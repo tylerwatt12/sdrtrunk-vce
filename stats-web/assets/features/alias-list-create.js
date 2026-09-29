@@ -25,119 +25,87 @@ export async function createAliasList(requestJson, { name, family, revision }) {
   };
 }
 
-export function createInlineAliasListCreator(dependencies, options) {
-  const { node, iconGlyph, uiPill, requestJson } = dependencies;
+export function createAliasListPopupTrigger(dependencies, options) {
+  const { node, iconGlyph, uiPill, requestJson, openReadOnlyModal } = dependencies;
   const {
     select, family, getRevision, onCreated, triggerLabel = 'New list', submitLabel = 'Create and use',
     helperText = 'The list is created immediately and selected for this workflow.'
   } = options;
   const normalized = normalizedFamily(family);
-  const host = node('div', 'ui-inline-create');
-  const trigger = node('button', 'ui-button ui-button-secondary ui-inline-create-trigger');
+  const host = node('div', 'ui-alias-list-create');
+  const trigger = node('button', 'ui-button ui-button-secondary ui-alias-list-create-trigger');
   trigger.type = 'button';
   if (iconGlyph) trigger.append(iconGlyph('icon-plus'));
   trigger.append(node('span', '', triggerLabel));
-  const panel = node('div', 'ui-inline-create-panel');
-  panel.hidden = true;
-  panel.id = `inline-alias-list-create-${++creatorSequence}`;
-  trigger.setAttribute('aria-controls', panel.id);
+  trigger.setAttribute('aria-haspopup', 'dialog');
   trigger.setAttribute('aria-expanded', 'false');
+  host.append(trigger);
 
-  const heading = node('div', 'ui-inline-create-heading');
-  const headingText = node('h3', '', 'Create Alias List');
-  headingText.id = `${panel.id}-heading`;
-  heading.append(headingText);
-  panel.setAttribute('role', 'group');
-  panel.setAttribute('aria-labelledby', headingText.id);
-  const name = node('input', 'ui-input');
-  name.type = 'text';
-  name.maxLength = 25;
-  name.autocomplete = 'off';
-  const nameField = node('label', 'ui-field');
-  nameField.append(node('span', 'ui-field-label', 'Name'), name);
-  const context = node('div', 'ui-inline-create-context');
-  context.append(node('span', '', 'Protocol family'), uiPill(familyLabel(normalized), 'neutral'));
-  const detail = node('small', 'ui-field-detail', helperText);
-  const error = node('div', 'ui-inline-create-status');
-  error.setAttribute('role', 'alert');
-  const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
-  cancel.type = 'button';
-  const submit = node('button', 'ui-button ui-button-primary', submitLabel);
-  submit.type = 'button';
-  const actions = node('div', 'ui-inline-create-actions');
-  actions.append(cancel, submit);
-  panel.append(heading, nameField, context, detail, error, actions);
-  const status = node('div', 'ui-inline-create-status');
-  status.setAttribute('role', 'status');
-  status.setAttribute('aria-live', 'polite');
-  host.append(trigger, panel, status);
-
-  const setOpen = (open) => {
-    panel.hidden = !open;
-    trigger.setAttribute('aria-expanded', String(open));
-    if (open) name.focus();
-    else trigger.focus();
-  };
-  const setBusy = (busy) => {
-    trigger.disabled = busy;
-    name.disabled = busy;
-    cancel.disabled = busy;
-    submit.disabled = busy;
-  };
   trigger.addEventListener('click', () => {
-    status.replaceChildren();
-    error.replaceChildren();
-    setOpen(true);
-  });
-  cancel.addEventListener('click', () => {
-    name.value = '';
-    error.replaceChildren();
-    setOpen(false);
-  });
-  panel.addEventListener('input', (event) => event.stopPropagation());
-  panel.addEventListener('change', (event) => event.stopPropagation());
-  panel.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') {
+    const form = node('form', 'admin-form');
+    const name = node('input', 'ui-input');
+    name.type = 'text';
+    name.maxLength = 25;
+    name.autocomplete = 'off';
+    const nameField = node('label', 'ui-field');
+    nameField.append(node('span', 'ui-field-label', 'Name'), name);
+    const context = node('div', 'ui-field-detail');
+    context.append('Protocol family: ', uiPill(familyLabel(normalized), 'neutral'));
+    const detail = node('div', 'ui-field-detail', helperText);
+    const error = node('div');
+    error.setAttribute('role', 'alert');
+    const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
+    cancel.type = 'button';
+    const submit = node('button', 'ui-button ui-button-primary', submitLabel);
+    submit.type = 'submit';
+    const actions = node('footer', 'ui-action-row');
+    actions.append(cancel, submit);
+    form.append(nameField, context, detail, error, actions);
+    const modal = openReadOnlyModal('Create Alias List', form, {
+      id: `create-alias-list-child-${++creatorSequence}`, className: 'modal-size-small alias-list-create-modal',
+      stack: 'child', onClose: () => trigger.setAttribute('aria-expanded', 'false')
+    });
+    if (!modal) return;
+    trigger.setAttribute('aria-expanded', 'true');
+    cancel.addEventListener('click', () => modal.close());
+    name.focus();
+    let createdResult = null;
+    form.addEventListener('submit', async (event) => {
       event.preventDefault();
-      name.value = '';
+      const listName = name.value.trim();
       error.replaceChildren();
-      setOpen(false);
-    } else if (event.target === name && event.key === 'Enter') {
-      event.preventDefault();
-      submit.click();
-    }
-  });
-  submit.addEventListener('click', async () => {
-    const listName = name.value.trim();
-    error.replaceChildren();
-    status.replaceChildren();
-    if (!listName) {
-      error.append(node('div', 'ui-notice ui-notice-danger', 'Enter a name for the Alias List.'));
-      name.focus();
-      return;
-    }
-    setBusy(true);
-    let completed = false;
-    let failed = false;
-    try {
-      const revision = await getRevision();
-      const result = await createAliasList(requestJson, { name: listName, family: normalized, revision });
-      await onCreated(result);
-      name.value = '';
-      panel.hidden = true;
-      trigger.setAttribute('aria-expanded', 'false');
-      status.append(node('div', 'ui-notice',
-        `${result.aliasList.name} was created and selected. It remains available if you cancel this workflow.`));
-      completed = true;
-    } catch (cause) {
-      error.append(node('div', 'ui-notice ui-notice-danger',
-        cause?.message || 'The Alias List could not be created.'));
-      failed = true;
-    } finally {
-      setBusy(false);
-      if (completed) (select && !select.disabled ? select : trigger).focus();
-      else if (failed) name.focus();
-    }
+      if (!listName) {
+        error.append(node('div', 'ui-notice ui-notice-danger', 'Enter a name for the Alias List.'));
+        name.focus();
+        return;
+      }
+      modal.setBusy(true);
+      name.disabled = true;
+      cancel.disabled = true;
+      submit.disabled = true;
+      try {
+        if (!createdResult) {
+          const revision = await getRevision();
+          createdResult = await createAliasList(requestJson, { name: listName, family: normalized, revision });
+        }
+        await onCreated(createdResult);
+        modal.setBusy(false);
+        modal.close();
+        (select && !select.disabled ? select : trigger).focus({ preventScroll: true });
+      } catch (cause) {
+        error.append(node('div', 'ui-notice ui-notice-danger',
+          createdResult ? `${createdResult.aliasList.name} was created, but could not be selected. ` +
+            `${cause?.message || 'Try again.'}` : cause?.message || 'The Alias List could not be created.'));
+        modal.setBusy(false);
+        name.disabled = Boolean(createdResult);
+        cancel.disabled = false;
+        submit.disabled = false;
+        if (createdResult) {
+          submit.textContent = 'Use created list';
+          submit.focus();
+        } else name.focus();
+      }
+    });
   });
   return host;
 }

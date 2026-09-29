@@ -39,6 +39,56 @@ async function installModalHarness(page) {
   }, modalFoundation);
 }
 
+async function installStackHarness(page) {
+  await page.goto('/design-system.html?theme=light&view=gallery');
+  await page.evaluate((source) => {
+    document.body.replaceChildren();
+    const node = (tag, className = '', text = null) => {
+      const element = document.createElement(tag);
+      element.className = className;
+      if (text !== null) element.textContent = String(text);
+      return element;
+    };
+    const valueNode = (value) => value instanceof Node ? value : document.createTextNode(String(value));
+    const iconButton = (_iconId, label, className) => {
+      const button = node('button', className);
+      button.type = 'button';
+      button.setAttribute('aria-label', label);
+      return button;
+    };
+    const shared = new Function('node', 'valueNode', 'iconButton',
+      `let activeReadOnlyModal = null; ${source}\nreturn { openReadOnlyModal, closeReadOnlyModal };`)(
+      node, valueNode, iconButton);
+    const opener = node('button', 'ui-button', 'Edit channel');
+    opener.type = 'button';
+    opener.addEventListener('click', () => {
+      const form = node('form');
+      const name = node('input', 'ui-input');
+      name.setAttribute('aria-label', 'Channel name');
+      const childTrigger = node('button', 'ui-button', 'New list');
+      childTrigger.type = 'button';
+      const filler = node('div');
+      filler.style.height = '1100px';
+      form.append(name, childTrigger, filler);
+      const parent = shared.openReadOnlyModal('Edit Channel', form, { id: 'parent' });
+      name.addEventListener('input', () => parent.setDirty(true));
+      childTrigger.addEventListener('click', () => {
+        const childForm = node('form');
+        const listName = node('input', 'ui-input');
+        listName.setAttribute('aria-label', 'List name');
+        childForm.append(listName);
+        shared.openReadOnlyModal('Create Alias List', childForm,
+          { id: 'child', className: 'modal-size-small', stack: 'child' });
+        listName.focus();
+      });
+    });
+    window.closeAllTestModals = () => shared.closeReadOnlyModal();
+    window.parentConfirmCount = 0;
+    window.confirm = () => { window.parentConfirmCount += 1; return false; };
+    document.body.append(opener);
+  }, modalFoundation);
+}
+
 async function installSourceRadioActionHarness(page, theme) {
   await page.goto(`/design-system.html?theme=${theme}&view=gallery`);
   await page.evaluate(({ modalSource, actionSource }) => {
@@ -100,6 +150,59 @@ test('modal backdrop dismisses only when a primary pointer starts and ends on it
 
   await page.mouse.click(4, 4);
   await expect(dialog).toHaveCount(0);
+  await expect(opener).toBeFocused();
+});
+
+test('a child dialog preserves the parent draft, scroll, focus, and body lock', async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 720 });
+  await installStackHarness(page);
+  const opener = page.getByRole('button', { name: 'Edit channel' });
+  await opener.click();
+  const parent = page.locator('.read-only-modal').filter({ hasText: 'Edit Channel' });
+  const parentContent = parent.locator('.modal-content');
+  const draft = parent.getByLabel('Channel name');
+  await draft.fill('Unfinished channel');
+  const scroll = await parentContent.evaluate((element) => {
+    element.scrollTop = 180;
+    return element.scrollTop;
+  });
+  expect(scroll).toBeGreaterThan(0);
+  const trigger = parent.getByRole('button', { name: 'New list' });
+  await trigger.evaluate((element) => {
+    element.focus({ preventScroll: true });
+    element.click();
+  });
+  const child = page.getByRole('dialog', { name: 'Create Alias List' });
+  await expect(child).toBeVisible();
+  await expect(child.getByLabel('List name')).toBeFocused();
+  await expect(parent).toHaveAttribute('aria-modal', 'false');
+  await expect(parent.locator('..')).toHaveAttribute('inert', '');
+  await expect(page.locator('body')).toHaveClass(/modal-open/);
+  await expect(page.locator('.read-only-modal')).toHaveCount(2);
+
+  await page.keyboard.press('Escape');
+  await expect(child).toHaveCount(0);
+  await expect(parent).toHaveAttribute('aria-modal', 'true');
+  await expect(parent.locator('..')).not.toHaveAttribute('inert', '');
+  await expect(trigger).toBeFocused();
+  await expect(draft).toHaveValue('Unfinished channel');
+  expect(await parentContent.evaluate((element) => element.scrollTop)).toBe(scroll);
+  expect(await page.evaluate(() => window.parentConfirmCount)).toBe(0);
+  await expect(page.locator('body')).toHaveClass(/modal-open/);
+
+  await trigger.click();
+  await page.mouse.click(4, 4);
+  await expect(page.getByRole('dialog', { name: 'Create Alias List' })).toHaveCount(0);
+  await expect(parent).toBeVisible();
+  expect(await page.evaluate(() => window.parentConfirmCount)).toBe(0);
+
+  await trigger.click();
+  expect(await page.evaluate(() => window.closeAllTestModals())).toBe(false);
+  await expect(page.locator('.read-only-modal')).toHaveCount(2);
+  expect(await page.evaluate(() => window.parentConfirmCount)).toBe(1);
+  await page.evaluate(() => { window.confirm = () => true; window.closeAllTestModals(); });
+  await expect(page.locator('.read-only-modal')).toHaveCount(0);
+  await expect(page.locator('body')).not.toHaveClass(/modal-open/);
   await expect(opener).toBeFocused();
 });
 

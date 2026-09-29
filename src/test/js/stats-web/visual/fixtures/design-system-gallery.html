@@ -168,7 +168,7 @@
           <article><span class="ui-icon-tile ui-icon-tile-accent"><svg aria-hidden="true"><use href="#visual-icon-channel"></use></svg></span><div><strong>Consistent language, flexible pages</strong><p>Keep controls, surfaces, type, and states consistent. A monitoring workspace, editor, and directory do not need the same layout.</p></div></article>
           <article><span class="ui-icon-tile ui-icon-tile-blue"><svg aria-hidden="true"><use href="#visual-icon-columns"></use></svg></span><div><strong>Put tools where they act</strong><p>Place compact table controls in the owning section header and let populated tables meet panel edges.</p></div></article>
           <article><span class="ui-icon-tile ui-icon-tile-accent"><svg aria-hidden="true"><use href="#visual-icon-live"></use></svg></span><div><strong>Design the narrow view intentionally</strong><p>Turn dense rows into semantic cards or focused selectors; do not make phone users pan across desktop tables.</p></div></article>
-          <article><span class="ui-icon-tile ui-icon-tile-blue"><svg aria-hidden="true"><use href="#visual-icon-plus"></use></svg></span><div><strong>Keep related work in context</strong><p>Use inline creation, selection bars, and expandable trays when leaving the workflow would discard useful state.</p></div></article>
+          <article><span class="ui-icon-tile ui-icon-tile-blue"><svg aria-hidden="true"><use href="#visual-icon-plus"></use></svg></span><div><strong>Keep related work in context</strong><p>Open a focused child dialog to create a related item without losing the parent form or its selection.</p></div></article>
         </div>
       </section>
 
@@ -265,22 +265,8 @@
             <select class="ui-select" id="visual-alias-list"><option>Default P25</option></select>
             <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></svg>
           </span>
-          <div class="ui-inline-create">
-            <button class="ui-button ui-button-secondary ui-inline-create-trigger" type="button"
-                    aria-expanded="true" aria-controls="visual-inline-alias-create"><svg aria-hidden="true"><use href="#visual-icon-plus"></use></svg><span>New list</span></button>
-            <div class="ui-inline-create-panel" id="visual-inline-alias-create" role="group" aria-labelledby="visual-inline-alias-heading">
-              <div class="ui-inline-create-heading"><h3 id="visual-inline-alias-heading">Create Alias List</h3></div>
-              <label class="ui-field"><span class="ui-field-label">Name</span>
-                <input class="ui-input" value="Lorain Public Safety"></label>
-              <div class="ui-inline-create-context"><span>Protocol family</span>
-                <span class="ui-pill ui-pill-neutral"><span>P25</span></span></div>
-              <small class="ui-field-detail">The list is created immediately and selected for this workflow.</small>
-              <div class="ui-inline-create-status" role="alert"></div>
-              <div class="ui-inline-create-actions"><button class="ui-button ui-button-secondary" type="button">Cancel</button>
-                <button class="ui-button ui-button-primary" type="button">Create and use</button></div>
-            </div>
-            <div class="ui-inline-create-status" role="status" aria-live="polite"></div>
-          </div>
+          <button class="ui-button ui-button-secondary ui-alias-list-create-trigger" type="button"
+                  aria-haspopup="dialog"><svg aria-hidden="true"><use href="#visual-icon-plus"></use></svg><span>New list</span></button>
         </div>
       </section>
 
@@ -369,6 +355,25 @@
             </div>
             <div class="ui-notice ui-notice-warning">Saving restarts this channel if it is running.</div>
             <div class="ui-action-row"><button class="ui-button" type="button">Cancel</button><button class="ui-button ui-button-primary" type="button">Save channel</button></div>
+          </form>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div class="visual-alias-list-create-modal-example">
+    <div class="modal-backdrop">
+      <section class="read-only-modal modal-size-small alias-list-create-modal" role="dialog" aria-modal="true" aria-labelledby="visual-alias-list-create-title">
+        <header class="modal-header">
+          <h2 id="visual-alias-list-create-title">Create Alias List</h2>
+          <button class="ui-button ui-button-secondary ui-icon-button modal-close" type="button" aria-label="Close Create Alias List"><svg aria-hidden="true"><use href="#visual-icon-close"></use></svg></button>
+        </header>
+        <div class="modal-content">
+          <form class="admin-form">
+            <label class="ui-field"><span class="ui-field-label">Name</span><input class="ui-input" value="Lorain Public Safety"></label>
+            <div class="ui-field-detail">Protocol family: <span class="ui-pill ui-pill-neutral">P25</span></div>
+            <div class="ui-field-detail">The list is created immediately and selected for this workflow.</div>
+            <div class="ui-action-row"><button class="ui-button ui-button-secondary" type="button">Cancel</button><button class="ui-button ui-button-primary" type="button">Create and use</button></div>
           </form>
         </div>
       </section>

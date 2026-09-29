@@ -339,7 +339,7 @@ function initializeScanListCatalog() {
 
 const parameters = new URLSearchParams(window.location.search);
 const theme = parameters.get('theme') === 'dark' ? 'dark' : 'light';
-const view = ['mobile-table', 'gallery', 'app-chrome', 'access-landing', 'access-login-modal', 'modal', 'modal-long', 'activity-action-modal', 'health-alert-modal', 'focus', 'settings', 'health', 'p25', 'admin-access',
+const view = ['mobile-table', 'gallery', 'app-chrome', 'access-landing', 'access-login-modal', 'modal', 'modal-long', 'alias-list-create-modal', 'activity-action-modal', 'health-alert-modal', 'focus', 'settings', 'health', 'p25', 'admin-access',
   'admin-receiver', 'admin-support', 'dashboard-health', 'dashboard-calls', 'dashboard-activity',
   'signal-quality-detail', 'radioreference-results',
   'radio-directory-coverage', 'radio-directory-panel', 'admin-scan-lists',

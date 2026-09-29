@@ -15,6 +15,18 @@ for(const [name, theme, viewport] of galleryCases) {
   });
 }
 
+for(const [name, theme, viewport] of [
+  ['alias-list-create-light-desktop', 'light', { width: 1280, height: 900 }],
+  ['alias-list-create-dark-mobile', 'dark', { width: 390, height: 844 }]
+]) {
+  test(name, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto(`/design-system.html?theme=${theme}&view=alias-list-create-modal`);
+    await expect(page.getByRole('dialog', { name: 'Create Alias List' })).toBeVisible();
+    await expect(page.locator('body')).toHaveScreenshot(`${name}.png`, { fullPage: true });
+  });
+}
+
 test('interface guidance demonstrates the current composition rules', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/design-system.html?theme=light&view=gallery');
@@ -56,8 +68,7 @@ test('interface guidance demonstrates the current composition rules', async ({ p
   await expect(restoredTable.locator('thead th')).toHaveText(['Channel', 'State']);
   await expect(restoredTable.locator('[data-column="channel"] .column-resizer'))
     .toHaveAttribute('aria-valuenow', String(initialWidth + 12));
-  await expect(page.locator('.ui-inline-create-trigger')).toHaveAttribute('aria-controls',
-    'visual-inline-alias-create');
+  await expect(page.locator('.ui-alias-list-create-trigger')).toHaveAttribute('aria-haspopup', 'dialog');
   await expect(page.getByLabel('Alias List', { exact: true })).toHaveValue('Default P25');
   const unlabeledIconControls = await page.locator([
     '.ui-icon-button', '.icon-button', '.ui-header-indicator', '.playback-command',

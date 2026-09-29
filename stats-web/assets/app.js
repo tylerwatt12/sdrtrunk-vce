@@ -17,9 +17,9 @@ import { createListenMap } from './features/listen-map.js?v=3';
 import { buildRadioResolvePlannerUrl } from './features/radioresolve-analysis.js?v=2';
 import {
   createAliasList,
-  createInlineAliasListCreator as buildInlineAliasListCreator
-} from './features/alias-list-create.js?v=1';
-import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=17';
+  createAliasListPopupTrigger as buildAliasListPopupTrigger
+} from './features/alias-list-create.js?v=2';
+import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=18';
 import { createStreamingWorkspace } from './features/streaming.js?v=4';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=1';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=7';
@@ -1967,32 +1967,45 @@ function clearAliasEditorRoute() {
   if (changed) window.history.replaceState({}, '', currentHref());
 }
 
-function closeReadOnlyModal(force = false) {
+function closeReadOnlyModal(force = false, topOnly = false) {
   const active = activeReadOnlyModal;
   if (!active) return true;
-  if (!force && active.isBusy?.()) return false;
-  if (!force && active.isDirty?.() && !window.confirm(active.discardMessage?.() ||
-    'Discard your unsaved changes?')) return false;
-  activeReadOnlyModal = null;
-  document.removeEventListener('keydown', active.keydown);
-  active.cleanup?.();
-  active.onClose?.();
-  active.backdrop.remove();
-  document.body.classList.remove('modal-open');
-  const returnFocus = active.returnFocusElement?.isConnected ? active.returnFocusElement :
-    (active.returnFocusSelector ? document.querySelector(active.returnFocusSelector) : null);
-  if (returnFocus instanceof HTMLElement) returnFocus.focus();
+  let root = active;
+  for (let current = active; current; current = topOnly ? null : current.parent) {
+    root = current;
+    if (!force && current.isBusy?.()) return false;
+    if (!force && current.isDirty?.() && !window.confirm(current.discardMessage?.() ||
+      'Discard your unsaved changes?')) return false;
+  }
+  for (let current = active; current; current = topOnly ? null : current.parent) {
+    activeReadOnlyModal = current.parent;
+    document.removeEventListener('keydown', current.keydown);
+    current.cleanup?.();
+    current.onClose?.();
+    current.backdrop.remove();
+    if (current.parent) {
+      current.parent.backdrop.inert = false;
+      current.parent.dialog.setAttribute('aria-modal', 'true');
+    } else {
+      document.body.classList.remove('modal-open');
+    }
+  }
+  const returnFocus = root.returnFocusElement?.isConnected ? root.returnFocusElement :
+    (root.returnFocusSelector ? document.querySelector(root.returnFocusSelector) : null);
+  if (returnFocus instanceof HTMLElement) returnFocus.focus({ preventScroll: true });
   return true;
 }
 
 function openReadOnlyModal(title, body, options = {}) {
   const returnFocusElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-  if (!closeReadOnlyModal()) return null;
+  const parent = options.stack === 'child' ? activeReadOnlyModal : null;
+  if (!parent && !closeReadOnlyModal()) return null;
   const backdrop = node('div', 'modal-backdrop');
   const dialog = node('section', 'read-only-modal');
   String(options.className || '').split(/\s+/).filter(Boolean)
     .forEach((className) => dialog.classList.add(className));
-  const titleId = `read-only-modal-title-${String(options.id || 'detail').replace(/[^a-z0-9-]/gi, '')}`;
+  const titleId = `read-only-modal-title-${String(options.id || 'detail').replace(/[^a-z0-9-]/gi, '')}-` +
+    `${document.querySelectorAll('.modal-backdrop').length + 1}`;
   dialog.setAttribute('role', 'dialog');
   dialog.setAttribute('aria-modal', 'true');
   dialog.setAttribute('aria-labelledby', titleId);
@@ -2008,12 +2021,13 @@ function openReadOnlyModal(title, body, options = {}) {
   backdrop.append(dialog);
 
   let modalState = null;
-  const dismiss = () => activeReadOnlyModal === modalState && closeReadOnlyModal();
+  const dismiss = () => activeReadOnlyModal === modalState && closeReadOnlyModal(false, true);
   const focusable = () => [...dialog.querySelectorAll(
     'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), ' +
     '[tabindex]:not([tabindex="-1"])')]
     .filter((element) => !element.hidden && element.getClientRects().length > 0);
   const keydown = (event) => {
+    if (activeReadOnlyModal !== modalState) return;
     if (event.key === 'Escape') {
       event.preventDefault();
       dismiss();
@@ -2060,13 +2074,17 @@ function openReadOnlyModal(title, body, options = {}) {
   let busy = false;
   let discardMessage = options.discardMessage || 'Discard your unsaved changes?';
   modalState = {
-    backdrop, keydown, returnFocusElement, returnFocusSelector: options.returnFocusSelector || null,
+    backdrop, dialog, parent, keydown, returnFocusElement, returnFocusSelector: options.returnFocusSelector || null,
     isDirty: () => dirty,
     discardMessage: () => discardMessage,
     isBusy: () => busy,
     cleanup: options.cleanup || null,
     onClose: options.onClose || null
   };
+  if (parent) {
+    parent.backdrop.inert = true;
+    parent.dialog.setAttribute('aria-modal', 'false');
+  }
   activeReadOnlyModal = modalState;
   document.addEventListener('keydown', keydown);
   document.body.classList.add('modal-open');
@@ -4136,9 +4154,9 @@ function aliasMutationError(host, error, retry = null) {
   }
 }
 
-function inlineAliasListCreator(options) {
+function aliasListPopupTrigger(options) {
   if (!aliasAdminAllowed()) return document.createDocumentFragment();
-  return buildInlineAliasListCreator({ node, iconGlyph, uiPill, requestJson }, options);
+  return buildAliasListPopupTrigger({ node, iconGlyph, uiPill, requestJson, openReadOnlyModal }, options);
 }
 
 async function currentAliasListRevision() {
@@ -9525,9 +9543,11 @@ function closePageConnections() {
 }
 
 window.addEventListener('beforeunload', (event) => {
-  if (activeReadOnlyModal?.isDirty?.()) {
+  for (let current = activeReadOnlyModal; current; current = current.parent) {
+    if (!current.isDirty?.()) continue;
     event.preventDefault();
     event.returnValue = '';
+    break;
   }
   liveConnections.forEach((source) => source.close());
   liveConnections.clear();
@@ -20172,7 +20192,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
             wrapper.append(node('small', 'ui-field-detail', CHANNEL_ENCRYPTED_SKIP_LOCK_HELP));
           }
           if (inlineAliasList) {
-            const aliasListCreator = inlineAliasListCreator({
+            const aliasListCreator = aliasListPopupTrigger({
               select: control,
               family: profile.alias_family,
               getRevision: currentAliasListRevision,
@@ -20185,9 +20205,13 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
                   .filter((entry) => Number(entry.id) !== Number(next.id)), next]
                   .sort((left, right) => String(left.name || '').localeCompare(String(right.name || ''),
                     undefined, { numeric: true, sensitivity: 'base' }));
-                const option = node('option', '', next.name);
-                option.value = String(next.id);
-                control.append(option);
+                let option = [...control.options].find((candidate) => candidate.value === String(next.id));
+                if (!option) {
+                  option = node('option');
+                  option.value = String(next.id);
+                  control.append(option);
+                }
+                option.textContent = next.name;
                 control.value = option.value;
                 control.dispatchEvent(new Event('change', { bubbles: true }));
               }
@@ -21793,7 +21817,7 @@ async function renderAdminRadioReferenceSettings() {
   const importWorkspace = createRadioReferenceImportWorkspace({
     node, iconGlyph, formField, uiSelectFrame, uiPill, uiSegmentedControl, table,
     openReadOnlyModal, closeReadOnlyModal, requestJson, formatFrequency: frequency, formatNumber: number,
-    href, anchor, modalFooter: aliasModalFooter, createInlineAliasListCreator: inlineAliasListCreator,
+    href, anchor, modalFooter: aliasModalFooter, createAliasListPopupTrigger: aliasListPopupTrigger,
     directoryTimeoutMs: RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS,
     mutationTimeoutMs: 65_000
   });

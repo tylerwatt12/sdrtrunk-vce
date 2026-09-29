@@ -48,6 +48,10 @@ body.modal-open {
   width: min(var(--modal-size-small), 96vw);
 }
 
+.read-only-modal.modal-size-small {
+  width: min(var(--modal-size-small), 96vw);
+}
+
 .read-only-modal.frequency-action-modal {
   width: min(var(--modal-size-small), 96vw);
 }
@@ -96,6 +100,10 @@ body.modal-open {
     max-height: none;
     border: 0;
     border-radius: 0;
+  }
+
+  .read-only-modal.modal-size-small {
+    width: 100vw;
   }
 
   .modal-content {

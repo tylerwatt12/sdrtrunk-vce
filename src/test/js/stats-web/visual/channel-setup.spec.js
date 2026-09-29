@@ -149,7 +149,7 @@ test('channel editor refreshes the voice-module override and renders the effecti
   expect(protocolRequests).toBe(3);
 });
 
-test('editing a channel opens the selected Alias List in a new tab', async ({ page }) => {
+test('editing a channel opens and creates the selected Alias List without losing its draft', async ({ page }) => {
   const configurationId = '00000000-0000-0000-0000-000000000001';
   const profile = {
     id: 'nbfm', label: 'NBFM', channel_kind: 'CONVENTIONAL', alias_family: 'NBFM',
@@ -213,6 +213,27 @@ test('editing a channel opens the selected Alias List in a new tab', async ({ pa
   const mobileLinkBox = await link.boundingBox();
   expect(mobileLinkBox.y).toBeGreaterThan(mobileSelectBox.y + mobileSelectBox.height);
   expect(mobileLinkBox.x + mobileLinkBox.width).toBeLessThanOrEqual(390);
+
+  let createdList = null;
+  await page.route('**/api/v1/admin/alias-lists**', async (route) => {
+    const request = route.request();
+    if (request.method() === 'POST') createdList = request.postDataJSON();
+    const data = request.method() === 'POST' ? { alias_list_id: 3, revision: 8 } : { revision: 7 };
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(apiData(data)) });
+  });
+  const draft = dialog.getByLabel('Name', { exact: true });
+  await draft.fill('Unsaved channel name');
+  await dialog.getByRole('button', { name: 'New list' }).click();
+  const child = page.getByRole('dialog', { name: 'Create Alias List' });
+  await expect(child).toBeVisible();
+  await child.getByLabel('Name').fill('Local Analog');
+  await child.getByRole('button', { name: 'Create and use' }).click();
+  await expect(child).toHaveCount(0);
+  await expect(dialog).toBeVisible();
+  await expect(draft).toHaveValue('Unsaved channel name');
+  await expect(select).toHaveValue('3');
+  await expect(link).toHaveAttribute('href', /view=aliases&list=3$/);
+  expect(createdList).toMatchObject({ revision: 7, name: 'Local Analog', family: 'nbfm' });
 });
 
 test('startup-order view moves keyed rows without replacing the page or losing position', async ({ page }) => {

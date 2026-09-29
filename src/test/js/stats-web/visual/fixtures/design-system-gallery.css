@@ -197,6 +197,10 @@ body {
   min-height: 100vh;
 }
 
+.visual-alias-list-create-modal-example {
+  min-height: 100vh;
+}
+
 .visual-access-login-modal-example {
   min-height: 100vh;
 }
@@ -583,6 +587,7 @@ body:not([data-gallery-view="mobile-table"]) .visual-mobile-table-example,
 body:not([data-gallery-view="app-chrome"]) .visual-app-chrome-example,
 body:not([data-gallery-view="gallery"]) .design-system-gallery,
 body:not([data-gallery-view="modal"]):not([data-gallery-view="modal-long"]) .visual-modal-example,
+body:not([data-gallery-view="alias-list-create-modal"]) .visual-alias-list-create-modal-example,
 body:not([data-gallery-view="activity-action-modal"]) .visual-activity-action-modal-example,
 body:not([data-gallery-view="health-alert-modal"]) .visual-health-alert-modal-example,
 body:not([data-gallery-view="focus"]) .visual-focus-example,
