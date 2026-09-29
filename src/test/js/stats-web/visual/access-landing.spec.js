@@ -25,7 +25,7 @@ function session(webAccess, authenticated = false) {
 
 async function mockAccess(page, initialWebAccess, options = {}) {
   const state = { session: session(initialWebAccess, options.authenticated === true), logins: [],
-    sessionRequests: 0 };
+    logouts: 0, sessionRequests: 0 };
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
@@ -45,6 +45,10 @@ async function mockAccess(page, initialWebAccess, options = {}) {
       }
       state.session = session(options.loginWebAccess !== false, true);
       await route.fulfill({ json: { data: state.session } });
+    } else if (pathname === '/api/v1/auth/logout') {
+      state.logouts += 1;
+      state.session = session(options.logoutWebAccess ?? initialWebAccess);
+      await route.fulfill({ json: { data: state.session } });
     } else if (pathname === '/api/v1/me/preferences') {
       await route.fulfill({ json: { revision: 1, preferences: defaultPreferences } });
     } else if (pathname === '/api/v1/status') {
@@ -56,20 +60,67 @@ async function mockAccess(page, initialWebAccess, options = {}) {
   return state;
 }
 
-test('the app shell stays hidden while access is being checked', async ({ page }) => {
-  let releaseSession;
-  const sessionGate = new Promise((resolve) => { releaseSession = resolve; });
-  await mockAccess(page, false, { sessionGate });
-  try {
-    await page.goto('/app.html?view=dashboard', { waitUntil: 'domcontentloaded' });
-    await expect(page.locator('.access-landing')).toBeVisible();
-    await expect(page.locator('.app-shell')).toBeHidden();
-    await expect(page.locator('a:visible')).toHaveCount(0);
-  } finally {
-    releaseSession();
-  }
-  await expect(page.locator('.access-login-form')).toBeVisible();
-});
+async function waitForPaint(page) {
+  await page.evaluate(() => new Promise((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(resolve))));
+}
+
+for (const [label, webAccess] of [['authorized', true], ['restricted', false]]) {
+  test(`${label} access does not flash the sign-in landing while the session loads`, async ({ page }) => {
+    let releaseScript;
+    let signalScriptRequested;
+    let releaseSession;
+    const scriptGate = new Promise((resolve) => { releaseScript = resolve; });
+    const scriptRequested = new Promise((resolve) => { signalScriptRequested = resolve; });
+    const sessionGate = new Promise((resolve) => { releaseSession = resolve; });
+    await page.route('**/assets/app.js*', async (route) => {
+      signalScriptRequested();
+      await scriptGate;
+      await route.continue();
+    });
+    await mockAccess(page, webAccess, { sessionGate });
+
+    let navigation;
+    const sessionRequested = page.waitForRequest('**/api/v1/auth/session');
+    void sessionRequested.catch(() => {});
+    try {
+      navigation = page.goto('/app.html?view=dashboard', { waitUntil: 'domcontentloaded' });
+      void navigation.catch(() => {});
+      await scriptRequested;
+      await page.locator('#access-landing').waitFor({ state: 'attached' });
+      // The application module has not run. Two frames expose the actual static first paint.
+      await waitForPaint(page);
+      await expect(page.locator('.access-landing')).toBeHidden();
+      await expect(page.locator('.app-shell')).toBeHidden();
+      await expect(page.locator('#access-pending')).toHaveCSS('opacity', '0');
+      await expect(page.locator('#access-landing-form-host').getByText('Checking access')).toBeHidden();
+    } finally {
+      releaseScript();
+    }
+    await Promise.all([navigation, sessionRequested]);
+    try {
+      // A slow access check gets a neutral spinner without exposing either interface.
+      await page.waitForTimeout(900);
+      await waitForPaint(page);
+      await expect(page.locator('.access-landing')).toBeHidden();
+      await expect(page.locator('.app-shell')).toBeHidden();
+      await expect(page.locator('#access-pending')).toHaveCSS('opacity', '1');
+      await expect(page.locator('#access-landing-form-host').getByText('Checking access')).toBeHidden();
+      await expect(page.locator('a:visible')).toHaveCount(0);
+    } finally {
+      releaseSession();
+    }
+    if (webAccess) {
+      await expect(page.locator('.app-shell')).toBeVisible();
+      await expect(page.locator('.access-landing')).toBeHidden();
+    } else {
+      await expect(page.locator('.access-landing .access-login-form')).toBeVisible();
+      await expect(page.locator('.app-shell')).toBeHidden();
+    }
+    await expect(page.locator('#access-pending')).toBeHidden();
+    await expect(page.locator('#access-pending')).toHaveAttribute('hidden', '');
+  });
+}
 
 test('access retry remains available after another session failure', async ({ page }) => {
   const state = await mockAccess(page, false, { sessionFailures: 2 });
@@ -143,6 +194,38 @@ test('landing sign-in restores the app shell after access is granted', async ({ 
   await expect(page.locator('.topbar')).toBeVisible();
   await expect(page.locator('#auth-action')).toHaveText('Sign Out');
   expect(state.logins).toEqual([{ username: 'listener', password: 'test-password' }]);
+});
+
+test('signing out after a landing login provides a fresh sign-in form', async ({ page }) => {
+  const state = await mockAccess(page, false);
+  await page.goto('/app.html?view=dashboard');
+
+  const form = page.locator('.access-landing .access-login-form');
+  await expect(form).toBeVisible();
+  await form.getByLabel('Username').fill('listener');
+  await form.getByLabel('Password').fill('first-password');
+  await form.getByRole('button', { name: 'Sign In' }).click();
+  await expect(page.locator('.app-shell')).toBeVisible();
+  await page.locator('#auth-action').click();
+
+  await expect(page.locator('.access-landing')).toBeVisible();
+  await expect(page.locator('.app-shell')).toBeHidden();
+  await expect(form.getByLabel('Username')).toBeEnabled();
+  await expect(form.getByLabel('Username')).toHaveValue('');
+  await expect(form.getByLabel('Password')).toBeEnabled();
+  await expect(form.getByLabel('Password')).toHaveValue('');
+  await expect(form.getByRole('button', { name: 'Sign In' })).toBeEnabled();
+  await expect(form.locator('.admin-form-message')).toBeEmpty();
+
+  await form.getByLabel('Username').fill('listener');
+  await form.getByLabel('Password').fill('second-password');
+  await form.getByRole('button', { name: 'Sign In' }).click();
+  await expect(page.locator('.app-shell')).toBeVisible();
+  expect(state.logouts).toBe(1);
+  expect(state.logins).toEqual([
+    { username: 'listener', password: 'first-password' },
+    { username: 'listener', password: 'second-password' }
+  ]);
 });
 
 test('restricted signed-in account can switch accounts without exposing the shell', async ({ page }) => {

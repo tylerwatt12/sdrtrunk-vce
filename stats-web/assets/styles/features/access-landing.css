@@ -1,3 +1,19 @@
+/* Show a neutral status only when session lookup outlasts a normal page load. */
+.access-pending {
+  position: fixed;
+  z-index: 80;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  opacity: 0;
+  animation: access-pending-reveal 1ms var(--access-pending-delay) forwards;
+}
+
+@keyframes access-pending-reveal {
+  to { opacity: 1; }
+}
+
 /* Full-screen public entry, with the same dark scene in either app theme. */
 .access-landing,
 .access-login-modal {

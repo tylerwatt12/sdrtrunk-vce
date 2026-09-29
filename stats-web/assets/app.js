@@ -890,13 +890,22 @@ function synchronizeAccessLanding() {
   const shell = document.querySelector('.app-shell');
   const host = document.getElementById('access-landing-form-host');
   if (!landing || !shell || !host) return false;
+  const pending = document.getElementById('access-pending');
+  if (pending) pending.hidden = true;
   const gated = !accessSessionAvailable ||
     accessSession.capabilities?.[ACCESS_CAPABILITIES.WEB_ACCESS] === false;
-  const becameGated = gated && landing.hidden;
+  const becameGated = gated && !shell.hidden;
   landing.hidden = !gated;
+  landing.toggleAttribute('inert', !gated);
   shell.hidden = gated;
   shell.toggleAttribute('inert', gated);
-  if (!gated) return false;
+  if (!gated) {
+    if (host.dataset.state) {
+      host.replaceChildren();
+      delete host.dataset.state;
+    }
+    return false;
+  }
   if (activeReadOnlyModal) closeReadOnlyModal(true);
   if (!landingVisualCleanup) {
     landingVisualCleanup = mountAccessWireframe(landing.querySelector('.access-scene-canvas'));

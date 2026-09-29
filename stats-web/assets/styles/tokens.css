@@ -114,6 +114,7 @@
   --access-scene-background: radial-gradient(ellipse 55% 75% at 48% 62%, #102c38 0%, transparent 75%), linear-gradient(120deg, #081923, #07111d 58%, #050b13);
   --access-scene-scrim: radial-gradient(ellipse 34% 37% at 27% 51%, rgb(3 13 21 / 72%), transparent 100%), linear-gradient(90deg, transparent 34%, rgb(3 10 17 / 19%) 65%, rgb(3 9 16 / 44%)), repeating-linear-gradient(0deg, transparent 0 3px, rgb(126 211 215 / 1%) 4px 5px);
   --access-scene-scrim-mobile: radial-gradient(ellipse 88% 55% at 50% 44%, rgb(3 13 21 / 65%), transparent 100%), linear-gradient(0deg, rgb(3 9 16 / 30%), transparent 65%);
+  --access-pending-delay: 800ms;
   --access-wire-color: #94dee1;
   --access-grid-color: #80ceda;
   --access-link-color: #7ac2cc;
