@@ -78,7 +78,7 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
         return new WebUserPreferences(CURRENT_VERSION, new Appearance("light"), new PageTitles(false),
             new Playback(1.0, List.of(), true, DEFAULT_TARGET_BURST_LIMIT), new Scanner("normal"),
             new Presentation(showEncryptionDetails, showControlDecodeQuality, showVoiceDecodeQuality,
-                decodeQualityDisplayMode, liveDetailRowLimit, false, false, false),
+                decodeQualityDisplayMode, liveDetailRowLimit, true, false, false),
             new Tuner(-140, 0, 1, true, true, false, false, "balanced"), new HealthAlerts(List.of()), Map.of());
     }
 

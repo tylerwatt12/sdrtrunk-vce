@@ -6,6 +6,7 @@
 package io.github.dsheirer.web.settings;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -17,13 +18,21 @@ import org.junit.jupiter.api.Test;
 class WebUserPreferencesCodecTest
 {
     private static final String DEFAULT_JSON = """
-        {"version":7,"appearance":{"theme":"light"},"page_titles":{"prepend_playing_call":false},"playback":{"volume":1.0,"selected_scan_list_ids":[],"target_grouping":true,"target_burst_limit":4},"scanner":{"detail_mode":"normal"},"presentation":{"show_encryption_details":true,"show_control_decode_quality":true,"show_voice_decode_quality":true,"decode_quality_display_mode":"percentage","live_detail_row_limit":200,"show_only_active_trunked_channels":false,"retain_last_call_on_idle_rows":false,"clear_voice_quality_when_idle":false},"tuner":{"floor_db":-140,"ceiling_db":0,"waterfall_speed":1.0,"snap_frequency":true,"smooth_fft":true,"highlight_waterfall_channels":false,"show_idle_channels":false,"profile":"balanced"},"health_alerts":{"disabled_codes":[]},"tables":{}}""";
+        {"version":7,"appearance":{"theme":"light"},"page_titles":{"prepend_playing_call":false},"playback":{"volume":1.0,"selected_scan_list_ids":[],"target_grouping":true,"target_burst_limit":4},"scanner":{"detail_mode":"normal"},"presentation":{"show_encryption_details":true,"show_control_decode_quality":true,"show_voice_decode_quality":true,"decode_quality_display_mode":"percentage","live_detail_row_limit":200,"show_only_active_trunked_channels":true,"retain_last_call_on_idle_rows":false,"clear_voice_quality_when_idle":false},"tuner":{"floor_db":-140,"ceiling_db":0,"waterfall_speed":1.0,"snap_frequency":true,"smooth_fft":true,"highlight_waterfall_channels":false,"show_idle_channels":false,"profile":"balanced"},"health_alerts":{"disabled_codes":[]},"tables":{}}""";
 
     @Test
     void defaultsHaveTheExactVersionSevenSnakeCaseWireShape() throws Exception
     {
         assertEquals(DEFAULT_JSON, WebUserPreferencesCodec.encode(WebUserPreferences.defaults()));
         assertEquals(WebUserPreferences.defaults(), WebUserPreferencesCodec.decode(DEFAULT_JSON));
+    }
+
+    @Test
+    void savedInactiveRowsChoiceRemainsOff() throws Exception
+    {
+        String savedOff = DEFAULT_JSON.replace("\"show_only_active_trunked_channels\":true",
+            "\"show_only_active_trunked_channels\":false");
+        assertFalse(WebUserPreferencesCodec.decode(savedOff).presentation().showOnlyActiveTrunkedChannels());
     }
 
     @Test
@@ -123,7 +132,7 @@ class WebUserPreferencesCodecTest
                 ",\"health_alerts\":{\"disabled_codes\":[]}", "")));
         assertThrows(java.io.IOException.class,
             () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace(
-                ",\"show_only_active_trunked_channels\":false", "")));
+                ",\"show_only_active_trunked_channels\":true", "")));
         assertThrows(java.io.IOException.class,
             () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace(
                 ",\"show_idle_channels\":false", "")));
