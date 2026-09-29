@@ -7,6 +7,7 @@ package io.github.dsheirer.stats;
 
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
+import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.preference.UserPreferences;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -68,6 +69,8 @@ final class ManagedRecordingLabels
             Map<String,ChannelLabels> channels = new HashMap<>();
             Map<String,AliasLabels> aliases = new HashMap<>();
             Map<String,String> talkerAliases = new HashMap<>();
+            Map<String,SystemScope> systems = new HashMap<>();
+            Map<String,Boolean> knownIdentities = new HashMap<>();
             for(Map<String,Object> call: result)
             {
                 String channelId = string(call.get("channel_id"));
@@ -78,6 +81,14 @@ final class ManagedRecordingLabels
                     put(call, "channel_name", channel.name());
                     put(call, "system_name", channel.systemName());
                     put(call, "site_name", channel.siteName());
+                    try
+                    {
+                        WebEntityRef.put(call, "channel_entity_ref", WebEntityRef.channel(channelId));
+                    }
+                    catch(IllegalArgumentException ignored)
+                    {
+                        //A legacy or malformed channel ID has no stable detail-page destination.
+                    }
                 }
 
                 Integer aliasListId = channel != null && channel.aliasListId() != null ? channel.aliasListId() :
@@ -123,6 +134,35 @@ final class ManagedRecordingLabels
                     }
                 }
                 String systemKey = string(call.get("system_key"));
+                SystemScope system = systemKey != null ? systems.computeIfAbsent(systemKey,
+                    key -> system(connection, key)) : null;
+                if(system != null)
+                {
+                    WebEntityRef.put(call, "radio_system_entity_ref", system.reference());
+                    if(protocolMatches(system.protocolCode(), protocol))
+                    {
+                        WebEntityRef.put(call, "source_entity_ref", identityReference(connection, system,
+                            knownIdentities, RadioSystemIdentityKey.KIND_RADIO, sourceId,
+                            integer(call.get("source_home_wacn")), integer(call.get("source_home_system_id")),
+                            integer(call.get("source_home_id"))));
+                        String callType = string(call.get("call_type"));
+                        int targetKind = switch(callType != null ? callType : "")
+                        {
+                            case "GROUP" -> RadioSystemIdentityKey.KIND_TALKGROUP;
+                            case "PATCH" -> RadioSystemIdentityKey.KIND_PATCH_GROUP;
+                            case "DIRECT" -> RadioSystemIdentityKey.KIND_RADIO;
+                            default -> 0;
+                        };
+                        if(targetKind != 0)
+                        {
+                            WebEntityRef.put(call, "target_entity_ref", identityReference(connection, system,
+                                knownIdentities, targetKind, integer(call.get("target_id")),
+                                integer(call.get("target_home_wacn")), integer(call.get("target_home_system_id")),
+                                integer(call.get("target_home_id"))));
+                        }
+                        decoratePatchMembers(connection, call, system, knownIdentities);
+                    }
+                }
                 if(systemKey != null && sourceId != null && sourceId > 0)
                 {
                     Integer homeWacn = integer(call.get("source_home_wacn"));
@@ -139,6 +179,168 @@ final class ManagedRecordingLabels
             //Current names are optional. Catalog data remains usable when the main database is busy or replaced.
         }
         return result;
+    }
+
+    private static void decoratePatchMembers(Connection connection, Map<String,Object> call, SystemScope system,
+                                             Map<String,Boolean> knownIdentities)
+    {
+        if(!(call.get("patch_members") instanceof List<?> members) || members.isEmpty())
+        {
+            return;
+        }
+        List<Map<String,Object>> decorated = new ArrayList<>(members.size());
+        for(Object item: members)
+        {
+            if(!(item instanceof Map<?,?> member))
+            {
+                continue;
+            }
+            Map<String,Object> copy = new LinkedHashMap<>();
+            member.forEach((key, value) -> {
+                if(key instanceof String field) copy.put(field, value);
+            });
+            int kind = switch(String.valueOf(copy.get("kind")))
+            {
+                case "talkgroup" -> RadioSystemIdentityKey.KIND_TALKGROUP;
+                case "radio" -> RadioSystemIdentityKey.KIND_RADIO;
+                default -> 0;
+            };
+            if(kind != 0)
+            {
+                WebEntityRef.put(copy, identityReference(connection, system, knownIdentities, kind,
+                    integer(copy.get("id")), integer(copy.get("home_wacn")),
+                    integer(copy.get("home_system_id")), integer(copy.get("home_identity_id"))));
+            }
+            decorated.add(copy);
+        }
+        call.put("patch_members", decorated);
+    }
+
+    private static boolean protocolMatches(int systemProtocol, String callProtocol)
+    {
+        return switch(callProtocol != null ? callProtocol : "")
+        {
+            case "APCO25", "APCO25_PHASE2" -> systemProtocol == 1;
+            case "DMR" -> systemProtocol == 3;
+            case "NXDN" -> systemProtocol == 4;
+            default -> false;
+        };
+    }
+
+    private static SystemScope system(Connection connection, String key)
+    {
+        try(PreparedStatement statement = connection.prepareStatement("""
+            SELECT protocol_code,p25_wacn,p25_system_id FROM radio_system WHERE system_key=?
+            """))
+        {
+            statement.setString(1, key);
+            try(ResultSet row = statement.executeQuery())
+            {
+                if(row.next())
+                {
+                    return new SystemScope(key, row.getInt("protocol_code"),
+                        row.getObject("p25_wacn") != null ? row.getInt("p25_wacn") : null,
+                        row.getObject("p25_system_id") != null ? row.getInt("p25_system_id") : null,
+                        WebEntityRef.radioSystem(key));
+                }
+            }
+        }
+        catch(SQLException | IllegalArgumentException ignored)
+        {
+            //An unavailable or invalid system has no stable detail-page destination.
+        }
+        return null;
+    }
+
+    private static WebEntityRef identityReference(Connection connection, SystemScope system,
+                                                   Map<String,Boolean> knownIdentities, int kind, Integer localId,
+                                                   Integer homeWacn, Integer homeSystemId, Integer homeId)
+    {
+        if(localId == null || localId <= 0)
+        {
+            return null;
+        }
+        int canonicalId = localId;
+        int canonicalWacn = RadioSystemIdentityKey.NO_HOME;
+        int canonicalSystem = RadioSystemIdentityKey.NO_HOME;
+        if(system.protocolCode() == 1)
+        {
+            if(homeWacn != null || homeSystemId != null || homeId != null)
+            {
+                if(homeWacn == null || homeSystemId == null || homeId == null)
+                {
+                    return null;
+                }
+                canonicalId = homeId;
+                canonicalWacn = homeWacn;
+                canonicalSystem = homeSystemId;
+            }
+            else if(system.p25Wacn() != null && system.p25SystemId() != null)
+            {
+                canonicalWacn = system.p25Wacn();
+                canonicalSystem = system.p25SystemId();
+            }
+            else
+            {
+                return null;
+            }
+        }
+        else if(homeWacn != null || homeSystemId != null || homeId != null)
+        {
+            return null;
+        }
+        try
+        {
+            String identityKey = RadioSystemIdentityKey.format(kind, canonicalWacn, canonicalSystem,
+                canonicalId);
+            String cacheKey = system.key() + ':' + identityKey;
+            int lookupId = canonicalId;
+            int lookupWacn = canonicalWacn;
+            int lookupSystem = canonicalSystem;
+            if(!knownIdentities.computeIfAbsent(cacheKey, ignored -> identityExists(connection, system.key(),
+                kind, lookupWacn, lookupSystem, lookupId)))
+            {
+                return null;
+            }
+            return switch(kind)
+            {
+                case RadioSystemIdentityKey.KIND_TALKGROUP -> WebEntityRef.talkgroup(system.key(), identityKey);
+                case RadioSystemIdentityKey.KIND_PATCH_GROUP -> WebEntityRef.patchGroup(system.key(), identityKey);
+                case RadioSystemIdentityKey.KIND_RADIO -> WebEntityRef.radio(system.key(), identityKey);
+                default -> null;
+            };
+        }
+        catch(IllegalArgumentException ignored)
+        {
+            return null;
+        }
+    }
+
+    private static boolean identityExists(Connection connection, String systemKey, int kind, int homeWacn,
+                                          int homeSystemId, int identityId)
+    {
+        try(PreparedStatement statement = connection.prepareStatement("""
+            SELECT 1 FROM radio_system_identity_summary identity
+            JOIN radio_system system ON system.id=identity.radio_system_id
+            WHERE system.system_key=? AND identity.identity_kind_code=?
+              AND identity.home_wacn=? AND identity.home_system_id=? AND identity.identity_id=?
+            LIMIT 1
+            """))
+        {
+            statement.setString(1, systemKey);
+            statement.setInt(2, kind);
+            statement.setInt(3, homeWacn);
+            statement.setInt(4, homeSystemId);
+            statement.setInt(5, identityId);
+            try(ResultSet rows = statement.executeQuery())
+            {
+                return rows.next();
+            }
+        }
+        catch(SQLException ignored)
+        {
+            return false;
+        }
     }
 
     List<Map<String,Object>> suggestions(String query, String kind, int requestedLimit)
@@ -594,4 +796,6 @@ final class ManagedRecordingLabels
 
     private record ChannelLabels(String name, String systemName, String siteName, Integer aliasListId) {}
     private record AliasLabels(String name, String description, String group) {}
+    private record SystemScope(String key, int protocolCode, Integer p25Wacn, Integer p25SystemId,
+                               WebEntityRef.KeyRef reference) {}
 }
