@@ -33,18 +33,29 @@ function preferences() {
   };
 }
 
-async function openApp(page, tier = 'admin') {
+async function openApp(page, tier = 'admin', summaryEnabled = true) {
   let current = preferences();
+  current.settings.stats_logging_enabled = summaryEnabled;
   const writes = [];
+  let statusRequests = 0;
   await page.route('**/api/v1/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname;
     if (pathname === '/api/v1/auth/session') {
       await route.fulfill({ json: { data: { configured: true, authenticated: true,
         username: tier === 'admin' ? 'admin' : 'listener', tier, primary: tier === 'admin',
-        capabilities: { 'admin-settings': tier === 'admin', 'receiver-health': tier === 'admin',
+        capabilities: { dashboard: true, 'admin-settings': tier === 'admin',
+          'receiver-health': tier === 'admin',
           'admin-users': tier === 'admin', 'admin-access': tier === 'admin', credits: true } } } });
     } else if (pathname === '/api/v1/me/preferences') {
       await route.fulfill({ json: { revision: 1, preferences: defaultPreferences } });
+    } else if (pathname === '/api/v1/status') {
+      statusRequests += 1;
+      const enabled = current.settings.stats_logging_enabled;
+      await route.fulfill({ json: { data: {
+        stats_logging: { summary_configured: enabled, summary_active: enabled,
+          state: enabled ? 'RUNNING' : 'DISABLED', last_successful_write_ms: 42 },
+        database: { stats_logging_enabled: enabled, logger: [] }
+      } } });
     } else if (pathname === '/api/v1/admin/operational-preferences') {
       await route.fulfill({ json: current });
     } else if (pathname.startsWith('/api/v1/admin/operational-preferences/')) {
@@ -63,10 +74,31 @@ async function openApp(page, tier = 'admin') {
     }
   });
   await page.goto('/app.html?view=admin&tab=operations');
-  return { writes, current: () => current, changeServer: (change) => {
+  return { writes, current: () => current, statusRequests: () => statusRequests, changeServer: (change) => {
     current = { ...current, revision: 'c'.repeat(64), settings: { ...current.settings, ...change } };
   } };
 }
+
+test('saved statistics notice explains Off and clears after saving On', async ({ page }) => {
+  const app = await openApp(page, 'admin', false);
+  await page.locator('.primary-nav [data-nav-group="listen"] summary').click();
+  await page.locator('.primary-nav a[data-view="dashboard"]').click();
+  const notice = page.locator('main .ui-notice').filter({ hasText: 'Saved activity summaries are off.' });
+  await expect(notice).toBeVisible();
+  await expect(notice).toHaveClass(/ui-notice-warning/);
+  await expect(notice).not.toContainText('Last update');
+  await notice.getByRole('link', { name: 'Call output & activity' }).click();
+  const summary = page.locator('form[data-preference="stats_logging_enabled"]');
+  await summary.locator('.ui-toggle').click();
+  const previousStatusRequests = app.statusRequests();
+  await summary.getByRole('button', { name: 'Save' }).click();
+  await expect.poll(() => app.statusRequests()).toBeGreaterThan(previousStatusRequests);
+  await expect(page.locator('.operational-preferences .admin-form-message')).toHaveText('Saved.');
+  await page.locator('.primary-nav [data-nav-group="listen"] summary').click();
+  await page.locator('.primary-nav a[data-view="dashboard"]').click();
+  await expect(page.locator('main .ui-notice').filter({ hasText: 'Saved activity summaries are off.' }))
+    .toHaveCount(0);
+});
 
 async function openCurrentStatus(page, tab = 'health') {
   const requests = { status: 0, health: 0 };

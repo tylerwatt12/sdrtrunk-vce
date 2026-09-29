@@ -127,9 +127,12 @@ class StatsWebInteractionUiContractTest
         assertFalse(loggingNotice.contains("Live Channels"));
         assertFalse(loggingNotice.contains("audio playback"));
         assertTrue(loggingNotice.contains("Saved statistics couldn’t be checked."));
-        assertTrue(loggingNotice.contains("Saved statistics are not updating."));
-        assertTrue(loggingNotice.contains("Last update:"));
-        assertFalse(loggingNotice.contains("logging.state"));
+        assertTrue(loggingNotice.contains("Saved activity summaries are off."));
+        assertTrue(loggingNotice.contains("summaries are starting."));
+        assertTrue(loggingNotice.contains("Saving activity summaries failed."));
+        assertTrue(loggingNotice.contains("Saved activity summaries are not running."));
+        assertTrue(loggingNotice.contains("Last saved update:"));
+        assertFalse(loggingNotice.contains("${logging.state}"));
         assertFalse(loggingNotice.contains("logging.lastError"));
         assertTrue(signalHealth.contains("capabilityAllowed(ACCESS_CAPABILITIES.LIVE)"));
         assertTrue(signalHealth.contains("Saved signal history is turned off."));

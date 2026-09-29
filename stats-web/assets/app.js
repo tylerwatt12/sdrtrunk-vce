@@ -2106,14 +2106,31 @@ function databaseLoggingNotice(view) {
   const logging = statsLoggingState();
   if (serviceStatusWarningRequired()) return node('div', 'ui-notice ui-notice-danger ui-notice-spaced',
     'Saved statistics couldn’t be checked. This page may show older information.');
-  if (!logging.available) return null;
-  if (!logging.summaryActive) {
-    const lastWrite = logging.lastSuccessfulWriteMs ?
-      ` Last update: ${exactDateTime(logging.lastSuccessfulWriteMs)}.` : '';
-    return node('div', 'ui-notice ui-notice-danger ui-notice-spaced',
-      `Saved statistics are not updating. This page may show older information.${lastWrite}`);
+  if (!logging.available || logging.summaryActive) return null;
+  if (!logging.summaryConfigured) {
+    const notice = node('div', 'ui-notice ui-notice-warning ui-notice-spaced',
+      'Saved activity summaries are off. Statistics on this page show the last saved information. ');
+    if (capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS)) {
+      notice.append('Turn them on in ', anchor('Call output & activity', href('admin', { tab: 'operations' })), '.');
+    } else {
+      notice.append('Ask an administrator to turn them on.');
+    }
+    return notice;
   }
-  return null;
+  if (logging.state === 'STARTING') return node('div', 'ui-notice ui-notice-warning ui-notice-spaced',
+    'Saved activity summaries are starting. This page may show older information until they are ready.');
+  const lastWrite = logging.lastSuccessfulWriteMs ?
+    ` Last saved update: ${exactDateTime(logging.lastSuccessfulWriteMs)}.` : '';
+  const failed = logging.state === 'FAILED';
+  const notice = node('div', `ui-notice ${failed ? 'ui-notice-danger' : 'ui-notice-warning'} ui-notice-spaced`,
+    `${failed ? 'Saving activity summaries failed.' : 'Saved activity summaries are not running.'} ` +
+    `This page may show older information.${lastWrite} `);
+  if (capabilityAllowed(ACCESS_CAPABILITIES.RECEIVER_HEALTH)) {
+    notice.append('Check ', anchor('Current status', href('admin', { tab: 'health' })), ' for details.');
+  } else {
+    notice.append('Ask an administrator to check the receiver status.');
+  }
+  return notice;
 }
 
 function tabs(items, active) {
@@ -21908,6 +21925,9 @@ async function renderAdminOperationalPreferences(renderContext = captureRenderCo
             confirmed = await requestOperationalPreference('PUT', field.id, readValue(), confirmed.revision);
             drafts.delete(field.id);
             status.textContent = 'Saved.';
+            if (field.id === 'stats_logging_enabled' || field.id === 'stats_detailed_history_enabled') {
+              await loadStatus(true);
+            }
           } catch (error) {
             if (error.current) {
               confirmed = error.current;

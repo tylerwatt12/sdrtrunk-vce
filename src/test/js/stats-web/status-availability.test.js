@@ -23,6 +23,7 @@ function functionSource(signature) {
 const responses = [];
 const delays = [];
 let requestCount = 0;
+const grantedCapabilities = new Set(['dashboard', 'admin-settings', 'receiver-health']);
 const context = {
   api: async () => {
     requestCount += 1;
@@ -36,7 +37,20 @@ const context = {
       callback();
       return delays.length;
     }
-  }
+  },
+  applicationRoutes: { dashboard: { databaseNotice: true } },
+  accessSessionAvailable: true,
+  ACCESS_CAPABILITIES: {
+    DASHBOARD: 'dashboard', ADMIN_SETTINGS: 'admin-settings', RECEIVER_HEALTH: 'receiver-health'
+  },
+  capabilityAllowed: (capability) => grantedCapabilities.has(capability),
+  exactDateTime: (value) => `time ${value}`,
+  href: (_view, options) => `/?view=admin&tab=${options.tab}`,
+  anchor: (label, target) => ({ label, target }),
+  node: (tag, className, value = '') => ({
+    tag, className, children: [value],
+    append(...children) { this.children.push(...children); }
+  })
 };
 vm.createContext(context);
 vm.runInContext(`
@@ -53,6 +67,8 @@ vm.runInContext(`
   ${functionSource('function serviceStatusWarningRequired()')}
   ${functionSource('function serviceStatusRetryDelay(milliseconds)')}
   ${functionSource('async function requestServiceStatus()')}
+  ${functionSource('function statsLoggingState()')}
+  ${functionSource('function databaseLoggingNotice(view)')}
   globalThis.statusState = () => ({
     value: serviceStatus,
     pending: serviceStatusRequestPending,
@@ -63,10 +79,14 @@ vm.runInContext(`
   globalThis.acceptStatus = acceptServiceStatus;
   globalThis.beginStatus = beginServiceStatusRequest;
   globalThis.requestStatus = requestServiceStatus;
+  globalThis.noticeFor = databaseLoggingNotice;
 `, context);
 
 async function main() {
   const plainState = () => JSON.parse(JSON.stringify(context.statusState()));
+  const plainNotice = () => JSON.parse(JSON.stringify(context.noticeFor('dashboard')));
+  const noticeText = (notice) => notice.children.map((child) =>
+    typeof child === 'string' ? child : child.label).join('');
   assert.deepEqual(plainState(), { value: null, pending: false, failures: 0, warning: false });
   context.beginStatus();
   assert.equal(context.statusState().pending, true);
@@ -100,6 +120,44 @@ async function main() {
   responses.push(refreshed);
   assert.strictEqual(await context.requestStatus(), refreshed);
   assert.deepEqual(plainState(), { value: refreshed, pending: false, failures: 0, warning: false });
+
+  context.acceptStatus({ stats_logging: { summary_configured: false, summary_active: false,
+    state: 'DISABLED', last_successful_write_ms: 42 } });
+  const disabled = plainNotice();
+  assert.match(disabled.className, /ui-notice-warning/);
+  assert.match(noticeText(disabled), /Saved activity summaries are off/);
+  assert.doesNotMatch(noticeText(disabled), /Last saved update|not updating/);
+  assert.deepEqual(disabled.children.find((child) => child?.label),
+    { label: 'Call output & activity', target: '/?view=admin&tab=operations' });
+
+  grantedCapabilities.delete('admin-settings');
+  assert.match(noticeText(plainNotice()), /Ask an administrator to turn them on/);
+  grantedCapabilities.add('admin-settings');
+
+  context.acceptStatus({ stats_logging: { summary_configured: true, summary_active: false,
+    state: 'STARTING', last_successful_write_ms: 42 } });
+  const starting = plainNotice();
+  assert.match(starting.className, /ui-notice-warning/);
+  assert.match(noticeText(starting), /summaries are starting/);
+
+  context.acceptStatus({ stats_logging: { summary_configured: true, summary_active: false,
+    state: 'FAILED', last_successful_write_ms: 42 } });
+  const failed = plainNotice();
+  assert.match(failed.className, /ui-notice-danger/);
+  assert.match(noticeText(failed), /Saving activity summaries failed/);
+  assert.match(noticeText(failed), /Last saved update: time 42/);
+  assert.deepEqual(failed.children.find((child) => child?.label),
+    { label: 'Current status', target: '/?view=admin&tab=health' });
+
+  context.acceptStatus({ stats_logging: { summary_configured: true, summary_active: false,
+    state: 'STOPPED', last_successful_write_ms: 42 } });
+  const stopped = plainNotice();
+  assert.match(stopped.className, /ui-notice-warning/);
+  assert.match(noticeText(stopped), /summaries are not running/);
+
+  context.acceptStatus({ stats_logging: { summary_configured: true, summary_active: true,
+    state: 'RUNNING' } });
+  assert.equal(context.noticeFor('dashboard'), null);
 }
 
 main().catch((error) => {
