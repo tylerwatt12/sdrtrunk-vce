@@ -17,6 +17,7 @@ const sampleTime = Date.UTC(2026, 8, 28, 12);
 
 async function openQuality(page, configurationId, { samples = false, theme = 'light' } = {}) {
   let qualityRequests = 0;
+  const requestedRanges = [];
   const channel = {
     configuration_id: configurationId, channel_kind: 'TRUNKED', protocol: 'P25',
     name: configurationId === remoteId ? 'North Control' : 'West Control',
@@ -24,7 +25,8 @@ async function openQuality(page, configurationId, { samples = false, theme = 'li
     capabilities: { quality: true }
   };
   await page.route('**/api/v1/**', async (route) => {
-    const pathname = new URL(route.request().url()).pathname;
+    const requestUrl = new URL(route.request().url());
+    const pathname = requestUrl.pathname;
     const respond = (data) => route.fulfill({ json: { data } });
     if (pathname === '/api/v1/auth/session') {
       await respond({ configured: true, authenticated: true, username: 'operator', tier: 'admin',
@@ -44,15 +46,22 @@ async function openQuality(page, configurationId, { samples = false, theme = 'li
       ] });
     } else if (pathname === `/api/v1/channels/${configurationId}/quality`) {
       qualityRequests += 1;
-      const series = Array.from({ length: 289 }, (_, index) => ({
-        time_ms: sampleTime - 86_400_000 + index * 300_000,
-        last_observed_ms: sampleTime - 86_400_000 + index * 300_000,
-        decode_health_pct: index === 288 ? 97.3 : Math.max(55, Math.min(99,
-          91 + 6 * Math.sin(index / 17) - (index > 160 && index < 190 ? 25 : 0))),
+      const range = requestUrl.searchParams.get('range');
+      requestedRanges.push(range);
+      const durationMs = { '1h': 3_600_000, '6h': 21_600_000, '24h': 86_400_000,
+        '7d': 604_800_000, '30d': 2_592_000_000 }[range] || 3_600_000;
+      const bucketMs = Math.max(30_000, Math.ceil(durationMs / 288 / 30_000) * 30_000);
+      const bucketCount = Math.floor(durationMs / bucketMs);
+      const series = Array.from({ length: bucketCount + 1 }, (_, index) => ({
+        time_ms: sampleTime - durationMs + index * bucketMs,
+        last_observed_ms: sampleTime - durationMs + index * bucketMs,
+        decode_health_pct: index === bucketCount ? 97.3 : Math.max(55, Math.min(99,
+          91 + 6 * Math.sin(index / 17) - (index > bucketCount * .55 &&
+            index < bucketCount * .66 ? 25 : 0))),
         average_signal_dbfs: null, minimum_signal_dbfs: null, maximum_signal_dbfs: null,
         sample_count: 1, frequency_hz: 851_012_500
       }));
-      await respond({ from_ms: sampleTime - 86_400_000, to_ms: sampleTime, bucket_ms: 300_000,
+      await respond({ from_ms: sampleTime - durationMs, to_ms: sampleTime, bucket_ms: bucketMs,
         rows: samples ? [{ configuration_id: configurationId, name: channel.name,
           decode_health_pct: 97.3, signal_dbfs: null, average_signal_dbfs: null,
           last_observed_ms: sampleTime - 30_000, series }] : [] });
@@ -61,7 +70,7 @@ async function openQuality(page, configurationId, { samples = false, theme = 'li
     }
   });
   await page.goto(`/app.html?view=channel&configuration_id=${configurationId}&tab=quality`);
-  return { qualityRequests: () => qualityRequests };
+  return { qualityRequests: () => qualityRequests, requestedRanges: () => requestedRanges };
 }
 
 test('remote channel Quality keeps decode history without RF signal presentation', async ({ page }) => {
@@ -78,14 +87,18 @@ test('remote channel Quality keeps decode history without RF signal presentation
   await expect(quality.locator('.signal-chart')).toHaveCount(0);
   await expect(quality.locator('.signal-history-overview .ui-metric')).toHaveCount(2);
   expect(requests.qualityRequests()).toBe(1);
+  expect(requests.requestedRanges()).toEqual(['1h']);
+  await expect(quality.getByRole('button', { name: '1 hour' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(quality.getByRole('link', { name: /Export/ })).toHaveAttribute('href', /range=1h/);
   await expect(quality).toHaveScreenshot('remote-channel-quality-light.png');
 
   await quality.locator('.decode-chart .chart-hover-surface').hover();
   await expect(quality.getByRole('tooltip')).toContainText('Decode health:');
   await expect(quality.getByRole('tooltip')).not.toContainText('signal');
-  await quality.getByRole('button', { name: '1 hour' }).click();
-  await expect(quality.getByRole('link', { name: /Export/ })).toHaveAttribute('href', /range=1h/);
+  await quality.getByRole('button', { name: '6 hours' }).click();
+  await expect(quality.getByRole('link', { name: /Export/ })).toHaveAttribute('href', /range=6h/);
   await expect.poll(requests.qualityRequests).toBe(2);
+  expect(requests.requestedRanges()).toEqual(['1h', '6h']);
 });
 
 test('remote decode history fits dark mobile without RF fields', async ({ page }) => {
@@ -102,7 +115,7 @@ test('remote channel Quality explains when decode samples are not yet retained',
   await page.setViewportSize({ width: 1280, height: 900 });
   const requests = await openQuality(page, remoteId);
   const quality = page.locator('.site-signal-history-section');
-  await expect(quality).toContainText('No remote decode quality samples are available in the selected 24h range');
+  await expect(quality).toContainText('No remote decode quality samples are available in the selected 1h range');
   await expect(quality.locator('.signal-range-controls')).toHaveCount(1);
   await expect(quality.getByRole('link', { name: /Export/ })).toHaveCount(1);
   expect(requests.qualityRequests()).toBe(1);

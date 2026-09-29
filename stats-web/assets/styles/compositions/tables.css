@@ -358,6 +358,31 @@
     background: transparent;
   }
   .ui-mobile-cards :where(colgroup, thead) { display: none; }
+  .ui-data-table.ui-mobile-cards:has(thead th > input[type="checkbox"]) thead {
+    display: block;
+    margin-bottom: var(--space-2);
+  }
+  .ui-data-table.ui-mobile-cards:has(thead th > input[type="checkbox"]) thead tr {
+    display: flex;
+    justify-content: flex-end;
+  }
+  .ui-data-table.ui-mobile-cards:has(thead th > input[type="checkbox"]) thead th {
+    display: none;
+  }
+  .ui-data-table.ui-mobile-cards:has(thead th > input[type="checkbox"]) thead th:has(> input[type="checkbox"]) {
+    position: static;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--control-height-compact);
+    height: var(--control-height-compact);
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-control);
+  }
+  .ui-data-table.ui-mobile-cards:has(thead th > input[type="checkbox"]) thead .column-resizer {
+    display: none;
+  }
   .ui-mobile-cards tbody { display: grid; gap: var(--space-3); }
   .ui-mobile-cards tbody > tr {
     position: relative;
@@ -400,6 +425,11 @@
     color: var(--muted);
     font-weight: 650;
   }
+  .ui-mobile-cards tbody td:has(> input[type="checkbox"]) {
+    display: flex;
+    justify-content: flex-end;
+  }
+  .ui-mobile-cards tbody td:has(> input[type="checkbox"])::before { display: none; }
   .ui-mobile-cards tbody td:last-child { border-bottom: 0; }
   .ui-data-table.ui-mobile-cards td.empty { display: block; }
   .ui-mobile-cards td.empty::before { display: none; }

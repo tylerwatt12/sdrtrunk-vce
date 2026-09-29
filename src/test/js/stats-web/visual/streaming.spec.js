@@ -102,6 +102,10 @@ async function install(page, theme = 'light', empty = false) {
         if (options.controller) options.controller.layoutMenuCleanup = () => layoutMenu.remove();
       }
       wrapper.append(element);
+      if (options.type === 'streaming-aliases') window.streamingTest.rebuildAliases = () => {
+        const replacement = table(values, columns, emptyText, options);
+        wrapper.replaceWith(replacement);
+      };
       return wrapper;
     };
 
@@ -225,6 +229,41 @@ test('alias changes survive paging and save only explicit selections',async({pag
   await expect(modal.getByText('Changes saved.',{exact:true})).toBeVisible();
   const writes=await page.evaluate(()=>window.streamingTest.calls.filter(([path,options])=>path.endsWith('/aliases')&&options.method==='POST'));
   expect(writes[0][1].body).toEqual({revision:'1:1:1',add:[52],remove:[1]});
+});
+
+test('alias column header toggles only the visible page and tracks partial assignments',async({page})=>{
+  await install(page);
+  await page.getByRole('button',{name:'County Calls',exact:true}).click();
+  const modal=page.getByRole('dialog');
+  await modal.getByRole('button',{name:'Aliases',exact:true}).click();
+  const header=modal.getByRole('checkbox',{name:'Send all aliases on this page to this destination'});
+  const rows=modal.locator('table[data-table-type="streaming-aliases"] tbody input[type="checkbox"]');
+  await expect(modal.locator('table[data-table-type="streaming-aliases"] thead th:first-child')).toHaveText('');
+  await expect(modal.getByRole('button',{name:'Select visible'})).toHaveCount(0);
+  await expect(modal.getByRole('button',{name:'Clear visible'})).toHaveCount(0);
+  await expect(header).toHaveJSProperty('indeterminate',true);
+  await page.evaluate(()=>window.streamingTest.rebuildAliases());
+  await expect(header).toHaveJSProperty('indeterminate',true);
+  await header.check();
+  await expect(header).toBeChecked();
+  await expect(rows).toHaveCount(50);
+  expect(await rows.evaluateAll(controls=>controls.every(control=>control.checked))).toBe(true);
+  await page.evaluate(()=>window.streamingTest.rebuildAliases());
+  await expect(header).toBeChecked();
+  await modal.getByRole('button',{name:'Next',exact:true}).click();
+  await expect(rows).toHaveCount(10);
+  await expect(header).toHaveJSProperty('indeterminate',true);
+  await modal.getByRole('checkbox',{name:'Send Dispatch 51 to this destination'}).uncheck();
+  await expect(header).not.toBeChecked();
+  await expect(header).toHaveJSProperty('indeterminate',false);
+  await modal.getByRole('button',{name:'Previous',exact:true}).click();
+  await expect(header).toBeChecked();
+  await header.uncheck();
+  expect(await rows.evaluateAll(controls=>controls.every(control=>!control.checked))).toBe(true);
+  await modal.getByRole('button',{name:'Save assignments'}).click();
+  const writes=await page.evaluate(()=>window.streamingTest.calls.filter(([path,options])=>path.endsWith('/aliases')&&options.method==='POST'));
+  expect(writes[0][1].body).toMatchObject({revision:'1:1:1',add:[]});
+  expect([...writes[0][1].body.remove].sort((left,right)=>left-right)).toEqual([1,51]);
 });
 
 test('alias assignment workspace stays usable in dark mobile layout',async({page})=>{

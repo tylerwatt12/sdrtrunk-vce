@@ -1118,7 +1118,8 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       });
       refreshPageToggle();
       const grid = table(values, [
-        { id: 'selected', label: '', sortable: false, renderHeader: () => pageToggle,
+        { id: 'selected', label: '', layoutLabel: 'Select talkgroups', essential: true,
+          sortable: false, renderHeader: () => pageToggle,
           render: (talkgroup) => {
             const id = talkgroupId(talkgroup);
             const control = node('input', 'ui-selection-check');

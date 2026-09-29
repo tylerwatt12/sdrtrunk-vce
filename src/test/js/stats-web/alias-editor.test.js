@@ -98,6 +98,8 @@ vm.runInContext(`
   ${functionSource('function completeAliasSelection(response, maximum = ALIAS_BULK_SELECTION_LIMIT)')}
   ${functionSource('function extendedAliasSelection(selection, additions, maximum = ALIAS_BULK_SELECTION_LIMIT)')}
   ${functionSource('function validatedAliasSelectionIds(selection, maximum = ALIAS_BULK_SELECTION_LIMIT)')}
+  ${functionSource('function syncAliasPageSelectionHeader(tableHost, rows)')}
+  ${functionSource('function aliasPageSelectionHeader(rows, onSelectionChange)')}
   ${functionSource('function resetAliasEditorSelection(scope = null)')}
   ${functionSource('function synchronizeAliasEditorSelectionScope(scope)')}
   ${functionSource('function clearInactiveAliasSelection(activeTable)')}
@@ -126,6 +128,8 @@ vm.runInContext(`
   globalThis.completeSelection = completeAliasSelection;
   globalThis.extendSelection = extendedAliasSelection;
   globalThis.validatedSelectionIds = validatedAliasSelectionIds;
+  globalThis.syncPageHeader = syncAliasPageSelectionHeader;
+  globalThis.pageSelectionHeader = aliasPageSelectionHeader;
   globalThis.resetSelection = resetAliasEditorSelection;
   globalThis.synchronizeSelectionScope = synchronizeAliasEditorSelectionScope;
   globalThis.clearInactiveSelection = clearInactiveAliasSelection;
@@ -441,6 +445,50 @@ const priorSelection = new Set([1, 2]);
 assert.throws(() => context.extendSelection(priorSelection,
   Array.from({ length: 9_999 }, (_, index) => index + 3)), /previous selection was kept/);
 assert.deepEqual([...priorSelection], [1, 2], 'An overflowing page add must leave the previous selection unchanged.');
+
+context.node = () => ({
+  checked: false, indeterminate: false, disabled: false, listeners: {}, attributes: {},
+  setAttribute(name, value) { this.attributes[name] = value; },
+  addEventListener(name, listener) { this.listeners[name] = listener; }
+});
+const pageRows = [{ alias_id: 31 }, { alias_id: 32 }];
+let pageHeader;
+const pageHost = { querySelector: () => pageHeader };
+const pageMessages = [];
+const pageChanged = (message, error) => {
+  pageMessages.push({ message, error });
+  context.syncPageHeader(pageHost, pageRows);
+};
+context.seedSelection([31, 99], selectionScope, 0);
+pageHeader = context.pageSelectionHeader(pageRows, pageChanged);
+context.syncPageHeader(pageHost, pageRows);
+assert.equal(pageHeader.attributes['aria-label'], 'Select all aliases on this page');
+assert.equal(pageHeader.indeterminate, true, 'A partly selected page should show a mixed header checkbox.');
+pageHeader.checked = true;
+pageHeader.listeners.change();
+assert.deepEqual([...context.selectionState().ids], [31, 99, 32],
+  'The header checkbox should add this page without clearing selections on another page.');
+assert.equal(pageHeader.checked, true);
+assert.equal(pageHeader.indeterminate, false);
+pageHeader.checked = false;
+pageHeader.listeners.change();
+assert.deepEqual([...context.selectionState().ids], [99],
+  'Clearing the header checkbox should remove only this page.');
+
+context.seedSelection(Array.from({ length: 10_000 }, (_, index) => index + 1), selectionScope, 0);
+const overflowRows = [{ alias_id: 10_001 }];
+let overflowHeader;
+const overflowHost = { querySelector: () => overflowHeader };
+overflowHeader = context.pageSelectionHeader(overflowRows, (message, error) => {
+  pageMessages.push({ message, error });
+  context.syncPageHeader(overflowHost, overflowRows);
+});
+overflowHeader.checked = true;
+overflowHeader.listeners.change();
+assert.equal(context.selectionState().ids.length, 10_000,
+  'The header must retain the previous selection when adding a page would exceed the limit.');
+assert.equal(overflowHeader.checked, false, 'A failed page selection must restore the header state.');
+assert.equal(pageMessages.at(-1).error, true);
 
 context.seedSelection([31, 32], selectionScope, 4);
 context.synchronizeSelectionScope(selectionScope);

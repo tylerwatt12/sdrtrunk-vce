@@ -520,6 +520,16 @@
     border: 0;
   }
 
+  .channel-catalog-table thead .channel-select-cell {
+    position: static;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--control-height-compact);
+    height: var(--control-height-compact);
+    border: 1px solid var(--line);
+  }
+
   .channel-catalog-table .channel-select-cell::before,
   .channel-catalog-table td[data-label="Name"]::before {
     display: none;

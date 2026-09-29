@@ -567,7 +567,7 @@ async function main() {
   assert.match(appSource, /rows: \(\) => dataRows\.slice\(\)/);
   assert.match(appSource, /trigger\.setAttribute\('popovertarget', panelId\)/);
   assert.match(appSource, /const trigger = iconButton\('icon-columns', 'Choose table columns'/);
-  assert.match(appSource, /const displayLabel = byId\.get\(id\)\.fullLabel \|\| byId\.get\(id\)\.label \|\| id/);
+  assert.match(appSource, /const displayLabel = byId\.get\(id\)\.layoutLabel \|\| byId\.get\(id\)\.fullLabel \|\| byId\.get\(id\)\.label \|\| id/);
   assert.match(appSource, /visibility\.setAttribute\('aria-label', `Show \$\{displayLabel\} column`\)/);
   assert.doesNotMatch(appSource, /inline \? '' : 'Columns'/);
   assert.match(appSource, /panel\.setAttribute\('popover', 'auto'\)/);

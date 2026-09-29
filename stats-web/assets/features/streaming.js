@@ -177,14 +177,37 @@ export function createStreamingWorkspace(deps) {
     aliasQuery.addEventListener('submit', event => { event.preventDefault(); aliasOffset = 0; void loadAliases(); });
     assignedOnly.addEventListener('change', () => { aliasOffset = 0; void loadAliases(); });
     const aliasActions = node('div', 'streaming-alias-actions ui-selection-bar');
-    const bulk = node('div', 'ui-action-row');
     const aliasLayoutHost = node('div', 'streaming-alias-layout');
     const aliasTableController = {};
-    const selectVisible = value => aliasRows.querySelectorAll('input[type=checkbox]').forEach(control => {
-      if (control.checked !== value) { control.checked = value; control.dispatchEvent(new Event('change')); }
-    });
-    bulk.append(button('Select visible', () => selectVisible(true)), button('Clear visible', () => selectVisible(false)));
-    aliasActions.append(aliasCount, bulk, aliasLayoutHost);
+    let pageToggle = null;
+    let visibleAliases = [];
+    const visibleAliasChecks = () => [...aliasRows.querySelectorAll('tbody input[type="checkbox"]')];
+    const syncPageToggle = () => {
+      if (!pageToggle) return;
+      const checked = visibleAliases.filter(row => changedAliases.has(row.id) ?
+        changedAliases.get(row.id) : row.assigned).length;
+      pageToggle.checked = visibleAliases.length > 0 && checked === visibleAliases.length;
+      pageToggle.indeterminate = checked > 0 && checked < visibleAliases.length;
+      pageToggle.disabled = visibleAliases.length === 0;
+    };
+    const renderPageToggle = () => {
+      const checkbox = node('input', 'ui-selection-check');
+      checkbox.type = 'checkbox';
+      checkbox.setAttribute('aria-label', 'Send all aliases on this page to this destination');
+      checkbox.addEventListener('change', () => {
+        const checked = checkbox.checked;
+        visibleAliasChecks().forEach(control => {
+          if (control.checked === checked) return;
+          control.checked = checked;
+          control.dispatchEvent(new Event('change'));
+        });
+        syncPageToggle();
+      });
+      pageToggle = checkbox;
+      syncPageToggle();
+      return checkbox;
+    };
+    aliasActions.append(aliasCount, aliasLayoutHost);
     aliasPager.append(previous, next);
     aliasesPanel.append(aliasQuery, aliasActions, aliasRows, aliasPager,
       node('p', 'muted', 'These are the same assignments shown in the Alias Editor. Only your explicit changes are saved, up to 500 per save.'));
@@ -309,14 +332,18 @@ export function createStreamingWorkspace(deps) {
         if (!alive || sequence !== aliasSequence) return;
         if (revision !== result.revision) throw Object.assign(new Error('Configuration changed. Reload before changing assignments.'), { code: 'stale_revision' });
         aliasLoaded = true; aliasTotal = result.total;
+        visibleAliases = result.items;
         aliasRows.replaceChildren(table(result.items, [
-          { id: 'selected', label: 'Assigned', render: row => {
+          { id: 'selected', label: '', layoutLabel: 'Assign aliases', essential: true, fixed: true,
+            renderHeader: renderPageToggle, render: row => {
             aliasOriginal.set(row.id, row.assigned);
-            const check = input('checkbox'); check.checked = changedAliases.has(row.id) ? changedAliases.get(row.id) : row.assigned;
+            const check = node('input', 'ui-selection-check');
+            check.type = 'checkbox';
+            check.checked = changedAliases.has(row.id) ? changedAliases.get(row.id) : row.assigned;
             check.setAttribute('aria-label', `Send ${row.name || row.identifier} to this destination`);
             check.addEventListener('change', () => {
               if (check.checked === aliasOriginal.get(row.id)) changedAliases.delete(row.id); else changedAliases.set(row.id, check.checked);
-              assignmentDirty = changedAliases.size > 0; dirty(); syncButtons();
+              assignmentDirty = changedAliases.size > 0; dirty(); syncButtons(); syncPageToggle();
             }); return check;
           } },
           { id: 'name', label: 'Alias', render: row => {
@@ -328,6 +355,7 @@ export function createStreamingWorkspace(deps) {
         ], 'No matching aliases', { type: 'streaming-aliases', sortable: false, mobileCards: true,
           tableClass: 'ui-mobile-cards ui-data-table-quiet', layoutMenuHost: aliasLayoutHost,
           controller: aliasTableController }));
+        syncPageToggle();
         aliasCount.textContent = result.total ? `${aliasOffset + 1}–${Math.min(aliasOffset + result.limit, result.total)} of ${formatNumber(result.total)}` : 'No aliases';
       } catch (error) { if (alive && error.name !== 'AbortError') { showError(localMessage, error); reload.hidden = error.code !== 'stale_revision'; } }
       finally { if (alive && sequence === aliasSequence) { searchButton.disabled = false; previous.disabled = aliasOffset === 0; next.disabled = aliasOffset + 50 >= aliasTotal; } }

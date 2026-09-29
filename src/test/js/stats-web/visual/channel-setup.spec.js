@@ -163,7 +163,7 @@ test('editing a channel opens and creates the selected Alias List without losing
   };
   const channel = {
     configuration_id: configurationId, protocol_id: 'nbfm', system: 'Test system', site: 'Test site',
-    name: 'Test channel', radioresolve_id: '', alias_list_id: 1,
+    name: 'Test channel', radioresolve_id: '', alias_list_id: 1, alias_list_name: 'First list',
     source: {}, settings: {}, frequency_map: [], event_logs: [], recorders: [], auxiliary_decoders: []
   };
   await page.route('**/api/v1/**', async (route) => {
@@ -234,6 +234,14 @@ test('editing a channel opens and creates the selected Alias List without losing
   await expect(select).toHaveValue('3');
   await expect(link).toHaveAttribute('href', /view=aliases&list=3$/);
   expect(createdList).toMatchObject({ revision: 7, name: 'Local Analog', family: 'nbfm' });
+
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/app.html?view=channel-setup');
+  const aliasCell = page.locator(`.channel-admin-catalog tr[data-id="${configurationId}"] td[data-column="alias-list"]`);
+  const aliasLink = aliasCell.getByRole('link', { name: 'First list' });
+  await expect(aliasLink).toHaveAttribute('href', /view=aliases&list=1$/);
+  await aliasLink.click();
+  await expect(page).toHaveURL(/view=aliases&list=1$/);
 });
 
 test('startup-order view moves keyed rows without replacing the page or losing position', async ({ page }) => {
@@ -302,6 +310,9 @@ test('startup-order view moves keyed rows without replacing the page or losing p
   await page.goto('/app.html?view=channel-setup');
   const catalog = page.locator('.channel-admin-catalog');
   await expect(catalog).toBeVisible();
+  const restrictedAliasCell = catalog.locator('tr[data-id="channel-01"] td[data-column="alias-list"]');
+  await expect(restrictedAliasCell).toHaveText('Aliases 2');
+  await expect(restrictedAliasCell.locator('a')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Grouped', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(catalog.locator('.table-row-group-disclosure')).toHaveCount(3);
 

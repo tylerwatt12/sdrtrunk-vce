@@ -20,7 +20,7 @@ import {
   createAliasListPopupTrigger as buildAliasListPopupTrigger
 } from './features/alias-list-create.js?v=2';
 import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=18';
-import { createStreamingWorkspace } from './features/streaming.js?v=4';
+import { createStreamingWorkspace } from './features/streaming.js?v=5';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=1';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=7';
 import { createRecordingsFeature } from './features/recordings.js?v=4';
@@ -2995,7 +2995,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
       const visibleCount = layout.column_order.length - layout.hidden_columns.length;
       visibility.disabled = (layout.essential_columns || []).includes(id) ||
         visibility.checked && visibleCount <= 1;
-      const displayLabel = byId.get(id).fullLabel || byId.get(id).label || id;
+      const displayLabel = byId.get(id).layoutLabel || byId.get(id).fullLabel || byId.get(id).label || id;
       visibility.setAttribute('aria-label', `Show ${displayLabel} column`);
       visibility.addEventListener('change', () => void replaceForLayout(
         tableLayouts.setHidden(layout, id, !visibility.checked)));
@@ -3921,8 +3921,37 @@ function aliasEditorFilterToolbar(aliasPage, options = null) {
   return form;
 }
 
+function syncAliasPageSelectionHeader(tableHost, rows) {
+  const checkbox = tableHost.querySelector('thead .alias-page-select');
+  if (!checkbox) return;
+  const selected = rows.filter((row) => aliasEditorSelection.has(Number(row.alias_id))).length;
+  checkbox.checked = rows.length > 0 && selected === rows.length;
+  checkbox.indeterminate = selected > 0 && selected < rows.length;
+  checkbox.disabled = rows.length === 0;
+}
+
+function aliasPageSelectionHeader(rows, onSelectionChange) {
+  const checkbox = node('input', 'alias-page-select ui-selection-check');
+  checkbox.type = 'checkbox';
+  checkbox.setAttribute('aria-label', 'Select all aliases on this page');
+  checkbox.addEventListener('change', () => {
+    try {
+      const ids = rows.map((row) => Number(row.alias_id));
+      if (checkbox.checked) aliasEditorSelection = extendedAliasSelection(aliasEditorSelection, ids);
+      else ids.forEach((id) => aliasEditorSelection.delete(id));
+      aliasEditorLastSelectionIndex = null;
+      onSelectionChange();
+    } catch (error) {
+      onSelectionChange(error.message, true);
+    }
+  });
+  return checkbox;
+}
+
 function aliasEditorBaseColumns(rows, onSelectionChange) {
-  const columns = [{ id: 'select', label: 'Select', group: 'Selection', className: 'alias-select-cell',
+  const columns = [{ id: 'select', label: '', layoutLabel: 'Select aliases', group: '',
+    className: 'alias-select-cell', essential: true,
+    renderHeader: () => aliasPageSelectionHeader(rows, onSelectionChange),
     render: (row) => {
       const id = Number(row.alias_id);
       const checkbox = node('input', 'alias-row-select ui-selection-check');
@@ -6549,6 +6578,7 @@ async function renderScanListMembers(main, scanListCatalog, scanList, renderCont
       checkbox.checked = aliasEditorSelection.has(id);
       tableRow?.classList.toggle('selected', checkbox.checked);
     });
+    syncAliasPageSelectionHeader(tableHost, rows);
     bulkBar?.update();
     selectionStatus.replaceChildren();
     if (message) selectionStatus.append(node(error ? 'div' : 'span', error ? 'error' : 'muted', message));
@@ -6584,22 +6614,11 @@ async function renderScanListMembers(main, scanListCatalog, scanList, renderCont
   });
   tableHost.append(aliasTable);
 
-  const selectPage = node('button', 'ui-button ui-button-secondary', 'Select This Page');
-  selectPage.type = 'button';
-  selectPage.addEventListener('click', () => {
-    try {
-      aliasEditorSelection = extendedAliasSelection(aliasEditorSelection,
-        rows.map((row) => Number(row.alias_id)));
-      updateSelection();
-    } catch (error) {
-      updateSelection(error.message, true);
-    }
-  });
   const selectAll = node('button', 'ui-button ui-button-secondary alias-select-all', 'Select All Matching');
   selectAll.type = 'button';
   selectAll.addEventListener('click', () =>
     selectAllMatchingAliases(selectionFilters, selectionScope, selectAll, updateSelection));
-  actions.append(selectPage, selectAll);
+  actions.append(selectAll);
   const exportContext = { scan_list_id: scanList.id };
   new Map([
     ['type', 'type'], ['matcher', 'matcher'], ['group', 'group'], ['record', 'record'],
@@ -6860,6 +6879,7 @@ async function renderAliases() {
       checkbox.checked = aliasEditorSelection.has(id);
       row?.classList.toggle('selected', checkbox.checked);
     });
+    syncAliasPageSelectionHeader(tableHost, rows);
     bulkBar?.update();
     selectionStatus.replaceChildren();
     if (message) selectionStatus.append(node(error ? 'div' : 'span', error ? 'error' : 'muted', message));
@@ -6898,22 +6918,11 @@ async function renderAliases() {
     updateSelection();
   };
 
-  const selectPage = node('button', 'ui-button ui-button-secondary', 'Select This Page');
-  selectPage.type = 'button';
-  selectPage.addEventListener('click', () => {
-    try {
-      aliasEditorSelection = extendedAliasSelection(aliasEditorSelection,
-        rows.map((row) => Number(row.alias_id)));
-      updateSelection();
-    } catch (error) {
-      updateSelection(error.message, true);
-    }
-  });
   const selectAll = node('button', 'ui-button ui-button-secondary alias-select-all', 'Select All Matching');
   selectAll.type = 'button';
   selectAll.addEventListener('click', () =>
     selectAllMatchingAliases(selectionFilters, selectionScope, selectAll, updateSelection));
-  actions.append(selectPage, selectAll);
+  actions.append(selectAll);
   const exportContext = { list: aliasListId(selectedList) };
   const exportFilters = new Map([
     ['type', 'type'], ['matcher', 'matcher'], ['group', 'group'],
@@ -7966,7 +7975,7 @@ async function channelSignalHistorySection(channel) {
   const block = section('Control Channel Quality History', host);
   block.classList.add('site-signal-history-section');
   const decodeOnly = channel?.remote_origin?.remote === true;
-  let selectedRange = '24h';
+  let selectedRange = '1h';
   let loadingSequence = 0;
   let loading = false;
   const rangeControl = signalRangeControls(selectedRange, async (value, buttons) => {
@@ -18605,7 +18614,7 @@ function channelAdminColumns(selected, state, selectionChanged, renderSelectionH
     selectionChanged?.();
   };
   const columns = [
-    { id: 'select', label: 'Select', className: 'channel-select-cell',
+    { id: 'select', label: '', layoutLabel: 'Select channels', className: 'channel-select-cell',
       essential: true, fixed: true, renderHeader: renderSelectionHeader, render: (row) => {
       const checkbox = node('input');
       checkbox.type = 'checkbox';
@@ -18688,7 +18697,8 @@ function channelAdminColumns(selected, state, selectionChanged, renderSelectionH
       controls.append(earlier, order, later);
       return controls;
     }, sortValue: (row) => row.auto_start_order == null ? Number.MAX_SAFE_INTEGER : row.auto_start_order },
-    { id: 'alias-list', label: 'Alias List', key: 'alias_list_name',
+    { id: 'alias-list', label: 'Alias List', key: 'alias_list_name', render: (row) =>
+      aliasListLink(row.alias_list_name, row.alias_list_id) || '—',
       sortValue: (row) => row.alias_list_name || '' }
   ];
   return columns;
