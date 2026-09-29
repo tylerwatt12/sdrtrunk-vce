@@ -21,6 +21,8 @@ import io.github.dsheirer.database.upgrade.ApplicationMigrationServiceTestSuppor
 import io.github.dsheirer.database.upgrade.DatabaseFormatCatalog;
 import io.github.dsheirer.database.upgrade.Format1TestDatabase;
 import io.github.dsheirer.database.upgrade.Format3TestDatabase;
+import io.github.dsheirer.database.upgrade.ManagedRecordingCatalogMigrator;
+import io.github.dsheirer.record.managed.ManagedRecordingSchema;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultPath;
 import io.github.dsheirer.web.auth.WebAccessService;
 import java.io.IOException;
@@ -225,6 +227,100 @@ class SdrTrunkDatabaseBootstrapMigrationTest
     }
 
     @Test
+    void headlessCatalogUpgradeRequiresExplicitFlagWithoutChangingRecordings() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("catalog-needs-upgrade");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        SdrTrunkTestDatabase.create(database);
+        Path catalog = createFormat1Catalog(database.resolveSibling("managed-recordings.sqlite"));
+        byte[] before = sha256(catalog);
+
+        IOException exception = assertThrows(IOException.class,
+            () -> SdrTrunkDatabaseBootstrap.run(new String[0], dataRoot, true));
+
+        assertTrue(exception.getMessage().contains("--upgrade-current"));
+        assertArrayEquals(before, sha256(catalog));
+        assertEquals(ManagedRecordingCatalogMigrator.State.UPGRADE_REQUIRED,
+            ManagedRecordingCatalogMigrator.inspect(catalog).state());
+        assertTrue(catalogBackups(catalog).isEmpty());
+    }
+
+    @Test
+    void freshProfileMigratesOlderCatalogAfterCreatingMainDatabase() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("catalog-without-main-database");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Path catalog = createFormat1Catalog(database.resolveSibling("managed-recordings.sqlite"));
+        Path passwordFile = passwordFile("fresh-with-catalog-password.txt");
+        byte[] catalogBefore = sha256(catalog);
+
+        IOException missingApproval = assertThrows(IOException.class,
+            () -> SdrTrunkDatabaseBootstrap.run(
+                new String[]{"--fresh", "--admin-password-file", passwordFile.toString()}, dataRoot, true));
+        assertTrue(missingApproval.getMessage().contains("--upgrade-managed-recordings"));
+        assertFalse(Files.exists(database));
+        assertArrayEquals(catalogBefore, sha256(catalog));
+
+        SdrTrunkDatabaseBootstrap.BootstrapResult result = SdrTrunkDatabaseBootstrap.run(
+            new String[]{"--fresh", "--upgrade-managed-recordings", "--admin-password-file",
+                passwordFile.toString()}, dataRoot, true);
+
+        assertTrue(result.startApplication());
+        assertTrue(Files.isRegularFile(database));
+        assertEquals(ManagedRecordingCatalogMigrator.State.CURRENT,
+            ManagedRecordingCatalogMigrator.inspect(catalog).state());
+        assertEquals("1", scalar(catalog, "SELECT COUNT(*) FROM recording_call"));
+        assertEquals("0", scalar(catalog, "SELECT COUNT(*) FROM recording_transcript"));
+        List<Path> backups = catalogBackups(catalog);
+        assertEquals(1, backups.size());
+        assertEquals("1", scalar(backups.getFirst(), "PRAGMA user_version"));
+    }
+
+    @Test
+    void headlessCatalogUpgradeRetainsCallsAndRecoveryCopy() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("catalog-upgrade");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        SdrTrunkTestDatabase.create(database);
+        removeInitialSetupMarker(database);
+        Path catalog = createFormat1Catalog(database.resolveSibling("managed-recordings.sqlite"));
+
+        SdrTrunkDatabaseBootstrap.BootstrapResult result = SdrTrunkDatabaseBootstrap.run(
+            new String[]{"--upgrade-current"}, dataRoot, true);
+
+        assertTrue(result.startApplication());
+        assertEquals(ManagedRecordingCatalogMigrator.State.CURRENT,
+            ManagedRecordingCatalogMigrator.inspect(catalog).state());
+        assertEquals("2", scalar(catalog, "PRAGMA user_version"));
+        assertEquals("2", scalar(catalog, "SELECT format_version FROM catalog_metadata WHERE id=1"));
+        assertEquals("1", scalar(catalog, "SELECT COUNT(*) FROM recording_call"));
+        assertEquals("5", scalar(catalog, "SELECT total_bytes FROM catalog_metadata WHERE id=1"));
+        assertEquals("0", scalar(catalog, "SELECT COUNT(*) FROM recording_transcript"));
+        List<Path> backups = catalogBackups(catalog);
+        assertEquals(1, backups.size());
+        assertEquals("1", scalar(backups.getFirst(), "PRAGMA user_version"));
+        assertEquals("1", scalar(backups.getFirst(), "SELECT COUNT(*) FROM recording_call"));
+        assertNoPrivateMigrationArtifacts(mTemporaryFolder);
+    }
+
+    @Test
+    void unusableOptionalCatalogKeepsHeadlessStartupFallback() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("unusable-catalog");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        SdrTrunkTestDatabase.create(database);
+        removeInitialSetupMarker(database);
+        Path catalog = database.resolveSibling("managed-recordings.sqlite");
+        Files.write(catalog, new byte[0]);
+
+        SdrTrunkDatabaseBootstrap.BootstrapResult result =
+            SdrTrunkDatabaseBootstrap.run(new String[0], dataRoot, true);
+
+        assertTrue(result.startApplication());
+        assertEquals(0L, Files.size(catalog));
+    }
+
+    @Test
     void unsupportedExistingFormat1LayoutLeavesNoBackupOrStagedDatabase() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("unsupported-current");
@@ -257,6 +353,40 @@ class SdrTrunkDatabaseBootstrapMigrationTest
         assertArrayEquals(before, sha256(sourceDatabase));
         assertFalse(Files.exists(targetRoot));
         assertNoPrivateMigrationArtifacts(mTemporaryFolder);
+    }
+
+    private static List<Path> catalogBackups(Path catalog) throws Exception
+    {
+        Path backupDirectory = catalog.getParent().resolve("backups");
+        if(!Files.isDirectory(backupDirectory))
+        {
+            return List.of();
+        }
+        try(var paths = Files.list(backupDirectory))
+        {
+            return paths.filter(path -> Files.isRegularFile(path) &&
+                path.getFileName().toString().startsWith("managed-recordings-before-transcript-")).toList();
+        }
+    }
+
+    private static Path createFormat1Catalog(Path catalog) throws Exception
+    {
+        Files.createDirectories(catalog.getParent());
+        try(Connection connection = open(catalog); Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA foreign_keys=ON");
+            for(String ddl: ManagedRecordingSchema.ddlForFormat(1).values())
+            {
+                statement.execute(ddl);
+            }
+            statement.execute("INSERT INTO catalog_metadata(id,format_version,call_count,total_bytes) " +
+                "VALUES(1,1,1,5)");
+            statement.execute("INSERT INTO recording_call(id,start_ms,end_ms,duration_ms,relative_path," +
+                "size_bytes,protocol,call_type,voice_type) VALUES(1,1000,2000,1000,'test.mp3',5,1,1,1)");
+            statement.execute("PRAGMA application_id=" + ManagedRecordingSchema.APPLICATION_ID);
+            statement.execute("PRAGMA user_version=1");
+        }
+        return catalog;
     }
 
     private static Path createFormat1Database(Path dataRoot, String aliasName) throws Exception

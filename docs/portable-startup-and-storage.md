@@ -183,9 +183,17 @@ when comparing channels, and never copy a newer database into an older build.
 
 ## Recording Storage
 
-Both supported release channels keep classic call recording. Recorded audio remains administrator-owned in the
-configured recording directory. Alpha and Nightly do not create or require a web recorded-call catalog and do not
-apply automatic time/space retention to recordings.
+Both supported release channels keep Classic call recording in the administrator-configured recording directory.
+Current Nightly builds also offer optional Managed Recordings, with audio in a separate managed directory and a
+separate `managed-recordings.sqlite` catalog for browsing and playback. The catalog has its own format version and
+does not change the application database's format version. Managed recording retention is controlled separately;
+Classic recordings remain administrator-owned files without automatic retention.
+
+When an existing profile's Managed Recordings catalog needs a format update, graphical setup offers a backed-up update
+before receiving starts. Headless startup of that profile requires an explicit `--upgrade-current` or
+`--upgrade-managed-recordings` run. If the main database is absent but an older catalog remains, add
+`--upgrade-managed-recordings` to `--fresh`, `--import-xml`, or `--upgrade-data`; setup prepares the main database and
+administrator first, then backs up and updates the catalog before receiving starts.
 
 The retired `webfirst` development branch used an incompatible managed-recording catalog. Its database is not a
 supported migration input for either active channel, so an old `webfirst` data directory must remain separate.

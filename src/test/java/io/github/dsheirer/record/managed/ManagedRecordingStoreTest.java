@@ -25,6 +25,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -33,6 +34,93 @@ class ManagedRecordingStoreTest
 {
     @TempDir
     Path temporary;
+
+    @Test
+    void freshCatalogStoresTranscriptSeparatelyWithTimestampAndCascade() throws Exception
+    {
+        Path root = temporary.resolve("managed");
+        Path db = temporary.resolve("database/recordings.sqlite");
+        Files.createDirectories(root);
+        try(ManagedRecordingStore store = new ManagedRecordingStore(db, root))
+        {
+            save(store, root, metadata(1000, "system-a", "one.mp3", 101, 4001,
+                ManagedRecordingCatalog.CALL_GROUP, null, List.of(), List.of()));
+            assertEquals(1, store.search(SearchFilter.builder().fromMs(0L).toMs(2000L)
+                .build()).calls().size());
+        }
+        assertFalse(ManagedRecordingSchema.ddlForFormat(1).containsKey("recording_transcript"));
+        assertTrue(ManagedRecordingSchema.ddlForFormat(2).containsKey("recording_transcript"));
+
+        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + db);
+            var statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA foreign_keys=ON");
+            try(var applicationId = statement.executeQuery("PRAGMA application_id"))
+            {
+                assertTrue(applicationId.next());
+                assertEquals(ManagedRecordingSchema.APPLICATION_ID, applicationId.getInt(1));
+            }
+            try(var version = statement.executeQuery("PRAGMA user_version"))
+            {
+                assertTrue(version.next());
+                assertEquals(2, version.getInt(1));
+            }
+            try(var metadata = statement.executeQuery(
+                "SELECT format_version FROM catalog_metadata WHERE id=1"))
+            {
+                assertTrue(metadata.next());
+                assertEquals(2, metadata.getInt(1));
+            }
+            statement.executeUpdate("INSERT INTO recording_transcript(call_id,text,stored_at_ms) " +
+                "VALUES(1,'hello world',1234)");
+            try(var rows = statement.executeQuery("SELECT text,stored_at_ms FROM recording_transcript " +
+                "WHERE call_id=1"))
+            {
+                assertTrue(rows.next());
+                assertEquals("hello world", rows.getString(1));
+                assertEquals(1234L, rows.getLong(2));
+            }
+            assertThrows(SQLException.class, () -> statement.executeUpdate(
+                "INSERT INTO recording_transcript(call_id,text,stored_at_ms) VALUES(1,'duplicate',2)"));
+            assertThrows(SQLException.class, () -> statement.executeUpdate(
+                "INSERT INTO recording_transcript(call_id,text,stored_at_ms) VALUES(999,'orphan',2)"));
+            assertThrows(SQLException.class, () -> statement.executeUpdate(
+                "UPDATE recording_transcript SET text=NULL WHERE call_id=1"));
+            assertThrows(SQLException.class, () -> statement.executeUpdate(
+                "UPDATE recording_transcript SET stored_at_ms=-1 WHERE call_id=1"));
+
+            statement.executeUpdate("DELETE FROM recording_call WHERE id=1");
+            try(var rows = statement.executeQuery("SELECT count(*) FROM recording_transcript"))
+            {
+                assertTrue(rows.next());
+                assertEquals(0, rows.getInt(1));
+            }
+        }
+    }
+
+    @Test
+    void rejectsAdditionalOrMissingCatalogObjects() throws Exception
+    {
+        Path root = temporary.resolve("managed");
+        Path db = temporary.resolve("database/recordings.sqlite");
+        Files.createDirectories(root);
+        try(ManagedRecordingStore ignored = new ManagedRecordingStore(db, root))
+        {
+        }
+        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + db);
+            var statement = connection.createStatement())
+        {
+            statement.execute("CREATE VIEW unexpected_view AS SELECT id FROM recording_call");
+        }
+        assertThrows(SQLException.class, () -> new ManagedRecordingStore(db, root));
+        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + db);
+            var statement = connection.createStatement())
+        {
+            statement.execute("DROP VIEW unexpected_view");
+            statement.execute("DROP TABLE recording_transcript");
+        }
+        assertThrows(SQLException.class, () -> new ManagedRecordingStore(db, root));
+    }
 
     @Test
     void pagesAndFiltersAcrossSystemsSitesAndPatchMembers() throws Exception

@@ -92,7 +92,8 @@ public final class ApplicationDatabaseMigrator
     private static final Pattern STAGED_DATA_ROOT =
         Pattern.compile("^\\..+\\.migration-" + UUID_PATTERN + "$");
     private static final String USAGE = "Usage: ApplicationDatabaseMigrator <staged-database-path> " +
-        "[<source-data-root> <target-data-root>]";
+        "[<source-data-root> <target-data-root>] or " +
+        "ApplicationDatabaseMigrator --managed-recording-catalog <staged-catalog-path>";
 
     private ApplicationDatabaseMigrator()
     {
@@ -120,6 +121,36 @@ public final class ApplicationDatabaseMigrator
         {
             output.println(USAGE);
             return EXIT_SUCCESS;
+        }
+
+        if(args != null && args.length == 2 && "--managed-recording-catalog".equals(args[0]))
+        {
+            final Path stagedCatalog;
+            try
+            {
+                stagedCatalog = Path.of(args[1]).toAbsolutePath().normalize();
+            }
+            catch(InvalidPathException | NullPointerException exception)
+            {
+                error.println("ERROR: The staged managed recordings catalog path is invalid.");
+                return EXIT_INPUT;
+            }
+            try
+            {
+                ManagedRecordingCatalogMigrator.runChild(stagedCatalog);
+                output.println("Managed recordings catalog updated.");
+                return EXIT_SUCCESS;
+            }
+            catch(IOException exception)
+            {
+                error.println("ERROR: " + message(exception));
+                return EXIT_INPUT;
+            }
+            catch(SQLException | RuntimeException exception)
+            {
+                error.println("ERROR: Managed recordings catalog migration failed: " + message(exception));
+                return EXIT_MIGRATION_FAILED;
+            }
         }
 
         if(args == null || (args.length != 1 && args.length != 3))

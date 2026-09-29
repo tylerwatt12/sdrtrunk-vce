@@ -13,14 +13,38 @@ package io.github.dsheirer.record.managed;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/** DDL for a newly created, separate Managed Recordings catalog. Existing files are validated only. */
-final class ManagedRecordingSchema
+/** Exact DDL for Managed Recordings catalogs. Existing files are validated only at startup. */
+public final class ManagedRecordingSchema
 {
-    static final Map<String,String> DDL = schema();
+    public static final int APPLICATION_ID = 0x56434552; // VCER
+    public static final int CURRENT_FORMAT_VERSION = 2;
+    private static final Map<String,String> FORMAT_ONE_DDL = formatOneSchema();
+    static final Map<String,String> DDL = formatTwoSchema();
 
     private ManagedRecordingSchema() {}
 
-    private static Map<String,String> schema()
+    /** Frozen format 1 and current format 2 signatures for the dedicated catalog migrator. */
+    public static Map<String,String> ddlForFormat(int version)
+    {
+        return switch(version)
+        {
+            case 1 -> FORMAT_ONE_DDL;
+            case 2 -> DDL;
+            default -> throw new IllegalArgumentException("Unsupported managed recordings catalog format: " + version);
+        };
+    }
+
+    private static Map<String,String> formatTwoSchema()
+    {
+        Map<String,String> schema = new LinkedHashMap<>(FORMAT_ONE_DDL);
+        schema.put("recording_transcript", "CREATE TABLE recording_transcript (" +
+            "call_id INTEGER PRIMARY KEY REFERENCES recording_call(id) ON DELETE CASCADE," +
+            "text TEXT NOT NULL,stored_at_ms INTEGER NOT NULL CHECK(stored_at_ms>=0)) STRICT");
+        return java.util.Collections.unmodifiableMap(schema);
+    }
+
+    /** The original format 1 DDL must remain byte-for-byte stable for exact legacy admission. */
+    private static Map<String,String> formatOneSchema()
     {
         Map<String,String> schema = new LinkedHashMap<>();
         schema.put("catalog_metadata", "CREATE TABLE catalog_metadata (" +

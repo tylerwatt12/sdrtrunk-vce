@@ -36,11 +36,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-/** Isolated SQLite implementation for Managed Recordings. This file has its own version 1 format. */
+/** Isolated SQLite implementation for Managed Recordings. This file has its own format version. */
 final class ManagedRecordingStore implements AutoCloseable
 {
-    private static final int FORMAT_VERSION = 1;
-    private static final int APPLICATION_ID = 0x56434552; // VCER
+    private static final int FORMAT_VERSION = ManagedRecordingSchema.CURRENT_FORMAT_VERSION;
+    private static final int APPLICATION_ID = ManagedRecordingSchema.APPLICATION_ID;
     private static final int MAINTENANCE_BATCH = 256;
     private static final Map<String,String> SCHEMA = ManagedRecordingSchema.DDL;
     private final Path mDatabaseFile;
@@ -123,7 +123,7 @@ final class ManagedRecordingStore implements AutoCloseable
                 statement.execute(ddl);
             }
             statement.execute("INSERT INTO catalog_metadata(id, format_version, call_count, total_bytes) " +
-                "VALUES(1, 1, 0, 0)");
+                "VALUES(1, " + FORMAT_VERSION + ", 0, 0)");
             statement.execute("PRAGMA application_id=" + APPLICATION_ID);
             statement.execute("PRAGMA user_version=" + FORMAT_VERSION);
             mWriterConnection.commit();
@@ -159,20 +159,26 @@ final class ManagedRecordingStore implements AutoCloseable
                 }
             }
         }
-        try(PreparedStatement statement = mWriterConnection.prepareStatement(
-            "SELECT sql FROM sqlite_master WHERE name=?"))
+        Map<String,String> actualSchema = new HashMap<>();
+        try(Statement statement = mWriterConnection.createStatement();
+            ResultSet rows = statement.executeQuery(
+                "SELECT name,sql FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'"))
         {
-            for(Map.Entry<String,String> entry : SCHEMA.entrySet())
+            while(rows.next())
             {
-                statement.setString(1, entry.getKey());
-                try(ResultSet rows = statement.executeQuery())
-                {
-                    if(!rows.next() || !entry.getValue().equals(rows.getString(1)))
-                    {
-                        throw new SQLException("Managed recordings catalog schema differs at " + entry.getKey());
-                    }
-                }
+                actualSchema.put(rows.getString(1), rows.getString(2));
             }
+        }
+        for(Map.Entry<String,String> entry : SCHEMA.entrySet())
+        {
+            if(!entry.getValue().equals(actualSchema.get(entry.getKey())))
+            {
+                throw new SQLException("Managed recordings catalog schema differs at " + entry.getKey());
+            }
+        }
+        if(actualSchema.size() != SCHEMA.size())
+        {
+            throw new SQLException("Managed recordings catalog has unexpected schema objects");
         }
     }
 

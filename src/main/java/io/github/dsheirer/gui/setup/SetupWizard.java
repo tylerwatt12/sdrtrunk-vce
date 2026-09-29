@@ -61,6 +61,7 @@ public final class SetupWizard extends JDialog
     }
     private final Path root;
     private final Path database;
+    private final Path managedRecordingCatalog;
     private final SdrTrunkDatabaseBootstrap.Options options;
     private final boolean forced;
     private final boolean databaseImportRequested;
@@ -120,6 +121,8 @@ public final class SetupWizard extends JDialog
     private SqliteDatabaseImportDialog.PreparedImport replacement;
     private StatsWebServerService liveServer;
     private DatabaseMigrationChain.PreflightReport startupMigrationPlan;
+    private boolean managedRecordingCatalogNeedsUpgrade;
+    private String managedRecordingCatalogReport = "";
 
     /** Retry an actual listener bind race in the same shell, before tuner activation or output workers start. */
     public static boolean ensureListener(UserPreferences preferences, StatsWebServerService server) throws Exception
@@ -160,6 +163,15 @@ public final class SetupWizard extends JDialog
             //A valid completed profile does not display a window unless required preparation changed.
             boolean current = false;
             Throwable inspectionFailure = null;
+            try
+            {
+                wizard.managedRecordingCatalogNeedsUpgrade =
+                    ManagedRecordingCatalogMigrator.inspect(wizard.managedRecordingCatalog).needsMigration();
+            }
+            catch(java.io.IOException | java.sql.SQLException ignored)
+            {
+                //The optional catalog retains its existing unavailable-catalog fallback for unknown or damaged files.
+            }
             if(Files.isRegularFile(wizard.database))
             {
                 try
@@ -172,9 +184,17 @@ public final class SetupWizard extends JDialog
             if(current)
             {
                 wizard.initialize(false);
-                if(!wizard.needsVisit()) { wizard.finished = true; return new Result(wizard.preferences, wizard.lock, true); }
-                wizard.progress.setComplete(false);
-                wizard.save();
+                boolean setupVisitNeeded = wizard.needsVisit();
+                if(!wizard.managedRecordingCatalogNeedsUpgrade && !setupVisitNeeded)
+                {
+                    wizard.finished = true;
+                    return new Result(wizard.preferences, wizard.lock, true);
+                }
+                if(setupVisitNeeded)
+                {
+                    wizard.progress.setComplete(false);
+                    wizard.save();
+                }
             }
             Throwable showInspectionFailure = inspectionFailure;
             SwingUtilities.invokeAndWait(() -> {
@@ -182,7 +202,8 @@ public final class SetupWizard extends JDialog
                 {
                     ThemeManager.getInstance().initialize(wizard.preferences);
                     SwingUtilities.updateComponentTreeUI(wizard);
-                    wizard.showPage(wizard.databaseImportRequested ? SetupStep.SOURCE : wizard.initialStep());
+                    wizard.showPage(wizard.databaseImportRequested || wizard.managedRecordingCatalogNeedsUpgrade ?
+                        SetupStep.SOURCE : wizard.initialStep());
                 }
                 else wizard.showPage(SetupStep.SOURCE);
                 if(showInspectionFailure != null) wizard.fail(
@@ -212,6 +233,7 @@ public final class SetupWizard extends JDialog
         ApplicationIcon.applyTaskbarIcon();
         root = dataRoot.toAbsolutePath().normalize();
         database = SdrTrunkDatabasePath.getDatabasePath(root);
+        managedRecordingCatalog = database.resolveSibling("managed-recordings.sqlite");
         options = SdrTrunkDatabaseBootstrap.Options.parse(args);
         if(Files.isRegularFile(database) && options.upgradeData() != null)
             throw new IllegalArgumentException("This profile already has a database. Use File → Import SQLite Database for explicitly confirmed replacement.");
@@ -445,6 +467,7 @@ public final class SetupWizard extends JDialog
     private void showPage(SetupStep id)
     {
         if(busy) return;
+        if(managedRecordingCatalogNeedsUpgrade) id = SetupStep.SOURCE;
         stopCountdown();
         step = id; generation++;
         page.removeAll(); danger.setVisible(false); errorReport = ""; copyError.setVisible(false);
@@ -474,6 +497,19 @@ public final class SetupWizard extends JDialog
 
     private void sourcePage()
     {
+        // Finish validating or updating the main profile before changing its separate recording catalog.
+        if(managedRecordingCatalogNeedsUpgrade && preferences != null)
+        {
+            notice("Managed recordings need an update", "This catalog needs a one-time schema update before receiving starts. A recovery copy will be kept, and its recordings will be preserved.", false);
+            details("Catalog to update", managedRecordingCatalog.toString());
+            next.setText("Back up & update recordings");
+            accept = this::upgradeManagedRecordingCatalog;
+            return;
+        }
+        if(!managedRecordingCatalogReport.isBlank())
+        {
+            notice("Managed recordings updated", managedRecordingCatalogReport, true);
+        }
         if(preferences != null)
         {
             if(forced && !sourceCommitted && liveServer == null)
@@ -590,6 +626,17 @@ public final class SetupWizard extends JDialog
         };
     }
 
+    private void upgradeManagedRecordingCatalog()
+    {
+        job("Updating managed recordings…", null,
+            () -> ManagedRecordingCatalogMigrator.migrate(managedRecordingCatalog), result -> {
+                managedRecordingCatalogNeedsUpgrade = false;
+                managedRecordingCatalogReport = result.migrated() ?
+                    "The catalog is ready. Recovery copy: " + result.backup() : "The catalog is already current.";
+                showPage(SetupStep.SOURCE);
+            });
+    }
+
     private void migrate(Path source, boolean fresh, boolean xml,
                          ApplicationMigrationService.ApprovedMigrationPlan approved)
     {
@@ -629,7 +676,7 @@ public final class SetupWizard extends JDialog
             ThemeManager.getInstance().initialize(preferences);
             SwingUtilities.updateComponentTreeUI(this);
             showPage(SetupStep.SOURCE);
-            if(!fresh && !xml)
+            if(!fresh && !xml && !managedRecordingCatalogNeedsUpgrade)
             {
                 int[] seconds = {10}; next.setText("Continue in 10 seconds");
                 countdown = new Timer(1000, e -> {
@@ -1312,7 +1359,8 @@ public final class SetupWizard extends JDialog
             String ink=colorHex(id==step || progress!=null && progress.isDone(id) ? WizardStyles.foreground() : WizardStyles.muted());
             button.setText("<html><font color='"+ink+"'>"+(progress!=null && progress.isDone(id)?"✓ ":"")+(id.ordinal()+1)+". "+id.title()+"<br><small>"+label(state)+"</small></font></html>");
             button.setToolTipText(label(state)); button.getAccessibleContext().setAccessibleDescription(label(state));
-            button.setEnabled(!busy && !restartRequired && (id==step || preferences!=null && (liveServer==null || id==SetupStep.WEB || id==SetupStep.REVIEW) &&
+            button.setEnabled(!busy && !restartRequired && (!managedRecordingCatalogNeedsUpgrade || id==SetupStep.SOURCE) &&
+                (id==step || preferences!=null && (liveServer==null || id==SetupStep.WEB || id==SetupStep.REVIEW) &&
                 (progress.isDone(id) || state==DEFERRED || state==NEEDS_ATTENTION)));
             button.setFont(button.getFont().deriveFont(id==step?Font.BOLD:Font.PLAIN));
             Color fill=id==step ? WizardStyles.surface() : UIManager.getColor("Panel.background");

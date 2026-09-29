@@ -6,6 +6,7 @@ package io.github.dsheirer.database;
 
 import io.github.dsheirer.database.importer.LegacyXmlConfigurationImporter;
 import io.github.dsheirer.database.upgrade.ApplicationMigrationService;
+import io.github.dsheirer.database.upgrade.ManagedRecordingCatalogMigrator;
 import io.github.dsheirer.database.upgrade.PreviousBuildLocator;
 import io.github.dsheirer.portable.PortableApplicationPaths;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultPath;
@@ -46,6 +47,24 @@ public final class SdrTrunkDatabaseBootstrap
         Path normalized = dataRoot.toAbsolutePath().normalize();
         Path database = SdrTrunkDatabasePath.getDatabasePath(normalized);
         Options options = Options.parse(args);
+        Path managedRecordingCatalog = database.resolveSibling("managed-recordings.sqlite");
+        boolean catalogNeedsUpgrade = false;
+        try
+        {
+            catalogNeedsUpgrade = ManagedRecordingCatalogMigrator.inspect(managedRecordingCatalog).needsMigration();
+        }
+        catch(IOException | SQLException ignored)
+        {
+            //Unknown or damaged optional catalogs retain the existing unavailable-catalog fallback at runtime.
+        }
+        if(catalogNeedsUpgrade && !options.upgradeCurrent() && !options.upgradeManagedRecordings())
+        {
+            String approval = Files.isRegularFile(database) ?
+                "--upgrade-current or --upgrade-managed-recordings" :
+                "--upgrade-managed-recordings alongside the chosen new-profile setup option";
+            throw new IOException("The managed recordings catalog requires an update. Start once with " +
+                approval + " to create a safety backup and migrate it before receiving starts.");
+        }
         boolean freshPreferences = false;
         if(Files.isRegularFile(database))
         {
@@ -95,6 +114,15 @@ public final class SdrTrunkDatabaseBootstrap
             char[] password = readPasswordFile(options.adminPasswordFile());
             try { InitialAdminSetup.provision(database, password); }
             finally { Arrays.fill(password, (char)0); }
+        }
+        if(catalogNeedsUpgrade)
+        {
+            var catalogMigration = ManagedRecordingCatalogMigrator.migrate(managedRecordingCatalog);
+            if(catalogMigration.migrated())
+            {
+                System.out.println("Managed recordings safety backup: " +
+                    catalogMigration.backup().toAbsolutePath().normalize());
+            }
         }
         prepareVault(normalized);
         return new BootstrapResult(true, freshPreferences);
@@ -192,6 +220,7 @@ public final class SdrTrunkDatabaseBootstrap
     }
 
     public record Options(boolean fresh, Path importXml, Path upgradeData, boolean upgradeCurrent,
+                          boolean upgradeManagedRecordings,
                            Path adminPasswordFile)
     {
         public static Options parse(String[] args)
@@ -200,6 +229,7 @@ public final class SdrTrunkDatabaseBootstrap
             Path importXml = null;
             Path upgradeData = null;
             boolean upgradeCurrent = false;
+            boolean upgradeManagedRecordings = false;
             Path adminPasswordFile = null;
 
             for(int x = 0; x < args.length; x++)
@@ -208,6 +238,7 @@ public final class SdrTrunkDatabaseBootstrap
                 {
                     case "--fresh" -> fresh = true;
                     case "--upgrade-current" -> upgradeCurrent = true;
+                    case "--upgrade-managed-recordings" -> upgradeManagedRecordings = true;
                     case "--admin-password-file" ->
                     {
                         if(++x >= args.length)
@@ -248,7 +279,8 @@ public final class SdrTrunkDatabaseBootstrap
                     "--upgrade-data, or --upgrade-current");
             }
 
-            return new Options(fresh, importXml, upgradeData, upgradeCurrent, adminPasswordFile);
+            return new Options(fresh, importXml, upgradeData, upgradeCurrent, upgradeManagedRecordings,
+                adminPasswordFile);
         }
     }
 }

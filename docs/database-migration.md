@@ -343,6 +343,13 @@ an intermediate format 28 does not repeat that repair.
 
 ## Schema-Change Rule
 
+The optional Managed Recordings catalog is a separate SQLite file with its own adjacent format chain. Its format 2
+adds a one-to-one `recording_transcript` table containing transcript text and its storage time in Unix epoch
+milliseconds. A missing row means no transcript has been stored. The format-1-to-2 Application Migrator step preserves
+all recording rows, IDs, paths, metadata, and counters, and adds no transcript rows. The main application database
+remains at its existing format because its SQLite contents do not change. Recognized older catalogs are backed up and
+migrated on a staged copy at the pre-receiver setup boundary; normal catalog startup validates only.
+
 Every change to persisted DDL or persisted meaning must land with all of the following:
 
 1. The clean current-schema definition.

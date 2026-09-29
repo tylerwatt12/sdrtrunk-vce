@@ -1478,7 +1478,8 @@ public class SDRTrunk
             Path dataRoot = PortableApplicationPaths.getDataRoot();
             Path databasePath = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
 
-            if(Files.isRegularFile(databasePath))
+            if(Files.isRegularFile(databasePath) ||
+                Files.isRegularFile(databasePath.resolveSibling("managed-recordings.sqlite")))
             {
                 dataRootLock = PortableDataRootLock.acquire(dataRoot);
             }
