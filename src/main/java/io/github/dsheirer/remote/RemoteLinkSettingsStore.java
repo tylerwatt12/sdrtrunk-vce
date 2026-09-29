@@ -38,6 +38,7 @@ import java.util.UUID;
  */
 public final class RemoteLinkSettingsStore
 {
+    public static final String DEFAULT_BIND_ADDRESS = "0.0.0.0";
     private static final Set<PosixFilePermission> OWNER_ONLY = Set.of(
         PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE);
     private final Path mPath;
@@ -231,7 +232,7 @@ public final class RemoteLinkSettingsStore
 
         public static Settings defaults()
         {
-            return new Settings(1, false, "127.0.0.1", 53_800, List.of(), Outbound.disabled());
+            return new Settings(1, false, DEFAULT_BIND_ADDRESS, 53_800, List.of(), Outbound.disabled());
         }
 
         @Override

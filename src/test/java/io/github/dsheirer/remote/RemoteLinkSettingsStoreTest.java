@@ -30,6 +30,19 @@ class RemoteLinkSettingsStoreTest
     Path mTemp;
 
     @Test
+    void freshSettingsListenOnAllInterfacesOnlyAfterExplicitEnablement() throws Exception
+    {
+        Settings defaults = new RemoteLinkSettingsStore(mTemp).load();
+
+        assertEquals(1, defaults.revision());
+        assertFalse(defaults.listenerEnabled());
+        assertEquals("0.0.0.0", defaults.bindAddress());
+        assertEquals(53_800, defaults.listenPort());
+        assertEquals("0.0.0.0", RemoteLinkAdministrationService.ListenerSnapshot.STOPPED.bindAddress());
+        assertFalse(Files.exists(mTemp.resolve("remote-links/settings.json")));
+    }
+
+    @Test
     void savesVersionedSenderCredentialsOutsideTheChannelDatabase() throws Exception
     {
         RemoteLinkSettingsStore store = new RemoteLinkSettingsStore(mTemp);
@@ -43,6 +56,8 @@ class RemoteLinkSettingsStoreTest
         store.save(settings);
 
         assertEquals(settings, store.load());
+        assertEquals("127.0.0.1", store.load().bindAddress(),
+            "an existing listener bind choice must not be replaced by the new default");
         assertFalse(settings.toString().contains("generated-key"));
         assertFalse(settings.trustedSenders().getFirst().toString().contains("generated-key"));
         assertFalse(settings.outbound().toString().contains("generated-key"));

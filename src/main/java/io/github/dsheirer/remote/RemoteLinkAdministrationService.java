@@ -106,7 +106,8 @@ public interface RemoteLinkAdministrationService extends RemoteOriginLookup
     record ListenerSnapshot(boolean enabled, String bindAddress, int port, ListenerState state,
                             String statusMessage, List<DependencySnapshot> dependencies)
     {
-        public static final ListenerSnapshot STOPPED = new ListenerSnapshot(false, "127.0.0.1", 0,
+        public static final ListenerSnapshot STOPPED = new ListenerSnapshot(false,
+            RemoteLinkSettingsStore.DEFAULT_BIND_ADDRESS, 0,
             ListenerState.STOPPED, null, List.of());
 
         public ListenerSnapshot
