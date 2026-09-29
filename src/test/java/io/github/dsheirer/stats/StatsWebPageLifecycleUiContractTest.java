@@ -5,6 +5,7 @@
  */
 package io.github.dsheirer.stats;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -25,7 +26,7 @@ class StatsWebPageLifecycleUiContractTest
         String source = readText(APP_JAVASCRIPT);
         int lifecycle = source.indexOf("import * as pageLifecycle from './core/page-lifecycle.js';");
         int systems = source.indexOf("import * as radioSystemsDirectory from './features/radio-systems-directory.js';");
-        int application = html.indexOf("<script type=\"module\" src=\"/assets/app.js?v=306\"></script>");
+        int application = html.indexOf("<script type=\"module\" src=\"/assets/app.js?v=311\"></script>");
 
         assertTrue(lifecycle >= 0);
         assertTrue(lifecycle < systems);
@@ -45,8 +46,12 @@ class StatsWebPageLifecycleUiContractTest
 
         assertOrdered(render, "if (!closeReadOnlyModal()) return;", "const epoch = ++activeRenderEpoch;");
         assertOrdered(render, "content.replaceChildren(loading);", "await entry.handler();");
-        assertFalse(render.contains("content.replaceChildren();"));
+        assertEquals(2, render.split("content\\.replaceChildren\\(\\);", -1).length - 1,
+            "Only the two sign-in landing branches may clear the root loader without a replacement.");
+        assertOrdered(render, "if (synchronizeAccessLanding()) {", "content.replaceChildren();");
         assertOrdered(render, "await refreshAccessSession(false);", "if (!renderIsCurrent(renderContext)) return;");
+        String refreshedAccess = render.substring(render.indexOf("await refreshAccessSession(false);"));
+        assertOrdered(refreshedAccess, "if (synchronizeAccessLanding()) {", "content.replaceChildren();");
         assertOrdered(beginPage, "content.replaceChildren(...children);",
             "content.setAttribute('aria-busy', 'false');");
 
