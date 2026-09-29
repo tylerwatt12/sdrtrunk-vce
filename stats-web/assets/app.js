@@ -12959,6 +12959,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   });
   if (!basicOperator && !panelOptions.inlineDisplayOptions) toolbarActions.append(options);
   if (toolbarActions.childElementCount) toolbar.append(toolbarActions);
+  if (basicOperator && viewportControls) toolbar.append(zoomActions);
   const refiningBadge = node('span', 'tuner-spectrum-refining', 'Refining…');
   refiningBadge.hidden = true;
   refiningBadge.setAttribute('role', 'status');
@@ -23194,7 +23195,8 @@ function tunerInventoryFrequency(value) {
 function tunerInventoryRate(value) {
   const hz = Number(value);
   if (!Number.isFinite(hz) || hz <= 0) return 'Unavailable';
-  return hz >= 1_000_000 ? `${(hz / 1_000_000).toFixed(3)} MHz` : `${(hz / 1_000).toFixed(1)} kHz`;
+  return hz >= 1_000_000 ? `${Number((hz / 1_000_000).toFixed(3))} MHz` :
+    `${Number((hz / 1_000).toFixed(1))} kHz`;
 }
 
 function tunerSettingValue(setting, value) {
@@ -23336,8 +23338,9 @@ async function renderTuners() {
   analyzeButton.disabled = true;
   analyzeButton.title = 'Open RadioResolve in a new tab with all tuners and running channels';
   analyzeButton.prepend(iconGlyph('icon-share'));
+  const tunerCount = node('span', 'tuners-sidebar-count', 'Loading tuners…');
   const tunerListActions = node('div', 'tuners-sidebar-actions ui-action-row');
-  tunerListActions.append(rescanUsbButton, analyzeButton);
+  tunerListActions.append(rescanUsbButton, tunerCount);
   const tunerListPanel = node('div', 'tuners-sidebar-panel');
   tunerListPanel.append(tunerListActions, listBody);
   const left = section('Receiver tuners', tunerListPanel, sectionActionHost(addTunerButton));
@@ -23349,11 +23352,12 @@ async function renderTuners() {
   const gainFallback = node('div', 'tuners-spectrum-toolbar-fallback');
   gainFallback.append(gainPanel);
   signalLayout.append(gainFallback, spectrumBody);
-  const signalHeader = node('div', 'section-title ui-section-title tuners-signal-header');
-  signalHeader.append(detailsBody);
+  const selectedSection = node('section', 'section ui-section tuners-selected-section');
+  selectedSection.setAttribute('aria-label', 'Selected tuner');
+  selectedSection.append(detailsBody);
   const signalSection = node('section', 'section ui-section tuners-signal-section');
   signalSection.setAttribute('aria-label', 'Selected tuner signal');
-  signalSection.append(signalHeader, signalLayout);
+  signalSection.append(signalLayout);
   const commonMore = node('details', 'tuners-common-details');
   commonMore.append(node('summary', '', 'Limits & sample rate'), commonMoreBody);
   const commonContent = node('div', 'tuners-common-content');
@@ -23362,11 +23366,12 @@ async function renderTuners() {
   const deviceSection = section('Device settings', deviceBody);
   const settingsParking = node('div');
   settingsParking.append(commonSection, deviceSection);
-  right.append(signalSection);
+  right.append(selectedSection, signalSection);
   const workspace = node('div', 'tuners-workspace editor-workspace');
   workspace.append(left, right);
   const heading = pageHeader('Tuners', 'Tune and watch receiver signal');
   heading.classList.add('tuners-page-header');
+  heading.append(analyzeButton);
   if (!beginPage(renderContext, heading, workspace)) return;
 
   let rows = [];
@@ -24075,8 +24080,6 @@ async function renderTuners() {
     if (tuner.device_group?.kind && tuner.device_group.kind !== 'single') {
       facts.append(detailFact('Device group', `${tuner.device_group.kind} · ${tuner.device_group.role || 'member'}`));
     }
-    const summary = node('div', 'tuners-detail-summary');
-    summary.append(title, facts);
     const actions = node('div', 'tuners-detail-actions ui-action-row');
     actions.setAttribute('role', 'group');
     actions.setAttribute('aria-label', 'Tuner actions');
@@ -24121,8 +24124,7 @@ async function renderTuners() {
         actions.append(restore);
       }
     } else {
-      const setup = node('button', 'ui-button ui-button-secondary', 'Enter setup');
-      setup.type = 'button';
+      const setup = iconButton('icon-setup', 'Enter setup');
       setup.id = 'selected-tuner-setup';
       setup.disabled = transitioning;
       setup.addEventListener('click', () => confirmStateChange(tuner, 'setup', '#selected-tuner-setup'));
@@ -24143,7 +24145,11 @@ async function renderTuners() {
       remove.addEventListener('click', () => confirmRemoveRecording(tuner));
       actions.append(remove);
     }
-    detailsBody.append(summary, centerHost, actions);
+    const selectedHeader = node('div', 'tuners-selected-header ui-section-title');
+    selectedHeader.append(title, actions);
+    const selectedContent = node('div', 'tuners-selected-content');
+    selectedContent.append(facts, centerHost);
+    detailsBody.append(selectedHeader, selectedContent);
     if (stoppedChannels.length) {
       const stopped = node('button', 'tuners-stopped-channels');
       stopped.type = 'button';
@@ -24181,6 +24187,7 @@ async function renderTuners() {
       const selectionEnd = active instanceof HTMLInputElement ? active.selectionEnd : null;
       const typingCenter = Boolean(right.querySelector('.tuners-center-frequency.is-typing'));
       rows = tunerInventoryRows(response);
+      tunerCount.textContent = `${number(rows.length)} tuner${rows.length === 1 ? '' : 's'}`;
       analyzeButton.disabled = analyzing;
       if (!rows.some((row) => row.id === selectedId)) selectedId = rows[0]?.id || '';
       if (typingCenter) {
@@ -24202,6 +24209,7 @@ async function renderTuners() {
     } catch (error) {
       if (!renderIsCurrent(renderContext) || generation !== refreshGeneration) return;
       listBody.replaceChildren(node('div', 'error', error.message || 'Could not load tuners.'));
+      tunerCount.textContent = 'Unavailable';
       detailsBody.replaceChildren(node('div', 'error', 'Tuner details are unavailable.'));
       centerHost.replaceChildren();
       centerHost.hidden = true;

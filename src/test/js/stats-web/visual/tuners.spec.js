@@ -217,11 +217,15 @@ test('compact tuner workspace keeps recording tuners in the Add tuner dialog', a
   await expect(page.getByRole('heading', { name: 'Tuners', exact: true })).toBeVisible();
   await expect(page.getByText('Signal', { exact: true })).toBeVisible();
   await expect(page.locator('.tuners-spectrum-toolbar-gain')).toBeVisible();
-  await expect(page.locator('.tuners-selected-section')).toHaveCount(0);
+  await expect(page.locator('.tuners-selected-section')).toHaveCount(1);
+  await expect(page.locator('.tuners-selected-section > .tuners-details > .tuners-selected-header'))
+    .toHaveCount(1);
   await expect(page.locator('.tuners-signal-section')).toHaveCount(1);
   await expect(page.getByRole('button', { name: 'Configure tuner' })).toBeVisible();
   await expect(page.getByLabel('LNA gain (dB)')).toHaveValue('8');
   await expect(page.locator('.tuners-frequency-digits')).toContainText('0851.01250MHz');
+  await expect(page.locator('.tuners-detail-fact').filter({ hasText: 'Sample rate' }).locator('dd'))
+    .toHaveText('10 MHz');
   await expect(page.locator('.tuners-main').getByRole('button', { name: /Queue/i })).toHaveCount(0);
 
   await page.getByLabel('LNA gain (dB)').fill('10');
@@ -262,6 +266,7 @@ test('embedded signal view reuses cursor, zoom, and selectable quality without t
   await expect(embedded.locator('.tuner-spectrum-cursor-popup')).toHaveCount(1);
   await expect(embedded.locator('.tuner-spectrum-cursor-guide')).toHaveCount(2);
   await expect(embedded.getByRole('group', { name: 'Spectrum zoom' })).toBeVisible();
+  await expect(embedded.locator('.tuner-spectrum-toolbar > .tuner-spectrum-zoom-actions')).toBeVisible();
   await expect(embedded.getByRole('button', { name: 'Zoom in' })).toBeVisible();
   await expect(embedded.getByRole('button', { name: 'Zoom out' })).toBeVisible();
   await expect(embedded.getByRole('button', { name: 'Reset zoom' })).toBeVisible();
@@ -478,23 +483,44 @@ test('gain controls stay available when spectrum setup fails', async ({ page }) 
 
 test('wide tuner summary and common controls use their available row', async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
-  await mockTuners(page, [], { currentTuner: operatorTuner() });
+  await mockTuners(page, [], { currentTuner: operatorTuner({
+    sample_rate_hz: 2_400_000, configured_sample_rate_hz: 2_400_000
+  }) });
   await page.goto('/app.html?view=tuners');
-  await expect(page.locator('.tuners-selected-section')).toHaveCount(0);
-  await expect(page.locator('.tuners-signal-section > .tuners-signal-header .tuners-details')).toHaveCount(1);
+  await expect(page.locator('.tuners-selected-section > .tuners-details')).toHaveCount(1);
+  await expect(page.locator('.tuners-selected-section .tuners-selected-content')).toHaveCount(1);
+  await expect(page.locator('.tuners-signal-section')).toHaveCount(1);
+  const facts = page.locator('.tuners-detail-facts');
+  const activeCount = facts.locator('.tuners-detail-fact').filter({ hasText: 'Active channels' }).locator('dd');
+  const sampleRate = facts.locator('.tuners-detail-fact').filter({ hasText: 'Sample rate' }).locator('dd');
+  await expect(activeCount).toHaveText('0');
+  await expect(sampleRate).toHaveText('2.4 MHz');
+  const typography = async (locator) => locator.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { fontFamily: style.fontFamily, fontSize: style.fontSize, fontWeight: style.fontWeight };
+  });
+  const centerTypography = await typography(page.locator('.tuners-frequency-digit').first());
+  expect(await typography(activeCount)).toEqual(centerTypography);
+  expect(await typography(sampleRate)).toEqual(centerTypography);
 
-  const [summaryBox, centerBox, actionsBox] = await Promise.all([
-    page.locator('.tuners-detail-summary').boundingBox(),
+  const [factsBox, centerBox, headingBox, actionsBox, selectedBox, signalBox] = await Promise.all([
+    page.locator('.tuners-detail-facts').boundingBox(),
     page.locator('.tuners-center-host').boundingBox(),
-    page.locator('.tuners-detail-actions').boundingBox()
+    page.locator('.tuners-detail-heading').boundingBox(),
+    page.locator('.tuners-detail-actions').boundingBox(),
+    page.locator('.tuners-selected-section').boundingBox(),
+    page.locator('.tuners-signal-section').boundingBox()
   ]);
-  expect(summaryBox).not.toBeNull();
+  expect(factsBox).not.toBeNull();
   expect(centerBox).not.toBeNull();
+  expect(headingBox).not.toBeNull();
   expect(actionsBox).not.toBeNull();
-  expect(summaryBox.x + summaryBox.width).toBeLessThanOrEqual(centerBox.x + 1);
-  expect(centerBox.x + centerBox.width).toBeLessThanOrEqual(actionsBox.x + 1);
-  const detailCenters = [summaryBox, centerBox, actionsBox].map((box) => box.y + box.height / 2);
-  expect(Math.max(...detailCenters) - Math.min(...detailCenters)).toBeLessThanOrEqual(1);
+  expect(selectedBox).not.toBeNull();
+  expect(signalBox).not.toBeNull();
+  expect(factsBox.x + factsBox.width).toBeLessThanOrEqual(centerBox.x + 1);
+  expect(Math.abs((headingBox.y + headingBox.height / 2) -
+    (actionsBox.y + actionsBox.height / 2))).toBeLessThanOrEqual(1);
+  expect(selectedBox.y + selectedBox.height).toBeLessThanOrEqual(signalBox.y + 1);
 
   await page.getByRole('button', { name: 'Configure tuner' }).click();
   await page.getByRole('dialog', { name: 'Configure Airspy R2' }).getByText('Limits & sample rate').click();
@@ -515,6 +541,32 @@ test('wide tuner summary and common controls use their available row', async ({ 
     resetBox.y + resetBox.height) - Math.min(minimumBox.y + minimumBox.height,
     maximumBox.y + maximumBox.height, resetBox.y + resetBox.height)).toBeLessThanOrEqual(1);
   expect(limitsBox.x + limitsBox.width).toBeLessThanOrEqual(sampleBox.x + 1);
+});
+
+test('tuner without center-frequency control uses the full summary width', async ({ page }) => {
+  await page.setViewportSize({ width: 960, height: 800 });
+  await mockTuners(page, [], { currentTuner: tuner() });
+  await page.goto('/app.html?view=tuners');
+
+  const content = page.locator('.tuners-selected-content');
+  const facts = content.locator('.tuners-detail-facts');
+  await expect(facts).toBeVisible();
+  await expect(content.locator('.tuners-center-host')).toBeHidden();
+  const widths = await content.evaluate((element) => {
+    const factsElement = element.querySelector('.tuners-detail-facts');
+    const styles = getComputedStyle(element);
+    return {
+      content: element.getBoundingClientRect().width,
+      facts: factsElement.getBoundingClientRect().width,
+      padding: parseFloat(styles.paddingLeft) + parseFloat(styles.paddingRight),
+      scroll: element.scrollWidth,
+      client: element.clientWidth
+    };
+  });
+  expect(widths.facts).toBeGreaterThanOrEqual(widths.content - widths.padding - 2);
+  expect(widths.scroll).toBeLessThanOrEqual(widths.client);
+  expect(await page.locator('.tuners-selected-section').evaluate(
+    (element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 });
 
 test('Setup unlocks setup-only controls and remains unavailable to channels', async ({ page }) => {
@@ -575,7 +627,15 @@ test('leaving Live stops channels once and offers one restore attempt', async ({
   await mockTuners(page, mutations, state);
   await page.goto('/app.html?view=tuners');
 
-  await page.getByRole('button', { name: 'Enter setup' }).click();
+  const setup = page.getByRole('button', { name: 'Enter setup' });
+  await expect(setup).toHaveClass(/\bui-icon-button\b/);
+  await expect(setup).toHaveAttribute('title', 'Enter setup');
+  await expect(setup).toHaveText('');
+  await expect(setup.locator('svg[aria-hidden="true"]')).toHaveCount(1);
+  await setup.hover();
+  await expect(page.locator('.ui-icon-hint')).toHaveText('Enter setup');
+  await expect(page.locator('.ui-icon-hint')).toBeVisible();
+  await setup.click();
   const stop = page.getByRole('dialog', { name: 'Enter Setup' });
   await expect(stop.getByText('Stop 2 channels?')).toBeVisible();
   await stop.getByRole('button', { name: 'Enter Setup', exact: true }).click();
