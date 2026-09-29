@@ -25,6 +25,24 @@ export const RADIO_REFERENCE_IMPORT_PATHS = Object.freeze({
 const SITE_LIMIT = 50;
 const TALKGROUP_LIMIT = 50;
 const FREQUENCY_LIMIT = 50;
+const COMMON_COUNTRY_CODES = Object.freeze(['US', 'CA', 'AU', 'UK', 'GB']);
+
+export function sortRadioReferenceCountries(countries) {
+  const rank = country => {
+    const code = String(country?.abbreviation ?? country?.code ?? '').trim().toUpperCase();
+    const index = COMMON_COUNTRY_CODES.indexOf(code);
+    return index < 0 ? COMMON_COUNTRY_CODES.length : index;
+  };
+  const compareNames = (left, right) => {
+    if (left == null) return right == null ? 0 : 1;
+    if (right == null) return -1;
+    const first = String(left).toLowerCase();
+    const second = String(right).toLowerCase();
+    return first < second ? -1 : first > second ? 1 : 0;
+  };
+  return (Array.isArray(countries) ? [...countries] : []).filter(Boolean).sort((left, right) =>
+    rank(left) - rank(right) || compareNames(left.name, right.name) || Number(left.id) - Number(right.id));
+}
 
 function rows(documentValue) {
   if (Array.isArray(documentValue)) return documentValue;
@@ -1886,7 +1904,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       const aliasListRevision = Number(aliasesDocument?.revision);
       state.aliasListRevision = Number.isSafeInteger(aliasListRevision) && aliasListRevision >= 0 ?
         aliasListRevision : 0;
-      state.countries = rows(countriesDocument);
+      state.countries = sortRadioReferenceCountries(rows(countriesDocument));
       state.bookmarks = rows(bookmarksDocument).map(normalizeBookmark);
       state.preferenceLoadError = preferencesResult.error?.message || '';
       const preferences = rows(preferencesResult.value).map((value) => [

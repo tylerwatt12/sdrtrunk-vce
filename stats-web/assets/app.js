@@ -19,7 +19,7 @@ import {
   createAliasList,
   createAliasListPopupTrigger as buildAliasListPopupTrigger
 } from './features/alias-list-create.js?v=2';
-import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=18';
+import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=19';
 import { createStreamingWorkspace } from './features/streaming.js?v=5';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=1';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=7';
@@ -280,6 +280,8 @@ const ALIAS_BULK_REQUEST_TIMEOUT_MS = 60_000;
 let serviceStatus = null;
 let serviceStatusRequestPending = false;
 let serviceStatusConsecutiveFailures = 0;
+let p25VisualizerCatalogHasRunningSystem = false;
+let p25VisualizerCatalogRequest = null;
 let webClientReloadAttempted = false;
 let activeReadOnlyModal = null;
 let aliasEditorSelection = new Set();
@@ -747,7 +749,8 @@ function updateNavigationAccess() {
     const locked = !viewAllowed(link.dataset.view);
     const definition = applicationRoutes?.[link.dataset.view];
     const administratorOnly = String(definition?.access || '').startsWith('admin');
-    link.hidden = administratorOnly && locked;
+    link.hidden = administratorOnly && locked ||
+      link.dataset.view === 'network-visualizer' && !p25VisualizerMenuAvailable();
     link.classList.toggle('access-locked', locked);
     const lock = link.querySelector('.nav-lock');
     if (lock) lock.hidden = !locked;
@@ -2140,6 +2143,44 @@ function statsLoggingState() {
   return { available: false, summaryConfigured: false, historyConfigured: false,
     summaryActive: false, historyActive: false, historyRetained: false, lastHistoryMs: 0,
     lastSuccessfulWriteMs: 0, state: '', lastError: '' };
+}
+
+function p25VisualizerMenuAvailable() {
+  const logging = statsLoggingState();
+  return Boolean(serviceStatus) && serviceStatusConsecutiveFailures === 0 &&
+    logging.summaryActive && logging.historyActive && p25VisualizerCatalogHasRunningSystem;
+}
+
+function catalogHasRunningP25System(catalog) {
+  return Array.isArray(catalog?.channels) && catalog.channels.some((channel) =>
+    channel?.channel_kind === 'TRUNKED' && channel.processing_state === 'RUNNING' &&
+    ['p25-phase1', 'p25-phase2'].includes(String(channel.protocol_id || '').toLowerCase()));
+}
+
+function refreshP25VisualizerMenu() {
+  p25VisualizerCatalogRequest?.abort();
+  p25VisualizerCatalogRequest = null;
+  if (!serviceStatus || serviceStatusConsecutiveFailures !== 0 ||
+      !statsLoggingState().summaryActive || !statsLoggingState().historyActive) {
+    p25VisualizerCatalogHasRunningSystem = false;
+    updateNavigationAccess();
+    return;
+  }
+  updateNavigationAccess();
+  const controller = new AbortController();
+  p25VisualizerCatalogRequest = controller;
+  void requestJson('/api/v1/channel-catalog', { csrf: false, page: false, signal: controller.signal,
+    timeoutMs: 5_000 }).then((catalog) => {
+    if (p25VisualizerCatalogRequest === controller) {
+      p25VisualizerCatalogHasRunningSystem = catalogHasRunningP25System(catalog);
+    }
+  }).catch(() => {
+    if (p25VisualizerCatalogRequest === controller) p25VisualizerCatalogHasRunningSystem = false;
+  }).finally(() => {
+    if (p25VisualizerCatalogRequest !== controller) return;
+    p25VisualizerCatalogRequest = null;
+    updateNavigationAccess();
+  });
 }
 
 function beginServiceStatusRequest() {
@@ -21875,8 +21916,8 @@ async function renderAdminRadioReferenceSettings() {
   const loadRegions = async () => {
     const response = await requestJson('/api/v1/admin/radioreference/countries', { csrf: false,
       timeoutMs: RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS });
-    const available = replaceRadioReferenceOptions(country, response?.items, configuration?.country_id,
-      'No countries available');
+    const available = replaceRadioReferenceOptions(country, sortRadioReferenceCountries(response?.items),
+      configuration?.country_id, 'No countries available');
     country.disabled = !available;
     if (available) await loadStates(country.value, configuration?.state_id);
   };
@@ -25856,6 +25897,7 @@ async function loadStatus(refreshCurrentView = false) {
   if (await reloadForWebClientRevision()) return;
   if (accessSessionAvailable && !capabilityAllowed(ACCESS_CAPABILITIES.DASHBOARD)) {
     clearServiceStatus();
+    refreshP25VisualizerMenu();
     const status = document.getElementById('global-status');
     if (status) status.textContent = 'Status restricted';
     return;
@@ -25868,6 +25910,7 @@ async function loadStatus(refreshCurrentView = false) {
     const status = document.getElementById('global-status');
     if (status) status.textContent = serviceStatus ? 'Receiver status stale' : 'Receiver status unavailable';
   }
+  refreshP25VisualizerMenu();
 
   const currentView = route.get('view') || 'dashboard';
   if (refreshCurrentView && currentView === 'admin' && (route.get('tab') || 'health') === 'health') {

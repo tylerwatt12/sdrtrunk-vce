@@ -213,7 +213,17 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
           { alias_list_id: 13, name: 'Default Analog', family: 'NBFM' }
         ] : [])
       ] };
-      if (path.endsWith('/countries')) return { items: [{ id: 1, name: 'United States', abbreviation: 'US' }] };
+      if (path.endsWith('/countries')) return { items: scenario === 'country-order' ? [
+        { id: 9, name: 'Zimbabwe', abbreviation: 'ZW' },
+        { id: 11, name: 'alpha', abbreviation: 'ZZ' },
+        { id: 5, name: 'United Kingdom', abbreviation: 'GB' },
+        { id: 4, name: 'United Kingdom', abbreviation: 'uk' },
+        { id: 1, name: 'United States', abbreviation: 'us' },
+        { id: 10, name: 'Alpha', abbreviation: 'XY' },
+        { id: 3, name: 'Australia', code: 'AU' },
+        { id: 2, name: 'Canada', abbreviation: ' ca ' },
+        { id: 8, name: 'Brazil', abbreviation: 'BR' }
+      ] : [{ id: 1, name: 'United States', abbreviation: 'US' }] };
       if (path.endsWith('/system-preferences')) {
         if (options.method === 'PUT') {
           if (failPreferenceSave) {
@@ -409,6 +419,14 @@ async function installRealTalkgroupAliasCreator(page) {
     existing.replaceWith(creator);
   });
 }
+
+test('country picker follows desktop priority, name, and ID order', async ({ page }) => {
+  await installWorkspace(page, 'light', false, false, 'country-order');
+  const country = page.getByRole('combobox', { name: 'Country', exact: true });
+  await expect(country).toHaveValue('1');
+  expect(await country.locator('option').evaluateAll(options => options.map(option => option.value)))
+    .toEqual(['1', '2', '3', '4', '5', '10', '11', '8', '9']);
+});
 
 test('Alias List creation updates every import picker without losing talkgroup selections', async ({ page }) => {
   await installWorkspace(page, 'light', false, false, 'alias-create');
