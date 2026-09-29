@@ -35,7 +35,7 @@ const snapshot = {
   ]
 };
 
-async function openLive(page) {
+async function openLive(page, showOnlyActiveTrunkedChannels = false) {
   let diagnosticSubscriptions = 0;
   await page.addInitScript((liveSnapshot) => {
     const originalFetch = window.fetch.bind(window);
@@ -71,7 +71,11 @@ async function openLive(page) {
         username: 'operator', tier: 'admin', primary: true,
         capabilities: { live: true, radio: true, 'call-audio': true } } } });
     } else if (pathname === '/api/v1/me/preferences') {
-      await route.fulfill({ json: { revision: 1, preferences: defaultPreferences } });
+      await route.fulfill({ json: { revision: 1, preferences: {
+        ...defaultPreferences,
+        presentation: { ...defaultPreferences.presentation,
+          show_only_active_trunked_channels: showOnlyActiveTrunkedChannels }
+      } } });
     } else if (pathname === '/api/v1/live/multiplex/control') {
       const body = route.request().postDataJSON();
       if (body?.subscriptions?.channel_diagnostics) diagnosticSubscriptions += 1;
@@ -83,6 +87,14 @@ async function openLive(page) {
   await page.goto('/app.html?view=live&channel=remote-site');
   return { diagnosticSubscriptions: () => diagnosticSubscriptions };
 }
+
+test('new Live presentation preferences start with active trunked channels only', async ({ page }) => {
+  expect(defaultPreferences.presentation.show_only_active_trunked_channels).toBe(true);
+  await openLive(page, defaultPreferences.presentation.show_only_active_trunked_channels);
+  await page.getByRole('button', { name: 'Live presentation settings' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Live presentation' });
+  await expect(dialog.getByRole('checkbox', { name: 'Show only active trunked channels' })).toBeChecked();
+});
 
 test('dedicated remote Live detail has one origin cue; mixed rows retain theirs', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });

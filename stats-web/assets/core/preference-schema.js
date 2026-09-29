@@ -17,7 +17,7 @@
       show_voice_decode_quality: true,
       decode_quality_display_mode: 'percentage',
       live_detail_row_limit: 200,
-      show_only_active_trunked_channels: false,
+      show_only_active_trunked_channels: true,
       retain_last_call_on_idle_rows: false,
       clear_voice_quality_when_idle: false
     }),

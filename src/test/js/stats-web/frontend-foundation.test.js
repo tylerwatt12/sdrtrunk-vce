@@ -1367,7 +1367,7 @@ async function main() {
     presentation: {
       show_encryption_details: true, show_control_decode_quality: true,
       show_voice_decode_quality: true, decode_quality_display_mode: 'percentage', live_detail_row_limit: 200,
-      show_only_active_trunked_channels: false, retain_last_call_on_idle_rows: false,
+      show_only_active_trunked_channels: true, retain_last_call_on_idle_rows: false,
       clear_voice_quality_when_idle: false
     },
     tuner: {
@@ -1381,6 +1381,9 @@ async function main() {
   assert.deepEqual(decodedDefaults.playback.selected_scan_list_ids, []);
   assert.equal(decodedDefaults.playback.target_grouping, true);
   assert.equal(decodedDefaults.playback.target_burst_limit, 4);
+  const savedActiveRowsOff = JSON.parse(JSON.stringify(decodedDefaults));
+  savedActiveRowsOff.presentation.show_only_active_trunked_channels = false;
+  assert.equal(preferenceSchema.validate(savedActiveRowsOff).presentation.show_only_active_trunked_channels, false);
   const upgradedAnonymousTables = vm.runInNewContext(
     `((value) => ${functionBinding(appSource, 'upgradeAnonymousTableLayouts')})({ sample: {
       schema: ['name'], column_order: ['name'], column_widths: {}, hidden_columns: []
