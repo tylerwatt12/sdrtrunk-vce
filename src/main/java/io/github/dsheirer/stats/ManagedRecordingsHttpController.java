@@ -69,8 +69,18 @@ final class ManagedRecordingsHttpController
     {
         try
         {
-            ManagedRecordingCatalog catalog = available();
             String path = exchange.getRequestURI().getRawPath();
+            if((BROWSE_PATH + "/status").equals(path))
+            {
+                requireMethod(exchange, "GET");
+                if(exchange.getRequestURI().getRawQuery() != null)
+                {
+                    throw new StatsApiException(400, "unknown_parameter", "Query is not supported");
+                }
+                ApiHttpResponse.sendData(exchange, 200, browseStatus());
+                return;
+            }
+            ManagedRecordingCatalog catalog = available();
             if((BROWSE_PATH + "/calls").equals(path))
             {
                 requireMethod(exchange, "GET");
@@ -229,6 +239,27 @@ final class ManagedRecordingsHttpController
             throw new StatsApiException(503, "recordings_unavailable", "Recordings are unavailable");
         }
         return catalog;
+    }
+
+    /** Exposes only the mode and catalog presence needed to render the public recordings page. */
+    private Map<String,Object> browseStatus() throws SQLException
+    {
+        ManagedRecordingCatalog catalog = mCatalog.get();
+        Map<String,Object> status = new LinkedHashMap<>();
+        status.put("mode", mPreferences.getRecordPreference().getRecordingMode().name());
+        status.put("available", catalog != null);
+        if(catalog == null)
+        {
+            status.put("call_count", null);
+            status.put("has_calls", false);
+        }
+        else
+        {
+            long callCount = catalog.stats().callCount();
+            status.put("call_count", callCount);
+            status.put("has_calls", callCount > 0);
+        }
+        return status;
     }
 
     private void search(HttpExchange exchange, ManagedRecordingCatalog catalog) throws SQLException, IOException

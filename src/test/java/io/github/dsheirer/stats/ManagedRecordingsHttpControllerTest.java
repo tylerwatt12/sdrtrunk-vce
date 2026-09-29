@@ -59,7 +59,7 @@ class ManagedRecordingsHttpControllerTest
     private UserPreferences mPreferences;
     private RecordingMode mOriginalMode;
     private Integer mOriginalRetention;
-    private ManagedRecordingCatalog mCatalog;
+    private volatile ManagedRecordingCatalog mCatalog;
     private ManagedRecordingMaintenance mMaintenance;
     private WebRequestSecurity mSecurity;
     private HttpServer mServer;
@@ -73,6 +73,7 @@ class ManagedRecordingsHttpControllerTest
         mPreferences = new UserPreferences();
         mOriginalMode = mPreferences.getRecordPreference().getRecordingMode();
         mOriginalRetention = mPreferences.getRecordPreference().getManagedRetentionDays();
+        mPreferences.getRecordPreference().setRecordingMode(RecordingMode.CLASSIC);
         Path mainDatabase = mDirectory.resolve("main.sqlite");
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mainDatabase))
         {
@@ -140,6 +141,15 @@ class ManagedRecordingsHttpControllerTest
     {
         String browse = ManagedRecordingsHttpController.BROWSE_PATH;
         String admin = ManagedRecordingsHttpController.ADMIN_PATH;
+        HttpResponse<String> initialStatus = send(request(browse + "/status").GET());
+        assertEquals(200, initialStatus.statusCode(), initialStatus.body());
+        assertEquals("CLASSIC", json(initialStatus).at("/data/mode").textValue());
+        assertTrue(json(initialStatus).at("/data/available").booleanValue());
+        assertTrue(json(initialStatus).at("/data/has_calls").booleanValue());
+        assertEquals(1, json(initialStatus).at("/data/call_count").longValue());
+        assertFalse(json(initialStatus).at("/data").has("managed_directory"));
+        assertFalse(json(initialStatus).at("/data").has("retention_days"));
+        assertEquals(400, send(request(browse + "/status?unexpected=1").GET()).statusCode());
         HttpResponse<String> search = send(request(browse + "/calls?from_ms=0&to_ms=5000")
             .GET());
         assertEquals(200, search.statusCode(), search.body());
@@ -165,6 +175,8 @@ class ManagedRecordingsHttpControllerTest
         assertEquals(200, update.statusCode(), update.body());
         assertEquals("MANAGED", json(update).at("/data/mode").textValue());
         assertEquals(30, json(update).at("/data/retention_days").intValue());
+        assertEquals("MANAGED", json(send(request(browse + "/status").GET()))
+            .at("/data/mode").textValue());
         assertEquals(200, send(request(admin + "/status")
             .header("Cookie", primary.cookie()).GET()).statusCode());
         HttpResponse<String> deletion = send(mutation(admin + "/calls", primary)
@@ -174,8 +186,34 @@ class ManagedRecordingsHttpControllerTest
         assertFalse(Files.exists(mDirectory.resolve("recordings-managed/one.mp3")));
         assertEquals(0, json(send(request(browse + "/calls?from_ms=0&to_ms=5000").GET()))
             .at("/data/calls").size());
+        HttpResponse<String> emptyStatus = send(request(browse + "/status").GET());
+        assertFalse(json(emptyStatus).at("/data/has_calls").booleanValue());
+        assertEquals(0, json(emptyStatus).at("/data/call_count").longValue());
         assertTrue(json(send(request(admin + "/status").header("Cookie", primary.cookie()).GET()))
             .at("/data/catalog/call_count").isNumber());
+    }
+
+    @Test
+    void publicStatusDistinguishesUnavailableCatalogFromEmptyCatalog() throws Exception
+    {
+        ManagedRecordingCatalog catalog = mCatalog;
+        mCatalog = null;
+        try
+        {
+            HttpResponse<String> response = send(request(
+                ManagedRecordingsHttpController.BROWSE_PATH + "/status").GET());
+            assertEquals(200, response.statusCode(), response.body());
+            JsonNode data = json(response).at("/data");
+            assertFalse(data.get("available").booleanValue());
+            assertFalse(data.get("has_calls").booleanValue());
+            assertTrue(data.get("call_count").isNull());
+            assertEquals(503, send(request(
+                ManagedRecordingsHttpController.BROWSE_PATH + "/calls").GET()).statusCode());
+        }
+        finally
+        {
+            mCatalog = catalog;
+        }
     }
 
     @Test
