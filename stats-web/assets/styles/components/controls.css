@@ -1130,3 +1130,24 @@
     justify-content: flex-start;
   }
 }
+
+/* A card-wide action leaves embedded links and secondary controls independently reachable. */
+.ui-card-play {
+  position: absolute;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.ui-card-play:hover {
+  color: var(--ink);
+}
+.ui-card-play:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+.ui-card-play-glyph {
+  font-size: var(--font-size-body);
+}

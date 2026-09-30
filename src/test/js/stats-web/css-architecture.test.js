@@ -13,7 +13,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/base.css?v=1") layer(reset);',
   '@import url("./styles/tokens.css?v=9") layer(tokens);',
   '@import url("./styles/components/semantic-text.css?v=1") layer(components);',
-  '@import url("./styles/components/controls.css?v=22") layer(components);',
+  '@import url("./styles/components/controls.css?v=23") layer(components);',
   '@import url("./styles/compositions/workspaces.css?v=14") layer(compositions);',
   '@import url("./styles/compositions/tables.css?v=9") layer(compositions);',
   '@import url("./styles/compositions/app-chrome.css?v=11") layer(compositions);',
@@ -44,7 +44,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/p25-settings.css?v=2") layer(features);',
   '@import url("./styles/features/receiver-health.css?v=5") layer(features);',
   '@import url("./styles/features/activity.css?v=3") layer(features);',
-  '@import url("./styles/features/recordings.css?v=3") layer(features);',
+  '@import url("./styles/features/recordings.css?v=4") layer(features);',
   '@import url("./styles/utilities/reduced-motion.css?v=10") layer(utilities);',
 ];
 

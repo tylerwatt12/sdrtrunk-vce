@@ -18,7 +18,7 @@
 
 .recordings-search-primary {
   display: grid;
-  grid-template-columns: minmax(170px, 245px) minmax(260px, 450px) max-content;
+  grid-template-columns: minmax(170px, 245px) minmax(0, 1fr) max-content;
   align-items: end;
   gap: var(--space-3);
 }
@@ -135,7 +135,6 @@
 }
 
 .recordings-search-actions,
-.recordings-call-actions,
 .recordings-selected {
   display: flex;
   flex-wrap: wrap;
@@ -198,40 +197,51 @@
 
 .recordings-shared:not(:empty),
 .recordings-selected:not(:empty) {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+}
+.recordings-shared-heading {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: baseline;
+}
+.recordings-shared-info {
+  margin-left: auto;
+}
+
+.recordings-shared-overline {
+  color: var(--muted);
+  font-size: var(--font-size-meta);
+}
+.recordings-shared-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2) var(--space-5);
+  margin: var(--space-3) 0 0;
+}
+.recordings-shared-fact {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(90px, 130px) minmax(0, 1fr);
+  gap: var(--space-2);
+}
+.recordings-shared-fact dt {
+  color: var(--muted);
+  font-size: var(--font-size-meta);
+}
+.recordings-shared-fact dd {
+  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.recordings-selected {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid var(--line);
-}
-
-.recordings-shared {
-  background: var(--accent-soft);
-}
-
-.recordings-shared-heading {
-  min-width: 0;
-  margin-right: auto;
-}
-
-.recordings-shared-overline {
-  color: var(--accent);
-  font-size: var(--font-size-meta);
-  font-weight: var(--font-weight-heading);
-  letter-spacing: .08em;
-}
-
-.recordings-shared-heading h3 {
-  margin: var(--space-1) 0;
-  font-size: var(--font-size-dialog-title);
-  overflow-wrap: anywhere;
-}
-
-.recordings-shared-heading p {
-  margin: 0;
-  color: var(--muted);
-  font-size: var(--font-size-meta);
 }
 
 .recordings-selected {
@@ -249,12 +259,14 @@
 }
 
 .recordings-call {
+  position: relative;
   min-width: 0;
   display: grid;
   grid-template-columns: auto minmax(84px, 110px) minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
+  padding-right: calc(var(--space-4) + var(--control-height));
   border-bottom: 1px solid var(--table-rule);
 }
 
@@ -303,13 +315,59 @@
   gap: var(--space-1) var(--space-3);
 }
 
-.recordings-call-actions {
-  justify-content: flex-end;
+.recordings-card-play {
+  inset: 0;
 }
-
-.recordings-call-actions button {
-  min-height: var(--control-height-compact);
-  padding-inline: var(--space-3);
+.recordings-play-glyph {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-4);
+}
+.recordings-call-info {
+  position: absolute;
+  right: var(--space-2);
+  bottom: var(--space-1);
+  z-index: 2;
+}
+.recordings-call-select, .recordings-call a {
+  position: relative;
+  z-index: 2;
+}
+.recordings-call-title {
+  font-weight: var(--font-weight-heading);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.recordings-call-context {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recordings-transcript-preview {
+  margin: var(--space-1) 0 0;
+  color: var(--muted);
+  font-size: var(--font-size-meta);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.recordings-choice-options {
+  display: grid;
+  gap: var(--space-2);
+}
+.recordings-choice-option {
+  display: grid;
+  text-align: left;
+  justify-items: start;
+  gap: var(--space-1);
+  white-space: normal;
+}
+.read-only-modal.recordings-playback-modal {
+  width: min(100%, 480px);
 }
 
 .recordings-detail {
@@ -357,7 +415,7 @@
   overflow-wrap: anywhere;
 }
 
-.recordings-detail-modal .read-only-modal {
+.read-only-modal.recordings-detail-modal {
   max-width: min(680px, calc(100vw - 2 * var(--modal-viewport-gap)));
 }
 
@@ -559,13 +617,12 @@
     grid-template-columns: minmax(84px, 110px) minmax(0, 1fr);
   }
 
-  .recordings-call-actions {
-    grid-column: 2 / -1;
-    justify-content: flex-start;
-  }
 }
 
 @media (max-width: 700px) {
+  .recordings-shared-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .recordings-search-fields,
   .recordings-custom-dates,
   .recordings-mode-choices,
@@ -641,14 +698,14 @@
     gap: var(--space-2);
     margin: var(--space-2);
     padding: var(--space-3);
+    padding-right: calc(var(--space-3) + var(--control-height));
     background: var(--surface);
     border: 1px solid var(--line);
     border-radius: var(--radius-card);
   }
 
   .recordings-call:not(:has(.recordings-call-select)) .recordings-call-time,
-  .recordings-call:not(:has(.recordings-call-select)) .recordings-call-main,
-  .recordings-call:not(:has(.recordings-call-select)) .recordings-call-actions {
+  .recordings-call:not(:has(.recordings-call-select)) .recordings-call-main {
     grid-column: 1 / -1;
   }
 
@@ -658,13 +715,8 @@
     gap: var(--space-2);
   }
 
-  .recordings-call-main,
-  .recordings-call-actions {
+  .recordings-call-main {
     grid-column: 1 / -1;
-  }
-
-  .recordings-call-actions button {
-    flex: 1 1 auto;
   }
 
   .recordings-player:not([hidden]) {
