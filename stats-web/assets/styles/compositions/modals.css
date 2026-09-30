@@ -20,6 +20,18 @@ body.modal-open {
   background: transparent;
 }
 
+.ui-popover.ui-icon-action-tooltip {
+  --ui-popover-padding: var(--space-1);
+  border-radius: var(--radius-control);
+  box-shadow: var(--shadow-raised);
+}
+
+.ui-popover.ui-icon-action-tooltip:popover-open {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
 .modal-backdrop {
   position: fixed;
   z-index: 100;

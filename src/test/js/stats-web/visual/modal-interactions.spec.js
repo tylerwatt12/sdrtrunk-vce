@@ -5,6 +5,8 @@ const { resolve } = require('node:path');
 const application = readFileSync(resolve(__dirname, '../../../../..', 'stats-web/assets/app.js'), 'utf8');
 const modalFoundation = application.slice(application.indexOf('function closeReadOnlyModal('),
   application.indexOf('function statsLoggingState('));
+const anchoredDropdown = application.slice(application.indexOf('function anchoredDropdownPlacement('),
+  application.indexOf('function compareTableValues('));
 const activityCellActions = application.slice(application.indexOf('function activityCellNavigation('),
   application.indexOf('function activityColumns('));
 
@@ -91,8 +93,12 @@ async function installStackHarness(page) {
 
 async function installSourceRadioActionHarness(page, theme) {
   await page.goto(`/design-system.html?theme=${theme}&view=gallery`);
-  await page.evaluate(({ modalSource, actionSource }) => {
+  await page.evaluate(({ dropdownSource, actionSource }) => {
+    const sprite = document.querySelector('body > svg[hidden]');
+    const hint = document.querySelector('.ui-icon-hint');
     document.body.replaceChildren();
+    if (sprite) document.body.append(sprite);
+    if (hint) document.body.append(hint);
     const node = (tag, className = '', text = null) => {
       const element = document.createElement(tag);
       element.className = className;
@@ -112,19 +118,29 @@ async function installSourceRadioActionHarness(page, theme) {
       link.append(valueNode(content));
       return link;
     };
+    const iconGlyph = (icon) => {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+      svg.setAttribute('aria-hidden', 'true');
+      use.setAttribute('href', `#visual-${icon}`);
+      svg.append(use);
+      return svg;
+    };
     const harness = new Function('node', 'valueNode', 'iconButton', 'anchor', 'iconGlyph',
       'capabilityAllowed', 'ACCESS_CAPABILITIES', 'entityTarget',
       'activityCellFilterRouteOverrides', 'currentHref',
-      `let activeReadOnlyModal = null; let activityCellActionSequence = 0;
-      ${modalSource}\n${actionSource}\nreturn { activityCellValue };`);
+      `let activeRenderController = null; let activityCellActionSequence = 0;
+      ${dropdownSource}\n${actionSource}\nreturn { activityCellValue };`);
     const { activityCellValue } = harness(node, valueNode, iconButton, anchor,
-      () => node('span'), () => true, { RADIO: 'radio' }, () => '/radios/2808137',
+      iconGlyph, () => true, { RADIO: 'radio' }, () => '/radios/2808137',
       () => ({ sourceId: 2808137 }), () => '/activity?sourceId=2808137');
     document.body.append(activityCellValue('2808137',
       { id: 1, source_entity_ref: { id: 2808137 } }, 'source', {}, {}));
-  }, { modalSource: modalFoundation, actionSource: activityCellActions });
-  await page.locator('.activity-cell-action-link').click();
-  return page.getByRole('dialog', { name: '2808137 actions' });
+  }, { dropdownSource: anchoredDropdown, actionSource: activityCellActions });
+  return {
+    trigger: page.locator('.activity-cell-action-link'),
+    tooltip: page.getByRole('group', { name: 'source radio 2808137 actions' })
+  };
 }
 
 test('modal backdrop dismisses only when a primary pointer starts and ends on it', async ({ page }) => {
@@ -211,61 +227,131 @@ for (const theme of ['light', 'dark']) {
     { name: 'desktop', width: 1100, height: 800 },
     { name: 'mobile', width: 390, height: 844 }
   ]) {
-    test(`source radio actions align at ${viewport.name} size in ${theme} theme`, async ({ page }) => {
+    test(`source radio action tooltip fits ${viewport.name} in ${theme} theme`, async ({ page }) => {
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
-      await page.goto(`/design-system.html?theme=${theme}&view=activity-action-modal`);
-      const specimen = page.getByRole('dialog', { name: '2808137 actions' });
-      await expect(specimen).toHaveScreenshot(`activity-action-modal-${theme}-${viewport.name}.png`);
+      await page.goto(`/design-system.html?theme=${theme}&view=activity-action-tooltip`);
+      const specimen = page.getByRole('group', { name: 'source radio 2808137 actions' });
+      await expect(specimen).toBeVisible();
+      await expect(page.locator('.visual-activity-action-tooltip-example'))
+        .toHaveScreenshot(`activity-action-tooltip-${theme}-${viewport.name}.png`);
 
-      const dialog = await installSourceRadioActionHarness(page, theme);
-      await expect(dialog).toBeVisible();
-      const links = dialog.locator('.tuner-frequency-action');
-      await expect(links).toHaveCount(2);
-      await expect(links.first()).toContainText('Filter activity');
-      await expect(links.last()).toContainText('Open source details');
+      const { trigger, tooltip } = await installSourceRadioActionHarness(page, theme);
+      await trigger.click();
+      await expect(tooltip).toBeVisible();
+      await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+      await expect(trigger).toHaveAttribute('aria-controls', await tooltip.getAttribute('id'));
+      await expect(tooltip).toHaveAttribute('popover', 'auto');
+      const actions = tooltip.locator('a.activity-cell-action-icon.ui-icon-button');
+      await expect(actions).toHaveCount(2);
+      await expect(actions.nth(0)).toHaveAttribute('aria-label', 'Filter activity by this source radio');
+      await expect(actions.nth(0)).toHaveAttribute('href', '/activity?sourceId=2808137');
+      await expect(actions.nth(0).locator('svg use')).toHaveAttribute('href', '#visual-icon-filter');
+      await expect(actions.nth(1)).toHaveAttribute('aria-label', 'Open source radio details');
+      await expect(actions.nth(1)).toHaveAttribute('href', '/radios/2808137');
+      await expect(actions.nth(1).locator('svg use')).toHaveAttribute('href', '#visual-icon-open-details');
+      await expect(page.locator('.modal-backdrop:visible')).toHaveCount(0);
+      await expect(page.locator('body')).not.toHaveClass(/modal-open/);
 
-      const layout = await dialog.evaluate((element) => {
-        const bounds = (node) => {
-          const { left, right, top, bottom, width } = node.getBoundingClientRect();
-          return { left, right, top, bottom, width };
-        };
-        const actions = [...element.querySelectorAll('.tuner-frequency-action')];
-        return {
-          dialog: bounds(element),
-          overflow: element.scrollWidth - element.clientWidth,
-          links: actions.map((action) => ({
-            bounds: bounds(action),
-            overflow: action.scrollWidth - action.clientWidth,
-            title: bounds(action.querySelector('strong')),
-            description: bounds(action.querySelector('small'))
-          }))
-        };
-      });
-      const [filter, details] = layout.links;
-      expect(Math.abs(filter.bounds.left - details.bounds.left)).toBeLessThanOrEqual(1);
-      expect(Math.abs(filter.bounds.width - details.bounds.width)).toBeLessThanOrEqual(1);
-      expect(Math.abs(filter.title.left - details.title.left)).toBeLessThanOrEqual(1);
-      expect(layout.overflow).toBeLessThanOrEqual(1);
-      for (const action of layout.links) {
-        expect(action.overflow).toBeLessThanOrEqual(1);
-        expect(action.title.right).toBeLessThanOrEqual(action.bounds.right);
-        expect(action.description.right).toBeLessThanOrEqual(action.bounds.right);
-      }
-
-      if (viewport.name === 'desktop') {
-        expect(layout.dialog.width).toBeLessThan(viewport.width);
-        expect(Math.abs(filter.description.left - details.description.left)).toBeLessThanOrEqual(1);
-        for (const action of layout.links) {
-          expect(action.description.left).toBeGreaterThan(action.title.right);
-        }
-      } else {
-        expect(layout.dialog.left).toBeGreaterThanOrEqual(0);
-        expect(layout.dialog.right).toBeLessThanOrEqual(viewport.width);
-        for (const action of layout.links) {
-          expect(Math.abs(action.title.left - action.description.left)).toBeLessThanOrEqual(1);
-          expect(action.description.top).toBeGreaterThanOrEqual(action.title.bottom);
-        }
-      }
+      const bounds = await tooltip.boundingBox();
+      expect(bounds.x).toBeGreaterThanOrEqual(0);
+      expect(bounds.y).toBeGreaterThanOrEqual(0);
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(viewport.width);
+      expect(bounds.y + bounds.height).toBeLessThanOrEqual(viewport.height);
     });
   }
 }
+
+test('activity icon tooltip follows hover and click, with shared icon hints', async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 650 });
+  const { trigger, tooltip } = await installSourceRadioActionHarness(page, 'light');
+  await trigger.hover();
+  await expect(tooltip).toBeVisible();
+  const filter = tooltip.getByRole('link', { name: 'Filter activity by this source radio' });
+  await filter.hover();
+  await expect(tooltip).toBeVisible();
+  const hint = page.locator('.ui-icon-hint');
+  await expect(hint).toHaveText('Filter activity by this source radio');
+  await expect(hint).toBeVisible();
+  await page.mouse.move(1, 50);
+  await expect(tooltip).toHaveCount(0);
+  await expect(hint).toBeHidden();
+
+  await trigger.click();
+  await expect(tooltip).toBeVisible();
+  await page.mouse.move(1, 50);
+  await expect(tooltip).toBeVisible();
+  await page.mouse.click(1, 50);
+  await expect(tooltip).toHaveCount(0);
+  await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+});
+
+test('activity icon tooltip opens with keyboard and Escape returns focus', async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 650 });
+  const { trigger, tooltip } = await installSourceRadioActionHarness(page, 'light');
+  await page.keyboard.press('Tab');
+  await expect(trigger).toBeFocused();
+  await expect(tooltip).toBeVisible();
+  await page.keyboard.press('Enter');
+  await expect(tooltip.getByRole('link', { name: 'Filter activity by this source radio' })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(tooltip.getByRole('link', { name: 'Open source radio details' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(tooltip).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+});
+
+test('activity icon tooltip escapes a clipped table at the viewport edge', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 600 });
+  const { trigger, tooltip } = await installSourceRadioActionHarness(page, 'light');
+  await trigger.evaluate((element) => {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'ui-table-wrap';
+    Object.assign(wrapper.style, {
+      position: 'fixed', right: '8px', bottom: '8px', width: '160px', height: '40px',
+      overflow: 'hidden'
+    });
+    const table = document.createElement('table');
+    table.className = 'ui-data-table';
+    element.replaceWith(wrapper);
+    table.insertRow().insertCell().append(element);
+    wrapper.append(table);
+  });
+  const table = page.locator('.ui-table-wrap');
+  await trigger.click();
+  await expect(tooltip).toBeVisible();
+  const [tableBounds, tooltipBounds] = await Promise.all([table.boundingBox(), tooltip.boundingBox()]);
+  expect(tooltipBounds.y).toBeLessThan(tableBounds.y);
+  expect(tooltipBounds.x).toBeGreaterThanOrEqual(0);
+  expect(tooltipBounds.x + tooltipBounds.width).toBeLessThanOrEqual(390);
+  expect(tooltipBounds.y + tooltipBounds.height).toBeLessThanOrEqual(600);
+});
+
+test.describe('touch activity cell actions', () => {
+  test.use({ hasTouch: true });
+
+  test('tap opens icon actions and outside tap dismisses them', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const { trigger, tooltip } = await installSourceRadioActionHarness(page, 'light');
+    await page.evaluate(() => {
+      window.activityActionHref = '';
+      document.addEventListener('click', (event) => {
+        const action = event.target.closest('.activity-cell-action-icon');
+        if (!action) return;
+        window.activityActionHref = action.getAttribute('href');
+        event.preventDefault();
+      }, true);
+    });
+    await trigger.tap();
+    await expect(tooltip).toBeVisible();
+    await tooltip.getByRole('link', { name: 'Filter activity by this source radio' }).tap();
+    await expect.poll(() => page.evaluate(() => window.activityActionHref))
+      .toBe('/activity?sourceId=2808137');
+    await tooltip.getByRole('link', { name: 'Open source radio details' }).tap();
+    await expect.poll(() => page.evaluate(() => window.activityActionHref))
+      .toBe('/radios/2808137');
+    await page.touchscreen.tap(350, 400);
+    await expect(tooltip).toHaveCount(0);
+    await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+  });
+});

@@ -129,6 +129,8 @@ class StatsWebActivityFiltersUiContractTest
             "function activityCellFilterRouteOverrides(filters, context, row, columnId)");
         String value = function(source,
             "function activityCellValue(displayValue, row, columnId, context, filters)");
+        String tooltip = function(source,
+            "function showActivityCellActionTooltip(trigger, dimension, text, filterTarget, navigation, options = {})");
         String columns = function(source, "function activityColumns(context, filters)");
         String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
 
@@ -140,11 +142,19 @@ class StatsWebActivityFiltersUiContractTest
         assertTrue(mapper.contains("radioRole: 'target'"));
         assertTrue(routes.contains("activityFilterRouteOverrides({ ...filters, ...patch })"));
         assertTrue(value.contains("currentHref(filterOverrides)"));
-        assertTrue(value.contains("aria-haspopup', 'dialog'"));
+        assertTrue(value.contains("aria-expanded"));
         assertTrue(value.contains("event.metaKey || event.ctrlKey || event.shiftKey || event.altKey"));
-        assertTrue(value.contains("openReadOnlyModal"));
-        assertTrue(value.contains("'Filter activity'"));
-        assertTrue(value.contains("returnFocusSelector"));
+        assertTrue(value.contains("showActivityCellActionTooltip("));
+        assertFalse(value.contains("openReadOnlyModal"));
+        assertFalse(value.contains("aria-haspopup', 'dialog'"));
+        assertTrue(tooltip.contains("activity-cell-action-tooltip"));
+        assertTrue(tooltip.contains("ui-icon-action-tooltip"));
+        assertTrue(tooltip.contains("ui-icon-button"));
+        assertTrue(tooltip.contains("aria-controls"));
+        assertTrue(tooltip.contains("setAttribute('popover', 'auto')"));
+        assertTrue(tooltip.contains("setAttribute('role', 'group')"));
+        assertTrue(tooltip.contains("Filter activity"));
+        assertFalse(tooltip.contains("openReadOnlyModal"));
         assertTrue(columns.contains("activityCellValue"));
         assertTrue(activity.contains("activityColumnsForContext(activityContext, filters)"));
     }

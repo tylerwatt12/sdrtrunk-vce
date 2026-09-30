@@ -339,7 +339,7 @@ function initializeScanListCatalog() {
 
 const parameters = new URLSearchParams(window.location.search);
 const theme = parameters.get('theme') === 'dark' ? 'dark' : 'light';
-const view = ['mobile-table', 'gallery', 'app-chrome', 'access-landing', 'access-login-modal', 'modal', 'modal-long', 'alias-list-create-modal', 'activity-action-modal', 'health-alert-modal', 'focus', 'settings', 'health', 'p25', 'admin-access',
+const view = ['mobile-table', 'gallery', 'app-chrome', 'access-landing', 'access-login-modal', 'modal', 'modal-long', 'alias-list-create-modal', 'activity-action-tooltip', 'health-alert-modal', 'focus', 'settings', 'health', 'p25', 'admin-access',
   'admin-receiver', 'admin-support', 'dashboard-health', 'dashboard-calls', 'dashboard-activity',
   'signal-quality-detail', 'radioreference-results',
   'radio-directory-coverage', 'radio-directory-panel', 'admin-scan-lists',
@@ -348,6 +348,20 @@ const view = ['mobile-table', 'gallery', 'app-chrome', 'access-landing', 'access
   parameters.get('view') : 'gallery';
 document.documentElement.dataset.theme = theme;
 document.body.dataset.galleryView = view;
+if (view === 'activity-action-tooltip') {
+  const trigger = document.querySelector('#visual-activity-cell-trigger');
+  const tooltip = document.querySelector('#visual-activity-cell-tooltip');
+  tooltip.showPopover();
+  const positionTooltip = () => {
+    const anchor = trigger.getBoundingClientRect();
+    const panel = tooltip.getBoundingClientRect();
+    tooltip.style.left = `${Math.max(8, Math.min(anchor.right - panel.width,
+      window.innerWidth - panel.width - 8))}px`;
+    tooltip.style.top = `${anchor.bottom + 6}px`;
+  };
+  positionTooltip();
+  window.addEventListener('resize', positionTooltip);
+}
 if(view === 'access-landing' || view === 'access-login-modal') {
   const example = document.querySelector(view === 'access-landing' ?
     '.visual-access-landing-example' : '.visual-access-login-modal-example');

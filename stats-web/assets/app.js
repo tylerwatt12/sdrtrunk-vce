@@ -18180,6 +18180,92 @@ function activityCellDimension(columnId) {
   })[columnId] || 'value';
 }
 
+let activeActivityCellActionTooltip = null;
+
+function showActivityCellActionTooltip(trigger, dimension, text, filterTarget, navigation, options = {}) {
+  const current = activeActivityCellActionTooltip;
+  if (current?.trigger === trigger && current.panel.matches(':popover-open')) {
+    if (options.pin) current.pinned = true;
+    if (options.focus) current.filter.focus({ preventScroll: true });
+    return current;
+  }
+  current?.close();
+
+  const panel = node('div', 'ui-popover ui-icon-action-tooltip activity-cell-action-tooltip');
+  panel.id = `activity-cell-action-tooltip-${++activityCellActionSequence}`;
+  panel.setAttribute('popover', 'auto');
+  panel.setAttribute('role', 'group');
+  panel.setAttribute('aria-label', `${dimension} ${text} actions`);
+  const action = (target, icon, label) => {
+    const link = anchor(iconGlyph(icon), target,
+      'ui-button ui-button-secondary ui-icon-button activity-cell-action-icon');
+    link.setAttribute('aria-label', label);
+    link.title = label;
+    return link;
+  };
+  const filter = action(filterTarget, 'icon-filter', `Filter activity by this ${dimension}`);
+  const details = action(navigation.target, 'icon-open-details', `Open ${dimension} details`);
+  panel.append(filter, details);
+  trigger.setAttribute('aria-controls', panel.id);
+  const cleanupDropdown = bindAnchoredDropdown(trigger, panel, activeRenderController?.signal);
+  let hideTimer = null;
+  let closed = false;
+  let state = null;
+  const cancelHide = () => {
+    window.clearTimeout(hideTimer);
+    hideTimer = null;
+  };
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+    cancelHide();
+    cleanupDropdown();
+    panel.remove();
+    trigger.removeAttribute('aria-controls');
+    if (activeActivityCellActionTooltip === state) activeActivityCellActionTooltip = null;
+  };
+  const close = (returnFocus = false) => {
+    if (!closed && panel.matches(':popover-open')) panel.hidePopover();
+    cleanup();
+    if (returnFocus && trigger.isConnected) {
+      trigger.dataset.activityTooltipReturningFocus = '';
+      trigger.focus({ preventScroll: true });
+      window.queueMicrotask(() => delete trigger.dataset.activityTooltipReturningFocus);
+    }
+  };
+  const scheduleHide = () => {
+    if (state?.pinned) return;
+    cancelHide();
+    hideTimer = window.setTimeout(() => {
+      if (!state?.pinned && !trigger.matches(':hover, :focus-visible') &&
+          !panel.matches(':hover') && !panel.contains(document.activeElement)) close();
+    }, 140);
+  };
+  panel.addEventListener('toggle', (event) => {
+    if (event.newState === 'closed') cleanup();
+  });
+  panel.addEventListener('pointerenter', cancelHide);
+  panel.addEventListener('pointerleave', scheduleHide);
+  panel.addEventListener('focusout', (event) => {
+    if (event.relatedTarget === trigger || panel.contains(event.relatedTarget)) return;
+    window.setTimeout(() => {
+      if (!panel.contains(document.activeElement) && document.activeElement !== trigger) close();
+    }, 0);
+  });
+  panel.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    close(true);
+  });
+  trigger.after(panel);
+  panel.showPopover();
+  state = { trigger, panel, filter, close, scheduleHide, pinned: Boolean(options.pin) };
+  activeActivityCellActionTooltip = state;
+  if (options.focus) filter.focus({ preventScroll: true });
+  return state;
+}
+
 function activityCellValue(displayValue, row, columnId, context, filters) {
   const text = displayValue instanceof Node ? displayValue.textContent.trim() : String(displayValue || '').trim();
   if (!text) return displayValue;
@@ -18204,29 +18290,53 @@ function activityCellValue(displayValue, row, columnId, context, filters) {
   const triggerId = `activity-cell-action-${rowKey}-${columnId}`;
   const trigger = anchor(displayValue, navigation.target, 'activity-cell-action-link');
   trigger.id = triggerId;
-  trigger.title = 'Choose whether to open details or filter Activity';
-  trigger.setAttribute('aria-haspopup', 'dialog');
   trigger.setAttribute('aria-label', `${dimension} ${text} actions`);
+  trigger.setAttribute('aria-expanded', 'false');
   trigger.append(iconGlyph('icon-chevron-down'));
+  let hoverTimer = null;
+  const clearHoverTimer = () => {
+    window.clearTimeout(hoverTimer);
+    hoverTimer = null;
+  };
+  const show = (options = {}) => showActivityCellActionTooltip(
+    trigger, dimension, text, filterTarget, navigation, options);
+  trigger.addEventListener('pointerenter', (event) => {
+    if (event.pointerType !== 'mouse' && event.pointerType !== 'pen') return;
+    clearHoverTimer();
+    hoverTimer = window.setTimeout(() => show(), 250);
+  });
+  trigger.addEventListener('pointerleave', () => {
+    clearHoverTimer();
+    if (activeActivityCellActionTooltip?.trigger === trigger)
+      activeActivityCellActionTooltip.scheduleHide();
+  });
+  trigger.addEventListener('focusin', () => {
+    if (!trigger.hasAttribute('data-activity-tooltip-returning-focus') &&
+        trigger.matches(':focus-visible')) show();
+  });
+  trigger.addEventListener('focusout', (event) => {
+    const active = activeActivityCellActionTooltip;
+    if (active?.trigger === trigger && !active.panel.contains(event.relatedTarget)) active.scheduleHide();
+  });
+  trigger.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && activeActivityCellActionTooltip?.trigger === trigger) {
+      event.preventDefault();
+      activeActivityCellActionTooltip.close(true);
+    } else if (event.key === 'Enter' || event.key === ' ' || event.key === 'ArrowDown') {
+      event.preventDefault();
+      clearHoverTimer();
+      show({ pin: true, focus: true });
+    } else if (event.key === 'Tab' && !event.shiftKey &&
+        activeActivityCellActionTooltip?.trigger === trigger) {
+      event.preventDefault();
+      activeActivityCellActionTooltip.filter.focus({ preventScroll: true });
+    }
+  });
   trigger.addEventListener('click', (event) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
-    const body = node('div', 'tuner-frequency-action-body');
-    body.append(node('p', 'tuner-frequency-action-intro', `Choose what to do with ${dimension} ${text}.`));
-    const actions = node('div', 'tuner-frequency-action-list');
-    const filterLink = anchor('', filterTarget, 'ui-button ui-button-secondary tuner-frequency-action');
-    filterLink.append(node('strong', '', 'Filter activity'),
-      node('small', '', `Show only rows with this ${dimension}.`));
-    const detailsLink = anchor('', navigation.target,
-      'ui-button ui-button-secondary tuner-frequency-action');
-    detailsLink.append(node('strong', '', navigation.title),
-      node('small', '', navigation.description));
-    actions.append(filterLink, detailsLink);
-    body.append(actions);
-    openReadOnlyModal(`${text} actions`, body, {
-      id: 'activity-cell-actions', className: 'frequency-action-modal',
-      returnFocusSelector: `#${triggerId}`
-    });
+    clearHoverTimer();
+    show({ pin: true, focus: true });
   });
   return trigger;
 }
