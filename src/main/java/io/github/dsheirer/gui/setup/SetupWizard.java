@@ -1189,8 +1189,6 @@ public final class SetupWizard extends JDialog
         next.setText("Launch VCE & open browser");
         paragraph("Your browser will open on this computer when you launch VCE. If it shows a certificate warning, follow the pictured steps.");
         paragraph("This computer's VCE web address: " + address);
-        notice("Check the address first", "On this computer, only continue if the browser address starts with " +
-            address + ". If it shows a different address, go back.", false);
         if(app.isStatsWebServerAnyIpEnabled())
             paragraph("On another device, use this computer's reachable address with port " + app.getStatsWebServerPort() +
                 ". Check the address you intended to open before continuing there.");

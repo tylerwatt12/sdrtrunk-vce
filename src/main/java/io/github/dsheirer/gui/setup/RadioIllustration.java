@@ -5,37 +5,31 @@ import java.net.URL;
 import javax.swing.ImageIcon;
 import javax.swing.JPanel;
 
-/** Bundled, resolution-independent dusk-radio artwork; no downloads or additional rendering framework. */
+/** Bundled setup artwork that matches the web sign-in scene. */
 final class RadioIllustration extends JPanel
 {
-    private static final Image VCE_WORDMARK = loadWordmark();
+    private static final Image WIREFRAME = loadImage("/images/app/vce-wizard-wireframe.png");
+    private static final Image VCE_WORDMARK = loadImage("/images/app/vce-wordmark.png");
 
-    RadioIllustration() { setPreferredSize(new Dimension(235, 215)); getAccessibleContext().setAccessibleName("VCE radio tower at dusk"); }
+    RadioIllustration() { setPreferredSize(new Dimension(235, 215)); getAccessibleContext().setAccessibleName("VCE geometric wireframe artwork"); }
     @Override protected void paintComponent(Graphics graphics)
     {
         super.paintComponent(graphics);
         Graphics2D g=(Graphics2D)graphics.create();
         try
         {
-            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,RenderingHints.VALUE_ANTIALIAS_ON);
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,RenderingHints.VALUE_INTERPOLATION_BICUBIC);
             double scale=getWidth()/235.0; g.scale(scale,getHeight()/215.0);
-            g.setPaint(new GradientPaint(0,0,new Color(23,30,68),235,215,new Color(173,89,96))); g.fillRect(0,0,235,215);
-            g.setColor(new Color(255,202,153)); g.fillOval(166,48,35,35);
-            g.setColor(new Color(53,54,88)); g.fillPolygon(new int[]{0,50,104,166,235,235,0},new int[]{149,97,151,113,154,215,215},7);
-            g.setColor(new Color(24,37,63)); g.fillPolygon(new int[]{0,73,139,205,235,235,0},new int[]{170,139,171,144,159,215,215},7);
-            g.setStroke(new BasicStroke(3)); g.setColor(new Color(223,222,226));
-            g.drawLine(90,157,112,62); g.drawLine(134,157,112,62); g.drawLine(95,134,129,134); g.drawLine(100,113,124,113);
-            g.drawLine(95,134,124,113); g.drawLine(100,113,129,134); g.drawLine(112,62,112,47);
-            g.setColor(new Color(246,157,123)); g.drawArc(85,31,54,48,135,90); g.drawArc(95,40,34,30,135,90);
-            g.drawArc(85,31,54,48,-45,90); g.drawArc(95,40,34,30,-45,90);
-            g.drawImage(VCE_WORDMARK,19,174,73,22,this);
+            if(WIREFRAME != null) g.drawImage(WIREFRAME,0,0,235,215,this);
+            else { g.setColor(new Color(7,17,29)); g.fillRect(0,0,235,215); }
+            if(VCE_WORDMARK != null) g.drawImage(VCE_WORDMARK,19,174,73,22,this);
         }
         finally { g.dispose(); }
     }
 
-    private static Image loadWordmark()
+    private static Image loadImage(String path)
     {
-        URL resource = RadioIllustration.class.getResource("/images/app/vce-wordmark.png");
+        URL resource = RadioIllustration.class.getResource(path);
         return resource != null ? new ImageIcon(resource).getImage() : null;
     }
 }
