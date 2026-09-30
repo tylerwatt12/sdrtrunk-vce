@@ -110,4 +110,14 @@ test('real Alias Editor bulk actions stay above a long table while scrolling', a
     return table.top < stickyTop && table.bottom > window.innerHeight &&
       Math.abs(bounds.top - stickyTop) <= 2 && bounds.bottom <= window.innerHeight;
   })).toBe(true);
+
+  await bar.getByRole('button', { name: 'Delete', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Delete · 1 aliases' });
+  const confirmation = dialog.getByRole('checkbox', {
+    name: 'I understand this permanently deletes exactly 1 selected aliases.'
+  });
+  await expect(confirmation).toHaveClass('ui-selection-check');
+  await expect(confirmation).toHaveCSS('appearance', 'none');
+  await confirmation.check();
+  await expect(confirmation).toBeChecked();
 });

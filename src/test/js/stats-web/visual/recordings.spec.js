@@ -164,6 +164,9 @@ for (const theme of ['light', 'dark']) {
     await page.setViewportSize({ width: 1280, height: 900 });
     await openRecordings(page, { theme });
     await expect(page.locator('.recordings-call')).toHaveCount(1);
+    const rowSelection = page.locator('.recordings-call-select');
+    await expect(rowSelection).toHaveClass(/ui-selection-check/);
+    await expect(rowSelection).toHaveCSS('appearance', 'none');
     const time = page.getByRole('combobox', { name: 'Date & time' });
     const query = page.getByRole('combobox', { name: 'Find a call' });
     const timeBox = await time.boundingBox();

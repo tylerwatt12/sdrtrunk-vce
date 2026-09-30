@@ -639,7 +639,7 @@ export function createRecordingsFeature(deps) {
     main.append(meta);
     const actions = actionBar(row);
     if (isPrimaryAdmin()) {
-      const checkbox = node('input', 'recordings-call-select');
+      const checkbox = node('input', 'recordings-call-select ui-selection-check');
       checkbox.type = 'checkbox';
       checkbox.checked = selection.has(String(row.id));
       checkbox.setAttribute('aria-label', `Select ${label(row)} at ${dateTime(millis(row))}`);

@@ -25,7 +25,9 @@ function snapshot() {
       feeds: [{ feed_id: 'north-control', display_name: 'Metro North', protocol: 'P25_PHASE1',
         frequency_hz: 855_862_500, system_name: 'Metro', site_name: 'North', state: 'CONNECTED',
         channel_configuration_id: 'local-channel-1', alias_list_id: 1, enabled: true }] }],
-    alias_lists: [{ alias_list_id: 1, name: 'P25' }], export_channel_options: []
+    alias_lists: [{ alias_list_id: 1, name: 'P25' }],
+    export_channel_options: [{ channel_configuration_id: 'local-channel-1', name: 'Metro North',
+      system_name: 'Metro', site_name: 'North', protocol: 'P25_PHASE1' }]
   };
 }
 
@@ -152,6 +154,17 @@ test('the sender preference and local feed stay editable without adoption fields
   expect(writes[1]).toEqual({ revision: 'fixture-revision', display_name: 'Metro North',
     alias_list_id: 1, enabled: false });
   await expect(page.locator('.remote-links-feed-card')).toContainText('disabled');
+});
+
+test('outbound system selection uses the themed checkbox', async ({ page }) => {
+  await openApp(page);
+  await page.getByRole('button', { name: 'Configure sender' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Outbound remote sender' });
+  const system = dialog.getByRole('checkbox', { name: /Metro North/ });
+  await expect(system).toHaveClass('ui-selection-check');
+  await expect(system).toHaveCSS('appearance', 'none');
+  await system.check();
+  await expect(system).toBeChecked();
 });
 
 test('new credential is announced and guarded until its secret is copied', async ({ page }) => {

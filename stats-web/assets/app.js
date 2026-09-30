@@ -22,8 +22,8 @@ import {
 import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=19';
 import { createStreamingWorkspace } from './features/streaming.js?v=5';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=1';
-import { createRemoteLinksWorkspace } from './features/remote-links.js?v=7';
-import { createRecordingsFeature } from './features/recordings.js?v=4';
+import { createRemoteLinksWorkspace } from './features/remote-links.js?v=8';
+import { createRecordingsFeature } from './features/recordings.js?v=5';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=4';
 
@@ -4434,7 +4434,7 @@ async function openAliasListDeleteModal(selectedList) {
         `${number(assignedChannels)} configured channels use this list. Reassign them before deleting the list.`));
     }
     const confirm = node('label', 'alias-confirm-check');
-    const checkbox = node('input');
+    const checkbox = node('input', 'ui-selection-check');
     checkbox.type = 'checkbox';
     confirm.append(checkbox, node('span', '', 'I understand this cannot be undone.'));
     const errorHost = node('div', 'alias-form-message');
@@ -5319,7 +5319,7 @@ function openAliasBulkModal(kind) {
   } else if (kind === 'delete') {
     submitLabel = `Delete ${number(ids.length)} Aliases`;
     const confirm = node('label', 'alias-confirm-check');
-    const checkbox = node('input');
+    const checkbox = node('input', 'ui-selection-check');
     checkbox.type = 'checkbox';
     confirm.append(checkbox, node('span', '',
       `I understand this permanently deletes exactly ${number(ids.length)} selected aliases.`));

@@ -340,13 +340,6 @@
   text-align: center;
 }
 
-.alias-row-select {
-  width: 17px;
-  height: 17px;
-  margin: 0;
-  accent-color: var(--accent);
-}
-
 .alias-bulk-bar {
   min-width: 0;
   flex-wrap: wrap;

@@ -304,7 +304,7 @@ export function createRemoteLinksWorkspace(deps) {
   }
 
   function input(type, value = '') {
-    const control = node('input', 'ui-input');
+    const control = node('input', type === 'checkbox' ? 'ui-selection-check' : 'ui-input');
     control.type = type;
     control.value = value ?? '';
     return control;
