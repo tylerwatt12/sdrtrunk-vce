@@ -74,7 +74,8 @@ async function main() {
 
   assert.match(application, /id: 'operations', label: 'Call output & activity'/);
   assert.match(application, /active === 'operations'\) await renderAdminOperationalPreferences/);
-  assert.match(application, /Administration > Call output & activity/);
+  assert.match(functionSource('function detailedHistoryNotice()'),
+    /anchor\('Call output & activity', href\('admin', \{ tab: 'operations' \}\)\)/);
   assert.doesNotMatch(application, /Stats & Web > Stats Server/);
 
   const page = functionSource('async function renderAdminOperationalPreferences(');
