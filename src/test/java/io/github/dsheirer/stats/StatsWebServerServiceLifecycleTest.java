@@ -65,6 +65,100 @@ class StatsWebServerServiceLifecycleTest
     }
 
     @Test
+    void listenerValidationDoesNotServeReceiverStatusAndReleasesPortForRuntime() throws Exception
+    {
+        assertListenerValidationDoesNotServeReceiverStatusAndReleasesPortForRuntime(false);
+    }
+
+    @Test
+    void httpsListenerValidationDoesNotServeReceiverStatusAndReleasesPortForRuntime() throws Exception
+    {
+        assertListenerValidationDoesNotServeReceiverStatusAndReleasesPortForRuntime(true);
+    }
+
+    private void assertListenerValidationDoesNotServeReceiverStatusAndReleasesPortForRuntime(boolean httpsEnabled)
+        throws Exception
+    {
+        Path dataRoot = mTemporaryDirectory.resolve("validation-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Path assets = mTemporaryDirectory.resolve("validation-assets");
+        Files.createDirectories(assets);
+        Files.writeString(assets.resolve("index.html"), "<!doctype html><title>receiver</title>");
+        String previousAssetOverride = System.getProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY);
+        System.setProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY, assets.toString());
+        TestApplicationPreference applicationPreference = new TestApplicationPreference(0, false, httpsEnabled, true);
+        TestUserPreferences preferences = new TestUserPreferences(applicationPreference,
+            new TestDirectoryPreference(dataRoot));
+        HttpClient client;
+
+        try
+        {
+            int port;
+            URI serverOrigin;
+            try(StatsWebServerService validation = StatsWebServerService.forListenerValidation(preferences))
+            {
+                assertTrue(validation.getRuntimeState().running(), validation.getRuntimeState().statusMessage());
+                assertEquals(httpsEnabled, validation.getRuntimeState().https());
+                port = validation.getRuntimeState().port();
+                serverOrigin = URI.create((httpsEnabled ? "https" : "http") + "://127.0.0.1:" + port + "/");
+                client = httpsEnabled ? httpsClient(validation.getTlsMaterialService().validateInstalledMaterial()) :
+                    HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+                for(String path: List.of("/", "/api/v1/status", WebSessionHttpController.SESSION_PATH,
+                    "/assets/app.js"))
+                {
+                    HttpResponse<String> response = client.send(HttpRequest.newBuilder(serverOrigin.resolve(path))
+                        .timeout(Duration.ofSeconds(5)).GET().build(), HttpResponse.BodyHandlers.ofString());
+                    assertEquals(503, response.statusCode(), path + ": " + response.body());
+                    assertEquals("no-store", response.headers().firstValue("Cache-Control").orElseThrow());
+                    assertEquals("1", response.headers().firstValue("Retry-After").orElseThrow());
+                    assertFalse(response.headers().firstValue("Set-Cookie").isPresent());
+                    assertFalse(response.body().contains("stats_logging"));
+                    if(path.startsWith("/api"))
+                    {
+                        assertEquals("receiver_starting",
+                            OBJECT_MAPPER.readTree(response.body()).at("/error/code").textValue());
+                    }
+                }
+                HttpResponse<String> mutation = client.send(HttpRequest.newBuilder(
+                    serverOrigin.resolve(WebSessionHttpController.LOGIN_PATH))
+                    .timeout(Duration.ofSeconds(5)).POST(HttpRequest.BodyPublishers.ofString("{}"))
+                    .build(), HttpResponse.BodyHandlers.ofString());
+                assertEquals(503, mutation.statusCode());
+                assertFalse(mutation.headers().firstValue("Set-Cookie").isPresent());
+                HttpResponse<String> head = client.send(HttpRequest.newBuilder(serverOrigin)
+                    .timeout(Duration.ofSeconds(5)).method("HEAD", HttpRequest.BodyPublishers.noBody()).build(),
+                    HttpResponse.BodyHandlers.ofString());
+                assertEquals(503, head.statusCode());
+                assertEquals("", head.body());
+            }
+
+            applicationPreference.setPort(port);
+            try(StatsWebServerService runtime = new StatsWebServerService(preferences))
+            {
+                assertTrue(runtime.getRuntimeState().running(), runtime.getRuntimeState().statusMessage());
+                assertEquals(port, runtime.getRuntimeState().port());
+                HttpResponse<String> response = client.send(HttpRequest.newBuilder(serverOrigin).GET().build(),
+                    HttpResponse.BodyHandlers.ofString());
+                assertEquals(200, response.statusCode(), response.body());
+                assertTrue(response.body().contains("receiver"));
+            }
+        }
+        finally
+        {
+            if(previousAssetOverride == null)
+            {
+                System.clearProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY);
+            }
+            else
+            {
+                System.setProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY, previousAssetOverride);
+            }
+        }
+    }
+
+    @Test
     void callMatchingRouteEnforcesAdminAndClearsLateBoundSourcesOnClose() throws Exception
     {
         Path dataRoot = mTemporaryDirectory.resolve("call-matching-data");

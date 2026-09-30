@@ -228,10 +228,18 @@ public class StatsWebServerService implements AutoCloseable
     private volatile WebRequestSecurity mWebRequestSecurity;
     private boolean mRuntimeServicesStarted;
     private boolean mClosed;
+    private final boolean mListenerValidationOnly;
 
     public StatsWebServerService(UserPreferences userPreferences)
     {
         this(userPreferences, null, null, null);
+    }
+
+    /** Tests the configured listener before receiver services exist. Close it before starting the receiver. */
+    public static StatsWebServerService forListenerValidation(UserPreferences userPreferences)
+    {
+        return new StatsWebServerService(userPreferences, null, null, null, null, null, null, null, null, null,
+            null, null, true);
     }
 
     public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager)
@@ -329,6 +337,24 @@ public class StatsWebServerService implements AutoCloseable
                                  StreamingAdministrationService streamingAdministrationService,
                                  RemoteLinkAdministrationService remoteLinkAdministrationService)
     {
+        this(userPreferences, channelProcessingManager, activityLogService, aliasAdministrationService,
+            decodeEventViewService, tunerManager, scanListModel, channelAdministrationService,
+            radioReferenceDirectoryService, radioReferenceImportService, streamingAdministrationService,
+            remoteLinkAdministrationService, false);
+    }
+
+    private StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager,
+                                  ReceiverActivityService activityLogService,
+                                  AliasAdministrationService aliasAdministrationService,
+                                  DecodeEventViewService decodeEventViewService, TunerManager tunerManager,
+                                  ScanListModel scanListModel, ChannelAdministrationService channelAdministrationService,
+                                  RadioReferenceDirectoryService radioReferenceDirectoryService,
+                                  RadioReferenceImportService radioReferenceImportService,
+                                  StreamingAdministrationService streamingAdministrationService,
+                                  RemoteLinkAdministrationService remoteLinkAdministrationService,
+                                  boolean listenerValidationOnly)
+    {
+        mListenerValidationOnly = listenerValidationOnly;
         mStreamingAdministrationService = streamingAdministrationService;
         mRemoteLinkAdministrationService = remoteLinkAdministrationService;
         EmbeddedHttpServerPolicy.configureBeforeServerInitialization();
@@ -379,10 +405,13 @@ public class StatsWebServerService implements AutoCloseable
         mReceiverHealthService.setWebStatusSupplier(this::receiverHealthObserverStatus);
         MyEventBus.getGlobalEventBus().register(this);
         updateServerState();
-        mTlsMaintenanceExecutor.scheduleWithFixedDelay(this::maintainAutomaticCertificate,
-            AUTOMATIC_CERTIFICATE_INITIAL_CHECK_MINUTES, AUTOMATIC_CERTIFICATE_MAINTENANCE_MINUTES,
-            TimeUnit.MINUTES);
-        mReceiverHealthService.start();
+        if(!mListenerValidationOnly)
+        {
+            mTlsMaintenanceExecutor.scheduleWithFixedDelay(this::maintainAutomaticCertificate,
+                AUTOMATIC_CERTIFICATE_INITIAL_CHECK_MINUTES, AUTOMATIC_CERTIFICATE_MAINTENANCE_MINUTES,
+                TimeUnit.MINUTES);
+            mReceiverHealthService.start();
+        }
     }
 
     @Subscribe
@@ -518,7 +547,10 @@ public class StatsWebServerService implements AutoCloseable
 
         try
         {
-            startRuntimeServices();
+            if(!mListenerValidationOnly)
+            {
+                startRuntimeServices();
+            }
             ListenerRuntime replacement = startListener(prepared);
             mListener = replacement;
             mRuntimeState = runningState(replacement, "Web server is running.");
@@ -730,7 +762,14 @@ public class StatsWebServerService implements AutoCloseable
         {
             String webClientRevision = readWebClientRevision(requested.assetRoot());
             server.setExecutor(executor);
-            registerContexts(server, requested.assetRoot(), webClientRevision);
+            if(mListenerValidationOnly)
+            {
+                server.createContext("/", StatsWebServerService::handleListenerValidation);
+            }
+            else
+            {
+                registerContexts(server, requested.assetRoot(), webClientRevision);
+            }
             server.start();
             return new ListenerRuntime(server, executor, configuration);
         }
@@ -777,6 +816,39 @@ public class StatsWebServerService implements AutoCloseable
         catch(IOException exception)
         {
             return null;
+        }
+    }
+
+    private static void handleListenerValidation(HttpExchange exchange) throws IOException
+    {
+        //Setup validates the real bind/TLS configuration before receiver services exist. Never expose their
+        //absence as a successfully fetched STOPPED status or accept operations through this temporary listener.
+        exchange.getResponseHeaders().set("Retry-After", "1");
+        if("HEAD".equals(exchange.getRequestMethod()))
+        {
+            exchange.getResponseHeaders().set("Cache-Control", "no-store");
+            exchange.sendResponseHeaders(503, -1);
+            exchange.close();
+        }
+        else if(exchange.getRequestURI().getPath().startsWith("/api"))
+        {
+            ApiHttpResponse.sendError(exchange, 503, "receiver_starting",
+                "The receiver is starting. Try again shortly.");
+        }
+        else
+        {
+            sendHtml(exchange, 503, """
+                <!doctype html>
+                <html lang="en">
+                <head>
+                  <meta charset="utf-8">
+                  <meta name="viewport" content="width=device-width, initial-scale=1">
+                  <meta http-equiv="refresh" content="2">
+                  <title>VCE is starting</title>
+                </head>
+                <body><h1>VCE is starting</h1><p>This page will refresh shortly.</p></body>
+                </html>
+                """);
         }
     }
 
