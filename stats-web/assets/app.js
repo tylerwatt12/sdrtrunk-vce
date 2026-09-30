@@ -19820,6 +19820,7 @@ async function renderModernChannelCatalog(renderContext) {
     const hiddenSummary = node('span', 'muted');
     let enableAutoStart = null;
     let disableAutoStart = null;
+    let cloneSelected = null;
     let selectAll = null;
     const updateSelection = () => {
       const visibleIds = new Set(state.visibleRows.map((row) => row.configuration_id));
@@ -19833,6 +19834,10 @@ async function renderModernChannelCatalog(renderContext) {
         selectedRows.every((row) => row.auto_start_order != null);
       if (disableAutoStart) disableAutoStart.disabled = selectedRows.length > 0 &&
         selectedRows.every((row) => row.auto_start_order == null);
+      if (cloneSelected) {
+        cloneSelected.disabled = selectedRows.some((row) => row.remote_origin?.remote === true);
+        cloneSelected.title = cloneSelected.disabled ? 'Remote channels cannot be cloned.' : '';
+      }
       if (selectAll) {
         selectAll.checked = state.visibleRows.length > 0 && visibleSelected === state.visibleRows.length;
         selectAll.indeterminate = visibleSelected > 0 && visibleSelected < state.visibleRows.length;
@@ -19971,9 +19976,10 @@ async function renderModernChannelCatalog(renderContext) {
       }, `ui-button ${danger ? 'ui-button-danger' : 'ui-button-secondary'}`);
     enableAutoStart = action('Enable auto-start', 'icon-plus', 'ENABLE_AUTO_START');
     disableAutoStart = action('Disable auto-start', 'icon-clear-queue', 'DISABLE_AUTO_START');
+    cloneSelected = action('Clone', 'icon-copy', 'CLONE');
     selectedBar.append(selectedSummary, hiddenSummary,
       action('Start', 'icon-play', 'START'), action('Stop', 'icon-stop', 'STOP'),
-      enableAutoStart, disableAutoStart, action('Clone', 'icon-copy', 'CLONE'),
+      enableAutoStart, disableAutoStart, cloneSelected,
       action('Delete', 'icon-trash', 'DELETE', 'Delete {count} selected channel(s)?', true), clearSelection);
 
     const filteredRows = () => {
@@ -20398,9 +20404,32 @@ function channelEditorFieldValue(control, field) {
   return text || null;
 }
 
-function channelEditorPayload(form, profile) {
-  const payload = { protocol_id: profile.id, settings: {}, source: {}, frequency_map: [],
-    event_logs: [], recorders: [], auxiliary_decoders: [] };
+function channelIsRemote(channel) {
+  return String(channel?.source?.source_type || '').toUpperCase() === 'REMOTE';
+}
+
+function channelEditorSections(profile, channel) {
+  if (!channelIsRemote(channel)) return profile.sections;
+  const applicable = new Set([
+    'settings.traffic_channel_pool_size', 'settings.use_bandplan_override',
+    'observed.p25_site_identity', 'event_logs'
+  ]);
+  return profile.sections.map((section) => ({
+    ...section,
+    label: section.id === 'source' ? 'Remote source' :
+      section.id === 'output' ? 'Event logs' : section.label,
+    fields: section.id === 'general' ? section.fields :
+      section.fields.filter((field) => applicable.has(field.path))
+  })).filter((section) => section.id === 'source' || section.fields.length);
+}
+
+function channelEditorPayload(form, profile, channel = null) {
+  const remote = channelIsRemote(channel);
+  const payload = { protocol_id: profile.id,
+    settings: remote ? { ...channel.settings } : {},
+    source: remote ? { ...channel.source, frequencies_hz: [...channel.source.frequencies_hz] } : {},
+    frequency_map: [], event_logs: [],
+    recorders: remote ? [...(channel.recorders || [])] : [], auxiliary_decoders: [] };
   profile.sections.forEach((section) => section.fields.forEach((field) => {
     if (field.type === 'read_only') return;
     const control = form.querySelector(`[data-channel-path="${CSS.escape(field.path)}"]`);
@@ -20785,7 +20814,8 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
       }
       const panels = new Map();
       const sectionNodes = [];
-      const sectionPlan = channelEditorSectionPlan(profile.sections);
+      const editorProfile = { ...profile, sections: channelEditorSections(profile, channel) };
+      const sectionPlan = channelEditorSectionPlan(editorProfile.sections);
       sectionPlan.forEach(({ definition: sectionDefinition, id, advanced }) => {
         const panel = node('fieldset', 'channel-editor-panel ui-form-section');
         const labelId = `${id}-label`;
@@ -20800,12 +20830,16 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
           panelHeader.append(panelLabel);
           if (sectionDefinition.id === 'protocol') panelHeader.append(
             uiActionButton('Restore defaults', 'icon-reset', () => {
-              channelRestoreProtocolDefaults(form, profile);
+              channelRestoreProtocolDefaults(form, editorProfile);
               modal.setDirty(true);
             }, 'ui-button ui-button-secondary'));
           panel.append(panelHeader);
         }
         const grid = node('div', 'channel-editor-grid');
+        if (channelIsRemote(channel) && sectionDefinition.id === 'source') {
+          grid.append(node('p', 'muted channel-wide-field',
+            'The sending VCE controls tuning. This channel follows its live control frequency.'));
+        }
         const squelchFields = [];
         sectionDefinition.fields.forEach((field) => {
           const control = channelEditorControl(field, profile, options, channel, protocols);
@@ -20992,7 +21026,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
         errors.replaceChildren();
         save.disabled = true;
         try {
-          const payload = channelEditorPayload(form, profile);
+          const payload = channelEditorPayload(form, editorProfile, channel);
           if (editing && entry.processing_state === 'RUNNING') {
             if (!window.confirm('Save these settings and restart the running channel?')) {
               save.disabled = false;

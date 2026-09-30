@@ -47,6 +47,9 @@ vm.runInContext(`
   const CHANNEL_ENCRYPTED_SKIP_PATH = 'settings.ignore_encrypted_calls';
   ${functionSource('function channelEncryptedCallSkipLocked(field, protocolCatalog)')}
   ${functionSource('function channelEditorFieldValue(control, field)')}
+  ${functionSource('function channelIsRemote(channel)')}
+  ${functionSource('function channelEditorSections(profile, channel)')}
+  ${functionSource('function channelEditorPayload(form, profile, channel = null)')}
   ${functionSource('function channelEditorSectionId(value)')}
   ${functionSource('function channelEditorSectionPlan(sections)')}
   ${functionSource('function channelSquelchQuality(noise)')}
@@ -284,6 +287,72 @@ assert.deepEqual(plan.map(({ definition, id, advanced }) => ({
 assert.equal(vm.runInContext("channelEditorSectionId(' RF source / backup ')", context),
   'channel-editor-section-rf-source-backup');
 assert.equal(vm.runInContext("channelEditorSectionId('')", context), 'channel-editor-section-section');
+
+const remoteProfile = { id: 'p25-phase1', sections: [
+  { id: 'general', label: 'General', fields: [{ path: 'name', type: 'text' }] },
+  { id: 'source', label: 'Source', fields: [
+    { path: 'source.frequencies_hz', type: 'frequency_list' },
+    { path: 'source.rotation_delay_ms', type: 'integer' }
+  ] },
+  { id: 'protocol', label: 'Decoder', fields: [
+    { path: 'settings.modulation', type: 'enum' },
+    { path: 'settings.traffic_channel_pool_size', type: 'integer' },
+    { path: 'settings.ignore_data_calls', type: 'boolean' },
+    { path: 'settings.ignore_encrypted_calls', type: 'boolean' },
+    { path: 'settings.learn_announced_control_channels', type: 'boolean' },
+    { path: 'settings.use_bandplan_override', type: 'boolean' }
+  ] },
+  { id: 'output', label: 'Logging & Recording', fields: [
+    { path: 'event_logs', type: 'multi_select' }, { path: 'recorders', type: 'multi_select' }
+  ] }
+] };
+const remoteChannel = {
+  source: { source_type: 'REMOTE', sender_id: 'sender', feed_id: 'feed',
+    frequencies_hz: [851_012_500], rotation_delay_ms: null },
+  recorders: ['BASEBAND'],
+  settings: { modulation: 'CQPSK', traffic_channel_pool_size: 20, ignore_data_calls: false,
+    ignore_encrypted_calls: false, learn_announced_control_channels: true,
+    use_bandplan_override: false }
+};
+context.remoteProfile = remoteProfile;
+context.remoteChannel = remoteChannel;
+context.CSS = { escape: (value) => value };
+const remoteSections = JSON.parse(vm.runInContext(
+  'JSON.stringify(channelEditorSections(remoteProfile, remoteChannel))', context));
+assert.deepEqual(remoteSections.map((section) => [section.id, section.label,
+  section.fields.map((field) => field.path)]), [
+  ['general', 'General', ['name']],
+  ['source', 'Remote source', []],
+  ['protocol', 'Decoder', ['settings.traffic_channel_pool_size', 'settings.use_bandplan_override']],
+  ['output', 'Event logs', ['event_logs']]
+]);
+assert.deepEqual(JSON.parse(vm.runInContext(
+  `JSON.stringify(channelEditorSections(remoteProfile, { source: { source_type: 'TUNER' } }))`, context)),
+  remoteProfile.sections, 'Local channel settings must remain available');
+context.remoteForm = {
+  querySelector(selector) {
+    const path = selector.match(/data-channel-path="([^"]+)"/)?.[1];
+    if (path === 'name') return { value: 'Remote renamed' };
+    if (path === 'settings.traffic_channel_pool_size') return { value: '12' };
+    if (path === 'settings.use_bandplan_override') return { checked: true, dataset: {} };
+    if (path === 'event_logs') return { querySelectorAll: () => [{ value: 'CALL_EVENT' }] };
+    throw new Error(`Unexpected remote field ${path}`);
+  }
+};
+context.remoteEditorProfile = { ...remoteProfile, sections: remoteSections };
+const remotePayload = JSON.parse(vm.runInContext(
+  'JSON.stringify(channelEditorPayload(remoteForm, remoteEditorProfile, remoteChannel))', context));
+assert.deepEqual(remotePayload.source, remoteChannel.source,
+  'Editing receiver settings must preserve remote routing and its saved frequency');
+assert.equal(remotePayload.name, 'Remote renamed');
+assert.equal(remotePayload.settings.traffic_channel_pool_size, 12);
+assert.equal(remotePayload.settings.modulation, 'CQPSK',
+  'Hidden decoder settings must retain their saved values');
+assert.equal(remotePayload.settings.learn_announced_control_channels, true);
+assert.equal(remotePayload.settings.use_bandplan_override, true);
+assert.deepEqual(remotePayload.event_logs, ['CALL_EVENT']);
+assert.deepEqual(remotePayload.recorders, ['BASEBAND'],
+  'An unrelated remote edit must not silently discard saved recorder selections');
 
 const requiredOutput = JSON.parse(vm.runInContext(`JSON.stringify(channelEditorSectionPlan([
   { id: 'output', label: 'Logging & Recording', fields: [{ path: 'recorders', required: true }] }

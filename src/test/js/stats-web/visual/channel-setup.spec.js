@@ -1,4 +1,9 @@
 const { expect, test } = require('@playwright/test');
+const path = require('node:path');
+
+const p25Phase1Profile = require(path.resolve(__dirname,
+  '../../../../../src/main/resources/channel-protocols.json')).profiles
+  .find((profile) => profile.id === 'p25-phase1');
 
 function apiData(data) {
   return { data };
@@ -242,6 +247,148 @@ test('editing a channel opens and creates the selected Alias List without losing
   await expect(aliasLink).toHaveAttribute('href', /view=aliases&list=1$/);
   await aliasLink.click();
   await expect(page).toHaveURL(/view=aliases&list=1$/);
+});
+
+test('remote P25 editor shows applicable controls and preserves its linked source on save', async ({ page }) => {
+  const remoteId = '11111111-1111-4111-8111-111111111111';
+  const localId = '22222222-2222-4222-8222-222222222222';
+  const senderId = '33333333-3333-4333-8333-333333333333';
+  const feedId = '44444444-4444-4444-8444-444444444444';
+  const settings = {
+    modulation: 'C4FM', traffic_channel_pool_size: 12, ignore_data_calls: true,
+    ignore_encrypted_calls: true, learn_announced_control_channels: false,
+    use_bandplan_override: false
+  };
+  const remoteChannel = {
+    configuration_id: remoteId, protocol_id: 'p25-phase1', system: 'Metro', site: 'North',
+    name: 'Remote Control', radio_resolve_id: null, alias_list_id: 1,
+    source: {
+      frequencies_hz: [851_012_500], minimum_frequency_hz: null, maximum_frequency_hz: null,
+      preferred_frequency_hz: null, preferred_tuner: null, rotation_delay_ms: null,
+      source_type: 'REMOTE', sender_id: senderId, feed_id: feedId
+    },
+    settings, frequency_map: [], event_logs: ['CALL_EVENT'], recorders: ['BASEBAND'],
+    auxiliary_decoders: [], observed: { learned_control_frequencies_hz: [], p25_site_identity: {} }
+  };
+  const localChannel = {
+    ...remoteChannel, configuration_id: localId, name: 'Local Control',
+    source: {
+      frequencies_hz: [852_012_500], minimum_frequency_hz: null, maximum_frequency_hz: null,
+      preferred_frequency_hz: null, preferred_tuner: null, rotation_delay_ms: 500,
+      source_type: 'TUNER_MULTIPLE_FREQUENCIES', sender_id: null, feed_id: null
+    },
+    recorders: []
+  };
+  const channels = new Map([[remoteId, remoteChannel], [localId, localChannel]]);
+  let savedRemote = null;
+
+  await page.route('**/api/v1/**', async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    const respond = (data) => route.fulfill({ json: apiData(data) });
+    if (pathname === '/api/v1/auth/session') {
+      await respond({ configured: true, authenticated: true, username: 'channel-admin', tier: 'admin',
+        primary: true, csrf_token: 'test-token',
+        capabilities: { 'admin-channels': true, 'admin-aliases': true, 'admin-settings': true } });
+    } else if (pathname === '/api/v1/admin/channels' && request.method() === 'GET') {
+      await respond({ revision: 1, channels: [...channels.values()].map((channel) => ({
+        ...channel, frequencies_hz: channel.source.frequencies_hz, protocol_label: 'P25 Phase 1',
+        channel_kind: 'TRUNKED', alias_list_name: 'Default P25', processing_state: 'STOPPED',
+        auto_start_order: 1, editable: true,
+        remote_origin: channel.source.source_type === 'REMOTE' ? { remote: true } : null
+      })) });
+    } else if (pathname === '/api/v1/admin/channels/options') {
+      await respond({ revision: 1, alias_lists: [{ id: 1, name: 'Default P25', family: 'P25' }],
+        tuners: ['Test tuner'] });
+    } else if (pathname === '/api/v1/admin/channels/protocols') {
+      await respond({ voice_decryption_module_loaded: false, profiles: [p25Phase1Profile] });
+    } else if (pathname === `/api/v1/admin/channels/${remoteId}` && request.method() === 'PUT') {
+      savedRemote = request.postDataJSON();
+      channels.set(remoteId, { ...remoteChannel, ...savedRemote });
+      await respond({ revision: 2, configuration_ids: [remoteId] });
+    } else if (pathname === `/api/v1/admin/channels/${remoteId}` ||
+        pathname === `/api/v1/admin/channels/${localId}`) {
+      await respond({ revision: 1, channel: channels.get(pathname.split('/').at(-1)),
+        processing_state: 'STOPPED' });
+    } else {
+      await route.fulfill({ status: 404, json: { error: { message: 'Not available in this browser contract' } } });
+    }
+  });
+
+  await page.goto(`/app.html?view=channel-setup&channel=${remoteId}`);
+  const remoteDialog = page.getByRole('dialog', { name: 'Edit Remote Control' });
+  await expect(remoteDialog).toBeVisible();
+  await expect(remoteDialog.getByLabel('Maximum traffic channels')).toHaveValue('12');
+  await expect(remoteDialog.getByLabel('Use P25 bandplan override')).toBeVisible();
+  await expect(remoteDialog.getByRole('group', { name: 'Remote source' }))
+    .toContainText('The sending VCE controls tuning');
+  for (const label of ['Preferred Tuner', 'Frequency rotation delay', 'Modulation',
+    'Learn announced control channels', 'Ignore data calls',
+    'Skip encrypted traffic channels (performance)', 'Recordings']) {
+    await expect(remoteDialog.getByLabel(label, { exact: true })).toHaveCount(0);
+  }
+  await remoteDialog.locator('details[data-channel-section="output"] > summary').click();
+  await expect(remoteDialog.locator('[data-channel-path="event_logs"]')).toBeVisible();
+  await remoteDialog.getByLabel('Name', { exact: true }).fill('Remote Control Renamed');
+  await remoteDialog.getByRole('button', { name: 'Save changes' }).click();
+  await expect(remoteDialog).toHaveCount(0);
+  expect(savedRemote).not.toBeNull();
+  expect(savedRemote.name).toBe('Remote Control Renamed');
+  expect(savedRemote.source).toMatchObject({ source_type: 'REMOTE', sender_id: senderId,
+    feed_id: feedId, frequencies_hz: [851_012_500] });
+  expect(savedRemote.settings).toMatchObject(settings);
+  expect(savedRemote.event_logs).toEqual(['CALL_EVENT']);
+  expect(savedRemote.recorders).toEqual(['BASEBAND'],
+    'editing a remote channel must not erase hidden saved recorder choices');
+
+  await page.goto(`/app.html?view=channel-setup&channel=${localId}`);
+  const localDialog = page.getByRole('dialog', { name: 'Edit Local Control' });
+  await expect(localDialog).toBeVisible();
+  await expect(localDialog.getByLabel('Preferred Tuner')).toBeVisible();
+  await expect(localDialog.getByLabel('Frequency rotation delay')).toBeVisible();
+  await expect(localDialog.getByLabel('Modulation')).toBeVisible();
+  await expect(localDialog.getByLabel('Learn announced control channels')).toBeVisible();
+  await expect(localDialog.getByLabel('Ignore data calls')).toBeVisible();
+  await expect(localDialog.getByLabel('Skip encrypted traffic channels (performance)')).toBeVisible();
+  await localDialog.locator('details[data-channel-section="output"] > summary').click();
+  await expect(localDialog.locator('[data-channel-path="recorders"]')).toBeVisible();
+});
+
+test('bulk Clone is unavailable whenever the selection includes a remote channel', async ({ page }) => {
+  const local = { ...channelFixture(1), name: 'Local Control', remote_origin: null };
+  const remote = { ...channelFixture(4), name: 'Remote Control', remote_origin: { remote: true } };
+  await page.route('**/api/v1/**', async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    const respond = (data) => route.fulfill({ json: apiData(data) });
+    if (pathname === '/api/v1/auth/session') {
+      await respond({ configured: true, authenticated: true, username: 'channel-admin', tier: 'admin',
+        primary: true, csrf_token: 'test-token', capabilities: { 'admin-channels': true } });
+    } else if (pathname === '/api/v1/admin/channels') {
+      await respond({ revision: 1, channels: [local, remote] });
+    } else if (pathname === '/api/v1/admin/channels/options') {
+      await respond({ revision: 1, alias_lists: [], tuners: [] });
+    } else if (pathname === '/api/v1/admin/channels/protocols') {
+      await respond({ profiles: [] });
+    } else {
+      await route.fulfill({ status: 404, json: { error: { message: 'Not available in this browser contract' } } });
+    }
+  });
+
+  await page.goto('/app.html?view=channel-setup');
+  const clone = page.locator('.channel-selection-bar').getByRole('button', { name: 'Clone' });
+  await page.getByRole('checkbox', { name: 'Select Local Control' }).check();
+  await expect(clone).toBeEnabled();
+  await page.getByRole('checkbox', { name: 'Select Remote Control' }).check();
+  await expect(clone).toBeDisabled();
+  await expect(clone).toHaveAttribute('title', 'Remote channels cannot be cloned.');
+
+  await page.getByRole('searchbox', { name: 'Search channels, systems, protocols, frequencies, or alias lists' })
+    .fill('Local Control');
+  await expect(clone).toBeDisabled();
+  await page.getByRole('searchbox', { name: 'Search channels, systems, protocols, frequencies, or alias lists' })
+    .fill('');
+  await page.getByRole('checkbox', { name: 'Select Remote Control' }).uncheck();
+  await expect(clone).toBeEnabled();
 });
 
 test('startup-order view moves keyed rows without replacing the page or losing position', async ({ page }) => {
