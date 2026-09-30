@@ -68,6 +68,8 @@ vm.runInContext(`
   ${functionSource('function serviceStatusRetryDelay(milliseconds)')}
   ${functionSource('async function requestServiceStatus()')}
   ${functionSource('function statsLoggingState()')}
+  ${functionSource('function detailedHistoryAvailable()')}
+  ${functionSource('function detailedHistoryNotice()')}
   ${functionSource('function databaseLoggingNotice(view)')}
   globalThis.statusState = () => ({
     value: serviceStatus,
@@ -80,11 +82,14 @@ vm.runInContext(`
   globalThis.beginStatus = beginServiceStatusRequest;
   globalThis.requestStatus = requestServiceStatus;
   globalThis.noticeFor = databaseLoggingNotice;
+  globalThis.historyAvailable = detailedHistoryAvailable;
+  globalThis.historyNotice = detailedHistoryNotice;
 `, context);
 
 async function main() {
   const plainState = () => JSON.parse(JSON.stringify(context.statusState()));
   const plainNotice = () => JSON.parse(JSON.stringify(context.noticeFor('dashboard')));
+  const historyNotice = () => JSON.parse(JSON.stringify(context.historyNotice()));
   const noticeText = (notice) => notice.children.map((child) =>
     typeof child === 'string' ? child : child.label).join('');
   assert.deepEqual(plainState(), { value: null, pending: false, failures: 0, warning: false });
@@ -158,6 +163,72 @@ async function main() {
   context.acceptStatus({ stats_logging: { summary_configured: true, summary_active: true,
     state: 'RUNNING' } });
   assert.equal(context.noticeFor('dashboard'), null);
+
+  context.clearStatus();
+  assert.equal(context.historyAvailable(), true);
+  assert.match(noticeText(historyNotice()), /Saved activity status could not be checked/);
+  assert.match(historyNotice().className, /ui-notice-danger/);
+
+  const acceptHistory = (state, retained, settings = {}) => context.acceptStatus({
+    stats_logging: {
+      summary_configured: true, detailed_history_configured: true,
+      summary_active: state === 'RUNNING', detailed_history_active: state === 'RUNNING',
+      state, ...settings
+    },
+    database: { detailed_history_available: retained, last_detailed_history_ms: retained ? 42 : 0 }
+  });
+  acceptHistory('RUNNING', false);
+  assert.equal(context.historyAvailable(), true);
+  assert.equal(context.historyNotice(), null);
+
+  for (const retained of [false, true]) {
+    for (const [state, message, severity] of [
+      ['STARTING', /Saving individual activity events is starting/, /ui-notice-warning/],
+      ['FAILED', /Saving individual activity events failed/, /ui-notice-danger/],
+      ['STOPPED', /Saving individual activity events is not running/, /ui-notice-warning/]
+    ]) {
+      acceptHistory(state, retained);
+      assert.equal(context.historyAvailable(), retained);
+      const notice = historyNotice();
+      assert.match(noticeText(notice), message);
+      assert.match(notice.className, severity);
+      assert.doesNotMatch(noticeText(notice), /is off|Turn it on|Turn on/);
+      assert.deepEqual(notice.children.find((child) => child?.label),
+        { label: 'Current status', target: '/?view=admin&tab=health' });
+      if (retained) assert.match(noticeText(notice), /newest saved activity is from time 42/);
+      else assert.doesNotMatch(noticeText(notice), /newest saved activity/);
+
+      grantedCapabilities.delete('receiver-health');
+      const restrictedNotice = historyNotice();
+      assert.equal(restrictedNotice.children.some((child) => child?.label), false);
+      assert.match(noticeText(restrictedNotice), /Ask an administrator to check the receiver status/);
+      grantedCapabilities.add('receiver-health');
+    }
+
+    for (const [state, settings, disabledSetting] of [
+      ['DISABLED', { summary_configured: false }, /Save activity summaries is off/],
+      ['RUNNING', { detailed_history_configured: false, detailed_history_active: false },
+        /Save individual activity events is off/],
+      ['DISABLED', { summary_configured: false, detailed_history_configured: false },
+        /Save activity summaries is off/]
+    ]) {
+      acceptHistory(state, retained, settings);
+      assert.equal(context.historyAvailable(), retained);
+      const notice = historyNotice();
+      assert.match(noticeText(notice), disabledSetting);
+      assert.match(notice.className, retained ? /ui-notice-warning/ : /ui-notice-danger/);
+      assert.deepEqual(notice.children.find((child) => child?.label),
+        { label: 'Call output & activity', target: '/?view=admin&tab=operations' });
+      if (retained) assert.match(noticeText(notice), /newest saved activity is from time 42/);
+      else assert.doesNotMatch(noticeText(notice), /newest saved activity/);
+
+      grantedCapabilities.delete('admin-settings');
+      const restrictedNotice = historyNotice();
+      assert.equal(restrictedNotice.children.some((child) => child?.label), false);
+      assert.match(noticeText(restrictedNotice), /Ask an administrator to turn it on/);
+      grantedCapabilities.add('admin-settings');
+    }
+  }
 }
 
 main().catch((error) => {

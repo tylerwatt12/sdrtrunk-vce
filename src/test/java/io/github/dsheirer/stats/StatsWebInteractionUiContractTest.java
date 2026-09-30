@@ -154,7 +154,7 @@ class StatsWebInteractionUiContractTest
         assertFalse(status.contains("historyLabel"));
         assertFalse(status.contains("History off"));
         assertTrue(historyNotice.contains("Save individual activity events"));
-        assertTrue(historyNotice.contains("Administration > Call output & activity"));
+        assertTrue(historyNotice.contains("anchor('Call output & activity', href('admin', { tab: 'operations' }))"));
         assertTrue(historyNotice.contains("No saved activity is available."));
         assertFalse(historyNotice.contains("earlier activity cannot be recovered"));
         assertTrue(historyNotice.contains("New activity is not being saved."));

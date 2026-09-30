@@ -2270,21 +2270,32 @@ function detailedHistoryNotice() {
       'Saved activity status could not be checked. Previously saved activity may still be available.');
   }
   if (logging.historyActive) return null;
-  if (logging.historyRetained) {
-    const lastSaved = logging.lastHistoryMs ?
-      ` The newest saved activity is from ${exactDateTime(logging.lastHistoryMs)}.` : '';
-    return node('div', 'ui-notice ui-notice-warning ui-notice-spaced ui-inset-notice',
-      `New activity is not being saved.${lastSaved} Turn on Save individual activity events in ` +
-      'Administration > Call output & activity to save new events.');
+  const lastSaved = logging.historyRetained && logging.lastHistoryMs ?
+    ` The newest saved activity is from ${exactDateTime(logging.lastHistoryMs)}.` : '';
+  if (!logging.summaryConfigured || !logging.historyConfigured) {
+    const setting = !logging.summaryConfigured ? 'Save activity summaries' : 'Save individual activity events';
+    const availability = logging.historyRetained ? 'New activity is not being saved.' :
+      'No saved activity is available.';
+    const notice = node('div', `ui-notice ${logging.historyRetained ? 'ui-notice-warning' : 'ui-notice-danger'} ` +
+      'ui-notice-spaced ui-inset-notice', `${availability}${lastSaved} ${setting} is off. `);
+    if (capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS)) {
+      notice.append('Turn it on in ', anchor('Call output & activity', href('admin', { tab: 'operations' })), '.');
+    } else {
+      notice.append('Ask an administrator to turn it on.');
+    }
+    return notice;
   }
-  if (logging.historyConfigured && !logging.summaryActive) {
-    return node('div', 'ui-notice ui-notice-danger ui-notice-spaced ui-inset-notice',
-      'Saved activity is unavailable because Save activity summaries is off. Turn it on in ' +
-      'Administration > Call output & activity to begin saving activity.');
+  const starting = logging.state === 'STARTING';
+  const failed = logging.state === 'FAILED';
+  const state = starting ? 'is starting.' : (failed ? 'failed.' : 'is not running.');
+  const notice = node('div', `ui-notice ${failed ? 'ui-notice-danger' : 'ui-notice-warning'} ` +
+    'ui-notice-spaced ui-inset-notice', `Saving individual activity events ${state}${lastSaved} `);
+  if (capabilityAllowed(ACCESS_CAPABILITIES.RECEIVER_HEALTH)) {
+    notice.append('Check ', anchor('Current status', href('admin', { tab: 'health' })), ' for details.');
+  } else {
+    notice.append('Ask an administrator to check the receiver status.');
   }
-  return node('div', 'ui-notice ui-notice-danger ui-notice-spaced ui-inset-notice',
-    'No saved activity is available. Turn on Save individual activity events in ' +
-    'Administration > Call output & activity.');
+  return notice;
 }
 
 function databaseLoggingNotice(view) {
