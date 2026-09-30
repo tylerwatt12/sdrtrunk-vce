@@ -120,8 +120,6 @@ function createP25Visualizer(dependencies = {}) {
   const empty = node('div', 'network-visualizer-empty');
   empty.append(iconGlyph('icon-network-visualizer'), node('strong', '', 'Loading saved P25 activity…'),
     node('p', '', 'This view uses only persisted Activity history.'));
-  const notice = node('div', 'network-visualizer-notice');
-  notice.hidden = true;
   const legend = node('div', 'network-visualizer-legend');
   legend.append(node('span', '', 'Sphere · system'), node('span', '', 'Cube · talkgroup'),
     node('span', '', 'Triangle · radio'), node('span', '', 'Faint line · earlier affiliation'),
@@ -136,7 +134,7 @@ function createP25Visualizer(dependencies = {}) {
   eventsHeader.append(eventsHeading, closeEvents);
   const eventList = node('ol', 'network-visualizer-event-list');
   events.append(eventsHeader, eventList);
-  stage.append(canvas, back, scopeTitle, autoFocus, manualGuide, empty, notice, legend, events);
+  stage.append(canvas, back, scopeTitle, autoFocus, manualGuide, empty, legend, events);
   layout.append(toolbar, stage);
 
   let state = createP25HistoryState();
@@ -273,8 +271,6 @@ function createP25Visualizer(dependencies = {}) {
       { highlightCategories: highlightedCategories });
     visibleNodeKeys = new Set(graph.nodes.map((value) => value.id));
     renderer.setData(graph, { animate });
-    notice.hidden = !graph.truncated;
-    notice.textContent = graph.truncated ? 'Some entities were omitted by visualization safety limits.' : '';
     renderEvents();
   }
 
@@ -389,7 +385,6 @@ function createP25Visualizer(dependencies = {}) {
     renderer?.setData({ nodes: [], links: [] }, { animate: false });
     back.hidden = true;
     scopeTitle.textContent = 'P25 radio systems';
-    notice.hidden = true;
     setEmpty(`Loading ${historyHours === 1 ? 'one hour' : '24 hours'} of saved P25 activity…`,
       routineP25ActivityEnabled(eventSettings) ? 'Including saved calls and grants.' :
         'Routine calls and grants are off in Visualizer settings.');
