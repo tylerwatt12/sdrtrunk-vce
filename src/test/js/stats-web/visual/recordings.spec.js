@@ -46,11 +46,53 @@ function entityLink(host, href) {
   return host.locator(`a[href="${href}"]`);
 }
 
+function mixedRecordingCalls() {
+  return Array.from({ length: 30 }, (_, index) => {
+    const secondSystem = index % 4 === 3;
+    const scope = secondSystem ? 'p25:00002:002' : systemKey;
+    const home = secondSystem ? '00002-002' : '00001-001';
+    const groupId = 1201 + index % 3;
+    const sourceId = 30914 + index;
+    const configuredChannel = `00000000-0000-4000-8000-${String(17 + index % 4).padStart(12, '0')}`;
+    const aliases = [
+      'Central / East Ridge / Valley Township / River District Fire Dispatch and Mutual Aid',
+      'Northern District Police Dispatch and Regional Public Safety Coordination',
+      'Countywide Emergency Medical Services and Hospital Transport Coordination'
+    ];
+    return {
+      ...linkedCall, id: 17 + index, start_ms: call.start_ms - index * 60_000,
+      duration_ms: 7_000 + index * 1_100,
+      system_key: scope,
+      system_name: secondSystem ? 'County Regional Public Safety Communications' :
+        'Metro Regional Interoperability and Public Safety Communications Network',
+      radio_system_entity_ref: { kind: 'radio_system', key: scope },
+      talkgroup_id: groupId, talkgroup_alias: aliases[index % aliases.length],
+      talkgroup_description: 'Dispatch operations serving several municipalities, regional response teams, hospitals, and mutual aid partners.',
+      talkgroup_group: 'Regional public safety operations and interagency mutual aid',
+      target_entity_ref: { kind: 'talkgroup', radio_system_key: scope,
+        identity_key: `v1-g-${home}-${groupId}` },
+      source_id: sourceId, source_alias: `Regional response unit ${index + 1}`,
+      source_ota_alias: `FIELD UNIT ${index + 1}`,
+      source_entity_ref: { kind: 'radio', radio_system_key: scope,
+        identity_key: `v1-r-${home}-${sourceId}` },
+      site_name: index % 2 ? 'East Ridge / River Valley Simulcast' : 'Central / Valley Township Simulcast',
+      audio_from: { wacn: secondSystem ? 2 : 1, system_id: secondSystem ? 2 : 1,
+        rfss: 1, site_id: index % 2 + 1 },
+      channel_id: configuredChannel,
+      channel_name: `Regional Receiver / ${secondSystem ? 'County' : 'Metro'} / Simulcast Channel ${index % 4 + 1}`,
+      channel_entity_ref: { kind: 'channel', key: configuredChannel },
+      frequency_hz: 851_012_500 + index * 25_000,
+      transcript_excerpt: 'Unit arriving at the designated staging location. Requesting the next available response team and confirming the information with dispatch before proceeding.'
+    };
+  });
+}
+
 async function openRecordings(page, options = {}) {
   const state = {
     mode: options.mode || 'MANAGED', available: options.available !== false,
     hasCalls: options.hasCalls !== false, matchCalls: true, admin: options.admin !== false,
     call: options.call || call, calls: options.calls || null, callDetail: options.callDetail || null, requestedFilters: [],
+    paginate: options.paginate === true,
     transcription: options.transcription || null, settingsWrites: [],
     settings: { mode: options.mode || 'MANAGED', managed_directory: '/recordings',
       retention_days: null, transcription_enabled: false, transcription_url: '',
@@ -76,10 +118,16 @@ async function openRecordings(page, options = {}) {
     } else if (pathname === '/api/v1/recordings/calls') {
       state.requestedFilters.push(Object.fromEntries(url.searchParams));
       const matching = state.hasCalls && state.matchCalls;
-      await route.fulfill({ json: { data: { calls: matching ? state.calls || [state.call] : [],
-        next_cursor: null, total: null } } });
-    } else if (pathname === '/api/v1/recordings/calls/17') {
-      await route.fulfill({ json: { data: { call: state.callDetail || state.call,
+      const calls = matching ? state.calls || [state.call] : [];
+      const offset = state.paginate ? Number((url.searchParams.get('cursor') || 'fixture:0').split(':')[1]) : 0;
+      const limit = state.paginate ? Number(url.searchParams.get('limit')) : calls.length;
+      await route.fulfill({ json: { data: { calls: calls.slice(offset, offset + limit),
+        next_cursor: state.paginate && offset + limit < calls.length ? `fixture:${offset + limit}` : null,
+        total: null } } });
+    } else if (/^\/api\/v1\/recordings\/calls\/\d+$/.test(pathname)) {
+      const id = Number(pathname.split('/').at(-1));
+      const selected = state.calls?.find((item) => item.id === id) || state.call;
+      await route.fulfill({ json: { data: { call: state.callDetail || selected,
         ...(state.transcription ? { transcription: state.transcription } : {}) } } });
     } else if (pathname === '/api/v1/admin/recordings/settings') {
       if (route.request().method() === 'PUT') {
@@ -267,9 +315,14 @@ test('linked recording cards and details open canonical entity pages', async ({ 
   await expect(card.locator('.recordings-call-title')).toBeVisible();
   const cardLabels = ['Metro Public Safety', 'North Ridge Channel', 'Fire Dispatch', 'Engine 4'];
   for (const [index, target] of linkedHrefs.entries()) {
+    if (index === 1) {
+      await expect(entityLink(card, target)).toHaveCount(0);
+      continue;
+    }
     await expect(entityLink(card, target).first()).toBeVisible();
     await expect(entityLink(card, target).first()).toContainText(cardLabels[index]);
   }
+  await expect(card.locator('.recordings-call-title')).toContainText('Fire Dispatch');
   await expect(card).toHaveScreenshot('recordings-linked-desktop.png');
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(card).toHaveScreenshot('recordings-linked-mobile.png');
@@ -516,4 +569,154 @@ test('unfiltered calls keep repeated identities in different systems separate', 
   await expect(page.locator('.recordings-call').first()).toContainText('Fire Dispatch');
   await expect(page.locator('.recordings-call').last()).toContainText('Other Metro Public Safety');
   await expect(page.locator('.recordings-call').last()).toContainText('Other Engine');
+});
+
+for (const theme of ['light', 'dark']) {
+  test(`mixed ${theme} results stay compact with twenty-five calls per page`, async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const calls = mixedRecordingCalls();
+    const state = await openRecordings(page, { theme, calls, paginate: true });
+    const cards = page.locator('.recordings-call');
+    await expect(cards).toHaveCount(25);
+    expect(state.requestedFilters.at(-1).limit).toBe('25');
+    await expect(page.locator('.recordings-result-count')).toContainText('25 calls shown');
+    await expect(page.locator('.recordings-shared')).toBeEmpty();
+    await expect(cards.first().locator('.recordings-call-title')).toContainText(calls[0].talkgroup_alias);
+    await expect(cards.first()).toContainText('TG 1201');
+    await expect(cards.first()).toContainText(calls[0].source_alias);
+    await expect(cards.first()).toContainText(calls[0].system_name);
+    await expect(cards.first()).toContainText(calls[0].site_name);
+    for (const detail of [calls[0].talkgroup_description, calls[0].talkgroup_group, calls[0].channel_name, 'MHz']) {
+      await expect(cards.filter({ hasText: detail })).toHaveCount(0);
+    }
+    await expect(page.locator('.recordings-transcript-preview')).toHaveCount(25);
+    await expect(page.locator('.recordings-library')).toHaveScreenshot(`recordings-mixed-compact-${theme}.png`);
+
+    await cards.first().locator('.recordings-call-info').click();
+    const details = page.getByRole('dialog', { name: 'Call details' });
+    await expect(details).toContainText(calls[0].talkgroup_description);
+    await expect(details).toContainText(calls[0].talkgroup_group);
+    await expect(details).toContainText(calls[0].channel_name);
+    await expect(details).toContainText('851.0125 MHz');
+    await expect(entityLink(details, `/?view=channel&configuration_id=${calls[0].channel_id}`).first()).toBeVisible();
+    await page.keyboard.press('Escape');
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(cards).toHaveCount(25);
+    const layout = await page.evaluate(() => ({
+      overflow: document.documentElement.scrollWidth - window.innerWidth,
+      excerpts: [...document.querySelectorAll('.recordings-transcript-preview')].map((element) => {
+        const style = getComputedStyle(element);
+        return { height: element.getBoundingClientRect().height,
+          lineHeight: Number.parseFloat(style.lineHeight) || Number.parseFloat(style.fontSize) * 1.5 };
+      })
+    }));
+    expect(layout.overflow).toBeLessThanOrEqual(0);
+    for (const excerpt of layout.excerpts) expect(excerpt.height).toBeLessThanOrEqual(excerpt.lineHeight + 1);
+    await expect(page.locator('.recordings-results-body')).toHaveScreenshot(`recordings-mixed-compact-mobile-${theme}.png`);
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await expect(cards).toHaveCount(5);
+    await expect(cards.first().locator('.recordings-call-title')).toContainText(calls[25].talkgroup_alias);
+    expect(state.requestedFilters.at(-1)).toMatchObject({ limit: '25', cursor: 'fixture:25' });
+    await page.getByRole('button', { name: 'Previous', exact: true }).click();
+    await expect(cards).toHaveCount(25);
+  });
+}
+
+test('shared system and channel use stable identities when some labels and links are missing', async ({ page }) => {
+  const first = { ...linkedCall, system_name: null, radio_system_entity_ref: null,
+    channel_name: null, channel_entity_ref: null };
+  const second = { ...linkedCall, id: 18, source_id: 30915, source_alias: 'Engine 5',
+    source_entity_ref: null, source_ota_alias: null };
+  await openRecordings(page, { calls: [first, second] });
+  const shared = page.locator('.recordings-shared');
+  await expect(shared).toContainText('Metro Public Safety');
+  await expect(shared).toContainText('North Ridge Channel');
+  await expect(page.locator('.recordings-call').filter({ hasText: 'Metro Public Safety' })).toHaveCount(0);
+  await expect(page.locator('.recordings-call').filter({ hasText: 'North Ridge Channel' })).toHaveCount(0);
+  await expect(page.locator('.recordings-call').last().locator('.recordings-call-title')).toContainText('Engine 5');
+  await shared.getByRole('button', { name: 'Show all shared call details' }).click();
+  const details = page.getByRole('dialog', { name: 'Shared call details' });
+  await expect(details).toContainText('Metro Public Safety');
+  await expect(details).toContainText('North Ridge Channel');
+});
+
+test('same display names do not share identities across different systems', async ({ page }) => {
+  const first = { ...linkedCall, talkgroup_description: 'Regional response coordination',
+    talkgroup_group: 'Emergency services', audio_from: { wacn: 1, system_id: 1, rfss: 1, site_id: 1 } };
+  const second = { ...first, id: 18, system_key: 'p25:00002:002',
+    radio_system_entity_ref: null, target_entity_ref: null, source_entity_ref: null,
+    channel_id: '00000000-0000-4000-8000-000000000018', channel_entity_ref: null,
+    audio_from: { wacn: 2, system_id: 2, rfss: 1, site_id: 1 } };
+  await openRecordings(page, { calls: [first, second] });
+  await expect(page.locator('.recordings-shared')).toBeEmpty();
+  const headings = page.locator('.recordings-call-heading');
+  await expect(headings).toHaveCount(2);
+  for (const heading of await headings.all()) {
+    await expect(heading).toContainText('Fire Dispatch');
+    await expect(heading).toContainText('TG 1201');
+  }
+  await expect(page.locator('.recordings-call').filter({ hasText: 'Regional response coordination' })).toHaveCount(0);
+  await expect(page.locator('.recordings-call').filter({ hasText: 'Emergency services' })).toHaveCount(0);
+});
+
+test('displayed radio and talkgroup IDs with different home identities stay distinct', async ({ page }) => {
+  const first = { ...linkedCall, source_entity_ref: null, target_entity_ref: null,
+    source_home_wacn: 1, source_home_system_id: 1, source_home_id: 30914,
+    target_home_wacn: 1, target_home_system_id: 1, target_home_id: 1201,
+    talkgroup_description: 'Regional response coordination', talkgroup_group: 'Emergency services' };
+  const second = { ...first, id: 18, source_home_wacn: 2, source_home_system_id: 2,
+    target_home_wacn: 2, target_home_system_id: 2 };
+  await openRecordings(page, { calls: [first, second] });
+  const shared = page.locator('.recordings-shared');
+  await expect(shared).toContainText('Metro Public Safety');
+  await expect(shared.locator('dt').filter({ hasText: 'Talkgroup' })).toHaveCount(0);
+  await expect(shared.locator('dt').filter({ hasText: 'Source radio' })).toHaveCount(0);
+  await shared.getByRole('button', { name: 'Show all shared call details' }).click();
+  const details = page.getByRole('dialog', { name: 'Shared call details' });
+  await expect(details).not.toContainText('Regional response coordination');
+  await expect(details).not.toContainText('Emergency services');
+});
+
+test('shared target descriptions and groups are available in info without cluttering the summary', async ({ page }) => {
+  const first = { ...linkedCall, talkgroup_description: 'Regional response coordination',
+    talkgroup_group: 'Emergency services' };
+  const second = { ...first, id: 18, source_id: 30915, source_alias: 'Engine 5', source_entity_ref: null };
+  await openRecordings(page, { calls: [first, second] });
+  const shared = page.locator('.recordings-shared');
+  await expect(shared).toContainText('Fire Dispatch');
+  await expect(shared).not.toContainText('Regional response coordination');
+  await expect(shared).not.toContainText('Emergency services');
+  await shared.getByRole('button', { name: 'Show all shared call details' }).click();
+  const details = page.getByRole('dialog', { name: 'Shared call details' });
+  await expect(details).toContainText('Regional response coordination');
+  await expect(details).toContainText('Emergency services');
+});
+
+test('calls on one local date show that date once above the results', async ({ page }) => {
+  const second = { ...linkedCall, id: 18, start_ms: linkedCall.start_ms + 60_000 };
+  await openRecordings(page, { calls: [linkedCall, second] });
+  const dateLabel = await page.evaluate((timestamp) => new Intl.DateTimeFormat(undefined,
+    { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(timestamp)), linkedCall.start_ms);
+  await expect(page.locator('.recordings-result-count')).toContainText(dateLabel);
+  const times = page.locator('.recordings-call-time');
+  await expect(times).toHaveCount(2);
+  await expect(times.filter({ hasText: dateLabel })).toHaveCount(0);
+  for (const time of await times.all()) {
+    await expect(time.locator('strong')).toHaveText(/\d/);
+    await expect(time).toContainText('00:42');
+  }
+});
+
+test('calls spanning local dates retain a date on each card', async ({ page }) => {
+  const previousDay = { ...linkedCall, id: 18, start_ms: linkedCall.start_ms - 86_400_000 };
+  await openRecordings(page, { calls: [linkedCall, previousDay] });
+  const dates = await page.evaluate((timestamps) => timestamps.map((timestamp) =>
+    new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+      .format(new Date(timestamp))), [linkedCall.start_ms, previousDay.start_ms]);
+  expect(dates[0]).not.toBe(dates[1]);
+  const cards = page.locator('.recordings-call');
+  await expect(cards).toHaveCount(2);
+  await expect(cards.first().locator('.recordings-call-time')).toContainText(dates[0]);
+  await expect(cards.last().locator('.recordings-call-time')).toContainText(dates[1]);
 });

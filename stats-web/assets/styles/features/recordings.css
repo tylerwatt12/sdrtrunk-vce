@@ -265,7 +265,7 @@
   grid-template-columns: auto minmax(84px, 110px) minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-4);
   padding-right: calc(var(--space-4) + var(--control-height));
   border-bottom: 1px solid var(--table-rule);
 }
@@ -305,14 +305,39 @@
   font-size: var(--font-size-body);
 }
 
+.recordings-call-heading {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.recordings-call-heading .recordings-call-id {
+  flex: 0 0 auto;
+}
+.recordings-call-context.recordings-context-system {
+  max-width: 28ch;
+}
+.recordings-call-context.recordings-context-source {
+  max-width: 24ch;
+}
+.recordings-call-context.recordings-context-site {
+  max-width: 22ch;
+}
+.recordings-call-context + .recordings-call-context::before {
+  content: '·';
+  margin-right: var(--space-2);
+}
+
 .recordings-call-id {
   font-weight: var(--font-weight-medium);
 }
 
 .recordings-call-meta {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1) var(--space-3);
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  gap: var(--space-3);
 }
 
 .recordings-card-play {
@@ -351,7 +376,7 @@
   color: var(--muted);
   font-size: var(--font-size-meta);
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
