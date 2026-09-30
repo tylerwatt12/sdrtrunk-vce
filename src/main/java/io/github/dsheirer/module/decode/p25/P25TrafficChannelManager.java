@@ -267,8 +267,10 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
         if(parentChannel.getDecodeConfiguration() instanceof DecodeConfigP25Phase1 phase1)
         {
-            mIgnoreDataCalls = phase1.getIgnoreDataCalls();
-            mIgnoreEncryptedCalls = phase1.getIgnoreEncryptedCalls();
+            // A remote sender owns traffic allocation. These local allocation preferences must not mark its
+            // control grants as ignored.
+            mIgnoreDataCalls = mGrantAllocationEnabled && phase1.getIgnoreDataCalls();
+            mIgnoreEncryptedCalls = mGrantAllocationEnabled && phase1.getIgnoreEncryptedCalls();
             createPhase1TrafficChannels(phase1.getTrafficChannelPoolSize(), phase1);
             DecodeConfigP25Phase2 phase2TrafficConfig = new DecodeConfigP25Phase2();
             phase2TrafficConfig.setIgnoreDataCalls(mIgnoreDataCalls);
@@ -277,8 +279,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         }
         else if(parentChannel.getDecodeConfiguration() instanceof DecodeConfigP25Phase2 phase2)
         {
-            mIgnoreDataCalls = phase2.getIgnoreDataCalls();
-            mIgnoreEncryptedCalls = phase2.getIgnoreEncryptedCalls();
+            mIgnoreDataCalls = mGrantAllocationEnabled && phase2.getIgnoreDataCalls();
+            mIgnoreEncryptedCalls = mGrantAllocationEnabled && phase2.getIgnoreEncryptedCalls();
             DecodeConfigP25Phase1 phase1TrafficConfig = new DecodeConfigP25Phase1();
             phase1TrafficConfig.setIgnoreDataCalls(mIgnoreDataCalls);
             phase1TrafficConfig.setIgnoreEncryptedCalls(mIgnoreEncryptedCalls);

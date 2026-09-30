@@ -8,6 +8,7 @@ package io.github.dsheirer.web.http;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -20,11 +21,21 @@ import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.channel.ChannelAdministrationServiceTestSupport;
 import io.github.dsheirer.configuration.ConfigurationManager;
+import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.ChannelProcessingManager;
+import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.module.ProcessingChain;
+import io.github.dsheirer.module.log.EventLogManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
+import io.github.dsheirer.remote.P25RemoteBitstreamService;
+import io.github.dsheirer.remote.P25RemotePhase;
+import io.github.dsheirer.remote.RemoteP25BitstreamSource;
+import io.github.dsheirer.source.Source;
+import io.github.dsheirer.source.config.SourceConfigRemote;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -35,6 +46,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -156,6 +168,74 @@ class ChannelAdminHttpControllerTest
             HttpResponse<String> remoteCreated = sendJson(client, origin.resolve(ChannelAdminHttpController.PATH),
                 "POST", remoteCreate);
             assertEquals(201, remoteCreated.statusCode(), remoteCreated.body());
+            JsonNode remoteCreatedData = MAPPER.readTree(remoteCreated.body()).path("data");
+            String remoteId = remoteCreatedData.path("configuration_ids").get(0).textValue();
+            long remoteRevision = remoteCreatedData.path("revision").longValue();
+            URI remoteUri = origin.resolve(ChannelAdminHttpController.PATH + "/" + remoteId);
+            String remoteSource = """
+                {"frequencies_hz":[851012500],"source_type":"REMOTE",
+                 "sender_id":"%s","feed_id":"%s"}
+                """.formatted(senderId, feedId);
+            String duplicateRemoteCreate = """
+                {"revision":%d,"protocol_id":"p25-phase1","system":"County","site":"Remote",
+                 "name":"Duplicate Remote Control","alias_list_id":%d,
+                 "source":%s,"settings":{},"frequency_map":[],"event_logs":[],
+                 "recorders":[],"auxiliary_decoders":[]}
+                """.formatted(remoteRevision, aliasListId,
+                    remoteSource.replace("851012500", "852012500"));
+            HttpResponse<String> duplicateCreated = sendJson(client,
+                origin.resolve(ChannelAdminHttpController.PATH), "POST", duplicateRemoteCreate);
+            assertEquals(400, duplicateCreated.statusCode(), duplicateCreated.body());
+            assertTrue(duplicateCreated.body().contains("already configured for this sender and feed"));
+            assertEquals(remoteRevision, channels.currentRevision());
+
+            HttpResponse<String> duplicateCloned = sendJson(client,
+                origin.resolve(ChannelAdminHttpController.ACTIONS_PATH), "POST",
+                "{\"revision\":" + remoteRevision + ",\"action\":\"CLONE\",\"configuration_ids\":[\"" +
+                    remoteId + "\"]}");
+            assertEquals(400, duplicateCloned.statusCode(), duplicateCloned.body());
+            assertTrue(duplicateCloned.body().contains("already configured for this sender and feed"));
+            assertEquals(remoteRevision, channels.currentRevision());
+
+            String[] changedSources = {
+                "{\"frequencies_hz\":[851012500]}",
+                remoteSource.replace(senderId, "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff"),
+                remoteSource.replace(feedId, "22222222-3333-4444-8555-666666666666"),
+                remoteSource.replace("851012500", "852012500")
+            };
+            for(String changedSource: changedSources)
+            {
+                String changedSourceUpdate = """
+                    {"revision":%d,"protocol_id":"p25-phase1","system":"County","site":"Remote",
+                     "name":"Changed Source","alias_list_id":%d,"source":%s,
+                     "settings":{},"frequency_map":[],"event_logs":[],"recorders":[],
+                     "auxiliary_decoders":[]}
+                    """.formatted(remoteRevision, aliasListId, changedSource);
+                HttpResponse<String> rejected = sendJson(client, remoteUri, "PUT", changedSourceUpdate);
+                assertEquals(400, rejected.statusCode(), rejected.body());
+                assertTrue(rejected.body().contains("Remote channel source cannot be changed"));
+                assertEquals(remoteRevision, channels.currentRevision());
+            }
+
+            String remoteSettingsUpdate = """
+                {"revision":%d,"protocol_id":"p25-phase1","system":"County","site":"Remote",
+                 "name":"Remote Control Updated","alias_list_id":%d,"source":%s,
+                 "settings":{"traffic_channel_pool_size":4},"frequency_map":[],"event_logs":[],
+                 "recorders":[],"auxiliary_decoders":[]}
+                """.formatted(remoteRevision, aliasListId, remoteSource);
+            HttpResponse<String> remoteUpdated = sendJson(client, remoteUri, "PUT", remoteSettingsUpdate);
+            assertEquals(200, remoteUpdated.statusCode(), remoteUpdated.body());
+            HttpResponse<String> remoteEntry = client.send(HttpRequest.newBuilder(remoteUri).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, remoteEntry.statusCode(), remoteEntry.body());
+            JsonNode savedRemote = MAPPER.readTree(remoteEntry.body()).path("data").path("channel");
+            assertEquals("Remote Control Updated", savedRemote.path("name").textValue());
+            assertEquals(4, savedRemote.path("settings").path("traffic_channel_pool_size").intValue());
+            assertEquals("REMOTE", savedRemote.path("source").path("source_type").textValue());
+            assertEquals(senderId, savedRemote.path("source").path("sender_id").textValue());
+            assertEquals(feedId, savedRemote.path("source").path("feed_id").textValue());
+            assertEquals(851_012_500L, savedRemote.path("source").path("frequencies_hz").get(0).longValue());
+
             HttpResponse<String> catalogWithRemote = client.send(HttpRequest.newBuilder(
                 origin.resolve(ChannelAdminHttpController.READ_PATH)).GET().build(),
                 HttpResponse.BodyHandlers.ofString());
@@ -178,6 +258,118 @@ class ChannelAdminHttpControllerTest
             finally
             {
                 MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+            }
+        }
+    }
+
+    @Test
+    void rejectedRemoteSourceEditDoesNotStopRunningChannel() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("running-remote-channel-http-data");
+        SdrTrunkTestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(dataRoot));
+        TestUserPreferences preferences = new TestUserPreferences(dataRoot);
+        AliasModel aliasModel = new AliasModel();
+        ConfigurationManager manager = new ConfigurationManager(preferences, null, aliasModel,
+            new EventLogManager(aliasModel, preferences), null);
+        ChannelProcessingManager processing = manager.getChannelProcessingManager();
+        AtomicInteger stopNotifications = new AtomicInteger();
+        HttpServer server = null;
+        ExecutorService executor = Executors.newCachedThreadPool();
+        try
+        {
+            manager.init();
+            AliasAdministrationService aliases = AliasAdministrationServiceTestSupport.create(manager);
+            long aliasListId = aliases.createAliasList("County P25", AliasListFamily.P25,
+                aliases.currentRevision()).aliasListId();
+            ChannelAdministrationService channels = ChannelAdministrationServiceTestSupport.create(manager);
+            processing.setP25RemoteBitstreamService(new P25RemoteBitstreamService()
+            {
+                @Override
+                public Source acquireSource(Channel channel, String threadName)
+                {
+                    SourceConfigRemote remote = (SourceConfigRemote)channel.getSourceConfiguration();
+                    return new RemoteP25BitstreamSource(remote.getFrequency(), P25RemotePhase.PHASE_1, threadName);
+                }
+
+                @Override
+                public void channelStarted(Channel channel, ChannelStartProcessingRequest request,
+                                           ProcessingChain chain)
+                {
+                }
+
+                @Override
+                public void channelStopped(Channel channel, ProcessingChain chain)
+                {
+                    stopNotifications.incrementAndGet();
+                }
+            });
+            ChannelAdminHttpController controller = new ChannelAdminHttpController(channels, () -> true);
+            server = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
+            server.setExecutor(executor);
+            server.createContext(ChannelAdminHttpController.PATH, controller::handle);
+            server.start();
+            URI origin = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
+            HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+
+            String senderId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+            String feedId = "11111111-2222-4333-8444-555555555555";
+            String source = """
+                {"frequencies_hz":[851012500],"source_type":"REMOTE",
+                 "sender_id":"%s","feed_id":"%s"}
+                """.formatted(senderId, feedId);
+            String create = """
+                {"revision":%d,"protocol_id":"p25-phase1","system":"County","site":"Remote",
+                 "name":"Remote Control","alias_list_id":%d,"source":%s,
+                 "settings":{},"frequency_map":[],"event_logs":[],"recorders":[],
+                 "auxiliary_decoders":[]}
+                """.formatted(channels.currentRevision(), aliasListId, source);
+            HttpResponse<String> created = sendJson(client, origin.resolve(ChannelAdminHttpController.PATH),
+                "POST", create);
+            assertEquals(201, created.statusCode(), created.body());
+            JsonNode createdData = MAPPER.readTree(created.body()).path("data");
+            String channelId = createdData.path("configuration_ids").get(0).textValue();
+            Channel saved = manager.getChannelModel().getChannels().stream()
+                .filter(channel -> channelId.equals(channel.getConfigurationId())).findFirst().orElseThrow();
+            processing.start(saved);
+            ProcessingChain originalChain =
+                processing.getProcessingChainsByConfiguration(channelId, null).getFirst();
+            long revision = channels.currentRevision();
+            assertEquals(ChannelAdministrationService.ProcessingState.RUNNING,
+                channels.get(channelId).processingState());
+
+            String invalidUpdate = """
+                {"revision":%d,"protocol_id":"p25-phase1","system":"County","site":"Remote",
+                 "name":"Changed Source","alias_list_id":%d,"source":%s,
+                 "settings":{},"frequency_map":[],"event_logs":[],"recorders":[],
+                 "auxiliary_decoders":[]}
+                """.formatted(revision, aliasListId,
+                    source.replace(senderId, "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff"));
+            HttpResponse<String> rejected = sendJson(client,
+                origin.resolve(ChannelAdminHttpController.PATH + "/" + channelId), "PUT", invalidUpdate);
+            assertEquals(400, rejected.statusCode(), rejected.body());
+            assertTrue(rejected.body().contains("Remote channel source cannot be changed"));
+            assertEquals(revision, channels.currentRevision());
+            assertSame(saved, manager.getChannelModel().getChannels().stream()
+                .filter(channel -> channelId.equals(channel.getConfigurationId())).findFirst().orElseThrow());
+            assertSame(originalChain,
+                processing.getProcessingChainsByConfiguration(channelId, null).getFirst());
+            assertEquals(0, stopNotifications.get());
+            assertEquals(ChannelAdministrationService.ProcessingState.RUNNING,
+                channels.get(channelId).processingState());
+            assertEquals(senderId, ((SourceConfigRemote)saved.getSourceConfiguration()).getSenderId());
+        }
+        finally
+        {
+            if(server != null) server.stop(0);
+            executor.shutdownNow();
+            try
+            {
+                processing.close();
+                manager.flushConfiguration();
+            }
+            finally
+            {
+                MyEventBus.getGlobalEventBus().unregister(processing);
             }
         }
     }

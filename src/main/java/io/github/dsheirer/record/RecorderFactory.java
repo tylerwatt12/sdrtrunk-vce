@@ -30,6 +30,7 @@ import io.github.dsheirer.record.binary.BinaryRecorder;
 import io.github.dsheirer.record.wave.ComplexSamplesWaveRecorder;
 import io.github.dsheirer.record.wave.IRecordingStatusListener;
 import io.github.dsheirer.record.wave.NativeBufferWaveRecorder;
+import io.github.dsheirer.source.config.SourceConfigRemote;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.util.StringUtils;
@@ -65,6 +66,13 @@ public class RecorderFactory
      */
     public static List<Module> getRecorders(UserPreferences userPreferences, Channel channel)
     {
+        // Remote sources provide packed dibits only. These channel recorders require I/Q samples, a local
+        // demodulated byte buffer, or a tuner source; alias-driven audio-call recording is handled separately.
+        if(channel.getSourceConfiguration() instanceof SourceConfigRemote)
+        {
+            return List.of();
+        }
+
         List<Module> recorderModules = new ArrayList<>();
 
         for(RecorderType recorderType: channel.getRecordConfiguration().getRecorders())

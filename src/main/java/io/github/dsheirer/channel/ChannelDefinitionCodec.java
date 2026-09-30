@@ -150,6 +150,14 @@ public final class ChannelDefinitionCodec
         validateCommon(submitted, aliasList, profile);
         Map<String,Object> settings = mRegistry.validateSettings(profile, submitted.settings());
         SourceConfiguration source = sourceTo(submitted.source(), profile);
+        if(existing != null && existing.getSourceConfiguration() instanceof SourceConfigRemote currentRemote &&
+            (!(source instanceof SourceConfigRemote updatedRemote) ||
+                !Objects.equals(currentRemote.getSenderId(), updatedRemote.getSenderId()) ||
+                !Objects.equals(currentRemote.getFeedId(), updatedRemote.getFeedId()) ||
+                currentRemote.getFrequency() != updatedRemote.getFrequency()))
+        {
+            throw new IllegalArgumentException("Remote channel source cannot be changed");
+        }
         DecodeConfiguration decoder = decoderTo(profile, settings, submitted.frequencyMap(), existing);
         if(profile.channelKind() != null)
         {

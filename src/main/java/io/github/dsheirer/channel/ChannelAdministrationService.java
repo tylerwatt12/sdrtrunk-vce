@@ -228,6 +228,7 @@ public final class ChannelAdministrationService
             Channel created = mCodec.toChannel(definition, aliasList, null);
             channels.add(created);
             requireUniqueRadioResolveIds(channels);
+            requireUniqueRemoteSource(created, channels);
             return new MutationTarget(Set.of(created.getConfigurationId()), List.of(created.getConfigurationId()));
         }));
     }
@@ -240,7 +241,11 @@ public final class ChannelAdministrationService
             Channel original = onConfigurationThread(() ->
             {
                 requireRevision(expectedRevision);
-                return requireChannel(id);
+                Channel existing = requireChannel(id);
+                // Reject invalid edits and duplicate remote routes before interrupting a running channel.
+                Channel candidate = mCodec.toChannel(definition, requireAliasList(definition.aliasListId()), existing);
+                requireUniqueRemoteSource(candidate, mConfigurationManager.getChannelModel().getChannels());
+                return existing;
             });
             boolean restart = isProcessing(id);
             boolean stopped = false;
@@ -295,6 +300,7 @@ public final class ChannelAdministrationService
             Channel replacement = mCodec.toChannel(normalized, requireAliasList(definition.aliasListId()), existing);
             channels.set(index, replacement);
             requireUniqueRadioResolveIds(channels);
+            requireUniqueRemoteSource(replacement, channels);
             return new MutationTarget(Set.of(id), List.of(id));
         });
     }
@@ -317,6 +323,7 @@ public final class ChannelAdministrationService
                     clone.setAutoStartOrder(effectiveAutoStartIds(channels).size() + 1);
                 }
                 channels.add(clone);
+                requireUniqueRemoteSource(clone, channels);
                 createdIds.add(clone.getConfigurationId());
             }
             requireUniqueRadioResolveIds(channels);
@@ -665,6 +672,22 @@ public final class ChannelAdministrationService
             if(id != null && !ids.add(id))
             {
                 throw new IllegalArgumentException("RadioResolve ID is already assigned to another channel");
+            }
+        }
+    }
+
+    private static void requireUniqueRemoteSource(Channel candidate, List<Channel> channels)
+    {
+        if(!(candidate.getSourceConfiguration() instanceof SourceConfigRemote remote)) return;
+
+        for(Channel channel: channels)
+        {
+            if(!Objects.equals(channel.getConfigurationId(), candidate.getConfigurationId()) &&
+                channel.getSourceConfiguration() instanceof SourceConfigRemote other &&
+                Objects.equals(remote.getSenderId(), other.getSenderId()) &&
+                Objects.equals(remote.getFeedId(), other.getFeedId()))
+            {
+                throw new IllegalArgumentException("Remote channel is already configured for this sender and feed");
             }
         }
     }

@@ -43,6 +43,7 @@ import io.github.dsheirer.module.decode.p25.bandplan.P25BandplanOverrideRegistry
 import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
 import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
 import io.github.dsheirer.protocol.Protocol;
+import io.github.dsheirer.source.config.SourceConfigRemote;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.List;
@@ -64,6 +65,39 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class P25TrafficChannelManagerTest
 {
+    @Test
+    void remoteControlGrantsIgnoreLocalTrafficSkipPreferences() throws Exception
+    {
+        Channel parent = new Channel("Remote control", Channel.ChannelType.STANDARD);
+        SourceConfigRemote source = new SourceConfigRemote();
+        source.setSenderId("54ad3a5c-c1cb-446f-bef7-c358fb14b7a8");
+        source.setFeedId("14dc0718-2970-4147-9185-7f4119810dca");
+        source.setFrequency(851_000_000L);
+        parent.setSourceConfiguration(source);
+        DecodeConfigP25Phase1 config = new DecodeConfigP25Phase1();
+        config.setTrafficChannelPoolSize(2);
+        config.setIgnoreDataCalls(true);
+        config.setIgnoreEncryptedCalls(true);
+        parent.setDecodeConfiguration(config);
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(parent);
+        manager.processFrequencyBand(band(0, 851_006_250L, 6_250L, 1));
+        APCO25Channel encrypted = APCO25Channel.create(0, 1);
+        APCO25Channel data = APCO25Channel.create(0, 2);
+
+        manager.processP1ControlDirectedChannelGrant(encrypted, VoiceServiceOptions.createEncrypted(),
+            identifiers(1201, null), Opcode.OSP_GROUP_VOICE_CHANNEL_GRANT, 1_000L);
+        manager.processP1ControlDirectedChannelGrant(data, null, identifiers(1202, null),
+            Opcode.OSP_SNDCP_DATA_CHANNEL_GRANT, 1_100L);
+
+        assertFalse(trafficTrackers(manager).get(encrypted.getDownlinkFrequency()).getEvent().getDetails()
+            .contains("IGNORED"));
+        assertFalse(trafficTrackers(manager).get(data.getDownlinkFrequency()).getEvent().getDetails()
+            .contains("IGNORED"));
+        assertTrue(allocatedTrafficChannels(manager).isEmpty(), "remote OPENs remain the allocation authority");
+        assertTrue(config.getIgnoreDataCalls(), "saved preferences must not be mutated");
+        assertTrue(config.getIgnoreEncryptedCalls());
+    }
+
     @Test
     void encryptedPhaseOneGrantSkipsAllocationButClearGrantStillStarts()
     {

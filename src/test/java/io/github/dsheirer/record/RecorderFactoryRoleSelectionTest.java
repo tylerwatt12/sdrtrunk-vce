@@ -19,11 +19,13 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.module.Module;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.dmr.audio.DMRCallSequenceRecorder;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
 import io.github.dsheirer.record.binary.BinaryRecorder;
 import io.github.dsheirer.record.config.RecordConfiguration;
 import io.github.dsheirer.record.wave.ComplexSamplesWaveRecorder;
+import io.github.dsheirer.source.config.SourceConfigRemote;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import java.nio.file.Path;
 import java.util.List;
@@ -79,6 +81,30 @@ class RecorderFactoryRoleSelectionTest
             RecorderType.BASEBAND, RecorderType.DEMODULATED_BIT_STREAM, RecorderType.MBE_CALL_SEQUENCE));
 
         assertTrue(modules.isEmpty());
+    }
+
+    @Test
+    void remoteBitstreamChannelsPreserveRecorderSelectionsWithoutCreatingRawRecorders()
+    {
+        for(Channel.ChannelType type: List.of(Channel.ChannelType.STANDARD, Channel.ChannelType.TRAFFIC))
+        {
+            Channel channel = new Channel("Remote P25", type);
+            channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+            SourceConfigRemote source = new SourceConfigRemote();
+            source.setSenderId("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
+            source.setFeedId("11111111-2222-4333-8444-555555555555");
+            source.setFrequency(FREQUENCY);
+            channel.setSourceConfiguration(source);
+            RecordConfiguration saved = new RecordConfiguration();
+            List<RecorderType> selected = List.of(RecorderType.BASEBAND, RecorderType.DEMODULATED_BIT_STREAM,
+                RecorderType.MBE_CALL_SEQUENCE, RecorderType.TRAFFIC_BASEBAND,
+                RecorderType.TRAFFIC_DEMODULATED_BIT_STREAM, RecorderType.TRAFFIC_MBE_CALL_SEQUENCE);
+            selected.forEach(saved::addRecorder);
+            channel.setRecordConfiguration(saved);
+
+            assertTrue(RecorderFactory.getRecorders(preferences(), channel).isEmpty());
+            assertEquals(selected, channel.getRecordConfiguration().getRecorders());
+        }
     }
 
     private UserPreferences preferences()
