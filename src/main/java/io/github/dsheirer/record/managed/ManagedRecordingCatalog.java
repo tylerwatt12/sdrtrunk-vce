@@ -52,6 +52,7 @@ public final class ManagedRecordingCatalog implements AutoCloseable
     private static final int MAX_PENDING_WRITES = 512;
     private static final int MAX_PENDING_TRANSCRIPT_WRITES = 32;
     private final Path mRoot;
+    private final Path mDatabaseFile;
     private final ManagedRecordingStore mStore;
     private final ArrayBlockingQueue<PendingRecording> mPending = new ArrayBlockingQueue<>(MAX_PENDING_WRITES);
     private final ArrayBlockingQueue<PendingTranscription> mPendingTranscription =
@@ -66,11 +67,12 @@ public final class ManagedRecordingCatalog implements AutoCloseable
 
     public ManagedRecordingCatalog(Path databaseFile, Path recordingsRoot) throws SQLException, IOException
     {
-        Objects.requireNonNull(databaseFile, "Database file is required");
+        mDatabaseFile = Objects.requireNonNull(databaseFile, "Database file is required")
+            .toAbsolutePath().normalize();
         mRoot = Objects.requireNonNull(recordingsRoot, "Managed recordings root is required")
             .toAbsolutePath().normalize();
         Files.createDirectories(mRoot);
-        mStore = new ManagedRecordingStore(databaseFile.toAbsolutePath().normalize(), mRoot);
+        mStore = new ManagedRecordingStore(mDatabaseFile, mRoot);
         mWriter = new Thread(this::writeLoop, "managed-recordings-catalog");
         mWriter.setDaemon(true);
         mWriter.start();
@@ -376,7 +378,18 @@ public final class ManagedRecordingCatalog implements AutoCloseable
 
     public List<String> channelIds(String query, int limit) throws SQLException
     {
-        return mStore.channelIds(query, boundedSuggestions(limit));
+        return channelIds(null, query, limit);
+    }
+
+    public List<String> channelIds(String systemKey, String query, int limit) throws SQLException
+    {
+        return mStore.channelIds(systemKey, query, boundedSuggestions(limit));
+    }
+
+    /** Catalog location for temporary, read-only joins to current recording labels. */
+    public Path databaseFile()
+    {
+        return mDatabaseFile;
     }
 
     public List<Site> sites(String systemKey, int limit) throws SQLException

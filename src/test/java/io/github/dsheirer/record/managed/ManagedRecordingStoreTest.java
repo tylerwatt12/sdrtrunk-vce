@@ -192,6 +192,7 @@ class ManagedRecordingStoreTest
         }
         try(ManagedRecordingCatalog catalog = new ManagedRecordingCatalog(db, root))
         {
+            assertEquals(db.toAbsolutePath().normalize(), catalog.databaseFile());
             assertEquals(1L, catalog.nextPendingTranscription(0, 500));
             assertTrue(catalog.storeTranscript(1, "", 1234L).get(5, TimeUnit.SECONDS));
             assertEquals("complete", catalog.transcription(1).status());
@@ -288,6 +289,106 @@ class ManagedRecordingStoreTest
         {
             assertEquals(3, reopened.stats().callCount());
             assertNotNull(reopened.find(2L));
+        }
+    }
+
+    @Test
+    void dimensionSuggestionsRequireLiveCallsBeforeTheLimitAndAfterDeletion() throws Exception
+    {
+        Path root = temporary.resolve("suggestions");
+        Path db = temporary.resolve("suggestions.sqlite");
+        Files.createDirectories(root);
+        Site site = new Site(0x12345, 0x321, 1, 2);
+        try(ManagedRecordingStore store = new ManagedRecordingStore(db, root))
+        {
+            save(store, root, metadata(1000, "system-recorded", "one.mp3", 101, 4001,
+                ManagedRecordingCatalog.CALL_GROUP, site, List.of(site), List.of()));
+            try(var connection = DriverManager.getConnection("jdbc:sqlite:" + db);
+                var statement = connection.createStatement())
+            {
+                statement.executeUpdate("INSERT INTO recording_system(system_key) VALUES('system-empty')");
+                statement.executeUpdate("INSERT INTO recording_channel(channel_uuid) VALUES('channel-0-empty')");
+                statement.executeUpdate("INSERT INTO recording_site(wacn,system_id,rfss,site_id) VALUES(0,0,0,0)");
+                statement.executeUpdate("INSERT INTO recording_system_site(system_id,site_id) " +
+                    "SELECT sys.id,site.id FROM recording_system sys,recording_site site " +
+                    "WHERE sys.system_key='system-empty' AND site.wacn=0");
+            }
+            assertEquals(List.of("system-recorded"), store.systemKeys("system", 1));
+            assertEquals(List.of("channel-a"), store.channelIds("channel", 1));
+            assertEquals(List.of(site), store.sites(null, null, 1));
+            assertTrue(store.sites("system-empty", null, 1).isEmpty());
+
+            assertTrue(store.delete(1));
+            assertTrue(store.systemKeys("system", 25).isEmpty());
+            assertTrue(store.channelIds("channel", 25).isEmpty());
+            assertTrue(store.sites(null, null, 25).isEmpty());
+            try(var connection = DriverManager.getConnection("jdbc:sqlite:" + db);
+                var statement = connection.createStatement();
+                var rows = statement.executeQuery("SELECT count(*) FROM recording_system"))
+            {
+                assertTrue(rows.next());
+                assertEquals(2, rows.getInt(1));
+            }
+        }
+    }
+
+    @Test
+    void retentionRemovesSuggestionsOnlyWhenTheLastMatchingCallExpires() throws Exception
+    {
+        Path root = temporary.resolve("retained-suggestions");
+        Files.createDirectories(root);
+        Site expiredSite = new Site(0x12345, 0x321, 1, 2);
+        Site retainedSite = new Site(0x12345, 0x321, 2, 3);
+        try(ManagedRecordingStore store = new ManagedRecordingStore(temporary.resolve("retention.sqlite"), root))
+        {
+            save(store, root, metadata(1000, "system-expired", "old.mp3", 101, 4001,
+                ManagedRecordingCatalog.CALL_GROUP, expiredSite, List.of(expiredSite), List.of(), "channel-old"));
+            save(store, root, metadata(2000, "system-retained", "recent.mp3", 101, 4001,
+                ManagedRecordingCatalog.CALL_GROUP, retainedSite, List.of(retainedSite), List.of(), "channel-new"));
+            assertEquals(1L, store.pruneOlderThan(1500).removed());
+            assertEquals(List.of("system-retained"), store.systemKeys("system", 25));
+            assertEquals(List.of("channel-new"), store.channelIds("channel", 25));
+            assertEquals(List.of(retainedSite), store.sites(null, null, 25));
+            assertTrue(store.channelIds("system-expired", "channel", 25).isEmpty());
+            assertTrue(store.sites("system-expired", null, 25).isEmpty());
+        }
+    }
+
+    @Test
+    void scopedDimensionSuggestionsUseRecordedP25EvidenceWithoutASystemSitePair() throws Exception
+    {
+        Path root = temporary.resolve("legacy-suggestions");
+        Files.createDirectories(root);
+        Site selected = new Site(0xbee00, 0x49f, 1, 1);
+        Site other = new Site(0xaaaaa, 0x111, 2, 2);
+        String selectedKey = "p25:bee00:49f";
+        String otherKey = "p25:aaaaa:111";
+        try(ManagedRecordingStore store = new ManagedRecordingStore(temporary.resolve("legacy.sqlite"), root))
+        {
+            save(store, root, metadata(1000, null, "winner.mp3", 101, 4001,
+                ManagedRecordingCatalog.CALL_GROUP, selected, List.of(selected), List.of(), "channel-1"));
+            save(store, root, metadata(2000, null, "observed.mp3", 101, 4001,
+                ManagedRecordingCatalog.CALL_GROUP, null, List.of(selected), List.of(), "channel-2"));
+            save(store, root, metadata(3000, otherKey, "owned-other.mp3", 101, 4001,
+                ManagedRecordingCatalog.CALL_GROUP, selected, List.of(selected), List.of(), "channel-3"));
+            save(store, root, metadata(4000, null, "winner-other.mp3", 101, 4001,
+                ManagedRecordingCatalog.CALL_GROUP, other, List.of(other, selected), List.of(), "channel-4"));
+            save(store, root, metadata(5000, null, "ambiguous.mp3", 101, 4001,
+                ManagedRecordingCatalog.CALL_GROUP, null, List.of(other, selected), List.of(), "channel-5"));
+            save(store, root, metadata(6000, selectedKey, "owned-selected.mp3", 101, 4001,
+                ManagedRecordingCatalog.CALL_GROUP, null, List.of(), List.of(), "channel-6"));
+
+            assertEquals(List.of("channel-1", "channel-2", "channel-6"),
+                store.channelIds(selectedKey, "channel", 25));
+            assertEquals(List.of("channel-3", "channel-4"), store.channelIds(otherKey, "channel", 25));
+            assertEquals(List.of(selected), store.sites(selectedKey, null, 25));
+            assertEquals(List.of(other, selected), store.sites(otherKey, null, 25));
+            assertTrue(store.sites("p25:00001:001", null, 25).isEmpty());
+
+            assertTrue(store.delete(1));
+            assertTrue(store.delete(2));
+            assertTrue(store.sites(selectedKey, null, 25).isEmpty());
+            assertEquals(List.of("channel-6"), store.channelIds(selectedKey, "channel", 25));
         }
     }
 
@@ -647,8 +748,15 @@ class ManagedRecordingStoreTest
                                                       int target, int type, Site winner, List<Site> sites,
                                                       List<Member> members)
     {
+        return metadata(start, system, path, source, target, type, winner, sites, members, "channel-a");
+    }
+
+    private static ManagedRecordingMetadata metadata(long start, String system, String path, int source,
+                                                      int target, int type, Site winner, List<Site> sites,
+                                                      List<Member> members, String channel)
+    {
         return new ManagedRecordingMetadata(start, start + 1000, 1000L, 5L, path, system,
-            "channel-a", 7L, 1, type, ManagedRecordingCatalog.VOICE_CLEAR,
+            channel, 7L, 1, type, ManagedRecordingCatalog.VOICE_CLEAR,
             source, null, null, null, target, null, null, null,
             851012500L, 1, 0x293, null, null, winner, sites, members);
     }

@@ -512,7 +512,7 @@ final class ManagedRecordingsHttpController
         List<Map<String,Object>> suggestions;
         try
         {
-            suggestions = new ArrayList<>(mLabels.suggestions(query, kind, systemKey, limit));
+            suggestions = new ArrayList<>(mLabels.suggestions(query, kind, systemKey, limit, catalog.databaseFile()));
         }
         finally
         {
@@ -536,7 +536,7 @@ final class ManagedRecordingsHttpController
         }
         if((kind == null || "channel".equals(kind)) && suggestions.size() < limit)
         {
-            for(String id: catalog.channelIds(query, limit - suggestions.size()))
+            for(String id: catalog.channelIds(systemKey, query, limit - suggestions.size()))
             {
                 if(seen.add("channel:" + id))
                 {

@@ -8,6 +8,7 @@ package io.github.dsheirer.stats;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.preference.UserPreferences;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -350,7 +351,16 @@ final class ManagedRecordingLabels
 
     List<Map<String,Object>> suggestions(String query, String kind, String systemKey, int requestedLimit)
     {
-        if(query == null || query.isBlank() || !Files.isRegularFile(mDatabasePath))
+        return suggestions(query, kind, systemKey, requestedLimit, null);
+    }
+
+    /** Applies catalog eligibility before each label query's limit, without changing either database. */
+    List<Map<String,Object>> suggestions(String query, String kind, String systemKey, int requestedLimit,
+                                         Path catalogDatabase)
+    {
+        boolean recordedOnly = catalogDatabase != null;
+        if(query == null || query.isBlank() || !Files.isRegularFile(mDatabasePath) ||
+            (recordedOnly && !Files.isRegularFile(catalogDatabase)))
         {
             return List.of();
         }
@@ -360,9 +370,15 @@ final class ManagedRecordingLabels
         List<Map<String,Object>> result = new ArrayList<>();
         try(Connection connection = open())
         {
+            if(recordedOnly)
+            {
+                attachRecordingCatalog(connection, catalogDatabase);
+            }
+            String scope = recordedOnly ?
+                "WITH recording_scope(system_key,wacn,sysid) AS (VALUES (?,?,?)) " : "";
             if(kind == null || "system".equals(kind))
             {
-                try(PreparedStatement statement = connection.prepareStatement("""
+                try(PreparedStatement statement = connection.prepareStatement(scope + """
                     SELECT system.system_key,
                         coalesce(nullif(config.system_name, ''), (
                             SELECT nullif(saved.system_name, '')
@@ -373,21 +389,25 @@ final class ManagedRecordingLabels
                         ), system.system_key) label
                     FROM radio_system system
                     LEFT JOIN configuration_channel config ON config.configuration_id = system.configuration_id
-                    WHERE lower(system.system_key) LIKE ? ESCAPE '\\'
+                    WHERE (lower(system.system_key) LIKE ? ESCAPE '\\'
                        OR lower(coalesce(config.system_name,'')) LIKE ? ESCAPE '\\'
                        OR EXISTS(
                            SELECT 1 FROM receiver_channel receiver
                            JOIN configuration_channel saved ON saved.configuration_id=receiver.configuration_id
                            WHERE receiver.radio_system_id=system.id
                              AND lower(coalesce(saved.system_name,'')) LIKE ? ESCAPE '\\'
-                       )
+                       ))
+                      AND %s
                     ORDER BY label LIMIT ?
-                    """))
+                    """.formatted(recordedOnly ? "EXISTS(SELECT 1 FROM (" +
+                        recordingCallCandidates("system.system_key", "system.p25_wacn", "system.p25_system_id") +
+                        "))" : "1")))
                 {
-                    statement.setString(1, pattern);
-                    statement.setString(2, pattern);
-                    statement.setString(3, pattern);
-                    statement.setInt(4, limit);
+                    int offset = bindRecordingScope(statement, recordedOnly, systemKey);
+                    statement.setString(offset + 1, pattern);
+                    statement.setString(offset + 2, pattern);
+                    statement.setString(offset + 3, pattern);
+                    statement.setInt(offset + 4, limit);
                     try(ResultSet rows = statement.executeQuery())
                     {
                         while(rows.next())
@@ -400,7 +420,7 @@ final class ManagedRecordingLabels
             }
             if(result.size() < limit && (kind == null || "channel".equals(kind) || "site".equals(kind)))
             {
-                try(PreparedStatement statement = connection.prepareStatement("""
+                try(PreparedStatement statement = connection.prepareStatement(scope + """
                     SELECT config.configuration_id, config.name, config.site_name, config.system_name,
                         config.channel_kind, p25.rfss, p25.site AS site_id,
                         system.p25_wacn AS wacn, system.p25_system_id AS sysid
@@ -410,16 +430,19 @@ final class ManagedRecordingLabels
                     LEFT JOIN radio_system system ON system.id=receiver.radio_system_id
                     WHERE lower(coalesce(config.name,'') || ' ' || coalesce(config.site_name,'') || ' ' ||
                         coalesce(config.system_name,'')) LIKE ? ESCAPE '\\'
-                      AND (? IS NULL OR system.system_key=?)
+                      AND (? IS NULL OR %s)
+                      AND %s
                     ORDER BY lower(coalesce(config.system_name,'')), lower(coalesce(config.site_name,'')),
                         lower(coalesce(config.name,''))
                     LIMIT ?
-                    """))
+                    """.formatted(recordedOnly ? "?=(SELECT system_key FROM recording_scope)" : "system.system_key=?",
+                        recordedOnly ? recordedChannelPredicate("site".equals(kind)) : "1")))
                 {
-                    statement.setString(1, pattern);
-                    statement.setString(2, systemKey);
-                    statement.setString(3, systemKey);
-                    statement.setInt(4, limit - result.size());
+                    int offset = bindRecordingScope(statement, recordedOnly, systemKey);
+                    statement.setString(offset + 1, pattern);
+                    statement.setString(offset + 2, systemKey);
+                    statement.setString(offset + 3, systemKey);
+                    statement.setInt(offset + 4, limit - result.size());
                     try(ResultSet rows = statement.executeQuery())
                     {
                         while(rows.next())
@@ -449,7 +472,7 @@ final class ManagedRecordingLabels
             }
             if(result.size() < limit && (kind == null || "talkgroup".equals(kind) || "radio".equals(kind)))
             {
-                try(PreparedStatement statement = connection.prepareStatement("""
+                try(PreparedStatement statement = connection.prepareStatement(scope + """
                     SELECT alias.matcher_type, alias.value, alias.min_value, alias.max_value,
                         alias.name, alias.description,
                         list.id AS alias_list_id, list.name AS list_name
@@ -459,6 +482,7 @@ final class ManagedRecordingLabels
                       AND (lower(alias.name) LIKE ? ESCAPE '\\' OR CAST(alias.value AS TEXT) LIKE ? ESCAPE '\\'
                           OR CAST(alias.min_value AS TEXT) LIKE ? ESCAPE '\\'
                           OR CAST(alias.max_value AS TEXT) LIKE ? ESCAPE '\\')
+                      AND %s
                       AND (? IS NULL OR alias.alias_list_id IN (
                           SELECT saved.alias_list_id
                           FROM configuration_channel saved
@@ -467,21 +491,22 @@ final class ManagedRecordingLabels
                           WHERE system.system_key=?
                       ))
                     ORDER BY lower(alias.name), alias.id LIMIT ?
-                    """))
+                    """.formatted(recordedOnly ? recordedAliasPredicate() : "1")))
                 {
                     for(String matcher: kind == null ?
                         List.of("TALKGROUP", "TALKGROUP_RANGE", "RADIO_ID", "RADIO_ID_RANGE") :
                         "radio".equals(kind) ? List.of("RADIO_ID", "RADIO_ID_RANGE") :
                             List.of("TALKGROUP", "TALKGROUP_RANGE"))
                     {
-                        statement.setString(1, matcher);
-                        statement.setString(2, pattern);
-                        statement.setString(3, pattern);
-                        statement.setString(4, pattern);
-                        statement.setString(5, pattern);
-                        statement.setString(6, systemKey);
-                        statement.setString(7, systemKey);
-                        statement.setInt(8, limit - result.size());
+                        int offset = bindRecordingScope(statement, recordedOnly, systemKey);
+                        statement.setString(offset + 1, matcher);
+                        statement.setString(offset + 2, pattern);
+                        statement.setString(offset + 3, pattern);
+                        statement.setString(offset + 4, pattern);
+                        statement.setString(offset + 5, pattern);
+                        statement.setString(offset + 6, recordedOnly ? null : systemKey);
+                        statement.setString(offset + 7, systemKey);
+                        statement.setInt(offset + 8, limit - result.size());
                         try(ResultSet rows = statement.executeQuery())
                         {
                             while(rows.next())
@@ -510,10 +535,12 @@ final class ManagedRecordingLabels
             if(result.size() < limit && systemKey != null && query.length() >= 3 &&
                 (kind == null || "radio".equals(kind)))
             {
-                try(PreparedStatement statement = connection.prepareStatement("""
-                    SELECT recent.identity_id, recent.last_talker_alias
+                String recordedRadio = recordedOnly ? recordedOtaIdentityQuery() : "recent.identity_id";
+                try(PreparedStatement statement = connection.prepareStatement(scope + """
+                    SELECT * FROM (
+                    SELECT (%s) AS identity_id, recent.last_talker_alias
                     FROM (
-                        SELECT summary.identity_id, summary.last_talker_alias
+                        SELECT summary.identity_id, summary.last_talker_alias%s
                         FROM radio_system_identity_summary summary
                             INDEXED BY idx_radio_system_identity_last_seen
                         JOIN radio_system system ON system.id=summary.radio_system_id
@@ -522,12 +549,14 @@ final class ManagedRecordingLabels
                     ) recent
                     WHERE recent.last_talker_alias IS NOT NULL
                       AND lower(recent.last_talker_alias) LIKE ? ESCAPE '\\'
-                    LIMIT ?
-                    """))
+                    ) WHERE identity_id IS NOT NULL LIMIT ?
+                    """.formatted(recordedRadio, recordedOnly ?
+                        ", summary.home_wacn, summary.home_system_id, system.p25_wacn, system.p25_system_id" : "")))
                 {
-                    statement.setString(1, systemKey);
-                    statement.setString(2, pattern);
-                    statement.setInt(3, limit - result.size());
+                    int offset = bindRecordingScope(statement, recordedOnly, systemKey);
+                    statement.setString(offset + 1, systemKey);
+                    statement.setString(offset + 2, pattern);
+                    statement.setInt(offset + 3, limit - result.size());
                     try(ResultSet rows = statement.executeQuery())
                     {
                         while(rows.next())
@@ -542,9 +571,175 @@ final class ManagedRecordingLabels
         }
         catch(SQLException ignored)
         {
-            return List.of();
+            // A failed optional lookup cannot add an unverified candidate. Retain earlier verified matches.
         }
         return result;
+    }
+
+    private static void attachRecordingCatalog(Connection connection, Path catalogDatabase) throws SQLException
+    {
+        try(PreparedStatement statement = connection.prepareStatement("ATTACH DATABASE ? AS recordings"))
+        {
+            statement.setString(1, catalogDatabase.toAbsolutePath().normalize().toUri() + "?mode=ro");
+            statement.execute();
+        }
+        try(Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA busy_timeout=1000");
+        }
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        org.sqlite.ProgressHandler.setHandler(connection, 10000, new org.sqlite.ProgressHandler()
+        {
+            @Override
+            protected int progress()
+            {
+                return System.nanoTime() >= deadline ? 1 : 0;
+            }
+        });
+    }
+
+    private static int bindRecordingScope(PreparedStatement statement, boolean recordedOnly, String systemKey)
+        throws SQLException
+    {
+        if(!recordedOnly) return 0;
+        boolean p25 = systemKey != null && RadioSystemKey.isP25Native(systemKey);
+        statement.setString(1, systemKey);
+        statement.setObject(2, p25 ? Integer.parseInt(systemKey.substring(4, 9), 16) : null);
+        statement.setObject(3, p25 ? Integer.parseInt(systemKey.substring(10), 16) : null);
+        return 3;
+    }
+
+    /** Mirrors catalog search ownership, including older P25 calls without a stored system key. */
+    private static String recordingSystemPredicate(String key, String wacn, String sysid)
+    {
+        return "(c.system_id=(SELECT id FROM recordings.recording_system WHERE system_key=" + key + ") OR " +
+            "(c.system_id IS NULL AND c.protocol IN (1,2) AND " + wacn + " IS NOT NULL AND (" +
+            "EXISTS(SELECT 1 FROM recordings.recording_site winner WHERE winner.id=c.winner_site_id " +
+            "AND winner.wacn=" + wacn + " AND winner.system_id=" + sysid + ") OR " +
+            "(c.winner_site_id IS NULL AND EXISTS(SELECT 1 FROM recordings.recording_call_site cs " +
+            "JOIN recordings.recording_site observed ON observed.id=cs.site_id WHERE cs.call_id=c.id " +
+            "AND observed.wacn=" + wacn + " AND observed.system_id=" + sysid + ") AND NOT EXISTS(" +
+            "SELECT 1 FROM recordings.recording_call_site cs JOIN recordings.recording_site observed " +
+            "ON observed.id=cs.site_id WHERE cs.call_id=c.id AND (observed.wacn<>" + wacn +
+            " OR observed.system_id<>" + sysid + "))))))";
+    }
+
+    /** Stored ownership and legacy site evidence use separate indexed drivers. */
+    private static String recordingCallCandidates(String key, String wacn, String sysid)
+    {
+        return "SELECT c.* FROM recordings.recording_call c WHERE c.system_id=" +
+            "(SELECT id FROM recordings.recording_system WHERE system_key=" + key + ") UNION ALL " +
+            "SELECT c.* FROM recordings.recording_site evidence " +
+            "JOIN recordings.recording_call_site cs ON cs.site_id=evidence.id " +
+            "JOIN recordings.recording_call c ON c.id=cs.call_id WHERE evidence.wacn=" + wacn +
+            " AND evidence.system_id=" + sysid + " AND c.system_id IS NULL AND " +
+            recordingSystemPredicate(key, wacn, sysid);
+    }
+
+    private static String selectedRecordingSystemPredicate()
+    {
+        return "((SELECT system_key FROM recording_scope) IS NULL OR " +
+            recordingSystemPredicate("(SELECT system_key FROM recording_scope)",
+                "(SELECT wacn FROM recording_scope)", "(SELECT sysid FROM recording_scope)") + ")";
+    }
+
+    private static String recordedChannelPredicate(boolean site)
+    {
+        String eligibility = selectedRecordingSystemPredicate();
+        if(site)
+        {
+            // A current channel snapshot is not proof that its numeric site has recorded calls.
+            eligibility += " AND nullif(config.site_name,'') IS NOT NULL AND " +
+                "(p25.rfss IS NULL OR p25.site IS NULL OR EXISTS(" +
+                "SELECT 1 FROM recordings.recording_call_site cs JOIN recordings.recording_site s " +
+                "ON s.id=cs.site_id WHERE cs.call_id=c.id AND s.rfss=p25.rfss AND s.site_id=p25.site " +
+                "AND (system.p25_wacn IS NULL OR s.wacn=system.p25_wacn) " +
+                "AND (system.p25_system_id IS NULL OR s.system_id=system.p25_system_id)))";
+        }
+        return "EXISTS(SELECT 1 FROM recordings.recording_call c WHERE c.channel_id=" +
+            "(SELECT id FROM recordings.recording_channel WHERE channel_uuid=config.configuration_id) " +
+            "AND " + eligibility + ")";
+    }
+
+    /** Exact production eligibility SQL, also used by query-plan regression tests. */
+    static String recordedAliasPredicate()
+    {
+        String common = selectedRecordingSystemPredicate() +
+            " AND c.alias_list_id=alias.alias_list_id AND alias.alias_list_id=coalesce(" +
+            "(SELECT saved.alias_list_id FROM configuration_channel saved JOIN recordings.recording_channel ch " +
+            "ON ch.channel_uuid=saved.configuration_id WHERE ch.id=c.channel_id),c.alias_list_id) AND " +
+            "((alias.protocol IN ('APCO25','APCO25_PHASE2') AND c.protocol IN (1,2)) OR " +
+            "(alias.protocol='DMR' AND c.protocol=3) OR (alias.protocol='NXDN' AND c.protocol=4) OR " +
+            "(alias.protocol='NBFM' AND c.protocol=5) OR (alias.protocol='AM' AND c.protocol=6))";
+        // Separate probes let the existing source, target, and patch-member indexes drive each lookup.
+        return "((alias.matcher_type IN ('RADIO_ID','RADIO_ID_RANGE') AND (" +
+            recordedAliasRole("c.source_id", "", common) + " OR " +
+            recordedAliasRole("c.target_id", "c.call_type=3 AND ", common) + " OR " +
+            recordedAliasPatchRole(2, common) + ")) OR " +
+            "(alias.matcher_type IN ('TALKGROUP','TALKGROUP_RANGE') AND (" +
+            recordedAliasRole("c.target_id", "c.call_type IN (1,2) AND ", common) + " OR " +
+            recordedAliasPatchRole(1, common) + ")))";
+    }
+
+    private static String aliasIdentityPredicate(String identity)
+    {
+        // A single bounded interval keeps exact identities and ranges on the same indexed path.
+        return identity + " BETWEEN CASE WHEN alias.matcher_type IN ('RADIO_ID','TALKGROUP') " +
+            "THEN alias.value ELSE alias.min_value END AND CASE " +
+            "WHEN alias.matcher_type IN ('RADIO_ID','TALKGROUP') THEN alias.value ELSE alias.max_value END";
+    }
+
+    private static String recordedAliasRole(String identity, String role, String common)
+    {
+        String index = "c.source_id".equals(identity) ? "idx_recording_call_source_time" :
+            "idx_recording_call_target_time";
+        return "EXISTS(SELECT 1 FROM recordings.recording_call c INDEXED BY " + index +
+            " WHERE " + identity + " IS NOT NULL AND " + role +
+            aliasIdentityPredicate(identity) + " AND " + common + ")";
+    }
+
+    private static String recordedAliasPatchRole(int kind, String common)
+    {
+        return "EXISTS(SELECT 1 FROM recordings.recording_patch_member member " +
+            "INDEXED BY idx_recording_patch_member_lookup CROSS JOIN recordings.recording_call c " +
+            "ON c.id=member.call_id WHERE member.kind=" + kind + " AND " +
+            aliasIdentityPredicate("member.local_id") + " AND " + common + ")";
+    }
+
+    private static String recordedOtaIdentityQuery()
+    {
+        String scope = selectedRecordingSystemPredicate();
+        String candidates = recordingCallCandidates("(SELECT system_key FROM recording_scope)",
+            "(SELECT wacn FROM recording_scope)", "(SELECT sysid FROM recording_scope)");
+        String homes = "coalesce(nullif(member.home_id,-1),member.local_id)=recent.identity_id " +
+            "AND coalesce(nullif(member.home_wacn,-1),recent.p25_wacn,-1)=recent.home_wacn " +
+            "AND coalesce(nullif(member.home_system,-1),recent.p25_system_id,-1)=recent.home_system_id";
+        // Most OTA identities use their local ID. Probe those indexes before resolving different home IDs.
+        String indexed = "SELECT local_id FROM (" +
+            "SELECT c.source_id AS local_id FROM recordings.recording_call c " +
+            "WHERE c.source_id=recent.identity_id AND " + recordedOtaRole("c.source", scope) + " UNION ALL " +
+            "SELECT c.target_id AS local_id FROM recordings.recording_call c " +
+            "WHERE c.target_id=recent.identity_id AND c.call_type=3 AND " +
+            recordedOtaRole("c.target", scope) + " UNION ALL " +
+            "SELECT member.local_id FROM recordings.recording_patch_member member " +
+            "JOIN recordings.recording_call c ON c.id=member.call_id WHERE member.kind=2 " +
+            "AND member.local_id=recent.identity_id AND " + scope + " AND " + homes + ") LIMIT 1";
+        String homeMapping = "SELECT local_id FROM (" +
+            "SELECT c.source_id AS local_id FROM (" + candidates + ") c WHERE " +
+            recordedOtaRole("c.source", "1") + " UNION ALL " +
+            "SELECT c.target_id AS local_id FROM (" + candidates + ") c WHERE c.call_type=3 AND " +
+            recordedOtaRole("c.target", "1") + " UNION ALL " +
+            "SELECT member.local_id FROM (" + candidates + ") c " +
+            "JOIN recordings.recording_patch_member member ON member.call_id=c.id " +
+            "WHERE member.kind=2 AND " + homes + ") LIMIT 1";
+        return "coalesce((" + indexed + "),(" + homeMapping + "))";
+    }
+
+    private static String recordedOtaRole(String identity, String scope)
+    {
+        return scope + " AND coalesce(" + identity + "_home_id," + identity + "_id)=recent.identity_id " +
+            "AND coalesce(" + identity + "_home_wacn,recent.p25_wacn,-1)=recent.home_wacn " +
+            "AND coalesce(" + identity + "_home_system,recent.p25_system_id,-1)=recent.home_system_id";
     }
 
     /** Resolves a free-text name to raw numeric identities without searching the large call catalog by label. */

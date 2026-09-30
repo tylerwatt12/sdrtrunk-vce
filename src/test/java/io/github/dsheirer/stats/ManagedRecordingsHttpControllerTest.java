@@ -429,6 +429,45 @@ class ManagedRecordingsHttpControllerTest
         assertEquals(3, json(range).at("/data/calls/0/id").longValue());
     }
 
+    @Test
+    void autocompleteOnlyReturnsNamesWithCatalogCallsAndFiltersBeforeItsLimit() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO alias_list(id,name,family) " +
+                "VALUES(700,'Fixture Dispatch List','P25')");
+            for(int index = 0; index < 25; index++)
+            {
+                statement.executeUpdate("INSERT INTO alias(alias_list_id,name,matcher_type,protocol,value) " +
+                    "VALUES(700,'A" + String.format("%02d", index) + " Dispatch Unused'," +
+                    "'TALKGROUP','APCO25'," + (5000 + index) + ")");
+            }
+            statement.executeUpdate("INSERT INTO alias(alias_list_id,name,matcher_type,protocol,value) " +
+                "VALUES(700,'Z Dispatch Recorded','TALKGROUP','APCO25',4001)");
+        }
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("managed-recordings.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE recording_call SET alias_list_id=700 WHERE id=1");
+        }
+
+        String path = ManagedRecordingsHttpController.BROWSE_PATH +
+            "/suggestions?q=Dispatch&kind=talkgroup&limit=1";
+        HttpResponse<String> response = send(request(path).GET());
+        assertEquals(200, response.statusCode(), response.body());
+        JsonNode rows = json(response).at("/data");
+        assertEquals(1, rows.size());
+        assertEquals("Z Dispatch Recorded", rows.get(0).path("label").textValue());
+        assertEquals("4001", rows.get(0).path("id").textValue());
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("managed-recordings.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DELETE FROM recording_call WHERE id=1");
+        }
+        assertEquals(0, json(send(request(path).GET())).at("/data").size());
+    }
+
     private Session login() throws Exception
     {
         String body = MAPPER.writeValueAsString(Map.of("username", "admin", "password", PASSWORD));

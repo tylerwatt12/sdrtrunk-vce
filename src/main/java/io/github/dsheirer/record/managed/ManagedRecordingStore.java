@@ -1748,17 +1748,31 @@ final class ManagedRecordingStore implements AutoCloseable
 
     List<String> systemKeys(String query, int limit) throws SQLException
     {
-        return strings("SELECT system_key FROM recording_system WHERE lower(system_key) LIKE ? " +
-            "ORDER BY system_key LIMIT ?", query, limit);
+        return strings("SELECT sys.system_key FROM recording_system sys " +
+            "WHERE lower(sys.system_key) LIKE ? AND EXISTS(" +
+            "SELECT 1 FROM recording_call c WHERE c.system_id=sys.id) " +
+            "ORDER BY sys.system_key LIMIT ?", query, List.of(), limit);
     }
 
     List<String> channelIds(String query, int limit) throws SQLException
     {
-        return strings("SELECT channel_uuid FROM recording_channel WHERE lower(channel_uuid) LIKE ? " +
-            "ORDER BY channel_uuid LIMIT ?", query, limit);
+        return channelIds(null, query, limit);
     }
 
-    private List<String> strings(String sql, String query, int limit) throws SQLException
+    List<String> channelIds(String systemKey, String query, int limit) throws SQLException
+    {
+        List<String> predicates = new ArrayList<>();
+        List<Object> parameters = new ArrayList<>();
+        predicates.add("c.channel_id=ch.id");
+        addSystemPredicate(predicates, parameters, systemKey, "sys.system_key=?");
+        return strings("SELECT ch.channel_uuid FROM recording_channel ch " +
+            "WHERE lower(ch.channel_uuid) LIKE ? AND EXISTS(" +
+            "SELECT 1 FROM recording_call c LEFT JOIN recording_system sys ON sys.id=c.system_id " +
+            "WHERE " + String.join(" AND ", predicates) + ") ORDER BY ch.channel_uuid LIMIT ?",
+            query, parameters, limit);
+    }
+
+    private List<String> strings(String sql, String query, List<Object> parameters, int limit) throws SQLException
     {
         String term = query != null ? query.trim().toLowerCase(java.util.Locale.ROOT) : "";
         if(term.length() > 80)
@@ -1771,7 +1785,12 @@ final class ManagedRecordingStore implements AutoCloseable
         try(Connection connection = openReader(); PreparedStatement statement = connection.prepareStatement(sql))
         {
             statement.setString(1, "%" + term + "%");
-            statement.setInt(2, limit);
+            int parameter = 2;
+            for(Object value : parameters)
+            {
+                statement.setObject(parameter++, value);
+            }
+            statement.setInt(parameter, limit);
             try(ResultSet rows = statement.executeQuery())
             {
                 while(rows.next())
@@ -1785,14 +1804,15 @@ final class ManagedRecordingStore implements AutoCloseable
 
     List<Site> sites(String systemKey, String query, int limit) throws SQLException
     {
-        String sql = systemKey != null && !systemKey.isBlank() ?
-            "SELECT site.wacn,site.system_id,site.rfss,site.site_id FROM recording_system sys " +
-                "JOIN recording_system_site pair ON pair.system_id=sys.id " +
-                "JOIN recording_site site ON site.id=pair.site_id " +
-                "WHERE sys.system_key=?" :
-            "SELECT wacn,system_id,rfss,site_id FROM recording_site " +
-                "WHERE 1=1";
-        String sitePrefix = systemKey != null && !systemKey.isBlank() ? "site." : "";
+        List<String> predicates = new ArrayList<>();
+        List<Object> parameters = new ArrayList<>();
+        predicates.add("cs.site_id=site.id");
+        addSystemPredicate(predicates, parameters, systemKey, "sys.system_key=?");
+        String sql = "SELECT site.wacn,site.system_id,site.rfss,site.site_id FROM recording_site site " +
+            "WHERE EXISTS(SELECT 1 FROM recording_call_site cs " +
+            "JOIN recording_call c ON c.id=cs.call_id " +
+            "LEFT JOIN recording_system sys ON sys.id=c.system_id WHERE " +
+            String.join(" AND ", predicates) + ")";
         String term = query != null ? query.trim() : "";
         if(term.length() > 32)
         {
@@ -1800,20 +1820,18 @@ final class ManagedRecordingStore implements AutoCloseable
         }
         if(!term.isBlank())
         {
-            sql += " AND (printf('%05X-%03X / %02X-%02X'," + sitePrefix + "wacn," +
-                sitePrefix + "system_id," + sitePrefix + "rfss," + sitePrefix + "site_id) LIKE ? " +
-                "OR CAST(" + sitePrefix + "rfss AS TEXT) LIKE ? OR CAST(" + sitePrefix +
-                "site_id AS TEXT) LIKE ?)";
+            sql += " AND (printf('%05X-%03X / %02X-%02X',site.wacn," +
+                "site.system_id,site.rfss,site.site_id) LIKE ? " +
+                "OR CAST(site.rfss AS TEXT) LIKE ? OR CAST(site.site_id AS TEXT) LIKE ?)";
         }
-        sql += " ORDER BY " + sitePrefix + "wacn," + sitePrefix + "system_id," +
-            sitePrefix + "rfss," + sitePrefix + "site_id LIMIT ?";
+        sql += " ORDER BY site.wacn,site.system_id,site.rfss,site.site_id LIMIT ?";
         List<Site> sites = new ArrayList<>();
         try(Connection connection = openReader(); PreparedStatement statement = connection.prepareStatement(sql))
         {
             int p = 1;
-            if(systemKey != null && !systemKey.isBlank())
+            for(Object value : parameters)
             {
-                statement.setString(p++, systemKey);
+                statement.setObject(p++, value);
             }
             if(!term.isBlank())
             {
