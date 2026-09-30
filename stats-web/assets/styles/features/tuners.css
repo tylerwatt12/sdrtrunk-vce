@@ -1,6 +1,6 @@
 .tuners-workspace {
   display: grid;
-  grid-template-columns: minmax(400px, 440px) minmax(0, 1fr) minmax(360px, 400px);
+  grid-template-columns: minmax(264px, 310px) minmax(0, 1fr);
   align-items: start;
   gap: var(--space-4);
 }
@@ -13,17 +13,39 @@
   min-width: 0;
 }
 
-.tuners-main,
-.tuners-controls {
+.tuners-main {
   display: grid;
   align-content: start;
   gap: var(--space-4);
+}
+
+.tuners-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-content: start;
+  gap: var(--space-4);
+}
+
+.tuners-controls[data-count="2"] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.tuners-controls[data-count="1"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.tuners-controls[data-count="0"] {
+  display: none;
 }
 
 .tuners-receivers,
 .tuners-main > section,
 .tuners-controls > section {
   margin-bottom: 0;
+}
+
+.tuners-selected-section {
+  overflow: visible;
 }
 
 .tuners-receivers {
@@ -42,6 +64,11 @@
 
 .tuners-main > section[hidden],
 .tuners-controls > section[hidden],
+.tuners-controls[hidden],
+.tuners-spectrum[hidden],
+.tuners-readouts[hidden],
+.tuners-recovery[hidden],
+.tuners-messages[hidden],
 .tuners-setting-actions[hidden],
 .tuners-common-details[hidden] {
   display: none;
@@ -144,18 +171,14 @@
 
 .tuners-selected-header {
   min-width: 0;
-  display: grid;
-  justify-items: start;
+  min-height: 74px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
   gap: var(--space-3);
-}
-
-.tuners-selected-content {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: start;
-  gap: var(--space-4);
   padding: var(--space-4);
+  border-radius: var(--radius-card) var(--radius-card) 0 0;
 }
 
 .tuners-detail-heading {
@@ -172,77 +195,158 @@
   overflow-wrap: anywhere;
 }
 
-.tuners-setup-note {
-  color: var(--muted);
-  font-size: var(--font-size-meta);
+.tuners-detail-identity {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-1);
 }
 
-.tuners-detail-facts {
+.tuners-detail-identity small {
+  color: var(--muted);
+  font-size: var(--font-size-label);
+  font-weight: normal;
+}
+
+.tuners-header-actions {
+  min-width: 0;
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
-  gap: var(--space-3) var(--space-4);
-  margin: 0;
+  gap: var(--space-2);
 }
 
-.tuners-detail-fact {
-  min-width: 0;
-  display: grid;
-  gap: var(--space-1);
+.tuners-mode {
+  max-width: 100%;
+  flex-wrap: nowrap;
 }
 
-.tuners-detail-fact dt {
-  color: var(--muted);
-  font-size: var(--font-size-meta);
+.tuners-mode > button {
+  min-width: 82px;
 }
 
-.tuners-detail-fact dd {
-  margin: 0;
-  font-size: var(--ui-summary-number-size);
-  font-weight: var(--font-weight-heading);
-  font-variant-numeric: tabular-nums;
-  overflow-wrap: anywhere;
-}
-
-.tuners-detail-actions {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  justify-content: stretch;
-  gap: var(--space-3);
-  padding: 0 var(--space-4) var(--space-4);
-}
-
-.tuners-mode-description {
-  margin: 0;
-  padding: 0 var(--space-4) var(--space-3);
-  color: var(--muted);
-  line-height: var(--line-height-body);
-}
-
-.tuners-action-choice {
-  min-width: 0;
-  display: grid;
-  gap: var(--space-1);
-}
-
-.tuners-action-choice > button {
-  width: 100%;
-}
-
-.tuners-action-choice > :not(button) {
-  margin: 0;
+.tuners-mode > button[aria-disabled="true"] {
+  opacity: .52;
+  cursor: not-allowed;
 }
 
 .tuners-center-host {
   min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
 }
 
-.tuners-controls .tuners-frequency-digit {
-  width: clamp(20px, 1.55vw, 25px);
-  height: 40px;
+.tuners-readouts {
+  --ui-summary-number-size: 20px;
+  display: grid;
+  grid-template-columns: minmax(110px, .72fr) minmax(150px, 1fr) minmax(255px, 1.35fr) minmax(145px, .85fr);
+  border-top: 1px solid var(--line);
+}
+
+.tuners-readouts[data-count="3"] {
+  grid-template-columns: minmax(110px, .72fr) minmax(150px, 1fr) minmax(255px, 1.35fr);
+}
+
+.tuners-readouts[data-count="3"] .tuners-readout:nth-child(3) {
+  border-right: 0;
+}
+
+.tuners-readout {
+  min-width: 0;
+  display: grid;
+  align-content: center;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  border-right: 1px solid var(--line);
+}
+
+.tuners-readout:last-child {
+  border-right: 0;
+}
+
+.tuners-readout[hidden] {
+  display: none;
+}
+
+.tuners-readout-label {
+  color: var(--muted);
+  font-size: var(--font-size-label);
+  line-height: 1.2;
+}
+
+.tuners-readout-value,
+.tuners-readout select,
+.tuners-lock-readout strong {
+  min-width: 0;
+  font-family: inherit;
+  font-size: var(--ui-summary-number-size);
+  font-weight: var(--font-weight-heading);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+
+.tuners-readout select {
+  width: 100%;
+  min-height: var(--control-height-compact);
+}
+
+.tuners-readout .tuners-setting {
+  padding: 0;
+}
+
+.tuners-common-sample label > span:first-child {
+  color: var(--muted);
+  font-size: var(--font-size-label);
+  font-weight: normal;
+}
+
+.tuners-center-value {
+  min-width: 0;
+  min-height: var(--control-height-compact);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
+  background: var(--surface);
+  border: 1px solid var(--interactive-border);
+  border-radius: var(--radius-control);
+}
+
+.tuners-center-value .tuners-frequency-digits {
+  flex: 1 1 auto;
+}
+
+.tuners-center-frequency[aria-disabled="true"] .tuners-center-value {
+  background: var(--surface-2);
+  border-color: var(--line);
+}
+
+.tuners-center-frequency[aria-disabled="true"] .tuners-frequency-digit {
+  color: var(--muted);
+}
+
+.tuners-center-help {
+  flex: 0 0 auto;
+}
+
+.tuners-readout .tuners-frequency-digit {
+  width: clamp(18px, 1.45vw, 24px);
+  height: var(--control-height-compact);
+}
+
+.tuners-readout .tuners-frequency-unit {
+  padding-bottom: 4px;
+}
+
+.tuners-readout .tuners-center-frequency.is-typing .tuners-center-value {
+  border-color: var(--focus-ring);
+}
+
+.tuners-readout .tuners-center-frequency > .tuners-setting-message:not(:empty) {
+  position: absolute;
+  z-index: 2;
+  top: calc(100% + 2px);
+  left: 0;
+  padding: var(--space-1) var(--space-2);
+  background: var(--surface);
+  border-radius: var(--radius-compact);
 }
 
 .tuners-center-host[hidden] {
@@ -251,34 +355,22 @@
 
 .tuners-center-frequency {
   min-width: 0;
+  width: 100%;
+  position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-areas:
-    "label lock"
-    "digits digits"
-    "message message";
-  align-items: center;
   gap: var(--space-1);
-  padding: 0;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius-compact);
 }
 
 .tuners-center-frequency:focus-visible {
-  border-color: var(--focus-ring);
-  box-shadow: var(--shadow-focus);
   outline: 0;
 }
 
-.tuners-center-label {
-  grid-area: label;
-  color: var(--muted);
-  font-size: var(--font-size-meta);
+.tuners-center-frequency:focus-visible .tuners-center-value {
+  border-color: var(--focus-ring);
+  box-shadow: var(--shadow-focus);
 }
 
 .tuners-frequency-digits {
-  grid-area: digits;
   min-width: 0;
   display: flex;
   align-items: center;
@@ -372,7 +464,6 @@
 
 .tuners-center-lock {
   min-width: 0;
-  grid-area: lock;
 }
 
 .tuners-center-lock .tuners-setting {
@@ -387,26 +478,48 @@
   border: 0;
 }
 
-.tuners-center-frequency > .tuners-setting-message {
-  grid-area: message;
-}
-
-.tuners-stopped-channels {
-  text-align: left;
-  padding: 0 var(--space-4) var(--space-4);
-  color: var(--accent);
-  background: transparent;
-  border: 0;
-  font: inherit;
-  cursor: pointer;
-}
-
-.tuners-stopped-channels:hover {
-  text-decoration: underline;
-}
-
 .tuners-detail-message {
   margin: 0 var(--space-4) var(--space-4);
+}
+
+.tuners-messages {
+  min-width: 0;
+  padding: 0 var(--space-4) var(--space-4);
+}
+
+.tuners-recovery:empty,
+.tuners-messages:empty {
+  display: none;
+}
+
+.tuners-recovery {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0 var(--space-4) var(--space-4);
+  padding: var(--space-3);
+  color: var(--warning-ink);
+  background: var(--warning-soft);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-control);
+}
+
+.tuners-recovery-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.tuners-messages {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.tuners-messages .tuners-detail-message {
+  margin: 0;
 }
 
 .tuners-spectrum {
@@ -464,18 +577,12 @@
 
 .tuners-spectrum .tuner-spectrum-quality-control {
   min-width: 0;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-1) var(--space-2);
   grid-column: 2;
   grid-row: 1;
 }
 
-.tuners-spectrum .tuner-spectrum-quality-description {
-  min-width: 0;
-  color: var(--muted);
-  font-size: var(--font-size-label);
+.tuners-spectrum .tuner-spectrum-quality-control > button {
+  min-width: 68px;
 }
 
 .tuners-spectrum .tuner-spectrum-toolbar > .tuner-spectrum-zoom-actions {
@@ -514,11 +621,11 @@
   position: static;
 }
 
-.tuners-signal-idle .tuner-spectrum-layout-basic {
+.tuners-selected-section.tuners-signal-idle .tuner-spectrum-layout-basic {
   grid-template-rows: auto minmax(250px, 1fr);
 }
 
-.tuners-signal-idle .tuner-spectrum-layout-basic .tuner-spectrum-visual-window {
+.tuners-selected-section.tuners-signal-idle .tuner-spectrum-layout-basic .tuner-spectrum-visual-window {
   grid-template-rows: minmax(90px, .35fr) minmax(160px, .65fr);
   max-height: 270px;
 }
@@ -536,6 +643,22 @@
   align-content: start;
   gap: var(--space-1);
   padding: var(--space-3) 0;
+}
+
+.tuners-setting-control-row {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.tuners-setting-control-row > :first-child {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.tuners-setting-control-row > .tuners-setting-help {
+  flex: 0 0 auto;
 }
 
 .tuners-setting > :first-child {
@@ -646,10 +769,6 @@
   display: grid;
 }
 
-.tuners-common-content > .tuners-common-sample {
-  padding: 0 var(--space-4) var(--space-3);
-}
-
 .tuners-common-limits .tuners-setting-action {
   white-space: nowrap;
 }
@@ -696,38 +815,32 @@
   width: min(var(--modal-size-large), 96vw);
 }
 
-@media (min-width: 1481px) {
-  .tuners-workspace {
-    align-items: stretch;
-  }
-
-  .tuners-receivers {
-    align-self: start;
-  }
-
-  .tuners-main {
-    align-content: stretch;
-    grid-template-rows: minmax(0, 1fr);
-  }
-
-  .tuners-signal-section,
-  .tuners-spectrum {
-    display: grid;
-    grid-template-rows: minmax(0, 1fr);
-  }
-
-  .tuners-spectrum .tuner-spectrum-layout-basic {
-    height: 100%;
-  }
-}
-
-@media (max-width: 1480px) {
-  .tuners-workspace {
-    grid-template-columns: minmax(400px, 440px) minmax(0, 1fr);
-  }
-
+@media (max-width: 1280px) {
   .tuners-controls {
-    grid-column: 2;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .tuners-readouts,
+  .tuners-readouts[data-count="3"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .tuners-readout:nth-child(2) {
+    border-right: 0;
+  }
+
+  .tuners-readout:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--line);
+  }
+
+  .tuners-readout:nth-child(3) {
+    grid-column: 1 / -1;
+    border-right: 0;
+  }
+
+  .tuners-readout:nth-child(4) {
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--line);
   }
 }
 
@@ -754,7 +867,7 @@
   }
 
   .tuners-controls {
-    grid-column: auto;
+    grid-column: 1;
   }
 
   .tuners-receivers {
@@ -776,6 +889,54 @@
 }
 
 @media (max-width: 680px) {
+  .tuners-selected-header {
+    align-items: stretch;
+  }
+
+  .tuners-header-actions {
+    width: 100%;
+  }
+
+  .tuners-mode {
+    min-width: 0;
+    flex: 1 1 auto;
+    width: 100%;
+  }
+
+  .tuners-mode > button {
+    min-width: 0;
+    flex: 1;
+    padding-inline: var(--space-2);
+  }
+
+  .tuners-controls,
+  .tuners-controls[data-count="2"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tuners-readout {
+    padding-inline: var(--space-3);
+  }
+
+  .tuners-spectrum .tuner-spectrum-selection {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .tuners-spectrum .tuner-spectrum-quality-control {
+    grid-column: 1;
+    grid-row: 2;
+    justify-self: start;
+    padding-right: 0;
+    border-top: 0;
+  }
+
+  .tuners-spectrum .tuner-spectrum-toolbar > .tuner-spectrum-zoom-actions {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
   .tuners-frequency-digit {
     width: clamp(20px, 6vw, 25px);
     height: 44px;
@@ -798,7 +959,7 @@
     grid-template-rows: auto minmax(390px, 1fr);
   }
 
-  .tuners-signal-idle .tuner-spectrum-layout-basic {
+  .tuners-selected-section.tuners-signal-idle .tuner-spectrum-layout-basic {
     grid-template-rows: auto minmax(250px, 270px);
   }
 
@@ -816,13 +977,13 @@
 
 }
 
-@media (max-width: 420px) {
-  .tuners-center-frequency {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas:
-      "label"
-      "digits"
-      "lock"
-      "message";
+@media (max-width: 390px) {
+  .tuners-readouts {
+    --ui-summary-number-size: 18px;
+  }
+
+  .tuners-spectrum .tuner-spectrum-quality-control > button {
+    min-width: 58px;
+    padding-inline: var(--space-2);
   }
 }

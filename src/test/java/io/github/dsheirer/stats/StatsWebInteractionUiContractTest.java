@@ -319,7 +319,7 @@ class StatsWebInteractionUiContractTest
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"254\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"255\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -670,7 +670,7 @@ class StatsWebInteractionUiContractTest
         String css = StatsWebStylesheetTestSupport.readAll();
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=223"));
+        assertTrue(html.contains("/assets/app.css?v=224"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")
@@ -1886,7 +1886,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("tunerBinAtFrequency(tunerFrameDomain(frameMetadata, fftValues.length), displayHz)"));
         assertTrue(tuner.contains("tunerBinAtFrequency(tunerFrameDomain(frameMetadata, fftValues.length), carrier.frequencyHz)"));
         assertTrue(tuner.contains("sourceBinCount"));
-        assertTrue(tuner.contains("resetZoom.disabled = !shouldRun()"));
+        assertTrue(tuner.contains("[resetZoom, !viewportReady || zoom <= 1.0001"));
+        assertTrue(tuner.contains("button.setAttribute('aria-disabled', String(unavailable))"));
         assertTrue(tuner.contains("if (!shouldRun() || !fullViewport || zoomAmount() <= 1.0001) return"));
         assertTrue(acceptState.contains("center_frequency_hz"));
         assertTrue(acceptState.contains("sample_rate_hz"));

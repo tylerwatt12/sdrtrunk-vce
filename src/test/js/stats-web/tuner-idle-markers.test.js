@@ -38,6 +38,7 @@ class Element {
     return null;
   }
   setAttribute(key, value) { this.attributes[key] = value; }
+  getAttribute(key) { return this.attributes[key] ?? null; }
   addEventListener(type, callback) { this.listeners[type] = callback; }
   dispatch(type) { this.listeners[type]?.({ currentTarget: this }); }
   getBoundingClientRect() { return { width: 800 }; }
@@ -500,13 +501,14 @@ test('maximum detail persists while inactive and only updates a running spectrum
 test('embedded quality stays session-local and does not overwrite the Spectrum preference', () => {
   const stored = [];
   const profileSelect = Object.assign(new Element('select'), { value: 'high-detail' });
-  const qualityButton = new Element('button');
+  const hiRes = new Element('button');
+  const loRes = new Element('button');
   const context = {
     basicOperator: true,
     profileSelection: true,
     tunerOperatorSpectrumProfile: 'efficient',
     profileSelect,
-    qualityButton,
+    hiRes, loRes,
     syncOperatorQuality: () => {},
     TUNER_SPECTRUM_PROFILE_PREFERENCE: 'profile',
     storeTunerChoice: (key, value) => stored.push([key, value]),
@@ -521,9 +523,9 @@ test('embedded quality stays session-local and does not overwrite the Spectrum p
 
   profileSelect.dispatch('change');
   assert.equal(context.tunerOperatorSpectrumProfile, 'high-detail');
-  qualityButton.dispatch('click');
+  loRes.dispatch('click');
   assert.equal(profileSelect.value, 'efficient');
-  qualityButton.dispatch('click');
+  hiRes.dispatch('click');
   assert.equal(profileSelect.value, 'balanced');
   assert.equal(context.tunerOperatorSpectrumProfile, 'balanced');
   assert.deepEqual(stored, []);
