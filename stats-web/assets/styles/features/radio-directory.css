@@ -37,6 +37,10 @@
   padding: var(--space-3);
 }
 
+.alias-coverage-toolbar.alias-coverage-awaiting-selection {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .alias-coverage-field {
   min-width: 0;
   display: grid;

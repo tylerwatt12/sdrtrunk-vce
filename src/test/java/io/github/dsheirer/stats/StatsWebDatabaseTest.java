@@ -137,6 +137,98 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void publicAliasInventoryIncludesNonIdentityMatchersWithoutCountingThemAsUnheard() throws Exception
+    {
+        long observedAt = System.currentTimeMillis();
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA foreign_keys=ON");
+            statement.executeUpdate("INSERT INTO alias_list(id, name, family) " +
+                "VALUES (971, 'Mixed P25 coverage', 'P25')");
+            statement.executeUpdate("""
+                INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, value,
+                    min_value, max_value, numeric_value, tone_sequence)
+                VALUES (97101, 971, 'Alpha Talkgroup', 'TALKGROUP', 'APCO25', 101,
+                            NULL, NULL, NULL, NULL),
+                       (97102, 971, 'Bravo Radio Range', 'RADIO_ID_RANGE', 'APCO25', NULL,
+                            200, 201, NULL, NULL),
+                       (97103, 971, 'Charlie User Status', 'STATUS', NULL, NULL,
+                            NULL, NULL, 11, NULL),
+                       (97104, 971, 'Delta Unit Status', 'UNIT_STATUS', NULL, NULL,
+                            NULL, NULL, 12, NULL),
+                       (97105, 971, 'Echo Tones', 'TONES', NULL, NULL,
+                            NULL, NULL, NULL, 'DTMF_1:200')
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias_activity_summary(alias_id, alias_list_id, protocol_code,
+                    metrics_state, logical_call_count, signaling_observation_count,
+                    first_evidence_ms, last_evidence_ms, updated_at_ms)
+                VALUES (97101, 971, 1, 'observed', 2, 3, %1$d, %1$d, %1$d)
+                """.formatted(observedAt));
+        }
+
+        Map<String,Object> listed = rowWith(rows(mDatabase.publicIdentityLists(request("/?limit=100"))),
+            "alias_list_id", 971);
+        assertEquals(5, number(listed.get("alias_count")));
+
+        Map<String,Object> totals = map(mDatabase.publicIdentityOverview(971, request("/?range=24h")), "totals");
+        assertEquals(5, number(totals.get("configured_alias_count")));
+        assertEquals(2, number(totals.get("activity_eligible_alias_count")));
+        assertEquals(1, number(totals.get("active_alias_count")));
+        assertEquals(1, number(totals.get("zero_call_alias_count")));
+        assertEquals(1, number(totals.get("never_heard_alias_count")));
+
+        Map<String,Object> all = mDatabase.publicIdentityAliases(971,
+            request("/?range=24h&status=all&sort=name&direction=asc&limit=2"));
+        assertEquals(List.of("Alpha Talkgroup", "Bravo Radio Range"), rows(all).stream()
+            .map(row -> row.get("name")).toList());
+        assertTrue((Boolean)all.get("has_more"));
+        assertEquals(2, number(all.get("next_offset")));
+        Map<String,Object> remaining = mDatabase.publicIdentityAliases(971,
+            request("/?range=24h&status=all&sort=name&direction=asc&limit=10&offset=2"));
+        assertEquals(List.of("Charlie User Status", "Delta Unit Status", "Echo Tones"), rows(remaining).stream()
+            .map(row -> row.get("name")).toList());
+
+        Map<String,Object> talkgroup = rowWith(rows(all), "name", "Alpha Talkgroup");
+        assertEquals("talkgroup", talkgroup.get("identity_type"));
+        assertEquals("TALKGROUP", talkgroup.get("matcher_type"));
+        assertEquals("101", talkgroup.get("identity_display"));
+        assertEquals("observed", talkgroup.get("metrics_state"));
+        assertEquals(2, number(talkgroup.get("logical_call_count")));
+        Map<String,Object> radio = rowWith(rows(all), "name", "Bravo Radio Range");
+        assertEquals("radio", radio.get("identity_type"));
+        assertEquals("200–201", radio.get("identity_display"));
+        assertEquals("not_collected", radio.get("metrics_state"));
+        Map<String,Object> userStatus = rowWith(rows(remaining), "name", "Charlie User Status");
+        assertEquals("other", userStatus.get("identity_type"));
+        assertEquals("User status", userStatus.get("matcher_label"));
+        assertEquals("11", userStatus.get("identity_display"));
+        assertEquals("unsupported", userStatus.get("metrics_state"));
+        assertNull(userStatus.get("logical_call_count"));
+        Map<String,Object> tones = rowWith(rows(remaining), "name", "Echo Tones");
+        assertEquals("Tones", tones.get("matcher_label"));
+        assertEquals("DTMF_1:200", tones.get("identity_display"));
+
+        assertEquals(List.of("Charlie User Status", "Delta Unit Status", "Echo Tones"),
+            rows(mDatabase.publicIdentityAliases(971,
+                request("/?type=other&sort=name&direction=asc&limit=100"))).stream()
+                .map(row -> row.get("name")).toList());
+        assertEquals(List.of("Charlie User Status"),
+            rows(mDatabase.publicIdentityAliases(971, request("/?q=11&limit=100"))).stream()
+                .map(row -> row.get("name")).toList());
+        assertEquals(List.of("Alpha Talkgroup"),
+            rows(mDatabase.publicIdentityAliases(971, request("/?status=recent&limit=100"))).stream()
+                .map(row -> row.get("name")).toList());
+        for(String status: List.of("zero_calls", "never_heard"))
+        {
+            assertEquals(List.of("Bravo Radio Range"),
+                rows(mDatabase.publicIdentityAliases(971, request("/?status=" + status + "&limit=100"))).stream()
+                    .map(row -> row.get("name")).toList());
+        }
+    }
+
+    @Test
     void radioSystemDetailIncludesRetainedSignalingOwnedByTheSystem() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);

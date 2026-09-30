@@ -766,6 +766,8 @@ async function main() {
     /pager ui-pager receiver-health-resolved-pager/);
   const coverageSource = functionBinding(appSource, 'renderAliasCoverageDirectory');
   const embeddedDirectoryPanel = functionBinding(appSource, 'radioDirectoryEmbeddedPanel');
+  assert.match(functionBinding(appSource, 'radioDirectoryPerspectiveControl'),
+    /\{ value: 'coverage', label: 'Alias inventory' \}/);
   assert.match(embeddedDirectoryPanel, /radio-directory-panel-body/);
   assert.match(embeddedDirectoryPanel,
     /body\.append\(radioDirectoryPerspectiveControl\(view\), directory\)/);
@@ -779,6 +781,45 @@ async function main() {
   assert.match(coverageSource, /layoutMenuHost: tableActions/);
   assert.match(coverageSource, /directory\.host\.replaceChildren\(present\(model\)\)/);
   assert.match(coverageSource, /bare: true/);
+  assert.match(coverageSource, /'Select an alias list'/);
+  assert.match(coverageSource, /if \(!selectedListId\) \{[\s\S]+listSelect\.focus\(\{ preventScroll: true \}\);[\s\S]+return wrapper;/,
+    'The unselected view should focus its picker and stop before rendering coverage sections');
+  assert.ok(coverageSource.indexOf('return wrapper;') < coverageSource.indexOf('aliasCoverageSummaryCards(totals'),
+    'The unselected view should not render summary cards, channel usage, or the alias table');
+  const coverageRequests = [];
+  const coverageLists = { rows: [
+    { alias_list_id: 1, family: 'NBFM' }, { alias_list_id: 2, family: 'P25' },
+    { alias_list_id: 3, family: 'AM' }, { alias_list_id: 4, family: 'DMR' },
+    { alias_list_id: 5, family: 'NXDN' }
+  ] };
+  const loadAliasCoverageModel = vm.runInNewContext(
+    `(async function loadAliasCoverageModel(parameters, previous = null, signal = null) ${
+      functionBinding(appSource, 'loadAliasCoverageModel')})`, {
+      apiPage: async (path) => {
+        coverageRequests.push(path);
+        return path === '/api/v1/identities/lists' ? coverageLists : { rows: [], total_count: 0 };
+      },
+      api: async (path) => { coverageRequests.push(path); return { totals: {}, channels: [] }; },
+      aliasListFamily: vm.runInNewContext(
+        `(function aliasListFamily(row) ${functionBinding(appSource, 'aliasListFamily')})`)
+    });
+  const unselectedCoverage = await loadAliasCoverageModel(new URLSearchParams());
+  assert.equal(unselectedCoverage.selectedListId, null,
+    'A list must be explicitly selected before coverage data loads');
+  assert.deepEqual(Array.from(unselectedCoverage.lists.rows, (row) => row.family), ['P25', 'DMR', 'NXDN']);
+  assert.deepEqual(coverageRequests, ['/api/v1/identities/lists'],
+    'The unselected view should request only the Alias List catalog');
+  coverageRequests.length = 0;
+  const unsupportedCoverage = await loadAliasCoverageModel(new URLSearchParams('alias_list_id=1'));
+  assert.equal(unsupportedCoverage.selectedListId, null,
+    'An unsupported list must not trigger observed-group discovery');
+  assert.deepEqual(coverageRequests, ['/api/v1/identities/lists']);
+  coverageRequests.length = 0;
+  const selectedCoverage = await loadAliasCoverageModel(new URLSearchParams('alias_list_id=2'));
+  assert.equal(selectedCoverage.selectedListId, 2);
+  assert.deepEqual(coverageRequests, ['/api/v1/identities/lists',
+    '/api/v1/identities/lists/2/overview', '/api/v1/identities/lists/2/aliases',
+    '/api/v1/identities/lists/2/unassigned']);
   const radioDirectorySource = functionBinding(appSource, 'renderNestedRadioDirectory');
   assert.match(radioDirectorySource, /radioDirectoryEmbeddedPanel\('systems', loading\.element\)/);
   assert.match(radioDirectorySource, /bare: true/);

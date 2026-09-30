@@ -60,7 +60,7 @@ class StatsWebRadioInformationArchitectureUiContractTest
         assertTrue(app.contains("function renderAliasCoverageDirectory(renderContext, embedded = false)"));
         assertFalse(app.contains("See aliases that activity-only views cannot show"));
         assertFalse(app.contains("Where this Alias List is used"));
-        assertTrue(app.contains("node('h2', '', 'Configuration scope')"));
+        assertTrue(app.contains("node('h2', '', 'Channels using this Alias List')"));
         assertTrue(app.contains("node('h2', '', 'Alias inventory')"));
         assertTrue(app.contains("const navigateCoverage = (target, options = {}) => routeFoundation.navigate"));
         assertTrue(app.contains("directory.host.replaceChildren(present(model))"));

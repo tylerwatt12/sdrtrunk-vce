@@ -542,7 +542,7 @@ class StatsWebDatabase
     );
     private static final Map<String,String> PUBLIC_IDENTITY_ALIAS_SORT_COLUMNS = Map.ofEntries(
         Map.entry("name", "lower(alias.name)"),
-        Map.entry("identity", "coalesce(alias.value, alias.min_value, 0)"),
+        Map.entry("identity", "coalesce(alias.value, alias.min_value, alias.numeric_value, 0)"),
         Map.entry("type", "identity_type"),
         Map.entry("group", "lower(coalesce(alias.group_name, ''))"),
         Map.entry("logical_call_count", "coalesce(summary.logical_call_count, 0)"),
@@ -916,14 +916,21 @@ class StatsWebDatabase
 
             Map<String,Object> totals = first(queryRows(connection, """
                 SELECT count(*) AS configured_alias_count,
-                    sum(CASE WHEN summary.last_evidence_ms >= ? THEN 1 ELSE 0 END) AS active_alias_count,
-                    sum(CASE WHEN coalesce(summary.logical_call_count, 0) = 0 THEN 1 ELSE 0 END)
+                    count(CASE WHEN alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE',
+                        'RADIO_ID', 'RADIO_ID_RANGE') THEN 1 END) AS activity_eligible_alias_count,
+                    count(CASE WHEN alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE',
+                        'RADIO_ID', 'RADIO_ID_RANGE') AND summary.last_evidence_ms >= ?
+                        THEN 1 END) AS active_alias_count,
+                    count(CASE WHEN alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE',
+                        'RADIO_ID', 'RADIO_ID_RANGE') AND coalesce(summary.logical_call_count, 0) = 0
+                        THEN 1 END)
                         AS zero_call_alias_count,
-                    sum(CASE WHEN summary.last_evidence_ms IS NULL THEN 1 ELSE 0 END) AS never_heard_alias_count
+                    count(CASE WHEN alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE',
+                        'RADIO_ID', 'RADIO_ID_RANGE') AND summary.last_evidence_ms IS NULL
+                        THEN 1 END) AS never_heard_alias_count
                 FROM alias
                 LEFT JOIN alias_activity_summary summary ON summary.alias_id = alias.id
                 WHERE alias.alias_list_id = ?
-                  AND alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE', 'RADIO_ID', 'RADIO_ID_RANGE')
                 """, activeAfter, aliasListId), "Alias List was not found");
 
             long systems = channels.stream().map(row -> row.get("radio_system_key"))
@@ -947,9 +954,9 @@ class StatsWebDatabase
         String type = request.text("type");
         String requestedStatus = request.text("status");
         String status = requestedStatus == null ? "all" : requestedStatus;
-        if(type != null && !Set.of("talkgroup", "radio").contains(type))
+        if(type != null && !Set.of("talkgroup", "radio", "other").contains(type))
         {
-            throw new StatsApiException(400, "invalid_parameter", "type must be talkgroup or radio", "type");
+            throw new StatsApiException(400, "invalid_parameter", "type must be talkgroup, radio, or other", "type");
         }
         if(!Set.of("all", "recent", "zero_calls", "never_heard").contains(status))
         {
@@ -962,39 +969,69 @@ class StatsWebDatabase
         StringBuilder sql = new StringBuilder("""
             SELECT alias.id AS alias_id, alias.name, alias.description, alias.group_name AS `group`,
                 CASE WHEN alias.matcher_type IN ('RADIO_ID', 'RADIO_ID_RANGE') THEN 'radio'
-                    ELSE 'talkgroup' END AS identity_type,
+                    WHEN alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE') THEN 'talkgroup'
+                    ELSE 'other' END AS identity_type,
+                alias.matcher_type,
+                CASE alias.matcher_type
+                    WHEN 'TALKGROUP' THEN 'Talkgroup'
+                    WHEN 'TALKGROUP_RANGE' THEN 'Talkgroup range'
+                    WHEN 'RADIO_ID' THEN 'Radio ID'
+                    WHEN 'RADIO_ID_RANGE' THEN 'Radio ID range'
+                    WHEN 'STATUS' THEN 'User status'
+                    WHEN 'UNIT_STATUS' THEN 'Unit status'
+                    WHEN 'TONES' THEN 'Tones'
+                    WHEN 'DCS' THEN 'DCS'
+                    WHEN 'ESN' THEN 'ESN'
+                END AS matcher_label,
+                CASE WHEN alias.matcher_type IN ('TALKGROUP_RANGE', 'RADIO_ID_RANGE')
+                    THEN CAST(alias.min_value AS TEXT) || '–' || CAST(alias.max_value AS TEXT)
+                    ELSE coalesce(CAST(alias.value AS TEXT), CAST(alias.numeric_value AS TEXT),
+                        alias.text_value, alias.tone_sequence, '') END AS identity_display,
                 alias.protocol, alias.value, alias.min_value, alias.max_value,
+                CASE WHEN alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE',
+                    'RADIO_ID', 'RADIO_ID_RANGE')
+                    THEN coalesce(summary.metrics_state, 'not_collected')
+                    ELSE 'unsupported' END AS metrics_state,
                 summary.logical_call_count, summary.signaling_observation_count,
                 summary.first_evidence_ms, summary.last_evidence_ms
             FROM alias
             LEFT JOIN alias_activity_summary summary ON summary.alias_id = alias.id
             WHERE alias.alias_list_id = ?
-              AND alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE', 'RADIO_ID', 'RADIO_ID_RANGE')
             """);
         List<Object> parameters = new ArrayList<>(List.of(aliasListId));
         switch(status)
         {
             case "recent" ->
             {
-                sql.append(" AND summary.last_evidence_ms >= ?");
+                sql.append(" AND alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE', " +
+                    "'RADIO_ID', 'RADIO_ID_RANGE') AND summary.last_evidence_ms >= ?");
                 parameters.add(activeAfter);
             }
-            case "zero_calls" -> sql.append(" AND coalesce(summary.logical_call_count, 0) = 0");
-            case "never_heard" -> sql.append(" AND summary.last_evidence_ms IS NULL");
+            case "zero_calls" -> sql.append(" AND alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE', " +
+                "'RADIO_ID', 'RADIO_ID_RANGE') AND coalesce(summary.logical_call_count, 0) = 0");
+            case "never_heard" -> sql.append(" AND alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE', " +
+                "'RADIO_ID', 'RADIO_ID_RANGE') AND summary.last_evidence_ms IS NULL");
             default -> { }
         }
         if(type != null)
         {
-            sql.append(type.equals("radio") ?
-                " AND alias.matcher_type IN ('RADIO_ID', 'RADIO_ID_RANGE')" :
-                " AND alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE')");
+            sql.append(switch(type)
+            {
+                case "radio" -> " AND alias.matcher_type IN ('RADIO_ID', 'RADIO_ID_RANGE')";
+                case "talkgroup" -> " AND alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE')";
+                default -> " AND alias.matcher_type NOT IN ('TALKGROUP', 'TALKGROUP_RANGE', " +
+                    "'RADIO_ID', 'RADIO_ID_RANGE')";
+            });
         }
         if(search != null)
         {
             sql.append(" AND lower(alias.name || ' ' || coalesce(alias.description, '') || ' ' || " +
                 "coalesce(alias.group_name, '') || ' ' || coalesce(CAST(alias.value AS TEXT), '') || ' ' || " +
                 "coalesce(CAST(alias.min_value AS TEXT), '') || ' ' || " +
-                "coalesce(CAST(alias.max_value AS TEXT), '')) LIKE ?");
+                "coalesce(CAST(alias.max_value AS TEXT), '') || ' ' || " +
+                "coalesce(CAST(alias.numeric_value AS TEXT), '') || ' ' || " +
+                "coalesce(alias.text_value, '') || ' ' || coalesce(alias.tone_sequence, '') || ' ' || " +
+                "alias.matcher_type) LIKE ?");
             parameters.add(like(search));
         }
         sql.append(" ORDER BY ").append(order(request, PUBLIC_IDENTITY_ALIAS_SORT_COLUMNS, "last_evidence"))

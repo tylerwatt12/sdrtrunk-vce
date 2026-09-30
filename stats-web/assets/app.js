@@ -11321,7 +11321,7 @@ async function renderDashboard() {
     tabs([
       { id: 'health', label: 'Main', href: href('dashboard', { tab: 'health' }) },
       { id: 'calls', label: 'Calls', href: href('dashboard', { tab: 'calls' }) },
-      { id: 'activity', label: 'Activity', href: href('dashboard', { tab: 'activity' }) }
+      { id: 'activity', label: 'Radio Activity', href: href('dashboard', { tab: 'activity' }) }
     ], tab))) return;
 
   if (tab === 'health') {
@@ -19755,7 +19755,7 @@ function radioDirectoryCardSection(title, rows, kind, emptyText, summary = null)
 function radioDirectoryPerspectiveControl(activeView) {
   const control = uiSegmentedControl([
     { value: 'systems', label: 'Systems & channels' },
-    { value: 'coverage', label: 'Alias coverage' }
+    { value: 'coverage', label: 'Alias inventory' }
   ], activeView, (value) => navigateTo(href('dashboard', value === 'coverage' ?
     { tab: 'health', directory_view: 'coverage' } : { tab: 'health' })));
   control.classList.add('radio-directory-perspective');
@@ -21215,9 +21215,21 @@ function aliasCoverageAliasCell(row) {
 }
 
 function aliasCoverageIdentityCell(row) {
-  const type = row.identity_type === 'radio' ? 'Radio' : 'Talkgroup';
-  const target = entityTarget(row.entity_ref, { channel: row.identity_type === 'radio' ? 'radios' : 'groups' });
-  return identitySummaryValue(identityActivityValue(row), type, target);
+  const type = row.matcher_label || (row.identity_type === 'radio' ? 'Radio' :
+    row.identity_type === 'talkgroup' ? 'Talkgroup' : 'Alias');
+  const target = row.identity_type === 'radio' || row.identity_type === 'talkgroup' ?
+    entityTarget(row.entity_ref, { channel: row.identity_type === 'radio' ? 'radios' : 'groups' }) : '';
+  return identitySummaryValue(row.identity_display || identityActivityValue(row), type, target);
+}
+
+function aliasCoverageMetric(row, field) {
+  return row.metrics_state === 'unsupported' ? node('span', 'muted', 'Not tracked') :
+    number(row[field] || 0);
+}
+
+function aliasCoverageEvidenceTime(row, field) {
+  return aliasCoverageTime(row.metrics_state === 'unsupported' ? null : row[field],
+    row.metrics_state === 'unsupported' ? 'Not tracked' : 'Never heard');
 }
 
 function aliasCoverageAliasesColumns() {
@@ -21225,13 +21237,13 @@ function aliasCoverageAliasesColumns() {
     { id: 'name', label: 'Alias', render: aliasCoverageAliasCell,
       className: 'alias-cell', sort: 'name' },
     { id: 'identity', label: 'Identity', render: aliasCoverageIdentityCell, className: 'numeric', sort: 'identity' },
-    { id: 'calls', label: 'Calls', render: (row) => number(row.logical_call_count || 0), className: 'numeric',
+    { id: 'calls', label: 'Calls', render: (row) => aliasCoverageMetric(row, 'logical_call_count'), className: 'numeric',
       sort: 'logical_call_count' },
-    { id: 'signals', label: 'Signals', render: (row) => number(row.signaling_observation_count || 0),
+    { id: 'signals', label: 'Signals', render: (row) => aliasCoverageMetric(row, 'signaling_observation_count'),
       className: 'numeric', sort: 'signaling_observation_count' },
-    { id: 'first', label: 'First heard', render: (row) => aliasCoverageTime(row.first_evidence_ms),
+    { id: 'first', label: 'First heard', render: (row) => aliasCoverageEvidenceTime(row, 'first_evidence_ms'),
       sort: 'first_evidence' },
-    { id: 'heard', label: 'Last heard', render: (row) => aliasCoverageTime(row.last_evidence_ms),
+    { id: 'heard', label: 'Last heard', render: (row) => aliasCoverageEvidenceTime(row, 'last_evidence_ms'),
       sort: 'last_evidence' }
   ];
 }
@@ -21307,12 +21319,13 @@ function aliasCoverageSearch(placeholder, onNavigate) {
 
 function aliasCoverageSummaryCards(totals, unassigned) {
   const configured = Number(totals.configured_alias_count || 0);
+  const activityEligible = Number(totals.activity_eligible_alias_count ?? configured);
   const recent = Number(totals.active_alias_count || 0);
   const summary = node('div', 'alias-coverage-summary');
   [
     ['Configured aliases', configured, 'icon-identities', 'blue'],
     ['Heard in period', recent, 'icon-live', 'success'],
-    ['Not heard in period', Math.max(0, configured - recent), 'icon-pause', 'neutral'],
+    ['Not heard in period', Math.max(0, activityEligible - recent), 'icon-pause', 'neutral'],
     ['Unassigned observed', unassigned.total_count || 0, 'icon-warning', 'warning']
   ].forEach(([label, value, icon, tone]) => {
     const card = node('div', `ui-summary-card ui-summary-${tone}`);
@@ -21327,7 +21340,7 @@ function aliasCoverageScope(overview) {
   const scope = node('section', 'ui-surface alias-coverage-scope');
   const header = node('header', 'alias-coverage-section-header');
   const copy = node('div');
-  copy.append(node('h2', '', 'Configuration scope'),
+  copy.append(node('h2', '', 'Channels using this Alias List'),
     node('p', 'muted', rows.length ?
       `${number(rows.length)} channel${rows.length === 1 ? '' : 's'} across ${number(overview.correlated_radio_system_count || 0)} radio system${Number(overview.correlated_radio_system_count) === 1 ? '' : 's'}` :
       'No configured channels currently reference this Alias List'));
@@ -21359,10 +21372,12 @@ async function loadAliasCoverageModel(parameters, previous = null, signal = null
   const aliasStatus = ['recent', 'zero_calls', 'never_heard'].includes(parameters.get('alias_status')) ?
     parameters.get('alias_status') : 'all';
   const options = { signal };
-  const lists = previous?.lists || await apiPage('/api/v1/identities/lists', { limit: 500 }, options);
-  if (!lists.rows.length) return { lists, selectedListId: null, selectedRange, activeTab, aliasStatus };
+  const availableLists = previous?.lists || await apiPage('/api/v1/identities/lists', { limit: 500 }, options);
+  const lists = { ...availableLists, rows: availableLists.rows.filter((row) =>
+    ['P25', 'DMR', 'NXDN'].includes(aliasListFamily(row))) };
   const requested = parameters.get('alias_list_id');
-  const selected = lists.rows.find((row) => String(row.alias_list_id) === String(requested)) || lists.rows[0];
+  const selected = lists.rows.find((row) => String(row.alias_list_id) === requested);
+  if (!selected) return { lists, selectedListId: null, selectedRange, activeTab, aliasStatus };
   const selectedListId = selected.alias_list_id;
   const configuredSort = parameters.get('sort') || (aliasStatus === 'recent' ? 'last_evidence' : 'name');
   const configuredDirection = parameters.get('direction') || (aliasStatus === 'recent' ? 'desc' : 'asc');
@@ -21387,16 +21402,16 @@ async function loadAliasCoverageModel(parameters, previous = null, signal = null
 }
 
 async function renderAliasCoverageDirectory(renderContext, embedded = false) {
-  const directory = createAsyncSection('Alias coverage', {
+  const directory = createAsyncSection('Alias inventory', {
     bare: true,
-    loadingMessage: 'Loading Alias Lists and coverage…',
-    errorMessage: 'Alias coverage could not be loaded.'
+    loadingMessage: 'Loading Alias Lists…',
+    errorMessage: 'Alias inventory could not be loaded.'
   });
   directory.host.classList.add('alias-coverage-loader');
   if (embedded) {
     content.append(radioDirectoryEmbeddedPanel('coverage', directory.element));
   } else if (!beginPage(renderContext, pageHeader('Radio Directory',
-    'Compare configured aliases with heard activity across every channel that uses them'),
+    'Browse aliases in a list, their activity, and the channels using them'),
     radioDirectoryPerspectiveControl('coverage'), directory.element)) return;
 
   let selectedModel = null;
@@ -21407,19 +21422,32 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
     void refreshCoverage(nextRoute, options);
   });
   const present = (model) => {
-    if (!model.selectedListId) return node('div', 'empty', 'No Alias Lists are configured.');
     const { lists, selectedListId, overview, aliases, unassigned,
       selectedRange, activeTab, aliasStatus } = model;
     const wrapper = node('div', 'alias-coverage ui-catalog data-workspace');
     wrapper.dataset.uiDensity = 'compact';
     const toolbar = node('div', 'alias-coverage-toolbar ui-catalog-toolbar');
+    toolbar.classList.toggle('alias-coverage-awaiting-selection', !selectedListId);
     const listControl = node('label', 'alias-coverage-field');
     listControl.append(node('span', '', 'Alias List'));
     const listSelect = uiSelect(lists.rows.map((row) => ({ value: row.alias_list_id,
-      label: `${row.name} · ${aliasListFamilyLabel(row)} · ${number(row.alias_count)} aliases` })), selectedListId);
+      label: `${row.name} · ${aliasListFamilyLabel(row)} · ${number(row.alias_count)} ` +
+        (Number(row.alias_count) === 1 ? 'alias' : 'aliases') })),
+      selectedListId, true, lists.rows.length ? 'Select an alias list' :
+        'No P25, DMR, or NXDN alias lists configured');
+    listSelect.disabled = !lists.rows.length;
     listSelect.addEventListener('change', () => navigateCoverage(currentHref({ alias_list_id: listSelect.value,
       q: null, offset: null, sort: null, direction: null })));
     listControl.append(uiSelectFrame(listSelect));
+    toolbar.append(listControl);
+    if (!selectedListId) {
+      wrapper.append(toolbar);
+      if (lists.rows.length) queueMicrotask(() => {
+        if (renderIsCurrent(renderContext) && directory.host.contains(wrapper))
+          listSelect.focus({ preventScroll: true });
+      });
+      return wrapper;
+    }
     const rangeControl = node('label', 'alias-coverage-field');
     rangeControl.append(node('span', '', 'Recent period'));
     const rangeSelect = uiSelect([
@@ -21428,7 +21456,7 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
     ], selectedRange);
     rangeSelect.addEventListener('change', () => navigateCoverage(currentHref({ range: rangeSelect.value, offset: null })));
     rangeControl.append(uiSelectFrame(rangeSelect));
-    toolbar.append(listControl, rangeControl);
+    toolbar.append(rangeControl);
     if (aliasAdminAllowed()) {
       const manage = anchor('Manage aliases', href('aliases', { list: selectedListId }),
         'ui-button ui-button-secondary alias-coverage-manage');
@@ -21445,7 +21473,7 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
         `Unassigned observations (${number(unassigned.total_count || 0)})` : 'Unassigned observations' }
     ], activeTab, (value) => navigateCoverage(currentHref({ identity_tab: value === 'configured' ? null : value,
       q: null, offset: null, sort: null, direction: null })));
-    tabs.setAttribute('aria-label', 'Alias coverage inventory');
+    tabs.setAttribute('aria-label', 'Alias inventory');
     const tableSection = node('section', 'ui-surface alias-coverage-table-section');
     const tableHeader = node('header', 'alias-coverage-table-header');
     const tableHeading = node('div', 'alias-coverage-table-heading');
@@ -21466,7 +21494,7 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
       status.setAttribute('aria-label', 'Alias activity status');
       const kind = uiSegmentedControl([
         { value: 'all', label: 'All' }, { value: 'talkgroup', label: 'Talkgroups' },
-        { value: 'radio', label: 'Radios' }
+        { value: 'radio', label: 'Radios' }, { value: 'other', label: 'Other' }
       ], route.get('type') || 'all', (value) => navigateCoverage(currentHref({ type: value === 'all' ? null : value,
         offset: null })));
       kind.setAttribute('aria-label', 'Alias type');
@@ -21521,7 +21549,7 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
       if (error?.name === 'AbortError' || sequence !== updateSequence || !renderIsCurrent(renderContext)) return;
       const failure = node('div', 'error alias-coverage-refresh-error');
       failure.setAttribute('role', 'alert');
-      failure.append(node('span', '', error.message || 'Alias coverage could not be updated.'),
+      failure.append(node('span', '', error.message || 'Alias inventory could not be updated.'),
         uiActionButton('Retry', null, () => void refreshCoverage(new URLSearchParams(route))));
       (tableSection || directory.host).prepend(failure);
     } finally {

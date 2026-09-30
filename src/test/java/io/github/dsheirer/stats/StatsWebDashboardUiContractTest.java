@@ -28,11 +28,11 @@ class StatsWebDashboardUiContractTest
         assertTrue(dashboard.contains("['health', 'calls', 'activity'].includes(requestedTab)"));
         assertTrue(dashboard.contains("{ id: 'calls', label: 'Calls'"));
         assertTrue(dashboard.contains("{ id: 'health', label: 'Main'"));
-        assertTrue(dashboard.contains("{ id: 'activity', label: 'Activity'"));
+        assertTrue(dashboard.contains("{ id: 'activity', label: 'Radio Activity'"));
         assertTrue(dashboard.indexOf("{ id: 'health', label: 'Main'") <
             dashboard.indexOf("{ id: 'calls', label: 'Calls'"));
         assertTrue(dashboard.indexOf("{ id: 'calls', label: 'Calls'") <
-            dashboard.indexOf("{ id: 'activity', label: 'Activity'"));
+            dashboard.indexOf("{ id: 'activity', label: 'Radio Activity'"));
         assertTrue(dashboard.contains("if (tab === 'health')"));
         assertTrue(dashboard.contains("renderNestedRadioDirectory(renderContext)"));
         assertTrue(dashboard.contains("if (tab === 'activity')"));

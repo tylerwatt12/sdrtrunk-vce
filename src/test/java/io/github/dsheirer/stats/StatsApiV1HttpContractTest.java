@@ -279,6 +279,16 @@ class StatsApiV1HttpContractTest
     @Test
     void publicAliasCoverageRoutesStayReadOnlyAndListScoped() throws Exception
     {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryDirectory.resolve("data"));
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO alias(id, alias_list_id, name, matcher_type, numeric_value)
+                VALUES (71001, 71, 'Public user status', 'STATUS', 12)
+                """);
+        }
+
         HttpResponse<String> listsResponse = get(StatsApiV1.IDENTITIES + "/lists?limit=100");
         assertEquals(200, listsResponse.statusCode(), listsResponse.body());
         JsonNode lists = OBJECT_MAPPER.readTree(listsResponse.body());
@@ -291,11 +301,25 @@ class StatsApiV1HttpContractTest
         assertEquals("HTTP Aliases", overview.at("/alias_list/name").textValue(), overviewResponse.body());
         assertEquals(1, overview.path("correlated_channel_count").intValue(), overviewResponse.body());
         assertTrue(overview.path("channels").isArray(), overviewResponse.body());
+        assertEquals(1, overview.at("/totals/configured_alias_count").intValue(), overviewResponse.body());
+        assertEquals(0, overview.at("/totals/activity_eligible_alias_count").intValue(),
+            overviewResponse.body());
 
         HttpResponse<String> aliasesResponse = get(StatsApiV1.IDENTITIES +
             "/lists/71/aliases?range=24h&status=all&limit=25");
         assertEquals(200, aliasesResponse.statusCode(), aliasesResponse.body());
-        assertTrue(OBJECT_MAPPER.readTree(aliasesResponse.body()).path("data").isArray(), aliasesResponse.body());
+        JsonNode aliases = OBJECT_MAPPER.readTree(aliasesResponse.body());
+        assertEquals(1, aliases.path("data").size(), aliasesResponse.body());
+        assertEquals("other", aliases.at("/data/0/identity_type").textValue(), aliasesResponse.body());
+        assertEquals("user_status", aliases.at("/data/0/matcher_type").textValue(), aliasesResponse.body());
+        assertEquals("User status", aliases.at("/data/0/matcher_label").textValue(), aliasesResponse.body());
+        assertEquals("12", aliases.at("/data/0/identity_display").textValue(), aliasesResponse.body());
+        assertEquals("unsupported", aliases.at("/data/0/metrics_state").textValue(), aliasesResponse.body());
+        HttpResponse<String> unheardResponse = get(StatsApiV1.IDENTITIES +
+            "/lists/71/aliases?status=never_heard&limit=25");
+        assertEquals(200, unheardResponse.statusCode(), unheardResponse.body());
+        assertEquals(0, OBJECT_MAPPER.readTree(unheardResponse.body()).path("data").size(),
+            unheardResponse.body());
 
     }
 
