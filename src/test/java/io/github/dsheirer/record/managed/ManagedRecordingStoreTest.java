@@ -37,6 +37,38 @@ class ManagedRecordingStoreTest
     Path temporary;
 
     @Test
+    void transcriptSearchFiltersBeforePaginationInBothQueryPaths() throws Exception
+    {
+        Path root = temporary.resolve("transcript-search");
+        Files.createDirectories(root);
+        try(ManagedRecordingStore store = new ManagedRecordingStore(temporary.resolve("search.sqlite"), root))
+        {
+            for(int index = 1; index <= 4; index++)
+            {
+                save(store, root, metadata(index * 1000, "system-a", index + ".mp3", 101, 4001,
+                    ManagedRecordingCatalog.CALL_GROUP, null, List.of(), List.of()));
+                assertTrue(store.storeTranscript(index, index % 2 == 0 ? "Engine arriving 100%_" : "No match", 5000L));
+            }
+            for(Integer talkgroup : new Integer[]{null, 4001})
+            {
+                SearchPage first = store.search(SearchFilter.builder().fromMs(0L).toMs(5000L)
+                    .talkgroupId(talkgroup).transcript("ENGINE").limit(1).build());
+                assertEquals(4L, first.calls().getFirst().id());
+                assertNotNull(first.nextCursor());
+                SearchPage second = store.search(SearchFilter.builder().fromMs(0L).toMs(5000L)
+                    .talkgroupId(talkgroup).transcript("ENGINE").limit(1).cursor(first.nextCursor()).build());
+                assertEquals(2L, second.calls().getFirst().id());
+                assertNull(second.nextCursor());
+            }
+            assertEquals(2, store.search(SearchFilter.builder().fromMs(0L).toMs(5000L)
+                .transcript("100%_").build()).calls().size());
+            assertTrue(store.search(SearchFilter.builder().fromMs(0L).toMs(5000L)
+                .transcript("unmatched").build()).calls().isEmpty());
+            assertEquals("Engine arriving 100%_", store.transcriptExcerpts(List.of(2L)).get(2L));
+        }
+    }
+
+    @Test
     void freshCatalogStoresTranscriptSeparatelyWithTimestampAndCascade() throws Exception
     {
         Path root = temporary.resolve("managed");

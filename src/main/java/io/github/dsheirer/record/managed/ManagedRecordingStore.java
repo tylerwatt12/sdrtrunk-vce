@@ -411,6 +411,18 @@ final class ManagedRecordingStore implements AutoCloseable
         Objects.requireNonNull(filter);
         try(Connection connection = openReader())
         {
+            if(filter.transcript != null)
+            {
+                long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+                org.sqlite.ProgressHandler.setHandler(connection, 10000, new org.sqlite.ProgressHandler()
+                {
+                    @Override
+                    protected int progress()
+                    {
+                        return System.nanoTime() >= deadline ? 1 : 0;
+                    }
+                });
+            }
             List<Integer> anyIds = new ArrayList<>(filter.anyIdentityIds);
             if(filter.anyIdentityId != null && !anyIds.contains(filter.anyIdentityId))
             {
@@ -607,6 +619,7 @@ final class ManagedRecordingStore implements AutoCloseable
                 predicates.add("c.voice_type=?");
                 parameters.add(voiceTypeFilter(filter.voiceType));
             }
+            addTranscriptPredicate(predicates, parameters, filter.transcript);
             if(filter.cursor != null && !filter.cursor.isBlank())
             {
                 long[] cursor = decodeCursor(filter.cursor);
@@ -852,6 +865,7 @@ final class ManagedRecordingStore implements AutoCloseable
             conditions.add("c.voice_type=?");
             parameters.add(voiceTypeFilter(filter.voiceType));
         }
+        addTranscriptPredicate(conditions, parameters, filter.transcript);
         if(filter.cursor != null && !filter.cursor.isBlank())
         {
             long[] cursor = decodeCursor(filter.cursor);
@@ -867,6 +881,18 @@ final class ManagedRecordingStore implements AutoCloseable
             orderId + " " + order + " LIMIT ?";
         parameters.add(filter.limit + 1);
         return new CandidateQuery(sql, List.copyOf(parameters));
+    }
+
+    private static void addTranscriptPredicate(List<String> conditions, List<Object> parameters, String text)
+    {
+        if(text != null)
+        {
+            // Probe only transcripts belonging to calls in the existing indexed search scope.
+            // instr treats percent and underscore as literal text, rather than SQL wildcards.
+            conditions.add("EXISTS(SELECT 1 FROM recording_transcript t WHERE t.call_id=c.id " +
+                "AND instr(lower(t.text),lower(?))>0)");
+            parameters.add(text);
+        }
     }
 
     private static void addSystemPredicate(List<String> conditions, List<Object> parameters,
@@ -1178,6 +1204,28 @@ final class ManagedRecordingStore implements AutoCloseable
                     rows.wasNull() ? null : storedAtMs);
             }
         }
+    }
+
+    Map<Long,String> transcriptExcerpts(List<Long> ids) throws SQLException
+    {
+        if(ids.isEmpty()) return Map.of();
+        if(ids.size() > ManagedRecordingCatalog.MAX_PAGE_SIZE)
+        {
+            throw new IllegalArgumentException("Too many transcript excerpts requested");
+        }
+        String placeholders = String.join(",", java.util.Collections.nCopies(ids.size(), "?"));
+        Map<Long,String> excerpts = new HashMap<>();
+        try(Connection connection = openReader();
+            PreparedStatement statement = connection.prepareStatement(
+                "SELECT call_id,substr(text,1,300) FROM recording_transcript WHERE call_id IN (" + placeholders + ")"))
+        {
+            for(int index = 0; index < ids.size(); index++) statement.setLong(index + 1, ids.get(index));
+            try(ResultSet rows = statement.executeQuery())
+            {
+                while(rows.next()) excerpts.put(rows.getLong(1), rows.getString(2));
+            }
+        }
+        return Map.copyOf(excerpts);
     }
 
     TranscriptionCounts transcriptionCounts(long minimumDurationMs) throws SQLException

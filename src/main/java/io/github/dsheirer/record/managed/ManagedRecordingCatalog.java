@@ -240,6 +240,11 @@ public final class ManagedRecordingCatalog implements AutoCloseable
         return mStore.transcription(id);
     }
 
+    public Map<Long,String> transcriptExcerpts(List<Long> ids) throws SQLException
+    {
+        return mStore.transcriptExcerpts(ids);
+    }
+
     public TranscriptionCounts transcriptionCounts(long minimumDurationMs) throws SQLException
     {
         return mStore.transcriptionCounts(minimumDurationMs);
@@ -686,6 +691,7 @@ public final class ManagedRecordingCatalog implements AutoCloseable
         public final String protocol;
         public final String callType;
         public final String voiceType;
+        public final String transcript;
         public final boolean sortAscending;
         public final String cursor;
         public final int limit;
@@ -731,6 +737,11 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             protocol = builder.protocol;
             callType = builder.callType;
             voiceType = builder.voiceType;
+            transcript = builder.transcript != null && !builder.transcript.isBlank() ? builder.transcript.strip() : null;
+            if(transcript != null && transcript.length() > 240)
+            {
+                throw new IllegalArgumentException("Transcript search must be at most 240 characters");
+            }
             sortAscending = builder.sortAscending;
             cursor = builder.cursor;
             limit = Math.max(1, Math.min(MAX_PAGE_SIZE, builder.limit));
@@ -744,7 +755,7 @@ public final class ManagedRecordingCatalog implements AutoCloseable
         public static final class Builder
         {
             private Long fromMs, toMs, minDurationMs, maxDurationMs, frequencyHz, aliasListId;
-            private String systemKey, channelId, protocol, callType, voiceType, cursor;
+            private String systemKey, channelId, protocol, callType, voiceType, cursor, transcript;
             private Integer wacn, systemId, rfss, siteId, talkgroupId, talkgroupMin, talkgroupMax,
                 sourceId, sourceMin, sourceMax, anyIdentityId;
             private List<Integer> anyIdentityIds;
@@ -775,6 +786,7 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             public Builder callType(String value) { callType = value; return this; }
             public Builder voiceType(String value) { voiceType = value; return this; }
             public Builder sortAscending(boolean value) { sortAscending = value; return this; }
+            public Builder transcript(String value) { transcript = value; return this; }
             public Builder cursor(String value) { cursor = value; return this; }
             public Builder limit(int value) { limit = value; return this; }
             public SearchFilter build() { return new SearchFilter(this); }

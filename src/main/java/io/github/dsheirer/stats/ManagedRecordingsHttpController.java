@@ -44,6 +44,7 @@ final class ManagedRecordingsHttpController
     private static final int MAXIMUM_JSON_BYTES = 8 * 1024;
     private static final int MAXIMUM_SEARCH_IDENTITIES = 200;
     private static final Semaphore AUDIO_RESPONSES = new Semaphore(16);
+    private static final Semaphore RECORDING_SEARCHES = new Semaphore(4);
     private static final Semaphore LABEL_LOOKUPS = new Semaphore(4);
     private final Supplier<ManagedRecordingCatalog> mCatalog;
     private final UserPreferences mPreferences;
@@ -105,7 +106,18 @@ final class ManagedRecordingsHttpController
             if((BROWSE_PATH + "/calls").equals(path))
             {
                 requireMethod(exchange, "GET");
-                search(exchange, catalog);
+                if(!RECORDING_SEARCHES.tryAcquire())
+                {
+                    throw new StatsApiException(429, "search_busy", "Too many recording searches are active. Try again.");
+                }
+                try
+                {
+                    search(exchange, catalog);
+                }
+                finally
+                {
+                    RECORDING_SEARCHES.release();
+                }
                 return;
             }
             if((BROWSE_PATH + "/suggestions").equals(path))
@@ -168,6 +180,12 @@ final class ManagedRecordingsHttpController
         }
         catch(SQLException exception)
         {
+            if(exception.getErrorCode() == 9)
+            {
+                ApiHttpResponse.sendError(exchange, 503, "recording_search_timeout",
+                    "This search took too long. Choose a shorter time range or add a system or talkgroup filter.");
+                return;
+            }
             mLog.warn("Managed recording read failed", exception);
             ApiHttpResponse.sendError(exchange, 503, "recordings_unavailable", "Recordings are unavailable");
         }
@@ -375,6 +393,7 @@ final class ManagedRecordingsHttpController
             .protocol(request.text("protocol"))
             .callType(request.text("call_type"))
             .voiceType(request.text("voice_type"))
+            .transcript(request.text("transcript"))
             .cursor(request.text("cursor"))
             .limit(request.limit(100));
         String sort = request.sort("desc");
@@ -437,6 +456,14 @@ final class ManagedRecordingsHttpController
             filter.cursor(page.nextCursor());
         }
         while(true);
+        Map<Long,String> excerpts = catalog.transcriptExcerpts(rows.stream()
+            .map(row -> ((Number)row.get("id")).longValue()).toList());
+        rows = rows.stream().map(row -> {
+            Map<String,Object> enriched = new LinkedHashMap<>(row);
+            String excerpt = excerpts.get(((Number)row.get("id")).longValue());
+            if(excerpt != null && !excerpt.isBlank()) enriched.put("transcript_excerpt", excerpt);
+            return enriched;
+        }).toList();
         Map<String,Object> payload = new LinkedHashMap<>();
         payload.put("calls", rows);
         if(page.nextCursor() != null)

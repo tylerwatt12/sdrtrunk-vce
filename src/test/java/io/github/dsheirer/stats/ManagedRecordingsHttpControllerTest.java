@@ -375,6 +375,13 @@ class ManagedRecordingsHttpControllerTest
         assertEquals("complete", completed.get("status").textValue());
         assertEquals("Dispatch test", completed.get("text").textValue());
         assertEquals(3000, completed.get("stored_at_ms").longValue());
+        String search = browse + "/calls?from_ms=0&to_ms=5000&transcript=dispatch";
+        JsonNode matches = json(send(request(search).GET())).at("/data/calls");
+        assertEquals(1, matches.size());
+        assertEquals("Dispatch test", matches.get(0).get("transcript_excerpt").textValue());
+        assertEquals(0, json(send(request(browse +
+            "/calls?from_ms=0&to_ms=5000&transcript=unmatched").GET())).at("/data/calls").size());
+        assertEquals(400, send(request(browse + "/calls?transcript=" + "a".repeat(241)).GET()).statusCode());
     }
 
     @Test
