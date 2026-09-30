@@ -260,6 +260,55 @@ class ManagedRecordingStoreTest
     }
 
     @Test
+    void p25SystemSearchFindsHistoricalCallsByRecordedSiteWithoutCrossingSystemOwnership() throws Exception
+    {
+        Path root = temporary.resolve("managed");
+        Files.createDirectories(root);
+        Site selected = new Site(0xbee00, 0x49f, 1, 1);
+        Site other = new Site(0xaaaaa, 0x111, 2, 2);
+        String selectedKey = "p25:bee00:49f";
+        String otherKey = "p25:aaaaa:111";
+        try(ManagedRecordingStore store = new ManagedRecordingStore(
+            temporary.resolve("database/recordings.sqlite"), root))
+        {
+            save(store, root, metadata(1000, null, "winner.mp3", 101, 56128,
+                ManagedRecordingCatalog.CALL_GROUP, selected, List.of(selected), List.of()));
+            save(store, root, metadata(2000, null, "observed.mp3", 101, 56128,
+                ManagedRecordingCatalog.CALL_GROUP, null, List.of(selected), List.of()));
+            save(store, root, metadata(3000, otherKey, "stored-other.mp3", 101, 56128,
+                ManagedRecordingCatalog.CALL_GROUP, selected, List.of(selected), List.of()));
+            save(store, root, metadata(4000, null, "winner-other.mp3", 101, 56128,
+                ManagedRecordingCatalog.CALL_GROUP, other, List.of(other, selected), List.of()));
+            save(store, root, metadata(5000, null, "ambiguous-observed.mp3", 101, 56128,
+                ManagedRecordingCatalog.CALL_GROUP, null, List.of(other, selected), List.of()));
+            save(store, root, metadata(6000, null, "no-site.mp3", 101, 56128,
+                ManagedRecordingCatalog.CALL_GROUP, null, List.of(), List.of()));
+            save(store, root, metadata(7000, selectedKey, "stored-selected.mp3", 101, 56128,
+                ManagedRecordingCatalog.CALL_GROUP, null, List.of(), List.of()));
+
+            SearchPage first = store.search(SearchFilter.builder().fromMs(0L).toMs(8000L)
+                .systemKey(selectedKey).limit(2).build());
+            assertEquals(List.of(7000L, 2000L), first.calls().stream()
+                .map(ManagedRecordingCatalog.RecordingCall::startMs).toList());
+            assertNotNull(first.nextCursor());
+            SearchPage next = store.search(SearchFilter.builder().fromMs(0L).toMs(8000L)
+                .systemKey(selectedKey).cursor(first.nextCursor()).limit(2).build());
+            assertEquals(List.of(1000L), next.calls().stream()
+                .map(ManagedRecordingCatalog.RecordingCall::startMs).toList());
+            assertNull(next.nextCursor());
+
+            SearchPage identity = store.search(SearchFilter.builder().fromMs(0L).toMs(8000L)
+                .systemKey(selectedKey).talkgroupId(56128).build());
+            assertEquals(List.of(7000L, 2000L, 1000L), identity.calls().stream()
+                .map(ManagedRecordingCatalog.RecordingCall::startMs).toList());
+            assertEquals(selectedKey, store.find(1L).systemKey());
+            assertEquals(otherKey, store.find(3L).systemKey());
+            assertEquals(selectedKey, store.find(2L).systemKey());
+            assertNull(store.find(5L).systemKey());
+        }
+    }
+
+    @Test
     void directDestinationAndDplAreTypedWithoutInventingTalkgroup() throws Exception
     {
         Path root = temporary.resolve("managed");

@@ -17,7 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
-import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
+import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.record.RecordingMode;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog;
@@ -91,11 +91,7 @@ class ManagedRecordingsHttpControllerTest
         mPreferences.getRecordPreference().setTranscriptionApiKey("");
         mPreferences.getRecordPreference().setTranscriptionMinimumDurationMs(500);
         Path mainDatabase = mDirectory.resolve("main.sqlite");
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mainDatabase))
-        {
-            SdrTrunkDatabaseSchema.create(connection);
-            SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
-        }
+        SdrTrunkDatabaseStartup.createGlobalDatabase(mainDatabase);
         Path root = mDirectory.resolve("recordings-managed");
         Path catalogDatabase = mDirectory.resolve("managed-recordings.sqlite");
         mCatalog = new ManagedRecordingCatalog(catalogDatabase, root);
@@ -236,6 +232,68 @@ class ManagedRecordingsHttpControllerTest
         {
             mCatalog = catalog;
         }
+    }
+
+    @Test
+    void selectedP25SystemFindsHistoricalCallWithSiteEvidenceAndNoStoredSystemKey() throws Exception
+    {
+        String configurationId = "4b75217f-2555-4c38-aafc-5d17bc0faf71";
+        String systemKey = "p25:bee00:49f";
+        String otherSystemKey = "p25:bee00:4a0";
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO alias_list(id,name,family) " +
+                "VALUES(91,'Fixture Aliases','P25')");
+            statement.executeUpdate("INSERT INTO configuration_channel(configuration_id,channel_kind," +
+                "sort_order,system_name,site_name,name,alias_list_id,decoder_type," +
+                "primary_frequency_hz,config_json) VALUES('" + configurationId +
+                "','TRUNKED',91,'Fixture Radio System','Fixture Site','Fixture Control'," +
+                "91,'P25_PHASE1',853375000,'{}')");
+            statement.executeUpdate("INSERT INTO radio_system(id,system_key,protocol_code," +
+                "address_domain_code,p25_wacn,p25_system_id,first_seen_ms,last_seen_ms) " +
+                "VALUES(91,'" + systemKey + "',1,0,0xBEE00,0x49F,1000,2000)," +
+                "(92,'" + otherSystemKey + "',1,0,0xBEE00,0x4A0,1000,2000)");
+            statement.executeUpdate("INSERT INTO receiver_channel(id,configuration_id," +
+                "first_seen_ms,last_seen_ms,radio_system_id,radio_system_assigned_at_ms) " +
+                "VALUES(91,'" + configurationId + "',1000,2000,91,1000)");
+        }
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("managed-recordings.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO recording_channel(id,channel_uuid) VALUES(91,'" +
+                configurationId + "')");
+            statement.executeUpdate("INSERT INTO recording_site(id,wacn,system_id,rfss,site_id) " +
+                "VALUES(91,0xBEE00,0x49F,1,1)");
+            statement.executeUpdate("UPDATE recording_call SET channel_id=91,winner_site_id=91 " +
+                "WHERE id=1");
+            statement.executeUpdate("INSERT INTO recording_call_site(call_id,site_id,start_ms) " +
+                "VALUES(1,91,1000)");
+        }
+
+        String browse = ManagedRecordingsHttpController.BROWSE_PATH;
+        JsonNode unfiltered = json(send(request(browse + "/calls?from_ms=0&to_ms=5000").GET()))
+            .at("/data/calls/0");
+        assertEquals("Fixture Radio System", unfiltered.path("system_name").textValue());
+        assertEquals(systemKey, unfiltered.path("system_key").textValue());
+
+        HttpResponse<String> suggestions = send(request(browse +
+            "/suggestions?q=Fixture%20Radio%20System&kind=system").GET());
+        assertEquals(200, suggestions.statusCode(), suggestions.body());
+        JsonNode selected = json(suggestions).at("/data/0");
+        assertEquals("Fixture Radio System", selected.path("label").textValue());
+        assertEquals(systemKey, selected.path("system_key").textValue());
+
+        HttpResponse<String> matching = send(request(browse + "/calls?from_ms=0&to_ms=5000" +
+            "&system_key=" + systemKey).GET());
+        assertEquals(200, matching.statusCode(), matching.body());
+        assertEquals(1, json(matching).at("/data/calls").size());
+        assertEquals(1, json(matching).at("/data/calls/0/id").longValue());
+
+        HttpResponse<String> unrelated = send(request(browse + "/calls?from_ms=0&to_ms=5000" +
+            "&system_key=" + otherSystemKey).GET());
+        assertEquals(200, unrelated.statusCode(), unrelated.body());
+        assertEquals(0, json(unrelated).at("/data/calls").size());
     }
 
     @Test

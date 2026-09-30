@@ -23,6 +23,7 @@ import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.dcs.DCSIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -116,7 +117,7 @@ record ManagedRecordingMetadata(long startMs, long endMs, long durationMs, long 
         ToneFact tone = tone(identifiers);
         return new ManagedRecordingMetadata(snapshot.startTimestamp(), snapshot.lastActivityTimestamp(),
             Math.max(0L, call.getDuration()), sizeBytes, relativePath,
-            source != null ? source.radioSystemKey() : null,
+            systemKey(protocol, source, winningSite, sites),
             source != null ? source.channelConfigurationId() : null,
             source != null ? source.aliasListId() : 0L,
             ManagedRecordingCatalog.protocolCode(protocol), callType, voiceType, sourceId,
@@ -132,6 +133,42 @@ record ManagedRecordingMetadata(long startMs, long endMs, long durationMs, long 
             integer(identifiers, Form.NETWORK_ACCESS_CODE), tone != null ? tone.kind() : null,
             tone != null ? tone.value() : null, winningSite,
             List.copyOf(sites), List.copyOf(members));
+    }
+
+    private static String systemKey(Protocol protocol, CallLegSource source,
+                                    ManagedRecordingCatalog.Site winningSite,
+                                    Set<ManagedRecordingCatalog.Site> observedSites)
+    {
+        String recordedKey = source != null ? source.radioSystemKey() : null;
+        if(recordedKey != null ||
+            protocol != Protocol.APCO25 && protocol != Protocol.APCO25_PHASE2)
+        {
+            return recordedKey;
+        }
+
+        if(winningSite != null)
+        {
+            return RadioSystemKey.p25(winningSite.wacn(), winningSite.systemId());
+        }
+
+        if(observedSites.isEmpty())
+        {
+            return null;
+        }
+        ManagedRecordingCatalog.Site candidate = observedSites.iterator().next();
+        for(ManagedRecordingCatalog.Site observed: observedSites)
+        {
+            if(!sameSystem(candidate, observed))
+            {
+                return null;
+            }
+        }
+        return RadioSystemKey.p25(candidate.wacn(), candidate.systemId());
+    }
+
+    private static boolean sameSystem(ManagedRecordingCatalog.Site left, ManagedRecordingCatalog.Site right)
+    {
+        return left.wacn() == right.wacn() && left.systemId() == right.systemId();
     }
 
     private static Identifier<?> unwrapPatch(Identifier<?> identifier)

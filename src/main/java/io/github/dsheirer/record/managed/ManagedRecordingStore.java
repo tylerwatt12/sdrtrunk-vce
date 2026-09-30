@@ -10,6 +10,7 @@
  */
 package io.github.dsheirer.record.managed;
 
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog.MaintenanceResult;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog.Member;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog.RecordingCall;
@@ -452,11 +453,7 @@ final class ManagedRecordingStore implements AutoCloseable
                 predicates.add("cs.site_id=?");
                 parameters.add(selectedSiteId);
             }
-            if(filter.systemKey != null && !filter.systemKey.isBlank())
-            {
-                predicates.add("sys.system_key=?");
-                parameters.add(filter.systemKey);
-            }
+            addSystemPredicate(predicates, parameters, filter.systemKey, "sys.system_key=?");
             if(filter.channelId != null && !filter.channelId.isBlank())
             {
                 predicates.add("ch.channel_uuid=?");
@@ -803,11 +800,8 @@ final class ManagedRecordingStore implements AutoCloseable
         conditions.add("c.start_ms BETWEEN ? AND ?");
         parameters.add(filter.fromMs);
         parameters.add(filter.toMs);
-        if(filter.systemKey != null && !filter.systemKey.isBlank())
-        {
-            conditions.add("c.system_id=(SELECT id FROM recording_system WHERE system_key=?)");
-            parameters.add(filter.systemKey);
-        }
+        addSystemPredicate(conditions, parameters, filter.systemKey,
+            "c.system_id=(SELECT id FROM recording_system WHERE system_key=?)");
         if(filter.channelId != null && !filter.channelId.isBlank())
         {
             conditions.add("c.channel_id=(SELECT id FROM recording_channel WHERE channel_uuid=?)");
@@ -875,6 +869,46 @@ final class ManagedRecordingStore implements AutoCloseable
         return new CandidateQuery(sql, List.copyOf(parameters));
     }
 
+    private static void addSystemPredicate(List<String> conditions, List<Object> parameters,
+                                           String systemKey, String exactPredicate)
+    {
+        if(systemKey == null || systemKey.isBlank())
+        {
+            return;
+        }
+
+        parameters.add(systemKey);
+        if(!RadioSystemKey.isP25Native(systemKey))
+        {
+            conditions.add(exactPredicate);
+            return;
+        }
+
+        int wacn = Integer.parseInt(systemKey.substring(4, 9), 16);
+        int systemId = Integer.parseInt(systemKey.substring(10), 16);
+        // Older P25 calls have a verified site but no recording_system row. A stored system remains authoritative;
+        // if the winner is absent, accept observed sites only when they agree on one radio system.
+        conditions.add("(" + exactPredicate + " OR (c.system_id IS NULL AND c.protocol IN (1,2) AND (" +
+            "EXISTS(SELECT 1 FROM recording_site winner WHERE winner.id=c.winner_site_id " +
+            "AND winner.wacn=? AND winner.system_id=?) OR (c.winner_site_id IS NULL AND " +
+            "EXISTS(SELECT 1 FROM recording_call_site cs JOIN recording_site observed " +
+            "ON observed.id=cs.site_id WHERE cs.call_id=c.id AND observed.wacn=? " +
+            "AND observed.system_id=?) AND NOT EXISTS(SELECT 1 FROM recording_call_site cs " +
+            "JOIN recording_site observed ON observed.id=cs.site_id WHERE cs.call_id=c.id " +
+            "AND (observed.wacn<>? OR observed.system_id<>?))))))");
+        parameters.add(wacn);
+        parameters.add(systemId);
+        parameters.add(wacn);
+        parameters.add(systemId);
+        parameters.add(wacn);
+        parameters.add(systemId);
+    }
+
+    private static boolean isP25Protocol(int protocol)
+    {
+        return protocol == 1 || protocol == 2;
+    }
+
     record CandidateQuery(String sql, List<Object> parameters) {}
 
     private record CallKey(long startMs, long id) {}
@@ -934,11 +968,30 @@ final class ManagedRecordingStore implements AutoCloseable
                 }
             }
         }
+        int protocol = row.getInt("protocol");
+        String systemKey = row.getString("system_key");
+        if(systemKey == null && isP25Protocol(protocol))
+        {
+            Site owner = winner;
+            if(owner == null && !also.isEmpty())
+            {
+                Site first = also.getFirst();
+                if(also.stream().allMatch(site -> site.wacn() == first.wacn() &&
+                    site.systemId() == first.systemId()))
+                {
+                    owner = first;
+                }
+            }
+            if(owner != null)
+            {
+                systemKey = RadioSystemKey.p25(owner.wacn(), owner.systemId());
+            }
+        }
         return new RecordingCall(id, row.getLong("start_ms"), row.getLong("end_ms"),
             row.getLong("duration_ms"), row.getString("relative_path"), row.getLong("size_bytes"),
-            row.getString("system_key"), row.getString("channel_uuid"),
+            systemKey, row.getString("channel_uuid"),
             nullableLong(row, "alias_list_id") != null ? row.getLong("alias_list_id") : 0L,
-            ManagedRecordingCatalog.protocolName(row.getInt("protocol")),
+            ManagedRecordingCatalog.protocolName(protocol),
             callTypeName(row.getInt("call_type")), voiceTypeName(row.getInt("voice_type")),
             nullableInt(row, "source_id"), nullableInt(row, "source_home_wacn"),
             nullableInt(row, "source_home_system"), nullableInt(row, "source_home_id"),
