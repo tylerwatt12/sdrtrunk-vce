@@ -67,6 +67,7 @@ import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.source.config.SourceConfigRemote;
+import io.github.dsheirer.source.tuner.channel.MultiFrequencyTunerChannelSource;
 import io.github.dsheirer.source.tuner.channel.TunerChannelSource;
 import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitorPauseRequest;
 import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitorResumeRequest;
@@ -409,16 +410,47 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             {
                 continue;
             }
-            String id = channel.isStandardChannel() ? channel.getConfigurationId() :
-                "traffic-" + channel.getChannelID();
-            String name = channel.getName() != null && !channel.getName().isBlank() ? channel.getName() : "Channel";
-            assignments.add(new TunerChannelAssignment(channel, id, name, channel.isStandardChannel()));
+            long activeFrequencyHz;
+            try
+            {
+                activeFrequencyHz = tunerSource instanceof MultiFrequencyTunerChannelSource rotating ?
+                    rotating.getActiveSourceFrequency() : tunerSource.getFrequency();
+            }
+            catch(RuntimeException ignored)
+            {
+                // A source being removed still leaves its saved channel identity available for the Setup notice.
+                activeFrequencyHz = 0;
+            }
+            assignments.add(tunerChannelAssignment(channel, activeFrequencyHz));
         }
         return List.copyOf(assignments);
     }
 
+    /** Capture the allocated frequency before stopping a chain, which can discard its rotating source. */
+    static TunerChannelAssignment tunerChannelAssignment(Channel channel, long activeFrequencyHz)
+    {
+        boolean standard = channel.isStandardChannel();
+        String parentId = channel.getConfigurationId();
+        String id = standard ? parentId : "traffic-" + channel.getChannelID();
+        String name = channel.getName() != null && !channel.getName().isBlank() ? channel.getName() : "Channel";
+        Long frequencyHz = activeFrequencyHz > 0 ? Long.valueOf(activeFrequencyHz) :
+            configuredAssignmentFrequency(channel);
+        return new TunerChannelAssignment(channel, id, name, standard, parentId,
+            standard ? "standard" : "traffic", frequencyHz, channel.getSystem(), channel.getSite());
+    }
+
+    private static Long configuredAssignmentFrequency(Channel channel)
+    {
+        if(channel.getSourceConfiguration() instanceof SourceConfigTuner single)
+        {
+            return single.getFrequency() > 0 ? single.getFrequency() : null;
+        }
+        return null;
+    }
+
     /** Internal receiver object plus the stable, browser-safe identity used by the tuner workflow. */
-    public record TunerChannelAssignment(Channel channel, String id, String name, boolean restorable)
+    public record TunerChannelAssignment(Channel channel, String id, String name, boolean restorable,
+                                         String parentId, String kind, Long frequencyHz, String system, String site)
     {
     }
 

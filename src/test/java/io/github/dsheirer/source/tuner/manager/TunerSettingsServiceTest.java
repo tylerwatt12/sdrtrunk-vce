@@ -28,6 +28,7 @@ import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner1;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner2;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.RspDuoTuner1Configuration;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.RspDuoTuner2Configuration;
+import io.github.dsheirer.web.http.ApiHttpResponse;
 import java.time.Duration;
 import java.util.SortedSet;
 import java.util.TreeSet;
@@ -40,6 +41,21 @@ import org.junit.jupiter.api.Test;
 
 class TunerSettingsServiceTest
 {
+    @Test
+    void stoppedChannelMetadataUsesPublicGroupingAndFrequencyFields()
+    {
+        TunerSettingsService.ChannelInfo info = new TunerSettingsService.ChannelInfo(
+            "traffic-42", "Voice", "saved-parent", "traffic", 851_012_500L, "Regional system", "North site");
+        var json = ApiHttpResponse.normalizePayload(info);
+
+        assertEquals("traffic-42", json.path("id").asText());
+        assertEquals("saved-parent", json.path("parent_id").asText());
+        assertEquals("traffic", json.path("kind").asText());
+        assertEquals(851_012_500L, json.path("frequency_hz").asLong());
+        assertEquals("Regional system", json.path("system").asText());
+        assertEquals("North site", json.path("site").asText());
+    }
+
     @Test
     void liveSettingAppliesOnceAndIsNeverQueued()
     {

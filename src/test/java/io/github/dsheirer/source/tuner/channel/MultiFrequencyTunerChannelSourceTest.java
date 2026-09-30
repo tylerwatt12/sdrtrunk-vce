@@ -71,9 +71,13 @@ class MultiFrequencyTunerChannelSourceTest
         source.setSourceEventListener(event -> {});
         source.start();
 
+        assertEquals(FIRST_FREQUENCY, source.getActiveSourceFrequency());
+
         source.process(SourceEvent.frequencyRotationRequest());
         assertEquals(1, tunerManager.getRequestCount());
         assertTrue(source.hasPendingRotationRetry());
+        assertEquals(FIRST_FREQUENCY, source.getFrequency(), "wrapper retains its previous channel metadata");
+        assertEquals(0, source.getActiveSourceFrequency(), "no source is allocated during the retry gap");
 
         ChannelRotationMonitorPauseRequest pauseRequest = new ChannelRotationMonitorPauseRequest();
         source.pauseRotation(pauseRequest);
@@ -112,6 +116,8 @@ class MultiFrequencyTunerChannelSourceTest
         }, "multi-frequency-rotate-test");
         rotateThread.start();
         assertTrue(sourceRequestEntered.await(2, TimeUnit.SECONDS));
+        assertEquals(0, source.getActiveSourceFrequency(),
+            "an administrator snapshot never waits on an in-flight rotation");
         ChannelRotationMonitorPauseRequest pauseRequest = new ChannelRotationMonitorPauseRequest();
         CountDownLatch pauseReturned = new CountDownLatch(1);
         Thread pauseThread = new Thread(() -> {
@@ -127,6 +133,7 @@ class MultiFrequencyTunerChannelSourceTest
         rotateThread.join(2_000);
         pauseThread.join(2_000);
         assertTrue(pauseRequest.isSourceStableAt(SECOND_FREQUENCY));
+        assertEquals(SECOND_FREQUENCY, source.getActiveSourceFrequency());
         source.stop();
     }
 

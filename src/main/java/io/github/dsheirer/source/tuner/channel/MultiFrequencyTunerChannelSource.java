@@ -253,6 +253,27 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
     }
 
     /**
+     * Read-only lifecycle snapshot.  The inherited frequency can retain the previous channel while a rotation has
+     * no underlying source.  Never wait for a rotation from an administrator observation.
+     */
+    public long getActiveSourceFrequency()
+    {
+        if(!mRotationLock.tryLock())
+        {
+            return 0;
+        }
+
+        try
+        {
+            return mStarted && mTunerChannelSource != null ? mTunerChannelSource.getFrequency() : 0;
+        }
+        finally
+        {
+            mRotationLock.unlock();
+        }
+    }
+
+    /**
      * Fences tuner replacement, cancels any persistent source retry, and reports the stable live source state.
      */
     @Subscribe

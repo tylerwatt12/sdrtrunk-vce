@@ -1,5 +1,6 @@
 package io.github.dsheirer.source.tuner.manager;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import io.github.dsheirer.controller.channel.ChannelException;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager.TunerChannelAssignment;
@@ -429,7 +430,9 @@ public final class TunerSettingsService implements AutoCloseable
                 mChannelProcessingManager.stop(assignment.channel());
                 if(remembered.size() < MAXIMUM_REMEMBERED_CHANNELS)
                 {
-                    remembered.add(new RememberedChannel(new ChannelInfo(assignment.id(), assignment.name()),
+                    remembered.add(new RememberedChannel(new ChannelInfo(assignment.id(), assignment.name(),
+                        assignment.parentId(), assignment.kind(), assignment.frequencyHz(),
+                        assignment.system(), assignment.site()),
                         assignment.channel(), assignment.restorable()));
                 }
             }
@@ -1169,7 +1172,9 @@ public final class TunerSettingsService implements AutoCloseable
     {
     }
 
-    public record ChannelInfo(String id, String name)
+    public record ChannelInfo(String id, String name, @JsonProperty("parent_id") String parentId,
+                              String kind, @JsonProperty("frequency_hz") Long frequencyHz,
+                              String system, String site)
     {
     }
 
