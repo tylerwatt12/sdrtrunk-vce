@@ -55,7 +55,8 @@ function canShowResults(source, type, site) {
 // own appearance and interaction. This module adds only workspace geometry.
 export function createRetainedStatisticsWorkspace(deps) {
   const { node, formField, uiSelectFrame, uiSegmentedControl, section, sectionActionHost,
-    table, openReadOnlyModal, modalFooter, requestJson, formatNumber, signal } = deps;
+    table, openReadOnlyModal, modalFooter, requestJson, formatNumber, formatDateTime,
+    renderItem, renderSource, renderAliasList, signal } = deps;
   const host = node('div', 'retained-statistics-page data-workspace');
   const pickerBody = node('div', 'retained-statistics-picker-body');
   const sourceBlock = node('div', 'retained-statistics-source-block');
@@ -102,11 +103,12 @@ export function createRetainedStatisticsWorkspace(deps) {
     'ui-feedback', message);
   const read = (path, values, requestSignal = signal) => requestJson(queryPath(path, values),
     { csrf: false, signal: requestSignal });
-  const timeLabel = (value) => {
-    const milliseconds = Number(value);
-    return Number.isFinite(milliseconds) && milliseconds > 0 ?
-      new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
-        .format(new Date(milliseconds)) : '';
+  const choiceName = (row, includeList = true) => [...new Set([row.label, row.site_name, row.channel_name,
+    row.radio_system_name, includeList ? row.alias_list_name : ''].filter(Boolean))].join(' · ');
+  const choiceLabel = (row, rows, key, includeList = true) => {
+    const label = choiceName(row, includeList);
+    return rows.some((other) => other[key] !== row[key] && choiceName(other) === choiceName(row)) ?
+      `${label} · ${row[key]}` : label;
   };
 
   const sourceMode = uiSegmentedControl([
@@ -211,12 +213,16 @@ export function createRetainedStatisticsWorkspace(deps) {
 
   function drawSourceChoices() {
     const selected = selectedSource();
+    sourceSearch.placeholder = state.sourceKind === 'radio_system' ?
+      'System, site, channel, or alias list' : 'Channel, site, or alias list';
     sourceSelect.replaceChildren(option('', state.sourceKind === 'radio_system' ?
       'Choose radio system' : 'Choose saved channel'));
+    const choices = selected ? [...state.sourceRows, selected] : state.sourceRows;
     if (selected && !state.sourceRows.some((row) => row.source_key === selected.source_key)) {
-      sourceSelect.append(option(selected.source_key, selected.label));
+      sourceSelect.append(option(selected.source_key, choiceLabel(selected, choices, 'source_key')));
     }
-    state.sourceRows.forEach((row) => sourceSelect.append(option(row.source_key, row.label)));
+    state.sourceRows.forEach((row) => sourceSelect.append(option(row.source_key,
+      choiceLabel(row, choices, 'source_key'))));
     sourceSelect.value = selected?.source_key || '';
     sourceSelect.disabled = state.sourceLoading && !state.sourceRows.length;
     sourceSearch.hidden = state.sourceRows.length < 20 && !state.sourceMore && !state.sourceSearch;
@@ -243,10 +249,13 @@ export function createRetainedStatisticsWorkspace(deps) {
     if (siteBlock.hidden) return;
     const selected = selectedSite();
     siteSelect.replaceChildren(option('', 'Choose site'));
+    const choices = selected ? [...state.siteRows, selected] : state.siteRows;
     if (selected && !state.siteRows.some((row) => row.configuration_id === selected.configuration_id)) {
-      siteSelect.append(option(selected.configuration_id, selected.label));
+      siteSelect.append(option(selected.configuration_id,
+        choiceLabel(selected, choices, 'configuration_id')));
     }
-    state.siteRows.forEach((row) => siteSelect.append(option(row.configuration_id, row.label)));
+    state.siteRows.forEach((row) => siteSelect.append(option(row.configuration_id,
+      choiceLabel(row, choices, 'configuration_id'))));
     siteSelect.value = selected?.configuration_id || '';
     siteSelect.disabled = state.siteLoading && !state.siteRows.length;
     siteSearch.hidden = state.siteRows.length < 20 && !state.siteMore && !state.siteSearch;
@@ -333,35 +342,31 @@ export function createRetainedStatisticsWorkspace(deps) {
     else void loadResults();
   }
 
-  function resultEvidence(row) {
-    const parts = [];
-    if (row.observation_count != null) {
-      const count = Number(row.observation_count);
-      parts.push(`${formatNumber(count)} observation${count === 1 ? '' : 's'}`);
-    }
-    const lastSeen = timeLabel(row.last_seen_ms);
-    if (lastSeen) parts.push(lastSeen);
-    return parts.join(' · ') || '—';
-  }
-
-  function tableItem(row) {
-    const copy = node('span', 'identity-summary');
-    copy.append(node('strong', 'identity-summary-primary', row.label || 'Unknown item'));
-    if (row.detail) copy.append(node('small', 'identity-summary-context', row.detail));
-    return copy;
-  }
-
   function resultsTable() {
+    const identity = ['radios', 'talkgroups'].includes(state.type);
     const columns = [
-      { id: 'item', label: 'Item', render: tableItem, sortable: false },
-      { id: 'activity', label: 'Activity', render: resultEvidence, sortable: false },
+      { id: 'item', label: ({ frequencies: 'Frequency', radios: 'Radio', talkgroups: 'Talkgroup',
+        sites: 'Site', channels: 'Saved channel', systems: 'Radio system' })[state.type],
+        render: renderItem, sortable: false }
+    ];
+    if (identity) columns.push({ id: 'alias-group', label: 'Alias group',
+      render: (row) => row.alias_group || '—', sortable: false });
+    if (state.type !== 'frequencies') columns.push({ id: 'alias-list', label: 'Alias list',
+      render: (row) => renderAliasList(row) || '—', sortable: false });
+    if (identity || state.type === 'frequencies') columns.push({ id: 'count',
+      label: identity ? 'Calls' : 'Observations', className: 'numeric', sortable: false,
+      render: (row) => {
+        const count = identity ? row.logical_call_count ?? row.observation_count : row.observation_count;
+        return count == null ? '—' : formatNumber(count);
+      } });
+    columns.push({ id: 'last-seen', label: 'Last seen',
+      render: (row) => formatDateTime(row.last_seen_ms) || '—', sortable: false },
       { id: 'action', label: 'Action', render: (row) => {
         const action = button('Review', () => reviewRow(row));
         action.disabled = busyWithJob();
         action.setAttribute('aria-label', `Review removal of ${row.label || 'item'}`);
         return action;
-      }, sortable: false }
-    ];
+      }, sortable: false });
     return table(state.resultRows, columns, 'No matching results', {
       type: `retained-statistics-${state.type}`, layoutMenuHost: resultsActions,
       tableClass: 'ui-data-table-quiet', mobileCards: true, sortable: false,
@@ -405,8 +410,17 @@ export function createRetainedStatisticsWorkspace(deps) {
       resultPager.hidden = true;
       return;
     }
-    resultContext.textContent = [selectedSource().label, selectedSite()?.label,
-      TYPES.find((entry) => entry.value === state.type)?.label].filter(Boolean).join(' · ');
+    resultSearch.placeholder = ({ frequencies: 'Frequency in MHz or Hz',
+      radios: 'Radio alias, over-the-air name, or ID', talkgroups: 'Talkgroup alias or ID',
+      sites: 'Site, channel, or alias list', channels: 'Channel, site, or alias list',
+      systems: 'System, site, channel, or alias list' })[state.type];
+    resultContext.replaceChildren(renderSource(selectedSource(),
+      choiceLabel(selectedSource(), state.sourceRows, 'source_key', false)));
+    if (selectedSite()) resultContext.append(' · ', renderSource(selectedSite(),
+      choiceLabel(selectedSite(), state.siteRows, 'configuration_id', false)));
+    const contextList = renderAliasList(selectedSite() || selectedSource());
+    if (contextList) resultContext.append(' · ', contextList);
+    resultContext.append(' · ', TYPES.find((entry) => entry.value === state.type)?.label || '');
     resultStatus.replaceChildren();
     if (state.resultLoading) {
       resultStatus.append(feedback('Loading results…', 'loading'));

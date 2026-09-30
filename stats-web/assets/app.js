@@ -21,7 +21,7 @@ import {
 } from './features/alias-list-create.js?v=2';
 import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=19';
 import { createStreamingWorkspace } from './features/streaming.js?v=5';
-import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=1';
+import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=2';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=8';
 import { createRecordingsFeature } from './features/recordings.js?v=5';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
@@ -1788,6 +1788,26 @@ function aliasListLink(name, id) {
   if (!configuredLabel) return '';
   if (!validId || !aliasAdminAllowed()) return configuredLabel;
   return anchor(configuredLabel, href('aliases', { list: aliasListId }));
+}
+
+function retainedStatisticsItem(row) {
+  const kind = String(row.target?.kind || '').replace(/^conventional_/, '');
+  const identity = ['radio', 'talkgroup'].includes(kind);
+  const alias = String(row.alias_name || '').trim();
+  const talker = String(row.last_talker_alias || '').trim();
+  const primary = alias || talker || row.label || 'Unknown item';
+  const details = [];
+  if (identity && (alias || talker) && row.native_id != null) {
+    details.push(`${kind === 'radio' ? 'Radio' : 'Talkgroup'} ${identityNumber(row, row.native_id)}`);
+  }
+  if (alias && talker && !sameSiteText(alias, talker)) details.push(`OTA ${talker}`);
+  if (row.detail) details.push(...String(row.detail).split(' · '));
+  const channelTab = ({ radio: 'radios', talkgroup: 'groups' })[kind] ||
+    (kind === 'frequency' && String(row.channel_kind).toUpperCase() === 'TRUNKED' ? 'frequencies' : '');
+  const target = entityReferenceAllowed(row.entity_ref) ?
+    entityTarget(row.entity_ref, channelTab ? { channel: channelTab } : {}) : '';
+  return identitySummaryValue(primary, [...new Set(details)].filter((part) => part !== primary)
+    .join(' · '), target);
 }
 
 function externalAnchor(label, target, className) {
@@ -26536,7 +26556,10 @@ async function renderAdmin() {
     content.append(createRetainedStatisticsWorkspace({
       node, formField, uiSelectFrame, uiSegmentedControl, section, sectionActionHost,
       table, openReadOnlyModal, modalFooter: aliasModalFooter, requestJson,
-      formatNumber: number, signal: activeRenderController?.signal
+      formatNumber: number, formatDateTime: dateTime, renderItem: retainedStatisticsItem,
+      renderSource: (row, label) => channelLink(row, label || row.label),
+      renderAliasList: (row) => aliasListLink(row.alias_list_name, row.alias_list_id),
+      signal: activeRenderController?.signal
     }));
   }
   else if (active === 'protocol-p25') {
