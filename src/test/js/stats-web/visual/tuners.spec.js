@@ -153,6 +153,10 @@ async function mockTuners(page, mutations, state = {}) {
     if (settingMatch && request.method() === 'PUT') {
       const value = body().value;
       mutations.push({ type: 'setting', setting: settingMatch[1], value });
+      if (state.pauseSetting === settingMatch[1]) {
+        state.settingPauseStarted?.();
+        await state.releaseSetting;
+      }
       if (state.rejectSetting === settingMatch[1]) {
         await route.fulfill({ status: 409, contentType: 'application/json',
           body: JSON.stringify({ error: { message: 'Channels won’t fit' } }) });
@@ -435,6 +439,53 @@ test('manual PPM presents and applies whole-number steps', async ({ page }) => {
   });
 });
 
+test('boolean settings auto-save without flashing actions and allow failure recovery', async ({ page }) => {
+  const mutations = [];
+  let signalSaveStarted;
+  let releaseSave;
+  const saveStarted = new Promise((resolve) => { signalSaveStarted = resolve; });
+  const saveReleased = new Promise((resolve) => { releaseSave = resolve; });
+  const state = { currentTuner: operatorTuner(), pauseSetting: 'automatic_ppm',
+    settingPauseStarted: signalSaveStarted, releaseSetting: saveReleased,
+    rejectSetting: 'automatic_ppm' };
+  await mockTuners(page, mutations, state);
+  await page.goto('/app.html?view=tuners');
+
+  const form = page.locator('[data-setting-id="automatic_ppm"]');
+  const actions = form.locator('.tuners-setting-actions');
+  const automaticPpm = form.getByLabel('Automatic PPM');
+  await form.locator('.ui-toggle').click();
+  await saveStarted;
+  await expect(automaticPpm).toBeChecked();
+  await expect(form.locator('.tuners-setting-message')).toHaveText('Saving…');
+  await expect(actions).toBeHidden();
+  await page.waitForTimeout(100);
+  await expect(actions).toBeHidden();
+
+  state.pauseSetting = null;
+  releaseSave();
+  await expect(form.getByText(/Channels won.t fit/)).toBeVisible();
+  await expect(form.getByRole('button', { name: 'Save' })).toBeVisible();
+  await expect(form.getByRole('button', { name: 'Discard' })).toBeVisible();
+
+  await form.getByRole('button', { name: 'Discard' }).click();
+  await expect(automaticPpm).not.toBeChecked();
+  await expect(form.locator('.ui-toggle-state')).toHaveText('Off');
+  await expect(actions).toBeHidden();
+
+  await form.locator('.ui-toggle').click();
+  await expect.poll(() => mutations.filter((mutation) => mutation.setting === 'automatic_ppm').length)
+    .toBe(2);
+  await expect(form.getByRole('button', { name: 'Save' })).toBeVisible();
+  state.rejectSetting = null;
+  await form.getByRole('button', { name: 'Save' }).click();
+  await expect.poll(() => mutations.filter((mutation) => mutation.setting === 'automatic_ppm').length)
+    .toBe(3);
+  await expect(automaticPpm).toBeChecked();
+  await expect(actions).toBeHidden();
+  expect(currentTuner(state).settings.find((setting) => setting.id === 'automatic_ppm').value).toBe(true);
+});
+
 test('preset gain shows disabled family controls and how to enable them', async ({ page }) => {
   const settings = operatorSettings({
     lna_gain: { editable: false, unavailable_reason: 'Use Custom gain' }
@@ -693,11 +744,50 @@ test('segmented Setup mode stops channels once and offers one restore attempt', 
   await page.getByRole('button', { name: 'Resume & go Live' }).click();
   const restore = page.getByRole('dialog', { name: 'Resume previous channels' });
   await expect(restore).toContainText('2 channels stopped');
-  await expect(restore).toContainText('Temporary call channels may not restart');
+  await expect(restore).toContainText('Voice channels are temporary and are not resumed.');
   await restore.getByRole('button', { name: 'Resume channels' }).click();
   await expect(restore).toBeHidden();
   expect(mutations.filter((mutation) => mutation.type === 'restore')).toHaveLength(1);
   await expect(page.getByRole('button', { name: /^Restart \d/ })).toHaveCount(0);
+});
+
+test('stopped-channel modal groups control and voice channels by their primary', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const stoppedChannels = [
+    { id: 'control-a', name: 'GCRCN', parent_id: 'control-a', kind: 'standard',
+      frequency_hz: 856_162_500, system: 'GCRCN', site: 'East Simulcast' },
+    { id: 'traffic-a', name: 'T-GCRCN', parent_id: 'control-a', kind: 'traffic',
+      frequency_hz: 857_112_500, system: 'GCRCN', site: 'East Simulcast' },
+    { id: 'traffic-b', name: 'T-GCRCN', parent_id: 'control-a', kind: 'traffic',
+      frequency_hz: 857_362_500, system: 'GCRCN', site: 'East Simulcast' },
+    { id: 'control-b', name: 'Fire Dispatch', parent_id: 'control-b', kind: 'standard',
+      frequency_hz: 852_762_500, system: 'County Fire', site: 'North' },
+    { id: 'traffic-only', name: 'T-METRO', parent_id: 'missing-control', kind: 'traffic',
+      frequency_hz: 858_212_500, system: 'METRO', site: 'West' }
+  ];
+  await mockTuners(page, [], { currentTuner: operatorTuner({ operator_state: 'setup',
+    stopped_channels: stoppedChannels }) });
+  await page.goto('/app.html?view=tuners');
+  await page.getByRole('button', { name: 'View stopped channels' }).click();
+
+  const modal = page.getByRole('dialog', { name: 'Stopped channels' });
+  await expect(modal.getByText('GCRCN', { exact: true })).toHaveCount(1);
+  await expect(modal).toContainText('1 Control · 856.16250 MHz');
+  await expect(modal).toContainText('2 Voice channels');
+  await expect(modal.getByText('T-GCRCN', { exact: true })).toHaveCount(0);
+  await expect(modal.getByText('Fire Dispatch', { exact: true })).toHaveCount(1);
+  await expect(modal).toContainText('1 Channel · 852.76250 MHz');
+  await expect(modal).toContainText('METRO');
+  await expect(modal).toContainText('1 Voice channel');
+  await expect(modal).toHaveScreenshot('tuners-stopped-channels-grouped-light-desktop.png');
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(modal).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth))
+    .toBeLessThanOrEqual(1);
+  expect(await modal.evaluate((element) => element.scrollWidth - element.clientWidth))
+    .toBeLessThanOrEqual(1);
+  await expect(modal).toHaveScreenshot('tuners-stopped-channels-grouped-light-mobile.png');
 });
 
 test('segmented Setup mode starts a disabled tuner and prompts for stopped channels', async ({ page }) => {

@@ -797,6 +797,27 @@
   border: 0;
 }
 
+.tuners-channel-list {
+  max-height: min(520px, 60dvh);
+  overflow: auto;
+}
+
+.tuners-channel-group,
+.tuners-channel-group-heading {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.tuners-channel-group {
+  padding: var(--space-3);
+}
+
+.tuners-channel-group-line {
+  padding-inline-start: var(--space-2);
+  font-variant-numeric: tabular-nums;
+}
+
 .tuners-recordings-file {
   min-width: 0;
   display: flex;

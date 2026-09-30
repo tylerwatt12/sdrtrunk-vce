@@ -24557,7 +24557,40 @@ function tunerOperatorStateLabel(tuner) {
 function tunerStoppedChannels(tuner) {
   return (Array.isArray(tuner?.stopped_channels) ? tuner.stopped_channels : [])
     .filter((channel) => channel && typeof channel.id === 'string')
-    .map((channel) => ({ id: channel.id, name: String(channel.name || channel.id) }));
+    .map((channel) => {
+      const name = String(channel.name || channel.id);
+      const kind = String(channel.kind || '').toLowerCase() === 'traffic' ||
+        (!channel.kind && name.startsWith('T-')) ? 'traffic' : 'standard';
+      const parentName = kind === 'traffic' ? name.replace(/^T-/, '') : name;
+      const frequencyHz = Number(channel.frequency_hz);
+      return {
+        id: channel.id, name, kind,
+        parentId: String(channel.parent_id || channel.parentId || '').trim(),
+        parentName: parentName || 'Channel',
+        frequencyHz: Number.isFinite(frequencyHz) && frequencyHz > 0 ? frequencyHz : null,
+        system: String(channel.system || '').trim(), site: String(channel.site || '').trim()
+      };
+    });
+}
+
+function tunerStoppedChannelGroups(channels) {
+  const groups = new Map();
+  for (const channel of channels) {
+    const key = channel.parentId ||
+      `${channel.system}\u0000${channel.site}\u0000${channel.parentName}`;
+    if (!groups.has(key)) groups.set(key, {
+      name: channel.parentName, system: channel.system, site: channel.site, primary: [], voiceCount: 0
+    });
+    const group = groups.get(key);
+    if (channel.kind === 'traffic') group.voiceCount += 1;
+    else {
+      group.primary.push(channel);
+      group.name = channel.name;
+      group.system = channel.system || group.system;
+      group.site = channel.site || group.site;
+    }
+  }
+  return [...groups.values()];
 }
 
 function tunerSettingDependencyMet(setting, settings) {
@@ -25038,8 +25071,10 @@ async function renderTuners() {
       save.disabled = !usability.enabled;
       const baseValue = control ? control.confirmedValue : setting.value;
       const isDirty = () => control && String(control.read(control.input)) !== String(baseValue);
+      let booleanSaveFailed = false;
       const updateActions = () => {
-        save.hidden = !actionSetting && !isDirty();
+        save.hidden = !actionSetting && (!isDirty() ||
+          (setting.kind === 'boolean' && !booleanSaveFailed));
         actions.hidden = save.hidden;
       };
       if (control) {
@@ -25062,6 +25097,7 @@ async function renderTuners() {
           const draft = setting.kind === 'boolean' ? control.input.checked : control.input.value;
           if (String(draft) === String(baseValue)) settingDrafts.delete(draftKey);
           else settingDrafts.set(draftKey, draft);
+          if (setting.kind === 'boolean') booleanSaveFailed = false;
           updateActions();
           if (setting.kind === 'boolean' && usability.enabled) form.requestSubmit();
         });
@@ -25069,11 +25105,12 @@ async function renderTuners() {
       discard.addEventListener('click', () => {
         if (!control) return;
         settingDrafts.delete(draftKey);
-        if (setting.kind === 'boolean') control.input.checked = Boolean(baseValue);
+        if (setting.kind === 'boolean') setUiToggle(control.input, Boolean(baseValue));
         else control.input.value = String(baseValue);
         const output = control.element.querySelector('.tuners-gain-value');
         if (output) output.textContent = tunerSettingValue(setting, baseValue);
         message.textContent = '';
+        booleanSaveFailed = false;
         updateActions();
       });
       if (!actionSetting) actions.append(discard);
@@ -25088,6 +25125,10 @@ async function renderTuners() {
         } catch (error) {
           message.textContent = error.message || 'Could not save';
           save.disabled = false;
+          if (setting.kind === 'boolean') {
+            booleanSaveFailed = true;
+            updateActions();
+          }
         }
       });
       if (control) {
@@ -25149,9 +25190,25 @@ async function renderTuners() {
 
   function openChannelList(title, channels, returnFocusSelector = '#selected-tuner-stopped') {
     const body = node('div', 'tuners-channel-list');
-    const list = node('ul');
-    channels.forEach((channel) => list.append(node('li', '', channel.name)));
-    body.append(list);
+    for (const group of tunerStoppedChannelGroups(channels)) {
+      const card = node('section', 'tuners-channel-group ui-surface');
+      const heading = node('div', 'tuners-channel-group-heading');
+      heading.append(node('strong', '', group.name));
+      const context = [group.system, group.site]
+        .filter((value) => value && value.toLowerCase() !== group.name.toLowerCase());
+      if (context.length) heading.append(node('small', 'ui-field-detail', context.join(' · ')));
+      card.append(heading);
+      if (group.primary.length) {
+        const count = group.primary.length;
+        const label = group.voiceCount ? 'Control' : 'Channel';
+        const frequencyHz = group.primary.find((channel) => channel.frequencyHz)?.frequencyHz;
+        card.append(node('div', 'tuners-channel-group-line',
+          `${count} ${label}${count === 1 ? '' : 's'}${frequencyHz ? ` · ${tunerInventoryFrequency(frequencyHz)}` : ''}`));
+      }
+      if (group.voiceCount) card.append(node('div', 'tuners-channel-group-line',
+        `${group.voiceCount} Voice channel${group.voiceCount === 1 ? '' : 's'}`));
+      body.append(card);
+    }
     openReadOnlyModal(title, body, { id: 'tuner-channel-list', returnFocusSelector, className: 'admin-modal' });
   }
 
@@ -25175,9 +25232,7 @@ async function renderTuners() {
       if (!current.restore_result || !Array.isArray(current.restore_result.failed)) {
         throw new Error('Restart result unavailable');
       }
-      return current.restore_result.failed.map((channel) => ({
-        id: String(channel.id || ''), name: String(channel.name || channel.id || 'Channel')
-      }));
+      return tunerStoppedChannels({ stopped_channels: current.restore_result.failed });
     }
     throw new Error('Restart is still running');
   }
@@ -25188,7 +25243,7 @@ async function renderTuners() {
     const body = node('div', 'admin-confirmation');
     body.append(node('p', '', `${channels.length} channel${channels.length === 1 ? '' : 's'} stopped ` +
       'when this tuner entered Setup. Try to restart eligible channels and return the tuner to Live?'));
-    body.append(node('p', 'ui-field-detail', 'Temporary call channels may not restart.'));
+    body.append(node('p', 'ui-field-detail', 'Voice channels are temporary and are not resumed.'));
     const message = node('div', 'admin-form-message');
     message.setAttribute('role', 'alert');
     const actions = node('div', 'admin-form-actions');
