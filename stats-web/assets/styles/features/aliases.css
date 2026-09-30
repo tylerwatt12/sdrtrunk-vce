@@ -194,20 +194,6 @@
   overflow-wrap: anywhere;
 }
 
-.alias-channel-usage-more {
-  margin-top: var(--space-2);
-}
-
-.alias-channel-usage-more summary {
-  width: fit-content;
-  color: var(--accent);
-  cursor: pointer;
-}
-
-.alias-channel-usage-more .alias-channel-usage-links {
-  margin-top: var(--space-2);
-}
-
 .alias-editor-filter-toolbar {
   display: grid;
   align-items: stretch;

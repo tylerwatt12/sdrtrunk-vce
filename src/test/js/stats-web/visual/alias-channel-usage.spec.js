@@ -43,14 +43,20 @@ for (const canEditChannels of [true, false]) {
       .locator('.alias-list-item-channels'))
       .toHaveText('Used by Public Works');
     const usage = page.locator('.alias-channel-usage');
-    await expect(usage.getByText('Fire Dispatch')).toBeVisible();
-    await expect(usage.getByRole('link')).toHaveCount(canEditChannels ? 4 : 0);
-    if (canEditChannels) {
-      await expect(usage.getByRole('link', { name: 'Fire Dispatch' })).toHaveAttribute('href',
-        /view=channel-setup&channel=00000000-0000-0000-0000-000000000002$/);
+    const channels = [
+      ['EMS Operations', 3], ['Fire Dispatch', 2], ['Police East', 1],
+      ['Police West', 4], ['Sheriff Dispatch', 5]
+    ];
+    await expect(usage.locator('.alias-channel-usage-links')).toHaveCount(1);
+    await expect(usage.locator('.alias-channel-usage-links li')).toHaveCount(channels.length);
+    await expect(usage.locator('details, summary')).toHaveCount(0);
+    for (const [name, suffix] of channels) {
+      await expect(usage.getByText(name, { exact: true })).toBeVisible();
+      if (canEditChannels) {
+        await expect(usage.getByRole('link', { name })).toHaveAttribute('href',
+          new RegExp(`view=channel-setup&channel=00000000-0000-0000-0000-00000000000${suffix}$`));
+      }
     }
-    await usage.getByText('Show 1 more channels').click();
-    await expect(usage.getByText('Sheriff Dispatch')).toBeVisible();
-    await expect(usage.getByRole('link')).toHaveCount(canEditChannels ? 5 : 0);
+    await expect(usage.getByRole('link')).toHaveCount(canEditChannels ? channels.length : 0);
   });
 }

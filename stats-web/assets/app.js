@@ -3693,13 +3693,7 @@ function aliasListChannelUsageCard(selectedList, usage) {
       body.append(node('p', 'ui-field-detail', count > 0 ?
         'Channel names could not be found. Reload to try again.' : 'No channels use this Alias List.'));
     } else {
-      body.append(channelLinks(channels.slice(0, 4)));
-      if (channels.length > 4) {
-        const more = node('details', 'alias-channel-usage-more');
-        more.append(node('summary', '', `Show ${number(channels.length - 4)} more channels`),
-          channelLinks(channels.slice(4)));
-        body.append(more);
-      }
+      body.append(channelLinks(channels));
     }
   };
   update();
