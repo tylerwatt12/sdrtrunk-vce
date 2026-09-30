@@ -7229,91 +7229,10 @@ class StatsWebDatabase
         parameters.add(offset);
     }
 
-    /**
-     * Searches one radio-system identity directory by native ID, configured Alias presentation, and, for radios,
-     * the latest over-the-air talker alias. Configured Alias matches are limited to Alias Lists assigned to a saved
-     * channel that currently belongs to the selected radio system, or to the saved channel that owns a historical
-     * channel-scoped system. Exact and range matchers deliberately use the existing matcher indexes and never consult
-     * retained detailed activity.
-     */
     private static void addRadioSystemIdentitySearch(StringBuilder sql, List<Object> parameters, String search,
                                                      String aliasMatcher, boolean includeTalkerAlias)
     {
-        if(search == null)
-        {
-            return;
-        }
-
-        if(!"TALKGROUP".equals(aliasMatcher) && !"RADIO_ID".equals(aliasMatcher))
-        {
-            throw new IllegalArgumentException("Unsupported radio-system Alias matcher");
-        }
-
-        String pattern = like(search);
-        sql.append(" AND (CAST(summary.identity_id AS TEXT) LIKE ? OR ")
-            .append("(system.protocol_code = 4 AND system.address_domain_code = 2 ")
-            .append("AND printf('%02d-%04d', ((summary.identity_id >> 11) & 31), ")
-            .append("(summary.identity_id & 2047)) LIKE ?)");
-        parameters.add(pattern);
-        parameters.add(pattern);
-
-        if(includeTalkerAlias)
-        {
-            sql.append(" OR lower(coalesce(summary.last_talker_alias, '')) LIKE ?");
-            parameters.add(pattern);
-        }
-
-        addRadioSystemAliasSearch(sql, parameters, aliasMatcher, false, pattern);
-        addRadioSystemAliasSearch(sql, parameters, aliasMatcher, true, pattern);
-        sql.append(')');
-    }
-
-    private static void addRadioSystemAliasSearch(StringBuilder sql, List<Object> parameters, String aliasMatcher,
-                                                  boolean ranged, String pattern)
-    {
-        String matcher = ranged ? aliasMatcher + "_RANGE" : aliasMatcher;
-        String index = switch(matcher)
-        {
-            case "TALKGROUP" -> "idx_alias_talkgroup_value";
-            case "TALKGROUP_RANGE" -> "idx_alias_talkgroup_range";
-            case "RADIO_ID" -> "idx_alias_radio_value";
-            case "RADIO_ID_RANGE" -> "idx_alias_radio_range";
-            default -> throw new IllegalArgumentException("Unsupported radio-system Alias matcher");
-        };
-        String identifierMatch = ranged ?
-            "summary.identity_id BETWEEN definition.min_value AND definition.max_value" :
-            "definition.value = summary.identity_id";
-
-        sql.append("""
-             OR EXISTS (
-                 SELECT 1
-                 FROM alias definition INDEXED BY %s
-                 WHERE definition.matcher_type = '%s'
-                   AND definition.protocol IN (
-                       CASE system.protocol_code
-                           WHEN 1 THEN 'APCO25' WHEN 3 THEN 'DMR' WHEN 4 THEN 'NXDN' END,
-                       CASE WHEN system.protocol_code = 1 THEN 'APCO25_PHASE2' END)
-                   AND %s
-                   AND (lower(coalesce(definition.name, '')) LIKE ?
-                     OR lower(coalesce(definition.description, '')) LIKE ?
-                     OR lower(coalesce(definition.group_name, '')) LIKE ?)
-                   AND (EXISTS (
-                           SELECT 1
-                           FROM receiver_channel channel
-                           JOIN configuration_channel config
-                             ON config.configuration_id = channel.configuration_id
-                           WHERE channel.radio_system_id = system.id
-                             AND config.alias_list_id = definition.alias_list_id)
-                     OR EXISTS (
-                           SELECT 1
-                           FROM configuration_channel config
-                           WHERE config.configuration_id = system.configuration_id
-                             AND config.alias_list_id = definition.alias_list_id))
-            )
-            """.formatted(index, matcher, identifierMatch));
-        parameters.add(pattern);
-        parameters.add(pattern);
-        parameters.add(pattern);
+        StatsIdentitySearch.append(sql, parameters, search, aliasMatcher, includeTalkerAlias);
     }
 
     private static void addTalkerAliasSearch(StringBuilder sql, List<Object> parameters, String search)

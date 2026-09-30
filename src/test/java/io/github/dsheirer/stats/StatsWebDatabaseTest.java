@@ -1771,6 +1771,30 @@ class StatsWebDatabaseTest
         assertTrue(rows(mDatabase.radioSystemGroupIdentities(RADIO_SYSTEM_KEY,
             request("/?q=foreign%20group"))).isEmpty(),
             "Configured group aliases must preserve radio-system ownership");
+
+        // The canonical radio address can differ from the channel's locally observed address.
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO alias (id,alias_list_id,name,matcher_type,protocol,value)
+                VALUES (7113,71,'Local Assignment','RADIO_ID','APCO25',555)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_radio_channel_presence (
+                    radio_system_id,radio_identity_id,channel_id,observed_local_id,
+                    evidence_code,confirmed_at_ms)
+                VALUES (71,7102,71,555,1,6000)
+                """);
+        }
+        Map<String,Object> local = mDatabase.radioSystemRadios(RADIO_SYSTEM_KEY,
+            request("/?q=local%20assignment&limit=1"));
+        assertEquals(1, number(local.get("total_count")));
+        assertEquals(202, number(rows(local).getFirst().get("native_id")));
+        assertEquals("Local Assignment", rows(local).getFirst().get("alias_name"));
+        assertTrue(rows(mDatabase.radioSystemRadios(RADIO_SYSTEM_KEY,
+            request("/?q=engine%20twelve"))).isEmpty(),
+            "Local P25 evidence must suppress a canonical-ID Alias search");
     }
 
     @Test
@@ -1792,24 +1816,32 @@ class StatsWebDatabaseTest
                         detail.contains("sqlite_autoindex_radio_system_identity_summary_1")),
                 () -> "Expected a system-owned identity lookup, plan was: " + groupPlan);
             assertTrue(groupPlan.stream().anyMatch(detail ->
-                    detail.contains("SEARCH definition USING INDEX idx_alias_talkgroup_value")),
+                    detail.contains("idx_alias_talkgroup_value (protocol=? AND value=?")),
                 () -> "Expected exact configured-talkgroup lookup, plan was: " + groupPlan);
             assertTrue(groupPlan.stream().anyMatch(detail ->
                     detail.contains("SEARCH definition USING INDEX idx_alias_talkgroup_range")),
                 () -> "Expected range configured-talkgroup lookup, plan was: " + groupPlan);
-            assertTrue(groupPlan.stream().noneMatch(detail -> detail.contains("receiver_activity_event")),
-                () -> "Identity alias search must not consult detailed activity: " + groupPlan);
+            assertTrue(groupPlan.stream().anyMatch(detail -> detail.contains(
+                    "idx_receiver_activity_event_source_time (source_identity_summary_id=?")),
+                () -> "Expected identity-keyed legacy activity fallback, plan was: " + groupPlan);
+            assertTrue(groupPlan.stream().noneMatch(detail -> detail.contains("SCAN evidence") ||
+                    detail.contains("SCAN receiver_activity_event")),
+                () -> "Identity alias search must not scan retained evidence: " + groupPlan);
 
             List<String> radioPlan = explain(connection, radioQuery[0].sql(),
                 radioQuery[0].parameters().toArray());
             assertTrue(radioPlan.stream().anyMatch(detail ->
-                    detail.contains("SEARCH definition USING INDEX idx_alias_radio_value")),
+                    detail.contains("idx_alias_radio_value (protocol=? AND value=?")),
                 () -> "Expected exact configured-radio lookup, plan was: " + radioPlan);
             assertTrue(radioPlan.stream().anyMatch(detail ->
                     detail.contains("SEARCH definition USING INDEX idx_alias_radio_range")),
                 () -> "Expected range configured-radio lookup, plan was: " + radioPlan);
-            assertTrue(radioPlan.stream().noneMatch(detail -> detail.contains("receiver_activity_event")),
-                () -> "Radio alias search must use summaries, not detailed activity: " + radioPlan);
+            assertTrue(radioPlan.stream().anyMatch(detail -> detail.contains(
+                    "idx_receiver_activity_event_target_time (target_identity_summary_id=?")),
+                () -> "Expected identity-keyed legacy activity fallback, plan was: " + radioPlan);
+            assertTrue(radioPlan.stream().noneMatch(detail -> detail.contains("SCAN evidence") ||
+                    detail.contains("SCAN receiver_activity_event")),
+                () -> "Radio alias search must not scan retained evidence: " + radioPlan);
         }
     }
 
