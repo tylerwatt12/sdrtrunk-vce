@@ -339,7 +339,7 @@ function initializeScanListCatalog() {
 
 const parameters = new URLSearchParams(window.location.search);
 const theme = parameters.get('theme') === 'dark' ? 'dark' : 'light';
-const view = ['mobile-table', 'gallery', 'app-chrome', 'access-landing', 'access-login-modal', 'modal', 'modal-long', 'alias-list-create-modal', 'activity-action-tooltip', 'health-alert-modal', 'focus', 'settings', 'health', 'p25', 'admin-access',
+const view = ['mobile-table', 'gallery', 'app-chrome', 'access-landing', 'access-login-modal', 'modal', 'modal-long', 'alias-list-create-modal', 'activity-action-tooltip', 'activity-filters', 'health-alert-modal', 'focus', 'settings', 'health', 'p25', 'admin-access',
   'admin-receiver', 'admin-support', 'dashboard-health', 'dashboard-calls', 'dashboard-activity',
   'signal-quality-detail', 'radioreference-results',
   'radio-directory-coverage', 'radio-directory-panel', 'admin-scan-lists',
@@ -361,6 +361,44 @@ if (view === 'activity-action-tooltip') {
   };
   positionTooltip();
   window.addEventListener('resize', positionTooltip);
+}
+if (view === 'activity-filters') {
+  const bindVisualActivityPopover = (triggerId, panelId) => {
+    const trigger = document.querySelector(triggerId);
+    const panel = document.querySelector(panelId);
+    const position = () => {
+      if (!panel.matches(':popover-open')) return;
+      if (panel.classList.contains('activity-filter-more-panel') &&
+          window.matchMedia('(max-width: 720px)').matches) {
+        panel.style.removeProperty('left');
+        panel.style.removeProperty('top');
+        panel.style.removeProperty('max-height');
+        return;
+      }
+      panel.style.maxHeight = '';
+      const anchor = trigger.getBoundingClientRect();
+      const bounds = panel.getBoundingClientRect();
+      const gutter = 8;
+      const gap = 6;
+      const left = Math.max(gutter, Math.min(anchor.right - bounds.width,
+        window.innerWidth - bounds.width - gutter));
+      const availableBelow = window.innerHeight - anchor.bottom - gap - gutter;
+      const availableAbove = anchor.top - gap - gutter;
+      const openAbove = availableBelow < Math.min(96, bounds.height) && availableAbove > availableBelow;
+      const maxHeight = Math.min(480, openAbove ? availableAbove : availableBelow);
+      panel.style.left = `${Math.round(left)}px`;
+      panel.style.top = `${Math.round(openAbove ?
+        Math.max(gutter, anchor.top - gap - Math.min(bounds.height, maxHeight)) : anchor.bottom + gap)}px`;
+      panel.style.maxHeight = `${Math.max(0, Math.floor(maxHeight))}px`;
+    };
+    panel.addEventListener('toggle', (event) => {
+      trigger.setAttribute('aria-expanded', String(event.newState === 'open'));
+      if (event.newState === 'open') position();
+    });
+    window.addEventListener('resize', position);
+  };
+  bindVisualActivityPopover('#visual-activity-destination-trigger', '#visual-activity-destination-popover');
+  bindVisualActivityPopover('#visual-activity-more-trigger', '#visual-activity-more-panel');
 }
 if(view === 'access-landing' || view === 'access-login-modal') {
   const example = document.querySelector(view === 'access-landing' ?

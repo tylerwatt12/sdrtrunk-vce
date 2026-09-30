@@ -1543,6 +1543,15 @@ class StatsWebDatabase
         }
     }
 
+    /** Exact statement and bindings used by a radio-system group or radio directory page. */
+    record IdentityDirectoryQuery(String sql, List<Object> parameters)
+    {
+        IdentityDirectoryQuery
+        {
+            parameters = List.copyOf(parameters);
+        }
+    }
+
     /**
      * Latest quality snapshot for every known monitored trunked channel. A left join deliberately retains channels
      * that have not produced a quality sample yet; their measurement columns remain null in JSON/CSV.
@@ -2160,10 +2169,17 @@ class StatsWebDatabase
 
     Map<String,Object> radioSystemGroupIdentities(String radioSystemKey, StatsRequest request)
     {
+        return radioSystemGroupIdentities(radioSystemKey, request, ignored -> {});
+    }
+
+    /** Runs the group-identity page and exposes its immutable statement to focused query-plan diagnostics. */
+    Map<String,Object> radioSystemGroupIdentities(String radioSystemKey, StatsRequest request,
+                                                  Consumer<IdentityDirectoryQuery> queryObserver)
+    {
         return readSnapshot(connection -> {
             requireRadioSystem(connection, radioSystemKey);
             List<Map<String,Object>> rows = queryRadioSystemGroupIdentities(connection, radioSystemKey, request,
-                request.limit() + 1, request.offset());
+                request.limit() + 1, request.offset(), queryObserver);
             Map<String,Object> response = page(rows, request);
             response.put("total_count", countRadioSystemGroupIdentities(connection, radioSystemKey, request));
             return response;
@@ -2180,12 +2196,20 @@ class StatsWebDatabase
             WHERE system.system_key = ? AND summary.identity_kind_code IN (1, 3)
             """);
         List<Object> parameters = new ArrayList<>(List.of(radioSystemKey));
-        addIdentifierSearch(sql, parameters, request.search(), "summary.identity_id");
+        addRadioSystemIdentitySearch(sql, parameters, request.search(), "TALKGROUP", false);
         return scalarLong(connection, sql.toString(), parameters.toArray());
     }
 
     private List<Map<String,Object>> queryRadioSystemGroupIdentities(Connection connection, String radioSystemKey,
                                                                       StatsRequest request, int limit, int offset)
+        throws SQLException
+    {
+        return queryRadioSystemGroupIdentities(connection, radioSystemKey, request, limit, offset, ignored -> {});
+    }
+
+    private List<Map<String,Object>> queryRadioSystemGroupIdentities(Connection connection, String radioSystemKey,
+                                                                      StatsRequest request, int limit, int offset,
+                                                                      Consumer<IdentityDirectoryQuery> queryObserver)
         throws SQLException
     {
         StringBuilder sql = new StringBuilder("""
@@ -2219,11 +2243,13 @@ class StatsWebDatabase
                 IDENTITY_KEY_SQL.formatted("summary"),
                 GROUP_IDENTITY_SIGNALING_COUNT_SQL));
         List<Object> parameters = new ArrayList<>(List.of(radioSystemKey));
-        addIdentifierSearch(sql, parameters, request.search(), "summary.identity_id");
+        addRadioSystemIdentitySearch(sql, parameters, request.search(), "TALKGROUP", false);
         sql.append(" ORDER BY ").append(order(request, GROUP_IDENTITY_SORT_COLUMNS, "logical_call_count"))
             .append(", summary.identity_kind_code, summary.identity_id LIMIT ? OFFSET ?");
         addLimitOffset(parameters, limit, offset);
-        List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
+        IdentityDirectoryQuery query = new IdentityDirectoryQuery(sql.toString(), parameters);
+        queryObserver.accept(query);
+        List<Map<String,Object>> rows = queryRows(connection, query.sql(), query.parameters().toArray());
         enrichRadioSystemGroupIdentities(connection, rows, "native_id", "alias_");
 
         for(Map<String,Object> row: rows)
@@ -2237,10 +2263,17 @@ class StatsWebDatabase
 
     Map<String,Object> radioSystemRadios(String radioSystemKey, StatsRequest request)
     {
+        return radioSystemRadios(radioSystemKey, request, ignored -> {});
+    }
+
+    /** Runs the radio page and exposes its immutable statement to focused query-plan diagnostics. */
+    Map<String,Object> radioSystemRadios(String radioSystemKey, StatsRequest request,
+                                         Consumer<IdentityDirectoryQuery> queryObserver)
+    {
         return readSnapshot(connection -> {
             requireRadioSystem(connection, radioSystemKey);
             List<Map<String,Object>> rows = queryRadioSystemRadios(connection, radioSystemKey, request,
-                request.limit() + 1, request.offset());
+                request.limit() + 1, request.offset(), queryObserver);
             Map<String,Object> response = page(rows, request);
             response.put("total_count", countRadioSystemRadios(connection, radioSystemKey, request));
             return response;
@@ -2264,13 +2297,21 @@ class StatsWebDatabase
             WHERE system.system_key = ? AND summary.identity_kind_code = 2
             """);
         List<Object> parameters = new ArrayList<>(List.of(radioSystemKey));
-        addIdentifierSearch(sql, parameters, request.search(), "summary.identity_id");
+        addRadioSystemIdentitySearch(sql, parameters, request.search(), "RADIO_ID", true);
         addRadioFilters(sql, parameters, request, "affiliation.radio_identity_id IS NOT NULL");
         return scalarLong(connection, sql.toString(), parameters.toArray());
     }
 
     private List<Map<String,Object>> queryRadioSystemRadios(Connection connection, String radioSystemKey,
                                                              StatsRequest request, int limit, int offset)
+        throws SQLException
+    {
+        return queryRadioSystemRadios(connection, radioSystemKey, request, limit, offset, ignored -> {});
+    }
+
+    private List<Map<String,Object>> queryRadioSystemRadios(Connection connection, String radioSystemKey,
+                                                             StatsRequest request, int limit, int offset,
+                                                             Consumer<IdentityDirectoryQuery> queryObserver)
         throws SQLException
     {
         StringBuilder sql = new StringBuilder("""
@@ -2300,12 +2341,14 @@ class StatsWebDatabase
             IDENTITY_KEY_SQL.formatted("affiliated_group"), radioPresenceSelect(),
             radioPresenceJoins("summary.id")));
         List<Object> parameters = new ArrayList<>(List.of(radioSystemKey));
-        addIdentifierSearch(sql, parameters, request.search(), "summary.identity_id");
+        addRadioSystemIdentitySearch(sql, parameters, request.search(), "RADIO_ID", true);
         addRadioFilters(sql, parameters, request, "affiliation.radio_identity_id IS NOT NULL");
         sql.append(" ORDER BY ").append(order(request, RADIO_SORT_COLUMNS, "logical_call_count"))
             .append(", summary.identity_id LIMIT ? OFFSET ?");
         addLimitOffset(parameters, limit, offset);
-        List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
+        IdentityDirectoryQuery query = new IdentityDirectoryQuery(sql.toString(), parameters);
+        queryObserver.accept(query);
+        List<Map<String,Object>> rows = queryRows(connection, query.sql(), query.parameters().toArray());
         enrichRadioSystemRadios(connection, rows, "native_id", "alias_");
         enrichRadioSystemGroupIdentities(connection, rows, "affiliated_talkgroup_identity_summary_id",
             "affiliated_talkgroup_id", "affiliated_talkgroup_alias_");
@@ -7149,19 +7192,91 @@ class StatsWebDatabase
         parameters.add(offset);
     }
 
-    private static void addIdentifierSearch(StringBuilder sql, List<Object> parameters, String search,
-                                            String column)
+    /**
+     * Searches one radio-system identity directory by native ID, configured Alias presentation, and, for radios,
+     * the latest over-the-air talker alias. Configured Alias matches are limited to Alias Lists assigned to a saved
+     * channel that currently belongs to the selected radio system, or to the saved channel that owns a historical
+     * channel-scoped system. Exact and range matchers deliberately use the existing matcher indexes and never consult
+     * retained detailed activity.
+     */
+    private static void addRadioSystemIdentitySearch(StringBuilder sql, List<Object> parameters, String search,
+                                                     String aliasMatcher, boolean includeTalkerAlias)
     {
-        if(search != null)
+        if(search == null)
         {
-            sql.append(" AND (CAST(").append(column).append(" AS TEXT) LIKE ? OR ")
-                .append("(system.protocol_code = 4 AND system.address_domain_code = 2 ")
-                .append("AND printf('%02d-%04d', ((").append(column).append(" >> 11) & 31), (")
-                .append(column).append(" & 2047)) LIKE ?))");
-            String like = like(search);
-            parameters.add(like);
-            parameters.add(like);
+            return;
         }
+
+        if(!"TALKGROUP".equals(aliasMatcher) && !"RADIO_ID".equals(aliasMatcher))
+        {
+            throw new IllegalArgumentException("Unsupported radio-system Alias matcher");
+        }
+
+        String pattern = like(search);
+        sql.append(" AND (CAST(summary.identity_id AS TEXT) LIKE ? OR ")
+            .append("(system.protocol_code = 4 AND system.address_domain_code = 2 ")
+            .append("AND printf('%02d-%04d', ((summary.identity_id >> 11) & 31), ")
+            .append("(summary.identity_id & 2047)) LIKE ?)");
+        parameters.add(pattern);
+        parameters.add(pattern);
+
+        if(includeTalkerAlias)
+        {
+            sql.append(" OR lower(coalesce(summary.last_talker_alias, '')) LIKE ?");
+            parameters.add(pattern);
+        }
+
+        addRadioSystemAliasSearch(sql, parameters, aliasMatcher, false, pattern);
+        addRadioSystemAliasSearch(sql, parameters, aliasMatcher, true, pattern);
+        sql.append(')');
+    }
+
+    private static void addRadioSystemAliasSearch(StringBuilder sql, List<Object> parameters, String aliasMatcher,
+                                                  boolean ranged, String pattern)
+    {
+        String matcher = ranged ? aliasMatcher + "_RANGE" : aliasMatcher;
+        String index = switch(matcher)
+        {
+            case "TALKGROUP" -> "idx_alias_talkgroup_value";
+            case "TALKGROUP_RANGE" -> "idx_alias_talkgroup_range";
+            case "RADIO_ID" -> "idx_alias_radio_value";
+            case "RADIO_ID_RANGE" -> "idx_alias_radio_range";
+            default -> throw new IllegalArgumentException("Unsupported radio-system Alias matcher");
+        };
+        String identifierMatch = ranged ?
+            "summary.identity_id BETWEEN definition.min_value AND definition.max_value" :
+            "definition.value = summary.identity_id";
+
+        sql.append("""
+             OR EXISTS (
+                 SELECT 1
+                 FROM alias definition INDEXED BY %s
+                 WHERE definition.matcher_type = '%s'
+                   AND definition.protocol IN (
+                       CASE system.protocol_code
+                           WHEN 1 THEN 'APCO25' WHEN 3 THEN 'DMR' WHEN 4 THEN 'NXDN' END,
+                       CASE WHEN system.protocol_code = 1 THEN 'APCO25_PHASE2' END)
+                   AND %s
+                   AND (lower(coalesce(definition.name, '')) LIKE ?
+                     OR lower(coalesce(definition.description, '')) LIKE ?
+                     OR lower(coalesce(definition.group_name, '')) LIKE ?)
+                   AND (EXISTS (
+                           SELECT 1
+                           FROM receiver_channel channel
+                           JOIN configuration_channel config
+                             ON config.configuration_id = channel.configuration_id
+                           WHERE channel.radio_system_id = system.id
+                             AND config.alias_list_id = definition.alias_list_id)
+                     OR EXISTS (
+                           SELECT 1
+                           FROM configuration_channel config
+                           WHERE config.configuration_id = system.configuration_id
+                             AND config.alias_list_id = definition.alias_list_id))
+            )
+            """.formatted(index, matcher, identifierMatch));
+        parameters.add(pattern);
+        parameters.add(pattern);
+        parameters.add(pattern);
     }
 
     private static void addTalkerAliasSearch(StringBuilder sql, List<Object> parameters, String search)

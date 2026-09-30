@@ -52,30 +52,48 @@ class StatsWebActivityFiltersUiContractTest
     {
         String source = readText(APP_JAVASCRIPT);
         String toolbar = function(source, "function activityFilterToolbar(context, initialFilters)");
-        String chooser = function(source, "function activityIdentityChooser(context, options = {})");
+        String picker = function(source, "function activityIdentityPicker(context, options = {})");
+        String chips = function(source, "function activityFilterChipDefinitions(filters, capabilities)");
         String capabilities = function(source, "function activityContextCapabilities(context)");
         String columns = function(source, "function activityColumns(context, filters)");
         String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
 
         assertTrue(activity.contains("activityFilterToolbar(activityContext, filters)"));
         assertTrue(toolbar.contains("aria-label', 'Filter retained activity'"));
-        assertTrue(toolbar.contains("'Apply filters'"));
-        assertTrue(toolbar.contains("'Clear filters'"));
-        assertTrue(toolbar.contains("'Advanced filters'"));
-        assertTrue(toolbar.contains("'Event type'"));
-        assertTrue(toolbar.contains("'Include grants'"));
+        assertTrue(toolbar.contains("'Apply'"));
+        assertTrue(toolbar.contains("'Clear all'"));
+        assertTrue(toolbar.contains("'More filters'"));
+        assertTrue(toolbar.contains("'Event subtype'"));
+        assertTrue(toolbar.contains("ACTIVITY_ACTION_INCLUDE_GRANTS"));
+        assertTrue(toolbar.contains("'All actions (including grants)'"));
         assertTrue(toolbar.contains("action === 'GRANT'"));
-        assertTrue(columns.contains("label: 'Event Type'"));
+        assertTrue(toolbar.contains("activity-filter-more-content"));
+        assertTrue(toolbar.contains("activity-filter-more-footer"));
+        assertTrue(toolbar.contains("activity-filter-chips"));
+        assertTrue(toolbar.contains("bindAnchoredDropdown(moreTrigger, morePanel"));
+        assertTrue(toolbar.contains("{ mobileSheet: true }"));
+        assertFalse(toolbar.contains("'Advanced filters'"));
+        assertFalse(toolbar.contains("'Include grants'"));
+        assertFalse(toolbar.contains("activity-filter-advanced"));
+        assertTrue(chips.contains("prefix: 'Source:'"));
+        assertTrue(chips.contains("prefix: 'Destination:'"));
+        assertTrue(chips.contains("'Encrypted only'"));
+        assertTrue(columns.contains("label: 'Event subtype'"));
         assertTrue(capabilities.contains("groupMatch: kind === 'talkgroup'"));
         assertTrue(capabilities.contains("rawIdentities: digitalConventional"));
         assertTrue(capabilities.contains("encryption: !analog"));
-        assertTrue(chooser.contains("setAttribute('role', 'combobox')"));
-        assertTrue(chooser.contains("setAttribute('aria-busy', 'true')"));
-        assertTrue(chooser.contains("document.activeElement === input && values.length > 0"));
-        assertTrue(chooser.contains("'No matching identities. Try another ID.'"));
-        assertTrue(chooser.contains("new AbortController()"));
-        assertTrue(chooser.contains("Choose an identity from the suggestions."));
-        assertFalse(chooser.contains("return { key: '', id }"));
+        assertTrue(capabilities.contains("timeslotFilter: !analog && context?.protocol === 'DMR'"));
+        assertTrue(picker.contains("setAttribute('role', 'combobox')"));
+        assertTrue(picker.contains("setAttribute('role', 'listbox')"));
+        assertTrue(picker.contains("setAttribute('popover', 'auto')"));
+        assertTrue(picker.contains("setAttribute('aria-busy', 'true')"));
+        assertTrue(picker.contains("Promise.allSettled(requests)"));
+        assertTrue(picker.contains("Search talkgroup, radio, patch, or alias"));
+        assertTrue(picker.contains("Choose an identity from the search results."));
+        assertTrue(picker.contains("bindAnchoredDropdown(trigger, panel"));
+        assertTrue(picker.contains("new AbortController()"));
+        assertFalse(picker.contains("datalist"));
+        assertFalse(source.contains("function activityIdentityChooser("));
     }
 
     @Test
@@ -164,12 +182,19 @@ class StatsWebActivityFiltersUiContractTest
     {
         String css = StatsWebStylesheetTestSupport.readAll();
         assertTrue(css.contains(".activity-filter-toolbar {"));
-        assertTrue(css.contains(".activity-filter-primary,"));
-        assertTrue(css.contains(".activity-filter-grid,"));
-        assertTrue(css.contains(".activity-filter-grid {\n  align-items: start;"));
+        assertTrue(css.contains(".activity-filter-primary {"));
+        assertTrue(css.contains(".activity-filter-picker {"));
+        assertTrue(css.contains(".activity-filter-chips {"));
+        assertTrue(css.contains(".activity-identity-picker-popover:popover-open"));
+        assertTrue(css.contains(".activity-filter-more-panel:popover-open"));
+        assertTrue(css.contains(".activity-filter-more-content {"));
+        assertTrue(css.contains("grid-template-rows: minmax(0, 1fr) auto"));
         assertTrue(css.contains(".activity-cell-action-link {"));
         assertTrue(css.contains(".activity-filter-error[hidden]"));
         assertTrue(css.contains("@media (max-width: 720px)"));
+        assertTrue(css.contains("inset: var(--space-2)"));
+        assertTrue(css.contains("[data-table-type=\"activity\"]"));
+        assertFalse(css.contains(".activity-filter-advanced"));
     }
 
     private static String function(String source, String signature)

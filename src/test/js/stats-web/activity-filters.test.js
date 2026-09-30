@@ -40,10 +40,16 @@ const nativeSystemCapabilities = context.activityContextCapabilities(systemConte
 assert.equal(nativeSystemCapabilities.channel, true);
 assert.equal(nativeSystemCapabilities.sourceIdentity, true);
 assert.equal(nativeSystemCapabilities.targetIdentity, true);
+assert.equal(nativeSystemCapabilities.timeslot, true,
+  'Existing P25 timeslot deep links must remain supported.');
+assert.equal(nativeSystemCapabilities.timeslotFilter, false,
+  'The sparse P25 timeslot dimension must not occupy the filter UI.');
 const savedSystemCapabilities = context.activityContextCapabilities({
   kind: 'saved-system', protocol: 'DMR', radioSystemKey: 'dmr:channel:one'
 });
 assert.equal(savedSystemCapabilities.channel, false, 'A saved channel must not offer a redundant channel picker.');
+assert.equal(savedSystemCapabilities.timeslotFilter, true,
+  'DMR activity keeps its meaningful two-slot filter under More filters.');
 assert.equal(context.activityContextCapabilities({
   kind: 'patch-group', protocol: 'P25', radioSystemKey: 'p25:bee00:49f'
 }).groupMatch, false, 'Patch pages do not have meaningful direct/via-patch membership.');
@@ -84,6 +90,25 @@ assert.equal(rollingApi.target_kind, 'talkgroup',
 assert.equal(rollingApi.frequency_hz, 851012500);
 assert.equal(rollingApi.lcn, '1-125');
 assert.equal(rollingApi.timeslot, 2);
+assert.equal(context.activityActionControlValue(rolling, nativeSystemCapabilities), 'GRANT');
+assert.equal(context.activityActionControlValue({ action: '', includeGrants: true },
+  nativeSystemCapabilities), '__include_grants__');
+assert.equal(context.activityActionControlValue({ action: '', includeGrants: false },
+  nativeSystemCapabilities), '');
+assert.equal(context.activityMoreFilterCount(rolling, nativeSystemCapabilities), 5,
+  'Only controls actually available under More contribute to its count.');
+assert.equal(context.activityMoreFilterCount({ ...rolling, configurationId: '', lcn: '' },
+  savedSystemCapabilities), 4,
+  'DMR timeslot contributes when that technical control is meaningful and available.');
+assert.equal(context.activityListboxNavigationIndex(0, 4, 'ArrowDown'), 1);
+assert.equal(context.activityListboxNavigationIndex(3, 4, 'ArrowDown'), 0,
+  'Down arrow wraps from the last identity result to the first.');
+assert.equal(context.activityListboxNavigationIndex(0, 4, 'ArrowUp'), 3,
+  'Up arrow wraps from the first identity result to the last.');
+assert.equal(context.activityListboxNavigationIndex(2, 4, 'Home'), 0);
+assert.equal(context.activityListboxNavigationIndex(1, 4, 'End'), 3);
+assert.equal(context.activityListboxNavigationIndex(1, 4, 'Escape'), -1);
+assert.equal(context.activityListboxNavigationIndex(0, 0, 'ArrowDown'), -1);
 
 for (const eventType of [
   'RADIO_UNINHIBIT', 'RADIO_INHIBIT', 'RADIO_UNINHIBIT_ACK', 'RADIO_INHIBIT_ACK'
@@ -288,3 +313,46 @@ assert.equal(context.activityCellFilterPatch(channelContext, activityRow, 'chann
 assert.equal(context.activityCellFilterPatch(analogContext, activityRow, 'source'), null);
 assert.equal(context.activityCellFilterPatch(systemContext, { action: 'not-real' }, 'action'), null);
 assert.equal(context.activityCellFilterPatch(systemContext, { event_type: '' }, 'event'), null);
+
+assert.match(application, /All actions \(grants hidden\)/,
+  'Grant inclusion belongs in the Action select.');
+assert.match(application, /All actions \(including grants\)/);
+assert.doesNotMatch(application, /uiToggleField\('Include grants'/,
+  'The standalone grants toggle must not return.');
+assert.match(application, /activity-identity-picker-popover/,
+  'Identity filtering uses a custom popover rather than an unreadable datalist.');
+assert.match(application, /if \(!query && !passive\) \{/,
+  'Opening an empty picker must not load an arbitrary first page of identities.');
+assert.match(application, /activityIdentityDirectoryPath\(context, 'radio'\)/);
+assert.match(application, /activityIdentityDirectoryPath\(context, 'talkgroup'\)/,
+  'The unified destination picker searches radio and group directories together.');
+assert.match(application, /bindAnchoredDropdown\(trigger, panel, activeRenderController\?\.signal\)/,
+  'Identity pickers must be anchored to their triggers in the real application.');
+assert.match(application,
+  /bindAnchoredDropdown\(moreTrigger, morePanel, activeRenderController\?\.signal, \{ mobileSheet: true \}\)/,
+  'More filters must be anchored on desktop and switch to the mobile sheet treatment.');
+assert.match(application, /activity-filter-more-footer/);
+assert.match(application, /activity-filter-more-content/);
+assert.match(application, /: initialFilters\.timeslot/,
+  'A hidden P25 timeslot deep link must survive applying another filter.');
+assert.match(application, /Event subtype/);
+
+const pickerStart = application.indexOf('function activityIdentityPicker(');
+const pickerEnd = application.indexOf('function activityChannelFilter(', pickerStart);
+assert.ok(pickerStart >= 0 && pickerEnd > pickerStart, 'The shared activity identity picker is required.');
+const picker = application.slice(pickerStart, pickerEnd);
+assert.match(picker, /const cancelIdentitySearch = \(\) => \{/);
+assert.match(picker, /const selectEntry = \(entry\) => \{\s*cancelIdentitySearch\(\);/,
+  'Selecting a result must invalidate and abort any in-flight lookup.');
+assert.match(picker, /clear\.addEventListener\('click', \(\) => \{\s*cancelIdentitySearch\(\);/,
+  'Clearing an identity must invalidate and abort any in-flight lookup.');
+assert.match(picker, /renderResults\(true\);/,
+  'A completed lookup must replace the searching announcement with its final result status.');
+assert.match(picker, /setAttribute\('aria-selected'/,
+  'Listbox options must expose selection state.');
+assert.match(picker, /results\.setAttribute\('aria-label'/,
+  'The identity result listbox must have an accessible name.');
+assert.match(picker, /activityListboxNavigationIndex\(/,
+  'Identity results must use the shared Arrow, Home, and End navigation model.');
+assert.match(picker, /event\.key === 'Escape'[\s\S]*?event\.stopPropagation\(\);[\s\S]*?input\.focus\(\);/,
+  'Escape from a result must return focus to the combobox without dismissing the picker.');

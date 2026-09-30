@@ -1604,6 +1604,124 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void radioSystemIdentitySearchUsesConfiguredAndOverTheAirAliasesBeforePaging() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES (75,'Unassigned','P25')");
+            statement.executeUpdate("""
+                UPDATE radio_system_identity_summary
+                SET last_talker_alias = 'Unit 202 OTA', last_talker_alias_seen_ms = 5000
+                WHERE id = 7102
+                """);
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary (
+                    id, radio_system_id, identity_kind_code, home_wacn, home_system_id, identity_id,
+                    first_seen_ms, last_seen_ms, logical_call_count
+                ) VALUES (7103, 71, 3, 0xBEE00, 0x49F, 900, 1000, 4000, 2),
+                         (7104, 71, 2, 0xBEE00, 0x49F, 203, 1000, 4000, 2)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias (
+                    id, alias_list_id, name, description, group_name,
+                    matcher_type, protocol, value, min_value, max_value
+                ) VALUES
+                    (7110, 71, 'Engine Twelve', 'West apparatus', 'Fire radios',
+                        'RADIO_ID', 'APCO25', 202, NULL, NULL),
+                    (7210, 72, 'Engine Twelve', 'West apparatus', 'Fire radios',
+                        'RADIO_ID', 'APCO25_PHASE2', 202, NULL, NULL),
+                    (7111, 71, 'Engine Fleet', 'Regional apparatus', 'Fire radios',
+                        'RADIO_ID_RANGE', 'APCO25', NULL, 200, 300),
+                    (7211, 72, 'Engine Fleet', 'Regional apparatus', 'Fire radios',
+                        'RADIO_ID_RANGE', 'APCO25_PHASE2', NULL, 200, 300),
+                    (7112, 71, 'Regional Patch', 'Mutual aid patch', 'Operations',
+                        'TALKGROUP', 'APCO25', 900, NULL, NULL),
+                    (7212, 72, 'Regional Patch', 'Mutual aid patch', 'Operations',
+                        'TALKGROUP', 'APCO25_PHASE2', 900, NULL, NULL),
+                    (7510, 75, 'Foreign Unit', NULL, NULL,
+                        'RADIO_ID', 'APCO25', 202, NULL, NULL),
+                    (7511, 75, 'Foreign Group', NULL, NULL,
+                        'TALKGROUP', 'APCO25', 101, NULL, NULL)
+                """);
+        }
+
+        Map<String,Object> firstRadioPage = mDatabase.radioSystemRadios(RADIO_SYSTEM_KEY,
+            request("/?q=ENGINE&sort=radio&direction=asc&limit=1"));
+        assertEquals(2, number(firstRadioPage.get("total_count")));
+        assertEquals(202, number(rows(firstRadioPage).getFirst().get("native_id")));
+        assertEquals(true, firstRadioPage.get("has_more"));
+
+        Map<String,Object> secondRadioPage = mDatabase.radioSystemRadios(RADIO_SYSTEM_KEY,
+            request("/?q=engine&sort=radio&direction=asc&limit=1&offset=1"));
+        assertEquals(2, number(secondRadioPage.get("total_count")));
+        assertEquals(203, number(rows(secondRadioPage).getFirst().get("native_id")));
+        assertEquals(false, secondRadioPage.get("has_more"));
+
+        assertEquals(202, number(rows(mDatabase.radioSystemRadios(RADIO_SYSTEM_KEY,
+            request("/?q=west%20apparatus"))).getFirst().get("native_id")));
+        assertEquals(2, number(mDatabase.radioSystemRadios(RADIO_SYSTEM_KEY,
+            request("/?q=fire%20radios")).get("total_count")));
+        assertEquals(202, number(rows(mDatabase.radioSystemRadios(RADIO_SYSTEM_KEY,
+            request("/?q=unit%20202%20ota"))).getFirst().get("native_id")));
+        assertEquals(202, number(rows(mDatabase.radioSystemRadios(RADIO_SYSTEM_KEY,
+            request("/?q=202"))).getFirst().get("native_id")));
+        assertTrue(rows(mDatabase.radioSystemRadios(RADIO_SYSTEM_KEY,
+            request("/?q=foreign%20unit"))).isEmpty(),
+            "An Alias List not assigned to the selected system must not contribute search results");
+
+        assertEquals(101, number(rows(mDatabase.radioSystemGroupIdentities(RADIO_SYSTEM_KEY,
+            request("/?q=operations"))).getFirst().get("native_id")));
+        Map<String,Object> patch = rows(mDatabase.radioSystemGroupIdentities(RADIO_SYSTEM_KEY,
+            request("/?q=mutual%20aid%20patch"))).getFirst();
+        assertEquals(900, number(patch.get("native_id")));
+        assertEquals(3, number(patch.get("group_identity_kind_code")));
+        assertTrue(rows(mDatabase.radioSystemGroupIdentities(RADIO_SYSTEM_KEY,
+            request("/?q=foreign%20group"))).isEmpty(),
+            "Configured group aliases must preserve radio-system ownership");
+    }
+
+    @Test
+    void radioSystemIdentityAliasSearchUsesSummaryAndMatcherIndexes() throws Exception
+    {
+        StatsWebDatabase.IdentityDirectoryQuery[] groupQuery = new StatsWebDatabase.IdentityDirectoryQuery[1];
+        StatsWebDatabase.IdentityDirectoryQuery[] radioQuery = new StatsWebDatabase.IdentityDirectoryQuery[1];
+        mDatabase.radioSystemGroupIdentities(RADIO_SYSTEM_KEY, request("/?q=dispatch&limit=25"),
+            query -> groupQuery[0] = query);
+        mDatabase.radioSystemRadios(RADIO_SYSTEM_KEY, request("/?q=unit&limit=25"),
+            query -> radioQuery[0] = query);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            List<String> groupPlan = explain(connection, groupQuery[0].sql(),
+                groupQuery[0].parameters().toArray());
+            assertTrue(groupPlan.stream().anyMatch(detail ->
+                    detail.contains("idx_radio_system_identity_last_seen") ||
+                        detail.contains("sqlite_autoindex_radio_system_identity_summary_1")),
+                () -> "Expected a system-owned identity lookup, plan was: " + groupPlan);
+            assertTrue(groupPlan.stream().anyMatch(detail ->
+                    detail.contains("SEARCH definition USING INDEX idx_alias_talkgroup_value")),
+                () -> "Expected exact configured-talkgroup lookup, plan was: " + groupPlan);
+            assertTrue(groupPlan.stream().anyMatch(detail ->
+                    detail.contains("SEARCH definition USING INDEX idx_alias_talkgroup_range")),
+                () -> "Expected range configured-talkgroup lookup, plan was: " + groupPlan);
+            assertTrue(groupPlan.stream().noneMatch(detail -> detail.contains("receiver_activity_event")),
+                () -> "Identity alias search must not consult detailed activity: " + groupPlan);
+
+            List<String> radioPlan = explain(connection, radioQuery[0].sql(),
+                radioQuery[0].parameters().toArray());
+            assertTrue(radioPlan.stream().anyMatch(detail ->
+                    detail.contains("SEARCH definition USING INDEX idx_alias_radio_value")),
+                () -> "Expected exact configured-radio lookup, plan was: " + radioPlan);
+            assertTrue(radioPlan.stream().anyMatch(detail ->
+                    detail.contains("SEARCH definition USING INDEX idx_alias_radio_range")),
+                () -> "Expected range configured-radio lookup, plan was: " + radioPlan);
+            assertTrue(radioPlan.stream().noneMatch(detail -> detail.contains("receiver_activity_event")),
+                () -> "Radio alias search must use summaries, not detailed activity: " + radioPlan);
+        }
+    }
+
+    @Test
     void activityCursorAndGrantFilterApplyBeforeTheBoundedPage() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);

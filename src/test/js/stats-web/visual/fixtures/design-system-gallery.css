@@ -2,6 +2,19 @@ body {
   min-width: 320px;
 }
 
+.visual-activity-filters-example {
+  width: calc(100% - (2 * var(--space-4)));
+  margin: var(--space-4) auto;
+}
+
+.visual-activity-filters-example > .ui-section {
+  margin: 0;
+}
+
+body[data-gallery-view="activity-filters"] {
+  min-height: 100vh;
+}
+
 .design-system-gallery {
   width: min(1180px, calc(100% - 32px));
   margin: 0 auto;
@@ -589,6 +602,7 @@ body:not([data-gallery-view="gallery"]) .design-system-gallery,
 body:not([data-gallery-view="modal"]):not([data-gallery-view="modal-long"]) .visual-modal-example,
 body:not([data-gallery-view="alias-list-create-modal"]) .visual-alias-list-create-modal-example,
 body:not([data-gallery-view="activity-action-tooltip"]) .visual-activity-action-tooltip-example,
+body:not([data-gallery-view="activity-filters"]) .visual-activity-filters-example,
 body:not([data-gallery-view="health-alert-modal"]) .visual-health-alert-modal-example,
 body:not([data-gallery-view="focus"]) .visual-focus-example,
 body:not([data-gallery-view="settings"]) .visual-settings-example,
@@ -621,6 +635,11 @@ body:not([data-gallery-view="tuner-frequency-popover"]) .visual-tuner-frequency-
 }
 
 @media (max-width: 680px) {
+  .visual-activity-filters-example {
+    width: calc(100% - (2 * var(--space-2)));
+    margin: var(--space-2) auto;
+  }
+
   .design-system-gallery {
     width: min(100% - 20px, 1180px);
     padding-top: var(--space-3);

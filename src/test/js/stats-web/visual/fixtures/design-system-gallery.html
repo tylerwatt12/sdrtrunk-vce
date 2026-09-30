@@ -394,6 +394,97 @@
     </div>
   </main>
 
+  <main class="visual-activity-filters-example">
+    <section class="section ui-section">
+      <div class="section-title ui-section-title">
+        <strong>Activity</strong>
+        <span class="ui-field-detail">Refresh in 10s</span>
+      </div>
+      <form class="activity-filter-toolbar ui-toolbar data-workspace">
+        <div class="activity-filter-primary">
+          <label class="ui-field activity-filter-field">
+            <span class="ui-field-label">Time</span>
+            <span class="ui-select-frame"><select class="ui-select"><option>All retained activity</option></select><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></svg></span>
+          </label>
+          <label class="ui-field activity-filter-field">
+            <span class="ui-field-label">Action</span>
+            <span class="ui-select-frame"><select class="ui-select"><option>All activity (grants hidden)</option></select><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></svg></span>
+          </label>
+          <div class="activity-filter-picker activity-filter-picker-source">
+            <span class="ui-field-label">Source</span>
+            <button class="ui-button ui-button-secondary activity-filter-picker-trigger" type="button"><svg aria-hidden="true"><use href="#visual-icon-search"></use></svg><span class="activity-filter-picker-label">Any source radio</span></button>
+          </div>
+          <div class="activity-filter-picker activity-filter-picker-destination">
+            <span class="ui-field-label">Destination</span>
+            <button class="ui-button ui-button-secondary activity-filter-picker-trigger" id="visual-activity-destination-trigger" popovertarget="visual-activity-destination-popover" type="button"><svg aria-hidden="true"><use href="#visual-icon-search"></use></svg><span class="activity-filter-picker-label">Any destination</span></button>
+          </div>
+          <button class="ui-button ui-button-secondary activity-filter-more-trigger" id="visual-activity-more-trigger" popovertarget="visual-activity-more-panel" type="button"><svg aria-hidden="true"><use href="#visual-icon-filter"></use></svg><span>More filters</span></button>
+          <div class="activity-filter-primary-actions"><button class="ui-button ui-button-primary" type="submit">Apply</button></div>
+        </div>
+        <div class="activity-filter-chips" aria-label="Active filters">
+          <button class="ui-button ui-button-secondary activity-filter-chip" type="button"><span class="activity-filter-chip-label">Source:</span><span class="activity-filter-chip-value">2808137 · Engine 12 Portable — Northside Operations</span><svg aria-hidden="true"><use href="#visual-icon-close"></use></svg></button>
+          <button class="ui-button ui-button-secondary activity-filter-chip" type="button"><span class="activity-filter-chip-label">Destination:</span><span class="activity-filter-chip-value">56131 · CPD D3 DISP — Downtown Dispatch</span><svg aria-hidden="true"><use href="#visual-icon-close"></use></svg></button>
+          <button class="ui-button ui-button-secondary activity-filter-chip" type="button"><span class="activity-filter-chip-value">Encrypted only</span><svg aria-hidden="true"><use href="#visual-icon-close"></use></svg></button>
+          <button class="link-button activity-filter-clear" type="button">Clear all</button>
+        </div>
+        <p class="activity-filter-error ui-notice ui-notice-danger" hidden></p>
+      </form>
+      <div class="table-wrap ui-table-wrap">
+        <table class="ui-data-table ui-data-table-quiet" data-table-type="activity">
+          <thead><tr><th>Seen</th><th>Action</th><th>Event subtype</th><th>Source</th><th>Source alias</th><th>Destination</th><th>Destination alias</th><th>Channel</th><th>Enc</th></tr></thead>
+          <tbody>
+            <tr><td>23:13:26</td><td>active</td><td>call_group</td><td>12345</td><td>Engine 12</td><td>56131</td><td>CPD D3 DISP</td><td>GCRCN</td><td>Yes</td></tr>
+            <tr><td>23:13:20</td><td>call</td><td>call_group</td><td>12345</td><td>Engine 12</td><td>56131</td><td>CPD D3 DISP</td><td>GCRCN</td><td>Yes</td></tr>
+            <tr><td>23:12:57</td><td>call</td><td>call_group</td><td>12345</td><td>Engine 12</td><td>56677</td><td>REGION 35 IO</td><td>GCRCN</td><td>Yes</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <div class="ui-popover activity-identity-picker-popover" id="visual-activity-destination-popover" popover="auto" role="dialog" aria-label="Choose destination">
+      <div class="ui-search activity-identity-search"><svg aria-hidden="true"><use href="#visual-icon-search"></use></svg><input class="ui-input activity-identity-picker-search" type="search" value="disp" aria-label="Search destination" placeholder="Search ID or alias"></div>
+      <div class="ui-segmented activity-identity-kind-tabs" role="group" aria-label="Destination type">
+        <button class="ui-segmented-option active" type="button" aria-pressed="true">All</button>
+        <button class="ui-segmented-option" type="button" aria-pressed="false">Talkgroups</button>
+        <button class="ui-segmented-option" type="button" aria-pressed="false">Radios</button>
+        <button class="ui-segmented-option" type="button" aria-pressed="false">Patches</button>
+      </div>
+      <div class="activity-identity-results" role="listbox">
+        <button class="ui-select-list-item activity-identity-result" type="button" role="option"><span class="ui-pill activity-identity-result-kind">Talkgroup</span><span class="activity-identity-result-alias">CPD D3 DISP</span><span class="activity-identity-result-id">56131</span></button>
+        <button class="ui-select-list-item activity-identity-result" type="button" role="option"><span class="ui-pill activity-identity-result-kind">Talkgroup</span><span class="activity-identity-result-alias">CPD D4 DISP</span><span class="activity-identity-result-id">56132</span></button>
+        <button class="ui-select-list-item activity-identity-result" type="button" role="option"><span class="ui-pill activity-identity-result-kind">Radio</span><span class="activity-identity-result-alias">Dispatch console 4</span><span class="activity-identity-result-id">2808137</span></button>
+      </div>
+      <div class="activity-identity-picker-footer"><button class="link-button activity-identity-picker-clear" type="button">Any destination</button><p class="ui-field-detail activity-identity-status">3 matching identities</p></div>
+    </div>
+
+    <div class="ui-popover activity-filter-more-panel" id="visual-activity-more-panel" popover="auto" role="dialog" aria-label="More activity filters">
+      <div class="activity-filter-more-content">
+      <section class="activity-filter-group">
+        <h3>Scope</h3>
+        <div class="activity-filter-grid">
+          <label class="ui-field activity-filter-field"><span class="ui-field-label">Channel / site</span><span class="ui-select-frame"><select class="ui-select"><option>Any channel or site</option></select><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></svg></span></label>
+        </div>
+      </section>
+      <section class="activity-filter-group">
+        <h3>Event details</h3>
+        <div class="activity-filter-grid">
+          <label class="ui-field activity-filter-field"><span class="ui-field-label">Encryption</span><span class="ui-select-frame"><select class="ui-select"><option>Encrypted only</option></select><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></svg></span></label>
+          <label class="ui-field activity-filter-field"><span class="ui-field-label">Event subtype</span><span class="ui-select-frame"><select class="ui-select"><option>All event subtypes</option></select><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></svg></span></label>
+        </div>
+      </section>
+      <section class="activity-filter-group activity-filter-group-technical">
+        <h3>Technical</h3>
+        <div class="activity-filter-grid">
+          <label class="ui-field activity-filter-field"><span class="ui-field-label">Exact frequency</span><span class="ui-select-frame"><select class="ui-select"><option>Any observed frequency</option></select><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></svg></span></label>
+        </div>
+      </section>
+      </div>
+      <footer class="activity-filter-more-footer">
+        <button class="ui-button ui-button-primary activity-filter-more-done" type="button" popovertarget="visual-activity-more-panel" popovertargetaction="hide">Done</button>
+      </footer>
+    </div>
+  </main>
+
   <div class="visual-health-alert-modal-example">
     <div class="modal-backdrop">
       <section class="read-only-modal health-alert-settings-modal" role="dialog" aria-modal="true" aria-labelledby="visual-health-alert-modal-title">

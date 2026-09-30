@@ -67,6 +67,7 @@ const LIVE_DETAIL_MAXIMUM_CAPTURE = 10000;
 const LIVE_DETAIL_REFRESH_INTERVAL_MILLISECONDS = 125;
 const ACTIVITY_REFRESH_INTERVAL_MILLISECONDS = 10_000;
 const ACTIVITY_IDENTITY_SEARCH_DELAY_MILLISECONDS = 250;
+const ACTIVITY_ACTION_INCLUDE_GRANTS = '__include_grants__';
 const ACTIVITY_ROUTE_KEYS = Object.freeze([
   'activity_range', 'activity_from_ms', 'activity_to_ms', 'activity_action',
   'activity_event_type', 'activity_encryption', 'activity_include_grants',
@@ -2378,7 +2379,7 @@ function anchoredDropdownPlacement(anchorRect, panelRect, viewport) {
   };
 }
 
-function bindAnchoredDropdown(trigger, panel, signal = null) {
+function bindAnchoredDropdown(trigger, panel, signal = null, options = {}) {
   let viewportListeners = null;
   let cleaned = false;
   const stopTracking = () => {
@@ -2386,6 +2387,12 @@ function bindAnchoredDropdown(trigger, panel, signal = null) {
     viewportListeners = null;
   };
   const position = () => {
+    if (options.mobileSheet && window.matchMedia?.('(max-width: 720px)').matches) {
+      panel.style.left = '';
+      panel.style.top = '';
+      panel.style.maxHeight = '';
+      return;
+    }
     const anchorRect = trigger.getBoundingClientRect();
     if (anchorRect.bottom <= 0 || anchorRect.top >= window.innerHeight ||
         anchorRect.right <= 0 || anchorRect.left >= window.innerWidth) {
@@ -17448,7 +17455,10 @@ function activityContextCapabilities(context) {
     grants: trunked,
     frequency: true,
     lcn: trunked,
-    timeslot: !analog && (context?.protocol === 'DMR' || trunked && context?.protocol === 'P25')
+    // Keep P25 timeslot route/API support for existing deep links, but only offer the control where a
+    // timeslot is a useful operator-facing dimension. P25 activity uses it too sparsely to justify UI space.
+    timeslot: !analog && (context?.protocol === 'DMR' || trunked && context?.protocol === 'P25'),
+    timeslotFilter: !analog && context?.protocol === 'DMR'
   });
 }
 
@@ -17581,6 +17591,32 @@ function activityFilterRouteOverrides(filters) {
   };
 }
 
+function activityActionControlValue(filters, capabilities) {
+  if (filters?.action) return filters.action;
+  return capabilities?.grants && filters?.includeGrants ? ACTIVITY_ACTION_INCLUDE_GRANTS : '';
+}
+
+function activityMoreFilterCount(filters, capabilities) {
+  return [
+    Boolean(filters?.eventType),
+    capabilities?.encryption && Boolean(filters?.encryption) && filters.encryption !== 'all',
+    Boolean(filters?.configurationId),
+    filters?.groupMatch && filters.groupMatch !== 'all',
+    filters?.frequencyHz !== null && filters?.frequencyHz !== undefined,
+    Boolean(filters?.lcn),
+    capabilities?.timeslotFilter && filters?.timeslot !== null && filters?.timeslot !== undefined
+  ].filter(Boolean).length;
+}
+
+function activityListboxNavigationIndex(currentIndex, length, key) {
+  if (!Number.isInteger(length) || length <= 0) return -1;
+  if (key === 'Home') return 0;
+  if (key === 'End') return length - 1;
+  if (key === 'ArrowDown') return currentIndex < 0 || currentIndex >= length - 1 ? 0 : currentIndex + 1;
+  if (key === 'ArrowUp') return currentIndex <= 0 ? length - 1 : currentIndex - 1;
+  return -1;
+}
+
 function activityCellFilterPatch(context, row, columnId) {
   const capabilities = activityContextCapabilities(context);
   const sourceColumns = new Set(['source', 'source-alias', 'source-ota-alias']);
@@ -17678,72 +17714,224 @@ function activityIdentityDirectoryPath(context, kind) {
   return radioSystemApiPath(context.radioSystemKey, kind === 'radio' ? 'radios' : 'group-identities');
 }
 
-function activityIdentitySuggestion(row, kind) {
+function activityIdentityKindFromKey(value) {
+  const key = activityIdentityKey(value);
+  if (key.startsWith('v1-r-')) return 'radio';
+  if (key.startsWith('v1-p-')) return 'patch_group';
+  return key ? 'talkgroup' : '';
+}
+
+function activityIdentityKindLabel(kind, plural = false) {
+  if (kind === 'radio') return plural ? 'Radios' : 'Radio';
+  if (kind === 'patch_group') return plural ? 'Patches' : 'Patch';
+  return plural ? 'Talkgroups' : 'Talkgroup';
+}
+
+function activityIdentitySuggestion(row, requestedKind = '') {
   const nativeId = row?.native_id ?? row?.radio_native_id ?? row?.group_native_id;
   const identityKey = activityIdentityKey(row?.identity_key || row?.radio_identity_key ||
     row?.group_identity_key);
   if (nativeId === null || nativeId === undefined || !identityKey) return null;
-  const label = aliasLabel(row) || row?.last_talker_alias || '';
-  const kindLabel = kind === 'radio' ? 'Radio' : kind === 'patch_group' ? 'Patch' : 'Talkgroup';
+  const kind = requestedKind || activityIdentityKindFromKey(identityKey) || rowGroupIdentityKind(row);
+  if (!['radio', 'talkgroup', 'patch_group'].includes(kind)) return null;
+  const alias = String(aliasLabel(row) || row?.last_talker_alias || '').trim();
+  const kindLabel = activityIdentityKindLabel(kind);
+  const displayId = String(identityNumber(row, nativeId));
   const [, , homeWacn, homeSystemId] = identityKey.split('-');
-  const home = homeWacn === 'x' ? '' : ` · ${homeWacn}-${homeSystemId}`;
-  return Object.freeze({ key: identityKey, id: Number(nativeId),
-    label: `${kindLabel} ${identityNumber(row, nativeId)}${label ? ` — ${label}` : ''}${home}` });
+  const home = homeWacn === 'x' ? '' : `${homeWacn}-${homeSystemId}`;
+  return Object.freeze({ key: identityKey, id: Number(nativeId), displayId, alias, kind, kindLabel, home,
+    label: `${kindLabel} ${displayId}${alias ? ` · ${alias}` : ''}${home ? ` · ${home}` : ''}` });
 }
 
-function activityIdentityChooser(context, options = {}) {
+function activityIdentityInitialSelection(identityKey, requestedKind = '') {
+  const key = activityIdentityKey(identityKey);
+  if (!key) return null;
+  const kind = requestedKind || activityIdentityKindFromKey(key);
+  const parts = key.split('-');
+  const id = Number(parts.at(-1));
+  const home = parts[2] === 'x' ? '' : `${parts[2]}-${parts[3]}`;
+  const kindLabel = activityIdentityKindLabel(kind);
+  return Object.freeze({ key, id, displayId: parts.at(-1), alias: '', kind, kindLabel, home,
+    label: `${kindLabel} ${parts.at(-1)}${home ? ` · ${home}` : ''}` });
+}
+
+function activityIdentityPicker(context, options = {}) {
   const sequenceId = ++activityFilterControlSequence;
-  const listId = `activity-identity-options-${sequenceId}`;
+  const panelId = `activity-identity-picker-${sequenceId}`;
+  const resultsId = `activity-identity-results-${sequenceId}`;
   const statusId = `activity-identity-status-${sequenceId}`;
-  const input = node('input', 'ui-input');
+  const destination = Boolean(options.destination);
+  const pickerKind = destination ? 'destination' : 'source';
+  const placeholder = destination ? 'Find talkgroup, radio, or patch' : 'Find ID or alias';
+  const searchPlaceholder = destination ? 'Search talkgroup, radio, patch, or alias' :
+    'Search radio ID or alias';
+  const field = node('div', `ui-field activity-filter-field activity-filter-picker activity-filter-picker-${pickerKind}`);
+  const trigger = node('button', 'ui-button ui-button-secondary activity-filter-picker-trigger');
+  trigger.type = 'button';
+  trigger.setAttribute('popovertarget', panelId);
+  trigger.setAttribute('aria-controls', panelId);
+  trigger.setAttribute('aria-haspopup', 'dialog');
+  trigger.setAttribute('aria-expanded', 'false');
+  const triggerLabel = node('span', 'activity-filter-picker-label');
+  trigger.append(iconGlyph('icon-search'), triggerLabel);
+  const panel = node('div', 'ui-popover activity-identity-picker-popover');
+  panel.id = panelId;
+  panel.setAttribute('popover', 'auto');
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-label', destination ? 'Choose a destination' : 'Choose a source radio');
+  const search = node('div', 'ui-search activity-identity-search');
+  const input = node('input', 'ui-input activity-identity-picker-search');
   input.type = 'search';
   input.autocomplete = 'off';
-  input.setAttribute('list', listId);
+  input.placeholder = searchPlaceholder;
   input.setAttribute('role', 'combobox');
-  input.setAttribute('aria-controls', listId);
+  input.setAttribute('aria-haspopup', 'listbox');
+  input.setAttribute('aria-controls', resultsId);
   input.setAttribute('aria-expanded', 'false');
   input.setAttribute('aria-describedby', statusId);
   input.setAttribute('aria-autocomplete', 'list');
-  const choices = node('datalist');
-  choices.id = listId;
-  const status = node('small', 'ui-field-detail activity-identity-status', 'Type an ID to search.');
+  search.append(iconGlyph('icon-search'), input);
+  const results = node('div', 'activity-identity-results');
+  results.id = resultsId;
+  results.setAttribute('role', 'listbox');
+  results.setAttribute('aria-label', destination ? 'Destination search results' : 'Source radio search results');
+  const status = node('p', 'ui-field-detail activity-identity-status', 'Search by ID or alias.');
   status.id = statusId;
   status.setAttribute('role', 'status');
   status.setAttribute('aria-live', 'polite');
-  const host = node('span', 'activity-identity-control');
-  host.append(input, choices, status);
-  let kind = options.kind || 'radio';
-  let selectedKey = activityIdentityKey(options.identityKey);
-  let selectedLabel = '';
+  const footer = node('div', 'activity-identity-picker-footer');
+  const clear = node('button', 'link-button activity-identity-picker-clear',
+    destination ? 'Any destination' : 'Any source radio');
+  clear.type = 'button';
+  footer.append(clear, status);
+
+  let activeKind = '';
+  const committedKey = activityIdentityKey(options.identityKey);
+  const committedKind = committedKey ? activityIdentityKindFromKey(committedKey) : options.kind || '';
+  let selected = activityIdentityInitialSelection(options.identityKey, options.kind || '');
+  if (!selected && destination && options.kind) {
+    const kindLabel = activityIdentityKindLabel(options.kind);
+    selected = Object.freeze({ key: '', id: null, displayId: '', alias: '', kind: options.kind,
+      kindLabel, home: '', label: `Any ${kindLabel.toLowerCase()}`, kindOnly: true });
+  }
+  let loadedEntries = [];
   let searchGeneration = 0;
   let searchController = null;
-  const suggestions = new Map();
-  if (selectedKey) {
-    const kindLabel = kind === 'radio' ? 'Radio' : kind === 'patch_group' ? 'Patch' : 'Talkgroup';
-    const parts = selectedKey.split('-');
-    const home = parts[2] === 'x' ? '' : ` · ${parts[2]}-${parts[3]}`;
-    selectedLabel = `${kindLabel} ${parts.at(-1)}${home}`;
-    input.value = selectedLabel;
-  }
 
-  const setAvailability = () => {
-    const available = Boolean(activityIdentityDirectoryPath(context, kind));
-    input.placeholder = kind === 'radio' ? 'Search radio ID' : kind ? 'Search group ID' :
-      'Choose a destination type';
-    input.disabled = !available;
-    if (!available) {
-      input.value = '';
-      selectedKey = '';
-      selectedLabel = '';
-      choices.replaceChildren();
-      status.textContent = kind ? 'Identity search is unavailable for this activity scope.' :
-        'Choose a destination type before searching.';
-    } else if (!input.value) status.textContent = 'Type an ID to search.';
+  const cancelIdentitySearch = () => {
+    searchGeneration += 1;
+    searchController?.abort();
+    searchController = null;
+    input.removeAttribute('aria-busy');
+  };
+  const notifySelection = () => options.onSelection?.(selected);
+  const updateSelection = () => {
+    const committed = selected && (committedKey ? selected.key === committedKey :
+      selected.kindOnly && selected.kind === committedKind);
+    triggerLabel.textContent = !selected ? placeholder : committed ?
+      (destination ? 'Replace destination' : 'Replace source radio') : selected.label;
+    trigger.classList.toggle('has-selection', Boolean(selected));
+    clear.hidden = !selected;
+    notifySelection();
+  };
+  const filteredEntries = () => activeKind ?
+    loadedEntries.filter((entry) => entry.kind === activeKind) : loadedEntries;
+  const selectEntry = (entry) => {
+    cancelIdentitySearch();
+    selected = entry;
+    input.value = '';
+    input.setCustomValidity('');
+    loadedEntries = [];
+    results.replaceChildren();
+    status.textContent = 'Search by ID or alias.';
+    updateSelection();
+    if (panel.matches(':popover-open')) panel.hidePopover();
+    trigger.focus();
+  };
+  const exactNumericEntries = () => {
+    const query = input.value.trim();
+    if (!/^\d+$/.test(query)) return [];
+    return filteredEntries().filter((entry) => String(entry.id) === query || entry.displayId === query);
+  };
+  const exactNumericEntry = () => {
+    const matches = exactNumericEntries();
+    return matches.length === 1 ? matches[0] : null;
+  };
+  const renderResults = (announce = !input.hasAttribute('aria-busy')) => {
+    const entries = filteredEntries();
+    const controls = [];
+    if (destination && activeKind) {
+      const kindLabel = activityIdentityKindLabel(activeKind);
+      const any = node('button', 'ui-select-list-item activity-identity-result activity-identity-any-kind');
+      any.type = 'button';
+      any.setAttribute('role', 'option');
+      any.setAttribute('aria-selected', String(Boolean(selected?.kindOnly && selected.kind === activeKind)));
+      const anyKind = uiPill(kindLabel, 'blue');
+      anyKind.classList.add('activity-identity-result-kind');
+      any.append(anyKind, node('span', 'activity-identity-result-alias', `Any ${kindLabel.toLowerCase()}`));
+      any.addEventListener('click', () => selectEntry(Object.freeze({ key: '', id: null,
+        displayId: '', alias: '', kind: activeKind, kindLabel, home: '',
+        label: `Any ${kindLabel.toLowerCase()}`, kindOnly: true })));
+      controls.push(any);
+    }
+    entries.forEach((entry) => {
+      const option = node('button', 'ui-select-list-item activity-identity-result');
+      option.type = 'button';
+      option.setAttribute('role', 'option');
+      option.setAttribute('aria-selected', String(selected?.key === entry.key));
+      option.dataset.identityKey = entry.key;
+      const kindBadge = uiPill(entry.kindLabel, 'blue');
+      kindBadge.classList.add('activity-identity-result-kind');
+      option.append(kindBadge,
+        node('span', 'activity-identity-result-alias', entry.alias || entry.kindLabel),
+        node('span', 'activity-identity-result-id', entry.displayId));
+      option.addEventListener('click', () => selectEntry(entry));
+      controls.push(option);
+    });
+    const selectedIndex = controls.findIndex((control) => control.getAttribute('aria-selected') === 'true');
+    const tabStop = selectedIndex >= 0 ? selectedIndex : 0;
+    controls.forEach((control, index) => { control.tabIndex = index === tabStop ? 0 : -1; });
+    results.replaceChildren(...controls);
+    input.setAttribute('aria-expanded', String(panel.matches(':popover-open') && controls.length > 0));
+    if (announce) {
+      status.textContent = entries.length ?
+        `${number(entries.length)} matching identit${entries.length === 1 ? 'y' : 'ies'}.` :
+        input.value.trim() ? 'No matching identities. Try another ID or alias.' :
+        destination && activeKind ?
+          `Search within ${activityIdentityKindLabel(activeKind, true).toLowerCase()}, or choose any.` :
+          'Search by ID or alias.';
+    }
   };
 
-  const load = async (query) => {
-    const path = activityIdentityDirectoryPath(context, kind);
-    if (!path) return;
+  let kindTabs = null;
+  if (destination) {
+    kindTabs = uiSegmentedControl([
+      { value: '', label: 'All' },
+      { value: 'talkgroup', label: 'Talkgroups' },
+      { value: 'radio', label: 'Radios' },
+      { value: 'patch_group', label: 'Patches' }
+    ], '', (value) => {
+      activeKind = value;
+      renderResults();
+    });
+    kindTabs.classList.add('activity-identity-kind-tabs');
+    kindTabs.setAttribute('aria-label', 'Destination type');
+  }
+
+  const load = async (query, passive = false) => {
+    query = String(query || '').trim();
+    if (!query && !passive) {
+      cancelIdentitySearch();
+      loadedEntries = [];
+      renderResults();
+      return [];
+    }
+    const radioPath = activityIdentityDirectoryPath(context, 'radio');
+    const groupPath = destination ? activityIdentityDirectoryPath(context, 'talkgroup') : '';
+    if (!radioPath && !groupPath) {
+      status.textContent = 'Identity search is unavailable for this activity scope.';
+      return [];
+    }
     searchController?.abort();
     const controller = new AbortController();
     searchController = controller;
@@ -17753,30 +17941,46 @@ function activityIdentityChooser(context, options = {}) {
     else renderSignal?.addEventListener('abort', abortForRender, { once: true });
     const generation = ++searchGeneration;
     input.setAttribute('aria-busy', 'true');
-    status.textContent = 'Searching identities…';
+    if (!passive) status.textContent = 'Searching identities…';
     try {
-      const page = await apiPage(path, { q: query || null, limit: 25 },
-        { signal: controller.signal });
-      if (generation !== searchGeneration || !input.isConnected) return;
-      const rows = (page.rows || []).filter((row) => kind === 'radio' || rowGroupIdentityKind(row) === kind);
-      const values = rows.map((row) => activityIdentitySuggestion(row, kind)).filter(Boolean);
-      suggestions.clear();
-      choices.replaceChildren(...values.map((entry) => {
-        suggestions.set(entry.label, entry);
-        const option = node('option');
-        option.value = entry.label;
-        return option;
+      const requests = [];
+      if (radioPath) requests.push(apiPage(radioPath, { q: query || null, limit: 25 },
+        { signal: controller.signal }).then((page) => ({ kind: 'radio', page })));
+      if (groupPath) requests.push(apiPage(groupPath, { q: query || null, limit: 25 },
+        { signal: controller.signal }).then((page) => ({ kind: 'group', page })));
+      const settled = await Promise.allSettled(requests);
+      if (generation !== searchGeneration || !input.isConnected) return [];
+      const fulfilled = settled.filter((entry) => entry.status === 'fulfilled').map((entry) => entry.value);
+      if (!fulfilled.length && settled.length) throw settled[0].reason;
+      const deduplicated = new Map();
+      fulfilled.forEach(({ kind, page }) => (page.rows || []).forEach((row) => {
+        const rowKind = kind === 'radio' ? 'radio' : rowGroupIdentityKind(row);
+        const entry = activityIdentitySuggestion(row, rowKind);
+        if (entry) deduplicated.set(entry.key, entry);
       }));
-      input.setAttribute('aria-expanded', String(document.activeElement === input && values.length > 0));
-      status.textContent = values.length ?
-        `${number(values.length)} matching identit${values.length === 1 ? 'y' : 'ies'} available.` :
-        'No matching identities. Try another ID.';
+      loadedEntries = [...deduplicated.values()].sort((left, right) => {
+        const exactLeft = String(left.id) === String(query).trim() ? 0 : 1;
+        const exactRight = String(right.id) === String(query).trim() ? 0 : 1;
+        return exactLeft - exactRight || left.alias.localeCompare(right.alias) || left.id - right.id;
+      });
+      if (selected?.key) {
+        const resolved = loadedEntries.find((entry) => entry.key === selected.key);
+        if (resolved) {
+          selected = resolved;
+          updateSelection();
+        }
+      }
+      const matches = loadedEntries;
+      if (passive) loadedEntries = [];
+      renderResults(true);
+      return matches;
     } catch (error) {
-      if (generation !== searchGeneration || error?.name === 'AbortError') return;
-      choices.replaceChildren();
-      suggestions.clear();
+      if (generation !== searchGeneration || error?.name === 'AbortError') return [];
+      loadedEntries = [];
+      results.replaceChildren();
       input.setAttribute('aria-expanded', 'false');
       status.textContent = 'Identity suggestions are unavailable. Try again.';
+      return [];
     } finally {
       renderSignal?.removeEventListener('abort', abortForRender);
       if (searchController === controller) searchController = null;
@@ -17784,65 +17988,121 @@ function activityIdentityChooser(context, options = {}) {
     }
   };
 
-  input.addEventListener('focus', () => {
-    input.setAttribute('aria-expanded', String(choices.childNodes.length > 0));
-    if (!choices.childNodes.length) {
-      const query = selectedKey && input.value === selectedLabel ? selectedKey.split('-').at(-1) :
-        input.value.trim();
-      void load(query);
-    }
-  });
-  input.addEventListener('blur', () => input.setAttribute('aria-expanded', 'false'));
-  input.addEventListener('input', () => {
-    input.setCustomValidity('');
-    const suggestion = suggestions.get(input.value);
-    selectedKey = suggestion?.key || '';
-    selectedLabel = suggestion?.label || '';
+  const scheduleSearch = () => {
     const generation = ++searchGeneration;
     pageTimeout(() => {
       if (generation === searchGeneration && input.isConnected) void load(input.value.trim());
     }, ACTIVITY_IDENTITY_SEARCH_DELAY_MILLISECONDS);
+  };
+  input.addEventListener('input', () => {
+    input.setCustomValidity('');
+    if (input.value.trim()) {
+      cancelIdentitySearch();
+      loadedEntries = [];
+      renderResults();
+      status.textContent = 'Searching identities…';
+      scheduleSearch();
+    } else void load('');
   });
-  input.addEventListener('change', () => {
-    const suggestion = suggestions.get(input.value);
-    if (suggestion) {
-      selectedKey = suggestion.key;
-      selectedLabel = suggestion.label;
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      const choices = [...results.querySelectorAll('[role="option"]')];
+      const selectedChoice = choices.find((candidate) => candidate.getAttribute('aria-selected') === 'true');
+      const choice = selectedChoice || (event.key === 'ArrowDown' ? choices[0] : choices.at(-1));
+      if (choice) {
+        event.preventDefault();
+        choices.forEach((candidate) => { candidate.tabIndex = candidate === choice ? 0 : -1; });
+        choice.focus();
+      }
+    } else if (event.key === 'Enter') {
+      const exact = exactNumericEntry();
+      if (exact) {
+        event.preventDefault();
+        selectEntry(exact);
+      }
     }
   });
-  setAvailability();
+  results.addEventListener('keydown', (event) => {
+    const option = event.target.closest?.('[role="option"]');
+    if (!option || !results.contains(option)) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      input.focus();
+      return;
+    }
+    const choices = [...results.querySelectorAll('[role="option"]')];
+    const nextIndex = activityListboxNavigationIndex(choices.indexOf(option), choices.length, event.key);
+    if (nextIndex < 0) return;
+    event.preventDefault();
+    choices.forEach((candidate, index) => { candidate.tabIndex = index === nextIndex ? 0 : -1; });
+    choices[nextIndex].focus();
+  });
+  clear.addEventListener('click', () => {
+    cancelIdentitySearch();
+    selected = null;
+    input.value = '';
+    input.setCustomValidity('');
+    loadedEntries = [];
+    results.replaceChildren();
+    status.textContent = 'Search by ID or alias.';
+    updateSelection();
+    if (panel.matches(':popover-open')) panel.hidePopover();
+    trigger.focus();
+  });
+  bindAnchoredDropdown(trigger, panel, activeRenderController?.signal);
+  panel.addEventListener('toggle', (event) => {
+    const open = event.newState === 'open';
+    trigger.setAttribute('aria-expanded', String(open));
+    input.setAttribute('aria-expanded', String(open && results.childElementCount > 0));
+    if (open) {
+      input.focus();
+      if (input.value.trim()) void load(input.value.trim());
+      else renderResults();
+    }
+  });
 
+  panel.append(search);
+  if (kindTabs) panel.append(kindTabs);
+  panel.append(results, footer);
+  field.append(node('span', 'ui-field-label', options.label || (destination ? 'Destination' : 'Source radio')),
+    trigger, panel);
+  updateSelection();
+  if (selected?.key) {
+    pageTimeout(() => {
+      if (input.isConnected) void load(String(selected.id), true);
+    }, 0);
+  }
+
+  const read = () => {
+    const query = input.value.trim();
+    if (query) {
+      const exact = exactNumericEntry();
+      if (exact) selectEntry(exact);
+      else {
+        const exactMatches = exactNumericEntries();
+        const message = !/^\d+$/.test(query) ? 'Choose an identity from the search results.' :
+          exactMatches.length > 1 ? 'Choose the identity type because more than one uses this ID.' :
+            'No matching identity was found. Try another ID.';
+        input.setCustomValidity(message);
+        return { key: '', id: null, kind: '', error: message };
+      }
+    }
+    return { key: selected?.key || '', id: null, kind: selected?.kind || '' };
+  };
   return Object.freeze({
-    element: activityFilterField(options.label || 'Identity', host, options.detail || ''),
+    element: field,
     input,
-    setKind(nextKind) {
-      kind = nextKind || '';
-      searchController?.abort();
-      searchGeneration += 1;
-      suggestions.clear();
-      choices.replaceChildren();
-      input.setAttribute('aria-expanded', 'false');
-      selectedKey = '';
-      selectedLabel = '';
-      input.value = '';
-      setAvailability();
+    async resolve() {
+      const query = input.value.trim();
+      if (query && /^\d+$/.test(query) && !exactNumericEntry()) await load(query);
+      return read();
     },
-    read() {
-      const text = input.value.trim();
-      if (!text) return { key: '', id: null };
-      const suggestion = suggestions.get(text);
-      if (suggestion) return { key: suggestion.key, id: null };
-      if (selectedKey && text === selectedLabel) return { key: selectedKey, id: null };
-      const message = 'Choose an identity from the suggestions.';
-      input.setCustomValidity(message);
-      return { key: '', id: null, error: message };
-    },
+    read,
     close() {
-      searchGeneration += 1;
-      searchController?.abort();
-      searchController = null;
-      input.removeAttribute('aria-busy');
+      cancelIdentitySearch();
       input.setAttribute('aria-expanded', 'false');
+      if (panel.matches(':popover-open')) panel.hidePopover();
     }
   });
 }
@@ -17884,30 +18144,102 @@ function activityChannelFilter(context, selectedConfigurationId = '') {
 }
 
 function activityDestinationFilter(context, initialFilters, label = 'Destination') {
-  const initialKind = initialFilters.targetKind || '';
-  const kindControl = activityFilterSelect(`${label} type`, [
-    { value: '', label: 'All destination types' },
-    { value: 'talkgroup', label: 'Talkgroup' },
-    { value: 'patch_group', label: 'Patch group' },
-    { value: 'radio', label: 'Private radio' }
-  ], initialKind);
-  const chooser = activityIdentityChooser(context, {
+  return activityIdentityPicker(context, {
     label,
-    kind: initialKind,
+    destination: true,
+    kind: initialFilters.targetKind || '',
     identityKey: initialFilters.targetIdentityKey,
-    detail: 'Choose a suggestion so the activity query uses its stable identity key.'
+    onSelection: initialFilters.onSelection
   });
-  kindControl.select.addEventListener('change', () => chooser.setKind(kindControl.select.value));
-  const element = fragment(kindControl.field, chooser.element);
-  return Object.freeze({
-    element,
-    input: chooser.input,
-    read() {
-      const selection = chooser.read();
-      return { ...selection, kind: kindControl.select.value };
-    },
-    close: chooser.close
-  });
+}
+
+function activityFilterGroup(title, controls, className = '') {
+  if (!controls.length) return null;
+  const section = node('section', `activity-filter-group${className ? ` ${className}` : ''}`);
+  section.append(node('h3', 'activity-filter-group-title', title));
+  const grid = node('div', 'activity-filter-grid');
+  controls.forEach((control) => grid.append(control));
+  section.append(grid);
+  return section;
+}
+
+function activityFilterIdentitySummary(identityKey, explicitKind = '', numericId = null) {
+  const key = activityIdentityKey(identityKey);
+  const id = numericId ?? (key ? key.split('-').at(-1) : '');
+  if (id === '' || id === null || id === undefined) {
+    return explicitKind ? `Any ${activityIdentityKindLabel(explicitKind).toLowerCase()}` : '';
+  }
+  const parts = key ? key.split('-') : [];
+  const home = parts[2] && parts[2] !== 'x' ? `${parts[2]}-${parts[3]}` : '';
+  return `${id}${home ? ` · ${home}` : ''}`;
+}
+
+function activityIdentityChipValue(entry) {
+  if (!entry) return '';
+  if (entry.kindOnly) return entry.label;
+  return `${entry.displayId}${entry.alias ? ` · ${entry.alias}` : ''}${entry.home ? ` · ${entry.home}` : ''}`;
+}
+
+function activityFilterChipDefinitions(filters, capabilities) {
+  const chips = [];
+  if (filters.range !== 'all') {
+    const range = ACTIVITY_LOG_RANGES.find((entry) => entry.value === filters.range);
+    chips.push({ id: 'time', prefix: 'Time:', value: range?.label || 'Custom dates',
+      keys: ['activity_range', 'activity_from_ms', 'activity_to_ms'] });
+  }
+  if (filters.action) {
+    chips.push({ id: 'action', prefix: 'Action:', value: activityOptionLabel(filters.action),
+      keys: ['activity_action', 'activity_include_grants'] });
+  } else if (capabilities.grants && filters.includeGrants) {
+    chips.push({ id: 'grants', prefix: 'Action:', value: 'Grants included',
+      keys: ['activity_include_grants'] });
+  }
+  if (filters.sourceIdentityKey || (filters.sourceId !== null && filters.sourceId !== undefined)) {
+    chips.push({ id: 'source', prefix: 'Source:',
+      value: activityFilterIdentitySummary(filters.sourceIdentityKey, 'radio', filters.sourceId),
+      keys: ['activity_source_identity_key', 'activity_source_id'] });
+  }
+  if (filters.targetIdentityKey ||
+      (filters.targetId !== null && filters.targetId !== undefined) || filters.targetKind) {
+    const kind = filters.targetKind || activityIdentityKindFromKey(filters.targetIdentityKey);
+    chips.push({ id: 'destination', prefix: 'Destination:',
+      value: activityFilterIdentitySummary(filters.targetIdentityKey, kind, filters.targetId),
+      kindLabel: kind && (filters.targetIdentityKey ||
+        filters.targetId !== null && filters.targetId !== undefined) ? activityIdentityKindLabel(kind) : '',
+      keys: ['activity_target_identity_key', 'activity_target_id', 'activity_target_kind'] });
+  }
+  if (capabilities.encryption && filters.encryption !== 'all') {
+    chips.push({ id: 'encryption', value: filters.encryption === 'encrypted' ?
+      'Encrypted only' : 'Clear only', keys: ['activity_encryption'] });
+  }
+  if (filters.eventType) {
+    chips.push({ id: 'event', prefix: 'Event subtype:', value: activityOptionLabel(filters.eventType),
+      keys: ['activity_event_type'] });
+  }
+  if (filters.configurationId) {
+    chips.push({ id: 'channel', prefix: 'Channel/site:', value: 'Selected channel',
+      keys: ['activity_configuration_id'] });
+  }
+  if (filters.radioRole !== 'any') {
+    chips.push({ id: 'role', prefix: 'This radio was:',
+      value: filters.radioRole === 'source' ? 'Source' : 'Destination',
+      keys: ['activity_radio_role', 'activity_source_identity_key', 'activity_target_identity_key',
+        'activity_source_id', 'activity_target_id', 'activity_target_kind'] });
+  }
+  if (filters.groupMatch !== 'all') {
+    chips.push({ id: 'group-match', prefix: 'Group match:',
+      value: filters.groupMatch === 'direct' ? 'Direct only' : 'Via patch only',
+      keys: ['activity_group_match'] });
+  }
+  if (filters.frequencyHz !== null && filters.frequencyHz !== undefined) {
+    chips.push({ id: 'frequency', prefix: 'Frequency:', value: `${frequency(filters.frequencyHz)} MHz`,
+      keys: ['activity_frequency_hz'] });
+  }
+  if (filters.lcn) chips.push({ id: 'lcn', prefix: 'LCN:', value: filters.lcn, keys: ['activity_lcn'] });
+  if (filters.timeslot !== null && filters.timeslot !== undefined) {
+    chips.push({ id: 'timeslot', value: `Timeslot ${filters.timeslot}`, keys: ['activity_timeslot'] });
+  }
+  return chips;
 }
 
 function activityFilterToolbar(context, initialFilters) {
@@ -17936,79 +18268,46 @@ function activityFilterToolbar(context, initialFilters) {
   });
 
   const actionControl = activityFilterSelect('Action', [
-    { value: '', label: 'All actions' },
+    { value: '', label: capabilities.grants ? 'All actions (grants hidden)' : 'All actions' },
+    ...(capabilities.grants ? [{ value: ACTIVITY_ACTION_INCLUDE_GRANTS,
+      label: 'All actions (including grants)' }] : []),
     ...ACTIVITY_ACTION_VALUES.map((value) => ({ value, label: activityOptionLabel(value) }))
-  ], initialFilters.action);
-  let encryptionControl = null;
-  if (capabilities.encryption) {
-    encryptionControl = activityFilterSelect('Encryption', [
-      { value: 'all', label: 'All' }, { value: 'clear', label: 'Clear' },
-      { value: 'encrypted', label: 'Encrypted' }
-    ], initialFilters.encryption);
-  }
-  let grantsInput = null;
-  let grantsField = null;
-  if (capabilities.grants) {
-    grantsField = uiToggleField('Include grants', initialFilters.includeGrants, 'Include grant activity',
-      'Grants are hidden by default because they can be noisy.');
-    grantsField.classList.add('ui-toggle-field-compact', 'activity-filter-grants');
-    grantsInput = grantsField.querySelector('input');
-    grantsInput.disabled = initialFilters.action === 'GRANT';
-  }
-  actionControl.select.addEventListener('change', () => {
-    if (!grantsInput) return;
-    if (actionControl.select.value === 'GRANT') setUiToggle(grantsInput, true);
-    grantsInput.disabled = actionControl.select.value === 'GRANT';
-  });
+  ], activityActionControlValue(initialFilters, capabilities));
   primary.append(rangeControl.field, actionControl.field);
-  if (encryptionControl) primary.append(encryptionControl.field);
-  if (grantsField) primary.append(grantsField);
 
-  const advanced = node('details', 'activity-filter-advanced');
-  const normalizedRouteState = activityFilterRouteOverrides(initialFilters);
-  const activeAdvancedKeys = ACTIVITY_ROUTE_KEYS.filter((key) => ![
-    'activity_range', 'activity_from_ms', 'activity_to_ms', 'activity_action',
-    'activity_encryption', 'activity_include_grants'
-  ].includes(key) && normalizedRouteState[key] !== null && normalizedRouteState[key] !== undefined);
-  advanced.open = activeAdvancedKeys.length > 0;
-  const advancedSummary = node('summary', 'activity-filter-advanced-summary');
-  advancedSummary.append(node('span', '', 'Advanced filters'));
-  if (activeAdvancedKeys.length) advancedSummary.append(uiPill(number(activeAdvancedKeys.length), 'neutral'));
-  const advancedGrid = node('div', 'activity-filter-grid');
-  const eventControl = activityFilterSelect('Event type', [
-    { value: '', label: 'All event types' },
-    ...ACTIVITY_EVENT_TYPE_VALUES.map((value) => ({ value, label: activityOptionLabel(value) }))
-  ], initialFilters.eventType, 'Decoder-specific event category.');
-  advancedGrid.append(eventControl.field);
-
-  let channelControl = null;
-  if (capabilities.channel && context.radioSystemKey) {
-    channelControl = activityChannelFilter(context, initialFilters.configurationId);
-    advancedGrid.append(channelControl.element);
-  }
+  let chipsHost = null;
+  const resolvedIdentityLabels = new Map();
+  const updateIdentityChip = (id, entry) => {
+    if (!entry) return;
+    const label = activityIdentityChipValue(entry);
+    resolvedIdentityLabels.set(id, label);
+    const value = chipsHost?.querySelector(`[data-activity-filter-chip="${id}"] .activity-filter-chip-value`);
+    if (value) value.textContent = label;
+  };
 
   let sourceChooser = null;
   let destinationChooser = null;
   if (capabilities.sourceIdentity) {
-    sourceChooser = activityIdentityChooser(context, {
+    sourceChooser = activityIdentityPicker(context, {
       label: 'Source radio', kind: 'radio', identityKey: initialFilters.sourceIdentityKey,
-      detail: 'Search by radio ID; matching configured aliases are shown in the choices.'
+      onSelection: (entry) => {
+        if (entry?.key && entry.key === initialFilters.sourceIdentityKey) {
+          updateIdentityChip('source', entry);
+        }
+      }
     });
-    advancedGrid.append(sourceChooser.element);
+    primary.append(sourceChooser.element);
   }
   if (capabilities.targetIdentity) {
-    destinationChooser = activityDestinationFilter(context, initialFilters);
-    advancedGrid.append(destinationChooser.element);
-  }
-
-  let groupMatchControl = null;
-  if (capabilities.groupMatch) {
-    groupMatchControl = activityFilterSelect('Group match', [
-      { value: 'all', label: 'Direct or through a patch' },
-      { value: 'direct', label: 'Direct only' },
-      { value: 'via_patch', label: 'Through a patch only' }
-    ], initialFilters.groupMatch);
-    advancedGrid.append(groupMatchControl.field);
+    destinationChooser = activityDestinationFilter(context, {
+      ...initialFilters,
+      onSelection: (entry) => {
+        const committed = entry?.key ? entry.key === initialFilters.targetIdentityKey :
+          entry?.kindOnly && !initialFilters.targetIdentityKey && entry.kind === initialFilters.targetKind;
+        if (committed) updateIdentityChip('destination', entry);
+      }
+    });
+    primary.append(destinationChooser.element);
   }
 
   let radioRoleControl = null;
@@ -18023,26 +18322,34 @@ function activityFilterToolbar(context, initialFilters) {
     radioSourceChooser = null;
     radioDestinationChooser = null;
     if (radioRoleControl.select.value === 'target') {
-      radioSourceChooser = activityIdentityChooser(context, {
-        label: 'Source radio', kind: 'radio', identityKey: initialFilters.sourceIdentityKey,
-        detail: 'The selected radio was the destination.'
+      radioSourceChooser = activityIdentityPicker(context, {
+        label: 'Other source radio', kind: 'radio', identityKey: initialFilters.sourceIdentityKey,
+        onSelection: (entry) => {
+          if (entry?.key && entry.key === initialFilters.sourceIdentityKey) {
+            updateIdentityChip('source', entry);
+          }
+        }
       });
       radioCounterpartHost.append(radioSourceChooser.element);
     } else if (radioRoleControl.select.value === 'source') {
-      radioDestinationChooser = activityDestinationFilter(context, initialFilters, 'Destination');
+      radioDestinationChooser = activityDestinationFilter(context, {
+        ...initialFilters,
+        onSelection: (entry) => {
+          const committed = entry?.key ? entry.key === initialFilters.targetIdentityKey :
+            entry?.kindOnly && !initialFilters.targetIdentityKey && entry.kind === initialFilters.targetKind;
+          if (committed) updateIdentityChip('destination', entry);
+        }
+      }, 'Other destination');
       radioCounterpartHost.append(radioDestinationChooser.element);
-    } else {
-      radioCounterpartHost.append(node('p', 'ui-field-detail activity-filter-role-help',
-        'Choose Source or Target to filter by the other participant.'));
     }
   };
   if (capabilities.radioRole) {
-    radioRoleControl = activityFilterSelect('Radio role', [
-      { value: 'any', label: 'Source or target' }, { value: 'source', label: 'Source' },
-      { value: 'target', label: 'Target' }
+    radioRoleControl = activityFilterSelect('This radio was', [
+      { value: 'any', label: 'Source or destination' }, { value: 'source', label: 'Source' },
+      { value: 'target', label: 'Destination' }
     ], initialFilters.radioRole);
     radioCounterpartHost = node('div', 'activity-filter-counterpart');
-    advancedGrid.append(radioRoleControl.field, radioCounterpartHost);
+    primary.append(radioRoleControl.field, radioCounterpartHost);
     radioRoleControl.select.addEventListener('change', renderRadioCounterpart);
     renderRadioCounterpart();
   }
@@ -18056,20 +18363,48 @@ function activityFilterToolbar(context, initialFilters) {
     rawSourceInput.min = '0';
     rawSourceInput.max = '16777215';
     rawSourceInput.step = '1';
+    rawSourceInput.placeholder = 'Any source ID';
     rawSourceInput.value = initialFilters.sourceId === null ? '' : String(initialFilters.sourceId);
     rawTargetInput = node('input', 'ui-input');
     rawTargetInput.type = 'number';
     rawTargetInput.min = '0';
     rawTargetInput.max = '16777215';
     rawTargetInput.step = '1';
+    rawTargetInput.placeholder = 'Any destination ID';
     rawTargetInput.value = initialFilters.targetId === null ? '' : String(initialFilters.targetId);
-    rawTargetKindControl = activityFilterSelect('Target type', [
-      { value: '', label: 'All target types' }, { value: 'talkgroup', label: 'Talkgroup' },
+    rawTargetKindControl = activityFilterSelect('Destination type', [
+      { value: '', label: 'Any type' }, { value: 'talkgroup', label: 'Talkgroup' },
       { value: 'radio', label: 'Radio' }
     ], initialFilters.targetKind);
-    advancedGrid.append(activityFilterField('Source ID', rawSourceInput, 'Exact observed numeric ID.'),
-      activityFilterField('Target ID', rawTargetInput, 'Exact observed numeric ID.'),
-      rawTargetKindControl.field);
+    primary.append(activityFilterField('Source ID', rawSourceInput),
+      rawTargetKindControl.field, activityFilterField('Destination ID', rawTargetInput));
+  }
+
+  let encryptionControl = null;
+  if (capabilities.encryption) {
+    encryptionControl = activityFilterSelect('Encryption', [
+      { value: 'all', label: 'All' }, { value: 'clear', label: 'Clear' },
+      { value: 'encrypted', label: 'Encrypted' }
+    ], initialFilters.encryption);
+  }
+
+  const eventControl = activityFilterSelect('Event subtype', [
+    { value: '', label: 'All event subtypes' },
+    ...ACTIVITY_EVENT_TYPE_VALUES.map((value) => ({ value, label: activityOptionLabel(value) }))
+  ], initialFilters.eventType);
+
+  let channelControl = null;
+  if (capabilities.channel && context.radioSystemKey) {
+    channelControl = activityChannelFilter(context, initialFilters.configurationId);
+  }
+
+  let groupMatchControl = null;
+  if (capabilities.groupMatch) {
+    groupMatchControl = activityFilterSelect('Group match', [
+      { value: 'all', label: 'Direct or through a patch' },
+      { value: 'direct', label: 'Direct only' },
+      { value: 'via_patch', label: 'Through a patch only' }
+    ], initialFilters.groupMatch);
   }
 
   let frequencyInput = null;
@@ -18083,7 +18418,6 @@ function activityFilterToolbar(context, initialFilters) {
     frequencyInput.inputMode = 'decimal';
     frequencyInput.value = initialFilters.frequencyHz === null ? '' :
       String(initialFilters.frequencyHz / 1_000_000);
-    advancedGrid.append(activityFilterField('Frequency (MHz)', frequencyInput, 'Exact frequency.'));
   }
   if (capabilities.lcn) {
     lcnInput = node('input', 'ui-input');
@@ -18092,28 +18426,95 @@ function activityFilterToolbar(context, initialFilters) {
     lcnInput.placeholder = 'Band-channel';
     lcnInput.pattern = '\\d+-\\d+';
     lcnInput.value = initialFilters.lcn;
-    advancedGrid.append(activityFilterField('LCN', lcnInput, 'For example, 1-125.'));
   }
-  if (capabilities.timeslot) {
+  if (capabilities.timeslotFilter) {
     timeslotControl = activityFilterSelect('Timeslot', [
       { value: '', label: 'All timeslots' }, { value: '1', label: 'Timeslot 1' },
       { value: '2', label: 'Timeslot 2' }
     ], initialFilters.timeslot === null ? '' : String(initialFilters.timeslot));
-    advancedGrid.append(timeslotControl.field);
   }
-  advanced.append(advancedSummary, advancedGrid);
 
-  const actions = node('div', 'activity-filter-actions ui-action-row');
-  const apply = node('button', 'ui-button ui-button-primary', 'Apply filters');
-  apply.type = 'submit';
-  const clear = node('button', 'ui-button ui-button-secondary', 'Clear filters');
-  clear.type = 'button';
-  clear.addEventListener('click', () => {
-    const overrides = Object.fromEntries(ACTIVITY_ROUTE_KEYS.map((key) => [key, null]));
-    overrides.before_id = null;
-    navigateTo(currentHref(overrides));
+  const moreSequence = ++activityFilterControlSequence;
+  const morePanelId = `activity-filter-more-${moreSequence}`;
+  const moreTrigger = node('button', 'ui-button ui-button-secondary activity-filter-more-trigger');
+  moreTrigger.type = 'button';
+  moreTrigger.setAttribute('popovertarget', morePanelId);
+  moreTrigger.setAttribute('aria-controls', morePanelId);
+  moreTrigger.setAttribute('aria-haspopup', 'dialog');
+  moreTrigger.setAttribute('aria-expanded', 'false');
+  moreTrigger.append(iconGlyph('icon-filter'), node('span', '', 'More filters'));
+  const moreCount = activityMoreFilterCount(initialFilters, capabilities);
+  if (moreCount) moreTrigger.append(uiPill(number(moreCount), 'neutral'));
+  const morePanel = node('div', 'ui-popover activity-filter-more-panel');
+  morePanel.id = morePanelId;
+  morePanel.setAttribute('popover', 'auto');
+  morePanel.setAttribute('role', 'dialog');
+  morePanel.setAttribute('aria-label', 'More activity filters');
+  const eventControls = [eventControl.field];
+  if (encryptionControl) eventControls.push(encryptionControl.field);
+  const scopeControls = [];
+  if (channelControl) scopeControls.push(channelControl.element);
+  if (groupMatchControl) scopeControls.push(groupMatchControl.field);
+  const technicalControls = [];
+  if (frequencyInput) technicalControls.push(activityFilterField('Frequency (MHz)', frequencyInput));
+  if (lcnInput) technicalControls.push(activityFilterField('LCN', lcnInput));
+  if (timeslotControl) technicalControls.push(timeslotControl.field);
+  const moreContent = node('div', 'activity-filter-more-content');
+  [activityFilterGroup('Scope', scopeControls),
+    activityFilterGroup('Event details', eventControls),
+    activityFilterGroup('Technical', technicalControls, 'activity-filter-group-technical')]
+    .filter(Boolean).forEach((group) => moreContent.append(group));
+  const moreFooter = node('div', 'activity-filter-more-footer');
+  const moreDone = node('button', 'ui-button ui-button-primary activity-filter-more-done', 'Done');
+  moreDone.type = 'button';
+  moreDone.addEventListener('click', () => {
+    if (morePanel.matches(':popover-open')) morePanel.hidePopover();
+    moreTrigger.focus();
   });
-  actions.append(apply, clear);
+  moreFooter.append(moreDone);
+  morePanel.append(moreContent, moreFooter);
+  morePanel.addEventListener('toggle', (event) => {
+    moreTrigger.setAttribute('aria-expanded', String(event.newState === 'open'));
+  });
+  bindAnchoredDropdown(moreTrigger, morePanel, activeRenderController?.signal, { mobileSheet: true });
+  primary.append(moreTrigger, morePanel);
+
+  const primaryActions = node('div', 'activity-filter-primary-actions');
+  const apply = node('button', 'ui-button ui-button-primary', 'Apply');
+  apply.type = 'submit';
+  primaryActions.append(apply);
+  primary.append(primaryActions);
+
+  chipsHost = node('div', 'activity-filter-chips');
+  chipsHost.setAttribute('aria-label', 'Active filters');
+  const chipDefinitions = activityFilterChipDefinitions(initialFilters, capabilities);
+  chipDefinitions.forEach((definition) => {
+    const chip = node('button', 'ui-button ui-button-secondary activity-filter-chip');
+    chip.type = 'button';
+    chip.dataset.activityFilterChip = definition.id;
+    chip.setAttribute('aria-label', `Remove ${[definition.prefix, definition.value].filter(Boolean).join(' ')} filter`);
+    if (definition.prefix) chip.append(node('span', 'activity-filter-chip-label', definition.prefix));
+    if (definition.kindLabel) chip.append(uiPill(definition.kindLabel, 'blue'));
+    chip.append(node('span', 'activity-filter-chip-value',
+      resolvedIdentityLabels.get(definition.id) || definition.value), iconGlyph('icon-close'));
+    chip.addEventListener('click', () => {
+      const overrides = Object.fromEntries(definition.keys.map((key) => [key, null]));
+      overrides.before_id = null;
+      navigateTo(currentHref(overrides));
+    });
+    chipsHost.append(chip);
+  });
+  if (chipDefinitions.length) {
+    const clear = node('button', 'link-button activity-filter-clear', 'Clear all');
+    clear.type = 'button';
+    clear.addEventListener('click', () => {
+      const overrides = Object.fromEntries(ACTIVITY_ROUTE_KEYS.map((key) => [key, null]));
+      overrides.before_id = null;
+      navigateTo(currentHref(overrides));
+    });
+    chipsHost.append(clear);
+  } else chipsHost.hidden = true;
+
   const status = node('p', 'activity-filter-error ui-notice ui-notice-danger');
   status.setAttribute('role', 'alert');
   status.hidden = true;
@@ -18125,7 +18526,7 @@ function activityFilterToolbar(context, initialFilters) {
     input.setCustomValidity(`${label} must be a whole number from 0 through 16777215.`);
     return undefined;
   };
-  form.addEventListener('submit', (event) => {
+  form.addEventListener('submit', async (event) => {
     event.preventDefault();
     status.hidden = true;
     status.textContent = '';
@@ -18144,17 +18545,21 @@ function activityFilterToolbar(context, initialFilters) {
 
     let source = { key: '', id: null };
     let destination = { key: '', id: null, kind: '' };
-    if (sourceChooser) source = sourceChooser.read();
-    if (destinationChooser) destination = destinationChooser.read();
-    if (radioRoleControl?.select.value === 'target' && radioSourceChooser) source = radioSourceChooser.read();
+    apply.disabled = true;
+    if (sourceChooser) source = await sourceChooser.resolve();
+    if (destinationChooser) destination = await destinationChooser.resolve();
+    if (radioRoleControl?.select.value === 'target' && radioSourceChooser) {
+      source = await radioSourceChooser.resolve();
+    }
     if (radioRoleControl?.select.value === 'source' && radioDestinationChooser) {
-      destination = radioDestinationChooser.read();
+      destination = await radioDestinationChooser.resolve();
     }
     if (source.error || destination.error) {
       status.textContent = source.error || destination.error;
       status.hidden = false;
       (source.error ? sourceChooser?.input || radioSourceChooser?.input :
         destinationChooser?.input || radioDestinationChooser?.input)?.reportValidity();
+      apply.disabled = false;
       return;
     }
     if (capabilities.rawIdentities) {
@@ -18164,6 +18569,7 @@ function activityFilterToolbar(context, initialFilters) {
         status.textContent = rawSourceInput.validationMessage || rawTargetInput.validationMessage;
         status.hidden = false;
         (sourceId === undefined ? rawSourceInput : rawTargetInput).reportValidity();
+        apply.disabled = false;
         return;
       }
       source = { key: '', id: sourceId };
@@ -18179,6 +18585,7 @@ function activityFilterToolbar(context, initialFilters) {
         status.textContent = message;
         status.hidden = false;
         frequencyInput.reportValidity();
+        apply.disabled = false;
         return;
       }
     }
@@ -18189,20 +18596,23 @@ function activityFilterToolbar(context, initialFilters) {
       status.textContent = message;
       status.hidden = false;
       lcnInput.reportValidity();
+      apply.disabled = false;
       return;
     }
-    const action = actionControl.select.value;
+    const actionSelection = actionControl.select.value;
+    const action = actionSelection === ACTIVITY_ACTION_INCLUDE_GRANTS ? '' : actionSelection;
     const next = {
       range, fromMs, toMs, action, eventType: eventControl.select.value,
       encryption: encryptionControl?.select.value || 'all',
-      includeGrants: action === 'GRANT' || Boolean(grantsInput?.checked),
+      includeGrants: action === 'GRANT' || actionSelection === ACTIVITY_ACTION_INCLUDE_GRANTS,
       configurationId: channelControl?.read() || '',
       radioRole: radioRoleControl?.select.value || 'any',
       groupMatch: groupMatchControl?.select.value || 'all',
       sourceIdentityKey: source.key || '', targetIdentityKey: destination.key || '',
       sourceId: source.id, targetId: destination.id,
       targetKind: destination.kind || '', frequencyHz, lcn,
-      timeslot: timeslotControl?.select.value ? Number(timeslotControl.select.value) : null
+      timeslot: timeslotControl ? (timeslotControl.select.value ?
+        Number(timeslotControl.select.value) : null) : initialFilters.timeslot
     };
     if (next.radioRole === 'any' && capabilities.radioRole) {
       next.sourceIdentityKey = '';
@@ -18211,10 +18621,15 @@ function activityFilterToolbar(context, initialFilters) {
       next.targetId = null;
       next.targetKind = '';
     }
+    sourceChooser?.close();
+    destinationChooser?.close();
+    radioSourceChooser?.close();
+    radioDestinationChooser?.close();
+    if (morePanel.matches(':popover-open')) morePanel.hidePopover();
     navigateTo(currentHref(activityFilterRouteOverrides(next)));
   });
 
-  form.append(primary, customDates, advanced, actions, status);
+  form.append(primary, customDates, chipsHost, status);
   return form;
 }
 
@@ -18251,7 +18666,7 @@ function activityCellNavigation(row, columnId) {
 
 function activityCellDimension(columnId) {
   return ({
-    action: 'action', event: 'event type', source: 'source radio',
+    action: 'action', event: 'event subtype', source: 'source radio',
     'source-alias': 'source radio', 'source-ota-alias': 'source radio',
     target: 'target', 'target-alias': 'target', channel: 'channel',
     encryption: 'encryption state'
@@ -18424,7 +18839,7 @@ function activityColumns(context, filters) {
     { id: 'time', label: 'Seen', fullLabel: 'Observed Time', render: (row) => dateTime(row.observed_at_ms), sortValue: (row) => Number(row.observed_at_ms || 0) },
     { id: 'action', label: 'Action', render: (row) =>
       activityCellValue(row.action, row, 'action', context, filters), sortValue: (row) => row.action || '' },
-    { id: 'event', label: 'Event Type', render: (row) =>
+    { id: 'event', label: 'Event subtype', render: (row) =>
       activityCellValue(row.event_type, row, 'event', context, filters),
       sortValue: (row) => row.event_type || '' },
     { id: 'source', label: 'Src', fullLabel: 'Source ID',

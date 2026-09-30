@@ -627,6 +627,52 @@ test('tuner-frequency-popover-dark-mobile', async ({ page }) => {
   await expect(page.locator('body')).toHaveScreenshot('tuner-frequency-popover-dark-mobile.png');
 });
 
+test('activity-filters-light-desktop', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/design-system.html?theme=light&view=activity-filters');
+  const toolbar = page.locator('.visual-activity-filters-example .activity-filter-toolbar');
+  await expect(toolbar.locator('.activity-filter-primary')).toBeVisible();
+  await expect(toolbar.locator('.activity-filter-chips')).toBeVisible();
+  const chipLabels = toolbar.locator('.activity-filter-chip-label');
+  await expect(chipLabels).toHaveText(['Source:', 'Destination:']);
+  expect(await chipLabels.evaluateAll((labels) => labels.every((label) =>
+    label.scrollWidth <= label.clientWidth))).toBe(true);
+  expect(await toolbar.locator('.activity-filter-chip-value').first().evaluate((value) =>
+    value.scrollWidth > value.clientWidth)).toBe(true);
+  await toolbar.locator('.activity-filter-picker-destination .activity-filter-picker-trigger').click();
+  const picker = page.locator('#visual-activity-destination-popover');
+  await expect(picker).toBeVisible();
+  const geometry = await picker.boundingBox();
+  expect(geometry).not.toBeNull();
+  expect(geometry.x).toBeGreaterThanOrEqual(0);
+  expect(geometry.x + geometry.width).toBeLessThanOrEqual(1440);
+  await expect(page.locator('body')).toHaveScreenshot('activity-filters-light-desktop.png');
+});
+
+test('activity-filters-dark-mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/design-system.html?theme=dark&view=activity-filters');
+  const toolbar = page.locator('.visual-activity-filters-example .activity-filter-toolbar');
+  await expect(toolbar.locator('.activity-filter-picker-source')).toBeVisible();
+  const tableWrap = page.locator('.visual-activity-filters-example .ui-table-wrap');
+  const tableWidths = await tableWrap.evaluate((element) => ({
+    client: element.clientWidth, scroll: element.scrollWidth
+  }));
+  expect(tableWidths.scroll).toBeGreaterThan(tableWidths.client);
+  await toolbar.locator('.activity-filter-more-trigger').click();
+  const panel = page.locator('#visual-activity-more-panel');
+  await expect(panel).toBeVisible();
+  const geometry = await panel.boundingBox();
+  expect(geometry).not.toBeNull();
+  expect(geometry.x).toBeGreaterThanOrEqual(0);
+  expect(geometry.x + geometry.width).toBeLessThanOrEqual(390);
+  expect(geometry.y).toBeGreaterThanOrEqual(0);
+  expect(geometry.y + geometry.height).toBeLessThanOrEqual(844);
+  await expect(panel.locator('.activity-filter-more-done')).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await expect(page.locator('body')).toHaveScreenshot('activity-filters-dark-mobile.png');
+});
+
 test('scanner-light-desktop', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/design-system.html?theme=light&view=scanner');
