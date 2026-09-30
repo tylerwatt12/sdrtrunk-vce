@@ -316,10 +316,45 @@ public final class TunerSettingCatalog
         if(!modeEditable)
         {
             if(configuration instanceof AirspyHfTunerConfiguration && "sample_rate".equals(spec.id())) return "Fixed";
+            String gainReason = gainUnavailableReason(configuration, spec.id());
+            if(gainReason != null) return gainReason;
             if(Set.of("if_gain", "mixer_gain", "lna_gain", "vga_gain").contains(spec.id())) return "Use manual gain";
             return "Unavailable";
         }
         return "Unavailable";
+    }
+
+    private static String gainUnavailableReason(TunerConfiguration configuration, String settingId)
+    {
+        if(configuration instanceof AirspyTunerConfiguration airspy)
+        {
+            return presetGainUnavailableReason(settingId, airspy.getGain().name(),
+                airspy.isMixerAGC(), airspy.isLNAAGC());
+        }
+        if(configuration instanceof HydraSdrTunerConfiguration hydra)
+        {
+            return presetGainUnavailableReason(settingId, hydra.getGain().name(),
+                hydra.isMixerAGC(), hydra.isLNAAGC());
+        }
+        if(configuration instanceof FC0013TunerConfiguration fc0013 && "lna_gain".equals(settingId) &&
+            fc0013.getAGC())
+        {
+            return "Turn off AGC";
+        }
+        return null;
+    }
+
+    private static String presetGainUnavailableReason(String settingId, String preset, boolean mixerAgc,
+                                                      boolean lnaAgc)
+    {
+        if(Set.of("if_gain", "mixer_gain", "lna_gain", "mixer_agc", "lna_agc").contains(settingId) &&
+            !"CUSTOM".equals(preset))
+        {
+            return "Use Custom gain";
+        }
+        if("mixer_gain".equals(settingId) && mixerAgc) return "Turn off Mixer AGC";
+        if("lna_gain".equals(settingId) && lnaAgc) return "Turn off LNA AGC";
+        return null;
     }
 
     static boolean isEditableInCurrentMode(TunerConfiguration configuration, String settingId)

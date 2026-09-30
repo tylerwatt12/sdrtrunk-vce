@@ -13,7 +13,10 @@ import io.github.dsheirer.source.tuner.airspy.AirspyTunerController;
 import io.github.dsheirer.source.tuner.airspy.AirspyTunerController.Gain;
 import io.github.dsheirer.source.tuner.hackrf.HackRFTunerConfiguration;
 import io.github.dsheirer.source.tuner.hackrf.HackRFTunerController.HackRFSampleRate;
+import io.github.dsheirer.source.tuner.hydrasdr.HydraSdrTunerConfiguration;
+import io.github.dsheirer.source.tuner.hydrasdr.HydraSdrTunerController;
 import io.github.dsheirer.source.tuner.recording.RecordingTunerConfiguration;
+import io.github.dsheirer.source.tuner.rtl.fc0013.FC0013TunerConfiguration;
 import io.github.dsheirer.source.tuner.sdrplay.RspSampleRate;
 import io.github.dsheirer.source.tuner.sdrplay.api.DeviceSelectionMode;
 import io.github.dsheirer.source.tuner.sdrplay.api.device.DeviceInfo;
@@ -127,6 +130,45 @@ class TunerSettingCatalogTest
         configuration.setMixerAGC(true);
         assertFalse(setting(airspy, "mixer_gain").editable());
         assertThrows(IllegalArgumentException.class, () -> TunerSettingCatalog.validate(airspy, "mixer_gain", 5));
+    }
+
+    @Test
+    void disabledGainReasonsIdentifyTheControlNeededToEnableThem()
+    {
+        FakeDiscoveredTuner airspy = new FakeDiscoveredTuner("airspy-gain-reasons");
+        AirspyTunerConfiguration airspyConfiguration = new AirspyTunerConfiguration(airspy.getId());
+        airspy.setTunerConfiguration(airspyConfiguration);
+        assertEquals("Use Custom gain", setting(airspy, "if_gain").unavailableReason());
+        assertEquals("Use Custom gain", setting(airspy, "mixer_agc").unavailableReason());
+        assertEquals("Use Custom gain", setting(airspy, "lna_agc").unavailableReason());
+
+        airspyConfiguration.setGain(Gain.CUSTOM);
+        airspyConfiguration.setMixerAGC(true);
+        airspyConfiguration.setLNAAGC(true);
+        assertEquals("Turn off Mixer AGC", setting(airspy, "mixer_gain").unavailableReason());
+        assertEquals("Turn off LNA AGC", setting(airspy, "lna_gain").unavailableReason());
+        airspyConfiguration.setMixerAGC(false);
+        airspyConfiguration.setLNAAGC(false);
+        assertTrue(setting(airspy, "mixer_gain").editable());
+        assertTrue(setting(airspy, "lna_gain").editable());
+
+        FakeDiscoveredTuner hydra = new FakeDiscoveredTuner("hydra-gain-reasons");
+        HydraSdrTunerConfiguration hydraConfiguration = new HydraSdrTunerConfiguration(hydra.getId());
+        hydra.setTunerConfiguration(hydraConfiguration);
+        assertEquals("Use Custom gain", setting(hydra, "mixer_agc").unavailableReason());
+        hydraConfiguration.setGain(HydraSdrTunerController.Gain.CUSTOM);
+        hydraConfiguration.setMixerAGC(true);
+        hydraConfiguration.setLNAAGC(true);
+        assertEquals("Turn off Mixer AGC", setting(hydra, "mixer_gain").unavailableReason());
+        assertEquals("Turn off LNA AGC", setting(hydra, "lna_gain").unavailableReason());
+
+        FakeDiscoveredTuner fc0013 = new FakeDiscoveredTuner("fc0013-gain-reasons");
+        FC0013TunerConfiguration fc0013Configuration = new FC0013TunerConfiguration(fc0013.getId());
+        fc0013.setTunerConfiguration(fc0013Configuration);
+        fc0013Configuration.setAGC(true);
+        assertEquals("Turn off AGC", setting(fc0013, "lna_gain").unavailableReason());
+        fc0013Configuration.setAGC(false);
+        assertTrue(setting(fc0013, "lna_gain").editable());
     }
 
     @Test
