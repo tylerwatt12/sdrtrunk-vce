@@ -20,6 +20,7 @@ import io.github.dsheirer.jmbe.github.GitHub;
 import io.github.dsheirer.portable.PortableDataRootLock;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
+import io.github.dsheirer.preference.application.WebCertificateMode;
 import io.github.dsheirer.preference.record.RecordingMode;
 import io.github.dsheirer.preference.portable.SqlitePreferencesFactory;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService;
@@ -93,6 +94,8 @@ public final class SetupWizard extends JDialog
     private Timer countdown;
     private boolean busy;
     private boolean finished;
+    private boolean firstRunGuideEligible;
+    private boolean certificateGuideVisible;
     private boolean limitedVisit;
     private boolean webAdjusted;
     private boolean rrVerified;
@@ -375,6 +378,7 @@ public final class SetupWizard extends JDialog
         SqlitePreferencesFactory.install(database);
         preferences = new UserPreferences();
         progress = SetupProgress.read(database);
+        firstRunGuideEligible = !progress.isComplete();
         limitedVisit = progress.isComplete() && !forced;
         if(newPreferences) preferences.getApplicationPreference().setStatsLoggingEnabled(true);
         var app = preferences.getApplicationPreference();
@@ -469,6 +473,8 @@ public final class SetupWizard extends JDialog
         if(busy) return;
         if(managedRecordingCatalogNeedsUpgrade) id = SetupStep.SOURCE;
         stopCountdown();
+        certificateGuideVisible = false;
+        back.setVisible(true);
         step = id; generation++;
         page.removeAll(); danger.setVisible(false); errorReport = ""; copyError.setVisible(false);
         copyError.setText("Copy error");
@@ -1160,12 +1166,60 @@ public final class SetupWizard extends JDialog
                 }
                 return true;
             }, ignored -> {
-                progress.set(SetupStep.REVIEW,COMPLETE); progress.setComplete(true);
-                if(!persist()) return;
-                WhatsNewDialog.getPendingReleaseNotes().ifPresent(WhatsNewDialog::markShown);
-                finished=true; dispose();
+                if(firstRunGuideEligible && liveServer == null &&
+                    app.getStatsWebServerCertificateMode() == WebCertificateMode.AUTOMATIC)
+                    showCertificateGuide();
+                else finishAndLaunch();
             });
         };
+    }
+
+    private void showCertificateGuide()
+    {
+        var app = preferences.getApplicationPreference();
+        String address = "https://127.0.0.1:" + app.getStatsWebServerPort() + "/";
+        certificateGuideVisible = true;
+        title.setText("Setup complete");
+        page.removeAll();
+        danger.setVisible(false);
+        diagnostics.setVisible(false);
+        detailsToggle.setVisible(false);
+        copyError.setVisible(false);
+        back.setVisible(false);
+        next.setText("Launch VCE & open browser");
+        paragraph("Your browser will open on this computer when you launch VCE. If it shows a certificate warning, follow the pictured steps.");
+        paragraph("This computer's VCE web address: " + address);
+        notice("Check the address first", "On this computer, only continue if the browser address starts with " +
+            address + ". If it shows a different address, go back.", false);
+        if(app.isStatsWebServerAnyIpEnabled())
+            paragraph("On another device, use this computer's reachable address with port " + app.getStatsWebServerPort() +
+                ". Check the address you intended to open before continuing there.");
+        append(new BrowserCertificateGuide(address));
+        accept = this::finishAndLaunch;
+        updateNavigation();
+        page.revalidate(); page.repaint();
+        SwingUtilities.invokeLater(() -> {
+            page.scrollRectToVisible(new Rectangle(0,0,1,1));
+            next.requestFocusInWindow();
+        });
+    }
+
+    private void finishAndLaunch()
+    {
+        SetupProgress.State previousReview = progress.get(SetupStep.REVIEW);
+        boolean previouslyComplete = progress.isComplete();
+        progress.set(SetupStep.REVIEW, COMPLETE);
+        progress.setComplete(true);
+        if(!persist())
+        {
+            progress.set(SetupStep.REVIEW, previousReview);
+            progress.setComplete(previouslyComplete);
+            updateNavigation();
+            return;
+        }
+        WhatsNewDialog.getPendingReleaseNotes().ifPresent(WhatsNewDialog::markShown);
+        finished = true;
+        dispose();
     }
 
     private <T> void job(String description, Runnable cancelAction, Callable<T> work, Consumer<T> success)
@@ -1343,7 +1397,7 @@ public final class SetupWizard extends JDialog
     private void updateNavigation()
     {
         enableTree(page,!busy && !restartRequired);
-        back.setEnabled(!busy && !restartRequired && preferences!=null && step.ordinal()>0);
+        back.setEnabled(!busy && !restartRequired && !certificateGuideVisible && preferences!=null && step.ordinal()>0);
         next.setEnabled(!busy && !restartRequired && canContinue.getAsBoolean());
         exit.setEnabled(!busy);
         boolean dark = preferences != null ? preferences.getApplicationPreference().getTheme().isDark() : selectedTheme == Theme.DARK;
@@ -1359,7 +1413,8 @@ public final class SetupWizard extends JDialog
             String ink=colorHex(id==step || progress!=null && progress.isDone(id) ? WizardStyles.foreground() : WizardStyles.muted());
             button.setText("<html><font color='"+ink+"'>"+(progress!=null && progress.isDone(id)?"✓ ":"")+(id.ordinal()+1)+". "+id.title()+"<br><small>"+label(state)+"</small></font></html>");
             button.setToolTipText(label(state)); button.getAccessibleContext().setAccessibleDescription(label(state));
-            button.setEnabled(!busy && !restartRequired && (!managedRecordingCatalogNeedsUpgrade || id==SetupStep.SOURCE) &&
+            button.setEnabled(!busy && !restartRequired && !certificateGuideVisible &&
+                (!managedRecordingCatalogNeedsUpgrade || id==SetupStep.SOURCE) &&
                 (id==step || preferences!=null && (liveServer==null || id==SetupStep.WEB || id==SetupStep.REVIEW) &&
                 (progress.isDone(id) || state==DEFERRED || state==NEEDS_ATTENTION)));
             button.setFont(button.getFont().deriveFont(id==step?Font.BOLD:Font.PLAIN));
@@ -1396,7 +1451,7 @@ public final class SetupWizard extends JDialog
             detailsToggle.setVisible(true);
         }
         copyError.setText("Copy error"); copyError.setVisible(true);
-        if(step == SetupStep.REVIEW) next.setText("Retry launch");
+        if(step == SetupStep.REVIEW) next.setText(certificateGuideVisible ? "Launch VCE & open browser" : "Retry launch");
         else if(step == SetupStep.JMBE) next.setText("Try again");
         updateNavigation();
     }

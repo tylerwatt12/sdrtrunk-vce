@@ -50,6 +50,7 @@ public final class SetupWizardSmoke
             capture(target,root,"12-deferred-benchmark-next-launch");
             click(target,"Skip this time"); await(target,SetupStep.REVIEW);
             click(target,"Finish & launch");
+            awaitClosed(target);
             return;
         }
         capture(target,root,"01-source");
@@ -163,7 +164,76 @@ public final class SetupWizardSmoke
                 capture(target,root,"11-bind-error");
             }
         }
+        var web=preferences(target).getApplicationPreference();
+        boolean guideExpected=web.isStatsWebServerHttpsEnabled() &&
+            web.getStatsWebServerCertificateMode()==io.github.dsheirer.preference.application.WebCertificateMode.AUTOMATIC;
         click(target,"Finish & launch");
+        if(guideExpected)
+        {
+            assertCertificateGuide(target,root);
+            click(target,"Launch VCE & open browser");
+        }
+        awaitClosed(target);
+        if(!SetupProgress.read(root.resolve("database/sdrtrunk.sqlite")).isComplete())
+            throw new AssertionError("Final launch action did not complete setup");
+    }
+
+    /** The successful listener check must leave the first-run guidance on screen until the final launch action. */
+    private static void assertCertificateGuide(SetupWizard target,Path root) throws Exception
+    {
+        awaitVisibleText(target,"Setup complete");
+        var finished=SetupWizard.class.getDeclaredField("finished"); finished.setAccessible(true);
+        var progressField=SetupWizard.class.getDeclaredField("progress"); progressField.setAccessible(true);
+        javax.swing.SwingUtilities.invokeAndWait(()-> {
+            try
+            {
+                if(!target.isShowing() || finished.getBoolean(target))
+                    throw new AssertionError("Certificate guidance was dismissed before the user could read it");
+                var progress=(SetupProgress)progressField.get(target);
+                if(progress.get(SetupStep.REVIEW)==SetupProgress.State.COMPLETE || progress.isComplete())
+                    throw new AssertionError("Review was marked complete before the final launch action");
+                for(String expected:new String[]{"18091", "Browser warning example", "Advanced",
+                    "Continue to 127.0.0.1 (unsafe)"})
+                    if(!hasVisibleText(target,expected))
+                        throw new AssertionError("Certificate guidance is missing: "+expected);
+                if(descendants(target).stream().noneMatch(component -> component instanceof javax.swing.JButton button &&
+                    button.isShowing() && button.isEnabled() && button.getText().equals("Launch VCE & open browser")))
+                    throw new AssertionError("Certificate guidance has no final launch action");
+            }
+            catch(IllegalAccessException e) { throw new RuntimeException(e); }
+        });
+        var savedProgress=SetupProgress.read(root.resolve("database/sdrtrunk.sqlite"));
+        if(savedProgress.get(SetupStep.REVIEW)==SetupProgress.State.COMPLETE || savedProgress.isComplete())
+            throw new AssertionError("Review was saved as complete before the final launch action");
+        javax.swing.SwingUtilities.invokeAndWait(()-> {
+            try
+            {
+                preferences(target).getApplicationPreference().setTheme(io.github.dsheirer.gui.theme.Theme.LIGHT);
+                target.setSize(1080,800);
+            }
+            catch(Exception e) { throw new RuntimeException(e); }
+        });
+        capture(target,root,"11-certificate-guide");
+        javax.swing.SwingUtilities.invokeAndWait(()-> {
+            try
+            {
+                preferences(target).getApplicationPreference().setTheme(io.github.dsheirer.gui.theme.Theme.DARK);
+                target.setSize(800,600);
+            }
+            catch(Exception e) { throw new RuntimeException(e); }
+        });
+        capture(target,root,"12-certificate-guide-dark-small");
+        javax.swing.SwingUtilities.invokeAndWait(()-> {
+            for(java.awt.Component component:descendants(target))
+                if(component instanceof javax.swing.JScrollPane scroll &&
+                    scroll.getViewport().getView() instanceof SetupPage)
+                {
+                    scroll.getVerticalScrollBar().setValue(scroll.getVerticalScrollBar().getMaximum());
+                    return;
+                }
+            throw new AssertionError("Certificate guide scroll pane unavailable");
+        });
+        capture(target,root,"13-certificate-guide-dark-small-scrolled");
     }
 
     /** Render result callbacks without making a RadioReference request or using real credentials. */
@@ -402,6 +472,30 @@ public final class SetupWizardSmoke
             Thread.sleep(100);
         }
         throw new AssertionError("Timed out at "+expected);
+    }
+
+    private static void awaitVisibleText(SetupWizard target,String expected) throws Exception
+    {
+        for(int i=0;i<600;i++)
+        {
+            boolean[] visible={false};
+            javax.swing.SwingUtilities.invokeAndWait(()-> visible[0]=target.isShowing() && hasVisibleText(target,expected));
+            if(visible[0]) return;
+            Thread.sleep(100);
+        }
+        throw new AssertionError("Timed out waiting for wizard text: "+expected);
+    }
+
+    private static void awaitClosed(SetupWizard target) throws Exception
+    {
+        for(int i=0;i<300;i++)
+        {
+            boolean[] closed={false};
+            javax.swing.SwingUtilities.invokeAndWait(()-> closed[0]=!target.isShowing());
+            if(closed[0]) return;
+            Thread.sleep(100);
+        }
+        throw new AssertionError("Final launch action did not close the wizard");
     }
     private static void click(SetupWizard target,String title) throws Exception
     {
