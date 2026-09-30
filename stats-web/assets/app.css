@@ -27,7 +27,7 @@
 @import url("./styles/features/listen-map.css?v=2") layer(features);
 @import url("./styles/features/network-visualizer.css?v=8") layer(features);
 @import url("./styles/features/scanner.css?v=5") layer(features);
-@import url("./styles/features/aliases.css?v=11") layer(features);
+@import url("./styles/features/aliases.css?v=12") layer(features);
 @import url("./styles/features/scan-lists.css?v=3") layer(features);
 @import url("./styles/features/dashboard.css?v=3") layer(features);
 @import url("./styles/features/administration.css?v=6") layer(features);

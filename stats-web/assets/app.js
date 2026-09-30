@@ -5560,13 +5560,13 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   const endpoint = `/api/v1/admin/alias-lists/${listId}/transfer`;
   const options = aliasEditorContext?.options || {};
   const body = node('div', 'alias-editor-form alias-transfer editor-workspace');
-  const destinationSummary = node('div', 'alias-transfer-destination');
-  destinationSummary.append(
-    node('strong', '', `${selectedList.name} · ${aliasListFamilyLabel(selectedList)} Alias List`),
-    node('span', 'muted', importing ?
-      'Only aliases in this list can change. History, counters, and Call Handling Defaults are preserved.' :
-      `${number(selectedList.alias_count || 0)} aliases will be saved in an importable VCE file.`));
-  body.append(destinationSummary);
+  if (!importing) {
+    const destinationSummary = node('div', 'alias-transfer-destination');
+    destinationSummary.append(
+      node('strong', '', `${selectedList.name} · ${aliasListFamilyLabel(selectedList)} Alias List`),
+      node('span', 'muted', `${number(selectedList.alias_count || 0)} aliases will be saved in an importable VCE file.`));
+    body.append(destinationSummary);
+  }
   const importPanel = node('div', 'alias-transfer-panel');
   const exportPanel = node('div', 'alias-transfer-panel');
   body.append(importing ? importPanel : exportPanel);
@@ -5768,13 +5768,6 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   exportButton.title = 'Export alias list as CSV';
   const exportCancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
   exportCancel.type = 'button';
-  const exportSummary = node('div', 'alias-transfer-export-summary');
-  exportSummary.append(
-    node('h3', '', `Export ${selectedList.name}`),
-    node('p', '', `Download all ${number(selectedList.alias_count || 0)} aliases in this list as an importable VCE CSV.`),
-    node('p', 'muted', 'The file includes matchers, appearance, recording choices, scan-list memberships, ' +
-      'named streaming destinations, and the source Alias List name.'),
-    node('p', 'muted', 'Referenced scan lists, streaming destinations, and icons must exist on the receiving installation.'));
   const exportChoices = node('fieldset', 'alias-transfer-mode-choices alias-transfer-export-choices');
   exportChoices.append(node('legend', '', 'Choose what to export'));
   [['all', 'All aliases in this Alias List',
@@ -5799,7 +5792,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   exportFrame.name = `alias-export-${listId}-${Date.now()}`;
   exportFrame.title = 'Alias CSV download';
   exportButton.target = exportFrame.name;
-  exportPanel.append(exportSummary, exportChoices, exportFrame,
+  exportPanel.append(exportChoices, exportFrame,
     aliasModalFooter(exportCancel, node('span', 'alias-modal-footer-spacer'), exportButton));
   body.insertBefore(errorHost, importing ? importPanel : exportPanel);
   let exportSequence = 0;

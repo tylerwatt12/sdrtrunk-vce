@@ -479,20 +479,6 @@
   gap: 6px;
 }
 
-.alias-transfer-export-summary {
-  display: grid;
-  gap: 8px;
-  padding: 16px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
-  background: var(--surface-2);
-}
-
-.alias-transfer-export-summary > h3,
-.alias-transfer-export-summary > p {
-  margin: 0;
-}
-
 .alias-transfer-section,
 .alias-transfer-review,
 .alias-transfer-radio-defaults {

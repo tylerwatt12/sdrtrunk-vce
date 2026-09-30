@@ -374,10 +374,8 @@ assert.match(transferModal, /node\('input', 'ui-choice-radio'\)/,
   'Export scope must use the shared single-choice radio treatment.');
 assert.match(transferModal, /destinationSummary\.append\(/);
 assert.match(transferModal, /step\.append\(node\('span'/);
-assert.match(transferModal, /exportSummary\.append\(/);
 assert.doesNotMatch(transferModal, /node\('div', 'alias-transfer-destination',\s*node\(/);
 assert.doesNotMatch(transferModal, /node\('li', '', node\(/);
-assert.doesNotMatch(transferModal, /node\('div', 'alias-transfer-export-summary',\s*node\(/);
 assert.match(transferModal, /preview\.counts\.deleted > 0/);
 assert.match(transferModal, /node\('div', 'pager ui-pager'\)/,
   'Alias transfer review pagination must use the shared padded pager');
