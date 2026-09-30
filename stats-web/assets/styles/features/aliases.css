@@ -211,20 +211,43 @@
 .alias-editor-filter-toolbar {
   display: grid;
   align-items: stretch;
-  gap: var(--space-3);
+  gap: var(--space-2);
   margin-bottom: var(--space-3);
+}
+
+.alias-filter-primary {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--space-2);
 }
 
 .alias-filter {
   min-width: 135px;
 }
 
-.alias-search-filter {
+.alias-filter-primary .alias-search-filter {
   min-width: min(320px, 100%);
+  flex: 1 1 320px;
 }
 
 .alias-search-filter input[type="search"] {
   width: 100%;
+}
+
+.alias-filter-advanced {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.alias-filter-advanced[hidden] {
+  display: none;
+}
+
+.alias-filter-active-summary {
+  overflow-wrap: anywhere;
 }
 
 .alias-filter-group {
@@ -254,7 +277,7 @@
 }
 
 .alias-filter-group-identity .alias-filter-group-fields {
-  grid-template-columns: minmax(260px, 2fr) repeat(2, minmax(130px, 1fr)) minmax(160px, 1fr);
+  grid-template-columns: repeat(2, minmax(130px, 1fr)) minmax(160px, 1fr);
 }
 
 .alias-filter-group-behavior .alias-filter-group-fields {
@@ -262,7 +285,7 @@
 }
 
 .alias-filter-group-observed .alias-filter-group-fields {
-  grid-template-columns: minmax(190px, 240px) repeat(2, minmax(240px, 1fr)) auto;
+  grid-template-columns: minmax(190px, 240px) repeat(2, minmax(240px, 1fr));
 }
 
 .alias-editor-filter-toolbar .alias-filter {
@@ -293,10 +316,6 @@
   align-items: center;
   justify-content: flex-end;
   gap: var(--space-2);
-}
-
-.alias-filter-group-observed .alias-filter-actions {
-  min-width: max-content;
 }
 
 .alias-editor-table-section {
@@ -976,10 +995,6 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .alias-filter-group-identity .alias-search-filter,
-  .alias-filter-actions {
-    grid-column: 1 / -1;
-  }
 }
 
 @media (max-width: 560px) {
@@ -1069,11 +1084,6 @@
   .alias-filter-group-behavior .alias-filter-group-fields,
   .alias-filter-group-observed .alias-filter-group-fields {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .alias-filter-group-identity .alias-search-filter,
-  .alias-filter-actions {
-    grid-column: 1;
   }
 
   .alias-filter-actions {

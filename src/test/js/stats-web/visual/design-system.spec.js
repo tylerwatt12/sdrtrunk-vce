@@ -680,6 +680,49 @@ test('aliases-dark-mobile', async ({ page }) => {
   await expect(page.locator('body')).toHaveScreenshot('aliases-dark-mobile.png', { fullPage: true });
 });
 
+test('alias search keeps advanced filters behind an accessible disclosure', async ({ page }) => {
+  for(const view of ['aliases', 'scan-list-members']) {
+    await page.goto(`/design-system.html?theme=light&view=${view}`);
+    const form = page.locator('.visual-feature-example:visible .alias-editor-filter-toolbar');
+    await expect(form.getByRole('searchbox', { name: 'Search' })).toBeVisible();
+    await expect(form.getByRole('button', { name: 'Search', exact: true })).toBeVisible();
+    const toggle = form.getByRole('button', { name: 'Advanced filters' });
+    const panelId = await toggle.getAttribute('aria-controls');
+    const panel = form.locator(`#${panelId}`);
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(panel).toBeHidden();
+    const tableSection = page.locator('.visual-feature-example:visible .alias-editor-table-section');
+    await expect(tableSection.locator('.alias-filter-result-count'))
+      .toHaveText(view === 'aliases' ? '1,248 aliases' : '386 aliases');
+    await expect(tableSection.locator('.alias-filter-result-count + .alias-editor-table-host'))
+      .toHaveCount(1);
+    await toggle.focus();
+    await toggle.press('Enter');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(panel).toBeVisible();
+    await expect(panel.locator('fieldset legend')).toHaveText([
+      'Identity and matching', 'Call handling', 'Observed activity'
+    ]);
+    await toggle.press('Enter');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(panel).toBeHidden();
+  }
+});
+
+for(const [name, theme, viewport] of [
+  ['aliases-advanced-light-desktop', 'light', { width: 1440, height: 960 }],
+  ['aliases-advanced-dark-mobile', 'dark', { width: 390, height: 844 }]
+]) {
+  test(name, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto(`/design-system.html?theme=${theme}&view=aliases`);
+    const form = page.locator('.visual-aliases-example .alias-editor-filter-toolbar');
+    await form.getByRole('button', { name: 'Advanced filters' }).click();
+    await expect(form.locator('.alias-filter-advanced')).toBeVisible();
+    await expect(page.locator('body')).toHaveScreenshot(`${name}.png`, { fullPage: true });
+  });
+}
+
 test('scan-list-members-dark-desktop', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/design-system.html?theme=dark&view=scan-list-members');

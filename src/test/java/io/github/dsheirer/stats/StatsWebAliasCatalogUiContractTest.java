@@ -32,7 +32,7 @@ class StatsWebAliasCatalogUiContractTest
             renderer.indexOf("apiPage('/api/v1/aliases'"));
         assertTrue(function(source, "function pageParameters(extra = {})").contains("limit: 100"));
         assertFalse(renderer.contains("All alias lists"));
-        assertTrue(function(source, "function aliasListRail(lists, selectedList)")
+        assertTrue(function(source, "function aliasListRail(lists, selectedList, usage)")
             .contains("href('aliases', { list: id"));
         assertTrue(renderer.contains("view === 'configure' ? { include_activity: false }"));
     }
@@ -409,6 +409,7 @@ class StatsWebAliasCatalogUiContractTest
         String source = source();
         String renderer = function(source, "async function renderAliases()");
         String filters = function(source, "function aliasEditorFilterToolbar(aliasPage, options = null)");
+        String activeFilters = function(source, "function aliasEditorHasActiveFilters(scanListScope = false)");
 
         for(String parameter: new String[]{"group", "record", "stream", "evidence", "use"})
         {
@@ -425,7 +426,7 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(filters.contains("'Assigned, no evidence'"));
         assertTrue(filters.contains("'Not being collected'"));
         assertTrue(filters.contains("hidden.value = String(new Date(control.value).getTime())"));
-        assertTrue(filters.contains("'lastActivityAfter', 'lastActivityBefore'"));
+        assertTrue(activeFilters.contains("'lastActivityAfter', 'lastActivityBefore'"));
         assertTrue(source.contains("A call can also have signaling"));
         assertTrue(source.contains("An em dash means unavailable; 0 means monitored with none observed"));
     }

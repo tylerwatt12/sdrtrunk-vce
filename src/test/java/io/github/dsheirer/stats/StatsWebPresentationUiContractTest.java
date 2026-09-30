@@ -145,9 +145,12 @@ class StatsWebPresentationUiContractTest
         assertTrue(detail.contains("stream_submitted_logical_call_count"));
         assertTrue(detail.contains("encrypted_logical_call_count"));
         assertTrue(filters.contains("'alias-filter alias-date-filter ui-field'"));
-        assertTrue(filters.contains("filterGroup('Find aliases', 'alias-filter-group-identity'"));
+        assertTrue(filters.contains("filterGroup('Identity and matching', 'alias-filter-group-identity'"));
         assertTrue(filters.contains("filterGroup('Call handling', 'alias-filter-group-behavior'"));
         assertTrue(filters.contains("filterGroup('Observed activity', 'alias-filter-group-observed'"));
+        assertTrue(filters.contains("'alias-filter-primary'"));
+        assertTrue(filters.contains("advancedFilters.hidden = activeAdvanced.length === 0"));
+        assertTrue(filters.contains("advancedButton.setAttribute('aria-expanded'"));
         assertTrue(css.contains(".alias-editor-filter-toolbar .alias-date-filter"));
         assertTrue(css.contains("width: 100%;\n  min-width: 0;\n  box-sizing: border-box;"));
     }

@@ -82,6 +82,8 @@ vm.runInContext(`
   ${functionSource('function aliasCloneOptionValue(value, configured, cloning, optionsTruncated)')}
   ${functionSource('function aliasStreamOptionSelected(selected, configured, editing, optionsTruncated)')}
   ${functionSource('function aliasEditorDefaultOrder(view)')}
+  ${functionSource('function aliasEditorHasActiveFilters(scanListScope = false)')}
+  ${functionSource('function aliasEditorResultCount(page, filtered)')}
   ${functionSource('function aliasTransferListDefaults(selectedList, options = {})')}
   ${functionSource('function aliasTransferListDefaultsSummary(defaults)')}
   ${functionSource('function aliasTransferAssignmentNames(enabled, selectedNames = [], exactNames = [])')}
@@ -112,6 +114,9 @@ vm.runInContext(`
   globalThis.cloneOptionValue = aliasCloneOptionValue;
   globalThis.streamOptionSelected = aliasStreamOptionSelected;
   globalThis.editorDefaultOrder = aliasEditorDefaultOrder;
+  globalThis.hasActiveFilters = aliasEditorHasActiveFilters;
+  globalThis.resultCount = aliasEditorResultCount;
+  globalThis.setRoute = (value) => { route = new URLSearchParams(value); };
   globalThis.transferListDefaults = aliasTransferListDefaults;
   globalThis.transferListDefaultsSummary = aliasTransferListDefaultsSummary;
   globalThis.transferAssignmentNames = aliasTransferAssignmentNames;
@@ -232,12 +237,45 @@ assert.match(aliasFilterToolbar, /not_collected/);
 assert.match(aliasFilterToolbar, /unsupported/);
 assert.match(aliasFilterToolbar, /aliasEditorFilterInput\('q'/,
   'Alias Editor filter searches must use the shared input control styling.');
+assert.match(aliasFilterToolbar, /primary\.append\(search, searchButton, advancedButton\)/,
+  'The default Alias Editor row must expose Search and the advanced disclosure together.');
+assert.match(aliasFilterToolbar, /advancedButton\.setAttribute\('aria-controls', advancedFilters\.id\)/);
+assert.match(aliasFilterToolbar, /advancedButton\.setAttribute\('aria-expanded', String\(activeAdvanced\.length > 0\)\)/);
+assert.match(aliasFilterToolbar, /advancedFilters\.hidden = activeAdvanced\.length === 0/,
+  'Advanced controls must start collapsed when no advanced filter is active.');
+assert.match(aliasFilterToolbar, /if \(activeAdvanced\.length\) advancedButton\.append\(uiPill\(/,
+  'The disclosure must show a count when advanced filters are active.');
+assert.match(aliasFilterToolbar,
+  /advancedButton\.addEventListener\('click',[\s\S]*advancedFilters\.hidden = !advancedFilters\.hidden;[\s\S]*setAttribute\('aria-expanded', String\(!advancedFilters\.hidden\)\)/,
+  'The disclosure state must stay synchronized with the accessible expanded state.');
+assert.match(aliasFilterToolbar, /anchor\('Clear all'/,
+  'Clearing applied search and advanced filters must be available from the compact row.');
+assert.match(aliasFilterToolbar, /'alias-filter-active-summary ui-section-note'/);
+assert.match(aliasFilterToolbar, /activeAdvanced\.join\(' · '\)/,
+  'Collapsed advanced filters must summarize their active names and values.');
+assert.ok(aliasFilterToolbar.indexOf("form.append(node('p', 'alias-filter-active-summary ui-section-note'") <
+  aliasFilterToolbar.indexOf('form.append(advancedFilters)'),
+  'The active filter summary must stay visible outside the collapsible panel.');
 assert.match(aliasFilterToolbar, /aliasEditorFilterInput\('group'/,
   'Alias Editor group filters must use the shared input control styling.');
 assert.match(aliasFilterToolbar, /aliasEditorFilterInput\('', aliasLocalDateTimeValue/g,
   'Alias Editor date filters must use the shared input control styling.');
 assert.match(aliasFilterToolbar, /ui-button ui-button-primary/,
   'Alias Editor filter actions must use the shared primary button styling.');
+context.setRoute('');
+assert.equal(context.hasActiveFilters(), false);
+context.setRoute('q=fire');
+assert.equal(context.hasActiveFilters(), true, 'Basic search must count as an active filter.');
+context.setRoute('scanListId=7');
+assert.equal(context.hasActiveFilters(true), false,
+  'The scan-list-members page must not count its fixed scan list as a removable filter.');
+assert.equal(context.hasActiveFilters(false), true);
+context.setRoute('record=enabled');
+assert.equal(context.hasActiveFilters(true), true,
+  'An advanced filter must remain clearable when the panel is collapsed.');
+assert.equal(context.resultCount({ total_count: 0, rows: [] }, false), '0 aliases');
+assert.equal(context.resultCount({ total_count: 3, rows: [] }, true), '3 matching aliases');
+context.setRoute('');
 assert.match(aliasDiscoverToolbar, /aliasEditorFilterInput\('q'/,
   'Alias Editor discovery searches must use the shared input control styling.');
 assert.match(aliasDiscoverToolbar, /ui-button ui-button-primary/,

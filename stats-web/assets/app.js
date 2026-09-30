@@ -3842,6 +3842,18 @@ function aliasLocalDateTimeValue(epoch) {
   return date.toISOString().slice(0, 16);
 }
 
+function aliasEditorHasActiveFilters(scanListScope = false) {
+  return ['q', 'type', 'matcher', 'group', ...(scanListScope ? [] : ['scanListId']),
+    'record', 'stream', 'evidence', 'use', 'lastActivityAfter', 'lastActivityBefore']
+    .some((key) => route.get(key));
+}
+
+function aliasEditorResultCount(page, filtered) {
+  const total = page.total_count;
+  if (!Number.isInteger(total)) return `${number(page.rows?.length || 0)} aliases shown`;
+  return `${number(total)} ${filtered ? 'matching ' : ''}${total === 1 ? 'alias' : 'aliases'}`;
+}
+
 function aliasEditorFilterToolbar(aliasPage, options = null) {
   const scanListScope = options?.scan_list_scope === true;
   const form = node('form', 'toolbar ui-toolbar ui-catalog-toolbar alias-catalog-toolbar alias-editor-filter-toolbar data-workspace');
@@ -3901,8 +3913,7 @@ function aliasEditorFilterToolbar(aliasPage, options = null) {
     group.append(node('legend', '', label), fields);
     return group;
   };
-  const identityGroup = filterGroup('Find aliases', 'alias-filter-group-identity', [
-    search,
+  const identityGroup = filterGroup('Identity and matching', 'alias-filter-group-identity', [
     selectFilter('Identity', 'type', [['', 'All identities'], ['talkgroup', 'Talkgroups'],
       ['radio', 'Radios'], ['other', 'Other']]),
     selectFilter('Matcher', 'matcher', [['', 'All matchers'],
@@ -3931,20 +3942,52 @@ function aliasEditorFilterToolbar(aliasPage, options = null) {
     ['not_collected', 'Not being collected'],
     ['unsupported', 'Unsupported alias type']
   ]);
-  const activeFilters = ['q', 'type', 'matcher', 'group', ...(scanListScope ? [] : ['scanListId']),
-    'record', 'stream', 'evidence', 'use', 'lastActivityAfter', 'lastActivityBefore'];
-  const actions = node('div', 'alias-filter-actions');
-  actions.append(node('button', 'ui-button ui-button-primary', 'Apply'));
-  if (activeFilters.some((key) => route.get(key))) {
-    actions.append(anchor('Clear', href('aliases', {
+  const advancedFilters = node('div', 'alias-filter-advanced');
+  advancedFilters.id = 'alias-editor-advanced-filters';
+  advancedFilters.append(identityGroup, behaviorGroup,
+    filterGroup('Observed activity', 'alias-filter-group-observed', [
+      evidenceFilter, seenAfter, seenBefore
+    ]));
+  const activeAdvanced = [...advancedFilters.querySelectorAll('select, input[name]')]
+    .filter((control) => control.name && route.get(control.name) &&
+      !(scanListScope && control.name === 'scanListId'))
+    .map((control) => {
+      const label = control.closest('label')?.querySelector('.ui-field-label')?.textContent || 'Filter';
+      const value = control.tagName === 'SELECT' ? control.selectedOptions[0]?.textContent : control.value;
+      return `${label}: ${value}`;
+    });
+  if (route.get('lastActivityAfter')) activeAdvanced.push(`Seen after: ${lastAfter.value.replace('T', ' ')}`);
+  if (route.get('lastActivityBefore')) activeAdvanced.push(`Seen before: ${lastBefore.value.replace('T', ' ')}`);
+  const primary = node('div', 'alias-filter-primary');
+  const searchButton = node('button', 'ui-button ui-button-primary', 'Search');
+  const advancedButton = node('button', 'ui-button ui-button-secondary alias-filter-advanced-toggle');
+  advancedButton.type = 'button';
+  advancedButton.setAttribute('aria-controls', advancedFilters.id);
+  advancedButton.setAttribute('aria-expanded', String(activeAdvanced.length > 0));
+  advancedButton.append(node('span', '', 'Advanced filters'));
+  if (activeAdvanced.length) advancedButton.append(uiPill(number(activeAdvanced.length), 'neutral'));
+  advancedFilters.hidden = activeAdvanced.length === 0;
+  advancedButton.addEventListener('click', () => {
+    advancedFilters.hidden = !advancedFilters.hidden;
+    advancedButton.setAttribute('aria-expanded', String(!advancedFilters.hidden));
+  });
+  primary.append(search, searchButton, advancedButton);
+  if (aliasEditorHasActiveFilters(scanListScope)) {
+    primary.append(anchor('Clear all', href('aliases', {
       list: route.get('list'), aliasTab: route.get('aliasTab') || 'configure',
       scanListId: scanListScope ? route.get('scanListId') : null
     }), 'ui-button ui-button-secondary'));
   }
-  form.append(identityGroup, behaviorGroup,
-    filterGroup('Observed activity', 'alias-filter-group-observed', [
-      evidenceFilter, seenAfter, seenBefore, actions
-    ]));
+  form.append(primary);
+  if (activeAdvanced.length) {
+    form.append(node('p', 'alias-filter-active-summary ui-section-note',
+      `${number(activeAdvanced.length)} advanced ${activeAdvanced.length === 1 ? 'filter' : 'filters'} active: ` +
+      activeAdvanced.join(' · ')));
+  }
+  const actions = node('div', 'alias-filter-actions');
+  actions.append(node('button', 'ui-button ui-button-primary', 'Apply filters'));
+  advancedFilters.append(actions);
+  form.append(advancedFilters);
   form.addEventListener('submit', () => {
     [[lastAfter, 'lastActivityAfter'], [lastBefore, 'lastActivityBefore']].forEach(([control, name]) => {
       if (!control.value) return;
@@ -6618,8 +6661,9 @@ async function renderScanListMembers(main, scanListCatalog, scanList, renderCont
     if (message) selectionStatus.append(node(error ? 'div' : 'span', error ? 'error' : 'muted', message));
   };
   const actions = node('div', 'section-title-actions ui-section-actions');
+  const filtersActive = aliasEditorHasActiveFilters(true);
   const aliasTable = table(rows, scanListMemberColumns(rows, updateSelection),
-    'No aliases belong to this scan list', {
+    filtersActive ? 'No aliases match these filters' : 'No aliases belong to this scan list', {
       type: 'alias-scan-list-members', serverSort: true, sortable: false,
       defaultSort: 'name', defaultDirection: 'asc', rowKey: (row) => row.alias_id,
       controller: tableController,
@@ -6664,6 +6708,9 @@ async function renderScanListMembers(main, scanListCatalog, scanList, renderCont
   actions.append(exportCsvLink('aliases', exportContext, { loading: true }));
   const block = section(`Aliases in ${scanList.name}`, tableHost, actions);
   block.classList.add('alias-editor-table-section', 'scan-list-member-table-section');
+  const resultCount = node('p', 'ui-section-note alias-filter-result-count',
+    aliasEditorResultCount(page, filtersActive));
+  block.insertBefore(resultCount, tableHost);
   bulkBar = scanListMemberBulkBar(scanList, () => {
     resetAliasEditorSelection(selectionScope);
     updateSelection();
@@ -6691,6 +6738,7 @@ async function renderScanListMembers(main, scanListCatalog, scanList, renderCont
       if (!nextScanList) return false;
       rows.splice(0, rows.length, ...(nextPage.rows || []));
       page = nextPage;
+      resultCount.textContent = aliasEditorResultCount(nextPage, filtersActive);
       Object.assign(scanList, nextScanList);
       aliasEditorContext.page = nextPage;
       aliasEditorContext.revision = Number(nextCatalog.revision ?? aliasEditorContext.revision ?? 0);
@@ -6919,8 +6967,10 @@ async function renderAliases() {
     if (message) selectionStatus.append(node(error ? 'div' : 'span', error ? 'error' : 'muted', message));
   };
   const columnsForView = () => aliasEditorColumns(view, rows, updateSelection);
+  const filtersActive = aliasEditorHasActiveFilters();
   const renderTable = () => {
-    const aliasTable = table(rows, columnsForView(), 'No aliases match these filters', {
+    const aliasTable = table(rows, columnsForView(), filtersActive ?
+      'No aliases match these filters' : 'This Alias List has no aliases yet', {
       type: `alias-editor-${view}`, serverSort: true, sortable: false,
       defaultSort: defaultOrder.sort, defaultDirection: defaultOrder.direction,
       controller: tableController,
@@ -6974,6 +7024,9 @@ async function renderAliases() {
     (view === 'activity' ? 'Activity' : 'Custom View'),
   tableHost, actions);
   block.classList.add('alias-editor-table-section');
+  const resultCount = node('p', 'ui-section-note alias-filter-result-count',
+    aliasEditorResultCount(page, filtersActive));
+  block.insertBefore(resultCount, tableHost);
   bulkBar = aliasBulkBar(() => {
     resetAliasEditorSelection(selectionScope);
     updateSelection();
@@ -7007,6 +7060,7 @@ async function renderAliases() {
       if (!pageController.isCurrent()) return false;
       rows.splice(0, rows.length, ...(nextPage.rows || []));
       page = nextPage;
+      resultCount.textContent = aliasEditorResultCount(nextPage, filtersActive);
       options = nextOptions;
       aliasEditorContext.page = nextPage;
       aliasEditorContext.options = nextOptions;
