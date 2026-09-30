@@ -164,7 +164,7 @@ function select(node, options, labelText) {
 }
 
 // Reuse map: the shared page header and section shells frame a compact data
-// workspace; ui-input, ui-select, ui-button, ui-choice-card, ui-feedback, and
+// workspace with desktop filter/results columns; ui-input, ui-select, ui-button, ui-choice-card, ui-feedback, and
 // the application's modal foundation own controls and feedback. This module
 // owns only recordings geometry and the historical audio lifecycle.
 export function createRecordingsFeature(deps) {
@@ -1285,9 +1285,10 @@ export function createRecordingsFeature(deps) {
     const form = makeSearchForm();
     const searchSection = node('section', 'section ui-section recordings-search-panel');
     searchSection.setAttribute('aria-label', 'Search calls');
-    searchSection.append(form);
-    host.append(searchSection);
-    const resultSection = node('section', 'section ui-section');
+    const filterTitle = node('div', 'section-title ui-section-title', 'Filters');
+    searchSection.append(filterTitle, form);
+    const browser = node('div', 'recordings-browser');
+    const resultSection = node('section', 'section ui-section recordings-results-panel');
     const titleBar = node('div', 'section-title ui-section-title');
     titleBar.append(node('span', '', 'Calls'));
     const titleActions = node('div', 'ui-section-actions');
@@ -1310,7 +1311,8 @@ export function createRecordingsFeature(deps) {
     pagerHost.setAttribute('aria-label', 'Call result pages');
     body.append(sharedHost, selectedHost, countHost, resultStatus, resultHost, pagerHost);
     resultSection.append(titleBar, body);
-    host.append(resultSection);
+    browser.append(searchSection, resultSection);
+    host.append(browser);
     if (Object.values(search).every((item) => !item)) search.from_ms = String(Date.now() - 86_400_000);
     currentFilters = effectiveFilters();
     cursors = [null];

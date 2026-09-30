@@ -82,9 +82,35 @@ function mixedRecordingCalls() {
       channel_name: `Regional Receiver / ${secondSystem ? 'County' : 'Metro'} / Simulcast Channel ${index % 4 + 1}`,
       channel_entity_ref: { kind: 'channel', key: configuredChannel },
       frequency_hz: 851_012_500 + index * 25_000,
-      transcript_excerpt: 'Unit arriving at the designated staging location. Requesting the next available response team and confirming the information with dispatch before proceeding.'
+      transcript_excerpt: 'Unit arriving at the designated staging location. Requesting the next available response team and confirming the information with dispatch before proceeding.' +
+        (index === 0 ? ` ${'DispatchInteroperability'.repeat(10)}` : '')
     };
   });
+}
+
+async function expectTranscriptsClearInfo(page) {
+  const layout = await page.evaluate(() => ({
+    overflow: document.documentElement.scrollWidth - window.innerWidth,
+    excerpts: [...document.querySelectorAll('.recordings-transcript-preview')].map((element) => {
+      const style = getComputedStyle(element);
+      const card = element.closest('.recordings-call');
+      const text = element.getBoundingClientRect();
+      return { height: text.height, right: text.right,
+        contentRight: card.querySelector('.recordings-call-main').getBoundingClientRect().right,
+        infoLeft: card.querySelector('.recordings-call-info').getBoundingClientRect().left,
+        lineHeight: Number.parseFloat(style.lineHeight) || Number.parseFloat(style.fontSize) * 1.5,
+        textOverflow: element.scrollWidth - element.clientWidth };
+    })
+  }));
+  expect(layout.overflow).toBeLessThanOrEqual(0);
+  expect(layout.excerpts.length).toBeGreaterThan(0);
+  expect(layout.excerpts[0].height).toBeGreaterThan(layout.excerpts[0].lineHeight + 1);
+  for (const excerpt of layout.excerpts) {
+    expect(excerpt.height).toBeLessThanOrEqual(excerpt.lineHeight * 2 + 1);
+    expect(excerpt.textOverflow).toBeLessThanOrEqual(1);
+    expect(excerpt.right).toBeLessThanOrEqual(excerpt.infoLeft - 4);
+    expect(excerpt.contentRight).toBeLessThanOrEqual(excerpt.infoLeft - 4);
+  }
 }
 
 async function openRecordings(page, options = {}) {
@@ -208,7 +234,7 @@ test('Managed empty page refreshes when the first call arrives', async ({ page }
 });
 
 for (const theme of ['light', 'dark']) {
-  test(`desktop ${theme} search aligns controls and exposes structured autocomplete`, async ({ page }) => {
+  test(`desktop ${theme} sidebar aligns controls and exposes structured autocomplete`, async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await openRecordings(page, { theme });
     await expect(page.locator('.recordings-call')).toHaveCount(1);
@@ -219,9 +245,11 @@ for (const theme of ['light', 'dark']) {
     const query = page.getByRole('combobox', { name: 'Find a call' });
     const timeBox = await time.boundingBox();
     const queryBox = await query.boundingBox();
-    expect(Math.abs(timeBox.y - queryBox.y)).toBeLessThan(2);
+    expect(Math.abs(timeBox.x - queryBox.x)).toBeLessThan(2);
+    expect(Math.abs(timeBox.width - queryBox.width)).toBeLessThan(2);
+    expect(queryBox.y).toBeGreaterThan(timeBox.y + timeBox.height);
     expect(Math.abs(timeBox.height - queryBox.height)).toBeLessThan(2);
-    expect(queryBox.width).toBeGreaterThan(450);
+    expect(queryBox.width).toBeGreaterThan(150);
     await expect(page.getByRole('button', { name: 'More filters' })).toBeVisible();
     await expect(page.locator('.recordings-library')).toHaveScreenshot(`recordings-desktop-${theme}.png`);
 
@@ -230,6 +258,10 @@ for (const theme of ['light', 'dark']) {
     await expect(suggestions.getByRole('option')).toHaveCount(1);
     await expect(suggestions.getByRole('option')).toContainText('Talkgroup');
     await expect(suggestions.getByRole('option')).toContainText('Metro Public Safety');
+    const sidebarBox = await page.locator('.recordings-search-panel').boundingBox();
+    const suggestionsBox = await suggestions.boundingBox();
+    expect(suggestionsBox.x).toBeGreaterThanOrEqual(sidebarBox.x);
+    expect(suggestionsBox.x + suggestionsBox.width).toBeLessThanOrEqual(sidebarBox.x + sidebarBox.width);
     if (theme === 'light') await expect(page.locator('.recordings-library'))
       .toHaveScreenshot('recordings-suggestions-light.png');
     await query.press('ArrowDown');
@@ -244,6 +276,22 @@ for (const theme of ['light', 'dark']) {
     await page.getByRole('button', { name: /More filters/ }).click();
     await expect(page.getByRole('combobox', { name: 'Radio system' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Clear filters' })).toBeVisible();
+    const fields = page.locator('.recordings-search-fields .recordings-field');
+    const bounds = await fields.evaluateAll((elements) => elements.map((element) => {
+      const box = element.getBoundingClientRect();
+      return { x: box.x, right: box.right, y: box.y, bottom: box.bottom };
+    }));
+    expect(bounds.length).toBeGreaterThan(10);
+    for (const [index, box] of bounds.entries()) {
+      expect(box.x).toBeGreaterThanOrEqual(sidebarBox.x);
+      expect(box.right).toBeLessThanOrEqual(sidebarBox.x + sidebarBox.width);
+      if (index) {
+        expect(Math.abs(box.x - bounds[0].x)).toBeLessThan(2);
+        expect(box.y).toBeGreaterThanOrEqual(bounds[index - 1].bottom);
+      }
+    }
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    expect(overflow).toBeLessThanOrEqual(0);
   });
 }
 
@@ -283,6 +331,39 @@ test('search controls stay within the narrow desktop boundary', async ({ page })
   expect(Math.abs(time.y - query.y)).toBeLessThan(2);
   expect(Math.abs(time.height - query.height)).toBeLessThan(2);
 });
+
+for (const width of [1151, 1440]) {
+  test(`recordings at ${width}px use a quarter-width filter sidebar`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const state = await openRecordings(page, { calls: mixedRecordingCalls(), paginate: true });
+    await expect(page.locator('.recordings-call')).toHaveCount(25);
+    expect(state.requestedFilters.at(-1).limit).toBe('25');
+    const search = await page.locator('.recordings-search-panel').boundingBox();
+    const results = await page.locator('.recordings-results-panel').boundingBox();
+    expect(Math.abs(search.y - results.y)).toBeLessThan(2);
+    expect(results.x).toBeGreaterThan(search.x + search.width);
+    expect(results.width / search.width).toBeGreaterThan(2.8);
+    expect(results.width / search.width).toBeLessThan(3.2);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    expect(overflow).toBeLessThanOrEqual(0);
+  });
+}
+
+for (const width of [1150, 768, 390]) {
+  test(`recordings at ${width}px stack filters above results`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const state = await openRecordings(page, { calls: mixedRecordingCalls(), paginate: true });
+    await expect(page.locator('.recordings-call')).toHaveCount(25);
+    expect(state.requestedFilters.at(-1).limit).toBe('25');
+    const search = await page.locator('.recordings-search-panel').boundingBox();
+    const results = await page.locator('.recordings-results-panel').boundingBox();
+    expect(Math.abs(search.x - results.x)).toBeLessThan(2);
+    expect(Math.abs(search.width - results.width)).toBeLessThan(2);
+    expect(results.y).toBeGreaterThanOrEqual(search.y + search.height);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    expect(overflow).toBeLessThanOrEqual(0);
+  });
+}
 
 for (const theme of ['light', 'dark']) {
   test(`mobile ${theme} filter sheet fills viewport and applies fields`, async ({ page }) => {
@@ -590,6 +671,7 @@ for (const theme of ['light', 'dark']) {
       await expect(cards.filter({ hasText: detail })).toHaveCount(0);
     }
     await expect(page.locator('.recordings-transcript-preview')).toHaveCount(25);
+    await expectTranscriptsClearInfo(page);
     await expect(page.locator('.recordings-library')).toHaveScreenshot(`recordings-mixed-compact-${theme}.png`);
 
     await cards.first().locator('.recordings-call-info').click();
@@ -603,16 +685,7 @@ for (const theme of ['light', 'dark']) {
 
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(cards).toHaveCount(25);
-    const layout = await page.evaluate(() => ({
-      overflow: document.documentElement.scrollWidth - window.innerWidth,
-      excerpts: [...document.querySelectorAll('.recordings-transcript-preview')].map((element) => {
-        const style = getComputedStyle(element);
-        return { height: element.getBoundingClientRect().height,
-          lineHeight: Number.parseFloat(style.lineHeight) || Number.parseFloat(style.fontSize) * 1.5 };
-      })
-    }));
-    expect(layout.overflow).toBeLessThanOrEqual(0);
-    for (const excerpt of layout.excerpts) expect(excerpt.height).toBeLessThanOrEqual(excerpt.lineHeight + 1);
+    await expectTranscriptsClearInfo(page);
     await expect(page.locator('.recordings-results-body')).toHaveScreenshot(`recordings-mixed-compact-mobile-${theme}.png`);
     await page.getByRole('button', { name: 'Next', exact: true }).click();
     await expect(cards).toHaveCount(5);
