@@ -79,6 +79,7 @@ class SdrTrunkDatabaseDdlBoundaryTest
         "java/io/github/dsheirer/database/upgrade/Format23To24DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format25To26DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format26To27DatabaseMigration.java",
+        "java/io/github/dsheirer/database/upgrade/Format29To30DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/ManagedRecordingCatalogMigrator.java");
     private static final Set<String> FRESH_DATABASE_CALLERS = Set.of(
         "java/io/github/dsheirer/database/SdrTrunkDatabaseBootstrap.java",

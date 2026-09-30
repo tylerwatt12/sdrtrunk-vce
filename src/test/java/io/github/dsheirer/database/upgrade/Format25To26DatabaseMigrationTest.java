@@ -79,9 +79,9 @@ class Format25To26DatabaseMigrationTest
             }
             statement.execute("PRAGMA foreign_keys=ON");
 
-            assertEquals(4, report.steps().size());
+            assertEquals(5, report.steps().size());
             assertEquals("format-25-to-26", report.steps().getFirst().id());
-            assertEquals("format-28-to-29", report.steps().getLast().id());
+            assertEquals("format-29-to-30", report.steps().getLast().id());
             assertEquals(expectedEffects, report.steps().getFirst().effects());
             assertEquals(eventsBefore, rows(statement, "SELECT * FROM receiver_activity_event ORDER BY id"));
             assertEquals(membersBefore, rows(statement,
@@ -138,7 +138,8 @@ class Format25To26DatabaseMigrationTest
             assertFalse(statement.executeQuery("PRAGMA foreign_key_check").next());
             assertEquals(DatabaseFormatCatalog.current().fingerprint(),
                 SqliteSchemaValidator.fingerprint(connection));
-            assertEquals(29, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
+                DatabaseFormatCatalog.requireCurrent(connection).version());
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);
             SQLException wrongSource = assertThrows(SQLException.class,
                 () -> new Format25To26DatabaseMigration().migrate(connection));
@@ -168,7 +169,8 @@ class Format25To26DatabaseMigrationTest
             connection.setAutoCommit(false);
             try
             {
-                assertEquals(29, DatabaseMigrationChain.migrate(connection).target().version());
+                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
+                    DatabaseMigrationChain.migrate(connection).target().version());
                 connection.rollback();
             }
             finally
@@ -193,7 +195,8 @@ class Format25To26DatabaseMigrationTest
             assertEquals(0, number(statement, "SELECT count(*) FROM receiver_activity_event"));
             assertEquals(0, number(statement, "SELECT count(*) FROM activity_event_identity_member"));
             assertEquals(0, number(statement, "SELECT count(*) FROM conventional_activity_summary"));
-            assertEquals(29, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
+                DatabaseFormatCatalog.requireCurrent(connection).version());
         }
     }
 
@@ -227,7 +230,8 @@ class Format25To26DatabaseMigrationTest
             assertEquals(0, number(statement, "SELECT count(*) FROM receiver_channel"));
             assertEquals(0, number(statement, "SELECT count(*) FROM receiver_activity_event"));
             assertFalse(statement.executeQuery("PRAGMA foreign_key_check").next());
-            assertEquals(29, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
+                DatabaseFormatCatalog.requireCurrent(connection).version());
         }
     }
 

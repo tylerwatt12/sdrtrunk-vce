@@ -36,7 +36,7 @@ import java.util.Map;
 public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
-    public static final int CURRENT_VERSION = 29;
+    public static final int CURRENT_VERSION = 30;
     static final String RETIRED_TRUNKED_IDENTITY_BOUNDARY_KEY = "trunked_identity_metrics_started_at_ms";
     static final List<String> RETIRED_SUBSYSTEM_VERSION_KEYS = List.of(
         "alias_schema_version", "configuration_schema_version", "settings_schema_version", "icon_schema_version",
@@ -88,6 +88,8 @@ public final class DatabaseFormatCatalog
         "5e4b968f42dd9a861d38d63824dd8c6989b1bb34f18ff9d09b98396dd786bca1";
     private static final String FORMAT_28_FINGERPRINT = FORMAT_27_FINGERPRINT;
     private static final String FORMAT_29_FINGERPRINT = FORMAT_28_FINGERPRINT;
+    private static final String FORMAT_30_FINGERPRINT =
+        "5693062af70c86ce2eb3bc79f4ec01a71f778c93c8fa7aca21563fdb04dfea9e";
 
     private static final FormatDescriptor FORMAT_1 = descriptor(1, "alpha8-shared",
         "Shared Alpha 8, Alpha 9, and Alpha 10 database format", FORMAT_1_FINGERPRINT,
@@ -366,11 +368,20 @@ public final class DatabaseFormatCatalog
             "Preserve existing wizard progress and carry over the new Recordings step",
             "Show Managed Recordings as the recommended choice only during fresh setup"));
 
+    private static final FormatDescriptor FORMAT_30 = new FormatDescriptor(30, "encrypted-activity-indexes-v1",
+        "Sparse encrypted Activity owner/time indexes", FORMAT_30_FINGERPRINT, Map.of(),
+        List.of("main format 30"),
+        "src/test/java/io/github/dsheirer/database/upgrade/Format30TestDatabase.java", List.of(
+            "Preserve every retained Activity row and event ID unchanged",
+            "Add sparse encrypted-only saved-channel and radio-system time indexes",
+            "Keep clear and unfiltered Activity storage and indexes unchanged",
+            "Repair only bounded current-component damage when format 29 is the selected source"));
+
     private static final List<FormatDescriptor> FORMATS =
         List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7, FORMAT_8, FORMAT_9,
             FORMAT_10, FORMAT_11, FORMAT_12, FORMAT_13, FORMAT_14, FORMAT_15, FORMAT_16, FORMAT_17, FORMAT_18,
             FORMAT_19, FORMAT_20, FORMAT_21, FORMAT_22, FORMAT_23, FORMAT_24, FORMAT_25, FORMAT_26, FORMAT_27,
-            FORMAT_28, FORMAT_29);
+            FORMAT_28, FORMAT_29, FORMAT_30);
 
     private static final Map<Integer,FormatDescriptor> BY_VERSION = FORMATS.stream().collect(
         java.util.stream.Collectors.toUnmodifiableMap(FormatDescriptor::version, descriptor -> descriptor));
@@ -551,7 +562,7 @@ public final class DatabaseFormatCatalog
     /** Current catalog descriptor. */
     public static FormatDescriptor current()
     {
-        return FORMAT_29;
+        return FORMAT_30;
     }
 
     /** Ordered manifest used by completeness tests and migration UX. */
@@ -838,7 +849,7 @@ public final class DatabaseFormatCatalog
             case 9, 10, 11 -> 4;
             case 12, 13, 14 -> 5;
             case 15, 16, 17, 18, 19, 20, 21, 22 -> 6;
-            case 23, 24, 25, 26, 27, 28, 29 -> 7;
+            case 23, 24, 25, 26, 27, 28, 29, 30 -> 7;
             default -> throw new IllegalArgumentException("No web preference version for database format " +
                 descriptor.version());
         };

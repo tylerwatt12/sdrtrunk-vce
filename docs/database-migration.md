@@ -80,7 +80,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -341,6 +341,13 @@ so a markerless file in this shared-layout family still requires its authoritati
 28 is the directly selected source, the step also applies bounded current-component repair before its final stamp;
 an intermediate format 28 does not repeat that repair.
 
+The format 29-to-30 step adds sparse encrypted-only Activity indexes ordered by saved-channel or radio-system owner,
+observation time, and event ID. This lets encrypted Activity pages seek directly through the comparatively small set
+of encrypted rows while preserving every retained event and identity relationship unchanged. Clear and unfiltered
+queries keep their existing general-purpose indexes; format 30 deliberately does not duplicate those much larger
+index populations. When format 29 is the directly selected source, the step first applies the bounded
+current-component repair policy; an intermediate format 29 does not repeat that repair.
+
 ## Schema-Change Rule
 
 The optional Managed Recordings catalog is a separate SQLite file with its own adjacent format chain. Its format 2
@@ -351,8 +358,8 @@ counters, and adds no transcript rows. Catalog format 3 adds a constrained `tran
 transcript, marking calls with an existing transcript `complete` and other calls `pending`. Short calls stay pending;
 the background worker applies its configured minimum duration when selecting work. A failed call is retried only by
 an administrator action. Fresh format-3 catalogs use the same status default and index. The main application database
-remains at format 29 because its SQLite contents do not change. Recognized older catalogs are backed up and migrated
-on a staged copy at the pre-receiver setup boundary; normal catalog startup validates only.
+is independently at format 30; transcript-catalog migrations do not change it. Recognized older catalogs are backed up
+and migrated on a staged copy at the pre-receiver setup boundary; normal catalog startup validates only.
 
 Every change to persisted DDL or persisted meaning must land with all of the following:
 

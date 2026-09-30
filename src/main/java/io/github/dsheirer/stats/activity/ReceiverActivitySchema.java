@@ -128,6 +128,7 @@ public class ReceiverActivitySchema
     public static void create(Connection connection) throws SQLException
     {
         create(connection, MAXIMUM_OBSERVED_SITE, true, true, EVENT_TYPES);
+        createEncryptedActivityFilterIndexes(connection);
     }
 
     /** Creates the frozen format-17 activity schema for the historical format-14-to-15 migration. */
@@ -237,6 +238,10 @@ public class ReceiverActivitySchema
             List.of("channel_id", "source_observed_local_id", "observed_at_ms", "id"));
         validateIndexColumns(connection, "idx_receiver_activity_event_channel_target_id_time",
             List.of("channel_id", "target_observed_local_id", "observed_at_ms", "id"));
+        validateIndexColumns(connection, "idx_receiver_activity_event_system_encrypted_time",
+            List.of("radio_system_id", "observed_at_ms", "id"));
+        validateIndexColumns(connection, "idx_receiver_activity_event_channel_encrypted_time",
+            List.of("channel_id", "observed_at_ms", "id"));
         validateIndexColumns(connection, "idx_trunked_signaling_activity_system",
             List.of("radio_system_id", "channel_id", "bucket_start_ms"));
         validateIndexColumns(connection, "idx_p25_site_snapshot_retention", List.of("last_seen_ms", "channel_id"));
@@ -2772,6 +2777,26 @@ public class ReceiverActivitySchema
         }
     }
 
+    /**
+     * Creates the sparse encrypted-only Activity indexes for fresh databases and the adjacent staged migrator.
+     */
+    public static void createEncryptedActivityFilterIndexes(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_system_encrypted_time
+                ON receiver_activity_event(radio_system_id, observed_at_ms DESC, id DESC)
+                WHERE encrypted = 1 AND radio_system_id IS NOT NULL
+                """);
+            statement.executeUpdate("""
+                CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_channel_encrypted_time
+                ON receiver_activity_event(channel_id, observed_at_ms DESC, id DESC)
+                WHERE encrypted = 1
+                """);
+        }
+    }
+
     private static void createActivityFilterIndexes(Statement statement) throws SQLException
     {
         statement.executeUpdate("""
@@ -2894,6 +2919,8 @@ public class ReceiverActivitySchema
         "idx_receiver_activity_event_channel_event_type_time",
         "idx_receiver_activity_event_channel_source_id_time",
         "idx_receiver_activity_event_channel_target_id_time",
+        "idx_receiver_activity_event_system_encrypted_time",
+        "idx_receiver_activity_event_channel_encrypted_time",
         "idx_activity_event_member_identity_event",
         "idx_trunked_signaling_activity_time",
         "idx_trunked_signaling_activity_system",

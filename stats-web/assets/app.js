@@ -1453,41 +1453,48 @@ function presenceChannelIdentity(channel) {
     if (siteId) values.push(`Site ${siteId}`);
     return values.join(' · ') || normalizedSiteText(channel.configuration_id);
   }
-  const siteId = identifierNumber(channel.site_id);
-  return siteId ? `Site ${siteId}` : normalizedSiteText(channel.configuration_id);
+  const family = protocolFamily(channel);
+  const values = [];
+  if (family === 'DMR' && identifierNumber(channel.network_id)) {
+    values.push(`Network ${identifierNumber(channel.network_id)}`);
+  } else if (family === 'NXDN' && identifierNumber(channel.system_id)) {
+    values.push(`System ${identifierNumber(channel.system_id)}`);
+  }
+  if (identifierNumber(channel.site_id)) values.push(`Site ${identifierNumber(channel.site_id)}`);
+  if (identifierNumber(channel.ran)) values.push(`RAN ${identifierNumber(channel.ran)}`);
+  return values.join(' · ') || normalizedSiteText(channel.configuration_id);
 }
 
-function presenceChannelContext(channel) {
-  return normalizedSiteText(channel?.site_name) || normalizedSiteText(channel?.name);
+function presenceChannelDisplayParts(channel) {
+  const name = normalizedSiteText(channel?.name);
+  const site = normalizedSiteText(channel?.site_name);
+  const identity = presenceChannelIdentity(channel);
+  const primary = name || site || identity;
+  const secondary = [];
+  [identity, site].forEach((value) => {
+    if (value && !sameSiteText(value, primary) &&
+        !secondary.some((candidate) => sameSiteText(candidate, value))) secondary.push(value);
+  });
+  return { primary, secondary: secondary.join(' · ') };
 }
 
 function presenceChannelSortValue(row) {
   const presence = authoritativePresence(row);
   if (!presence) return '';
-  return `${presenceChannelIdentity(presence.channel)}\u0000${presenceChannelContext(presence.channel)}`;
+  const display = presenceChannelDisplayParts(presence.channel);
+  return `${display.primary}\u0000${display.secondary}`;
 }
 
-function channelPresenceCell(row, showConfirmation = true) {
+function channelPresenceCell(row) {
   const presence = authoritativePresence(row);
   if (!presence) return '—';
-  const identity = presenceChannelIdentity(presence.channel);
-  const configured = presenceChannelContext(presence.channel);
+  const display = presenceChannelDisplayParts(presence.channel);
   const summary = node('span', 'identity-summary');
   const primary = node('span', 'identity-summary-primary');
-  primary.append(channelLink(presence.channel, identity));
+  primary.append(channelLink(presence.channel, display.primary));
   summary.append(primary);
-  if (configured || showConfirmation) {
-    const context = node('small', 'identity-summary-context');
-    if (configured) context.append(configured);
-    if (showConfirmation) {
-      if (configured) context.append(' · ');
-      context.append('Confirmed ', dateTime(presence.confirmed_at_ms));
-    }
-    summary.append(context);
-  }
-  summary.title = [identity, configured,
-    `${semanticLabel(presence.evidence)} confirmed ${exactDateTime(presence.confirmed_at_ms)}`]
-    .filter(Boolean).join(' · ');
+  if (display.secondary) summary.append(node('small', 'identity-summary-context', display.secondary));
+  summary.title = [display.primary, display.secondary].filter(Boolean).join(' · ');
   return summary;
 }
 
@@ -2428,6 +2435,10 @@ function bindAnchoredDropdown(trigger, panel, signal = null, options = {}) {
     panel.style.top = `${placement.top}px`;
     panel.style.maxHeight = `${placement.maxHeight}px`;
   };
+  const trackViewportScroll = (event) => {
+    if (event.target instanceof Node && panel.contains(event.target)) return;
+    position();
+  };
   const toggle = (event) => {
     const open = event.newState === 'open';
     trigger.setAttribute('aria-expanded', String(open));
@@ -2437,7 +2448,7 @@ function bindAnchoredDropdown(trigger, panel, signal = null, options = {}) {
     viewportListeners = new AbortController();
     const options = { signal: viewportListeners.signal };
     window.addEventListener('resize', position, options);
-    window.addEventListener('scroll', position, { ...options, capture: true, passive: true });
+    window.addEventListener('scroll', trackViewportScroll, { ...options, capture: true, passive: true });
   };
   const cleanup = () => {
     if (cleaned) return;
@@ -2450,6 +2461,9 @@ function bindAnchoredDropdown(trigger, panel, signal = null, options = {}) {
   };
   panel.addEventListener('toggle', toggle);
   signal?.addEventListener('abort', cleanup, { once: true });
+  cleanup.position = () => {
+    if (!cleaned && panel.matches(':popover-open')) position();
+  };
   return cleanup;
 }
 
@@ -11299,7 +11313,7 @@ function radioSystemRadioColumns(system) {
       sortValue: affiliationTalkgroupSortValue });
   }
   if (radioSystemCapability(system, 'radio_channel_presence')) {
-    columns.push({ id: 'confirmed-channel', label: 'Last Confirmed Channel', render: channelPresenceCell,
+    columns.push({ id: 'confirmed-channel', label: 'Site', render: channelPresenceCell,
       className: 'alias-cell', sort: 'channel', sortValue: presenceChannelSortValue });
   }
   columns.push(
@@ -16535,7 +16549,6 @@ async function renderTunerSpectrum() {
 
 function radioSystemAssignmentLabel(row) {
   const state = String(row?.assignment_state || '').trim().toUpperCase();
-  if (state === 'CURRENT') return 'Current receiver assignment';
   if (state === 'HISTORICAL') return 'Historical activity';
   return '';
 }
@@ -16654,6 +16667,15 @@ async function renderRadioSystem() {
       isSavedChannelRadioSystem(system) ? 'Saved Channel Activity' : 'System Activity');
   } else {
     const infoColumn = node('div', 'entity-info-column system-info-column');
+    const assignment = radioSystemAssignmentLabel(system);
+    const systemInfo = [
+      [radioSystemOwnerLabel(system), radioSystemInfoValue(system)]
+    ];
+    if (assignment) systemInfo.push(['Assignment', assignment]);
+    systemInfo.push(
+      ['Alias Lists', radioSystemAliasLists(system)],
+      ['First Seen', dateTime(system.first_seen_ms)], ['Last Seen', dateTime(system.last_seen_ms)]
+    );
     const blocks = [section('Directory', metrics([
       ['Configured Channels', system.channels],
       ['Known Talkgroups', system.talkgroups],
@@ -16671,12 +16693,8 @@ async function renderRadioSystem() {
         ['Currently Affiliated', system.affiliated_radios]
       ], true)));
     }
-    blocks.push(section(isSavedChannelRadioSystem(system) ? 'Saved Channel Scope' : 'System Info', keyValues([
-      [radioSystemOwnerLabel(system), radioSystemInfoValue(system)],
-      ['Assignment', radioSystemAssignmentLabel(system)],
-      ['Alias Lists', radioSystemAliasLists(system)],
-      ['First Seen', dateTime(system.first_seen_ms)], ['Last Seen', dateTime(system.last_seen_ms)]
-    ])), section('Retained Signaling Observations', fragment(
+    blocks.push(section(isSavedChannelRadioSystem(system) ? 'Saved Channel Scope' : 'System Info',
+      keyValues(systemInfo)), section('Retained Signaling Observations', fragment(
       signalingMetrics(signalingActionRows(response.action_counts)
         .map((row) => [row.label, Number(row.observation_count || 0)])),
       activityMetricGuide())));
@@ -16731,7 +16749,7 @@ async function renderGroupIdentity() {
     }
     if (channelPresence) {
       columns.splice(radioSystemCapability(groupIdentity, 'talker_aliases') ? 3 : 2, 0,
-        { id: 'confirmed-channel', label: 'Confirmed Channel', fullLabel: 'Last Confirmed Affiliated Channel',
+        { id: 'confirmed-channel', label: 'Site',
           render: (row) => row.currently_affiliated === true ? channelPresenceCell(row) : '',
           className: 'alias-cell', sort: 'channel', sortValue: (row) => row.currently_affiliated === true ?
             presenceChannelSortValue(row) : '' });
@@ -16856,10 +16874,8 @@ async function renderRadio() {
       ])));
     }
     if (radioSystemCapability(radio, 'radio_channel_presence')) {
-      const presence = authoritativePresence(radio);
-      blocks.push(section('Last Confirmed Channel', keyValues([
-        ['Channel', channelPresenceCell(radio, false)],
-        ['Confirmed', presence ? dateTime(presence.confirmed_at_ms) : '—']
+      blocks.push(section('Site Presence', keyValues([
+        ['Site', channelPresenceCell(radio)]
       ])));
     }
     blocks.push(section('Relationships', metrics([
@@ -17948,6 +17964,7 @@ function activityIdentityPicker(context, options = {}) {
   let loadedEntries = [];
   let searchGeneration = 0;
   let searchController = null;
+  let repositionPanel = () => { };
 
   const cancelIdentitySearch = () => {
     searchGeneration += 1;
@@ -18032,6 +18049,7 @@ function activityIdentityPicker(context, options = {}) {
           `Search within ${activityIdentityKindLabel(activeKind, true).toLowerCase()}, or choose any.` :
           'Search by ID or alias.';
     }
+    repositionPanel();
   };
 
   let kindTabs = null;
@@ -18181,7 +18199,8 @@ function activityIdentityPicker(context, options = {}) {
     if (panel.matches(':popover-open')) panel.hidePopover();
     trigger.focus();
   });
-  bindAnchoredDropdown(trigger, panel, activeRenderController?.signal);
+  const dropdownCleanup = bindAnchoredDropdown(trigger, panel, activeRenderController?.signal);
+  repositionPanel = dropdownCleanup.position;
   panel.addEventListener('toggle', (event) => {
     const open = event.newState === 'open';
     trigger.setAttribute('aria-expanded', String(open));

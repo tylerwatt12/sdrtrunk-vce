@@ -348,6 +348,8 @@ assert.match(picker, /clear\.addEventListener\('click', \(\) => \{\s*cancelIdent
   'Clearing an identity must invalidate and abort any in-flight lookup.');
 assert.match(picker, /renderResults\(true\);/,
   'A completed lookup must replace the searching announcement with its final result status.');
+assert.match(picker, /repositionPanel\(\);/,
+  'Asynchronous destination results must be placed inside the viewport before the user scrolls them.');
 assert.match(picker, /setAttribute\('aria-selected'/,
   'Listbox options must expose selection state.');
 assert.match(picker, /results\.setAttribute\('aria-label'/,

@@ -26,8 +26,8 @@ class StatsWebChannelPresenceUiContractTest
         String source = source();
         String presence = function(source, "function authoritativePresence(row)");
         String identity = function(source, "function presenceChannelIdentity(channel)");
-        String context = function(source, "function presenceChannelContext(channel)");
-        String cell = function(source, "function channelPresenceCell(row, showConfirmation = true)");
+        String display = function(source, "function presenceChannelDisplayParts(channel)");
+        String cell = function(source, "function channelPresenceCell(row)");
 
         assertTrue(presence.contains("['registration', 'affiliation'].includes(evidence)"));
         assertTrue(presence.contains("presence?.confirmed_at_ms"));
@@ -44,11 +44,19 @@ class StatsWebChannelPresenceUiContractTest
 
         assertTrue(identity.contains("channel.site_id"));
         assertTrue(identity.contains("channel.configuration_id"));
-        assertTrue(context.indexOf("channel?.site_name") < context.indexOf("channel?.name"));
-        assertFalse(context.contains("channel?.channel_name"));
-        assertTrue(cell.contains("channelLink(presence.channel, identity)"));
-        assertTrue(cell.contains("presenceChannelContext(presence.channel)"));
-        assertTrue(cell.contains("dateTime(presence.confirmed_at_ms)"));
+        assertTrue(identity.contains("channel.network_id"));
+        assertTrue(identity.contains("channel.system_id"));
+        assertTrue(identity.contains("channel.ran"));
+        assertTrue(display.indexOf("channel?.name") < display.indexOf("channel?.site_name"));
+        assertTrue(display.contains("const primary = name || site || identity"));
+        assertTrue(display.contains("[identity, site].forEach"));
+        assertTrue(display.contains("!sameSiteText(value, primary)"));
+        assertFalse(display.contains("channel?.channel_name"));
+        assertTrue(cell.contains("channelLink(presence.channel, display.primary)"));
+        assertTrue(cell.contains("identity-summary-context', display.secondary"));
+        assertFalse(cell.contains("confirmed_at_ms"));
+        assertFalse(cell.contains("dateTime("));
+        assertFalse(cell.contains("exactDateTime("));
     }
 
     @Test
@@ -63,7 +71,9 @@ class StatsWebChannelPresenceUiContractTest
         assertTrue(groupIdentity.contains("route.get('affiliated') === 'true'"));
         assertTrue(groupIdentity.contains("affiliated: affiliatedOnly ? true : null"));
         assertTrue(groupIdentity.contains("row.currently_affiliated === true ? channelPresenceCell(row)"));
-        assertTrue(groupIdentity.contains("label: 'Confirmed Channel'"));
+        assertTrue(groupIdentity.contains("{ id: 'confirmed-channel', label: 'Site'"));
+        assertFalse(groupIdentity.contains("label: 'Confirmed Channel'"));
+        assertFalse(groupIdentity.contains("fullLabel: 'Last Confirmed Affiliated Channel'"));
         assertTrue(groupIdentity.contains("['Affiliated Channels', groupIdentity.affiliated_channels]"));
         assertTrue(groupIdentity.contains("affiliatedOnly ? 'Clear Filter' : 'Show Affiliated'"));
         assertTrue(groupIdentity.contains("affiliatedOnly ? 'Affiliated Radios' : 'Radios'"));
@@ -86,7 +96,8 @@ class StatsWebChannelPresenceUiContractTest
 
         assertTrue(columns.contains("label: 'Affiliation'"));
         assertTrue(columns.contains("render: affiliationTalkgroupCell"));
-        assertTrue(columns.contains("label: 'Last Confirmed Channel'"));
+        assertTrue(columns.contains("{ id: 'confirmed-channel', label: 'Site'"));
+        assertFalse(columns.contains("label: 'Last Confirmed Channel'"));
         assertTrue(columns.contains("render: channelPresenceCell"));
         assertTrue(columns.contains("radioSystemCapability(system, 'radio_channel_presence')"));
         assertTrue(columns.contains("sort: 'channel'"));
@@ -116,9 +127,11 @@ class StatsWebChannelPresenceUiContractTest
             "['Affiliation Confirmed', dateTime(radio.affiliation_confirmed_at_ms)]"));
         assertFalse(radio.contains("affiliation_updated_at_ms"));
         assertTrue(radio.contains("radioSystemCapability(radio, 'radio_channel_presence')"));
-        assertTrue(radio.contains("section('Last Confirmed Channel'"));
-        assertTrue(radio.contains("['Channel', channelPresenceCell(radio, false)]"));
-        assertTrue(radio.contains("['Confirmed', presence ? dateTime(presence.confirmed_at_ms) : '—']"));
+        assertTrue(radio.contains("section('Site Presence'"));
+        assertTrue(radio.contains("['Site', channelPresenceCell(radio)]"));
+        assertFalse(radio.contains("section('Last Confirmed Channel'"));
+        assertFalse(radio.contains("['Confirmed'"));
+        assertFalse(radio.contains("presence.confirmed_at_ms"));
         assertTrue(channel.contains("channelCapability(channel, 'current_affiliations')"));
         assertTrue(channel.contains("channelCapability(channel, 'radio_channel_presence')"));
         assertTrue(channel.contains("summary.push(['Affiliated Radios', channel.affiliated_radios, linked])"));

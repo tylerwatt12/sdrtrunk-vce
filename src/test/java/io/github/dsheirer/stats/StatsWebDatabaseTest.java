@@ -669,7 +669,7 @@ class StatsWebDatabaseTest
         assertEquals(0, number(historical.get("channels")));
         assertEquals("HISTORICAL", historical.get("assignment_state"));
         assertEquals("Historical DMR", historical.get("system_name"));
-        assertEquals("Old site", historical.get("channel_names"));
+        assertEquals("Old receiver", historical.get("channel_names"));
         assertEquals(List.of("Historical DMR aliases"), aliasListNames(historical));
 
         Map<String,Object> detail = map(mDatabase.radioSystem(fallbackKey), "radio_system");
@@ -863,6 +863,49 @@ class StatsWebDatabaseTest
         assertEquals(Map.of("kind", "radio", "radio_system_key", RADIO_SYSTEM_KEY,
             "identity_key", identityKey),
             radio.get("entity_ref"));
+    }
+
+    @Test
+    void sitePresenceAndSystemSummaryPreferUniqueConfiguredChannelNames() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                UPDATE configuration_channel
+                SET site_name = 'Shared Site',
+                    name = CASE configuration_id
+                        WHEN '%1$s' THEN 'Zulu Control'
+                        WHEN '%2$s' THEN 'Alpha Control'
+                    END
+                WHERE configuration_id IN ('%1$s', '%2$s')
+                """.formatted(P25_CHANNEL_A, P25_CHANNEL_B));
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary (
+                    id, radio_system_id, identity_kind_code, home_wacn, home_system_id, identity_id,
+                    first_seen_ms, last_seen_ms, logical_call_count
+                ) VALUES (7103, 71, 2, 0xBEE00, 0x49F, 303, 1000, 4000, 1)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_radio_channel_presence (
+                    radio_system_id, radio_identity_id, channel_id, observed_local_id,
+                    evidence_code, confirmed_at_ms
+                ) VALUES (71, 7102, 71, 202, 1, 4000),
+                         (71, 7103, 72, 303, 1, 4000)
+                """);
+        }
+
+        Map<String,Object> system = map(mDatabase.radioSystem(RADIO_SYSTEM_KEY), "radio_system");
+        assertEquals("Alpha Control, Zulu Control", system.get("channel_names"),
+            "Shared site labels must not collapse distinct configured channels");
+        assertEquals(2, number(system.get("channel_name_count")));
+
+        List<Map<String,Object>> radios = rows(mDatabase.radioSystemRadios(RADIO_SYSTEM_KEY,
+            request("/?sort=channel&direction=asc")));
+        assertEquals(List.of(303L, 202L), radios.stream().map(row -> number(row.get("native_id"))).toList(),
+            "Site sorting must follow the prominent configured channel name before RFSS/Site identity");
+        assertEquals("Alpha Control", map(map(radios.getFirst(), "presence"), "channel").get("name"));
+        assertEquals("Shared Site", map(map(radios.getFirst(), "presence"), "channel").get("site_name"));
     }
 
     @Test
@@ -2061,6 +2104,95 @@ class StatsWebDatabaseTest
         StatsApiException oversizedPage = assertThrows(StatsApiException.class, () -> mDatabase.activity(
             request("/?from_ms=1&to_ms=1000&actions=JOIN&after_id=0&limit=5001")));
         assertEquals("limit", oversizedPage.field());
+    }
+
+    @Test
+    void encryptedOwnerHistoryUsesSparseIndexesWithoutPlannerStatistics() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            try(ResultSet resultSet = statement.executeQuery(
+                "SELECT name FROM sqlite_schema WHERE name = 'sqlite_stat1'"))
+            {
+                assertFalse(resultSet.next(), "The representative plan must not rely on ANALYZE statistics");
+            }
+
+            statement.executeUpdate("""
+                WITH digits(value) AS (VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9)),
+                ten_thousand(value) AS (
+                    SELECT a.value + 10*b.value + 100*c.value + 1000*d.value
+                    FROM digits a CROSS JOIN digits b CROSS JOIN digits c CROSS JOIN digits d
+                ),
+                events(value) AS (
+                    SELECT value FROM ten_thousand
+                    UNION ALL
+                    SELECT value + 10000 FROM ten_thousand
+                )
+                INSERT INTO receiver_activity_event (
+                    channel_id, radio_system_id, observed_at_ms, action_code,
+                    source_observed_local_id, encrypted)
+                SELECT 71, 71, 20000 + value, 23, value % 500,
+                       CASE WHEN value % 100 = 0 THEN 1 ELSE 0 END
+                FROM events
+                """);
+        }
+
+        StatsWebDatabase.ActivityQuery[] channelEncrypted = new StatsWebDatabase.ActivityQuery[1];
+        Map<String,Object> channelPage = mDatabase.activity(request("/?configuration_id=" + P25_CHANNEL_A +
+            "&encryption=encrypted&hide_grants=true&limit=200"),
+            query -> channelEncrypted[0] = query);
+        assertEquals(200, rows(channelPage).size());
+        assertTrue(channelEncrypted[0].sql().contains(
+            "receiver_activity_event AS candidate INDEXED BY " +
+                "idx_receiver_activity_event_channel_encrypted_time"));
+        assertTrue(channelEncrypted[0].sql().contains("candidate.encrypted = 1"));
+        assertFalse(channelEncrypted[0].sql().contains("candidate.encrypted = ?"));
+
+        StatsWebDatabase.ActivityQuery[] systemEncrypted = new StatsWebDatabase.ActivityQuery[1];
+        mDatabase.activity(request("/?radio_system_key=" + RADIO_SYSTEM_KEY +
+            "&encryption=encrypted&hide_grants=true&limit=200"),
+            query -> systemEncrypted[0] = query);
+        assertTrue(systemEncrypted[0].sql().contains(
+            "receiver_activity_event AS candidate INDEXED BY " +
+                "idx_receiver_activity_event_system_encrypted_time"));
+
+        StatsWebDatabase.ActivityQuery[] clear = new StatsWebDatabase.ActivityQuery[1];
+        mDatabase.activity(request("/?configuration_id=" + P25_CHANNEL_A +
+            "&encryption=clear&limit=1"), query -> clear[0] = query);
+        assertFalse(clear[0].sql().contains("INDEXED BY"));
+        assertTrue(clear[0].sql().contains("candidate.encrypted = ?"));
+
+        StatsWebDatabase.ActivityQuery[] unfiltered = new StatsWebDatabase.ActivityQuery[1];
+        mDatabase.activity(request("/?configuration_id=" + P25_CHANNEL_A + "&limit=1"),
+            query -> unfiltered[0] = query);
+        assertFalse(unfiltered[0].sql().contains("INDEXED BY"));
+
+        StatsWebDatabase.ActivityQuery[] identitySpecific = new StatsWebDatabase.ActivityQuery[1];
+        mDatabase.activity(request("/?configuration_id=" + P25_CHANNEL_A +
+            "&encryption=encrypted&source_id=1&limit=1"), query -> identitySpecific[0] = query);
+        assertFalse(identitySpecific[0].sql().contains("INDEXED BY"));
+        assertTrue(identitySpecific[0].sql().contains("candidate.encrypted = ?"));
+
+        StatsWebDatabase.ActivityQuery[] forward = new StatsWebDatabase.ActivityQuery[1];
+        mDatabase.activity(request("/?configuration_id=" + P25_CHANNEL_A +
+            "&encryption=encrypted&after_id=0&limit=200"), query -> forward[0] = query);
+        assertFalse(forward[0].sql().contains("INDEXED BY"));
+        assertTrue(forward[0].sql().contains("candidate.encrypted = ?"));
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            List<String> channelPlan = explain(connection, channelEncrypted[0].sql(),
+                channelEncrypted[0].parameters().toArray());
+            assertTrue(channelPlan.stream().anyMatch(detail ->
+                    detail.contains("idx_receiver_activity_event_channel_encrypted_time")),
+                () -> "Expected the sparse channel/encrypted/time index without stats, plan was: " + channelPlan);
+            List<String> systemPlan = explain(connection, systemEncrypted[0].sql(),
+                systemEncrypted[0].parameters().toArray());
+            assertTrue(systemPlan.stream().anyMatch(detail ->
+                    detail.contains("idx_receiver_activity_event_system_encrypted_time")),
+                () -> "Expected the sparse system/encrypted/time index without stats, plan was: " + systemPlan);
+        }
     }
 
     @Test

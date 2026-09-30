@@ -44,7 +44,7 @@ class Format19To20DatabaseMigrationTest
 
             DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspectForMigration(connection));
-            assertEquals(10, preflight.steps().size());
+            assertEquals(11, preflight.steps().size());
             assertEquals("format-19-to-20", preflight.steps().getFirst().id());
             assertEquals(DatabaseMigrationEffect.UNKNOWN_COUNT,
                 preflight.steps().getFirst().effects().getFirst().affectedRows());
@@ -71,7 +71,7 @@ class Format19To20DatabaseMigrationTest
             }
 
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
-            assertEquals("format-28-to-29", report.steps().getLast().id());
+            assertEquals("format-29-to-30", report.steps().getLast().id());
             assertEquals(aliases, number(statement, "SELECT count(*) FROM alias"));
             assertEquals(aliases, number(statement, "SELECT count(*) FROM alias_activity_summary"));
             assertEquals(aliasLists, number(statement, "SELECT count(*) FROM alias_list"));

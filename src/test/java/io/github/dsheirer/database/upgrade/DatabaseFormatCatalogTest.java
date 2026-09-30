@@ -86,8 +86,12 @@ class DatabaseFormatCatalogTest
             .anyMatch(policy -> policy.contains("absent ignoreEncryptedCalls setting as disabled")));
         assertTrue(DatabaseFormatCatalog.requireVersion(28).migrationPolicy().stream()
             .anyMatch(policy -> policy.contains("stable sender and feed UUIDs")));
-        assertTrue(DatabaseFormatCatalog.current().migrationPolicy().stream()
+        assertTrue(DatabaseFormatCatalog.requireVersion(29).migrationPolicy().stream()
             .anyMatch(policy -> policy.contains("carry over the new Recordings step")));
+        assertTrue(DatabaseFormatCatalog.current().migrationPolicy().stream()
+            .anyMatch(policy -> policy.contains("encrypted-only saved-channel and radio-system time indexes")));
+        assertTrue(DatabaseFormatCatalog.current().migrationPolicy().stream()
+            .anyMatch(policy -> policy.contains("bounded current-component damage")));
 
         assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 1, DatabaseMigrationChain.steps().size());
         for(int index = 0; index < DatabaseMigrationChain.steps().size(); index++)
@@ -213,6 +217,34 @@ class DatabaseFormatCatalogTest
             assertEquals(strict, migration);
             assertEquals("format-26-to-27",
                 DatabaseMigrationChain.validateSource(connection, migration).steps().getFirst().id());
+        }
+    }
+
+    @Test
+    void exactMarkerlessFormat30IsRecognizedPlannedAndSafelyAdopted() throws Exception
+    {
+        Path database = Format30TestDatabase.create(mTemporaryFolder.resolve("markerless-format-30.sqlite"));
+
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            assertEquals(1, statement.executeUpdate(
+                "DELETE FROM database_metadata WHERE key='database_format_version'"));
+            DatabaseFormatCatalog.DetectedFormat strict = DatabaseFormatCatalog.inspect(connection);
+            DatabaseFormatCatalog.DetectedFormat migration = DatabaseFormatCatalog.inspectForMigration(connection);
+            assertEquals(30, strict.version());
+            assertFalse(strict.markerPresent());
+            assertEquals(strict, migration);
+
+            DatabaseMigrationChain.PreflightReport plan =
+                DatabaseMigrationChain.validateSource(connection, migration);
+            assertEquals(1, plan.steps().size());
+            assertEquals("adopt-global-format-marker", plan.steps().getFirst().id());
+
+            DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
+            assertEquals(1, report.steps().size());
+            assertEquals("adopt-global-format-marker", report.steps().getFirst().id());
+            assertTrue(report.target().markerPresent());
+            assertEquals(30, DatabaseFormatCatalog.requireCurrent(connection).version());
         }
     }
 

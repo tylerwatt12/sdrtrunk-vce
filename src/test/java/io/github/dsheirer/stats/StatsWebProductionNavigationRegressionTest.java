@@ -112,7 +112,7 @@ class StatsWebProductionNavigationRegressionTest
         Map<String,Object> system = map(mDatabase.radioSystem(RADIO_SYSTEM_KEY), "radio_system");
         assertEquals("GCRCN", system.get("system_name"));
         assertEquals(List.of("GCRCN"), aliasListNames(system));
-        assertEquals("GCRCNSimul", system.get("channel_names"));
+        assertEquals("GCRCN Control", system.get("channel_names"));
 
         Map<String,Object> channel = rows(mDatabase.radioSystemChannels(RADIO_SYSTEM_KEY, request("/"))).getFirst();
         assertEquals("GCRCNSimul", channel.get("site_name"));

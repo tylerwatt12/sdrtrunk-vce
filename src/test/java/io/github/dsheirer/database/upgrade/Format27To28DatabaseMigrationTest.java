@@ -44,7 +44,7 @@ class Format27To28DatabaseMigrationTest
 
             DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspect(connection));
-            assertEquals(2, preflight.steps().size());
+            assertEquals(3, preflight.steps().size());
             assertEquals("format-27-to-28", preflight.steps().getFirst().id());
 
             new Format27To28DatabaseMigration().migrate(connection);
@@ -75,7 +75,8 @@ class Format27To28DatabaseMigrationTest
             connection.setAutoCommit(false);
             try
             {
-                assertEquals(29, DatabaseMigrationChain.migrate(connection).target().version());
+                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
+                    DatabaseMigrationChain.migrate(connection).target().version());
                 connection.rollback();
             }
             finally
@@ -86,8 +87,10 @@ class Format27To28DatabaseMigrationTest
             assertEquals(27, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals("27", metadata(statement));
             assertEquals(before, configurationDigest(statement));
-            assertEquals(29, DatabaseMigrationChain.migrate(connection).target().version());
-            assertEquals(29, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
+                DatabaseMigrationChain.migrate(connection).target().version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
+                DatabaseFormatCatalog.requireCurrent(connection).version());
         }
     }
 

@@ -37,7 +37,9 @@ class Format23To24DatabaseMigrationTest
         "idx_receiver_activity_event_system_event_type_time",
         "idx_receiver_activity_event_channel_event_type_time",
         "idx_receiver_activity_event_channel_source_id_time",
-        "idx_receiver_activity_event_channel_target_id_time");
+        "idx_receiver_activity_event_channel_target_id_time",
+        "idx_receiver_activity_event_system_encrypted_time",
+        "idx_receiver_activity_event_channel_encrypted_time");
 
     @TempDir
     Path mTemporaryFolder;
@@ -58,9 +60,9 @@ class Format23To24DatabaseMigrationTest
 
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
 
-            assertEquals(6, report.steps().size());
+            assertEquals(7, report.steps().size());
             assertEquals("format-23-to-24", report.steps().getFirst().id());
-            assertEquals("format-28-to-29", report.steps().getLast().id());
+            assertEquals("format-29-to-30", report.steps().getLast().id());
             assertEquals(activityBefore.size(), report.steps().getFirst().effects().getFirst().affectedRows());
             assertEquals(rowsBefore, tableRowCounts(statement));
             assertEquals(activityBefore, activityRows(statement));

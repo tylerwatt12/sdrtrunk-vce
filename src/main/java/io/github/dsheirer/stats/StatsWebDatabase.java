@@ -436,12 +436,12 @@ class StatsWebDatabase
     private static final String CURRENT_RELATIONSHIP_AFFILIATION_SQL =
         "relationship.group_kind_code = 1 AND affiliation.radio_identity_id IS NOT NULL " +
             "AND affiliation.talkgroup_identity_id = relationship.group_identity_id";
-    private static final String RADIO_CHANNEL_SORT_SQL = "CASE WHEN presence.channel_id IS NULL THEN NULL " +
-        "WHEN system.protocol_code = 1 THEN printf('%03d:%03d', " +
+    private static final String RADIO_CHANNEL_SORT_SQL = "CASE WHEN presence.channel_id IS NULL THEN NULL ELSE " +
+        "lower(coalesce(nullif(trim(presence_config.name), ''), " +
+        "nullif(trim(presence_config.site_name), ''), presence_config.configuration_id, '')) || char(0) || " +
+        "CASE WHEN system.protocol_code = 1 THEN printf('%03d:%03d', " +
         "coalesce(presence_p25.rfss, -1), coalesce(presence_p25.site, -1)) " +
-        "ELSE printf('%010d', coalesce(presence_trunked.observed_site_id, -1)) END || char(0) || " +
-        "lower(coalesce(nullif(trim(presence_config.site_name), ''), " +
-        "nullif(trim(presence_config.name), ''), presence_config.configuration_id, ''))";
+        "ELSE printf('%010d', coalesce(presence_trunked.observed_site_id, -1)) END END";
     private static final Map<String,String> SYSTEM_SORT_COLUMNS = Map.ofEntries(
         Map.entry("wacn", "wacn"),
         Map.entry("system_id", "system_id"),
@@ -4576,39 +4576,38 @@ class StatsWebDatabase
     private static ActivityQuery buildActivityQuery(ActivityFilters filters)
     {
         List<ActivityCandidateBranch> branches = new ArrayList<>();
+        String candidateSource = activityCandidateSource(filters);
 
         if(filters.groupIdentitySummaryId() != null)
         {
             if(filters.groupMatch() != ActivityGroupMatch.VIA_PATCH)
             {
-                branches.add(activityCandidateBranch(filters, "receiver_activity_event candidate",
+                branches.add(activityCandidateBranch(filters, candidateSource,
                     "candidate.target_identity_summary_id = ?", List.of(filters.groupIdentitySummaryId()), true));
             }
             if(filters.groupMatch() != ActivityGroupMatch.DIRECT)
             {
-                branches.add(activityCandidateBranch(filters, """
-                    activity_event_identity_member member
-                    JOIN receiver_activity_event candidate ON candidate.id = member.event_id
-                    """, "member.identity_summary_id = ?", List.of(filters.groupIdentitySummaryId()), true));
+                branches.add(activityCandidateBranch(filters, "activity_event_identity_member member\nJOIN " +
+                    candidateSource + " ON candidate.id = member.event_id",
+                    "member.identity_summary_id = ?", List.of(filters.groupIdentitySummaryId()), true));
             }
         }
         else if(filters.radioIdentitySummaryId() != null)
         {
             if(filters.radioRole() != ActivityRadioRole.TARGET)
             {
-                branches.add(activityCandidateBranch(filters, "receiver_activity_event candidate",
+                branches.add(activityCandidateBranch(filters, candidateSource,
                     "candidate.source_identity_summary_id = ?", List.of(filters.radioIdentitySummaryId()), false));
             }
             if(filters.radioRole() != ActivityRadioRole.SOURCE)
             {
-                branches.add(activityCandidateBranch(filters, "receiver_activity_event candidate",
+                branches.add(activityCandidateBranch(filters, candidateSource,
                     "candidate.target_identity_summary_id = ?", List.of(filters.radioIdentitySummaryId()), false));
             }
         }
         else
         {
-            branches.add(activityCandidateBranch(filters, "receiver_activity_event candidate", null, List.of(),
-                false));
+            branches.add(activityCandidateBranch(filters, candidateSource, null, List.of(), false));
         }
 
         StringBuilder sql = new StringBuilder("WITH activity_candidates(id, observed_at_ms) AS (\n");
@@ -4646,6 +4645,38 @@ class StatsWebDatabase
         return new ActivityQuery(sql.toString(), List.copyOf(parameters));
     }
 
+    /**
+     * Keeps the sparse encrypted indexes deterministic for the common owner-scoped history page before SQLite has
+     * planner statistics.  More selective identity/filter branches and forward polling retain planner freedom.
+     */
+    private static String activityCandidateSource(ActivityFilters filters)
+    {
+        String index = activityEncryptedOwnerIndex(filters);
+        return index != null ? "receiver_activity_event AS candidate INDEXED BY " + index :
+            "receiver_activity_event candidate";
+    }
+
+    private static String activityEncryptedOwnerIndex(ActivityFilters filters)
+    {
+        if(filters.afterId() != null || !Integer.valueOf(1).equals(filters.encryption()) ||
+            filters.groupIdentitySummaryId() != null || filters.radioIdentitySummaryId() != null ||
+            filters.sourceIdentitySummaryId() != null || filters.targetIdentitySummaryId() != null ||
+            filters.actionCode() != null || filters.actionCodes() != null || filters.eventTypeCode() != null ||
+            filters.sourceId() != null || filters.targetId() != null || filters.targetKind() != null ||
+            filters.frequencyHertz() != null || filters.lcnBand() != null || filters.lcnNumber() != null ||
+            filters.timeslot() != null)
+        {
+            return null;
+        }
+
+        if(filters.channelId() != null)
+        {
+            return "idx_receiver_activity_event_channel_encrypted_time";
+        }
+
+        return filters.radioSystemId() != null ? "idx_receiver_activity_event_system_encrypted_time" : null;
+    }
+
     private static ActivityCandidateBranch activityCandidateBranch(ActivityFilters filters, String fromClause,
                                                                     String primaryPredicate,
                                                                     List<Object> primaryParameters,
@@ -4663,7 +4694,12 @@ class StatsWebDatabase
         appendActivityPredicate(sql, parameters, "candidate.observed_at_ms >= ?", filters.fromMilliseconds());
         appendActivityPredicate(sql, parameters, "candidate.observed_at_ms < ?", filters.toMilliseconds());
 
-        if(filters.encryption() != null)
+        if(activityEncryptedOwnerIndex(filters) != null)
+        {
+            // SQLite can prove eligibility for the partial index only from the literal predicate.
+            sql.append("\n  AND candidate.encrypted = 1");
+        }
+        else if(filters.encryption() != null)
         {
             appendActivityPredicate(sql, parameters, "candidate.encrypted = ?", filters.encryption());
         }
@@ -5690,22 +5726,22 @@ class StatsWebDatabase
                 (SELECT COUNT(*) FROM trunked_radio_affiliation affiliation
                     WHERE affiliation.radio_system_id = system.id) AS affiliated_radios,
                 (SELECT group_concat(name, ', ') FROM (
-                    SELECT DISTINCT coalesce(nullif(trim(config.site_name), ''),
-                                             nullif(trim(config.name), '')) AS name
+                    SELECT DISTINCT coalesce(nullif(trim(config.name), ''),
+                                             nullif(trim(config.site_name), '')) AS name
                     FROM configuration_channel config
                     LEFT JOIN receiver_channel channel ON channel.configuration_id = config.configuration_id
                     WHERE (channel.radio_system_id = system.id OR
                            config.configuration_id = system.configuration_id)
                     ORDER BY lower(name), name
                     LIMIT 8)) AS channel_names,
-                (SELECT count(DISTINCT coalesce(nullif(trim(config.site_name), ''),
-                                                nullif(trim(config.name), '')))
+                (SELECT count(DISTINCT coalesce(nullif(trim(config.name), ''),
+                                                nullif(trim(config.site_name), '')))
                  FROM configuration_channel config
                  LEFT JOIN receiver_channel channel ON channel.configuration_id = config.configuration_id
                  WHERE channel.radio_system_id = system.id OR
                        config.configuration_id = system.configuration_id) AS channel_name_count,
-                CASE WHEN (SELECT count(DISTINCT coalesce(nullif(trim(config.site_name), ''),
-                                                          nullif(trim(config.name), '')))
+                CASE WHEN (SELECT count(DISTINCT coalesce(nullif(trim(config.name), ''),
+                                                          nullif(trim(config.site_name), '')))
                            FROM configuration_channel config
                            LEFT JOIN receiver_channel channel
                              ON channel.configuration_id = config.configuration_id

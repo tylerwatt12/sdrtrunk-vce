@@ -38,14 +38,16 @@ class Format28To29DatabaseMigrationTest
                 assertEquals(28, DatabaseFormatCatalog.inspect(connection).version());
 
                 DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
-                assertEquals(29, report.target().version());
-                assertEquals("format-28-to-29", report.steps().getLast().id());
+                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
+                assertEquals("format-28-to-29", report.steps().getFirst().id());
+                assertEquals("format-29-to-30", report.steps().getLast().id());
                 assertEquals(portable, scalar(statement,
                     "SELECT settings_json FROM application_settings WHERE key='portable_java_preferences_v1'"));
                 SetupProgress upgraded = SetupProgress.read(connection);
                 assertEquals(SetupProgress.State.DEFERRED, upgraded.get(SetupStep.ACTIVITY));
                 assertEquals(SetupProgress.State.CARRIED_OVER, upgraded.get(SetupStep.RECORDINGS));
-                assertEquals(29, DatabaseFormatCatalog.requireCurrent(connection).version());
+                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
+                    DatabaseFormatCatalog.requireCurrent(connection).version());
             }
         }
     }
@@ -57,13 +59,14 @@ class Format28To29DatabaseMigrationTest
         {
             statement.executeUpdate("UPDATE application_settings SET settings_json='{}' WHERE key='setup_wizard'");
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
-            assertTrue(report.steps().getLast().effects().stream().anyMatch(effect ->
+            assertTrue(report.steps().getFirst().effects().stream().anyMatch(effect ->
                 effect.subject().equals("unusable legacy setup progress") && effect.affectedRows() == 1));
             SetupProgress progress = SetupProgress.read(connection);
             assertTrue(progress.isImported());
             assertFalse(progress.isComplete());
             assertEquals(SetupProgress.State.CARRIED_OVER, progress.get(SetupStep.RECORDINGS));
-            assertEquals(29, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
+                DatabaseFormatCatalog.requireCurrent(connection).version());
         }
     }
 
@@ -76,7 +79,8 @@ class Format28To29DatabaseMigrationTest
             connection.setAutoCommit(false);
             try
             {
-                assertEquals(29, DatabaseMigrationChain.migrate(connection).target().version());
+                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
+                    DatabaseMigrationChain.migrate(connection).target().version());
                 connection.rollback();
             }
             finally
@@ -85,7 +89,8 @@ class Format28To29DatabaseMigrationTest
             }
             assertEquals(before, scalar(statement, "SELECT settings_json FROM application_settings WHERE key='setup_wizard'"));
             assertEquals(28, DatabaseFormatCatalog.inspect(connection).version());
-            assertEquals(29, DatabaseMigrationChain.migrate(connection).target().version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
+                DatabaseMigrationChain.migrate(connection).target().version());
         }
     }
 
@@ -98,9 +103,10 @@ class Format28To29DatabaseMigrationTest
             assertTrue(new Format28To29DatabaseMigration().validateSource(connection).stream().anyMatch(effect ->
                 effect.subject().equals("unusable spectrum-snap settings") && effect.affectedRows() == 1));
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
-            assertTrue(report.steps().getLast().effects().stream().anyMatch(effect ->
+            assertTrue(report.steps().getFirst().effects().stream().anyMatch(effect ->
                 effect.subject().equals("unusable spectrum-snap settings") && effect.affectedRows() == 1));
-            assertEquals(29, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
+                DatabaseFormatCatalog.requireCurrent(connection).version());
         }
     }
 

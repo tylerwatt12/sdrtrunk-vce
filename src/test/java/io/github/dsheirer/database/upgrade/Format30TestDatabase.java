@@ -6,21 +6,21 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 
-/** Exact populated format-29 fixture produced by the adjacent format-28 migration. */
-public final class Format29TestDatabase
+/** Exact populated format-30 fixture produced by the adjacent format-29 migration. */
+public final class Format30TestDatabase
 {
-    private Format29TestDatabase() {}
+    private Format30TestDatabase() {}
 
     public static Path create(Path database) throws Exception
     {
-        Format28TestDatabase.create(database);
+        Format29TestDatabase.create(database);
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
             connection.setAutoCommit(false);
             try
             {
-                new Format28To29DatabaseMigration().migrate(connection);
-                DatabaseFormatCatalog.stamp(connection, 29);
+                new Format29To30DatabaseMigration().migrate(connection);
+                DatabaseFormatCatalog.stamp(connection, 30);
                 connection.commit();
             }
             catch(Exception exception)
@@ -34,13 +34,13 @@ public final class Format29TestDatabase
             }
 
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);
-            if(!DatabaseFormatCatalog.requireVersion(29).fingerprint().equals(fingerprint))
+            if(!DatabaseFormatCatalog.requireVersion(30).fingerprint().equals(fingerprint))
             {
-                throw new IllegalStateException("Global format 29 fixture fingerprint mismatch: " + fingerprint);
+                throw new IllegalStateException("Global format 30 fixture fingerprint mismatch: " + fingerprint);
             }
-            if(DatabaseFormatCatalog.inspect(connection).version() != 29)
+            if(DatabaseFormatCatalog.requireCurrent(connection).version() != 30)
             {
-                throw new IllegalStateException("Global format 29 fixture marker mismatch");
+                throw new IllegalStateException("Global format 30 fixture marker mismatch");
             }
         }
         return database;

@@ -321,6 +321,19 @@ time limit and indexed pruning remain its bounded-growth mechanism.
   `idx_receiver_activity_event_retention` for pruning, and `idx_activity_event_member_identity_event` for member
   lookup, without a temporary sort for the normal time-ordered page.
 
+- **Encrypted Activity owner paging:** Let `Q` be the fraction of accepted detailed events marked encrypted. The
+  channel and radio-system encrypted partial indexes each receive at most `Q * E` entries per hour and retain at most
+  `Q * E * H` entries; the system index omits events without a radio-system owner. Each entry contains three compact
+  integers (owner, observation time, and event ID) and no duplicated text. Budget 64 bytes per entry including B-tree
+  overhead, or at most `128 * Q * E * H` bytes for both indexes together. The all-encrypted worst case is therefore
+  about 128 bytes of additional index storage per retained event, while normal sparse encryption pays that cost only
+  for encrypted rows. The existing encryption-algorithm/key index cannot seek by saved-channel or radio-system owner,
+  and the general owner/time indexes must scan clear rows to find sparse encrypted matches. The partial owner/time
+  indexes instead serve `owner = ? AND encrypted = 1 ORDER BY observed_at_ms DESC, id DESC` directly. Normal time-based
+  retention and channel/system deletion remove these entries with their parent events. Representative-volume migration
+  tests require `EXPLAIN QUERY PLAN` to select each partial index without a temporary B-tree and to reject it for clear
+  Activity queries.
+
 - **Radio-system identity summaries:** A new `radio_system_identity_summary` row is created only when a system first
   sees a distinct canonical talkgroup, patch group, or radio; later observations update it. Admission stops at 100,000
   identities per system while existing rows remain writable. The conservative allowance is 2 KiB per row, including

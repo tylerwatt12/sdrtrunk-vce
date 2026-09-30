@@ -578,6 +578,10 @@ async function main() {
   assert.match(dropdownBinding, /new AbortController\(\)/);
   assert.match(dropdownBinding, /addEventListener\('resize'/);
   assert.match(dropdownBinding, /addEventListener\('scroll'/);
+  assert.match(dropdownBinding, /panel\.contains\(event\.target\)/,
+    'Scrolling inside an anchored dropdown must not reposition the dropdown itself.');
+  assert.match(dropdownBinding, /cleanup\.position =/,
+    'Dynamic dropdown content must be able to request a fresh anchored placement.');
   assert.match(dropdownBinding, /setAttribute\('aria-expanded'/);
   assert.match(dropdownBinding, /panel\.style\.maxHeight = ''/);
   assert.match(dropdownBinding, /panel\.hidePopover\(\)/);
@@ -1165,6 +1169,8 @@ async function main() {
     `(function(row) ${functionBinding(appSource, 'isSavedChannelRadioSystem')})`);
   const radioSystemAssignmentLabel = vm.runInNewContext(
     `(function(row) ${functionBinding(appSource, 'radioSystemAssignmentLabel')})`);
+  assert.equal(radioSystemAssignmentLabel({ assignment_state: 'CURRENT' }), '');
+  assert.equal(radioSystemAssignmentLabel({ assignment_state: 'HISTORICAL' }), 'Historical activity');
   const radioSystemsDirectoryDetails = vm.runInNewContext(
     `(function(row) ${functionBinding(appSource, 'radioSystemsDirectoryDetails')})`, {
       channelDirectoryDetails, isP25: (row) => row.protocol === 'P25', hex,
@@ -1183,7 +1189,7 @@ async function main() {
   'Type-C · Local · System 303');
   assert.equal(radioSystemsDirectoryDetails({ protocol: 'DMR', assignment_state: 'CURRENT',
     variant: 'TIER_III', model: 'small', network_id: 42, radio_system_key: 'dmr:tier3:small:42' }),
-  'Current receiver assignment · Tier III · Small · Network 42');
+  'Tier III · Small · Network 42');
   assert.equal(radioSystemsDirectoryDetails({ protocol: 'NXDN', assignment_state: 'HISTORICAL',
     variant: 'TYPE_C', address_domain: 'nxdn_type_c',
     radio_system_key: 'nxdn-c:channel:728d2d66-de4e-476b-a696-919f32dd4d12' }),
