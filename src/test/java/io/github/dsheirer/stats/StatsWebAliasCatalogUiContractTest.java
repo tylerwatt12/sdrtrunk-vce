@@ -74,8 +74,9 @@ class StatsWebAliasCatalogUiContractTest
     void combinesCallsAndSignalingInOneActivityView() throws Exception
     {
         String source = source();
-        String tabs = function(source, "function aliasEditorViewTabs(selectedList)");
+        String tabs = function(source, "function aliasEditorViewTabs(selectedList, onSwitch = null)");
         String view = function(source, "function aliasEditorView(selectedList)");
+        String renderer = function(source, "async function renderAliases()");
         String columns = function(source, "function aliasEditorColumns(view, rows, onSelectionChange)");
         String activity = function(source, "function aliasActivityColumns()");
         String configuration = function(source, "function aliasCustomConfigurationColumns()");
@@ -85,15 +86,20 @@ class StatsWebAliasCatalogUiContractTest
         {
             assertTrue(tabs.contains("'" + label + "'"), () -> "Missing editor view " + label);
         }
+        assertTrue(tabs.contains("const navigation = tabs(entries, active)"));
+        assertTrue(tabs.contains("href: aliasEditorViewHref(selectedList, 'configure', active)"));
+        assertTrue(tabs.contains("href: aliasEditorViewHref(selectedList, 'activity', active)"));
+        assertTrue(tabs.contains("href: aliasEditorViewHref(selectedList, 'custom', active)"));
+        assertTrue(tabs.contains("void onSwitch(entry.id)"));
+        assertTrue(renderer.contains("aliasEditorViewTabs(selectedList, (nextView) => switchView?.(nextView))"));
+        assertTrue(renderer.contains("setAliasEditorViewTabs(viewTabs, view)"));
         assertFalse(tabs.contains("'Call Use'"));
         assertFalse(tabs.contains("'System Evidence'"));
         assertTrue(view.contains("['calls', 'evidence']"));
         assertTrue(view.contains("'activity' : route.get('aliasTab')"));
         assertTrue(function(source, "function aliasEditorDefaultOrder(view)")
             .contains("view === 'activity' ? { sort: 'logical_call_count', direction: 'desc' }"));
-        assertTrue(function(source, "async function renderAliases()")
-            .contains("sort: route.get('sort') || defaultOrder.sort"));
-        String renderer = function(source, "async function renderAliases()");
+        assertTrue(renderer.contains("sort: route.get('sort') || defaultOrder.sort"));
         assertTrue(renderer.contains("view === 'activity' ? { timeoutMs: 35_000 } : {}"));
         assertTrue(renderer.contains("loading alias-activity-loading', 'Preparing alias activity…'"));
         String activityAwait = "let [page, initialOptions] = await Promise.all";
@@ -435,7 +441,7 @@ class StatsWebAliasCatalogUiContractTest
     void exposesUnmatchedPolicyAndBoundedObservedGroupIdentityDiscovery() throws Exception
     {
         String source = source();
-        String tabs = function(source, "function aliasEditorViewTabs(selectedList)");
+        String tabs = function(source, "function aliasEditorViewTabs(selectedList, onSwitch = null)");
         String view = function(source, "function aliasEditorView(selectedList)");
         String renderer = function(source, "async function renderAliases()");
         String discoverySupport = function(source, "function observedGroupIdentityDiscoverySupported(selectedList)");
@@ -455,7 +461,11 @@ class StatsWebAliasCatalogUiContractTest
             "async function openAliasEditorModal(mode = 'create', id = null, prefill = null)");
 
         assertFalse(source.contains("alias_match_kind"));
-        assertTrue(tabs.contains("'Discover'"));
+        assertTrue(tabs.contains("const discover = anchor('Discover', href('aliases',"));
+        assertFalse(tabs.substring(0, tabs.indexOf("const navigation = tabs(entries, active)"))
+            .contains("'Discover'"), "Discover must not be part of the column-view group");
+        assertTrue(tabs.indexOf("const navigation = tabs(entries, active)") <
+            tabs.indexOf("switcher.append(discover)"), "Discover must be separate from the column-view group");
         assertTrue(renderer.contains("`/api/v1/alias-lists/${aliasListId(selectedList)}/observed-group-identities`"));
         assertTrue(renderer.contains("include_exact: false"));
         assertTrue(renderer.contains("options?.alias_list && options?.revision !== undefined"));

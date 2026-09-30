@@ -69,6 +69,13 @@ vm.runInContext(`
   const ALIAS_TRANSFER_EXPORT_READY_COOKIE_PREFIX = 'sdrtrunk_alias_export_ready_';
   const ALIAS_CREATE_ROUTE_KEYS = [];
   let route = new URLSearchParams('');
+  function href(view, values = {}) {
+    const parameters = new URLSearchParams({ view });
+    Object.entries(values).forEach(([key, value]) => {
+      if (value !== null && value !== undefined && value !== '') parameters.set(key, String(value));
+    });
+    return '/?' + parameters.toString();
+  }
   let aliasEditorSelection = new Set();
   let aliasEditorSelectionScope = null;
   let aliasEditorSelectionRequest = 0;
@@ -82,6 +89,7 @@ vm.runInContext(`
   ${functionSource('function aliasCloneOptionValue(value, configured, cloning, optionsTruncated)')}
   ${functionSource('function aliasStreamOptionSelected(selected, configured, editing, optionsTruncated)')}
   ${functionSource('function aliasEditorDefaultOrder(view)')}
+  ${functionSource('function aliasEditorViewHref(selectedList, target, currentView = aliasEditorView(selectedList))')}
   ${functionSource('function aliasEditorHasActiveFilters(scanListScope = false)')}
   ${functionSource('function aliasEditorResultCount(page, filtered)')}
   ${functionSource('function aliasTransferListDefaults(selectedList, options = {})')}
@@ -114,6 +122,7 @@ vm.runInContext(`
   globalThis.cloneOptionValue = aliasCloneOptionValue;
   globalThis.streamOptionSelected = aliasStreamOptionSelected;
   globalThis.editorDefaultOrder = aliasEditorDefaultOrder;
+  globalThis.editorViewHref = aliasEditorViewHref;
   globalThis.hasActiveFilters = aliasEditorHasActiveFilters;
   globalThis.resultCount = aliasEditorResultCount;
   globalThis.setRoute = (value) => { route = new URLSearchParams(value); };
@@ -214,12 +223,65 @@ assert.deepEqual(JSON.parse(JSON.stringify(context.editorDefaultOrder('activity'
 assert.deepEqual(JSON.parse(JSON.stringify(context.editorDefaultOrder('configure'))),
   { sort: 'name', direction: 'asc' },
   'Configuration views must retain their alphabetical default.');
+const selectedAliasList = { alias_list_id: 7 };
+const viewRoute = (target, currentView) => new URL(context.editorViewHref(selectedAliasList,
+  target, currentView), 'https://example.test').searchParams;
+const sharedViewState = new URLSearchParams({
+  view: 'aliases', list: '7', aliasTab: 'configure', q: 'fire', type: 'talkgroup',
+  matcher: 'TALKGROUP', group: 'Dispatch', scanListId: '4', record: 'enabled',
+  stream: 'present', evidence: 'observed', use: 'used', lastActivityAfter: '42',
+  lastActivityBefore: '99', offset: '100', sort: 'group', direction: 'desc',
+  alias: '72', createAlias: '1', createListId: '7', unrelated: 'discard'
+});
+context.setRoute(sharedViewState.toString());
+const activityRoute = viewRoute('activity', 'configure');
+for (const key of ['q', 'type', 'matcher', 'group', 'scanListId', 'record', 'stream',
+  'evidence', 'use', 'lastActivityAfter', 'lastActivityBefore', 'offset', 'sort', 'direction']) {
+  assert.equal(activityRoute.get(key), sharedViewState.get(key),
+    `Switching column views must retain ${key}.`);
+}
+assert.equal(activityRoute.get('view'), 'aliases');
+assert.equal(activityRoute.get('list'), '7');
+assert.equal(activityRoute.get('aliasTab'), 'activity');
+for (const key of ['alias', 'createAlias', 'createListId', 'unrelated']) {
+  assert.equal(activityRoute.has(key), false,
+    `Switching column views must not carry transient ${key} state.`);
+}
+context.setRoute('view=aliases&list=7&aliasTab=configure&q=fire&offset=100');
+const defaultActivityRoute = viewRoute('activity', 'configure');
+assert.equal(defaultActivityRoute.get('sort'), 'name',
+  'Switching from Configure must keep its effective alphabetical order.');
+assert.equal(defaultActivityRoute.get('direction'), 'asc');
+assert.equal(defaultActivityRoute.get('offset'), '100');
+context.setRoute('view=aliases&list=7&aliasTab=activity&q=fire&offset=100');
+const defaultCustomRoute = viewRoute('custom', 'activity');
+assert.equal(defaultCustomRoute.get('sort'), 'logical_call_count',
+  'Switching from Activity must keep its effective call-count order.');
+assert.equal(defaultCustomRoute.get('direction'), 'desc');
+assert.equal(defaultCustomRoute.get('offset'), '100');
+context.setRoute('view=aliases&list=7&aliasTab=discover&q=channel');
+const returnFromDiscover = viewRoute('configure', 'discover');
+assert.deepEqual([...returnFromDiscover.entries()],
+  [['view', 'aliases'], ['list', '7'], ['aliasTab', 'configure']],
+  'Returning from Discover must start a fresh Alias search instead of reusing its different query.');
 const aliasRenderer = functionSource('async function renderAliases()');
+const aliasViewTabs = functionSource('function aliasEditorViewTabs(selectedList, onSwitch = null)');
 const aliasFilterToolbar = functionSource('function aliasEditorFilterToolbar(aliasPage, options = null)');
 const aliasDiscoverToolbar = functionSource('function observedGroupIdentityToolbar(selectedList)');
 const aliasExportLink = functionSource('function exportCsvLink(dataset, context = {}, options = {})');
 const aliasDetailLink = functionSource('function aliasDetailLink(row)');
 const aliasMutationFinisher = functionSource('async function finishAliasMutation(modal, result, routeChanges = {})');
+assert.match(aliasViewTabs, /href: aliasEditorViewHref\(selectedList, 'configure', active\)/);
+assert.match(aliasViewTabs, /href: aliasEditorViewHref\(selectedList, 'activity', active\)/);
+assert.match(aliasViewTabs, /href: aliasEditorViewHref\(selectedList, 'custom', active\)/);
+assert.match(aliasViewTabs, /event\.preventDefault\(\);\s*void onSwitch\(entry\.id\)/,
+  'An ordinary view click must switch the existing Alias table in place.');
+assert.match(aliasViewTabs, /anchor\('Discover', href\('aliases', \{ list: id, aliasTab: 'discover' \}\)/,
+  'Discover must have a separate link to its own search and results.');
+assert.match(aliasRenderer, /aliasEditorViewTabs\(selectedList, \(nextView\) => switchView\?\.\(nextView\)\)/,
+  'The three column-view controls must be wired to the current Alias table.');
+assert.match(aliasRenderer, /switchView = async \(nextView\) => \{[\s\S]*?window\.history\.pushState\([\s\S]*?setAliasEditorViewTabs\(viewTabs, view\);[\s\S]*?renderTable\(\)/,
+  'Switching views must update the route, selected control, and existing table without rendering the page again.');
 assert.match(aliasRenderer, /sort: route\.get\('sort'\) \|\| defaultOrder\.sort/,
   'Explicit routed sorting must take precedence over the view default.');
 assert.match(aliasRenderer, /defaultSort: defaultOrder\.sort/,

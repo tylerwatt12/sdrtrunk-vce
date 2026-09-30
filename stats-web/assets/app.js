@@ -3818,22 +3818,59 @@ function aliasEditorDefaultOrder(view) {
     { sort: 'name', direction: 'asc' };
 }
 
-function aliasEditorViewTabs(selectedList) {
+function aliasEditorViewHref(selectedList, target, currentView = aliasEditorView(selectedList)) {
+  const id = aliasListId(selectedList);
+  if (currentView === 'discover') return href('aliases', { list: id, aliasTab: target });
+  const parameters = { list: id, aliasTab: target };
+  ['q', 'type', 'matcher', 'group', 'scanListId', 'record', 'stream', 'evidence', 'use',
+    'lastActivityAfter', 'lastActivityBefore', 'offset'].forEach((key) => {
+    if (route.get(key)) parameters[key] = route.get(key);
+  });
+  const order = aliasEditorDefaultOrder(currentView);
+  parameters.sort = route.get('sort') || order.sort;
+  parameters.direction = route.get('direction') || order.direction;
+  return href('aliases', parameters);
+}
+
+function setAliasEditorViewTabs(viewTabs, view) {
+  viewTabs.querySelectorAll('[data-alias-view]').forEach((link) => {
+    const active = link.dataset.aliasView === view;
+    link.classList.toggle('active', active);
+    if (active) link.setAttribute('aria-current', 'page');
+    else link.removeAttribute('aria-current');
+  });
+}
+
+function aliasEditorViewTabs(selectedList, onSwitch = null) {
   const id = aliasListId(selectedList);
   const active = aliasEditorView(selectedList);
   const entries = [
-    { id: 'configure', label: 'Configure', href: href('aliases', { list: id, aliasTab: 'configure' }) }
+    { id: 'configure', label: 'Configure', href: aliasEditorViewHref(selectedList, 'configure', active) },
+    { id: 'activity', label: 'Activity', href: aliasEditorViewHref(selectedList, 'activity', active) },
+    { id: 'custom', label: 'Custom', href: aliasEditorViewHref(selectedList, 'custom', active) }
   ];
-  if (observedGroupIdentityDiscoverySupported(selectedList)) {
-    entries.push({ id: 'discover', label: 'Discover', href: href('aliases', { list: id, aliasTab: 'discover' }) });
-  }
-  entries.push(
-    { id: 'activity', label: 'Activity', href: href('aliases', { list: id, aliasTab: 'activity' }) },
-    { id: 'custom', label: 'Custom', href: href('aliases', { list: id, aliasTab: 'custom' }) }
-  );
   const navigation = tabs(entries, active);
   navigation.classList.add('alias-editor-view-tabs');
-  return navigation;
+  navigation.querySelectorAll('a').forEach((link, index) => {
+    const entry = entries[index];
+    link.dataset.aliasView = entry.id;
+    if (!onSwitch || active === 'discover') return;
+    link.addEventListener('click', (event) => {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      void onSwitch(entry.id);
+    });
+  });
+  const switcher = node('div', 'alias-editor-view-switcher');
+  switcher.append(navigation);
+  if (observedGroupIdentityDiscoverySupported(selectedList)) {
+    const discover = anchor('Discover', href('aliases', { list: id, aliasTab: 'discover' }),
+      'ui-button ui-button-secondary alias-discover-link');
+    discover.dataset.aliasView = 'discover';
+    switcher.append(discover);
+  }
+  setAliasEditorViewTabs(switcher, active);
+  return switcher;
 }
 
 function aliasLocalDateTimeValue(epoch) {
@@ -6851,8 +6888,8 @@ async function renderAliases() {
     return;
   }
 
-  const view = aliasEditorView(selectedList);
-  const defaultOrder = aliasEditorDefaultOrder(view);
+  let view = aliasEditorView(selectedList);
+  let defaultOrder = aliasEditorDefaultOrder(view);
   const activityLoading = view === 'activity' ?
     node('div', 'loading alias-activity-loading', 'Preparing alias activity…') : null;
   if (activityLoading) {
@@ -6938,8 +6975,11 @@ async function renderAliases() {
   summary.append(listActions);
   const usageCard = aliasListChannelUsageCard(selectedList, usage);
   updateUsageCard = usageCard.update;
-  main.append(summary, usageCard.element, aliasEditorViewTabs(selectedList), view === 'discover' ?
-    observedGroupIdentityToolbar(selectedList) : aliasEditorFilterToolbar(page, options));
+  let switchView = null;
+  const viewTabs = aliasEditorViewTabs(selectedList, (nextView) => switchView?.(nextView));
+  const filterToolbar = view === 'discover' ? observedGroupIdentityToolbar(selectedList) :
+    aliasEditorFilterToolbar(page, options);
+  main.append(summary, usageCard.element, viewTabs, filterToolbar);
 
   if (view === 'discover') {
     aliasEditorPageController = renderObservedGroupIdentities(main, page, selectedList, renderContext,
@@ -6949,6 +6989,9 @@ async function renderAliases() {
 
   const tableHost = node('div', 'alias-catalog-table-host alias-editor-table-host');
   const tableController = {};
+  const viewFeedback = node('div', 'alias-editor-view-feedback');
+  viewFeedback.setAttribute('role', 'status');
+  viewTabs.after(viewFeedback);
   const selectionStatus = node('div', 'alias-form-message alias-selection-status');
   selectionStatus.setAttribute('role', 'status');
   selectionStatus.setAttribute('aria-live', 'polite');
@@ -7021,9 +7064,9 @@ async function renderAliases() {
   actions.append(exportCsvLink('aliases', exportContext, { loading: true }));
   const pagerHost = node('div');
   pagerHost.append(pager(page));
-  const block = section(view === 'configure' ? 'Alias Configuration' :
-    (view === 'activity' ? 'Activity' : 'Custom View'),
-  tableHost, actions);
+  const viewTitle = (selectedView) => selectedView === 'configure' ? 'Alias Configuration' :
+    (selectedView === 'activity' ? 'Activity' : 'Custom View');
+  const block = section(viewTitle(view), tableHost, actions);
   block.classList.add('alias-editor-table-section');
   const resultCount = node('p', 'ui-section-note alias-filter-result-count',
     aliasEditorResultCount(page, filtersActive));
@@ -7034,12 +7077,81 @@ async function renderAliases() {
   });
   block.append(selectionStatus);
   renderTable();
-  block.append(node('p', 'ui-section-note', view === 'configure' ?
+  const viewDescription = node('p', 'ui-section-note', view === 'configure' ?
     'Configuration controls what the alias matches and what happens to its calls. Open an alias to edit it.' :
     'Calls are completed transmissions. Signaling counts recognized system actions. A call can also have signaling, ' +
       'so the columns should not be added together. An em dash means unavailable; 0 means monitored with none ' +
-      'observed.'), pagerHost);
+      'observed.');
+  block.append(viewDescription, pagerHost);
   main.append(bulkBar, block);
+
+  let activityLoaded = view !== 'configure';
+  let activityPagePromise = null;
+  let viewSwitchRequest = 0;
+  let dataVersion = 0;
+  switchView = async (nextView) => {
+    const request = ++viewSwitchRequest;
+    const currentDataVersion = dataVersion;
+    viewFeedback.replaceChildren();
+    if (nextView === view || !['configure', 'activity', 'custom'].includes(nextView)) return;
+    if (nextView !== 'configure' && !activityLoaded) {
+      viewFeedback.append(node('div', 'loading alias-activity-loading', 'Preparing alias activity…'));
+      try {
+        if (!activityPagePromise) {
+          const pending = apiPage('/api/v1/aliases', pageParameters({
+            ...filters, sort: route.get('sort') || defaultOrder.sort,
+            direction: route.get('direction') || defaultOrder.direction
+          }), { timeoutMs: 35_000 }).finally(() => {
+            if (activityPagePromise === pending) activityPagePromise = null;
+          });
+          activityPagePromise = pending;
+        }
+        const activityPage = await activityPagePromise;
+        if (request !== viewSwitchRequest || currentDataVersion !== dataVersion ||
+            !pageController.isCurrent()) return;
+        const activityRows = new Map((activityPage.rows || []).map((row) => [Number(row.alias_id), row]));
+        rows.splice(0, rows.length, ...rows.map((row) =>
+          ({ ...row, ...(activityRows.get(Number(row.alias_id)) || {}) })));
+        page = { ...page, rows };
+        aliasEditorContext.page = page;
+        activityLoaded = true;
+      } catch (error) {
+        if (request === viewSwitchRequest && pageController.isCurrent() && error?.name !== 'AbortError') {
+          viewFeedback.replaceChildren(node('div', 'error',
+            `Could not load alias activity. ${error.message}`));
+        }
+        return;
+      }
+    }
+    if (request !== viewSwitchRequest || currentDataVersion !== dataVersion ||
+        !pageController.isCurrent()) return;
+    const target = aliasEditorViewHref(selectedList, nextView, view);
+    window.history.pushState({}, '', target);
+    route = new URLSearchParams(new URL(target, window.location.href).search);
+    view = nextView;
+    defaultOrder = aliasEditorDefaultOrder(view);
+    ['aliasTab', 'sort', 'direction'].forEach((name) => {
+      let hidden = filterToolbar.querySelector(`input[type="hidden"][name="${name}"]`);
+      if (!hidden) {
+        hidden = node('input');
+        hidden.type = 'hidden';
+        hidden.name = name;
+        filterToolbar.prepend(hidden);
+      }
+      hidden.value = route.get(name) || '';
+    });
+    setAliasEditorViewTabs(viewTabs, view);
+    block.querySelector(':scope > .section-title').firstChild.textContent = viewTitle(view);
+    viewDescription.textContent = view === 'configure' ?
+      'Configuration controls what the alias matches and what happens to its calls. Open an alias to edit it.' :
+      'Calls are completed transmissions. Signaling counts recognized system actions. A call can also have signaling, ' +
+        'so the columns should not be added together. An em dash means unavailable; 0 means monitored with none ' +
+        'observed.';
+    resultCount.textContent = aliasEditorResultCount(page, filtersActive);
+    renderTable();
+    pagerHost.replaceChildren(pager(page));
+    viewFeedback.replaceChildren();
+  };
 
   const pageController = {
     isCurrent: () => aliasEditorPageController === pageController &&
@@ -7048,8 +7160,12 @@ async function renderAliases() {
       Number(routeChanges.list) === aliasListId(selectedList),
     refresh: async () => {
       if (!pageController.isCurrent()) return false;
+      viewSwitchRequest += 1;
+      dataVersion += 1;
+      activityPagePromise = null;
+      viewFeedback.replaceChildren();
       const nextPagePromise = apiPage('/api/v1/aliases', pageParameters({
-        ...filters, ...(view === 'configure' ? { include_activity: false } : {}),
+        ...filters, ...(view === 'configure' && !activityLoaded ? { include_activity: false } : {}),
         sort: route.get('sort') || defaultOrder.sort,
         direction: route.get('direction') || defaultOrder.direction
       }));
@@ -7061,6 +7177,7 @@ async function renderAliases() {
       if (!pageController.isCurrent()) return false;
       rows.splice(0, rows.length, ...(nextPage.rows || []));
       page = nextPage;
+      activityLoaded = activityLoaded || view !== 'configure';
       resultCount.textContent = aliasEditorResultCount(nextPage, filtersActive);
       options = nextOptions;
       aliasEditorContext.page = nextPage;

@@ -118,6 +118,22 @@
   min-width: 0;
 }
 
+.alias-editor-view-switcher {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.alias-editor-view-switcher .alias-editor-view-tabs {
+  margin-bottom: 0;
+}
+
+.alias-editor-view-feedback:empty {
+  display: none;
+}
+
 .alias-editor-welcome {
   min-height: 320px;
   display: grid;
@@ -199,6 +215,10 @@
   align-items: stretch;
   gap: var(--space-2);
   margin-bottom: var(--space-3);
+}
+
+.observed-group-identity-toolbar {
+  align-items: end;
 }
 
 .alias-filter-primary {
