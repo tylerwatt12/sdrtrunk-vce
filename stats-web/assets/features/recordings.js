@@ -169,7 +169,9 @@ function select(node, options, labelText) {
 // workspace with desktop filter/results columns; ui-input, ui-select, ui-dual-range,
 // ui-button, ui-choice-card, ui-feedback, and
 // the application's modal foundation own controls and feedback. This module
-// owns only recordings geometry and the historical audio lifecycle.
+// owns only recordings geometry and the historical audio lifecycle. Administration
+// reuses section shells, ui-field/ui-toggle, ui-action-row, ui-admin-facts, and
+// ui-section-disclosure in desktop/mobile and light/dark layouts.
 export function createRecordingsFeature(deps) {
   const { node, requestJson, openReadOnlyModal, section, pageHeader, beginPage,
     captureRenderContext, renderIsCurrent, content, isPrimaryAdmin, canViewRadio,
@@ -1335,7 +1337,45 @@ export function createRecordingsFeature(deps) {
     void loadPage(0);
   }
 
-  async function renderAdminRecordings() {
+  function adminLink(title, tab) {
+    return anchor(title, href('admin', { tab }), 'ui-button ui-button-secondary');
+  }
+
+  function adminActions(...controls) {
+    const actions = node('div', 'ui-action-row');
+    actions.append(...controls);
+    return actions;
+  }
+
+  function confirmAdminAction({ title, description, confirmLabel, perform, onError, danger = false,
+    details = [] }) {
+    const body = node('div', 'recordings-admin-dialog-body');
+    const status = node('div', 'recordings-form-status');
+    status.setAttribute('role', 'status');
+    let modal;
+    const cancel = button(node, 'Cancel', () => modal?.close());
+    const confirm = button(node, confirmLabel, async () => {
+      confirm.disabled = true;
+      cancel.disabled = true;
+      modal.setBusy(true);
+      try {
+        await perform();
+        modal.setBusy(false);
+        modal.close();
+      } catch (error) {
+        onError?.(error);
+        status.replaceChildren(makeNotice(error.message || `${title} could not be completed. Try again.`, 'error'));
+      } finally {
+        modal.setBusy(false);
+        confirm.disabled = false;
+        cancel.disabled = false;
+      }
+    }, danger ? 'ui-button ui-button-danger' : 'ui-button ui-button-primary');
+    body.append(node('p', '', description), ...details, status, adminActions(cancel, confirm));
+    modal = openReadOnlyModal(title, body, { id: 'recordings-administration-action' });
+  }
+
+  async function renderAdminRecordings(options = {}) {
     const wrapper = node('div', 'recordings-admin editor-workspace');
     const status = node('div', 'recordings-form-status');
     status.setAttribute('role', 'status');
@@ -1382,7 +1422,7 @@ export function createRecordingsFeature(deps) {
       modeBody.append(modes, folder, node('p', 'recordings-admin-note',
         'Managed calls are saved as MP3 for browser playback. The recording format setting applies to Classic mode. ' +
         'Existing managed calls stay searchable when you switch to Classic, and their age limit still applies.'),
-      saveMode, modeStatus);
+      adminActions(saveMode, adminLink('Audio quality settings', 'audio-quality')), modeStatus);
       const ageBody = node('div', 'recordings-admin-body');
       const age = textInput('No age limit', 'number');
       age.min = '1';
@@ -1404,7 +1444,161 @@ export function createRecordingsFeature(deps) {
           ageStatus.replaceChildren(makeNotice(error.message || 'Age limit could not be saved.', 'error'));
         } finally { saveAge.disabled = false; }
       }, 'ui-button ui-button-primary');
-      ageBody.append(field('Remove managed calls older than (days)', age), saveAge, ageStatus);
+      const ageField = field('Remove managed calls older than (days)', age);
+      ageField.append(node('small', 'ui-field-detail', 'Leave blank for no age limit. The age limit continues to ' +
+        'apply to existing managed calls in Classic mode.'));
+      ageBody.append(ageField, adminActions(saveAge, adminLink('Transcription settings', 'transcription')),
+        ageStatus);
+      const catalogBody = node('div', 'recordings-admin-body');
+      const catalogFacts = node('dl', 'ui-facts ui-admin-facts recordings-admin-facts');
+      const stat = (name, detail) => {
+        if (detail === null || detail === undefined || detail === '') return;
+        const fact = node('div', 'ui-fact');
+        fact.append(node('dt', '', name), node('dd', '', detail));
+        catalogFacts.append(fact);
+      };
+      const operationStatus = node('div', 'recordings-form-status');
+      operationStatus.setAttribute('role', 'status');
+      let currentCatalog = catalog;
+      const operation = (snapshot) => snapshot?.maintenance || snapshot?.operation || snapshot || {};
+      const operationState = (snapshot) => String(value(operation(snapshot), 'state', 'status') || 'IDLE')
+        .toUpperCase();
+      const activeOperation = (snapshot) => ['RUNNING', 'QUEUED', 'IN_PROGRESS'].includes(operationState(snapshot));
+      const drawCatalog = (snapshot) => {
+        currentCatalog = snapshot;
+        catalogFacts.replaceChildren();
+        const counts = snapshot?.catalog || snapshot;
+        stat('Listed calls', Number(value(counts, 'call_count', 'total_calls') || 0).toLocaleString());
+        stat('Oldest call', dateTime(value(counts, 'oldest_call_ms', 'oldest_start_ms'), true));
+        stat('Last recount', dateTime(value(snapshot, 'last_recount_ms')));
+        stat('Maintenance', prettify(operationState(snapshot)));
+        const current = operation(snapshot);
+        if (activeOperation(snapshot)) operationStatus.replaceChildren(makeNotice(
+          `${prettify(value(current, 'kind') || 'Maintenance')} running` +
+            `${value(current, 'inspected') !== null ? ` · ${Number(current.inspected).toLocaleString()} checked` : ''}`,
+          'loading'));
+      };
+      const refreshCatalog = async () => {
+        const latest = await requestJson(`${ADMIN}/status`, { page: false });
+        if (wrapper.isConnected) {
+          drawCatalog(latest);
+        }
+        return latest;
+      };
+      const refreshStatus = button(node, 'Refresh status', async () => {
+        refreshStatus.disabled = true;
+        try { await refreshCatalog(); }
+        catch (error) {
+          operationStatus.replaceChildren(makeNotice(error.message ||
+            'Call catalog status could not be loaded. Try again.', 'error'));
+        } finally { refreshStatus.disabled = false; }
+      });
+      const watchMaintenance = async (initial) => {
+        let latest = initial;
+        while (wrapper.isConnected && activeOperation(latest)) {
+          await new Promise((resolve) => window.setTimeout(resolve, 1_500));
+          if (!wrapper.isConnected) return;
+          try { latest = await refreshCatalog(); }
+          catch (error) {
+            operationStatus.replaceChildren(makeNotice(error.message || 'Maintenance status could not be read.',
+              'error'));
+            return;
+          }
+        }
+        if (wrapper.isConnected && initial !== latest) {
+          const failed = operationState(latest) === 'FAILED';
+          operationStatus.replaceChildren(makeNotice(failed ?
+            'Maintenance could not finish. Review the receiver log before trying again.' :
+            'Maintenance finished. Call totals are current.', failed ? 'error' : ''));
+        }
+      };
+      drawCatalog(catalog);
+      const maintenance = node('div', 'recordings-maintenance');
+      const run = (name, description, action) => {
+        const row = node('div', 'recordings-maintenance-row');
+        const copy = node('div');
+        copy.append(node('strong', '', name), node('p', '', description));
+        const control = button(node, `Run ${name.toLowerCase()}`, () => {
+          const details = [];
+          if (action === 'recount') {
+            const facts = node('dl', 'ui-facts ui-admin-facts recordings-admin-facts');
+            const counts = currentCatalog?.catalog || currentCatalog;
+            for (const [label, detail] of [
+              ['Listed calls', Number(value(counts, 'call_count', 'total_calls') || 0).toLocaleString()],
+              ['Last recount', dateTime(value(currentCatalog, 'last_recount_ms'))]
+            ]) {
+              if (!detail) continue;
+              const fact = node('div', 'ui-fact');
+              fact.append(node('dt', '', label), node('dd', '', detail));
+              facts.append(fact);
+            }
+            details.push(facts);
+          } else {
+            details.push(node('div', 'ui-notice ui-notice-warning',
+              'On a very large library, reindexing can delay new managed calls and may cause some to be dropped. ' +
+              'Run during quiet reception.'), node('p', 'recordings-admin-note',
+              'Reindex checks listed calls. It does not recover unlisted audio files.'));
+          }
+          confirmAdminAction({
+            title: name, confirmLabel: `Run ${name.toLowerCase()}`, details,
+            description: action === 'recount' ? 'Refresh the displayed call total for the managed recording catalog.' :
+              'Check listed calls and remove broken entries from the managed call catalog.',
+            perform: async () => {
+              control.disabled = true;
+              operationStatus.replaceChildren(makeNotice(`${name} started…`, 'loading'));
+              try {
+                await requestJson(`${ADMIN}/${action}`, { method: 'POST', page: false,
+                  timeoutMs: 60_000 });
+                const latest = await refreshCatalog();
+                if (activeOperation(latest)) void watchMaintenance(latest).finally(() => {
+                  control.disabled = false;
+                });
+                else {
+                  operationStatus.replaceChildren(makeNotice(`${name} complete.`));
+                  control.disabled = false;
+                }
+              } catch (error) {
+                control.disabled = false;
+                throw error;
+              }
+            },
+            onError: (error) => operationStatus.replaceChildren(makeNotice(error.message ||
+              `${name} could not be started.`, 'error'))
+          });
+        });
+        row.append(copy, control);
+        maintenance.append(row);
+      };
+      run('Recount calls', 'Refresh the displayed call total.', 'recount');
+      run('Reindex calls', 'Check listed calls and remove broken entries. On a very large library, this can delay ' +
+        'new managed calls and may cause some to be dropped. Run during quiet reception.', 'reindex');
+      const maintenanceDisclosure = node('details', 'ui-section-disclosure');
+      maintenanceDisclosure.append(node('summary', 'ui-section-summary', 'Maintenance'), maintenance,
+        node('p', 'recordings-admin-note recordings-maintenance-note',
+          'Reindex checks listed calls. It does not recover unlisted audio files.'));
+      catalogBody.append(catalogFacts, operationStatus, maintenanceDisclosure);
+      wrapper.append(section('Recording mode', modeBody));
+      if (options.classicFormatPanel) wrapper.append(options.classicFormatPanel);
+      wrapper.append(section('Managed call retention', ageBody),
+        section('Call catalog', catalogBody, refreshStatus));
+      if (activeOperation(catalog)) void watchMaintenance(catalog);
+    } catch (error) {
+      if (wrapper.isConnected) status.replaceChildren(makeNotice(error.message ||
+        'Recording settings could not be loaded. Try again.', 'error'));
+    }
+  }
+
+  async function renderAdminTranscription() {
+    const wrapper = node('div', 'recordings-admin editor-workspace');
+    const status = node('div', 'recordings-form-status');
+    status.setAttribute('role', 'status');
+    wrapper.append(status);
+    content.append(wrapper);
+    try {
+      const [settings, catalog] = await Promise.all([
+        requestJson(`${ADMIN}/settings`), requestJson(`${ADMIN}/status`)
+      ]);
+      if (!wrapper.isConnected) return;
       const transcriptionBody = node('div', 'recordings-admin-body');
       const enabledField = uiToggleField('Transcribe managed calls',
         settings?.transcription_enabled === true, 'Transcribe managed calls',
@@ -1426,20 +1620,28 @@ export function createRecordingsFeature(deps) {
       const keyState = node('small', 'ui-field-detail', settings?.transcription_key_configured ?
         'An API key is saved on this receiver.' : 'No API key is saved.');
       keyField.append(keyState);
-      const clearKey = button(node, 'Clear saved key', async () => {
-        clearKey.disabled = true;
-        try {
-          await requestJson(`${ADMIN}/settings`, { method: 'PUT',
-            body: { transcription_clear_api_key: true }, page: false });
-          key.value = '';
-          settings.transcription_key_configured = false;
-          keyState.textContent = 'No API key is saved.';
-          key.placeholder = 'Optional API key';
-          clearKey.hidden = true;
-          transcriptionStatus.replaceChildren(makeNotice('Saved API key cleared.'));
-        } catch (error) {
-          transcriptionStatus.replaceChildren(makeNotice(error.message || 'API key could not be cleared.', 'error'));
-        } finally { clearKey.disabled = false; }
+      const clearKey = button(node, 'Clear saved key', () => {
+        confirmAdminAction({
+          title: 'Clear saved transcription key', confirmLabel: 'Clear saved key', danger: true,
+          description: 'Clear the saved transcription API key from this receiver.',
+          details: [node('p', 'recordings-admin-note', 'The endpoint and model remain configured. A service that ' +
+            'requires a key may stop accepting transcription requests.')],
+          perform: async () => {
+            clearKey.disabled = true;
+            try {
+              await requestJson(`${ADMIN}/settings`, { method: 'PUT',
+                body: { transcription_clear_api_key: true }, page: false });
+              key.value = '';
+              settings.transcription_key_configured = false;
+              keyState.textContent = 'No API key is saved.';
+              key.placeholder = 'Optional API key';
+              clearKey.hidden = true;
+              transcriptionStatus.replaceChildren(makeNotice('Saved API key cleared.'));
+            } finally { clearKey.disabled = false; }
+          },
+          onError: (error) => transcriptionStatus.replaceChildren(makeNotice(error.message ||
+            'API key could not be cleared.', 'error'))
+        });
       });
       clearKey.hidden = settings?.transcription_key_configured !== true;
       const transcriptionFields = node('div', 'recordings-transcription-fields');
@@ -1477,7 +1679,7 @@ export function createRecordingsFeature(deps) {
             'Transcription settings could not be saved.', 'error'));
         } finally { saveTranscription.disabled = false; }
       }, 'ui-button ui-button-primary');
-      const transcriptionFacts = node('dl', 'ui-facts recordings-admin-facts');
+      const transcriptionFacts = node('dl', 'ui-facts ui-admin-facts recordings-admin-facts');
       const drawTranscription = (snapshot) => {
         transcriptionFacts.replaceChildren();
         const progress = snapshot?.transcription || {};
@@ -1502,110 +1704,36 @@ export function createRecordingsFeature(deps) {
       };
       drawTranscription(catalog);
       const keyActions = node('div', 'ui-action-row');
-      keyActions.append(clearKey, saveTranscription);
+      keyActions.append(saveTranscription, clearKey);
       transcriptionBody.append(enabledField, transcriptionFields,
         node('p', 'recordings-admin-note', 'Only calls at or above this length are eligible. ' +
           'The backlog processes in the background.'),
-        keyActions, transcriptionStatus, transcriptionFacts);
-      const catalogBody = node('div', 'recordings-admin-body');
-      const catalogFacts = node('dl', 'ui-facts recordings-admin-facts');
-      const stat = (name, detail) => {
-        if (detail === null || detail === undefined || detail === '') return;
-        const fact = node('div', 'ui-fact');
-        fact.append(node('dt', '', name), node('dd', '', detail));
-        catalogFacts.append(fact);
-      };
-      const operationStatus = node('div', 'recordings-form-status');
-      operationStatus.setAttribute('role', 'status');
-      const operation = (snapshot) => snapshot?.maintenance || snapshot?.operation || snapshot || {};
-      const operationState = (snapshot) => String(value(operation(snapshot), 'state', 'status') || 'IDLE')
-        .toUpperCase();
-      const activeOperation = (snapshot) => ['RUNNING', 'QUEUED', 'IN_PROGRESS'].includes(operationState(snapshot));
-      const drawCatalog = (snapshot) => {
-        catalogFacts.replaceChildren();
-        const counts = snapshot?.catalog || snapshot;
-        stat('Listed calls', Number(value(counts, 'call_count', 'total_calls') || 0).toLocaleString());
-        stat('Oldest call', dateTime(value(counts, 'oldest_call_ms', 'oldest_start_ms'), true));
-        stat('Last recount', dateTime(value(snapshot, 'last_recount_ms')));
-        stat('Maintenance', prettify(operationState(snapshot)));
-        const current = operation(snapshot);
-        if (activeOperation(snapshot)) operationStatus.replaceChildren(makeNotice(
-          `${prettify(value(current, 'kind') || 'Maintenance')} running` +
-            `${value(current, 'inspected') !== null ? ` · ${Number(current.inspected).toLocaleString()} checked` : ''}`,
-          'loading'));
-      };
-      const refreshCatalog = async () => {
-        const latest = await requestJson(`${ADMIN}/status`, { page: false });
-        if (wrapper.isConnected) {
-          drawCatalog(latest);
-          drawTranscription(latest);
-        }
-        return latest;
-      };
-      const refreshTranscription = button(node, 'Refresh status', async () => {
-        refreshTranscription.disabled = true;
-        try { await refreshCatalog(); }
-        catch (error) {
-          transcriptionStatus.replaceChildren(makeNotice(error.message ||
-            'Transcription status could not be loaded. Try again.', 'error'));
-        } finally { refreshTranscription.disabled = false; }
-      });
-      transcriptionBody.append(refreshTranscription);
-      const watchMaintenance = async (initial) => {
-        let latest = initial;
-        while (wrapper.isConnected && activeOperation(latest)) {
-          await new Promise((resolve) => window.setTimeout(resolve, 1_500));
-          if (!wrapper.isConnected) return;
-          try { latest = await refreshCatalog(); }
-          catch (error) {
-            operationStatus.replaceChildren(makeNotice(error.message || 'Maintenance status could not be read.',
-              'error'));
-            return;
+        keyActions, transcriptionStatus);
+      const progressBody = node('div', 'recordings-admin-body');
+      const progressStatus = node('div', 'recordings-form-status');
+      progressStatus.setAttribute('role', 'status');
+      const refreshStatus = button(node, 'Refresh status', async () => {
+        refreshStatus.disabled = true;
+        try {
+          const latest = await requestJson(`${ADMIN}/status`, { page: false });
+          if (wrapper.isConnected) {
+            drawTranscription(latest);
+            progressStatus.replaceChildren();
           }
-        }
-        if (wrapper.isConnected && initial !== latest) {
-          const failed = operationState(latest) === 'FAILED';
-          operationStatus.replaceChildren(makeNotice(failed ?
-            'Maintenance could not finish. Review the receiver log before trying again.' :
-            'Maintenance finished. Call totals are current.', failed ? 'error' : ''));
-        }
-      };
-      drawCatalog(catalog);
-      const maintenance = node('div', 'recordings-maintenance');
-      const run = (name, description, action) => {
-        const row = node('div', 'recordings-maintenance-row');
-        const copy = node('div');
-        copy.append(node('strong', '', name), node('p', '', description));
-        const control = button(node, `Run ${name.toLowerCase()}`, async () => {
-          control.disabled = true;
-          operationStatus.replaceChildren(makeNotice(`${name} started…`, 'loading'));
-          try {
-            await requestJson(`${ADMIN}/${action}`, { method: 'POST', page: false,
-              timeoutMs: 60_000 });
-            const latest = await refreshCatalog();
-            if (activeOperation(latest)) await watchMaintenance(latest);
-            else operationStatus.replaceChildren(makeNotice(`${name} complete.`));
-          } catch (error) {
-            operationStatus.replaceChildren(makeNotice(error.message || `${name} could not be started.`, 'error'));
-          } finally { control.disabled = false; }
-        });
-        row.append(copy, control);
-        maintenance.append(row);
-      };
-      run('Recount calls', 'Refresh the displayed call total.', 'recount');
-      run('Reindex calls', 'Check listed calls and remove broken entries. On a very large library, this can delay ' +
-        'new managed calls and may cause some to be dropped. Run during quiet reception.', 'reindex');
-      catalogBody.append(catalogFacts, maintenance, operationStatus,
-        node('p', 'recordings-admin-note', 'Reindex checks listed calls. It does not recover unlisted audio files.'));
-      wrapper.append(section('Recording mode', modeBody), section('Managed call retention', ageBody),
-        section('Transcription', transcriptionBody),
-        section('Call catalog', catalogBody));
-      if (activeOperation(catalog)) void watchMaintenance(catalog);
+        } catch (error) {
+          if (wrapper.isConnected) progressStatus.replaceChildren(makeNotice(error.message ||
+            'Transcription status could not be loaded. Try again.', 'error'));
+        } finally { refreshStatus.disabled = false; }
+      });
+      progressBody.append(transcriptionFacts, progressStatus,
+        adminActions(adminLink('Recording settings', 'recordings')));
+      wrapper.append(section('Transcription settings', transcriptionBody),
+        section('Transcription progress', progressBody, refreshStatus));
     } catch (error) {
       if (wrapper.isConnected) status.replaceChildren(makeNotice(error.message ||
-        'Recording settings could not be loaded. Try again.', 'error'));
+        'Transcription settings could not be loaded. Try again.', 'error'));
     }
   }
 
-  return { renderSearchPage, renderAdminRecordings, stopAudio };
+  return { renderSearchPage, renderAdminRecordings, renderAdminTranscription, stopAudio };
 }

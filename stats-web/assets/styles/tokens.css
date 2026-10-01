@@ -217,6 +217,14 @@
   --font-weight-medium: 600;
   --font-weight-control: 700;
   --font-weight-heading: 750;
+  --settings-sidebar-width: 208px;
+  --settings-nav-icon-size: 15px;
+  --settings-nav-font-size: 13px;
+  --settings-title-size: 24px;
+  --settings-title-mobile-size: 22px;
+  --settings-panel-title-size: var(--font-size-section-title);
+  --settings-heading-weight: 500;
+  --settings-group-letter-spacing: .035em;
   --line-height-body: 1.45;
   --line-height-control: 1.2;
   --modal-size-small: 540px;

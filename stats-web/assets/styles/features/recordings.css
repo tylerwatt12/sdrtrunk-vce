@@ -20,10 +20,15 @@
   overflow: visible;
 }
 
-.recordings-search,
-.recordings-admin-body {
+.recordings-search {
   display: grid;
   gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.recordings-admin-body {
+  display: grid;
+  gap: var(--space-4);
   padding: var(--space-4);
 }
 
@@ -612,21 +617,35 @@
 
 .recordings-maintenance {
   display: grid;
-  border-top: 1px solid var(--line);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+  padding: var(--space-4);
 }
 
 .recordings-maintenance-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  justify-items: start;
   gap: var(--space-3);
-  padding: var(--space-3) 0;
-  border-bottom: 1px solid var(--line);
 }
 
 .recordings-maintenance-row p {
   margin: var(--space-1) 0 0;
   color: var(--muted);
+}
+
+.recordings-maintenance-note {
+  padding: 0 var(--space-4) var(--space-4);
+}
+
+.recordings-admin-dialog-body {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.recordings-admin-dialog-body > p {
+  margin: 0;
 }
 
 .recordings-form-status:empty {
@@ -680,7 +699,8 @@
   .recordings-search-fields,
   .recordings-custom-dates,
   .recordings-mode-choices,
-  .recordings-transcription-fields {
+  .recordings-transcription-fields,
+  .recordings-maintenance {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -798,10 +818,6 @@
     padding-inline: var(--space-2);
   }
 
-  .recordings-maintenance-row {
-    align-items: start;
-    flex-direction: column;
-  }
 }
 
 @media (max-width: 340px) {

@@ -120,11 +120,13 @@ async function openRecordings(page, options = {}) {
     call: options.call || call, calls: options.calls || null, callDetail: options.callDetail || null,
     requestedFilters: [], suggestionRequests: [],
     paginate: options.paginate === true,
-    transcription: options.transcription || null, settingsWrites: [],
+    transcription: options.transcription || null, settingsWrites: [], maintenanceWrites: [],
+    catalogStatus: options.catalogStatus || { catalog: { call_count: 1 },
+      transcription: { pending: 3, completed: 1, failed: 1, active: false } },
     settings: { mode: options.mode || 'MANAGED', managed_directory: '/recordings',
       retention_days: null, transcription_enabled: false, transcription_url: '',
       transcription_model: '', transcription_min_duration_ms: 500,
-      transcription_key_configured: Boolean(options.keyConfigured) }
+      transcription_key_configured: Boolean(options.keyConfigured), ...options.settings }
   };
   const preferences = structuredClone(defaultPreferences);
   preferences.appearance.theme = options.theme || 'light';
@@ -166,8 +168,22 @@ async function openRecordings(page, options = {}) {
       }
       await route.fulfill({ json: { data: state.settings } });
     } else if (pathname === '/api/v1/admin/recordings/status') {
-      await route.fulfill({ json: { data: { catalog: { call_count: 1 },
-        transcription: { pending: 3, completed: 1, failed: 1, active: false } } } });
+      await route.fulfill({ json: { data: state.catalogStatus } });
+    } else if (['/api/v1/admin/recordings/recount', '/api/v1/admin/recordings/reindex'].includes(pathname)) {
+      state.maintenanceWrites.push(pathname.split('/').at(-1));
+      await route.fulfill({ json: { data: state.catalogStatus } });
+    } else if (pathname === '/api/v1/admin/operational-preferences') {
+      await route.fulfill({ json: { revision: 'a'.repeat(64), settings: { audio_record_format: 'MP3',
+        patch_group_streaming_option: 'PATCH_GROUP', mp3_setting: 'CBR_16', mp3_input_audio_format: 'SR_16000',
+        mp3_normalize_audio: false, stats_logging_enabled: true, stats_detailed_history_enabled: false,
+        stats_logging_retention_days: 30 },
+      options: {
+        patch_group_streaming_options: [{ value: 'PATCH_GROUP', label: 'Patch Group' }],
+        audio_record_formats: [{ value: 'MP3', label: 'MP3' }, { value: 'WAVE', label: 'WAV' }],
+        mp3_settings: [{ value: 'CBR_16', label: '16 kbps' }],
+        mp3_input_audio_formats_by_setting: { CBR_16: [{ value: 'SR_16000', label: '16 kHz' }] },
+        minimum_stats_logging_retention_days: 1, maximum_stats_logging_retention_days: 365
+      } } });
     } else if (pathname === '/api/v1/admin/recordings/calls/17/transcription/retry') {
       state.transcription = { status: 'PENDING', text: null, stored_at_ms: null };
       await route.fulfill({ json: { data: state.transcription } });
@@ -192,7 +208,7 @@ async function openRecordings(page, options = {}) {
       await route.fulfill({ status: 404, json: { error: { status: 404, message: 'Unavailable' } } });
     }
   });
-  await page.goto(options.view === 'admin' ? '/app.html?view=admin&tab=recordings' :
+  await page.goto(options.view === 'admin' ? `/app.html?view=admin&tab=${options.tab || 'recordings'}` :
     '/app.html?view=recordings');
   return state;
 }
@@ -677,8 +693,113 @@ test('recording identities remain readable when references or radio access are a
   await expect(detail.locator('a[href*="view="]')).toHaveCount(0);
 });
 
+test('recording settings retain mode, retention, catalog facts, and both maintenance actions', async ({ page }) => {
+  const state = await openRecordings(page, { view: 'admin', mode: 'CLASSIC',
+    settings: { retention_days: 90 },
+    catalogStatus: { catalog: { call_count: 28_416, oldest_call_ms: Date.parse('2026-07-03T08:42:00Z') },
+      last_recount_ms: Date.parse('2026-09-28T09:14:00Z'), maintenance: { state: 'IDLE' } } });
+  const workspace = page.locator('.recordings-admin');
+  await expect(workspace.getByRole('radio', { name: /Classic/ })).toBeChecked();
+  await expect(workspace).toContainText('/recordings');
+  await expect(workspace).toContainText('Existing managed calls stay searchable when you switch to Classic');
+  await expect(workspace.getByLabel('Remove managed calls older than (days)')).toHaveValue('90');
+  await expect(workspace.getByLabel('Recording format')).toHaveValue('MP3');
+  expect(await workspace.getByLabel('Recording format').locator('option').allTextContents())
+    .toEqual(['MP3', 'WAV']);
+  await expect(workspace).toContainText('28,416');
+  await expect(workspace).toContainText('Jul 3, 2026');
+  await expect(workspace).toContainText('Last recount');
+  await expect(workspace).toContainText('Idle');
+  await expect(workspace.getByLabel('Transcription endpoint URL')).toHaveCount(0);
+  await expect(workspace.getByRole('link', { name: 'Audio quality settings' }))
+    .toHaveAttribute('href', '/?view=admin&tab=audio-quality');
+  await expect(workspace.getByRole('link', { name: 'Transcription settings' }))
+    .toHaveAttribute('href', '/?view=admin&tab=transcription');
+
+  await workspace.getByRole('radio', { name: /Managed/ }).check();
+  await workspace.getByRole('button', { name: 'Save mode', exact: true }).click();
+  await expect(workspace).toContainText('Recording mode saved.');
+  expect(state.settingsWrites.at(-1)).toEqual({ mode: 'MANAGED' });
+  await workspace.getByLabel('Remove managed calls older than (days)').fill('2.5');
+  await workspace.getByRole('button', { name: 'Save age limit' }).click();
+  await expect(workspace).toContainText('Enter a whole number of days, or leave the field blank.');
+  await workspace.getByLabel('Remove managed calls older than (days)').fill('');
+  await workspace.getByRole('button', { name: 'Save age limit' }).click();
+  await expect(workspace).toContainText('Age limit saved.');
+  expect(state.settingsWrites.at(-1)).toEqual({ retention_days: null });
+
+  const maintenance = workspace.locator('details.ui-section-disclosure');
+  await expect(maintenance).not.toHaveAttribute('open', '');
+  await expect(workspace.getByRole('button', { name: 'Run recount calls' })).toBeHidden();
+  await maintenance.locator('summary').click();
+  for (const [title, action] of [['Recount calls', 'recount'], ['Reindex calls', 'reindex']]) {
+    await workspace.getByRole('button', { name: `Run ${title.toLowerCase()}` }).click();
+    const dialog = page.getByRole('dialog', { name: title });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    expect(state.maintenanceWrites).not.toContain(action);
+    await workspace.getByRole('button', { name: `Run ${title.toLowerCase()}` }).click();
+    await dialog.getByRole('button', { name: `Run ${title.toLowerCase()}` }).click();
+    await expect(dialog).toBeHidden();
+    await expect(workspace).toContainText(`${title} complete.`);
+    expect(state.maintenanceWrites.at(-1)).toBe(action);
+  }
+});
+
+test('transcription page keeps every provider field and progress status through refresh', async ({ page }) => {
+  const state = await openRecordings(page, { view: 'admin', tab: 'transcription', keyConfigured: true,
+    settings: { transcription_enabled: true, transcription_url: 'http://127.0.0.1:8000/v1/audio/transcriptions',
+      transcription_model: 'speech-model', transcription_min_duration_ms: 750 },
+    catalogStatus: { transcription: { pending: 36, completed: 12_408, failed: 2, active: true,
+      last_error: 'Transcription service was temporarily unavailable.' } } });
+  const workspace = page.locator('.recordings-admin');
+  await expect(workspace.getByRole('checkbox', { name: 'Transcribe managed calls' })).toBeChecked();
+  await expect(workspace.getByLabel('Transcription endpoint URL'))
+    .toHaveValue('http://127.0.0.1:8000/v1/audio/transcriptions');
+  await expect(workspace.getByLabel('Model ID')).toHaveValue('speech-model');
+  await expect(workspace.getByLabel('Minimum call length (ms)')).toHaveValue('750');
+  await expect(workspace.getByLabel('API key')).toHaveValue('');
+  for (const invalid of ['499', '600001', '500.5']) {
+    await workspace.getByLabel('Minimum call length (ms)').fill(invalid);
+    await workspace.getByRole('button', { name: 'Save transcription settings' }).click();
+    await expect(workspace).toContainText('Enter a whole number from 500 to 600,000 milliseconds.');
+    expect(state.settingsWrites).toEqual([]);
+  }
+  await workspace.getByLabel('Minimum call length (ms)').fill('750');
+  const progress = workspace.locator('section').filter({ hasText: 'Transcription progress' });
+  for (const text of ['Pending', '36', 'Completed', '12,408', 'Failed', '2', 'Worker',
+    'Transcribing a call', 'Last error', 'Transcription service was temporarily unavailable.']) {
+    await expect(progress).toContainText(text);
+  }
+  await expect(workspace.getByLabel('Remove managed calls older than (days)')).toHaveCount(0);
+  await workspace.getByRole('button', { name: 'Clear saved key' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Clear saved transcription key' });
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  expect(state.settingsWrites).toEqual([]);
+  await expect(workspace.getByRole('button', { name: 'Clear saved key' })).toBeFocused();
+  state.catalogStatus.transcription.pending = 35;
+  state.catalogStatus.transcription.completed = 12_409;
+  await progress.getByRole('button', { name: 'Refresh status' }).click();
+  await expect(progress).toContainText('35');
+  await expect(progress).toContainText('12,409');
+  await expect(workspace.getByRole('link', { name: 'Recording settings' }))
+    .toHaveAttribute('href', '/?view=admin&tab=recordings');
+});
+
+test('recording settings keep running and failed maintenance visible while tools are collapsed', async ({ page }) => {
+  const state = await openRecordings(page, { view: 'admin',
+    catalogStatus: { catalog: { call_count: 28_416 },
+      maintenance: { state: 'RUNNING', kind: 'REINDEX', inspected: 4_200 } } });
+  const workspace = page.locator('.recordings-admin');
+  await expect(workspace).toContainText('Reindex running · 4,200 checked');
+  await expect(workspace.getByRole('button', { name: 'Run reindex calls' })).toBeHidden();
+  state.catalogStatus.maintenance.state = 'FAILED';
+  await expect(workspace).toContainText('Maintenance could not finish. Review the receiver log before trying again.');
+  await expect(workspace.locator('.ui-admin-facts')).toContainText('Failed');
+});
+
 test('transcription settings save a write-only key and show catalog progress', async ({ page }) => {
-  const state = await openRecordings(page, { view: 'admin', keyConfigured: true });
+  const state = await openRecordings(page, { view: 'admin', tab: 'transcription', keyConfigured: true });
   await expect(page.getByRole('checkbox', { name: 'Transcribe managed calls' })).toBeVisible();
   await expect(page.locator('.recordings-admin')).toContainText('3');
   await expect(page.getByRole('button', { name: 'Clear saved key' })).toBeVisible();
@@ -699,13 +820,18 @@ test('transcription settings save a write-only key and show catalog progress', a
   await page.getByRole('button', { name: 'Save transcription settings' }).click();
   expect(state.settingsWrites.at(-1)).not.toHaveProperty('transcription_api_key');
   await page.getByRole('button', { name: 'Clear saved key' }).click();
+  const clearDialog = page.getByRole('dialog', { name: 'Clear saved transcription key' });
+  await expect(clearDialog).toBeVisible();
+  expect(state.settingsWrites.at(-1)).not.toHaveProperty('transcription_clear_api_key');
+  await clearDialog.getByRole('button', { name: 'Clear saved key' }).click();
+  await expect(clearDialog).toBeHidden();
   expect(state.settingsWrites.at(-1)).toMatchObject({ transcription_clear_api_key: true });
   await expect(page.getByRole('button', { name: 'Clear saved key' })).toBeHidden();
 });
 
 test('transcription settings fit a narrow dark viewport', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await openRecordings(page, { view: 'admin', theme: 'dark', keyConfigured: true });
+  await openRecordings(page, { view: 'admin', tab: 'transcription', theme: 'dark', keyConfigured: true });
   await expect(page.getByLabel('Transcription endpoint URL')).toBeVisible();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(overflow).toBeLessThanOrEqual(0);

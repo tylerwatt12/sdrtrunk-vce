@@ -907,14 +907,15 @@ async function main() {
   const receiverBehaviorSettings = functionBinding(appSource, 'renderAdminReceiverBehaviorSettings');
   assert.doesNotMatch(receiverBehaviorSettings, /adminWorkflowNote\(/,
     'Live timing should rely on its page description and setting label.');
-  assert.doesNotMatch(receiverBehaviorSettings, /section\('Live timing'/);
-  assert.match(receiverBehaviorSettings, /node\('section', 'section ui-section'\)/);
+  assert.match(receiverBehaviorSettings, /section\('Live timing'/,
+    'Combined display settings must identify the Live timing section.');
   const spectrumSnapSettings = functionBinding(appSource, 'renderAdminSpectrumSnapSettings');
   assert.doesNotMatch(spectrumSnapSettings, /adminWorkflowNote\(/,
     'Spectrum settings should rely on their page description and setting label.');
   assert.doesNotMatch(spectrumSnapSettings, /settingsCard\('Spectrum country'/);
   assert.doesNotMatch(spectrumSnapSettings, /Controls Spectrum band labels/);
-  assert.doesNotMatch(spectrumSnapSettings, /section\('Spectrum country'/);
+  assert.match(spectrumSnapSettings, /section\('Spectrum country'/,
+    'Combined display settings must identify the Spectrum country section.');
   assert.match(spectrumSnapSettings, /formField\('Country'/);
   const receiverSettingsRequests = [];
   const receiverSettingsResponses = [];
@@ -988,7 +989,7 @@ async function main() {
   assert.match(callMatchingRenderer, /callMatchingHistoryPage\(latest\.duplicates, historyPage\)/);
   assert.match(callMatchingRenderer, /callMatchingHistoryPager\(page, \(nextPage\) =>/);
   const tableCalls = functionCalls(appSource, 'table');
-  assert.equal(tableCalls.length, 18, 'Every application table call must be audited');
+  assert.equal(tableCalls.length, 19, 'Every application table call must be audited');
   assert.match(appSource,
     /else if \(!options\.serverSort && options\.sortable !== false\)/,
     'Server-paged tables must not offer current-page-only sorting for derived columns');

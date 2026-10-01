@@ -133,7 +133,7 @@ async function main() {
   assert.match(noticeText(disabled), /Saved activity summaries are off/);
   assert.doesNotMatch(noticeText(disabled), /Last saved update|not updating/);
   assert.deepEqual(disabled.children.find((child) => child?.label),
-    { label: 'Call output & activity', target: '/?view=admin&tab=operations' });
+    { label: 'Activity settings', target: '/?view=admin&tab=activity' });
 
   grantedCapabilities.delete('admin-settings');
   assert.match(noticeText(plainNotice()), /Ask an administrator to turn them on/);
@@ -152,7 +152,7 @@ async function main() {
   assert.match(noticeText(failed), /Saving activity summaries failed/);
   assert.match(noticeText(failed), /Last saved update: time 42/);
   assert.deepEqual(failed.children.find((child) => child?.label),
-    { label: 'Current status', target: '/?view=admin&tab=health' });
+    { label: 'Receiver status', target: '/?view=admin&tab=health' });
 
   context.acceptStatus({ stats_logging: { summary_configured: true, summary_active: false,
     state: 'STOPPED', last_successful_write_ms: 42 } });
@@ -194,7 +194,7 @@ async function main() {
       assert.match(notice.className, severity);
       assert.doesNotMatch(noticeText(notice), /is off|Turn it on|Turn on/);
       assert.deepEqual(notice.children.find((child) => child?.label),
-        { label: 'Current status', target: '/?view=admin&tab=health' });
+        { label: 'Receiver status', target: '/?view=admin&tab=health' });
       if (retained) assert.match(noticeText(notice), /newest saved activity is from time 42/);
       else assert.doesNotMatch(noticeText(notice), /newest saved activity/);
 
@@ -218,7 +218,7 @@ async function main() {
       assert.match(noticeText(notice), disabledSetting);
       assert.match(notice.className, retained ? /ui-notice-warning/ : /ui-notice-danger/);
       assert.deepEqual(notice.children.find((child) => child?.label),
-        { label: 'Call output & activity', target: '/?view=admin&tab=operations' });
+        { label: 'Activity settings', target: '/?view=admin&tab=activity' });
       if (retained) assert.match(noticeText(notice), /newest saved activity is from time 42/);
       else assert.doesNotMatch(noticeText(notice), /newest saved activity/);
 

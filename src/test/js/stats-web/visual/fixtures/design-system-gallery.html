@@ -70,6 +70,18 @@
     <symbol id="visual-icon-skip" viewBox="0 0 24 24"><path d="M5 5v14l10-7ZM19 5v14"></path></symbol>
     <symbol id="visual-icon-replay" viewBox="0 0 24 24"><path d="M7 7H3v-4M3.5 7A9 9 0 1 1 3 16"></path></symbol>
     <symbol id="visual-icon-clear-queue" viewBox="0 0 24 24"><path d="M4 6h10M4 12h8M4 18h6M16 14l5 5M21 14l-5 5"></path></symbol>
+
+    <symbol id="visual-icon-call-matching" viewBox="0 0 24 24"><path d="m12 15 2 2 4-4"></path><rect x="8" y="8" width="12" height="12" rx="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></symbol>
+    <symbol id="visual-icon-recording-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="2"></circle><path d="M7 12a5 5 0 0 1 5-5M12 17a5 5 0 0 0 5-5"></path></symbol>
+    <symbol id="visual-icon-audio-quality" viewBox="0 0 24 24"><path d="M2 10v4M6 6v12M10 3v18M14 8v8M18 5v14M22 10v4"></path></symbol>
+    <symbol id="visual-icon-transcription" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"></rect><path d="M7 15h4M15 15h2M7 11h2M13 11h4"></path></symbol>
+    <symbol id="visual-icon-activity" viewBox="0 0 24 24"><path d="M3 3v18h18M8 16v-3M13 16V8M18 16v-5M7 8l4-4 4 3 5-5"></path></symbol>
+    <symbol id="visual-icon-cleanup" viewBox="0 0 24 24"><path d="m7 21-4.3-4.3a2.4 2.4 0 0 1 0-3.4l9.6-9.6a2.4 2.4 0 0 1 3.4 0l4.6 4.6a2.4 2.4 0 0 1 0 3.4L11 21H7ZM6 10l8 8M22 21H7"></path></symbol>
+    <symbol id="visual-icon-radio-tower" viewBox="0 0 24 24"><path d="M4.9 16.1a10 10 0 0 1 0-14.1M7.8 13.2a6 6 0 0 1 0-8.4M16.2 4.8a6 6 0 0 1 0 8.4M19.1 2a10 10 0 0 1 0 14.1M9.5 18h5M8 22l4-11 4 11"></path><circle cx="12" cy="9" r="2"></circle></symbol>
+    <symbol id="visual-icon-display" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"></rect><path d="M8 21h8M12 17v4"></path></symbol>
+    <symbol id="visual-icon-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"></path><circle cx="9" cy="7" r="4"></circle></symbol>
+    <symbol id="visual-icon-bug" viewBox="0 0 24 24"><path d="M8 8.5a4 4 0 0 1 8 0V16a4 4 0 0 1-8 0Z"></path><path d="M12 4V2M8.5 5 6.5 3M15.5 5l2-2M8 11H4M16 11h4M8 15H4M16 15h4M10 11h4M12 11v8"></path></symbol>
+    <symbol id="visual-icon-network-visualizer" viewBox="0 0 24 24"><circle cx="5" cy="7" r="2"></circle><circle cx="18.5" cy="5" r="2"></circle><circle cx="12" cy="12" r="2.5"></circle><circle cx="5.5" cy="18" r="2"></circle><circle cx="19" cy="18" r="2"></circle><path d="m6.8 7.8 3.1 2.6M14 10.5l2.8-3.7M10 13.5l-2.8 3M14.2 13.5l3.2 3M7.5 18h9.5"></path></symbol>
   </svg>
 
   <section class="visual-access-landing-example access-landing" aria-label="VCE sign in">
@@ -549,39 +561,15 @@
   </section>
 
   <main class="visual-settings-example">
-    <header class="visual-settings-header">
-      <div>
-        <p class="visual-settings-eyebrow">Administration</p>
-        <h1>Receiver settings</h1>
-        <p>Shared settings cards keep receiver options predictable across every administration page.</p>
-      </div>
-      <span class="ui-pill ui-pill-success"><svg aria-hidden="true"><use href="#visual-icon-check"></use></svg><span>Connected</span></span>
-    </header>
 
-    <div class="admin-settings-shell">
-      <nav class="admin-settings-tree" aria-label="Settings pages">
-        <details class="admin-settings-branch" open>
-          <summary>Receiver</summary>
-          <div class="admin-settings-branch-items">
-            <a class="admin-settings-leaf active" href="#receiver">General <span class="settings-scope-badge">Receiver</span></a>
-            <a class="admin-settings-leaf" href="#alerts">Health alerts <span class="settings-scope-badge">Receiver</span></a>
-            <a class="admin-settings-leaf" href="#p25">P25 overrides <span class="settings-scope-badge">Receiver</span></a>
-          </div>
-        </details>
-        <details class="admin-settings-branch" open>
-          <summary>Account</summary>
-          <div class="admin-settings-branch-items">
-            <a class="admin-settings-leaf" href="#profile">My settings <span class="settings-scope-badge">You</span></a>
-            <a class="admin-settings-leaf" href="#radio-reference">RadioReference <span class="settings-scope-badge">Receiver</span></a>
-          </div>
-        </details>
-      </nav>
+    <div class="admin-settings-shell ui-settings-workspace">
+      <nav class="admin-settings-tree ui-settings-navigation" data-visual-admin-nav-mirror="display" aria-label="Administration sections"></nav>
 
-      <section class="admin-settings-content" id="receiver">
-        <form class="admin-form settings-page-form visual-settings-form">
-          <div class="settings-card-grid">
-            <section class="settings-card">
-              <header class="settings-card-header">
+      <section class="admin-settings-content ui-settings-page" id="receiver"><header class="ui-settings-page-header"><div class="ui-settings-breadcrumb">Administration › Web interface</div><div class="ui-settings-title-row"><h1 class="page-title">Receiver settings</h1><span class="ui-settings-scope">Receiver-wide</span></div><p class="ui-settings-description">Shared settings cards keep receiver options predictable across every administration page.</p></header>
+        <form class="admin-form settings-page-form ui-settings-form visual-settings-form">
+          <div class="settings-card-grid ui-settings-card-grid">
+            <section class="settings-card ui-settings-panel">
+              <header class="settings-card-header ui-settings-panel-header">
                 <h2 class="settings-card-title">Web interface</h2>
                 <p class="settings-card-description">Choose how this receiver appears to local operators.</p>
               </header>
@@ -607,8 +595,8 @@
               </div>
             </section>
 
-            <section class="settings-card">
-              <header class="settings-card-header">
+            <section class="settings-card ui-settings-panel">
+              <header class="settings-card-header ui-settings-panel-header">
                 <h2 class="settings-card-title">Current configuration</h2>
                 <p class="settings-card-description">Read-only values help confirm which receiver is being changed.</p>
               </header>
@@ -750,23 +738,14 @@
   </main>
 
   <main class="visual-feature-example visual-admin-support-example">
-    <header class="visual-feature-header"><div><p class="visual-settings-eyebrow">Administration</p><h1>Report a problem</h1><p>Create and submit a support report.</p></div></header>
-    <div class="admin-settings-shell">
-      <nav class="admin-settings-tree" aria-label="Administration settings">
-        <label class="admin-settings-picker"><span class="admin-settings-picker-label">Administration section</span><select class="ui-select" aria-label="Administration section"><optgroup label="Monitor"><option>Current status</option><option>Call matching</option><option selected>Report a problem</option></optgroup><optgroup label="Receiving &amp; output"><option>Call output &amp; activity</option><option>Spectrum country</option><option>P25 band plans</option></optgroup><optgroup label="Accounts &amp; access"><option>Web accounts</option><option>Page access</option></optgroup><optgroup label="Display"><option>Live timing</option></optgroup></select></label>
-        <details class="admin-settings-branch" open><summary>Monitor</summary><div class="admin-settings-branch-items"><a class="admin-settings-leaf" href="#">Current status</a><a class="admin-settings-leaf" href="#">Call matching</a><a class="admin-settings-leaf active" href="#" aria-current="page">Report a problem</a></div></details>
-        <details class="admin-settings-branch"><summary>Receiving &amp; output</summary><div class="admin-settings-branch-items"><a class="admin-settings-leaf" href="#">Call output &amp; activity</a><a class="admin-settings-leaf" href="#">Spectrum country</a><a class="admin-settings-leaf" href="#">P25 band plans</a></div></details>
-        <details class="admin-settings-branch"><summary>Accounts &amp; access</summary><div class="admin-settings-branch-items"><a class="admin-settings-leaf" href="#">Web accounts</a><a class="admin-settings-leaf" href="#">Page access</a></div></details>
-        <details class="admin-settings-branch"><summary>Display</summary><div class="admin-settings-branch-items"><a class="admin-settings-leaf" href="#">Live timing</a></div></details>
-      </nav>
-      <div class="admin-settings-content">
-        <section class="section ui-section">
-          <div class="section-title ui-section-title"><h2>Report a problem</h2></div>
-          <div class="admin-section-body support-report-settings">
-            <form class="admin-form settings-page-form support-report-form">
-              <div class="settings-card-grid support-report-card-grid">
-                <section class="settings-card">
-                  <div class="settings-card-header"><h3 class="settings-card-title">Issue details</h3></div>
+    <div class="admin-settings-shell ui-settings-workspace">
+      <nav class="admin-settings-tree ui-settings-navigation" data-visual-admin-nav-mirror="support" aria-label="Administration sections"></nav>
+      <div class="admin-settings-content ui-settings-page"><header class="ui-settings-page-header"><div class="ui-settings-breadcrumb">Administration › Status & support</div><div class="ui-settings-title-row"><h1 class="page-title">Report a problem</h1><span class="ui-settings-scope">Receiver-wide</span></div><p class="ui-settings-description">Create and submit a support report.</p></header>
+        <div class="admin-section-body support-report-settings">
+            <form class="admin-form settings-page-form ui-settings-form ui-settings-form-plain support-report-form">
+              <div class="settings-card-grid ui-settings-card-grid support-report-card-grid">
+                <section class="settings-card ui-settings-panel">
+                  <div class="settings-card-header ui-settings-panel-header"><h3 class="settings-card-title">Issue details</h3></div>
                   <div class="settings-card-body">
                     <div class="support-report-fields">
                       <label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">Title</span><input class="ui-input" value="Audio stops after several calls"></label>
@@ -776,8 +755,8 @@
                     </div>
                   </div>
                 </section>
-                <section class="settings-card">
-                  <div class="settings-card-header"><h3 class="settings-card-title">Problem details</h3></div>
+                <section class="settings-card ui-settings-panel">
+                  <div class="settings-card-header ui-settings-panel-header"><h3 class="settings-card-title">Problem details</h3></div>
                   <div class="settings-card-body">
                     <div class="support-report-narrative-fields">
                       <label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">What happened</span><textarea class="ui-textarea support-report-textarea">Calls appear in Live activity, but playback remains silent.</textarea></label>
@@ -785,8 +764,8 @@
                     </div>
                   </div>
                 </section>
-                <section class="settings-card support-report-diagnostics-card">
-                  <div class="settings-card-header"><h3 class="settings-card-title">Information for support</h3><p class="settings-card-description">Passwords, service keys, and private service details are excluded.</p></div>
+                <section class="settings-card ui-settings-panel support-report-diagnostics-card">
+                  <div class="settings-card-header ui-settings-panel-header"><h3 class="settings-card-title">Information for support</h3><p class="settings-card-description">Passwords, service keys, and private service details are excluded.</p></div>
                   <div class="settings-card-body">
                     <details class="support-report-options" open>
                       <summary>Information to include</summary>
@@ -805,8 +784,7 @@
                 <div class="admin-form-actions ui-action-row"><button class="ui-button ui-button-primary" type="button">Prepare support report</button></div>
               </footer>
             </form>
-          </div>
-        </section>
+        </div>
       </div>
     </div>
   </main>
@@ -855,6 +833,45 @@
     </div>
   </main>
 
+
+  <main class="visual-admin-navigation-example ui-settings-workspace editor-workspace">
+    <nav class="ui-settings-navigation" aria-label="Administration sections">
+      <div class="ui-settings-navigation-title">Administration</div>
+      <label class="ui-settings-picker ui-field"><span class="ui-settings-picker-label">Administration section</span><select class="ui-select" aria-label="Administration section" data-visual-admin-picker></select></label>
+      <div data-visual-admin-navigation></div>
+    </nav>
+    <div class="ui-settings-page">
+      <header class="ui-settings-page-header">
+        <div class="ui-settings-breadcrumb"><span>Administration</span><span aria-hidden="true">›</span><span data-visual-admin-group>Audio &amp; recordings</span></div>
+        <div class="ui-settings-title-row"><h1 class="page-title" data-visual-admin-title>Recording settings</h1><span class="ui-settings-scope">Receiver-wide</span></div>
+        <p class="ui-settings-description" data-visual-admin-description>Choose how calls are recorded and how long managed calls are kept.</p>
+      </header>
+      <section class="ui-section ui-settings-panel">
+        <header class="ui-section-title"><h2>Recording mode</h2><span class="ui-settings-scope">Receiver-wide</span></header>
+        <form class="admin-form ui-settings-form">
+          <div class="settings-field-grid"><label class="ui-choice-card ui-toggle-field"><input class="ui-choice-radio" type="radio" name="visual-admin-mode" value="CLASSIC"><span class="ui-toggle-copy"><strong>Classic</strong><small>Keep a flat recordings folder for tools such as Trunking Recorder.</small></span></label><label class="ui-choice-card ui-toggle-field"><input class="ui-choice-radio" type="radio" name="visual-admin-mode" value="MANAGED" checked><span class="ui-toggle-copy"><strong>Managed</strong><small>Organize calls automatically, search by radio or talkgroup, listen in your browser, and clear old calls by age.</small></span></label></div>
+          <dl class="ui-settings-facts"><div><dt>Managed folder</dt><dd>Receiver recording folder / managed calls</dd></div></dl>
+          <p class="ui-field-detail">Managed calls use MP3 for browser playback. Existing managed calls remain searchable when you switch to Classic, and their age limit still applies.</p>
+          <div class="ui-action-row"><button type="button" class="ui-button ui-button-primary">Save mode</button><a class="link-button" href="#audio">Audio quality settings</a></div>
+        </form>
+      </section>
+      <section class="ui-section ui-settings-panel">
+        <header class="ui-section-title"><h2>Managed call retention</h2></header>
+        <form class="admin-form ui-settings-form">
+          <label class="ui-field"><span class="ui-field-label">Remove managed calls older than (days)</span><input class="ui-input" type="number" min="1" max="3650" value="90"><small class="ui-field-detail">Leave blank for no age limit. The age limit continues to apply to existing managed calls in Classic mode.</small></label>
+          <div class="ui-action-row"><button type="button" class="ui-button ui-button-primary" disabled>Save age limit</button><a class="link-button" href="#transcription">Transcription settings</a></div>
+        </form>
+      </section>
+      <section class="ui-section ui-settings-panel">
+        <header class="ui-section-title"><h2>Call catalog</h2><button type="button" class="ui-button ui-button-secondary">Refresh status</button></header>
+        <div class="ui-settings-panel-body">
+          <dl class="ui-settings-facts"><div><dt>Listed calls</dt><dd>28,416</dd></div><div><dt>Oldest call</dt><dd>Jul 3, 2026 · 8:42 AM</dd></div><div><dt>Last recount</dt><dd>Today · 9:14 AM</dd></div><div><dt>Maintenance</dt><dd><span class="ui-pill ui-pill-success">Idle</span></dd></div></dl>
+          <details><summary>Maintenance</summary><div class="settings-field-grid"><div><h3>Recount calls</h3><p class="ui-field-detail">Refresh the displayed call total.</p><button type="button" class="ui-button ui-button-secondary">Run recount calls</button></div><div><h3>Reindex calls</h3><p class="ui-field-detail">Check listed calls and remove broken entries. On a large library, this can delay new managed calls and may cause some to be dropped. Run during quiet reception.</p><button type="button" class="ui-button ui-button-secondary">Run reindex calls</button></div></div></details>
+        </div>
+      </section>
+    </div>
+  </main>
+
   <main class="visual-feature-example visual-admin-access-example">
     <header class="visual-feature-header"><div><p class="visual-settings-eyebrow">Administration</p><h1>Web accounts</h1><p>Manage accounts that can sign in.</p></div></header>
     <section class="section ui-section">
@@ -877,7 +894,7 @@
     <section class="section ui-section">
       <div class="section-title ui-section-title"><h2>Access levels</h2></div>
       <div class="admin-section-body">
-        <div class="admin-web-access-control">
+        <div class="admin-web-access-control ui-field-row ui-settings-control">
           <div class="admin-web-access-copy"><strong>Entire web interface</strong><p>Individual pages can require a higher access level.</p></div>
           <label class="admin-web-access-tier"><span>Minimum access</span><select class="ui-select admin-tier-select"><option>User</option></select></label>
         </div>

@@ -355,6 +355,11 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
   padding: 28px 0 48px;
 }
 
+.visual-admin-navigation-example {
+  width: min(1180px, calc(100% - 32px));
+  margin: var(--space-3) auto var(--space-5);
+}
+
 .visual-tuners-example {
   width: min(1760px, calc(100% - 32px));
 }
@@ -610,6 +615,7 @@ body:not([data-gallery-view="health"]) .visual-health-example,
 body:not([data-gallery-view="p25"]) .visual-p25-example,
 body:not([data-gallery-view="admin-access"]) .visual-admin-access-example,
 body:not([data-gallery-view="admin-scan-lists"]) .visual-admin-scan-lists-example,
+body:not([data-gallery-view="admin-navigation"]) .visual-admin-navigation-example,
 body:not([data-gallery-view="admin-receiver"]) .visual-admin-receiver-example,
 body:not([data-gallery-view="admin-support"]) .visual-admin-support-example,
 body:not([data-gallery-view="dashboard-health"]) .visual-dashboard-health-example,

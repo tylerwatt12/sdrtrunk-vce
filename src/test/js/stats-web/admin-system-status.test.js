@@ -91,5 +91,8 @@ const systemStatus = functionSource('function receiverHealthSavedActivitySection
 assert.match(systemStatus, /\['Activity summaries'/);
 assert.match(systemStatus, /\['Individual events'/);
 assert.match(systemStatus, /\['Activity storage'/);
-assert.match(systemStatus, /receiverHealthSection\('saved-activity', 'Saved activity'/);
+assert.match(systemStatus,
+  /receiverHealthSection\('saved-activity', activityPage \? 'Current collection status' : 'Saved activity'/);
+assert.match(systemStatus, /route\.get\('tab'\) === 'activity'/,
+  'Activity settings and Receiver status must share the same collection status data.');
 assert.match(systemStatus, /capabilityAllowed\(ACCESS_CAPABILITIES\.ADMIN_SETTINGS\)/);

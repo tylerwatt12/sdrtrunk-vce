@@ -23,7 +23,7 @@ import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from
 import { createStreamingWorkspace } from './features/streaming.js?v=5';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=3';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=9';
-import { createRecordingsFeature } from './features/recordings.js?v=10';
+import { createRecordingsFeature } from './features/recordings.js?v=11';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=4';
 
@@ -2282,7 +2282,7 @@ function detailedHistoryNotice() {
     const notice = node('div', `ui-notice ${logging.historyRetained ? 'ui-notice-warning' : 'ui-notice-danger'} ` +
       'ui-notice-spaced ui-inset-notice', `${availability}${lastSaved} ${setting} is off. `);
     if (capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS)) {
-      notice.append('Turn it on in ', anchor('Call output & activity', href('admin', { tab: 'operations' })), '.');
+      notice.append('Turn it on in ', anchor('Activity settings', href('admin', { tab: 'activity' })), '.');
     } else {
       notice.append('Ask an administrator to turn it on.');
     }
@@ -2294,7 +2294,7 @@ function detailedHistoryNotice() {
   const notice = node('div', `ui-notice ${failed ? 'ui-notice-danger' : 'ui-notice-warning'} ` +
     'ui-notice-spaced ui-inset-notice', `Saving individual activity events ${state}${lastSaved} `);
   if (capabilityAllowed(ACCESS_CAPABILITIES.RECEIVER_HEALTH)) {
-    notice.append('Check ', anchor('Current status', href('admin', { tab: 'health' })), ' for details.');
+    notice.append('Check ', anchor('Receiver status', href('admin', { tab: 'health' })), ' for details.');
   } else {
     notice.append('Ask an administrator to check the receiver status.');
   }
@@ -2312,7 +2312,7 @@ function databaseLoggingNotice(view) {
     const notice = node('div', 'ui-notice ui-notice-warning ui-notice-spaced',
       'Saved activity summaries are off. Statistics on this page show the last saved information. ');
     if (capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS)) {
-      notice.append('Turn them on in ', anchor('Call output & activity', href('admin', { tab: 'operations' })), '.');
+      notice.append('Turn them on in ', anchor('Activity settings', href('admin', { tab: 'activity' })), '.');
     } else {
       notice.append('Ask an administrator to turn them on.');
     }
@@ -2327,7 +2327,7 @@ function databaseLoggingNotice(view) {
     `${failed ? 'Saving activity summaries failed.' : 'Saved activity summaries are not running.'} ` +
     `This page may show older information.${lastWrite} `);
   if (capabilityAllowed(ACCESS_CAPABILITIES.RECEIVER_HEALTH)) {
-    notice.append('Check ', anchor('Current status', href('admin', { tab: 'health' })), ' for details.');
+    notice.append('Check ', anchor('Receiver status', href('admin', { tab: 'health' })), ' for details.');
   } else {
     notice.append('Ask an administrator to check the receiver status.');
   }
@@ -2356,6 +2356,7 @@ function tabs(items, active) {
 
 function section(title, child, action = null) {
   const wrapper = node('section', 'section ui-section');
+  if (route.get('view') === 'admin') wrapper.classList.add('ui-settings-panel');
   const titleBar = node('div', 'section-title ui-section-title', title);
   if (action) titleBar.append(action);
   wrapper.append(titleBar);
@@ -8676,7 +8677,7 @@ class ReceiverHealthController {
     this.pageHost = null;
     this.resolvedSort = 'recent';
     this.resolvedPage = 0;
-    this.openHealthSections = new Set(['host-overview', 'current', 'saved-activity', 'active', 'resolved']);
+    this.openHealthSections = new Set(['host-overview', 'current', 'saved-activity', 'active']);
     this.expandedResolvedIncidents = new Set();
   }
 
@@ -8701,7 +8702,7 @@ class ReceiverHealthController {
       this.stale = false;
       this.lastError = '';
       this.resolvedPage = 0;
-      this.openHealthSections = new Set(['host-overview', 'current', 'saved-activity', 'active', 'resolved']);
+      this.openHealthSections = new Set(['host-overview', 'current', 'saved-activity', 'active']);
       this.expandedResolvedIncidents.clear();
     } else if (!this.desktopEnabled()) {
       this.abortRequest();
@@ -8738,7 +8739,7 @@ class ReceiverHealthController {
   bindPage(host) {
     if (this.pageHost !== host) {
       this.resolvedPage = 0;
-      this.openHealthSections = new Set(['host-overview', 'current', 'saved-activity', 'active', 'resolved']);
+      this.openHealthSections = new Set(['host-overview', 'current', 'saved-activity', 'active']);
     }
     this.pageHost = host;
     this.updatePage();
@@ -16498,7 +16499,7 @@ function saveP25VisualizerEventSettings(value) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=27');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=28');
   const visualizerModule = await p25VisualizerModulePromise;
   if (!renderIsCurrent(renderContext)) return;
   const visualizer = visualizerModule.createP25Visualizer({
@@ -22089,7 +22090,7 @@ function accessPolicyIdentity(policy) {
 }
 
 function webAccessControl(policy, statusHost) {
-  const wrapper = node('div', 'admin-web-access-control');
+  const wrapper = node('div', 'admin-web-access-control ui-field-row ui-settings-control');
   const copy = node('div', 'admin-web-access-copy');
   copy.append(node('strong', '', 'Entire web interface'),
     node('p', '', 'Individual pages can require a higher access level.'));
@@ -22113,8 +22114,8 @@ async function renderAdminAccess(renderContext = captureRenderContext()) {
   statusHost.setAttribute('role', 'status');
   const titleActions = sectionActionHost();
   const body = node('div', 'admin-section-body');
-  body.append(statusHost);
-  if (webPolicy) body.append(webAccessControl(webPolicy, statusHost));
+  content.append(statusHost);
+  if (webPolicy) content.append(section('Web interface', webAccessControl(webPolicy, statusHost)));
   body.append(table(featurePolicies, [
       { id: 'capability', label: 'Page or feature', render: accessPolicyIdentity,
         sortValue: (policy) => policy.displayName || policy.id },
@@ -22125,7 +22126,7 @@ async function renderAdminAccess(renderContext = captureRenderContext()) {
       type: 'admin-access', sortable: false, mobileCards: true, tableClass: 'admin-responsive-table',
       layoutMenuHost: titleActions
     }));
-  content.append(section('Access levels', body, titleActions));
+  content.append(section('Pages & features', body, titleActions));
   if (recordingsPolicies.length) {
     const recordingsTitleActions = sectionActionHost();
     const recordingsBody = node('div', 'admin-section-body');
@@ -22847,9 +22848,9 @@ async function renderAdminRadioReferenceSettings() {
   }
 }
 
-async function renderAdminSpectrumSnapSettings() {
+async function renderAdminSpectrumSnapSettings(target = content) {
   const body = node('div', 'admin-section-body spectrum-snap-settings');
-  const form = node('form', 'admin-form settings-page-form');
+  const form = node('form', 'admin-form settings-page-form ui-settings-form');
   const country = node('select');
   country.required = true;
   country.disabled = true;
@@ -22861,17 +22862,13 @@ async function renderAdminSpectrumSnapSettings() {
   save.disabled = true;
   const actions = node('div', 'admin-form-actions');
   actions.append(save);
-  const card = node('div', 'settings-card');
-  const cardBody = node('div', 'settings-card-body');
-  cardBody.append(formField('Country', country, 'Only the United States is currently available.'));
-  card.append(cardBody);
   const footer = node('div', 'settings-form-footer');
   footer.append(message, actions);
-  form.append(settingsCardGrid(card), footer);
+  form.append(formField('Country', country, 'Only the United States is currently available.'), footer);
   body.append(form);
-  const panel = node('section', 'section ui-section');
-  panel.append(body);
-  content.append(panel);
+  const panel = section('Spectrum country', body);
+  panel.classList.add('ui-settings-panel');
+  target.append(panel);
 
   let confirmed = null;
   const apply = (documentValue) => {
@@ -22964,9 +22961,9 @@ async function requestReceiverSettings(method = 'GET', settings = null, revision
   return decodeReceiverSettingsEnvelope(documentValue);
 }
 
-async function renderAdminReceiverBehaviorSettings() {
+async function renderAdminReceiverBehaviorSettings(target = content) {
   const body = node('div', 'admin-section-body receiver-settings');
-  const form = node('form', 'admin-form settings-page-form receiver-settings-form');
+  const form = node('form', 'admin-form settings-page-form ui-settings-form receiver-settings-form');
   const grantAge = node('input');
   grantAge.type = 'number';
   grantAge.min = '100';
@@ -22980,18 +22977,14 @@ async function renderAdminReceiverBehaviorSettings() {
   save.disabled = true;
   const actions = node('div', 'admin-form-actions');
   actions.append(save);
-  const group = node('div', 'settings-card');
-  const groupBody = node('div', 'settings-card-body');
-  groupBody.append(formField('Mark a traffic row idle after (milliseconds)', grantAge,
-    'Applies to traffic rows on the Live page.'));
-  group.append(groupBody);
   const footer = node('div', 'settings-form-footer');
   footer.append(message, actions);
-  form.append(settingsCardGrid(group), footer);
+  form.append(formField('Mark a traffic row idle after (milliseconds)', grantAge,
+    'Applies to traffic rows on the Live page.'), footer);
   body.append(form);
-  const panel = node('section', 'section ui-section');
-  panel.append(body);
-  content.append(panel);
+  const panel = section('Live timing', body);
+  panel.classList.add('ui-settings-panel');
+  target.append(panel);
 
   let confirmed = null;
   const apply = (envelope) => {
@@ -23082,18 +23075,25 @@ async function requestOperationalPreference(method = 'GET', field = '', value = 
   return decodeOperationalPreferencesEnvelope(documentValue);
 }
 
-async function renderAdminOperationalPreferences(renderContext = captureRenderContext()) {
+async function renderAdminOperationalPreferences(renderContext = captureRenderContext(), options = {}) {
   const body = node('div', 'admin-section-body');
   const status = node('div', 'admin-form-message', 'Loading settings…');
   status.setAttribute('role', 'status');
   const reload = node('button', 'ui-button ui-button-secondary', 'Reload saved settings');
   reload.type = 'button';
   reload.disabled = true;
-  const workspace = node('div', 'settings-page-form operational-preferences');
+  const workspace = options.fields ? node('div', 'operational-preferences operational-preferences-focused') :
+    node('div', 'settings-page-form ui-settings-form operational-preferences');
   const lanes = node('div', 'operational-preference-lanes');
   workspace.append(status, lanes);
   body.append(workspace);
-  content.append(section('Call output & activity', body, sectionActionHost(reload)));
+  const panel = options.fields ? node('div', 'operational-preferences-page') :
+    section('Call output & activity', body, sectionActionHost(reload));
+  if (options.fields) {
+    panel.append(body);
+    lanes.append(section(options.title || 'Settings', null, sectionActionHost(reload)));
+  }
+  (options.target || content).append(panel);
   let confirmed = null;
   let saving = false;
   const drafts = new Map();
@@ -23147,8 +23147,9 @@ async function renderAdminOperationalPreferences(renderContext = captureRenderCo
 
   function renderFields() {
     if (!confirmed || !renderIsCurrent(renderContext)) return;
-    const rendered = groups.map((group) => {
-      const forms = group.fields.map((field) => {
+    const rendered = groups.filter((group) => !options.fields ||
+      group.fields.some((field) => options.fields.includes(field.id))).map((group) => {
+      const forms = group.fields.filter((field) => !options.fields || options.fields.includes(field.id)).map((field) => {
         const form = node('form', 'admin-form operational-preference-form');
         form.dataset.preference = field.id;
         const current = confirmed.settings[field.id];
@@ -23227,7 +23228,15 @@ async function renderAdminOperationalPreferences(renderContext = captureRenderCo
         });
         return form;
       });
-      const card = settingsCard(group.title, group.description, ...forms);
+      const card = options.fields ? section(options.title || group.title,
+        node('div', 'settings-card-body'), sectionActionHost(reload)) :
+        settingsCard(group.title, group.description, ...forms);
+      if (options.fields) {
+        card.classList.add('ui-settings-panel');
+        const cardBody = card.querySelector('.settings-card-body');
+        if (group.description) cardBody.append(node('p', 'settings-card-description', group.description));
+        cardBody.append(...forms);
+      }
       card.classList.add('operational-preference-card');
       if (group.layout === 'wide') card.classList.add('operational-preference-card-wide');
       return { area: group.area, card };
@@ -23243,7 +23252,8 @@ async function renderAdminOperationalPreferences(renderContext = captureRenderCo
       host.append(labelGroup, grid);
       return host;
     };
-    lanes.replaceChildren(
+    if (options.fields) lanes.replaceChildren(...rendered.map((entry) => entry.card));
+    else lanes.replaceChildren(
       lane('output', 'Calls & audio'),
       lane('activity', 'Activity history')
     );
@@ -23274,6 +23284,7 @@ async function renderAdminOperationalPreferences(renderContext = captureRenderCo
   } finally {
     reload.disabled = false;
   }
+  return panel;
 }
 
 function p25OverrideInput(label, field, value = '', options = {}) {
@@ -23423,57 +23434,151 @@ async function requestP25BandplanOverrides(method = 'GET', profiles = null) {
 }
 
 async function renderAdminP25BandplanOverrides() {
-  const renderRoute = route.toString();
-  const body = node('div', 'admin-section-body');
-  const form = node('form', 'admin-form settings-page-form p25-overrides-form');
+  const renderContext = captureRenderContext();
+  const body = node('div', 'admin-section-body p25-overrides-workspace');
   const intro = node('p', 'p25-overrides-intro',
     'Some P25 trunked systems do not transmit their band plan. Add an override to define it manually. ' +
       'Site overrides take priority over system overrides.');
   const list = node('div', 'p25-override-profile-list');
   const message = node('div', 'admin-form-message', 'Loading P25 band plan overrides…');
   message.setAttribute('role', 'status');
-  const add = node('button', 'ui-button ui-button-secondary', 'Add P25 override');
+  const add = node('button', 'ui-button ui-button-primary', 'Add P25 override');
+  add.id = 'admin-add-p25-override';
   add.type = 'button';
   add.disabled = true;
-  add.addEventListener('click', () => {
-    const card = p25OverrideProfileCard();
-    card.open = true;
-    list.append(card);
-    card.querySelector('[data-p25-override-field="wacn"]')?.focus();
-  });
   const save = node('button', 'ui-button ui-button-primary', 'Save overrides');
-  save.type = 'submit';
+  save.type = 'button';
   save.disabled = true;
-  const actions = node('div', 'admin-form-actions');
-  actions.append(add, save);
+  const actions = node('div', 'ui-action-row');
+  actions.append(save);
   const footer = node('div', 'settings-form-footer');
   footer.append(message, actions);
-  form.append(intro, list, footer);
-  body.append(form);
-  content.append(section('P25 band plan overrides', body));
+  body.append(intro, list, footer);
+  const titleActions = sectionActionHost(add);
+  content.append(section('P25 band plan overrides', body, titleActions));
+  let profiles = [];
+  let saving = false;
+  const tableController = {};
+  const hex = (value, width) => Number.isInteger(value) ? value.toString(16).toUpperCase().padStart(width, '0') : '—';
+  const identity = (profile) => `${hex(profile.wacn, 5)}-${hex(profile.system, 3)}`;
+  const draftChanged = () => { message.textContent = 'Unsaved changes'; };
 
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    if (!form.reportValidity() || save.disabled) return;
+  const editProfile = (index = null) => {
+    const existing = index === null ? null : profiles[index];
+    const form = node('form', 'admin-form p25-overrides-form');
+    const editorList = node('div', 'p25-override-profile-list');
+    const card = p25OverrideProfileCard(existing);
+    const editor = node('div', 'p25-override-profile');
+    editor.append(...card.querySelector('.settings-card-body').childNodes);
+    editorList.append(editor);
+    const status = node('div', 'admin-form-message');
+    status.setAttribute('role', 'status');
+    let modal;
+    const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
+    cancel.type = 'button';
+    cancel.addEventListener('click', () => modal.close());
+    const apply = node('button', 'ui-button ui-button-primary', existing ? 'Apply changes' : 'Add override');
+    apply.type = 'submit';
+    form.append(editorList, status, aliasModalFooter(cancel, apply));
+    modal = openReadOnlyModal(existing ? `Edit P25 override · ${identity(existing)}` : 'Add P25 override', form,
+      { id: 'p25-override-editor', className: 'p25-override-editor-modal',
+        returnFocusSelector: index === null ? '#admin-add-p25-override' : `#p25-override-edit-${index}` });
+    form.addEventListener('input', () => modal.setDirty(true));
+    form.addEventListener('change', () => modal.setDirty(true));
+    editorList.addEventListener('click', (event) => {
+      if (event.target.closest('button')) modal.setDirty(true);
+    });
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      if (!form.reportValidity()) return;
+      try {
+        const [next] = p25OverrideProfilesFromForm(editorList);
+        if (index === null) profiles.push(next);
+        else profiles[index] = next;
+        draw();
+        draftChanged();
+        modal.setDirty(false);
+        modal.close();
+      } catch (error) {
+        status.textContent = error.message;
+      }
+    });
+  };
+
+  const deleteProfile = (index) => {
+    const profile = profiles[index];
+    const scene = node('div');
+    scene.append(node('p', '', `Delete the P25 override for ${identity(profile)}?`),
+      node('p', 'muted', 'The removal remains a draft until you save overrides.'));
+    let modal;
+    const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
+    cancel.type = 'button';
+    cancel.addEventListener('click', () => modal.close());
+    const remove = node('button', 'ui-button ui-button-danger', 'Delete override');
+    remove.type = 'button';
+    remove.addEventListener('click', () => {
+      profiles.splice(index, 1);
+      draw();
+      draftChanged();
+      modal.close();
+    });
+    scene.append(aliasModalFooter(cancel, remove));
+    modal = openReadOnlyModal('Delete P25 override', scene, { id: 'p25-override-delete',
+      returnFocusSelector: '#admin-add-p25-override' });
+  };
+
+  function draw() {
+    list.replaceChildren(table(profiles, [
+      { id: 'system', label: 'System', render: (profile) => identity(profile) },
+      { id: 'scope', label: 'Scope', render: (profile) => profile.rfss !== null && profile.site !== null ?
+        `RFSS ${hex(profile.rfss, 2)} · Site ${hex(profile.site, 2)}` : 'Entire system' },
+      { id: 'bands', label: 'Bands', render: (profile) => number(profile.bands.length) },
+      { id: 'actions', label: 'Actions', render: (profile) => {
+        const index = profiles.indexOf(profile);
+        const controls = node('div', 'ui-action-row');
+        const edit = iconButton('icon-edit', `Edit P25 override ${identity(profile)}`,
+          'ui-button ui-button-secondary ui-icon-button');
+        edit.id = `p25-override-edit-${index}`;
+        edit.disabled = saving;
+        edit.addEventListener('click', () => editProfile(index));
+        const remove = iconButton('icon-trash', `Delete P25 override ${identity(profile)}`,
+          'ui-button ui-button-danger-quiet ui-icon-button');
+        remove.disabled = saving;
+        remove.addEventListener('click', () => deleteProfile(index));
+        controls.append(edit, remove);
+        return controls;
+      } }
+    ], 'No P25 overrides configured.', {
+      type: 'admin-p25-overrides', controller: tableController, layoutMenuHost: titleActions,
+      sortable: false, mobileCards: true
+    }));
+  }
+  add.addEventListener('click', () => editProfile());
+  save.addEventListener('click', async () => {
+    if (saving || save.disabled) return;
+    saving = true;
     add.disabled = true;
     save.disabled = true;
+    draw();
     message.textContent = 'Saving overrides…';
     try {
-      const documentValue = await requestP25BandplanOverrides('PUT', p25OverrideProfilesFromForm(list));
-      list.replaceChildren(...(documentValue?.profiles || []).map(p25OverrideProfileCard));
+      const documentValue = await requestP25BandplanOverrides('PUT', profiles);
+      profiles = documentValue.profiles;
       message.textContent = 'Overrides saved.';
     } catch (error) {
       message.textContent = error.message;
     } finally {
+      saving = false;
       add.disabled = false;
       save.disabled = false;
+      draw();
     }
   });
-
   try {
     const documentValue = await requestP25BandplanOverrides();
-    if (route.toString() !== renderRoute) return;
-    list.append(...documentValue.profiles.map(p25OverrideProfileCard));
+    if (!renderIsCurrent(renderContext)) return;
+    profiles = documentValue.profiles;
+    draw();
     message.textContent = '';
     add.disabled = false;
     save.disabled = false;
@@ -23699,7 +23804,7 @@ function receiverHealthResolvedSection(incidents) {
 let receiverHealthSectionSequence = 0;
 
 function receiverHealthSection(key, title, child, action = null) {
-  const wrapper = node('section', 'section ui-section receiver-health-section');
+  const wrapper = node('section', 'section ui-section ui-settings-panel receiver-health-section');
   const titleBar = node('div', 'section-title ui-section-title');
   const body = node('div', 'receiver-health-section-body');
   body.id = `receiver-health-section-body-${++receiverHealthSectionSequence}`;
@@ -23885,8 +23990,8 @@ function renderReceiverHealthPage(host, snapshot, stale, lastError) {
   if (stale) overview.append(node('div', 'ui-notice ui-notice-warning receiver-health-stale-notice',
     'Live status is delayed. Showing the last update received.'));
 
-  host.append(receiverHealthHostResourceOverview(snapshot),
-    receiverHealthSection('current', 'Summary', overview, receiverHealthRefreshButton()),
+  host.append(receiverHealthSection('current', 'Receiver overview', overview, receiverHealthRefreshButton()),
+    receiverHealthHostResourceOverview(snapshot),
     receiverHealthSavedActivitySection(),
     receiverHealthAccountSettingNotice(snapshot),
     receiverHealthSection('active', 'Issues needing attention', receiverHealthIncidentList(snapshot.active)),
@@ -23933,6 +24038,7 @@ function preferenceSelect(name, choices, selected) {
 
 function settingsCard(title, description, ...items) {
   const card = node('section', 'settings-card');
+  if (route.get('view') === 'admin') card.classList.add('ui-settings-panel');
   const header = node('div', 'settings-card-header');
   header.append(node('h3', 'settings-card-title', title));
   if (description) header.append(node('p', 'settings-card-description', description));
@@ -24436,14 +24542,21 @@ async function renderSettings() {
   if (statusIconRequested && renderIsCurrent(renderContext)) openStatusIconSettings('#status-icon-settings');
 }
 
-function renderStreaming() {
+async function renderStreaming() {
   const renderContext = captureRenderContext();
   const workspace = createStreamingWorkspace({
     node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, table,
     openReadOnlyModal, requestJson, modalFooter: aliasModalFooter, formatNumber: number, href,
     signal: renderContext.signal
   });
-  beginPage(renderContext, pageHeader('Streaming', 'Manage destinations and monitor delivery'), workspace.element);
+  const routingHost = node('div');
+  if (!beginPage(renderContext, pageHeader('Streaming', 'Manage destinations and monitor delivery'),
+    routingHost, workspace.element)) return;
+  if (capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS)) {
+    await renderAdminOperationalPreferences(renderContext, {
+      target: routingHost, fields: ['patch_group_streaming_option'], title: 'Patch-group routing'
+    });
+  }
 }
 
 function renderAdminRemoteLinks(renderContext) {
@@ -25718,6 +25831,7 @@ async function renderTuners() {
 }
 
 function receiverHealthSavedActivitySection() {
+  const activityPage = route.get('view') === 'admin' && route.get('tab') === 'activity';
   const database = serviceStatus?.database;
   const logging = statsLoggingState();
   const loggingState = logging.available && logging.state ? semanticLabel(logging.state) : 'Unknown';
@@ -25731,7 +25845,8 @@ function receiverHealthSavedActivitySection() {
   const body = node('div', 'admin-section-body');
   let actions = null;
   if (capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS)) {
-    const settingsLink = anchor('Open Call output & activity', href('admin', { tab: 'operations' }),
+    const settingsLink = anchor(activityPage ? 'Receiver status' : 'Open Activity settings',
+      href('admin', { tab: activityPage ? 'health' : 'activity' }),
       'ui-button ui-button-secondary');
     settingsLink.dataset.receiverHealthFocus = 'saved-activity-settings';
     actions = sectionActionHost(settingsLink);
@@ -25741,16 +25856,16 @@ function receiverHealthSavedActivitySection() {
     ['Individual events', logging.historyActive, historyState],
     ['Activity storage', database?.database_bytes, databaseDisplay]
   ], true));
-  const result = receiverHealthSection('saved-activity', 'Saved activity', body, actions);
+  const result = receiverHealthSection('saved-activity', activityPage ? 'Current collection status' : 'Saved activity', body, actions);
   result.id = 'receiver-health-saved-activity';
   return result;
 }
 
 function adminSettingsTree(groups, active) {
-  const navigation = node('nav', 'admin-settings-tree');
+  const navigation = node('nav', 'admin-settings-tree ui-settings-navigation');
   navigation.setAttribute('aria-label', 'Administration sections');
-  const picker = node('label', 'admin-settings-picker');
-  const pickerLabel = node('span', 'admin-settings-picker-label', 'Administration section');
+  const picker = node('label', 'admin-settings-picker ui-settings-picker');
+  const pickerLabel = node('span', 'admin-settings-picker-label ui-settings-picker-label', 'Administration section');
   const select = node('select', 'ui-select');
   select.setAttribute('aria-label', 'Administration section');
   groups.forEach((group) => {
@@ -25766,17 +25881,16 @@ function adminSettingsTree(groups, active) {
   });
   select.addEventListener('change', () => navigateTo(href('admin', { tab: select.value })));
   picker.append(pickerLabel, select);
-  navigation.append(picker);
+  navigation.append(node('div', 'admin-settings-sidebar-heading ui-settings-navigation-title', 'Administration'), picker);
   groups.forEach((group) => {
-    const disclosure = node('details', 'admin-settings-branch');
-    disclosure.open = group.items.some((item) => item.id === active) || group.open === true;
-    disclosure.append(node('summary', '', group.label));
-    const links = node('div', 'admin-settings-branch-items');
+    const disclosure = node('section', 'admin-settings-branch ui-settings-nav-group');
+    disclosure.append(node('h2', 'admin-settings-group-title ui-settings-nav-group-title', group.label));
+    const links = node('div', 'admin-settings-branch-items ui-settings-nav-items');
     group.items.forEach((item) => {
-      const link = anchor(item.label, href('admin', { tab: item.id }), 'admin-settings-leaf');
+      const link = anchor('', href('admin', { tab: item.id }), 'admin-settings-leaf ui-settings-nav-link');
+      link.append(iconGlyph(`icon-${item.icon}`), node('span', '', item.label));
       link.classList.toggle('active', item.id === active);
       if (item.id === active) link.setAttribute('aria-current', 'page');
-      if (item.scope && item.id === active) link.append(node('small', 'settings-scope-badge', item.scope));
       links.append(link);
     });
     disclosure.append(links);
@@ -25859,7 +25973,7 @@ function supportReportSelect(entries) {
 function renderAdminSupportReport() {
   pageTitleController.update({ pageTitle: 'Report a problem' });
   const body = node('div', 'admin-section-body support-report-settings');
-  const form = node('form', 'admin-form settings-page-form support-report-form');
+  const form = node('form', 'admin-form settings-page-form support-report-form ui-settings-form-plain');
   const title = node('input', 'ui-input');
   title.type = 'text';
   title.required = true;
@@ -26134,7 +26248,7 @@ function renderAdminSupportReport() {
   });
 
   body.append(form);
-  content.append(section('Report a problem', body));
+  content.append(body);
 }
 
 const CALL_MATCHING_HISTORY_LIMIT = 100;
@@ -26555,40 +26669,62 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
 function adminSettingsGroups() {
   const allowed = (capability) => capabilityAllowed(capability);
   return [
-    { label: 'Monitor', items: [
-      { id: 'health', label: 'Current status', capability: ACCESS_CAPABILITIES.RECEIVER_HEALTH,
+    { label: 'Status & support', items: [
+      { id: 'health', label: 'Receiver status', icon: 'health', capability: ACCESS_CAPABILITIES.RECEIVER_HEALTH,
         description: 'Check the receiver and issues that need attention.' },
-      { id: 'call-matching', label: 'Call matching', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+      { id: 'call-matching', label: 'Call matching', icon: 'call-matching', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         description: 'Monitor how duplicate calls are matched.' },
-      { id: 'support', label: 'Report a problem', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+      { id: 'support', label: 'Report a problem', icon: 'bug', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         description: 'Create and submit a support report.' }
     ] },
-    { label: 'Receiving & output', items: [
-      { id: 'operations', label: 'Call output & activity', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        description: 'Choose how calls are streamed and recorded, and whether activity is saved.' },
-      { id: 'recordings', label: 'Recordings', capability: ACCESS_CAPABILITIES.ADMIN_RECORDINGS,
-        description: 'Manage recording mode, retention, and transcription.' },
-      { id: 'retained-statistics', label: 'Retained statistics', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        description: 'Remove saved statistics while keeping aliases and alias lists.' },
-      { id: 'remote-links', label: 'Remote Links', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        description: 'Receive P25 systems from trusted installations or send local systems to one host.' },
-      { id: 'spectrum', label: 'Spectrum country', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        description: 'Choose the country used for Spectrum frequency labels and cursor snapping.' },
-      { id: 'protocol-p25', label: 'P25 band plans', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        description: 'Configure P25 band plan overrides.' }
+    { label: 'Audio & recordings', items: [
+      { id: 'recordings', label: 'Recording settings', icon: 'recording-settings', capability: ACCESS_CAPABILITIES.ADMIN_RECORDINGS,
+        scope: 'Receiver-wide', description: 'Choose how calls are recorded and how long managed calls are kept.' },
+      { id: 'audio-quality', label: 'Audio quality', icon: 'audio-quality', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+        scope: 'Receiver-wide', description: 'Set MP3 encoding for recordings and outgoing streams.' },
+      { id: 'transcription', label: 'Transcription', icon: 'transcription', capability: ACCESS_CAPABILITIES.ADMIN_RECORDINGS,
+        scope: 'Receiver-wide', description: 'Create transcripts for managed recordings and monitor progress.' }
     ] },
-    { label: 'Accounts & access', items: [
-      { id: 'users', label: 'Web accounts', capability: ACCESS_CAPABILITIES.ADMIN_USERS,
+    { label: 'Activity & storage', items: [
+      { id: 'activity', label: 'Activity settings', icon: 'activity', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+        scope: 'Receiver-wide', description: 'Choose which activity is saved and how long its history is kept.' },
+      { id: 'retained-statistics', label: 'Saved data cleanup', icon: 'cleanup', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+        scope: 'Receiver-wide', description: 'Remove saved statistics while keeping aliases and alias lists.' }
+    ] },
+    { label: 'Receiver configuration', items: [
+      { id: 'remote-links', label: 'Remote Links', icon: 'network-visualizer', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+        scope: 'Receiver-wide', description: 'Receive P25 systems from trusted installations or send local systems to one host.' },
+      { id: 'protocol-p25', label: 'P25 band plans', icon: 'radio-tower', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+        scope: 'Receiver-wide', description: 'Configure P25 band plan overrides.' }
+    ] },
+    { label: 'Web interface', items: [
+      { id: 'display', label: 'Display settings', icon: 'display', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+        scope: 'Receiver-wide', description: 'Set Live traffic timing and the country used for Spectrum frequency labels.' },
+      { id: 'users', label: 'Web accounts', icon: 'users', capability: ACCESS_CAPABILITIES.ADMIN_USERS,
         description: 'Manage accounts that can sign in.' },
-      { id: 'access', label: 'Page access', capability: ACCESS_CAPABILITIES.ADMIN_ACCESS,
+      { id: 'access', label: 'Page access', icon: 'admin', capability: ACCESS_CAPABILITIES.ADMIN_ACCESS,
         description: 'Choose who can open the web interface and individual pages.' }
-    ] },
-    { label: 'Display', items: [
-      { id: 'live-timing', label: 'Live timing', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        description: 'Set when inactive traffic rows appear idle in Live.' }
     ] }
   ].map((group) => ({ ...group, items: group.items.filter((item) => allowed(item.capability)) }))
     .filter((group) => group.items.length);
+}
+
+function adminSettingsHeader(current, group) {
+  const header = node('header', 'ui-settings-page-header');
+  header.append(node('div', 'admin-settings-breadcrumb ui-settings-breadcrumb',
+    `Administration › ${group.label}`));
+  const titleRow = node('div', 'ui-settings-title-row');
+  titleRow.append(node('h1', 'page-title', current.label));
+  if (current.scope) titleRow.append(node('span', 'ui-settings-scope', current.scope));
+  header.append(titleRow, node('p', 'ui-settings-description', current.description));
+  return header;
+}
+
+function applyAdminSettingsPresentation(host) {
+  host.querySelectorAll('.ui-section, .settings-card').forEach((panel) => panel.classList.add('ui-settings-panel'));
+  host.querySelectorAll('.settings-card-header').forEach((header) => header.classList.add('ui-settings-panel-header'));
+  host.querySelectorAll('.settings-page-form').forEach((form) => form.classList.add('ui-settings-form'));
+  host.querySelectorAll('.settings-card-grid').forEach((grid) => grid.classList.add('ui-settings-card-grid'));
 }
 
 function adminSettingsLeaves(groups) {
@@ -26611,28 +26747,76 @@ async function renderAdmin() {
   if (!availableTabs.length) throw Object.assign(new Error('Administrator access is unavailable.'),
     { status: 403 });
   const requested = route.get('tab') || 'health';
-  const active = availableTabs.some((item) => item.id === requested) ? requested : availableTabs[0].id;
-  const current = availableTabs.find((item) => item.id === active);
+  const normalized = ['live-timing', 'spectrum'].includes(requested) ? 'display' : requested;
+  const legacy = normalized === 'operations' && capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS) ?
+    { id: 'operations', label: 'Call output & activity', scope: 'Receiver-wide',
+      description: 'Choose how calls are streamed and recorded, and whether activity is saved.' } : null;
+  const active = legacy ? legacy.id : availableTabs.some((item) => item.id === normalized) ? normalized : availableTabs[0].id;
+  const current = legacy || availableTabs.find((item) => item.id === active);
+  const group = groups.find((item) => item.items.some((leaf) => leaf.id === active)) || { label: 'Audio & recordings' };
   if (active !== requested) {
     route.set('tab', active);
     window.history.replaceState({}, '', currentHref());
   }
-  if (!beginPage(renderContext, pageHeader(current.label, current.description))) return;
-  const shell = node('div', 'admin-settings-shell');
-  const body = node('div', 'admin-settings-content');
+  const shell = node('div', 'admin-settings-shell ui-settings-workspace');
+  const body = node('div', 'admin-settings-content ui-settings-page');
+  body.append(adminSettingsHeader(current, group));
   shell.append(adminSettingsTree(groups, active), body);
-  content.append(shell);
+  if (!beginPage(renderContext, shell)) return;
+  pageTitleController.update({ pageTitle: current.label });
   if (active === 'health') await renderAdminHealth();
   else if (active === 'call-matching') await renderAdminCallMatching(renderContext);
   else if (active === 'support') renderAdminSupportReport();
-  else if (active === 'live-timing') {
-    pageTitleController.update({ pageTitle: 'Live timing' });
-    await renderAdminReceiverBehaviorSettings();
+  else if (active === 'display') {
+    const display = node('div', 'admin-display-settings');
+    content.append(display);
+    await Promise.all([
+      renderAdminReceiverBehaviorSettings(display),
+      renderAdminSpectrumSnapSettings(display)
+    ]);
+    if (renderIsCurrent(renderContext)) {
+      const personal = node('p', 'ui-notice');
+      personal.append('Personal appearance and playback choices are in ',
+        anchor('My Settings', href('settings')), '.');
+      display.append(personal);
+    }
   }
-  else if (active === 'spectrum') await renderAdminSpectrumSnapSettings();
   else if (active === 'remote-links') renderAdminRemoteLinks(renderContext);
   else if (active === 'operations') await renderAdminOperationalPreferences(renderContext);
-  else if (active === 'recordings') await recordingsFeature.renderAdminRecordings();
+  else if (active === 'audio-quality') {
+    content.append(node('div', 'ui-notice',
+      'These settings apply to MP3 recordings and outgoing streams. Managed recordings use MP3.'));
+    await renderAdminOperationalPreferences(renderContext, {
+      fields: ['mp3_setting', 'mp3_input_audio_format', 'mp3_normalize_audio'], title: 'MP3 encoding'
+    });
+    if (renderIsCurrent(renderContext)) {
+      const actions = node('div', 'ui-action-row');
+      actions.append(anchor('Recording settings', href('admin', { tab: 'recordings' }), 'ui-button ui-button-secondary'),
+        anchor('Streaming behavior', href('streaming'), 'ui-button ui-button-secondary'));
+      content.append(actions);
+    }
+  }
+  else if (active === 'activity') {
+    await renderAdminOperationalPreferences(renderContext, {
+      fields: ['stats_logging_enabled', 'stats_detailed_history_enabled', 'stats_logging_retention_days'],
+      title: 'Saved activity'
+    });
+    if (renderIsCurrent(renderContext)) {
+      const actions = node('div', 'ui-action-row');
+      actions.append(anchor('Review saved data', href('admin', { tab: 'retained-statistics' }),
+        'ui-button ui-button-secondary'));
+      content.append(actions, receiverHealthSavedActivitySection());
+    }
+  }
+  else if (active === 'recordings') {
+    const classicFormatHost = node('div');
+    const classicFormatPanel = capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS) ?
+      await renderAdminOperationalPreferences(renderContext, {
+        target: classicFormatHost, fields: ['audio_record_format'], title: 'Classic recording format'
+      }) : null;
+    if (renderIsCurrent(renderContext)) await recordingsFeature.renderAdminRecordings({ classicFormatPanel });
+  }
+  else if (active === 'transcription') await recordingsFeature.renderAdminTranscription();
   else if (active === 'retained-statistics') {
     content.append(createRetainedStatisticsWorkspace({
       node, formField, uiSelectFrame, uiSegmentedControl, section, sectionActionHost,
@@ -26662,6 +26846,7 @@ async function renderAdmin() {
   else await renderAdminUsers(renderContext);
   if (!renderIsCurrent(renderContext)) return;
   while (shell.nextSibling) body.append(shell.nextSibling);
+  applyAdminSettingsPresentation(body);
 }
 
 function routeViewLabel(view) {
@@ -26843,7 +27028,7 @@ async function loadStatus(refreshCurrentView = false) {
   refreshP25VisualizerMenu();
 
   const currentView = route.get('view') || 'dashboard';
-  if (refreshCurrentView && currentView === 'admin' && (route.get('tab') || 'health') === 'health') {
+  if (refreshCurrentView && currentView === 'admin' && ['health', 'activity'].includes(route.get('tab') || 'health')) {
     refreshReceiverHealthSavedActivityStatus();
     return;
   }

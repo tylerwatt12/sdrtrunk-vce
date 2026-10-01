@@ -392,7 +392,7 @@ function createP25Visualizer(dependencies = {}) {
     const history = dependencies.historyStatus || {};
     if (history.available && !history.historyActive && !history.historyRetained) {
       setEmpty('Saved P25 activity is unavailable',
-        'Turn on Save individual activity events in Administration > Call output & activity. The visualizer uses ' +
+        'Turn on Save individual activity events in Administration > Activity settings. The visualizer uses ' +
           'saved activity rather than live decoder activity.',
         'error');
       setStatus('History unavailable', 'error');

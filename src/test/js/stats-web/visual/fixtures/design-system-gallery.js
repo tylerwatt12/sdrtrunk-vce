@@ -356,7 +356,7 @@ function initializeScanListCatalog() {
 const parameters = new URLSearchParams(window.location.search);
 const theme = parameters.get('theme') === 'dark' ? 'dark' : 'light';
 const view = ['mobile-table', 'gallery', 'app-chrome', 'access-landing', 'access-login-modal', 'modal', 'modal-long', 'alias-list-create-modal', 'activity-action-tooltip', 'activity-filters', 'health-alert-modal', 'focus', 'settings', 'health', 'p25', 'admin-access',
-  'admin-receiver', 'admin-support', 'dashboard-health', 'dashboard-calls', 'dashboard-activity',
+  'admin-navigation', 'admin-receiver', 'admin-support', 'dashboard-health', 'dashboard-calls', 'dashboard-activity',
   'signal-quality-detail', 'radioreference-results',
   'radio-directory-coverage', 'radio-directory-panel', 'admin-scan-lists',
   'scanner', 'tuner-spectrum', 'tuners', 'aliases', 'alias-modal', 'alias-export', 'scan-list-members', 'channels',
@@ -364,6 +364,78 @@ const view = ['mobile-table', 'gallery', 'app-chrome', 'access-landing', 'access
   parameters.get('view') : 'gallery';
 document.documentElement.dataset.theme = theme;
 document.body.dataset.galleryView = view;
+{
+  const workspace = document.querySelector('.visual-admin-navigation-example');
+  const navigation = workspace.querySelector('[data-visual-admin-navigation]');
+  const picker = workspace.querySelector('[data-visual-admin-picker]');
+  const groups = [
+    ['Status & support', [['health', 'Receiver status', 'health'], ['matching', 'Call matching', 'call-matching'],
+      ['support', 'Report a problem', 'bug']]],
+    ['Audio & recordings', [['recording', 'Recording settings', 'recording-settings'],
+      ['audio', 'Audio quality', 'audio-quality'], ['transcription', 'Transcription', 'transcription']]],
+    ['Activity & storage', [['activity', 'Activity settings', 'activity'], ['cleanup', 'Saved data cleanup', 'cleanup']]],
+    ['Receiver configuration', [['remote', 'Remote Links', 'network-visualizer'], ['bandplans', 'P25 band plans', 'radio-tower']]],
+    ['Web interface', [['display', 'Display settings', 'display'], ['accounts', 'Web accounts', 'users'],
+      ['access', 'Page access', 'admin']]]
+  ];
+  const setPage = (id) => {
+    const group = groups.find((entry) => entry[1].some((page) => page[0] === id));
+    const selected = group[1].find((page) => page[0] === id);
+    workspace.querySelector('[data-visual-admin-title]').textContent = selected[1];
+    workspace.querySelector('[data-visual-admin-group]').textContent = group[0];
+    picker.value = id;
+    navigation.querySelectorAll('.ui-settings-nav-link').forEach((link) => {
+      if (link.dataset.page === id) link.setAttribute('aria-current', 'page');
+      else link.removeAttribute('aria-current');
+    });
+  };
+  groups.forEach(([label, pages]) => {
+    const group = document.createElement('section');
+    group.className = 'ui-settings-nav-group';
+    const title = document.createElement('h2');
+    title.className = 'ui-settings-nav-group-title';
+    title.textContent = label;
+    const items = document.createElement('div');
+    items.className = 'ui-settings-nav-items';
+    const options = document.createElement('optgroup');
+    options.label = label;
+    pages.forEach(([id, name, iconName]) => {
+      const link = document.createElement('a');
+      link.className = 'ui-settings-nav-link';
+      link.href = `#${id}`;
+      link.dataset.page = id;
+      const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      icon.setAttribute('aria-hidden', 'true');
+      const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+      use.setAttribute('href', `#visual-icon-${iconName}`);
+      icon.append(use);
+      const text = document.createElement('span');
+      text.textContent = name;
+      link.append(icon, text);
+      link.addEventListener('click', (event) => { event.preventDefault(); setPage(id); });
+      items.append(link);
+      const option = document.createElement('option');
+      option.value = id;
+      option.textContent = name;
+      options.append(option);
+    });
+    group.append(title, items);
+    navigation.append(group);
+    picker.append(options);
+  });
+  picker.addEventListener('change', () => setPage(picker.value));
+  setPage('recording');
+  document.querySelectorAll('[data-visual-admin-nav-mirror]').forEach((mirror) => {
+    const active = mirror.dataset.visualAdminNavMirror;
+    mirror.replaceChildren(...[...workspace.querySelector('.ui-settings-navigation').children]
+      .map((child) => child.cloneNode(true)));
+    mirror.querySelectorAll('.ui-settings-nav-link').forEach((link) => {
+      if (link.dataset.page === active) link.setAttribute('aria-current', 'page');
+      else link.removeAttribute('aria-current');
+    });
+    mirror.querySelector('select').value = active;
+  });
+}
 if (view === 'activity-action-tooltip') {
   const trigger = document.querySelector('#visual-activity-cell-trigger');
   const tooltip = document.querySelector('#visual-activity-cell-tooltip');

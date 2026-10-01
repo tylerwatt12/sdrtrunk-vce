@@ -11,7 +11,7 @@ const application = fs.readFileSync(path.resolve(process.argv[2] ||
 function functionSource(signature) {
   const start = application.indexOf(signature);
   if (start < 0) throw new Error(`Missing ${signature}`);
-  const opening = application.indexOf('{', start + signature.length);
+  const opening = application.indexOf(') {', start) + 2;
   let depth = 0;
   for (let index = opening; index < application.length; index += 1) {
     if (application[index] === '{') depth += 1;
@@ -72,19 +72,50 @@ async function main() {
   await assert.rejects(context.requestOperationalPreference('PUT', 'mp3_setting', 'CBR_32', revision),
     /Input audio rate is not supported/);
 
-  assert.match(application, /id: 'operations', label: 'Call output & activity'/);
+  const capabilities = Object.fromEntries(['RECEIVER_HEALTH', 'ADMIN_SETTINGS', 'ADMIN_RECORDINGS',
+    'ADMIN_USERS', 'ADMIN_ACCESS'].map((key) => [key, key]));
+  const allowedCapabilities = new Set(Object.values(capabilities));
+  const navigationContext = {
+    ACCESS_CAPABILITIES: capabilities,
+    capabilityAllowed: (capability) => allowedCapabilities.has(capability)
+  };
+  vm.createContext(navigationContext);
+  vm.runInContext(functionSource('function adminSettingsGroups()'), navigationContext);
+  const groups = navigationContext.adminSettingsGroups();
+  const plain = (value) => JSON.parse(JSON.stringify(value));
+  assert.deepEqual(plain(groups.map((group) => group.label)), ['Status & support',
+    'Audio & recordings', 'Activity & storage', 'Receiver configuration', 'Web interface']);
+  assert.deepEqual(plain(groups.map((group) => group.items.map((item) => item.id))), [
+    ['health', 'call-matching', 'support'], ['recordings', 'audio-quality', 'transcription'],
+    ['activity', 'retained-statistics'], ['remote-links', 'protocol-p25'], ['display', 'users', 'access']
+  ]);
+  const html = fs.readFileSync(path.resolve(path.dirname(process.argv[2] ||
+    path.resolve(__dirname, '../../../../stats-web/assets/app.js')), '../index.html'), 'utf8');
+  for (const item of groups.flatMap((group) => group.items)) {
+    assert.match(item.icon, /^[a-z0-9-]+$/);
+    assert.ok(html.includes(`id="icon-${item.icon}"`), `The ${item.label} menu icon must exist.`);
+    assert.ok(item.description, `${item.label} needs a purpose sentence.`);
+  }
+  allowedCapabilities.delete('ADMIN_SETTINGS');
+  allowedCapabilities.delete('ADMIN_RECORDINGS');
+  assert.deepEqual(plain(navigationContext.adminSettingsGroups().flatMap((group) =>
+    group.items.map((item) => item.id))), ['health', 'users', 'access'],
+  'The new groups must preserve the existing endpoint capabilities.');
+
   assert.match(application, /active === 'operations'\) await renderAdminOperationalPreferences/);
   assert.match(functionSource('function detailedHistoryNotice()'),
-    /anchor\('Call output & activity', href\('admin', \{ tab: 'operations' \}\)\)/);
+    /anchor\('Activity settings', href\('admin', \{ tab: 'activity' \}\)\)/);
   assert.doesNotMatch(application, /Stats & Web > Stats Server/);
 
   const page = functionSource('async function renderAdminOperationalPreferences(');
-  assert.match(page, /node\('div', 'settings-page-form operational-preferences'\)/);
+  assert.match(page, /node\('div', 'settings-page-form ui-settings-form operational-preferences'\)/);
   assert.match(page, /body\.append\(workspace\)/);
   assert.doesNotMatch(page, /adminWorkflowNote\(/,
     'Operations should rely on its page description and setting labels instead of a second summary.');
-  assert.match(page,
-    /content\.append\(section\('Call output & activity', body, sectionActionHost\(reload\)\)\)/);
+  assert.match(page, /section\('Call output & activity', body, sectionActionHost\(reload\)\)/);
+  assert.match(page, /\(options\.target \|\| content\)\.append\(panel\)/);
+  assert.match(page, /options\.fields\.includes\(field\.id\)/,
+    'New settings pages must select the original fields without replacing the preference contract.');
   assert.doesNotMatch(page, /const heading = node\('div', 'ui-action-row'\)/,
     'Reload belongs in the section heading instead of a detached blank action row');
   assert.match(page, /lane\('output', 'Calls & audio'/);

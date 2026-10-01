@@ -44,6 +44,7 @@ async function openApp(page, tier = 'admin', summaryEnabled = true) {
       await route.fulfill({ json: { data: { configured: true, authenticated: true,
         username: tier === 'admin' ? 'admin' : 'listener', tier, primary: tier === 'admin',
         capabilities: { dashboard: true, 'admin-settings': tier === 'admin',
+          'admin-recordings': tier === 'admin',
           'receiver-health': tier === 'admin',
           'admin-users': tier === 'admin', 'admin-access': tier === 'admin', credits: true } } } });
     } else if (pathname === '/api/v1/me/preferences') {
@@ -87,7 +88,7 @@ test('saved statistics notice explains Off and clears after saving On', async ({
   await expect(notice).toBeVisible();
   await expect(notice).toHaveClass(/ui-notice-warning/);
   await expect(notice).not.toContainText('Last update');
-  await notice.getByRole('link', { name: 'Call output & activity' }).click();
+  await notice.getByRole('link', { name: 'Activity settings' }).click();
   const summary = page.locator('form[data-preference="stats_logging_enabled"]');
   await summary.locator('.ui-toggle').click();
   const previousStatusRequests = app.statusRequests();
@@ -189,6 +190,7 @@ test('receiver settings read as separate output and activity workflows', async (
 test('administration navigation becomes a complete compact picker on mobile', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await openApp(page);
+  await page.goto('/app.html?view=admin&tab=audio-quality');
   const navigation = page.locator('.admin-settings-tree');
   const picker = navigation.locator('.admin-settings-picker');
   const select = picker.getByRole('combobox', { name: 'Administration section' });
@@ -198,12 +200,11 @@ test('administration navigation becomes a complete compact picker on mobile', as
 
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(picker).toBeVisible();
-  await expect(select).toHaveValue('operations');
+  await expect(select).toHaveValue('audio-quality');
   await expect(navigation.locator('.admin-settings-branch:visible')).toHaveCount(0);
   expect(await select.locator('option').evaluateAll((options) => options.map((option) => option.value)))
-    .toEqual(['health', 'call-matching', 'support', 'operations', 'retained-statistics',
-      'remote-links', 'spectrum', 'protocol-p25',
-      'users', 'access', 'live-timing']);
+    .toEqual(['health', 'call-matching', 'support', 'recordings', 'audio-quality', 'transcription',
+      'activity', 'retained-statistics', 'remote-links', 'protocol-p25', 'display', 'users', 'access']);
 
   await select.selectOption('support');
   await expect(page).toHaveURL(/view=admin&tab=support/);
@@ -227,10 +228,10 @@ test('problem report questions require answers before preparing a report', async
   expect(await before.evaluate((input) => input.validity.valid)).toBe(true);
 });
 
-test('current status owns saved activity and refreshes both status sources', async ({ page }) => {
-  const requests = await openCurrentStatus(page, 'activity');
+test('receiver status owns saved activity status and refreshes both status sources', async ({ page }) => {
+  const requests = await openCurrentStatus(page, 'health');
   await expect(page).toHaveURL(/view=admin&tab=health/);
-  await expect(page.getByRole('heading', { level: 1, name: 'Current status' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Receiver status' })).toBeVisible();
   await expect(page.locator('#receiver-health-saved-activity')).toContainText('Saved activity');
   await expect(page.locator('#receiver-health-saved-activity')).toContainText('Activity summaries');
   const initialStatusRequests = requests.status;

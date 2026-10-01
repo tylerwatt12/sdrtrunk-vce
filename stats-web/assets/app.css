@@ -7,7 +7,7 @@
 @layer reset, tokens, components, compositions, features, utilities;
 
 @import url("./styles/base.css?v=1") layer(reset);
-@import url("./styles/tokens.css?v=9") layer(tokens);
+@import url("./styles/tokens.css?v=10") layer(tokens);
 @import url("./styles/components/semantic-text.css?v=1") layer(components);
 @import url("./styles/components/controls.css?v=24") layer(components);
 @import url("./styles/compositions/workspaces.css?v=15") layer(compositions);
@@ -15,7 +15,7 @@
 @import url("./styles/compositions/app-chrome.css?v=11") layer(compositions);
 @import url("./styles/compositions/charts.css?v=3") layer(compositions);
 @import url("./styles/compositions/modals.css?v=6") layer(compositions);
-@import url("./styles/compositions/settings.css?v=5") layer(compositions);
+@import url("./styles/compositions/settings.css?v=6") layer(compositions);
 @import url("./styles/features/access-landing.css?v=2") layer(features);
 @import url("./styles/features/about.css?v=1") layer(features);
 @import url("./styles/features/channels.css?v=14") layer(features);
@@ -30,15 +30,15 @@
 @import url("./styles/features/aliases.css?v=15") layer(features);
 @import url("./styles/features/scan-lists.css?v=3") layer(features);
 @import url("./styles/features/dashboard.css?v=3") layer(features);
-@import url("./styles/features/administration.css?v=6") layer(features);
+@import url("./styles/features/administration.css?v=7") layer(features);
 @import url("./styles/features/retained-statistics.css?v=2") layer(features);
 @import url("./styles/features/call-matching.css?v=2") layer(features);
 @import url("./styles/features/signal-quality.css?v=4") layer(features);
 @import url("./styles/features/radioreference.css?v=15") layer(features);
 @import url("./styles/features/streaming.css?v=4") layer(features);
 @import url("./styles/features/remote-links.css?v=5") layer(features);
-@import url("./styles/features/p25-settings.css?v=2") layer(features);
+@import url("./styles/features/p25-settings.css?v=3") layer(features);
 @import url("./styles/features/receiver-health.css?v=5") layer(features);
 @import url("./styles/features/activity.css?v=3") layer(features);
-@import url("./styles/features/recordings.css?v=6") layer(features);
+@import url("./styles/features/recordings.css?v=7") layer(features);
 @import url("./styles/utilities/reduced-motion.css?v=10") layer(utilities);

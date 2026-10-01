@@ -9,6 +9,7 @@ const assets = path.dirname(applicationPath);
 const application = fs.readFileSync(applicationPath, 'utf8');
 const html = fs.readFileSync(path.resolve(assets, '../index.html'), 'utf8');
 const css = fs.readFileSync(path.resolve(assets, 'styles/features/administration.css'), 'utf8');
+const settingsCss = fs.readFileSync(path.resolve(assets, 'styles/compositions/settings.css'), 'utf8');
 
 assert.match(html, /id="support-report-indicator"[^>]+receiver-health-indicator receiver-health-neutral icon-button[^>]+view=admin&amp;tab=support/);
 assert.match(html, /id="icon-bug"/);
@@ -42,4 +43,6 @@ assert.match(css, /\.support-report-footer > \.support-report-progress,[\s\S]*?g
 assert.match(css, /\.support-report-fields\s*\{[^}]*align-items:\s*start;/);
 assert.doesNotMatch(css, /\.support-report-form\s*\{[^}]*linear-gradient/);
 assert.doesNotMatch(css, /\.admin-settings-(?:branch|nested)-items\s*\{[^}]*border-left:/);
-assert.match(css, /\.admin-settings-leaf\.active\s*\{[^}]*box-shadow:\s*var\(--shadow-selected\)/);
+assert.match(settingsCss,
+  /\.ui-settings-nav-link\[aria-current="page"\]\s*\{[^}]*background:\s*var\(--accent-soft\)/,
+  'Administration navigation must use the shared composition and its accessible current-page state.');
