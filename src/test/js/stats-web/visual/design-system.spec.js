@@ -15,6 +15,63 @@ for(const [name, theme, viewport] of galleryCases) {
   });
 }
 
+for (const [, theme, viewport] of galleryCases) {
+  test(`dual range ${theme} ${viewport.width} shows normal disabled and focus states`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto(`/design-system.html?theme=${theme}&view=gallery`);
+    const ranges = page.locator('.visual-duration-range');
+    const minimum = ranges.first().getByRole('slider', { name: 'Call length: Minimum', exact: true });
+    const maximum = ranges.first().getByRole('slider', { name: 'Call length: Maximum', exact: true });
+    await expect(maximum).toHaveAttribute('aria-valuetext', 'Any length');
+    await expect(ranges.last().getByRole('slider').first()).toBeDisabled();
+    await expect(ranges.last().getByRole('slider').last()).toBeDisabled();
+    await minimum.focus();
+    await minimum.press('ArrowRight');
+    await expect(minimum).toHaveValue('0.5');
+    await expect(minimum).toHaveAttribute('aria-valuetext', '0.5 sec');
+    // A focused handle must stay transparent above the other handle and rail,
+    // including when the range sits inside the shared administration form.
+    for (const handle of [minimum, maximum]) {
+      await expect(handle).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+      await expect(handle).toHaveCSS('border-width', '0px');
+      await expect(handle).toHaveCSS('padding', '0px');
+      await expect(handle).toHaveCSS('box-shadow', 'none');
+    }
+    await expect(ranges.first()).toHaveScreenshot(`dual-range-${theme}-${viewport.width}.png`);
+  });
+}
+
+test('equal dual range handles remain ordered and each can move by keyboard or pointer', async ({ page }) => {
+  await page.goto('/design-system.html?theme=light&view=gallery');
+  const range = page.locator('.visual-duration-range').first();
+  const minimum = range.getByRole('slider', { name: 'Call length: Minimum', exact: true });
+  const maximum = range.getByRole('slider', { name: 'Call length: Maximum', exact: true });
+  const equalHandles = async () => {
+    await minimum.evaluate((input) => { input.value = '30'; input.dispatchEvent(new Event('input')); });
+    await maximum.evaluate((input) => { input.value = '30'; input.dispatchEvent(new Event('input')); });
+  };
+  await equalHandles();
+  await minimum.focus();
+  await minimum.press('ArrowRight');
+  await expect(minimum).toHaveValue('30');
+  await minimum.press('ArrowLeft');
+  await expect(minimum).toHaveValue('29.5');
+  await maximum.focus();
+  await maximum.press('ArrowRight');
+  await expect(maximum).toHaveValue('30.5');
+  await equalHandles();
+  await minimum.scrollIntoViewIfNeeded();
+  const rail = await range.locator('.ui-dual-range-rail').boundingBox();
+  const middle = rail.x + rail.width / 4;
+  await page.mouse.click(middle - 4, rail.y + rail.height / 2);
+  expect(Number(await minimum.inputValue())).toBeLessThan(30);
+  await expect(maximum).toHaveValue('30');
+  await equalHandles();
+  await page.mouse.click(middle + 4, rail.y + rail.height / 2);
+  await expect(minimum).toHaveValue('30');
+  expect(Number(await maximum.inputValue())).toBeGreaterThan(30);
+});
+
 for(const [name, theme, viewport] of [
   ['alias-list-create-light-desktop', 'light', { width: 1280, height: 900 }],
   ['alias-list-create-dark-mobile', 'dark', { width: 390, height: 844 }]

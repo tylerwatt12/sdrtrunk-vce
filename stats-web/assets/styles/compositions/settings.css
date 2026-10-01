@@ -29,7 +29,7 @@
   gap: var(--space-3);
 }
 
-.admin-form input:not(.ui-input):not([type="checkbox"]):not([type="radio"]),
+.admin-form input:not(.ui-input):not([type="checkbox"]):not([type="radio"]):not([type="range"]),
 .admin-form select:not(.ui-select),
 .admin-form textarea:not(.ui-textarea) {
   min-height: var(--ui-control-height, var(--control-height-comfortable));
@@ -43,20 +43,20 @@
   line-height: var(--line-height-control);
 }
 
-.admin-form input:not(.ui-input):not([type="checkbox"]):not([type="radio"]),
+.admin-form input:not(.ui-input):not([type="checkbox"]):not([type="radio"]):not([type="range"]),
 .admin-form select:not(.ui-select),
 .admin-form textarea:not(.ui-textarea) {
   min-width: 0;
   width: 100%;
 }
 
-.admin-form input:not(.ui-input):not([type="checkbox"]):not([type="radio"]),
+.admin-form input:not(.ui-input):not([type="checkbox"]):not([type="radio"]):not([type="range"]),
 .admin-form select:not(.ui-select) {
   height: var(--ui-control-height, var(--control-height-comfortable));
   min-height: var(--ui-control-height, var(--control-height-comfortable));
 }
 
-.admin-form input:not(.ui-input):not([type="checkbox"]):not([type="radio"]):focus,
+.admin-form input:not(.ui-input):not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus,
 .admin-form select:not(.ui-select):focus,
 .admin-form textarea:not(.ui-textarea):focus {
   border-color: var(--focus-ring);

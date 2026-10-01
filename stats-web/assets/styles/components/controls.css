@@ -937,6 +937,126 @@
   opacity: .48;
 }
 
+.ui-dual-range-heading {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-2);
+}
+
+.ui-dual-range-value {
+  color: var(--muted);
+  font-size: var(--font-size-meta);
+}
+
+.ui-dual-range {
+  position: relative;
+  min-width: 0;
+  height: var(--icon-action-size);
+  margin-inline: var(--space-2);
+  touch-action: none;
+}
+
+.ui-dual-range-rail {
+  position: absolute;
+  inset-inline: calc(var(--space-5) / 2);
+  top: calc(50% - 2px);
+  height: 4px;
+  border-radius: var(--radius-control);
+  background: var(--line);
+}
+
+.ui-dual-range-rail::after {
+  content: '';
+  position: absolute;
+  left: var(--range-lower);
+  right: calc(100% - var(--range-upper));
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.ui-dual-range-handle {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  pointer-events: none;
+}
+
+.ui-dual-range-handle::-webkit-slider-runnable-track {
+  height: 4px;
+  background: transparent;
+}
+
+.ui-dual-range-handle::-moz-range-track {
+  height: 4px;
+  background: transparent;
+}
+
+.ui-dual-range-handle::-webkit-slider-thumb {
+  width: var(--space-5);
+  height: var(--space-5);
+  margin-top: calc(2px - var(--space-5) / 2);
+  appearance: none;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  background: var(--surface);
+  cursor: grab;
+  pointer-events: auto;
+}
+
+.ui-dual-range-handle::-moz-range-thumb {
+  width: var(--space-5);
+  height: var(--space-5);
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  background: var(--surface);
+  cursor: grab;
+  pointer-events: auto;
+}
+
+.ui-dual-range-handle:focus-visible {
+  outline: none;
+  z-index: 2;
+}
+
+.ui-dual-range-handle:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+
+.ui-dual-range-handle:focus-visible::-moz-range-thumb {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+
+.ui-dual-range-at-end .ui-dual-range-handle:first-of-type {
+  z-index: 1;
+}
+
+.ui-dual-range-disabled {
+  opacity: .48;
+}
+
+.ui-dual-range-handle:disabled::-webkit-slider-thumb {
+  cursor: not-allowed;
+}
+
+.ui-dual-range-handle:disabled::-moz-range-thumb {
+  cursor: not-allowed;
+}
+
 .ui-repeater,
 .ui-repeater-rows {
   display: grid;

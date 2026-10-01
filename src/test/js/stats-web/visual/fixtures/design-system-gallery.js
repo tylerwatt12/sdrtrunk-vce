@@ -1,5 +1,21 @@
 import * as tableDefaults from '/assets/core/table-defaults.js';
 import * as tableLayouts from '/assets/core/table-layout.js';
+import { createDualRange } from '/assets/core/dual-range.js';
+
+document.querySelectorAll('.visual-duration-range').forEach((host) => {
+  const node = (tag, className, text) => {
+    const element = document.createElement(tag);
+    if (className) element.className = className;
+    if (text) element.textContent = text;
+    return element;
+  };
+  const disabled = host.dataset.disabled === 'true';
+  const control = createDualRange({ node, label: disabled ? 'Call length (disabled)' : 'Call length',
+    min: 0, max: 120, step: 0.5, lower: disabled ? 10 : 0, upper: disabled ? 60 : 120,
+    disabled, format: (value, endpoint) => endpoint === 'upper' && value === 120 ?
+      'Any length' : `${value} sec` });
+  host.append(control.field);
+});
 
 function initializeGuidanceTable() {
   const panel = document.querySelector('.visual-data-panel');

@@ -117,7 +117,8 @@ async function openRecordings(page, options = {}) {
   const state = {
     mode: options.mode || 'MANAGED', available: options.available !== false,
     hasCalls: options.hasCalls !== false, matchCalls: true, admin: options.admin !== false,
-    call: options.call || call, calls: options.calls || null, callDetail: options.callDetail || null, requestedFilters: [],
+    call: options.call || call, calls: options.calls || null, callDetail: options.callDetail || null,
+    requestedFilters: [], suggestionRequests: [],
     paginate: options.paginate === true,
     transcription: options.transcription || null, settingsWrites: [],
     settings: { mode: options.mode || 'MANAGED', managed_directory: '/recordings',
@@ -172,14 +173,17 @@ async function openRecordings(page, options = {}) {
       await route.fulfill({ json: { data: state.transcription } });
     } else if (pathname === '/api/v1/recordings/suggestions') {
       const q = url.searchParams.get('q') || '';
+      state.suggestionRequests.push(Object.fromEntries(url.searchParams));
       if (q === 'error') {
         await route.fulfill({ status: 500, json: { error: { message: 'Suggestion error' } } });
       } else {
         if (q === 'slow') await new Promise((resolve) => setTimeout(resolve, 350));
-        const suggestions = q.toLowerCase().includes('fire') ? [
+        const suggestions = typeof options.suggestions === 'function' ?
+          options.suggestions(q, Object.fromEntries(url.searchParams)) : options.suggestions ||
+          (q.toLowerCase().includes('fire') ? [
           { kind: 'talkgroup', id: 1201, label: 'Fire Dispatch', detail: 'Metro Public Safety · TG 1201',
             system_key: 'metro', system_name: 'Metro Public Safety' }
-        ] : [];
+        ] : []);
         await route.fulfill({ json: { data: { suggestions } } });
       }
     } else if (pathname === '/api/v1/status') {
@@ -308,6 +312,163 @@ test('suggestions show no-match and failure states, then stay closed after blur'
   await page.getByRole('combobox', { name: 'Date & time' }).focus();
   await page.waitForTimeout(450);
   await expect(page.getByRole('listbox')).toBeHidden();
+});
+
+test('call length uses ordered half-second handles and an unrestricted upper endpoint', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const state = await openRecordings(page);
+  await expect(page.locator('.recordings-call')).toHaveCount(1);
+  await page.getByRole('button', { name: 'More filters' }).click();
+  for (const name of ['WACN', 'SysID', 'RFSS', 'Site ID', 'Minimum length', 'Maximum length']) {
+    await expect(page.getByLabel(name, { exact: true })).toHaveCount(0);
+  }
+  const lower = page.getByRole('slider', { name: 'Call length: Minimum', exact: true });
+  const upper = page.getByRole('slider', { name: 'Call length: Maximum', exact: true });
+  await expect(lower).toHaveValue('0');
+  await expect(upper).toHaveValue('120');
+  await expect(upper).toHaveAttribute('aria-valuetext', 'Any length');
+  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  expect(state.requestedFilters.at(-1)).not.toHaveProperty('min_duration_ms');
+  expect(state.requestedFilters.at(-1)).not.toHaveProperty('max_duration_ms');
+
+  await lower.focus();
+  await lower.press('ArrowRight');
+  await expect(lower).toHaveValue('0.5');
+  await upper.focus();
+  await upper.press('Home');
+  await expect(upper).toHaveValue('0.5');
+  await expect(lower).toHaveAttribute('aria-valuemax', '0.5');
+  await expect(upper).toHaveAttribute('aria-valuemin', '0.5');
+  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  expect(state.requestedFilters.at(-1)).toMatchObject({ min_duration_ms: '500', max_duration_ms: '500' });
+  await upper.focus();
+  await upper.press('End');
+  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  expect(state.requestedFilters.at(-1)).toHaveProperty('min_duration_ms', '500');
+  expect(state.requestedFilters.at(-1)).not.toHaveProperty('max_duration_ms');
+
+  await page.getByRole('button', { name: 'Clear filters' }).click();
+  await expect(page.locator('.recordings-call')).toHaveCount(1);
+  await page.getByRole('button', { name: 'More filters' }).click();
+  await expect(page.getByRole('slider', { name: 'Call length: Minimum', exact: true })).toHaveValue('0');
+  await expect(page.getByRole('slider', { name: 'Call length: Maximum', exact: true }))
+    .toHaveAttribute('aria-valuetext', 'Any length');
+});
+
+test('numeric talkgroups can be selected in Find a call and the dedicated filter', async ({ page }) => {
+  const unknownGroup = { kind: 'talkgroup', id: 7, label: 'Talkgroup 7',
+    detail: 'Metro Public Safety · TG 7', system_key: 'metro', system_name: 'Metro Public Safety' };
+  const state = await openRecordings(page, { suggestions: [unknownGroup] });
+  const query = page.getByRole('combobox', { name: 'Find a call' });
+  await query.fill('7');
+  await expect(page.locator('#recordings-options-q').getByRole('option')).toHaveCount(1);
+  expect(state.suggestionRequests.at(-1)).toMatchObject({ q: '7' });
+  await query.press('ArrowDown');
+  await query.press('Enter');
+  await expect(query).toHaveValue('');
+  await expect(page.locator('.recordings-selected-filters')).toContainText('Talkgroup 7');
+  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  expect(state.requestedFilters.at(-1)).toMatchObject({ talkgroup_id: '7', system_key: 'metro' });
+  expect(state.requestedFilters.at(-1)).not.toHaveProperty('q');
+
+  await page.getByRole('button', { name: 'More filters' }).click();
+  const talkgroup = page.getByRole('combobox', { name: 'Talkgroup', exact: true });
+  await talkgroup.fill('7');
+  await expect(page.locator('#recordings-options-talkgroup_id').getByRole('option')).toHaveCount(1);
+  expect(state.suggestionRequests.at(-1)).toMatchObject({ q: '7', kind: 'talkgroup', system_key: 'metro' });
+  await talkgroup.press('ArrowDown');
+  await expect(talkgroup).toHaveAccessibleName('Talkgroup');
+  await talkgroup.press('Enter');
+  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  expect(state.requestedFilters.at(-1)).toMatchObject({ talkgroup_id: '7', system_key: 'metro' });
+});
+
+test('raw numeric identities keep the selected system friendly name', async ({ page }) => {
+  const state = await openRecordings(page, { suggestions: (q) => q === 'metro' ? [
+    { kind: 'system', id: systemKey, system_key: systemKey, label: 'Metro Public Safety' }
+  ] : q === '7' ? [
+    { kind: 'talkgroup', id: 7, label: 'Talkgroup 7', system_key: systemKey }
+  ] : q === '8' ? [
+    { kind: 'radio', id: 8, label: 'Radio 8', system_key: systemKey }
+  ] : [] });
+  const query = page.getByRole('combobox', { name: 'Find a call' });
+  const chips = page.locator('.recordings-selected-filters');
+  for (const term of ['metro', '7', '8']) {
+    await query.fill(term);
+    await expect(page.locator('#recordings-options-q').getByRole('option')).toHaveCount(1);
+    await query.press('ArrowDown');
+    await query.press('Enter');
+    await expect(chips.getByRole('button', { name: 'Remove Metro Public Safety filter', exact: true }))
+      .toBeVisible();
+    await expect(chips.getByRole('button', { name: `Remove ${systemKey} filter`, exact: true })).toHaveCount(0);
+  }
+  expect(state.suggestionRequests.at(-1)).toMatchObject({ q: '8', system_key: systemKey });
+  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  expect(state.requestedFilters.at(-1)).toMatchObject({ system_key: systemKey, talkgroup_id: '7', radio_id: '8' });
+});
+
+test('named site suggestions use channel names and preserve their hidden site tuple', async ({ page }) => {
+  const recordedSite = { kind: 'site', id: channelId, channel_id: channelId,
+    label: 'North Ridge Channel', detail: 'Metro Public Safety · North Ridge · RFSS 1 · Site 2',
+    wacn: 1, sysid: 1, rfss: 1, site_id: 2 };
+  const state = await openRecordings(page, { suggestions: [recordedSite] });
+  await page.getByRole('button', { name: 'More filters' }).click();
+  const site = page.getByRole('combobox', { name: 'Site', exact: true });
+  await site.fill('ridge');
+  await expect(page.locator('#recordings-options-site').getByRole('option'))
+    .toContainText('North Ridge Channel');
+  await site.press('ArrowDown');
+  await expect(site).toHaveAccessibleName('Site');
+  await expect(site).toHaveAccessibleDescription('Choose a site from the suggestions.');
+  await site.press('Enter');
+  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  expect(state.requestedFilters.at(-1)).toMatchObject({ wacn: '1', sysid: '1', rfss: '1', site_id: '2' });
+  expect(state.requestedFilters.at(-1)).not.toHaveProperty('channel_id');
+  expect(state.requestedFilters.at(-1)).not.toHaveProperty('site');
+  await page.locator('.recordings-selected-filters').getByRole('button', { name: /North Ridge Channel/ }).click();
+  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  for (const key of ['wacn', 'sysid', 'rfss', 'site_id']) {
+    expect(state.requestedFilters.at(-1)).not.toHaveProperty(key);
+  }
+
+  const query = page.getByRole('combobox', { name: 'Find a call' });
+  await query.fill('ridge');
+  await expect(page.locator('#recordings-options-q').getByRole('option'))
+    .toContainText('North Ridge Channel');
+  await query.press('ArrowDown');
+  await query.press('Enter');
+  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  expect(state.requestedFilters.at(-1)).toMatchObject({ wacn: '1', sysid: '1', rfss: '1', site_id: '2' });
+  expect(state.requestedFilters.at(-1)).not.toHaveProperty('q');
+});
+
+test.describe('touch call length', () => {
+  test.use({ hasTouch: true });
+  test('mobile duration handles survive filter dialog reopen and support touch', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const state = await openRecordings(page);
+    await page.getByRole('button', { name: 'Filters' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Filters' });
+    const lower = dialog.getByRole('slider', { name: 'Call length: Minimum', exact: true });
+    const upper = dialog.getByRole('slider', { name: 'Call length: Maximum', exact: true });
+    await lower.scrollIntoViewIfNeeded();
+    const rail = await dialog.locator('.ui-dual-range-rail').boundingBox();
+    await page.touchscreen.tap(rail.x + rail.width / 4, rail.y + rail.height / 2);
+    await expect(lower).toHaveValue('30');
+    await page.touchscreen.tap(rail.x + rail.width * 3 / 4, rail.y + rail.height / 2);
+    await expect(upper).toHaveValue('90');
+    await dialog.getByRole('button', { name: 'Show calls' }).click();
+    await expect(dialog).toBeHidden();
+    expect(state.requestedFilters.at(-1)).toMatchObject({ min_duration_ms: '30000', max_duration_ms: '90000' });
+    await page.getByRole('button', { name: 'Filters' }).click();
+    await expect(lower).toHaveValue('30');
+    await expect(upper).toHaveValue('90');
+    await dialog.getByRole('button', { name: 'Clear filters' }).click();
+    await page.getByRole('button', { name: 'Filters' }).click();
+    await expect(dialog.getByRole('slider', { name: 'Call length: Minimum', exact: true })).toHaveValue('0');
+    await expect(dialog.getByRole('slider', { name: 'Call length: Maximum', exact: true }))
+      .toHaveAttribute('aria-valuetext', 'Any length');
+  });
 });
 
 test('empty search results omit count and pagination', async ({ page }) => {

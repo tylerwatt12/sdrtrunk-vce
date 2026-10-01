@@ -1,3 +1,5 @@
+import { createDualRange } from '../core/dual-range.js?v=1';
+
 const CALLS = '/api/v1/recordings/calls';
 const SUGGESTIONS = '/api/v1/recordings/suggestions';
 const STATUS = '/api/v1/recordings/status';
@@ -7,7 +9,7 @@ const SUGGESTION_DELAY_MS = 240;
 
 const SEARCH_FIELDS = Object.freeze([
   ['system_key', 'Radio system', 'system', 'System name or key'],
-  ['site', 'Site', 'site', 'Site name or ID'],
+  ['site', 'Site', 'site', 'Channel name, site name, or ID'],
   ['talkgroup_id', 'Talkgroup', 'talkgroup', 'Talkgroup alias or ID'],
   ['radio_id', 'Radio ID', 'radio', 'Radio alias, ID, or OTA name'],
   ['channel_id', 'Analog channel', 'channel', 'Channel name']
@@ -164,7 +166,8 @@ function select(node, options, labelText) {
 }
 
 // Reuse map: the shared page header and section shells frame a compact data
-// workspace with desktop filter/results columns; ui-input, ui-select, ui-button, ui-choice-card, ui-feedback, and
+// workspace with desktop filter/results columns; ui-input, ui-select, ui-dual-range,
+// ui-button, ui-choice-card, ui-feedback, and
 // the application's modal foundation own controls and feedback. This module
 // owns only recordings geometry and the historical audio lifecycle.
 export function createRecordingsFeature(deps) {
@@ -260,10 +263,14 @@ export function createRecordingsFeature(deps) {
       selectedSuggestions.set(key, suggestion);
     }
     if (['radio_id', 'talkgroup_id'].includes(key) && suggestion.system_key) {
+      const sameSystem = search.system_key === String(suggestion.system_key);
+      const existingSystem = selectedSuggestions.get('system_key');
       search.system_key = String(suggestion.system_key);
-      selectedSuggestions.set('system_key', {
-        kind: 'system', id: suggestion.system_key, label: suggestion.system_name || suggestion.system_key
-      });
+      if (!sameSystem || !existingSystem || suggestion.system_name) {
+        selectedSuggestions.set('system_key', {
+          kind: 'system', id: suggestion.system_key, label: suggestion.system_name || suggestion.system_key
+        });
+      }
     }
   }
 
@@ -913,6 +920,7 @@ export function createRecordingsFeature(deps) {
 
   function autocompleteFilter(key, title, kind, placeholder) {
     const input = textInput(placeholder);
+    input.id = `recordings-input-${key}`;
     searchInputs.set(key, input);
     input.value = selectedSuggestions.get(key)?.label || search[key] || '';
     const control = node('div', 'recordings-autocomplete');
@@ -979,7 +987,7 @@ export function createRecordingsFeature(deps) {
       window.clearTimeout(timer);
       const request = ++generation;
       const q = input.value.trim();
-      if (q.length < 2) { close(); return; }
+      if (!q || (q.length < 2 && !/^\d+$/.test(q))) { close(); return; }
       showMessage('Finding suggestions…', 'loading');
       timer = window.setTimeout(async () => {
         try {
@@ -1045,14 +1053,26 @@ export function createRecordingsFeature(deps) {
       blurTimer = window.setTimeout(close, 120);
     });
     control.append(input, options);
-    const wrapper = field(title, control);
+    // Keep the popup outside the label so its active option cannot become
+    // part of the combobox's accessible name.
+    const wrapper = node('div', 'ui-field recordings-field');
+    const inputLabel = node('label', 'ui-field-label', title);
+    inputLabel.setAttribute('for', input.id);
+    wrapper.append(inputLabel, control);
     if (key === 'system_key') {
       searchHint = node('small', 'ui-field-detail',
         'Choose a radio system to search over-the-air radio names.');
+      searchHint.id = 'recordings-system-search-hint';
+      input.setAttribute('aria-describedby', searchHint.id);
       searchHint.hidden = Boolean(search.system_key);
       wrapper.append(searchHint);
     }
-    if (key === 'site') wrapper.append(node('small', 'ui-field-detail', 'Choose a site from the suggestions.'));
+    if (key === 'site') {
+      const siteHint = node('small', 'ui-field-detail', 'Choose a site from the suggestions.');
+      siteHint.id = 'recordings-site-search-hint';
+      input.setAttribute('aria-describedby', siteHint.id);
+      wrapper.append(siteHint);
+    }
     return wrapper;
   }
 
@@ -1085,12 +1105,18 @@ export function createRecordingsFeature(deps) {
     transcript.value = search.transcript;
     transcript.maxLength = 240;
     advancedFields.append(field('Transcript text', transcript));
-    const minDuration = textInput('Seconds', 'number');
-    minDuration.min = '0';
-    minDuration.value = search.min_duration_ms ? String(Number(search.min_duration_ms) / 1000) : '';
-    const maxDuration = textInput('Seconds', 'number');
-    maxDuration.min = '0';
-    maxDuration.value = search.max_duration_ms ? String(Number(search.max_duration_ms) / 1000) : '';
+    const minimumSeconds = Number(search.min_duration_ms || 0) / 1000;
+    const maximumSeconds = search.max_duration_ms ? Number(search.max_duration_ms) / 1000 : null;
+    // The last upper position has no ceiling, so long conventional calls stay
+    // included. Expand only when restoring a filter beyond the normal scale.
+    const durationCeiling = Math.max(120, Math.ceil(minimumSeconds + 1),
+      maximumSeconds === null ? 0 : Math.ceil(maximumSeconds + 1));
+    const callDuration = createDualRange({ node, label: 'Call length',
+      min: 0, max: durationCeiling, step: 0.5,
+      lower: minimumSeconds, upper: maximumSeconds ?? durationCeiling,
+      format: (seconds, endpoint) => endpoint === 'upper' && seconds === durationCeiling ?
+        'Any length' : `${seconds} sec` });
+    callDuration.field.classList.add('recordings-field');
     const frequencyInput = textInput('MHz', 'number');
     frequencyInput.step = '0.0001';
     frequencyInput.min = '0';
@@ -1105,16 +1131,8 @@ export function createRecordingsFeature(deps) {
       ['APCO25_PHASE2', 'P25 Phase 2'], ['DMR', 'DMR'], ['NXDN', 'NXDN'],
       ['NBFM', 'Analog FM'], ['AM', 'Analog AM'], ['DCS', 'DCS']], 'Protocol');
     protocol.value = search.protocol;
-    advancedFields.append(field('Minimum length', minDuration),
-      field('Maximum length', maxDuration), field('Frequency', frequencyInput),
+    advancedFields.append(callDuration.field, field('Frequency', frequencyInput),
       field('Call type', callType), field('Voice type', voiceType), field('Protocol', protocol));
-    const protocolFields = {};
-    for (const [key, title] of [['wacn', 'WACN'], ['sysid', 'SysID'], ['rfss', 'RFSS'], ['site_id', 'Site ID']]) {
-      const input = textInput(title);
-      input.value = search[key];
-      protocolFields[key] = input;
-      advancedFields.append(field(title, input));
-    }
     advanced.append(advancedFields);
     const actions = node('div', 'recordings-search-actions');
     const submit = button(node, 'Search', null, 'ui-button ui-button-primary');
@@ -1212,17 +1230,15 @@ export function createRecordingsFeature(deps) {
         String(new Date(from.value).getTime()) : '';
       search.to_ms = range.value === 'custom' && to.value ?
         String(new Date(to.value).getTime() + 59_999) : (rangeMs ? String(now) : '');
-      search.min_duration_ms = minDuration.value ? String(Math.round(Number(minDuration.value) * 1000)) : '';
-      search.max_duration_ms = maxDuration.value ? String(Math.round(Number(maxDuration.value) * 1000)) : '';
+      const durationRange = callDuration.values();
+      search.min_duration_ms = durationRange.lower > 0 ? String(Math.round(durationRange.lower * 1000)) : '';
+      search.max_duration_ms = durationRange.upper < durationCeiling ?
+        String(Math.round(durationRange.upper * 1000)) : '';
       search.frequency_hz = frequencyInput.value ? String(Math.round(Number(frequencyInput.value) * 1_000_000)) : '';
       search.transcript = transcript.value.trim();
       search.call_type = callType.value;
       search.voice_type = voiceType.value;
       search.protocol = protocol.value;
-      Object.entries(protocolFields).forEach(([key, input]) => {
-        if (!input.value.trim() && selectedSuggestions.get('site')?.appliedKeys?.includes(key)) return;
-        search[key] = input.value.trim();
-      });
       currentFilters = effectiveFilters();
       cursors = [null];
       currentPage = 0;
