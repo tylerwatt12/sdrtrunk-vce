@@ -24,7 +24,7 @@ import { createStreamingWorkspace } from './features/streaming.js?v=7';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=6';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=10';
 import { createRecordingsFeature } from './features/recordings.js?v=16';
-import { createAudioDock } from './core/audio-dock.js?v=5';
+import { createAudioDock } from './core/audio-dock.js?v=6';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=5';
 

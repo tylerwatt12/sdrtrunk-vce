@@ -136,7 +136,7 @@ async function install(page, state = {}) {
   await expect(page.getByRole('heading', { name: 'Tuner Spectrum', exact: true })).toBeVisible();
   if (!state.browseError) await expect(page.locator('.spectrum-browse-center')).toContainText('0851.01250MHz');
   await page.evaluate(async () => {
-    window.discoveryApi = await import('/assets/app.js?v=353');
+    window.discoveryApi = await import(document.querySelector('script[type="module"][src*="/assets/app.js"]').src);
     window.discoveryProbeStates = [];
     window.openDiscovery = () => window.discoveryApi.openSpectrumDiscoveryWizard({
       tunerId: 'idle-a', targetId: 'target-a', frequencyHz: 851012500, browseLeaseId: 'browse-a',

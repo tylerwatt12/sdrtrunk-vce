@@ -87,8 +87,11 @@ for (const source of ['live', 'recordings']) {
 test('audio dock restricted source remains visible and disabled', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 740 });
   const dock = await openGallery(page, { fixture: 'restricted', theme: 'dark' });
-  await expect(dock.getByRole('button', { name: 'Recordings', exact: true })).toBeDisabled();
-  await expect(dock.getByRole('button', { name: 'Live', exact: true })).toBeEnabled();
+  const picker = dock.getByRole('combobox', { name: 'Audio source', exact: true });
+  await expect(picker).toBeVisible();
+  await expect.poll(() => picker.evaluate((element) => element.selectedOptions[0]?.label)).toBe('Live');
+  await expect(picker.locator('option[value="recordings"]')).toBeDisabled();
+  await expect(picker.locator('option[value="live"]')).toBeEnabled();
   await expect(dock).toHaveScreenshot('restricted-source-dark-320.png');
 });
 

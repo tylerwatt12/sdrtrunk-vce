@@ -2,6 +2,7 @@
 
 const { expect, test } = require('@playwright/test');
 const { openAudioApp } = require('./fixtures/audio-dock-app.cjs');
+const { selectDockSource } = require('./fixtures/audio-dock-source.cjs');
 
 const viewports = [{ width: 320, height: 740 }, { width: 390, height: 844 },
   { width: 430, height: 932 }, { width: 844, height: 390 }];
@@ -32,9 +33,9 @@ for (const theme of ['light', 'dark']) {
         const player = page.locator('#audio-dock');
         const navigation = page.locator('#primary-navigation');
         const toggle = page.locator('#navigation-toggle');
-        for (const source of ['Live', 'Recordings']) {
+        for (const source of ['live', 'recordings']) {
           if (await player.getAttribute('data-state') === 'collapsed') await setDockSize(player, 'minimal');
-          await player.getByRole('button', { name: source, exact: true }).click();
+          await selectDockSource(player, source);
           for (const size of ['collapsed', 'minimal', 'full']) {
             await setDockSize(player, size);
             await toggle.click();

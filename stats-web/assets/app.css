@@ -7,14 +7,14 @@
 @layer reset, tokens, components, compositions, features, utilities;
 
 @import url("./styles/base.css?v=1") layer(reset);
-@import url("./styles/tokens.css?v=15") layer(tokens);
+@import url("./styles/tokens.css?v=16") layer(tokens);
 @import url("./styles/components/semantic-text.css?v=2") layer(components);
 @import url("./styles/components/controls.css?v=28") layer(components);
-@import url("./styles/components/audio-controls.css?v=3") layer(components);
+@import url("./styles/components/audio-controls.css?v=4") layer(components);
 @import url("./styles/compositions/workspaces.css?v=20") layer(compositions);
 @import url("./styles/compositions/tables.css?v=11") layer(compositions);
 @import url("./styles/compositions/app-chrome.css?v=13") layer(compositions);
-@import url("./styles/compositions/audio-dock.css?v=4") layer(compositions);
+@import url("./styles/compositions/audio-dock.css?v=5") layer(compositions);
 @import url("./styles/compositions/charts.css?v=3") layer(compositions);
 @import url("./styles/compositions/modals.css?v=6") layer(compositions);
 @import url("./styles/compositions/settings.css?v=7") layer(compositions);

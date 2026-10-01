@@ -17,7 +17,14 @@
   --audio-grip-width: 28px;
   --audio-action-size: 42px;
   --audio-play-size: 48px;
-  --audio-source-height: 32px;
+  --audio-source-height: 36px;
+  --audio-source-font-size: 13px;
+  --audio-source-padding-x: 8px;
+  --audio-source-padding-y: 6px;
+  --audio-source-inset: 4px;
+  --audio-source-gap: 2px;
+  --audio-source-option-radius: 6px;
+  --audio-source-picker-end-padding: 32px;
   --audio-title-size: 17px;
   --audio-progress-height: 4px;
   --audio-tab-rule: 3px;

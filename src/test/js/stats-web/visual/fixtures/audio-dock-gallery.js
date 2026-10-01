@@ -181,7 +181,13 @@ export async function mountAudioDockGallery(parameters) {
   const dock = document.querySelector('#audio-dock');
   const clickNamed = (label) => [...dock.querySelectorAll('button')].find((button) =>
     button.getClientRects().length && (button.getAttribute('aria-label') === label || button.textContent === label))?.click();
-  if (parameters.get('audioSource') === 'recordings') clickNamed('Recordings');
+  if (parameters.get('audioSource') === 'recordings') {
+    const sourcePicker = dock.querySelector('.ui-audio-source-picker');
+    if (sourcePicker.getClientRects().length) {
+      sourcePicker.value = 'recordings';
+      sourcePicker.dispatchEvent(new Event('change', { bubbles: true }));
+    } else clickNamed('Recordings');
+  }
   const size = parameters.get('audioState') || 'full';
   const handle = dock.querySelector('.ui-audio-handle');
   if (size !== 'minimal') handle.dispatchEvent(new KeyboardEvent('keydown', {

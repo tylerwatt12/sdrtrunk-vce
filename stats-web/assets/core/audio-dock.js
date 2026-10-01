@@ -1,4 +1,4 @@
-/* Reuse map: global workspace composition; ui-button/ui-icon-button, ui-segmented,
+/* Reuse map: global workspace composition; ui-button/ui-icon-button, ui-segmented, ui-select,
  * ui-range, ui-feedback, ui-fact-list and ui-section-disclosure. Existing scanner
  * and recording-choice modal retain their lifecycle. One live engine and one
  * recording adapter; the dock owns presentation only, in light/dark and all sizes. */
@@ -183,22 +183,60 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const sourceButtons = node('div', 'ui-segmented ui-audio-sources');
   sourceButtons.setAttribute('role', 'group');
   sourceButtons.setAttribute('aria-label', 'Audio source');
+  const chooseSource = (value) => {
+    if (!access()[value] || (value === 'recordings' && openRecordings?.() === false)) {
+      render();
+      return;
+    }
+    if (source === value) render();
+    else switchSource(value);
+  };
+  const sourcePicker = node('select', 'ui-select ui-audio-source-picker');
+  sourcePicker.setAttribute('aria-label', 'Audio source');
+  // A source choice is also a navigation action. The hidden current label lets
+  // choosing Recordings navigate even when that source is already selected.
+  const currentSourceChoice = node('option');
+  currentSourceChoice.value = ''; currentSourceChoice.hidden = true;
+  sourcePicker.append(currentSourceChoice);
+  sourcePicker.addEventListener('change', () => chooseSource(sourcePicker.value));
   const sourceControls = {};
+  const sourceOptions = {};
   ['live', 'recordings'].forEach((value) => {
-    const button = node('button', 'ui-segmented-option', value === 'live' ? 'Live' : 'Recordings');
+    const label = value === 'live' ? 'Live' : 'Recordings';
+    const button = node('button', 'ui-segmented-option', label);
     button.type = 'button';
-    button.addEventListener('click', () => {
-      if (value === 'recordings' && openRecordings?.() === false) return;
-      switchSource(value);
-    });
+    button.addEventListener('click', () => chooseSource(value));
+    const option = node('option', '', label);
+    option.value = value;
     sourceControls[value] = button;
+    sourceOptions[value] = option;
     sourceButtons.append(button);
+    sourcePicker.append(option);
   });
+  let focusedSourceControl = null;
+  [sourceButtons, sourcePicker].forEach((control) => {
+    control.addEventListener('focusin', (event) => { focusedSourceControl = event.target; });
+    control.addEventListener('focusout', (event) => {
+      // Resizing can hide the focused control before the media-query callback.
+      // Retain that focus long enough to transfer it to the visible counterpart.
+      if (event.target.getClientRects().length) focusedSourceControl = null;
+    });
+  });
+  const compactSourceLayout = window.matchMedia('(max-width: 359px)');
+  const updateSourceFocus = () => {
+    if (dock.hidden || size === 'collapsed') return;
+    if (compactSourceLayout.matches && sourceButtons.contains(focusedSourceControl)) {
+      sourcePicker.focus({ preventScroll: true });
+    } else if (!compactSourceLayout.matches && focusedSourceControl === sourcePicker) {
+      sourceControls[source].focus({ preventScroll: true });
+    }
+  };
+  compactSourceLayout.addEventListener('change', updateSourceFocus);
   const count = textButton('Queue 0', () => { panel = 'queue'; setSize('full'); });
   count.classList.add('ui-audio-count');
   const headerStart = node('div', 'audio-dock-header-start');
   const headerEnd = node('div', 'audio-dock-header-end');
-  headerStart.append(collapsedTitle, sourceButtons);
+  headerStart.append(collapsedTitle, sourceButtons, sourcePicker);
   headerEnd.append(collapsedMeta, count);
   header.append(headerStart, handle, headerEnd);
 
@@ -501,7 +539,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     dock.dataset.state = size; dock.dataset.source = source;
     document.body.classList.toggle('has-audio-dock', !dock.hidden);
     collapsedTitle.hidden = collapsedMeta.hidden = size !== 'collapsed';
-    sourceButtons.hidden = count.hidden = body.hidden = size === 'collapsed';
+    sourceButtons.hidden = sourcePicker.hidden = count.hidden = body.hidden = size === 'collapsed';
+    if (dock.hidden || size === 'collapsed') focusedSourceControl = null;
     handle.setAttribute('aria-expanded', String(size !== 'collapsed'));
     const sizeDescription = { collapsed: 'Collapsed player', minimal: 'Minimal controls', full: 'Full controls' }[size];
     sizeHint.textContent = `${sizeDescription}. Drag up or down, or click to change player size.`;
@@ -515,7 +554,12 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     count.title = `${queueCount()} calls queued`;
     Object.entries(sourceControls).forEach(([value, button]) => {
       button.disabled = !permissions[value]; button.setAttribute('aria-pressed', String(source === value));
+      sourceOptions[value].disabled = !permissions[value];
     });
+    const sourceLabel = source === 'live' ? 'Live' : 'Recordings';
+    if (currentSourceChoice.textContent !== sourceLabel) currentSourceChoice.textContent = sourceLabel;
+    if (sourcePicker.value !== '') sourcePicker.value = '';
+    sourcePicker.disabled = !permissions.live && !permissions.recordings;
     nowTitle.textContent = name; nowTitle.title = name;
     nowSubtitle.textContent = subtitle(call) || (source === 'live' ? 'Select scan lists in Listening' : 'Choose a recording to play');
     nowSubtitle.title = nowSubtitle.textContent;
@@ -642,6 +686,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   }
   synchronize();
   return { synchronize, destroy() {
+    compactSourceLayout.removeEventListener('change', updateSourceFocus);
     unsubscribeLive(); unsubscribeRecordings(); resizeObserver.disconnect(); routeObserver.disconnect();
     window.clearInterval(progressTimer); dock.remove(); document.body.classList.remove('has-audio-dock');
     document.documentElement.style.removeProperty('--audio-dock-height');

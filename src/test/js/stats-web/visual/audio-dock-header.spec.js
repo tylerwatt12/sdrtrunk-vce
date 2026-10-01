@@ -2,6 +2,7 @@
 
 const { expect, test } = require('@playwright/test');
 const { openAudioApp } = require('./fixtures/audio-dock-app.cjs');
+const { dockSourceControl, selectDockSource } = require('./fixtures/audio-dock-source.cjs');
 
 const viewports = [{ width: 1280, height: 900 }, { width: 320, height: 740 }, { width: 390, height: 844 }];
 const handle = (dock) => dock.getByRole('button', { name: 'Change audio player size', exact: true });
@@ -39,8 +40,7 @@ async function openGallery(page, source, state = 'full', stress = false) {
 async function expectSingleRow(dock, state, source, queued, title) {
   const header = dock.locator('.audio-dock-header');
   const grip = header.locator('.ui-audio-grip');
-  const left = state === 'collapsed' ? header.locator('.audio-dock-single-line') :
-    header.getByRole('group', { name: 'Audio source', exact: true });
+  const left = state === 'collapsed' ? header.locator('.audio-dock-single-line') : await dockSourceControl(dock);
   const right = state === 'collapsed' ? header.locator('.audio-dock-meta') :
     header.getByRole('button', { name: `Queue ${queued}`, exact: true });
   await expect(handle(dock)).toHaveCount(1);
@@ -51,9 +51,12 @@ async function expectSingleRow(dock, state, source, queued, title) {
     await expect(left).toHaveAttribute('title', title);
     await expect(right).toHaveText(`${source === 'live' ? 'Live audio' : 'Recording'} · ${queued} queued`);
     await expect(header.getByRole('group', { name: 'Audio source', exact: true })).toBeHidden();
+    await expect(header.getByRole('combobox', { name: 'Audio source', exact: true })).toBeHidden();
     await expect(dock.getByRole('slider')).toHaveCount(0);
   } else {
-    for (const label of ['Live', 'Recordings', `Queue ${queued}`]) {
+    const labels = await header.getByRole('combobox', { name: 'Audio source', exact: true }).isVisible() ?
+      [`Queue ${queued}`] : ['Live', 'Recordings', `Queue ${queued}`];
+    for (const label of labels) {
       const button = header.getByRole('button', { name: label, exact: true });
       const textFits = await button.evaluate((element) => {
         const range = document.createRange();
@@ -152,14 +155,14 @@ for (const viewport of viewports) {
     await openAudioApp(page, { view: 'dashboard', feedCallsEnabled: false });
     const dock = page.locator('#audio-dock');
     await setSize(dock, 'full');
-    await dock.getByRole('button', { name: 'Recordings', exact: true }).click();
+    await selectDockSource(dock, 'recordings');
     await expect(page).toHaveURL(/view=recordings/);
     await expect(dock).toHaveAttribute('data-source', 'recordings');
     await expect(dock).toHaveAttribute('data-state', 'full');
     await dock.getByRole('button', { name: 'Queue 0', exact: true }).click();
     await expect(dock.getByRole('tab', { name: 'Queue', exact: true })).toHaveAttribute('aria-selected', 'true');
     await expect(dock).toHaveAttribute('data-state', 'full');
-    await dock.getByRole('button', { name: 'Live', exact: true }).click();
+    await selectDockSource(dock, 'live');
     await expect(dock).toHaveAttribute('data-source', 'live');
     await expect(dock).toHaveAttribute('data-state', 'full');
   });
