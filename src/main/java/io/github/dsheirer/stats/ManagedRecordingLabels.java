@@ -365,6 +365,7 @@ final class ManagedRecordingLabels
             return List.of();
         }
         int limit = Math.max(1, Math.min(MAX_SUGGESTIONS, requestedLimit));
+        Long exactIdentity = query.matches("[0-9]{1,10}") ? Long.parseLong(query) : null;
         String pattern = '%' + query.toLowerCase(Locale.ROOT).replace("\\", "\\\\")
             .replace("%", "\\%").replace("_", "\\_") + '%';
         List<Map<String,Object>> result = new ArrayList<>();
@@ -493,7 +494,7 @@ final class ManagedRecordingLabels
                           JOIN radio_system system ON system.id=receiver.radio_system_id
                           WHERE system.system_key=?
                       ))
-                    ORDER BY lower(alias.name), alias.id LIMIT ?
+                    ORDER BY CASE WHEN alias.value=? THEN 0 ELSE 1 END, lower(alias.name), alias.id LIMIT ?
                     """.formatted(recordedOnly ? recordedAliasPredicate() : "1")))
                 {
                     for(String matcher: kind == null ?
@@ -509,7 +510,8 @@ final class ManagedRecordingLabels
                         statement.setString(offset + 5, pattern);
                         statement.setString(offset + 6, recordedOnly ? null : systemKey);
                         statement.setString(offset + 7, systemKey);
-                        statement.setInt(offset + 8, limit - result.size());
+                        statement.setObject(offset + 8, exactIdentity);
+                        statement.setInt(offset + 9, limit - result.size());
                         try(ResultSet rows = statement.executeQuery())
                         {
                             while(rows.next())

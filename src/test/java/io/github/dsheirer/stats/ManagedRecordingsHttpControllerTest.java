@@ -488,6 +488,124 @@ class ManagedRecordingsHttpControllerTest
     }
 
     @Test
+    void exactUnaliasedNumericTalkgroupPrecedesFullPagesOfRecordedSubstringMatches() throws Exception
+    {
+        populateNumericSubstringSuggestions();
+        String base = ManagedRecordingsHttpController.BROWSE_PATH + "/suggestions?q=4001";
+        for(String kind: new String[]{"&kind=talkgroup", ""})
+        {
+            for(int limit: new int[]{20, 1})
+            {
+                HttpResponse<String> response = send(request(base + kind + "&limit=" + limit).GET());
+                assertEquals(200, response.statusCode(), response.body());
+                JsonNode rows = json(response).at("/data");
+                assertEquals(limit, rows.size());
+                assertEquals("talkgroup", rows.get(0).path("kind").textValue());
+                assertEquals("4001", rows.get(0).path("id").textValue());
+                assertEquals("Talkgroup 4001", rows.get(0).path("label").textValue());
+                assertFalse(rows.get(0).has("alias_list_id"));
+                assertEquals(1, exactCount(rows, "talkgroup", "4001"));
+            }
+        }
+    }
+
+    @Test
+    void exactFriendlyNamesRemainCurrentBeyondSubstringAliasesAndGeneralChannelMatches() throws Exception
+    {
+        populateNumericSubstringSuggestions();
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO alias(alias_list_id,name,matcher_type,protocol,value) " +
+                "VALUES(700,'Z Exact Dispatch','TALKGROUP','APCO25',4001)," +
+                "(700,'Z Exact Radio','RADIO_ID','APCO25',4001)");
+        }
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("managed-recordings.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE recording_call SET alias_list_id=700 WHERE id=1");
+            statement.executeUpdate("INSERT INTO recording_call(start_ms,end_ms,duration_ms,relative_path," +
+                "size_bytes,alias_list_id,protocol,call_type,voice_type,source_id,target_id) " +
+                "VALUES(2000,3000,1000,'direct-exact.mp3',5,700,1,3,1,999,4001)," +
+                "(2100,3100,1000,'direct-only.mp3',5,700,1,3,1,998,4002)");
+        }
+        String base = ManagedRecordingsHttpController.BROWSE_PATH + "/suggestions?q=4001";
+        for(String kind: new String[]{"&kind=talkgroup", ""})
+        {
+            for(int limit: new int[]{20, 1})
+            {
+                JsonNode rows = json(send(request(base + kind + "&limit=" + limit).GET())).at("/data");
+                assertEquals("talkgroup", rows.get(0).path("kind").textValue());
+                assertEquals("4001", rows.get(0).path("id").textValue());
+                assertEquals("Z Exact Dispatch", rows.get(0).path("label").textValue());
+                assertEquals(700, rows.get(0).path("alias_list_id").intValue());
+                assertEquals(1, exactCount(rows, "talkgroup", "4001"));
+                if(kind.isEmpty() && limit == 20)
+                {
+                    assertEquals("radio", rows.get(1).path("kind").textValue());
+                    assertEquals("4001", rows.get(1).path("id").textValue());
+                    assertEquals("Z Exact Radio", rows.get(1).path("label").textValue());
+                    assertEquals(1, exactCount(rows, "radio", "4001"));
+                }
+            }
+        }
+        JsonNode directOnly = json(send(request(ManagedRecordingsHttpController.BROWSE_PATH +
+            "/suggestions?q=4002").GET())).at("/data");
+        assertEquals(1, directOnly.size());
+        assertEquals("radio", directOnly.get(0).path("kind").textValue());
+        assertEquals("4002", directOnly.get(0).path("id").textValue());
+        assertEquals(0, json(send(request(ManagedRecordingsHttpController.BROWSE_PATH +
+            "/suggestions?q=4002&kind=talkgroup").GET())).at("/data").size());
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE alias SET name='Z Current Dispatch' " +
+                "WHERE matcher_type='TALKGROUP' AND value=4001");
+        }
+        assertEquals("Z Current Dispatch", json(send(request(base + "&limit=1").GET()))
+            .at("/data/0/label").textValue());
+    }
+
+    private void populateNumericSubstringSuggestions() throws Exception
+    {
+        try(Connection main = DriverManager.getConnection("jdbc:sqlite:" + mDirectory.resolve("main.sqlite"));
+            Statement names = main.createStatement();
+            Connection catalog = DriverManager.getConnection("jdbc:sqlite:" +
+                mDirectory.resolve("managed-recordings.sqlite")); Statement calls = catalog.createStatement())
+        {
+            names.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES(700,'Fixture List','P25')");
+            for(int index = 0; index < 25; index++)
+            {
+                int identity = 14001 + 100000 * index;
+                String prefix = "A" + String.format("%02d", index) + " 4001";
+                String channel = String.format("00000000-0000-0000-0000-%012d", index + 1);
+                names.executeUpdate("INSERT INTO alias(alias_list_id,name,matcher_type,protocol,value) " +
+                    "VALUES(700,'" + prefix + " Dispatch','TALKGROUP','APCO25'," + identity + ")");
+                names.executeUpdate("INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order," +
+                    "name,alias_list_id,decoder_type,primary_frequency_hz,config_json) VALUES('" + channel +
+                    "','TRUNKED'," + index + ",'" + prefix + " Channel',700,'P25_PHASE1',853000000,'{}')");
+                calls.executeUpdate("INSERT INTO recording_channel(id,channel_uuid) VALUES(" + (index + 100) +
+                    ",'" + channel + "')");
+                calls.executeUpdate("INSERT INTO recording_call(start_ms,end_ms,duration_ms,relative_path," +
+                    "size_bytes,channel_id,alias_list_id,protocol,call_type,voice_type,source_id,target_id) VALUES(" +
+                    "1500,2500,1000,'substring-" + index + ".mp3',5," + (index + 100) +
+                    ",700,1,1,1,101," + identity + ")");
+            }
+        }
+    }
+
+    private static long exactCount(JsonNode rows, String kind, String id)
+    {
+        long count = 0;
+        for(JsonNode row: rows)
+        {
+            if(kind.equals(row.path("kind").textValue()) && id.equals(row.path("id").textValue())) count++;
+        }
+        return count;
+    }
+
+    @Test
     void autocompleteOnlyReturnsNamesWithCatalogCallsAndFiltersBeforeItsLimit() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +

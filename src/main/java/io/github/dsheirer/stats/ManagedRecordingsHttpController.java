@@ -527,8 +527,33 @@ final class ManagedRecordingsHttpController
             }
             if(query.matches("[0-9]{1,10}"))
             {
-                for(String identityKind: kind == null ? List.of("talkgroup", "radio") :
-                    Set.of("talkgroup", "radio").contains(kind) ? List.of(kind) : List.<String>of())
+                List<String> identityKinds = kind == null ? List.of("talkgroup", "radio") :
+                    Set.of("talkgroup", "radio").contains(kind) ? List.of(kind) : List.of();
+                List<Map<String,Object>> exact = new ArrayList<>();
+                // Verify exact numeric matches even when substring labels have filled the requested limit.
+                for(String identityKind: identityKinds)
+                {
+                    List<Integer> identities = catalog.identitySuggestions(systemKey, query,
+                        "radio".equals(identityKind), 1);
+                    if(identities.isEmpty() || !identities.getFirst().toString().equals(query)) continue;
+                    Map<String,Object> row = suggestions.stream().filter(candidate ->
+                        identityKind.equals(candidate.get("kind")) && query.equals(candidate.get("id")))
+                        .findFirst().orElse(null);
+                    if(row == null)
+                    {
+                        // A general finder can fill its first page with systems or channels before reaching aliases.
+                        row = mLabels.suggestions(query, identityKind, systemKey, 1, catalog.databaseFile())
+                            .stream().filter(candidate -> identityKind.equals(candidate.get("kind")) &&
+                                query.equals(candidate.get("id"))).findFirst().orElse(null);
+                    }
+                    if(row == null) row = numericSuggestion(identityKind, identities.getFirst(), systemKey);
+                    suggestions.removeIf(candidate -> identityKind.equals(candidate.get("kind")) &&
+                        query.equals(candidate.get("id")));
+                    exact.add(row);
+                    seen.add(identityKind + ":" + query);
+                }
+                suggestions.addAll(0, exact);
+                for(String identityKind: identityKinds)
                 {
                     if(suggestions.size() >= limit) break;
                     for(Integer identity: catalog.identitySuggestions(systemKey, query,
@@ -536,12 +561,7 @@ final class ManagedRecordingsHttpController
                     {
                         if(seen.add(identityKind + ":" + identity))
                         {
-                            Map<String,Object> row = new LinkedHashMap<>();
-                            row.put("kind", identityKind);
-                            row.put("id", identity.toString());
-                            row.put("label", ("talkgroup".equals(identityKind) ? "Talkgroup " : "Radio ") + identity);
-                            if(systemKey != null) row.put("system_key", systemKey);
-                            suggestions.add(row);
+                            suggestions.add(numericSuggestion(identityKind, identity, systemKey));
                             if(suggestions.size() >= limit) break;
                         }
                     }
@@ -596,6 +616,16 @@ final class ManagedRecordingsHttpController
         {
             LABEL_LOOKUPS.release();
         }
+    }
+
+    private static Map<String,Object> numericSuggestion(String kind, Integer identity, String systemKey)
+    {
+        Map<String,Object> row = new LinkedHashMap<>();
+        row.put("kind", kind);
+        row.put("id", identity.toString());
+        row.put("label", ("talkgroup".equals(kind) ? "Talkgroup " : "Radio ") + identity);
+        if(systemKey != null) row.put("system_key", systemKey);
+        return row;
     }
 
     private void audio(HttpExchange exchange, ManagedRecordingCatalog catalog, long id)
