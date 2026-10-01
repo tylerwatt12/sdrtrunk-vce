@@ -2,7 +2,7 @@ import * as routeFoundation from './core/routes.js?v=8';
 import * as preferenceSchema from './core/preference-schema.js?v=2';
 import { Controller as UserPreferenceController } from './core/user-preferences.js';
 import * as tableLayouts from './core/table-layout.js';
-import * as tableDefaults from './core/table-defaults.js?v=9';
+import * as tableDefaults from './core/table-defaults.js?v=10';
 import { Controller as PageTitleController } from './core/page-title.js?v=2';
 import { href as entityRefHref } from './core/entity-ref.js';
 import * as pageLifecycle from './core/page-lifecycle.js';
@@ -21,7 +21,7 @@ import {
 } from './features/alias-list-create.js?v=2';
 import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=19';
 import { createStreamingWorkspace } from './features/streaming.js?v=5';
-import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=3';
+import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=4';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=9';
 import { createRecordingsFeature } from './features/recordings.js?v=13';
 import { createAudioDock } from './core/audio-dock.js?v=1';
@@ -26840,7 +26840,7 @@ function adminSettingsGroups() {
       { id: 'activity', label: 'Activity settings', icon: 'activity', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         description: 'Choose which activity is saved and how long its history is kept.' },
       { id: 'retained-statistics', label: 'Saved data cleanup', icon: 'cleanup', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        description: 'Remove saved statistics while keeping aliases and alias lists.' }
+        description: 'Delete saved statistics while keeping aliases and alias lists.' }
     ] },
     { label: 'Receiver configuration', items: [
       { id: 'remote-links', label: 'Remote Links', icon: 'network-visualizer', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,

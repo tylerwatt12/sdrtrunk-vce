@@ -17,6 +17,9 @@ const COLUMN_WIDTHS = Object.freeze({
 });
 
 const TABLE_DEFAULTS = Object.freeze({
+  'retained-statistics-v3': {
+    widths: { action: 112 }
+  },
   'streaming-aliases': {
     widths: { selected: 88, name: 220, identifier: 145, list: 230 },
     grow: ['name', 'list']

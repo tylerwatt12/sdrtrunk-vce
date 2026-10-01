@@ -180,36 +180,59 @@ test('system site drilldown shows band plan details and preview counts before re
     await expect(results.getByRole('columnheader', { name: 'Observations' })).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath('retained-statistics-desktop-light.png'),
       fullPage: true });
-    await results.getByRole('button', { name: 'Review removal of Band 0' }).click();
+    await results.getByRole('button', { name: 'Delete statistics for Band 0' }).click();
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByText('4 directly matched records')).toBeVisible();
     await expect(dialog.getByText('Linked history may also be removed')).toBeVisible();
     await expect(dialog.getByText('Saved aliases and alias lists remain.')).toBeVisible();
-    await dialog.getByRole('button', { name: 'Remove saved statistics' }).click();
-    await expect(workspace.getByText('Removal complete.')).toBeVisible();
+    await dialog.getByRole('button', { name: 'Delete statistics', exact: true }).click();
+    await expect(workspace.getByText('Statistics deleted.')).toBeVisible();
     expect(requests.writes[0].target).toMatchObject({ kind: 'scoped_data',
       data_type: 'band_plans', source_key: SYSTEM, site_configuration_id: SITE,
       record_key: '0', parts: ['current', 'summary'] });
   });
 
-test('frequency results have separate evidence columns and search past page one', async ({ page }) => {
-  const requests = await openStatistics(page);
-  const workspace = page.locator('.retained-statistics-page');
-  await workspace.getByRole('combobox', { name: 'Radio system' }).selectOption(SYSTEM);
-  await workspace.getByRole('button', { name: 'Frequencies', exact: true }).click();
-  await workspace.getByRole('combobox', { name: 'Site' }).selectOption(SITE);
-  const results = workspace.locator('.retained-statistics-table');
-  await expect(results.getByRole('columnheader', { name: 'Decoder obs.' })).toBeVisible();
-  await expect(results.getByRole('columnheader', { name: 'Voice grants' })).toBeVisible();
-  await expect(results.getByRole('columnheader', { name: 'Last observed' })).toBeVisible();
-  await expect(workspace.locator('.retained-statistics-result-count')).toHaveText('30 results');
-  await workspace.getByRole('button', { name: 'Next' }).click();
-  await expect(results.getByRole('button', { name: /Review removal/ })).toHaveCount(5);
-  await workspace.getByRole('searchbox', { name: 'Search results' }).fill('850350000');
-  await expect(workspace.locator('.retained-statistics-result-count')).toHaveText('1 result');
-  expect(requests.results).toContainEqual(expect.objectContaining({ dataType: 'frequencies',
-    q: '850350000', offset: 0, site: SITE }));
-});
+test('frequency results have visible delete buttons, preview before deletion, and search past page one',
+  async ({ page }, testInfo) => {
+    const requests = await openStatistics(page);
+    const workspace = page.locator('.retained-statistics-page');
+    await workspace.getByRole('combobox', { name: 'Radio system' }).selectOption(SYSTEM);
+    await workspace.getByRole('button', { name: 'Frequencies', exact: true }).click();
+    await workspace.getByRole('combobox', { name: 'Site' }).selectOption(SITE);
+    const results = workspace.locator('.retained-statistics-table');
+    await expect(results.getByRole('columnheader', { name: 'Decoder obs.' })).toBeVisible();
+    await expect(results.getByRole('columnheader', { name: 'Voice grants' })).toBeVisible();
+    await expect(results.getByRole('columnheader', { name: 'Last observed' })).toBeVisible();
+    await expect(workspace.locator('.retained-statistics-result-count')).toHaveText('30 results');
+    const firstDelete = results.getByRole('button', { name: 'Delete statistics for 850.000000 MHz' });
+    await expect(firstDelete).toBeVisible();
+    await expect(firstDelete).toHaveText('Delete…');
+    await expect(firstDelete).toHaveClass(/\bui-button\b/);
+    await expect(firstDelete).toHaveClass(/\bui-button-danger\b/);
+    expect(await firstDelete.evaluate((button) => {
+      const text = document.createRange();
+      text.selectNodeContents(button);
+      return text.getClientRects().length;
+    })).toBe(1);
+    await page.screenshot({ path: testInfo.outputPath('retained-statistics-frequencies-desktop-light.png'),
+      fullPage: true });
+    await firstDelete.click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('8 directly matched records')).toBeVisible();
+    expect(requests.previews).toHaveLength(1);
+    expect(requests.writes).toHaveLength(0);
+    await dialog.getByRole('button', { name: 'Delete statistics', exact: true }).click();
+    await expect(workspace.getByText('Statistics deleted.')).toBeVisible();
+    expect(requests.writes).toHaveLength(1);
+    expect(requests.writes[0].target).toMatchObject({ data_type: 'frequencies',
+      site_configuration_id: SITE, record_key: '850000000' });
+    await workspace.getByRole('button', { name: 'Next' }).click();
+    await expect(results.getByRole('button', { name: /Delete statistics for/ })).toHaveCount(5);
+    await workspace.getByRole('searchbox', { name: 'Search results' }).fill('850350000');
+    await expect(workspace.locator('.retained-statistics-result-count')).toHaveText('1 result');
+    expect(requests.results).toContainEqual(expect.objectContaining({ dataType: 'frequencies',
+      q: '850350000', offset: 0, site: SITE }));
+  });
 
 test('conventional channel selection shows frequency context and separate calls and last heard',
   async ({ page }) => {
@@ -227,6 +250,8 @@ test('conventional channel selection shows frequency context and separate calls 
     await expect(results.getByRole('columnheader', { name: 'Calls' })).toBeVisible();
     await expect(results.getByRole('columnheader', { name: 'Last heard' })).toBeVisible();
     await expect(results.getByRole('link', { name: '155.115000 MHz' })).toBeVisible();
+    await expect(results.getByRole('button', { name: 'Delete statistics for 155.115000 MHz' }))
+      .toHaveText('Delete…');
   });
 
 test('radio names and IDs link to details, with server search before pagination', async ({ page }) => {
@@ -241,15 +266,17 @@ test('radio names and IDs link to details, with server search before pagination'
   await expect(results.getByText('Radio 1234')).toBeVisible();
   await expect(results.getByRole('columnheader', { name: 'Calls' })).toBeVisible();
   await expect(results.getByRole('columnheader', { name: 'Last heard' })).toBeVisible();
+  await expect(results.getByRole('button', { name: 'Delete statistics for Engine 12 (Radio 1234)' }))
+    .toHaveText('Delete…');
   expect(requests.results).toContainEqual(expect.objectContaining({ dataType: 'radios',
     q: 'Engine 12', offset: 0 }));
 });
 
-test('Alias Activity supports individual review and an explicit global reset', async ({ page }) => {
+test('Alias Activity supports individual reset and an explicit global reset', async ({ page }) => {
   const requests = await openStatistics(page);
   const workspace = page.locator('.retained-statistics-page');
   await workspace.getByRole('button', { name: 'Alias Activity', exact: true }).click();
-  const reset = workspace.getByRole('button', { name: 'Reset all Alias Activity' });
+  const reset = workspace.getByRole('button', { name: 'Reset all Alias Activity…', exact: true });
   await expect(reset).toBeEnabled();
   await expect(workspace.locator('.retained-statistics-result-count')).toHaveText('30 results');
   await workspace.getByRole('searchbox', { name: 'Search results' }).fill('Dispatch Console');
@@ -259,17 +286,19 @@ test('Alias Activity supports individual review and an explicit global reset', a
   const href = new URL(await alias.getAttribute('href'), 'http://127.0.0.1:4173');
   expect(href.searchParams.get('view')).toBe('aliases');
   expect(href.searchParams.get('alias')).toBe('130');
-  await results.getByRole('button', { name: 'Review removal of Dispatch Console' }).click();
+  const resetAlias = results.getByRole('button', { name: 'Reset activity for Dispatch Console' });
+  await expect(resetAlias).toHaveText('Reset…');
+  await resetAlias.click();
   await expect(page.getByRole('dialog').getByText('2 directly matched records')).toBeVisible();
   await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click();
   await reset.click();
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByText('Saved aliases and alias lists remain.')).toBeVisible();
-  await expect(dialog.getByRole('button', { name: 'Remove saved statistics' })).toBeDisabled();
+  await expect(dialog.getByRole('button', { name: 'Reset activity', exact: true })).toBeDisabled();
   await dialog.getByRole('textbox', { name: 'Type RESET ALIAS ACTIVITY to confirm' })
     .fill('RESET ALIAS ACTIVITY');
-  await dialog.getByRole('button', { name: 'Remove saved statistics' }).click();
-  await expect(workspace.getByText('Removal complete.')).toBeVisible();
+  await dialog.getByRole('button', { name: 'Reset activity', exact: true }).click();
+  await expect(workspace.getByText('Activity reset.')).toBeVisible();
   expect(requests.writes[0].target).toEqual(scoped('alias_activity', 'alias_activity', ['summary']));
   expect(requests.results).toContainEqual(expect.objectContaining({ kind: 'alias_activity',
     sourceKey: null }));
@@ -280,15 +309,18 @@ test('preview failure blocks removal until retry succeeds', async ({ page }) => 
   const workspace = page.locator('.retained-statistics-page');
   await workspace.getByRole('combobox', { name: 'Radio system' }).selectOption(SYSTEM);
   await workspace.getByRole('button', { name: 'All retained data in scope' }).click();
-  await workspace.getByRole('button', { name: 'Review removal' }).click();
+  const deleteAll = workspace.getByRole('button', { name: 'Delete statistics for All retained data' });
+  await expect(deleteAll).toHaveText('Delete…');
+  await expect(deleteAll).toHaveClass(/\bui-button-danger\b/);
+  await deleteAll.click();
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByText('Affected records could not be checked.')).toBeVisible();
-  await expect(dialog.getByRole('button', { name: 'Remove saved statistics' })).toBeDisabled();
+  await expect(dialog.getByRole('button', { name: 'Delete statistics', exact: true })).toBeDisabled();
   await dialog.getByRole('button', { name: 'Retry' }).click();
   await expect(dialog.getByText('8 directly matched records')).toBeVisible();
-  await expect(dialog.getByRole('button', { name: 'Remove saved statistics' })).toBeDisabled();
+  await expect(dialog.getByRole('button', { name: 'Delete statistics', exact: true })).toBeDisabled();
   await dialog.getByRole('textbox', { name: 'Type Metro P25 to confirm' }).fill('Metro P25');
-  await expect(dialog.getByRole('button', { name: 'Remove saved statistics' })).toBeEnabled();
+  await expect(dialog.getByRole('button', { name: 'Delete statistics', exact: true })).toBeEnabled();
 });
 
 test('a large preview requires a narrower selection', async ({ page }) => {
@@ -296,10 +328,10 @@ test('a large preview requires a narrower selection', async ({ page }) => {
   const workspace = page.locator('.retained-statistics-page');
   await workspace.getByRole('combobox', { name: 'Radio system' }).selectOption(SYSTEM);
   await workspace.getByRole('button', { name: 'All retained data in scope' }).click();
-  await workspace.getByRole('button', { name: 'Review removal' }).click();
+  await workspace.getByRole('button', { name: 'Delete statistics for All retained data' }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByText('Too many matching records.')).toBeVisible();
-  await expect(dialog.getByRole('button', { name: 'Remove saved statistics' })).toBeDisabled();
+  await expect(dialog.getByRole('button', { name: 'Delete statistics', exact: true })).toBeDisabled();
   expect(requests.writes).toHaveLength(0);
 });
 
@@ -309,11 +341,11 @@ test('a size change after preview keeps the selected scope', async ({ page }) =>
   const source = workspace.getByRole('combobox', { name: 'Radio system' });
   await source.selectOption(SYSTEM);
   await workspace.getByRole('button', { name: 'All retained data in scope' }).click();
-  await workspace.getByRole('button', { name: 'Review removal' }).click();
+  await workspace.getByRole('button', { name: 'Delete statistics for All retained data' }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByText('8 directly matched records')).toBeVisible();
   await dialog.getByRole('textbox', { name: 'Type Metro P25 to confirm' }).fill('Metro P25');
-  await dialog.getByRole('button', { name: 'Remove saved statistics' }).click();
+  await dialog.getByRole('button', { name: 'Delete statistics', exact: true }).click();
   await expect(workspace.getByText('Too many records. Narrow the scope')).toBeVisible();
   await expect(source).toHaveValue(SYSTEM);
 });
@@ -323,11 +355,14 @@ test('the grouped workspace fits a phone in dark mode', async ({ page }, testInf
   await openStatistics(page, { theme: 'dark' });
   const workspace = page.locator('.retained-statistics-page');
   await workspace.getByRole('combobox', { name: 'Radio system' }).selectOption(SYSTEM);
-  await workspace.getByRole('button', { name: 'Band plans', exact: true }).click();
+  await workspace.getByRole('button', { name: 'Frequencies', exact: true }).click();
   await workspace.getByRole('combobox', { name: 'Site' }).selectOption(SITE);
-  await expect(workspace.getByText('Band 0')).toBeVisible();
+  const firstDelete = workspace.getByRole('button', { name: 'Delete statistics for 850.000000 MHz' });
+  await expect(firstDelete).toBeVisible();
   const bounds = await workspace.boundingBox();
   expect(bounds.x + bounds.width).toBeLessThanOrEqual(390);
   await page.screenshot({ path: testInfo.outputPath('retained-statistics-mobile-dark.png'),
     fullPage: true });
+  await firstDelete.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath('retained-statistics-mobile-dark-action.png') });
 });

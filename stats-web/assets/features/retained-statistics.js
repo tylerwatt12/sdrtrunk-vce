@@ -84,13 +84,14 @@ function queryPath(path, values) {
 function targetForRemoval(row, partsOrHistory) {
   const target = row?.target;
   if (!target || typeof target !== 'object' || Array.isArray(target)) {
-    throw new Error('This row cannot be removed. Refresh the results and try again.');
+    throw new Error('This row cannot be deleted. Refresh the results and try again.');
   }
   if (target.kind === 'scoped_data') {
     const supported = Array.isArray(target.parts) ? target.parts : [];
     const parts = Array.isArray(partsOrHistory) ? partsOrHistory.filter((part) =>
       supported.includes(part)) : supported;
-    if (!parts.length) throw new Error('Choose at least one saved part to remove.');
+    if (!parts.length) throw new Error(target.source_kind === 'alias_activity' ?
+      'Choose at least one saved part to reset.' : 'Choose at least one saved part to delete.');
     return { ...target, parts };
   }
   if (target.kind === 'learned_site' || target.kind === 'saved_site' || target.kind === 'system') {
@@ -262,7 +263,7 @@ export function createRetainedStatisticsWorkspace(deps) {
   const resultTable = node('div', 'retained-statistics-table');
   const partsBlock = node('div', 'retained-statistics-parts');
   partsBlock.setAttribute('role', 'group');
-  partsBlock.setAttribute('aria-label', 'Saved parts to remove');
+  partsBlock.setAttribute('aria-label', 'Saved parts to delete');
   const resultPager = node('nav', 'retained-statistics-pager pager ui-pager');
   resultPager.setAttribute('aria-label', 'Results pages');
   resultsBody.append(resultContext, resultSearchForm, resultCount, partsBlock, resultStatus,
@@ -340,7 +341,7 @@ export function createRetainedStatisticsWorkspace(deps) {
       return group;
     }));
     allButton.textContent = state.sourceKind === 'alias_activity' ?
-      'Reset all Alias Activity' : 'All retained data in scope';
+      'Reset all Alias Activity…' : 'All retained data in scope';
     allButton.disabled = state.sourceKind === 'alias_activity' ?
       selectedSource()?.target?.kind !== 'scoped_data' : !selectedSource();
     allButton.setAttribute('aria-pressed', String(state.type === 'all'));
@@ -519,14 +520,16 @@ export function createRetainedStatisticsWorkspace(deps) {
           formatNumber(row.record_count ?? row.observation_count)), time('Last seen'));
     }
     columns.splice(1, 0, { id: 'action', label: 'Action', render: (row) => {
-      const action = button('Review', () => reviewRow(row), 'link-button ui-row-action');
+      const resetActivity = row.target?.source_kind === 'alias_activity';
+      const action = button(resetActivity ? 'Reset…' : 'Delete…', () => reviewRow(row),
+        'ui-button ui-button-danger');
       action.disabled = busyWithJob() || row.target?.kind === 'scoped_data' &&
         !selectedPartsFor(row).length;
-      action.setAttribute('aria-label', `Review removal of ${row.label || 'item'}`);
+      action.setAttribute('aria-label', `${resetActivity ? 'Reset activity' : 'Delete statistics'} for ${row.label || 'item'}`);
       return action;
     }, sortable: false });
     return table(state.resultRows, columns, 'No matching results', {
-      type: `retained-statistics-v2-${state.sourceKind}-${state.type}`,
+      type: `retained-statistics-v3.${state.sourceKind}.${state.type}`,
       layoutMenuHost: resultsActions,
       tableClass: 'ui-data-table-quiet', mobileCards: true, sortable: false,
       controller: tableController
@@ -538,7 +541,8 @@ export function createRetainedStatisticsWorkspace(deps) {
     const text = node('div', 'retained-statistics-aggregate-text');
     text.append(node('strong', '', row.label || 'Selected data'));
     if (row.detail) text.append(node('small', 'muted', row.detail));
-    const action = button('Review removal', () => reviewRow(row));
+    const action = button('Delete…', () => reviewRow(row), 'ui-button ui-button-danger');
+    action.setAttribute('aria-label', `Delete statistics for ${row.label || 'selected data'}`);
     action.disabled = busyWithJob() || row.target?.kind === 'scoped_data' &&
       !selectedPartsFor(row).length;
     summary.append(text, action);
@@ -561,7 +565,10 @@ export function createRetainedStatisticsWorkspace(deps) {
     }
     partsBlock.hidden = false;
     if (state.parts === null) state.parts = supported.slice();
-    partsBlock.append(node('strong', 'retained-statistics-parts-label', 'Remove saved parts'));
+    const resetActivity = state.sourceKind === 'alias_activity';
+    partsBlock.setAttribute('aria-label', resetActivity ? 'Activity to reset' : 'Saved parts to delete');
+    partsBlock.append(node('strong', 'retained-statistics-parts-label',
+      resetActivity ? 'Activity to reset' : 'Data to delete'));
     PART_ORDER.filter((part) => supported.includes(part)).forEach((part) => {
       const label = node('label', 'retained-statistics-part');
       const input = node('input', 'ui-selection-check');
@@ -696,22 +703,22 @@ export function createRetainedStatisticsWorkspace(deps) {
 
   function removalImpact(row, includeChannelHistory) {
     switch (row.target?.kind) {
-      case 'frequency': return 'Removes this observed frequency from the selected site.';
-      case 'radio': return 'Removes this radio ID and its directly owned retained data.';
-      case 'talkgroup': return 'Removes this talkgroup and its directly owned retained data.';
+      case 'frequency': return 'Deletes this observed frequency from the selected site.';
+      case 'radio': return 'Deletes this radio ID and its directly owned retained data.';
+      case 'talkgroup': return 'Deletes this talkgroup and its directly owned retained data.';
       case 'conventional_radio':
       case 'conventional_talkgroup':
-        return 'Removes this ID’s saved summary for the listed frequency and timeslot. Call history may remain.';
+        return 'Deletes this ID’s saved summary for the listed frequency and timeslot. Call history may remain.';
       case 'learned_site': return includeChannelHistory ?
-        'Removes this learned site and associated saved-channel history.' :
-        'Removes this learned site. Saved-site inventory remains.';
+        'Deletes this learned site and associated saved-channel history.' :
+        'Deletes this learned site. Saved-site inventory remains.';
       case 'saved_site': return includeChannelHistory ?
-        'Removes site inventory and saved-channel history.' :
-        'Removes site inventory, including frequencies. Channel history remains.';
-      case 'channel': return 'Removes directly owned statistics for this saved channel. Its configuration remains.';
+        'Deletes site inventory and saved-channel history.' :
+        'Deletes site inventory, including frequencies. Channel history remains.';
+      case 'channel': return 'Deletes directly owned statistics for this saved channel. Its configuration remains.';
       case 'system': return includeChannelHistory ?
-        'Removes this system and associated saved-channel history.' : 'Removes system-owned statistics.';
-      default: return 'Removes this retained statistic.';
+        'Deletes this system and associated saved-channel history.' : 'Deletes system-owned statistics.';
+      default: return 'Deletes this retained statistic.';
     }
   }
 
@@ -734,6 +741,7 @@ export function createRetainedStatisticsWorkspace(deps) {
       jobNotice.replaceChildren(feedback(error.message, 'error'));
       return;
     }
+    const resetActivity = target.source_kind === 'alias_activity';
     const body = node('div', 'retained-statistics-review editor-workspace');
     const summary = node('div', 'ui-fact retained-statistics-review-target');
     summary.append(node('strong', '', row.label || 'Selected data'));
@@ -743,7 +751,7 @@ export function createRetainedStatisticsWorkspace(deps) {
         `${selectedSource()?.label || 'Selected source'}${selectedSite() ?
           ` · ${selectedSite().label}` : ''}`);
     const parts = node('div', 'retained-statistics-review-parts');
-    parts.append(node('strong', '', 'Remove'), node('span', '', target.parts.map((part) =>
+    parts.append(node('strong', '', resetActivity ? 'Reset' : 'Delete'), node('span', '', target.parts.map((part) =>
       partLabel(target.source_kind, target.data_type, part)).join(' · ')));
     const previewHost = node('div', 'retained-statistics-preview');
     previewHost.setAttribute('role', 'status');
@@ -753,7 +761,8 @@ export function createRetainedStatisticsWorkspace(deps) {
     const errorHost = node('div', 'retained-statistics-review-error');
     errorHost.setAttribute('role', 'alert');
     const cancel = button('Cancel');
-    const confirm = button('Remove saved statistics', null, 'ui-button ui-button-danger');
+    const confirm = button(resetActivity ? 'Reset activity' : 'Delete statistics', null,
+      'ui-button ui-button-danger');
     confirm.disabled = true;
     const footer = modalFooter(cancel, confirm);
     footer.classList.add('retained-statistics-review-actions');
@@ -848,13 +857,14 @@ export function createRetainedStatisticsWorkspace(deps) {
         if (state.disposed || error?.name === 'AbortError') return;
         modal.setBusy(false);
         errorHost.replaceChildren(feedback(error.status === 409 ?
-          'Saved data changed. Close this review and choose it again.' :
-          error.message || 'Removal could not be started.', 'error'));
+          'Saved data changed. Close this dialog and choose it again.' :
+          error.message || (resetActivity ? 'Activity reset could not be started.' :
+            'Deletion could not be started.'), 'error'));
         if (error.status === 409) previewReady = false;
         updateConfirm();
       }
     });
-    modal = openReadOnlyModal(`Remove ${row.label || 'saved data'}?`, body, {
+    modal = openReadOnlyModal(`${resetActivity ? 'Reset' : 'Delete'} ${row.label || 'saved data'}?`, body, {
       id: 'retained-statistics-review', className: 'retained-statistics-modal',
       returnFocusSelector: target.source_kind === 'alias_activity' &&
         target.record_key == null ? '.retained-statistics-all-button' :
@@ -872,11 +882,11 @@ export function createRetainedStatisticsWorkspace(deps) {
     if (row.detail) summary.append(node('small', 'muted', row.detail));
     const impact = node('p', 'retained-statistics-impact');
     const reappearance = node('div', 'ui-notice ui-notice-warning',
-      'Receiving continues; removed rows may return. Alias Activity totals may remain.');
+      'Receiving continues; deleted rows may return. Alias Activity totals may remain.');
     const errorHost = node('div', 'retained-statistics-review-error');
     errorHost.setAttribute('role', 'alert');
     const cancel = button('Cancel');
-    const confirm = button('Remove', null, 'ui-button ui-button-danger');
+    const confirm = button('Delete statistics', null, 'ui-button ui-button-danger');
     const footer = modalFooter(cancel, confirm);
     footer.classList.add('retained-statistics-review-actions');
     let includeChannelHistory = false;
@@ -900,7 +910,7 @@ export function createRetainedStatisticsWorkspace(deps) {
       drawReview();
     }) : null;
     if (scope) {
-      scope.setAttribute('aria-label', 'Removal scope');
+      scope.setAttribute('aria-label', 'Deletion scope');
       scope.classList.add('retained-statistics-scope-control');
       const scopeField = node('div', 'admin-form-field ui-field');
       scopeField.append(node('span', 'admin-form-label ui-field-label', 'Scope'), scope);
@@ -964,17 +974,17 @@ export function createRetainedStatisticsWorkspace(deps) {
         if (state.disposed || error?.name === 'AbortError') return;
         if (error?.status === 409) {
           modal.setBusy(false);
-          errorHost.replaceChildren(feedback('Removal request conflicted. Close and review the item again.',
+          errorHost.replaceChildren(feedback('Deletion request conflicted. Close this dialog and choose the item again.',
             'error'));
           confirm.disabled = true;
           return;
         }
-        errorHost.replaceChildren(feedback(error.message || 'Removal could not be started.', 'error'));
+        errorHost.replaceChildren(feedback(error.message || 'Deletion could not be started.', 'error'));
         modal.setBusy(false);
         updateConfirm();
       }
     });
-    modal = openReadOnlyModal(`Remove ${row.label || 'item'}?`, body, {
+    modal = openReadOnlyModal(`Delete ${row.label || 'item'}?`, body, {
       id: 'retained-statistics-review', className: 'retained-statistics-modal',
       returnFocusSelector: '.retained-statistics-result-count'
     });
@@ -986,16 +996,21 @@ export function createRetainedStatisticsWorkspace(deps) {
     jobNotice.replaceChildren();
     if (!state.job) return;
     const stateName = String(state.job.state || '').toLowerCase();
-    if (stateName === 'queued') jobNotice.append(feedback('Removal queued…', 'loading'));
-    else if (stateName === 'running') jobNotice.append(feedback('Removing retained statistics…', 'loading'));
+    const resetActivity = state.jobTarget?.source_kind === 'alias_activity';
+    if (stateName === 'queued') jobNotice.append(feedback(resetActivity ? 'Activity reset queued…' :
+      'Deletion queued…', 'loading'));
+    else if (stateName === 'running') jobNotice.append(feedback(resetActivity ? 'Resetting activity…' :
+      'Deleting statistics…', 'loading'));
     else if (stateName === 'succeeded') {
       const message = state.job.outcome === 'stale_site' ? 'Site changed. Choose it again.' :
         state.job.outcome === 'too_large' ?
           'Too many records. Narrow the scope or data type and retry.' :
-          state.job.outcome === 'not_found' ? 'The item was already gone.' : 'Removal complete.';
+          state.job.outcome === 'not_found' ? 'The item was already gone.' :
+            resetActivity ? 'Activity reset.' : 'Statistics deleted.';
       jobNotice.append(feedback(message));
     } else if (stateName === 'failed') {
-      jobNotice.append(feedback(state.job.error || 'Removal failed. Try again.', 'error'));
+      jobNotice.append(feedback(state.job.error || (resetActivity ? 'Activity reset failed. Try again.' :
+        'Deletion failed. Try again.'), 'error'));
     }
     drawResults();
   }
@@ -1050,7 +1065,8 @@ export function createRetainedStatisticsWorkspace(deps) {
       }
     } catch (error) {
       if (state.disposed || error?.name === 'AbortError') return;
-      jobNotice.replaceChildren(feedback('Removal status is unavailable.', 'error'),
+      jobNotice.replaceChildren(feedback(state.jobTarget?.source_kind === 'alias_activity' ?
+        'Activity reset status is unavailable.' : 'Deletion status is unavailable.', 'error'),
         button('Retry status', () => void pollJob()));
     }
   }
