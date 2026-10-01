@@ -113,11 +113,11 @@ function canShowResults(sourceKind, source, type, site) {
 }
 
 // Reuse map: the Administration settings shell owns navigation; shared ui-field,
-// ui-select, ui-segmented, ui-data-table, ui-pager, ui-feedback and modal controls
+// ui-select, ui-segmented, ui-data-table, ui-pager, ui-metric, ui-feedback and modal controls
 // own appearance and interaction. This module adds only workspace geometry.
 export function createRetainedStatisticsWorkspace(deps) {
   const { node, formField, uiSelectFrame, uiSegmentedControl, section, sectionActionHost,
-    table, openReadOnlyModal, modalFooter, requestJson, formatNumber, formatDateTime,
+    table, openReadOnlyModal, modalFooter, metrics, requestJson, formatNumber, formatDateTime,
     renderItem, renderSource, renderAliasList, renderAlias, signal } = deps;
   const host = node('div', 'retained-statistics-page data-workspace');
   const pickerBody = node('div', 'retained-statistics-picker-body');
@@ -868,13 +868,13 @@ export function createRetainedStatisticsWorkspace(deps) {
           return;
         }
         const counts = preview.counts_by_part || {};
-        const list = node('dl', 'ui-facts retained-statistics-preview-counts');
-        target.parts.forEach((part) => {
-          const fact = node('div', 'ui-fact');
-          fact.append(node('dt', '', partLabel(target.source_kind, target.data_type, part)),
-            node('dd', '', formatNumber(counts[part] ?? 0)));
-          list.append(fact);
-        });
+        const partIcons = { current: 'icon-spectrum', summary: 'icon-dashboard',
+          buckets: 'icon-replay', events: 'icon-scan-lists' };
+        const list = metrics(target.parts.map((part) => [
+          partLabel(target.source_kind, target.data_type, part), counts[part] ?? 0,
+          undefined, { icon: partIcons[part] }
+        ]), true);
+        list.classList.add('retained-statistics-preview-counts');
         const total = node('strong', 'retained-statistics-preview-total',
           `${formatNumber(preview.rows_total ?? 0)} directly matched records`);
         previewHost.replaceChildren(total, list);

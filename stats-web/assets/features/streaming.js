@@ -1,13 +1,13 @@
 const ROOT = '/api/v1/admin/streaming';
 const POLL_MS = 3000;
 
-// Reuse map: data-workspace, ui-catalog-toolbar, ui-surface, ui-facts and ui-status
+// Reuse map: data-workspace, ui-catalog-toolbar, ui-surface, ui-metric and ui-status
 // compose the destination cards; shared table, feedback, fields, toggles, select frames,
 // segmented tabs, selection bar and modal lifecycle compose the editor. Only feature
 // geometry lives in streaming.css; desktop/mobile and light/dark use shared tokens.
 export function createStreamingWorkspace(deps) {
   const { node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, table,
-    openReadOnlyModal, requestJson, modalFooter, formatNumber, href, signal } = deps;
+    openReadOnlyModal, requestJson, modalFooter, metrics, formatNumber, href, signal } = deps;
   const host = node('div', 'streaming-page data-workspace');
   const toolbar = node('div', 'streaming-toolbar streaming-page-toolbar ui-catalog-toolbar');
   const summary = node('div', 'streaming-summary');
@@ -39,6 +39,7 @@ export function createStreamingWorkspace(deps) {
   const write = (path, method, body, options = {}) => requestJson(ROOT + path,
     { method, body, signal, timeoutMs: 65000, ...options });
   const statusTone = (row) => row.attention ? 'danger' : row.state === 'CONNECTED' ? 'success' : 'neutral';
+  const errorTone = (row) => Number(row.errors) > 0 ? (row.attention ? 'danger' : 'warning') : 'blue';
   const count = (value) => value == null ? '—' : formatNumber(value);
   const showError = (target, error) => target.replaceChildren(feedback(error.message || 'The request failed', 'error'));
 
@@ -77,19 +78,17 @@ export function createStreamingWorkspace(deps) {
           statuses.append(cell(row, 'state'), cell(row, 'enabled'));
           header.append(identity, statuses);
 
-          const facts = node('dl', 'ui-facts streaming-destination-metrics');
-          [['queued', 'Queued'], ['sent', 'Sent / uploaded'], ['aged_off', 'Aged off'], ['errors', 'Errors']]
-            .forEach(([key, label]) => {
-              const fact = node('div', 'ui-fact');
-              fact.append(node('dt', '', label), node('dd', 'streaming-destination-value', null));
-              fact.lastElementChild.append(cell(row, key));
-              facts.append(fact);
-            });
+          const counters = metrics([
+            ['queued', 'Queued', 'icon-replay'], ['sent', 'Sent / uploaded', 'icon-share'],
+            ['aged_off', 'Aged off', 'icon-skip'], ['errors', 'Errors', 'icon-warning']
+          ].map(([key, label, icon]) => [label, row[key], cell(row, key),
+            { icon, tone: key === 'errors' ? errorTone(row) : 'blue' }]), true);
+          counters.classList.add('streaming-destination-metrics');
           const error = node('div', 'streaming-destination-error ui-notice ui-notice-danger');
           error.append(node('strong', '', 'Last error'), cell(row, 'last_error'));
           const footer = node('footer', 'streaming-destination-actions ui-action-row');
           footer.append(button('Manage destination', () => openEditor(row.configuration_id)));
-          card.append(header, facts, error, footer);
+          card.append(header, counters, error, footer);
           return card;
         }));
       }
@@ -100,6 +99,10 @@ export function createStreamingWorkspace(deps) {
       target.state.replaceChildren(uiStatus(row.state_label, statusTone(row)));
       target.enabled.replaceChildren(uiStatus(row.enabled ? 'Enabled' : 'Disabled', row.enabled ? 'success' : 'neutral'));
       ['queued', 'sent', 'aged_off', 'errors'].forEach(key => { target[key].textContent = count(row[key]); });
+      const errorsMetric = target.errors.closest('.ui-metric');
+      ['blue', 'warning', 'danger'].forEach(tone => {
+        errorsMetric.classList.toggle(`ui-metric-${tone}`, tone === errorTone(row));
+      });
       const error = target.last_error.closest('.streaming-destination-error');
       target.last_error.textContent = row.last_error || '';
       error.hidden = !row.last_error;

@@ -278,6 +278,9 @@
 }
 
 .ui-metric-grid-embedded { padding: 0; }
+/* A section owns the inset when its metric grid is the body. Embedded grids
+   inside padded panels and modal bodies inherit that surrounding spacing. */
+.ui-section > .ui-metric-grid-embedded { padding: var(--space-3); }
 .ui-metric-grid-fit { grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); }
 
 .ui-metric {
@@ -340,6 +343,7 @@
 .ui-metric-warning .ui-metric-icon { color: var(--warning); }
 .ui-metric-danger .ui-metric-icon { color: var(--danger); }
 .ui-metric-success .ui-metric-icon { color: var(--success); }
+.ui-metric-accent .ui-metric-icon { color: var(--accent); }
 
 .ui-metric-unit,
 .ui-metric-detail {

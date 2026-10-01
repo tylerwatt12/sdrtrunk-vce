@@ -4,7 +4,8 @@ const { resolve } = require('node:path');
 const app = readFileSync(resolve(__dirname, '../../../../..', 'stats-web/assets/app.js'), 'utf8');
 const helpersSource = app.slice(app.indexOf('function closeReadOnlyModal('), app.indexOf('function statsLoggingState(')) +
   app.slice(app.indexOf('function uiToggle('), app.indexOf('function uiPill(')) +
-  app.slice(app.indexOf('function uiSegmentedControl('), app.indexOf('function channelSummaryCards('));
+  app.slice(app.indexOf('function uiSegmentedControl('), app.indexOf('function channelSummaryCards(')) +
+  app.slice(app.indexOf('const METRIC_ICONS ='), app.indexOf('function searchBar('));
 
 async function install(page, theme = 'light', empty = false) {
   await page.goto(`/design-system.html?theme=${theme}`);
@@ -109,9 +110,11 @@ async function install(page, theme = 'light', empty = false) {
       return wrapper;
     };
 
-    const shared = new Function('node', 'valueNode', 'iconButton', `let activeReadOnlyModal = null; ${helpersSource}
-      return { openReadOnlyModal, uiToggleField, uiSegmentedControl };`)(node,
-        value => value instanceof Node ? value : document.createTextNode(String(value)), iconButton);
+    const shared = new Function('node', 'valueNode', 'iconButton', 'iconGlyph', 'number',
+      `let activeReadOnlyModal = null; ${helpersSource}
+      return { openReadOnlyModal, uiToggleField, uiSegmentedControl, metrics };`)(node,
+        value => value instanceof Node ? value : document.createTextNode(String(value)), iconButton,
+        iconGlyph, String);
     const fields = [
       {key:'name',label:'Name',type:'text',maximum:255},
       {key:'enabled',label:'Enabled',type:'boolean'},
@@ -128,7 +131,7 @@ async function install(page, theme = 'light', empty = false) {
     let assignments=new Set([1,51]);
     const aliases=Array.from({length:60},(_,i)=>({id:i+1,name:`Dispatch ${i+1}`,identifier:String(100+i),alias_list_id:7,alias_list_name:'County Public Safety'}));
     const calls=[];
-    window.streamingTest={calls,fail:false,stale:false,feedMode:'ready',feedDelay:0,feeds:[
+    window.streamingTest={calls,status,fail:false,stale:false,feedMode:'ready',feedDelay:0,feeds:[
       {id:1042,name:'Metro Public Safety Dispatch and Regional Interoperability Network',configured:false},
       {id:2087,name:'County Fire and EMS',configured:true},
       {id:3194,name:'Citywide Events',configured:false}
@@ -206,6 +209,28 @@ test('partial settings preserve saved credentials and stale edits remain reviewa
   const writes=await page.evaluate(()=>window.streamingTest.calls.filter(([,options])=>options.method==='PUT'));
   expect(writes.at(-1)[1].body.settings).toEqual({name:'Renamed calls'});
   await expect(modal.getByLabel('Provider',{exact:true})).toBeDisabled();
+});
+
+test('delivery counters retain their live values and update error severity after recovery', async ({page}) => {
+  await install(page);
+  const counters = page.locator('.streaming-destination-card').first().locator('.streaming-destination-metrics');
+  const errors = counters.locator('.ui-metric').filter({hasText:'Errors'});
+  await expect(counters.locator('.ui-metric')).toHaveCount(4);
+  await expect(errors).toHaveClass(/\bui-metric-blue\b/);
+  await page.evaluate(() => {
+    window.streamingTest.errorCounter = document.querySelector('.streaming-destination-metrics .ui-metric:last-child strong span');
+    Object.assign(window.streamingTest.status, {queued:7, sent:141, errors:2, attention:true, last_error:'Delivery unavailable'});
+  });
+  await expect(errors).toHaveClass(/\bui-metric-danger\b/);
+  await expect(errors.locator('strong')).toHaveText('2');
+  await expect(counters.locator('.ui-metric strong')).toHaveText(['7','141','0','2']);
+  await page.evaluate(() => Object.assign(window.streamingTest.status, {attention:false, last_error:null}));
+  await expect(errors).toHaveClass(/\bui-metric-warning\b/);
+  await expect(page.locator('.streaming-destination-card').first().locator('.streaming-destination-error')).toBeHidden();
+  await page.evaluate(() => { window.streamingTest.status.errors = 0; });
+  await expect(errors).toHaveClass(/\bui-metric-blue\b/);
+  expect(await page.evaluate(() => window.streamingTest.errorCounter ===
+    document.querySelector('.streaming-destination-metrics .ui-metric:last-child strong span'))).toBe(true);
 });
 
 test('alias changes survive paging and save only explicit selections',async({page})=>{

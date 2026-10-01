@@ -258,7 +258,7 @@ function resultCount(value, key) {
 
 export function createRadioReferenceImportWorkspace(dependencies) {
   const {
-    node, iconGlyph, formField, uiSelectFrame, uiPill, uiSegmentedControl, table,
+    node, iconGlyph, metricCard, formField, uiSelectFrame, uiPill, uiSegmentedControl, table,
     openReadOnlyModal, closeReadOnlyModal, requestJson, formatFrequency, formatNumber, href, anchor,
     modalFooter, createAliasListPopupTrigger, directoryTimeoutMs = 15_000, mutationTimeoutMs = 65_000,
     onLocationSaved = null
@@ -571,14 +571,13 @@ export function createRadioReferenceImportWorkspace(dependencies) {
   const renderPreviewDetails = (preview, kind) => {
     const wrapper = node('div', 'radioreference-preview');
     const operation = textValue(preview, ['operation', 'action']);
-    const summary = node('div', 'radioreference-preview-summary');
+    const summary = node('div', 'radioreference-preview-summary ui-metric-grid ui-metric-grid-embedded');
     if (kind === 'talkgroups') {
       [['Add', resultCount(preview, 'add')], ['Update', resultCount(preview, 'update')],
         ['Unchanged', resultCount(preview, 'unchanged')]].forEach(([label, count]) => {
-        const card = node('div', 'ui-summary-card');
-        card.append(iconGlyph(label === 'Add' ? 'icon-plus' : label === 'Update' ? 'icon-refresh' : 'icon-aliases'),
-          node('strong', '', formatNumber(count)), node('span', '', label));
-        summary.append(card);
+        summary.append(metricCard(label, count, formatNumber(count), {
+          icon: label === 'Add' ? 'icon-plus' : label === 'Update' ? 'icon-refresh' : 'icon-aliases'
+        }));
       });
       wrapper.append(summary, node('p', 'muted',
         'Updates replace only RadioReference-owned name, description, and group fields. Local handling stays intact.'));

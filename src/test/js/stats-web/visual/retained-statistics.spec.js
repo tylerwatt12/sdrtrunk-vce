@@ -338,6 +338,35 @@ test('Alias Activity supports individual reset and an explicit global reset', as
     sourceKey: null }));
 });
 
+for (const theme of ['light', 'dark']) for (const mobile of [false, true]) {
+  test(`cleanup preview cards fit the ${theme} ${mobile ? 'mobile' : 'desktop'} dialog`, async ({ page }) => {
+    const width = mobile ? 390 : 1440;
+    await page.setViewportSize({ width, height: mobile ? 844 : 1000 });
+    const requests = await openStatistics(page, { theme });
+    const workspace = page.locator('.retained-statistics-page');
+    await workspace.getByRole('combobox', { name: 'Radio system' }).selectOption(SYSTEM);
+    await workspace.getByRole('button', { name: 'All retained data in scope' }).click();
+    await workspace.getByRole('button', { name: 'Delete statistics for All retained data' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('8 directly matched records')).toBeVisible();
+    const cards = dialog.locator('.retained-statistics-preview-counts .ui-metric');
+    await expect(cards).toHaveCount(4);
+    await expect(cards.locator('strong')).toHaveText(['2', '2', '2', '2']);
+    const dialogBounds = await dialog.boundingBox();
+    const bounds = await cards.evaluateAll((items) => items.map((item) => {
+      const rect = item.getBoundingClientRect();
+      return { left: rect.left, right: rect.right };
+    }));
+    bounds.forEach((card) => {
+      expect(card.left).toBeGreaterThan(dialogBounds.x);
+      expect(card.right).toBeLessThan(dialogBounds.x + dialogBounds.width);
+    });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    expect(requests.writes).toHaveLength(0);
+    await expect(dialog).toHaveScreenshot(`retained-statistics-preview-${theme}-${mobile ? 'mobile' : 'desktop'}.png`);
+  });
+}
+
 test('preview failure blocks removal until retry succeeds', async ({ page }) => {
   await openStatistics(page, { previewFailsOnce: true });
   const workspace = page.locator('.retained-statistics-page');

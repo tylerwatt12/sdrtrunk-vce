@@ -361,38 +361,6 @@ body[data-view="scanner"] .content {
   margin-bottom: var(--space-2);
 }
 
-.scanner-call-quality-values {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: var(--space-2);
-}
-
-.scanner-call-quality-stat {
-  min-width: 0;
-  padding: var(--space-2);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-compact);
-}
-
-.scanner-call-quality-stat span,
-.scanner-call-quality-stat strong {
-  display: block;
-}
-
-.scanner-call-quality-stat span {
-  color: var(--muted);
-  font-size: 8px;
-  font-weight: 800;
-  letter-spacing: .05em;
-  text-transform: uppercase;
-}
-
-.scanner-call-quality-stat strong {
-  margin-top: 2px;
-  font-size: 12px;
-}
-
 .scanner-idle {
   height: 100%;
   min-height: 0;

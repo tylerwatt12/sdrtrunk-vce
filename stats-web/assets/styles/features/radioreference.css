@@ -684,9 +684,7 @@
 }
 
 .radioreference-preview-summary {
-  display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-2);
 }
 
 .radioreference-talkgroup-status {

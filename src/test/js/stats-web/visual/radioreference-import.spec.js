@@ -1,9 +1,15 @@
 const { expect, test } = require('@playwright/test');
+const { readFileSync } = require('node:fs');
+const { resolve } = require('node:path');
+const app = readFileSync(resolve(__dirname, '../../../../..', 'stats-web/assets/app.js'), 'utf8');
+const metricHelpers = app.slice(app.indexOf('function number('), app.indexOf('function hex(')) +
+  app.slice(app.indexOf('function valueNode('), app.indexOf('function tableColumnKey(')) +
+  app.slice(app.indexOf('const METRIC_ICONS ='), app.indexOf('function searchBar('));
 
 async function installWorkspace(page, theme = 'light', large = false, slow = false, scenario = '') {
   await page.goto(`/design-system.html?theme=${theme}&view=gallery${large ? '&large=1' : ''}` +
     `${slow ? '&slow=1' : ''}${scenario ? `&scenario=${scenario}` : ''}`);
-  await page.evaluate(async () => {
+  await page.evaluate(async (metricHelpers) => {
     const { createRadioReferenceImportWorkspace } = await import(
       '/assets/features/radioreference-import.js?visual-test=1');
     const tableDefaults = await import('/assets/core/table-defaults.js?visual-test=1');
@@ -33,6 +39,7 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
       icon.innerHTML = '<circle cx="12" cy="12" r="7"></circle>';
       return icon;
     };
+    const metricCard = new Function('node', 'iconGlyph', `${metricHelpers}; return metricCard;`)(node, iconGlyph);
     const formField = (labelText, control, detail = '') => {
       const field = node('label', 'admin-form-field ui-field');
       field.append(node('span', 'admin-form-label ui-field-label', labelText), control);
@@ -363,7 +370,7 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
       return footer;
     };
     const workspace = createRadioReferenceImportWorkspace({
-      node, iconGlyph, formField, uiSelectFrame, uiPill, uiStatus, uiSegmentedControl, table,
+      node, iconGlyph, metricCard, formField, uiSelectFrame, uiPill, uiStatus, uiSegmentedControl, table,
       openReadOnlyModal, closeReadOnlyModal, requestJson, createAliasListPopupTrigger,
       formatFrequency: (value) => (Number(value) / 1_000_000).toFixed(5),
       formatNumber: (value) => Number(value).toLocaleString('en-US'),
@@ -373,7 +380,7 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
     window.radioReferenceVisual.workspace = workspace;
     body.append(workspace.element);
     workspace.setConfiguration({ account: { state: 'VALID_PREMIUM' }, country_id: 1, state_id: 39, county_id: 49 });
-  });
+  }, metricHelpers);
   if (scenario !== 'slow-initialize')
     await expect(page.getByRole('button', { name: 'Browse' })).toBeVisible();
 }

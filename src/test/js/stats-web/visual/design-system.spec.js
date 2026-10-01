@@ -1,4 +1,5 @@
 const { expect, test } = require('@playwright/test');
+const { expectMetricGridSpacing, expectNoHorizontalOverflow } = require('./fixtures/metric-geometry.cjs');
 
 const galleryCases = [
   ['components-light-desktop', 'light', { width: 1280, height: 900 }],
@@ -155,6 +156,67 @@ test('stat counters share a rounded tile with a decorative landmark icon', async
     'Continue', 'Active', 'Join', 'Register', 'Emergency', 'Status'
   ]);
 });
+
+for (const [, theme, viewport] of galleryCases) {
+  test(`stat groups preserve section insets and card gaps in ${theme} at ${viewport.width}px`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto(`/design-system.html?theme=${theme}&view=entity-details`);
+    await expectMetricGridSpacing(page.locator('.visual-entity-details-example .ui-section > .ui-metric-grid'));
+    const affiliation = page.locator('.visual-entity-details-example .ui-metric a');
+    await expect(affiliation).toHaveText('9');
+    await expect(affiliation).toHaveAttribute('href', '#');
+    await affiliation.focus();
+    await expect(affiliation).toBeFocused();
+    await expectNoHorizontalOverflow(page);
+  });
+
+  test(`embedded stat groups use the existing body inset in ${theme} at ${viewport.width}px`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto(`/design-system.html?theme=${theme}&view=health`);
+    const resources = page.locator('.receiver-health-resource-bars');
+    await expect(resources).toBeVisible();
+    await expectMetricGridSpacing(resources, { inset: 0, sectionInset: false });
+    const spacing = await resources.evaluate((grid) => {
+      const body = grid.closest('.ui-settings-panel-body');
+      const bodyBounds = body.getBoundingClientRect();
+      const cardBounds = grid.firstElementChild.getBoundingClientRect();
+      const styles = getComputedStyle(body);
+      return {
+        expectedLeft: parseFloat(styles.paddingLeft),
+        expectedTop: parseFloat(styles.paddingTop),
+        left: cardBounds.left - bodyBounds.left,
+        top: cardBounds.top - bodyBounds.top
+      };
+    });
+    expect(spacing.expectedLeft).toBeGreaterThan(0);
+    expect(spacing.expectedTop).toBeGreaterThan(0);
+    expect(spacing.left).toBeCloseTo(spacing.expectedLeft, 0);
+    expect(spacing.top).toBeCloseTo(spacing.expectedTop, 0);
+    await expectNoHorizontalOverflow(page);
+  });
+
+  test(`numeric summaries share metric cards in ${theme} at ${viewport.width}px`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    for (const [view, selector, count] of [
+      ['gallery', '.visual-summary-grid', 3],
+      ['channels', '.visual-channels-example .channel-summary-grid', 3],
+      ['radio-directory-coverage', '.visual-radio-directory-coverage-example .alias-coverage-summary', 4]
+    ]) {
+      await page.goto(`/design-system.html?theme=${theme}&view=${view}`);
+      const summary = page.locator(selector);
+      await expect(summary.locator(':scope > .ui-metric')).toHaveCount(count);
+      await expect(summary.locator('.ui-summary-card')).toHaveCount(0);
+      await expect(summary.locator('.ui-metric-label .ui-metric-icon svg')).toHaveCount(count);
+      await expectMetricGridSpacing(summary, { inset: 0, sectionInset: false });
+      if (view === 'gallery') {
+        const quality = page.locator('.design-system-gallery .scanner-call-quality-values');
+        await expect(quality.locator('.ui-metric-compact')).toHaveCount(6);
+        await expectMetricGridSpacing(quality, { inset: 0, sectionInset: false });
+      }
+      await expectNoHorizontalOverflow(page);
+    }
+  });
+}
 
 test('workspace density changes spacing without changing visual identity', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -751,6 +813,61 @@ test('scanner-dark-mobile', async ({ page }) => {
   expect(unnamedPlaybackControls).toBe(0);
   await expect(page.locator('body')).toHaveScreenshot('scanner-dark-mobile.png', { fullPage: true });
 });
+
+for (const theme of ['light', 'dark']) {
+  for (const width of [1001, 1180, 1280]) {
+    test(`scanner quality metric labels fit beside the scan rail in ${theme} at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto(`/design-system.html?theme=${theme}&view=scanner`);
+      await page.evaluate(() => {
+        const cards = document.querySelector('.design-system-gallery .scanner-call-quality-values').cloneNode(true);
+        const engineer = document.createElement('div');
+        engineer.className = 'scanner-engineer-grid';
+        const quality = document.createElement('section');
+        quality.className = 'scanner-call-quality';
+        const heading = document.createElement('span');
+        heading.className = 'scanner-call-quality-heading';
+        heading.textContent = 'Call Quality';
+        quality.append(heading, cards);
+        engineer.append(quality);
+        document.querySelector('.visual-scanner-example .scanner-display').append(engineer);
+      });
+      const scanner = page.locator('.visual-scanner-example');
+      const quality = scanner.locator('.scanner-call-quality-values');
+      await expect(quality.locator('.ui-metric-label')).toHaveText([
+        'Decoded', 'Repeated', 'Concealed', 'Missing', 'FEC Errors', 'FEC Protected'
+      ]);
+      await expectMetricGridSpacing(quality, { inset: 0, sectionInset: false });
+      const nowPlaying = await scanner.locator('.scanner-now-playing').boundingBox();
+      const scanRail = await scanner.locator('.scanner-scan-rail').boundingBox();
+      expect(scanRail.x).toBeGreaterThanOrEqual(nowPlaying.x + nowPlaying.width - 1);
+      const measurements = await quality.locator('.ui-metric').evaluateAll((cards) => cards.map((card) => {
+        const label = card.querySelector('.ui-metric-label');
+        const bounds = card.getBoundingClientRect();
+        const labelBounds = label.getBoundingClientRect();
+        const text = document.createRange();
+        text.selectNodeContents(label.lastChild);
+        return {
+          label: label.textContent.trim(),
+          width: bounds.width,
+          cardFits: card.scrollWidth <= card.clientWidth,
+          labelFits: label.scrollWidth <= label.clientWidth && labelBounds.left >= bounds.left &&
+            labelBounds.right <= bounds.right,
+          textFits: [...text.getClientRects()].every((rect) => rect.left >= labelBounds.left - 1 &&
+            rect.right <= labelBounds.right + 1 && rect.top >= labelBounds.top - 1 &&
+            rect.bottom <= labelBounds.bottom + 1)
+        };
+      }));
+      for (const measurement of measurements) {
+        expect(measurement.width, measurement.label).toBeGreaterThanOrEqual(170);
+        expect(measurement.cardFits, measurement.label).toBe(true);
+        expect(measurement.labelFits, measurement.label).toBe(true);
+        expect(measurement.textFits, measurement.label).toBe(true);
+      }
+      await expectNoHorizontalOverflow(page);
+    });
+  }
+}
 
 test('aliases-light-desktop', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 960 });

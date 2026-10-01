@@ -19,9 +19,9 @@ import {
   createAliasList,
   createAliasListPopupTrigger as buildAliasListPopupTrigger
 } from './features/alias-list-create.js?v=2';
-import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=19';
-import { createStreamingWorkspace } from './features/streaming.js?v=5';
-import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=5';
+import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=20';
+import { createStreamingWorkspace } from './features/streaming.js?v=6';
+import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=6';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=9';
 import { createRecordingsFeature } from './features/recordings.js?v=13';
 import { createAudioDock } from './core/audio-dock.js?v=1';
@@ -3332,19 +3332,23 @@ const METRIC_ICONS = {
   Failed: 'icon-warning', 'Listed calls': 'icon-recording',
   'Copies being compared': 'icon-recording', 'Calls being matched': 'icon-call-matching',
   'Duplicates combined': 'icon-call-matching', 'Extra copies combined': 'icon-recording',
-  'Uncertain calls kept separate': 'icon-warning'
+  'Uncertain calls kept separate': 'icon-warning',
+  Decoded: 'icon-channel', Repeated: 'icon-replay', Concealed: 'icon-speaker',
+  Missing: 'icon-warning', 'FEC Errors': 'icon-warning', 'FEC Protected': 'icon-health'
 };
 
-function metricCard(label, value, displayValue = undefined) {
+// Reuse map: metric cards and grids share tokens across sections, padded panels,
+// modal bodies, and standalone catalog summaries in both themes and screen sizes.
+function metricCard(label, value, displayValue = undefined, options = {}) {
   const name = String(label).split(' · ')[0];
   const hasAlert = Number(value) > 0;
-  const tone = hasAlert && ['Need action', 'Errors'].includes(name) ? 'danger' :
+  const tone = options.tone || (hasAlert && ['Need action', 'Errors'].includes(name) ? 'danger' :
     hasAlert && ['Check soon', 'Degraded channels', 'Emergency', 'Denial', 'Failed',
       'Uncertain calls kept separate'].includes(name) ?
-      'warning' : 'blue';
+      'warning' : 'blue');
   const metric = node('div', `metric ui-metric ui-metric-${tone}`);
   const icon = node('span', 'ui-metric-icon');
-  icon.append(iconGlyph(METRIC_ICONS[name] || 'icon-dashboard'));
+  icon.append(iconGlyph(options.icon || METRIC_ICONS[name] || 'icon-dashboard'));
   const copy = node('div', 'ui-metric-copy');
   const displayed = node('strong');
   displayed.append(valueNode(displayValue === undefined ? number(value) : displayValue));
@@ -3361,7 +3365,8 @@ function metricCard(label, value, displayValue = undefined) {
 function metrics(values, embedded = false) {
   const band = node(embedded ? 'div' : 'section',
     `summary-band ui-metric-grid${embedded ? ' ui-metric-grid-embedded' : ''}`);
-  values.forEach(([label, value, displayValue]) => band.append(metricCard(label, value, displayValue)));
+  values.forEach(([label, value, displayValue, options]) =>
+    band.append(metricCard(label, value, displayValue, options)));
   return band;
 }
 
@@ -7302,7 +7307,7 @@ function signalingMetrics(values) {
   const observed = values.filter(([, count]) => Number(count) > 0)
     .sort((left, right) => Number(right[1]) - Number(left[1]));
   if (!observed.length) return node('div', 'empty', 'No signaling observations recorded');
-  const summary = metrics(observed, true);
+  const summary = metrics(observed);
   summary.querySelectorAll('.ui-metric').forEach((metric) => metric.classList.add('ui-metric-compact'));
   return summary;
 }
@@ -8341,7 +8346,7 @@ function groupIdentityHistoryTotals(totals) {
     ['Recorded', totals?.recorded_logical_call_count],
     ['Submitted to Streamer', totals?.stream_submitted_logical_call_count],
     ['Encrypted', totals?.encrypted_logical_call_count]
-  ], true);
+  ]);
 }
 
 async function groupIdentityActivityHistorySection(scopeParameters) {
@@ -10218,15 +10223,16 @@ function scannerVoiceMeter(call) {
 function scannerCallQuality(call) {
   const quality = node('section', 'scanner-call-quality');
   quality.append(node('span', 'scanner-call-quality-heading', 'Call Quality'));
-  const values = node('div', 'scanner-call-quality-values');
+  const values = node('div',
+    'ui-metric-grid ui-metric-grid-embedded ui-metric-grid-inline scanner-call-quality-values');
   [
     ['Decoded', call?.vc_decoded_frames], ['Repeated', call?.vc_repeated_frames],
     ['Concealed', call?.vc_concealed_frames], ['Missing', call?.vc_missing_frames],
     ['FEC Errors', call?.vc_fec_errors], ['FEC Protected', call?.vc_fec_protected_bits]
   ].forEach(([label, value]) => {
-    const metric = node('div', 'scanner-call-quality-stat');
-    metric.append(node('span', '', label), node('strong', '',
-      value === null || value === undefined || value === '' ? '—' : String(value)));
+    const metric = metricCard(label, value,
+      value === null || value === undefined || value === '' ? '—' : undefined);
+    metric.classList.add('ui-metric-compact');
     values.append(metric);
   });
   quality.append(values);
@@ -19357,7 +19363,6 @@ function uiSegmentedControl(entries, initialValue, onChange) {
 
 function channelSummaryCards(catalog, editable) {
   const channels = catalog.channels || [];
-  const wrapper = node('div', 'channel-summary-grid');
   const cards = [
     ['Configured channels', channels.length, 'icon-conventional', 'accent'],
     ['Running now', channels.filter((row) => row.processing_state === 'RUNNING').length, 'icon-play', 'success']
@@ -19365,11 +19370,9 @@ function channelSummaryCards(catalog, editable) {
   cards.push(editable ?
     ['Auto-start enabled', channels.filter((row) => row.auto_start_order != null).length, 'icon-play', 'blue'] :
     ['Stopped', channels.filter((row) => row.processing_state !== 'RUNNING').length, 'icon-stop', 'neutral']);
-  cards.forEach(([label, value, icon, tone]) => {
-    const card = node('div', `ui-summary-card ui-summary-${tone}`);
-    card.append(iconGlyph(icon), node('strong', '', number(value)), node('span', '', label));
-    wrapper.append(card);
-  });
+  const wrapper = metrics(cards.map(([label, value, icon, tone]) =>
+    [label, value, undefined, { icon, tone }]), true);
+  wrapper.classList.add('channel-summary-grid');
   return wrapper;
 }
 
@@ -21424,17 +21427,13 @@ function aliasCoverageSummaryCards(totals, unassigned) {
   const configured = Number(totals.configured_alias_count || 0);
   const activityEligible = Number(totals.activity_eligible_alias_count ?? configured);
   const recent = Number(totals.active_alias_count || 0);
-  const summary = node('div', 'alias-coverage-summary');
-  [
+  const summary = metrics([
     ['Configured aliases', configured, 'icon-identities', 'blue'],
     ['Heard in period', recent, 'icon-live', 'success'],
     ['Not heard in period', Math.max(0, activityEligible - recent), 'icon-pause', 'neutral'],
     ['Unassigned observed', unassigned.total_count || 0, 'icon-warning', 'warning']
-  ].forEach(([label, value, icon, tone]) => {
-    const card = node('div', `ui-summary-card ui-summary-${tone}`);
-    card.append(iconGlyph(icon), node('strong', '', number(value)), node('span', '', label));
-    summary.append(card);
-  });
+  ].map(([label, value, icon, tone]) => [label, value, undefined, { icon, tone }]), true);
+  summary.classList.add('alias-coverage-summary');
   return summary;
 }
 
@@ -22802,7 +22801,7 @@ async function renderAdminRadioReferenceSettings() {
   });
 
   const importWorkspace = createRadioReferenceImportWorkspace({
-    node, iconGlyph, formField, uiSelectFrame, uiPill, uiSegmentedControl, table,
+    node, iconGlyph, metricCard, formField, uiSelectFrame, uiPill, uiSegmentedControl, table,
     openReadOnlyModal, closeReadOnlyModal, requestJson, formatFrequency: frequency, formatNumber: number,
     href, anchor, modalFooter: aliasModalFooter, createAliasListPopupTrigger: aliasListPopupTrigger,
     directoryTimeoutMs: RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS,
@@ -24749,7 +24748,7 @@ async function renderSettings() {
 async function renderStreaming() {
   const renderContext = captureRenderContext();
   const workspace = createStreamingWorkspace({
-    node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, table,
+    node, metricCard, metrics, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, table,
     openReadOnlyModal, requestJson, modalFooter: aliasModalFooter, formatNumber: number, href,
     signal: renderContext.signal
   });
@@ -27106,7 +27105,7 @@ async function renderAdmin() {
   else if (active === 'transcription') await recordingsFeature.renderAdminTranscription();
   else if (active === 'retained-statistics') {
     content.append(createRetainedStatisticsWorkspace({
-      node, formField, uiSelectFrame, uiSegmentedControl, section, sectionActionHost,
+      node, metricCard, metrics, formField, uiSelectFrame, uiSegmentedControl, section, sectionActionHost,
       table, openReadOnlyModal, modalFooter: aliasModalFooter, requestJson,
       formatNumber: number, formatDateTime: dateTime, renderItem: retainedStatisticsItem,
       renderSource: (row, label) => channelLink(row, label || row.label),

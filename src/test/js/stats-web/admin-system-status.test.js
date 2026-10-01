@@ -54,7 +54,7 @@ vm.createContext(context);
 vm.runInContext([
   functionSource('function number(value)'),
   functionSource('function valueNode(value)'),
-  functionSource('function metricCard(label, value, displayValue = undefined)'),
+  functionSource('function metricCard(label, value, displayValue = undefined, options = {})'),
   functionSource('function metrics(values, embedded = false)'),
   functionSource('function adminStatusBytes(value)'),
   functionSource('function adminDatabaseDisplay(database)')
