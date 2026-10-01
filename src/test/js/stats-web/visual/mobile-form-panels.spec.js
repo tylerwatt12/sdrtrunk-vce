@@ -206,10 +206,33 @@ test('P25 Events retains its single list through a short-screen orientation chan
   await page.setViewportSize({ width: 390, height: 844 });
   await dockSize(page, 'minimal');
   await toggle.click();
-  // This height is above the compact media query. The actual remaining graph
-  // stage must still trigger the sheet when a complete event would not fit.
-  await page.setViewportSize({ width: 320, height: 675 });
+  // Keep the viewport above the compact media query while leaving too little
+  // room for one event. Derive the resize from the rendered list so changes to
+  // the player or toolbar height do not stop exercising this geometry branch.
+  await page.setViewportSize({ width: 320, height: 740 });
+  const inlineList = page.locator('.network-visualizer-stage .network-visualizer-event-list');
+  await expect(inlineList).toBeVisible();
+  const available = await inlineList.evaluate(element => ({ height: element.clientHeight,
+    entryHeight: element.firstElementChild.getBoundingClientRect().height }));
+  expect(available.height).toBeGreaterThanOrEqual(available.entryHeight);
+  const targetHeight = 740 - Math.ceil(available.height - available.entryHeight) - 2;
+  expect(targetHeight).toBeGreaterThan(640);
+  await page.evaluate(() => {
+    window.addEventListener('resize', () => {
+      const list = document.querySelector('.network-visualizer-event-list');
+      window.p25EventsResizeGeometry = { inline: Boolean(list.closest('.network-visualizer-stage')),
+        compact: matchMedia('(max-height: 640px)').matches, height: list.clientHeight,
+        entryHeight: list.firstElementChild.getBoundingClientRect().height };
+    }, { once: true });
+  });
+  await page.setViewportSize({ width: 320, height: targetHeight });
   await expect(page.getByRole('dialog', { name: 'Noteworthy P25 activity', exact: true })).toBeVisible();
+  const resized = await page.evaluate(() => window.p25EventsResizeGeometry);
+  await test.info().attach('events-resize-geometry', {
+    body: JSON.stringify({ initial: available, targetHeight, resized }), contentType: 'application/json' });
+  expect(resized.inline).toBe(true);
+  expect(resized.compact).toBe(false);
+  expect(resized.height).toBeLessThan(resized.entryHeight);
   await page.keyboard.press('Escape');
   await toggle.click();
   await page.evaluate(() => {

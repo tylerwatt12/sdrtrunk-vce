@@ -1,21 +1,20 @@
 :root {
-  --audio-ink: #202f43;
-  --audio-surface: #f9fafc;
-  --audio-raised: #e7ecf4;
-  --audio-quiet: #f0f3f8;
-  --audio-muted: #56687f;
-  --audio-line: #c3cedd;
-  --audio-accent: #234d78;
-  --audio-accent-hover: #1b3d60;
-  --audio-accent-ink: #ffffff;
-  --audio-shadow: 0 10px 28px #293e5924;
+  --audio-ink: var(--ink);
+  --audio-surface: var(--surface);
+  --audio-raised: color-mix(in srgb, var(--accent-soft) 50%, var(--surface));
+  --audio-quiet: var(--surface-2);
+  --audio-muted: var(--muted);
+  --audio-line: color-mix(in srgb, var(--accent) 20%, var(--line));
+  --audio-accent: var(--primary-control);
+  --audio-accent-hover: var(--primary-control-hover);
+  --audio-accent-ink: var(--primary-control-ink);
+  --audio-shadow: var(--shadow-raised);
   --audio-radius: 18px;
   --audio-dock-width: 490px;
   --audio-dock-inset: 18px;
   --audio-dock-layer: 30;
-  --audio-collapsed-height: 64px;
-  --audio-handle-height: 36px;
-  --audio-grip-width: 42px;
+  --audio-handle-height: 44px;
+  --audio-grip-width: 28px;
   --audio-action-size: 42px;
   --audio-play-size: 48px;
   --audio-source-height: 32px;
@@ -279,16 +278,6 @@
 }
 
 :root[data-theme="dark"] {
-  --audio-ink: #e6edf6;
-  --audio-surface: #202c3d;
-  --audio-raised: #29374a;
-  --audio-quiet: #1b2737;
-  --audio-muted: #afbed0;
-  --audio-line: #45556a;
-  --audio-accent: #bbd6f2;
-  --audio-accent-hover: #d5e6f7;
-  --audio-accent-ink: #182c44;
-  --audio-shadow: 0 10px 28px #00000055;
   color-scheme: dark;
   --bg: #10161c;
   --surface: #172029;

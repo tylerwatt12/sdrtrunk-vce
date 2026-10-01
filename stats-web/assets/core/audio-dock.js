@@ -130,11 +130,9 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   grip.setAttribute('aria-hidden', 'true');
   const sizeHint = node('span', 'visually-hidden');
   sizeHint.id = 'audio-dock-size-hint';
-  const collapsedCopy = node('span', 'audio-dock-copy');
   const collapsedTitle = node('strong', 'audio-dock-single-line');
-  const collapsedMeta = node('span', 'audio-dock-meta');
-  collapsedCopy.append(collapsedTitle, collapsedMeta);
-  handle.append(grip, collapsedCopy, sizeHint);
+  const collapsedMeta = node('span', 'audio-dock-meta audio-dock-collapsed-meta');
+  handle.append(grip, sizeHint);
   let gesture = null;
   let suppressClick = false;
   handle.addEventListener('pointerdown', (event) => {
@@ -198,7 +196,11 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   });
   const count = textButton('Queue 0', () => { panel = 'queue'; setSize('full'); });
   count.classList.add('ui-audio-count');
-  header.append(sourceButtons, count);
+  const headerStart = node('div', 'audio-dock-header-start');
+  const headerEnd = node('div', 'audio-dock-header-end');
+  headerStart.append(collapsedTitle, sourceButtons);
+  headerEnd.append(collapsedMeta, count);
+  header.append(headerStart, handle, headerEnd);
 
   const body = node('div', 'audio-dock-body');
   body.id = 'audio-dock-content';
@@ -281,7 +283,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     tabButtons[value] = button; tabs.append(button);
   });
   body.append(now, timing, transport, volumeRow, actions, tabs, panelHost);
-  dock.append(handle, header, body);
+  dock.append(header, body);
   document.querySelector('.app-shell').append(dock);
 
   const message = (text, error = false) => {
@@ -498,7 +500,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       (!permissions.live && !permissions.recordings);
     dock.dataset.state = size; dock.dataset.source = source;
     document.body.classList.toggle('has-audio-dock', !dock.hidden);
-    collapsedCopy.hidden = size !== 'collapsed'; header.hidden = size === 'collapsed'; body.hidden = size === 'collapsed';
+    collapsedTitle.hidden = collapsedMeta.hidden = size !== 'collapsed';
+    sourceButtons.hidden = count.hidden = body.hidden = size === 'collapsed';
     handle.setAttribute('aria-expanded', String(size !== 'collapsed'));
     const sizeDescription = { collapsed: 'Collapsed player', minimal: 'Minimal controls', full: 'Full controls' }[size];
     sizeHint.textContent = `${sizeDescription}. Drag up or down, or click to change player size.`;

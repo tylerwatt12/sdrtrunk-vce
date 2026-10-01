@@ -6,11 +6,10 @@
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
+  padding: 0;
   border: 0;
   color: var(--audio-ink);
-  background: var(--audio-raised);
+  background: transparent;
   font: inherit;
   text-align: left;
   cursor: grab;
@@ -54,10 +53,10 @@
   color: var(--audio-accent-ink);
   background: var(--audio-accent-hover);
 }
-.ui-audio-sources { min-width: 0; flex-shrink: 0; }
+.ui-audio-sources { min-width: 0; max-width: 100%; }
 .ui-audio-sources .ui-segmented-option {
   min-height: var(--audio-source-height);
-  padding: var(--space-1) var(--space-2);
+  padding: var(--space-1);
   font-size: var(--font-size-label);
 }
 .ui-audio-sources .ui-segmented-option[aria-pressed="true"] {
