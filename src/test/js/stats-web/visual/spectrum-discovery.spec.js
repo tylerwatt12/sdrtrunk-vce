@@ -11,7 +11,10 @@ function tuner() {
     available: true, operator_state: 'setup', channel_count: 0, frequency_hz: 851012500,
     spectrum_target_id: 'target-a', sample_rate_hz: 10000000,
     settings: [{ id: 'frequency_mhz', label: 'Center frequency', value: 851.0125,
-      editable: true, availability: 'setup', minimum: 24, maximum: 1800, dependencies: [] }] };
+      editable: true, availability: 'setup', minimum: 24, maximum: 1800,
+      unavailable_reason: 'Unlock center', dependencies: [{ setting_id: 'center_frequency_locked', equals: false }] },
+    { id: 'center_frequency_locked', label: 'Lock center', kind: 'boolean', value: false,
+      editable: true, availability: 'live', dependencies: [] }] };
 }
 
 function snapshot(protocolId, state) {
@@ -44,6 +47,7 @@ function snapshot(protocolId, state) {
 
 async function install(page, state = {}) {
   state.tuner = tuner();
+  state.tuner.settings.find((setting) => setting.id === 'center_frequency_locked').value = state.locked === true;
   state.requests = [];
   const preferenceModule = await import(pathToFileURL(resolve(root,
     'stats-web/assets/core/preference-schema.js')).href);
@@ -69,6 +73,15 @@ async function install(page, state = {}) {
       body: JSON.stringify({ revision: 1, country_code: 'US', country_label: 'United States',
         countries: [{ code: 'US', label: 'United States' }], scopes: [] }) });
     if (path === '/api/v1/admin/tuners') return respond({ tuners: [state.tuner] });
+    if (path.startsWith('/api/v1/admin/tuners/idle-a/settings/')) {
+      const setting = state.tuner.settings.find((candidate) => candidate.id === path.split('/').at(-1));
+      if (state.rejectLock && setting.id === 'center_frequency_locked') return route.fulfill({
+        status: 409, contentType: 'application/json',
+        body: JSON.stringify({ error: { code: 'busy', message: 'Could not change center lock.' } }) });
+      setting.value = body.value;
+      if (setting.id === 'frequency_mhz') state.tuner.frequency_hz = Math.round(body.value * 1_000_000);
+      return respond({});
+    }
     if (path.endsWith('/browse')) {
       if (request.method() === 'DELETE') return respond(null, 204);
       if (state.failBrowseOnce) {
@@ -77,8 +90,9 @@ async function install(page, state = {}) {
         return route.fulfill({ status: 409, contentType: 'application/json',
           body: JSON.stringify({ error: { code: 'busy', message: 'Tuner is temporarily unavailable.' } }) });
       }
+      if (Number.isInteger(state.browseChannelCount)) state.tuner.channel_count = state.browseChannelCount;
       return respond({ lease_id: 'browse-a', expires_at_epoch_ms: Date.now() + 30000,
-        can_tune: !state.running, tuner: state.tuner });
+        can_tune: !state.running && state.tuner.channel_count === 0, tuner: state.tuner });
     }
     if (path === '/api/v1/diagnostics/tuners') return respond({ rows: [] });
     if (path === '/api/v1/admin/channels/protocols') return respond(protocols);
@@ -90,6 +104,11 @@ async function install(page, state = {}) {
     }
     if (path === '/api/v1/admin/spectrum-discovery/discovery-a') {
       if (request.method() === 'DELETE') return respond(null, 204);
+      if (state.failProbeStatusOnce) {
+        state.failProbeStatusOnce = false;
+        return route.fulfill({ status: 503, contentType: 'application/json',
+          body: JSON.stringify({ error: { code: 'unavailable', message: 'Status temporarily unavailable.' } }) });
+      }
       return respond(snapshot(state.protocolId, state));
     }
     if (path.endsWith('/save')) {
@@ -115,7 +134,7 @@ async function install(page, state = {}) {
   await expect(page.getByRole('heading', { name: 'Tuner Spectrum', exact: true })).toBeVisible();
   if (!state.browseError) await expect(page.locator('.spectrum-browse-center')).toContainText('0851.01250MHz');
   await page.evaluate(async () => {
-    window.discoveryApi = await import('/assets/app.js?v=350');
+    window.discoveryApi = await import('/assets/app.js?v=351');
     window.discoveryProbeStates = [];
     window.openDiscovery = () => window.discoveryApi.openSpectrumDiscoveryWizard({
       tunerId: 'idle-a', targetId: 'target-a', frequencyHz: 851012500, browseLeaseId: 'browse-a',
@@ -131,6 +150,97 @@ async function begin(page, protocolId = 'p25-phase1') {
   await wizard(page).getByRole('combobox', { name: 'Protocol', exact: true }).selectOption(protocolId);
   await wizard(page).getByRole('button', { name: 'Next', exact: true }).click();
 }
+
+for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
+  test(`Spectrum center lock unlocks tuning with its lease in ${theme} at ${width}px`, async ({ page }) => {
+    const state = { locked: true, theme };
+    await page.setViewportSize({ width, height: 900 });
+    await install(page, state);
+    const lock = page.locator('.spectrum-browse-center').getByRole('checkbox', { name: 'Lock center' });
+    const digit = page.getByRole('button', { name: 'Decrease 100 MHz place', includeHidden: true });
+    await expect(lock).toBeChecked();
+    await expect(lock).toBeEnabled();
+    await expect(digit).toBeDisabled();
+    await expect(page.locator('.spectrum-browse-toolbar')).toHaveScreenshot(`spectrum-center-lock-${theme}.png`);
+    await lock.press('Space');
+    await expect(digit).toBeEnabled();
+    await expect(lock).toBeFocused();
+    expect(state.requests.find((request) => request.path.endsWith('/settings/center_frequency_locked')).body)
+      .toEqual({ value: false, lease_id: 'browse-a' });
+    await digit.click();
+    await expect(page.locator('.spectrum-browse-center')).toContainText('0751.01250MHz');
+    expect(state.requests.find((request) => request.path.endsWith('/settings/frequency_mhz')).body)
+      .toEqual({ value: 751.0125, lease_id: 'browse-a' });
+    await lock.press('Space');
+    await expect(digit).toBeDisabled();
+  });
+}
+
+test('a rejected Spectrum center lock restores the confirmed switch and allows retry', async ({ page }) => {
+  const state = { locked: true, rejectLock: true };
+  await install(page, state);
+  const lock = page.locator('.spectrum-browse-center').getByRole('checkbox', { name: 'Lock center' });
+  await lock.press('Space');
+  await expect(lock).toBeChecked();
+  await expect(lock).toBeEnabled();
+  await expect(page.locator('.spectrum-browse-message')).toContainText('Could not change center lock.');
+  state.rejectLock = false;
+  await lock.press('Space');
+  await expect(lock).not.toBeChecked();
+  await expect(page.getByRole('button', { name: 'Decrease 100 MHz place', includeHidden: true })).toBeEnabled();
+});
+
+test('active monitoring keeps the Spectrum center lock disabled', async ({ page }) => {
+  await install(page, { locked: true, running: true });
+  await expect(page.locator('.spectrum-browse-center').getByRole('checkbox', { name: 'Lock center' })).toBeDisabled();
+});
+
+test('confirmed lease activity updates the existing tuner option and preserves picker focus', async ({ page }) => {
+  const state = { browseChannelCount: 1 };
+  await page.clock.install();
+  await install(page, state);
+  const picker = page.locator('.spectrum-browse-tuner select');
+  await expect(picker.locator('option:checked')).toHaveText('Test receiver · 1 active');
+  await picker.focus();
+  await page.evaluate(() => {
+    window.originalSpectrumPicker = document.querySelector('.spectrum-browse-tuner select');
+    window.originalSpectrumOption = window.originalSpectrumPicker.selectedOptions[0];
+  });
+  state.browseChannelCount = 0;
+  await page.clock.fastForward(11000);
+  await expect(picker.locator('option:checked')).toHaveText('Test receiver · Idle');
+  await expect(picker).toBeFocused();
+  state.browseChannelCount = 2;
+  await page.clock.fastForward(11000);
+  await expect(picker.locator('option:checked')).toHaveText('Test receiver · 2 active');
+  await expect(picker).toBeFocused();
+  expect(await picker.evaluate((element) => element === window.originalSpectrumPicker &&
+    element.selectedOptions[0] === window.originalSpectrumOption)).toBe(true);
+});
+
+test('an unchanged lease renewal preserves a typed center frequency draft and its focused control', async ({ page }) => {
+  const state = {};
+  await page.clock.install();
+  await install(page, state);
+  const center = page.locator('.spectrum-browse-center .tuners-center-frequency');
+  await center.focus();
+  await page.locator('.spectrum-browse-center .tuners-frequency-digit').first().hover();
+  await page.keyboard.type('075');
+  await expect(center).toContainText('0751.01250MHz');
+  await page.evaluate(() => {
+    window.originalSpectrumCenter = document.querySelector('.spectrum-browse-center .tuners-center-frequency');
+  });
+  await page.clock.fastForward(11000);
+  await expect.poll(() => state.requests.some((request) => request.path.endsWith('/browse') &&
+    request.body.lease_id === 'browse-a')).toBe(true);
+  await expect(center).toBeFocused();
+  expect(await center.evaluate((element) => element === window.originalSpectrumCenter)).toBe(true);
+  await page.keyboard.type('412345');
+  await page.keyboard.press('Enter');
+  await expect(center).toContainText('0754.12345MHz');
+  expect(state.requests.find((request) => request.path.endsWith('/settings/frequency_mhz')).body)
+    .toEqual({ value: 754.12345, lease_id: 'browse-a' });
+});
 
 test('idle receiver browsing renews and releases on leaving Spectrum', async ({ page }) => {
   const state = {};
@@ -172,6 +282,39 @@ test('P25 polling retains Cancel focus and cancellation releases the probe', asy
   await expect.poll(() => state.requests.some((request) => request.path.endsWith('/discovery-a') &&
     request.method === 'DELETE')).toBe(true);
   expect(await page.evaluate(() => window.discoveryProbeStates)).toEqual([true, false]);
+});
+
+test('retrying inconclusive P25 identification restores Cancel while scanning and saves no channel', async ({ page }) => {
+  const state = { phase: 'inconclusive' };
+  await install(page, state);
+  await begin(page);
+  const dialog = wizard(page);
+  await expect(dialog.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Back', exact: true })).toBeVisible();
+  state.phase = 'identifying';
+  await dialog.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: 'Back', exact: true })).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect.poll(() => state.requests.filter((request) => request.path.endsWith('/discovery-a') &&
+    request.method === 'DELETE').length).toBe(2);
+  expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(0);
+});
+
+test('recovering P25 probe status restores the scanning footer', async ({ page }) => {
+  const state = { phase: 'identifying', failProbeStatusOnce: true };
+  await install(page, state);
+  await begin(page);
+  const dialog = wizard(page);
+  await expect(dialog.getByRole('button', { name: 'Retry status', exact: true })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Retry status', exact: true }).click();
+  await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Retry status', exact: true })).toHaveCount(0);
+  await expect(dialog).toContainText('waiting for a stable system and site.');
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
 });
 
 test('ambiguous aliases require a choice; saved start failure retries without recreating', async ({ page }) => {

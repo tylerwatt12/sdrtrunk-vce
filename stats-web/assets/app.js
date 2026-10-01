@@ -13040,6 +13040,7 @@ function openSpectrumDiscoveryWizard(selection) {
         return;
       }
       session = created;
+      probeNodes = null;
       window.clearTimeout(heartbeatTimer);
       heartbeatTimer = window.setTimeout(() => void heartbeat(), 10_000);
       settings = { ...(session.review?.template?.settings || {}) };
@@ -13103,6 +13104,7 @@ function openSpectrumDiscoveryWizard(selection) {
       if (current()) drawSession();
     } catch (error) {
       if (!current()) return;
+      probeNodes = null;
       showError(error);
       actions.replaceChildren();
       button('Cancel', () => modal.close());
@@ -17048,8 +17050,26 @@ async function renderTunerSpectrum() {
   let disposed = false;
   let operation = 0;
   let tuning = false;
-  const canTune = () => lease?.can_tune === true && !probeActive && !tuning &&
+  const tunerOptionLabel = (tuner) => `${tuner.name} · ${Number(tuner.channel_count || 0) ?
+    `${tuner.channel_count} active` : 'Idle'}`;
+  const confirmSelectedTuner = (tuner) => {
+    selectedTuner = tuner;
+    tuners = tuners.map((candidate) => candidate.id === tuner.id ? tuner : candidate);
+    const option = [...select.options].find((candidate) => candidate.value === tuner.id);
+    if (option) option.textContent = tunerOptionLabel(tuner);
+  };
+  const centerSettingsSignature = (browse) => JSON.stringify([
+    browse?.can_tune, tunerOperatorState(browse?.tuner), Number(browse?.tuner?.channel_count || 0),
+    (browse?.tuner?.settings || []).filter((setting) =>
+      ['frequency_mhz', 'center_frequency_locked'].includes(setting.id))
+  ]);
+  const canEditCenter = () => lease?.can_tune === true && !probeActive && !tuning &&
     Number(selectedTuner?.channel_count || 0) === 0;
+  const canTune = () => {
+    const settings = selectedTuner?.settings || [];
+    const setting = settings.find((candidate) => candidate.id === 'frequency_mhz');
+    return canEditCenter() && setting && tunerSettingUsability(setting, selectedTuner, settings).enabled;
+  };
   const leasePath = (id) => `/api/v1/admin/tuners/${encodeURIComponent(id)}/browse`;
   const releaseLease = async () => {
     window.clearTimeout(leaseTimer);
@@ -17063,39 +17083,64 @@ async function renderTunerSpectrum() {
     centerControl?.close();
     const setting = selectedTuner?.settings?.find((candidate) => candidate.id === 'frequency_mhz');
     if (!setting) { centerHost.replaceChildren(); return; }
-    const usability = canTune() ? tunerSettingUsability(setting, selectedTuner, selectedTuner.settings) :
-      { enabled: false, reason: probeActive ? 'Finish or cancel signal identification to tune' :
+    const usability = canEditCenter() ? tunerSettingUsability(setting, selectedTuner, selectedTuner.settings) :
+      { enabled: false, reason: tuning ? 'Saving center frequency settings' :
+        probeActive ? 'Finish or cancel signal identification to tune' :
         'Active channels keep the center frequency fixed' };
     centerControl = tunerCenterFrequencyControl(selectedTuner, setting, usability, {
       save: async (_tuner, _setting, value) => tune(Math.round(value * 1_000_000))
     });
     centerHost.replaceChildren(centerControl);
+    const lock = selectedTuner.settings.find((candidate) => candidate.id === 'center_frequency_locked');
+    if (lock) {
+      const control = tunerSettingInput(lock);
+      control.element.classList.add('tuners-center-lock-field');
+      control.input.dataset.tunerSetting = lock.id;
+      control.input.disabled = !canEditCenter() ||
+        !tunerSettingUsability(lock, selectedTuner, selectedTuner.settings).enabled;
+      control.input.addEventListener('change', () => {
+        void saveCenterSetting(lock, control.read(control.input)).catch(() => {});
+      });
+      centerHost.append(control.element);
+    }
   };
-  const tune = async (frequencyHz) => {
-    if (!canTune()) return;
+  const saveCenterSetting = async (setting, value) => {
+    if (!canEditCenter() || (setting.id === 'frequency_mhz' && !canTune())) return;
+    const restoreFocus = document.activeElement?.dataset.tunerSetting === setting.id;
     tuning = true;
     select.disabled = true;
+    renderCenter();
     try {
-      await requestJson(`/api/v1/admin/tuners/${encodeURIComponent(selectedTuner.id)}/settings/frequency_mhz`, {
-        method: 'PUT', body: { value: frequencyHz / 1_000_000, lease_id: lease.lease_id }, page: false
+      await requestJson(`/api/v1/admin/tuners/${encodeURIComponent(selectedTuner.id)}/settings/${setting.id}`, {
+        method: 'PUT', body: { value, lease_id: lease.lease_id }, page: false
       });
       const renewed = await requestJson(leasePath(selectedTuner.id), {
         method: 'POST', body: { lease_id: lease.lease_id }, page: false
       });
       if (disposed) return;
       lease = renewed;
-      selectedTuner = renewed.tuner;
-      spectrum.selectTarget(selectedTuner.spectrum_target_id || '');
-      spectrum.refreshTargets();
-      message.textContent = 'Click a signal to add a channel. Drag the full view to tune; zoom to pan.';
+      confirmSelectedTuner(renewed.tuner);
+      if (setting.id === 'frequency_mhz') {
+        spectrum.selectTarget(selectedTuner.spectrum_target_id || '');
+        spectrum.refreshTargets();
+      }
+      message.textContent = setting.id === 'center_frequency_locked' && value === true ?
+        'Center frequency locked. Unlock to tune; zoom to pan.' :
+        'Click a signal to add a channel. Drag the full view to tune; zoom to pan.';
     } catch (error) {
-      message.textContent = error.message || 'Could not tune. Try again.';
+      message.textContent = error.message || 'Could not save center frequency settings. Try again.';
       throw error;
     } finally {
       tuning = false;
-      if (!disposed) { select.disabled = probeActive; renderCenter(); }
+      if (!disposed) {
+        select.disabled = probeActive;
+        renderCenter();
+        if (restoreFocus) centerHost.querySelector(`[data-tuner-setting="${setting.id}"]`)?.focus();
+      }
     }
   };
+  const tune = (frequencyHz) => saveCenterSetting(
+    selectedTuner.settings.find((candidate) => candidate.id === 'frequency_mhz'), frequencyHz / 1_000_000);
   const spectrum = tunerSpectrumPanel(snapPresetDocument, {
     managedSelection: true,
     canRetune: canTune,
@@ -17132,9 +17177,10 @@ async function renderTunerSpectrum() {
         method: 'POST', body: { lease_id: existing.lease_id }, page: false
       });
       if (disposed || lease?.lease_id !== existing.lease_id) return;
+      const centerChanged = centerSettingsSignature(lease) !== centerSettingsSignature(renewed);
       lease = renewed;
-      selectedTuner = renewed.tuner;
-      renderCenter();
+      confirmSelectedTuner(renewed.tuner);
+      if (centerChanged) renderCenter();
     } catch (error) {
       if (disposed) return;
       lease = null;
@@ -17164,7 +17210,7 @@ async function renderTunerSpectrum() {
         return;
       }
       lease = acquired;
-      selectedTuner = acquired.tuner;
+      confirmSelectedTuner(acquired.tuner);
       select.value = id;
       storeTunerChoice('session-target', selectedTuner.spectrum_target_id || id);
       spectrum.selectTarget(selectedTuner.spectrum_target_id || '');
@@ -17172,7 +17218,8 @@ async function renderTunerSpectrum() {
       renderCenter();
       message.textContent = canTune() ?
         'Click a signal to add a channel. Drag the full view to tune; zoom to pan.' :
-        'Monitoring active channels. Click a signal to add a channel within this receiver window.';
+        canEditCenter() ? 'Center frequency locked. Unlock to tune; zoom to pan.' :
+          'Monitoring active channels. Click a signal to add a channel within this receiver window.';
       leaseTimer = window.setTimeout(() => void renewLease(), 10_000);
     } catch (error) {
       message.textContent = error.message || 'Could not browse this tuner. Retry or choose another tuner.';
@@ -17189,8 +17236,7 @@ async function renderTunerSpectrum() {
         !['ERROR', 'REMOVED', 'UNSUPPORTED'].includes(String(tuner.status).toUpperCase()));
       const selectedId = selectedTuner?.id;
       select.replaceChildren(...tuners.map((tuner) => {
-        const option = node('option', '', `${tuner.name} · ${Number(tuner.channel_count || 0) ?
-          `${tuner.channel_count} active` : 'Idle'}`);
+        const option = node('option', '', tunerOptionLabel(tuner));
         option.value = tuner.id;
         return option;
       }));

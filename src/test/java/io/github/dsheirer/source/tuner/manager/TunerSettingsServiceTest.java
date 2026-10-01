@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.source.SourceEvent;
@@ -41,6 +42,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletableFuture;
 import java.util.List;
+import java.util.function.IntConsumer;
 import org.junit.jupiter.api.Test;
 
 class TunerSettingsServiceTest
@@ -592,7 +594,40 @@ class TunerSettingsServiceTest
     }
 
     @Test
-    void liveCenterRejectsChannelsThatWouldNotFit()
+    void completedPairedTransitionImmediatelyAcceptsNextRequest()
+    {
+        DeviceInfo masterInfo = new DeviceInfo(DeviceType.RSPduo, "completion-pair-test");
+        masterInfo.setDeviceSelectionMode(DeviceSelectionMode.MASTER_TUNER_1);
+        DeviceInfo slaveInfo = masterInfo.copy();
+        slaveInfo.setDeviceSelectionMode(DeviceSelectionMode.SLAVE_TUNER_2);
+        TestRspDuoMaster master = new TestRspDuoMaster(masterInfo);
+        TestRspDuoSlave slave = new TestRspDuoSlave(slaveInfo);
+        master.setTunerConfiguration(new RspDuoTuner1Configuration(master.getId()));
+        slave.setTunerConfiguration(new RspDuoTuner2Configuration(slave.getId()));
+        master.installRunning();
+        slave.installRunning();
+        try(TunerSettingsService service = new TunerSettingsService(() -> {},
+            candidate -> candidate == master || candidate == slave,
+            id -> id.equals(master.getId()) ? master : id.equals(slave.getId()) ? slave : null))
+        {
+            assertTimeoutPreemptively(Duration.ofSeconds(10), () -> {
+                for(int attempt = 0; attempt < 50; attempt++)
+                {
+                    assertEquals("accepted", service.requestState(master, DiscoveredTuner.OperatorState.SETUP).status());
+                    while(service.transition(master) != null && !Thread.currentThread().isInterrupted()) Thread.onSpinWait();
+                    assertNull(service.transition(master));
+                    //There is deliberately no sleep after the public completion signal.
+                    assertEquals("accepted", service.requestState(slave, DiscoveredTuner.OperatorState.DISABLED).status());
+                    while(service.transition(slave) != null && !Thread.currentThread().isInterrupted()) Thread.onSpinWait();
+                    assertNull(service.transition(slave));
+                    assertEquals(DiscoveredTuner.OperatorState.DISABLED, slave.getOperatorState());
+                }
+            });
+        }
+    }
+
+    @Test
+    void activeCenterRejectsRetuneWithoutChangingConfigurationOrHardware()
     {
         TrackingAirspyController controller = new TrackingAirspyController();
         CountingChannelManager channels = new CountingChannelManager();
@@ -606,12 +641,103 @@ class TunerSettingsServiceTest
 
         try(TunerSettingsService service = service(tuner, saves))
         {
-            IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+            TunerSettingsService.SettingUnavailableException failure =
+                assertThrows(TunerSettingsService.SettingUnavailableException.class,
                 () -> service.set(tuner, "frequency_mhz", 120.0));
-            assertEquals("Channels won't fit", failure.getMessage());
+            assertEquals("Channels are using this tuner", failure.getMessage());
             assertEquals(original, configuration.getFrequency());
             assertEquals(0, controller.mFrequencyCalls.get());
             assertEquals(0, saves.get());
+        }
+    }
+
+    @Test
+    void activeCenterRejectsEvenFittingRetuneAndDisablesFrequencyDescriptor() throws Exception
+    {
+        TrackingAirspyController controller = new TrackingAirspyController();
+        controller.setFrequency(120_000_000L);
+        CountingChannelManager channels = new CountingChannelManager();
+        channels.mChannels.add(new TunerChannel(120_000_000L, 12_500));
+        channels.mCount.set(1);
+        FakeDiscoveredTuner tuner = runningTuner(controller, channels);
+        AirspyTunerConfiguration configuration = (AirspyTunerConfiguration)tuner.getTunerConfiguration();
+        configuration.setCenterFrequencyLocked(false);
+        configuration.setFrequency(120_000_000L);
+        int calls = controller.mFrequencyCalls.get();
+        AtomicInteger saves = new AtomicInteger();
+        try(TunerSettingsService service = service(tuner, saves))
+        {
+            var descriptor = service.describe(tuner).stream().filter(setting ->
+                "frequency_mhz".equals(setting.id())).findFirst().orElseThrow();
+            assertFalse(descriptor.editable());
+            assertEquals("Channels are using this tuner", descriptor.unavailableReason());
+            assertThrows(TunerSettingsService.SettingUnavailableException.class,
+                () -> service.set(tuner, "frequency_mhz", 120.1));
+            assertEquals(120_000_000L, configuration.getFrequency());
+            assertEquals(120_000_000L, controller.getFrequency());
+            assertEquals(calls, controller.mFrequencyCalls.get());
+            assertEquals(0, saves.get());
+        }
+    }
+
+    @Test
+    void centerRechecksOccupancyInsideControllerAndAllocationLocksBeforeHardwareWrite()
+    {
+        TrackingAirspyController controller = new TrackingAirspyController();
+        CountingChannelManager channels = new CountingChannelManager();
+        FakeDiscoveredTuner tuner = runningTuner(controller, channels);
+        AirspyTunerConfiguration configuration = (AirspyTunerConfiguration)tuner.getTunerConfiguration();
+        configuration.setCenterFrequencyLocked(false);
+        long original = configuration.getFrequency();
+        AtomicInteger saves = new AtomicInteger();
+        AtomicInteger observations = new AtomicInteger();
+        channels.mCountReadObserver = count -> {
+            if(observations.incrementAndGet() == 1)
+            {
+                assertEquals(0, count);
+                //A channel allocation won after the initial unlocked occupancy read.
+                channels.mCount.set(1);
+            }
+            else
+            {
+                assertTrue(controller.getLock().isHeldByCurrentThread());
+                assertFalse(CompletableFuture.supplyAsync(() -> {
+                    boolean acquired = tuner.tryAcquireForAllocation();
+                    if(acquired) tuner.releaseAfterAllocation();
+                    return acquired;
+                }).orTimeout(1, TimeUnit.SECONDS).join());
+            }
+        };
+        try(TunerSettingsService service = service(tuner, saves))
+        {
+            assertThrows(TunerSettingsService.SettingUnavailableException.class,
+                () -> service.set(tuner, "frequency_mhz", 120.1));
+            assertEquals(2, observations.get());
+            assertEquals(original, configuration.getFrequency());
+            assertEquals(0, controller.mFrequencyCalls.get());
+            assertEquals(0, saves.get());
+        }
+    }
+
+    @Test
+    void idleUnlockedFrequencyRemainsEditableAndAppliesOnce()
+    {
+        TrackingAirspyController controller = new TrackingAirspyController();
+        FakeDiscoveredTuner tuner = runningTuner(controller, new CountingChannelManager());
+        AirspyTunerConfiguration configuration = (AirspyTunerConfiguration)tuner.getTunerConfiguration();
+        configuration.setCenterFrequencyLocked(false);
+        AtomicInteger saves = new AtomicInteger();
+        try(TunerSettingsService service = service(tuner, saves))
+        {
+            var descriptor = service.describe(tuner).stream().filter(setting ->
+                "frequency_mhz".equals(setting.id())).findFirst().orElseThrow();
+            assertTrue(descriptor.editable());
+            assertNull(descriptor.unavailableReason());
+            assertEquals("applied", service.set(tuner, "frequency_mhz", 120.1).status());
+            assertEquals(120_100_000L, configuration.getFrequency());
+            assertEquals(120_100_000L, controller.getFrequency());
+            assertEquals(1, controller.mFrequencyCalls.get());
+            assertEquals(1, saves.get());
         }
     }
 
@@ -825,10 +951,16 @@ class TunerSettingsServiceTest
     {
         private final AtomicInteger mCount = new AtomicInteger();
         private final SortedSet<TunerChannel> mChannels = new ConcurrentSkipListSet<>();
+        private IntConsumer mCountReadObserver;
 
         @Override public SortedSet<TunerChannel> getTunerChannels() { return new TreeSet<>(mChannels); }
         @Override public String getStateDescription() { return "test"; }
-        @Override public int getTunerChannelCount() { return mCount.get(); }
+        @Override public int getTunerChannelCount()
+        {
+            int count = mCount.get();
+            if(mCountReadObserver != null) mCountReadObserver.accept(count);
+            return count;
+        }
         @Override public void stopAllChannels() { mCount.set(0); }
         @Override public TunerChannelSource getSource(TunerChannel channel, ChannelSpecification specification,
                                                       String threadName) { return null; }

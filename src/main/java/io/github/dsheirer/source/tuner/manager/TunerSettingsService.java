@@ -148,6 +148,12 @@ public final class TunerSettingsService implements AutoCloseable
     {
         List<TunerSettingCatalog.SettingDescriptor> descriptors = TunerSettingCatalog.describe(tuner);
 
+        if(!isIdle(tuner))
+        {
+            descriptors = descriptors.stream().map(descriptor -> "frequency_mhz".equals(descriptor.id()) ?
+                unavailable(descriptor, "Channels are using this tuner") : descriptor).toList();
+        }
+
         if(tuner instanceof DiscoveredRspDuoTuner1 && rspDuoSibling(tuner) instanceof DiscoveredTuner slave &&
             !isFullyDisabled(slave))
         {
@@ -226,7 +232,7 @@ public final class TunerSettingsService implements AutoCloseable
             {
                 throw new SettingUnavailableException("Spectrum tuner session expired; reopen Spectrum");
             }
-            if(owner != null && "frequency_mhz".equals(settingId) && !isIdle(tuner))
+            if("frequency_mhz".equals(settingId) && !isIdle(tuner))
             {
                 throw new SettingUnavailableException("Channels are using this tuner");
             }
@@ -524,8 +530,7 @@ public final class TunerSettingsService implements AutoCloseable
                 catch(RuntimeException exception) { failure = exception; }
                 finally
                 {
-                    mTransitions.remove(tuner);
-                    mLifecycleReservations.removeAll(group);
+                    finishTransition(tuner, group);
                     mBrowseRequests.remove(result);
                 }
                 if(failure == null) result.complete(value);
@@ -534,8 +539,7 @@ public final class TunerSettingsService implements AutoCloseable
         }
         catch(RejectedExecutionException exception)
         {
-            mTransitions.remove(tuner);
-            mLifecycleReservations.removeAll(group);
+            finishTransition(tuner, group);
             mBrowseRequests.remove(result);
             result.completeExceptionally(new IllegalStateException("Tuner maintenance is unavailable"));
         }
@@ -720,16 +724,24 @@ public final class TunerSettingsService implements AutoCloseable
                 }
                 finally
                 {
-                    mTransitions.remove(tuner);
-                    mLifecycleReservations.removeAll(group);
+                    finishTransition(tuner, group);
                 }
             });
         }
         catch(RejectedExecutionException e)
         {
-            mTransitions.remove(tuner);
-            mLifecycleReservations.removeAll(group);
+            finishTransition(tuner, group);
             throw new IllegalStateException("Tuner maintenance is unavailable", e);
+        }
+    }
+
+    /** Publish completion only after the entire group is free, without clearing a newer request's transition. */
+    private void finishTransition(DiscoveredTuner tuner, List<DiscoveredTuner> group)
+    {
+        synchronized(mLifecycleLock)
+        {
+            mLifecycleReservations.removeAll(group);
+            mTransitions.remove(tuner);
         }
     }
 
@@ -1175,7 +1187,8 @@ public final class TunerSettingsService implements AutoCloseable
 
                 try
                 {
-                    if(TunerSettingCatalog.requiresSetup(configuration, settingId) && !isIdle(tuner))
+                    if((TunerSettingCatalog.requiresSetup(configuration, settingId) ||
+                        "frequency_mhz".equals(settingId)) && !isIdle(tuner))
                     {
                         return ApplyResult.RETRY;
                     }
