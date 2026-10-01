@@ -8527,6 +8527,7 @@ async function requestJson(path, options = {}) {
       body: options.body === undefined ? undefined : JSON.stringify(snakeCasePayload(options.body)),
       cache: 'no-store',
       credentials: 'same-origin',
+      keepalive: options.keepalive === true,
       signal: controller.signal
     });
     const contentType = String(response.headers.get('Content-Type') || '').toLowerCase();
@@ -12906,6 +12907,384 @@ function diagnosticAudioPlayer(initialVolume = 0.7) {
   };
 }
 
+function spectrumDiscoverySettingFields(profile) {
+  return (profile?.sections || []).flatMap((section) => section.fields || [])
+    .filter((field) => field.path.startsWith('settings.') && field.type !== 'read_only');
+}
+
+function spectrumDiscoverySettings(form, profile) {
+  const settings = {};
+  spectrumDiscoverySettingFields(profile).forEach((field) => {
+    const control = form.querySelector(`[data-channel-path="${CSS.escape(field.path)}"]`);
+    if (control) settings[field.path.substring(9)] = channelEditorFieldValue(control, field);
+  });
+  return settings;
+}
+
+function spectrumDiscoveryIdentity(identity) {
+  return identity ? [
+    ['WACN', hex(identity.wacn, 5)], ['System ID', hex(identity.system, 3)],
+    ['RFSS', String(identity.rfss)], ['Site ID', String(identity.site)]
+  ] : [];
+}
+
+function openSpectrumDiscoveryWizard(selection) {
+  const abort = new AbortController();
+  const host = node('div', 'spectrum-discovery-workspace editor-workspace');
+  const frequency = node('p', 'muted', `${channelMHz(selection.frequencyHz)} MHz`);
+  const steps = node('div', 'ui-segmented spectrum-discovery-steps');
+  steps.setAttribute('aria-label', 'Add channel steps');
+  const stage = node('div', 'spectrum-discovery-stage');
+  const message = node('div', 'ui-feedback');
+  message.setAttribute('role', 'status');
+  const actions = node('div', 'ui-action-row');
+  host.append(frequency, steps, stage, message, actions);
+  let session = null;
+  let protocols = null;
+  let profile = null;
+  let pollTimer = null;
+  let heartbeatTimer = null;
+  let closed = false;
+  let operation = 0;
+  let settings = {};
+  let reviewDraft = null;
+  let probeNodes = null;
+  const path = '/api/v1/admin/spectrum-discovery';
+  const sessionPath = () => `${path}/${encodeURIComponent(session.session_id)}`;
+  const cancelSession = async () => {
+    const previous = session;
+    session = null;
+    if (previous?.session_id) {
+      await requestJson(`${path}/${encodeURIComponent(previous.session_id)}`, {
+        method: 'DELETE', page: false, keepalive: true
+      }).catch(() => {});
+    }
+  };
+  const modal = openReadOnlyModal('Add channel / system', host, {
+    id: 'spectrum-discovery', className: 'channel-editor-modal spectrum-discovery-modal',
+    cleanup: () => {
+      closed = true;
+      operation += 1;
+      abort.abort();
+      window.clearTimeout(pollTimer);
+      window.clearTimeout(heartbeatTimer);
+      window.removeEventListener('pagehide', abandon);
+      void cancelSession();
+      selection.setProbeActive?.(false);
+    }
+  });
+  if (!modal) return null;
+  const abandon = () => {
+    abort.abort();
+    window.clearTimeout(pollTimer);
+    window.clearTimeout(heartbeatTimer);
+    void cancelSession();
+  };
+  window.addEventListener('pagehide', abandon);
+  const current = () => !closed && activeReadOnlyModal === modal.state;
+  const request = (url, options = {}) => requestJson(url, {
+    page: false, signal: abort.signal, ...options
+  });
+  const showStep = (index, label) => {
+    probeNodes = null;
+    steps.replaceChildren(...['Protocol', 'Identify / settings', 'Review', 'Complete'].map((text, position) => {
+      const item = uiPill(`${position + 1}. ${text}`, position === index ? 'blue' : 'neutral');
+      if (position === index) item.setAttribute('aria-current', 'step');
+      return item;
+    }));
+    stage.replaceChildren(node('h3', '', label));
+    actions.replaceChildren();
+    message.textContent = '';
+  };
+  const button = (label, action, primary = false) => {
+    const control = uiActionButton(label, '', action,
+      `ui-button ${primary ? 'ui-button-primary' : 'ui-button-secondary'}`);
+    actions.append(control);
+    return control;
+  };
+  const busy = (value) => {
+    modal.setBusy(value);
+    actions.querySelectorAll('button').forEach((control) => { control.disabled = value; });
+  };
+  const showError = (error) => {
+    if (current()) message.textContent = error.message || 'Could not complete this step. Try again.';
+  };
+  const showProtocol = () => {
+    showStep(0, 'Choose a protocol');
+    const select = uiSelect([
+      { value: 'p25-phase1', label: 'P25 trunked control channel' },
+      { value: 'am', label: 'AM' }, { value: 'nbfm', label: 'NBFM' }
+    ], profile?.id || 'p25-phase1');
+    select.setAttribute('aria-label', 'Protocol');
+    stage.append(formField('Protocol', uiSelectFrame(select)));
+    button('Cancel', () => modal.close());
+    button('Next', () => void beginSession(select.value), true);
+  };
+  const beginSession = async (protocolId) => {
+    const generation = ++operation;
+    busy(true);
+    try {
+      await cancelSession();
+      if (!current() || generation !== operation) return;
+      profile = protocols.profiles.find((candidate) => candidate.id === protocolId);
+      if (!profile) throw new Error('This protocol is unavailable. Reload the page and try again.');
+      selection.setProbeActive?.(true);
+      const created = await request(path, { method: 'POST', body: {
+        tuner_id: selection.tunerId, frequency_hz: Math.round(selection.frequencyHz),
+        protocol_id: protocolId, browse_lease_id: selection.browseLeaseId || null
+      } });
+      if (!current() || generation !== operation) {
+        if (created?.session_id) void requestJson(`${path}/${encodeURIComponent(created.session_id)}`, {
+          method: 'DELETE', page: false
+        }).catch(() => {});
+        return;
+      }
+      session = created;
+      window.clearTimeout(heartbeatTimer);
+      heartbeatTimer = window.setTimeout(() => void heartbeat(), 10_000);
+      settings = { ...(session.review?.template?.settings || {}) };
+      reviewDraft = null;
+      modal.setDirty(false);
+      drawSession();
+    } catch (error) {
+      selection.setProbeActive?.(false);
+      showError(error);
+    } finally { if (current()) busy(false); }
+  };
+  const drawProbe = () => {
+    const identifying = session.state === 'identifying';
+    if (!identifying || !probeNodes) {
+      showStep(1, 'Identify the P25 control channel');
+      const candidates = node('div', 'channel-editor-grid');
+      probeNodes = { identity: node('div') };
+      [['c4fm', 'C4FM'], ['cqpsk', 'CQPSK']].forEach(([key, label]) => {
+        const card = node('div', 'ui-form-section');
+        const selected = uiPill('Selected', 'success');
+        selected.hidden = true;
+        const heading = node('strong', '', label);
+        heading.append(' ', selected);
+        const counts = node('p', 'muted');
+        card.append(heading, counts);
+        probeNodes[key] = { selected, counts };
+        candidates.append(card);
+      });
+      stage.append(candidates, probeNodes.identity);
+      if (identifying) button('Cancel', () => modal.close());
+      else {
+        button('Back', async () => {
+          await cancelSession();
+          if (current()) { selection.setProbeActive?.(false); showProtocol(); }
+        });
+        button('Retry', () => void beginSession(profile.id), true);
+      }
+    }
+    const probe = session.probe || {};
+    [['c4fm', 'C4FM'], ['cqpsk', 'CQPSK']].forEach(([key, label]) => {
+      const candidate = probe[key] || {};
+      probeNodes[key].selected.hidden = probe.selected_modulation !== label;
+      probeNodes[key].counts.textContent =
+        `${Math.round(Number(candidate.quality_pct) || 0)}% quality · ${number(candidate.valid_messages || 0)} valid messages · ` +
+        `${number(candidate.valid_control_messages || 0)} control · ${number(candidate.invalid_control_messages || 0)} invalid`;
+    });
+    if (probe.identity) probeNodes.identity.replaceChildren(keyValues(spectrumDiscoveryIdentity(probe.identity)));
+    if (identifying) {
+      const seconds = Math.min(Math.ceil(Number(probe.timeout_ms || 15000) / 1000),
+        Math.floor(Number(probe.elapsed_ms || 0) / 1000));
+      message.textContent = `Listening… ${seconds}s · waiting for a stable system and site.`;
+      pollTimer = window.setTimeout(() => void poll(), 750);
+    } else message.textContent = session.reason ||
+      'Identification was inconclusive. Try again or choose another signal.';
+  };
+
+  const poll = async () => {
+    if (!current() || !session) return;
+    try {
+      session = await request(sessionPath(), { csrf: false });
+      if (current()) drawSession();
+    } catch (error) {
+      if (!current()) return;
+      showError(error);
+      actions.replaceChildren();
+      button('Cancel', () => modal.close());
+      button('Retry status', () => void poll(), true);
+    }
+  };
+  const heartbeat = async () => {
+    if (!current() || !session) return;
+    if (session.state !== 'identifying' && !modal.state.isBusy()) {
+      try {
+        const renewed = await request(sessionPath(), { csrf: false });
+        if (!current()) return;
+        session.expires_at_ms = renewed.expires_at_ms;
+        if (!session.saved && renewed.state !== 'ready') { session = renewed; drawSession(); }
+      } catch (error) {
+        if (!current()) return;
+        showError(error);
+      }
+    }
+    heartbeatTimer = window.setTimeout(() => void heartbeat(), 10_000);
+  };
+  const showSettings = () => {
+    showStep(1, `${profile.label} settings`);
+    const form = node('form', 'channel-editor-form');
+    const grid = node('div', 'channel-editor-grid');
+    const advanced = node('details', 'ui-details');
+    advanced.append(node('summary', '', 'Advanced settings'));
+    const advancedGrid = node('div', 'channel-editor-grid');
+    const basic = new Set(['settings.bandwidth', 'settings.talkgroup', 'settings.deemphasis']);
+    spectrumDiscoverySettingFields(profile).forEach((field) => {
+      const control = channelEditorControl(field, profile, {}, {
+        ...session.review.template, settings
+      }, protocols);
+      const input = control.matches('label') ? control.querySelector('input') : control;
+      input?.setAttribute('aria-label', field.label);
+      const wrapper = formField(field.label,
+        control instanceof HTMLSelectElement ? uiSelectFrame(control) : control, field.help || '');
+      wrapper.dataset.channelField = field.path;
+      if (field.visible_when) {
+        wrapper.dataset.visiblePath = field.visible_when.path;
+        wrapper.dataset.visibleEquals = JSON.stringify(field.visible_when.equals);
+      }
+      (basic.has(field.path) ? grid : advancedGrid).append(wrapper);
+    });
+    advanced.append(advancedGrid);
+    form.append(grid, advanced);
+    form.addEventListener('input', () => modal.setDirty(true));
+    form.addEventListener('change', () => channelEditorDependencies(form));
+    form.addEventListener('submit', (event) => event.preventDefault());
+    channelEditorDependencies(form);
+    stage.append(form);
+    button('Back', async () => {
+      await cancelSession();
+      if (current()) { selection.setProbeActive?.(false); showProtocol(); }
+    });
+    button('Next', () => {
+      if (!form.reportValidity()) return;
+      try { settings = spectrumDiscoverySettings(form, profile); showReview(); } catch (error) { showError(error); }
+    }, true);
+  };
+  const showReview = () => {
+    showStep(2, 'Review and start listening');
+    const review = session.review;
+    const template = review.template;
+    const form = node('form', 'channel-editor-form');
+    const grid = node('div', 'channel-editor-grid');
+    const values = reviewDraft || { system: template.system || '', site: template.site || '', name: template.name || '' };
+    const fields = (profile.sections || []).flatMap((section) => section.fields || []);
+    ['system', 'site', 'name'].forEach((key) => {
+      const field = fields.find((candidate) => candidate.path === key) ||
+        { path: key, type: 'text', label: semanticLabel(key), required: key === 'name' };
+      const control = channelEditorControl(field, profile, {}, values, protocols);
+      control.setAttribute('aria-label', field.label);
+      grid.append(formField(field.label, control));
+    });
+    const lists = review.alias_lists || [];
+    const suggested = review.suggested_alias_list_id;
+    const allowNew = profile.id !== 'p25-phase1' || lists.length === 0;
+    const aliasOptions = [
+      ...lists.map((list) => ({ value: list.id, label: list.name })),
+      ...(allowNew ? [{ value: 'new', label: 'Create a new Alias List' }] : [])
+    ];
+    const previousAlias = reviewDraft ? (reviewDraft.alias_list_id || 'new') : null;
+    const selected = aliasOptions.some((option) => String(option.value) === String(previousAlias)) ?
+      previousAlias : (suggested || (lists.length === 1 ? lists[0].id : (lists.length ? '' : 'new')));
+    const aliases = uiSelect(aliasOptions, selected, selected === '', 'Choose an Alias List');
+    aliases.required = true;
+    aliases.setAttribute('aria-label', 'Alias List');
+    const newName = node('input', 'ui-input');
+    newName.type = 'text';
+    newName.setAttribute('aria-label', 'New Alias List name');
+    newName.maxLength = 25;
+    newName.value = reviewDraft?.new_alias_list_name || review.default_new_alias_list_name || '';
+    const newField = formField('New Alias List name', newName);
+    const defaults = node('p', 'ui-field-hint', 'New Alias Lists listen through the Default scan list.');
+    const syncAlias = () => {
+      newField.hidden = aliases.value !== 'new';
+      newName.required = aliases.value === 'new';
+      defaults.hidden = aliases.value !== 'new';
+    };
+    aliases.addEventListener('change', syncAlias);
+    syncAlias();
+    grid.append(formField('Alias List', uiSelectFrame(aliases)), newField);
+    form.append(grid, defaults);
+    if (session.probe?.identity) form.append(keyValues([
+      ...spectrumDiscoveryIdentity(session.probe.identity), ['Modulation', session.probe.selected_modulation]
+    ]));
+    form.append(node('div', 'ui-notice', profile.id === 'p25-phase1' ?
+      'Auto start and announced control channel learning will be enabled.' : 'Auto start will be enabled.'));
+    form.addEventListener('input', () => modal.setDirty(true));
+    form.addEventListener('change', () => modal.setDirty(true));
+    form.addEventListener('submit', (event) => event.preventDefault());
+    stage.append(form);
+    const read = () => ({
+      ...Object.fromEntries(['system', 'site', 'name'].map((key) => [key,
+        form.querySelector(`[data-channel-path="${key}"]`).value.trim() || null])),
+      alias_list_id: aliases.value === 'new' ? 0 : Number(aliases.value),
+      new_alias_list_name: aliases.value === 'new' ? newName.value.trim() : null,
+      settings, revision: review.revision, browse_lease_id: selection.browseLeaseId || null
+    });
+    if (profile.id !== 'p25-phase1') button('Back', () => { reviewDraft = read(); showSettings(); });
+    else button('Cancel', () => modal.close());
+    button('Create & start', async () => {
+      if (!form.reportValidity()) return;
+      busy(true);
+      try {
+        reviewDraft = read();
+        session = await request(`${sessionPath()}/save`, { method: 'POST', body: reviewDraft, timeoutMs: 30_000 });
+        if (!current()) return;
+        modal.setDirty(false);
+        selection.onSaved?.(session);
+        showComplete();
+      } catch (error) {
+        if (error.status === 409 && error.code === 'stale_revision') {
+          try {
+            session = await request(sessionPath(), { csrf: false });
+            if (current()) {
+              showReview();
+              message.textContent = 'Channel or Alias List choices changed. Review your choices and try again.';
+            }
+          } catch (refreshError) { showError(refreshError); }
+        } else showError(error);
+      } finally { if (current()) busy(false); }
+    }, true);
+  };
+  const showComplete = () => {
+    showStep(3, session.saved?.running ? 'Channel running' : 'Channel saved');
+    const running = session.saved?.running === true;
+    stage.append(node('div', `ui-notice${running ? '' : ' ui-notice-warning'}`,
+      running ? 'The channel is saved and listening.' :
+        session.saved?.start_error || 'The channel was saved but could not start. Retry when tuner capacity is available.'));
+    if (!running) button('Retry start', async () => {
+      busy(true);
+      try {
+        session = await request(`${sessionPath()}/start`, { method: 'POST' });
+        if (current()) { selection.onSaved?.(session); showComplete(); }
+      } catch (error) { showError(error); } finally { if (current()) busy(false); }
+    }, true);
+    if (session.saved?.configuration_id) actions.append(anchor('Open channel',
+      href('channel', { configuration_id: session.saved.configuration_id }), 'ui-button ui-button-secondary'));
+    button('Done', () => modal.close(), running);
+  };
+  const drawSession = () => {
+    window.clearTimeout(pollTimer);
+    if (session.saved) showComplete();
+    else if (session.state === 'ready' && session.review) {
+      settings = { ...session.review.template.settings };
+      if (profile.id === 'p25-phase1') showReview(); else showSettings();
+    } else drawProbe();
+  };
+  void request('/api/v1/admin/channels/protocols', { csrf: false }).then((catalog) => {
+    if (!current()) return;
+    protocols = catalog;
+    showProtocol();
+  }).catch((error) => {
+    showStep(0, 'Protocol choices unavailable');
+    showError(error);
+    button('Close', () => modal.close());
+  });
+  return modal;
+}
+
 function tunerFrequencyAction(label, icon, hint, disabled = false) {
   const button = node(disabled ? 'span' : 'button',
     'ui-button ui-button-secondary tuner-frequency-action ui-icon-button');
@@ -13010,7 +13389,30 @@ function openTunerFrequencyActions(selection) {
     'Look up this frequency in RadioReference');
   const listen = tunerFrequencyAction('Listen to NBFM', 'icon-speaker', 'Listen to this frequency in NBFM',
     !selection.targetId || !capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO));
-  const addSystem = tunerFrequencyAction('Add system', 'icon-plus', 'Add system (coming later)', true);
+  const addSystem = tunerFrequencyAction('Add channel / system', 'icon-plus', 'Checking this frequency…');
+  addSystem.disabled = true;
+  if (selection.tunerId && capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_CHANNELS)) {
+    const query = new URLSearchParams({ tuner_id: selection.tunerId,
+      frequency_hz: String(Math.round(selectedHz)) });
+    void requestJson(`/api/v1/admin/spectrum-discovery/eligibility?${query}`, {
+      csrf: false, page: false, signal: activeRenderController?.signal
+    }).then((eligibility) => {
+      if (!panel.isConnected) return;
+      addSystem.disabled = eligibility.eligible !== true;
+      addSystem.title = addSystem.disabled ? eligibility.reason || 'This frequency is already configured.' :
+        'Add a channel or P25 system from this signal';
+      if (addSystem.disabled) message.textContent = addSystem.title;
+    }).catch((error) => {
+      if (!panel.isConnected) return;
+      addSystem.title = 'Could not check this frequency. Close and try again.';
+      message.textContent = error.message || addSystem.title;
+    });
+  } else addSystem.title = 'Channel setup access is required.';
+  addSystem.addEventListener('click', () => {
+    if (addSystem.disabled) return;
+    panel.hidePopover();
+    openSpectrumDiscoveryWizard(selection);
+  });
   const message = node('div', 'tuner-frequency-action-message');
   message.setAttribute('role', 'status');
   const audioOptions = node('div', 'tuner-frequency-audio-options');
@@ -13625,6 +14027,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   let hoverYRatio = null;
   let hoverFlag = null;
   let drag = null;
+  let suppressClick = false;
   let dbFloor = initialFloor;
   let dbCeiling = initialCeiling;
   let waterfallSpeed = Number(speedInput.value);
@@ -13714,6 +14117,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
 
   const controller = {
     element: layout,
+    refreshTargets,
     selectTarget(targetId) {
       if (!managedSelection || disposed) return;
       managedTargetId = String(targetId || '');
@@ -14553,6 +14957,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     const snap = snapInput.checked ? tunerSnapFrequency(rawFrequencyHz, frequencyScopes) : null;
     const target = targetsById.get(selectedTargetId());
     return Object.freeze({
+      ...panelOptions.selectionContext?.(),
       targetId: selectedTargetId(),
       targetLabel: String(target?.label || ''),
       rawFrequencyHz,
@@ -14567,6 +14972,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   function frequencySelectionForCarrier(carrier) {
     const target = targetsById.get(selectedTargetId());
     return Object.freeze({
+      ...panelOptions.selectionContext?.(),
       targetId: selectedTargetId(),
       targetLabel: String(target?.label || ''),
       rawFrequencyHz: carrier.frequencyHz,
@@ -14730,6 +15136,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     drag = null;
     if (!current) return;
     current.canvas.classList.remove('dragging');
+    messageForRetune(0);
     if (releaseCapture && current.canvas.hasPointerCapture(current.pointerId)) {
       try { current.canvas.releasePointerCapture(current.pointerId); } catch (error) { /* Already released. */ }
     }
@@ -14760,6 +15167,10 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     }
   }
 
+  function messageForRetune(deltaHz) {
+    if (panelOptions.onRetunePreview) panelOptions.onRetunePreview(deltaHz);
+  }
+
   function onPlotPointerMove(event) {
     const rect = event.currentTarget.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
@@ -14773,23 +15184,33 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
       drag.moved = true;
       //Keep the server session/producer attached and freeze only local frame application until pointer release.
     }
-    panBy(-deltaPixels / rect.width * (viewport.endHz - viewport.startHz), 'none');
+    if (drag.retune) {
+      drag.deltaHz -= deltaPixels / rect.width * (viewport.endHz - viewport.startHz);
+      messageForRetune(drag.deltaHz);
+    } else panBy(-deltaPixels / rect.width * (viewport.endHz - viewport.startHz), 'none');
   }
 
   function onPlotPointerDown(event) {
-    if (!viewportControls || !canInteract() || zoomAmount() <= 1.0001 || event.button !== 0) return;
+    if (!viewportControls || !canInteract() || event.button !== 0) return;
+    const retune = zoomAmount() <= 1.0001;
+    if (retune && !panelOptions.canRetune?.()) return;
     event.preventDefault();
     cancelDrag();
     event.currentTarget.setPointerCapture(event.pointerId);
     event.currentTarget.classList.add('dragging');
-    drag = { pointerId: event.pointerId, lastX: event.clientX, canvas: event.currentTarget, moved: false };
+    drag = { pointerId: event.pointerId, lastX: event.clientX, canvas: event.currentTarget,
+      moved: false, retune, deltaHz: 0 };
   }
 
   function onPlotPointerUp(event) {
     if (!drag || drag.pointerId !== event.pointerId) return;
-    const moved = drag.moved;
+    const { moved, retune, deltaHz } = drag;
+    suppressClick = true;
     cancelDrag();
-    if (moved) queueViewportUpdate();
+    if (moved && retune) {
+      messageForRetune(0);
+      void panelOptions.retune?.(Math.round((fullViewport.startHz + fullViewport.endHz) / 2 + deltaHz));
+    } else if (moved) queueViewportUpdate();
     else if (frequencyActions) openFrequencyActionsAtPointer(event);
   }
 
@@ -14801,6 +15222,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   }
 
   function onPlotClick(event) {
+    if (suppressClick) { suppressClick = false; return; }
     if (!frequencyActions) return;
     if (!canInteract() || zoomAmount() > 1.0001) return;
     openFrequencyActionsAtPointer(event);
@@ -16595,10 +17017,216 @@ async function renderTunerSpectrum() {
   const renderContext = captureRenderContext();
   const snapPresetDocument = await requestSpectrumSnapPresetDocument();
   if (!renderIsCurrent(renderContext)) return;
-  const spectrum = tunerSpectrumPanel(snapPresetDocument);
-  pageConnections.add(spectrum);
-  beginPage(renderContext, pageHeader('Tuner Spectrum',
-    'Inspect the full bandwidth of each active tuner. Click a frequency to choose an action.'), spectrum.element);
+  const browseAllowed = capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_TUNERS);
+  if (!browseAllowed) {
+    const spectrum = tunerSpectrumPanel(snapPresetDocument);
+    pageConnections.add(spectrum);
+    beginPage(renderContext, pageHeader('Tuner Spectrum',
+      'Inspect receiver signals. Click a frequency to choose an action.'), spectrum.element);
+    return;
+  }
+  const workspace = node('div', 'spectrum-browse-workspace');
+  const toolbar = node('div', 'spectrum-browse-toolbar');
+  const select = uiSelect([], '', false);
+  select.setAttribute('aria-label', 'Tuner');
+  select.disabled = true;
+  const selectField = formField('Tuner', uiSelectFrame(select));
+  selectField.classList.add('spectrum-browse-tuner');
+  const centerHost = node('div', 'spectrum-browse-center tuners-readout');
+  const message = node('div', 'ui-feedback spectrum-browse-message');
+  message.setAttribute('role', 'status');
+  const retryBrowse = uiActionButton('Retry browsing', '', () => void chooseTuner(select.value),
+    'ui-button ui-button-secondary');
+  retryBrowse.hidden = true;
+  toolbar.append(selectField, centerHost, message, retryBrowse);
+  let tuners = [];
+  let selectedTuner = null;
+  let lease = null;
+  let leaseTimer = null;
+  let probeActive = false;
+  let centerControl = null;
+  let disposed = false;
+  let operation = 0;
+  let tuning = false;
+  const canTune = () => lease?.can_tune === true && !probeActive && !tuning &&
+    Number(selectedTuner?.channel_count || 0) === 0;
+  const leasePath = (id) => `/api/v1/admin/tuners/${encodeURIComponent(id)}/browse`;
+  const releaseLease = async () => {
+    window.clearTimeout(leaseTimer);
+    const previous = lease;
+    lease = null;
+    if (previous?.lease_id) await requestJson(leasePath(previous.tuner.id), {
+      method: 'DELETE', body: { lease_id: previous.lease_id }, page: false, keepalive: true
+    }).catch(() => {});
+  };
+  const renderCenter = () => {
+    centerControl?.close();
+    const setting = selectedTuner?.settings?.find((candidate) => candidate.id === 'frequency_mhz');
+    if (!setting) { centerHost.replaceChildren(); return; }
+    const usability = canTune() ? tunerSettingUsability(setting, selectedTuner, selectedTuner.settings) :
+      { enabled: false, reason: probeActive ? 'Finish or cancel signal identification to tune' :
+        'Active channels keep the center frequency fixed' };
+    centerControl = tunerCenterFrequencyControl(selectedTuner, setting, usability, {
+      save: async (_tuner, _setting, value) => tune(Math.round(value * 1_000_000))
+    });
+    centerHost.replaceChildren(centerControl);
+  };
+  const tune = async (frequencyHz) => {
+    if (!canTune()) return;
+    tuning = true;
+    select.disabled = true;
+    try {
+      await requestJson(`/api/v1/admin/tuners/${encodeURIComponent(selectedTuner.id)}/settings/frequency_mhz`, {
+        method: 'PUT', body: { value: frequencyHz / 1_000_000, lease_id: lease.lease_id }, page: false
+      });
+      const renewed = await requestJson(leasePath(selectedTuner.id), {
+        method: 'POST', body: { lease_id: lease.lease_id }, page: false
+      });
+      if (disposed) return;
+      lease = renewed;
+      selectedTuner = renewed.tuner;
+      spectrum.selectTarget(selectedTuner.spectrum_target_id || '');
+      spectrum.refreshTargets();
+      message.textContent = 'Click a signal to add a channel. Drag the full view to tune; zoom to pan.';
+    } catch (error) {
+      message.textContent = error.message || 'Could not tune. Try again.';
+      throw error;
+    } finally {
+      tuning = false;
+      if (!disposed) { select.disabled = probeActive; renderCenter(); }
+    }
+  };
+  const spectrum = tunerSpectrumPanel(snapPresetDocument, {
+    managedSelection: true,
+    canRetune: canTune,
+    retune: (frequencyHz) => tune(frequencyHz).catch(() => {}),
+    onRetunePreview: (deltaHz) => {
+      if (deltaHz && selectedTuner) message.textContent =
+        `Release to tune to ${channelMHz(Number(selectedTuner.frequency_hz) + deltaHz)} MHz`;
+    },
+    selectionContext: () => ({
+      tunerId: selectedTuner?.id || '', browseLeaseId: lease?.lease_id || '',
+      setProbeActive: (active) => {
+        probeActive = active;
+        select.disabled = active;
+        renderCenter();
+      },
+      onSaved: (savedSession) => {
+        window.clearTimeout(leaseTimer);
+        lease = null;
+        probeActive = false;
+        select.disabled = false;
+        if (savedSession.saved?.running) void chooseTuner(selectedTuner.id);
+        else {
+          renderCenter();
+          message.textContent = 'Channel saved. Retry start in the wizard when the tuner is available.';
+        }
+      }
+    })
+  });
+  const renewLease = async () => {
+    if (disposed || !lease) return;
+    const existing = lease;
+    try {
+      const renewed = await requestJson(leasePath(existing.tuner.id), {
+        method: 'POST', body: { lease_id: existing.lease_id }, page: false
+      });
+      if (disposed || lease?.lease_id !== existing.lease_id) return;
+      lease = renewed;
+      selectedTuner = renewed.tuner;
+      renderCenter();
+    } catch (error) {
+      if (disposed) return;
+      lease = null;
+      spectrum.selectTarget('');
+      message.textContent = error.message || 'Tuner browsing expired. Retry to resume.';
+      retryBrowse.hidden = false;
+      renderCenter();
+      return;
+    }
+    leaseTimer = window.setTimeout(() => void renewLease(), 10_000);
+  };
+  const chooseTuner = async (id) => {
+    const generation = ++operation;
+    retryBrowse.hidden = true;
+    select.disabled = true;
+    message.textContent = 'Preparing tuner…';
+    spectrum.selectTarget('');
+    centerControl?.close();
+    centerHost.replaceChildren();
+    await releaseLease();
+    if (disposed || generation !== operation) return;
+    try {
+      const acquired = await requestJson(leasePath(id), { method: 'POST', body: {}, page: false });
+      if (disposed || generation !== operation) {
+        void requestJson(leasePath(id), { method: 'DELETE', body: { lease_id: acquired.lease_id },
+          page: false }).catch(() => {});
+        return;
+      }
+      lease = acquired;
+      selectedTuner = acquired.tuner;
+      select.value = id;
+      storeTunerChoice('session-target', selectedTuner.spectrum_target_id || id);
+      spectrum.selectTarget(selectedTuner.spectrum_target_id || '');
+      spectrum.refreshTargets();
+      renderCenter();
+      message.textContent = canTune() ?
+        'Click a signal to add a channel. Drag the full view to tune; zoom to pan.' :
+        'Monitoring active channels. Click a signal to add a channel within this receiver window.';
+      leaseTimer = window.setTimeout(() => void renewLease(), 10_000);
+    } catch (error) {
+      message.textContent = error.message || 'Could not browse this tuner. Retry or choose another tuner.';
+      retryBrowse.hidden = false;
+    }
+    finally { if (!disposed) select.disabled = false; }
+  };
+  const loadTuners = async (choose = true) => {
+    try {
+      const inventory = await requestJson('/api/v1/admin/tuners', { csrf: false });
+      if (disposed) return;
+      tuners = tunerInventoryRows(inventory).filter((tuner) =>
+        String(tuner.tuner_class).toUpperCase() !== 'RECORDING' &&
+        !['ERROR', 'REMOVED', 'UNSUPPORTED'].includes(String(tuner.status).toUpperCase()));
+      const selectedId = selectedTuner?.id;
+      select.replaceChildren(...tuners.map((tuner) => {
+        const option = node('option', '', `${tuner.name} · ${Number(tuner.channel_count || 0) ?
+          `${tuner.channel_count} active` : 'Idle'}`);
+        option.value = tuner.id;
+        return option;
+      }));
+      select.disabled = probeActive || !tuners.length;
+      if (!tuners.length) { message.textContent = 'No tuners are available. Connect a tuner and reload.'; return; }
+      if (!choose) {
+        selectedTuner = tuners.find((tuner) => tuner.id === selectedId) || selectedTuner;
+        select.value = selectedId || '';
+        renderCenter();
+        spectrum.refreshTargets();
+        return;
+      }
+      const remembered = tuners.find((tuner) =>
+        tuner.id === tunerSpectrumSessionTarget || tuner.spectrum_target_id === tunerSpectrumSessionTarget);
+      await chooseTuner(remembered?.id || tuners[0].id);
+    } catch (error) { if (!disposed) message.textContent = error.message; }
+  };
+  select.addEventListener('change', () => void chooseTuner(select.value));
+  workspace.append(toolbar, spectrum.element);
+  if (!beginPage(renderContext, pageHeader('Tuner Spectrum',
+    'Browse signals and add channels from a selected frequency.'), workspace)) {
+    spectrum.close();
+    return;
+  }
+  const close = () => {
+    if (disposed) return;
+    disposed = true;
+    operation += 1;
+    centerControl?.close();
+    spectrum.close();
+    void releaseLease();
+    window.removeEventListener('pagehide', close);
+  };
+  window.addEventListener('pagehide', close);
+  pageConnections.add({ close });
+  void loadTuners();
 }
 
 function radioSystemAssignmentLabel(row) {
@@ -24969,6 +25597,182 @@ function tunerCenterFrequencyText(value) {
   return `${whole.padStart(4, '0')}.${fraction}`;
 }
 
+function tunerCenterFrequencyControl(tuner, setting, usability, callbacks = {}) {
+  const settingDrafts = callbacks.drafts || new Map();
+  const saveTunerSetting = callbacks.save;
+  let centerKeydownCleanup = null;
+  const key = `${tuner.id}:${setting.id}`;
+  let value = Number(settingDrafts.has(key) ? settingDrafts.get(key) : setting.value);
+  const wrapper = node('div', 'tuners-center-frequency');
+  wrapper.setAttribute('role', 'group');
+  wrapper.setAttribute('aria-label', 'Center frequency');
+  wrapper.setAttribute('aria-disabled', String(!usability.enabled));
+  wrapper.tabIndex = usability.enabled ? 0 : -1;
+  wrapper.dataset.tunerSetting = setting.id;
+  const label = node('span', 'tuners-center-label tuners-readout-label', 'Center frequency');
+  const digits = node('div', 'tuners-frequency-digits');
+  const controlRow = node('div', 'tuners-center-control-row');
+  const valueRow = node('div', 'tuners-center-value');
+  valueRow.append(digits);
+  controlRow.append(valueRow);
+  const message = node('div', 'tuners-setting-message');
+  message.setAttribute('role', 'status');
+  const positions = [1_000, 100, 10, 1, .1, .01, .001, .0001, .00001];
+  let hoverIndex = -1;
+  let typingStart = -1;
+  let typingValue = '';
+  let saving = false;
+
+  const commit = async (next) => {
+    if (!usability.enabled || saving) return;
+    const minimum = Number(setting.minimum);
+    const maximum = Number(setting.maximum);
+    if ((Number.isFinite(minimum) && next < minimum) || (Number.isFinite(maximum) && next > maximum)) {
+      value = Number(setting.value);
+      settingDrafts.delete(key);
+      draw();
+      message.textContent = 'Out of range';
+      return;
+    }
+    saving = true;
+    draw();
+    digits.setAttribute('aria-busy', 'true');
+    message.textContent = 'Saving…';
+    try {
+      await saveTunerSetting(tuner, setting, Number(next.toFixed(5)), message);
+    } catch (error) {
+      saving = false;
+      value = Number(setting.value);
+      settingDrafts.delete(key);
+      digits.removeAttribute('aria-busy');
+      message.textContent = error.message || 'Could not save';
+      draw();
+    }
+  };
+  const draw = () => {
+    const text = tunerCenterFrequencyText(value);
+    let valueIndex = 0;
+    const parts = [];
+    [...text].forEach((character) => {
+      if (character === '.') {
+        parts.push(node('span', 'tuners-frequency-decimal', '.'));
+        return;
+      }
+      const index = valueIndex++;
+      const column = node('span', `tuners-frequency-digit${index === hoverIndex ? ' is-active' : ''}`);
+      const up = node('button', 'tuners-frequency-step tuners-frequency-step-up');
+      up.type = 'button';
+      up.tabIndex = -1;
+      up.disabled = !usability.enabled || saving;
+      up.setAttribute('aria-label', `Increase ${positions[index]} MHz place`);
+      const shown = node('span', '', character);
+      shown.setAttribute('aria-hidden', 'true');
+      const down = node('button', 'tuners-frequency-step tuners-frequency-step-down');
+      down.type = 'button';
+      down.tabIndex = -1;
+      down.disabled = !usability.enabled || saving;
+      down.setAttribute('aria-label', `Decrease ${positions[index]} MHz place`);
+      column.append(up, shown, down);
+      column.addEventListener('pointerenter', () => { hoverIndex = index; column.classList.add('is-active'); });
+      column.addEventListener('pointerleave', () => column.classList.remove('is-active'));
+      up.addEventListener('click', () => {
+        if (saving) return;
+        value = Math.max(0, Math.min(9_999.99999, value + positions[index]));
+        settingDrafts.set(key, value);
+        draw();
+        void commit(value);
+      });
+      down.addEventListener('click', () => {
+        if (saving) return;
+        value = Math.max(0, Math.min(9_999.99999, value - positions[index]));
+        settingDrafts.set(key, value);
+        draw();
+        void commit(value);
+      });
+      parts.push(column);
+    });
+    digits.replaceChildren(...parts, node('span', 'tuners-frequency-unit', 'MHz'));
+  };
+  const keydown = (event) => {
+    if (event.defaultPrevented) return;
+    if (!wrapper.isConnected || hoverIndex < 0 || !usability.enabled || saving ||
+        event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement ||
+        event.target instanceof HTMLTextAreaElement) return;
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      event.preventDefault();
+      hoverIndex = Math.max(0, Math.min(positions.length - 1,
+        hoverIndex + (event.key === 'ArrowLeft' ? -1 : 1)));
+      draw();
+    } else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      event.preventDefault();
+      value += (event.key === 'ArrowUp' ? 1 : -1) * positions[hoverIndex];
+      settingDrafts.set(key, value);
+      draw();
+      void commit(value);
+    } else if (/^[0-9]$/.test(event.key)) {
+      event.preventDefault();
+      if (typingStart < 0) {
+        typingStart = hoverIndex;
+        typingValue = '';
+      }
+      if (typingStart + typingValue.length >= positions.length) return;
+      typingValue += event.key;
+      const currentDigits = tunerCenterFrequencyText(value).replace('.', '').split('');
+      [...typingValue].forEach((character, offset) => { currentDigits[typingStart + offset] = character; });
+      value = Number(`${currentDigits.slice(0, 4).join('')}.${currentDigits.slice(4).join('')}`);
+      settingDrafts.set(key, value);
+      wrapper.classList.add('is-typing');
+      draw();
+    } else if (event.key === 'Enter' && typingStart >= 0) {
+      event.preventDefault();
+      typingStart = -1;
+      typingValue = '';
+      wrapper.classList.remove('is-typing');
+      void commit(value);
+    } else if (event.key === 'Escape' && typingStart >= 0) {
+      event.preventDefault();
+      typingStart = -1;
+      typingValue = '';
+      value = Number(setting.value);
+      settingDrafts.delete(key);
+      wrapper.classList.remove('is-typing');
+      message.textContent = '';
+      draw();
+    }
+  };
+  const detachKeydown = () => {
+    document.removeEventListener('keydown', keydown);
+    if (centerKeydownCleanup === detachKeydown) centerKeydownCleanup = null;
+  };
+  wrapper.addEventListener('pointerenter', () => {
+    centerKeydownCleanup?.();
+    document.addEventListener('keydown', keydown);
+    centerKeydownCleanup = detachKeydown;
+  });
+  wrapper.addEventListener('pointerleave', () => {
+    hoverIndex = -1;
+    detachKeydown();
+  });
+  wrapper.addEventListener('focus', () => {
+    if (hoverIndex < 0) {
+      hoverIndex = 0;
+      draw();
+    }
+  });
+  wrapper.addEventListener('keydown', keydown);
+  if (!usability.enabled) {
+    const help = iconButton('icon-about', usability.reason,
+      'ui-button ui-button-secondary ui-icon-button ui-icon-button-compact tuners-center-help');
+    help.dataset.tunerHelp = setting.id;
+    controlRow.append(help);
+  }
+  wrapper.append(label, controlRow);
+  wrapper.append(message);
+  wrapper.close = detachKeydown;
+  draw();
+  return wrapper;
+}
+
 async function renderTuners() {
   const renderContext = captureRenderContext();
   const listBody = node('div', 'tuners-list');
@@ -25190,176 +25994,11 @@ async function renderTuners() {
 
   function centerFrequencyControl(tuner, setting, usability) {
     centerKeydownCleanup?.();
-    centerKeydownCleanup = null;
-    const key = `${tuner.id}:${setting.id}`;
-    let value = Number(settingDrafts.has(key) ? settingDrafts.get(key) : setting.value);
-    const wrapper = node('div', 'tuners-center-frequency');
-    wrapper.setAttribute('role', 'group');
-    wrapper.setAttribute('aria-label', 'Center frequency');
-    wrapper.setAttribute('aria-disabled', String(!usability.enabled));
-    wrapper.tabIndex = usability.enabled ? 0 : -1;
-    wrapper.dataset.tunerSetting = setting.id;
-    const label = node('span', 'tuners-center-label tuners-readout-label', 'Center frequency');
-    const digits = node('div', 'tuners-frequency-digits');
-    const controlRow = node('div', 'tuners-center-control-row');
-    const valueRow = node('div', 'tuners-center-value');
-    valueRow.append(digits);
-    controlRow.append(valueRow);
-    const message = node('div', 'tuners-setting-message');
-    message.setAttribute('role', 'status');
-    const positions = [1_000, 100, 10, 1, .1, .01, .001, .0001, .00001];
-    let hoverIndex = -1;
-    let typingStart = -1;
-    let typingValue = '';
-    let saving = false;
-
-    const commit = async (next) => {
-      if (!usability.enabled || saving) return;
-      const minimum = Number(setting.minimum);
-      const maximum = Number(setting.maximum);
-      if ((Number.isFinite(minimum) && next < minimum) || (Number.isFinite(maximum) && next > maximum)) {
-        value = Number(setting.value);
-        settingDrafts.delete(key);
-        draw();
-        message.textContent = 'Out of range';
-        return;
-      }
-      saving = true;
-      draw();
-      digits.setAttribute('aria-busy', 'true');
-      message.textContent = 'Saving…';
-      try {
-        await saveTunerSetting(tuner, setting, Number(next.toFixed(5)), message);
-      } catch (error) {
-        saving = false;
-        value = Number(setting.value);
-        settingDrafts.delete(key);
-        digits.removeAttribute('aria-busy');
-        message.textContent = error.message || 'Could not save';
-        draw();
-      }
-    };
-    const draw = () => {
-      const text = tunerCenterFrequencyText(value);
-      let valueIndex = 0;
-      const parts = [];
-      [...text].forEach((character) => {
-        if (character === '.') {
-          parts.push(node('span', 'tuners-frequency-decimal', '.'));
-          return;
-        }
-        const index = valueIndex++;
-        const column = node('span', `tuners-frequency-digit${index === hoverIndex ? ' is-active' : ''}`);
-        const up = node('button', 'tuners-frequency-step tuners-frequency-step-up');
-        up.type = 'button';
-        up.tabIndex = -1;
-        up.disabled = !usability.enabled || saving;
-        up.setAttribute('aria-label', `Increase ${positions[index]} MHz place`);
-        const shown = node('span', '', character);
-        shown.setAttribute('aria-hidden', 'true');
-        const down = node('button', 'tuners-frequency-step tuners-frequency-step-down');
-        down.type = 'button';
-        down.tabIndex = -1;
-        down.disabled = !usability.enabled || saving;
-        down.setAttribute('aria-label', `Decrease ${positions[index]} MHz place`);
-        column.append(up, shown, down);
-        column.addEventListener('pointerenter', () => { hoverIndex = index; column.classList.add('is-active'); });
-        column.addEventListener('pointerleave', () => column.classList.remove('is-active'));
-        up.addEventListener('click', () => {
-          if (saving) return;
-          value = Math.max(0, Math.min(9_999.99999, value + positions[index]));
-          settingDrafts.set(key, value);
-          draw();
-          void commit(value);
-        });
-        down.addEventListener('click', () => {
-          if (saving) return;
-          value = Math.max(0, Math.min(9_999.99999, value - positions[index]));
-          settingDrafts.set(key, value);
-          draw();
-          void commit(value);
-        });
-        parts.push(column);
-      });
-      digits.replaceChildren(...parts, node('span', 'tuners-frequency-unit', 'MHz'));
-    };
-    const keydown = (event) => {
-      if (event.defaultPrevented) return;
-      if (!wrapper.isConnected || hoverIndex < 0 || !usability.enabled || saving ||
-          event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement ||
-          event.target instanceof HTMLTextAreaElement) return;
-      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-        event.preventDefault();
-        hoverIndex = Math.max(0, Math.min(positions.length - 1,
-          hoverIndex + (event.key === 'ArrowLeft' ? -1 : 1)));
-        draw();
-      } else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
-        event.preventDefault();
-        value += (event.key === 'ArrowUp' ? 1 : -1) * positions[hoverIndex];
-        settingDrafts.set(key, value);
-        draw();
-        void commit(value);
-      } else if (/^[0-9]$/.test(event.key)) {
-        event.preventDefault();
-        if (typingStart < 0) {
-          typingStart = hoverIndex;
-          typingValue = '';
-        }
-        if (typingStart + typingValue.length >= positions.length) return;
-        typingValue += event.key;
-        const currentDigits = tunerCenterFrequencyText(value).replace('.', '').split('');
-        [...typingValue].forEach((character, offset) => { currentDigits[typingStart + offset] = character; });
-        value = Number(`${currentDigits.slice(0, 4).join('')}.${currentDigits.slice(4).join('')}`);
-        settingDrafts.set(key, value);
-        wrapper.classList.add('is-typing');
-        draw();
-      } else if (event.key === 'Enter' && typingStart >= 0) {
-        event.preventDefault();
-        typingStart = -1;
-        typingValue = '';
-        wrapper.classList.remove('is-typing');
-        void commit(value);
-      } else if (event.key === 'Escape' && typingStart >= 0) {
-        event.preventDefault();
-        typingStart = -1;
-        typingValue = '';
-        value = Number(setting.value);
-        settingDrafts.delete(key);
-        wrapper.classList.remove('is-typing');
-        message.textContent = '';
-        draw();
-      }
-    };
-    const detachKeydown = () => {
-      document.removeEventListener('keydown', keydown);
-      if (centerKeydownCleanup === detachKeydown) centerKeydownCleanup = null;
-    };
-    wrapper.addEventListener('pointerenter', () => {
-      centerKeydownCleanup?.();
-      document.addEventListener('keydown', keydown);
-      centerKeydownCleanup = detachKeydown;
+    const control = tunerCenterFrequencyControl(tuner, setting, usability, {
+      drafts: settingDrafts, save: saveTunerSetting
     });
-    wrapper.addEventListener('pointerleave', () => {
-      hoverIndex = -1;
-      detachKeydown();
-    });
-    wrapper.addEventListener('focus', () => {
-      if (hoverIndex < 0) {
-        hoverIndex = 0;
-        draw();
-      }
-    });
-    wrapper.addEventListener('keydown', keydown);
-    if (!usability.enabled) {
-      const help = iconButton('icon-about', usability.reason,
-        'ui-button ui-button-secondary ui-icon-button ui-icon-button-compact tuners-center-help');
-      help.dataset.tunerHelp = setting.id;
-      controlRow.append(help);
-    }
-    wrapper.append(label, controlRow);
-    wrapper.append(message);
-    draw();
-    return wrapper;
+    centerKeydownCleanup = control.close;
+    return control;
   }
 
   function renderSettings(tuner) {

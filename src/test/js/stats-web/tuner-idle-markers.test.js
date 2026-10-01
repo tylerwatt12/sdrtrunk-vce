@@ -235,6 +235,9 @@ function embeddedSpectrumInteractionHarness() {
     frequencyCursor: true,
     viewportControls: true,
     frequencyActions: false,
+    panelOptions: {},
+    suppressClick: false,
+    messageForRetune: () => {},
     fullViewport: { startHz: 100, endHz: 200 },
     viewport: { startHz: 100, endHz: 200 },
     spectrum: { overlay: { textContent: '' } },
@@ -338,6 +341,30 @@ test('embedded spectrum keeps the shared cursor and zoom handlers without enabli
 
   h.context.onPlotClick(h.event());
   assert.equal(h.frequencyActions.length, 0, 'a zoomed Tuners plot click never opens frequency actions');
+});
+
+test('full receiver window drag tunes once on release while a zoomed drag only pans', () => {
+  const h = embeddedSpectrumInteractionHarness();
+  const retunes = [];
+  h.context.panelOptions = { canRetune: () => true, retune: (frequency) => retunes.push(frequency) };
+  h.context.onPlotPointerDown(h.event());
+  h.context.onPlotPointerMove(h.event({ clientX: 180 }));
+  assert.deepEqual(retunes, [], 'pointer movement must not retune the receiver');
+  assert.equal(h.viewportUpdates.length, 0, 'full-view movement must not request a zoom viewport');
+  h.context.onPlotPointerUp(h.event({ clientX: 180 }));
+  assert.deepEqual(retunes, [130], 'one receiver center change is committed on release');
+
+  h.setViewport(120, 180);
+  h.context.onPlotPointerDown(h.event());
+  h.context.onPlotPointerMove(h.event({ clientX: 180 }));
+  h.context.onPlotPointerUp(h.event({ clientX: 180 }));
+  assert.deepEqual(retunes, [130], 'zoomed drags only pan inside the existing receiver window');
+  assert.equal(h.viewportUpdates.length, 1);
+
+  h.setViewport(100, 200);
+  h.context.panelOptions.canRetune = () => false;
+  h.context.onPlotPointerDown(h.event());
+  assert.equal(h.context.drag, null, 'active channels or an identification probe prohibit full-view tuning');
 });
 
 test('Tuners and Spectrum pages instantiate the same spectrum renderer', () => {

@@ -78,7 +78,10 @@ class StatsWebFrequencyActionsUiContractTest
 
         assertTrue(actions.contains("'RadioReference lookup'"));
         assertTrue(actions.contains("'Listen to NBFM'"));
-        assertTrue(actions.contains("'Add system'"));
+        assertTrue(actions.contains("'Add channel / system'"));
+        assertTrue(actions.contains("/api/v1/admin/spectrum-discovery/eligibility?"));
+        assertTrue(actions.contains("eligibility.eligible !== true"));
+        assertTrue(actions.contains("openSpectrumDiscoveryWizard(selection)"));
         assertTrue(actions.contains("bandwidth_hz: Number(bandwidth.value)"));
         assertTrue(actions.contains("binaryFrameConnection('frequency_audio'"));
         assertTrue(actions.contains("true);"));
