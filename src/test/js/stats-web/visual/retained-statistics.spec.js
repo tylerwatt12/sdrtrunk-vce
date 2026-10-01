@@ -22,7 +22,16 @@ function scoped(sourceKind, dataType, parts, extra = {}) {
 }
 
 async function openStatistics(page, options = {}) {
-  const requests = { results: [], sources: [], previews: [], writes: [] };
+  const requests = { results: [], sources: [], previews: [], writes: [], actions: [], polls: [] };
+  let currentJob = options.largeJob ? { job_id: 'job-1', state: 'running',
+    rows_deleted: 80_000, rows_total: 213_000, cutoff_ms: 1_780_000_000_000,
+    batches_completed: 8, can_resume: false } : null;
+  let jobMissing = false;
+  let firstPollRelease;
+  let actionFailed = false;
+  requests.setJob = (updates) => { currentJob = { ...currentJob, ...updates }; };
+  requests.forgetJob = () => { jobMissing = true; };
+  requests.releaseFirstPoll = () => firstPollRelease?.();
   let failedPreview = false;
   const bands = Array.from({ length: 6 }, (_, index) => ({
     label: `Band ${index}`, band: index, base_hz: 851_000_000 + index * 1_000_000,
@@ -127,7 +136,8 @@ async function openStatistics(page, options = {}) {
             dataType === 'radios' ? radios :
               dataType === 'alias_activity' ? aliases :
                 [{ label: dataType === 'all' ? 'All retained data' :
-                  dataType === 'hourly_history' ? 'Hourly history' : 'Saved activity',
+                  dataType === 'hourly_history' ? 'Hourly history' :
+                    dataType === 'control_quality' ? 'Quality history' : 'Saved activity',
                 detail: kind === 'radio_system' ? 'Metro P25' : 'Downtown repeater',
                 target: scoped(kind, dataType, dataType === 'all' ?
                   ['current', 'summary', 'buckets', 'events'] : ['buckets'],
@@ -146,14 +156,38 @@ async function openStatistics(page, options = {}) {
         await route.fulfill({ status: 500, json: { error: { status: 500,
           message: 'Preview unavailable' } } });
       } else await route.fulfill({ json: wrap({ outcome: 'found',
-        counts_by_part: Object.fromEntries(target.parts.map((part) => [part, 2])),
-        rows_total: target.parts.length * 2,
+        counts_by_part: Object.fromEntries(target.parts.map((part) => [part, options.largeJob ? 213_000 : 2])),
+        rows_total: options.largeJob ? 213_000 : target.parts.length * 2,
         effects: ['Linked history may also be removed by this selection.'] }) });
     } else if (pathname.endsWith('/retained-statistics/deletions') &&
       route.request().method() === 'POST') {
-      requests.writes.push(JSON.parse(route.request().postData() || '{}'));
-      await route.fulfill({ status: 202, json: wrap({ job_id: 'job-1', state: 'running' }) });
+      const body = JSON.parse(route.request().postData() || '{}');
+      requests.writes.push(body);
+      if (currentJob) currentJob.target = body.target;
+      await route.fulfill({ status: 202, json: wrap(currentJob ? { ...currentJob, rows_deleted: 0 } :
+        { job_id: 'job-1', state: 'running' }) });
+    } else if (/\/retained-statistics\/deletions\/job-1\/(cancel|resume)$/.test(pathname)) {
+      const action = pathname.split('/').pop();
+      requests.actions.push(action);
+      if (options.actionFailsOnce && !actionFailed) {
+        actionFailed = true;
+        return route.fulfill({ status: 500,
+          json: { error: { status: 500, message: 'Cleanup control unavailable' } } });
+      }
+      currentJob = { ...currentJob, state: action === 'cancel' ?
+        (options.cancelQueues ? 'cancelling' : 'cancelled') : 'running',
+        can_resume: action === 'cancel' && !options.cancelQueues };
+      await route.fulfill({ json: wrap(currentJob) });
     } else if (pathname.endsWith('/retained-statistics/deletions/job-1')) {
+      requests.polls.push(pathname);
+      if (options.holdFirstPoll && requests.polls.length === 1) {
+        const snapshot = { ...currentJob };
+        await new Promise((resolve) => { firstPollRelease = resolve; });
+        return route.fulfill({ json: wrap(snapshot) });
+      }
+      if (jobMissing) return route.fulfill({ status: 404,
+        json: { error: { status: 404, code: 'job_not_found', message: 'Job no longer available' } } });
+      if (currentJob) return route.fulfill({ json: wrap(currentJob) });
       await route.fulfill({ json: wrap({ job_id: 'job-1', state: 'succeeded',
         rows_deleted: options.jobTooLarge ? 0 : 2,
         outcome: options.jobTooLarge ? 'too_large' : 'deleted' }) });
@@ -323,14 +357,14 @@ test('preview failure blocks removal until retry succeeds', async ({ page }) => 
   await expect(dialog.getByRole('button', { name: 'Delete statistics', exact: true })).toBeEnabled();
 });
 
-test('a large preview requires a narrower selection', async ({ page }) => {
+test('an older receiver explains that large cleanup needs an update', async ({ page }) => {
   const requests = await openStatistics(page, { previewTooLarge: true });
   const workspace = page.locator('.retained-statistics-page');
   await workspace.getByRole('combobox', { name: 'Radio system' }).selectOption(SYSTEM);
   await workspace.getByRole('button', { name: 'All retained data in scope' }).click();
   await workspace.getByRole('button', { name: 'Delete statistics for All retained data' }).click();
   const dialog = page.getByRole('dialog');
-  await expect(dialog.getByText('Too many matching records.')).toBeVisible();
+  await expect(dialog.getByText('This receiver needs an update')).toBeVisible();
   await expect(dialog.getByRole('button', { name: 'Delete statistics', exact: true })).toBeDisabled();
   expect(requests.writes).toHaveLength(0);
 });
@@ -346,8 +380,166 @@ test('a size change after preview keeps the selected scope', async ({ page }) =>
   await expect(dialog.getByText('8 directly matched records')).toBeVisible();
   await dialog.getByRole('textbox', { name: 'Type Metro P25 to confirm' }).fill('Metro P25');
   await dialog.getByRole('button', { name: 'Delete statistics', exact: true }).click();
-  await expect(workspace.getByText('Too many records. Narrow the scope')).toBeVisible();
+  await expect(workspace.getByText('This receiver needs an update')).toBeVisible();
   await expect(source).toHaveValue(SYSTEM);
+});
+
+test('large quality history cleanup shows progress and can stop and resume the same job',
+  async ({ page }, testInfo) => {
+    const requests = await openStatistics(page, { largeJob: true, cancelQueues: true });
+    const workspace = page.locator('.retained-statistics-page');
+    await workspace.getByRole('combobox', { name: 'Radio system' }).selectOption(SYSTEM);
+    await workspace.getByRole('button', { name: 'Control quality', exact: true }).click();
+    await workspace.getByRole('combobox', { name: 'Site' }).selectOption(SITE);
+    await workspace.getByRole('button', { name: 'Delete statistics for Quality history' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('213,000 directly matched records')).toBeVisible();
+    await expect(dialog.getByText('New observations after cleanup starts are kept.')).toBeVisible();
+    await expect(dialog.getByText('Saved aliases and alias lists remain.')).toBeVisible();
+    expect(requests.writes).toHaveLength(0);
+    await dialog.getByRole('button', { name: 'Delete statistics', exact: true }).click();
+    await expect(workspace.getByText('80,000 of 213,000 records deleted')).toBeVisible();
+    await expect(workspace.locator('.retained-statistics-job-notice')).not.toContainText('[object');
+    await expect(workspace.locator('.retained-statistics-job-notice time')).toBeVisible();
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: testInfo.outputPath('retained-statistics-large-job-desktop-light.png'),
+      fullPage: true });
+    await workspace.getByRole('button', { name: 'Stop cleanup', exact: true }).click();
+    await expect(workspace.getByText('Stopping after the current batch…')).toBeVisible();
+    requests.setJob({ state: 'cancelled', can_resume: true });
+    await expect(workspace.getByText('Cleanup stopped. Deleted records stay deleted.')).toBeVisible();
+    await expect(workspace.getByRole('button', { name: 'Resume cleanup' })).toBeEnabled();
+    await page.reload();
+    await expect(workspace.getByRole('button', { name: 'Resume cleanup' })).toBeEnabled();
+    await workspace.getByRole('button', { name: 'Resume cleanup' }).click();
+    requests.setJob({ state: 'running', rows_deleted: 160_000 });
+    await expect(workspace.getByText('160,000 of 213,000 records deleted')).toBeVisible();
+    requests.setJob({ state: 'succeeded', rows_deleted: 212_998, rows_retained: 2, outcome: 'deleted' });
+    await expect(workspace.getByText('Statistics deleted.', { exact: true })).toBeVisible();
+    await expect(workspace.getByText('212,998 records deleted', { exact: true })).toBeVisible();
+    await expect(workspace.getByText('2 records kept because they changed during cleanup.')).toBeVisible();
+    expect(requests.actions).toEqual(['cancel', 'resume']);
+    expect(requests.writes).toHaveLength(1);
+    expect(await page.evaluate(() => sessionStorage.getItem('retained-statistics-job'))).toBeNull();
+  });
+
+test('history limits are previewed and submitted with inclusive From and exclusive Before',
+  async ({ page }) => {
+    const requests = await openStatistics(page, { largeJob: true });
+    const workspace = page.locator('.retained-statistics-page');
+    await workspace.getByRole('combobox', { name: 'Radio system' }).selectOption(SYSTEM);
+    await workspace.getByRole('button', { name: 'Control quality', exact: true }).click();
+    await workspace.getByRole('combobox', { name: 'Site' }).selectOption(SITE);
+    await workspace.getByRole('button', { name: 'Delete statistics for Quality history' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('button', { name: 'Delete statistics', exact: true })).toBeEnabled();
+    await dialog.locator('summary').filter({ hasText: 'Limit history' }).click();
+    await dialog.getByLabel('From', { exact: true }).fill('2026-09-01T00:00');
+    await dialog.getByLabel('Before', { exact: true }).fill('2026-10-01T00:00');
+    await dialog.getByRole('spinbutton', { name: 'Frequency in MHz' }).fill('772.43125');
+    await expect(dialog.getByRole('button', { name: 'Delete statistics', exact: true })).toBeDisabled();
+    await dialog.getByRole('button', { name: 'Update preview' }).click();
+    await expect(dialog.getByRole('button', { name: 'Delete statistics', exact: true })).toBeEnabled();
+    expect(requests.previews.at(-1)).toMatchObject({ from_ms: Date.parse('2026-09-01T00:00:00Z'),
+      to_ms: Date.parse('2026-10-01T00:00:00Z'), frequency_hz: 772_431_250,
+      data_type: 'control_quality', parts: ['buckets'], site_configuration_id: SITE });
+    await dialog.getByRole('button', { name: 'Delete statistics', exact: true }).click();
+    expect(requests.writes[0].target).toEqual(requests.previews.at(-1));
+  });
+
+test('cleanup resumes status after reload without storing its deletion target', async ({ page }) => {
+  const requests = await openStatistics(page, { largeJob: true });
+  const workspace = page.locator('.retained-statistics-page');
+  await workspace.getByRole('combobox', { name: 'Radio system' }).selectOption(SYSTEM);
+  await workspace.getByRole('button', { name: 'Hourly history', exact: true }).click();
+  await workspace.getByRole('button', { name: 'Delete statistics for Hourly history' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete statistics', exact: true }).click();
+  await expect(workspace.getByText('80,000 of 213,000 records deleted')).toBeVisible();
+  expect(await page.evaluate(() => sessionStorage.getItem('retained-statistics-job'))).toBe('job-1');
+  requests.setJob({ rows_deleted: 120_000 });
+  await page.reload();
+  await expect(workspace.getByText('120,000 of 213,000 records deleted')).toBeVisible();
+  await expect(workspace.getByRole('button', { name: 'Stop cleanup' })).toBeVisible();
+  expect(requests.writes).toHaveLength(1);
+  requests.forgetJob();
+  await page.reload();
+  await expect(workspace.getByText('Cleanup status is no longer available.')).toBeVisible();
+  expect(await page.evaluate(() => sessionStorage.getItem('retained-statistics-job'))).toBeNull();
+});
+
+test('failed partial cleanup reports completed work and offers resume', async ({ page }) => {
+  const requests = await openStatistics(page, { largeJob: true });
+  const workspace = page.locator('.retained-statistics-page');
+  await workspace.getByRole('combobox', { name: 'Radio system' }).selectOption(SYSTEM);
+  await workspace.getByRole('button', { name: 'Hourly history', exact: true }).click();
+  await workspace.getByRole('button', { name: 'Delete statistics for Hourly history' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete statistics', exact: true }).click();
+  requests.setJob({ state: 'failed', can_resume: true, error: 'Cleanup paused after a storage error.' });
+  await expect(workspace.getByText('Cleanup paused after a storage error.')).toBeVisible();
+  await expect(workspace.getByText('80,000 of 213,000 records deleted')).toBeVisible();
+  await expect(workspace.getByRole('button', { name: 'Resume cleanup' })).toBeVisible();
+});
+
+test('failed cleanup control keeps polling after an older in-flight status response', async ({ page }) => {
+  const requests = await openStatistics(page, { largeJob: true, holdFirstPoll: true, actionFailsOnce: true });
+  const workspace = page.locator('.retained-statistics-page');
+  await workspace.getByRole('combobox', { name: 'Radio system' }).selectOption(SYSTEM);
+  await workspace.getByRole('button', { name: 'Hourly history', exact: true }).click();
+  await workspace.getByRole('button', { name: 'Delete statistics for Hourly history' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete statistics', exact: true }).click();
+  await expect.poll(() => requests.polls.length).toBe(1);
+  requests.setJob({ rows_deleted: 120_000 });
+  try {
+    await workspace.getByRole('button', { name: 'Stop cleanup' }).click();
+    await expect.poll(() => requests.polls.length).toBeGreaterThanOrEqual(2);
+  } finally {
+    requests.releaseFirstPoll();
+  }
+  await expect(workspace.getByText('120,000 of 213,000 records deleted')).toBeVisible();
+  requests.setJob({ rows_deleted: 140_000 });
+  await expect(workspace.getByText('140,000 of 213,000 records deleted')).toBeVisible();
+  expect(requests.actions).toEqual(['cancel']);
+});
+
+for (const selectedSite of [false, true]) {
+  test(`all retained data cleanup keeps the selected ${selectedSite ? 'site' : 'system'} scope`, async ({ page }) => {
+    await openStatistics(page);
+    const workspace = page.locator('.retained-statistics-page');
+    const source = workspace.getByRole('combobox', { name: 'Radio system' });
+    await source.selectOption(SYSTEM);
+    await workspace.getByRole('button', { name: 'All retained data in scope' }).click();
+    if (selectedSite) await workspace.getByRole('combobox', { name: 'Site' }).selectOption(SITE);
+    await workspace.getByRole('button', { name: 'Delete statistics for All retained data' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('8 directly matched records')).toBeVisible();
+    const phrase = selectedSite ? 'DELETE SITE' : 'Metro P25';
+    await dialog.getByRole('textbox', { name: `Type ${phrase} to confirm` }).fill(phrase);
+    await dialog.getByRole('button', { name: 'Delete statistics', exact: true }).click();
+    await expect(workspace.getByText('Statistics deleted.', { exact: true })).toBeVisible();
+    await expect(source).toHaveValue(SYSTEM);
+    await expect(workspace.getByRole('button', { name: 'All retained data in scope' }))
+      .toHaveAttribute('aria-pressed', 'true');
+    if (selectedSite) await expect(workspace.getByRole('combobox', { name: 'Site' })).toHaveValue(SITE);
+  });
+}
+
+test('large cleanup limits and progress fit a phone in dark mode', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openStatistics(page, { largeJob: true, theme: 'dark' });
+  const workspace = page.locator('.retained-statistics-page');
+  await workspace.getByRole('combobox', { name: 'Radio system' }).selectOption(SYSTEM);
+  await workspace.getByRole('button', { name: 'Hourly history', exact: true }).click();
+  await workspace.getByRole('button', { name: 'Delete statistics for Hourly history' }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByRole('button', { name: 'Delete statistics', exact: true })).toBeEnabled();
+  await dialog.locator('summary').filter({ hasText: 'Limit history' }).click();
+  const bounds = await dialog.boundingBox();
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(390);
+  await page.screenshot({ path: testInfo.outputPath('retained-statistics-history-limits-mobile-dark.png') });
+  await dialog.getByRole('button', { name: 'Delete statistics', exact: true }).click();
+  await expect(workspace.getByText('80,000 of 213,000 records deleted')).toBeVisible();
+  await workspace.getByRole('button', { name: 'Stop cleanup' }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath('retained-statistics-progress-mobile-dark.png') });
 });
 
 test('the grouped workspace fits a phone in dark mode', async ({ page }, testInfo) => {

@@ -2,6 +2,8 @@ const ROOT = '/api/v1/admin/retained-statistics';
 const PAGE_SIZE = 25;
 const CHOICE_SIZE = 50;
 const JOB_POLL_MS = 1500;
+const JOB_STORAGE_KEY = 'retained-statistics-job';
+const HISTORY_TYPES = new Set(['control_quality', 'hourly_history', 'detailed_events']);
 
 const TYPE_GROUPS = Object.freeze({
   radio_system: [
@@ -139,7 +141,8 @@ export function createRetainedStatisticsWorkspace(deps) {
     siteMore: false, siteLoading: false, siteError: '', siteRequest: 0,
     resultSearch: '', resultRows: [], resultOffset: 0, resultMore: false,
     resultTotal: null, resultLoading: false, resultRequest: 0, resultError: '',
-    job: null, jobTarget: null, jobSource: null, jobTimer: null,
+    job: null, jobTarget: null, jobSource: null, jobTimer: null, jobActionPending: false,
+    jobRequest: 0,
     choiceTimer: null, resultTimer: null,
     disposed: false
   };
@@ -271,7 +274,7 @@ export function createRetainedStatisticsWorkspace(deps) {
 
   const selectedSource = () => state.source;
   const selectedSite = () => state.site;
-  const busyWithJob = () => Boolean(state.job && ['queued', 'running'].includes(state.job.state));
+  const busyWithJob = () => Boolean(state.job && ['queued', 'running', 'cancelling'].includes(state.job.state));
   const tableController = {};
 
   function clearSite() {
@@ -400,6 +403,7 @@ export function createRetainedStatisticsWorkspace(deps) {
         state.sourceLoading = false;
         drawSourceChoices();
         drawTypes();
+        if (state.job) drawJob();
       }
     }
   }
@@ -757,7 +761,7 @@ export function createRetainedStatisticsWorkspace(deps) {
     previewHost.setAttribute('role', 'status');
     const keep = node('div', 'ui-notice', target.source_kind === 'alias_activity' ?
       'Saved aliases and alias lists remain. New activity may return while receiving continues.' :
-      'Saved aliases and alias lists remain. Alias Activity totals may remain. New observations may return while receiving continues.');
+      'Saved aliases and alias lists remain. New observations after cleanup starts are kept.');
     const errorHost = node('div', 'retained-statistics-review-error');
     errorHost.setAttribute('role', 'alert');
     const cancel = button('Cancel');
@@ -785,25 +789,80 @@ export function createRetainedStatisticsWorkspace(deps) {
     let modal = null;
     let previewReady = false;
     let requestId = null;
+    let previewRequest = 0;
+    let historyFields = null;
+    if (HISTORY_TYPES.has(target.data_type)) {
+      const limits = node('details', 'retained-statistics-history-limits');
+      limits.append(node('summary', '', 'Limit history (optional)'));
+      const fields = node('div', 'retained-statistics-history-fields');
+      const from = node('input', 'ui-input');
+      from.type = 'datetime-local';
+      const before = node('input', 'ui-input');
+      before.type = 'datetime-local';
+      const frequency = node('input', 'ui-input');
+      frequency.type = 'number';
+      frequency.min = '0';
+      frequency.step = '0.000001';
+      frequency.placeholder = 'Any frequency';
+      historyFields = { from, before, frequency };
+      fields.append(formField('From', from), formField('Before', before),
+        formField('Frequency in MHz', frequency));
+      const refresh = button('Update preview', () => void loadPreview());
+      limits.append(fields, refresh);
+      body.insertBefore(limits, previewHost);
+      Object.values(historyFields).forEach((input) => input.addEventListener('input', () => {
+        previewRequest += 1;
+        previewReady = false;
+        updateConfirm();
+        previewHost.replaceChildren(feedback('Update the preview to check these limits.'));
+      }));
+    }
+
+    function applyHistoryLimits() {
+      if (!historyFields) return;
+      const { from, before, frequency } = historyFields;
+      const fromMs = from.value ? new Date(from.value).getTime() : null;
+      const toMs = before.value ? new Date(before.value).getTime() : null;
+      const hz = frequency.value ? Math.round(Number(frequency.value) * 1_000_000) : null;
+      if (fromMs !== null && (!Number.isFinite(fromMs) || fromMs < 0) ||
+        toMs !== null && (!Number.isFinite(toMs) || toMs < 0)) {
+        throw new Error('Enter valid dates.');
+      }
+      if (fromMs !== null && toMs !== null && fromMs >= toMs) {
+        throw new Error('Before must be later than From.');
+      }
+      if (hz !== null && (!Number.isSafeInteger(hz) || hz <= 0)) {
+        throw new Error('Enter a frequency greater than zero.');
+      }
+      delete target.from_ms;
+      delete target.to_ms;
+      delete target.frequency_hz;
+      if (fromMs !== null) target.from_ms = fromMs;
+      if (toMs !== null) target.to_ms = toMs;
+      if (hz !== null) target.frequency_hz = hz;
+      requestId = null;
+    }
 
     function updateConfirm() {
       confirm.disabled = !previewReady || Boolean(phrase && phraseInput?.value !== phrase);
     }
 
     async function loadPreview() {
+      const generation = ++previewRequest;
       previewReady = false;
       updateConfirm();
       previewHost.replaceChildren(feedback('Checking affected records…', 'loading'));
       errorHost.replaceChildren();
       try {
+        applyHistoryLimits();
         const preview = await requestJson(`${ROOT}/preview`, {
           method: 'POST', body: { target }, signal, timeoutMs: 30000
         });
-        if (state.disposed || !body.isConnected) return;
+        if (state.disposed || !body.isConnected || generation !== previewRequest) return;
         if (preview.outcome !== 'found') {
           const message = preview.outcome === 'stale_site' ?
             'This site changed. Choose it again.' : preview.outcome === 'too_large' ?
-              'Too many matching records. Choose a smaller scope or data type.' :
+              'This receiver needs an update to clean up large selections.' :
               'These records are already gone.';
           previewHost.replaceChildren(feedback(message));
           return;
@@ -819,6 +878,8 @@ export function createRetainedStatisticsWorkspace(deps) {
         const total = node('strong', 'retained-statistics-preview-total',
           `${formatNumber(preview.rows_total ?? 0)} directly matched records`);
         previewHost.replaceChildren(total, list);
+        if (!resetActivity) previewHost.append(node('small', 'muted',
+          'Cleanup runs in the background while receiving continues.'));
         if (Array.isArray(preview.effects) && preview.effects.length) {
           const effects = node('ul', 'retained-statistics-effects');
           preview.effects.forEach((effect) => effects.append(node('li', '', String(effect))));
@@ -827,8 +888,10 @@ export function createRetainedStatisticsWorkspace(deps) {
         previewReady = Number(preview.rows_total) > 0;
         updateConfirm();
       } catch (error) {
-        if (state.disposed || !body.isConnected || error?.name === 'AbortError') return;
+        if (state.disposed || !body.isConnected || generation !== previewRequest ||
+          error?.name === 'AbortError') return;
         previewHost.replaceChildren(feedback('Affected records could not be checked.', 'error'));
+        if (historyFields && !error.status) errorHost.append(feedback(error.message, 'error'));
         previewHost.append(button('Retry', () => void loadPreview()));
       }
     }
@@ -850,7 +913,9 @@ export function createRetainedStatisticsWorkspace(deps) {
         modal.close();
         state.job = response;
         state.jobTarget = target;
-        state.jobSource = { kind: state.sourceKind, key: selectedSource()?.source_key };
+        state.jobSource = { kind: state.sourceKind, key: selectedSource()?.source_key,
+          label: [selectedSource()?.label, selectedSite()?.label].filter(Boolean).join(' · ') };
+        rememberJob();
         drawJob();
         void pollJob();
       } catch (error) {
@@ -967,7 +1032,9 @@ export function createRetainedStatisticsWorkspace(deps) {
         modal.close();
         state.job = response;
         state.jobTarget = submittedTarget;
-        state.jobSource = { kind: state.sourceKind, key: selectedSource()?.source_key };
+        state.jobSource = { kind: state.sourceKind, key: selectedSource()?.source_key,
+          label: [selectedSource()?.label, selectedSite()?.label].filter(Boolean).join(' · ') };
+        rememberJob();
         drawJob();
         void pollJob();
       } catch (error) {
@@ -992,19 +1059,81 @@ export function createRetainedStatisticsWorkspace(deps) {
     drawReview();
   }
 
+  function rememberJob() {
+    try {
+      if (state.job?.job_id && state.job.state !== 'succeeded') {
+        window.sessionStorage.setItem(JOB_STORAGE_KEY, state.job.job_id);
+      } else window.sessionStorage.removeItem(JOB_STORAGE_KEY);
+    } catch { /* Cleanup still works when browser storage is unavailable. */ }
+  }
+
+  function setJob(response) {
+    state.job = response;
+    if (response.target) {
+      state.jobTarget = response.target;
+      state.jobSource = { kind: response.target.source_kind, key: response.target.source_key,
+        label: state.jobSource?.label };
+    }
+    rememberJob();
+  }
+
+  async function changeJob(action) {
+    if (!state.job?.job_id || state.jobActionPending) return;
+    state.jobActionPending = true;
+    state.jobRequest += 1;
+    drawJob();
+    try {
+      const response = await requestJson(`${ROOT}/deletions/${encodeURIComponent(state.job.job_id)}/${action}`,
+        { method: 'POST', body: {}, signal, timeoutMs: 30000 });
+      if (state.disposed) return;
+      setJob(response);
+      window.clearTimeout(state.jobTimer);
+      drawJob();
+      if (busyWithJob()) void pollJob();
+      else void loadResults();
+    } catch (error) {
+      if (state.disposed || error?.name === 'AbortError') return;
+      jobNotice.append(feedback(action === 'cancel' ?
+        'Cleanup could not be stopped. Try again.' : 'Cleanup could not be resumed. Try again.', 'error'));
+      if (busyWithJob()) {
+        window.clearTimeout(state.jobTimer);
+        void pollJob();
+      }
+    } finally {
+      state.jobActionPending = false;
+      if (!state.disposed) jobNotice.querySelectorAll('button').forEach((control) => {
+        control.disabled = false;
+      });
+    }
+  }
+
   function drawJob() {
     jobNotice.replaceChildren();
     if (!state.job) return;
     const stateName = String(state.job.state || '').toLowerCase();
     const resetActivity = state.jobTarget?.source_kind === 'alias_activity';
+    if (state.jobTarget?.data_type) {
+      const sourceName = state.jobSource?.label || (state.sourceKind === state.jobTarget.source_kind ?
+        state.sourceRows.find((row) => row.source_key === state.jobTarget.source_key)?.label : '');
+      const context = state.job.label || [sourceName, typeLabel(state.jobTarget.source_kind, state.jobTarget.data_type)]
+        .filter(Boolean).join(' · ');
+      jobNotice.append(node('strong', '', context));
+    }
+    const deleted = Number(state.job.rows_deleted ?? 0);
+    const total = Number(state.job.rows_total);
+    const hasProgress = Number.isFinite(total) && total > 0;
+    const progress = hasProgress ? `${formatNumber(deleted)}${stateName === 'succeeded' ? '' :
+      ` of ${formatNumber(total)}`} records ${resetActivity ? 'reset' : 'deleted'}` : '';
     if (stateName === 'queued') jobNotice.append(feedback(resetActivity ? 'Activity reset queued…' :
       'Deletion queued…', 'loading'));
     else if (stateName === 'running') jobNotice.append(feedback(resetActivity ? 'Resetting activity…' :
       'Deleting statistics…', 'loading'));
+    else if (stateName === 'cancelling') jobNotice.append(feedback('Stopping after the current batch…', 'loading'));
+    else if (stateName === 'cancelled') jobNotice.append(feedback('Cleanup stopped. Deleted records stay deleted.'));
     else if (stateName === 'succeeded') {
       const message = state.job.outcome === 'stale_site' ? 'Site changed. Choose it again.' :
         state.job.outcome === 'too_large' ?
-          'Too many records. Narrow the scope or data type and retry.' :
+          'This receiver needs an update to clean up large selections.' :
           state.job.outcome === 'not_found' ? 'The item was already gone.' :
             resetActivity ? 'Activity reset.' : 'Statistics deleted.';
       jobNotice.append(feedback(message));
@@ -1012,16 +1141,37 @@ export function createRetainedStatisticsWorkspace(deps) {
       jobNotice.append(feedback(state.job.error || (resetActivity ? 'Activity reset failed. Try again.' :
         'Deletion failed. Try again.'), 'error'));
     }
+    if (progress) jobNotice.append(node('strong', 'retained-statistics-job-progress', progress));
+    const retained = Number(state.job.rows_retained ?? 0);
+    if (retained > 0) jobNotice.append(node('small', 'muted',
+      `${formatNumber(retained)} record${retained === 1 ? '' : 's'} kept because ${
+        retained === 1 ? 'it changed' : 'they changed'} during cleanup.`));
+    if (state.job.cutoff_ms && !resetActivity) {
+      const cutoff = node('small', 'muted');
+      cutoff.append('New observations after ', formatDateTime(state.job.cutoff_ms), ' are kept.');
+      jobNotice.append(cutoff);
+    }
+    const actions = node('div', 'ui-action-row');
+    if (['queued', 'running'].includes(stateName)) {
+      actions.append(button('Stop cleanup', () => void changeJob('cancel')));
+    } else if (['cancelled', 'failed'].includes(stateName) && state.job.can_resume) {
+      actions.append(button('Resume cleanup', () => void changeJob('resume')));
+    }
+    actions.querySelectorAll('button').forEach((control) => {
+      control.disabled = state.jobActionPending;
+    });
+    if (actions.childElementCount) jobNotice.append(actions);
     drawResults();
   }
 
   async function pollJob() {
     if (state.disposed || !busyWithJob()) return;
+    const generation = ++state.jobRequest;
     try {
       const response = await requestJson(`${ROOT}/deletions/${encodeURIComponent(state.job.job_id)}`,
         { csrf: false, signal });
-      if (state.disposed) return;
-      state.job = response;
+      if (state.disposed || generation !== state.jobRequest) return;
+      setJob(response);
       drawJob();
       if (busyWithJob()) state.jobTimer = window.setTimeout(pollJob, JOB_POLL_MS);
       else {
@@ -1034,9 +1184,7 @@ export function createRetainedStatisticsWorkspace(deps) {
         const removedSource = state.job.state === 'succeeded' && !staleSite && !tooLarge &&
           sourceIsCurrent &&
           (target?.kind === 'system' && state.sourceKind === 'radio_system' ||
-            target?.kind === 'channel' && state.sourceKind === 'saved_channel' ||
-            target?.kind === 'scoped_data' && target.data_type === 'all' &&
-              !target.site_configuration_id && state.sourceKind !== 'alias_activity');
+            target?.kind === 'channel' && state.sourceKind === 'saved_channel');
         if (removedSource) {
           state.source = null;
           state.type = '';
@@ -1050,9 +1198,7 @@ export function createRetainedStatisticsWorkspace(deps) {
         } else {
           const removedSelectedSite = staleSite || state.job.state === 'succeeded' && !tooLarge &&
             (['saved_site', 'channel'].includes(target?.kind) &&
-              selectedSite()?.configuration_id === target?.configuration_id ||
-              target?.kind === 'scoped_data' && target.data_type === 'all' &&
-              selectedSite()?.configuration_id === target.site_configuration_id);
+              selectedSite()?.configuration_id === target?.configuration_id);
           if (removedSelectedSite) {
             clearSite();
             clearResults();
@@ -1064,11 +1210,29 @@ export function createRetainedStatisticsWorkspace(deps) {
         }
       }
     } catch (error) {
-      if (state.disposed || error?.name === 'AbortError') return;
+      if (state.disposed || generation !== state.jobRequest || error?.name === 'AbortError') return;
+      if (error.status === 404) {
+        state.job = null;
+        rememberJob();
+        jobNotice.replaceChildren(feedback(
+          'Cleanup status is no longer available. Choose the same data again to delete any remaining records.',
+          'error'));
+        drawResults();
+        return;
+      }
       jobNotice.replaceChildren(feedback(state.jobTarget?.source_kind === 'alias_activity' ?
         'Activity reset status is unavailable.' : 'Deletion status is unavailable.', 'error'),
         button('Retry status', () => void pollJob()));
     }
+  }
+
+  async function recoverJob() {
+    let id;
+    try { id = window.sessionStorage.getItem(JOB_STORAGE_KEY); } catch { return; }
+    if (!id) return;
+    state.job = { job_id: id, state: 'running' };
+    drawJob();
+    await pollJob();
   }
 
   sourceSelect.addEventListener('change', () => {
@@ -1125,6 +1289,7 @@ export function createRetainedStatisticsWorkspace(deps) {
   drawSite();
   drawResults();
   void loadSources(true);
+  void recoverJob();
   return host;
 }
 

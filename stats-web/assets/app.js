@@ -21,7 +21,7 @@ import {
 } from './features/alias-list-create.js?v=2';
 import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=19';
 import { createStreamingWorkspace } from './features/streaming.js?v=5';
-import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=4';
+import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=5';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=9';
 import { createRecordingsFeature } from './features/recordings.js?v=13';
 import { createAudioDock } from './core/audio-dock.js?v=1';
