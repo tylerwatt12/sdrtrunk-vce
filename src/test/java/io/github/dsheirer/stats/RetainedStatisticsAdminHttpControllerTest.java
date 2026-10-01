@@ -41,6 +41,7 @@ import java.net.http.HttpResponse;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.time.Duration;
 import java.util.Arrays;
@@ -156,10 +157,12 @@ class RetainedStatisticsAdminHttpControllerTest
         assertEquals(1, first.nextOffset());
         assertEquals(851012500L, ((Number)first.rows().getFirst().get("frequency_hz")).longValue());
         JsonNode target = MAPPER.valueToTree(first.rows().getFirst().get("target"));
-        assertEquals("frequency", target.get("kind").textValue());
+        assertEquals("scoped_data", target.get("kind").textValue());
         assertEquals(SITE_A, target.get("site_configuration_id").textValue());
         assertEquals(RetainedSiteKey.p25(1, 1, 71, 71, 1000),
             target.get("expected_site_key").textValue());
+        assertEquals("851012500", target.get("record_key").textValue());
+        assertEquals("frequencies", target.get("data_type").textValue());
 
         RetainedStatisticsCatalog.Page second = mCatalog.results(
             "radio_system", SYSTEM, "frequencies", SITE_A, null, 1, 1);
@@ -216,12 +219,266 @@ class RetainedStatisticsAdminHttpControllerTest
         RetainedStatisticsCatalog.Page conventionalRadios = mCatalog.results("saved_channel", DMR_CHANNEL,
             "radios", null, null, 10, 0);
         assertEquals(2, conventionalRadios.totalCount());
-        assertEquals("conventional_radio", ((Map<?,?>)conventionalRadios.rows().getFirst()
+        assertEquals("scoped_data", ((Map<?,?>)conventionalRadios.rows().getFirst()
             .get("target")).get("kind"));
         assertEquals(2, mCatalog.results("saved_channel", DMR_CHANNEL, "talkgroups", null,
             null, 10, 0).totalCount());
+        RetainedStatisticsCatalog.Page conventionalSources = mCatalog.sources("saved_channel", null, 10, 0);
+        assertEquals(1, conventionalSources.totalCount(), "trunked saved sites belong under radio systems");
+        assertEquals(460012500L, ((Number)conventionalSources.rows().getFirst()
+            .get("primary_frequency_hz")).longValue());
+        assertEquals(1, mCatalog.sources("saved_channel", "460.012500", 10, 0).totalCount());
+        assertEquals(0, mCatalog.sources("saved_channel", "North Control", 10, 0).totalCount());
         assertThrows(StatsApiException.class, () -> mCatalog.results("saved_channel", SITE_A,
             "radios", null, null, 10, 0));
+        assertThrows(StatsApiException.class, () -> mCatalog.results("saved_channel", SITE_A,
+            "frequencies", null, null, 10, 0));
+        assertThrows(StatsApiException.class, () -> mCatalog.results("radio_system", SYSTEM,
+            "alias_activity", null, null, 10, 0));
+    }
+
+    @Test
+    void bandPlansAndCurrentOnlyFrequenciesKeepTheirSavedSiteAndDetailedEvidence() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabase);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO p25_site_frequency_band(channel_id,band,base_hz,bandwidth,spacing_hz,
+                    transmit_offset_hz,timeslots,confirmed_at_ms)
+                VALUES (71,0,851000000,12500,12500,-45000000,2,4000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_frequency_band_summary(channel_id,band,base_hz,bandwidth,spacing_hz,
+                    transmit_offset_hz,timeslots,first_seen_ms,last_seen_ms,observation_count)
+                VALUES (71,0,851000000,12500,12500,-45000000,2,1000,4000,9)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_channel(channel_id,channel_key,descriptor,downlink_hz,uplink_hz,
+                    timeslots,confirmed_at_ms)
+                VALUES (71,'a','0-001',851012500,806012500,2,4000),
+                       (71,'current-only','0-004',851050000,806050000,2,4000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_channel_tag_summary(channel_id,channel_key,tag,
+                    first_seen_ms,last_seen_ms,observation_count)
+                VALUES (71,'a','VOICE',1000,4000,7)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_neighbor(channel_id,neighbor_key,rfss,site,downlink_hz,confirmed_at_ms)
+                VALUES (71,'1:2',1,2,852012500,4000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_neighbor_summary(channel_id,neighbor_key,rfss,site,downlink_hz,
+                    first_seen_ms,last_seen_ms,observation_count)
+                VALUES (71,'1:2',1,2,852012500,1000,4000,3)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_patch_group(channel_id,local_patch_group_id,version,confirmed_at_ms)
+                VALUES (71,3102,1,4000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_patch_group_summary(channel_id,local_patch_group_id,version,
+                    first_seen_ms,last_seen_ms,observation_count)
+                VALUES (71,3102,1,1000,4000,3)
+                """);
+        }
+        RetainedStatisticsCatalog.Page plans = mCatalog.results("radio_system", SYSTEM,
+            "band_plans", SITE_A, "851", 10, 0);
+        assertEquals(1, plans.totalCount());
+        Map<String,Object> band = plans.rows().getFirst();
+        assertEquals(0, ((Number)band.get("band")).intValue());
+        assertEquals(851000000L, ((Number)band.get("base_hz")).longValue());
+        assertEquals(9, ((Number)band.get("observation_count")).intValue());
+        assertEquals("0", ((Map<?,?>)band.get("target")).get("record_key"));
+        assertEquals(2, ((java.util.List<?>)band.get("available_parts")).size());
+        assertEquals(0, mCatalog.results("radio_system", OTHER_SYSTEM, "band_plans",
+            OTHER_SITE, null, 10, 0).totalCount());
+        assertThrows(StatsApiException.class, () -> mCatalog.results("radio_system", SYSTEM,
+            "band_plans", OTHER_SITE, null, 10, 0), "a selected site must belong to the system");
+        assertEquals("1:2", ((Map<?,?>)mCatalog.results("radio_system", SYSTEM, "neighbors",
+            SITE_A, "852.012500", 10, 0).rows().getFirst().get("target")).get("record_key"));
+        assertEquals("3102", ((Map<?,?>)mCatalog.results("radio_system", SYSTEM, "patches",
+            SITE_A, "3102", 10, 0).rows().getFirst().get("target")).get("record_key"));
+
+        RetainedStatisticsCatalog.Page frequencies = mCatalog.results("radio_system", SYSTEM,
+            "frequencies", SITE_A, null, 10, 0);
+        assertEquals(3, frequencies.totalCount(), "current-only observations must be discoverable");
+        Map<String,Object> voice = frequencies.rows().getFirst();
+        assertEquals(806012500L, ((Number)voice.get("uplink_hz")).longValue());
+        assertEquals(7L, ((Number)voice.get("voice_grant_observations")).longValue());
+        assertEquals("0-001", voice.get("descriptor"));
+        assertEquals(2, ((java.util.List<?>)voice.get("channel_keys")).size(),
+            "one physical frequency may have several logical channel keys");
+        Map<String,Object> currentOnly = frequencies.rows().getLast();
+        assertNull(currentOnly.get("observation_count"));
+        assertEquals("HISTORICAL", currentOnly.get("state"),
+            "the stored current projection can still be older than the six-hour display window");
+        assertEquals("851050000", ((Map<?,?>)currentOnly.get("target")).get("record_key"));
+    }
+
+    @Test
+    void aliasActivityPreviewIsReadOnlyAndSearchesBeyondTheFirstPage() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabase);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,value)
+                VALUES (711,71,'Dispatch Alpha','TALKGROUP','APCO25',101)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias_activity_summary(alias_id,alias_list_id,protocol_code,metrics_state,
+                    logical_call_count,signaling_observation_count,first_evidence_ms,last_evidence_ms,
+                    updated_at_ms)
+                VALUES (711,71,1,'observed',4,2,1000,4000,5000)
+                """);
+            for(int index = 0; index < 60; index++)
+            {
+                statement.executeUpdate("INSERT INTO alias(alias_list_id,name,matcher_type,protocol,value) " +
+                    "VALUES (71,'Other alias " + index + "','RADIO_ID','APCO25'," + (1000 + index) + ")");
+            }
+            statement.executeUpdate("""
+                INSERT INTO alias(alias_list_id,name,matcher_type,protocol,value)
+                VALUES (71,'Very distant radio','RADIO_ID','APCO25',2000)
+                """);
+        }
+        RetainedStatisticsCatalog.Page aliasPage = mCatalog.results("alias_activity", null,
+            "alias_activity", null, "Very distant", 10, 0);
+        assertEquals(1, aliasPage.totalCount(), "friendly-name search must run before pagination");
+        assertEquals("Very distant radio", aliasPage.rows().getFirst().get("label"));
+        assertEquals(4000L, ((Number)mCatalog.results("alias_activity", null,
+            "alias_activity", null, "Dispatch Alpha", 10, 0).rows().getFirst()
+            .get("last_seen_ms")).longValue());
+        RetainedStatisticsCatalog.Page source = mCatalog.sources("alias_activity", null, 10, 0);
+        assertEquals(1, source.totalCount());
+        assertFalse(((Map<?,?>)source.rows().getFirst().get("target")).containsKey("source_key"));
+
+        Session admin = login();
+        Map<?,?> target = (Map<?,?>)mCatalog.results("alias_activity", null,
+            "alias_activity", null, "Dispatch Alpha", 10, 0).rows().getFirst().get("target");
+        String previewBody = MAPPER.writeValueAsString(Map.of("target", target));
+        String base = RetainedStatisticsAdminHttpController.PATH;
+        assertEquals(403, send(request(base + "/preview").header("Origin", mOrigin.toString())
+            .header("Cookie", admin.cookie()).header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(previewBody))).statusCode());
+        HttpResponse<String> preview = send(mutation(base + "/preview", admin)
+            .POST(HttpRequest.BodyPublishers.ofString(previewBody)));
+        assertEquals(200, preview.statusCode(), preview.body());
+        assertEquals(1, json(preview).at("/data/counts_by_part/summary").intValue());
+        assertEquals(1, json(preview).at("/data/rows_total").intValue());
+        assertEquals(1, mCatalog.results("alias_activity", null, "alias_activity", null,
+            "Dispatch Alpha", 10, 0).totalCount(), "preview must preserve saved aliases");
+
+        String submission = MAPPER.writeValueAsString(Map.of("request_id", UUID.randomUUID().toString(),
+            "target", target));
+        assertEquals(202, send(mutation(base + "/deletions", admin)
+            .POST(HttpRequest.BodyPublishers.ofString(submission))).statusCode());
+        assertTrue(mDispatched.get().deletionTarget() instanceof StatsDatabaseMaintenanceRequest.ScopedData);
+        assertEquals(400, send(mutation(base + "/preview", admin)
+            .POST(HttpRequest.BodyPublishers.ofString(previewBody.replace("summary", "current"))))
+            .statusCode(), "Alias Activity has no current part");
+        String unsupported = MAPPER.writeValueAsString(Map.of("target", Map.of("kind", "scoped_data",
+            "source_kind", "alias_activity", "data_type", "unknown_type", "parts",
+            java.util.List.of("summary"))));
+        assertEquals(400, send(mutation(base + "/preview", admin)
+            .POST(HttpRequest.BodyPublishers.ofString(unsupported))).statusCode());
+        String trunkedAsConventional = MAPPER.writeValueAsString(Map.of("target",
+            Map.of("kind", "scoped_data", "source_kind", "saved_channel", "source_key", SITE_A,
+                "data_type", "all", "parts", java.util.List.of("summary"))));
+        assertEquals(400, send(mutation(base + "/preview", admin)
+            .POST(HttpRequest.BodyPublishers.ofString(trunkedAsConventional))).statusCode());
+    }
+
+    @Test
+    void largeScopedDirectoriesFilterBeforePagination() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabase))
+        {
+            connection.setAutoCommit(false);
+            try(PreparedStatement frequency = connection.prepareStatement("""
+                    INSERT INTO p25_site_channel_summary(channel_id,channel_key,downlink_hz,
+                        first_seen_ms,last_seen_ms,observation_count)
+                    VALUES (71,?,?,1000,4000,1)
+                    """);
+                PreparedStatement radio = connection.prepareStatement("""
+                    INSERT INTO radio_system_identity_summary(radio_system_id,identity_kind_code,
+                        home_wacn,home_system_id,identity_id,first_seen_ms,last_seen_ms,logical_call_count)
+                    VALUES (71,2,0xBEE00,0x49F,?,1000,4000,1)
+                    """))
+            {
+                for(int index = 0; index < 300; index++)
+                {
+                    frequency.setString(1, "bulk-" + index);
+                    frequency.setLong(2, 760000000L + index * 12500L);
+                    frequency.addBatch();
+                }
+                for(int index = 0; index < 1500; index++)
+                {
+                    radio.setInt(1, 50000 + index);
+                    radio.addBatch();
+                }
+                frequency.executeBatch();
+                radio.executeBatch();
+                connection.commit();
+            }
+        }
+        RetainedStatisticsCatalog.Page firstFrequencies = mCatalog.results("radio_system", SYSTEM,
+            "frequencies", SITE_A, null, 25, 0);
+        assertEquals(302, firstFrequencies.totalCount());
+        assertTrue(firstFrequencies.hasMore());
+        assertEquals(25, firstFrequencies.rows().size());
+        assertEquals(1, mCatalog.results("radio_system", SYSTEM, "frequencies", SITE_A,
+            "763.737500", 25, 0).totalCount(), "frequency search must run before page limiting");
+        RetainedStatisticsCatalog.Page lastFrequencies = mCatalog.results("radio_system", SYSTEM,
+            "frequencies", SITE_A, null, 25, 300);
+        assertEquals(2, lastFrequencies.rows().size());
+        assertFalse(lastFrequencies.hasMore());
+
+        RetainedStatisticsCatalog.Page firstRadios = mCatalog.results("radio_system", SYSTEM,
+            "radios", null, null, 25, 0);
+        assertEquals(1502, firstRadios.totalCount());
+        assertEquals(25, firstRadios.rows().size());
+        assertEquals(1, mCatalog.results("radio_system", SYSTEM, "radios", null,
+            "51499", 25, 0).totalCount(), "ID search must run before page limiting");
+        assertEquals(2, mCatalog.results("radio_system", SYSTEM, "radios", null,
+            null, 25, 1500).rows().size());
+    }
+
+    @Test
+    void snapshotlessSavedSiteKeepsChannelHistoryReachableAndDetectsRecreatedState() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabase);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA foreign_keys=ON");
+            statement.executeUpdate("DELETE FROM p25_site_snapshot WHERE channel_id=72");
+        }
+        RetainedStatisticsCatalog.Page sites = mCatalog.sites("radio_system", SYSTEM, null, 10, 0);
+        assertEquals(2, sites.totalCount());
+        Map<String,Object> snapshotless = sites.rows().stream()
+            .filter(row -> SITE_B.equals(row.get("configuration_id"))).findFirst().orElseThrow();
+        assertTrue(String.valueOf(snapshotless.get("label")).contains("no current site state"));
+        String key = String.valueOf(snapshotless.get("site_key"));
+        assertTrue(key.startsWith("trunked-unsited:"));
+        RetainedStatisticsCatalog.Page quality = mCatalog.results("radio_system", SYSTEM,
+            "control_quality", SITE_B, null, 10, 0);
+        assertEquals(key, ((Map<?,?>)quality.rows().getFirst().get("target")).get("expected_site_key"));
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabase);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA foreign_keys=ON");
+            statement.executeUpdate("""
+                INSERT INTO p25_site_snapshot(channel_id,first_seen_ms,last_seen_ms,
+                    observation_count,protocol,rfss,site)
+                VALUES (72,5000,5000,1,'APCO25',1,2)
+                """);
+        }
+        var target = new StatsDatabaseMaintenanceRequest.ScopedData("radio_system", SYSTEM,
+            SITE_B, key, "control_quality", null, java.util.List.of("buckets"));
+        assertEquals(ReceiverActivityMaintenance.DeletionOutcome.STALE_SITE,
+            mCatalog.preview(target).outcome());
     }
 
     @Test
@@ -297,6 +554,15 @@ class RetainedStatisticsAdminHttpControllerTest
             ReceiverActivityMaintenance.DeletionOutcome.STALE_SITE));
         String secondId = json(secondAccepted).at("/data/job_id").textValue();
         assertEquals("stale_site", json(send(request(base + "/deletions/" + secondId)
+            .header("Cookie", admin.cookie()).GET())).at("/data/outcome").textValue());
+        String thirdId = UUID.randomUUID().toString();
+        String thirdBody = body.replace(requestId, thirdId);
+        assertEquals(202, send(mutation(base + "/deletions", admin)
+            .POST(HttpRequest.BodyPublishers.ofString(thirdBody))).statusCode());
+        mDispatched.get().result().complete(new ReceiverActivityMaintenance.Result(
+            ReceiverActivityMaintenance.Operation.DELETE_RETAINED_STATS, 0, null, 0, 0, 0, 0,
+            ReceiverActivityMaintenance.DeletionOutcome.TOO_LARGE));
+        assertEquals("too_large", json(send(request(base + "/deletions/" + thirdId)
             .header("Cookie", admin.cookie()).GET())).at("/data/outcome").textValue());
         assertEquals(2, mCatalog.results("radio_system", SYSTEM, "frequencies", SITE_A,
             null, 10, 0).totalCount(), "the HTTP test dispatcher must not change the database");

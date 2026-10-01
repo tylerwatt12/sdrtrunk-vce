@@ -14,6 +14,8 @@ import static io.github.dsheirer.stats.StatsSqlRows.queryRows;
 
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.stats.activity.RetainedSiteKey;
+import io.github.dsheirer.stats.activity.ReceiverActivityMaintenance;
+import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest.ScopedData;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -34,6 +36,7 @@ import java.util.Set;
 /** Bounded, read-only target discovery for retained-statistics administration. */
 final class RetainedStatisticsCatalog
 {
+    private static final long CURRENT_STATE_WINDOW_MS = 6L * 60 * 60 * 1000;
     private static final String CHANNEL_LABEL = "coalesce(nullif(trim(config.name), ''), " +
         "nullif(trim(config.site_name), ''), config.configuration_id)";
     private static final String SITE_LABEL = "coalesce(nullif(trim(config.site_name), ''), " +
@@ -44,6 +47,8 @@ final class RetainedStatisticsCatalog
     private static final String CHANNEL_SEARCH = "lower(" + CHANNEL_LABEL + " || ' ' || " +
         "coalesce(config.system_name,'') || ' ' || coalesce(config.site_name,'') || ' ' || " +
         "coalesce(config.name,'') || ' ' || coalesce(list.name,'') || ' ' || " +
+        "coalesce(CAST(config.primary_frequency_hz AS TEXT),'') || ' ' || " +
+        "coalesce(printf('%.6f',config.primary_frequency_hz/1000000.0),'') || ' ' || " +
         "config.configuration_id) LIKE ? ESCAPE '\\'";
     private static final String SYSTEM_LABEL = "coalesce((SELECT nullif(trim(config.system_name), '') " +
         "FROM receiver_channel channel JOIN configuration_channel config " +
@@ -51,7 +56,11 @@ final class RetainedStatisticsCatalog
         "AND nullif(trim(config.system_name), '') IS NOT NULL " +
         "ORDER BY channel.last_seen_ms DESC LIMIT 1), system.system_key)";
     private static final String SITE_SELECT = """
-        SELECT config.configuration_id, %s AS label, %s, config.channel_kind,
+        SELECT config.configuration_id,
+               CASE WHEN config.channel_kind='TRUNKED' AND p25.channel_id IS NULL
+                         AND trunked.channel_id IS NULL
+                    THEN %s || ' · no current site state' ELSE %s END AS label,
+               %s, config.channel_kind,
                config.decoder_type AS protocol, system.system_key AS radio_system_key,
                channel.id AS channel_id, channel.first_seen_ms AS channel_first_seen_ms,
                channel.radio_system_id, p25.channel_id IS NOT NULL AS p25_snapshot,
@@ -68,14 +77,19 @@ final class RetainedStatisticsCatalog
         LEFT JOIN radio_system system ON system.id=channel.radio_system_id
         LEFT JOIN p25_site_snapshot p25 ON p25.channel_id=channel.id
         LEFT JOIN trunked_site_snapshot trunked ON trunked.channel_id=channel.id
-        WHERE (config.channel_kind='CONVENTIONAL' OR p25.channel_id IS NOT NULL
-               OR trunked.channel_id IS NOT NULL)
-        """.formatted(SITE_LABEL, CHANNEL_CONTEXT);
+        WHERE config.channel_kind IN ('CONVENTIONAL','TRUNKED')
+        """.formatted(SITE_LABEL, SITE_LABEL, CHANNEL_CONTEXT);
     private static final String IDENTITY_KEY_SQL = "'v1-' || CASE summary.identity_kind_code " +
         "WHEN 1 THEN 'g' WHEN 2 THEN 'r' END || '-' || " +
         "CASE WHEN summary.home_wacn=-1 THEN 'x' ELSE printf('%05x',summary.home_wacn) END || '-' || " +
         "CASE WHEN summary.home_system_id=-1 THEN 'x' ELSE printf('%03x',summary.home_system_id) END || '-' || " +
         "summary.identity_id";
+    private static final Set<String> SITE_DATA_TYPES = Set.of("site_state", "frequencies", "band_plans",
+        "foreign_band_plans", "neighbors", "patches", "control_quality");
+    private static final Set<String> SCOPED_DATA_TYPES = Set.of("all", "site_state", "band_plans",
+        "foreign_band_plans", "neighbors", "patches", "control_quality", "relationships",
+        "affiliations", "call_activity", "signaling_activity", "hourly_history", "detailed_events",
+        "alias_activity");
 
     private final Path mDatabasePath;
 
@@ -86,9 +100,20 @@ final class RetainedStatisticsCatalog
 
     Page sources(String kind, String search, int limit, int offset)
     {
+        if("alias_activity".equals(kind))
+        {
+            boolean matched = search == null || "alias activity".contains(search.toLowerCase(Locale.ROOT));
+            Map<String,Object> source = new LinkedHashMap<>();
+            source.put("source_kind", "alias_activity");
+            source.put("source_key", "alias_activity");
+            source.put("label", "Alias Activity");
+            source.put("target", scopedTarget("alias_activity", null, null, null, "alias_activity", null,
+                List.of("summary")));
+            return page(matched && offset == 0 ? List.of(source) : List.of(), limit, offset, matched ? 1 : 0);
+        }
         if(!"radio_system".equals(kind) && !"saved_channel".equals(kind))
         {
-            throw invalid("kind", "Select radio_system or saved_channel");
+            throw invalid("kind", "Select a supported statistics source");
         }
         return read(connection -> {
             String sql;
@@ -112,12 +137,13 @@ final class RetainedStatisticsCatalog
             {
                 sql = "SELECT config.configuration_id AS source_key, " + CHANNEL_LABEL +
                     " AS label, " + CHANNEL_CONTEXT + ", config.decoder_type AS protocol, " +
-                    "config.channel_kind, " +
+                    "config.channel_kind, config.primary_frequency_hz, " +
                     "system.system_key AS radio_system_key, " +
                     "channel.last_seen_ms FROM receiver_channel channel " +
                     "JOIN configuration_channel config ON config.configuration_id=channel.configuration_id " +
                     "LEFT JOIN alias_list list ON list.id=config.alias_list_id " +
-                    "LEFT JOIN radio_system system ON system.id=channel.radio_system_id WHERE 1=1";
+                    "LEFT JOIN radio_system system ON system.id=channel.radio_system_id " +
+                    "WHERE config.channel_kind='CONVENTIONAL'";
                 if(search != null)
                 {
                     sql += " AND " + CHANNEL_SEARCH;
@@ -157,49 +183,202 @@ final class RetainedStatisticsCatalog
         return read(connection -> sitePage(connection, sourceKind, sourceKey, search, limit, offset));
     }
 
+    ReceiverActivityMaintenance.Preview preview(ScopedData target)
+    {
+        return read(connection -> ReceiverActivityMaintenance.preview(connection, target));
+    }
+
     Page results(String sourceKind, String sourceKey, String dataType, String siteConfigurationId,
                  String search, int limit, int offset)
     {
+        if("alias_activity".equals(sourceKind))
+        {
+            if(sourceKey != null && !"alias_activity".equals(sourceKey))
+                throw invalid("source_key", "Alias Activity has no source selection");
+            if(!"alias_activity".equals(dataType) || siteConfigurationId != null)
+                throw invalid("data_type", "Select Alias Activity");
+            return read(connection -> aliasActivity(connection, search, limit, offset));
+        }
         requireSourceKind(sourceKind);
         requireKey(sourceKey, "source_key");
-        if(!List.of("frequencies", "radios", "talkgroups", "sites", "channels", "systems")
-            .contains(dataType))
+        if(!SCOPED_DATA_TYPES.contains(dataType) &&
+            !List.of("frequencies", "radios", "talkgroups", "sites", "channels", "systems")
+                .contains(dataType))
         {
             throw invalid("data_type", "Select a supported data type");
         }
-        if("saved_channel".equals(sourceKind) && !List.of("frequencies", "radios", "talkgroups",
-            "sites", "channels")
+        if("alias_activity".equals(dataType))
+        {
+            throw invalid("data_type", "Alias Activity is a receiver-wide selection");
+        }
+        if("saved_channel".equals(sourceKind) && !Set.of("all", "frequencies", "radios", "talkgroups",
+            "call_activity", "signaling_activity", "hourly_history", "detailed_events", "sites", "channels")
             .contains(dataType))
         {
             throw invalid("data_type", "This data type requires a radio system");
         }
-        if("frequencies".equals(dataType) && (siteConfigurationId == null || siteConfigurationId.isBlank()))
+        if("radio_system".equals(sourceKind) && SITE_DATA_TYPES.contains(dataType) &&
+            (siteConfigurationId == null || siteConfigurationId.isBlank()))
         {
             throw invalid("site_configuration_id", "Select a saved site first");
         }
-        if(!"frequencies".equals(dataType) && siteConfigurationId != null)
+        if(siteConfigurationId != null && !SITE_DATA_TYPES.contains(dataType) && !"all".equals(dataType))
         {
-            throw invalid("site_configuration_id", "Site selection is only used for frequencies");
+            throw invalid("site_configuration_id", "Site selection is not used for this data type");
         }
-        return read(connection -> switch(dataType)
-        {
-            case "frequencies" -> frequencies(connection, sourceKind, sourceKey, siteConfigurationId,
-                search, limit, offset);
-            case "radios", "talkgroups" -> "radio_system".equals(sourceKind) ?
-                identities(connection, sourceKey, dataType, search, limit, offset) :
-                conventionalIdentities(connection, sourceKey, dataType, search, limit, offset);
-            case "sites" -> siteResults(connection, sourceKind, sourceKey, search, limit, offset);
-            case "channels" -> channelResults(connection, sourceKind, sourceKey, search, limit, offset);
-            case "systems" -> systemResults(connection, sourceKey, search, limit, offset);
-            default -> throw new IllegalStateException("Unreachable data type");
+        if("saved_channel".equals(sourceKind) && siteConfigurationId != null &&
+            !sourceKey.equals(siteConfigurationId))
+            throw invalid("site_configuration_id", "Site is outside the selected channel");
+        return read(connection -> {
+            if("saved_channel".equals(sourceKind)) requireConventionalChannel(connection, sourceKey);
+            return switch(dataType)
+            {
+                case "frequencies" -> frequencies(connection, sourceKind, sourceKey,
+                    "saved_channel".equals(sourceKind) ? sourceKey : siteConfigurationId,
+                    search, limit, offset);
+                case "band_plans", "foreign_band_plans" -> bandPlans(connection, sourceKind, sourceKey,
+                    siteConfigurationId, dataType, search, limit, offset);
+                case "neighbors", "patches" -> siteFacts(connection, sourceKind, sourceKey,
+                    siteConfigurationId, dataType, search, limit, offset);
+                case "radios", "talkgroups" -> "radio_system".equals(sourceKind) ?
+                    identities(connection, sourceKey, dataType, search, limit, offset) :
+                    conventionalIdentities(connection, sourceKey, dataType, search, limit, offset);
+                case "sites" -> siteResults(connection, sourceKind, sourceKey, search, limit, offset);
+                case "channels" -> channelResults(connection, sourceKind, sourceKey, search, limit, offset);
+                case "systems" -> systemResults(connection, sourceKey, search, limit, offset);
+                case "all", "site_state", "control_quality", "relationships",
+                    "affiliations", "call_activity", "signaling_activity", "hourly_history", "detailed_events" ->
+                    aggregateResult(connection, sourceKind, sourceKey, siteConfigurationId,
+                        dataType, search, limit, offset);
+                default -> throw new IllegalStateException("Unreachable data type");
+            };
         });
+    }
+
+    private static void requireConventionalChannel(Connection connection, String configurationId)
+        throws SQLException
+    {
+        if(queryRows(connection, "SELECT 1 FROM receiver_channel channel " +
+            "JOIN configuration_channel config ON config.configuration_id=channel.configuration_id " +
+            "WHERE config.configuration_id=? AND config.channel_kind='CONVENTIONAL' LIMIT 1",
+            configurationId).isEmpty())
+        {
+            throw new StatsApiException(404, "source_not_found", "Conventional channel was not found");
+        }
+    }
+
+    private static Map<String,Object> selectedSite(Connection connection, String sourceKind,
+                                                   String sourceKey, String configurationId)
+        throws SQLException
+    {
+        String predicate = "radio_system".equals(sourceKind) ?
+            "system.system_key=? AND config.channel_kind='TRUNKED'" :
+            "config.configuration_id=? AND config.channel_kind='CONVENTIONAL'";
+        List<Map<String,Object>> rows = queryRows(connection, SITE_SELECT +
+            " AND config.configuration_id=? AND " + predicate, configurationId, sourceKey);
+        if(rows.isEmpty())
+        {
+            throw new StatsApiException(404, "site_not_found", "Saved site was not found in this source");
+        }
+        return rows.getFirst();
+    }
+
+    private static Map<String,Object> scopedTarget(String sourceKind, String sourceKey,
+                                                    String siteConfigurationId, String expectedSiteKey,
+                                                    String dataType, String recordKey, List<String> parts)
+    {
+        Map<String,Object> target = new LinkedHashMap<>();
+        target.put("kind", "scoped_data");
+        target.put("source_kind", sourceKind);
+        if(sourceKey != null) target.put("source_key", sourceKey);
+        if(siteConfigurationId != null)
+        {
+            target.put("site_configuration_id", siteConfigurationId);
+            target.put("expected_site_key", expectedSiteKey);
+        }
+        target.put("data_type", dataType);
+        if(recordKey != null) target.put("record_key", recordKey);
+        target.put("parts", parts);
+        return target;
+    }
+
+    private static List<String> partsFor(String sourceKind, String dataType)
+    {
+        return switch(dataType)
+        {
+            case "all" -> "saved_channel".equals(sourceKind) ?
+                List.of("summary", "buckets", "events") :
+                List.of("current", "summary", "buckets", "events");
+            case "site_state", "affiliations" -> List.of("current");
+            case "band_plans", "foreign_band_plans", "patches", "neighbors" ->
+                List.of("current", "summary");
+            case "control_quality", "hourly_history" -> List.of("buckets");
+            case "relationships", "alias_activity" -> List.of("summary");
+            case "detailed_events" -> List.of("events");
+            case "radios", "talkgroups" -> "saved_channel".equals(sourceKind) ?
+                List.of("summary", "events") : List.of("summary", "buckets", "events");
+            case "call_activity", "signaling_activity" -> List.of("summary", "buckets", "events");
+            default -> List.of("summary");
+        };
+    }
+
+    private static Page aggregateResult(Connection connection, String sourceKind, String sourceKey,
+                                        String siteConfigurationId, String dataType, String search,
+                                        int limit, int offset) throws SQLException
+    {
+        String label = switch(dataType)
+        {
+            case "all" -> "All retained data";
+            case "site_state" -> "Site state";
+            case "neighbors" -> "Neighbors";
+            case "patches" -> "Patch groups";
+            case "control_quality" -> "Control quality";
+            case "relationships" -> "Radio relationships";
+            case "affiliations" -> "Affiliations and presence";
+            case "call_activity" -> "Call totals";
+            case "signaling_activity" -> "Signaling totals";
+            case "hourly_history" -> "Hourly history";
+            case "detailed_events" -> "Detailed events";
+            default -> throw new IllegalArgumentException("Unsupported aggregate type");
+        };
+        List<Map<String,Object>> sources = "radio_system".equals(sourceKind) ?
+            queryRows(connection, "SELECT system.system_key, " + SYSTEM_LABEL + " AS label " +
+                "FROM radio_system system WHERE system.system_key=?", sourceKey) :
+            queryRows(connection, "SELECT config.configuration_id, " + CHANNEL_LABEL + " AS label " +
+                "FROM configuration_channel config WHERE config.configuration_id=? " +
+                "AND config.channel_kind='CONVENTIONAL'", sourceKey);
+        if(sources.isEmpty())
+            throw new StatsApiException(404, "source_not_found", "Statistics source was not found");
+        Map<String,Object> site = siteConfigurationId == null ? null :
+            selectedSite(connection, sourceKind, sourceKey, siteConfigurationId);
+        if("patches".equals(dataType) && site != null && numberOrZero(site.get("p25_snapshot")) == 0)
+            return page(List.of(), limit, offset, 0);
+        String scope = String.valueOf(sources.getFirst().get("label"));
+        if(site != null) scope += " · " + site.get("label");
+        String searchable = (label + " " + scope).toLowerCase(Locale.ROOT);
+        if(search != null && !searchable.contains(search.toLowerCase(Locale.ROOT)))
+            return page(List.of(), limit, offset, 0);
+        if(offset > 0) return page(List.of(), limit, offset, 1);
+        List<String> parts = "neighbors".equals(dataType) && site != null &&
+            numberOrZero(site.get("p25_snapshot")) == 0 ? List.of("summary") :
+            partsFor(sourceKind, dataType);
+        Map<String,Object> row = new LinkedHashMap<>();
+        row.put("label", label);
+        row.put("detail", scope);
+        row.put("available_parts", parts);
+        row.put("target", scopedTarget(sourceKind, sourceKey, siteConfigurationId,
+            site == null ? null : siteKey(site), dataType, null, parts));
+        WebEntityRef.put(row, "radio_system".equals(sourceKind) ? WebEntityRef.radioSystem(sourceKey) :
+            WebEntityRef.channel(sourceKey));
+        return page(List.of(row), limit, offset, 1);
     }
 
     private static Page sitePage(Connection connection, String sourceKind, String sourceKey,
                                  String search, int limit, int offset) throws SQLException
     {
-        String predicate = "radio_system".equals(sourceKind) ? "system.system_key=?" :
-            "config.configuration_id=?";
+        String predicate = "radio_system".equals(sourceKind) ?
+            "system.system_key=? AND config.channel_kind='TRUNKED'" :
+            "config.configuration_id=? AND config.channel_kind='CONVENTIONAL'";
         String sql = SITE_SELECT + " AND " + predicate;
         List<Object> parameters = new ArrayList<>(List.of(sourceKey));
         if(search != null)
@@ -234,18 +413,244 @@ final class RetainedStatisticsCatalog
         return page(rows, limit, offset, total);
     }
 
+    private static Page bandPlans(Connection connection, String sourceKind, String sourceKey,
+                                  String siteConfigurationId, String dataType, String search,
+                                  int limit, int offset) throws SQLException
+    {
+        Map<String,Object> site = selectedSite(connection, sourceKind, sourceKey, siteConfigurationId);
+        if(numberOrZero(site.get("p25_snapshot")) == 0)
+            return page(List.of(), limit, offset, 0);
+        long channelId = number(site.get("channel_id"));
+        boolean foreign = "foreign_band_plans".equals(dataType);
+        String sql = foreign ? """
+            WITH keys AS (
+                SELECT foreign_wacn,foreign_system_id,band
+                FROM p25_foreign_system_band WHERE channel_id=?
+                UNION SELECT foreign_wacn,foreign_system_id,band
+                FROM p25_foreign_system_band_summary WHERE channel_id=?
+            )
+            SELECT keys.foreign_wacn,keys.foreign_system_id,keys.band,
+                coalesce(current.channel_type,summary.channel_type) AS channel_type_code,
+                coalesce(current.base_hz,summary.base_hz) AS base_hz,
+                coalesce(current.spacing_hz,summary.spacing_hz) AS spacing_hz,
+                coalesce(current.transmit_offset_hz,summary.transmit_offset_hz) AS transmit_offset_hz,
+                current.confirmed_at_ms,summary.first_seen_ms,summary.last_seen_ms,
+                summary.observation_count,current.band IS NOT NULL AS has_current,
+                summary.band IS NOT NULL AS has_summary,
+                CASE WHEN current.band IS NOT NULL THEN 'CURRENT' ELSE 'HISTORICAL' END AS state
+            FROM keys
+            LEFT JOIN p25_foreign_system_band current ON current.channel_id=?
+                AND current.foreign_wacn=keys.foreign_wacn
+                AND current.foreign_system_id=keys.foreign_system_id AND current.band=keys.band
+            LEFT JOIN p25_foreign_system_band_summary summary ON summary.channel_id=?
+                AND summary.foreign_wacn=keys.foreign_wacn
+                AND summary.foreign_system_id=keys.foreign_system_id AND summary.band=keys.band
+            """ : """
+            WITH keys AS (
+                SELECT band FROM p25_site_frequency_band WHERE channel_id=?
+                UNION SELECT band FROM p25_site_frequency_band_summary WHERE channel_id=?
+            )
+            SELECT keys.band,coalesce(current.tdma,summary.tdma) AS tdma,
+                coalesce(current.base_hz,summary.base_hz) AS base_hz,
+                coalesce(current.bandwidth,summary.bandwidth) AS bandwidth_hz,
+                coalesce(current.spacing_hz,summary.spacing_hz) AS spacing_hz,
+                coalesce(current.transmit_offset_hz,summary.transmit_offset_hz) AS transmit_offset_hz,
+                coalesce(current.timeslots,summary.timeslots) AS timeslots,
+                current.confirmed_at_ms,summary.first_seen_ms,summary.last_seen_ms,
+                summary.observation_count,current.band IS NOT NULL AS has_current,
+                summary.band IS NOT NULL AS has_summary,
+                CASE WHEN current.band IS NOT NULL THEN 'CURRENT' ELSE 'HISTORICAL' END AS state
+            FROM keys
+            LEFT JOIN p25_site_frequency_band current ON current.channel_id=? AND current.band=keys.band
+            LEFT JOIN p25_site_frequency_band_summary summary
+                ON summary.channel_id=? AND summary.band=keys.band
+            """;
+        List<Object> parameters = new ArrayList<>(List.of(channelId, channelId, channelId, channelId));
+        if(search != null)
+        {
+            sql += " WHERE (CAST(keys.band AS TEXT) LIKE ? ESCAPE '\\' OR " +
+                "printf('%.6f',coalesce(current.base_hz,summary.base_hz)/1000000.0) " +
+                "LIKE ? ESCAPE '\\'" + (foreign ?
+                " OR printf('%05X',keys.foreign_wacn) LIKE ? ESCAPE '\\' " +
+                    "OR CAST(keys.foreign_system_id AS TEXT) LIKE ? ESCAPE '\\'" : "") + ")";
+            parameters.add(like(search));
+            parameters.add(like(search));
+            if(foreign)
+            {
+                parameters.add(like(search));
+                parameters.add(like(search));
+            }
+        }
+        long total = count(connection, "SELECT COUNT(*) FROM (" + sql + ")", parameters);
+        sql += foreign ? " ORDER BY keys.foreign_wacn,keys.foreign_system_id,keys.band LIMIT ? OFFSET ?" :
+            " ORDER BY keys.band LIMIT ? OFFSET ?";
+        parameters.add(limit + 1);
+        parameters.add(offset);
+        List<Map<String,Object>> rows = queryRows(connection, sql, parameters.toArray());
+        String ownerKey = siteKey(site);
+        for(Map<String,Object> row: rows)
+        {
+            int band = ((Number)row.get("band")).intValue();
+            String key = foreign ? row.get("foreign_wacn") + ":" + row.get("foreign_system_id") + ":" + band :
+                String.valueOf(band);
+            row.put("label", foreign ? "Foreign band " + band + " · " + row.get("foreign_wacn") + ":" +
+                row.get("foreign_system_id") : "Band " + band);
+            row.put("detail", site.get("label"));
+            row.put("record_key", key);
+            row.put("state", recent(row.get("confirmed_at_ms"), row.get("last_seen_ms")) ?
+                "CURRENT" : "HISTORICAL");
+            List<String> parts = new ArrayList<>();
+            if(numberOrZero(row.get("has_current")) != 0) parts.add("current");
+            if(numberOrZero(row.get("has_summary")) != 0) parts.add("summary");
+            row.put("available_parts", List.copyOf(parts));
+            row.put("target", scopedTarget(sourceKind, sourceKey, siteConfigurationId, ownerKey,
+                dataType, key, parts));
+            copyContext(row, site);
+            WebEntityRef.put(row, WebEntityRef.channel(siteConfigurationId));
+        }
+        return page(rows, limit, offset, total);
+    }
+
+    private static Page aliasActivity(Connection connection, String search, int limit, int offset)
+        throws SQLException
+    {
+        String sql = """
+            SELECT definition.id AS alias_id,definition.alias_list_id,
+                definition.name AS label,definition.description,definition.group_name AS alias_group,
+                definition.matcher_type,definition.protocol,definition.value AS native_id,
+                list.name AS alias_list_name,summary.metrics_state,
+                summary.logical_call_count,summary.first_evidence_ms AS first_seen_ms,
+                summary.last_evidence_ms AS last_seen_ms,
+                summary.signaling_observation_count
+            FROM alias definition
+            JOIN alias_list list ON list.id=definition.alias_list_id
+            LEFT JOIN alias_activity_summary summary ON summary.alias_id=definition.id
+            WHERE 1=1
+            """;
+        List<Object> parameters = new ArrayList<>();
+        if(search != null)
+        {
+            sql += " AND lower(definition.name || ' ' || coalesce(definition.group_name,'') || ' ' || " +
+                "coalesce(definition.description,'') || ' ' || list.name || ' ' || " +
+                "coalesce(CAST(definition.value AS TEXT),'')) LIKE ? ESCAPE '\\'";
+            parameters.add(like(search));
+        }
+        long total = count(connection, "SELECT COUNT(*) FROM (" + sql + ")", parameters);
+        sql += " ORDER BY lower(definition.name),definition.id LIMIT ? OFFSET ?";
+        parameters.add(limit + 1);
+        parameters.add(offset);
+        List<Map<String,Object>> rows = queryRows(connection, sql, parameters.toArray());
+        for(Map<String,Object> row: rows)
+        {
+            row.put("detail", row.get("alias_list_name"));
+            row.put("available_parts", List.of("summary"));
+            row.put("target", scopedTarget("alias_activity", null, null, null,
+                "alias_activity", String.valueOf(row.get("alias_id")), List.of("summary")));
+        }
+        return page(rows, limit, offset, total);
+    }
+
+    private static Page siteFacts(Connection connection, String sourceKind, String sourceKey,
+                                  String siteConfigurationId, String dataType, String search,
+                                  int limit, int offset) throws SQLException
+    {
+        Map<String,Object> site = selectedSite(connection, sourceKind, sourceKey, siteConfigurationId);
+        if(numberOrZero(site.get("p25_snapshot")) == 0)
+        {
+            return "neighbors".equals(dataType) ? aggregateResult(connection, sourceKind, sourceKey,
+                siteConfigurationId, dataType, search, limit, offset) :
+                page(List.of(), limit, offset, 0);
+        }
+        long channelId = number(site.get("channel_id"));
+        boolean neighbor = "neighbors".equals(dataType);
+        String sql = neighbor ? """
+            WITH keys AS (
+                SELECT neighbor_key FROM p25_site_neighbor WHERE channel_id=?
+                UNION SELECT neighbor_key FROM p25_site_neighbor_summary WHERE channel_id=?
+            )
+            SELECT keys.neighbor_key,coalesce(current.system_id,summary.system_id) AS system_id,
+                coalesce(current.rfss,summary.rfss) AS rfss,
+                coalesce(current.site,summary.site) AS site,
+                coalesce(current.channel_descriptor,summary.channel_descriptor) AS channel_descriptor,
+                coalesce(current.downlink_hz,summary.downlink_hz) AS downlink_hz,
+                coalesce(current.uplink_hz,summary.uplink_hz) AS uplink_hz,
+                coalesce(current.status,summary.status) AS status,
+                current.confirmed_at_ms,summary.first_seen_ms,summary.last_seen_ms,
+                summary.observation_count,current.neighbor_key IS NOT NULL AS has_current,
+                summary.neighbor_key IS NOT NULL AS has_summary
+            FROM keys
+            LEFT JOIN p25_site_neighbor current
+                ON current.channel_id=? AND current.neighbor_key=keys.neighbor_key
+            LEFT JOIN p25_site_neighbor_summary summary
+                ON summary.channel_id=? AND summary.neighbor_key=keys.neighbor_key
+            """ : """
+            WITH keys AS (
+                SELECT local_patch_group_id FROM p25_site_patch_group WHERE channel_id=?
+                UNION SELECT local_patch_group_id FROM p25_site_patch_group_summary WHERE channel_id=?
+            )
+            SELECT keys.local_patch_group_id,
+                coalesce(current.version,summary.version) AS version,
+                current.confirmed_at_ms,summary.first_seen_ms,summary.last_seen_ms,
+                summary.observation_count,
+                current.local_patch_group_id IS NOT NULL AS has_current,
+                summary.local_patch_group_id IS NOT NULL AS has_summary,
+                (SELECT count(*) FROM p25_site_patch_group_talkgroup_summary member
+                 WHERE member.channel_id=? AND member.local_patch_group_id=keys.local_patch_group_id)
+                    AS talkgroup_count,
+                (SELECT count(*) FROM p25_site_patch_group_radio_summary member
+                 WHERE member.channel_id=? AND member.local_patch_group_id=keys.local_patch_group_id)
+                    AS radio_count
+            FROM keys
+            LEFT JOIN p25_site_patch_group current
+                ON current.channel_id=? AND current.local_patch_group_id=keys.local_patch_group_id
+            LEFT JOIN p25_site_patch_group_summary summary
+                ON summary.channel_id=? AND summary.local_patch_group_id=keys.local_patch_group_id
+            """;
+        List<Object> parameters = new ArrayList<>();
+        for(int index = 0; index < (neighbor ? 4 : 6); index++) parameters.add(channelId);
+        if(search != null)
+        {
+            sql += neighbor ? " WHERE lower(keys.neighbor_key || ' ' || " +
+                "coalesce(CAST(coalesce(current.rfss,summary.rfss) AS TEXT),'') || ' ' || " +
+                "coalesce(CAST(coalesce(current.site,summary.site) AS TEXT),'') || ' ' || " +
+                "coalesce(current.status,summary.status,'') || ' ' || " +
+                "coalesce(printf('%.6f',coalesce(current.downlink_hz,summary.downlink_hz)/1000000.0),'')) " +
+                "LIKE ? ESCAPE '\\'" :
+                " WHERE CAST(keys.local_patch_group_id AS TEXT) LIKE ? ESCAPE '\\'";
+            parameters.add(like(search));
+        }
+        long total = count(connection, "SELECT COUNT(*) FROM (" + sql + ")", parameters);
+        sql += neighbor ? " ORDER BY keys.neighbor_key LIMIT ? OFFSET ?" :
+            " ORDER BY keys.local_patch_group_id LIMIT ? OFFSET ?";
+        parameters.add(limit + 1);
+        parameters.add(offset);
+        List<Map<String,Object>> rows = queryRows(connection, sql, parameters.toArray());
+        String ownerKey = siteKey(site);
+        for(Map<String,Object> row: rows)
+        {
+            String key = String.valueOf(row.get(neighbor ? "neighbor_key" : "local_patch_group_id"));
+            row.put("label", neighbor ? "Neighbor " + key : "Patch group " + key);
+            row.put("detail", site.get("label"));
+            row.put("record_key", key);
+            row.put("state", recent(row.get("confirmed_at_ms"), row.get("last_seen_ms")) ?
+                "CURRENT" : "HISTORICAL");
+            List<String> parts = new ArrayList<>();
+            if(numberOrZero(row.get("has_current")) != 0) parts.add("current");
+            if(numberOrZero(row.get("has_summary")) != 0) parts.add("summary");
+            row.put("available_parts", List.copyOf(parts));
+            row.put("target", scopedTarget(sourceKind, sourceKey, siteConfigurationId, ownerKey,
+                dataType, key, parts));
+            copyContext(row, site);
+            WebEntityRef.put(row, WebEntityRef.channel(siteConfigurationId));
+        }
+        return page(rows, limit, offset, total);
+    }
+
     private static Page frequencies(Connection connection, String sourceKind, String sourceKey,
                                     String siteConfigurationId, String search, int limit, int offset)
         throws SQLException
     {
-        String siteSql = SITE_SELECT + " AND config.configuration_id=? AND " +
-            ("radio_system".equals(sourceKind) ? "system.system_key=?" : "config.configuration_id=?");
-        List<Map<String,Object>> siteRows = queryRows(connection, siteSql, siteConfigurationId, sourceKey);
-        if(siteRows.isEmpty())
-        {
-            throw new StatsApiException(404, "site_not_found", "Saved site was not found in this source");
-        }
-        Map<String,Object> site = siteRows.getFirst();
+        Map<String,Object> site = selectedSite(connection, sourceKind, sourceKey, siteConfigurationId);
         String ownerKey = siteKey(site);
         long channelId = number(site.get("channel_id"));
         String base;
@@ -271,12 +676,16 @@ final class RetainedStatisticsCatalog
         }
         else if(numberOrZero(site.get("p25_snapshot")) != 0)
         {
-            base = "SELECT coalesce(current.downlink_hz,summary.downlink_hz) AS frequency_hz, " +
+            base = "WITH keys AS (SELECT channel_key FROM p25_site_channel_summary WHERE channel_id=? " +
+                "UNION SELECT channel_key FROM p25_site_channel WHERE channel_id=?) " +
+                "SELECT coalesce(current.downlink_hz,summary.downlink_hz) AS frequency_hz, " +
                 "SUM(summary.observation_count) AS observation_count, " +
-                "MAX(summary.last_seen_ms) AS last_seen_ms " +
-                "FROM p25_site_channel_summary summary LEFT JOIN p25_site_channel current " +
-                "ON current.channel_id=summary.channel_id AND current.channel_key=summary.channel_key " +
-                "WHERE summary.channel_id=? GROUP BY coalesce(current.downlink_hz,summary.downlink_hz) " +
+                "MAX(coalesce(summary.last_seen_ms,current.confirmed_at_ms)) AS last_seen_ms " +
+                "FROM keys LEFT JOIN p25_site_channel_summary summary " +
+                "ON summary.channel_id=? AND summary.channel_key=keys.channel_key " +
+                "LEFT JOIN p25_site_channel current " +
+                "ON current.channel_id=? AND current.channel_key=keys.channel_key " +
+                "GROUP BY coalesce(current.downlink_hz,summary.downlink_hz) " +
                 "HAVING frequency_hz IS NOT NULL AND frequency_hz>0";
         }
         else
@@ -287,7 +696,9 @@ final class RetainedStatisticsCatalog
         }
         String sql = "SELECT * FROM (" + base + ") WHERE 1=1";
         List<Object> parameters = new ArrayList<>();
-        for(int index = 0; index < ("CONVENTIONAL".equals(site.get("channel_kind")) ? 4 : 1); index++)
+        int bindCount = "CONVENTIONAL".equals(site.get("channel_kind")) ||
+            numberOrZero(site.get("p25_snapshot")) != 0 ? 4 : 1;
+        for(int index = 0; index < bindCount; index++)
         {
             parameters.add(channelId);
         }
@@ -310,10 +721,149 @@ final class RetainedStatisticsCatalog
             row.put("detail", String.valueOf(site.get("label")));
             copyContext(row, site);
             WebEntityRef.put(row, WebEntityRef.channel(siteConfigurationId));
-            row.put("target", Map.of("kind", "frequency", "site_configuration_id", siteConfigurationId,
-                "expected_site_key", ownerKey, "frequency_hz", hz));
+            List<String> parts = "TRUNKED".equals(site.get("channel_kind")) &&
+                numberOrZero(site.get("p25_snapshot")) != 0 ?
+                List.of("current", "summary", "buckets", "events") :
+                List.of("summary", "buckets", "events");
+            row.put("available_parts", parts);
+            row.put("target", scopedTarget(sourceKind, sourceKey,
+                "radio_system".equals(sourceKind) ? siteConfigurationId : null,
+                "radio_system".equals(sourceKind) ? ownerKey : null,
+                "frequencies", String.valueOf(hz), parts));
+            if("TRUNKED".equals(site.get("channel_kind")) &&
+                numberOrZero(site.get("p25_snapshot")) != 0)
+                enrichP25Frequency(connection, row, channelId, hz);
+            else if("TRUNKED".equals(site.get("channel_kind")))
+                enrichTrunkedFrequency(connection, row, channelId, hz);
+            else
+                enrichConventionalFrequency(connection, row, channelId, hz);
         }
         return page(rows, limit, offset, total);
+    }
+
+    private static void enrichP25Frequency(Connection connection, Map<String,Object> row,
+                                           long channelId, long frequencyHz) throws SQLException
+    {
+        List<Map<String,Object>> logical = queryRows(connection, """
+            WITH keys AS (
+                SELECT channel_key FROM p25_site_channel_summary WHERE channel_id=?
+                UNION SELECT channel_key FROM p25_site_channel WHERE channel_id=?
+            )
+            SELECT keys.channel_key,coalesce(current.descriptor,summary.descriptor) AS descriptor,
+                coalesce(current.uplink_hz,summary.uplink_hz) AS uplink_hz,
+                coalesce(current.tdma,summary.tdma) AS tdma,
+                coalesce(current.timeslots,summary.timeslots) AS timeslots,
+                current.confirmed_at_ms,summary.first_seen_ms,summary.last_seen_ms,
+                summary.observation_count,
+                (SELECT coalesce(sum(tag.observation_count),0) FROM p25_site_channel_tag_summary tag
+                 WHERE tag.channel_id=coalesce(summary.channel_id,current.channel_id)
+                   AND tag.channel_key=keys.channel_key
+                   AND tag.tag='VOICE') AS voice_grant_observations,
+                (SELECT group_concat(tag.tag,', ') FROM p25_site_channel_tag_summary tag
+                 WHERE tag.channel_id=coalesce(summary.channel_id,current.channel_id)
+                   AND tag.channel_key=keys.channel_key)
+                    AS observed_tags,
+                (SELECT group_concat(tag.tag,', ') FROM p25_site_channel_tag tag
+                 WHERE tag.channel_id=coalesce(summary.channel_id,current.channel_id)
+                   AND tag.channel_key=keys.channel_key)
+                    AS current_tags
+            FROM keys
+            LEFT JOIN p25_site_channel_summary summary
+                ON summary.channel_id=? AND summary.channel_key=keys.channel_key
+            LEFT JOIN p25_site_channel current
+                ON current.channel_id=? AND current.channel_key=keys.channel_key
+            WHERE coalesce(current.downlink_hz,summary.downlink_hz)=?
+            ORDER BY keys.channel_key
+            """, channelId, channelId, channelId, channelId, frequencyHz);
+        List<String> channelKeys = new ArrayList<>();
+        Set<String> tags = new LinkedHashSet<>();
+        Set<String> currentTags = new LinkedHashSet<>();
+        long voiceGrants = 0;
+        long confirmedAt = 0;
+        for(Map<String,Object> logicalRow: logical)
+        {
+            channelKeys.add(String.valueOf(logicalRow.get("channel_key")));
+            if(row.get("descriptor") == null) row.put("descriptor", logicalRow.get("descriptor"));
+            if(row.get("uplink_hz") == null) row.put("uplink_hz", logicalRow.get("uplink_hz"));
+            if(row.get("timeslots") == null) row.put("timeslots", logicalRow.get("timeslots"));
+            if(row.get("tdma") == null) row.put("tdma", logicalRow.get("tdma"));
+            voiceGrants += numberOrZero(logicalRow.get("voice_grant_observations"));
+            confirmedAt = Math.max(confirmedAt, numberOrZero(logicalRow.get("confirmed_at_ms")));
+            addCommaValues(tags, logicalRow.get("observed_tags"));
+            addCommaValues(currentTags, logicalRow.get("current_tags"));
+        }
+        row.put("channel_keys", List.copyOf(channelKeys));
+        row.put("channel_key", channelKeys.size() == 1 ? channelKeys.getFirst() : null);
+        row.put("logical_channel_count", channelKeys.size());
+        row.put("tags", List.copyOf(tags));
+        row.put("current_tags", List.copyOf(currentTags));
+        row.put("voice_grant_observations", voiceGrants);
+        row.put("state", recent(confirmedAt, row.get("last_seen_ms")) ?
+            "CURRENT" : "HISTORICAL");
+    }
+
+    private static void enrichTrunkedFrequency(Connection connection, Map<String,Object> row,
+                                               long channelId, long frequencyHz) throws SQLException
+    {
+        List<Map<String,Object>> logical = queryRows(connection, """
+            SELECT channel_number,inbound_channel_number,timeslot,uplink_hz,role_flags,
+                observation_count,last_seen_ms
+            FROM trunked_site_channel_summary
+            WHERE channel_id=? AND frequency_hz=?
+            ORDER BY channel_number,timeslot
+            """, channelId, frequencyHz);
+        List<String> channels = new ArrayList<>();
+        for(Map<String,Object> item: logical)
+        {
+            if(item.get("channel_number") instanceof Number number && number.longValue() >= 0)
+                channels.add(String.valueOf(number.longValue()));
+            if(row.get("uplink_hz") == null) row.put("uplink_hz", item.get("uplink_hz"));
+            if(row.get("timeslot") == null) row.put("timeslot", item.get("timeslot"));
+            if(row.get("role_flags") == null) row.put("role_flags", item.get("role_flags"));
+        }
+        row.put("channel_keys", List.copyOf(channels));
+        row.put("logical_channel_count", logical.size());
+        row.put("state", recent(row.get("last_seen_ms")) ? "CURRENT" : "HISTORICAL");
+    }
+
+    private static void enrichConventionalFrequency(Connection connection, Map<String,Object> row,
+                                                     long channelId, long frequencyHz) throws SQLException
+    {
+        List<Map<String,Object>> slots = queryRows(connection, """
+            SELECT DISTINCT timeslot FROM (
+                SELECT timeslot FROM conventional_activity_summary WHERE channel_id=? AND frequency_hz=?
+                UNION SELECT timeslot FROM conventional_activity_bucket WHERE channel_id=? AND frequency_hz=?
+                UNION SELECT timeslot FROM dmr_conventional_radio_summary WHERE channel_id=? AND frequency_hz=?
+                UNION SELECT timeslot FROM dmr_conventional_talkgroup_summary WHERE channel_id=? AND frequency_hz=?
+            ) WHERE timeslot IS NOT NULL ORDER BY timeslot
+            """, channelId, frequencyHz, channelId, frequencyHz,
+            channelId, frequencyHz, channelId, frequencyHz);
+        List<Integer> values = new ArrayList<>();
+        for(Map<String,Object> slot: slots)
+        {
+            if(slot.get("timeslot") instanceof Number number) values.add(number.intValue());
+        }
+        row.put("timeslots", List.copyOf(values));
+        row.put("timeslot", values.size() == 1 ? values.getFirst() : null);
+        row.put("logical_call_count", row.get("observation_count"));
+    }
+
+    private static void addCommaValues(Set<String> destination, Object text)
+    {
+        if(text instanceof String value)
+        {
+            for(String part: value.split(","))
+            {
+                if(!part.isBlank()) destination.add(part.strip());
+            }
+        }
+    }
+
+    private static boolean recent(Object... timestamps)
+    {
+        long latest = 0;
+        for(Object timestamp: timestamps) latest = Math.max(latest, numberOrZero(timestamp));
+        return latest >= System.currentTimeMillis() - CURRENT_STATE_WINDOW_MS;
     }
 
     private static Page identities(Connection connection, String systemKey, String dataType,
@@ -372,8 +922,10 @@ final class RetainedStatisticsCatalog
             WebEntityRef.put(row, kind == 2 ? WebEntityRef.radio(systemKey,
                 String.valueOf(row.get("identity_key"))) : WebEntityRef.talkgroup(systemKey,
                 String.valueOf(row.get("identity_key"))));
-            row.put("target", Map.of("kind", kind == 2 ? "radio" : "talkgroup",
-                "radio_system_key", systemKey, "identity_key", row.get("identity_key")));
+            List<String> parts = partsFor("radio_system", dataType);
+            row.put("available_parts", parts);
+            row.put("target", scopedTarget("radio_system", systemKey, null, null,
+                dataType, String.valueOf(row.get("identity_key")), parts));
         }
         return page(rows, limit, offset, total);
     }
@@ -454,9 +1006,10 @@ final class RetainedStatisticsCatalog
             row.put("detail", numericLabel + " · " + String.format(Locale.ROOT, "%.6f MHz · slot %d",
                 frequencyHz / 1_000_000.0, timeslot));
             WebEntityRef.put(row, WebEntityRef.channel(configurationId));
-            row.put("target", Map.of("kind", "radios".equals(dataType) ? "conventional_radio" :
-                "conventional_talkgroup", "configuration_id", configurationId,
-                "frequency_hz", frequencyHz, "timeslot", timeslot, "native_id", nativeId));
+            List<String> parts = partsFor("saved_channel", dataType);
+            row.put("available_parts", parts);
+            row.put("target", scopedTarget("saved_channel", configurationId, null, null,
+                dataType, frequencyHz + ":" + timeslot + ":" + nativeId, parts));
         }
         return page(rows, limit, offset, total);
     }
@@ -811,6 +1364,11 @@ final class RetainedStatisticsCatalog
             return RetainedSiteKey.p25(integer(row.get("rfss")), integer(row.get("site")),
                 number(row.get("channel_id")), integer(row.get("radio_system_id")),
                 number(row.get("p25_first_seen_ms")));
+        }
+        if(row.get("trunked_first_seen_ms") == null)
+        {
+            return RetainedSiteKey.snapshotless(number(row.get("channel_id")),
+                integer(row.get("radio_system_id")), number(row.get("channel_first_seen_ms")));
         }
         return RetainedSiteKey.trunked((int)number(row.get("protocol_code")),
             (int)number(row.get("variant_code")), (int)number(row.get("observed_location_category_code")),

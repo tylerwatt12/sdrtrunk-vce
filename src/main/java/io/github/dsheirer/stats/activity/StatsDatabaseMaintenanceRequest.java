@@ -12,6 +12,8 @@
 package io.github.dsheirer.stats.activity;
 
 import java.util.Objects;
+import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -80,7 +82,7 @@ public final class StatsDatabaseMaintenanceRequest
     }
 
     public sealed interface DeletionTarget permits Frequency, Identity, ConventionalIdentity, LearnedSite,
-        SavedSite, Channel, System
+        SavedSite, Channel, System, ScopedData
     {
     }
 
@@ -159,6 +161,50 @@ public final class StatsDatabaseMaintenanceRequest
         public System
         {
             requireText(radioSystemKey, "Radio system key");
+        }
+    }
+
+    /** A bounded, source-owned family of retained observations. No configuration rows are targets. */
+    public record ScopedData(String sourceKind, String sourceKey, String siteConfigurationId,
+                             String expectedSiteKey, String dataType, String recordKey, List<String> parts)
+        implements DeletionTarget
+    {
+        private static final Set<String> SOURCE_KINDS = Set.of("radio_system", "saved_channel", "alias_activity");
+        private static final Set<String> DATA_TYPES = Set.of("all", "site_state", "frequencies", "band_plans",
+            "foreign_band_plans", "neighbors", "patches", "control_quality", "radios", "talkgroups",
+            "relationships", "affiliations", "call_activity", "signaling_activity", "detailed_events",
+            "hourly_history", "alias_activity");
+        private static final Set<String> PARTS = Set.of("current", "summary", "buckets", "events");
+
+        public ScopedData
+        {
+            if(!SOURCE_KINDS.contains(sourceKind)) throw new IllegalArgumentException("Source kind is invalid");
+            if(!DATA_TYPES.contains(dataType)) throw new IllegalArgumentException("Data type is invalid");
+            if((siteConfigurationId == null) != (expectedSiteKey == null))
+                throw new IllegalArgumentException("Site configuration and site key must be supplied together");
+            if(siteConfigurationId != null)
+            {
+                requireText(siteConfigurationId, "Site configuration ID");
+                requireText(expectedSiteKey, "Expected site key");
+            }
+            if("alias_activity".equals(sourceKind))
+            {
+                if(sourceKey != null || siteConfigurationId != null || !"alias_activity".equals(dataType))
+                    throw new IllegalArgumentException("Alias Activity is receiver-wide");
+            }
+            else
+            {
+                requireText(sourceKey, "Source key");
+                if("alias_activity".equals(dataType))
+                    throw new IllegalArgumentException("Alias Activity has no per-source attribution");
+            }
+            if(recordKey != null && (recordKey.isBlank() || recordKey.length() > 128))
+                throw new IllegalArgumentException("Record key is invalid");
+            if(parts == null || parts.isEmpty() || parts.size() > 4 || !PARTS.containsAll(parts))
+                throw new IllegalArgumentException("Select supported retained-data parts");
+            parts = parts.stream().distinct().sorted().toList();
+            if("alias_activity".equals(dataType) && !parts.equals(List.of("summary")))
+                throw new IllegalArgumentException("Alias Activity has only a summary part");
         }
     }
 

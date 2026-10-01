@@ -18,12 +18,15 @@ import com.sun.net.httpserver.HttpExchange;
 import io.github.dsheirer.stats.activity.ReceiverActivityMaintenance;
 import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest;
 import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest.DeletionTarget;
+import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest.ScopedData;
 import io.github.dsheirer.web.http.ApiHttpResponse;
 import io.github.dsheirer.web.http.ApiRequestDecoder;
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -91,7 +94,8 @@ final class RetainedStatisticsAdminHttpController
                 request.requireOnly("source_kind", "source_key", "data_type", "site_configuration_id",
                     "q", "limit", "offset");
                 String sourceKind = request.requiredText("source_kind");
-                String sourceKey = request.requiredText("source_key");
+                String sourceKey = "alias_activity".equals(sourceKind) ? request.text("source_key") :
+                    request.requiredText("source_key");
                 String dataType = request.requiredText("data_type");
                 String siteConfigurationId = request.text("site_configuration_id");
                 String search = request.search();
@@ -99,6 +103,31 @@ final class RetainedStatisticsAdminHttpController
                 int offset = request.offset();
                 sendPage(exchange, mCatalog.results(sourceKind, sourceKey, dataType,
                     siteConfigurationId, search, limit, offset));
+            }
+            else if((PATH + "/preview").equals(path))
+            {
+                requireMethod(exchange, "POST");
+                requireNoQuery(exchange);
+                JsonNode body = readBody(exchange);
+                requireFields(body, Set.of("target"));
+                DeletionTarget target = parseTarget(body.get("target"));
+                if(!(target instanceof ScopedData scoped))
+                {
+                    throw invalid("target", "Preview requires a scoped statistics target");
+                }
+                var preview = mCatalog.preview(scoped);
+                Map<String,Object> response = new LinkedHashMap<>();
+                response.put("outcome", switch(preview.outcome())
+                {
+                    case NOT_FOUND -> "not_found";
+                    case STALE_SITE -> "stale_site";
+                    case TOO_LARGE -> "too_large";
+                    default -> "found";
+                });
+                response.put("counts_by_part", preview.countsByPart());
+                response.put("rows_total", preview.rowsTotal());
+                response.put("effects", preview.effects());
+                ApiHttpResponse.sendData(exchange, 200, response);
             }
             else if((PATH + "/deletions").equals(path))
             {
@@ -226,6 +255,7 @@ final class RetainedStatisticsAdminHttpController
                 {
                     case NOT_FOUND -> "not_found";
                     case STALE_SITE -> "stale_site";
+                    case TOO_LARGE -> "too_large";
                     default -> "deleted";
                 };
             }
@@ -297,6 +327,35 @@ final class RetainedStatisticsAdminHttpController
         String kind = requiredText(target, "kind", 32);
         return switch(kind)
         {
+            case "scoped_data" -> {
+                requireAllowedFields(target, Set.of("kind", "source_kind", "source_key",
+                    "site_configuration_id", "expected_site_key", "data_type", "record_key", "parts"));
+                for(String field: List.of("source_kind", "data_type", "parts"))
+                {
+                    if(!target.has(field)) throw invalid(field, field + " is required");
+                }
+                JsonNode partsNode = target.get("parts");
+                if(partsNode == null || !partsNode.isArray() || partsNode.isEmpty() || partsNode.size() > 4)
+                {
+                    throw invalid("parts", "Select at least one statistics part");
+                }
+                List<String> parts = new ArrayList<>();
+                for(JsonNode part: partsNode)
+                {
+                    if(!part.isTextual() || !Set.of("current", "summary", "buckets", "events")
+                        .contains(part.textValue()) || parts.contains(part.textValue()))
+                    {
+                        throw invalid("parts", "Statistics parts are invalid");
+                    }
+                    parts.add(part.textValue());
+                }
+                yield new ScopedData(requiredText(target, "source_kind", 32),
+                    optionalText(target, "source_key", 512),
+                    optionalText(target, "site_configuration_id", 36),
+                    optionalText(target, "expected_site_key", 256),
+                    requiredText(target, "data_type", 64),
+                    optionalText(target, "record_key", 128), List.copyOf(parts));
+            }
             case "frequency" -> {
                 requireFields(target, Set.of("kind", "site_configuration_id", "expected_site_key", "frequency_hz"));
                 yield new StatsDatabaseMaintenanceRequest.Frequency(
@@ -383,6 +442,18 @@ final class RetainedStatisticsAdminHttpController
 
     private static void requireFields(JsonNode object, Set<String> allowed)
     {
+        requireAllowedFields(object, allowed);
+        for(String required: allowed)
+        {
+            if(!object.has(required))
+            {
+                throw invalid(required, required + " is required");
+            }
+        }
+    }
+
+    private static void requireAllowedFields(JsonNode object, Set<String> allowed)
+    {
         if(object == null || !object.isObject())
         {
             throw invalid("body", "JSON object is required");
@@ -396,13 +467,17 @@ final class RetainedStatisticsAdminHttpController
                 throw invalid(field, field + " is not supported");
             }
         }
-        for(String required: allowed)
+    }
+
+    private static String optionalText(JsonNode object, String field, int maximum)
+    {
+        JsonNode value = object.get(field);
+        if(value == null) return null;
+        if(!value.isTextual() || value.textValue().isBlank() || value.textValue().length() > maximum)
         {
-            if(!object.has(required))
-            {
-                throw invalid(required, required + " is required");
-            }
+            throw invalid(field, field + " is invalid");
         }
+        return value.textValue();
     }
 
     private static String requiredText(JsonNode object, String field, int maximum)

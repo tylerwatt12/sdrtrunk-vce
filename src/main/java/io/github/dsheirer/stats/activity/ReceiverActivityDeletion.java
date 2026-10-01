@@ -20,6 +20,7 @@ import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest.Identit
 import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest.LearnedSite;
 import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest.SavedSite;
 import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest.System;
+import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest.ScopedData;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -56,6 +57,11 @@ final class ReceiverActivityDeletion
             return new Result(ReceiverActivityMaintenance.DeletionOutcome.STALE_SITE, 0);
         }
 
+        static Result tooLarge()
+        {
+            return new Result(ReceiverActivityMaintenance.DeletionOutcome.TOO_LARGE, 0);
+        }
+
         static Result deleted(int rows)
         {
             return new Result(ReceiverActivityMaintenance.DeletionOutcome.DELETED, rows);
@@ -73,6 +79,7 @@ final class ReceiverActivityDeletion
             case SavedSite site -> deleteSavedSite(connection, site);
             case Channel channel -> deleteChannel(connection, channel);
             case System system -> deleteSystem(connection, system);
+            case ScopedData scoped -> ReceiverActivityScopedDeletion.delete(connection, scoped);
         };
     }
 
@@ -229,7 +236,7 @@ final class ReceiverActivityDeletion
         return Result.deleted(deleted);
     }
 
-    private static ParsedIdentity parseIdentity(Identity target)
+    static ParsedIdentity parseIdentity(Identity target)
     {
         var match = IDENTITY_KEY.matcher(target.identityKey());
         if(!match.matches() || target.kind() == IdentityKind.RADIO && !"r".equals(match.group(1)) ||
@@ -379,7 +386,7 @@ final class ReceiverActivityDeletion
         return Result.deleted(deleted);
     }
 
-    private static SavedChannel savedChannel(Connection connection, String configurationId) throws SQLException
+    static SavedChannel savedChannel(Connection connection, String configurationId) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
             SELECT receiver.id, receiver.radio_system_id, receiver.first_seen_ms AS channel_first_seen_ms,
@@ -423,6 +430,11 @@ final class ReceiverActivityDeletion
                         nullableInt(rows, "observed_ran"), nullableInt(rows, "observed_model_code"),
                         channelId, radioSystemId, rows.getLong("trunked_first_seen_ms"));
                 }
+                else if("TRUNKED".equals(kind))
+                {
+                    siteKey = RetainedSiteKey.snapshotless(channelId, radioSystemId,
+                        rows.getLong("channel_first_seen_ms"));
+                }
                 return new SavedChannel(channelId, kind, rows.getString("decoder_type"), siteKey);
             }
         }
@@ -434,7 +446,7 @@ final class ReceiverActivityDeletion
         return rows.wasNull() ? null : value;
     }
 
-    private static int systemId(Connection connection, String systemKey) throws SQLException
+    static int systemId(Connection connection, String systemKey) throws SQLException
     {
         return scalar(connection, "SELECT id FROM radio_system WHERE system_key = ?", systemKey);
     }
@@ -465,11 +477,11 @@ final class ReceiverActivityDeletion
         for(int index = 0; index < values.length; index++) statement.setObject(index + 1, values[index]);
     }
 
-    private record ParsedIdentity(int kindCode, int homeWacn, int homeSystemId, int identityId)
+    record ParsedIdentity(int kindCode, int homeWacn, int homeSystemId, int identityId)
     {
     }
 
-    private record SavedChannel(int id, String kind, String decoder, String siteKey)
+    record SavedChannel(int id, String kind, String decoder, String siteKey)
     {
     }
 }

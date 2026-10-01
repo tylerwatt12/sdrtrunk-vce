@@ -27,6 +27,12 @@ public final class RetainedSiteKey
         return "conventional:" + channelId + ':' + channelFirstSeenMs;
     }
 
+    /** Stable saved-channel owner when a trunked channel has no current site snapshot. */
+    public static String snapshotless(long channelId, Integer radioSystemId, long channelFirstSeenMs)
+    {
+        return "trunked-unsited" + owner(channelId, radioSystemId, channelFirstSeenMs);
+    }
+
     public static String p25(Integer rfss, Integer site, long channelId, Integer radioSystemId,
                              long snapshotFirstSeenMs)
     {

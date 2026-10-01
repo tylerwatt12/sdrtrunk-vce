@@ -13,6 +13,7 @@ package io.github.dsheirer.stats.activity;
 
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
+import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest.ScopedData;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -20,6 +21,8 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import org.apache.commons.io.FileUtils;
 
@@ -47,7 +50,20 @@ public final class ReceiverActivityMaintenance
         NOT_APPLICABLE,
         DELETED,
         NOT_FOUND,
-        STALE_SITE
+        STALE_SITE,
+        TOO_LARGE
+    }
+
+    /** Read-only preview. Counts describe directly matched rows; effects describe FK cascades. */
+    public record Preview(DeletionOutcome outcome, Map<String,Integer> countsByPart, int rowsTotal,
+                          List<String> effects)
+    {
+    }
+
+    public static Preview preview(Connection connection, ScopedData target) throws SQLException
+    {
+        ReceiverActivityScopedDeletion.Preview preview = ReceiverActivityScopedDeletion.preview(connection, target);
+        return new Preview(preview.outcome(), preview.countsByPart(), preview.rowsTotal(), preview.effects());
     }
 
     public record Result(Operation operation, int rowsDeleted, String checkResult, long databaseBytesBefore,
@@ -81,6 +97,7 @@ public final class ReceiverActivityMaintenance
                 {
                     case NOT_FOUND -> "Target is no longer available";
                     case STALE_SITE -> "Selected site changed; choose it again";
+                    case TOO_LARGE -> "Selection is too large for live removal; narrow the scope";
                     default -> "Retained statistics removed";
                 });
             }
@@ -90,7 +107,7 @@ public final class ReceiverActivityMaintenance
                 sb.append(". Removed ").append(rowsDeleted).append(" directly matched row(s)");
             }
             else if(operation != Operation.CHECK && deletionOutcome != DeletionOutcome.NOT_FOUND &&
-                deletionOutcome != DeletionOutcome.STALE_SITE)
+                deletionOutcome != DeletionOutcome.STALE_SITE && deletionOutcome != DeletionOutcome.TOO_LARGE)
             {
                 sb.append(". Deleted ").append(rowsDeleted).append(
                     operation == Operation.RESET_STATS || operation == Operation.CLEAR_CHANNEL_STATS ||
