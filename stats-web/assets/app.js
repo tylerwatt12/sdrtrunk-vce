@@ -21,7 +21,7 @@ import {
 } from './features/alias-list-create.js?v=2';
 import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=19';
 import { createStreamingWorkspace } from './features/streaming.js?v=5';
-import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=2';
+import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=3';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=8';
 import { createRecordingsFeature } from './features/recordings.js?v=9';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
@@ -1798,7 +1798,10 @@ function aliasListLink(name, id) {
 }
 
 function retainedStatisticsItem(row) {
-  const kind = String(row.target?.kind || '').replace(/^conventional_/, '');
+  const dataType = String(row.target?.data_type || '');
+  const kind = row.target?.kind === 'scoped_data' ?
+    ({ radios: 'radio', talkgroups: 'talkgroup', frequencies: 'frequency' })[dataType] || '' :
+    String(row.target?.kind || '').replace(/^conventional_/, '');
   const identity = ['radio', 'talkgroup'].includes(kind);
   const alias = String(row.alias_name || '').trim();
   const talker = String(row.last_talker_alias || '').trim();
@@ -26565,7 +26568,7 @@ function adminSettingsGroups() {
       { id: 'recordings', label: 'Recordings', capability: ACCESS_CAPABILITIES.ADMIN_RECORDINGS,
         description: 'Manage recording mode, retention, and transcription.' },
       { id: 'retained-statistics', label: 'Retained statistics', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        description: 'Review and remove saved observations.' },
+        description: 'Remove saved statistics while keeping aliases and alias lists.' },
       { id: 'remote-links', label: 'Remote Links', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         description: 'Receive P25 systems from trusted installations or send local systems to one host.' },
       { id: 'spectrum', label: 'Spectrum country', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
@@ -26636,6 +26639,17 @@ async function renderAdmin() {
       formatNumber: number, formatDateTime: dateTime, renderItem: retainedStatisticsItem,
       renderSource: (row, label) => channelLink(row, label || row.label),
       renderAliasList: (row) => aliasListLink(row.alias_list_name, row.alias_list_id),
+      renderAlias: (row) => {
+        const label = row.label || `Alias ${row.alias_id || ''}`;
+        const listId = Number(row.alias_list_id);
+        const aliasId = Number(row.alias_id);
+        const target = aliasAdminAllowed() && Number.isInteger(listId) && listId > 0 &&
+          Number.isInteger(aliasId) && aliasId > 0 ?
+          href('aliases', { list: listId, aliasTab: 'configure', alias: aliasId }) : '';
+        return identitySummaryValue(label, [row.alias_group, row.matcher_type,
+          Number.isInteger(aliasId) && aliasId > 0 ? `Alias ${aliasId}` : '']
+          .filter(Boolean).join(' · '), target);
+      },
       signal: activeRenderController?.signal
     }));
   }

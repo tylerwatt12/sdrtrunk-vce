@@ -3,23 +3,73 @@ const PAGE_SIZE = 25;
 const CHOICE_SIZE = 50;
 const JOB_POLL_MS = 1500;
 
-const TYPES = Object.freeze([
-  { value: 'frequencies', label: 'Frequencies' },
-  { value: 'radios', label: 'Radio IDs' },
-  { value: 'talkgroups', label: 'Talkgroups' },
-  { value: 'sites', label: 'Sites' },
-  { value: 'channels', label: 'Saved channels' },
-  { value: 'systems', label: 'Radio systems' }
-]);
+const TYPE_GROUPS = Object.freeze({
+  radio_system: [
+    { label: 'Observed setup', types: [
+      ['site_state', 'Sites & state'], ['frequencies', 'Frequencies'],
+      ['band_plans', 'Band plans'], ['foreign_band_plans', 'Foreign band plans'],
+      ['neighbors', 'Neighbors'], ['patches', 'Patch groups'],
+      ['control_quality', 'Control quality']
+    ] },
+    { label: 'Identities & summaries', types: [
+      ['radios', 'Radio IDs'], ['talkgroups', 'Talkgroups'],
+      ['relationships', 'Radio relationships'], ['affiliations', 'Affiliations & presence']
+    ] },
+    { label: 'Activity & history', types: [
+      ['call_activity', 'Call totals'], ['signaling_activity', 'Signaling totals'],
+      ['hourly_history', 'Hourly history'], ['detailed_events', 'Detailed events']
+    ] }
+  ],
+  saved_channel: [
+    { label: 'Channel observations', types: [['frequencies', 'Frequencies']] },
+    { label: 'Identities & summaries', types: [
+      ['call_activity', 'Call totals'], ['signaling_activity', 'Signaling totals'],
+      ['radios', 'DMR radio IDs'],
+      ['talkgroups', 'DMR talkgroups']
+    ] },
+    { label: 'Activity & history', types: [
+      ['hourly_history', 'Hourly history'], ['detailed_events', 'Detailed events']
+    ] }
+  ],
+  alias_activity: [
+    { label: 'Receiver-wide', types: [['alias_activity', 'Alias Activity']] }
+  ]
+});
+function typeLabel(sourceKind, type) {
+  if (type === 'all') return 'All retained data';
+  return TYPE_GROUPS[sourceKind]?.flatMap((group) => group.types)
+    .find(([value]) => value === type)?.[1] || 'Results';
+}
+const SITE_TYPES = new Set(['site_state', 'frequencies', 'band_plans',
+  'foreign_band_plans', 'neighbors', 'patches', 'control_quality']);
+const P25_TYPES = new Set(['band_plans', 'foreign_band_plans', 'patches']);
+const PART_LABELS = Object.freeze({ current: 'Current observations',
+  summary: 'Summary statistics', buckets: 'History buckets', events: 'Detailed events' });
+const PART_ORDER = Object.keys(PART_LABELS);
 
-const CHANNEL_TYPES = new Set(['frequencies', 'sites', 'channels']);
+function partLabel(sourceKind, type, part) {
+  if (type === 'alias_activity' && part === 'summary') return 'Activity counters & timestamps';
+  if (['band_plans', 'foreign_band_plans'].includes(type)) {
+    return ({ current: 'Current learned plan', summary: 'Lifetime summary' })[part] ||
+      PART_LABELS[part];
+  }
+  if (type === 'frequencies') {
+    return ({ current: 'Current frequency', summary: 'Lifetime summary',
+      buckets: sourceKind === 'saved_channel' ? 'Hourly history' : 'History buckets' })[part] ||
+      PART_LABELS[part];
+  }
+  if (type === 'control_quality' && part === 'buckets') return 'Quality history';
+  if (type === 'hourly_history' && part === 'buckets') return 'Hourly history';
+  if (['radios', 'talkgroups'].includes(type) && part === 'summary') return 'Identity summary';
+  return PART_LABELS[part] || part;
+}
 
 function typeAvailable(sourceKind, source, type) {
+  if (sourceKind === 'alias_activity') return type === 'alias_activity';
   if (!source) return false;
+  if (P25_TYPES.has(type) && String(source.protocol || '').toUpperCase() !== 'P25') return false;
   if (sourceKind === 'radio_system') return true;
-  if (CHANNEL_TYPES.has(type)) return true;
-  return ['radios', 'talkgroups'].includes(type) &&
-    String(source.channel_kind || '').toUpperCase() === 'CONVENTIONAL' &&
+  return !['radios', 'talkgroups'].includes(type) ||
     String(source.protocol || '').toUpperCase() === 'DMR';
 }
 
@@ -31,23 +81,32 @@ function queryPath(path, values) {
   return `${ROOT}${path}?${query}`;
 }
 
-function targetForRemoval(row, includeChannelHistory) {
+function targetForRemoval(row, partsOrHistory) {
   const target = row?.target;
   if (!target || typeof target !== 'object' || Array.isArray(target)) {
     throw new Error('This row cannot be removed. Refresh the results and try again.');
   }
+  if (target.kind === 'scoped_data') {
+    const supported = Array.isArray(target.parts) ? target.parts : [];
+    const parts = Array.isArray(partsOrHistory) ? partsOrHistory.filter((part) =>
+      supported.includes(part)) : supported;
+    if (!parts.length) throw new Error('Choose at least one saved part to remove.');
+    return { ...target, parts };
+  }
   if (target.kind === 'learned_site' || target.kind === 'saved_site' || target.kind === 'system') {
-    return { ...target, include_channel_history: Boolean(includeChannelHistory) };
+    return { ...target, include_channel_history: Boolean(partsOrHistory) };
   }
   return { ...target };
 }
 
-function requiresSite(source, type) {
-  return Boolean(source && type === 'frequencies');
+function requiresSite(sourceKind, source, type) {
+  return sourceKind === 'radio_system' && Boolean(source) && SITE_TYPES.has(type);
 }
 
-function canShowResults(source, type, site) {
-  return Boolean(source && type && (!requiresSite(source, type) || site?.configuration_id));
+function canShowResults(sourceKind, source, type, site) {
+  if (sourceKind === 'alias_activity') return type === 'alias_activity';
+  return Boolean(source && type && (!requiresSite(sourceKind, source, type) ||
+    site?.configuration_id));
 }
 
 // Reuse map: the Administration settings shell owns navigation; shared ui-field,
@@ -56,7 +115,7 @@ function canShowResults(source, type, site) {
 export function createRetainedStatisticsWorkspace(deps) {
   const { node, formField, uiSelectFrame, uiSegmentedControl, section, sectionActionHost,
     table, openReadOnlyModal, modalFooter, requestJson, formatNumber, formatDateTime,
-    renderItem, renderSource, renderAliasList, signal } = deps;
+    renderItem, renderSource, renderAliasList, renderAlias, signal } = deps;
   const host = node('div', 'retained-statistics-page data-workspace');
   const pickerBody = node('div', 'retained-statistics-picker-body');
   const sourceBlock = node('div', 'retained-statistics-source-block');
@@ -65,6 +124,7 @@ export function createRetainedStatisticsWorkspace(deps) {
   const resultsBody = node('div', 'retained-statistics-results-body');
   const resultsActions = sectionActionHost();
   const resultsSection = section('Results', resultsBody, resultsActions);
+  const resultsTitle = resultsSection.querySelector('.ui-section-title').firstChild;
   const selectionSection = section('Choose data', pickerBody);
   const jobNotice = node('div', 'retained-statistics-job-notice');
   jobNotice.setAttribute('role', 'status');
@@ -74,7 +134,7 @@ export function createRetainedStatisticsWorkspace(deps) {
   const state = {
     sourceKind: 'radio_system', source: null, sourceRows: [], sourceOffset: 0,
     sourceSearch: '', sourceMore: false, sourceLoading: false, sourceError: '', sourceRequest: 0,
-    type: '', site: null, siteRows: [], siteOffset: 0, siteSearch: '',
+    type: '', parts: null, site: null, siteRows: [], siteOffset: 0, siteSearch: '',
     siteMore: false, siteLoading: false, siteError: '', siteRequest: 0,
     resultSearch: '', resultRows: [], resultOffset: 0, resultMore: false,
     resultTotal: null, resultLoading: false, resultRequest: 0, resultError: '',
@@ -103,53 +163,71 @@ export function createRetainedStatisticsWorkspace(deps) {
     'ui-feedback', message);
   const read = (path, values, requestSignal = signal) => requestJson(queryPath(path, values),
     { csrf: false, signal: requestSignal });
-  const choiceName = (row, includeList = true) => [...new Set([row.label, row.site_name, row.channel_name,
-    row.radio_system_name, includeList ? row.alias_list_name : ''].filter(Boolean))].join(' · ');
-  const choiceLabel = (row, rows, key, includeList = true) => {
-    const label = choiceName(row, includeList);
+  const mhz = (hz) => Number.isFinite(Number(hz)) && Number(hz) > 0 ?
+    `${(Number(hz) / 1_000_000).toFixed(5)} MHz` : '';
+  const choiceName = (row) => [...new Set([row.label,
+    row.source_kind === 'saved_channel' ? row.radio_system_name : '',
+    row.source_kind === 'saved_channel' ? row.site_name : '', row.protocol,
+    row.source_kind === 'saved_channel' ? mhz(row.primary_frequency_hz) : ''].filter(Boolean))]
+    .join(' · ');
+  const choiceLabel = (row, rows, key) => {
+    const label = choiceName(row);
     return rows.some((other) => other[key] !== row[key] && choiceName(other) === choiceName(row)) ?
       `${label} · ${row[key]}` : label;
   };
 
   const sourceMode = uiSegmentedControl([
-    { value: 'radio_system', label: 'Radio system' },
-    { value: 'saved_channel', label: 'Saved channel' }
+    { value: 'radio_system', label: 'Trunked system' },
+    { value: 'saved_channel', label: 'Conventional channel' },
+    { value: 'alias_activity', label: 'Alias Activity' }
   ], state.sourceKind, (value) => {
     if (value === state.sourceKind) return;
     state.sourceKind = value;
     state.source = null;
-    state.type = '';
+    state.type = value === 'alias_activity' ? 'alias_activity' : '';
+    state.parts = null;
     clearSite();
     clearResults();
     state.sourceSearch = '';
     sourceSearch.value = '';
+    sourceBlock.hidden = value === 'alias_activity';
     drawSourceChoices();
     drawTypes();
     drawSite();
     drawResults();
     void loadSources(true);
+    if (value === 'alias_activity') void loadResults();
   });
-  sourceMode.setAttribute('aria-label', 'Source type');
+  sourceMode.setAttribute('aria-label', 'Statistics scope');
   sourceMode.classList.add('retained-statistics-source-mode');
+  const modeBlock = node('div', 'retained-statistics-mode-block');
+  modeBlock.append(node('h3', 'retained-statistics-label', 'Where?'), sourceMode);
   const sourceSearch = node('input', 'ui-input');
   sourceSearch.type = 'search';
   sourceSearch.autocomplete = 'off';
-  sourceSearch.placeholder = 'Find a source';
-  sourceSearch.setAttribute('aria-label', 'Find a source');
-  const sourceSelect = select('Source');
+  sourceSearch.placeholder = 'Search radio systems';
+  sourceSearch.setAttribute('aria-label', 'Search sources');
+  const sourceSelect = select('Radio system');
   const sourceMoreButton = button('More sources', () => void loadSources(Boolean(state.sourceError)));
   const sourceMessage = node('small', 'ui-field-detail');
   sourceMessage.setAttribute('role', 'status');
   sourceMessage.setAttribute('aria-live', 'polite');
   const sourceChoices = node('div', 'retained-statistics-source-choices');
   sourceChoices.append(uiSelectFrame(sourceSelect), sourceMoreButton);
-  sourceBlock.append(node('h3', 'retained-statistics-label', 'Source'), sourceMode,
+  const sourceLabel = node('h3', 'retained-statistics-label', 'Radio system');
+  sourceBlock.append(sourceLabel,
     sourceSearch, sourceChoices, sourceMessage);
 
-  const typeChoices = node('div', 'retained-statistics-types ui-segmented');
-  typeChoices.setAttribute('role', 'group');
-  typeChoices.setAttribute('aria-label', 'Data type');
-  typeBlock.append(node('h3', 'retained-statistics-label', 'Data type'), typeChoices);
+  const typeChoices = node('div', 'retained-statistics-catalog');
+  typeChoices.setAttribute('aria-label', 'Data types');
+  const allButton = button('All retained data in scope', () => {
+    if (state.sourceKind === 'alias_activity') reviewGlobalAlias();
+    else chooseType('all');
+  });
+  allButton.classList.add('retained-statistics-all-button');
+  const catalogHeading = node('div', 'retained-statistics-catalog-heading');
+  catalogHeading.append(node('h3', 'retained-statistics-label', 'What data?'), allButton);
+  typeBlock.append(catalogHeading, typeChoices);
 
   const siteSearch = node('input', 'ui-input');
   siteSearch.type = 'search';
@@ -165,7 +243,9 @@ export function createRetainedStatisticsWorkspace(deps) {
   siteChoices.append(uiSelectFrame(siteSelect), siteMoreButton);
   siteBlock.append(node('h3', 'retained-statistics-label', 'Site'),
     siteSearch, siteChoices, siteMessage);
-  pickerBody.append(sourceBlock, typeBlock, siteBlock);
+  const sourceRow = node('div', 'retained-statistics-source-row');
+  sourceRow.append(modeBlock, sourceBlock);
+  pickerBody.append(sourceRow, typeBlock, siteBlock);
 
   const resultSearch = node('input', 'ui-input');
   resultSearch.type = 'search';
@@ -180,9 +260,12 @@ export function createRetainedStatisticsWorkspace(deps) {
   resultStatus.setAttribute('role', 'status');
   resultStatus.setAttribute('aria-live', 'polite');
   const resultTable = node('div', 'retained-statistics-table');
+  const partsBlock = node('div', 'retained-statistics-parts');
+  partsBlock.setAttribute('role', 'group');
+  partsBlock.setAttribute('aria-label', 'Saved parts to remove');
   const resultPager = node('nav', 'retained-statistics-pager pager ui-pager');
   resultPager.setAttribute('aria-label', 'Results pages');
-  resultsBody.append(resultContext, resultSearchForm, resultCount, resultStatus,
+  resultsBody.append(resultContext, resultSearchForm, resultCount, partsBlock, resultStatus,
     resultTable, resultPager);
 
   const selectedSource = () => state.source;
@@ -207,16 +290,23 @@ export function createRetainedStatisticsWorkspace(deps) {
     state.resultTotal = null;
     state.resultSearch = '';
     state.resultError = '';
+    state.parts = null;
     state.resultRequest += 1;
     resultSearch.value = '';
   }
 
   function drawSourceChoices() {
+    if (state.sourceKind === 'alias_activity') return;
     const selected = selectedSource();
-    sourceSearch.placeholder = state.sourceKind === 'radio_system' ?
-      'System, site, channel, or alias list' : 'Channel, site, or alias list';
+    const system = state.sourceKind === 'radio_system';
+    sourceLabel.textContent = system ? 'Radio system' : 'Conventional channel';
+    sourceSearch.placeholder = system ? 'Search by system name or ID' :
+      'Search by channel, site, protocol, or frequency';
+    sourceSearch.setAttribute('aria-label', system ? 'Search radio systems' :
+      'Search conventional channels');
+    sourceSelect.setAttribute('aria-label', system ? 'Radio system' : 'Conventional channel');
     sourceSelect.replaceChildren(option('', state.sourceKind === 'radio_system' ?
-      'Choose radio system' : 'Choose saved channel'));
+      'Choose radio system' : 'Choose conventional channel'));
     const choices = selected ? [...state.sourceRows, selected] : state.sourceRows;
     if (selected && !state.sourceRows.some((row) => row.source_key === selected.source_key)) {
       sourceSelect.append(option(selected.source_key, choiceLabel(selected, choices, 'source_key')));
@@ -225,7 +315,6 @@ export function createRetainedStatisticsWorkspace(deps) {
       choiceLabel(row, choices, 'source_key'))));
     sourceSelect.value = selected?.source_key || '';
     sourceSelect.disabled = state.sourceLoading && !state.sourceRows.length;
-    sourceSearch.hidden = state.sourceRows.length < 20 && !state.sourceMore && !state.sourceSearch;
     sourceMoreButton.hidden = !state.sourceMore && !state.sourceError;
     sourceMoreButton.textContent = state.sourceError ? 'Retry' : 'More sources';
     sourceMoreButton.disabled = state.sourceLoading;
@@ -234,21 +323,36 @@ export function createRetainedStatisticsWorkspace(deps) {
   }
 
   function drawTypes() {
-    typeChoices.replaceChildren(...TYPES.map((entry) => {
-      const control = button(entry.label, () => chooseType(entry.value),
-        'ui-segmented-option retained-statistics-type-option');
-      control.disabled = !typeAvailable(state.sourceKind, selectedSource(), entry.value);
-      control.classList.toggle('active', state.type === entry.value);
-      control.setAttribute('aria-pressed', String(state.type === entry.value));
-      return control;
+    const groups = TYPE_GROUPS[state.sourceKind] || [];
+    typeChoices.replaceChildren(...groups.map((entry) => {
+      const group = node('div', 'ui-fact retained-statistics-catalog-group');
+      const choices = node('div', 'retained-statistics-catalog-items');
+      choices.setAttribute('role', 'group');
+      choices.setAttribute('aria-label', entry.label);
+      choices.append(...entry.types.map(([value, label]) => {
+        const control = button(label, () => chooseType(value),
+          'ui-button ui-button-secondary retained-statistics-type-option');
+        control.disabled = !typeAvailable(state.sourceKind, selectedSource(), value);
+        control.setAttribute('aria-pressed', String(state.type === value));
+        return control;
+      }));
+      group.append(node('strong', 'retained-statistics-group-label', entry.label), choices);
+      return group;
     }));
+    allButton.textContent = state.sourceKind === 'alias_activity' ?
+      'Reset all Alias Activity' : 'All retained data in scope';
+    allButton.disabled = state.sourceKind === 'alias_activity' ?
+      selectedSource()?.target?.kind !== 'scoped_data' : !selectedSource();
+    allButton.setAttribute('aria-pressed', String(state.type === 'all'));
   }
 
   function drawSite() {
-    siteBlock.hidden = !requiresSite(selectedSource(), state.type);
+    siteBlock.hidden = state.sourceKind !== 'radio_system' || !selectedSource() ||
+      (state.type !== 'all' && !requiresSite(state.sourceKind, selectedSource(), state.type));
     if (siteBlock.hidden) return;
     const selected = selectedSite();
-    siteSelect.replaceChildren(option('', 'Choose site'));
+    siteSelect.replaceChildren(option('', state.type === 'all' ?
+      'Entire radio system · all sites' : 'Choose site'));
     const choices = selected ? [...state.siteRows, selected] : state.siteRows;
     if (selected && !state.siteRows.some((row) => row.configuration_id === selected.configuration_id)) {
       siteSelect.append(option(selected.configuration_id,
@@ -258,7 +362,6 @@ export function createRetainedStatisticsWorkspace(deps) {
       choiceLabel(row, choices, 'configuration_id'))));
     siteSelect.value = selected?.configuration_id || '';
     siteSelect.disabled = state.siteLoading && !state.siteRows.length;
-    siteSearch.hidden = state.siteRows.length < 20 && !state.siteMore && !state.siteSearch;
     siteMoreButton.hidden = !state.siteMore && !state.siteError;
     siteMoreButton.textContent = state.siteError ? 'Retry' : 'More sites';
     siteMoreButton.disabled = state.siteLoading;
@@ -287,6 +390,7 @@ export function createRetainedStatisticsWorkspace(deps) {
       state.sourceRows = state.sourceRows.concat(rows);
       state.sourceOffset = Number(response.next_offset ?? state.sourceOffset + rows.length);
       state.sourceMore = response.has_more === true;
+      if (state.sourceKind === 'alias_activity') state.source = rows[0] || null;
     } catch (error) {
       if (state.disposed || generation !== state.sourceRequest || error?.name === 'AbortError') return;
       state.sourceError = error.message || 'Sources could not be loaded.';
@@ -294,12 +398,14 @@ export function createRetainedStatisticsWorkspace(deps) {
       if (generation === state.sourceRequest) {
         state.sourceLoading = false;
         drawSourceChoices();
+        drawTypes();
       }
     }
   }
 
   async function loadSites(reset) {
-    if (state.disposed || !selectedSource() || state.siteLoading && !reset) return;
+    if (state.disposed || state.sourceKind !== 'radio_system' || !selectedSource() ||
+      state.siteLoading && !reset) return;
     const generation = ++state.siteRequest;
     state.siteError = '';
     if (reset) {
@@ -331,46 +437,143 @@ export function createRetainedStatisticsWorkspace(deps) {
   }
 
   function chooseType(value) {
-    if (state.type === value || !selectedSource()) return;
+    if (state.type === value || !typeAvailable(state.sourceKind, selectedSource(), value) &&
+      value !== 'all') return;
+    if (value === 'all' && !selectedSource()) return;
     state.type = value;
     clearSite();
     clearResults();
     drawTypes();
     drawSite();
     drawResults();
-    if (requiresSite(selectedSource(), state.type)) void loadSites(true);
-    else void loadResults();
+    if (requiresSite(state.sourceKind, selectedSource(), state.type)) void loadSites(true);
+    else {
+      if (state.sourceKind === 'radio_system' && state.type === 'all') void loadSites(true);
+      void loadResults();
+    }
   }
 
   function resultsTable() {
     const identity = ['radios', 'talkgroups'].includes(state.type);
-    const columns = [
-      { id: 'item', label: ({ frequencies: 'Frequency', radios: 'Radio', talkgroups: 'Talkgroup',
-        sites: 'Site', channels: 'Saved channel', systems: 'Radio system' })[state.type],
-        render: renderItem, sortable: false }
-    ];
-    if (identity) columns.push({ id: 'alias-group', label: 'Alias group',
-      render: (row) => row.alias_group || '—', sortable: false });
-    if (state.type !== 'frequencies') columns.push({ id: 'alias-list', label: 'Alias list',
-      render: (row) => renderAliasList(row) || '—', sortable: false });
-    if (identity || state.type === 'frequencies') columns.push({ id: 'count',
-      label: identity ? 'Calls' : 'Observations', className: 'numeric', sortable: false,
-      render: (row) => {
-        const count = identity ? row.logical_call_count ?? row.observation_count : row.observation_count;
-        return count == null ? '—' : formatNumber(count);
+    const numeric = (...names) => ({ id: names[0], label: names[names.length - 1],
+      className: 'numeric', sortable: false, render: (row) => {
+        const value = names.slice(0, -1).map((name) => row[name]).find((item) => item != null);
+        return value == null ? '—' : formatNumber(value);
       } });
-    columns.push({ id: 'last-seen', label: 'Last seen',
-      render: (row) => formatDateTime(row.last_seen_ms) || '—', sortable: false },
-      { id: 'action', label: 'Action', render: (row) => {
-        const action = button('Review', () => reviewRow(row));
-        action.disabled = busyWithJob();
-        action.setAttribute('aria-label', `Review removal of ${row.label || 'item'}`);
-        return action;
-      }, sortable: false });
+    const field = (id, label, render) => ({ id, label, render, sortable: false });
+    const time = (label) => field('last-seen', label, (row) =>
+      formatDateTime(row.last_seen_ms) || '—');
+    const stateValue = (row) => row.state ?
+      String(row.state).toLowerCase().replace(/^./, (letter) => letter.toUpperCase()) : '—';
+    const item = field('item', state.type === 'alias_activity' ? 'Saved alias' :
+      identity ? (state.type === 'radios' ? 'Radio' : 'Talkgroup') :
+        state.type === 'band_plans' || state.type === 'foreign_band_plans' ? 'Band' :
+          state.type === 'frequencies' ? 'Frequency' : 'Item',
+    (row) => state.type === 'alias_activity' ? renderAlias(row) : renderItem(row));
+    let columns = [item];
+    if (state.type === 'band_plans' || state.type === 'foreign_band_plans') {
+      columns.push(field('base', 'Base MHz', (row) => mhz(row.base_hz) || '—'),
+        field('spacing', 'Space kHz', (row) => row.spacing_hz == null ? '—' :
+          formatNumber(Number(row.spacing_hz) / 1000)));
+      if (state.type === 'band_plans') columns.push(numeric('bandwidth_hz', 'BW Hz'));
+      columns.push(
+        field('offset', 'Offset MHz', (row) => row.transmit_offset_hz == null ? '—' :
+          (Number(row.transmit_offset_hz) / 1_000_000).toFixed(3)));
+      if (state.type === 'band_plans') columns.push(numeric('timeslots', 'Slots'));
+      else columns.push(field('channel-type', 'Channel type', (row) =>
+        row.channel_type_code ?? '—'));
+      columns.push(field('state', 'State', stateValue),
+        numeric('observation_count', 'Observations'), time('Last seen'));
+    } else if (state.type === 'frequencies' && state.sourceKind === 'radio_system') {
+      columns.push(field('channel', 'LCN', (row) => row.channel_key ||
+        (Array.isArray(row.channel_keys) ? row.channel_keys.join(', ') : row.descriptor) || '—'),
+        field('use', 'Use', (row) => {
+          const tags = Array.isArray(row.current_tags) && row.current_tags.length ?
+            row.current_tags : row.tags;
+          return Array.isArray(tags) ? tags.join(', ') || '—' : tags || '—';
+        }),
+        field('uplink', 'Up MHz', (row) => mhz(row.uplink_hz) || '—'),
+        numeric('timeslots', 'Slots'), field('state', 'State', stateValue),
+        numeric('observation_count', 'Decoder obs.'),
+        numeric('voice_grant_observations', 'Voice grants'), time('Last observed'));
+    } else if (state.type === 'frequencies') {
+      if (state.resultRows.some((row) => Array.isArray(row.timeslots) && row.timeslots.length ||
+        Number(row.timeslot) > 0)) {
+        columns.push(field('slots', 'Slots', (row) => Array.isArray(row.timeslots) &&
+          row.timeslots.length ? row.timeslots.join(', ') : Number(row.timeslot) > 0 ?
+            String(row.timeslot) : '—'));
+      }
+      columns.push(numeric('logical_call_count', 'observation_count', 'Calls'),
+        time('Last heard'));
+    } else if (state.type === 'alias_activity') {
+      columns.push(field('alias-list', 'Alias list', (row) => renderAliasList(row) || '—'),
+        numeric('logical_call_count', 'Calls'),
+        numeric('signaling_observation_count', 'Signaling'), time('Last heard'));
+    } else if (identity) {
+      columns.push(field('alias-group', 'Alias group', (row) => row.alias_group || '—'),
+        field('alias-list', 'Alias list', (row) => renderAliasList(row) || '—'),
+        numeric('logical_call_count', 'observation_count', 'Calls'), time('Last heard'));
+    } else {
+      columns.push(field('saved-records', 'Saved records', (row) =>
+        row.observation_count == null && row.record_count == null ? '—' :
+          formatNumber(row.record_count ?? row.observation_count)), time('Last seen'));
+    }
+    columns.splice(1, 0, { id: 'action', label: 'Action', render: (row) => {
+      const action = button('Review', () => reviewRow(row), 'link-button ui-row-action');
+      action.disabled = busyWithJob() || row.target?.kind === 'scoped_data' &&
+        !selectedPartsFor(row).length;
+      action.setAttribute('aria-label', `Review removal of ${row.label || 'item'}`);
+      return action;
+    }, sortable: false });
     return table(state.resultRows, columns, 'No matching results', {
-      type: `retained-statistics-${state.type}`, layoutMenuHost: resultsActions,
+      type: `retained-statistics-v2-${state.sourceKind}-${state.type}`,
+      layoutMenuHost: resultsActions,
       tableClass: 'ui-data-table-quiet', mobileCards: true, sortable: false,
       controller: tableController
+    });
+  }
+
+  function aggregateResult(row) {
+    const summary = node('div', 'ui-fact retained-statistics-aggregate');
+    const text = node('div', 'retained-statistics-aggregate-text');
+    text.append(node('strong', '', row.label || 'Selected data'));
+    if (row.detail) text.append(node('small', 'muted', row.detail));
+    const action = button('Review removal', () => reviewRow(row));
+    action.disabled = busyWithJob() || row.target?.kind === 'scoped_data' &&
+      !selectedPartsFor(row).length;
+    summary.append(text, action);
+    return summary;
+  }
+
+  function selectedPartsFor(row) {
+    const supported = Array.isArray(row?.target?.parts) ? row.target.parts : [];
+    return (state.parts || supported).filter((part) => supported.includes(part));
+  }
+
+  function drawParts() {
+    partsBlock.replaceChildren();
+    const supported = [...new Set(state.resultRows.flatMap((row) =>
+      row.target?.kind === 'scoped_data' && Array.isArray(row.target.parts) ?
+        row.target.parts : []))];
+    if (!supported.length) {
+      partsBlock.hidden = true;
+      return;
+    }
+    partsBlock.hidden = false;
+    if (state.parts === null) state.parts = supported.slice();
+    partsBlock.append(node('strong', 'retained-statistics-parts-label', 'Remove saved parts'));
+    PART_ORDER.filter((part) => supported.includes(part)).forEach((part) => {
+      const label = node('label', 'retained-statistics-part');
+      const input = node('input', 'ui-selection-check');
+      input.type = 'checkbox';
+      input.value = part;
+      input.checked = state.parts.includes(part);
+      input.addEventListener('change', () => {
+        state.parts = [...partsBlock.querySelectorAll('input:checked')].map((control) => control.value);
+        drawResults();
+      });
+      label.append(input, node('span', '', partLabel(state.sourceKind, state.type, part)));
+      partsBlock.append(label);
     });
   }
 
@@ -397,7 +600,8 @@ export function createRetainedStatisticsWorkspace(deps) {
   }
 
   function drawResults() {
-    const ready = canShowResults(selectedSource(), state.type, selectedSite());
+    const ready = canShowResults(state.sourceKind, selectedSource(), state.type, selectedSite());
+    resultsTitle.textContent = state.type ? typeLabel(state.sourceKind, state.type) : 'Results';
     resultContext.hidden = !ready;
     resultSearchForm.hidden = !ready;
     resultCount.hidden = !ready;
@@ -405,22 +609,28 @@ export function createRetainedStatisticsWorkspace(deps) {
     if (!ready) {
       resultContext.textContent = '';
       resultCount.textContent = '';
+      partsBlock.hidden = true;
       resultStatus.replaceChildren(feedback(!selectedSource() || !state.type ?
-        'Choose a source and data type.' : 'Choose a site to see frequencies.'));
+        'Choose a system or channel and a data type.' : 'Choose a site.'));
       resultPager.hidden = true;
       return;
     }
     resultSearch.placeholder = ({ frequencies: 'Frequency in MHz or Hz',
       radios: 'Radio alias, over-the-air name, or ID', talkgroups: 'Talkgroup alias or ID',
-      sites: 'Site, channel, or alias list', channels: 'Channel, site, or alias list',
-      systems: 'System, site, channel, or alias list' })[state.type];
-    resultContext.replaceChildren(renderSource(selectedSource(),
-      choiceLabel(selectedSource(), state.sourceRows, 'source_key', false)));
+      band_plans: 'Band or base MHz', foreign_band_plans: 'Foreign system or band',
+      alias_activity: 'Alias name or list' })[state.type] || 'Search results';
+    resultSearchForm.hidden = state.type === 'all';
+    if (state.sourceKind === 'alias_activity') {
+      resultContext.replaceChildren('Receiver-wide');
+    } else resultContext.replaceChildren(renderSource(selectedSource(), selectedSource()?.label));
     if (selectedSite()) resultContext.append(' · ', renderSource(selectedSite(),
-      choiceLabel(selectedSite(), state.siteRows, 'configuration_id', false)));
-    const contextList = renderAliasList(selectedSite() || selectedSource());
+      selectedSite().label));
+    else if (state.sourceKind === 'radio_system' && state.type === 'all') {
+      resultContext.append(' · All sites');
+    }
+    const contextList = state.sourceKind === 'alias_activity' ? null :
+      renderAliasList(selectedSite() || selectedSource());
     if (contextList) resultContext.append(' · ', contextList);
-    resultContext.append(' · ', TYPES.find((entry) => entry.value === state.type)?.label || '');
     resultStatus.replaceChildren();
     if (state.resultLoading) {
       resultStatus.append(feedback('Loading results…', 'loading'));
@@ -430,8 +640,12 @@ export function createRetainedStatisticsWorkspace(deps) {
     } else if (!state.resultRows.length) {
       resultStatus.append(feedback('No matching results.'));
     } else {
-      resultTable.append(resultsTable());
+      const aggregate = state.resultRows.length === 1 &&
+        state.resultRows[0].target?.kind === 'scoped_data' &&
+        state.resultRows[0].target?.record_key == null && state.type !== 'alias_activity';
+      resultTable.append(aggregate ? aggregateResult(state.resultRows[0]) : resultsTable());
     }
+    drawParts();
     if (state.resultTotal != null) {
       resultCount.textContent = `${formatNumber(state.resultTotal)} result${state.resultTotal === 1 ? '' : 's'}`;
     } else resultCount.textContent = state.resultRows.length ? 'Results' : '';
@@ -439,14 +653,16 @@ export function createRetainedStatisticsWorkspace(deps) {
   }
 
   async function loadResults() {
-    if (state.disposed || !canShowResults(selectedSource(), state.type, selectedSite())) return;
+    if (state.disposed || !canShowResults(state.sourceKind, selectedSource(),
+      state.type, selectedSite())) return;
     const generation = ++state.resultRequest;
     state.resultLoading = true;
     state.resultError = '';
     drawResults();
     try {
       const response = await read('/results', {
-        source_kind: state.sourceKind, source_key: selectedSource().source_key,
+        source_kind: state.sourceKind, source_key: state.sourceKind === 'alias_activity' ?
+          undefined : selectedSource().source_key,
         data_type: state.type, site_configuration_id: selectedSite()?.configuration_id,
         q: state.resultSearch, limit: PAGE_SIZE, offset: state.resultOffset
       });
@@ -499,15 +715,164 @@ export function createRetainedStatisticsWorkspace(deps) {
     }
   }
 
+  function reviewGlobalAlias() {
+    const target = selectedSource()?.target;
+    if (!target || target.kind !== 'scoped_data') {
+      jobNotice.replaceChildren(feedback('Alias Activity could not be loaded. Try again.', 'error'));
+      return;
+    }
+    reviewScopedRow({ label: 'All Alias Activity',
+      detail: 'Call counts and last-heard times across saved aliases', target }, target.parts);
+  }
+
+  function reviewScopedRow(row, forcedParts = null) {
+    if (busyWithJob()) return;
+    let target;
+    try {
+      target = targetForRemoval(row, forcedParts || selectedPartsFor(row));
+    } catch (error) {
+      jobNotice.replaceChildren(feedback(error.message, 'error'));
+      return;
+    }
+    const body = node('div', 'retained-statistics-review editor-workspace');
+    const summary = node('div', 'ui-fact retained-statistics-review-target');
+    summary.append(node('strong', '', row.label || 'Selected data'));
+    if (row.detail) summary.append(node('small', 'muted', row.detail));
+    const scope = node('p', 'retained-statistics-impact',
+      target.source_kind === 'alias_activity' ? 'Alias Activity' :
+        `${selectedSource()?.label || 'Selected source'}${selectedSite() ?
+          ` · ${selectedSite().label}` : ''}`);
+    const parts = node('div', 'retained-statistics-review-parts');
+    parts.append(node('strong', '', 'Remove'), node('span', '', target.parts.map((part) =>
+      partLabel(target.source_kind, target.data_type, part)).join(' · ')));
+    const previewHost = node('div', 'retained-statistics-preview');
+    previewHost.setAttribute('role', 'status');
+    const keep = node('div', 'ui-notice', target.source_kind === 'alias_activity' ?
+      'Saved aliases and alias lists remain. New activity may return while receiving continues.' :
+      'Saved aliases and alias lists remain. Alias Activity totals may remain. New observations may return while receiving continues.');
+    const errorHost = node('div', 'retained-statistics-review-error');
+    errorHost.setAttribute('role', 'alert');
+    const cancel = button('Cancel');
+    const confirm = button('Remove saved statistics', null, 'ui-button ui-button-danger');
+    confirm.disabled = true;
+    const footer = modalFooter(cancel, confirm);
+    footer.classList.add('retained-statistics-review-actions');
+    const phrase = target.source_kind === 'alias_activity' && target.record_key == null ?
+      'RESET ALIAS ACTIVITY' : target.data_type === 'all' && target.site_configuration_id ?
+        'DELETE SITE' : target.data_type === 'all' && target.source_kind === 'radio_system' ?
+          selectedSource()?.label || 'DELETE SYSTEM' : target.data_type === 'all' ?
+            'DELETE CHANNEL STATISTICS' : '';
+    let phraseInput = null;
+    if (phrase) {
+      phraseInput = node('input', 'ui-input');
+      phraseInput.type = 'text';
+      phraseInput.autocomplete = 'off';
+      phraseInput.spellcheck = false;
+      const field = formField(`Type ${phrase} to confirm`, phraseInput);
+      field.classList.add('retained-statistics-phrase');
+      phraseInput.addEventListener('input', updateConfirm);
+      body.append(summary, scope, parts, previewHost, field, keep, errorHost, footer);
+    } else body.append(summary, scope, parts, previewHost, keep, errorHost, footer);
+    let modal = null;
+    let previewReady = false;
+    let requestId = null;
+
+    function updateConfirm() {
+      confirm.disabled = !previewReady || Boolean(phrase && phraseInput?.value !== phrase);
+    }
+
+    async function loadPreview() {
+      previewReady = false;
+      updateConfirm();
+      previewHost.replaceChildren(feedback('Checking affected records…', 'loading'));
+      errorHost.replaceChildren();
+      try {
+        const preview = await requestJson(`${ROOT}/preview`, {
+          method: 'POST', body: { target }, signal, timeoutMs: 30000
+        });
+        if (state.disposed || !body.isConnected) return;
+        if (preview.outcome !== 'found') {
+          const message = preview.outcome === 'stale_site' ?
+            'This site changed. Choose it again.' : preview.outcome === 'too_large' ?
+              'Too many matching records. Choose a smaller scope or data type.' :
+              'These records are already gone.';
+          previewHost.replaceChildren(feedback(message));
+          return;
+        }
+        const counts = preview.counts_by_part || {};
+        const list = node('dl', 'ui-facts retained-statistics-preview-counts');
+        target.parts.forEach((part) => {
+          const fact = node('div', 'ui-fact');
+          fact.append(node('dt', '', partLabel(target.source_kind, target.data_type, part)),
+            node('dd', '', formatNumber(counts[part] ?? 0)));
+          list.append(fact);
+        });
+        const total = node('strong', 'retained-statistics-preview-total',
+          `${formatNumber(preview.rows_total ?? 0)} directly matched records`);
+        previewHost.replaceChildren(total, list);
+        if (Array.isArray(preview.effects) && preview.effects.length) {
+          const effects = node('ul', 'retained-statistics-effects');
+          preview.effects.forEach((effect) => effects.append(node('li', '', String(effect))));
+          previewHost.append(effects);
+        }
+        previewReady = Number(preview.rows_total) > 0;
+        updateConfirm();
+      } catch (error) {
+        if (state.disposed || !body.isConnected || error?.name === 'AbortError') return;
+        previewHost.replaceChildren(feedback('Affected records could not be checked.', 'error'));
+        previewHost.append(button('Retry', () => void loadPreview()));
+      }
+    }
+
+    cancel.addEventListener('click', () => modal?.close());
+    confirm.addEventListener('click', async () => {
+      if (confirm.disabled || !modal) return;
+      modal.setBusy(true);
+      confirm.disabled = true;
+      errorHost.replaceChildren();
+      try {
+        requestId ||= crypto.randomUUID();
+        const response = await requestJson(`${ROOT}/deletions`, {
+          method: 'POST', body: { request_id: requestId, target },
+          signal, timeoutMs: 30000
+        });
+        if (state.disposed) return;
+        modal.setBusy(false);
+        modal.close();
+        state.job = response;
+        state.jobTarget = target;
+        state.jobSource = { kind: state.sourceKind, key: selectedSource()?.source_key };
+        drawJob();
+        void pollJob();
+      } catch (error) {
+        if (state.disposed || error?.name === 'AbortError') return;
+        modal.setBusy(false);
+        errorHost.replaceChildren(feedback(error.status === 409 ?
+          'Saved data changed. Close this review and choose it again.' :
+          error.message || 'Removal could not be started.', 'error'));
+        if (error.status === 409) previewReady = false;
+        updateConfirm();
+      }
+    });
+    modal = openReadOnlyModal(`Remove ${row.label || 'saved data'}?`, body, {
+      id: 'retained-statistics-review', className: 'retained-statistics-modal',
+      returnFocusSelector: target.source_kind === 'alias_activity' &&
+        target.record_key == null ? '.retained-statistics-all-button' :
+          '.retained-statistics-result-count'
+    });
+    if (modal) void loadPreview();
+  }
+
   function reviewRow(row) {
     if (busyWithJob()) return;
+    if (row.target?.kind === 'scoped_data') return reviewScopedRow(row);
     const body = node('div', 'retained-statistics-review editor-workspace');
     const summary = node('div', 'ui-fact retained-statistics-review-target');
     summary.append(node('strong', '', row.label || 'Selected item'));
     if (row.detail) summary.append(node('small', 'muted', row.detail));
     const impact = node('p', 'retained-statistics-impact');
     const reappearance = node('div', 'ui-notice ui-notice-warning',
-      'Receiving continues; removed rows may return. Shared Alias Activity totals may remain.');
+      'Receiving continues; removed rows may return. Alias Activity totals may remain.');
     const errorHost = node('div', 'retained-statistics-review-error');
     errorHost.setAttribute('role', 'alert');
     const cancel = button('Cancel');
@@ -625,7 +990,9 @@ export function createRetainedStatisticsWorkspace(deps) {
     else if (stateName === 'running') jobNotice.append(feedback('Removing retained statistics…', 'loading'));
     else if (stateName === 'succeeded') {
       const message = state.job.outcome === 'stale_site' ? 'Site changed. Choose it again.' :
-        state.job.outcome === 'not_found' ? 'The item was already gone.' : 'Removal complete.';
+        state.job.outcome === 'too_large' ?
+          'Too many records. Narrow the scope or data type and retry.' :
+          state.job.outcome === 'not_found' ? 'The item was already gone.' : 'Removal complete.';
       jobNotice.append(feedback(message));
     } else if (stateName === 'failed') {
       jobNotice.append(feedback(state.job.error || 'Removal failed. Try again.', 'error'));
@@ -646,11 +1013,15 @@ export function createRetainedStatisticsWorkspace(deps) {
         const target = state.jobTarget;
         const submittedSource = state.jobSource;
         const staleSite = state.job.state === 'succeeded' && state.job.outcome === 'stale_site';
+        const tooLarge = state.job.state === 'succeeded' && state.job.outcome === 'too_large';
         const sourceIsCurrent = selectedSource()?.source_key === submittedSource?.key &&
           state.sourceKind === submittedSource?.kind;
-        const removedSource = state.job.state === 'succeeded' && !staleSite && sourceIsCurrent &&
+        const removedSource = state.job.state === 'succeeded' && !staleSite && !tooLarge &&
+          sourceIsCurrent &&
           (target?.kind === 'system' && state.sourceKind === 'radio_system' ||
-            target?.kind === 'channel' && state.sourceKind === 'saved_channel');
+            target?.kind === 'channel' && state.sourceKind === 'saved_channel' ||
+            target?.kind === 'scoped_data' && target.data_type === 'all' &&
+              !target.site_configuration_id && state.sourceKind !== 'alias_activity');
         if (removedSource) {
           state.source = null;
           state.type = '';
@@ -662,16 +1033,19 @@ export function createRetainedStatisticsWorkspace(deps) {
           drawResults();
           void loadSources(true);
         } else {
-          const removedSelectedSite = staleSite || state.job.state === 'succeeded' &&
-            ['saved_site', 'channel'].includes(target?.kind) &&
-            selectedSite()?.configuration_id === target?.configuration_id;
+          const removedSelectedSite = staleSite || state.job.state === 'succeeded' && !tooLarge &&
+            (['saved_site', 'channel'].includes(target?.kind) &&
+              selectedSite()?.configuration_id === target?.configuration_id ||
+              target?.kind === 'scoped_data' && target.data_type === 'all' &&
+              selectedSite()?.configuration_id === target.site_configuration_id);
           if (removedSelectedSite) {
             clearSite();
             clearResults();
             drawSite();
             drawResults();
           } else void loadResults();
-          if (requiresSite(selectedSource(), state.type)) void loadSites(true);
+          if (requiresSite(state.sourceKind, selectedSource(), state.type) ||
+            state.sourceKind === 'radio_system' && state.type === 'all') void loadSites(true);
         }
       }
     } catch (error) {
@@ -702,7 +1076,7 @@ export function createRetainedStatisticsWorkspace(deps) {
     clearResults();
     drawSite();
     drawResults();
-    if (selectedSite()) void loadResults();
+    if (selectedSite() || state.type === 'all') void loadResults();
   });
   siteSearch.addEventListener('input', () => {
     window.clearTimeout(state.choiceTimer);
