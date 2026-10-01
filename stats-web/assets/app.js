@@ -13053,24 +13053,27 @@ function openSpectrumDiscoveryWizard(selection) {
       showError(error);
     } finally { if (current()) busy(false); }
   };
-  const drawProbe = () => {
-    const identifying = session.state === 'identifying';
+  const drawSetupStatus = () => {
+    const p25 = profile.id === 'p25-phase1';
+    const identifying = p25 && session.state === 'identifying';
     if (!identifying || !probeNodes) {
-      showStep(1, 'Identify the P25 control channel');
+      showStep(1, p25 ? 'Identify the P25 control channel' : `${profile.label} setup interrupted`);
       const candidates = node('div', 'channel-editor-grid');
       probeNodes = { identity: node('div') };
-      [['c4fm', 'C4FM'], ['cqpsk', 'CQPSK']].forEach(([key, label]) => {
-        const card = node('div', 'ui-form-section');
-        const selected = uiPill('Selected', 'success');
-        selected.hidden = true;
-        const heading = node('strong', '', label);
-        heading.append(' ', selected);
-        const counts = node('p', 'muted');
-        card.append(heading, counts);
-        probeNodes[key] = { selected, counts };
-        candidates.append(card);
-      });
-      stage.append(candidates, probeNodes.identity);
+      if (p25) {
+        [['c4fm', 'C4FM'], ['cqpsk', 'CQPSK']].forEach(([key, label]) => {
+          const card = node('div', 'ui-form-section');
+          const selected = uiPill('Selected', 'success');
+          selected.hidden = true;
+          const heading = node('strong', '', label);
+          heading.append(' ', selected);
+          const counts = node('p', 'muted');
+          card.append(heading, counts);
+          probeNodes[key] = { selected, counts };
+          candidates.append(card);
+        });
+        stage.append(candidates, probeNodes.identity);
+      }
       if (identifying) button('Cancel', () => modal.close());
       else {
         button('Back', async () => {
@@ -13079,6 +13082,10 @@ function openSpectrumDiscoveryWizard(selection) {
         });
         button('Retry', () => void beginSession(profile.id), true);
       }
+    }
+    if (!p25) {
+      message.textContent = session.reason || 'Channel setup was interrupted. Retry or choose another signal.';
+      return;
     }
     const probe = session.probe || {};
     [['c4fm', 'C4FM'], ['cqpsk', 'CQPSK']].forEach(([key, label]) => {
@@ -13274,7 +13281,7 @@ function openSpectrumDiscoveryWizard(selection) {
     else if (session.state === 'ready' && session.review) {
       settings = { ...session.review.template.settings };
       if (profile.id === 'p25-phase1') showReview(); else showSettings();
-    } else drawProbe();
+    } else drawSetupStatus();
   };
   void request('/api/v1/admin/channels/protocols', { csrf: false }).then((catalog) => {
     if (!current()) return;

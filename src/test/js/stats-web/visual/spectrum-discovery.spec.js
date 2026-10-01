@@ -22,7 +22,8 @@ function snapshot(protocolId, state) {
   const settings = Object.fromEntries(profile.sections.flatMap((section) => section.fields)
     .filter((field) => field.path.startsWith('settings.') && Object.hasOwn(field, 'default'))
     .map((field) => [field.path.substring(9), field.default]));
-  return { session_id: 'discovery-a', state: state.phase || 'ready', protocol_id: protocolId,
+  return { session_id: 'discovery-a', state: state.phase || 'ready', reason: state.reason || null,
+    protocol_id: protocolId,
     tuner_id: 'idle-a', target_id: 'target-a', frequency_hz: state.frequencyHz || 851012500,
     expires_at_ms: Date.now() + 30000,
     probe: protocolId === 'p25-phase1' ? {
@@ -135,7 +136,7 @@ async function install(page, state = {}) {
   await expect(page.getByRole('heading', { name: 'Tuner Spectrum', exact: true })).toBeVisible();
   if (!state.browseError) await expect(page.locator('.spectrum-browse-center')).toContainText('0851.01250MHz');
   await page.evaluate(async () => {
-    window.discoveryApi = await import('/assets/app.js?v=352');
+    window.discoveryApi = await import('/assets/app.js?v=353');
     window.discoveryProbeStates = [];
     window.openDiscovery = () => window.discoveryApi.openSpectrumDiscoveryWizard({
       tunerId: 'idle-a', targetId: 'target-a', frequencyHz: 851012500, browseLeaseId: 'browse-a',
@@ -399,6 +400,35 @@ for (const [protocolId, theme, width] of [['am', 'light', 1280], ['nbfm', 'dark'
     expect(save.settings.bandwidth).toBe('BW_25_0');
     expect(save.alias_list_id).toBe(0);
     expect(save.new_alias_list_name).toBe('P25 B0001-123');
+  });
+}
+
+for (const protocolId of ['am', 'nbfm']) {
+  test(`${protocolId} interrupted setup stays protocol-specific and retries the selected protocol`, async ({ page }) => {
+    const state = {};
+    await page.clock.install();
+    await install(page, state);
+    await begin(page, protocolId);
+    const dialog = wizard(page);
+    const label = protocols.profiles.find((profile) => profile.id === protocolId).label;
+    await expect(dialog.getByRole('heading', { name: `${label} settings`, exact: true })).toBeVisible();
+    state.phase = 'failed';
+    state.reason = 'The selected tuner is unavailable.';
+    await page.clock.fastForward(11000);
+    await expect(dialog.getByRole('heading', { name: `${label} setup interrupted` })).toBeVisible();
+    await expect(dialog).toContainText('The selected tuner is unavailable.');
+    await expect(dialog).not.toContainText('P25');
+    await expect(dialog).not.toContainText('C4FM');
+    await expect(dialog).not.toContainText('CQPSK');
+    await expect(dialog.getByRole('button', { name: 'Back', exact: true })).toBeVisible();
+    state.phase = 'ready';
+    state.reason = null;
+    await dialog.getByRole('button', { name: 'Retry', exact: true }).click();
+    await expect(dialog.getByRole('heading', { name: `${label} settings`, exact: true })).toBeVisible();
+    const opens = state.requests.filter((request) => request.path === '/api/v1/admin/spectrum-discovery' &&
+      request.method === 'POST');
+    expect(opens.map((request) => request.body.protocol_id)).toEqual([protocolId, protocolId]);
+    expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(0);
   });
 }
 
