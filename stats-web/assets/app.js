@@ -23,7 +23,7 @@ import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from
 import { createStreamingWorkspace } from './features/streaming.js?v=5';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=3';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=8';
-import { createRecordingsFeature } from './features/recordings.js?v=9';
+import { createRecordingsFeature } from './features/recordings.js?v=10';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=4';
 

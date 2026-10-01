@@ -1105,17 +1105,16 @@ export function createRecordingsFeature(deps) {
     transcript.value = search.transcript;
     transcript.maxLength = 240;
     advancedFields.append(field('Transcript text', transcript));
-    const minimumSeconds = Number(search.min_duration_ms || 0) / 1000;
-    const maximumSeconds = search.max_duration_ms ? Number(search.max_duration_ms) / 1000 : null;
-    // The last upper position has no ceiling, so long conventional calls stay
-    // included. Expand only when restoring a filter beyond the normal scale.
-    const durationCeiling = Math.max(120, Math.ceil(minimumSeconds + 1),
-      maximumSeconds === null ? 0 : Math.ceil(maximumSeconds + 1));
+    const durationCeiling = 30;
+    const minimumSeconds = Math.min(durationCeiling, Number(search.min_duration_ms || 0) / 1000);
+    const maximumSeconds = search.max_duration_ms ?
+      Math.min(durationCeiling, Math.floor(Number(search.max_duration_ms) / 1000)) : durationCeiling;
+    // Endpoint positions include sub-second calls and calls longer than 30 seconds.
     const callDuration = createDualRange({ node, label: 'Call length',
-      min: 0, max: durationCeiling, step: 0.5,
-      lower: minimumSeconds, upper: maximumSeconds ?? durationCeiling,
+      min: 0, max: durationCeiling, step: 1,
+      lower: minimumSeconds, upper: maximumSeconds,
       format: (seconds, endpoint) => endpoint === 'upper' && seconds === durationCeiling ?
-        'Any length' : `${seconds} sec` });
+        '30 seconds+' : seconds === 0 ? '<1 second' : `${seconds} ${seconds === 1 ? 'second' : 'seconds'}` });
     callDuration.field.classList.add('recordings-field');
     const frequencyInput = textInput('MHz', 'number');
     frequencyInput.step = '0.0001';
@@ -1233,7 +1232,7 @@ export function createRecordingsFeature(deps) {
       const durationRange = callDuration.values();
       search.min_duration_ms = durationRange.lower > 0 ? String(Math.round(durationRange.lower * 1000)) : '';
       search.max_duration_ms = durationRange.upper < durationCeiling ?
-        String(Math.round(durationRange.upper * 1000)) : '';
+        String(durationRange.upper === 0 ? 999 : Math.round(durationRange.upper * 1000)) : '';
       search.frequency_hz = frequencyInput.value ? String(Math.round(Number(frequencyInput.value) * 1_000_000)) : '';
       search.transcript = transcript.value.trim();
       search.call_type = callType.value;

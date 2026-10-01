@@ -314,7 +314,7 @@ test('suggestions show no-match and failure states, then stay closed after blur'
   await expect(page.getByRole('listbox')).toBeHidden();
 });
 
-test('call length uses ordered half-second handles and an unrestricted upper endpoint', async ({ page }) => {
+test('call length steps from sub-second to whole seconds with a thirty-second-plus endpoint', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   const state = await openRecordings(page);
   await expect(page.locator('.recordings-call')).toHaveCount(1);
@@ -325,26 +325,33 @@ test('call length uses ordered half-second handles and an unrestricted upper end
   const lower = page.getByRole('slider', { name: 'Call length: Minimum', exact: true });
   const upper = page.getByRole('slider', { name: 'Call length: Maximum', exact: true });
   await expect(lower).toHaveValue('0');
-  await expect(upper).toHaveValue('120');
-  await expect(upper).toHaveAttribute('aria-valuetext', 'Any length');
+  await expect(lower).toHaveAttribute('aria-valuetext', '<1 second');
+  await expect(upper).toHaveValue('30');
+  await expect(upper).toHaveAttribute('aria-valuetext', '30 seconds+');
+  await expect(page.locator('.ui-dual-range-field')).toHaveScreenshot('recordings-duration-defaults-desktop.png');
   await page.getByRole('button', { name: 'Search', exact: true }).click();
   expect(state.requestedFilters.at(-1)).not.toHaveProperty('min_duration_ms');
   expect(state.requestedFilters.at(-1)).not.toHaveProperty('max_duration_ms');
 
   await lower.focus();
   await lower.press('ArrowRight');
-  await expect(lower).toHaveValue('0.5');
+  await expect(lower).toHaveValue('1');
+  await expect(lower).toHaveAttribute('aria-valuetext', '1 second');
   await upper.focus();
   await upper.press('Home');
-  await expect(upper).toHaveValue('0.5');
-  await expect(lower).toHaveAttribute('aria-valuemax', '0.5');
-  await expect(upper).toHaveAttribute('aria-valuemin', '0.5');
+  await expect(upper).toHaveValue('1');
+  await expect(lower).toHaveAttribute('aria-valuemax', '1');
+  await expect(upper).toHaveAttribute('aria-valuemin', '1');
   await page.getByRole('button', { name: 'Search', exact: true }).click();
-  expect(state.requestedFilters.at(-1)).toMatchObject({ min_duration_ms: '500', max_duration_ms: '500' });
+  expect(state.requestedFilters.at(-1)).toMatchObject({ min_duration_ms: '1000', max_duration_ms: '1000' });
   await upper.focus();
   await upper.press('End');
   await page.getByRole('button', { name: 'Search', exact: true }).click();
-  expect(state.requestedFilters.at(-1)).toHaveProperty('min_duration_ms', '500');
+  expect(state.requestedFilters.at(-1)).toHaveProperty('min_duration_ms', '1000');
+  expect(state.requestedFilters.at(-1)).not.toHaveProperty('max_duration_ms');
+  await lower.press('End');
+  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  expect(state.requestedFilters.at(-1)).toHaveProperty('min_duration_ms', '30000');
   expect(state.requestedFilters.at(-1)).not.toHaveProperty('max_duration_ms');
 
   await page.getByRole('button', { name: 'Clear filters' }).click();
@@ -352,7 +359,7 @@ test('call length uses ordered half-second handles and an unrestricted upper end
   await page.getByRole('button', { name: 'More filters' }).click();
   await expect(page.getByRole('slider', { name: 'Call length: Minimum', exact: true })).toHaveValue('0');
   await expect(page.getByRole('slider', { name: 'Call length: Maximum', exact: true }))
-    .toHaveAttribute('aria-valuetext', 'Any length');
+    .toHaveAttribute('aria-valuetext', '30 seconds+');
 });
 
 test('numeric talkgroups can be selected in Find a call and the dedicated filter', async ({ page }) => {
@@ -453,21 +460,30 @@ test.describe('touch call length', () => {
     const upper = dialog.getByRole('slider', { name: 'Call length: Maximum', exact: true });
     await lower.scrollIntoViewIfNeeded();
     const rail = await dialog.locator('.ui-dual-range-rail').boundingBox();
-    await page.touchscreen.tap(rail.x + rail.width / 4, rail.y + rail.height / 2);
-    await expect(lower).toHaveValue('30');
-    await page.touchscreen.tap(rail.x + rail.width * 3 / 4, rail.y + rail.height / 2);
-    await expect(upper).toHaveValue('90');
+    await page.touchscreen.tap(rail.x + rail.width / 3, rail.y + rail.height / 2);
+    await expect(lower).toHaveValue('10');
+    await page.touchscreen.tap(rail.x + rail.width * 2 / 3, rail.y + rail.height / 2);
+    await expect(upper).toHaveValue('20');
     await dialog.getByRole('button', { name: 'Show calls' }).click();
     await expect(dialog).toBeHidden();
-    expect(state.requestedFilters.at(-1)).toMatchObject({ min_duration_ms: '30000', max_duration_ms: '90000' });
+    expect(state.requestedFilters.at(-1)).toMatchObject({ min_duration_ms: '10000', max_duration_ms: '20000' });
     await page.getByRole('button', { name: 'Filters' }).click();
-    await expect(lower).toHaveValue('30');
-    await expect(upper).toHaveValue('90');
+    await expect(lower).toHaveValue('10');
+    await expect(upper).toHaveValue('20');
+    await lower.press('Home');
+    await upper.press('Home');
+    await expect(upper).toHaveAttribute('aria-valuetext', '<1 second');
+    await dialog.getByRole('button', { name: 'Show calls' }).click();
+    expect(state.requestedFilters.at(-1)).toHaveProperty('max_duration_ms', '999');
+    expect(state.requestedFilters.at(-1)).not.toHaveProperty('min_duration_ms');
+    await page.getByRole('button', { name: 'Filters' }).click();
+    await expect(upper).toHaveValue('0');
+    await expect(upper).toHaveAttribute('aria-valuetext', '<1 second');
     await dialog.getByRole('button', { name: 'Clear filters' }).click();
     await page.getByRole('button', { name: 'Filters' }).click();
     await expect(dialog.getByRole('slider', { name: 'Call length: Minimum', exact: true })).toHaveValue('0');
     await expect(dialog.getByRole('slider', { name: 'Call length: Maximum', exact: true }))
-      .toHaveAttribute('aria-valuetext', 'Any length');
+      .toHaveAttribute('aria-valuetext', '30 seconds+');
   });
 });
 
@@ -540,6 +556,9 @@ for (const theme of ['light', 'dark']) {
     expect(bounds.height).toBe(844);
     await expect(sheet.getByRole('combobox', { name: 'Radio system' })).toBeVisible();
     await expect(sheet).toHaveScreenshot(`recordings-mobile-filters-${theme}.png`);
+    const duration = sheet.locator('.ui-dual-range-field');
+    await duration.scrollIntoViewIfNeeded();
+    await expect(duration).toHaveScreenshot(`recordings-duration-defaults-mobile-${theme}.png`);
     await sheet.locator('.modal-content').evaluate((content) => { content.scrollTop = content.scrollHeight; });
     const lastField = await sheet.locator('.recordings-search-fields .recordings-field').last().boundingBox();
     const footer = await sheet.locator('.recordings-filter-sheet-actions').boundingBox();
