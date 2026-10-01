@@ -1,6 +1,7 @@
 /* Final-layer accessibility overrides for the opt-in design system. */
 @media (prefers-reduced-motion: reduce) {
-  .ui-disclosure-button > svg {
+  .ui-disclosure-button > svg,
+  .ui-disclosure-toggle::before {
     transition: none;
   }
   .ui-data-table .activity-row-new > td {

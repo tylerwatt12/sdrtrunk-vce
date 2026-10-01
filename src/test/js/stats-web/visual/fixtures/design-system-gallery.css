@@ -624,6 +624,7 @@ body:not([data-gallery-view="health-alert-modal"]) .visual-health-alert-modal-ex
 body:not([data-gallery-view="focus"]) .visual-focus-example,
 body:not([data-gallery-view="settings"]) .visual-settings-example,
 body:not([data-gallery-view="health"]) .visual-health-example,
+body:not([data-gallery-view="status-primitives"]) .visual-status-primitives-example,
 body:not([data-gallery-view="p25"]) .visual-p25-example,
 body:not([data-gallery-view="admin-access"]) .visual-admin-access-example,
 body:not([data-gallery-view="admin-scan-lists"]) .visual-admin-scan-lists-example,

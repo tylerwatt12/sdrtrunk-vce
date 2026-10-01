@@ -634,82 +634,28 @@
     </div>
   </main>
 
+  <main class="visual-feature-example visual-status-primitives-example">
+    <header class="visual-feature-header"><div><p class="visual-settings-eyebrow">Shared interface patterns</p><h1>Compact records and status</h1><p>Related facts stay together while saved field order and status detail remain available.</p></div></header>
+    <section class="ui-section">
+      <header class="section-title ui-section-title"><h2 class="ui-record-card-title">Resource metrics</h2></header>
+      <div class="ui-metric-grid ui-metric-grid-4">
+        <article class="ui-metric ui-metric-success"><div class="ui-metric-copy"><div class="ui-metric-heading"><span class="ui-metric-label"><span class="ui-metric-icon"><svg aria-hidden="true"><use href="#visual-icon-health"></use></svg></span>VCE processor use</span><span class="ui-status ui-status-success">Normal</span></div><strong>10.3 <small class="ui-metric-unit">%</small></strong><progress class="ui-metric-progress" max="100" value="10.3" aria-label="VCE processor use">10.3%</progress><small class="ui-metric-detail">Receiver process only</small></div></article>
+        <article class="ui-metric ui-metric-warning"><div class="ui-metric-copy"><div class="ui-metric-heading"><span class="ui-metric-label"><span class="ui-metric-icon"><svg aria-hidden="true"><use href="#visual-icon-alert"></use></svg></span>VCE memory use</span><span class="ui-status ui-status-warning">Check soon</span></div><strong>78 <small class="ui-metric-unit">%</small></strong><progress class="ui-metric-progress" max="100" value="78" aria-label="VCE memory use">78%</progress><small class="ui-metric-detail">Used 1.6 GB of 2.0 GB</small></div></article>
+        <article class="ui-metric ui-metric-danger"><div class="ui-metric-copy"><div class="ui-metric-heading"><span class="ui-metric-label"><span class="ui-metric-icon"><svg aria-hidden="true"><use href="#visual-icon-recording"></use></svg></span>Free storage space</span><span class="ui-status ui-status-danger">Action needed</span></div><strong>6 <small class="ui-metric-unit">%</small></strong><progress class="ui-metric-progress" max="100" value="6" aria-label="Free storage space">6%</progress><small class="ui-metric-detail">Free 18 GB of 300 GB</small></div></article>
+        <article class="ui-metric ui-metric-neutral ui-metric-text"><div class="ui-metric-copy"><div class="ui-metric-heading"><span class="ui-metric-label"><span class="ui-metric-icon"><svg aria-hidden="true"><use href="#visual-icon-health"></use></svg></span>Time spent freeing memory</span><span class="ui-status ui-status-neutral">Waiting</span></div><strong>Unavailable</strong><small class="ui-metric-detail">Waiting for the first sample</small></div></article>
+      </div>
+    </section>
+    <section class="ui-section receiver-health-section collapsed">
+      <header class="section-title ui-section-title"><button class="ui-disclosure-toggle" type="button" aria-expanded="false" aria-controls="visual-status-details" data-visual-disclosure><span class="ui-disclosure-copy"><span>Incoming radio data</span><small>8 measurements · 2 channels need attention</small></span><span class="ui-status ui-status-warning">Check soon</span></button></header>
+      <div class="receiver-health-section-body" id="visual-status-details" hidden><div class="ui-feedback receiver-health-empty"><strong>No additional samples yet</strong><p>Measurements appear as the receiver processes incoming radio data.</p></div></div>
+    </section>
+    <section class="ui-section visual-records-default"><header class="section-title ui-section-title"><h2 class="ui-record-card-title">Recent duplicate calls</h2><span class="ui-status ui-status-success">Live</span></header><div class="ui-table-wrap" data-visual-compact-records="default"></div></section>
+    <section class="ui-section visual-records-custom"><header class="section-title ui-section-title"><h2 class="ui-record-card-title">Saved field order</h2><span class="ui-muted">Legacy preference retained</span></header><div class="ui-table-wrap" data-visual-compact-records="custom"></div></section>
+  </main>
+
   <main class="visual-feature-example visual-health-example">
-    <header class="visual-feature-header">
-      <div><p class="visual-settings-eyebrow">Administration</p><h1>Current status</h1><p>Check the receiver and issues that need attention.</p></div>
-      <a class="receiver-health-indicator receiver-health-warning icon-button" href="#health" aria-label="Receiver status needs attention"><svg aria-hidden="true"><use href="#visual-icon-alert"></use></svg></a>
-    </header>
-
-    <section class="section ui-section receiver-health-section">
-      <div class="section-title ui-section-title"><button class="receiver-health-section-toggle" type="button" aria-expanded="true">Computer resources</button><button class="ui-button ui-button-secondary" type="button">Check again</button></div>
-      <div class="receiver-health-section-body">
-        <div class="receiver-health-resource-bars">
-          <article class="receiver-health-resource-bar receiver-health-healthy">
-            <div class="receiver-health-resource-heading"><strong>Application memory</strong><span class="ui-pill ui-pill-success">Normal</span></div>
-            <div class="receiver-health-resource-value"><strong>42</strong><span>%</span></div>
-            <progress class="receiver-health-resource-progress receiver-health-healthy" max="100" value="42">42%</progress>
-            <div class="receiver-health-resource-detail">860 MB of 2 GB in use</div>
-          </article>
-          <article class="receiver-health-resource-bar receiver-health-warning">
-            <div class="receiver-health-resource-heading"><strong>Computer memory</strong><span class="ui-pill ui-pill-warning">Check soon</span></div>
-            <div class="receiver-health-resource-value"><strong>78</strong><span>%</span></div>
-            <progress class="receiver-health-resource-progress receiver-health-warning" max="100" value="78">78%</progress>
-            <div class="receiver-health-resource-detail">Other applications are using additional memory.</div>
-          </article>
-          <article class="receiver-health-resource-bar receiver-health-critical">
-            <div class="receiver-health-resource-heading"><strong>Disk space</strong><span class="ui-pill ui-pill-danger">Action needed</span></div>
-            <div class="receiver-health-resource-value"><strong>94</strong><span>%</span></div>
-            <progress class="receiver-health-resource-progress receiver-health-critical" max="100" value="94">94%</progress>
-            <div class="receiver-health-resource-detail">18 GB remains in the recording location.</div>
-          </article>
-        </div>
-      </div>
-    </section>
-
-    <section class="section ui-section receiver-health-section">
-      <div class="section-title ui-section-title"><button class="receiver-health-section-toggle" type="button" aria-expanded="true">Summary</button></div>
-      <div class="receiver-health-section-body">
-        <div class="receiver-health-overview">
-          <div class="receiver-health-overview-state receiver-health-warning"><span>Receiver status</span><strong>Check soon</strong></div>
-          <div class="summary-band ui-metric-grid"><div class="metric ui-metric ui-metric-blue"><div class="ui-metric-copy"><span class="ui-metric-label"><span class="ui-metric-icon"><svg aria-hidden="true"><use href="#visual-icon-live"></use></svg></span>Current issues</span><strong>2</strong></div></div><div class="metric ui-metric ui-metric-danger"><div class="ui-metric-copy"><span class="ui-metric-label"><span class="ui-metric-icon"><svg aria-hidden="true"><use href="#visual-icon-alert"></use></svg></span>Need action</span><strong>1</strong></div></div><div class="metric ui-metric ui-metric-warning"><div class="ui-metric-copy"><span class="ui-metric-label"><span class="ui-metric-icon"><svg aria-hidden="true"><use href="#visual-icon-alert"></use></svg></span>Check soon</span><strong>1</strong></div></div></div>
-          <dl class="receiver-health-timing"><dt>Monitoring since</dt><dd>Today at 8:04 AM</dd><dt>Last update</dt><dd>Just now</dd></dl>
-        </div>
-      </div>
-    </section>
-
-    <section class="section ui-section receiver-health-section">
-      <div class="section-title ui-section-title"><button class="receiver-health-section-toggle" type="button" aria-expanded="true">Saved activity</button><div class="section-title-actions ui-section-actions"><button class="ui-button ui-button-secondary" type="button">Open Call output &amp; activity</button></div></div>
-      <div class="receiver-health-section-body">
-        <div class="admin-section-body">
-          <div class="summary-band ui-metric-grid">
-            <div class="metric ui-metric ui-metric-blue ui-metric-text"><div class="ui-metric-copy"><span class="ui-metric-label"><span class="ui-metric-icon"><svg aria-hidden="true"><use href="#visual-icon-live"></use></svg></span>Activity summaries</span><strong>On</strong></div></div>
-            <div class="metric ui-metric ui-metric-blue ui-metric-text"><div class="ui-metric-copy"><span class="ui-metric-label"><span class="ui-metric-icon"><svg aria-hidden="true"><use href="#visual-icon-live"></use></svg></span>Individual events</span><strong>On</strong></div></div>
-            <div class="metric ui-metric ui-metric-blue"><div class="ui-metric-copy"><span class="ui-metric-label"><span class="ui-metric-icon"><svg aria-hidden="true"><use href="#visual-icon-live"></use></svg></span>Activity storage</span><strong>84 MB</strong></div></div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <aside class="receiver-health-account-setting"><a href="#status-icon">Choose status icon issues</a></aside>
-
-    <section class="section ui-section receiver-health-section">
-      <div class="section-title ui-section-title"><button class="receiver-health-section-toggle" type="button" aria-expanded="true">Issues needing attention</button></div>
-      <div class="receiver-health-section-body receiver-health-incident-list">
-        <article class="receiver-health-incident receiver-health-critical">
-          <div class="receiver-health-incident-heading"><div class="receiver-health-incident-identity"><h3>Recording disk is nearly full</h3><div class="receiver-health-incident-scope">Recording service</div></div><span class="ui-pill ui-pill-danger">Action needed</span></div>
-          <dl class="receiver-health-incident-facts"><dt>Started</dt><dd>Today at 10:31 AM</dd><dt>Last detected</dt><dd>Just now</dd></dl>
-          <div class="receiver-health-incident-guidance"><div class="receiver-health-guidance-item"><h4>Likely cause</h4><p>The recording location has less free space than the configured safety threshold.</p></div><div class="receiver-health-guidance-item"><h4>Impact</h4><p>New recordings may stop when the remaining space is exhausted.</p></div><div class="receiver-health-guidance-item"><h4>Check next</h4><p>Remove unneeded recordings or select a location with more space.</p></div><div class="receiver-health-guidance-item"><h4>Observed</h4><p>94% used · 18 GB available</p></div></div>
-        </article>
-      </div>
-    </section>
-
-    <section class="section ui-section receiver-health-section">
-      <div class="section-title ui-section-title"><button class="receiver-health-section-toggle" type="button" aria-expanded="true">Detailed measurements</button></div>
-      <div class="receiver-health-section-body receiver-health-measurement-list" role="list">
-        <div class="receiver-health-measurement-row receiver-health-warning" role="listitem"><div class="receiver-health-measurement-scope">Computer</div><div class="receiver-health-measurement-label">Memory pressure</div><div class="receiver-health-measurement-value"><strong>78</strong><span>%</span></div><span class="ui-pill ui-pill-warning">Check soon</span><div class="receiver-health-measurement-detail">Sustained above the preferred operating range.</div></div>
-        <div class="receiver-health-measurement-row receiver-health-healthy" role="listitem"><div class="receiver-health-measurement-scope">Decoder</div><div class="receiver-health-measurement-label">Dropped buffers</div><div class="receiver-health-measurement-value"><strong>0</strong></div><span class="ui-pill ui-pill-success">Normal</span><div class="receiver-health-measurement-detail">No dropped native buffers were observed.</div></div>
-      </div>
-    </section>
+    <header class="visual-feature-header"><div><p class="visual-settings-eyebrow">Administration · Status &amp; support</p><h1>Receiver status</h1><p>Check the receiver and issues that need attention.</p></div></header>
+    <div class="ui-settings-page receiver-health-page" data-visual-receiver-health></div>
   </main>
 
 <main class="visual-feature-example visual-p25-example"><header class="visual-feature-header"><div><p class="visual-settings-eyebrow">Administration</p><h1>P25 band plans</h1><p>Configure P25 band plan overrides.</p></div></header><section class="ui-section"><header class="ui-section-title"><h2>P25 band plan overrides</h2><button type="button" class="ui-button ui-button-secondary">Add P25 override</button></header><form class="admin-form settings-page-form p25-overrides-form"><p class="p25-overrides-intro">Some P25 trunked systems do not transmit their band plan. Add an override to define it manually. Site overrides take priority over system overrides.</p><div class="p25-override-profile-list"><article class="ui-record-section p25-override-record"><header class="ui-record-card-header p25-override-profile-header"><span class="ui-record-card-icon"><svg aria-hidden="true"><use href="#visual-icon-channel"></use></svg></span><div class="ui-record-card-copy"><h3 class="ui-record-card-title">BEE00-49F · 01-01</h3><p class="ui-muted">Site override</p></div><div class="ui-action-row"><button type="button" class="ui-button ui-button-secondary">Edit</button><button type="button" class="ui-button ui-button-danger-quiet ui-icon-button" aria-label="Delete override"><svg aria-hidden="true"><use href="#visual-icon-trash"></use></svg></button></div></header><div class="ui-record-card-body p25-override-record-body"><dl class="ui-facts ui-record-facts p25-override-profile-facts"><div class="ui-fact"><dt>WACN</dt><dd>BEE00</dd></div><div class="ui-fact"><dt>System ID</dt><dd>49F</dd></div><div class="ui-fact"><dt>RFSS</dt><dd>01</dd></div><div class="ui-fact"><dt>Site ID</dt><dd>01</dd></div></dl><div class="p25-override-bands-heading"><h4 class="ui-record-card-title">Replacement bands</h4><span class="ui-muted">1 band</span></div><div class="p25-override-band-records"><section class="ui-surface-inset p25-override-band-record"><header class="p25-override-band-header"><h5 class="ui-record-card-title">Band 1</h5><span class="ui-pill">P25 2-slot TDMA</span></header><dl class="ui-facts ui-record-facts p25-override-band-facts"><div class="ui-fact"><dt>Band ID</dt><dd>1</dd></div><div class="ui-fact"><dt>Type</dt><dd>P25 2-slot TDMA</dd></div><div class="ui-fact"><dt>Base frequency</dt><dd>851.00625 MHz</dd></div><div class="ui-fact"><dt>Bandwidth</dt><dd>12.5 kHz</dd></div><div class="ui-fact"><dt>Spacing</dt><dd>6.25 kHz</dd></div><div class="ui-fact"><dt>Offset</dt><dd>−45 MHz</dd></div></dl></section></div></div></article></div><footer class="settings-form-footer"><div class="admin-form-message" role="status"></div><button type="button" class="ui-button ui-button-primary">Save overrides</button></footer></form></section></main>

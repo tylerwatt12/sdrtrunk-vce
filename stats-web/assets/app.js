@@ -3320,6 +3320,9 @@ const METRIC_ICONS = {
   Logout: 'icon-stop', Denial: 'icon-warning', Data: 'icon-dashboard',
   'Healthy channels': 'icon-health', 'Degraded channels': 'icon-warning',
   'Offline channels': 'icon-stop', 'Current issues': 'icon-health',
+  'Receiver status': 'icon-health', 'VCE processor use': 'icon-health',
+  'VCE memory use': 'icon-dashboard', 'Time spent freeing memory': 'icon-replay',
+  'Free storage space': 'icon-recording',
   'Need action': 'icon-warning', 'Check soon': 'icon-warning',
   'Summary logging': 'icon-live', 'Detailed history': 'icon-scan-lists',
   'Activity database': 'icon-dashboard', Added: 'icon-plus', Updated: 'icon-refresh',
@@ -23735,22 +23738,30 @@ function receiverHealthSeverityBadge(value) {
   return uiPill(label, tone);
 }
 
+function receiverHealthStatus(value) {
+  const severity = receiverHealthSeverity(value);
+  return uiStatus(severity === 'critical' ? 'Action needed' : severity === 'warning' ? 'Check soon' : 'Normal',
+    severity === 'critical' ? 'danger' : severity === 'warning' ? 'warning' : 'success');
+}
+
 function receiverHealthIncident(incident, resolved = false, expanded = false, onToggle = null) {
   const severity = receiverHealthSeverity(incident.severity);
-  const card = node(resolved ? 'details' : 'article', `receiver-health-incident receiver-health-${severity}`);
-  const heading = node(resolved ? 'summary' : 'div', 'receiver-health-incident-heading');
-  const identity = node('div', 'receiver-health-incident-identity');
-  identity.append(node('h3', '', receiverHealthText(incident.title, 'Receiver issue')),
-    node('div', 'receiver-health-incident-scope',
+  const card = node(resolved ? 'details' : 'article',
+    `ui-record-card${resolved ? ' ui-section-disclosure' : ''} receiver-health-incident receiver-health-${severity}`);
+  const heading = node(resolved ? 'summary' : 'div',
+    `${resolved ? 'ui-section-summary' : 'ui-record-card-header'} receiver-health-incident-heading`);
+  const identity = node('div', 'ui-record-card-copy receiver-health-incident-identity');
+  identity.append(node('h3', 'ui-record-card-title', receiverHealthText(incident.title, 'Receiver issue')),
+    node('p', 'muted receiver-health-incident-scope',
     receiverHealthText(incident.scope, 'Receiver')));
   if (resolved) {
-    const resolvedSummary = node('div', 'receiver-health-incident-resolved-summary');
+    const resolvedSummary = node('p', 'muted receiver-health-incident-resolved-summary');
     resolvedSummary.append('Cleared ', receiverHealthTime(incident.resolved_at_ms));
     identity.append(resolvedSummary);
   }
   heading.append(identity, receiverHealthSeverityBadge(incident.severity));
 
-  const facts = node('dl', 'receiver-health-incident-facts');
+  const facts = node('dl', 'ui-fact-list receiver-health-incident-facts');
   const entries = [
     ['Started', receiverHealthTime(incident.opened_at_ms)],
     ['Last detected', receiverHealthTime(incident.last_seen_ms)]
@@ -23763,18 +23774,20 @@ function receiverHealthIncident(incident, resolved = false, expanded = false, on
     facts.append(detail);
   });
 
-  const guidance = node('div', 'receiver-health-incident-guidance');
+  const guidance = node('dl', 'ui-facts ui-record-facts receiver-health-incident-guidance');
   [
     ['What happened', incident.observed],
     ['Possible cause', incident.likely_cause],
     ['What this may affect', incident.impact],
     ['What to do', incident.check_next]
   ].forEach(([label, value]) => {
-    const item = node('div', 'receiver-health-guidance-item');
-    item.append(node('h4', '', label), node('p', '', receiverHealthText(value)));
+    const item = node('div', 'ui-fact receiver-health-guidance-item');
+    item.append(node('dt', '', label), node('dd', '', receiverHealthText(value)));
     guidance.append(item);
   });
-  card.append(heading, facts, guidance);
+  const body = node('div', 'ui-record-card-body receiver-health-incident-body');
+  body.append(facts, guidance);
+  card.append(heading, body);
   if (resolved) {
     heading.dataset.receiverHealthFocus = `resolved-incident:${receiverHealthResolvedIncidentKey(incident)}`;
     card.open = expanded;
@@ -23838,8 +23851,10 @@ function receiverHealthPruneExpandedResolvedIncidents(incidents) {
 
 function receiverHealthIncidentList(incidents, resolved = false) {
   if (!incidents.length) {
-    return node('div', resolved ? 'receiver-health-empty' : 'receiver-health-empty receiver-health-empty-healthy',
-      resolved ? 'No issues have cleared recently.' : 'No receiver issues need attention.');
+    const empty = node('div', 'ui-feedback receiver-health-empty');
+    empty.append(resolved ? 'No issues have cleared recently.' :
+      uiStatus('No receiver issues need attention.', 'success'));
+    return empty;
   }
   const list = node('div', 'receiver-health-incident-list');
   list.append(...incidents.map((incident) => {
@@ -23882,7 +23897,8 @@ function receiverHealthResolvedSection(incidents) {
   receiverHealthPruneExpandedResolvedIncidents(incidents);
   if (!incidents.length) {
     receiverHealthController.resolvedPage = 0;
-    return receiverHealthSection('resolved', 'Recently cleared', receiverHealthIncidentList(incidents, true));
+    return receiverHealthSection('resolved', 'Recently cleared', receiverHealthIncidentList(incidents, true),
+      null, 'No recently cleared issues');
   }
   const body = node('div');
   const sort = node('select', 'ui-select receiver-health-resolved-select');
@@ -23913,20 +23929,27 @@ function receiverHealthResolvedSection(incidents) {
     draw();
   });
   draw();
-  return receiverHealthSection('resolved', 'Recently cleared', body, control);
+  return receiverHealthSection('resolved', 'Recently cleared', body, control,
+    `${number(incidents.length)} cleared issue${incidents.length === 1 ? '' : 's'}`);
 }
 
 let receiverHealthSectionSequence = 0;
 
-function receiverHealthSection(key, title, child, action = null) {
-  const wrapper = node('section', 'section ui-section ui-settings-panel receiver-health-section');
+function receiverHealthSection(key, title, child, action = null, summary = '', status = null) {
+  const wrapper = node('section', 'section ui-section ui-settings-panel ui-section-collapsible receiver-health-section');
+  wrapper.dataset.receiverHealthSection = key;
   const titleBar = node('div', 'section-title ui-section-title');
-  const body = node('div', 'receiver-health-section-body');
+  const body = node('div', 'ui-settings-panel-body receiver-health-section-body');
   body.id = `receiver-health-section-body-${++receiverHealthSectionSequence}`;
   if (child) body.append(child);
 
-  const toggle = node('button', 'receiver-health-section-toggle', title);
+  const toggle = node('button', 'ui-disclosure-toggle receiver-health-section-toggle');
   toggle.type = 'button';
+  const copy = node('span', 'ui-disclosure-copy');
+  copy.append(node('span', '', title));
+  if (summary) copy.append(node('small', '', summary));
+  toggle.append(copy);
+  if (status) toggle.append(status);
   toggle.dataset.receiverHealthFocus = `section:${key}`;
   toggle.setAttribute('aria-controls', body.id);
   const applyExpanded = (expanded) => {
@@ -23970,56 +23993,71 @@ function receiverHealthResourceBar(row) {
   const unit = receiverHealthText(row.unit, '');
   const formattedValue = unit ? `${value} ${unit}` : value;
   const scale = receiverHealthResourceScale(row);
-  const item = node('article', `receiver-health-resource-bar receiver-health-${severity}`);
-  const heading = node('div', 'receiver-health-resource-heading');
-  heading.append(node('strong', '', label), receiverHealthSeverityBadge(row.severity));
-  const reading = node('div', 'receiver-health-resource-value');
-  reading.append(node('strong', '', value));
-  if (unit) reading.append(node('span', '', unit));
-  const progress = node('progress', `receiver-health-resource-progress receiver-health-${severity}`);
+  const item = metricCard(label, row.value, value);
+  item.classList.remove('ui-metric-blue');
+  item.classList.add('receiver-health-resource-bar', 'ui-metric-compact',
+    `receiver-health-${severity}`,
+    `ui-metric-${severity === 'critical' ? 'danger' : severity === 'warning' ? 'warning' : 'success'}`);
+  const copy = item.querySelector('.ui-metric-copy');
+  const labelNode = copy.querySelector('.ui-metric-label');
+  const heading = node('div', 'ui-metric-heading receiver-health-resource-heading');
+  labelNode.replaceWith(heading);
+  heading.append(labelNode, receiverHealthStatus(row.severity));
+  const reading = copy.querySelector('strong');
+  reading.classList.add('receiver-health-resource-value');
+  if (unit) reading.append(node('small', 'ui-metric-unit', unit));
+  const progress = node('progress', 'ui-metric-progress receiver-health-resource-progress');
   progress.max = scale.maximum;
   progress.value = scale.value;
   progress.setAttribute('aria-label', label);
   progress.setAttribute('aria-valuetext', scale.available ? formattedValue : 'Unavailable');
-  item.append(heading, reading, progress);
+  copy.append(progress);
   const detail = receiverHealthText(row.detail, '');
-  if (detail) item.append(node('div', 'receiver-health-resource-detail', detail));
+  if (detail) copy.append(node('small', 'ui-metric-detail receiver-health-resource-detail', detail));
   return item;
 }
 
 function receiverHealthHostResourceOverview(snapshot) {
   const group = snapshot.measurements.find((measurement) =>
     receiverHealthText(measurement.id).toLowerCase() === 'host');
-  const body = node('div', 'receiver-health-resource-bars');
+  const body = node('div', 'ui-metric-grid ui-metric-grid-embedded ui-metric-grid-4 receiver-health-resource-bars');
   if (group?.rows?.length) body.append(...group.rows.map(receiverHealthResourceBar));
-  else body.append(node('div', 'receiver-health-empty', 'Computer resource data is unavailable.'));
+  else body.append(node('div', 'ui-feedback receiver-health-empty', 'Computer resource data is unavailable.'));
   return receiverHealthSection('host-overview', 'Computer resources', body);
 }
 
 function receiverHealthMeasurementRow(row) {
   const severity = receiverHealthSeverity(row.severity);
-  const item = node('div', `receiver-health-measurement-row receiver-health-${severity}`);
+  const item = node('div', `ui-record-section receiver-health-measurement-row receiver-health-${severity}`);
   item.setAttribute('role', 'listitem');
-  const scope = node('div', 'receiver-health-measurement-scope', receiverHealthText(row.scope, 'Receiver'));
-  const label = node('div', 'receiver-health-measurement-label', receiverHealthText(row.label));
+  const heading = node('div', 'ui-record-card-header receiver-health-measurement-heading');
+  const identity = node('div', 'ui-record-card-copy');
+  const scope = node('p', 'muted receiver-health-measurement-scope', receiverHealthText(row.scope, 'Receiver'));
+  const label = node('div', 'ui-record-title receiver-health-measurement-label', receiverHealthText(row.label));
+  identity.append(scope, label);
   const reading = node('div', 'receiver-health-measurement-value');
   reading.append(node('strong', '', receiverHealthText(row.value)));
   const unit = receiverHealthText(row.unit, '');
-  if (unit) reading.append(node('span', '', unit));
-  item.append(scope, label, reading, receiverHealthSeverityBadge(row.severity));
+  if (unit) reading.append(node('small', 'ui-metric-unit', unit));
+  heading.append(identity, reading, receiverHealthStatus(row.severity));
+  item.append(heading);
   const detail = receiverHealthText(row.detail, '');
-  if (detail) item.append(node('div', 'receiver-health-measurement-detail', detail));
+  if (detail) item.append(node('div', 'ui-record-card-body muted receiver-health-measurement-detail', detail));
   return item;
 }
 
 function receiverHealthMeasurementGroup(group, index) {
-  const body = node('div', 'receiver-health-measurement-list');
+  const body = node('div', 'ui-record-card receiver-health-measurement-list');
   body.setAttribute('role', 'list');
   if (group.rows.length) body.append(...group.rows.map(receiverHealthMeasurementRow));
-  else body.append(node('div', 'receiver-health-empty', 'No measurements available.'));
+  else body.append(node('div', 'ui-feedback receiver-health-empty', 'No measurements available.'));
   const title = receiverHealthText(group.title, 'Detailed measurements');
   const key = `measurement:${receiverHealthText(group.id, `${title}:${index}`)}`;
-  return receiverHealthSection(key, title, body);
+  const severity = group.rows.some((row) => receiverHealthSeverity(row.severity) === 'critical') ? 'critical' :
+    group.rows.some((row) => receiverHealthSeverity(row.severity) === 'warning') ? 'warning' : 'healthy';
+  return receiverHealthSection(key, title, body, null,
+    `${number(group.rows.length)} measurement${group.rows.length === 1 ? '' : 's'}`,
+    group.rows.length ? receiverHealthStatus(severity) : uiStatus('Unavailable', 'neutral'));
 }
 
 function receiverHealthRefreshButton() {
@@ -24042,7 +24080,7 @@ function receiverHealthAccountSettingNotice(snapshot) {
     message = `${number(settings.disabled_count)} current issue${settings.disabled_count === 1 ? '' : 's'} ` +
       `${settings.disabled_count === 1 ? 'is' : 'are'} hidden from your status icon.`;
   }
-  const settingsLink = node('button', 'link-button', 'Choose status icon issues');
+  const settingsLink = node('button', 'ui-button ui-button-secondary', 'Choose status icon issues');
   settingsLink.type = 'button';
   settingsLink.id = 'receiver-health-alert-settings';
   settingsLink.dataset.receiverHealthFocus = 'alert-settings';
@@ -24071,7 +24109,7 @@ function renderReceiverHealthPage(host, snapshot, stale, lastError) {
   if (!snapshot) {
     const message = stale ? (lastError || 'Receiver status is unavailable right now. Select Check again to try again.') :
       'Loading receiver status…';
-    const body = node('div', 'admin-section-body');
+    const body = node('div');
     body.append(node('div', stale ? 'ui-notice ui-notice-warning' :
       'ui-feedback ui-feedback-loading receiver-health-loading-message', message));
     host.append(receiverHealthSection('current', 'Summary', body, receiverHealthRefreshButton()),
@@ -24084,14 +24122,21 @@ function renderReceiverHealthPage(host, snapshot, stale, lastError) {
   const stateLabel = stale ? 'Status out of date' : summary.severity === 'critical' ? 'Action needed' :
     summary.severity === 'warning' ? 'Check soon' : 'Normal';
   const overview = node('div', 'receiver-health-overview');
-  const status = node('div', `receiver-health-overview-state receiver-health-${stale ? 'stale' : summary.severity}`);
-  status.append(node('span', '', 'Receiver status'), node('strong', '', stateLabel));
-  overview.append(status, metrics([
+  const status = metricCard('Receiver status', summary.active_count, stateLabel);
+  status.classList.remove('ui-metric-blue');
+  status.classList.add('receiver-health-overview-state',
+    `receiver-health-${stale ? 'stale' : summary.severity}`,
+    `ui-metric-${stale ? 'neutral' : summary.severity === 'critical' ? 'danger' :
+      summary.severity === 'warning' ? 'warning' : 'success'}`);
+  const overviewMetrics = metrics([
     ['Current issues', summary.active_count],
     ['Need action', summary.critical_count],
     ['Check soon', summary.warning_count]
-  ], true));
-  const timing = node('dl', 'receiver-health-timing');
+  ], true);
+  overviewMetrics.classList.add('ui-metric-grid-4', 'ui-metric-grid-inline', 'receiver-health-overview-metrics');
+  overviewMetrics.prepend(status);
+  overview.append(overviewMetrics);
+  const timing = node('dl', 'ui-fact-list receiver-health-timing');
   [
     ['Monitoring since', receiverHealthTime(snapshot.started_at_ms)],
     ['Last update', receiverHealthTime(snapshot.generated_at_ms)]
@@ -24101,27 +24146,42 @@ function renderReceiverHealthPage(host, snapshot, stale, lastError) {
     detail.append(valueNode(value));
     timing.append(detail);
   });
-  overview.append(timing);
+  const footer = node('div', 'receiver-health-overview-footer');
+  footer.append(timing, receiverHealthAccountSettingNotice(snapshot));
+  overview.append(footer);
   if (stale) overview.append(node('div', 'ui-notice ui-notice-warning receiver-health-stale-notice',
     'Live status is delayed. Showing the last update received.'));
 
+  const issues = node('div', 'ui-settings-page receiver-health-issues-grid');
+  issues.classList.toggle('receiver-health-issues-grid-active', snapshot.active.length > 0);
+  issues.append(receiverHealthSection('active', 'Issues needing attention',
+    receiverHealthIncidentList(snapshot.active), null,
+    `${number(summary.active_count)} current issue${summary.active_count === 1 ? '' : 's'}`),
+    receiverHealthResolvedSection(snapshot.resolved));
   host.append(receiverHealthSection('current', 'Receiver overview', overview, receiverHealthRefreshButton()),
     receiverHealthHostResourceOverview(snapshot),
     receiverHealthSavedActivitySection(),
-    receiverHealthAccountSettingNotice(snapshot),
-    receiverHealthSection('active', 'Issues needing attention', receiverHealthIncidentList(snapshot.active)),
-    receiverHealthResolvedSection(snapshot.resolved));
+    issues);
+  const diagnostics = node('section', 'receiver-health-diagnostics');
+  diagnostics.setAttribute('aria-label', 'Receiver diagnostics');
+  const heading = node('div', 'ui-heading-group ui-heading-group-quiet receiver-health-diagnostics-heading');
+  const measurementCount = snapshot.measurements.reduce((total, group) => total + group.rows.length, 0);
+  heading.append(node('h2', '', 'Receiver diagnostics'), node('p', '',
+    `${number(snapshot.measurements.length)} groups · ${number(measurementCount)} measurements`));
+  const groups = node('div', 'ui-settings-page receiver-health-diagnostics-grid');
   if (snapshot.measurements.length) {
-    host.append(...snapshot.measurements.map(receiverHealthMeasurementGroup));
+    groups.append(...snapshot.measurements.map(receiverHealthMeasurementGroup));
   } else {
-    host.append(receiverHealthSection('measurements', 'Detailed measurements', node('div', 'receiver-health-empty',
+    groups.append(receiverHealthSection('measurements', 'Detailed measurements', node('div', 'ui-feedback receiver-health-empty',
       'No measurements available.')));
   }
+  diagnostics.append(heading, groups);
+  host.append(diagnostics);
   receiverHealthRestoreFocus(host, focusedControl);
 }
 
 async function renderAdminHealth() {
-  const host = node('div', 'receiver-health-page');
+  const host = node('div', 'ui-settings-page receiver-health-page');
   content.append(host);
   receiverHealthController.bindPage(host);
   void receiverHealthController.refresh();
@@ -25957,7 +26017,7 @@ function receiverHealthSavedActivitySection() {
     (failed && logging.historyConfigured ? 'Error' : logging.historyConfigured ? 'On · Not running' :
       (logging.historyRetained ? 'Off · Saved history available' : 'Off'));
   const databaseDisplay = adminDatabaseDisplay(database);
-  const body = node('div', 'admin-section-body');
+  const body = node('div', 'receiver-health-saved-activity-body');
   let actions = null;
   if (capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS)) {
     const settingsLink = anchor(activityPage ? 'Receiver status' : 'Open Activity settings',
@@ -25966,11 +26026,14 @@ function receiverHealthSavedActivitySection() {
     settingsLink.dataset.receiverHealthFocus = 'saved-activity-settings';
     actions = sectionActionHost(settingsLink);
   }
-  body.append(metrics([
+  const collectionMetrics = metrics([
     ['Activity summaries', logging.summaryActive, summaryState],
     ['Individual events', logging.historyActive, historyState],
     ['Activity storage', database?.database_bytes, databaseDisplay]
-  ], true));
+  ], true);
+  collectionMetrics.classList.add('ui-metric-grid-3');
+  [...collectionMetrics.children].forEach((metric) => metric.classList.add('ui-metric-compact'));
+  body.append(collectionMetrics);
   const result = receiverHealthSection('saved-activity', activityPage ? 'Current collection status' : 'Saved activity', body, actions);
   result.id = 'receiver-health-saved-activity';
   return result;
@@ -26624,7 +26687,7 @@ function callMatchingComparison(decision) {
 
 async function renderAdminCallMatching(renderContext = captureRenderContext()) {
   pageTitleController.update({ pageTitle: 'Call matching' });
-  const workspace = node('div', 'call-matching-workspace');
+  const workspace = node('div', 'ui-settings-page call-matching-workspace');
   const status = node('div', 'call-matching-live-status');
   status.setAttribute('role', 'status');
   const healthState = node('span', 'call-matching-health-state');
@@ -26645,7 +26708,7 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
   const highlightedSequences = new Set();
   const columns = [
     { id: 'time', label: 'Matched at', className: 'call-matching-field-time',
-      render: (row) => dateTime(row.decided_at_ms) || '—' },
+      render: (row) => stackedDateTime(row.decided_at_ms) || '—' },
     { id: 'talkgroup', label: 'Talkgroup', className: 'call-matching-field-talkgroup ui-record-title',
       render: (row) => callMatchingIdentitySummary(row.call_identity || {}) },
     { id: 'radio', label: 'Radio', className: 'call-matching-field-radio',
@@ -26681,8 +26744,8 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
   ];
   const tableWrap = table([], columns, 'No duplicate calls have been matched recently.', {
     type: 'call-matching-duplicates', layoutMenuHost: tableActions, controller: tableController,
-    sortable: false, recordList: true, tableClass: 'call-matching-history-list',
-    recordListOrder: ['talkgroup', 'time', 'action', 'radio', 'site', 'copies', 'match', 'outputs'],
+    sortable: false, recordList: true, tableClass: 'ui-record-list-compact call-matching-history-list',
+    recordListOrder: ['talkgroup', 'radio', 'site', 'action', 'time', 'copies', 'match', 'outputs'],
     layoutMenuLabels: { trigger: 'Displayed fields', title: 'Displayed fields', item: 'field',
       description: 'Show and arrange call details.', reset: 'Reset displayed fields' },
     rowKey: (row) => row.decision_sequence,

@@ -239,6 +239,8 @@
   --font-size-meta: 11px;
   --font-size-section-title: 15px;
   --font-size-dialog-title: 19px;
+  --font-weight-normal: 400;
+  --disclosure-chevron-size: 6px;
   --font-weight-medium: 600;
   --font-weight-control: 700;
   --font-weight-heading: 750;

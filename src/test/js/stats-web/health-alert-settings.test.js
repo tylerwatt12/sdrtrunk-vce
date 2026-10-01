@@ -118,7 +118,8 @@ assert.match(renderHealth, /receiverHealthIncidentList\(snapshot\.active\)/,
 assert.match(renderHealth, /receiverHealthAccountSettingNotice\(snapshot\)/);
 
 const healthAccountSettingNotice = functionSource('function receiverHealthAccountSettingNotice(snapshot)');
-assert.match(healthAccountSettingNotice, /node\('button', 'link-button'/);
+assert.match(healthAccountSettingNotice, /node\('button', 'ui-button ui-button-secondary'/,
+  'The Receiver status control must use the shared settings action treatment.');
 assert.match(healthAccountSettingNotice,
   /openStatusIconSettings\('#receiver-health-alert-settings'\)/,
   'The Receiver status control must open the shared status-icon settings modal.');
@@ -139,7 +140,8 @@ assert.ok(updateIndicator.indexOf('accountAlerts.active_count > 0') <
 
 assert.match(stylesheet, /\.receiver-health-indicator\.receiver-health-neutral\s*,/);
 assert.match(stylesheet, /\.receiver-health-account-setting\s*\{/);
-assert.match(stylesheet, /\.receiver-health-account-setting \.link-button\s*\{/);
+assert.doesNotMatch(stylesheet, /\.receiver-health-account-setting \.ui-button\s*\{/,
+  'Receiver status must use the shared button appearance without feature overrides.');
 assert.match(stylesheet, /\.read-only-modal\.health-alert-settings-modal\s*\{/);
 assert.match(stylesheet, /\.settings-card-grid\s*\{[^}]*align-items: stretch/s);
 assert.match(stylesheet, /\.settings-card\s*\{[^}]*height: 100%/s,

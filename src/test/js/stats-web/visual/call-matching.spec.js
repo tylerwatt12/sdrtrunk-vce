@@ -351,12 +351,115 @@ test('saved displayed fields remain editable and do not force a wide history tab
   await expect(table.locator('tbody td')).toHaveCount(8);
   await expect(table.locator('tbody tr').first().locator('td').first()).toHaveAttribute('data-column', 'talkgroup');
   await expect(menu.locator('.table-layout-column > span')).toHaveText([
-    'Talkgroup', 'Matched at', 'Compare receiver copies', 'Radio', 'Selected site', 'Copies',
+    'Talkgroup', 'Radio', 'Selected site', 'Compare receiver copies', 'Matched at', 'Copies',
     'Why matched / selected', 'Used for'
   ]);
   await expect(menu.getByRole('button', { name: 'Move Talkgroup left', exact: true })).toBeDisabled();
   expect(app.preferences().tables['call-matching-duplicates']).toBeUndefined();
 });
+
+const matchingFieldSchema = ['time', 'talkgroup', 'radio', 'site', 'copies', 'match', 'outputs', 'action'];
+
+for (const width of [1440, 390, 320]) {
+  for (const layout of ['default', 'legacy', 'hidden-and-reordered']) {
+    for (const longNames of [false, true]) {
+      test(`twenty matched calls fit ${width}px with ${layout} fields and ${longNames ? 'long' : 'normal'} names`,
+        async ({ page }) => {
+          await page.setViewportSize({ width, height: width === 1440 ? 1000 : 844 });
+          const records = Array.from({ length: 20 }, (_, index) => {
+            const record = duplicate(71 - index);
+            if (longNames) {
+              record.call_identity.destination_alias =
+                'County Public Safety Fire and Emergency Operations Dispatch';
+              record.call_identity.source_alias = 'Regional Fire Department Engine 14 Command Radio';
+              record.legs[0].channel_name = index % 2 ?
+                'Northwest County Public Safety Regional Simulcast' :
+                'NORTHWESTCOUNTYPUBLICSAFETYEMERGENCYOPERATIONS';
+            }
+            return record;
+          });
+          const saved = layout === 'default' ? null : {
+            schema: matchingFieldSchema,
+            column_order: layout === 'legacy' ? matchingFieldSchema :
+              ['outputs', 'action', 'talkgroup', 'site', 'radio', 'match', 'copies', 'time'],
+            hidden_columns: layout === 'hidden-and-reordered' ? ['radio', 'time'] : [],
+            column_widths: { talkgroup: 1200 }, collapsed_groups: []
+          };
+          const app = await openApp(page, {
+            matching: async () => ({ data: snapshot(records) }),
+            ...(saved ? { tables: { 'call-matching-duplicates': saved } } : {})
+          });
+          const table = page.locator('table[data-table-type="call-matching-duplicates"]');
+          const rows = table.locator('tbody tr');
+          const pager = page.getByRole('navigation', { name: 'Matched call pages' });
+          await expect(rows).toHaveCount(20);
+          await expect(pager).toContainText('Matched calls 1-20 of 20 · Page 1 of 1');
+          await expect(rows.first().locator('td')).toHaveCount(saved?.hidden_columns.length ? 6 : 8);
+          await expect(rows.first()).toContainText(records[0].call_identity.destination_alias);
+          await expect(rows.first()).toContainText(records[0].legs[0].channel_name);
+
+          const geometry = await table.evaluate((element) => {
+            const rect = (node) => {
+              const bounds = node.getBoundingClientRect();
+              return { x: bounds.x, y: bounds.y, right: bounds.right, bottom: bounds.bottom,
+                width: bounds.width, height: bounds.height };
+            };
+            const inside = (child, parent) => child.x >= parent.x - 1 && child.y >= parent.y - 1 &&
+              child.right <= parent.right + 1 && child.bottom <= parent.bottom + 1;
+            const issues = [];
+            const heights = [];
+            element.querySelectorAll('tbody tr').forEach((row) => {
+              const rowBounds = rect(row);
+              heights.push(rowBounds.height);
+              const fields = [...row.querySelectorAll('td')];
+              fields.forEach((field, index) => {
+                const fieldBounds = rect(field);
+                if (!inside(fieldBounds, rowBounds)) issues.push(`${row.dataset.id}:${field.dataset.column}:outside`);
+                if (field.scrollWidth > field.clientWidth + 1) {
+                  issues.push(`${row.dataset.id}:${field.dataset.column}:overflow`);
+                }
+                fields.slice(index + 1).forEach((other) => {
+                  const otherBounds = rect(other);
+                  if (Math.min(fieldBounds.right, otherBounds.right) -
+                      Math.max(fieldBounds.x, otherBounds.x) > 1 &&
+                      Math.min(fieldBounds.bottom, otherBounds.bottom) -
+                      Math.max(fieldBounds.y, otherBounds.y) > 1) {
+                    issues.push(`${row.dataset.id}:${field.dataset.column}/${other.dataset.column}:overlap`);
+                  }
+                });
+              });
+              const compare = row.querySelector('.call-matching-compare');
+              if (!compare || !inside(rect(compare), rowBounds)) issues.push(`${row.dataset.id}:compare:outside`);
+            });
+            const last = rect(element.querySelector('tbody tr:last-child'));
+            const pager = document.querySelector('.call-matching-history-pager');
+            return { issues, heights, lastBottom: last.bottom, pagerTop: rect(pager).y,
+              pagerInRow: Boolean(pager.closest('tr')),
+              documentOverflow: document.documentElement.scrollWidth > window.innerWidth + 1,
+              tableOverflow: element.scrollWidth > element.parentElement.clientWidth + 1 };
+          });
+          expect(geometry.issues).toEqual([]);
+          expect(geometry.pagerInRow).toBe(false);
+          expect(geometry.pagerTop).toBeGreaterThanOrEqual(geometry.lastBottom - 1);
+          expect(geometry.documentOverflow).toBe(false);
+          expect(geometry.tableOverflow).toBe(false);
+          if (width === 1440) {
+            expect(Math.max(...geometry.heights)).toBeLessThanOrEqual(longNames ? 230 : 180);
+          }
+          if (saved) {
+            expect(app.preferences().tables['call-matching-duplicates']).toEqual(saved);
+            expect(app.preferenceWrites()).toHaveLength(0);
+          }
+          if (layout !== 'hidden-and-reordered' &&
+              ((width !== 320 && !longNames) || (width === 320 && longNames))) {
+            await page.screenshot({
+              path: `build/playwright-results/call-matching-twenty-records-${layout}-${width}.png`, fullPage: true
+            });
+          }
+        });
+    }
+  }
+}
 
 test('comparison keeps every receiver copy and trusts the selected copy index', async ({ page }) => {
   const decision = duplicate();

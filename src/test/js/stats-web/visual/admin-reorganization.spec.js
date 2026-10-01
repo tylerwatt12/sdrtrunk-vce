@@ -122,7 +122,7 @@ async function openAdmin(page, tab = 'audio-quality', denied = [], options = {})
       await data({ stats_logging: { summary_configured: operational.settings.stats_logging_enabled,
         detailed_history_configured: true, summary_active: operational.settings.stats_logging_enabled,
         detailed_history_active: true, state: 'RUNNING' },
-      database: { database_bytes: 1_048_576, detailed_history_available: true, logger: [] } });
+      database: { database_exists: true, database_bytes: 1_048_576, detailed_history_available: true, logger: [] } });
     } else if (pathname === '/api/v1/receiver-health') {
       await data({ started_at_ms: Date.now() - 60_000, generated_at_ms: Date.now(),
         summary: { severity: 'healthy', active_count: 0, warning_count: 0, critical_count: 0 },
@@ -332,6 +332,73 @@ test('receiver status preserves issue evidence, cleared history paging, and deta
   await expect(measurements).toHaveAttribute('aria-expanded', 'true');
   await expect(pager).toContainText('Page 2 of 2');
 });
+
+for (const [theme, width] of [['light', 1440], ['dark', 1440], ['light', 320], ['dark', 320]]) {
+  test(`receiver status keeps compact summaries and complete diagnostics at ${width}px in ${theme}`,
+    async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 900 });
+      const resourceRows = [
+        { label: 'VCE processor use', value: 10.3, unit: '%', detail: 'Receiver processor use' },
+        { label: 'VCE memory use', value: 15, unit: '%', detail: 'Used 307 MB of 2.0 GB' },
+        { label: 'Time spent freeing memory', value: 13, unit: 'ms in last sample',
+          detail: 'Total since startup 25925 ms' },
+        { label: 'Free storage space', value: 30.2, unit: '%', detail: 'Free 69 GB of 228 GB' }
+      ].map((row) => ({ ...row, severity: 'healthy', scope: 'Computer' }));
+      const row = { severity: 'healthy', scope: 'County Dispatch · Primary site',
+        label: 'Received radio samples', value: 2048, unit: 'samples',
+        detail: 'Measurements remain available for the configured receiver.' };
+      await openAdmin(page, 'health', [], { theme, healthDocument: {
+        measurements: [
+          { id: 'tuners', title: 'Tuners', rows: [row] },
+          { id: 'usb', title: 'USB tuner connection', rows: [{ ...row, severity: 'warning' }] },
+          { id: 'control', title: 'Control channel', rows: [{ ...row, severity: 'critical' }] },
+          { id: 'host', title: 'Computer resources', rows: resourceRows }
+        ]
+      } });
+      const resources = page.locator('.receiver-health-resource-bars .ui-metric');
+      await expect(resources).toHaveCount(4);
+      await expect(resources.nth(2)).toContainText('13ms in last sample');
+      await expect(resources.nth(2)).toContainText('Total since startup 25925 ms');
+      await expect(page.getByRole('progressbar', { name: 'Time spent freeing memory', exact: true }))
+        .toHaveAttribute('aria-valuetext', '13 ms in last sample');
+      await expect(page.locator('#receiver-health-saved-activity .ui-metric strong'))
+        .toHaveText(['On', 'On', '1.0 MB']);
+      const diagnostics = page.locator('.receiver-health-diagnostics-grid');
+      const tuner = diagnostics.locator('[data-receiver-health-section="measurement:tuners"]');
+      const usb = diagnostics.locator('[data-receiver-health-section="measurement:usb"]');
+      const control = diagnostics.locator('[data-receiver-health-section="measurement:control"]');
+      await expect(tuner).toContainText('1 measurement');
+      await expect(usb.locator('.ui-disclosure-toggle .ui-status')).toHaveText('Check soon');
+      await expect(control.locator('.ui-disclosure-toggle .ui-status')).toHaveText('Action needed');
+      await expect(control.locator('.receiver-health-section-body')).toBeHidden();
+      if (width > 720) {
+        const [left, right] = await Promise.all([tuner.boundingBox(), usb.boundingBox()]);
+        expect(right.x).toBeGreaterThan(left.x + left.width);
+        expect(Math.abs(right.y - left.y)).toBeLessThan(2);
+        const cards = await resources.evaluateAll((items) => items.map((item) => {
+          const bounds = item.getBoundingClientRect();
+          return { left: bounds.left, right: bounds.right };
+        }));
+        expect(cards[1].left - cards[0].right).toBeGreaterThanOrEqual(6);
+      }
+      const toggle = control.locator('.ui-disclosure-toggle');
+      await toggle.focus();
+      await page.keyboard.press('Enter');
+      const measurement = control.locator('.receiver-health-measurement-row');
+      await expect(measurement).toBeVisible();
+      for (const text of [row.scope, row.label, String(row.value), row.unit, row.detail]) {
+        await expect(measurement).toContainText(text);
+      }
+      const [panel, grid] = await Promise.all([control.boundingBox(), diagnostics.boundingBox()]);
+      expect(Math.abs(panel.width - grid.width)).toBeLessThan(2);
+      await page.getByRole('button', { name: 'Check again', exact: true }).click();
+      await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth))
+        .toBeLessThanOrEqual(1);
+      await page.getByRole('button', { name: 'Collapse audio player', exact: true }).click();
+      await page.screenshot({ path: testInfo.outputPath('receiver-status.png'), fullPage: true });
+    });
+}
 
 test('new pages honor the original settings and recordings capabilities', async ({ page }) => {
   const app = await openAdmin(page, 'audio-quality', ['admin-settings', 'admin-recordings']);

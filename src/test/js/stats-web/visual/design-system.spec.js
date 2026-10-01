@@ -1058,6 +1058,99 @@ test('receiver-health-dark-mobile', async ({ page }) => {
   await expect(page.locator('body')).toHaveScreenshot('receiver-health-dark-mobile.png', { fullPage: true });
 });
 
+for (const [name, theme, viewport] of [
+  ['receiver-health-dark-desktop', 'dark', { width: 1280, height: 900 }],
+  ['receiver-health-light-mobile', 'light', { width: 390, height: 844 }]
+]) {
+  test(name, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto(`/design-system.html?theme=${theme}&view=health`);
+    await expect(page.locator('body')).toHaveScreenshot(`${name}.png`, { fullPage: true });
+  });
+}
+
+for (const [theme, viewport] of [
+  ['light', { width: 1280, height: 900 }], ['dark', { width: 1280, height: 900 }],
+  ['light', { width: 390, height: 844 }], ['dark', { width: 390, height: 844 }]
+]) {
+  const size = viewport.width > 900 ? 'desktop' : 'mobile';
+  test(`status-primitives-${theme}-${size}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto(`/design-system.html?theme=${theme}&view=status-primitives`);
+    await expect(page.locator('body')).toHaveScreenshot(`status-primitives-${theme}-${size}.png`, { fullPage: true });
+  });
+
+  test(`compact records and status ${theme} ${size} preserve field order and keyboard controls`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto(`/design-system.html?theme=${theme}&view=status-primitives`);
+    const example = page.locator('.visual-status-primitives-example');
+    const metrics = example.locator('.ui-metric');
+    await expect(metrics).toHaveCount(4);
+    await expect(example.getByRole('progressbar', { name: 'VCE processor use' })).toHaveAttribute('value', '10.3');
+    await expect(example.getByRole('progressbar', { name: 'Free storage space' })).toHaveAttribute('value', '6');
+    await expect(metrics.last()).toContainText('Unavailable');
+    await expect(metrics.last()).toContainText('Waiting for the first sample');
+    await expect(metrics.last().locator('progress')).toHaveCount(0);
+    const defaultRecord = example.locator('.visual-records-default tbody tr').first();
+    const customRecord = example.locator('.visual-records-custom tbody tr').first();
+    expect(await defaultRecord.locator('td').evaluateAll((cells) => cells.map((cell) => cell.dataset.column)))
+      .toEqual(['talkgroup', 'radio', 'site', 'action', 'time', 'copies', 'match', 'outputs']);
+    expect(await customRecord.locator('td').evaluateAll((cells) => cells.map((cell) => cell.dataset.column)))
+      .toEqual(['site', 'time', 'outputs', 'copies', 'talkgroup', 'match', 'action', 'radio']);
+    await expect(example.getByRole('button', { name: 'Compare copies of County Fire Dispatch' })).toHaveCount(2);
+    await expect(example.locator('.visual-records-default .identity-summary-primary').first()).toHaveAttribute('href', '#talkgroup-1201');
+    for (const record of [defaultRecord, customRecord]) {
+      expect(await record.evaluate((row) => {
+        const boundary = row.getBoundingClientRect();
+        const cells = [...row.querySelectorAll('td')].map((cell) => cell.getBoundingClientRect());
+        return cells.every((cell) => cell.left >= boundary.left - 1 && cell.right <= boundary.right + 1) &&
+          cells.every((cell, index) => cells.slice(index + 1).every((other) =>
+            cell.right <= other.left + 1 || other.right <= cell.left + 1 ||
+            cell.bottom <= other.top + 1 || other.bottom <= cell.top + 1));
+      })).toBe(true);
+      const bounds = await record.boundingBox();
+      expect(bounds.height).toBeLessThan(size === 'desktop' ? 180 : 460);
+    }
+    const disclosure = example.locator('.ui-disclosure-toggle');
+    await expect(disclosure).toHaveAccessibleName('Incoming radio data 8 measurements · 2 channels need attention Check soon');
+    await expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+    await disclosure.focus();
+    await expect(disclosure).toHaveCSS('outline-width', '2px');
+    await disclosure.press('Enter');
+    await expect(disclosure).toHaveAttribute('aria-expanded', 'true');
+    await expect(example.locator('#visual-status-details')).toBeVisible();
+    await expect(disclosure).toBeFocused();
+    await disclosure.press('Space');
+    await expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+    await expect(example.locator('#visual-status-details')).toBeHidden();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+  });
+}
+
+test('receiver health gallery shares metric and disclosure structure', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/design-system.html?theme=light&view=health');
+  const example = page.locator('.visual-health-example');
+  await expect(example.locator('.receiver-health-overview-metrics .ui-metric')).toHaveCount(4);
+  await expect(example.locator('.receiver-health-resource-bars .ui-metric')).toHaveCount(4);
+  await expect(example.getByRole('progressbar', { name: 'Free storage space' })).toHaveAttribute('value', '6');
+  await expect(example.getByRole('button', { name: 'Choose status icon issues' })).toBeVisible();
+  await expect(example.locator('.receiver-health-diagnostics-grid .ui-disclosure-copy > small')).toHaveCount(8);
+  const diagnostics = example.locator('.receiver-health-diagnostics-grid');
+  const toggle = diagnostics.locator('.ui-disclosure-toggle').first();
+  await expect(toggle).toHaveAccessibleName('Tuners 4 measurements Normal');
+  await toggle.focus();
+  await toggle.press('Enter');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(diagnostics.locator('.receiver-health-section-body').first()).toBeVisible();
+  await expect(toggle).toBeFocused();
+  const openBounds = await diagnostics.locator('.receiver-health-section').first().boundingBox();
+  const gridBounds = await diagnostics.boundingBox();
+  expect(Math.abs(openBounds.width - gridBounds.width)).toBeLessThan(2);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+});
+
 test('p25-settings-dark-desktop', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto('/design-system.html?theme=dark&view=p25');

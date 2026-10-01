@@ -437,6 +437,7 @@
 
 /* A semantic table may present its records as a list while retaining field preferences. */
 .ui-record-list { table-layout: auto; display: block; }
+.ui-record-list colgroup { display: none; }
 .ui-record-list thead {
   position: absolute;
   width: 1px;
@@ -488,3 +489,21 @@
   font-size: var(--record-title-size);
   font-weight: var(--record-title-weight);
 }
+
+.ui-record-list-compact tbody tr {
+  align-items: start;
+  gap: var(--space-3) var(--space-4);
+  padding: var(--space-3) var(--space-4);
+}
+
+.ui-record-list-compact tbody td::before {
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-medium);
+}
+
+.ui-record-list-compact tbody td.empty {
+  flex: 1 1 100%;
+  grid-column: 1 / -1;
+}
+
+.ui-record-list-compact tbody td.empty::before { display: none; }
