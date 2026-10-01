@@ -2012,7 +2012,7 @@ export function createRecordingsFeature(deps) {
         }
       };
       drawTranscription(catalog);
-      const keyActions = node('div', 'ui-action-row');
+      const keyActions = node('div', 'ui-toolbar');
       keyActions.append(saveTranscription, clearKey);
       transcriptionBody.append(enabledField, transcriptionFields,
         keyActions, transcriptionStatus);

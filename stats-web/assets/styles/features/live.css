@@ -603,9 +603,11 @@ body[data-view="live"] .channel-diagnostic-readouts {
   display: grid;
   flex: 1 1 auto;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  /* Compact detail panes pan the plots instead of clipping their status text. */
+  grid-auto-rows: minmax(210px, 1fr);
   gap: var(--space-3);
   padding: var(--space-3);
-  overflow: hidden;
+  overflow: auto;
 }
 
 .channel-diagnostic-card {
@@ -923,8 +925,6 @@ body[data-view="live"] .channel-diagnostic-readouts {
 @media (max-width: 900px) {
   .channel-diagnostic-grid {
     grid-template-columns: minmax(0, 1fr);
-    grid-auto-rows: minmax(210px, 1fr);
-    overflow-y: auto;
   }
 }
 
@@ -933,6 +933,12 @@ body[data-view="live"] .channel-diagnostic-readouts {
   body[data-view="live"] .content {
     overflow-y: auto;
     overscroll-behavior-block: contain;
+  }
+
+  body[data-view="live"] .content > .live-split {
+    /* Keep pane geometry bounded while the workspace pans above the dock. */
+    flex: 0 0 auto;
+    height: calc(100dvh - var(--app-header-offset, 64px));
   }
 }
 

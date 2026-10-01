@@ -737,6 +737,7 @@ test('recording settings retain mode, retention, catalog facts, and both mainten
   const maintenance = workspace.locator('details.ui-section-disclosure');
   await expect(maintenance).not.toHaveAttribute('open', '');
   await expect(workspace.getByRole('button', { name: 'Run recount calls' })).toBeHidden();
+  await page.getByRole('button', { name: 'Change audio player size', exact: true }).press('Home');
   await maintenance.locator('summary').click();
   for (const [title, action] of [['Recount calls', 'recount'], ['Reindex calls', 'reindex']]) {
     await workspace.getByRole('button', { name: `Run ${title.toLowerCase()}` }).click();

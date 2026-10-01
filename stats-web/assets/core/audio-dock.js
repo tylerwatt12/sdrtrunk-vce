@@ -590,7 +590,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
           });
         });
         if (focused) {
-          const restored = [...panelHost.querySelectorAll('button, input, select, a, [tabindex]')].find((control) =>
+          const restored = [...panelHost.querySelectorAll('button, input, select, a, summary, [tabindex]')].find((control) =>
             focusId ? control.id === focusId : control.tagName === focusTag &&
               (control.getAttribute('aria-label') || control.textContent) === focusName);
           (restored || tabButtons[panel]).focus({ preventScroll: true });

@@ -88,6 +88,43 @@ async function openLive(page, showOnlyActiveTrunkedChannels = false) {
   return { diagnosticSubscriptions: () => diagnosticSubscriptions };
 }
 
+async function panDiagnosticStatusIntoView(page, overlay) {
+  await expect.poll(() => overlay.evaluate((element) => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const text = range.getBoundingClientRect();
+    const plot = element.parentElement.getBoundingClientRect();
+    return text.top >= plot.top && text.bottom <= plot.bottom &&
+      text.left >= plot.left && text.right <= plot.right;
+  })).toBe(true);
+  const grid = page.locator('.channel-diagnostic-grid');
+  await grid.scrollIntoViewIfNeeded();
+  const delta = await overlay.evaluate((element) => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const text = range.getBoundingClientRect();
+    const grid = element.closest('.channel-diagnostic-grid').getBoundingClientRect();
+    const dock = document.querySelector('#audio-dock').getBoundingClientRect();
+    const coveredHorizontally = text.right > dock.left && text.left < dock.right;
+    const bottom = coveredHorizontally ? Math.min(grid.bottom, dock.top) : grid.bottom;
+    return (text.top + text.bottom - grid.top - bottom) / 2;
+  });
+  await grid.hover({ position: { x: 5, y: 5 } });
+  await page.mouse.wheel(0, delta);
+  await expect.poll(() => overlay.evaluate((element) => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const text = range.getBoundingClientRect();
+    const grid = element.closest('.channel-diagnostic-grid').getBoundingClientRect();
+    const plot = element.parentElement;
+    const clear = [text.left + 1, text.right - 1].every((x) =>
+      [text.top + 1, text.bottom - 1].every((y) => plot.contains(document.elementFromPoint(x, y))));
+    return { visible: text.top >= grid.top && text.bottom <= grid.bottom && clear,
+      textTop: text.top, textBottom: text.bottom, gridTop: grid.top, gridBottom: grid.bottom,
+      dockTop: document.querySelector('#audio-dock').getBoundingClientRect().top, clear };
+  })).toMatchObject({ visible: true });
+}
+
 test('new Live presentation preferences start with active trunked channels only', async ({ page }) => {
   expect(defaultPreferences.presentation.show_only_active_trunked_channels).toBe(true);
   await openLive(page, defaultPreferences.presentation.show_only_active_trunked_channels);
@@ -95,6 +132,30 @@ test('new Live presentation preferences start with active trunked channels only'
   const dialog = page.getByRole('dialog', { name: 'Live presentation' });
   await expect(dialog.getByRole('checkbox', { name: 'Show only active trunked channels' })).toBeChecked();
 });
+
+for (const viewport of [{ width: 1280, height: 900 }, { width: 1024, height: 550 }]) {
+  test(`desktop Live panes keep their usable height in every dock size at ${viewport.width}x${viewport.height}`,
+    async ({ page }) => {
+      await page.setViewportSize(viewport);
+      await openLive(page);
+      const dock = page.locator('#audio-dock');
+      const handle = dock.getByRole('button', { name: 'Change audio player size', exact: true });
+      const geometry = () => page.evaluate(() => Object.fromEntries(
+        ['.content', '.live-split', '.live-right-workspace', '.live-channels-section', '.live-details'].map((selector) => {
+          const element = document.querySelector(selector);
+          return [selector, { height: element.getBoundingClientRect().height,
+            scrollHeight: element.scrollHeight, paddingBottom: getComputedStyle(element).paddingBottom }];
+        })));
+      await handle.press('Home');
+      await expect(dock).toHaveAttribute('data-state', 'collapsed');
+      const baseline = await geometry();
+      for (const [key, state] of [['ArrowUp', 'minimal'], ['End', 'full'], ['Home', 'collapsed']]) {
+        await handle.press(key);
+        await expect(dock).toHaveAttribute('data-state', state);
+        await expect.poll(geometry).toEqual(baseline);
+      }
+    });
+}
 
 test('dedicated remote Live detail has one origin cue; mixed rows retain theirs', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -107,6 +168,8 @@ test('dedicated remote Live detail has one origin cue; mixed rows retain theirs'
   await expect(selected.locator('td[data-column="channel"] .live-remote-origin')).toHaveCount(0);
   await expect(selected).toHaveScreenshot('live-selected-remote-detail-light.png');
 
+  // The floating desktop dock can be reduced to inspect the page beneath it.
+  await page.getByRole('button', { name: 'Change audio player size', exact: true }).press('Home');
   await selected.locator('tr[data-id="remote-lcn-1"]').click();
   await page.getByRole('tab', { name: 'Channel', exact: true }).click();
   const diagnostics = page.locator('.live-channel-pane');
@@ -116,6 +179,7 @@ test('dedicated remote Live detail has one origin cue; mixed rows retain theirs'
     .toHaveText('Symbols are not available for remote linked VCE data');
   await expect(diagnostics.locator('.channel-diagnostic-view-toggle')).toBeHidden();
   expect(link.diagnosticSubscriptions()).toBe(0);
+  for (const overlay of await diagnostics.locator('.channel-diagnostic-overlay').all()) await panDiagnosticStatusIntoView(page, overlay);
   await expect(diagnostics).toHaveScreenshot('live-remote-diagnostics-light.png');
 
   await page.getByRole('tab', { name: /Show live channels for Conventional/ }).click();
@@ -125,3 +189,31 @@ test('dedicated remote Live detail has one origin cue; mixed rows retain theirs'
   await expect(diagnostics.locator('.channel-diagnostic-view-toggle')).toBeVisible();
   await expect.poll(() => link.diagnosticSubscriptions()).toBeGreaterThan(0);
 });
+
+for (const viewport of [
+  { width: 1280, height: 900 },
+  { width: 1280, height: 600 },
+  { width: 320, height: 740 },
+  { width: 390, height: 844 },
+  { width: 430, height: 932 },
+  { width: 844, height: 390 },
+]) {
+  test(`remote diagnostic status remains reachable at ${viewport.width}x${viewport.height}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await openLive(page);
+    if (viewport.width > 900) {
+      await page.getByRole('button', { name: 'Change audio player size', exact: true }).press('Home');
+      if (viewport.height <= 600) {
+        // A short desktop keeps its existing pane resizer above the floating dock.
+        await page.getByRole('separator', { name: 'Resize live channels and details panels' }).press('End');
+      }
+    }
+    await page.locator('tr[data-id="remote-lcn-1"]').click();
+    const channelTab = page.getByRole('tab', { name: 'Channel', exact: true });
+    await channelTab.scrollIntoViewIfNeeded();
+    await channelTab.click();
+    const statuses = page.locator('.channel-diagnostic-overlay');
+    await expect(statuses).toHaveCount(2);
+    for (const overlay of await statuses.all()) await panDiagnosticStatusIntoView(page, overlay);
+  });
+}

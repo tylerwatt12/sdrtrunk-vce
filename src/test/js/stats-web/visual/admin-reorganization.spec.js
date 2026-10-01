@@ -244,6 +244,7 @@ test('display combines the original timing and spectrum settings and preserves t
     settings: { traffic_grant_age_out_milliseconds: 3750 }, revision: '"4"' }]);
   await expect(country).toHaveValue('US');
   await country.selectOption('CA');
+  await page.getByRole('button', { name: 'Change audio player size', exact: true }).press('Home');
   await page.getByRole('button', { name: 'Save country', exact: true }).click();
   await expect(page.getByText('Country saved.', { exact: true })).toBeVisible();
   expect(app.writes[1]).toEqual({ field: 'spectrum-country',

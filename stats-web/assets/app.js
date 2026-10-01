@@ -23,8 +23,8 @@ import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from
 import { createStreamingWorkspace } from './features/streaming.js?v=6';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=6';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=9';
-import { createRecordingsFeature } from './features/recordings.js?v=14';
-import { createAudioDock } from './core/audio-dock.js?v=3';
+import { createRecordingsFeature } from './features/recordings.js?v=15';
+import { createAudioDock } from './core/audio-dock.js?v=4';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=5';
 
@@ -23565,7 +23565,7 @@ async function renderAdminP25BandplanOverrides() {
   const actions = node('div', 'ui-action-row');
   actions.append(save);
   const footer = node('div', 'ui-record-card-footer p25-override-footer');
-  footer.append(message, actions);
+  footer.append(actions, message);
   body.append(intro, list, footer);
   const titleActions = sectionActionHost(add);
   content.append(section('P25 band plan overrides', body, titleActions));

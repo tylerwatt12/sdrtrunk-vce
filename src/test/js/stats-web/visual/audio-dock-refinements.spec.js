@@ -84,6 +84,26 @@ async function expectBlankFacts(page) {
   await expect(player(page).locator('#audio-dock-panel dd a')).toHaveCount(0);
 }
 
+test('desktop page geometry stays unchanged in every audio dock size', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openApp(page);
+  const geometry = () => page.locator('.content').evaluate((content) => ({
+    height: content.getBoundingClientRect().height,
+    scrollHeight: content.scrollHeight,
+    paddingBottom: getComputedStyle(content).paddingBottom,
+    spacer: getComputedStyle(content, '::after').content,
+    documentHeight: document.documentElement.scrollHeight,
+    scrollPaddingBottom: getComputedStyle(document.documentElement).scrollPaddingBottom,
+  }));
+  await size(page, 'collapsed');
+  const baseline = await geometry();
+  expect(baseline.spacer).toBe('none');
+  for (const state of ['minimal', 'full', 'collapsed']) {
+    await size(page, state);
+    await expect.poll(geometry).toEqual(baseline);
+  }
+});
+
 async function endLiveCall(page) {
   await page.evaluate(() => {
     const source = window.audioTest.liveSources.find((value) => value.active);
@@ -227,8 +247,11 @@ test('live Details keeps every label and disclosure state through active, paused
   await player(page).getByRole('button', { name: 'Pause live audio', exact: true }).click();
   await expect(player(page).locator('#audio-dock-panel')).toContainText('Engine 4');
   await player(page).getByRole('button', { name: 'Resume live audio', exact: true }).click();
+  const identityHeading = player(page).locator('summary', { hasText: 'Identity & aliases' });
+  await identityHeading.focus();
   await endLiveCall(page);
   await expectBlankFacts(page);
+  await expect(identityHeading).toBeFocused();
   expect(await labels(page)).toEqual(idleLabels);
   await expect(player(page).locator('details').filter({ has: page.locator('summary', { hasText: 'Identity & aliases' }) }))
     .toHaveJSProperty('open', true);
@@ -237,6 +260,7 @@ test('live Details keeps every label and disclosure state through active, paused
   state.feed.pending.push({ ...liveCall, call_id: 'refinement-second-call', started_at_ms: liveCall.started_at_ms + 60_000,
     completed_at_ms: liveCall.completed_at_ms + 60_000, source_alias: 'Engine 5', source_id: 30915 });
   await expect(player(page).locator('#audio-dock-panel')).toContainText('Engine 5');
+  await expect(identityHeading).toBeFocused();
   expect(await labels(page)).toEqual(idleLabels);
   await endLiveCall(page);
   await expectBlankFacts(page);
@@ -261,8 +285,11 @@ test('recording Details retains static and received-site labels but clears value
   await player(page).getByRole('button', { name: 'Pause recording', exact: true }).click();
   await expect(player(page).locator('#audio-dock-panel')).toContainText('Engine 4');
   await player(page).getByRole('button', { name: 'Play recording', exact: true }).click();
+  const sitesHeading = player(page).locator('summary', { hasText: 'Received site identities' });
+  await sitesHeading.focus();
   await page.evaluate(() => window.audioTest.recordingPlayer.dispatchEvent(new Event('ended')));
   await expectBlankFacts(page);
+  await expect(sitesHeading).toBeFocused();
   expect(await labels(page)).toEqual(activeLabels);
   await expect(player(page).locator('details').filter({ has: page.locator('summary', { hasText: 'Received site identities' }) }))
     .toHaveJSProperty('open', true);

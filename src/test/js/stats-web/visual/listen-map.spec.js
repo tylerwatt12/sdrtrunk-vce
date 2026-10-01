@@ -148,7 +148,8 @@ test('selection centering and detailed history use explicit operator controls', 
   await expect.poll(() => markerCenterOffset(page, 'Medic 2')).toBeLessThan(3);
   await page.locator('.listen-map-list-item').filter({ hasText: 'Engine 4' }).click();
   await expect.poll(() => markerCenterOffset(page, 'Engine 4')).toBeLessThan(3);
-  await history.nth(2).click();
+  await page.getByRole('button', { name: 'Change audio player size', exact: true }).press('Home');
+  await history.nth(2).locator('.listen-map-history-center').click();
   await expect.poll(() => markerCenterOffset(page, 'Engine 4')).toBeGreaterThan(80);
 });
 
