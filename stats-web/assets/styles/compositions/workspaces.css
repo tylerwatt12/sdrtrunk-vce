@@ -30,6 +30,7 @@
 }
 
 .ui-page-header {
+  min-width: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -37,8 +38,13 @@
   margin-bottom: var(--space-4);
 }
 
+.ui-page-header > div {
+  min-width: 0;
+}
+
 .ui-page-header .page-title {
   margin: 0;
+  overflow-wrap: anywhere;
   font-size: clamp(24px, 2.1vw, 30px);
   font-weight: var(--font-weight-heading);
   letter-spacing: 0;

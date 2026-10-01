@@ -23,9 +23,10 @@ import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from
 import { createStreamingWorkspace } from './features/streaming.js?v=5';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=3';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=9';
-import { createRecordingsFeature } from './features/recordings.js?v=12';
+import { createRecordingsFeature } from './features/recordings.js?v=13';
+import { createAudioDock } from './core/audio-dock.js?v=1';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
-import { WebCallPlayer } from './web-call-player.js?v=4';
+import { WebCallPlayer } from './web-call-player.js?v=5';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
@@ -9939,6 +9940,7 @@ function synchronizePlaybackAccess(accessChanged = false) {
     if (webCallPlayer) webCallPlayer.disconnect(unavailableMessage);
     else status.textContent = unavailableMessage;
     bar.querySelectorAll('button, input').forEach((control) => { control.disabled = true; });
+    audioDock.synchronize();
     return;
   }
 
@@ -9985,6 +9987,7 @@ function synchronizePlaybackAccess(accessChanged = false) {
     webCallPlayer.connect('/api/v1/calls/feed', (path, options) =>
       requestJson(path, { ...options, csrf: false, page: false, timeoutMs: 10_000 }));
   }
+  audioDock.synchronize();
 }
 
 const SCANNER_DETAIL_LEVELS = Object.freeze({ simple: 0, normal: 1, advanced: 2, engineer: 3 });
@@ -27221,9 +27224,23 @@ const recordingsFeature = createRecordingsFeature({
   }
 });
 
+const audioDock = createAudioDock({
+  node, iconButton, recordings: recordingsFeature.playback,
+  getLivePlayer: () => webCallPlayer,
+  access: () => ({ live: capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO),
+    recordings: capabilityAllowed(ACCESS_CAPABILITIES.RECORDINGS) }),
+  entityRefHref, href,
+  canViewRadio: () => capabilityAllowed(ACCESS_CAPABILITIES.RADIO),
+  getTitlePreference: () => activeUserPreferences().page_titles.prepend_playing_call,
+  setTitlePreference: (value) => updateUserPreferences((preferences) => {
+    preferences.page_titles.prepend_playing_call = value;
+  })
+});
+
 async function render() {
   setNavigationOpen(false);
-  if (!capabilityAllowed(ACCESS_CAPABILITIES.RECORDINGS)) recordingsFeature.stopAudio();
+  if (!capabilityAllowed(ACCESS_CAPABILITIES.RECORDINGS)) recordingsFeature.playback.reset();
+  audioDock.synchronize();
   const view = routeFoundation.requestedView(route);
   const entry = routeFoundation.resolve(applicationRoutes, route);
   if (!closeReadOnlyModal()) return;

@@ -163,11 +163,15 @@
 
 .alias-list-summary-copy {
   min-width: 0;
+  max-width: 100%;
+  flex: 1 1 auto;
   flex-wrap: wrap;
   gap: var(--space-2);
 }
 
 .alias-list-summary-copy h2 {
+  min-width: 0;
+  max-width: 100%;
   margin: 0;
   overflow: hidden;
   font-size: 18px;
@@ -1028,8 +1032,13 @@
   }
 
   .alias-list-summary {
-    align-items: flex-start;
+    align-items: stretch;
     flex-direction: column;
+  }
+
+  .alias-list-summary-copy h2 {
+    overflow-wrap: anywhere;
+    white-space: normal;
   }
 
   .alias-list-summary-actions {

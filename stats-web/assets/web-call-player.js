@@ -193,10 +193,14 @@ export class WebCallPlayer {
       targetLabel: this.currentTargetLabel(),
       holdTarget: this.holdTarget,
       queuedCount: this.queuedCount,
+      queue: this.scheduledQueue(WebCallPlayer.MAXIMUM_QUEUED_CALLS),
+      currentTime: this.getPlaybackPosition(),
+      duration: Number(this.currentBuffer?.duration) || 0,
       status: this.ui.status?.textContent || '',
       avoids: [...this.avoids.values()].reverse(),
       scanLists: this.scanLists.map((item) => ({ ...item, selected: this.selectedScanListIds.has(item.id) })),
       scanListCatalogReady: this.scanListCatalogReady,
+      scanListCatalogState: this.scanListCatalogState,
       maximumSelectedScanLists: this.maximumSelectedScanLists,
       volume: this.volume,
       targetGrouping: this.targetGrouping,
@@ -1215,6 +1219,7 @@ export class WebCallPlayer {
   setStatus(value) {
     this.statusValue = String(value || '');
     this.renderStatus();
+    this.notifyStateObservers();
   }
 
   setVolume(value, persist = true) {

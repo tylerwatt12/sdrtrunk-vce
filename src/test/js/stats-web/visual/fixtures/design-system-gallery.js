@@ -1,6 +1,7 @@
 import * as tableDefaults from '/assets/core/table-defaults.js';
 import * as tableLayouts from '/assets/core/table-layout.js';
 import { createDualRange } from '/assets/core/dual-range.js';
+import { mountAudioDockGallery } from '/visual/audio-dock-gallery.js';
 
 document.querySelectorAll('.visual-duration-range').forEach((host) => {
   const node = (tag, className, text) => {
@@ -355,7 +356,7 @@ function initializeScanListCatalog() {
 
 const parameters = new URLSearchParams(window.location.search);
 const theme = parameters.get('theme') === 'dark' ? 'dark' : 'light';
-const view = ['mobile-table', 'gallery', 'app-chrome', 'access-landing', 'access-login-modal', 'modal', 'modal-long', 'alias-list-create-modal', 'activity-action-tooltip', 'activity-filters', 'health-alert-modal', 'focus', 'settings', 'health', 'p25', 'admin-access',
+const view = ['mobile-table', 'gallery', 'app-chrome', 'audio-dock', 'access-landing', 'access-login-modal', 'modal', 'modal-long', 'alias-list-create-modal', 'activity-action-tooltip', 'activity-filters', 'health-alert-modal', 'focus', 'settings', 'health', 'p25', 'admin-access',
   'admin-navigation', 'admin-receiver', 'admin-support', 'dashboard-health', 'dashboard-calls', 'dashboard-activity',
   'signal-quality-detail', 'radioreference-results',
   'radio-directory-coverage', 'radio-directory-panel', 'admin-scan-lists',
@@ -499,6 +500,7 @@ if(view === 'access-landing' || view === 'access-login-modal') {
   example.querySelector('form').addEventListener('submit', (event) => event.preventDefault());
 }
 if(view === 'gallery') initializeGuidanceTable();
+if(view === 'audio-dock') await mountAudioDockGallery(parameters);
 if(view === 'admin-scan-lists') initializeScanListCatalog();
 document.querySelectorAll('.radioreference-detail-header').forEach((header) =>
   header.classList.add('ui-surface-header'));
@@ -683,12 +685,5 @@ if(view === 'live-notice') {
 }
 if(view === 'scanner') document.body.dataset.view = 'scanner';
 if(view === 'entity-details') document.body.dataset.view = 'group-identity';
-if(view === 'app-chrome') {
-  document.querySelector('.visual-app-chrome-example .playback-volume')?.style
-    .setProperty('--playback-volume-level', '75%');
-  if(window.matchMedia('(max-width: 1180px)').matches) {
-    document.querySelector('.visual-app-chrome-example .playback-control-menu').open = false;
-  }
-}
 const label = document.getElementById('visual-theme-label');
 if(label) label.textContent = `${theme[0].toUpperCase()}${theme.slice(1)} theme`;

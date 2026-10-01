@@ -280,160 +280,186 @@ export function createRecordingsFeature(deps) {
     return `${CALLS}/${encodeURIComponent(String(row.id))}/audio`;
   }
 
+  const playbackObservers = new Set();
+  const maximumSharedCalls = 100;
+  let sharedQueueRequest = 0;
+  let clickMode = 'queue';
+  let queueEntrySequence = 0;
+
+  function queueEntry(row) {
+    return { ...row, _queueEntryKey: `recording-entry-${++queueEntrySequence}` };
+  }
+
+  function queuedIndex(state, reference) {
+    const key = String(reference);
+    return state.queue.findIndex((row) => row._queueEntryKey === key || String(row.id) === key);
+  }
+
   function recordedPlayer() {
     if (player) return player;
-    const dock = node('section', 'recordings-player');
-    dock.setAttribute('aria-label', 'Recorded call playback');
-    dock.hidden = true;
-    const title = node('strong', 'recordings-player-title', 'Recordings');
-    const detail = node('span', 'recordings-player-detail', 'Queue ready');
-    const status = node('span', 'recordings-player-status');
-    status.setAttribute('role', 'status');
-    const main = node('div', 'recordings-player-main');
-    const heading = node('div', 'recordings-player-heading');
-    heading.append(node('span', 'recordings-player-eyebrow', 'RECORDINGS'), title, detail);
-    const play = button(node, 'Play', () => void toggleAudio(), 'ui-button ui-button-primary');
-    const next = button(node, 'Next', () => void advance(), 'ui-button ui-button-secondary');
-    const stop = button(node, 'Stop', () => stopAudio(), 'ui-button ui-button-secondary');
-    const queueButton = button(node, 'Queue', () => {
-      queuePanel.hidden = !queuePanel.hidden;
-      queueButton.setAttribute('aria-expanded', String(!queuePanel.hidden));
-    });
-    queueButton.setAttribute('aria-expanded', 'false');
-    const controls = node('div', 'recordings-player-controls');
-    controls.append(play, next, stop, queueButton);
-    const seek = node('input', 'recordings-player-seek');
-    seek.type = 'range';
-    seek.min = '0';
-    seek.max = '1';
-    seek.step = '0.1';
-    seek.value = '0';
-    seek.setAttribute('aria-label', 'Recording position');
-    const elapsed = node('span', 'recordings-player-elapsed', '00:00 / 00:00');
-    const progress = node('div', 'recordings-player-progress');
-    progress.append(seek, elapsed);
-    main.append(heading, progress, controls, status);
-    const queuePanel = node('div', 'recordings-player-queue');
-    queuePanel.hidden = true;
-    dock.append(main, queuePanel);
-    document.querySelector('.app-shell')?.append(dock);
     const audio = new Audio();
     audio.preload = 'metadata';
-    player = { dock, title, detail, status, play, next, queuePanel, seek, elapsed, audio,
-      current: null, queue: [], mode: 'idle', continuation: null, loading: false, token: 0 };
-    audio.addEventListener('timeupdate', () => {
-      if (!player || !audio.duration || !Number.isFinite(audio.duration)) return;
-      seek.max = String(audio.duration);
-      seek.value = String(audio.currentTime);
-      elapsed.textContent = `${secondsLabel(audio.currentTime)} / ${secondsLabel(audio.duration)}`;
-    });
+    player = { audio, current: null, queue: [], history: [], mode: 'idle', continuation: null,
+      loading: false, pendingStart: false, stopped: true, token: 0, detailsToken: 0, detailsLoading: false, detailsError: '', status: '' };
+    ['timeupdate', 'loadedmetadata', 'durationchange', 'play', 'pause', 'volumechange']
+      .forEach((event) => audio.addEventListener(event, drawQueue));
     audio.addEventListener('ended', () => void advance());
     audio.addEventListener('error', () => {
       if (!player?.current) return;
-      status.textContent = 'This recording could not be played. Moving to the next call.';
+      player.status = 'This recording could not be played. Moving to the next call.';
       void advance();
-    });
-    audio.addEventListener('play', () => { play.textContent = 'Pause'; });
-    audio.addEventListener('pause', () => { play.textContent = 'Play'; });
-    seek.addEventListener('input', () => {
-      if (Number.isFinite(audio.duration)) audio.currentTime = Number(seek.value);
     });
     return player;
   }
 
-  function secondsLabel(seconds) {
-    const total = Math.max(0, Math.floor(Number(seconds) || 0));
-    return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+  function playbackState() {
+    const state = recordedPlayer();
+    const measuredDuration = Number(state.audio.duration);
+    const callDuration = Number(value(state.current, 'duration_ms', 'call_duration_ms')) / 1000;
+    const total = Number.isFinite(measuredDuration) && measuredDuration > 0 ? measuredDuration :
+      (Number.isFinite(callDuration) && callDuration > 0 ? callDuration : 0);
+    return { current: state.current, queue: [...state.queue], history: [...state.history],
+      playing: Boolean(state.current && !state.stopped && !state.audio.paused),
+      paused: Boolean(state.current && !state.stopped && state.audio.paused), stopped: state.stopped, loading: state.loading,
+      status: state.status, duration: total, currentTime: Number(state.audio.currentTime) || 0,
+      volume: state.audio.volume, mode: state.mode, clickMode,
+      continuation: Boolean(state.continuation && !state.continuation.done),
+      canNext: Boolean(state.queue.length || (state.continuation && !state.continuation.done)),
+      canPrevious: Boolean(state.history.length), detailsLoading: state.detailsLoading,
+      detailsError: state.detailsError };
   }
 
   function drawQueue() {
-    const state = recordedPlayer();
-    state.dock.hidden = !state.current && !state.queue.length && !state.continuation;
-    document.body.classList.toggle('recordings-audio-active', Boolean(state.current));
-    state.next.disabled = !state.queue.length && !state.continuation;
-    const panel = state.queuePanel;
-    panel.replaceChildren();
-    const heading = node('div', 'recordings-queue-heading');
-    heading.append(node('strong', '', 'Playback queue'),
-      node('span', '', `${state.queue.length + (state.current ? 1 : 0)} loaded calls`));
-    panel.append(heading);
-    if (state.current) panel.append(queueItem(state.current, 'Now playing'));
-    state.queue.slice(0, 20).forEach((row, index) => panel.append(queueItem(row, index === 0 ? 'Up next' : '')));
-    if (state.continuation) panel.append(node('p', 'recordings-queue-note',
-      'More matching calls load as playback reaches them.'));
-    if (!state.current && !state.queue.length) panel.append(node('p', 'recordings-queue-note', 'Queue is empty.'));
+    if (!playbackObservers.size) return;
+    const snapshot = playbackState();
+    playbackObservers.forEach((observer) => {
+      try { observer(snapshot); } catch (_error) { /* Playback must outlive its presentation. */ }
+    });
   }
 
-  function queueItem(row, overline) {
-    const item = node('div', 'recordings-queue-item');
-    if (overline) item.append(node('span', 'recordings-player-eyebrow', overline));
-    item.append(node('strong', '', `${timeOnly(millis(row))} · ${label(row)}`));
-    const source = sourceLabel(row);
-    if (source) item.append(node('span', '', source));
-    return item;
+  function subscribeState(observer) {
+    if (typeof observer !== 'function') return () => {};
+    playbackObservers.add(observer);
+    observer(playbackState());
+    return () => playbackObservers.delete(observer);
   }
 
   async function toggleAudio() {
     const state = recordedPlayer();
     if (state.current) {
-      if (state.audio.paused) {
+      if (state.audio.paused || state.stopped) {
+        const token = state.token;
+        const current = state.current;
+        await stopLiveAudio();
+        if (token !== state.token || String(current.id) !== String(state.current?.id)) return;
+        if (state.stopped) {
+          state.audio.src = audioUrl(current);
+          state.audio.currentTime = 0;
+          state.stopped = false;
+        }
+        state.status = state.mode === 'continue' && state.continuation ? 'Continuing through matching calls' : '';
         try { await state.audio.play(); }
-        catch (_error) { state.status.textContent = 'Playback could not start. Try again.'; }
+        catch (_error) {
+          if (state.token === token) state.status = 'Playback could not start. Try again.';
+        }
       } else state.audio.pause();
+      drawQueue();
       return;
     }
     await advance();
   }
 
   function stopAudio() {
+    sharedQueueRequest++;
     if (!player) return;
     const state = player;
     state.token++;
     state.audio.pause();
     state.audio.removeAttribute('src');
     state.audio.load();
-    state.current = null;
-    state.queue = [];
     state.continuation = null;
-    state.mode = 'idle';
-    state.status.textContent = '';
+    state.loading = false;
+    state.pendingStart = false;
+    state.stopped = true;
+    state.status = 'Stopped.';
     drawQueue();
   }
 
-  async function loadContinuation(state) {
-    const continuation = state.continuation;
-    if (!continuation || continuation.loading || continuation.done) return;
-    continuation.loading = true;
+  function resetAudio() {
+    stopAudio();
+    if (!player) return;
+    player.detailsToken++;
+    player.current = null;
+    player.queue = [];
+    player.history = [];
+    player.mode = 'idle';
+    player.detailsLoading = false;
+    player.detailsError = '';
+    player.status = '';
+    drawQueue();
+  }
+
+  async function loadCurrentDetails(state, row) {
+    const token = ++state.detailsToken;
+    state.detailsLoading = true;
+    state.detailsError = '';
+    drawQueue();
     try {
-      const result = await requestJson(query(continuation.filters, {
-        from_ms: continuation.fromMs, sort: 'asc', cursor: continuation.cursor
-      }), { page: false });
-      if (state.continuation !== continuation) return;
-      for (const row of Array.isArray(result?.calls) ? result.calls : []) {
-        if (!afterCall(row, continuation.anchor)) continue;
-        if (continuation.seen.has(callKey(row))) continue;
-        continuation.seen.add(callKey(row));
-        state.queue.push(row);
-      }
-      continuation.cursor = result?.next_cursor || null;
-      continuation.done = !continuation.cursor;
-      if (continuation.done && !state.queue.length) state.continuation = null;
-      drawQueue();
+      const result = await requestJson(`${CALLS}/${encodeURIComponent(String(row.id))}`, { page: false });
+      if (token !== state.detailsToken || String(state.current?.id) !== String(row.id)) return;
+      state.current = { ...row, ...(result?.call || result || {}),
+        ...(result?.transcription ? { transcription: result.transcription } : {}) };
     } catch (_error) {
-      if (state.continuation === continuation) {
-        continuation.done = true;
-        state.status.textContent = 'Could not load the next matching calls.';
-      }
+      if (token === state.detailsToken) state.detailsError = 'Call details are unavailable. Try this call again.';
     } finally {
-      continuation.loading = false;
+      if (token === state.detailsToken) {
+        state.detailsLoading = false;
+        drawQueue();
+      }
     }
   }
 
-  async function advance() {
+  function loadContinuation(state) {
+    const continuation = state.continuation;
+    if (!continuation || continuation.done) return Promise.resolve();
+    if (continuation.loading) return continuation.request;
+    continuation.loading = true;
+    continuation.request = (async () => {
+      try {
+        const result = await requestJson(query(continuation.filters, {
+          from_ms: continuation.fromMs, sort: 'asc', cursor: continuation.cursor
+        }), { page: false });
+        if (state.continuation !== continuation) return;
+        for (const row of Array.isArray(result?.calls) ? result.calls : []) {
+          if (!afterCall(row, continuation.anchor)) continue;
+          if (continuation.seen.has(callKey(row))) continue;
+          continuation.seen.add(callKey(row));
+          state.queue.push(queueEntry(row));
+        }
+        continuation.cursor = result?.next_cursor || null;
+        continuation.done = !continuation.cursor;
+        if (continuation.done && !state.queue.length) state.continuation = null;
+        drawQueue();
+      } catch (_error) {
+        if (state.continuation === continuation) {
+          continuation.done = true;
+          state.status = 'Could not load the next matching calls.';
+          drawQueue();
+        }
+      } finally {
+        continuation.loading = false;
+      }
+    })();
+    return continuation.request;
+  }
+
+  async function advance({ remember = true } = {}) {
     const state = recordedPlayer();
     if (state.loading) return;
     const token = state.token;
     state.loading = true;
+    state.pendingStart = true;
+    drawQueue();
     try {
       state.audio.pause();
       while (!state.queue.length && state.continuation) {
@@ -441,49 +467,66 @@ export function createRecordingsFeature(deps) {
         if (token !== state.token) return;
         if (state.continuation?.loading || state.continuation?.done) break;
       }
-      const next = state.queue.shift();
+      const next = state.queue[0];
       if (!next) {
-        state.current = null;
+        state.stopped = true;
         state.continuation = null;
         state.audio.removeAttribute('src');
         state.audio.load();
-        state.status.textContent = 'Playback finished.';
+        if (state.status !== 'Could not load the next matching calls.') state.status = 'Playback finished.';
         drawQueue();
         return;
       }
       await stopLiveAudio();
       if (token !== state.token) return;
+      state.queue.shift();
+      if (remember && state.current) {
+        state.history.push(state.current);
+        if (state.history.length > maximumSharedCalls) state.history.shift();
+      }
       state.current = next;
-      state.title.textContent = label(next);
-      state.detail.textContent = `${dateTime(millis(next))}${sourceLabel(next) ? ` · ${sourceLabel(next)}` : ''}`;
-      state.status.textContent = state.mode === 'continue' ? 'Continuing through matching calls' : '';
+      state.pendingStart = false;
+      state.stopped = false;
+      state.status = state.mode === 'continue' ? 'Continuing through matching calls' : '';
       state.audio.src = audioUrl(next);
       state.audio.currentTime = 0;
-      state.seek.value = '0';
-      state.elapsed.textContent = `00:00 / ${duration(next) || '00:00'}`;
+      void loadCurrentDetails(state, next);
       drawQueue();
       try { await state.audio.play(); }
-      catch (_error) { state.status.textContent = 'Playback could not start. Press Play to retry.'; }
-      if (state.continuation && state.queue.length < 8) void loadContinuation(state);
+      catch (_error) {
+        if (token === state.token) state.status = 'Playback could not start. Press Play to retry.';
+      }
+      if (token === state.token && state.continuation && state.queue.length < 8) void loadContinuation(state);
     } finally {
-      state.loading = false;
-      if (token !== state.token && state.queue.length) void advance();
+      if (token === state.token) {
+        state.loading = false;
+        state.pendingStart = false;
+        drawQueue();
+      }
     }
   }
 
-  function playbackAction(row, action) {
+  function playbackAction(row, action = 'once') {
+    if (!row || row.id === null || row.id === undefined) return;
     const state = recordedPlayer();
+    sharedQueueRequest++;
     if (action === 'queue') {
-      state.queue.push(row);
+      state.queue.push(queueEntry(row));
       state.mode = state.mode === 'idle' ? 'queue' : state.mode;
-      state.status.textContent = 'Call added to the recording queue.';
+      state.status = 'Call added to the recording queue.';
       drawQueue();
       return;
     }
     state.token++;
+    state.detailsToken++;
     state.audio.pause();
     state.current = null;
-    state.queue = [row];
+    state.queue = [queueEntry(row)];
+    state.history = [];
+    state.loading = false;
+    state.pendingStart = false;
+    state.detailsLoading = false;
+    state.detailsError = '';
     state.continuation = action === 'continue' ? {
       filters: { ...currentFilters }, anchor: row, fromMs: millis(row), cursor: null,
       seen: new Set([callKey(row)]), loading: false, done: false
@@ -492,6 +535,122 @@ export function createRecordingsFeature(deps) {
     drawQueue();
     void advance();
   }
+
+  function seekAudio(seconds) {
+    const state = recordedPlayer();
+    const target = Number(seconds);
+    const total = playbackState().duration;
+    if (!state.current || !Number.isFinite(target) || !total) return;
+    state.audio.currentTime = Math.max(0, Math.min(total, target));
+    drawQueue();
+  }
+
+  function previousAudio() {
+    const state = recordedPlayer();
+    const previous = state.history.pop();
+    if (!previous) return;
+    state.token++;
+    state.loading = false;
+    state.pendingStart = false;
+    if (state.current) state.queue.unshift(state.current);
+    state.queue.unshift(previous);
+    void advance({ remember: false });
+  }
+
+  function clearQueue() {
+    const state = recordedPlayer();
+    sharedQueueRequest++;
+    state.token++;
+    state.loading = false;
+    state.pendingStart = false;
+    state.queue = [];
+    state.continuation = null;
+    state.status = 'Recording queue cleared.';
+    drawQueue();
+  }
+
+  function queueHref() {
+    const state = recordedPlayer();
+    const ids = [state.current, ...state.queue].filter(Boolean).map((row) => String(row.id));
+    if (!ids.length || ids.length > maximumSharedCalls || ids.some((id) => !/^[1-9]\d{0,18}$/.test(id))) return null;
+    return href('recordings', { recording_queue: ids.join(',') });
+  }
+
+  async function loadSharedQueue(params) {
+    const raw = typeof params === 'string' ? new URLSearchParams(params).get('recording_queue') :
+      params?.get ? params.get('recording_queue') : params?.recording_queue;
+    if (!raw) return false;
+    const ids = String(raw).split(',');
+    if (ids.length > maximumSharedCalls || ids.some((id) => !/^[1-9]\d{0,18}$/.test(id))) return false;
+    const token = ++sharedQueueRequest;
+    const state = recordedPlayer();
+    state.status = 'Loading shared recording queue…';
+    drawQueue();
+    const rows = [];
+    let unavailable = 0;
+    // Bound concurrent detail reads as well as the URL's call count.
+    for (let offset = 0; offset < ids.length; offset += 5) {
+      const results = await Promise.allSettled(ids.slice(offset, offset + 5).map(async (id) => {
+        const detail = await requestJson(`${CALLS}/${encodeURIComponent(id)}`, { page: false });
+        const call = detail?.call || detail;
+        if (!call || String(call.id) !== id) throw new Error('Recording unavailable');
+        return { ...call, ...(detail?.transcription ? { transcription: detail.transcription } : {}) };
+      }));
+      if (token !== sharedQueueRequest) return false;
+      results.forEach((result) => {
+        if (result.status === 'fulfilled') rows.push(result.value);
+        else unavailable++;
+      });
+    }
+    state.queue.push(...rows.map(queueEntry));
+    state.mode = state.mode === 'idle' ? 'queue' : state.mode;
+    state.status = unavailable ? `${rows.length} calls queued; ${unavailable} calls are unavailable.` :
+      `${rows.length} calls added to the recording queue. Press Play to start.`;
+    drawQueue();
+    return rows.length > 0;
+  }
+
+  const playback = {
+    subscribeState, viewState: playbackState, toggle: toggleAudio, next: advance, previous: previousAudio,
+    stop: stopAudio, reset: resetAudio, seek: seekAudio, skipSeconds: (seconds) => seekAudio(playbackState().currentTime + Number(seconds)),
+    setVolume: (volume) => {
+      if (!Number.isFinite(Number(volume))) return;
+      recordedPlayer().audio.volume = Math.max(0, Math.min(1, Number(volume)));
+      drawQueue();
+    },
+    clearQueue,
+    setClickMode: (mode) => {
+      if (['queue', 'once', 'continue'].includes(mode)) { clickMode = mode; drawQueue(); }
+    },
+    queueHref, loadSharedQueue, renderDetails, renderTranscript, play: playbackAction,
+    removeQueued: (reference) => {
+      const state = recordedPlayer();
+      const index = queuedIndex(state, reference);
+      if (index < 0) return;
+      const restart = state.loading && state.pendingStart;
+      if (restart) {
+        state.token++;
+        state.loading = false;
+        state.pendingStart = false;
+      }
+      state.queue.splice(index, 1);
+      drawQueue();
+      if (restart) void advance();
+    },
+    playQueued: (reference) => {
+      const state = recordedPlayer();
+      const index = queuedIndex(state, reference);
+      if (index < 0) return;
+      // Invalidate an in-flight start before reordering. It must neither consume
+      // the selected row nor clear the loading state of the replacement start.
+      state.token++;
+      state.loading = false;
+      state.pendingStart = false;
+      const [row] = state.queue.splice(index, 1);
+      state.queue.unshift(row);
+      void advance();
+    }
+  };
 
   function choosePlayback(row) {
     const body = node('div', 'recordings-playback-choices');
@@ -515,45 +674,208 @@ export function createRecordingsFeature(deps) {
     modal = openReadOnlyModal('Play recording', body, {
       id: `play-recording-${row.id}`, className: 'recordings-playback-modal'
     });
-    choices.firstElementChild?.focus();
+    const preferredIndex = ['once', 'continue', 'queue'].indexOf(clickMode);
+    (choices.children?.[preferredIndex] || choices.firstElementChild)?.focus();
   }
 
-  function callFacts(row) {
-    const receivedSites = value(row, 'also_received_on', 'also_received_sites');
-    const groupLabel = value(row, 'call_type') === 'PATCH' ? 'Patch' : 'Talkgroup';
-    const values = [
-      ['Duration', duration(row)], ['Call type', prettify(value(row, 'call_type'))],
-      ['Voice', prettify(value(row, 'voice_type'))], ['Frequency', frequency(row)],
-      ['Site', winningSite(row)],
-      ['Also received on', Array.isArray(receivedSites) ? receivedSites.map(siteText)
-        .filter(Boolean).join(', ') : ''],
-      ['Saved channel', value(row, 'channel_name', 'analog_channel_name') ||
-        (row?.channel_entity_ref ? 'Open channel' : null), 'channel_entity_ref'],
-      [`${groupLabel} ID`, value(row, 'talkgroup_id', 'group_id'), 'target_entity_ref'],
-      [`${groupLabel} alias`, value(row, 'talkgroup_alias', 'group_alias'), 'target_entity_ref'],
-      [`${groupLabel} description`, value(row, 'talkgroup_description', 'group_description')],
-      [`${groupLabel} group`, value(row, 'talkgroup_group', 'group_group')],
-      ['Destination radio', value(row, 'destination_radio_id'), 'target_entity_ref'],
-      ['Destination alias', value(row, 'destination_radio_alias'), 'target_entity_ref'],
-      ['Destination description', value(row, 'destination_radio_description')],
-      ['Destination group', value(row, 'destination_radio_group')],
-      ['Source ID', value(row, 'source_id', 'radio_id'), 'source_entity_ref'],
-      ['Source alias', value(row, 'source_alias', 'radio_alias'), 'source_entity_ref'],
-      ['Source description', value(row, 'source_description', 'radio_description')],
-      ['Latest OTA name', value(row, 'source_ota_alias', 'source_ota_ta', 'ota_alias', 'talker_alias'),
-        'source_entity_ref'],
-      ['Source group', value(row, 'source_group', 'radio_group')],
-      ['Radio system', value(row, 'system_name', 'radio_system_name', 'system_key'),
-        'radio_system_entity_ref'],
-      ['Protocol', protocolLabel(value(row, 'protocol'))],
-      ['WACN', value(row, 'wacn')], ['SysID', value(row, 'system_id', 'sysid')],
-      ['RFSS', value(row, 'rfss_id', 'rfss')], ['Site ID', value(row, 'site_id')],
-      ['NAC', value(row, 'nac')], ['Tone', value(row, 'tone')],
-      ['PL', value(row, 'pl')], ['DPL', value(row, 'dpl')]
+  function hexIdentity(identity, width) {
+    if (identity === null || identity === undefined || identity === '') return '';
+    const numeric = Number(identity);
+    return Number.isInteger(numeric) && numeric >= 0 ? numeric.toString(16).toUpperCase().padStart(width, '0') :
+      String(identity);
+  }
+
+  function fileSize(bytes) {
+    if (bytes === null || bytes === undefined || bytes === '') return '';
+    const count = Number(bytes);
+    if (!Number.isFinite(count) || count < 0) return '';
+    return count < 1024 ? `${count} bytes` : count < 1_048_576 ? `${(count / 1024).toFixed(1)} KB` :
+      `${(count / 1_048_576).toFixed(1)} MB`;
+  }
+
+  function receivedSites(row) {
+    const sites = value(row, 'also_received_on', 'also_received_sites');
+    if (!Array.isArray(sites) || !sites.length) return '';
+    const list = node('span', '');
+    sites.forEach((site) => {
+      const text = siteText(site);
+      if (!text) return;
+      if (list.childNodes.length) list.append(', ');
+      list.append(entityLink(text, site?.entity_ref));
+    });
+    return list.childNodes.length ? list : '';
+  }
+
+  function patchMembers(row) {
+    const members = value(row, 'patch_members', 'patch_talkgroups');
+    if (!Array.isArray(members) || !members.length) return '';
+    const list = node('span', '');
+    members.forEach((member) => {
+      const id = typeof member === 'object' ? value(member, 'id', 'talkgroup_id') : member;
+      const name = typeof member === 'object' ? value(member, 'alias', 'name') : null;
+      if (id === null && !name) return;
+      if (list.childNodes.length) list.append(', ');
+      const text = name ? `${name}${id !== null ? ` · ${id}` : ''}` : String(id);
+      list.append(entityLink(text, member?.entity_ref));
+    });
+    return list.childNodes.length ? list : '';
+  }
+
+  function factGroups(row) {
+    const group = value(row, 'call_type') === 'PATCH' ? 'Patch' : 'Talkgroup';
+    const target = label(row);
+    const source = sourceLabel(row);
+    const savedChannel = value(row, 'channel_name', 'analog_channel_name') ||
+      (row?.channel_entity_ref ? 'Open channel' : null);
+    const groups = [
+      ['', [
+        ['Target', target, 'target_entity_ref'], ['Source', source, 'source_entity_ref'],
+        ['Latest OTA name', value(row, 'source_ota_alias', 'source_ota_ta', 'ota_alias', 'talker_alias'), 'source_entity_ref'],
+        ['Radio system', value(row, 'system_name', 'radio_system_name', 'system_key'), 'radio_system_entity_ref'],
+        ['Saved channel', savedChannel, 'channel_entity_ref'],
+        ['Winning site', winningSite(row), 'site_entity_ref'], ['Also received on', receivedSites(row)],
+        ['Started', dateTime(millis(row))], ['Duration', duration(row)],
+        ['Call type', prettify(value(row, 'call_type'))], ['Voice type', prettify(value(row, 'voice_type'))],
+        ['Decoder', protocolLabel(value(row, 'protocol'))], ['Frequency', frequency(row)],
+        ['Timeslot', value(row, 'timeslot')],
+        ['Encrypted', typeof row?.encrypted === 'boolean' ? (row.encrypted ? 'Yes' : 'No') : null],
+        ['Alias List', value(row, 'alias_list_name', 'alias_list'), 'alias_list_entity_ref'],
+        ['Matched Scan Lists', Array.isArray(row?.matched_scan_lists) ? row.matched_scan_lists.map((item) =>
+          typeof item === 'string' ? item : value(item, 'name', 'id')).filter(Boolean).join(', ') : null]
+      ]],
+      ['Source & target identities', [
+        ['Source Radio ID', value(row, 'source_id', 'radio_id'), 'source_entity_ref'],
+        ['Source alias', value(row, 'source_alias', 'radio_alias'), 'source_entity_ref'],
+        ['Source group', value(row, 'source_group', 'radio_group')],
+        ['Source description', value(row, 'source_description', 'radio_description')],
+        [`${group} ID`, value(row, 'talkgroup_id', 'group_id'), 'target_entity_ref'],
+        [`${group} alias`, value(row, 'talkgroup_alias', 'group_alias', 'talkgroup_name'), 'target_entity_ref'],
+        [`${group} group`, value(row, 'talkgroup_group', 'group_group')],
+        [`${group} description`, value(row, 'talkgroup_description', 'group_description')],
+        ['Destination Radio ID', value(row, 'destination_radio_id'), 'target_entity_ref'],
+        ['Destination alias', value(row, 'destination_radio_alias'), 'target_entity_ref'],
+        ['Destination group', value(row, 'destination_radio_group')],
+        ['Destination description', value(row, 'destination_radio_description')], ['Patch members', patchMembers(row)]
+      ]],
+      ['Protocol & signaling', [
+        ['WACN', hexIdentity(value(row, 'wacn'), 5)],
+        ['SysID', hexIdentity(value(row, 'system_id', 'sysid'), 3)],
+        ['RFSS', value(row, 'rfss_id', 'rfss')], ['Site ID', value(row, 'site_id')],
+        ['NAC', hexIdentity(value(row, 'nac'), 3)], ['Tone kind', value(row, 'tone_kind')],
+        ['Tone', value(row, 'tone')], ['PL', value(row, 'pl')], ['DPL', value(row, 'dpl')]
+      ]],
+      ['Recording identifiers', [
+        ['Recording ID', value(row, 'id')], ['Call ID', value(row, 'call_id')],
+        ['Ended', dateTime(Number(value(row, 'end_ms', 'ended_at_ms')))],
+        ['File size', fileSize(value(row, 'size_bytes', 'file_size_bytes'))],
+        ['System key', value(row, 'system_key')], ['Channel ID', value(row, 'channel_id'), 'channel_entity_ref'],
+        ['Alias List ID', value(row, 'alias_list_id'), 'alias_list_entity_ref'],
+        ['Raw target ID', value(row, 'target_id'), 'target_entity_ref'],
+        ['Source home WACN', hexIdentity(value(row, 'source_home_wacn'), 5)],
+        ['Source home system', hexIdentity(value(row, 'source_home_system_id'), 3)],
+        ['Source home identity', value(row, 'source_home_id'), 'source_entity_ref'],
+        ['Target home WACN', hexIdentity(value(row, 'target_home_wacn'), 5)],
+        ['Target home system', hexIdentity(value(row, 'target_home_system_id'), 3)],
+        ['Target home identity', value(row, 'target_home_id'), 'target_entity_ref']
+      ]]
     ];
-    return values.filter(([, detail]) => detail !== null && detail !== undefined && detail !== '')
-      .map(([name, detail, reference]) => [name,
-        reference ? entityLink(detail, row?.[reference]) : detail]);
+    const sites = [value(row, 'audio_from'), ...(Array.isArray(value(row, 'also_received_on', 'also_received_sites')) ?
+      value(row, 'also_received_on', 'also_received_sites') : [])].filter((site) => site && typeof site === 'object');
+    if (sites.length) groups.push(['Received site identities', sites.flatMap((site, index) => {
+      const prefix = index === 0 && row.audio_from ? 'Winning site' : `Received site ${index + (row.audio_from ? 0 : 1)}`;
+      return [[`${prefix} name`, siteText(site), site.entity_ref],
+        [`${prefix} WACN`, hexIdentity(value(site, 'wacn'), 5)],
+        [`${prefix} SysID`, hexIdentity(value(site, 'system_id', 'sysid'), 3)],
+        [`${prefix} RFSS`, value(site, 'rfss_id', 'rfss')], [`${prefix} ID`, value(site, 'site_id')]];
+    })]);
+    const members = value(row, 'patch_members', 'patch_talkgroups');
+    if (Array.isArray(members) && members.length) groups.push(['Patch member identities', members.flatMap((member, index) => {
+      if (!member || typeof member !== 'object') return [];
+      const prefix = `Member ${index + 1}`;
+      return [[`${prefix} kind`, prettify(value(member, 'kind'))],
+        [`${prefix} ID`, value(member, 'id', 'talkgroup_id'), member.entity_ref],
+        [`${prefix} alias`, value(member, 'alias', 'name'), member.entity_ref],
+        [`${prefix} home WACN`, hexIdentity(value(member, 'home_wacn'), 5)],
+        [`${prefix} home system`, hexIdentity(value(member, 'home_system_id'), 3)],
+        [`${prefix} home identity`, value(member, 'home_identity_id'), member.entity_ref]];
+    })]);
+    return groups.map(([title, facts]) => [title, facts.filter(([, detail]) =>
+      detail !== null && detail !== undefined && detail !== '').map(([name, detail, reference]) => [name,
+      reference ? entityLink(detail, typeof reference === 'string' ? row?.[reference] : reference) : detail])])
+      .filter(([, facts]) => facts.length);
+  }
+
+  function renderDetails(host, call = player?.current) {
+    host.replaceChildren();
+    if (!call) {
+      host.append(makeNotice('Choose a recording to see its call details.'));
+      return;
+    }
+    factGroups(call).forEach(([title, facts]) => {
+      const list = node('dl', 'ui-fact-list audio-dock-facts');
+      facts.forEach(([name, detail]) => appendFact(node, list, name, detail));
+      if (!title) host.append(list);
+      else {
+        list.classList.add('ui-form-section');
+        const group = node('details', 'ui-section-disclosure');
+        group.append(node('summary', 'ui-section-summary', title), list);
+        host.append(group);
+      }
+    });
+    if (String(player?.current?.id) === String(call.id)) {
+      if (player.detailsLoading) host.append(makeNotice('Loading complete call details…', 'loading'));
+      else if (player.detailsError) host.append(makeNotice(player.detailsError, 'error'));
+    }
+    const actions = node('div', 'ui-action-row');
+    const download = anchor('Download recording', audioUrl(call), 'ui-button ui-button-secondary');
+    download.setAttribute('download', '');
+    actions.append(download);
+    host.append(actions);
+  }
+
+  function renderTranscript(host, call = player?.current) {
+    host.replaceChildren();
+    if (!call) { host.append(makeNotice('Choose a recording to see its transcript.')); return; }
+    const transcript = call.transcription;
+    if (!transcript && player?.detailsLoading && String(player.current?.id) === String(call.id)) {
+      host.append(makeNotice('Loading transcript…', 'loading'));
+      return;
+    }
+    if (!transcript && player?.detailsError && String(player.current?.id) === String(call.id)) {
+      host.append(makeNotice(player.detailsError, 'error'));
+      return;
+    }
+    const state = String(transcript?.status || 'PENDING').toUpperCase();
+    const message = state === 'COMPLETE' ?
+      (transcript?.text ? `Transcribed ${dateTime(transcript.stored_at_ms)}` : 'No speech was returned.') :
+      state === 'FAILED' ? 'Transcription failed.' : state === 'DISABLED' ? 'Transcription is off.' :
+      state === 'TOO_SHORT' || transcript?.too_short ? 'Call is shorter than the minimum length.' :
+      state === 'PENDING' ? 'Pending transcription.' : prettify(state);
+    host.append(node('p', 'recordings-transcript-status', message));
+    if (state === 'COMPLETE' && transcript?.text) {
+      host.append(node('p', 'recordings-transcript-text', String(transcript.text)));
+    }
+    if (state !== 'FAILED' || !isPrimaryAdmin()) return;
+    const retryStatus = node('div', 'recordings-form-status');
+    retryStatus.setAttribute('role', 'status');
+    const retry = button(node, 'Retry transcription', async () => {
+      retry.disabled = true;
+      try {
+        const result = await requestJson(`${ADMIN}/calls/${encodeURIComponent(String(call.id))}/transcription/retry`,
+          { method: 'POST', page: false });
+        if (String(player?.current?.id) === String(call.id)) {
+          player.current = { ...player.current, transcription: result };
+          drawQueue();
+        }
+        if (host.isConnected) renderTranscript(host, { ...call, transcription: result });
+      } catch (error) {
+        if (host.isConnected) {
+          retryStatus.replaceChildren(makeNotice(error.message || 'Transcription could not be retried. Try again.', 'error'));
+          retry.disabled = false;
+        }
+      }
+    });
+    host.append(retry, retryStatus);
   }
 
   async function openDetails(row) {
@@ -564,60 +886,18 @@ export function createRecordingsFeature(deps) {
     try {
       const detail = await requestJson(`${CALLS}/${encodeURIComponent(String(row.id))}`, { page: false });
       if (!modal.dialog.isConnected) return;
-      const call = detail?.call || detail || row;
+      const call = { ...row, ...(detail?.call || detail || {}),
+        ...(detail?.transcription ? { transcription: detail.transcription } : {}) };
       const heading = node('div', 'recordings-detail-heading');
       heading.append(node('h3', '', label(call)), node('span', '', dateTime(millis(call))));
-      const facts = node('dl', 'ui-fact-list recordings-detail-facts');
-      callFacts(call).forEach(([name, fact]) => appendFact(node, facts, name, fact));
-      const patchMembers = value(call, 'patch_members', 'patch_talkgroups');
-      if (Array.isArray(patchMembers) && patchMembers.length) {
-        const members = node('span', '');
-        patchMembers.forEach((member) => {
-          const name = typeof member === 'object' ? value(member, 'alias', 'name', 'id', 'talkgroup_id') : member;
-          if (name === null || name === undefined || name === '') return;
-          if (members.childNodes.length) members.append(', ');
-          members.append(entityLink(name, member?.entity_ref));
-        });
-        if (members.childNodes.length) appendFact(node, facts, 'Patch members', members);
-      }
-      const transcription = detail?.transcription || call?.transcription;
-      const transcriptPanel = transcription && node('section', 'recordings-transcript');
-      if (transcriptPanel) {
-        const drawTranscript = (current) => {
-          const state = String(current?.status || 'PENDING').toUpperCase();
-          const title = node('h4', '', 'Transcript');
-          const message = state === 'COMPLETE' ?
-            (current?.text ? `Transcribed ${dateTime(current.stored_at_ms)}` : 'No speech was returned.') :
-            state === 'FAILED' ? 'Transcription failed.' :
-            state === 'DISABLED' ? 'Transcription is off.' :
-            state === 'TOO_SHORT' || current?.too_short ? 'Call is shorter than the minimum length.' :
-            state === 'PENDING' ? 'Pending transcription.' : prettify(state);
-          const summary = node('p', 'recordings-transcript-status', message);
-          transcriptPanel.replaceChildren(title, summary);
-          if (state === 'COMPLETE' && current?.text) {
-            transcriptPanel.append(node('p', 'recordings-transcript-text', String(current.text)));
-          }
-          if (state === 'FAILED' && isPrimaryAdmin()) {
-            const retryStatus = node('div', 'recordings-form-status');
-            retryStatus.setAttribute('role', 'status');
-            const retry = button(node, 'Retry transcription', async () => {
-              retry.disabled = true;
-              try {
-                const result = await requestJson(`${ADMIN}/calls/${encodeURIComponent(String(call.id))}/transcription/retry`,
-                  { method: 'POST', page: false });
-                if (modal.dialog.isConnected) drawTranscript(result);
-              } catch (error) {
-                if (modal.dialog.isConnected) retryStatus.replaceChildren(makeNotice(error.message ||
-                  'Transcription could not be retried. Try again.', 'error'));
-                retry.disabled = false;
-              }
-            });
-            transcriptPanel.append(retry, retryStatus);
-          }
-        };
-        drawTranscript(transcription);
-      }
-      body.replaceChildren(heading, facts, ...(transcriptPanel ? [transcriptPanel] : []));
+      const facts = node('div', 'ui-editor-sections recordings-detail-facts');
+      renderDetails(facts, call);
+      const transcript = node('section', 'recordings-transcript');
+      transcript.append(node('h4', '', 'Transcript'));
+      const transcriptBody = node('div', '');
+      renderTranscript(transcriptBody, call);
+      transcript.append(transcriptBody);
+      body.replaceChildren(heading, facts, transcript);
     } catch (error) {
       if (modal.dialog.isConnected) body.replaceChildren(makeNotice(error.message ||
         'Call details are unavailable. Refresh the results and try again.', 'error'));
@@ -826,7 +1106,7 @@ export function createRecordingsFeature(deps) {
       try {
         await requestJson(`${ADMIN}/calls`, { method: 'DELETE',
           body: { ids: ids.map((id) => Number(id)) }, page: false });
-        if (player && ids.includes(String(player.current?.id))) stopAudio();
+        if (player && ids.includes(String(player.current?.id))) resetAudio();
         else if (player) {
           player.queue = player.queue.filter((row) => !ids.includes(String(row.id)));
           drawQueue();
@@ -1756,5 +2036,5 @@ export function createRecordingsFeature(deps) {
     }
   }
 
-  return { renderSearchPage, renderAdminRecordings, renderAdminTranscription, stopAudio };
+  return { renderSearchPage, renderAdminRecordings, renderAdminTranscription, stopAudio, playback };
 }

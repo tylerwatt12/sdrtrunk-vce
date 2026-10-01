@@ -530,6 +530,13 @@
   gap: var(--space-1);
 }
 
+.ui-badge-group > a.ui-pill {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 .ui-badge-group-compact {
   gap: 3px;
 }
@@ -674,7 +681,8 @@
 }
 
 .ui-search {
-  min-width: 260px;
+  min-width: 0;
+  max-width: 100%;
   position: relative;
   flex: 1 1 360px;
 }

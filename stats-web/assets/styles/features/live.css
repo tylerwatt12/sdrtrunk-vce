@@ -928,6 +928,14 @@ body[data-view="live"] .channel-diagnostic-readouts {
   }
 }
 
+/* Short phone viewports keep both panes reachable beneath the header. */
+@media (max-width: 1120px) and (max-height: 560px) {
+  body[data-view="live"] .content {
+    overflow-y: auto;
+    overscroll-behavior-block: contain;
+  }
+}
+
 @media (max-width: 680px) {
   .live-picker-header {
     flex-wrap: nowrap;

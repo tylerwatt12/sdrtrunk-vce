@@ -71,6 +71,18 @@ body[data-gallery-view="activity-filters"] {
   grid-column: 1 / -1;
 }
 
+.visual-audio-call-context {
+  margin-top: var(--space-4);
+}
+
+.visual-mobile-boundaries {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+body:not([data-gallery-view="audio-dock"]) .visual-audio-dock-example {
+  display: none;
+}
+
 .visual-guidance-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

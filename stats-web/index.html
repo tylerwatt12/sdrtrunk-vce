@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="sdrtrunk-web-revision" content="272">
+  <meta name="sdrtrunk-web-revision" content="273">
   <meta name="theme-color" content="#202a33" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#090e13" media="(prefers-color-scheme: dark)">
   <title>VCE</title>
@@ -11,7 +11,7 @@
   <link rel="icon" href="/assets/vce-icon-32.png?v=1" type="image/png" sizes="32x32">
   <link rel="apple-touch-icon" href="/assets/vce-apple-touch-icon.png?v=1" sizes="180x180">
   <link rel="manifest" href="/assets/site.webmanifest?v=1">
-  <link rel="stylesheet" href="/assets/app.css?v=241">
+  <link rel="stylesheet" href="/assets/app.css?v=242">
 </head>
 <body>
   <svg class="icon-sprite" aria-hidden="true">
@@ -53,6 +53,11 @@
     <symbol id="icon-bug" viewBox="0 0 24 24"><path d="M8 8.5a4 4 0 0 1 8 0V16a4 4 0 0 1-8 0Z"></path><path d="M12 4V2M8.5 5 6.5 3M15.5 5l2-2M8 11H4M16 11h4M8 15H4M16 15h4M10 11h4M12 11v8"></path></symbol>
     <symbol id="icon-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M19 5l-1.5 1.5M6.5 17.5 5 19"></path></symbol>
     <symbol id="icon-moon" viewBox="0 0 24 24"><path d="M20 15.5A8 8 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z"></path></symbol>
+    <symbol id="icon-minimize" viewBox="0 0 24 24"><path d="M4 4l6 6M14 14l6 6M4 10h6V4M14 20v-6h6"></path></symbol>
+    <symbol id="icon-previous" viewBox="0 0 24 24"><path d="M19 5v14l-10-7ZM5 5v14"></path></symbol>
+    <symbol id="icon-rewind" viewBox="0 0 24 24"><path d="m11 5-8 7 8 7V5Zm10 0-8 7 8 7V5Z"></path></symbol>
+    <symbol id="icon-forward" viewBox="0 0 24 24"><path d="m3 5 8 7-8 7V5Zm10 0 8 7-8 7V5Z"></path></symbol>
+    <symbol id="icon-speaker-muted" viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4ZM17 9l5 6M22 9l-5 6"></path></symbol>
     <symbol id="icon-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7Z"></path></symbol>
     <symbol id="icon-speaker" viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4ZM17 9a4 4 0 0 1 0 6M19.5 6a8 8 0 0 1 0 12"></path></symbol>
     <symbol id="icon-pause" viewBox="0 0 24 24"><path d="M7 5h3v14H7zM14 5h3v14h-3z"></path></symbol>
@@ -133,7 +138,10 @@
         </div>
       </header>
       <button type="button" id="navigation-backdrop" class="navigation-backdrop" aria-label="Close navigation" hidden></button>
-      <div id="desktop-playback-slot" class="desktop-playback-slot">
+
+    </div>
+    <main id="content" class="content" aria-live="polite" aria-busy="true"><div class="loading ui-feedback ui-feedback-loading" role="status">Loading</div></main>
+      <div id="desktop-playback-slot" class="desktop-playback-slot" hidden>
         <section class="playback-bar" id="playback-bar" aria-label="Web call playback">
           <details id="playback-control-menu" class="playback-control-menu" open><summary aria-label="Playback controls" title="Playback controls"><svg aria-hidden="true"><use href="#icon-playback-controls"></use></svg></summary><div class="playback-control-menu-panel"><div class="playback-controls" role="group" aria-label="Playback controls"><button type="button" id="playback-play" class="playback-command playback-icon-command playback-play-command" aria-pressed="false" aria-label="Play browser call audio" title="Play browser call audio"><svg aria-hidden="true"><use href="#icon-play"></use></svg></button><button type="button" id="playback-pause" class="playback-command playback-icon-command" disabled aria-pressed="false" aria-label="Pause audio and keep collecting calls (queue is limited)" title="Pause audio and keep collecting calls (queue is limited)"><svg aria-hidden="true"><use href="#icon-pause"></use></svg></button><button type="button" id="playback-skip" class="playback-command playback-icon-command" aria-label="Skip current call" title="Skip current call"><svg aria-hidden="true"><use href="#icon-skip"></use></svg></button><button type="button" id="playback-replay" class="playback-command playback-icon-command" aria-label="Replay last call" title="Replay last call"><svg aria-hidden="true"><use href="#icon-replay"></use></svg></button><button type="button" id="playback-hold" class="playback-command playback-letter-command" aria-label="Hold current target" title="Hold current target">H</button><div class="playback-command-group" role="group" aria-label="Avoid controls"><button type="button" id="playback-avoid" class="playback-command playback-letter-command" aria-label="Avoid current target" title="Avoid current target">A</button><button type="button" id="playback-avoid-list" class="playback-command playback-menu-command" aria-label="Open avoid list" title="Open avoid list"><svg aria-hidden="true"><use href="#icon-chevron-down"></use></svg></button></div><button type="button" id="playback-clear-queue" class="playback-command playback-icon-command" aria-label="Clear queued calls" title="Clear queued calls"><svg aria-hidden="true"><use href="#icon-clear-queue"></use></svg></button></div><label class="playback-volume" title="Browser playback volume"><span class="playback-volume-label" aria-hidden="true">VOL</span><input id="playback-volume" type="range" min="0" max="1" step="0.05" value="1" aria-label="Browser playback volume"></label></div></details>
           <div class="playback-now"><div id="playback-current" class="playback-current"><strong class="playback-current-primary">Idle</strong></div></div>
@@ -142,9 +150,7 @@
           <div id="playback-status" class="playback-status">Checking access</div><div id="playback-progress" class="playback-progress" aria-hidden="true"><span id="playback-progress-glow" class="playback-progress-glow"></span></div>
         </section>
       </div>
-    </div>
-    <main id="content" class="content" aria-live="polite" aria-busy="true"><div class="loading ui-feedback ui-feedback-loading" role="status">Loading</div></main>
   </div>
-  <script type="module" src="/assets/app.js?v=339"></script>
+  <script type="module" src="/assets/app.js?v=340"></script>
 </body>
 </html>

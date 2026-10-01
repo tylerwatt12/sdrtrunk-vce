@@ -399,6 +399,8 @@ body[data-view="network-visualizer"] .content {
   right: var(--space-3);
   bottom: var(--space-3);
   width: min(430px, calc(100% - 32px));
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--network-panel-line);
   border-radius: var(--radius-card);
@@ -409,6 +411,7 @@ body[data-view="network-visualizer"] .content {
 
 .network-visualizer-panel-header {
   display: flex;
+  flex: 0 0 auto;
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-3);
@@ -431,7 +434,8 @@ body[data-view="network-visualizer"] .content {
 }
 
 .network-visualizer-event-list {
-  height: calc(100% - 78px);
+  min-height: 0;
+  flex: 1 1 auto;
   margin: 0;
   padding: 0;
   overflow: auto;

@@ -112,16 +112,6 @@ body[data-view="scanner"] .content {
   min-width: 0;
 }
 
-.scanner-expanded .playback-control-menu[open] > .playback-control-menu-panel {
-  width: 100%;
-  display: flex;
-  align-items: center;
-}
-
-.scanner-player-host > .playback-bar.scanner-expanded .playback-volume {
-  margin-left: auto;
-}
-
 .scanner-player-host > .playback-bar.scanner-expanded .playback-now,
 .scanner-player-host > .playback-bar.scanner-expanded .playback-subscriptions,
 .scanner-player-host > .playback-bar.scanner-expanded .playback-status {

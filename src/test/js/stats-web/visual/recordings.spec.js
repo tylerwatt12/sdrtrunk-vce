@@ -4,6 +4,9 @@ const { expect, test } = require('@playwright/test');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
+// The global player is covered separately; these snapshots isolate recording components.
+const componentScreenshot = { stylePath: path.resolve(__dirname, 'fixtures/hide-global-audio-dock.css') };
+
 let defaultPreferences;
 
 test.beforeAll(async () => {
@@ -224,14 +227,14 @@ test('Classic empty page invites only the primary administrator', async ({ page 
     .toHaveAttribute('href', '/?view=admin&tab=recordings');
   await expect(page.locator('.recordings-search')).toHaveCount(0);
   await expect(page.locator('.recordings-pager')).toHaveCount(0);
-  await expect(page.locator('.recordings-library')).toHaveScreenshot('recordings-classic-admin-empty.png');
+  await expect(page.locator('.recordings-library')).toHaveScreenshot('recordings-classic-admin-empty.png', componentScreenshot);
 
   await page.setViewportSize({ width: 390, height: 844 });
   await openRecordings(page, { mode: 'CLASSIC', hasCalls: false, admin: false, theme: 'dark' });
   await expect(page.getByRole('heading', { name: 'No managed recordings yet' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Enable Managed Recordings' })).toHaveCount(0);
   await expect(page.locator('.recordings-search')).toHaveCount(0);
-  await expect(page.locator('.recordings-library')).toHaveScreenshot('recordings-classic-guest-empty.png');
+  await expect(page.locator('.recordings-library')).toHaveScreenshot('recordings-classic-guest-empty.png', componentScreenshot);
 });
 
 test('Classic history remains searchable and unavailable catalog has no enable pitch', async ({ page }) => {
@@ -239,7 +242,7 @@ test('Classic history remains searchable and unavailable catalog has no enable p
   await expect(page.locator('.recordings-mode-notice')).toContainText('Earlier Managed calls remain searchable');
   await expect(page.locator('.recordings-call')).toHaveCount(1);
   await expect(page.getByRole('combobox', { name: 'Find a call' })).toBeVisible();
-  await expect(page.locator('.recordings-library')).toHaveScreenshot('recordings-classic-history.png');
+  await expect(page.locator('.recordings-library')).toHaveScreenshot('recordings-classic-history.png', componentScreenshot);
 
   await openRecordings(page, { mode: 'CLASSIC', hasCalls: false, available: false });
   await expect(page.locator('.recordings-library')).toContainText('library is unavailable');
@@ -249,7 +252,7 @@ test('Classic history remains searchable and unavailable catalog has no enable p
 test('Managed empty page refreshes when the first call arrives', async ({ page }) => {
   const state = await openRecordings(page, { hasCalls: false });
   await expect(page.getByRole('heading', { name: 'Ready for the first call' })).toBeVisible();
-  await expect(page.locator('.recordings-library')).toHaveScreenshot('recordings-managed-empty.png');
+  await expect(page.locator('.recordings-library')).toHaveScreenshot('recordings-managed-empty.png', componentScreenshot);
   state.hasCalls = true;
   await page.getByRole('button', { name: 'Refresh calls' }).click();
   await expect(page.locator('.recordings-call')).toHaveCount(1);
@@ -274,7 +277,7 @@ for (const theme of ['light', 'dark']) {
     expect(Math.abs(timeBox.height - queryBox.height)).toBeLessThan(2);
     expect(queryBox.width).toBeGreaterThan(150);
     await expect(page.getByRole('button', { name: 'More filters' })).toBeVisible();
-    await expect(page.locator('.recordings-library')).toHaveScreenshot(`recordings-desktop-${theme}.png`);
+    await expect(page.locator('.recordings-library')).toHaveScreenshot(`recordings-desktop-${theme}.png`, componentScreenshot);
 
     await query.fill('fire');
     const suggestions = page.getByRole('listbox');
@@ -286,7 +289,7 @@ for (const theme of ['light', 'dark']) {
     expect(suggestionsBox.x).toBeGreaterThanOrEqual(sidebarBox.x);
     expect(suggestionsBox.x + suggestionsBox.width).toBeLessThanOrEqual(sidebarBox.x + sidebarBox.width);
     if (theme === 'light') await expect(page.locator('.recordings-library'))
-      .toHaveScreenshot('recordings-suggestions-light.png');
+      .toHaveScreenshot('recordings-suggestions-light.png', componentScreenshot);
     await query.press('ArrowDown');
     await expect(query).toHaveAttribute('aria-activedescendant', /recordings-options-q-0/);
     await query.press('Enter');
@@ -295,7 +298,7 @@ for (const theme of ['light', 'dark']) {
     await page.getByRole('button', { name: 'Search', exact: true }).click();
     await expect(page.locator('.recordings-selected-filters')).toContainText('Fire Dispatch');
     if (theme === 'light') await expect(page.locator('.recordings-library'))
-      .toHaveScreenshot('recordings-filtered-context-light.png');
+      .toHaveScreenshot('recordings-filtered-context-light.png', componentScreenshot);
     await page.getByRole('button', { name: /More filters/ }).click();
     await expect(page.getByRole('combobox', { name: 'Radio system' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Clear filters' })).toBeVisible();
@@ -347,7 +350,7 @@ test('call length steps from sub-second to whole seconds with a thirty-second-pl
   await expect(lower).toHaveAttribute('aria-valuetext', '<1 second');
   await expect(upper).toHaveValue('30');
   await expect(upper).toHaveAttribute('aria-valuetext', '30 seconds+');
-  await expect(page.locator('.ui-dual-range-field')).toHaveScreenshot('recordings-duration-defaults-desktop.png');
+  await expect(page.locator('.ui-dual-range-field')).toHaveScreenshot('recordings-duration-defaults-desktop.png', componentScreenshot);
   await page.getByRole('button', { name: 'Search', exact: true }).click();
   expect(state.requestedFilters.at(-1)).not.toHaveProperty('min_duration_ms');
   expect(state.requestedFilters.at(-1)).not.toHaveProperty('max_duration_ms');
@@ -566,7 +569,7 @@ for (const theme of ['light', 'dark']) {
     await page.setViewportSize({ width: 390, height: 844 });
     const state = await openRecordings(page, { theme });
     await expect(page.locator('.recordings-call')).toHaveCount(1);
-    await expect(page.locator('.recordings-library')).toHaveScreenshot(`recordings-mobile-${theme}.png`);
+    await expect(page.locator('.recordings-library')).toHaveScreenshot(`recordings-mobile-${theme}.png`, componentScreenshot);
     await page.getByRole('button', { name: 'Filters' }).click();
     const sheet = page.getByRole('dialog', { name: 'Filters' });
     await expect(sheet).toBeVisible();
@@ -574,10 +577,10 @@ for (const theme of ['light', 'dark']) {
     expect(bounds.width).toBe(390);
     expect(bounds.height).toBe(844);
     await expect(sheet.getByRole('combobox', { name: 'Radio system' })).toBeVisible();
-    await expect(sheet).toHaveScreenshot(`recordings-mobile-filters-${theme}.png`);
+    await expect(sheet).toHaveScreenshot(`recordings-mobile-filters-${theme}.png`, componentScreenshot);
     const duration = sheet.locator('.ui-dual-range-field');
     await duration.scrollIntoViewIfNeeded();
-    await expect(duration).toHaveScreenshot(`recordings-duration-defaults-mobile-${theme}.png`);
+    await expect(duration).toHaveScreenshot(`recordings-duration-defaults-mobile-${theme}.png`, componentScreenshot);
     await sheet.locator('.modal-content').evaluate((content) => { content.scrollTop = content.scrollHeight; });
     const lastField = await sheet.locator('.recordings-search-fields .recordings-field').last().boundingBox();
     const footer = await sheet.locator('.recordings-filter-sheet-actions').boundingBox();
@@ -603,16 +606,16 @@ test('linked recording cards and details open canonical entity pages', async ({ 
     await expect(entityLink(card, target).first()).toContainText(cardLabels[index]);
   }
   await expect(card.locator('.recordings-call-title')).toContainText('Fire Dispatch');
-  await expect(card).toHaveScreenshot('recordings-linked-desktop.png');
+  await expect(card).toHaveScreenshot('recordings-linked-desktop.png', componentScreenshot);
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(card).toHaveScreenshot('recordings-linked-mobile.png');
+  await expect(card).toHaveScreenshot('recordings-linked-mobile.png', componentScreenshot);
   await card.locator('.recordings-call-info').click();
   const detail = page.getByRole('dialog', { name: 'Call details' });
   await expect(detail).toBeVisible();
   for (const target of linkedHrefs) {
     await expect(entityLink(detail, target).first()).toBeVisible();
   }
-  await expect(detail).toHaveScreenshot('recordings-linked-detail-mobile.png');
+  await expect(detail).toHaveScreenshot('recordings-linked-detail-mobile.png', componentScreenshot);
 });
 
 test('conventional recordings link their configured channel without a radio system', async ({ page }) => {
@@ -985,14 +988,14 @@ for (const theme of ['light', 'dark']) {
     await expect(page.locator('.recordings-library')).not.toContainText('Audio from');
     await expect(page.locator('.recordings-call-actions')).toHaveCount(0);
     await expect(page.locator('.recordings-transcript-preview')).toHaveCount(2);
-    await expect(page.locator('.recordings-library')).toHaveScreenshot(`recordings-approved-${theme}.png`);
+    await expect(page.locator('.recordings-library')).toHaveScreenshot(`recordings-approved-${theme}.png`, componentScreenshot);
     const firstCard = page.locator('.recordings-call').first();
     await firstCard.locator('.recordings-card-play').click({ position: { x: 180, y: 20 } });
     let chooser = page.getByRole('dialog', { name: 'Play recording', exact: true });
     await expect(chooser).toBeVisible();
     await expect(chooser.getByRole('button', { name: /Play once/ })).toContainText('then stop');
     await expect(chooser.getByRole('button', { name: /Continue from here/ })).toContainText('newer matching calls');
-    await expect(chooser).toHaveScreenshot(`recordings-playback-${theme}.png`);
+    await expect(chooser).toHaveScreenshot(`recordings-playback-${theme}.png`, componentScreenshot);
     await page.keyboard.press('Escape');
     await expect(firstCard.locator('.recordings-card-play')).toBeFocused();
     await firstCard.locator('.recordings-call-select').check();
@@ -1003,15 +1006,16 @@ for (const theme of ['light', 'dark']) {
     await page.getByRole('button', { name: 'Search', exact: true }).click();
     await expect.poll(() => state.requestedFilters.at(-1).transcript).toBe('arriving');
     await page.setViewportSize({ width: 390, height: 844 });
-    await expect(page.locator('.recordings-results-body')).toHaveScreenshot(`recordings-approved-mobile-${theme}.png`);
+    await expect(page.locator('.recordings-results-body')).toHaveScreenshot(`recordings-approved-mobile-${theme}.png`, componentScreenshot);
     await firstCard.locator('.recordings-card-play').focus();
     await page.keyboard.press('Enter');
     chooser = page.getByRole('dialog', { name: 'Play recording', exact: true });
     await expect(chooser).toBeVisible();
-    await expect(chooser).toHaveScreenshot(`recordings-playback-mobile-${theme}.png`);
+    await expect(chooser).toHaveScreenshot(`recordings-playback-mobile-${theme}.png`, componentScreenshot);
     await chooser.getByRole('button', { name: /Add to queue/ }).click();
     await expect(chooser).toBeHidden();
-    await expect(page.locator('.recordings-player')).toContainText('1 loaded calls');
+    await expect(page.locator('#audio-dock')).toHaveAttribute('data-source', 'recordings');
+    await expect(page.locator('#audio-dock').getByRole('button', { name: 'Queue 1', exact: true })).toBeVisible();
   });
 }
 
@@ -1032,7 +1036,8 @@ test('playback choices retain the selected call and continuation search', async 
   await page.locator('.recordings-card-play').click();
   await page.getByRole('dialog', { name: 'Play recording', exact: true })
     .getByRole('button', { name: /Play once/ }).click();
-  await expect(page.locator('.recordings-player')).toContainText('Fire Dispatch');
+  await expect(page.locator('#audio-dock')).toHaveAttribute('data-source', 'recordings');
+  await expect(page.locator('#audio-dock')).toContainText('Fire Dispatch');
   await expect.poll(() => page.evaluate(() => window.playedRecordingSources.at(-1))).toMatch(/calls\/17\/audio$/);
   await page.locator('.recordings-card-play').click();
   await page.getByRole('dialog', { name: 'Play recording', exact: true })
@@ -1077,7 +1082,7 @@ for (const theme of ['light', 'dark']) {
     }
     await expect(page.locator('.recordings-transcript-preview')).toHaveCount(25);
     await expectTranscriptsClearInfo(page);
-    await expect(page.locator('.recordings-library')).toHaveScreenshot(`recordings-mixed-compact-${theme}.png`);
+    await expect(page.locator('.recordings-library')).toHaveScreenshot(`recordings-mixed-compact-${theme}.png`, componentScreenshot);
 
     await cards.first().locator('.recordings-call-info').click();
     const details = page.getByRole('dialog', { name: 'Call details' });
@@ -1091,7 +1096,7 @@ for (const theme of ['light', 'dark']) {
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(cards).toHaveCount(25);
     await expectTranscriptsClearInfo(page);
-    await expect(page.locator('.recordings-results-body')).toHaveScreenshot(`recordings-mixed-compact-mobile-${theme}.png`);
+    await expect(page.locator('.recordings-results-body')).toHaveScreenshot(`recordings-mixed-compact-mobile-${theme}.png`, componentScreenshot);
     await page.getByRole('button', { name: 'Next', exact: true }).click();
     await expect(cards).toHaveCount(5);
     await expect(cards.first().locator('.recordings-call-title')).toContainText(calls[25].talkgroup_alias);

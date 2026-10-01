@@ -1,0 +1,2 @@
+/* Component snapshots do not include the separately tested global player. */
+#audio-dock { visibility: hidden !important; }

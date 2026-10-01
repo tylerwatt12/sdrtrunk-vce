@@ -263,7 +263,8 @@ for (const legacy of ['live-timing', 'spectrum']) {
 test('page access preserves all nineteen backend policies and every tier option', async ({ page }) => {
   expect(accessPolicies).toHaveLength(19);
   await openAdmin(page, 'access');
-  const controls = page.locator('.admin-settings-content .admin-tier-select');
+  const controls = page.locator('.admin-settings-content')
+    .getByRole('combobox', { name: /^Minimum access level for / });
   await expect(controls).toHaveCount(19);
   for (const policy of accessPolicies) {
     const select = page.getByRole('combobox', { name: `Minimum access level for ${policy.display_name}` });

@@ -167,6 +167,7 @@
 .channel-editor-form {
   min-width: 0;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 0;
 }
 
@@ -205,12 +206,15 @@
 }
 
 .channel-editor-hero > div {
+  min-width: 0;
   display: grid;
+  flex: 1 1 auto;
   gap: 3px;
   margin-right: auto;
 }
 
 .channel-editor-hero strong {
+  overflow-wrap: anywhere;
   font-size: 16px;
 }
 
@@ -364,7 +368,7 @@
   --channel-map-columns: 110px minmax(150px, 1fr) 40px;
 }
 
-.channel-map-editor.channel-map-with-uplink {
+.channel-map-editor:where(.channel-map-with-uplink) {
   --channel-map-columns: 110px minmax(150px, 1fr) minmax(150px, 1fr) 40px;
 }
 

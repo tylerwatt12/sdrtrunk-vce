@@ -302,7 +302,8 @@ test('icon actions show hints on hover and keyboard-visible focus only', async (
 
   await page.goto('/design-system.html?theme=light&view=app-chrome');
   await expect(page.locator('.visual-app-chrome-example .theme-toggle')).toHaveCSS('width', '40px');
-  await expect(page.locator('.visual-app-chrome-example .playback-icon-command').first()).toHaveCSS('width', '40px');
+  await page.goto('/design-system.html?theme=light&view=scanner');
+  await expect(page.locator('.visual-scanner-example .playback-icon-command').first()).toHaveCSS('width', '40px');
 });
 
 test('disabled icon hint stays visible outside a table', async ({ page }) => {
@@ -453,10 +454,10 @@ test('app-chrome-dark-mobile', async ({ page }) => {
   await expect(page.locator('body')).toHaveScreenshot('app-chrome-dark-mobile.png');
 });
 
-test('app chrome transport controls and popovers share one compact surface language', async ({ page }) => {
+test('Scanner transport controls share one compact surface language', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
-  await page.goto('/design-system.html?theme=dark&view=app-chrome');
-  const example = page.locator('.visual-app-chrome-example');
+  await page.goto('/design-system.html?theme=dark&view=scanner');
+  const example = page.locator('.visual-scanner-example');
   const command = example.locator('.playback-command').first();
   const volume = example.locator('.playback-volume');
   const avoidGroup = example.locator('.playback-command-group');
@@ -470,41 +471,22 @@ test('app chrome transport controls and popovers share one compact surface langu
     element.style.setProperty('--playback-volume-level', '0%');
   });
   await expect(volume.locator('.playback-volume-label')).toHaveCSS('background-clip', 'text');
-  await expect(volume).toHaveScreenshot('app-chrome-volume-empty-dark-desktop.png');
+  await expect(volume).toHaveScreenshot('scanner-volume-empty-dark-desktop.png');
   await volume.locator('input').focus();
   await expect(volume).toHaveCSS('outline-style', 'solid');
   await volume.evaluate((element) => {
     element.style.setProperty('--playback-volume-level', '75%');
   });
 
-  const subscriptions = example.locator('.playback-subscriptions');
-  await subscriptions.locator('summary').click();
-  const subscriptionPanel = subscriptions.locator('.playback-subscription-panel');
-  await expect(subscriptionPanel).toBeVisible();
-  await expect(subscriptionPanel).toHaveCSS('background-image', 'none');
-  await expect(subscriptionPanel).toHaveCSS('overflow-y', 'hidden');
-  await expect(subscriptionPanel.locator('.playback-scan-list-options')).toHaveCSS('overflow-y', 'auto');
-  await expect(subscriptionPanel.locator('.ui-selection-check-inverse')).toHaveCount(3);
-  await expect(page).toHaveScreenshot('app-chrome-scan-lists-dark-desktop.png');
-
-  await subscriptions.locator('summary').click();
-  const queue = example.locator('.playback-queue');
-  await queue.locator('summary').click();
-  const queuePanel = queue.locator('.playback-queue-list');
-  await expect(queuePanel).toBeVisible();
-  await expect(queuePanel).toHaveCSS('background-image', 'none');
-  await expect(queuePanel.locator('.playback-queue-item')).toHaveCount(3);
-  await expect(page).toHaveScreenshot('app-chrome-queue-dark-desktop.png');
 });
 
-test('app chrome keeps desktop navigation and mobile playback controls distinct', async ({ page }) => {
+test('app chrome keeps desktop and mobile navigation reachable without a second audio player', async ({ page }) => {
   const navigation = page.locator('.visual-app-chrome-example .navigation-toggle');
-  const playbackMenu = page.locator('.visual-app-chrome-example .playback-control-menu');
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto('/design-system.html?theme=light&view=app-chrome');
   await expect(navigation).toBeHidden();
-  await expect(playbackMenu).toHaveAttribute('open', '');
   const header = page.locator('.visual-app-chrome-example .app-header');
+  await expect(header.locator('.playback-bar')).toHaveCount(0);
   const brand = header.getByRole('link', { name: 'VCE home' });
   await expect(brand.locator('img.brand-logo')).toHaveAttribute('src', '/assets/vce-wordmark.svg?v=3');
   await expect(header.getByText('RadioReference', { exact: true })).toBeAttached();
@@ -512,16 +494,15 @@ test('app chrome keeps desktop navigation and mobile playback controls distinct'
   await expect(header.getByText('Hardware', { exact: true })).toBeAttached();
   await expect(header.getByText('Administration', { exact: true })).toBeAttached();
   await expect(header.getByText('About', { exact: true })).toBeAttached();
-  await expect(header.getByRole('button', { name: 'Replay last call' })).toBeAttached();
-  await expect(header.getByRole('button', { name: 'Clear queued calls' })).toBeAttached();
+  await expect(header.getByRole('link', { name: 'Receiver status' })).toBeVisible();
+  await expect(header.getByRole('link', { name: 'Report a problem' })).toBeVisible();
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
   await expect(navigation).toBeVisible();
   const [navigationBox, brandBox] = await Promise.all([navigation.boundingBox(), brand.boundingBox()]);
   expect(brandBox.x - (navigationBox.x + navigationBox.width)).toBeGreaterThanOrEqual(9);
-  await expect(playbackMenu).not.toHaveAttribute('open', '');
-  await expect(page.locator('.visual-app-chrome-example .playback-control-menu > summary')).toBeVisible();
+  await expect(header.locator('.playback-bar')).toHaveCount(0);
 });
 
 for (const [view, theme, viewport, name] of [
