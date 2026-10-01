@@ -12932,14 +12932,16 @@ function openSpectrumDiscoveryWizard(selection) {
   selection = { ...selection, frequencyHz: Math.round(Number(selection.frequencyHz)) };
   const abort = new AbortController();
   const host = node('div', 'spectrum-discovery-workspace editor-workspace');
-  const frequency = node('p', 'muted', `${channelMHz(selection.frequencyHz)} MHz`);
-  const steps = node('div', 'ui-segmented spectrum-discovery-steps');
+  const context = node('div', 'spectrum-discovery-context');
+  context.append(node('strong', '', `${(selection.frequencyHz / 1_000_000).toFixed(6)} MHz`),
+    node('p', 'muted', selection.tunerName || selection.targetLabel || 'Selected receiver'));
+  const steps = node('ol', 'spectrum-discovery-progress');
   steps.setAttribute('aria-label', 'Add channel steps');
   const stage = node('div', 'spectrum-discovery-stage');
   const message = node('div', 'ui-feedback');
   message.setAttribute('role', 'status');
-  const actions = node('div', 'ui-action-row');
-  host.append(frequency, steps, stage, message, actions);
+  const actions = node('div', 'ui-action-row spectrum-discovery-actions');
+  host.append(context, steps, stage, actions);
   let session = null;
   let protocols = null;
   let profile = null;
@@ -12949,10 +12951,26 @@ function openSpectrumDiscoveryWizard(selection) {
   let operation = 0;
   let settings = {};
   let reviewDraft = null;
+  let savedAliasName = '';
+  let restartRequired = false;
   let probeNodes = null;
   const path = '/api/v1/admin/spectrum-discovery';
+  const protocolLabels = { 'p25-phase1': 'P25 radio system', am: 'AM radio', nbfm: 'FM two-way radio' };
   const sessionPath = () => `${path}/${encodeURIComponent(session.session_id)}`;
-  const cancelSession = async () => {
+  const disclosure = (label, ...content) => {
+    const details = node('details', 'ui-section-disclosure ui-section-disclosure-flat');
+    details.append(node('summary', 'ui-section-summary', label), ...content);
+    return details;
+  };
+  const facts = (entries) => {
+    const list = node('dl', 'ui-fact-list spectrum-discovery-summary');
+    entries.forEach(([label, value]) => list.append(node('dt', '', label), node('dd', '', value)));
+    return list;
+  };
+  const cancelSession = async (invalidate = true) => {
+    if (invalidate) operation += 1;
+    window.clearTimeout(pollTimer);
+    window.clearTimeout(heartbeatTimer);
     const previous = session;
     session = null;
     if (previous?.session_id) {
@@ -12961,41 +12979,40 @@ function openSpectrumDiscoveryWizard(selection) {
       }).catch(() => {});
     }
   };
-  const modal = openReadOnlyModal('Add channel / system', host, {
+  const modal = openReadOnlyModal('Add a channel', host, {
     id: 'spectrum-discovery', className: 'channel-editor-modal spectrum-discovery-modal',
     cleanup: () => {
       closed = true;
-      operation += 1;
       abort.abort();
-      window.clearTimeout(pollTimer);
-      window.clearTimeout(heartbeatTimer);
       window.removeEventListener('pagehide', abandon);
       void cancelSession();
       selection.setProbeActive?.(false);
     }
   });
   if (!modal) return null;
-  const abandon = () => {
-    abort.abort();
-    window.clearTimeout(pollTimer);
-    window.clearTimeout(heartbeatTimer);
-    void cancelSession();
-  };
+  const abandon = () => { abort.abort(); void cancelSession(); };
   window.addEventListener('pagehide', abandon);
-  const current = () => !closed && activeReadOnlyModal === modal.state;
+  const current = () => !closed && !abort.signal.aborted && activeReadOnlyModal === modal.state;
   const request = (url, options = {}) => requestJson(url, {
     page: false, signal: abort.signal, ...options
   });
   const showStep = (index, label) => {
     probeNodes = null;
-    steps.replaceChildren(...['Protocol', 'Identify / settings', 'Review', 'Complete'].map((text, position) => {
-      const item = uiPill(`${position + 1}. ${text}`, position === index ? 'blue' : 'neutral');
-      if (position === index) item.setAttribute('aria-current', 'step');
-      return item;
-    }));
-    stage.replaceChildren(node('h3', '', label));
+    steps.hidden = index === 3;
+    steps.replaceChildren(...['Signal', !profile || profile.id === 'p25-phase1' ? 'Check signal' : 'Audio', 'Review']
+      .map((text, position) => {
+        const item = node('li');
+        item.append(uiPill(position < index ? '✓' : String(position + 1),
+          position === index ? 'blue' : position < index ? 'success' : 'neutral'), node('span', '', text));
+        if (position === index) item.setAttribute('aria-current', 'step');
+        return item;
+      }));
+    const heading = node('h3', '', label);
+    heading.tabIndex = -1;
+    stage.replaceChildren(heading, message);
     actions.replaceChildren();
-    message.textContent = '';
+    message.replaceChildren();
+    heading.focus({ preventScroll: true });
   };
   const button = (label, action, primary = false) => {
     const control = uiActionButton(label, '', action,
@@ -13006,29 +13023,75 @@ function openSpectrumDiscoveryWizard(selection) {
   const busy = (value) => {
     modal.setBusy(value);
     actions.querySelectorAll('button').forEach((control) => { control.disabled = value; });
+    stage.querySelectorAll('input[type="radio"]').forEach((control) => { control.disabled = value; });
   };
-  const showError = (error) => {
-    if (current()) message.textContent = error.message || 'Could not complete this step. Try again.';
+  const showError = (error, copy = 'This step could not finish. Try again.') => {
+    if (!current()) return;
+    message.replaceChildren(node('p', '', copy));
+    if (error?.message) message.append(disclosure('Error details', node('p', 'muted', error.message)));
+  };
+  const valid = (form) => {
+    let parent = form.querySelector(':invalid')?.parentElement;
+    while (parent && parent !== form) {
+      if (parent.matches('details')) parent.open = true;
+      parent = parent.parentElement;
+    }
+    return form.reportValidity();
+  };
+  const chooseAnother = async () => {
+    busy(true);
+    const cancelled = cancelSession();
+    const generation = operation;
+    await cancelled;
+    if (current() && generation === operation) {
+      selection.setProbeActive?.(false);
+      showProtocol();
+      busy(false);
+    }
   };
   const showProtocol = () => {
-    showStep(0, 'Choose a protocol');
-    const select = uiSelect([
-      { value: 'p25-phase1', label: 'P25 trunked control channel' },
-      { value: 'am', label: 'AM' }, { value: 'nbfm', label: 'NBFM' }
-    ], profile?.id || 'p25-phase1');
-    select.setAttribute('aria-label', 'Protocol');
-    stage.append(formField('Protocol', uiSelectFrame(select)));
-    button('Cancel', () => modal.close());
-    button('Next', () => void beginSession(select.value), true);
+    showStep(0, 'What kind of signal is this?');
+    stage.append(node('p', 'muted', 'Choose a radio type. We’ll guide you through the rest.'));
+    const group = node('fieldset', 'spectrum-discovery-protocols');
+    group.setAttribute('aria-label', 'Radio type');
+    const descriptions = {
+      'p25-phase1': 'Public safety and other digital radio systems',
+      am: 'Aircraft communications and other AM signals',
+      nbfm: 'Analog voice on a single frequency'
+    };
+    const next = button(profile?.id && profile.id !== 'p25-phase1' ? 'Continue' : 'Check signal', () => {
+      void beginSession(group.querySelector('input:checked').value);
+    }, true);
+    Object.entries(protocolLabels).forEach(([id, label]) => {
+      const option = node('label', 'ui-choice-card spectrum-discovery-protocol-option');
+      const radio = node('input', 'ui-choice-radio');
+      radio.type = 'radio';
+      radio.name = 'spectrum-discovery-protocol';
+      radio.value = id;
+      radio.checked = id === (profile?.id || 'p25-phase1');
+      radio.setAttribute('aria-label', label);
+      radio.addEventListener('change', () => { next.textContent = id === 'p25-phase1' ? 'Check signal' : 'Continue'; });
+      const copy = node('div', 'spectrum-discovery-option-copy');
+      copy.append(node('strong', '', label), node('p', 'muted', descriptions[id]));
+      option.append(radio, copy);
+      group.append(option);
+    });
+    const help = disclosure('Help me choose',
+      node('p', '', 'P25 uses a control signal to coordinate a group of radio frequencies. This is called a trunked system. Select its steady control signal to add the system.'),
+      node('p', '', 'AM and FM two-way radio listen to the frequency you selected. FM two-way radio uses narrowband FM (NBFM); it is not for FM broadcast stations.'),
+      node('p', '', 'Automatic radio type detection is not available yet. If you are unsure, try P25 first. A signal check does not save a channel.'));
+    stage.append(group, help);
+    const cancel = button('Cancel', () => modal.close());
+    actions.prepend(cancel);
   };
   const beginSession = async (protocolId) => {
     const generation = ++operation;
     busy(true);
     try {
-      await cancelSession();
+      await cancelSession(false);
       if (!current() || generation !== operation) return;
       profile = protocols.profiles.find((candidate) => candidate.id === protocolId);
-      if (!profile) throw new Error('This protocol is unavailable. Reload the page and try again.');
+      if (!profile) throw new Error('This radio type is unavailable. Reload the page and try again.');
       selection.setProbeActive?.(true);
       const created = await request(path, { method: 'POST', body: {
         tuner_id: selection.tunerId, frequency_hz: selection.frequencyHz,
@@ -13041,111 +13104,193 @@ function openSpectrumDiscoveryWizard(selection) {
         return;
       }
       session = created;
-      probeNodes = null;
-      window.clearTimeout(heartbeatTimer);
       heartbeatTimer = window.setTimeout(() => void heartbeat(), 10_000);
       settings = { ...(session.review?.template?.settings || {}) };
       reviewDraft = null;
+      restartRequired = false;
       modal.setDirty(false);
       drawSession();
     } catch (error) {
-      selection.setProbeActive?.(false);
-      showError(error);
-    } finally { if (current()) busy(false); }
+      if (current() && generation === operation) {
+        selection.setProbeActive?.(false);
+        showError(error, 'We couldn’t begin checking this signal. Try again.');
+      }
+    } finally { if (current() && generation === operation) busy(false); }
+  };
+  const technicalDetails = () => {
+    const identity = node('div', 'spectrum-discovery-summary');
+    const table = node('table', 'ui-data-table ui-data-table-quiet spectrum-discovery-probe-table');
+    const head = node('thead');
+    const row = node('tr');
+    ['Signal setting', 'Valid messages', 'Control messages', 'Invalid control', 'Message quality'].forEach((label) => {
+      const cell = node('th', '', label);
+      cell.scope = 'col';
+      row.append(cell);
+    });
+    head.append(row);
+    const body = node('tbody');
+    const nodes = { identity };
+    [['c4fm', 'C4FM'], ['cqpsk', 'CQPSK']].forEach(([key, label]) => {
+      const candidate = node('tr');
+      const selected = uiPill('Selected', 'success');
+      selected.hidden = true;
+      const name = node('th', '', label);
+      name.scope = 'row';
+      name.append(' ', selected);
+      const counts = Array.from({ length: 4 }, () => node('td'));
+      candidate.append(name, ...counts);
+      nodes[key] = { selected, counts };
+      body.append(candidate);
+    });
+    table.append(head, body);
+    const wrap = node('div', 'ui-table-wrap');
+    wrap.append(table);
+    const details = disclosure('Technical details', identity, wrap,
+      node('p', 'ui-field-hint', 'Message quality is the proportion of messages that passed the decoder’s checks. It is not a confidence score. The selection also requires repeated, matching system and site information.'));
+    details.classList.add('spectrum-discovery-technical');
+    return { details, nodes };
   };
   const drawSetupStatus = () => {
     const p25 = profile.id === 'p25-phase1';
     const identifying = p25 && session.state === 'identifying';
-    if (!identifying || !probeNodes) {
-      showStep(1, p25 ? 'Identify the P25 control channel' : `${profile.label} setup interrupted`);
-      const candidates = node('div', 'channel-editor-grid');
-      probeNodes = { identity: node('div') };
-      if (p25) {
-        [['c4fm', 'C4FM'], ['cqpsk', 'CQPSK']].forEach(([key, label]) => {
-          const card = node('div', 'ui-form-section');
-          const selected = uiPill('Selected', 'success');
-          selected.hidden = true;
-          const heading = node('strong', '', label);
-          heading.append(' ', selected);
-          const counts = node('p', 'muted');
-          card.append(heading, counts);
-          probeNodes[key] = { selected, counts };
-          candidates.append(card);
-        });
-        stage.append(candidates, probeNodes.identity);
-      }
-      if (identifying) button('Cancel', () => modal.close());
-      else {
-        button('Back', async () => {
-          await cancelSession();
-          if (current()) { selection.setProbeActive?.(false); showProtocol(); }
-        });
-        button('Retry', () => void beginSession(profile.id), true);
-      }
+    const ready = p25 && session.state === 'ready' && session.review;
+    const phase = identifying ? 'identifying' : ready ? 'ready' : 'failed';
+    if (!probeNodes) {
+      showStep(1, 'Checking this radio system…');
+      const title = stage.querySelector('h3');
+      const status = node('div', 'ui-notice spectrum-discovery-status');
+      const heading = node('strong', 'spectrum-discovery-status-heading');
+      const copy = node('p');
+      const elapsed = node('p', 'muted');
+      status.setAttribute('role', 'status');
+      status.append(heading, copy, elapsed);
+      const technical = p25 ? technicalDetails() : null;
+      probeNodes = { ...(technical?.nodes || {}), title, status, heading, copy, elapsed, phase: null };
+      stage.append(status);
+      if (p25) stage.append(disclosure('How does this work?',
+        node('p', '', 'The app tries two ways of reading the signal and checks several messages before choosing the settings.'),
+        node('p', '', 'Your receiver stays on its current frequency while this wizard is open. Other channels keep running.')), technical.details);
     }
-    if (!p25) {
-      message.textContent = session.reason || 'Channel setup was interrupted. Retry or choose another signal.';
-      return;
-    }
+    const nodes = probeNodes;
+    nodes.title.textContent = ready ? 'Ready to add' : identifying ? 'Checking this radio system…' :
+      p25 ? 'We couldn’t identify this signal' : `${protocolLabels[profile.id]} setup interrupted`;
+    nodes.status.classList.toggle('ui-notice-warning', phase === 'failed');
+    nodes.heading.textContent = ready ? 'Signal settings found' : identifying ? 'Listening to the selected signal' : 'Nothing has been added';
+    nodes.copy.textContent = ready ? 'We found this radio system’s information and selected its signal settings.' :
+      identifying ? 'We’ll check this signal and find the settings needed to listen.' :
+      p25 ? 'We couldn’t get enough matching information. Try again, or choose another radio type.' :
+        'Your receiver is no longer ready for setup. Try again, or choose another radio type.';
+    nodes.elapsed.hidden = !identifying;
     const probe = session.probe || {};
-    [['c4fm', 'C4FM'], ['cqpsk', 'CQPSK']].forEach(([key, label]) => {
-      const candidate = probe[key] || {};
-      probeNodes[key].selected.hidden = probe.selected_modulation !== label;
-      probeNodes[key].counts.textContent =
-        `${Math.round(Number(candidate.quality_pct) || 0)}% quality · ${number(candidate.valid_messages || 0)} valid messages · ` +
-        `${number(candidate.valid_control_messages || 0)} control · ${number(candidate.invalid_control_messages || 0)} invalid`;
-    });
-    if (probe.identity) probeNodes.identity.replaceChildren(keyValues(spectrumDiscoveryIdentity(probe.identity)));
+    if (p25) {
+      [['c4fm', 'C4FM'], ['cqpsk', 'CQPSK']].forEach(([key, label]) => {
+        const candidate = probe[key] || {};
+        nodes[key].selected.hidden = probe.selected_modulation !== label;
+        const counts = [number(candidate.valid_messages || 0), number(candidate.valid_control_messages || 0),
+          number(candidate.invalid_control_messages || 0), `${Math.round(Number(candidate.quality_pct) || 0)}%`];
+        nodes[key].counts.forEach((cell, index) => { cell.textContent = counts[index]; });
+      });
+      nodes.identity.replaceChildren(...(probe.identity ? [facts(spectrumDiscoveryIdentity(probe.identity))] : []));
+    }
+    if (nodes.phase !== phase) {
+      const wasIdentifying = nodes.phase === 'identifying';
+      nodes.phase = phase;
+      if (!(ready && wasIdentifying)) actions.replaceChildren();
+      if (identifying) button('Cancel', () => modal.close());
+      else if (ready) {
+        if (!wasIdentifying) button('Cancel', () => modal.close());
+        button('Review channel', showReview, true);
+      } else {
+        button('Choose another radio type', () => void chooseAnother());
+        button('Try again', () => void beginSession(profile.id), true);
+      }
+    }
     if (identifying) {
-      const seconds = Math.min(Math.ceil(Number(probe.timeout_ms || 15000) / 1000),
-        Math.floor(Number(probe.elapsed_ms || 0) / 1000));
-      message.textContent = `Listening… ${seconds}s · waiting for a stable system and site.`;
+      const limit = Math.ceil(Number(probe.timeout_ms || 30000) / 1000);
+      const seconds = Math.min(limit, Math.floor(Number(probe.elapsed_ms || 0) / 1000));
+      nodes.elapsed.textContent = `${seconds} seconds elapsed · This can take up to ${limit} seconds.`;
       pollTimer = window.setTimeout(() => void poll(), 750);
-    } else message.textContent = session.reason ||
-      'Identification was inconclusive. Try again or choose another signal.';
+    } else if (phase === 'failed' && session.reason) {
+      message.replaceChildren(disclosure('Error details', node('p', 'muted', session.reason)));
+    }
   };
-
   const poll = async () => {
     if (!current() || !session) return;
+    const generation = operation;
+    const id = session.session_id;
     try {
-      session = await request(sessionPath(), { csrf: false });
-      if (current()) drawSession();
+      const updated = await request(sessionPath(), { csrf: false });
+      if (!current() || generation !== operation || session?.session_id !== id) return;
+      session = updated;
+      drawSession();
     } catch (error) {
-      if (!current()) return;
+      if (!current() || generation !== operation || session?.session_id !== id) return;
       probeNodes = null;
-      showError(error);
+      if (error.code === 'discovery_conflict') {
+        session.state = 'failed';
+        session.reason = error.message;
+        drawSession();
+        return;
+      }
+      showError(error, 'We lost the connection while checking the signal. Reconnect to continue.');
       actions.replaceChildren();
       button('Cancel', () => modal.close());
-      button('Retry status', () => void poll(), true);
+      button('Retry connection', () => void poll(), true);
     }
   };
   const heartbeat = async () => {
     if (!current() || !session) return;
+    const generation = operation;
+    const id = session.session_id;
     if (session.state !== 'identifying' && !modal.state.isBusy()) {
       try {
         const renewed = await request(sessionPath(), { csrf: false });
-        if (!current()) return;
+        if (!current() || generation !== operation || session?.session_id !== id) return;
         session.expires_at_ms = renewed.expires_at_ms;
-        if (!session.saved && renewed.state !== 'ready') { session = renewed; drawSession(); }
+        if (!modal.state.isBusy() && !session.saved && renewed.state !== 'ready') { session = renewed; drawSession(); }
       } catch (error) {
-        if (!current()) return;
-        showError(error);
+        if (!current() || generation !== operation || session?.session_id !== id) return;
+        if (!modal.state.isBusy()) {
+          if (!session.saved && error.code === 'discovery_conflict') {
+            session.state = 'failed';
+            session.reason = error.message;
+            drawSession();
+            return;
+          } else showError(error, 'We couldn’t refresh this setup. Check your connection before continuing.');
+        }
       }
     }
-    heartbeatTimer = window.setTimeout(() => void heartbeat(), 10_000);
+    if (current() && generation === operation && session?.session_id === id)
+      heartbeatTimer = window.setTimeout(() => void heartbeat(), 10_000);
+  };
+  const audioSummary = () => {
+    const fields = spectrumDiscoverySettingFields(profile);
+    const rows = ['bandwidth', 'deemphasis'].map((key) => {
+      const field = fields.find((candidate) => candidate.path === `settings.${key}`);
+      if (!field) return null;
+      const value = settings[key] ?? field.default;
+      return [key === 'bandwidth' ? 'Signal width' : 'Audio correction',
+        field.options?.find((entry) => entry.value === value)?.label || String(value)];
+    }).filter(Boolean);
+    return facts(rows);
   };
   const showSettings = () => {
-    showStep(1, `${profile.label} settings`);
+    showStep(1, 'Ready for audio');
+    stage.append(node('p', 'muted', 'The usual audio settings are selected. You can keep them or make adjustments.'));
+    const summary = audioSummary();
+    summary.classList.add('spectrum-discovery-summary');
     const form = node('form', 'channel-editor-form');
-    const grid = node('div', 'channel-editor-grid');
-    const advanced = node('details', 'ui-details');
-    advanced.append(node('summary', '', 'Advanced settings'));
-    const advancedGrid = node('div', 'channel-editor-grid');
-    const basic = new Set(['settings.bandwidth', 'settings.talkgroup', 'settings.deemphasis']);
+    const groups = new Map();
+    ['Audio', 'Squelch', 'Technical details'].forEach((label) => {
+      const section = node('fieldset', 'ui-form-section');
+      section.append(node('legend', '', label));
+      const grid = node('div', 'channel-editor-grid');
+      section.append(grid);
+      groups.set(label, { section, grid });
+    });
     spectrumDiscoverySettingFields(profile).forEach((field) => {
-      const control = channelEditorControl(field, profile, {}, {
-        ...session.review.template, settings
-      }, protocols);
+      const control = channelEditorControl(field, profile, {}, { ...session.review.template, settings }, protocols);
+      if (field.type === 'enum' && field.nullable !== true) control.querySelector('option[value=""]')?.remove();
       const input = control.matches('label') ? control.querySelector('input') : control;
       input?.setAttribute('aria-label', field.label);
       const wrapper = formField(field.label,
@@ -13155,143 +13300,222 @@ function openSpectrumDiscoveryWizard(selection) {
         wrapper.dataset.visiblePath = field.visible_when.path;
         wrapper.dataset.visibleEquals = JSON.stringify(field.visible_when.equals);
       }
-      (basic.has(field.path) ? grid : advancedGrid).append(wrapper);
+      const group = field.path.startsWith('settings.squelch_') ? 'Squelch' :
+        field.path === 'settings.talkgroup' ? 'Technical details' : 'Audio';
+      groups.get(group).grid.append(wrapper);
     });
-    advanced.append(advancedGrid);
-    form.append(grid, advanced);
+    const adjust = disclosure('Adjust audio settings', node('p', 'ui-field-hint',
+      'Bandwidth is the signal width the receiver listens to. De-emphasis corrects the tone of some FM signals. Squelch keeps background noise quiet when nobody is speaking.'),
+      ...[...groups.values()].map(({ section }) => section));
+    form.append(adjust);
     form.addEventListener('input', () => modal.setDirty(true));
-    form.addEventListener('change', () => channelEditorDependencies(form));
+    form.addEventListener('change', () => {
+      channelEditorDependencies(form);
+      settings = { ...settings, ...spectrumDiscoverySettings(form, profile) };
+      summary.replaceChildren(...audioSummary().children);
+    });
     form.addEventListener('submit', (event) => event.preventDefault());
     channelEditorDependencies(form);
-    stage.append(form);
-    button('Back', async () => {
-      await cancelSession();
-      if (current()) { selection.setProbeActive?.(false); showProtocol(); }
-    });
-    button('Next', () => {
-      if (!form.reportValidity()) return;
-      try { settings = spectrumDiscoverySettings(form, profile); showReview(); } catch (error) { showError(error); }
+    stage.append(summary, form);
+    button('Back', () => void chooseAnother());
+    button('Continue', () => {
+      if (!valid(form)) return;
+      try { settings = { ...settings, ...spectrumDiscoverySettings(form, profile) }; showReview(); }
+      catch (error) { showError(error, 'Check the audio settings and try again.'); }
     }, true);
   };
   const showReview = () => {
-    showStep(2, 'Review and start listening');
+    showStep(2, 'Name your channel');
+    stage.append(node('p', 'muted', 'Give it a name you’ll recognize, then start listening.'));
     const review = session.review;
     const template = review.template;
-    const form = node('form', 'channel-editor-form');
-    const grid = node('div', 'channel-editor-grid');
+    const form = node('form', 'channel-editor-form spectrum-discovery-review');
     const values = reviewDraft || { system: template.system || '', site: template.site || '', name: template.name || '' };
     const fields = (profile.sections || []).flatMap((section) => section.fields || []);
-    ['system', 'site', 'name'].forEach((key) => {
+    const controls = {};
+    ['name', 'system', 'site'].forEach((key) => {
       const field = fields.find((candidate) => candidate.path === key) ||
         { path: key, type: 'text', label: semanticLabel(key), required: key === 'name' };
       const control = channelEditorControl(field, profile, {}, values, protocols);
-      control.setAttribute('aria-label', field.label);
-      grid.append(formField(field.label, control));
+      const label = key === 'name' ? 'Channel name' : field.label;
+      control.setAttribute('aria-label', label);
+      controls[key] = formField(label, control);
     });
+    const labels = node('div', 'channel-editor-grid');
+    labels.append(controls.system, controls.site);
+    const optional = disclosure('Additional labels (optional)',
+      node('p', 'ui-field-hint', 'System and site labels help organize your channels. You can keep the suggested labels.'), labels);
+    optional.classList.add('spectrum-discovery-optional');
+    form.append(controls.name, optional);
     const lists = review.alias_lists || [];
-    const suggested = review.suggested_alias_list_id;
-    const allowNew = profile.id !== 'p25-phase1' || lists.length === 0;
-    const aliasOptions = [
-      ...lists.map((list) => ({ value: list.id, label: list.name })),
-      ...(allowNew ? [{ value: 'new', label: 'Create a new Alias List' }] : [])
-    ];
-    const previousAlias = reviewDraft ? (reviewDraft.alias_list_id || 'new') : null;
-    const selected = aliasOptions.some((option) => String(option.value) === String(previousAlias)) ?
-      previousAlias : (suggested || (lists.length === 1 ? lists[0].id : (lists.length ? '' : 'new')));
-    const aliases = uiSelect(aliasOptions, selected, selected === '', 'Choose an Alias List');
-    aliases.required = true;
-    aliases.setAttribute('aria-label', 'Alias List');
+    const p25 = profile.id === 'p25-phase1';
+    const allowNew = !p25 || lists.length === 0;
+    const aliasOptions = [...lists.map((list) => ({ value: list.id, label: list.name })),
+      ...(allowNew ? [{ value: 'new', label: 'Create settings for this channel' }] : [])];
+    const previousAlias = reviewDraft ? (reviewDraft.alias_list_id === 0 ? 'new' : reviewDraft.alias_list_id ?? '') : null;
+    let selected = previousAlias === '' ? '' : aliasOptions.some((option) => String(option.value) === String(previousAlias)) ? previousAlias :
+      (review.suggested_alias_list_id || (lists.length === 1 ? lists[0].id : lists.length ? '' : 'new'));
+    const alias = node('section', 'ui-form-section spectrum-discovery-alias');
+    alias.append(node('h4', '', 'Names and listening settings'));
+    let aliases = null;
+    if (p25 && lists.length === 1) {
+      alias.append(node('strong', '', `Use existing settings: ${lists[0].name}`),
+        node('p', 'muted', 'This signal belongs to a system you’ve already added.'));
+    } else if (lists.length === 0) {
+      alias.append(node('strong', '', p25 ? 'Create settings for this system' : 'Create settings for this channel'));
+    } else {
+      aliases = uiSelect(aliasOptions, selected, selected === '', 'Choose listening settings');
+      aliases.required = true;
+      aliases.setAttribute('aria-label', 'Names and listening settings');
+      alias.append(node('p', 'muted', p25 ? 'This system has more than one set of saved settings. Choose which to use.' :
+        'Reuse saved settings, or create a new set for this channel.'),
+      formField('Use settings', uiSelectFrame(aliases)));
+    }
     const newName = node('input', 'ui-input');
     newName.type = 'text';
-    newName.setAttribute('aria-label', 'New Alias List name');
+    newName.setAttribute('aria-label', 'New settings name');
     newName.maxLength = 25;
     newName.value = reviewDraft?.new_alias_list_name || review.default_new_alias_list_name || '';
-    const newField = formField('New Alias List name', newName);
-    const defaults = node('p', 'ui-field-hint', 'New Alias Lists listen through the Default scan list.');
+    const newField = formField('New settings name', newName);
+    const defaults = node('p', 'ui-field-hint', 'New channels will be included in your Default listening list.');
     const syncAlias = () => {
-      newField.hidden = aliases.value !== 'new';
-      newName.required = aliases.value === 'new';
-      defaults.hidden = aliases.value !== 'new';
+      if (aliases) selected = aliases.value;
+      newField.hidden = selected !== 'new';
+      newName.required = selected === 'new';
+      defaults.hidden = selected !== 'new';
     };
-    aliases.addEventListener('change', syncAlias);
+    aliases?.addEventListener('change', syncAlias);
     syncAlias();
-    grid.append(formField('Alias List', uiSelectFrame(aliases)), newField);
-    form.append(grid, defaults);
-    if (session.probe?.identity) form.append(keyValues([
-      ...spectrumDiscoveryIdentity(session.probe.identity), ['Modulation', session.probe.selected_modulation]
-    ]));
-    form.append(node('div', 'ui-notice', profile.id === 'p25-phase1' ?
-      'Auto start and announced control channel learning will be enabled.' : 'Auto start will be enabled.'));
-    form.addEventListener('input', () => modal.setDirty(true));
-    form.addEventListener('change', () => modal.setDirty(true));
+    alias.append(newField, defaults, disclosure('What are these settings?',
+      node('p', '', 'An Alias List stores names for radio groups and controls which groups you hear. These are called talkgroups on a P25 system. New lists use the usual listening defaults.'),
+      node('p', '', 'For P25, existing settings are offered only when both the network and system identifiers match exactly.')));
+    form.append(alias);
+    const summary = facts([
+      ['Radio type', protocolLabels[profile.id]], ['Start automatically', 'On'],
+      ...(p25 ? [['Follow control frequency changes', 'On']] : [])
+    ]);
+    summary.classList.add('spectrum-discovery-summary');
+    form.append(summary);
+    if (!p25) {
+      const audio = audioSummary();
+      audio.classList.add('spectrum-discovery-summary');
+      form.append(audio);
+    } else {
+      form.append(disclosure('Technical details', facts([...spectrumDiscoveryIdentity(session.probe.identity),
+        ['Modulation', session.probe.selected_modulation]]), node('p', 'ui-field-hint',
+        'The selected signal setting is saved for this channel. The app will also learn other control frequencies announced by this system.')));
+    }
+    form.addEventListener('input', () => { modal.setDirty(true); reviewDraft = read(); });
+    form.addEventListener('change', () => { modal.setDirty(true); reviewDraft = read(); });
     form.addEventListener('submit', (event) => event.preventDefault());
     stage.append(form);
     const read = () => ({
       ...Object.fromEntries(['system', 'site', 'name'].map((key) => [key,
         form.querySelector(`[data-channel-path="${key}"]`).value.trim() || null])),
-      alias_list_id: aliases.value === 'new' ? 0 : Number(aliases.value),
-      new_alias_list_name: aliases.value === 'new' ? newName.value.trim() : null,
+      alias_list_id: selected === 'new' ? 0 : selected === '' ? null : Number(selected),
+      new_alias_list_name: selected === 'new' ? newName.value.trim() : null,
       settings, revision: review.revision, browse_lease_id: selection.browseLeaseId || null
     });
-    if (profile.id !== 'p25-phase1') button('Back', () => { reviewDraft = read(); showSettings(); });
-    else button('Cancel', () => modal.close());
-    button('Create & start', async () => {
-      if (!form.reportValidity()) return;
+    button('Back', () => { reviewDraft = read(); if (p25) drawSetupStatus(); else showSettings(); });
+    const add = button('Add and start listening', async () => {
+      if (!valid(form)) return;
       busy(true);
       try {
         reviewDraft = read();
+        savedAliasName = selected === 'new' ? newName.value.trim() :
+          lists.find((list) => String(list.id) === String(selected))?.name || '';
         session = await request(`${sessionPath()}/save`, { method: 'POST', body: reviewDraft, timeoutMs: 30_000 });
         if (!current()) return;
         modal.setDirty(false);
         selection.onSaved?.(session);
         showComplete();
       } catch (error) {
-        if (error.status === 409 && error.code === 'stale_revision') {
+        if (!current()) return;
+        if (error.code === 'channel_saved_restart_required') {
+          restartRequired = true;
+          session.saved = { running: false, restart_required: true, start_error: error.message };
+          modal.setDirty(false);
+          selection.onSaved?.(session);
+          showComplete();
+        } else if (error.code === 'discovery_conflict') {
+          session.state = 'failed';
+          session.reason = error.message;
+          drawSession();
+        } else if (error.status === 409 && error.code === 'stale_revision') {
           try {
-            session = await request(sessionPath(), { csrf: false });
+            const refreshed = await request(sessionPath(), { csrf: false });
             if (current()) {
-              showReview();
-              message.textContent = 'Channel or Alias List choices changed. Review your choices and try again.';
+              session = refreshed;
+              if (session.state === 'ready') {
+                showReview();
+                message.textContent = 'Your saved choices changed. Check the listening settings and try adding again.';
+              } else drawSession();
             }
           } catch (refreshError) { showError(refreshError); }
-        } else showError(error);
+        } else {
+          showError(error, 'We couldn’t add your channel. Your choices are still here. Try again.');
+          add.textContent = 'Try adding again';
+        }
       } finally { if (current()) busy(false); }
     }, true);
   };
   const showComplete = () => {
-    showStep(3, session.saved?.running ? 'Channel running' : 'Channel saved');
     const running = session.saved?.running === true;
-    stage.append(node('div', `ui-notice${running ? '' : ' ui-notice-warning'}`,
-      running ? 'The channel is saved and listening.' :
-        session.saved?.start_error || 'The channel was saved but could not start. Retry when tuner capacity is available.'));
-    if (!running) button('Retry start', async () => {
-      busy(true);
-      try {
-        session = await request(`${sessionPath()}/start`, { method: 'POST' });
-        if (current()) { selection.onSaved?.(session); showComplete(); }
-      } catch (error) { showError(error); } finally { if (current()) busy(false); }
-    }, true);
+    showStep(3, running ? 'Ready to listen' : 'Channel added');
+    const status = node('div', `ui-notice spectrum-discovery-status${running ? '' : ' ui-notice-warning'}`);
+    status.append(node('strong', 'spectrum-discovery-status-heading', running ? 'Your channel is running' :
+      restartRequired ? 'Your channel is saved' : 'Listening couldn’t start'), node('p', '', running ?
+      'You’ll hear activity when someone transmits and your listening settings allow it.' :
+      restartRequired ? 'Your channel was saved, but the receiver needs to restart before listening can start.' :
+      'Your channel was added, but listening couldn’t start. You can try starting it again.'));
+    stage.append(status);
+    const summary = facts([
+      ['Channel', reviewDraft?.name || session.review?.template?.name || 'Saved channel'],
+      ['Radio type', protocolLabels[profile.id]], ['Names and listening settings', savedAliasName || 'Saved settings'],
+      ['Status', running ? 'Running' : 'Saved']
+    ]);
+    summary.classList.add('spectrum-discovery-summary');
+    stage.append(summary);
+    if (!running) {
+      if (session.saved?.start_error) stage.append(disclosure('Error details', node('p', 'muted', session.saved.start_error)));
+      if (!restartRequired) button('Try starting again', async () => {
+        busy(true);
+        try {
+          session = await request(`${sessionPath()}/start`, { method: 'POST' });
+          if (current()) { selection.onSaved?.(session); showComplete(); }
+        } catch (error) { showError(error, 'The channel is still saved. Check your receiver and try starting again.'); }
+        finally { if (current()) busy(false); }
+      }, true);
+    }
     if (session.saved?.configuration_id) actions.append(anchor('Open channel',
       href('channel', { configuration_id: session.saved.configuration_id }), 'ui-button ui-button-secondary'));
+    else if (restartRequired) actions.append(anchor('Open channels', href('admin', { tab: 'channels' }),
+      'ui-button ui-button-secondary'));
     button('Done', () => modal.close(), running);
   };
   const drawSession = () => {
     window.clearTimeout(pollTimer);
     if (session.saved) showComplete();
     else if (session.state === 'ready' && session.review) {
-      settings = { ...session.review.template.settings };
-      if (profile.id === 'p25-phase1') showReview(); else showSettings();
+      if (!Object.keys(settings).length) settings = { ...session.review.template.settings };
+      if (profile.id === 'p25-phase1') drawSetupStatus(); else showSettings();
     } else drawSetupStatus();
   };
-  void request('/api/v1/admin/channels/protocols', { csrf: false }).then((catalog) => {
-    if (!current()) return;
-    protocols = catalog;
-    showProtocol();
-  }).catch((error) => {
-    showStep(0, 'Protocol choices unavailable');
-    showError(error);
-    button('Close', () => modal.close());
-  });
+  const loadProtocols = async () => {
+    try {
+      const catalog = await request('/api/v1/admin/channels/protocols', { csrf: false });
+      if (!current()) return;
+      protocols = catalog;
+      showProtocol();
+    } catch (error) {
+      if (!current()) return;
+      showStep(0, 'Radio types unavailable');
+      showError(error, 'We couldn’t load the radio types. Check your connection and try again.');
+      button('Close', () => modal.close());
+      button('Try again', () => void loadProtocols(), true);
+    }
+  };
+  void loadProtocols();
   return modal;
 }
 
@@ -17158,7 +17382,7 @@ async function renderTunerSpectrum() {
         `Release to tune to ${channelMHz(Number(selectedTuner.frequency_hz) + deltaHz)} MHz`;
     },
     selectionContext: () => ({
-      tunerId: selectedTuner?.id || '', browseLeaseId: lease?.lease_id || '',
+      tunerId: selectedTuner?.id || '', tunerName: selectedTuner?.name || '', browseLeaseId: lease?.lease_id || '',
       setProbeActive: (active) => {
         probeActive = active;
         select.disabled = active;
@@ -17172,7 +17396,9 @@ async function renderTunerSpectrum() {
         if (savedSession.saved?.running) void chooseTuner(selectedTuner.id);
         else {
           renderCenter();
-          message.textContent = 'Channel saved. Retry start in the wizard when the tuner is available.';
+          message.textContent = savedSession.saved?.restart_required ?
+            'Channel saved. Restart the receiver before listening.' :
+            'Channel saved. Try starting again in the wizard when the receiver is available.';
         }
       }
     })

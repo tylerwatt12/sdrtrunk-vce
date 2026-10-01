@@ -1373,14 +1373,19 @@
   <div class="visual-spectrum-discovery-example">
     <div class="modal-backdrop">
       <section class="read-only-modal channel-editor-modal spectrum-discovery-modal" role="dialog" aria-modal="true" aria-labelledby="visual-spectrum-discovery-title">
-        <header class="modal-header"><h2 id="visual-spectrum-discovery-title">Add channel / system</h2><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Close"><svg aria-hidden="true"><use href="#visual-icon-close"></use></svg></button></header>
+        <header class="modal-header"><h2 id="visual-spectrum-discovery-title">Add a channel</h2><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Close"><svg aria-hidden="true"><use href="#visual-icon-close"></use></svg></button></header>
         <div class="modal-content"><div class="spectrum-discovery-workspace editor-workspace">
-          <p class="muted">851.0125 MHz</p>
-          <div class="ui-segmented spectrum-discovery-steps" aria-label="Add channel steps"><span class="ui-pill ui-pill-neutral">1. Protocol</span><span class="ui-pill ui-pill-blue" aria-current="step">2. Identify / settings</span><span class="ui-pill ui-pill-neutral">3. Review</span><span class="ui-pill ui-pill-neutral">4. Complete</span></div>
-          <div class="spectrum-discovery-stage"><h3>Identify the P25 control channel</h3><div class="channel-editor-grid"><div class="ui-form-section"><strong>C4FM</strong><p class="muted">81% quality · 18 valid messages · 12 control · 4 invalid</p></div><div class="ui-form-section"><strong>CQPSK <span class="ui-pill ui-pill-success">Selected</span></strong><p class="muted">99% quality · 52 valid messages · 41 control · 1 invalid</p></div></div>
-          <dl class="key-values ui-facts"><div class="key-value-item ui-fact"><dt>WACN</dt><dd>B0001</dd></div><div class="key-value-item ui-fact"><dt>System ID</dt><dd>123</dd></div><div class="key-value-item ui-fact"><dt>RFSS</dt><dd>1</dd></div><div class="key-value-item ui-fact"><dt>Site ID</dt><dd>2</dd></div></dl></div>
-          <div class="ui-feedback" role="status">Listening… 2s · waiting for a stable system and site.</div>
-          <div class="ui-action-row"><button class="ui-button ui-button-secondary" type="button">Cancel</button></div>
+          <div class="spectrum-discovery-context"><strong>851.012500 MHz</strong><p class="muted">Airspy · Receiver 1</p></div>
+          <ol class="spectrum-discovery-progress" aria-label="Add channel steps"><li><span class="ui-pill ui-pill-success">✓</span><span>Signal</span></li><li aria-current="step"><span class="ui-pill ui-pill-blue">2</span><span>Check signal</span></li><li><span class="ui-pill ui-pill-neutral">3</span><span>Review</span></li></ol>
+          <div class="spectrum-discovery-stage">
+            <h3>Ready to add</h3>
+            <div class="ui-notice spectrum-discovery-status" role="status"><strong class="spectrum-discovery-status-heading">Signal settings found</strong><p>We found this radio system’s information and selected its signal settings.</p></div>
+            <details class="ui-section-disclosure ui-section-disclosure-flat"><summary class="ui-section-summary">How does this work?</summary><p>The app tries two ways of reading the signal and checks several messages before choosing the settings.</p><p>Your receiver stays on its current frequency while this wizard is open. Other channels keep running.</p></details>
+            <details class="ui-section-disclosure ui-section-disclosure-flat spectrum-discovery-technical"><summary class="ui-section-summary">Technical details</summary><div class="spectrum-discovery-summary">
+              <dl class="ui-fact-list"><dt>WACN (hex)</dt><dd>B0001</dd><dt>System ID (hex)</dt><dd>123</dd><dt>RFSS</dt><dd>1</dd><dt>Site ID</dt><dd>2</dd></dl>
+            </div><div class="ui-table-wrap"><table class="ui-data-table ui-data-table-quiet spectrum-discovery-probe-table"><caption class="visually-hidden">P25 modulation comparison</caption><thead><tr><th scope="col">Signal setting</th><th scope="col">Valid messages</th><th scope="col">Control messages</th><th scope="col">Invalid control</th><th scope="col">Message quality</th></tr></thead><tbody><tr><th scope="row">C4FM</th><td>18</td><td>12</td><td>4</td><td>81%</td></tr><tr><th scope="row">CQPSK <span class="ui-pill ui-pill-success">Selected</span></th><td>52</td><td>41</td><td>1</td><td>99%</td></tr></tbody></table></div><p class="ui-field-hint">Message quality is the proportion of messages that passed the decoder’s checks. It is not a confidence score. The selection also requires repeated, matching system and site information.</p></details>
+          </div>
+          <div class="ui-action-row spectrum-discovery-actions"><button class="ui-button ui-button-secondary" type="button">Cancel</button><button class="ui-button ui-button-primary" type="button">Review channel</button></div>
         </div></div>
       </section>
     </div>

@@ -973,23 +973,148 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   flex: 1 1 240px;
 }
 
-.spectrum-discovery-workspace,
-.spectrum-discovery-stage {
+.read-only-modal.spectrum-discovery-modal {
+  width: min(var(--modal-size-medium), 96vw);
+}
+
+.spectrum-discovery-modal .modal-content {
+  display: flex;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.spectrum-discovery-workspace {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4);
+}
+
+.spectrum-discovery-context,
+.spectrum-discovery-stage,
+.spectrum-discovery-option-copy,
+.spectrum-discovery-status,
+.spectrum-discovery-review,
+.spectrum-discovery-alias {
+  min-width: 0;
   display: grid;
   gap: var(--space-3);
 }
 
-.spectrum-discovery-workspace {
-  padding: var(--space-4);
+.spectrum-discovery-context,
+.spectrum-discovery-option-copy {
+  gap: var(--space-1);
 }
 
-.spectrum-discovery-workspace > p,
-.spectrum-discovery-stage > h3 {
+.spectrum-discovery-context > p,
+.spectrum-discovery-stage > h3,
+.spectrum-discovery-stage > p,
+.spectrum-discovery-option-copy > p,
+.spectrum-discovery-status > p,
+.spectrum-discovery-review > p,
+.spectrum-discovery-alias > h4,
+.spectrum-discovery-alias > p,
+.spectrum-discovery-alias > h4,
+.spectrum-discovery-summary > p,
+.spectrum-discovery-technical > p,
+.spectrum-discovery-optional > p {
   margin: 0;
 }
 
-.spectrum-discovery-steps {
+.spectrum-discovery-summary,
+.spectrum-discovery-technical,
+.spectrum-discovery-optional {
+  min-width: 0;
+}
+
+.spectrum-discovery-technical > :not(summary),
+.spectrum-discovery-optional > :not(summary) {
+  margin-block: var(--space-3) 0;
+}
+
+.spectrum-discovery-context,
+.spectrum-discovery-progress,
+.spectrum-discovery-actions {
+  flex: 0 0 auto;
+}
+
+.spectrum-discovery-progress {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.spectrum-discovery-progress > li {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.spectrum-discovery-progress[hidden] {
+  display: none;
+}
+
+.spectrum-discovery-progress > li > span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.spectrum-discovery-stage {
+  min-height: 0;
+  flex: 1 1 auto;
+  align-content: start;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-1);
+  margin: calc(-1 * var(--space-1));
+}
+
+.spectrum-discovery-stage > .ui-feedback {
+  order: 99;
+}
+
+.spectrum-discovery-protocols {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.spectrum-discovery-protocol-option {
+  min-width: 0;
+  display: flex;
+  align-items: start;
+  gap: var(--space-2);
+}
+
+.spectrum-discovery-status-heading {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.spectrum-discovery-probe-table {
+  min-width: 0;
+}
+
+.spectrum-discovery-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   flex-wrap: wrap;
+  gap: var(--space-3);
 }
 
 @media (max-width: 760px) {
@@ -1012,6 +1137,16 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   }
 
   .spectrum-discovery-workspace {
-    padding: var(--space-2);
+    padding: var(--space-3);
+  }
+}
+
+@media (max-width: 560px) {
+  .read-only-modal.spectrum-discovery-modal {
+    width: 100vw;
+  }
+
+  .spectrum-discovery-protocols {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
