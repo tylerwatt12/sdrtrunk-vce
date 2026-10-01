@@ -24894,8 +24894,10 @@ async function renderTuners() {
     wrapper.dataset.tunerSetting = setting.id;
     const label = node('span', 'tuners-center-label tuners-readout-label', 'Center frequency');
     const digits = node('div', 'tuners-frequency-digits');
+    const controlRow = node('div', 'tuners-center-control-row');
     const valueRow = node('div', 'tuners-center-value');
     valueRow.append(digits);
+    controlRow.append(valueRow);
     const message = node('div', 'tuners-setting-message');
     message.setAttribute('role', 'status');
     const positions = [1_000, 100, 10, 1, .1, .01, .001, .0001, .00001];
@@ -25045,9 +25047,9 @@ async function renderTuners() {
       const help = iconButton('icon-about', usability.reason,
         'ui-button ui-button-secondary ui-icon-button ui-icon-button-compact tuners-center-help');
       help.dataset.tunerHelp = setting.id;
-      valueRow.append(help);
+      controlRow.append(help);
     }
-    wrapper.append(label, valueRow);
+    wrapper.append(label, controlRow);
     wrapper.append(message);
     draw();
     return wrapper;
@@ -25169,6 +25171,9 @@ async function renderTuners() {
             'ui-button ui-button-secondary ui-icon-button ui-icon-button-compact tuners-setting-help');
           help.dataset.tunerHelp = setting.id;
           controlRow.append(help);
+          if (control.element.classList.contains('ui-field')) {
+            controlRow.classList.add('tuners-setting-control-row-aligned');
+          }
         }
         form.append(controlRow);
       } else if (!usability.enabled && usability.reason) {

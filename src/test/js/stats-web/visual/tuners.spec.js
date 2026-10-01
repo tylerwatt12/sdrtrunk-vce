@@ -634,6 +634,60 @@ test('desktop receiver picker and selected tuner form two columns with settings 
   await expect(page.locator('.tuners-readouts').getByLabel('Sample rate')).toHaveValue('10 MHz');
 });
 
+test('disabled tuner help icons align with their controls on desktop and mobile', async ({ page }) => {
+  const settings = operatorSettings({
+    lna_gain: { editable: false, unavailable_reason: 'Use Setup' },
+    automatic_ppm: { value: true },
+    center_frequency_locked: { value: true }
+  });
+  await mockTuners(page, [], { currentTuner: operatorTuner({ settings }) });
+  await page.goto('/app.html?view=tuners');
+
+  for (const id of ['sample_rate', 'frequency_correction_ppm', 'lna_gain', 'frequency_mhz']) {
+    await expect(page.locator(`[data-tuner-help="${id}"]`)).toBeVisible();
+  }
+
+  for (const viewport of [{ width: 1680, height: 1000 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    if (viewport.width === 390) {
+      await page.reload();
+      await expect(page.locator('[data-tuner-help="sample_rate"]')).toBeVisible();
+    }
+    const alignment = await page.evaluate(() => {
+      const bounds = (selector) => {
+        const element = document.querySelector(selector);
+        if (!element) throw new Error(`Missing tuner control: ${selector}`);
+        const rect = element.getBoundingClientRect();
+        return { centerY: rect.top + rect.height / 2, right: rect.right };
+      };
+      const pairs = [
+        ['sample_rate', '[data-setting-id="sample_rate"] .ui-select-frame'],
+        ['frequency_correction_ppm', '[data-setting-id="frequency_correction_ppm"] .ui-input'],
+        ['lna_gain', '[data-setting-id="lna_gain"] .ui-range'],
+        ['frequency_mhz', '.tuners-frequency-digits']
+      ];
+      const verticalOffsets = Object.fromEntries(pairs.map(([id, control]) => [id,
+        Math.abs(bounds(`[data-tuner-help="${id}"]`).centerY - bounds(control).centerY)]));
+      return {
+        verticalOffsets,
+        sampleRightInset: bounds('.tuners-common-sample').right -
+          bounds('[data-tuner-help="sample_rate"]').right,
+        centerRightInset: bounds('.tuners-center-host').right -
+          bounds('[data-tuner-help="frequency_mhz"]').right,
+        pageOverflow: document.documentElement.scrollWidth - window.innerWidth,
+        selectedOverflow: document.querySelector('.tuners-selected-section').scrollWidth -
+          document.querySelector('.tuners-selected-section').clientWidth
+      };
+    });
+    for (const offset of Object.values(alignment.verticalOffsets)) {
+      expect(offset).toBeLessThanOrEqual(2);
+    }
+    expect(Math.abs(alignment.sampleRightInset - alignment.centerRightInset)).toBeLessThanOrEqual(2);
+    expect(alignment.pageOverflow).toBeLessThanOrEqual(1);
+    expect(alignment.selectedOverflow).toBeLessThanOrEqual(1);
+  }
+});
+
 test('medium-width tuner controls remain below the selected tuner without horizontal overflow', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await mockTuners(page, []);
