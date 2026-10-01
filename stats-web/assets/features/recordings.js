@@ -175,7 +175,7 @@ function select(node, options, labelText) {
 export function createRecordingsFeature(deps) {
   const { node, requestJson, openReadOnlyModal, section, pageHeader, beginPage,
     captureRenderContext, renderIsCurrent, content, isPrimaryAdmin, canViewRadio,
-    entityRefHref, stopLiveAudio, href, anchor, uiToggleField } = deps;
+    entityRefHref, stopLiveAudio, href, anchor, uiToggleField, metrics } = deps;
   const search = {
     q: '', transcript: '', from_ms: '', to_ms: '', system_key: '', site: '', talkgroup_id: '', radio_id: '',
     channel_id: '', min_duration_ms: '', max_duration_ms: '', frequency_hz: '',
@@ -1449,12 +1449,17 @@ export function createRecordingsFeature(deps) {
         'apply to existing managed calls in Classic mode.'));
       ageBody.append(ageField, adminActions(saveAge, adminLink('Transcription settings', 'transcription')),
         ageStatus);
-      const catalogBody = node('div', 'recordings-admin-body');
-      const catalogFacts = node('dl', 'ui-facts ui-admin-facts recordings-admin-facts');
+      const catalogBody = node('div', 'recordings-admin-body recordings-catalog-body');
+      const catalogSummary = node('div', 'recordings-catalog-summary');
+      const catalogCount = node('div', 'recordings-catalog-count');
+      const catalogFacts = node('dl', 'ui-facts ui-record-facts recordings-catalog-facts');
+      catalogSummary.append(catalogCount, catalogFacts);
       const stat = (name, detail) => {
         if (detail === null || detail === undefined || detail === '') return;
         const fact = node('div', 'ui-fact');
-        fact.append(node('dt', '', name), node('dd', '', detail));
+        const description = node('dd');
+        description.append(detail);
+        fact.append(node('dt', '', name), description);
         catalogFacts.append(fact);
       };
       const operationStatus = node('div', 'recordings-form-status');
@@ -1468,15 +1473,25 @@ export function createRecordingsFeature(deps) {
         currentCatalog = snapshot;
         catalogFacts.replaceChildren();
         const counts = snapshot?.catalog || snapshot;
-        stat('Listed calls', Number(value(counts, 'call_count', 'total_calls') || 0).toLocaleString());
+        catalogCount.replaceChildren(metrics([
+          ['Listed calls', Number(value(counts, 'call_count', 'total_calls') || 0)]
+        ], true));
         stat('Oldest call', dateTime(value(counts, 'oldest_call_ms', 'oldest_start_ms'), true));
         stat('Last recount', dateTime(value(snapshot, 'last_recount_ms')));
-        stat('Maintenance', prettify(operationState(snapshot)));
+        const state = operationState(snapshot);
+        const statePill = node('span', `ui-pill${state === 'FAILED' ? ' ui-pill-danger' : ''}`,
+          prettify(state));
+        stat('Maintenance', statePill);
         const current = operation(snapshot);
         if (activeOperation(snapshot)) operationStatus.replaceChildren(makeNotice(
           `${prettify(value(current, 'kind') || 'Maintenance')} running` +
             `${value(current, 'inspected') !== null ? ` · ${Number(current.inspected).toLocaleString()} checked` : ''}`,
           'loading'));
+        else if (state === 'FAILED') operationStatus.replaceChildren(makeNotice(
+          'Maintenance could not finish. Review the receiver log before trying again.', 'error'));
+        else if (state === 'COMPLETED') operationStatus.replaceChildren(makeNotice(
+          'Maintenance finished. Call totals are current.'));
+        else operationStatus.replaceChildren();
       };
       const refreshCatalog = async () => {
         const latest = await requestJson(`${ADMIN}/status`, { page: false });
@@ -1513,11 +1528,14 @@ export function createRecordingsFeature(deps) {
         }
       };
       drawCatalog(catalog);
+      const reindexWarning = 'On a very large library, reindexing can delay new managed calls and may cause some ' +
+        'to be dropped. Run during quiet reception.';
+      const reindexLimitation = 'Reindex checks listed calls. It does not recover unlisted audio files.';
       const maintenance = node('div', 'recordings-maintenance');
       const run = (name, description, action) => {
         const row = node('div', 'recordings-maintenance-row');
-        const copy = node('div');
-        copy.append(node('strong', '', name), node('p', '', description));
+        const copy = node('div', 'ui-record-card-copy');
+        copy.append(node('strong', 'ui-record-title', name), node('p', 'recordings-admin-note', description));
         const control = button(node, `Run ${name.toLowerCase()}`, () => {
           const details = [];
           if (action === 'recount') {
@@ -1534,10 +1552,8 @@ export function createRecordingsFeature(deps) {
             }
             details.push(facts);
           } else {
-            details.push(node('div', 'ui-notice ui-notice-warning',
-              'On a very large library, reindexing can delay new managed calls and may cause some to be dropped. ' +
-              'Run during quiet reception.'), node('p', 'recordings-admin-note',
-              'Reindex checks listed calls. It does not recover unlisted audio files.'));
+            details.push(node('div', 'ui-notice ui-notice-warning', reindexWarning),
+              node('p', 'recordings-admin-note', reindexLimitation));
           }
           confirmAdminAction({
             title: name, confirmLabel: `Run ${name.toLowerCase()}`, details,
@@ -1570,13 +1586,12 @@ export function createRecordingsFeature(deps) {
         maintenance.append(row);
       };
       run('Recount calls', 'Refresh the displayed call total.', 'recount');
-      run('Reindex calls', 'Check listed calls and remove broken entries. On a very large library, this can delay ' +
-        'new managed calls and may cause some to be dropped. Run during quiet reception.', 'reindex');
-      const maintenanceDisclosure = node('details', 'ui-section-disclosure');
+      run('Reindex calls', 'Check listed calls and remove broken entries.', 'reindex');
+      const maintenanceDisclosure = node('details', 'ui-section-disclosure ui-section-disclosure-flat');
       maintenanceDisclosure.append(node('summary', 'ui-section-summary', 'Maintenance'), maintenance,
-        node('p', 'recordings-admin-note recordings-maintenance-note',
-          'Reindex checks listed calls. It does not recover unlisted audio files.'));
-      catalogBody.append(catalogFacts, operationStatus, maintenanceDisclosure);
+        node('div', 'ui-notice ui-notice-warning recordings-maintenance-warning', reindexWarning),
+        node('p', 'recordings-admin-note recordings-maintenance-note', reindexLimitation));
+      catalogBody.append(catalogSummary, operationStatus, maintenanceDisclosure);
       wrapper.append(section('Recording mode', modeBody));
       if (options.classicFormatPanel) wrapper.append(options.classicFormatPanel);
       wrapper.append(section('Managed call retention', ageBody),
@@ -1645,8 +1660,12 @@ export function createRecordingsFeature(deps) {
       });
       clearKey.hidden = settings?.transcription_key_configured !== true;
       const transcriptionFields = node('div', 'recordings-transcription-fields');
-      transcriptionFields.append(field('Transcription endpoint URL', endpoint), field('Model ID', model),
-        field('Minimum call length (ms)', minimum), keyField);
+      const endpointField = field('Transcription endpoint URL', endpoint);
+      endpointField.classList.add('recordings-transcription-wide');
+      keyField.classList.add('recordings-transcription-wide');
+      const minimumField = field('Minimum call length (ms)', minimum);
+      minimumField.append(node('small', 'ui-field-detail', 'Only calls at or above this length are eligible.'));
+      transcriptionFields.append(endpointField, field('Model ID', model), minimumField, keyField);
       const transcriptionStatus = node('div', 'recordings-form-status');
       transcriptionStatus.setAttribute('role', 'status');
       const saveTranscription = button(node, 'Save transcription settings', async () => {
@@ -1679,35 +1698,37 @@ export function createRecordingsFeature(deps) {
             'Transcription settings could not be saved.', 'error'));
         } finally { saveTranscription.disabled = false; }
       }, 'ui-button ui-button-primary');
-      const transcriptionFacts = node('dl', 'ui-facts ui-admin-facts recordings-admin-facts');
+      const transcriptionProgress = node('div', 'recordings-transcription-progress');
       const drawTranscription = (snapshot) => {
-        transcriptionFacts.replaceChildren();
+        transcriptionProgress.replaceChildren();
         const progress = snapshot?.transcription || {};
-        for (const [name, count] of [
+        const counts = [
           ['Pending', progress.pending], ['Completed', progress.completed], ['Failed', progress.failed]
-        ]) {
-          if (count === null || count === undefined) continue;
-          const fact = node('div', 'ui-fact');
-          fact.append(node('dt', '', name), node('dd', '', Number(count).toLocaleString()));
-          transcriptionFacts.append(fact);
+        ].filter(([, count]) => count !== null && count !== undefined);
+        if (counts.length) {
+          const countTiles = metrics(counts, true);
+          countTiles.classList.add('ui-metric-grid-fit', 'ui-metric-grid-inline', 'recordings-transcription-counts');
+          transcriptionProgress.append(countTiles);
         }
         if (progress.active) {
-          const fact = node('div', 'ui-fact');
-          fact.append(node('dt', '', 'Worker'), node('dd', '', 'Transcribing a call'));
-          transcriptionFacts.append(fact);
+          const worker = node('dl', 'ui-facts ui-admin-facts recordings-transcription-worker');
+          const fact = node('div', 'ui-fact recordings-transcription-worker-row');
+          const status = node('dd');
+          status.append(node('span', 'ui-pill state-current', 'Transcribing a call'));
+          fact.append(node('dt', '', 'Worker'), status);
+          worker.append(fact);
+          transcriptionProgress.append(worker);
         }
         if (progress.last_error) {
-          const fact = node('div', 'ui-fact');
-          fact.append(node('dt', '', 'Last error'), node('dd', '', String(progress.last_error)));
-          transcriptionFacts.append(fact);
+          const error = node('div', 'ui-notice ui-notice-danger recordings-transcription-error');
+          error.append(node('strong', '', 'Last error'), node('p', '', String(progress.last_error)));
+          transcriptionProgress.append(error);
         }
       };
       drawTranscription(catalog);
       const keyActions = node('div', 'ui-action-row');
       keyActions.append(saveTranscription, clearKey);
       transcriptionBody.append(enabledField, transcriptionFields,
-        node('p', 'recordings-admin-note', 'Only calls at or above this length are eligible. ' +
-          'The backlog processes in the background.'),
         keyActions, transcriptionStatus);
       const progressBody = node('div', 'recordings-admin-body');
       const progressStatus = node('div', 'recordings-form-status');
@@ -1725,10 +1746,10 @@ export function createRecordingsFeature(deps) {
             'Transcription status could not be loaded. Try again.', 'error'));
         } finally { refreshStatus.disabled = false; }
       });
-      progressBody.append(transcriptionFacts, progressStatus,
+      progressBody.append(transcriptionProgress, progressStatus,
         adminActions(adminLink('Recording settings', 'recordings')));
-      wrapper.append(section('Transcription settings', transcriptionBody),
-        section('Transcription progress', progressBody, refreshStatus));
+      wrapper.append(section('Transcription progress', progressBody, refreshStatus),
+        section('Transcription settings', transcriptionBody));
     } catch (error) {
       if (wrapper.isConnected) status.replaceChildren(makeNotice(error.message ||
         'Transcription settings could not be loaded. Try again.', 'error'));

@@ -23,7 +23,7 @@ import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from
 import { createStreamingWorkspace } from './features/streaming.js?v=5';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=3';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=9';
-import { createRecordingsFeature } from './features/recordings.js?v=11';
+import { createRecordingsFeature } from './features/recordings.js?v=12';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=4';
 
@@ -2775,7 +2775,9 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
   tableController.widthObserver?.disconnect();
   const declaredColumns = columns.slice();
   tableLayouts.registerSchema(tableSchemaRegistry, tableType, declaredColumns);
-  const defaultLayout = tableDefaults.layout(tableType, declaredColumns);
+  const tableDefaultLayout = tableDefaults.layout(tableType, declaredColumns);
+  const defaultLayout = options.recordList && Array.isArray(options.recordListOrder) ?
+    { ...tableDefaultLayout, column_order: options.recordListOrder } : tableDefaultLayout;
   const storedLayout = options.layout || activeUserPreferences().tables[tableType] || defaultLayout;
   let layout = tableLayouts.normalize(declaredColumns, storedLayout);
   if (layout.reset) {
@@ -2797,6 +2799,13 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
   String(options.tableClass || '').split(/\s+/).filter(Boolean)
     .forEach((className) => element.classList.add(className));
   element.dataset.tableType = tableType;
+  if (options.recordList) {
+    element.classList.add('ui-record-list');
+    const customFieldOrder = layout.column_order.some((id, index) =>
+      id !== defaultLayout.column_order[index]);
+    element.classList.toggle('ui-record-list-custom-order', customFieldOrder);
+    element.classList.toggle('has-custom-field-order', customFieldOrder);
+  }
   if (options.mobileCards) {
     element.dataset.mobileCards = 'true';
     element.classList.add('ui-mobile-cards');
@@ -3066,7 +3075,8 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     const chooser = node('div', 'table-layout-menu');
     chooser.dataset.tableType = tableType;
     const panelId = `table-layout-panel-${++tableLayoutPanelSequence}`;
-    const trigger = iconButton('icon-columns', 'Choose table columns',
+    const menuLabels = options.layoutMenuLabels || {};
+    const trigger = iconButton('icon-columns', menuLabels.trigger || 'Choose table columns',
       'ui-button ui-button-secondary ui-icon-button ui-icon-button-compact table-layout-trigger');
     trigger.setAttribute('popovertarget', panelId);
     trigger.setAttribute('aria-haspopup', 'dialog');
@@ -3076,9 +3086,10 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     panel.id = panelId;
     panel.setAttribute('popover', 'auto');
     panel.setAttribute('role', 'dialog');
-    panel.setAttribute('aria-label', 'Table columns');
+    panel.setAttribute('aria-label', menuLabels.title || 'Table columns');
     const panelHeader = node('div', 'table-layout-panel-header');
-    panelHeader.append(node('strong', '', 'Table columns'), node('span', '', 'Show and arrange this table.'));
+    panelHeader.append(node('strong', '', menuLabels.title || 'Table columns'),
+      node('span', '', menuLabels.description || 'Show and arrange this table.'));
     const optionsHost = node('div', 'table-layout-options');
     panel.append(panelHeader, optionsHost);
     const byId = new Map(declaredColumns.map((column) => [column.id, column]));
@@ -3093,7 +3104,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
       visibility.disabled = (layout.essential_columns || []).includes(id) ||
         visibility.checked && visibleCount <= 1;
       const displayLabel = byId.get(id).layoutLabel || byId.get(id).fullLabel || byId.get(id).label || id;
-      visibility.setAttribute('aria-label', `Show ${displayLabel} column`);
+      visibility.setAttribute('aria-label', `Show ${displayLabel} ${menuLabels.item || 'column'}`);
       visibility.addEventListener('change', () => void replaceForLayout(
         tableLayouts.setHidden(layout, id, !visibility.checked)));
       const label = node('span', '', displayLabel);
@@ -3123,7 +3134,8 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
       item.append(visibility, label, earlier, later);
       optionsHost.append(item);
     });
-    const reset = node('button', 'ui-button ui-button-secondary table-layout-reset', 'Reset this table');
+    const reset = node('button', 'ui-button ui-button-secondary table-layout-reset',
+      menuLabels.reset || 'Reset this table');
     reset.type = 'button';
     reset.dataset.layoutFocusKey = 'reset';
     reset.addEventListener('click', async () => {
@@ -3181,19 +3193,21 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     });
   }
   wrapper.append(element);
-  const applyWidths = () => applyPreferredTableWidths(element, wrapper, columns, columnElements,
-    layout, tableType, options.widthVariant);
+  const applyWidths = () => {
+    if (!options.recordList) applyPreferredTableWidths(element, wrapper, columns, columnElements,
+      layout, tableType, options.widthVariant);
+  };
   applyWidths();
   window.requestAnimationFrame(() => {
     if (wrapper.isConnected) applyWidths();
   });
-  if (tableDefaults.fit(tableType) && typeof ResizeObserver !== 'undefined') {
+  if (!options.recordList && tableDefaults.fit(tableType) && typeof ResizeObserver !== 'undefined') {
     tableController.widthObserver = new ResizeObserver(applyWidths);
     tableController.widthObserver.observe(wrapper);
     const observer = tableController.widthObserver;
     activeRenderController?.signal.addEventListener('abort', () => observer.disconnect(), { once: true });
   }
-  addColumnResizers(element, columns, columnElements, headers, tableType,
+  if (!options.recordList) addColumnResizers(element, columns, columnElements, headers, tableType,
     () => layout, (nextLayout) => { layout = nextLayout; }, beginLayoutMutation, endLayoutMutation,
     () => rebuildTable(null), applyWidths);
   updateSortIndicators();
@@ -3310,14 +3324,19 @@ const METRIC_ICONS = {
   'Activity database': 'icon-dashboard', Added: 'icon-plus', Updated: 'icon-refresh',
   Unchanged: 'icon-pause', Removed: 'icon-trash', Errors: 'icon-warning',
   Current: 'icon-spectrum', '30s average': 'icon-live', Decode: 'icon-channel',
-  'Last sample': 'icon-replay'
+  'Last sample': 'icon-replay', Pending: 'icon-replay', Completed: 'icon-health',
+  Failed: 'icon-warning', 'Listed calls': 'icon-recording',
+  'Copies being compared': 'icon-recording', 'Calls being matched': 'icon-call-matching',
+  'Duplicates combined': 'icon-call-matching', 'Extra copies combined': 'icon-recording',
+  'Uncertain calls kept separate': 'icon-warning'
 };
 
 function metricCard(label, value, displayValue = undefined) {
   const name = String(label).split(' · ')[0];
   const hasAlert = Number(value) > 0;
   const tone = hasAlert && ['Need action', 'Errors'].includes(name) ? 'danger' :
-    hasAlert && ['Check soon', 'Degraded channels', 'Emergency', 'Denial'].includes(name) ?
+    hasAlert && ['Check soon', 'Degraded channels', 'Emergency', 'Denial', 'Failed',
+      'Uncertain calls kept separate'].includes(name) ?
       'warning' : 'blue';
   const metric = node('div', `metric ui-metric ui-metric-${tone}`);
   const icon = node('span', 'ui-metric-icon');
@@ -3325,13 +3344,19 @@ function metricCard(label, value, displayValue = undefined) {
   const copy = node('div', 'ui-metric-copy');
   const displayed = node('strong');
   displayed.append(valueNode(displayValue === undefined ? number(value) : displayValue));
-  copy.append(node('span', 'ui-metric-label', label), displayed);
-  metric.append(icon, copy);
+  const heading = node('span', 'ui-metric-label');
+  heading.append(icon, document.createTextNode(label));
+  copy.append(heading, displayed);
+  metric.append(copy);
+  if (typeof displayValue === 'string' && !/^[-−+]?\d/.test(displayValue)) {
+    metric.className += ' ui-metric-text';
+  }
   return metric;
 }
 
 function metrics(values, embedded = false) {
-  const band = node(embedded ? 'div' : 'section', 'summary-band ui-metric-grid');
+  const band = node(embedded ? 'div' : 'section',
+    `summary-band ui-metric-grid${embedded ? ' ui-metric-grid-embedded' : ''}`);
   values.forEach(([label, value, displayValue]) => band.append(metricCard(label, value, displayValue)));
   return band;
 }
@@ -21840,7 +21865,7 @@ function adminStatusMessage(host, message, error = false) {
 
 function userIdentityCell(account) {
   const wrapper = node('div', 'admin-user-identity');
-  wrapper.append(node('strong', '', account.username));
+  wrapper.append(node('h2', 'ui-record-card-title', account.username));
   if (account.primaryAdmin) {
     const primary = uiPill('Primary', 'success');
     wrapper.append(primary);
@@ -21849,7 +21874,7 @@ function userIdentityCell(account) {
 }
 
 function userTierControl(account) {
-  return node('span', 'admin-tier-locked', account.primaryAdmin ? 'Admin' : 'User');
+  return node('span', 'ui-muted admin-tier-locked', account.primaryAdmin ? 'Admin access' : 'User access');
 }
 
 function normalizedManagedUsername(value) {
@@ -21981,19 +22006,55 @@ function openDeleteUserModal(account, statusHost, returnFocusSelector) {
 }
 
 function userActions(account, statusHost) {
-  if (account.primaryAdmin) return node('span', 'admin-managed-note', 'Managed in the desktop application');
+  if (account.primaryAdmin) {
+    const managed = node('span', 'ui-permission-fixed admin-managed-note');
+    managed.append(iconGlyph('icon-lock'), document.createTextNode('Managed in the desktop application'));
+    return managed;
+  }
   const actions = node('div', 'admin-row-actions');
-  const reset = iconButton('icon-edit', `Change password for ${account.username}`);
+  const reset = uiActionButton('Change password', 'icon-key', () => openManagedUserModal(account, statusHost,
+    `.admin-row-actions button[data-username="${account.username}"][data-user-action="password"]`), 'ui-button ui-button-link');
+  reset.setAttribute('aria-label', `Change password for ${account.username}`);
   reset.dataset.username = account.username;
-  const remove = iconButton('icon-trash', `Delete ${account.username}`,
-    'ui-button ui-button-danger-quiet ui-icon-button');
+  reset.dataset.userAction = 'password';
+  const remove = uiActionButton('Delete', 'icon-trash', () => openDeleteUserModal(account, statusHost,
+    `.admin-row-actions button[data-username="${account.username}"][data-user-action="delete"]`), 'ui-button ui-button-link ui-button-danger-quiet');
+  remove.setAttribute('aria-label', `Delete ${account.username}`);
   remove.dataset.username = account.username;
-  reset.addEventListener('click', () => openManagedUserModal(account, statusHost,
-    `.admin-row-actions button[data-username="${account.username}"]`));
-  remove.addEventListener('click', () => openDeleteUserModal(account, statusHost,
-    `.admin-row-actions button[data-username="${account.username}"]`));
+  remove.dataset.userAction = 'delete';
   actions.append(reset, remove);
   return actions;
+}
+
+function adminUserCard(account, statusHost) {
+  const card = node('article', 'ui-record-card admin-account-card');
+  card.dataset.username = account.username;
+  card.classList.toggle('admin-account-primary', account.primaryAdmin);
+  const header = node('div', 'ui-record-card-header admin-account-header');
+  const avatar = node('span', `ui-record-avatar${account.primaryAdmin ? ' ui-record-avatar-accent' : ''}`);
+  avatar.append(iconGlyph(account.primaryAdmin ? 'icon-admin' : 'icon-users'));
+  const copy = node('div', 'ui-record-card-copy admin-account-copy');
+  copy.append(userIdentityCell(account));
+  if (account.primaryAdmin) {
+    const detail = node('div', 'ui-muted admin-account-detail');
+    detail.append(userTierControl(account), document.createTextNode(' · Password changed '),
+      valueNode(dateTime(account.passwordChangedAtEpochMillis)));
+    copy.append(detail);
+  } else copy.append(userTierControl(account));
+  header.append(avatar, copy);
+  const facts = keyValues([['Password changed', dateTime(account.passwordChangedAtEpochMillis)]]);
+  facts.classList.add('ui-record-facts');
+  const body = node('div', 'ui-record-card-body admin-account-body');
+  body.append(facts);
+  card.append(header);
+  if (!account.primaryAdmin) card.append(body);
+  if (account.primaryAdmin) header.append(userActions(account, statusHost));
+  else {
+    const footer = node('div', 'ui-record-card-footer');
+    footer.append(userActions(account, statusHost));
+    card.append(footer);
+  }
+  return card;
 }
 
 async function renderAdminUsers(renderContext = captureRenderContext()) {
@@ -22014,24 +22075,22 @@ async function renderAdminUsers(renderContext = captureRenderContext()) {
     create.title = `Account limit reached (${number(maximumUsers)}).`;
   }
   create.addEventListener('click', () => openManagedUserModal(null, statusHost, '#admin-create-user'));
-  const titleActions = sectionActionHost(create);
-  const body = node('div', 'admin-section-body');
-  body.append(statusHost, table(users, [
-    { id: 'username', label: 'Username', render: userIdentityCell,
-      sortValue: (account) => account.username },
-    { id: 'access-tier', label: 'Access level',
-      render: (account) => userTierControl(account),
-      sortValue: (account) => accessTierRank(account.tier) },
-    { id: 'password-changed', label: 'Password changed',
-      render: (account) => dateTime(account.passwordChangedAtEpochMillis),
-      sortValue: (account) => account.passwordChangedAtEpochMillis },
-    { id: 'actions', label: 'Actions', render: (account) => userActions(account, statusHost),
-      sortable: false }
-  ], 'No accounts found', {
-    type: 'admin-users', sortable: false, mobileCards: true, tableClass: 'admin-responsive-table',
-    layoutMenuHost: titleActions
-  }));
-  content.append(section('Accounts', body, titleActions));
+  create.prepend(iconGlyph('icon-plus'));
+  const titleRow = content.querySelector('.ui-settings-title-row');
+  if (titleRow) titleRow.append(create);
+  const toolbar = node('div', 'admin-accounts-toolbar');
+  const managedCount = users.filter((account) => !account.primaryAdmin).length;
+  toolbar.append(node('span', 'ui-muted', `${number(managedCount)} managed account${managedCount === 1 ? '' : 's'}`));
+  if (!titleRow) toolbar.append(create);
+  if (capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_ACCESS)) {
+    const accessLink = anchor('Manage page access', href('admin', { tab: 'access' }), 'ui-button ui-button-link');
+    accessLink.append(iconGlyph('icon-open-details'));
+    toolbar.append(accessLink);
+  }
+  const cards = node('div', 'ui-record-grid admin-account-grid');
+  users.forEach((account) => cards.append(adminUserCard(account, statusHost)));
+  if (!users.length) cards.append(node('div', 'ui-empty-state', 'No accounts found'));
+  content.append(toolbar, cards, statusHost);
 }
 
 function adminAccessPolicies(response) {
@@ -22084,63 +22143,86 @@ function accessPolicyTierControl(policy, statusHost) {
 }
 
 function accessPolicyIdentity(policy) {
-  const wrapper = node('div', 'admin-capability-identity');
-  wrapper.append(node('strong', '', policy.displayName || policy.id));
+  const icons = { dashboard: 'icon-dashboard', live: 'icon-live', radio: 'icon-radio-tower',
+    'call-audio': 'icon-speaker', 'csv-export': 'icon-download', credits: 'icon-about',
+    'tuner-spectrum': 'icon-spectrum', 'user-settings': 'icon-admin', recordings: 'icon-recording',
+    'admin-recordings': 'icon-recording-settings', 'receiver-health': 'icon-health' };
+  const wrapper = node('div', 'ui-permission-identity admin-capability-identity');
+  const icon = node('span', 'ui-record-card-icon');
+  icon.append(iconGlyph(icons[policy.id] || 'icon-admin'));
+  wrapper.append(icon, node('span', 'ui-permission-name', policy.displayName || policy.id));
   return wrapper;
 }
 
 function webAccessControl(policy, statusHost) {
-  const wrapper = node('div', 'admin-web-access-control ui-field-row ui-settings-control');
-  const copy = node('div', 'admin-web-access-copy');
-  copy.append(node('strong', '', 'Entire web interface'),
-    node('p', '', 'Individual pages can require a higher access level.'));
-  const control = node('label', 'admin-web-access-tier');
-  control.append(node('span', '', 'Minimum access'), accessPolicyTierControl(policy, statusHost));
-  wrapper.append(copy, control);
+  const wrapper = node('div', 'ui-record-card-header admin-web-access-control');
+  const icon = node('span', 'ui-record-card-icon');
+  icon.append(iconGlyph('icon-network-visualizer'));
+  const copy = node('div', 'ui-record-card-copy ui-heading-group admin-web-access-copy');
+  copy.append(node('h2', 'ui-record-card-title', policy.displayName),
+    node('p', 'ui-muted', 'Individual pages can require a higher access level.'));
+  const control = node('label', 'ui-field admin-web-access-tier');
+  control.append(node('span', 'ui-field-label', 'Minimum access'), accessPolicyTierControl(policy, statusHost));
+  wrapper.append(icon, copy, control);
   return wrapper;
+}
+
+function adminAccessRows(policies, statusHost, compactFixed = false) {
+  const list = node('div', 'ui-permission-list');
+  policies.forEach((policy) => {
+    const row = node('div', 'ui-permission-row');
+    row.dataset.capability = policy.id;
+    const controls = node('div', 'ui-permission-tier');
+    const select = accessPolicyTierControl(policy, statusHost);
+    if (select.disabled) controls.append(node('span', 'ui-permission-fixed', 'Fixed'));
+    if (compactFixed && select.disabled) {
+      row.classList.add('ui-permission-row-compact');
+      controls.classList.add('ui-permission-tier-fixed');
+      select.classList.remove('admin-tier-select');
+      select.classList.add('ui-select-static');
+    }
+    controls.append(select);
+    row.append(compactFixed ? node('span', 'ui-permission-name', policy.displayName || policy.id) :
+      accessPolicyIdentity(policy), controls);
+    list.append(row);
+  });
+  if (!policies.length) list.append(node('div', 'ui-empty-state', 'No page access settings are available'));
+  return list;
 }
 
 async function renderAdminAccess(renderContext = captureRenderContext()) {
   const response = await requestJson('/api/v1/admin/access', { csrf: false });
   if (!renderIsCurrent(renderContext)) return;
-  const policies = adminAccessPolicies(response).sort((left, right) =>
+  const displayOrder = ['dashboard', 'live', 'radio', 'call-audio', 'csv-export', 'credits',
+    'tuner-spectrum', 'user-settings', 'recordings', 'admin-recordings', 'admin-users', 'admin-access',
+    'admin-aliases', 'admin-streaming', 'admin-channels', 'admin-tuners', 'admin-settings', 'receiver-health'];
+  const order = (id) => displayOrder.includes(id) ? displayOrder.indexOf(id) : displayOrder.length;
+  const policies = adminAccessPolicies(response).sort((left, right) => order(left.id) - order(right.id) ||
     (left.displayName || left.id).localeCompare(right.displayName || right.id));
   const webPolicy = policies.find((policy) => policy.id === ACCESS_CAPABILITIES.WEB_ACCESS);
   const recordingsPolicies = policies.filter((policy) =>
     [ACCESS_CAPABILITIES.RECORDINGS, ACCESS_CAPABILITIES.ADMIN_RECORDINGS].includes(policy.id));
+  const administrationPolicies = policies.filter((policy) => !recordingsPolicies.includes(policy) &&
+    (policy.id.startsWith('admin-') || policy.id === ACCESS_CAPABILITIES.RECEIVER_HEALTH));
   const featurePolicies = policies.filter((policy) => policy.id !== ACCESS_CAPABILITIES.WEB_ACCESS &&
-    !recordingsPolicies.includes(policy));
+    !recordingsPolicies.includes(policy) && !administrationPolicies.includes(policy));
   const statusHost = node('div', 'admin-operation-status ui-notice');
   statusHost.setAttribute('role', 'status');
-  const titleActions = sectionActionHost();
-  const body = node('div', 'admin-section-body');
   content.append(statusHost);
-  if (webPolicy) content.append(section('Web interface', webAccessControl(webPolicy, statusHost)));
-  body.append(table(featurePolicies, [
-      { id: 'capability', label: 'Page or feature', render: accessPolicyIdentity,
-        sortValue: (policy) => policy.displayName || policy.id },
-      { id: 'required-tier', label: 'Minimum access',
-        render: (policy) => accessPolicyTierControl(policy, statusHost),
-        sortValue: (policy) => accessTierRank(policy.requiredTier) }
-    ], 'No page access settings are available', {
-      type: 'admin-access', sortable: false, mobileCards: true, tableClass: 'admin-responsive-table',
-      layoutMenuHost: titleActions
-    }));
-  content.append(section('Pages & features', body, titleActions));
+  if (webPolicy) {
+    const gate = node('section', 'ui-record-card admin-access-gate');
+    gate.append(webAccessControl(webPolicy, statusHost));
+    content.append(gate);
+  }
+  content.append(section('Pages & features', adminAccessRows(featurePolicies, statusHost),
+    node('span', 'ui-muted ui-label', 'Minimum access')));
   if (recordingsPolicies.length) {
-    const recordingsTitleActions = sectionActionHost();
-    const recordingsBody = node('div', 'admin-section-body');
-    recordingsBody.append(table(recordingsPolicies, [
-      { id: 'capability', label: 'Recordings permission', render: accessPolicyIdentity,
-        sortValue: (policy) => policy.displayName || policy.id },
-      { id: 'required-tier', label: 'Minimum access',
-        render: (policy) => accessPolicyTierControl(policy, statusHost),
-        sortValue: (policy) => accessTierRank(policy.requiredTier) }
-    ], 'No recordings permissions are available', {
-      type: 'admin-recordings-access', sortable: false, mobileCards: true,
-      tableClass: 'admin-responsive-table', layoutMenuHost: recordingsTitleActions
-    }));
-    content.append(section('Recordings', recordingsBody, recordingsTitleActions));
+    content.append(section('Recordings', adminAccessRows(recordingsPolicies, statusHost),
+      node('span', 'ui-muted ui-label', 'Minimum access')));
+  }
+  if (administrationPolicies.length) {
+    content.append(section('Administration', adminAccessRows(administrationPolicies, statusHost, true),
+      uiPill('Admin access', 'neutral', 'icon-lock')));
   }
 }
 
@@ -23306,8 +23388,15 @@ function p25OverrideNumber(value, divisor) {
   return String(Number((Number(value) / divisor).toFixed(6)));
 }
 
+function p25OverrideBandValue(value, divisor, precision, unit) {
+  if (value === null || value === undefined || value === '' || !Number.isFinite(Number(value))) return '—';
+  return `${(Number(value) / divisor).toFixed(precision)} ${unit}`;
+}
+
 function p25OverrideBandRow(band = null) {
-  const row = node('div', 'p25-override-band-row');
+  const row = node('section', 'ui-surface-inset p25-override-band-row');
+  const header = node('div', 'p25-override-band-header');
+  const title = node('h3', 'ui-record-card-title', band ? `Band ${band.identifier}` : 'New band');
   const type = node('select');
   type.dataset.p25OverrideField = 'type';
   [['FDMA', 'FDMA'], ['TDMA', 'P25 2-slot TDMA']].forEach(([value, label]) => {
@@ -23319,7 +23408,9 @@ function p25OverrideBandRow(band = null) {
   const remove = iconButton('icon-trash', 'Remove band',
     'ui-button ui-button-danger-quiet ui-icon-button p25-override-remove');
   remove.addEventListener('click', () => row.remove());
-  row.append(
+  header.append(title, remove);
+  const fields = node('div', 'p25-override-band-fields');
+  fields.append(
     p25OverrideInput('Band ID', 'identifier', band?.identifier ?? '',
       { type: 'number', required: true, min: 0, max: 15, step: 1 }),
     formField('Type', type),
@@ -23333,25 +23424,20 @@ function p25OverrideBandRow(band = null) {
       { type: 'number', required: true, min: 0.001, step: 0.001 }),
     p25OverrideInput('Offset (MHz)', 'transmit_offset',
       p25OverrideNumber(band?.transmit_offset, 1_000_000),
-      { type: 'number', required: true, step: 0.000001 }),
-    remove
+      { type: 'number', required: true, step: 0.000001 })
   );
+  fields.addEventListener('input', () => {
+    const identifier = fields.querySelector('[data-p25-override-field="identifier"]').value;
+    title.textContent = identifier ? `Band ${identifier}` : 'New band';
+  });
+  row.append(header, fields);
   return row;
 }
 
 function p25OverrideProfileCard(profile = null) {
-  const card = node('details', 'settings-card p25-override-profile');
-  const header = node('summary', 'settings-card-header p25-override-profile-header');
-  const title = node('h3', 'settings-card-title', 'New P25 override');
-  const remove = iconButton('icon-trash', 'Delete override',
-    'ui-button ui-button-danger-quiet ui-icon-button p25-override-profile-delete');
-  remove.addEventListener('click', (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    card.remove();
-  });
-  header.append(title, remove);
-  const body = node('div', 'settings-card-body');
+  const card = node('div', 'p25-override-profile');
+  const body = node('div', 'p25-override-editor-body');
+  const systemTitle = node('h3', 'ui-record-card-title', 'System and site');
   const identity = node('div', 'p25-override-identity');
   const hex = (value, width) => Number.isInteger(value) ? value.toString(16).toUpperCase().padStart(width, '0') : '';
   identity.append(
@@ -23371,19 +23457,10 @@ function p25OverrideProfileCard(profile = null) {
   addBand.addEventListener('click', () => bands.append(p25OverrideBandRow()));
   const actions = node('div', 'ui-action-row p25-override-profile-actions');
   actions.append(addBand);
-  body.append(identity, node('h4', 'p25-override-bands-title', 'Replacement bands'), bands, actions);
-  card.append(header, body);
-
-  const updateTitle = () => {
-    const wacn = card.querySelector('[data-p25-override-field="wacn"]')?.value.trim().toUpperCase();
-    const system = card.querySelector('[data-p25-override-field="system"]')?.value.trim().toUpperCase();
-    const rfss = card.querySelector('[data-p25-override-field="rfss"]')?.value.trim().toUpperCase();
-    const site = card.querySelector('[data-p25-override-field="site"]')?.value.trim().toUpperCase();
-    title.textContent = wacn && system ? `${wacn}-${system}${rfss && site ? ` · ${rfss}-${site}` : ''}` :
-      'New P25 override';
-  };
-  identity.addEventListener('input', updateTitle);
-  updateTitle();
+  body.append(systemTitle, identity,
+    node('p', 'ui-field-detail', 'Enter both RFSS and Site ID, or leave both blank.'),
+    node('h3', 'ui-record-card-title p25-override-bands-title', 'Replacement bands'), bands, actions);
+  card.append(body);
   return card;
 }
 
@@ -23436,13 +23513,13 @@ async function requestP25BandplanOverrides(method = 'GET', profiles = null) {
 async function renderAdminP25BandplanOverrides() {
   const renderContext = captureRenderContext();
   const body = node('div', 'admin-section-body p25-overrides-workspace');
-  const intro = node('p', 'p25-overrides-intro',
-    'Some P25 trunked systems do not transmit their band plan. Add an override to define it manually. ' +
-      'Site overrides take priority over system overrides.');
+  const intro = node('p', 'p25-overrides-intro muted',
+    'Site overrides take priority over system overrides.');
   const list = node('div', 'p25-override-profile-list');
   const message = node('div', 'admin-form-message', 'Loading P25 band plan overrides…');
   message.setAttribute('role', 'status');
   const add = node('button', 'ui-button ui-button-primary', 'Add P25 override');
+  add.prepend(iconGlyph('icon-plus'));
   add.id = 'admin-add-p25-override';
   add.type = 'button';
   add.disabled = true;
@@ -23451,14 +23528,13 @@ async function renderAdminP25BandplanOverrides() {
   save.disabled = true;
   const actions = node('div', 'ui-action-row');
   actions.append(save);
-  const footer = node('div', 'settings-form-footer');
+  const footer = node('div', 'ui-record-card-footer p25-override-footer');
   footer.append(message, actions);
   body.append(intro, list, footer);
   const titleActions = sectionActionHost(add);
   content.append(section('P25 band plan overrides', body, titleActions));
   let profiles = [];
   let saving = false;
-  const tableController = {};
   const hex = (value, width) => Number.isInteger(value) ? value.toString(16).toUpperCase().padStart(width, '0') : '—';
   const identity = (profile) => `${hex(profile.wacn, 5)}-${hex(profile.system, 3)}`;
   const draftChanged = () => { message.textContent = 'Unsaved changes'; };
@@ -23468,9 +23544,7 @@ async function renderAdminP25BandplanOverrides() {
     const form = node('form', 'admin-form p25-overrides-form');
     const editorList = node('div', 'p25-override-profile-list');
     const card = p25OverrideProfileCard(existing);
-    const editor = node('div', 'p25-override-profile');
-    editor.append(...card.querySelector('.settings-card-body').childNodes);
-    editorList.append(editor);
+    editorList.append(card);
     const status = node('div', 'admin-form-message');
     status.setAttribute('role', 'status');
     let modal;
@@ -23528,29 +23602,66 @@ async function renderAdminP25BandplanOverrides() {
   };
 
   function draw() {
-    list.replaceChildren(table(profiles, [
-      { id: 'system', label: 'System', render: (profile) => identity(profile) },
-      { id: 'scope', label: 'Scope', render: (profile) => profile.rfss !== null && profile.site !== null ?
-        `RFSS ${hex(profile.rfss, 2)} · Site ${hex(profile.site, 2)}` : 'Entire system' },
-      { id: 'bands', label: 'Bands', render: (profile) => number(profile.bands.length) },
-      { id: 'actions', label: 'Actions', render: (profile) => {
-        const index = profiles.indexOf(profile);
-        const controls = node('div', 'ui-action-row');
-        const edit = iconButton('icon-edit', `Edit P25 override ${identity(profile)}`,
-          'ui-button ui-button-secondary ui-icon-button');
-        edit.id = `p25-override-edit-${index}`;
-        edit.disabled = saving;
-        edit.addEventListener('click', () => editProfile(index));
-        const remove = iconButton('icon-trash', `Delete P25 override ${identity(profile)}`,
-          'ui-button ui-button-danger-quiet ui-icon-button');
-        remove.disabled = saving;
-        remove.addEventListener('click', () => deleteProfile(index));
-        controls.append(edit, remove);
-        return controls;
-      } }
-    ], 'No P25 overrides configured.', {
-      type: 'admin-p25-overrides', controller: tableController, layoutMenuHost: titleActions,
-      sortable: false, mobileCards: true
+    if (!profiles.length) {
+      list.replaceChildren(node('div', 'ui-feedback ui-feedback-empty', 'No P25 overrides configured.'));
+      return;
+    }
+    list.replaceChildren(...profiles.map((profile, index) => {
+      const record = node('article', 'ui-record-section p25-override-record');
+      const header = node('div', 'ui-record-card-header p25-override-profile-header');
+      const label = node('div', 'ui-record-card-copy');
+      const title = node('h3', 'ui-record-card-title', identity(profile));
+      title.id = `p25-override-title-${index}`;
+      record.setAttribute('aria-labelledby', title.id);
+      const siteOverride = profile.rfss !== null && profile.site !== null;
+      const scope = node('p', 'muted', siteOverride ?
+        `RFSS ${hex(profile.rfss, 2)} · Site ${hex(profile.site, 2)}` : 'Entire system');
+      label.append(title, scope);
+      const icon = node('span', 'ui-record-card-icon');
+      icon.append(iconGlyph('icon-radio-tower'));
+      const controls = node('div', 'ui-action-row');
+      const edit = node('button', 'ui-button ui-button-secondary', 'Edit');
+      edit.prepend(iconGlyph('icon-edit'));
+      edit.type = 'button';
+      edit.id = `p25-override-edit-${index}`;
+      edit.setAttribute('aria-label', `Edit P25 override ${identity(profile)}`);
+      edit.disabled = saving;
+      edit.addEventListener('click', () => editProfile(index));
+      const remove = iconButton('icon-trash', `Delete P25 override ${identity(profile)}`,
+        'ui-button ui-button-danger-quiet ui-icon-button');
+      remove.disabled = saving;
+      remove.addEventListener('click', () => deleteProfile(index));
+      controls.append(edit, remove);
+      header.append(icon, label, controls);
+      const details = node('div', 'ui-record-card-body p25-override-record-body');
+      const facts = keyValues([
+        ['WACN', hex(profile.wacn, 5)], ['System ID', hex(profile.system, 3)],
+        ['RFSS', siteOverride ? hex(profile.rfss, 2) : 'All'],
+        ['Site ID', siteOverride ? hex(profile.site, 2) : 'All']
+      ]);
+      facts.classList.add('ui-record-facts', 'p25-override-profile-facts');
+      const bandsHeading = node('div', 'p25-override-bands-heading');
+      bandsHeading.append(node('h4', 'ui-record-card-title', 'Replacement bands'),
+        node('span', 'muted', `${number(profile.bands.length)} band${profile.bands.length === 1 ? '' : 's'}`));
+      const bands = node('div', 'p25-override-band-records');
+      bands.append(...profile.bands.map((band) => {
+        const item = node('section', 'ui-surface-inset p25-override-band-record');
+        const bandHeader = node('div', 'p25-override-band-header');
+        bandHeader.append(node('h5', 'ui-record-card-title', `Band ${band.identifier}`),
+          uiPill(band.type === 'TDMA' ? 'P25 2-slot TDMA' : 'FDMA'));
+        const values = keyValues([
+          ['Base frequency', p25OverrideBandValue(band.base_frequency, 1_000_000, 6, 'MHz')],
+          ['Bandwidth', p25OverrideBandValue(band.bandwidth, 1_000, 3, 'kHz')],
+          ['Spacing', p25OverrideBandValue(band.channel_spacing, 1_000, 3, 'kHz')],
+          ['Offset', p25OverrideBandValue(band.transmit_offset, 1_000_000, 6, 'MHz')]
+        ]);
+        values.classList.add('ui-record-facts', 'p25-override-band-facts');
+        item.append(bandHeader, values);
+        return item;
+      }));
+      details.append(facts, bandsHeading, bands);
+      record.append(header, details);
+      return record;
     }));
   }
   add.addEventListener('click', () => editProfile());
@@ -26283,6 +26394,21 @@ function callMatchingCopySite(leg) {
   return [name, site].filter(Boolean).join(' · ') || String(leg?.decoder || 'Unknown site');
 }
 
+function callMatchingCopySummary(leg) {
+  if (!leg) return 'Unavailable';
+  const name = String(leg.channel_name || '').trim();
+  const site = [leg.rfss !== null && leg.rfss !== undefined ? `RFSS ${leg.rfss}` : '',
+    leg.site !== null && leg.site !== undefined ? `Site ${leg.site}` : ''].filter(Boolean).join(' · ');
+  return identitySummaryValue(name || site || String(leg.decoder || 'Unknown site'), name ? site : '');
+}
+
+function callMatchingIdentitySummary(identity, destination = true) {
+  const alias = destination ? identity.destination_alias : identity.source_alias;
+  const identifier = destination ? identity.destination_value : identity.source_value;
+  return identitySummaryValue(callMatchingIdentity(alias, identifier,
+    destination ? 'Unknown destination' : 'Unknown radio'), identifier || '');
+}
+
 function callMatchingWinner(decision) {
   const copies = Array.isArray(decision?.legs) ? decision.legs : [];
   return copies.find((leg) => leg.copy_index === decision?.winner?.selected_copy_index) ||
@@ -26403,9 +26529,9 @@ function callMatchingComparison(decision) {
   const runnerUp = copies.find((copy) => copy.copy_index === decision.winner?.runner_up_copy_index);
   const body = node('div', 'call-matching-comparison');
   const intro = node('div', 'call-matching-comparison-intro');
-  intro.append(node('strong', '', callMatchingIdentity(identity.destination_alias,
-    identity.destination_value, 'Unknown destination')),
-    node('span', 'muted', `Radio ${callMatchingIdentity(identity.source_alias, identity.source_value, 'unknown')} · ` +
+  intro.append(callMatchingIdentitySummary(identity),
+    node('span', 'muted', `Radio ${callMatchingIdentity(identity.source_alias, identity.source_value, 'unknown')}` +
+      `${identity.source_alias && identity.source_value ? ` (${identity.source_value})` : ''} · ` +
       `${callMatchingDuration(Number(identity.end_timestamp || 0) - Number(identity.start_timestamp || 0))} · ` +
       `${copies.length} receiver copies`));
   body.append(intro);
@@ -26419,23 +26545,26 @@ function callMatchingComparison(decision) {
     ['Runner-up measurement', decision.winner?.runner_up_value?.display || '—'],
     ['Used for', callMatchingOutputTags(decision.output_policy)]
   ]);
+  summary.classList.add('ui-admin-facts', 'call-matching-comparison-summary');
   body.append(summary);
-  const heading = node('h3', 'call-matching-comparison-heading', 'Copy comparison');
+  const heading = node('div', 'ui-heading-group');
+  heading.append(node('h3', '', 'Copy comparison'));
   body.append(heading);
   if (!copies.length) {
     body.append(node('div', 'empty', 'No comparison details are available for this call.'));
     return body;
   }
   const wrap = node('div', 'call-matching-comparison-scroll ui-table-wrap');
-  const matrix = node('table', 'ui-data-table call-matching-comparison-table');
+  const matrix = node('table', 'ui-data-table ui-data-table-quiet call-matching-comparison-table');
   const thead = node('thead');
   const header = node('tr');
   header.append(node('th', '', 'Metric'));
   copies.forEach((copy, index) => {
-    const label = copy.selected ? 'Selected copy' :
+    const selected = copy.copy_index === winner?.copy_index;
+    const label = selected ? 'Selected copy' :
       (copy.copy_index === decision.winner?.runner_up_copy_index ? 'Runner-up' : `Other copy ${index + 1}`);
-    const cell = node('th');
-    cell.append(uiPill(label, copy.selected ? 'success' : 'neutral'),
+    const cell = node('th', selected ? 'ui-data-table-selected-column' : '');
+    cell.append(uiPill(label, selected ? 'success' : 'neutral'),
       node('strong', 'call-matching-copy-site', callMatchingCopySite(copy)),
       node('small', 'muted', `${callMatchingDuration(copy.duration_milliseconds)} · ` +
         `${copy.decoder || 'Unknown decoder'}`));
@@ -26443,36 +26572,43 @@ function callMatchingComparison(decision) {
   });
   thead.append(header);
   const tbody = node('tbody');
+  const measurement = (value, detail) => identitySummaryValue(value, detail);
   const rows = [
-    ['Match', (copy) => copy.selected ? 'Selected copy' :
-      (copy.overlap ? `${callMatchingDuration(copy.overlap.overlap_milliseconds)} shared · ` +
+    ['Match', (copy) => copy.copy_index === winner?.copy_index ? 'Selected copy' :
+      (copy.overlap ? measurement(`${callMatchingDuration(copy.overlap.overlap_milliseconds)} shared`,
         `${callMatchingPercent(copy.overlap.shorter_copy_overlap_percent)} of shorter copy · ` +
-        `${callMatchingPercent(copy.overlap.selected_copy_coverage_percent)} of selected copy` :
+        `${callMatchingPercent(copy.overlap.selected_copy_coverage_percent)} of selected copy`) :
         callMatchingProof(decision))],
-    ['Usable frames', (copy) => `${callMatchingCount(copy.usable_frame_count)} / ` +
-      `${callMatchingCount(copy.expected_frame_count)} (${callMatchingPercent(copy.quality_percent)})`],
+    ['Usable frames', (copy) => measurement(`${callMatchingCount(copy.usable_frame_count)} / ` +
+      callMatchingCount(copy.expected_frame_count), callMatchingPercent(copy.quality_percent))],
     ['Observed / decoded frames', (copy) => `${callMatchingCount(copy.observed_frame_count)} / ` +
       callMatchingCount(copy.decoded_frame_count)],
-    ['Missing or repaired', (copy) => `${callMatchingCount(Number(copy.missing_frame_count || 0) +
-      Number(copy.concealed_frame_count || 0))} / ${callMatchingCount(copy.expected_frame_count)} ` +
-      `(${callMatchingPercent(Number(copy.missing_and_concealed_rate || 0) * 100)})`],
-    ['Repeated', (copy) => `${callMatchingCount(copy.repeated_frame_count)} / ` +
-      `${callMatchingCount(copy.expected_frame_count)} ` +
-      `(${callMatchingPercent(Number(copy.repeated_frame_rate || 0) * 100)})`],
+    ['Missing or repaired', (copy) => measurement(`${callMatchingCount(Number(copy.missing_frame_count || 0) +
+      Number(copy.concealed_frame_count || 0))} / ${callMatchingCount(copy.expected_frame_count)}`,
+      callMatchingPercent(Number(copy.missing_and_concealed_rate || 0) * 100))],
+    ['Repeated', (copy) => measurement(`${callMatchingCount(copy.repeated_frame_count)} / ` +
+      callMatchingCount(copy.expected_frame_count),
+      callMatchingPercent(Number(copy.repeated_frame_rate || 0) * 100))],
     ['FEC errors', (copy) => Number(copy.fec_protected_bit_count) > 0 ?
-      `${callMatchingCount(copy.fec_error_count)} / ${callMatchingCount(copy.fec_protected_bit_count)} ` +
-      `(${callMatchingPercent(Number(copy.normalized_fec_error_rate || 0) * 100, 2)})` : 'Not measured'],
+      measurement(`${callMatchingCount(copy.fec_error_count)} / ${callMatchingCount(copy.fec_protected_bit_count)}`,
+        callMatchingPercent(Number(copy.normalized_fec_error_rate || 0) * 100, 2)) : 'Not measured'],
     ['Audio samples', (copy) => `${callMatchingCount(copy.retained_audio_sample_count)} samples`],
     ['Damage', (copy) => [copy.ingress_loss ? 'Receiver input loss' : '',
       copy.audio_truncated ? 'Audio truncated' : ''].filter(Boolean).join(' · ') || 'None'],
-    ['Timing', (copy) => `${callMatchingDuration(copy.duration_milliseconds)} · ` +
-      `${copy.overlap && !copy.selected ? `starts ${callMatchingCount(Math.abs(copy.overlap.start_offset_from_selected_milliseconds))} ms ` +
-      `${Number(copy.overlap.start_offset_from_selected_milliseconds) < 0 ? 'earlier' : 'later'}` : 'selected copy'}`]
+    ['Timing', (copy) => measurement(callMatchingDuration(copy.duration_milliseconds),
+      copy.overlap && copy.copy_index !== winner?.copy_index ?
+        `starts ${callMatchingCount(Math.abs(copy.overlap.start_offset_from_selected_milliseconds))} ms ` +
+        `${Number(copy.overlap.start_offset_from_selected_milliseconds) < 0 ? 'earlier' : 'later'}` : 'selected copy')]
   ];
   rows.forEach(([label, render]) => {
     const row = node('tr');
-    row.append(node('th', '', label), ...copies.map((copy) => node('td', copy.selected ? 'call-matching-winning-value' : '',
-      render(copy))));
+    const labelCell = node('th', '', label);
+    labelCell.scope = 'row';
+    row.append(labelCell, ...copies.map((copy) => {
+      const cell = node('td', copy.copy_index === winner?.copy_index ? 'ui-data-table-selected-column' : '');
+      cell.append(valueNode(render(copy)));
+      return cell;
+    }));
     tbody.append(row);
   });
   matrix.append(thead, tbody);
@@ -26487,7 +26623,11 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
   const workspace = node('div', 'call-matching-workspace');
   const status = node('div', 'call-matching-live-status');
   status.setAttribute('role', 'status');
-  status.append(uiStatus('Connecting'));
+  const healthState = node('span', 'call-matching-health-state');
+  healthState.hidden = true;
+  const connectionState = node('span', 'call-matching-connection-state');
+  connectionState.append(uiStatus('Connecting'));
+  status.append(healthState, connectionState);
   const statusContent = node('div', 'call-matching-status-content');
   statusContent.append(node('div', 'loading', 'Loading call matching status…'));
   workspace.append(section('Matching status', statusContent, sectionActionHost(status)));
@@ -26500,32 +26640,23 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
   let historyPage = 0;
   const highlightedSequences = new Set();
   const columns = [
-    { id: 'time', label: 'Matched at', render: (row) => dateTime(row.decided_at_ms) || '—' },
-    { id: 'talkgroup', label: 'Talkgroup', render: (row) => {
-      const identity = row.call_identity || {};
-      const cell = node('span', 'call-matching-stacked-cell');
-      cell.append(node('strong', '', callMatchingIdentity(identity.destination_alias,
-        identity.destination_value, 'Unknown destination')),
-        node('small', '', identity.destination_value || ''));
-      return cell;
-    } },
-    { id: 'radio', label: 'Radio', render: (row) => {
-      const identity = row.call_identity || {};
-      const cell = node('span', 'call-matching-stacked-cell');
-      cell.append(node('strong', '', callMatchingIdentity(identity.source_alias,
-        identity.source_value, 'Unknown radio')), node('small', '', identity.source_value || ''));
-      return cell;
-    } },
-    { id: 'site', label: 'Selected site', render: (row) => callMatchingCopySite(callMatchingWinner(row)) },
-    { id: 'copies', label: 'Copies', render: (row) => callMatchingCount(row.legs?.length) },
-    { id: 'match', label: 'Why matched / selected', render: (row) => {
-      const cell = node('span', 'call-matching-stacked-cell');
-      cell.append(node('strong', '', callMatchingProof(row)),
-        node('small', '', callMatchingCriterion(row.winner?.criterion)));
-      return cell;
-    } },
-    { id: 'outputs', label: 'Used for', render: (row) => callMatchingOutputTags(row.output_policy) },
-    { id: 'action', label: '', fullLabel: 'Compare receiver copies', essential: true, render: (row) => {
+    { id: 'time', label: 'Matched at', className: 'call-matching-field-time',
+      render: (row) => dateTime(row.decided_at_ms) || '—' },
+    { id: 'talkgroup', label: 'Talkgroup', className: 'call-matching-field-talkgroup ui-record-title',
+      render: (row) => callMatchingIdentitySummary(row.call_identity || {}) },
+    { id: 'radio', label: 'Radio', className: 'call-matching-field-radio',
+      render: (row) => callMatchingIdentitySummary(row.call_identity || {}, false) },
+    { id: 'site', label: 'Selected site', className: 'call-matching-field-site',
+      render: (row) => callMatchingCopySummary(callMatchingWinner(row)) },
+    { id: 'copies', label: 'Copies', className: 'call-matching-field-copies',
+      render: (row) => callMatchingCount(row.legs?.length) },
+    { id: 'match', label: 'Why matched / selected', className: 'call-matching-field-match',
+      render: (row) => identitySummaryValue(callMatchingProof(row),
+        callMatchingCriterion(row.winner?.criterion)) },
+    { id: 'outputs', label: 'Used for', className: 'call-matching-field-outputs',
+      render: (row) => callMatchingOutputTags(row.output_policy) },
+    { id: 'action', label: '', fullLabel: 'Compare receiver copies', essential: true,
+      className: 'call-matching-field-action ui-record-action', render: (row) => {
       const button = node('button', 'ui-button ui-button-secondary call-matching-compare', 'Compare');
       button.type = 'button';
       button.dataset.decisionSequence = String(row.decision_sequence);
@@ -26546,7 +26677,10 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
   ];
   const tableWrap = table([], columns, 'No duplicate calls have been matched recently.', {
     type: 'call-matching-duplicates', layoutMenuHost: tableActions, controller: tableController,
-    sortable: false, mobileCards: true, tableClass: 'admin-responsive-table',
+    sortable: false, recordList: true, tableClass: 'call-matching-history-list',
+    recordListOrder: ['talkgroup', 'time', 'action', 'radio', 'site', 'copies', 'match', 'outputs'],
+    layoutMenuLabels: { trigger: 'Displayed fields', title: 'Displayed fields', item: 'field',
+      description: 'Show and arrange call details.', reset: 'Reset displayed fields' },
     rowKey: (row) => row.decision_sequence,
     rowClass: (row) => [
       Number(row.decision_sequence) === selectedSequence ? 'selected' : '',
@@ -26596,19 +26730,30 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
     const resolver = latest.resolver;
     const counters = resolver.counters || {};
     const [health, healthTone] = callMatchingHealth(latest);
-    status.replaceChildren(uiStatus('Live', 'success'));
+    connectionState.replaceChildren(uiStatus('Live', 'success'));
+    healthState.hidden = false;
+    healthState.replaceChildren(uiStatus(health, healthTone));
     const summary = node('div', 'call-matching-health-summary');
-    const state = node('div', 'call-matching-health-state');
-    state.append(uiStatus(health, healthTone));
-    const summaryMetrics = metrics([
+    const groups = node('div', 'call-matching-metric-groups');
+    const current = node('section', 'call-matching-metric-group');
+    const currentHeading = node('div', 'ui-heading-group ui-heading-group-quiet call-matching-metric-group-heading');
+    currentHeading.append(node('h3', '', 'Matching now'));
+    current.append(currentHeading, metrics([
       ['Copies being compared', resolver.active_leg_count],
-      ['Calls being matched', resolver.active_cohort_count],
+      ['Calls being matched', resolver.active_cohort_count]
+    ], true));
+    current.lastElementChild.classList.add('ui-metric-grid-inline', 'call-matching-current-counts');
+    const session = node('section', 'call-matching-metric-group');
+    const sessionHeading = node('div', 'ui-heading-group ui-heading-group-quiet call-matching-metric-group-heading');
+    sessionHeading.append(node('h3', '', 'This receiver session'));
+    session.append(sessionHeading, metrics([
       ['Duplicates combined', counters.merged_logical_calls],
       ['Extra copies combined', counters.merged_receiver_copies],
       ['Uncertain calls kept separate', counters.fail_open_logical_calls]
-    ], true);
-    summaryMetrics.classList.add('call-matching-metrics');
-    summary.append(state, summaryMetrics);
+    ], true));
+    session.lastElementChild.classList.add('ui-metric-grid-inline', 'call-matching-session-counts');
+    groups.append(current, session);
+    summary.append(groups);
     statusContent.replaceChildren(summary);
     statusContent.setAttribute('aria-busy', 'false');
     const retained = new Set(latest.duplicates.map((item) => Number(item.decision_sequence)));
@@ -26644,14 +26789,16 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
         tableController.replaceRows([]);
         historyPager.replaceChildren();
         if (workspace.isConnected) {
-          status.replaceChildren(uiStatus('Access denied', 'danger'));
+          healthState.hidden = true;
+          healthState.replaceChildren();
+          connectionState.replaceChildren(uiStatus('Access denied', 'danger'));
           statusContent.replaceChildren(node('div', 'error',
             'You no longer have access to call matching.'));
         }
         if (initialRequest) throw error;
         return;
       }
-      status.replaceChildren(uiStatus('Unavailable', 'danger'));
+      connectionState.replaceChildren(uiStatus('Unavailable', 'danger'));
       if (!latest) statusContent.replaceChildren(node('div', 'error', error.message ||
         'Call matching status is unavailable.'));
     } finally {
@@ -26679,27 +26826,27 @@ function adminSettingsGroups() {
     ] },
     { label: 'Audio & recordings', items: [
       { id: 'recordings', label: 'Recording settings', icon: 'recording-settings', capability: ACCESS_CAPABILITIES.ADMIN_RECORDINGS,
-        scope: 'Receiver-wide', description: 'Choose how calls are recorded and how long managed calls are kept.' },
+        description: 'Choose how calls are recorded and how long managed calls are kept.' },
       { id: 'audio-quality', label: 'Audio quality', icon: 'audio-quality', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        scope: 'Receiver-wide', description: 'Set MP3 encoding for recordings and outgoing streams.' },
+        description: 'Set MP3 encoding for recordings and outgoing streams.' },
       { id: 'transcription', label: 'Transcription', icon: 'transcription', capability: ACCESS_CAPABILITIES.ADMIN_RECORDINGS,
-        scope: 'Receiver-wide', description: 'Create transcripts for managed recordings and monitor progress.' }
+        description: 'Create transcripts for managed recordings and monitor progress.' }
     ] },
     { label: 'Activity & storage', items: [
       { id: 'activity', label: 'Activity settings', icon: 'activity', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        scope: 'Receiver-wide', description: 'Choose which activity is saved and how long its history is kept.' },
+        description: 'Choose which activity is saved and how long its history is kept.' },
       { id: 'retained-statistics', label: 'Saved data cleanup', icon: 'cleanup', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        scope: 'Receiver-wide', description: 'Remove saved statistics while keeping aliases and alias lists.' }
+        description: 'Remove saved statistics while keeping aliases and alias lists.' }
     ] },
     { label: 'Receiver configuration', items: [
       { id: 'remote-links', label: 'Remote Links', icon: 'network-visualizer', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        scope: 'Receiver-wide', description: 'Receive P25 systems from trusted installations or send local systems to one host.' },
+        description: 'Receive P25 systems from trusted installations or send local systems to one host.' },
       { id: 'protocol-p25', label: 'P25 band plans', icon: 'radio-tower', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        scope: 'Receiver-wide', description: 'Configure P25 band plan overrides.' }
+        description: 'Configure P25 band plan overrides.' }
     ] },
     { label: 'Web interface', items: [
       { id: 'display', label: 'Display settings', icon: 'display', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        scope: 'Receiver-wide', description: 'Set Live traffic timing and the country used for Spectrum frequency labels.' },
+        description: 'Set Live traffic timing and the country used for Spectrum frequency labels.' },
       { id: 'users', label: 'Web accounts', icon: 'users', capability: ACCESS_CAPABILITIES.ADMIN_USERS,
         description: 'Manage accounts that can sign in.' },
       { id: 'access', label: 'Page access', icon: 'admin', capability: ACCESS_CAPABILITIES.ADMIN_ACCESS,
@@ -26715,7 +26862,6 @@ function adminSettingsHeader(current, group) {
     `Administration › ${group.label}`));
   const titleRow = node('div', 'ui-settings-title-row');
   titleRow.append(node('h1', 'page-title', current.label));
-  if (current.scope) titleRow.append(node('span', 'ui-settings-scope', current.scope));
   header.append(titleRow, node('p', 'ui-settings-description', current.description));
   return header;
 }
@@ -26749,7 +26895,7 @@ async function renderAdmin() {
   const requested = route.get('tab') || 'health';
   const normalized = ['live-timing', 'spectrum'].includes(requested) ? 'display' : requested;
   const legacy = normalized === 'operations' && capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS) ?
-    { id: 'operations', label: 'Call output & activity', scope: 'Receiver-wide',
+    { id: 'operations', label: 'Call output & activity',
       description: 'Choose how calls are streamed and recorded, and whether activity is saved.' } : null;
   const active = legacy ? legacy.id : availableTabs.some((item) => item.id === normalized) ? normalized : availableTabs[0].id;
   const current = legacy || availableTabs.find((item) => item.id === active);
@@ -27064,7 +27210,7 @@ applicationRoutes = routeFoundation.createRegistry({
 }, routeDefinitionAllowed);
 
 const recordingsFeature = createRecordingsFeature({
-  node, requestJson, openReadOnlyModal, section, pageHeader, beginPage, uiToggleField,
+  node, requestJson, openReadOnlyModal, section, pageHeader, beginPage, uiToggleField, metrics,
   captureRenderContext, renderIsCurrent, content, href, anchor, entityRefHref,
   canViewRadio: () => capabilityAllowed(ACCESS_CAPABILITIES.RADIO),
   isPrimaryAdmin: () => accessSession.primary === true &&

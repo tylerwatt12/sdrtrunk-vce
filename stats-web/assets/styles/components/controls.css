@@ -1271,3 +1271,37 @@
 .ui-card-play-glyph {
   font-size: var(--font-size-body);
 }
+
+/* Inline actions use the same focus, disabled, and feedback behavior as other buttons. */
+.ui-button-link {
+  min-height: var(--control-height-compact);
+  padding: var(--space-1) 0;
+  color: var(--accent);
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  font-weight: var(--record-title-weight);
+  text-decoration: none;
+}
+.ui-button-link:hover:not(:disabled, [aria-disabled="true"]) {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  transform: none;
+  text-decoration: underline;
+}
+.ui-button-link.ui-button-danger-quiet { color: var(--danger); }
+
+/* Fixed permissions retain their native value and options in a compact read-only treatment. */
+.ui-select.ui-select-static:disabled {
+  width: auto;
+  min-height: 0;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  opacity: 1;
+  cursor: default;
+  font-size: var(--font-size-label);
+}

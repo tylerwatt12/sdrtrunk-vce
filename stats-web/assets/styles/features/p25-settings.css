@@ -1,7 +1,6 @@
 .p25-overrides-intro {
   margin: 0;
-  color: var(--muted);
-  line-height: 1.45;
+  padding: var(--space-4);
 }
 
 .read-only-modal.p25-override-editor-modal {
@@ -11,114 +10,109 @@
 .p25-overrides-workspace {
   min-width: 0;
   display: grid;
-  gap: var(--space-4);
-  padding: var(--space-4);
-}
-
-.p25-override-editor-modal .p25-override-profile {
-  min-width: 0;
-  display: grid;
-  gap: var(--space-4);
-}
-
-.p25-override-editor-modal .p25-override-identity {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.p25-override-editor-modal .p25-override-band-row {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.p25-override-editor-modal .p25-override-remove {
-  grid-column: 1 / -1;
-  justify-self: end;
-}
-
-.p25-override-editor-modal .p25-override-profile-list {
-  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  padding: 0;
 }
 
 .p25-override-profile-list,
+.p25-override-editor-body,
 .p25-override-bands {
   display: grid;
+  min-width: 0;
   gap: var(--space-3);
+}
+
+.p25-override-profile-list {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .p25-override-profile-header {
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.p25-override-record-body {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.p25-override-footer {
+  justify-content: space-between;
+}
+
+.p25-override-profile-facts {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.p25-override-band-records {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.p25-override-band-record,
+.p25-override-band-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.p25-override-band-header,
+.p25-override-bands-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-3);
-  cursor: pointer;
-  list-style: none;
+  gap: var(--space-2);
+  flex-wrap: wrap;
 }
 
-.p25-override-profile-header::-webkit-details-marker {
-  display: none;
+.p25-override-bands-heading {
+  justify-content: flex-start;
 }
 
-.p25-override-profile-header::before {
-  content: "▸";
-  flex: 0 0 auto;
-  color: var(--muted);
-}
-
-.p25-override-profile[open] > .p25-override-profile-header::before {
-  content: "▾";
+.p25-override-band-facts {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .p25-override-identity {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-3);
 }
 
-.p25-override-bands-title {
-  margin: var(--space-1) 0 0;
+.p25-override-band-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: end;
+  gap: var(--space-3);
+  min-width: 0;
 }
 
 .p25-override-profile-actions {
   justify-content: flex-start;
 }
 
-.p25-override-band-row {
-  display: grid;
-  grid-template-columns: 90px minmax(150px, .9fr) repeat(4, minmax(130px, 1fr)) max-content;
-  align-items: end;
-  gap: var(--space-2);
-  padding: var(--space-3);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
-}
+@media (max-width: 900px) {
+  .p25-override-band-records {
+    grid-template-columns: minmax(0, 1fr);
+  }
 
-.p25-override-remove {
-  margin-bottom: 1px;
-}
-
-@media (max-width: 1180px) {
-  .p25-override-identity,
-  .p25-override-band-row {
+  .p25-override-band-fields {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 560px) {
-  .p25-override-editor-modal .p25-override-identity,
-  .p25-override-editor-modal .p25-override-band-row {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   .p25-override-identity,
-  .p25-override-band-row {
+  .p25-override-band-row,
+  .p25-override-band-fields {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .p25-override-profile-header {
-    align-items: flex-start;
-  }
-
-  .p25-override-profile-delete {
-    flex: 0 0 auto;
+  .p25-override-profile-facts,
+  .p25-override-band-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

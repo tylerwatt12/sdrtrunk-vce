@@ -434,3 +434,57 @@
   .ui-data-table.ui-mobile-cards td.empty { display: block; }
   .ui-mobile-cards td.empty::before { display: none; }
 }
+
+/* A semantic table may present its records as a list while retaining field preferences. */
+.ui-record-list { table-layout: auto; display: block; }
+.ui-record-list thead {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
+}
+.ui-record-list tbody { display: block; }
+.ui-record-list tbody tr {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-5);
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.ui-record-list tbody tr:last-child { border-bottom: 0; }
+.ui-record-list tbody tr.selected { background: var(--accent-soft); }
+.ui-record-list tbody td {
+  display: block;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.ui-record-list tbody td::before {
+  content: attr(data-label);
+  display: block;
+  margin-bottom: var(--space-1);
+  color: var(--muted);
+  font-size: var(--font-size-label);
+  font-weight: var(--record-title-weight);
+}
+.ui-record-list tbody td.ui-record-action::before { display: none; }
+.ui-record-list tbody td.ui-record-title {
+  font-size: var(--record-title-size);
+  font-weight: var(--record-title-weight);
+}
+.ui-data-table .ui-data-table-selected-column {
+  background: color-mix(in srgb, var(--accent-soft) 60%, var(--surface));
+}
+
+.ui-record-list tbody td.ui-record-title::before { display: none; }
+.ui-record-list .ui-record-title .identity-summary-primary {
+  font-size: var(--record-title-size);
+  font-weight: var(--record-title-weight);
+}

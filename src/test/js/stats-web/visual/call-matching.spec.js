@@ -113,14 +113,22 @@ function session(tier = 'admin') {
 async function openApp(page, options = {}) {
   let requestCount = 0;
   const matching = options.matching || (async () => ({ status: 200, data: snapshot() }));
-  const preferences = JSON.parse(JSON.stringify(defaultPreferences));
+  let preferences = JSON.parse(JSON.stringify(defaultPreferences));
+  let preferenceRevision = 1;
+  const preferenceWrites = [];
   preferences.appearance.theme = options.theme || 'light';
+  if (options.tables) preferences.tables = JSON.parse(JSON.stringify(options.tables));
   await page.route('**/api/v1/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname;
     if (pathname === '/api/v1/auth/session') {
       await route.fulfill({ json: { data: session(options.tier || 'admin') } });
     } else if (pathname === '/api/v1/me/preferences') {
-      await route.fulfill({ json: { revision: 1, preferences } });
+      if (route.request().method() === 'PUT') {
+        preferences = route.request().postDataJSON();
+        preferenceWrites.push(JSON.parse(JSON.stringify(preferences)));
+        preferenceRevision++;
+      }
+      await route.fulfill({ json: { revision: preferenceRevision, preferences } });
     } else if (pathname === '/api/v1/admin/call-matching') {
       requestCount++;
       const response = await matching(requestCount, route);
@@ -134,7 +142,8 @@ async function openApp(page, options = {}) {
     }
   });
   await page.goto('/app.html?view=admin&tab=call-matching');
-  return { requests: () => requestCount };
+  return { requests: () => requestCount, preferences: () => preferences,
+    preferenceWrites: () => preferenceWrites };
 }
 
 test('administrator sees only confirmed duplicates and compares receiver copies', async ({ page }) => {
@@ -144,8 +153,21 @@ test('administrator sees only confirmed duplicates and compares receiver copies'
   await expect(page.getByRole('link', { name: 'Call matching' })).toHaveAttribute('aria-current', 'page');
   const table = page.locator('table[data-table-type="call-matching-duplicates"]');
   await expect(table.locator('tbody tr')).toHaveCount(1);
+  await expect(table.locator('tbody td')).toHaveCount(8);
   await expect(table).toContainText('Matching voice frames');
+  await expect(table).toContainText('County Fire Dispatch');
+  await expect(table).toContainText('27101');
+  await expect(table).toContainText('Engine 4');
+  await expect(table).toContainText('1204185');
+  await expect(table).toContainText('Cuyahoga Simulcast');
+  await expect(table).toContainText('RFSS 1 · Site 1');
+  await expect(table).toContainText('Browser audio');
   await expect(table).not.toContainText('Single call');
+  await expect(table).toHaveClass(/ui-record-list/);
+  await expect(page.locator('.call-matching-metric-group').first()).toContainText('Matching now');
+  await expect(page.locator('.call-matching-metric-group').first().locator('.ui-metric')).toHaveCount(2);
+  await expect(page.locator('.call-matching-metric-group').last()).toContainText('This receiver session');
+  await expect(page.locator('.call-matching-metric-group').last().locator('.ui-metric')).toHaveCount(3);
   await expect(page.locator('.call-matching-workspace .ui-toggle')).toHaveCount(0);
   await expect(page.locator('.call-matching-status-content')).not.toContainText('Diagnostic file');
   await expect(page.locator('.call-matching-status-content')).not.toContainText('Diagnostic queue');
@@ -157,6 +179,12 @@ test('administrator sees only confirmed duplicates and compares receiver copies'
   await expect(dialog).toContainText('164 usable frames');
   await expect(dialog).toContainText('3.5 s shared');
   await expect(dialog).toContainText('Matching voice frames');
+  await expect(dialog).toContainText('27101');
+  await expect(dialog).toContainText('1204185');
+  await expect(dialog.locator('.call-matching-comparison-summary .ui-fact')).toHaveCount(7);
+  await expect(dialog.locator('.call-matching-comparison-table tbody tr')).toHaveCount(9);
+  await expect(dialog.locator('.call-matching-comparison-table thead th.ui-data-table-selected-column'))
+    .toHaveCount(1);
   await page.keyboard.press('Escape');
   await expect(dialog).not.toBeVisible();
   await expect(compare).toBeFocused();
@@ -283,7 +311,7 @@ test('empty and failed snapshots recover on a later poll', async ({ page }) => {
   await expect(page.locator('table[data-table-type="call-matching-duplicates"] tbody td.empty')).toBeVisible();
   await expect.poll(() => app.requests()).toBeGreaterThanOrEqual(2);
   await expect(page.locator('.call-matching-live-status')).toContainText('Live');
-  await expect(page.locator('.call-matching-status-content')).toContainText('Healthy');
+  await expect(page.locator('.call-matching-health-state')).toContainText('Healthy');
   await expect(page.locator('table[data-table-type="call-matching-duplicates"] tbody td.empty')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Compare duplicate call 71' })).toBeVisible({ timeout: 3500 });
 });
@@ -296,6 +324,87 @@ test('published warning state appears without file-debug health', async ({ page 
   await expect(page.locator('.call-matching-health-summary')).not.toContainText('Diagnostic file');
   await expect(page.locator('.call-matching-status-content')).toContainText('Calls being matched');
 });
+
+test('saved displayed fields remain editable and do not force a wide history table', async ({ page }) => {
+  const schema = ['time', 'talkgroup', 'radio', 'site', 'copies', 'match', 'outputs', 'action'];
+  const saved = { schema, column_order: ['talkgroup', 'time', 'site', 'radio', 'copies', 'match', 'outputs', 'action'],
+    hidden_columns: ['radio'], column_widths: { talkgroup: 1200 }, collapsed_groups: [] };
+  const app = await openApp(page, { tables: { 'call-matching-duplicates': saved } });
+  const table = page.locator('table[data-table-type="call-matching-duplicates"]');
+  await expect(table).toHaveClass(/ui-record-list-custom-order/);
+  await expect(table).toHaveClass(/has-custom-field-order/);
+  await expect(table.locator('tbody td[data-column="radio"]')).toHaveCount(0);
+  expect(await table.evaluate(element => element.scrollWidth <= element.parentElement.clientWidth + 1)).toBe(true);
+  await page.getByRole('button', { name: 'Displayed fields', exact: true }).click();
+  const menu = page.getByRole('dialog', { name: 'Displayed fields', exact: true });
+  await expect(menu.getByRole('checkbox', { name: 'Show Compare receiver copies field' })).toBeDisabled();
+  await menu.getByRole('checkbox', { name: 'Show Radio field' }).check();
+  await expect(table.locator('tbody td[data-column="radio"]')).toHaveCount(1);
+  await expect.poll(() => app.preferenceWrites().length).toBe(1);
+  expect(app.preferences().tables['call-matching-duplicates'].column_widths.talkgroup).toBe(1200);
+  await menu.getByRole('button', { name: 'Move Talkgroup right', exact: true }).click();
+  await expect.poll(() => table.locator('tbody tr').first().locator('td').first().getAttribute('data-column'))
+    .toBe('time');
+  await menu.getByRole('button', { name: 'Reset displayed fields' }).click();
+  await expect(table).not.toHaveClass(/ui-record-list-custom-order/);
+  await expect(table).not.toHaveClass(/has-custom-field-order/);
+  await expect(table.locator('tbody td')).toHaveCount(8);
+  await expect(table.locator('tbody tr').first().locator('td').first()).toHaveAttribute('data-column', 'talkgroup');
+  await expect(menu.locator('.table-layout-column > span')).toHaveText([
+    'Talkgroup', 'Matched at', 'Compare receiver copies', 'Radio', 'Selected site', 'Copies',
+    'Why matched / selected', 'Used for'
+  ]);
+  await expect(menu.getByRole('button', { name: 'Move Talkgroup left', exact: true })).toBeDisabled();
+  expect(app.preferences().tables['call-matching-duplicates']).toBeUndefined();
+});
+
+test('comparison keeps every receiver copy and trusts the selected copy index', async ({ page }) => {
+  const decision = duplicate();
+  decision.legs[0].selected = false;
+  const third = { ...copy(3, false), channel_name: 'West Tower', site: 7,
+    fec_protected_bit_count: 0, ingress_loss: true, audio_truncated: true };
+  decision.legs.push(third);
+  await openApp(page, { matching: async () => ({ data: snapshot([decision]) }) });
+  await page.getByRole('button', { name: 'Compare duplicate call 71' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Duplicate call details' });
+  await expect(dialog.locator('.call-matching-comparison-table thead th')).toHaveCount(4);
+  await expect(dialog.locator('.ui-data-table-selected-column').first()).toContainText('Selected copy');
+  await expect(dialog.locator('.ui-data-table-selected-column').first()).toContainText('Cuyahoga Simulcast');
+  await expect(dialog).toContainText('West Tower');
+  await expect(dialog).toContainText('Not measured');
+  await expect(dialog).toContainText('Receiver input loss');
+  await expect(dialog).toContainText('Audio truncated');
+  await expect(dialog.locator('.call-matching-comparison-table tbody tr')).toHaveCount(9);
+});
+
+test('transient polling failure retains the latest call list and health', async ({ page }) => {
+  await openApp(page, { matching: async (count) => count === 1 ? { data: snapshot() } :
+    { status: 503, message: 'Temporarily unavailable' } });
+  await expect(page.locator('.call-matching-live-status')).toContainText('Unavailable', { timeout: 3500 });
+  await expect(page.locator('.call-matching-health-state')).toContainText('Healthy');
+  await expect(page.getByRole('button', { name: 'Compare duplicate call 71' })).toBeVisible();
+  await expect(page.locator('.call-matching-metric-group')).toHaveCount(2);
+});
+
+test('a new receiver session resets history paging and closes old comparisons', async ({ page }) => {
+  let current = snapshot(Array.from({ length: 45 }, (_, index) => duplicate(index + 1)));
+  await openApp(page, { matching: async () => ({ data: current }) });
+  await page.locator('.call-matching-history-pager').getByRole('button', { name: 'Next' }).click();
+  await page.getByRole('button', { name: 'Compare duplicate call 25' }).click();
+  current = { ...current, session_id: 'replacement-session' };
+  await expect(page.getByRole('dialog', { name: 'Duplicate call details' })).not.toBeVisible({ timeout: 3500 });
+  await expect(page.locator('.call-matching-history-pager')).toContainText('Page 1 of 3');
+});
+
+for (const [published, label] of [['HEALTHY', 'Healthy'], ['WARNING', 'Warning'], ['DRAINING', 'Stopping'],
+  ['STOPPED', 'Stopped'], ['UNRESPONSIVE', 'Not responding']]) {
+  test(`published ${published} matching status keeps its label`, async ({ page }) => {
+    const data = snapshot();
+    data.resolver.health_state = published;
+    await openApp(page, { matching: async () => ({ data }) });
+    await expect(page.locator('.call-matching-health-state')).toHaveText(label);
+  });
+}
 
 for (const [name, viewport, theme] of [
   ['desktop-light', { width: 1440, height: 1000 }, 'light'],

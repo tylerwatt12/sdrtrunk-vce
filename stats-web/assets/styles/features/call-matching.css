@@ -10,44 +10,58 @@
   align-items: center;
   justify-content: flex-end;
   gap: var(--space-2);
-  color: var(--muted);
-  font-size: var(--font-size-meta);
 }
 
-.call-matching-status-content {
+.call-matching-status-content,
+.call-matching-metric-group {
   min-width: 0;
 }
 
-.call-matching-health-state {
-  margin: var(--space-3) var(--space-3) 0;
+.call-matching-metric-group {
+  display: grid;
+  align-content: start;
+  gap: var(--space-2);
 }
 
-.call-matching-comparison-heading {
-  margin: var(--space-2) 0;
-  font-size: var(--font-size-body);
+.call-matching-metric-groups {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: var(--space-4);
+  padding: var(--space-4);
 }
+
+.call-matching-metric-group-heading {
+  margin: 0;
+}
+
+.call-matching-current-counts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.call-matching-session-counts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 
 .call-matching-history-pagination:empty {
   display: none;
 }
 
-.call-matching-history-pager {
-  border-top: 1px solid var(--line);
-}
-
-.call-matching-stacked-cell {
+.call-matching-history-list tbody > tr {
   display: grid;
-  min-width: 0;
-  gap: var(--space-1);
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) minmax(0, .75fr);
 }
 
-.call-matching-stacked-cell strong,
-.call-matching-copy-site {
-  overflow-wrap: anywhere;
+.call-matching-history-list:not(.has-custom-field-order) .call-matching-field-talkgroup { order: 0; }
+.call-matching-history-list:not(.has-custom-field-order) .call-matching-field-time { order: 1; }
+.call-matching-history-list:not(.has-custom-field-order) .call-matching-field-action { order: 2; }
+.call-matching-history-list:not(.has-custom-field-order) .call-matching-field-radio { order: 3; }
+.call-matching-history-list:not(.has-custom-field-order) .call-matching-field-site { order: 4; }
+.call-matching-history-list:not(.has-custom-field-order) .call-matching-field-copies { order: 5; }
+.call-matching-history-list:not(.has-custom-field-order) .call-matching-field-match { order: 6; }
+.call-matching-history-list:not(.has-custom-field-order) .call-matching-field-outputs { order: 7; }
+
+.call-matching-field-time,
+.call-matching-field-action {
+  justify-self: end;
 }
 
-.call-matching-stacked-cell small {
-  color: var(--muted);
+.call-matching-field-match {
+  grid-column: span 2;
 }
 
 .call-matching-output-tags {
@@ -56,28 +70,15 @@
   gap: var(--space-1);
 }
 
-.call-matching-compare {
-  white-space: nowrap;
-}
-
 .call-matching-comparison {
   min-width: 0;
   display: grid;
-  gap: var(--space-3);
+  gap: var(--space-4);
 }
 
 .call-matching-comparison-intro {
   display: grid;
   gap: var(--space-1);
-}
-
-.call-matching-comparison-intro > strong {
-  font-size: var(--font-size-section-title);
-}
-
-.call-matching-comparison-scroll {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
 }
 
 .call-matching-comparison-table {
@@ -89,7 +90,7 @@
 }
 
 .call-matching-comparison-table thead th:not(:first-child) {
-  min-width: 235px;
+  min-width: 220px;
 }
 
 .call-matching-comparison-table thead th:not(:first-child) > :where(strong, small) {
@@ -97,19 +98,15 @@
   margin-top: var(--space-1);
 }
 
-.call-matching-comparison-table tbody th {
-  color: var(--muted);
-  font-weight: var(--font-weight-medium);
-}
-
-.call-matching-winning-value {
-  font-weight: var(--font-weight-heading);
-}
-
 .call-matching-comparison-hint {
   display: none;
   margin: 0;
-  font-size: var(--font-size-meta);
+}
+
+@media (max-width: 1100px) {
+  .call-matching-metric-groups {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 760px) {
@@ -123,23 +120,19 @@
 }
 
 @media (max-width: 560px) {
-  .call-matching-metrics {
+  .call-matching-history-list tbody > tr {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .call-matching-metrics .metric {
-    min-height: 72px;
-    grid-template-columns: 30px minmax(0, 1fr);
-    gap: var(--space-2);
-    padding: var(--space-2);
+  .call-matching-history-list:not(.has-custom-field-order) .call-matching-field-radio { order: 2; }
+  .call-matching-history-list:not(.has-custom-field-order) .call-matching-field-action { order: 3; }
+
+  .call-matching-field-action {
+    align-self: end;
   }
 
-  .call-matching-metrics .metric-icon {
-    width: 30px;
-    height: 30px;
-  }
-
-  .call-matching-metrics .metric-copy > strong {
-    font-size: 18px;
+  .call-matching-field-match,
+  .call-matching-field-outputs {
+    grid-column: 1 / -1;
   }
 }

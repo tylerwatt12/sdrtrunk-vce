@@ -371,9 +371,22 @@ test('streaming management does not broaden receiver settings access', async ({ 
 
 test('P25 inventory retains every original identity and band field in the focused editor', async ({ page }) => {
   const app = await openAdmin(page, 'protocol-p25');
-  const inventory = page.locator('.p25-overrides-workspace table');
+  const inventory = page.locator('.p25-overrides-workspace .p25-override-profile-list');
+  await expect(page.locator('.p25-overrides-workspace table')).toHaveCount(0);
+  await expect(inventory.locator('.p25-override-record')).toHaveCount(1);
   await expect(inventory).toContainText('BEE00-49F');
   await expect(inventory).toContainText('RFSS 01 · Site 02');
+  await expect(inventory.locator('.p25-override-profile-facts dt'))
+    .toHaveText(['WACN', 'System ID', 'RFSS', 'Site ID']);
+  await expect(inventory.locator('.p25-override-profile-facts dd'))
+    .toHaveText(['BEE00', '49F', '01', '02']);
+  const firstBand = inventory.locator('.p25-override-band-record').first();
+  await expect(firstBand).toContainText('Band 0');
+  await expect(firstBand).toContainText('FDMA');
+  await expect(firstBand.locator('dt')).toHaveText(['Base frequency', 'Bandwidth', 'Spacing', 'Offset']);
+  await expect(firstBand.locator('dd'))
+    .toHaveText(['851.006250 MHz', '12.500 kHz', '12.500 kHz', '-45.000000 MHz']);
+  await expect(inventory.locator('.p25-override-band-record').last()).toContainText('P25 2-slot TDMA');
   await page.getByRole('button', { name: 'Edit P25 override BEE00-49F', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Edit P25 override · BEE00-49F' });
   await expect(dialog.getByLabel('WACN (hex)', { exact: true })).toHaveValue('BEE00');
@@ -407,13 +420,13 @@ test('P25 inventory retains every original identity and band field in the focuse
   await expect(dialog).toBeHidden();
   await expect(page.getByRole('button', { name: 'Edit P25 override BEE00-49F', exact: true })).toBeFocused();
   await expect(page.locator('.admin-settings-content').getByRole('button', { name: 'Choose table columns' }))
-    .toHaveCount(1);
+    .toHaveCount(0);
   await expect(page.getByText('Unsaved changes', { exact: true })).toBeVisible();
   expect(app.writes).toEqual([]);
   await page.getByRole('button', { name: 'Save overrides', exact: true }).click();
   await expect(page.getByText('Overrides saved.', { exact: true })).toBeVisible();
   await expect(page.locator('.admin-settings-content').getByRole('button', { name: 'Choose table columns' }))
-    .toHaveCount(1);
+    .toHaveCount(0);
   expect(app.writes).toHaveLength(1);
   expect(app.writes[0].profiles[0]).toEqual({ wacn: 0xBEE00, system: 0x49F, rfss: 1, site: 2,
     bands: [{ identifier: 0, type: 'FDMA', base_frequency: 851_006_250, bandwidth: 12_500,
@@ -429,7 +442,7 @@ test('P25 removal confirms the selected profile and remains a draft until Save o
   await expect(dialog).toContainText('BEE00-49F');
   await expect(dialog).toContainText('remains a draft until you save overrides');
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await expect(page.locator('.p25-overrides-workspace table')).toContainText('BEE00-49F');
+  await expect(page.locator('.p25-overrides-workspace .p25-override-record')).toContainText('BEE00-49F');
   await page.getByRole('button', { name: 'Delete P25 override BEE00-49F', exact: true }).click();
   await dialog.getByRole('button', { name: 'Delete override', exact: true }).click();
   await expect(page.getByText('No P25 overrides configured.', { exact: true })).toBeVisible();
@@ -438,6 +451,72 @@ test('P25 removal confirms the selected profile and remains a draft until Save o
   await page.getByRole('button', { name: 'Save overrides', exact: true }).click();
   await expect(page.getByText('Overrides saved.', { exact: true })).toBeVisible();
   expect(app.writes).toEqual([{ field: 'p25-bandplan-overrides', profiles: [] }]);
+});
+
+test('P25 system-wide records retain zero values and the maximum Band ID', async ({ page }) => {
+  const app = await openAdmin(page, 'protocol-p25');
+  await page.getByRole('button', { name: 'Add P25 override', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Add P25 override', exact: true });
+  await dialog.getByLabel('WACN (hex)', { exact: true }).fill('abcde');
+  await dialog.getByLabel('System ID (hex)', { exact: true }).fill('012');
+  const band = dialog.locator('.p25-override-band-row');
+  await band.getByLabel('Band ID', { exact: true }).fill('15');
+  await band.getByRole('combobox', { name: 'Type', exact: true }).selectOption('TDMA');
+  await band.getByLabel('Base frequency (MHz)', { exact: true }).fill('0');
+  await band.getByLabel('Bandwidth (kHz)', { exact: true }).fill('6.25');
+  await band.getByLabel('Spacing (kHz)', { exact: true }).fill('6.25');
+  await band.getByLabel('Offset (MHz)', { exact: true }).fill('0');
+  await dialog.getByRole('button', { name: 'Add override', exact: true }).click();
+  const record = page.locator('.p25-override-record').last();
+  await expect(record).toContainText('ABCDE-012');
+  await expect(record).toContainText('Entire system');
+  await expect(record.locator('.p25-override-profile-facts dd')).toHaveText(['ABCDE', '012', 'All', 'All']);
+  await expect(record).toContainText('Band 15');
+  await expect(record).toContainText('P25 2-slot TDMA');
+  await expect(record.locator('.p25-override-band-facts dd'))
+    .toHaveText(['0.000000 MHz', '6.250 kHz', '6.250 kHz', '0.000000 MHz']);
+  expect(app.writes).toEqual([]);
+  await page.getByRole('button', { name: 'Save overrides', exact: true }).click();
+  await expect(page.getByText('Overrides saved.', { exact: true })).toBeVisible();
+  expect(app.writes[0].profiles[1]).toEqual({ wacn: 0xABCDE, system: 0x012, rfss: null, site: null,
+    bands: [{ identifier: 15, type: 'TDMA', base_frequency: 0, bandwidth: 6250,
+      channel_spacing: 6250, transmit_offset: 0 }] });
+});
+
+test('P25 editor keeps unsaved fields when discarding is declined', async ({ page }) => {
+  const app = await openAdmin(page, 'protocol-p25');
+  await page.getByRole('button', { name: 'Edit P25 override BEE00-49F', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: 'Edit P25 override · BEE00-49F', exact: true });
+  await editor.getByLabel('Offset (MHz)', { exact: true }).first().fill('-30');
+  const decline = async (confirmation) => {
+    expect(confirmation.message()).toBe('Discard your unsaved changes?');
+    await confirmation.dismiss();
+  };
+  page.once('dialog', decline);
+  await editor.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(editor).toBeVisible();
+  await expect(editor.getByLabel('Offset (MHz)', { exact: true }).first()).toHaveValue('-30');
+  page.once('dialog', (confirmation) => confirmation.accept());
+  await page.keyboard.press('Escape');
+  await expect(editor).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Edit P25 override BEE00-49F', exact: true })).toBeFocused();
+  await expect(page.locator('.p25-override-band-facts').first()).toContainText('-45.000000 MHz');
+  expect(app.writes).toEqual([]);
+});
+
+test('P25 records and complete editor fit a 320 px mobile viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 760 });
+  await openAdmin(page, 'protocol-p25');
+  await expect(page.locator('.p25-override-record')).toBeVisible();
+  expect(await page.locator('.p25-overrides-workspace').evaluate((inventory) =>
+    inventory.scrollWidth <= inventory.clientWidth && inventory.getBoundingClientRect().right <= innerWidth)).toBe(true);
+  await page.getByRole('button', { name: 'Edit P25 override BEE00-49F', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: 'Edit P25 override · BEE00-49F', exact: true });
+  await expect(editor).toBeVisible();
+  await editor.getByRole('button', { name: 'Add band', exact: true }).scrollIntoViewIfNeeded();
+  await expect(editor.getByRole('button', { name: 'Add band', exact: true })).toBeVisible();
+  expect(await editor.evaluate((dialog) => dialog.scrollWidth <= dialog.clientWidth)).toBe(true);
+  expect(await editor.evaluate((dialog) => dialog.getBoundingClientRect().right <= innerWidth)).toBe(true);
 });
 
 for (const [theme, viewport, size] of [
@@ -464,6 +543,16 @@ for (const [theme, viewport, size] of [
       await expect(page.locator('body')).toHaveScreenshot(`admin-${tab}-${theme}-${size}.png`, { fullPage: true });
     });
   }
+  test(`P25 records preserve their responsive layout ${theme} ${size}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await openAdmin(page, 'protocol-p25', [], { theme });
+    const inventory = page.locator('.p25-overrides-workspace');
+    await expect(inventory.locator('.p25-override-record')).toHaveCount(1);
+    await expect(inventory.locator('.p25-override-band-record')).toHaveCount(2);
+    await expect(inventory.locator('table')).toHaveCount(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await expect(page.locator('body')).toHaveScreenshot(`admin-p25-records-${theme}-${size}.png`, { fullPage: true });
+  });
   test(`P25 editor preserves its complete responsive layout ${theme} ${size}`, async ({ page }) => {
     await page.setViewportSize(viewport);
     await openAdmin(page, 'protocol-p25', [], { theme });

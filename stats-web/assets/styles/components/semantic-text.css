@@ -13,3 +13,6 @@
   color: var(--danger);
   font-weight: 650;
 }
+
+.ui-muted { color: var(--muted); }
+.ui-label { font-size: var(--font-size-label); }

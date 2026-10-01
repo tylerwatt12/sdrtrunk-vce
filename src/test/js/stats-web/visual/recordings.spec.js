@@ -121,6 +121,7 @@ async function openRecordings(page, options = {}) {
     requestedFilters: [], suggestionRequests: [],
     paginate: options.paginate === true,
     transcription: options.transcription || null, settingsWrites: [], maintenanceWrites: [],
+    catalogStatusError: null,
     catalogStatus: options.catalogStatus || { catalog: { call_count: 1 },
       transcription: { pending: 3, completed: 1, failed: 1, active: false } },
     settings: { mode: options.mode || 'MANAGED', managed_directory: '/recordings',
@@ -168,7 +169,9 @@ async function openRecordings(page, options = {}) {
       }
       await route.fulfill({ json: { data: state.settings } });
     } else if (pathname === '/api/v1/admin/recordings/status') {
-      await route.fulfill({ json: { data: state.catalogStatus } });
+      await route.fulfill(state.catalogStatusError ?
+        { status: 503, json: { error: { message: state.catalogStatusError } } } :
+        { json: { data: state.catalogStatus } });
     } else if (['/api/v1/admin/recordings/recount', '/api/v1/admin/recordings/reindex'].includes(pathname)) {
       state.maintenanceWrites.push(pathname.split('/').at(-1));
       await route.fulfill({ json: { data: state.catalogStatus } });
@@ -736,6 +739,14 @@ test('recording settings retain mode, retention, catalog facts, and both mainten
     await workspace.getByRole('button', { name: `Run ${title.toLowerCase()}` }).click();
     const dialog = page.getByRole('dialog', { name: title });
     await expect(dialog).toBeVisible();
+    if (action === 'recount') {
+      await expect(dialog).toContainText('28,416');
+      await expect(dialog).toContainText('Last recount');
+    } else {
+      await expect(dialog).toContainText('may cause some to be dropped');
+      await expect(dialog).toContainText('Run during quiet reception.');
+      await expect(dialog).toContainText('It does not recover unlisted audio files.');
+    }
     await dialog.getByRole('button', { name: 'Cancel' }).click();
     expect(state.maintenanceWrites).not.toContain(action);
     await workspace.getByRole('button', { name: `Run ${title.toLowerCase()}` }).click();
@@ -753,6 +764,7 @@ test('transcription page keeps every provider field and progress status through 
     catalogStatus: { transcription: { pending: 36, completed: 12_408, failed: 2, active: true,
       last_error: 'Transcription service was temporarily unavailable.' } } });
   const workspace = page.locator('.recordings-admin');
+  await expect(workspace.locator('section').first()).toContainText('Transcription progress');
   await expect(workspace.getByRole('checkbox', { name: 'Transcribe managed calls' })).toBeChecked();
   await expect(workspace.getByLabel('Transcription endpoint URL'))
     .toHaveValue('http://127.0.0.1:8000/v1/audio/transcriptions');
@@ -795,7 +807,7 @@ test('recording settings keep running and failed maintenance visible while tools
   await expect(workspace.getByRole('button', { name: 'Run reindex calls' })).toBeHidden();
   state.catalogStatus.maintenance.state = 'FAILED';
   await expect(workspace).toContainText('Maintenance could not finish. Review the receiver log before trying again.');
-  await expect(workspace.locator('.ui-admin-facts')).toContainText('Failed');
+  await expect(workspace.locator('.recordings-catalog-facts')).toContainText('Failed');
 });
 
 test('transcription settings save a write-only key and show catalog progress', async ({ page }) => {
@@ -836,6 +848,93 @@ test('transcription settings fit a narrow dark viewport', async ({ page }) => {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(overflow).toBeLessThanOrEqual(0);
 });
+
+test('transcription progress distinguishes unavailable and zero counts and retains the latest status on refresh error', async ({ page }) => {
+  const lastError = 'The transcription service returned a temporary error. '.repeat(12);
+  const state = await openRecordings(page, { view: 'admin', tab: 'transcription',
+    catalogStatus: { transcription: { pending: 0, completed: null, failed: 1, active: true,
+      last_error: lastError } } });
+  const progress = page.locator('section').filter({ hasText: 'Transcription progress' });
+  await expect(progress.locator('.ui-metric-label')).toHaveText(['Pending', 'Failed']);
+  await expect(progress.locator('.ui-metric strong')).toHaveText(['0', '1']);
+  await expect(progress.locator('.recordings-transcription-error p')).toHaveText(lastError.trim());
+  await expect(progress).toContainText('Transcribing a call');
+  await expect(progress.getByRole('progressbar')).toHaveCount(0);
+
+  state.catalogStatus.transcription = { pending: null, completed: 5, failed: 0, active: false };
+  await progress.getByRole('button', { name: 'Refresh status' }).click();
+  await expect(progress.locator('.ui-metric-label')).toHaveText(['Completed', 'Failed']);
+  await expect(progress.locator('.ui-metric strong')).toHaveText(['5', '0']);
+  await expect(progress.locator('.recordings-transcription-worker')).toHaveCount(0);
+  await expect(progress.locator('.recordings-transcription-error')).toHaveCount(0);
+  state.catalogStatusError = 'Transcription status could not be loaded. Try again.';
+  await progress.getByRole('button', { name: 'Refresh status' }).click();
+  await expect(progress.getByRole('alert')).toHaveText(state.catalogStatusError);
+  await expect(progress.locator('.ui-metric strong')).toHaveText(['5', '0']);
+  await expect(progress.getByRole('button', { name: 'Refresh status' })).toBeEnabled();
+});
+
+test('call catalog keeps all maintenance states and zero calls while omitting unavailable dates', async ({ page }) => {
+  const state = await openRecordings(page, { view: 'admin',
+    catalogStatus: { catalog: { call_count: 0 }, maintenance: { state: 'IDLE' } } });
+  const catalog = page.locator('section').filter({ hasText: 'Call catalog' });
+  await expect(catalog.locator('.ui-metric-label')).toHaveText('Listed calls');
+  await expect(catalog.locator('.ui-metric strong')).toHaveText('0');
+  await expect(catalog).not.toContainText('Oldest call');
+  await expect(catalog).not.toContainText('Last recount');
+  for (const [status, label] of [['QUEUED', 'Queued'], ['RUNNING', 'Running'],
+    ['IN_PROGRESS', 'In Progress'], ['FAILED', 'Failed'], ['COMPLETED', 'Completed'], ['IDLE', 'Idle']]) {
+    state.catalogStatus.maintenance = { state: status, kind: 'REINDEX', inspected: 0 };
+    await catalog.getByRole('button', { name: 'Refresh status' }).click();
+    await expect(catalog.locator('.recordings-catalog-facts')).toContainText(label);
+    if (['QUEUED', 'RUNNING', 'IN_PROGRESS'].includes(status)) {
+      await expect(catalog).toContainText('Reindex running · 0 checked');
+    }
+    if (status === 'FAILED') await expect(catalog).toContainText('Review the receiver log before trying again.');
+    if (status === 'COMPLETED') await expect(catalog).toContainText('Maintenance finished. Call totals are current.');
+  }
+  state.catalogStatusError = 'Call catalog status could not be loaded. Try again.';
+  await catalog.getByRole('button', { name: 'Refresh status' }).click();
+  await expect(catalog.getByRole('alert')).toHaveText(state.catalogStatusError);
+  await expect(catalog.locator('.ui-metric strong')).toHaveText('0');
+  await expect(catalog.getByRole('button', { name: 'Refresh status' })).toBeEnabled();
+});
+
+for (const theme of ['light', 'dark']) {
+  for (const viewport of ['desktop', 'mobile']) {
+    test(`recording administration panels match the approved ${theme} ${viewport} layout`, async ({ page }) => {
+      await page.setViewportSize(viewport === 'desktop' ? { width: 1280, height: 1100 } :
+        { width: 390, height: 844 });
+      await openRecordings(page, { view: 'admin', tab: 'transcription', theme, keyConfigured: true,
+        settings: { transcription_enabled: true,
+          transcription_url: 'http://127.0.0.1:8000/v1/audio/transcriptions',
+          transcription_model: 'speech-model', transcription_min_duration_ms: 750 },
+        catalogStatus: { transcription: { pending: 36, completed: 12_408, failed: 2, active: true,
+          last_error: 'The transcription service did not respond. Check that the service is running.' } } });
+      const transcription = page.locator('.recordings-admin');
+      await expect(transcription.locator('.ui-metric')).toHaveCount(3);
+      const counts = await transcription.locator('.ui-metric').evaluateAll((tiles) =>
+        tiles.map((tile) => tile.getBoundingClientRect().top));
+      expect(new Set(counts).size).toBe(1);
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await expect(page).toHaveScreenshot(`admin-transcription-${theme}-${viewport}.png`, { fullPage: true });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth))
+        .toBeLessThanOrEqual(0);
+
+      await openRecordings(page, { view: 'admin', theme,
+        catalogStatus: { catalog: { call_count: 28_416,
+          oldest_call_ms: Date.parse('2026-07-03T08:42:00Z') },
+          last_recount_ms: Date.parse('2026-09-28T09:14:00Z'), maintenance: { state: 'IDLE' } } });
+      const catalog = page.locator('section').filter({ hasText: 'Call catalog' });
+      await catalog.locator('details summary').click();
+      await expect(catalog.getByRole('button', { name: 'Run reindex calls' })).toBeVisible();
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await expect(page).toHaveScreenshot(`admin-call-catalog-${theme}-${viewport}.png`, { fullPage: true });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth))
+        .toBeLessThanOrEqual(0);
+    });
+  }
+}
 
 test('call details show a transcript and allow administrators to retry failures', async ({ page }) => {
   await openRecordings(page, { transcription: { status: 'complete',

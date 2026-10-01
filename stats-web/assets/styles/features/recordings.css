@@ -601,6 +601,52 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-3);
+  align-items: start;
+}
+
+.recordings-transcription-wide {
+  grid-column: 1 / -1;
+}
+
+.recordings-transcription-progress {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-4);
+}
+
+.recordings-transcription-counts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+.recordings-transcription-worker {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.recordings-transcription-worker-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.recordings-transcription-error {
+  display: grid;
+  gap: var(--space-1);
+  overflow-wrap: anywhere;
+}
+
+.recordings-transcription-error p {
+  margin: 0;
+}
+
+.recordings-catalog-summary {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: var(--space-4);
+  align-items: center;
+}
+
+.recordings-catalog-count {
+  min-width: 0;
 }
 
 .recordings-admin-note {
@@ -617,26 +663,25 @@
 
 .recordings-maintenance {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-4);
-  padding: var(--space-4);
+  padding: var(--space-3) 0 var(--space-4);
 }
 
 .recordings-maintenance-row {
   min-width: 0;
   display: grid;
-  align-content: start;
-  justify-items: start;
-  gap: var(--space-3);
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: var(--space-4);
 }
 
-.recordings-maintenance-row p {
-  margin: var(--space-1) 0 0;
-  color: var(--muted);
+.recordings-maintenance-warning {
+  margin: 0 0 var(--space-4);
 }
 
 .recordings-maintenance-note {
-  padding: 0 var(--space-4) var(--space-4);
+  padding: 0 0 var(--space-4);
 }
 
 .recordings-admin-dialog-body {
@@ -700,6 +745,8 @@
   .recordings-custom-dates,
   .recordings-mode-choices,
   .recordings-transcription-fields,
+  .recordings-catalog-summary,
+  .recordings-maintenance-row,
   .recordings-maintenance {
     grid-template-columns: minmax(0, 1fr);
   }

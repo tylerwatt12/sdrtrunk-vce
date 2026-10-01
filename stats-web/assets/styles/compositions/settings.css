@@ -153,18 +153,6 @@
   line-height: var(--line-height-body);
 }
 
-.ui-settings-scope {
-  display: inline-flex;
-  align-items: center;
-  padding: var(--space-1) var(--space-2);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-compact);
-  font-size: var(--font-size-meta);
-  line-height: var(--line-height-control);
-  white-space: nowrap;
-}
-
 .ui-settings-panel,
 .settings-card.ui-settings-panel {
   min-width: 0;

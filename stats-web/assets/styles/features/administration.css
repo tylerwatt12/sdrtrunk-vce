@@ -6,55 +6,31 @@
   margin: var(--space-4);
 }
 
-.admin-web-access-control {
+.admin-web-access-control { flex-wrap: wrap; }
+.admin-web-access-copy { min-width: 0; flex: 1 1 280px; }
+.admin-web-access-tier { width: 140px; }
+.admin-user-identity { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.admin-managed-note { max-width: 100%; }
+.admin-tier-select { width: 140px; max-width: 100%; }
+.admin-accounts-toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-3) var(--space-5);
-}
-
-.admin-web-access-copy {
-  min-width: 0;
-  flex: 1 1 420px;
-}
-
-.admin-web-access-copy p {
-  max-width: 820px;
-  margin: var(--space-1) 0 0;
-  color: var(--muted);
-  line-height: 1.45;
-}
-
-.admin-web-access-tier {
-  display: flex;
-  align-items: center;
   gap: var(--space-2);
-  font-weight: 650;
+  margin-bottom: var(--space-3);
 }
-
-.admin-user-identity,
-.admin-capability-identity {
-  min-width: 0;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.admin-capability-identity code {
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.admin-managed-note,
-.admin-tier-locked {
-  color: var(--muted);
-}
-
-.admin-tier-select {
-  width: 140px;
-  max-width: 100%;
+.admin-account-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.admin-account-primary { grid-column: 1 / -1; }
+.admin-account-primary .admin-account-header { flex-wrap: wrap; }
+.admin-account-primary .admin-account-copy { flex: 1 1 160px; }
+.admin-account-primary .admin-account-body { max-width: 100%; }
+.admin-account-primary .admin-account-header > .admin-managed-note { flex: 0 1 auto; }
+.admin-account-card .admin-row-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); width: 100%; }
+.admin-account-card .admin-row-actions > :last-child { margin-left: auto; }
+.admin-access-gate { margin-bottom: var(--space-4); }
+@media (max-width: 680px) {
+  .admin-account-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 .support-report-form {

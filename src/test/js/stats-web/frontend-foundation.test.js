@@ -566,9 +566,9 @@ async function main() {
   assert.match(appSource, /dataRows = prepend \? dataRows\.slice\(0, limit\) : dataRows\.slice\(-limit\)/);
   assert.match(appSource, /rows: \(\) => dataRows\.slice\(\)/);
   assert.match(appSource, /trigger\.setAttribute\('popovertarget', panelId\)/);
-  assert.match(appSource, /const trigger = iconButton\('icon-columns', 'Choose table columns'/);
+  assert.match(appSource, /const trigger = iconButton\('icon-columns', menuLabels.trigger \|\| 'Choose table columns'/);
   assert.match(appSource, /const displayLabel = byId\.get\(id\)\.layoutLabel \|\| byId\.get\(id\)\.fullLabel \|\| byId\.get\(id\)\.label \|\| id/);
-  assert.match(appSource, /visibility\.setAttribute\('aria-label', `Show \$\{displayLabel\} column`\)/);
+  assert.match(appSource, /visibility\.setAttribute\('aria-label', `Show \$\{displayLabel\} \$\{menuLabels.item \|\| 'column'\}`\)/);
   assert.doesNotMatch(appSource, /inline \? '' : 'Columns'/);
   assert.match(appSource, /panel\.setAttribute\('popover', 'auto'\)/);
   assert.match(appSource, /const panel = node\('div', 'ui-popover table-layout-panel'\)/);
@@ -598,7 +598,7 @@ async function main() {
   assert.match(functionBinding(appSource, 'renderAdminSupportReport'),
     /ui-button ui-button-primary', 'Prepare support report'/);
   const userTierSource = functionBinding(appSource, 'userTierControl');
-  assert.match(userTierSource, /account\.primaryAdmin \? 'Admin' : 'User'/);
+  assert.match(userTierSource, /account\.primaryAdmin \? 'Admin access' : 'User access'/);
   assert.doesNotMatch(userTierSource, /node\('select'/);
   assert.doesNotMatch(userTierSource, /method: 'PUT'/);
   assert.doesNotMatch(functionBinding(appSource, 'adminUserRecord'), /auth_revision|authRevision/,
@@ -729,11 +729,11 @@ async function main() {
   const adminAccessRenderer = functionBinding(appSource, 'renderAdminAccess');
   assert.match(adminUsersRenderer,
     /admin-operation-status ui-notice[\s\S]+ui-button ui-button-primary/);
-  assert.match(adminUsersRenderer, /type: 'admin-users', sortable: false, mobileCards: true/,
-    'Web-account rows must use the shared labeled-card layout on narrow screens');
+  assert.match(adminUsersRenderer, /ui-record-grid admin-account-grid/,
+    'Web accounts must use the shared responsive record cards');
   assert.match(adminAccessRenderer, /admin-operation-status ui-notice/);
-  assert.match(adminAccessRenderer, /type: 'admin-access', sortable: false, mobileCards: true/,
-    'Access-policy rows must use the shared labeled-card layout on narrow screens');
+  assert.match(adminAccessRenderer, /adminAccessRows\(featurePolicies, statusHost\)/,
+    'Access policies must use grouped shared permission rows');
   assert.doesNotMatch(adminAccessRenderer, /adminWorkflowNote\(/,
     'Page access should not repeat its controls in a separate summary.');
   const adminNavigation = functionBinding(appSource, 'adminSettingsTree');
@@ -744,7 +744,7 @@ async function main() {
     'The compact administration picker must navigate through the same tab routes as the desktop tree');
   assert.match(functionBinding(appSource, 'userIdentityCell'), /uiPill\('Primary', 'success'\)/);
   assert.match(functionBinding(appSource, 'userActions'),
-    /iconButton\('icon-edit'[\s\S]+iconButton\('icon-trash'[\s\S]+ui-button ui-button-danger-quiet ui-icon-button/);
+    /uiActionButton\('Change password', 'icon-key'[\s\S]+uiActionButton\('Delete', 'icon-trash'[\s\S]+ui-button ui-button-link ui-button-danger-quiet/);
   const dashboardCallChart = functionBinding(appSource, 'dashboardCallActivityChart');
   assert.match(dashboardCallChart, /dashboard-control-group ui-segmented/);
   assert.match(dashboardCallChart, /ui-segmented-option dashboard-filter-button/);
@@ -984,12 +984,12 @@ async function main() {
   assert.match(scanListActions, /count === 1 \? 'alias' : 'aliases'/);
   const callMatchingRenderer = functionBinding(appSource, 'renderAdminCallMatching');
   assert.match(callMatchingRenderer, /type: 'call-matching-duplicates'/);
-  assert.match(callMatchingRenderer, /mobileCards: true/);
+  assert.match(callMatchingRenderer, /recordList: true/);
   assert.match(callMatchingRenderer, /sortable: false/);
   assert.match(callMatchingRenderer, /callMatchingHistoryPage\(latest\.duplicates, historyPage\)/);
   assert.match(callMatchingRenderer, /callMatchingHistoryPager\(page, \(nextPage\) =>/);
   const tableCalls = functionCalls(appSource, 'table');
-  assert.equal(tableCalls.length, 19, 'Every application table call must be audited');
+  assert.equal(tableCalls.length, 15, 'Every application table call must be audited');
   assert.match(appSource,
     /else if \(!options\.serverSort && options\.sortable !== false\)/,
     'Server-paged tables must not offer current-page-only sorting for derived columns');

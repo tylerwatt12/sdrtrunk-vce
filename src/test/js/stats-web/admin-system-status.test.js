@@ -84,7 +84,7 @@ const status = context.metrics([
   ['Individual events', false, 'On · Not running'],
   ['Activity storage', 1048576, '1.0 MB']
 ], true);
-assert.deepStrictEqual(status.children.map((metric) => metric.children[1].children[1].textContent),
+assert.deepStrictEqual(status.children.map((metric) => metric.children[0].children[1].textContent),
   ['On', 'On · Not running', '1.0 MB']);
 
 const systemStatus = functionSource('function receiverHealthSavedActivitySection()');
