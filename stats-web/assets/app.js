@@ -26694,10 +26694,17 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
   healthState.hidden = true;
   const connectionState = node('span', 'call-matching-connection-state');
   connectionState.append(uiStatus('Connecting'));
-  status.append(healthState, connectionState);
+  const pauseState = node('span', 'call-matching-pause-state');
+  pauseState.append(uiStatus('Paused', 'neutral'));
+  pauseState.hidden = true;
+  status.append(healthState, connectionState, pauseState);
+  const pause = iconButton('icon-pause', 'Pause call matching monitor',
+    'ui-button ui-button-secondary ui-icon-button ui-icon-button-compact call-matching-pause');
+  pause.setAttribute('aria-pressed', 'false');
+  pause.disabled = true;
   const statusContent = node('div', 'call-matching-status-content');
   statusContent.append(node('div', 'loading', 'Loading call matching status…'));
-  workspace.append(section('Matching status', statusContent, sectionActionHost(status)));
+  workspace.append(section('Matching status', statusContent, sectionActionHost(fragment(status, pause))));
   const tableActions = sectionActionHost();
   const tableController = {};
   let selectedSequence = null;
@@ -26705,7 +26712,17 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
   let latest = null;
   let sessionKey = null;
   let historyPage = 0;
+  let paused = false;
+  let pendingSnapshot = null;
+  let pollingError = false;
   const highlightedSequences = new Set();
+  const syncPauseControl = () => {
+    setIconButton(pause, paused ? 'icon-play' : 'icon-pause',
+      `${paused ? 'Resume' : 'Pause'} call matching monitor`);
+    pause.setAttribute('aria-pressed', String(paused));
+    pauseState.hidden = !paused;
+    connectionState.hidden = paused && !pollingError;
+  };
   const columns = [
     { id: 'time', label: 'Matched at', className: 'call-matching-field-time',
       render: (row) => stackedDateTime(row.decided_at_ms) || '—' },
@@ -26789,7 +26806,7 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
         pageTimeout(() => {
           if (sessionKey !== nextSessionKey) return;
           newSequences.forEach((sequence) => highlightedSequences.delete(sequence));
-          if (workspace.isConnected) renderHistory();
+          if (workspace.isConnected && !paused) renderHistory();
         }, 8_000);
       }
     }
@@ -26839,7 +26856,17 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
     inFlight = true;
     try {
       const value = await api('/api/v1/admin/call-matching', {}, { signal: renderContext.signal });
-      if (renderIsCurrent(renderContext) && workspace.isConnected) update(value);
+      if (renderIsCurrent(renderContext) && workspace.isConnected) {
+        const snapshot = callMatchingSnapshot(value);
+        pollingError = false;
+        if (paused) {
+          // Keep one fresh snapshot without changing the call list being inspected.
+          pendingSnapshot = snapshot;
+          connectionState.replaceChildren(uiStatus('Live', 'success'));
+        } else update(snapshot);
+        pause.disabled = false;
+        syncPauseControl();
+      }
     } catch (error) {
       if (error?.name === 'AbortError' || !renderIsCurrent(renderContext)) return;
       if (error?.status === 401 || error?.status === 403) {
@@ -26853,6 +26880,10 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
         selectedModal = null;
         selectedSequence = null;
         latest = null;
+        pendingSnapshot = null;
+        paused = false;
+        pause.disabled = true;
+        syncPauseControl();
         tableController.replaceRows([]);
         historyPager.replaceChildren();
         if (workspace.isConnected) {
@@ -26865,13 +26896,27 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
         if (initialRequest) throw error;
         return;
       }
+      pollingError = true;
+      pendingSnapshot = null;
       connectionState.replaceChildren(uiStatus('Unavailable', 'danger'));
+      syncPauseControl();
       if (!latest) statusContent.replaceChildren(node('div', 'error', error.message ||
         'Call matching status is unavailable.'));
     } finally {
       inFlight = false;
     }
   };
+  pause.addEventListener('click', () => {
+    if (!latest || stopped) return;
+    paused = !paused;
+    syncPauseControl();
+    if (!paused) {
+      const snapshot = pendingSnapshot;
+      pendingSnapshot = null;
+      if (snapshot) update(snapshot);
+      void refresh();
+    }
+  });
   let initialRequest = true;
   await refresh();
   initialRequest = false;
