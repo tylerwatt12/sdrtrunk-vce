@@ -16664,7 +16664,7 @@ async function renderRadioSystem() {
       loadingMessage: 'Loading talker aliases…',
       errorMessage: 'The talker alias summary could not be loaded.'
     });
-    content.append(searchBar('Search radio ID or talker alias'), directory.element);
+    content.append(searchBar('Search radio ID, configured alias, or OTA alias'), directory.element);
     await directory.load(
       () => apiPage(radioSystemApiPath(radioSystem.radio_system_key, 'talker-aliases'), pageParameters()),
       (page) => pagedTableContent(page, columns, 'talker-aliases', {
