@@ -37,6 +37,87 @@ class ManagedRecordingStoreTest
     Path temporary;
 
     @Test
+    void numericSuggestionsUseRecordedRolesPrefixesAndSystemScopeWithoutAliases() throws Exception
+    {
+        Path root = temporary.resolve("numeric-suggestions");
+        Files.createDirectories(root);
+        Site legacySite = new Site(1, 1, 4, 9);
+        try(ManagedRecordingStore store = new ManagedRecordingStore(temporary.resolve("numeric.sqlite"), root))
+        {
+            store.insert(metadata(1000, "system-a", "group.mp3", 101, 4001,
+                ManagedRecordingCatalog.CALL_GROUP, null, List.of(), List.of()));
+            store.insert(metadata(2000, "system-a", "direct.mp3", 102, 4002,
+                ManagedRecordingCatalog.CALL_DIRECT, null, List.of(), List.of()));
+            store.insert(metadata(3000, "system-a", "patch.mp3", 103, 7001,
+                ManagedRecordingCatalog.CALL_PATCH, null, List.of(),
+                List.of(new Member("talkgroup", 4003, null, null, null),
+                    new Member("radio", 4004, null, null, null))));
+            store.insert(metadata(4000, "system-b", "other.mp3", 104, 4005,
+                ManagedRecordingCatalog.CALL_GROUP, null, List.of(), List.of()));
+            store.insert(metadata(5000, null, "legacy.mp3", 105, 4006,
+                ManagedRecordingCatalog.CALL_GROUP, legacySite, List.of(legacySite), List.of()));
+            store.insert(metadata(6000, "system-a", "single.mp3", 106, 4,
+                ManagedRecordingCatalog.CALL_GROUP, null, List.of(), List.of()));
+
+            assertEquals(List.of(4001, 4003), store.identitySuggestions("system-a", "40", false, 20));
+            assertEquals(List.of(4002, 4004), store.identitySuggestions("system-a", "40", true, 20));
+            assertEquals(List.of(4005), store.identitySuggestions("system-b", "40", false, 20));
+            assertEquals(List.of(4006), store.identitySuggestions("p25:00001:001", "40", false, 20));
+            assertTrue(store.identitySuggestions("p25:00002:002", "40", false, 20).isEmpty());
+            assertEquals(List.of(4), store.identitySuggestions("system-a", "4", false, 1));
+            assertEquals(List.of(4001), store.identitySuggestions("system-a", "4001", false, 20));
+            assertTrue(store.identitySuggestions("system-a", "4002", false, 20).isEmpty());
+            assertTrue(store.identitySuggestions(null, "4294967296", false, 20).isEmpty());
+            assertTrue(store.identitySuggestions(null, "Dispatch", false, 20).isEmpty());
+            assertTrue(store.identitySuggestions(null, "04", false, 20).isEmpty());
+            assertTrue(store.delete(1));
+            assertTrue(store.identitySuggestions("system-a", "4001", false, 20).isEmpty());
+        }
+    }
+
+    @Test
+    void numericSuggestionsSeekPastDuplicateCallsAndKeepBoundedIndexPlans() throws Exception
+    {
+        Path root = temporary.resolve("numeric-indexes");
+        Files.createDirectories(root);
+        Path database = temporary.resolve("numeric-indexes.sqlite");
+        try(ManagedRecordingStore store = new ManagedRecordingStore(database, root))
+        {
+            for(int index = 0; index < 40; index++)
+            {
+                store.insert(metadata(index + 1, "system-a", "duplicate-" + index + ".mp3", 101, 4001,
+                    ManagedRecordingCatalog.CALL_GROUP, null, List.of(), List.of()));
+            }
+            for(int index = 0; index < 30; index++)
+            {
+                store.insert(metadata(index + 1000, "system-a", "distinct-" + index + ".mp3", 101,
+                    4002 + index, ManagedRecordingCatalog.CALL_GROUP, null, List.of(), List.of()));
+            }
+            assertEquals(List.of(4001, 4002, 4003), store.identitySuggestions("system-a", "40", false, 3));
+            for(boolean radio: new boolean[]{false, true})
+            {
+                for(String system: new String[]{null, "system-a", "p25:00001:001"})
+                {
+                    for(ManagedRecordingStore.CandidateQuery query:
+                        ManagedRecordingStore.identitySuggestionQueries(radio, system))
+                    {
+                        var parameters = new java.util.ArrayList<Object>(List.of(4000, 4999));
+                        parameters.addAll(query.parameters());
+                        String explanation = plan(database,
+                            new ManagedRecordingStore.CandidateQuery(query.sql(), parameters));
+                        assertTrue(explanation.contains("idx_recording_call_source_time") ||
+                            explanation.contains("idx_recording_call_target_time") ||
+                            explanation.contains("idx_recording_patch_member_lookup"), explanation);
+                        assertTrue(explanation.contains(">?") && explanation.contains("<?"), explanation);
+                        assertFalse(explanation.contains("SCAN c") || explanation.contains("SCAN member") ||
+                            explanation.contains("USE TEMP B-TREE FOR ORDER BY"), explanation);
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
     void transcriptSearchFiltersBeforePaginationInBothQueryPaths() throws Exception
     {
         Path root = temporary.resolve("transcript-search");

@@ -386,6 +386,13 @@ public final class ManagedRecordingCatalog implements AutoCloseable
         return mStore.channelIds(systemKey, query, boundedSuggestions(limit));
     }
 
+    /** Numeric identities remain searchable even when no configured alias supplies their name. */
+    public List<Integer> identitySuggestions(String systemKey, String query, boolean radio, int limit)
+        throws SQLException
+    {
+        return mStore.identitySuggestions(systemKey, query, radio, boundedSuggestions(limit));
+    }
+
     /** Catalog location for temporary, read-only joins to current recording labels. */
     public Path databaseFile()
     {

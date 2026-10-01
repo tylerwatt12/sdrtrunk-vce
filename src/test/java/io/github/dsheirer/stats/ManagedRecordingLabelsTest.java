@@ -87,6 +87,8 @@ class ManagedRecordingLabelsTest
             .anyMatch(row -> "Engine One OTA".equals(row.get("label"))));
         List<Map<String,Object>> site = labels.suggestions("North", "site", 20);
         assertEquals(1, site.size());
+        assertEquals("Dispatch", site.getFirst().get("label"));
+        assertEquals("North Site · Metro System", site.getFirst().get("detail"));
         assertEquals(4, site.getFirst().get("rfss"));
         assertEquals(9, site.getFirst().get("site_id"));
         assertEquals(7L, labels.suggestions("Fire", "talkgroup", 20).getFirst().get("alias_list_id"));

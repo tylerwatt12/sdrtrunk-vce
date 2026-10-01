@@ -429,13 +429,15 @@ final class ManagedRecordingLabels
                     LEFT JOIN p25_site_snapshot p25 ON p25.channel_id=receiver.id
                     LEFT JOIN radio_system system ON system.id=receiver.radio_system_id
                     WHERE lower(coalesce(config.name,'') || ' ' || coalesce(config.site_name,'') || ' ' ||
-                        coalesce(config.system_name,'')) LIKE ? ESCAPE '\\'
+                        coalesce(config.system_name,'')%s) LIKE ? ESCAPE '\\'
                       AND (? IS NULL OR %s)
                       AND %s
                     ORDER BY lower(coalesce(config.system_name,'')), lower(coalesce(config.site_name,'')),
                         lower(coalesce(config.name,''))
                     LIMIT ?
-                    """.formatted(recordedOnly ? "?=(SELECT system_key FROM recording_scope)" : "system.system_key=?",
+                    """.formatted("site".equals(kind) ?
+                        " || ' ' || coalesce(CAST(p25.rfss AS TEXT),'') || ' ' || coalesce(CAST(p25.site AS TEXT),'')" : "",
+                        recordedOnly ? "?=(SELECT system_key FROM recording_scope)" : "system.system_key=?",
                         recordedOnly ? recordedChannelPredicate("site".equals(kind)) : "1")))
                 {
                     int offset = bindRecordingScope(statement, recordedOnly, systemKey);
@@ -448,14 +450,15 @@ final class ManagedRecordingLabels
                         while(rows.next())
                         {
                             String site = rows.getString("site_name");
-                            String type = "site".equals(kind) && site != null && !site.isBlank() ? "site" : "channel";
-                            if("site".equals(kind) && !"site".equals(type))
-                            {
-                                continue;
-                            }
-                            String label = "site".equals(type) ? site : rows.getString("name");
+                            String type = "site".equals(kind) ? "site" : "channel";
+                            String label = rows.getString("name");
+                            if(label == null || label.isBlank()) label = site;
+                            List<String> context = new ArrayList<>();
+                            if("site".equals(type) && site != null && !site.isBlank()) context.add(site);
+                            String systemName = rows.getString("system_name");
+                            if(systemName != null && !systemName.isBlank()) context.add(systemName);
                             Map<String,Object> item = suggestion(type, rows.getString("configuration_id"), label,
-                                rows.getString("system_name"), null);
+                                context.isEmpty() ? null : String.join(" · ", context), null);
                             item.put("channel_id", rows.getString("configuration_id"));
                             if("site".equals(type) && rows.getObject("rfss") != null &&
                                 rows.getObject("site_id") != null)
@@ -649,8 +652,7 @@ final class ManagedRecordingLabels
         if(site)
         {
             // A current channel snapshot is not proof that its numeric site has recorded calls.
-            eligibility += " AND nullif(config.site_name,'') IS NOT NULL AND " +
-                "(p25.rfss IS NULL OR p25.site IS NULL OR EXISTS(" +
+            eligibility += " AND (p25.rfss IS NULL OR p25.site IS NULL OR EXISTS(" +
                 "SELECT 1 FROM recordings.recording_call_site cs JOIN recordings.recording_site s " +
                 "ON s.id=cs.site_id WHERE cs.call_id=c.id AND s.rfss=p25.rfss AND s.site_id=p25.site " +
                 "AND (system.p25_wacn IS NULL OR s.wacn=system.p25_wacn) " +

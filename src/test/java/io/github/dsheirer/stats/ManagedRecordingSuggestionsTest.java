@@ -100,9 +100,37 @@ class ManagedRecordingSuggestionsTest
 
         assertEquals(Set.of("Fixture North System"), labels("Fixture", "system", null, 20));
         assertEquals(Set.of("Fixture North Channel"), labels("Fixture", "channel", null, 20));
-        assertEquals(Set.of("Fixture North Site"), labels("Fixture", "site", null, 20));
+        assertEquals(Set.of("Fixture North Channel"), labels("Fixture", "site", null, 20));
         assertEquals(Set.of("Fixture Recorded Dispatch"), labels("Fixture", "talkgroup", null, 20));
         assertEquals(Set.of("Fixture Recorded Radio"), labels("Fixture", "radio", null, 20));
+    }
+
+    @Test
+    void siteSuggestionsLeadWithChannelNameAndKeepSiteAndSystemContext() throws Exception
+    {
+        call(1, 1, 1, 700, 1, 1, 101, 1001);
+        catalog("INSERT INTO recording_call_site(call_id,site_id,start_ms) VALUES(1,1,1000)");
+        Map<String,Object> row = suggestions("North Channel", "site", SYSTEM_A, 20).getFirst();
+        assertEquals("site", row.get("kind"));
+        assertEquals("Fixture North Channel", row.get("label"));
+        assertEquals("Fixture North Site · Fixture North System", row.get("detail"));
+        assertEquals(CHANNEL_A, row.get("channel_id"));
+        assertEquals(9, row.get("site_id"));
+        assertEquals("Fixture North Channel", suggestions("9", "site", SYSTEM_A, 20)
+            .getFirst().get("label"));
+        assertEquals("Fixture North Channel", suggestions("4", "site", SYSTEM_A, 20)
+            .getFirst().get("label"));
+        assertEquals("Fixture North Channel", suggestions("North Site", "site", SYSTEM_A, 20)
+            .getFirst().get("label"));
+
+        main("UPDATE configuration_channel SET site_name='' WHERE configuration_id='" + CHANNEL_A + "'",
+            "DELETE FROM p25_site_snapshot WHERE channel_id=501");
+        row = suggestions("North Channel", "site", SYSTEM_A, 20).getFirst();
+        assertEquals("Fixture North Channel", row.get("label"));
+        assertEquals("Fixture North System", row.get("detail"));
+        assertEquals(CHANNEL_A, row.get("channel_id"));
+        assertFalse(row.containsKey("site_id"));
+        assertTrue(suggestions("North Channel", "site", SYSTEM_B, 20).isEmpty());
     }
 
     @Test

@@ -1772,6 +1772,121 @@ final class ManagedRecordingStore implements AutoCloseable
             query, parameters, limit);
     }
 
+    /**
+     * Decimal prefixes become at most ten disjoint numeric intervals. Each role seeks the next identity through
+     * its existing index, then advances past all calls with that identity instead of reading their duplicates.
+     */
+    List<Integer> identitySuggestions(String systemKey, String query, boolean radio, int limit) throws SQLException
+    {
+        String term = query == null ? "" : query.trim();
+        if(!term.matches("[0-9]{1,10}") || (term.length() > 1 && term.charAt(0) == '0')) return List.of();
+        long prefix = Long.parseLong(term);
+        if(prefix > Integer.MAX_VALUE) return List.of();
+        List<Integer> identities = new ArrayList<>();
+        List<CandidateQuery> queries = identitySuggestionQueries(radio, systemKey);
+        try(Connection connection = openReader())
+        {
+            try(Statement setup = connection.createStatement())
+            {
+                setup.execute("PRAGMA busy_timeout=1000");
+            }
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+            org.sqlite.ProgressHandler.setHandler(connection, 10000, new org.sqlite.ProgressHandler()
+            {
+                @Override
+                protected int progress()
+                {
+                    return System.nanoTime() >= deadline ? 1 : 0;
+                }
+            });
+            List<PreparedStatement> statements = new ArrayList<>();
+            try
+            {
+                for(CandidateQuery queryPlan: queries)
+                {
+                    PreparedStatement statement = connection.prepareStatement(queryPlan.sql());
+                    statements.add(statement);
+                    int parameter = 3;
+                    for(Object value: queryPlan.parameters()) statement.setObject(parameter++, value);
+                }
+                for(long factor = 1; prefix * factor <= Integer.MAX_VALUE; factor *= 10)
+                {
+                    long lower = prefix * factor;
+                    long upper = Math.min(Integer.MAX_VALUE, (prefix + 1) * factor - 1);
+                    while(lower <= upper && identities.size() < limit && System.nanoTime() < deadline)
+                    {
+                        Integer next = null;
+                        for(PreparedStatement statement: statements)
+                        {
+                            statement.setLong(1, lower);
+                            statement.setLong(2, upper);
+                            try(ResultSet rows = statement.executeQuery())
+                            {
+                                if(rows.next())
+                                {
+                                    int value = rows.getInt(1);
+                                    if(next == null || value < next) next = value;
+                                }
+                            }
+                        }
+                        if(next == null) break;
+                        identities.add(next);
+                        lower = (long)next + 1;
+                    }
+                    if(identities.size() >= limit || prefix == 0 || factor > Integer.MAX_VALUE / 10L ||
+                        System.nanoTime() >= deadline) break;
+                }
+            }
+            catch(SQLException exception)
+            {
+                if(System.nanoTime() < deadline) throw exception;
+                // An optional suggestion lookup may return its verified prefix if its work budget expires.
+            }
+            finally
+            {
+                for(PreparedStatement statement: statements) statement.close();
+            }
+        }
+        return List.copyOf(identities);
+    }
+
+    /** Production SQL exposed to focused query-plan tests; the first two bindings are the numeric interval. */
+    static List<CandidateQuery> identitySuggestionQueries(boolean radio, String systemKey)
+    {
+        List<CandidateQuery> result = new ArrayList<>();
+        if(radio)
+        {
+            result.add(identitySuggestionQuery("c.source_id", "idx_recording_call_source_time", "1", systemKey));
+            result.add(identitySuggestionQuery("c.target_id", "idx_recording_call_target_time", "c.call_type=3",
+                systemKey));
+        }
+        else
+        {
+            result.add(identitySuggestionQuery("c.target_id", "idx_recording_call_target_time",
+                "c.call_type IN (1,2)", systemKey));
+        }
+        result.add(identitySuggestionQuery("member.local_id", "idx_recording_patch_member_lookup",
+            "member.kind=" + (radio ? 2 : 1), systemKey));
+        return List.copyOf(result);
+    }
+
+    private static CandidateQuery identitySuggestionQuery(String identity, String index, String role, String systemKey)
+    {
+        List<String> predicates = new ArrayList<>();
+        List<Object> parameters = new ArrayList<>();
+        predicates.add(identity + " IS NOT NULL");
+        predicates.add(identity + " BETWEEN ? AND ?");
+        predicates.add(role);
+        addSystemPredicate(predicates, parameters, systemKey,
+            "c.system_id=(SELECT id FROM recording_system WHERE system_key=?)");
+        String from = identity.startsWith("member.") ?
+            "recording_patch_member member INDEXED BY " + index +
+                " CROSS JOIN recording_call c ON c.id=member.call_id" :
+            "recording_call c INDEXED BY " + index;
+        return new CandidateQuery("SELECT " + identity + " FROM " + from + " WHERE " +
+            String.join(" AND ", predicates) + " ORDER BY " + identity + " LIMIT 1", List.copyOf(parameters));
+    }
+
     private List<String> strings(String sql, String query, List<Object> parameters, int limit) throws SQLException
     {
         String term = query != null ? query.trim().toLowerCase(java.util.Locale.ROOT) : "";

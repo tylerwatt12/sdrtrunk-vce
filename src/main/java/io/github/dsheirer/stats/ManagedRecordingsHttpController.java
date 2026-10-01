@@ -496,7 +496,7 @@ final class ManagedRecordingsHttpController
         String systemKey = request.text("system_key");
         int limit = request.limit(20);
         request.requireFullyConsumed();
-        if(query == null || query.length() < 2)
+        if(query == null || (query.length() < 2 && !query.matches("[0-9]")))
         {
             ApiHttpResponse.sendData(exchange, 200, List.of());
             return;
@@ -509,59 +509,93 @@ final class ManagedRecordingsHttpController
         {
             throw new StatsApiException(429, "search_busy", "Too many recording suggestions are active");
         }
-        List<Map<String,Object>> suggestions;
         try
         {
-            suggestions = new ArrayList<>(mLabels.suggestions(query, kind, systemKey, limit, catalog.databaseFile()));
+            List<Map<String,Object>> suggestions = new ArrayList<>(
+                mLabels.suggestions(query, kind, systemKey, limit, catalog.databaseFile()));
+            Set<String> seen = new LinkedHashSet<>();
+            Set<String> seenSites = new LinkedHashSet<>();
+            for(Map<String,Object> row: suggestions)
+            {
+                seen.add(row.get("kind") + ":" + row.get("id"));
+                if("site".equals(row.get("kind")) && row.get("wacn") != null && row.get("sysid") != null &&
+                    row.get("rfss") != null && row.get("site_id") != null)
+                {
+                    seenSites.add(row.get("wacn") + ":" + row.get("sysid") + ":" + row.get("rfss") +
+                        ":" + row.get("site_id"));
+                }
+            }
+            if(query.matches("[0-9]{1,10}"))
+            {
+                for(String identityKind: kind == null ? List.of("talkgroup", "radio") :
+                    Set.of("talkgroup", "radio").contains(kind) ? List.of(kind) : List.<String>of())
+                {
+                    if(suggestions.size() >= limit) break;
+                    for(Integer identity: catalog.identitySuggestions(systemKey, query,
+                        "radio".equals(identityKind), limit))
+                    {
+                        if(seen.add(identityKind + ":" + identity))
+                        {
+                            Map<String,Object> row = new LinkedHashMap<>();
+                            row.put("kind", identityKind);
+                            row.put("id", identity.toString());
+                            row.put("label", ("talkgroup".equals(identityKind) ? "Talkgroup " : "Radio ") + identity);
+                            if(systemKey != null) row.put("system_key", systemKey);
+                            suggestions.add(row);
+                            if(suggestions.size() >= limit) break;
+                        }
+                    }
+                }
+            }
+            if((kind == null || "system".equals(kind)) && suggestions.size() < limit)
+            {
+                for(String key: catalog.systemKeys(query, limit - suggestions.size()))
+                {
+                    if(seen.add("system:" + key))
+                    {
+                        suggestions.add(Map.of("kind", "system", "id", key, "label", key,
+                            "system_key", key));
+                    }
+                }
+            }
+            if((kind == null || "channel".equals(kind)) && suggestions.size() < limit)
+            {
+                for(String id: catalog.channelIds(systemKey, query, limit - suggestions.size()))
+                {
+                    if(seen.add("channel:" + id))
+                    {
+                        suggestions.add(Map.of("kind", "channel", "id", id, "label", id,
+                            "channel_id", id));
+                    }
+                }
+            }
+            if("site".equals(kind) && suggestions.size() < limit)
+            {
+                for(ManagedRecordingCatalog.Site site: catalog.sites(systemKey, query, limit))
+                {
+                    if(!seenSites.add(site.wacn() + ":" + site.systemId() + ":" + site.rfss() + ":" + site.siteId()))
+                    {
+                        continue;
+                    }
+                    String label = "RFSS " + site.rfss() + " · Site " + site.siteId();
+                    Map<String,Object> row = new LinkedHashMap<>(site.toMap());
+                    row.put("kind", "site");
+                    row.put("id", site.rfss() + ":" + site.siteId());
+                    row.put("label", label);
+                    if(systemKey != null) row.put("system_key", systemKey);
+                    row.put("sysid", site.systemId());
+                    row.put("rfss", site.rfss());
+                    suggestions.add(row);
+                    if(suggestions.size() >= limit) break;
+                }
+            }
+            ApiHttpResponse.sendData(exchange, 200,
+                suggestions.size() > limit ? suggestions.subList(0, limit) : suggestions);
         }
         finally
         {
             LABEL_LOOKUPS.release();
         }
-        Set<String> seen = new LinkedHashSet<>();
-        for(Map<String,Object> row: suggestions)
-        {
-            seen.add(row.get("kind") + ":" + row.get("id"));
-        }
-        if((kind == null || "system".equals(kind)) && suggestions.size() < limit)
-        {
-            for(String key: catalog.systemKeys(query, limit - suggestions.size()))
-            {
-                if(seen.add("system:" + key))
-                {
-                    suggestions.add(Map.of("kind", "system", "id", key, "label", key,
-                        "system_key", key));
-                }
-            }
-        }
-        if((kind == null || "channel".equals(kind)) && suggestions.size() < limit)
-        {
-            for(String id: catalog.channelIds(systemKey, query, limit - suggestions.size()))
-            {
-                if(seen.add("channel:" + id))
-                {
-                    suggestions.add(Map.of("kind", "channel", "id", id, "label", id,
-                        "channel_id", id));
-                }
-            }
-        }
-        if("site".equals(kind) && suggestions.size() < limit)
-        {
-            for(ManagedRecordingCatalog.Site site: catalog.sites(systemKey, query, limit - suggestions.size()))
-            {
-                String label = "RFSS " + site.rfss() + " · Site " + site.siteId();
-                Map<String,Object> row = new LinkedHashMap<>(site.toMap());
-                row.put("kind", "site");
-                row.put("id", site.rfss() + ":" + site.siteId());
-                row.put("label", label);
-                if(systemKey != null) row.put("system_key", systemKey);
-                row.put("sysid", site.systemId());
-                row.put("rfss", site.rfss());
-                suggestions.add(row);
-            }
-        }
-        ApiHttpResponse.sendData(exchange, 200,
-            suggestions.size() > limit ? suggestions.subList(0, limit) : suggestions);
     }
 
     private void audio(HttpExchange exchange, ManagedRecordingCatalog catalog, long id)

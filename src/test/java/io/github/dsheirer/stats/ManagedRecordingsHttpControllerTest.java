@@ -282,6 +282,23 @@ class ManagedRecordingsHttpControllerTest
         assertEquals(200, suggestions.statusCode(), suggestions.body());
         JsonNode selected = json(suggestions).at("/data/0");
         assertEquals("Fixture Radio System", selected.path("label").textValue());
+        JsonNode numeric = json(send(request(browse +
+            "/suggestions?q=4001&kind=talkgroup&system_key=" + systemKey).GET())).at("/data");
+        assertEquals(1, numeric.size());
+        assertEquals("4001", numeric.get(0).path("id").textValue());
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO p25_site_snapshot(channel_id,first_seen_ms,last_seen_ms," +
+                "protocol,rfss,site) VALUES(91,1000,2000,'APCO25',1,1)");
+        }
+        JsonNode siteRows = json(send(request(browse + "/suggestions?q=1&kind=site&system_key=" +
+            systemKey).GET())).at("/data");
+        assertEquals(1, siteRows.size());
+        assertEquals("Fixture Control", siteRows.get(0).path("label").textValue());
+        assertEquals("Fixture Site · Fixture Radio System", siteRows.get(0).path("detail").textValue());
+        assertEquals(configurationId, siteRows.get(0).path("channel_id").textValue());
+
         assertEquals(systemKey, selected.path("system_key").textValue());
 
         HttpResponse<String> matching = send(request(browse + "/calls?from_ms=0&to_ms=5000" +
@@ -427,6 +444,47 @@ class ManagedRecordingsHttpControllerTest
         assertEquals(200, range.statusCode(), range.body());
         assertEquals(1, json(range).at("/data/calls").size());
         assertEquals(3, json(range).at("/data/calls/0/id").longValue());
+    }
+
+    @Test
+    void numericAutocompleteReturnsUnaliasedTalkgroupsInSpecificAndGeneralFinders() throws Exception
+    {
+        String base = ManagedRecordingsHttpController.BROWSE_PATH + "/suggestions?q=4001";
+        for(String suffix: new String[]{"&kind=talkgroup", ""})
+        {
+            HttpResponse<String> response = send(request(base + suffix).GET());
+            assertEquals(200, response.statusCode(), response.body());
+            JsonNode rows = json(response).at("/data");
+            assertEquals(1, rows.size());
+            assertEquals("talkgroup", rows.get(0).path("kind").textValue());
+            assertEquals("4001", rows.get(0).path("id").textValue());
+            assertEquals("Talkgroup 4001", rows.get(0).path("label").textValue());
+            assertFalse(rows.get(0).has("alias_list_id"));
+        }
+        assertEquals("4001", json(send(request(ManagedRecordingsHttpController.BROWSE_PATH +
+            "/suggestions?q=40&kind=talkgroup").GET())).at("/data/0/id").textValue());
+        assertEquals("4001", json(send(request(ManagedRecordingsHttpController.BROWSE_PATH +
+            "/suggestions?q=4&kind=talkgroup").GET())).at("/data/0/id").textValue());
+        assertEquals(0, json(send(request(ManagedRecordingsHttpController.BROWSE_PATH +
+            "/suggestions?q=4009&kind=talkgroup").GET())).at("/data").size());
+        assertEquals(0, json(send(request(base + "&kind=talkgroup&system_key=other-system").GET()))
+            .at("/data").size());
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES(700,'Fixture List','P25')");
+            statement.executeUpdate("INSERT INTO alias(alias_list_id,name,matcher_type,protocol,value) " +
+                "VALUES(700,'Fixture Dispatch','TALKGROUP','APCO25',4001)");
+        }
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("managed-recordings.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE recording_call SET alias_list_id=700 WHERE id=1");
+        }
+        JsonNode rows = json(send(request(base + "&kind=talkgroup").GET())).at("/data");
+        assertEquals(1, rows.size());
+        assertEquals("Fixture Dispatch", rows.get(0).path("label").textValue());
     }
 
     @Test
