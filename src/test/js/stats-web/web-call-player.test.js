@@ -71,6 +71,90 @@ async function main() {
     assert.equal(volumeStyles.get('--playback-volume-level'), '0%',
       'The handleless volume control must render its empty state');
 
+    const pendingVolumeWrites = [];
+    const volumePreferences = Object.assign(Object.create(WebCallPlayer.prototype), {
+      volume: 0.65,
+      ui: { volume: {
+        value: '0.65',
+        setAttribute() {},
+        closest() { return { style: { setProperty() {} } }; }
+      } },
+      gainNode: { gain: { value: 0.65 } },
+      selectedScanListIds: new Set(['1']),
+      targetGrouping: true,
+      targetBurstLimit: 4,
+      stateObservers: new Set(),
+      filterQueueForSelectedLists() {}, renderScanLists() {}, synchronizeSubscription() {}, render() {},
+      preferenceWriter(snapshot) {
+        let finish;
+        const promise = new Promise((resolve) => { finish = resolve; });
+        pendingVolumeWrites.push({ snapshot, finish });
+        return promise;
+      }
+    });
+    const settleVolumeWrites = async () => { for (let index = 0; index < 8; index++) await Promise.resolve(); };
+    const acknowledgeVolumeWrite = async (index, apply = true) => {
+      const request = pendingVolumeWrites[index];
+      if (apply) volumePreferences.applyPreferences(request.snapshot, { identity: 'operator' });
+      request.finish();
+      await settleVolumeWrites();
+    };
+    volumePreferences.applyPreferences({ volume: 0.65 }, { identity: 'operator' });
+    volumePreferences.setVolume(0);
+    volumePreferences.setVolume(0.65);
+    volumePreferences.setVolume(0.75, false);
+    await settleVolumeWrites();
+    assert.deepEqual(pendingVolumeWrites.map((request) => request.snapshot.volume), [0, 0.65],
+      'Preference writes must capture their volume when requested, before a newer drag changes it');
+    await acknowledgeVolumeWrite(0);
+    await acknowledgeVolumeWrite(1);
+    assert.equal(volumePreferences.volume, 0.75,
+      'Mute and unmute acknowledgments must not overwrite a newer unsaved drag');
+    assert.equal(volumePreferences.ui.volume.value, '0.75');
+    assert.equal(volumePreferences.gainNode.gain.value, 0.75,
+      'Stale preference responses must not change the audible gain');
+    assert.equal(volumePreferences.volumeEditPending, true);
+    volumePreferences.applyPreferences({ target_grouping: false });
+    volumePreferences.writePreferences();
+    await settleVolumeWrites();
+    await acknowledgeVolumeWrite(2);
+    assert.equal(volumePreferences.volumeEditPending, true,
+      'Saving a Scan List or grouping preference cannot commit an unfinished volume drag');
+
+    volumePreferences.writePreferences({ volume: true });
+    await settleVolumeWrites();
+    volumePreferences.setVolume(0.8, false);
+    await acknowledgeVolumeWrite(3);
+    assert.equal(volumePreferences.volume, 0.8);
+    assert.equal(volumePreferences.volumeEditPending, true,
+      'A completed older volume save cannot release the guard for a newer drag');
+    volumePreferences.setVolume(0.85);
+    await settleVolumeWrites();
+    volumePreferences.setVolume(0.9);
+    await settleVolumeWrites();
+    await acknowledgeVolumeWrite(5);
+    assert.equal(volumePreferences.volumeEditPending, true,
+      'The newest save must keep its guard while an older preference response is outstanding');
+    await acknowledgeVolumeWrite(4);
+    assert.equal(volumePreferences.volume, 0.9,
+      'An older acknowledgment delivered after the latest save cannot replace the selected volume');
+    assert.equal(volumePreferences.volumeEditPending, false);
+    volumePreferences.applyPreferences({ volume: 0.2 }, { identity: 'operator' });
+    assert.equal(volumePreferences.volume, 0.2,
+      'Confirmed preferences may update volume after the latest edit and older responses settle');
+
+    volumePreferences.setVolume(0.6);
+    await settleVolumeWrites();
+    volumePreferences.applyPreferences({ volume: 0.3 }, { identity: 'another-operator' });
+    assert.equal(volumePreferences.volume, 0.3,
+      "Changing the signed-in identity must discard the prior identity's transient volume edit");
+    assert.equal(volumePreferences.volumeEditPending, false);
+    volumePreferences.setVolume(0.45, false);
+    await acknowledgeVolumeWrite(6, false);
+    assert.equal(volumePreferences.volume, 0.45);
+    assert.equal(volumePreferences.volumeEditPending, true,
+      "An old identity's pending save cannot release a newer identity's volume guard");
+
     const presentation = Object.create(WebCallPlayer.prototype);
     Object.assign(presentation, {
       current: null,

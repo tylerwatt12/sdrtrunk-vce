@@ -407,7 +407,7 @@ function applyUserPreferenceSnapshot(snapshot) {
   applyTheme();
   pageTitleController.update({ prependPlaying: preferences.page_titles.prepend_playing_call });
   const player = webCallPlayer;
-  if (player && typeof player.applyPreferences === 'function') player.applyPreferences(preferences.playback);
+  if (player && typeof player.applyPreferences === 'function') player.applyPreferences(preferences.playback, { identity: snapshot.identity });
   if (typeof scannerDetailMode !== 'undefined') {
     setScannerDetailMode(pendingScannerDetailMode || preferences.scanner.detail_mode);
   }
@@ -9965,7 +9965,8 @@ function synchronizePlaybackAccess(accessChanged = false) {
     webCallPlayer.setPreferenceWriter((playback) => {
       return updateUserPreferences((preferences) => { preferences.playback = playback; });
     });
-    webCallPlayer.applyPreferences(activeUserPreferences().playback);
+    webCallPlayer.applyPreferences(activeUserPreferences().playback,
+      { identity: userPreferenceController.snapshot().identity });
     webCallPlayer.subscribeState((playerState) =>
       pageTitleController.update({ playerState }));
     webCallPlayer.subscribeState((playerState) => {

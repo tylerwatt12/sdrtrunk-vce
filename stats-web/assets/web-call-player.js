@@ -50,6 +50,12 @@ export class WebCallPlayer {
     this.volume = 1;
     this.statusValue = this.ui.status?.textContent || '';
     this.preferenceWriter = null;
+    this.volumeEditRevision = 0;
+    this.volumeEditPending = false;
+    this.volumeCommit = null;
+    this.preferenceWriteSequence = 0;
+    this.pendingPreferenceWrites = new Map();
+    this.preferenceIdentity = undefined;
     this.maximumQueued = WebCallPlayer.MAXIMUM_QUEUED_CALLS;
     this.maximumSelectedScanLists = WebCallPlayer.MAXIMUM_SELECTED_SCAN_LISTS;
     this.targetGrouping = true;
@@ -91,10 +97,17 @@ export class WebCallPlayer {
     this.preferenceWriter = typeof writer === 'function' ? writer : null;
   }
 
-  applyPreferences(preferences) {
+  applyPreferences(preferences, options = {}) {
     if (!preferences || typeof preferences !== 'object') return;
+    if (Object.hasOwn(options, 'identity') && options.identity !== this.preferenceIdentity) {
+      this.preferenceIdentity = options.identity;
+      this.volumeEditRevision = (this.volumeEditRevision || 0) + 1;
+      this.volumeEditPending = false;
+      this.volumeCommit = null;
+      this.pendingPreferenceWrites?.clear();
+    }
     const volume = Number(preferences.volume);
-    if (Number.isFinite(volume) && volume >= 0 && volume <= 1) {
+    if (!this.volumeEditPending && Number.isFinite(volume) && volume >= 0 && volume <= 1) {
       this.volume = volume;
       this.ui.volume.value = String(volume);
       if (this.gainNode) this.gainNode.gain.value = volume;
@@ -120,16 +133,36 @@ export class WebCallPlayer {
     this.render();
   }
 
-  writePreferences() {
-    if (!this.preferenceWriter) return;
+  writePreferences({ volume = false } = {}) {
+    if (!this.preferenceWriter) {
+      if (volume) this.volumeEditPending = false;
+      return Promise.resolve();
+    }
     const selectedScanListIds = [...this.selectedScanListIds].map(Number)
       .filter((id) => Number.isSafeInteger(id) && id > 0).sort((left, right) => left - right);
-    void Promise.resolve().then(() => this.preferenceWriter({
+    const snapshot = {
       volume: this.volume,
       selected_scan_list_ids: selectedScanListIds,
       target_grouping: this.targetGrouping,
       target_burst_limit: this.targetBurstLimit
-    })).catch(() => {});
+    };
+    const revision = this.volumeEditRevision || 0;
+    const writeId = this.preferenceWriteSequence = (this.preferenceWriteSequence || 0) + 1;
+    const pending = this.pendingPreferenceWrites ||= new Map();
+    pending.set(writeId, revision);
+    if (volume) this.volumeCommit = { revision, writeId, settled: false };
+    return Promise.resolve().then(() => this.preferenceWriter(snapshot)).catch(() => {}).finally(() => {
+      pending.delete(writeId);
+      const commit = this.volumeCommit;
+      if (commit?.writeId === writeId) commit.settled = true;
+      // Only an explicit volume save can finish an edit. Older requests may still
+      // deliver a preference snapshot after that save, so retain the local gain
+      // until those responses settle too. A newer drag always keeps its guard.
+      if (commit?.settled && commit.revision === this.volumeEditRevision &&
+          ![...pending.values()].some((olderRevision) => olderRevision < commit.revision)) {
+        this.volumeEditPending = false;
+      }
+    });
   }
 
   subscribeState(observer) {
@@ -140,7 +173,7 @@ export class WebCallPlayer {
   }
 
   notifyStateObservers() {
-    if (!this.stateObservers.size) return;
+    if (!this.stateObservers?.size) return;
     const state = this.viewState();
     this.stateObservers.forEach((observer) => {
       try { observer(state); } catch (_) { }
@@ -603,7 +636,7 @@ export class WebCallPlayer {
     this.ui.avoidList?.addEventListener('click', () => this.actions.openAvoidList?.(this));
     this.ui.clearQueue?.addEventListener('click', () => this.clearQueue());
     this.ui.volume.addEventListener('input', () => this.changeVolume(false));
-    this.ui.volume.addEventListener('change', () => this.writePreferences());
+    this.ui.volume.addEventListener('change', () => this.writePreferences({ volume: true }));
     const panels = [this.ui.scanListOptions?.closest('details'), this.ui.queueList?.closest('details')]
       .filter(Boolean);
     panels.forEach((panel) => panel.addEventListener('toggle', () => {
@@ -1007,12 +1040,15 @@ export class WebCallPlayer {
   }
 
   changeVolume(write = false) {
+    this.volumeEditRevision = (this.volumeEditRevision || 0) + 1;
+    this.volumeEditPending = true;
     const requested = Number(this.ui.volume.value);
     this.volume = Number.isFinite(requested) ? Math.max(0, Math.min(1, requested)) : 1;
     this.ui.volume.value = String(this.volume);
     if (this.gainNode) this.gainNode.gain.value = this.volume;
     this.renderVolume();
-    if (write) this.writePreferences();
+    if (write) this.writePreferences({ volume: true });
+    this.notifyStateObservers();
   }
 
   ensureAudioContext() {
@@ -1179,6 +1215,13 @@ export class WebCallPlayer {
   setStatus(value) {
     this.statusValue = String(value || '');
     this.renderStatus();
+  }
+
+  setVolume(value, persist = true) {
+    const volume = Number(value);
+    if (!Number.isFinite(volume)) return;
+    if (this.ui.volume) this.ui.volume.value = String(Math.max(0, Math.min(1, volume)));
+    this.changeVolume(persist);
   }
 
   renderStatus() {
