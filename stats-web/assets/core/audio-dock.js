@@ -471,7 +471,10 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     burstLabel.append(burst); listeningSection('Target rotation', burstLabel);
     const titleField = uiToggleField('Playing call in page title', getTitlePreference());
     const prepend = titleField.querySelector('input'); prepend.id = 'audio-dock-title-preference';
-    prepend.addEventListener('change', () => void setTitlePreference(prepend.checked));
+    prepend.addEventListener('change', () => {
+      const refresh = () => { panelKey = ''; render(); };
+      void Promise.resolve(setTitlePreference(prepend.checked)).then(refresh, refresh);
+    });
     listeningSection('Page title', titleField);
   }
   function updateProgress() {

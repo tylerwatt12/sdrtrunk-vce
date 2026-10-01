@@ -24,7 +24,7 @@ import { createStreamingWorkspace } from './features/streaming.js?v=6';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=6';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=9';
 import { createRecordingsFeature } from './features/recordings.js?v=14';
-import { createAudioDock } from './core/audio-dock.js?v=2';
+import { createAudioDock } from './core/audio-dock.js?v=3';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=5';
 
@@ -27372,7 +27372,7 @@ const audioDock = createAudioDock({
   entityRefHref, href,
   canViewRadio: () => capabilityAllowed(ACCESS_CAPABILITIES.RADIO),
   getTitlePreference: () => activeUserPreferences().page_titles.prepend_playing_call,
-  setTitlePreference: (value) => updateUserPreferences((preferences) => {
+  setTitlePreference: (value) => settleUserPreferenceMutation((preferences) => {
     preferences.page_titles.prepend_playing_call = value;
   })
 });
