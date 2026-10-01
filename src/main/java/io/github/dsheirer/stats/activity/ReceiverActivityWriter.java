@@ -21,6 +21,8 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -49,6 +51,8 @@ class ReceiverActivityWriter implements AutoCloseable
     private static final long BATCH_COLLECTION_MILLISECONDS = 10000;
     private static final long BATCH_COLLECTION_POLL_MILLISECONDS = 100;
     private static final long POLL_TIMEOUT_MILLISECONDS = 1000;
+    private static final long CLEANUP_YIELD_MILLISECONDS = 25;
+    private static final long CLEANUP_OBSERVATION_BATCH_MILLISECONDS = 100;
     private static final int DATABASE_BUSY_TIMEOUT_MILLISECONDS = 250;
     private static final long DATABASE_BUSY_RETRY_MILLISECONDS = 100;
     private static final long GRACEFUL_DRAIN_MILLISECONDS = 5000;
@@ -66,6 +70,9 @@ class ReceiverActivityWriter implements AutoCloseable
     private final int mDatabaseBusyTimeoutMilliseconds;
     private final long mGracefulDrainMilliseconds;
     private final ConcurrentLinkedQueue<MaintenanceCommand> mMaintenanceQueue = new ConcurrentLinkedQueue<>();
+    /* Owned exclusively by the background writer; receiver producers never inspect cleanup plans. */
+    private final Deque<StatsDatabaseMaintenanceRequest> mDeletionJobs = new ArrayDeque<>();
+    private long mNextDeletionPassNanos;
     private final Object mQueueOrderingLock = new Object();
     private final AtomicBoolean mRunning = new AtomicBoolean();
     private final AtomicBoolean mRetentionCleanupRequested = new AtomicBoolean();
@@ -182,7 +189,7 @@ class ReceiverActivityWriter implements AutoCloseable
      */
     void submitMaintenance(StatsDatabaseMaintenanceRequest request)
     {
-        if(request == null)
+        if(request == null || !request.claimSubmission())
         {
             return;
         }
@@ -348,8 +355,11 @@ class ReceiverActivityWriter implements AutoCloseable
             List<ReceiverActivityRecord> batch = new ArrayList<>(mBatchSize);
             QueuedRecord pendingRecord = null;
 
-            while(mRunning.get() || pendingRecord != null || !mQueue.isEmpty() || !mMaintenanceQueue.isEmpty())
+            while(mRunning.get() || pendingRecord != null || !mQueue.isEmpty() || !mMaintenanceQueue.isEmpty() ||
+                !mDeletionJobs.isEmpty())
             {
+                if(!mRunning.get()) interruptDeletionJobs();
+                observeCleanupQueues();
                 MaintenanceCommand command = mMaintenanceQueue.peek();
                 QueuedRecord queuedHead = mQueue.peek();
                 long nextSequence = pendingRecord != null ? pendingRecord.sequence() :
@@ -364,7 +374,8 @@ class ReceiverActivityWriter implements AutoCloseable
 
                 if(pendingRecord == null)
                 {
-                    pendingRecord = mQueue.poll(POLL_TIMEOUT_MILLISECONDS, TimeUnit.MILLISECONDS);
+                    pendingRecord = mQueue.poll(mDeletionJobs.isEmpty() ? POLL_TIMEOUT_MILLISECONDS :
+                        CLEANUP_YIELD_MILLISECONDS, TimeUnit.MILLISECONDS);
                 }
 
                 command = mMaintenanceQueue.peek();
@@ -376,10 +387,12 @@ class ReceiverActivityWriter implements AutoCloseable
                     pendingRecord = null;
 
                     long batchDeadline = System.nanoTime() +
-                        TimeUnit.MILLISECONDS.toNanos(mBatchCollectionMilliseconds);
+                        TimeUnit.MILLISECONDS.toNanos(mDeletionJobs.isEmpty() ? mBatchCollectionMilliseconds :
+                            Math.min(mBatchCollectionMilliseconds, CLEANUP_OBSERVATION_BATCH_MILLISECONDS));
 
                     while(batch.size() < mBatchSize && !requiresPromptCommit(batch.getLast()))
                     {
+                        observeCleanupQueues();
                         command = mMaintenanceQueue.peek();
                         queuedHead = mQueue.peek();
 
@@ -438,6 +451,7 @@ class ReceiverActivityWriter implements AutoCloseable
                     batch.clear();
                 }
 
+                processDeletionPass(connection);
                 runScheduledMaintenance(connection);
             }
 
@@ -484,14 +498,74 @@ class ReceiverActivityWriter implements AutoCloseable
         {
             try
             {
-                ReceiverActivityMaintenance.Result result = executeMaintenanceWithRetry(connection, command);
-                command.request().result().complete(result);
+                StatsDatabaseMaintenanceRequest request = command.request();
+                if(request.deletionTarget() instanceof StatsDatabaseMaintenanceRequest.ScopedData)
+                {
+                    mDeletionJobs.addLast(request);
+                    processDeletionPass(connection);
+                }
+                else
+                {
+                    ReceiverActivityMaintenance.Result result = executeMaintenanceWithRetry(connection, command);
+                    request.result().complete(result);
+                }
             }
             catch(Exception e)
             {
                 command.request().result().completeExceptionally(e);
                 mLog.warn("Statistics database maintenance request failed [{}]",
                     command.request().operation(), e);
+            }
+        }
+    }
+
+    private void observeCleanupQueues()
+    {
+        int queued = mQueue.size();
+        long dropped = mDroppedRecords.get();
+        for(StatsDatabaseMaintenanceRequest request: mDeletionJobs) request.observeWriter(queued, dropped);
+    }
+
+    /** One small transaction followed by an observation-processing opportunity. */
+    private void processDeletionPass(Connection connection)
+    {
+        if(mDeletionJobs.isEmpty() || System.nanoTime() < mNextDeletionPassNanos) return;
+        StatsDatabaseMaintenanceRequest request = mDeletionJobs.removeFirst();
+        request.observeWriter(mQueue.size(), mDroppedRecords.get());
+        try
+        {
+            ReceiverActivityMaintenance.Result result = mRunning.get() ?
+                ReceiverActivityMaintenance.deleteRetainedStatsPass(connection, mDatabasePath, request,
+                    mDroppedRecords.get()) : ReceiverActivityMaintenance.interruptRetainedStats(mDatabasePath, request);
+            request.observeWriter(mQueue.size(), mDroppedRecords.get());
+            if(result == null) mDeletionJobs.addLast(request);
+            else request.result().complete(result);
+        }
+        catch(Exception failure)
+        {
+            if(failure instanceof SQLException sql && isDatabaseBusy(sql)) request.databaseBusy();
+            request.setResumable(true);
+            request.observeWriter(mQueue.size(), mDroppedRecords.get());
+            request.result().completeExceptionally(failure);
+            mLog.warn("Statistics cleanup paused after a batch failure; committed progress is retained", failure);
+        }
+        mNextDeletionPassNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(CLEANUP_YIELD_MILLISECONDS);
+    }
+
+    private void interruptDeletionJobs()
+    {
+        StatsDatabaseMaintenanceRequest request;
+        while((request = mDeletionJobs.pollFirst()) != null)
+        {
+            try
+            {
+                request.observeWriter(mQueue.size(), mDroppedRecords.get());
+                request.result().complete(ReceiverActivityMaintenance.interruptRetainedStats(mDatabasePath, request));
+            }
+            catch(IOException failure)
+            {
+                request.setResumable(true);
+                request.result().completeExceptionally(failure);
             }
         }
     }
@@ -568,6 +642,7 @@ class ReceiverActivityWriter implements AutoCloseable
 
     private void failPendingMaintenance(Exception failure)
     {
+        interruptDeletionJobs();
         MaintenanceCommand command;
 
         while((command = mMaintenanceQueue.poll()) != null)

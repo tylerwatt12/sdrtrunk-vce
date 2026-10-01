@@ -235,7 +235,7 @@ class ReceiverActivityScopedDeletionTest
             ScopedData target = new ScopedData("radio_system", SYSTEM, null, null,
                 "radios", "v1-r-x-x-321", List.of("summary"));
             ReceiverActivityMaintenance.Preview preview = ReceiverActivityMaintenance.preview(connection, target);
-            assertEquals(1, preview.rowsTotal());
+            assertEquals(3, preview.rowsTotal());
             assertTrue(preview.effects().stream().anyMatch(effect -> effect.contains("foreign keys")));
             assertEquals(1, ReceiverActivityDeletion.delete(connection, target).rowsDeleted());
             assertEquals(0, count(connection, "radio_system_identity_summary"));
@@ -245,7 +245,7 @@ class ReceiverActivityScopedDeletionTest
     }
 
     @Test
-    void largeIdentityCascadeIsRejectedBeforeWriterMutation() throws Exception
+    void largeIdentityCascadeIsAvailableForBatchedCleanup() throws Exception
     {
         try(Connection connection = open())
         {
@@ -265,10 +265,8 @@ class ReceiverActivityScopedDeletionTest
             ScopedData target = new ScopedData("radio_system", SYSTEM, null, null,
                 "radios", "v1-r-x-x-321", List.of("summary"));
             ReceiverActivityMaintenance.Preview preview = ReceiverActivityMaintenance.preview(connection, target);
-            assertEquals(1, preview.rowsTotal());
-            assertEquals(ReceiverActivityMaintenance.DeletionOutcome.TOO_LARGE, preview.outcome());
-            assertEquals(ReceiverActivityMaintenance.DeletionOutcome.TOO_LARGE,
-                ReceiverActivityDeletion.delete(connection, target).outcome());
+            assertEquals(100002, preview.rowsTotal());
+            assertEquals(ReceiverActivityMaintenance.DeletionOutcome.DELETED, preview.outcome());
             assertEquals(1, count(connection, "radio_system_identity_summary"));
             assertEquals(100001, count(connection, "receiver_activity_event"));
         }
@@ -406,9 +404,9 @@ class ReceiverActivityScopedDeletionTest
                 """);
             ScopedData target = new ScopedData("saved_channel", CHANNEL, null, null,
                 "all", null, List.of("summary", "buckets", "events"));
-            assertTrue(ReceiverActivityMaintenance.preview(connection, target).rowsTotal() >= 2);
+            assertEquals(1, ReceiverActivityMaintenance.preview(connection, target).rowsTotal());
             assertTrue(ReceiverActivityDeletion.delete(connection, target).found());
-            assertEquals(1, count(connection, "receiver_channel"));
+            assertEquals(2, count(connection, "receiver_channel"));
             assertEquals(1, count(connection, "conventional_activity_summary WHERE channel_id=2"));
             assertEquals(2, count(connection, "configuration_channel"));
             assertEquals(1, count(connection, "alias"));
@@ -475,10 +473,10 @@ class ReceiverActivityScopedDeletionTest
 
             ScopedData system = new ScopedData("radio_system", SYSTEM, null, null, "all", null,
                 List.of("current", "summary", "buckets", "events"));
-            assertTrue(ReceiverActivityMaintenance.preview(connection, system).rowsTotal() >= 3);
+            assertEquals(2, ReceiverActivityMaintenance.preview(connection, system).rowsTotal());
             assertTrue(ReceiverActivityDeletion.delete(connection, system).found());
-            assertEquals(0, count(connection, "receiver_channel"));
-            assertEquals(0, count(connection, "radio_system"));
+            assertEquals(2, count(connection, "receiver_channel"));
+            assertEquals(1, count(connection, "radio_system"));
             assertEquals(2, count(connection, "configuration_channel"));
         }
     }

@@ -658,6 +658,119 @@ class ReceiverActivityWriterTest
     }
 
     @Test
+    void largeCleanupYieldsToIncomingObservationsAndContinuationKeepsTheCutoff() throws Exception
+    {
+        Path database = createDatabase(mTemporaryFolder.resolve("cleanup-fairness.sqlite"));
+        insertConfiguredChannel(database);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 1000, 1250, 10_000);
+        writer.start();
+        writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, System.currentTimeMillis()));
+        StatsDatabaseMaintenanceRequest barrier = StatsDatabaseMaintenanceRequest.forOperation(
+            ReceiverActivityMaintenance.Operation.CHECK);
+        writer.submitMaintenance(barrier);
+        barrier.result().get(5, TimeUnit.SECONDS);
+        awaitWritten(writer, 1);
+        StatsDatabaseMaintenanceRequest request = seedCleanupQuality(database, 100_002);
+        writer.submitMaintenance(request);
+        awaitCleanupPass(request);
+        long cutoff = request.progress().cutoffMs();
+        for(int index = 0; index < 100; index++)
+            writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, cutoff + 1 + index));
+        awaitWritten(writer, 101, 3);
+        assertEquals(101, writer.getWrittenRecords());
+        assertFalse(request.result().isDone(), "Incoming observations must commit before a large cleanup drains");
+        request.cancel();
+        assertEquals(ReceiverActivityMaintenance.DeletionOutcome.INTERRUPTED,
+            request.result().get(3, TimeUnit.SECONDS).deletionOutcome());
+        assertTrue(request.progress().rowsDeleted() > 0);
+        assertTrue(request.progress().rowsDeleted() < request.progress().rowsTotal());
+        StatsDatabaseMaintenanceRequest continuation = request.resume();
+        writer.submitMaintenance(continuation);
+        assertEquals(ReceiverActivityMaintenance.DeletionOutcome.DELETED,
+            continuation.result().get(30, TimeUnit.SECONDS).deletionOutcome());
+        assertEquals(cutoff, continuation.progress().cutoffMs());
+        assertEquals(100_002, continuation.progress().rowsDeleted());
+        assertEquals(0, continuation.progress().recordsDropped());
+        assertTrue(continuation.progress().observationQueueHighWater() > 0);
+        writer.close();
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertEquals(0, scalar(connection, "SELECT count(*) FROM trunked_control_channel_quality"));
+            assertEquals(100, scalar(connection, "SELECT count(*) FROM receiver_activity_event WHERE observed_at_ms>" + cutoff));
+            assertEquals("ok", text(connection, "PRAGMA quick_check"));
+        }
+    }
+
+    @Test
+    void contendedCleanupPausesWithProgressAndFullObserverQueueNeverBlocksProducer() throws Exception
+    {
+        Path database = createDatabase(mTemporaryFolder.resolve("cleanup-lock.sqlite"));
+        insertConfiguredChannel(database);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 1, 1250, 100, 25, 5000);
+        writer.start();
+        writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, System.currentTimeMillis()));
+        awaitWritten(writer, 1);
+        StatsDatabaseMaintenanceRequest request = seedCleanupQuality(database, 20_000);
+        writer.submitMaintenance(request);
+        awaitCleanupPass(request);
+        try(Connection blocker = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = blocker.createStatement())
+        {
+            statement.execute("PRAGMA busy_timeout=1000");
+            statement.execute("BEGIN IMMEDIATE");
+            try
+            {
+                java.util.concurrent.ExecutionException failure = org.junit.jupiter.api.Assertions.assertThrows(
+                    java.util.concurrent.ExecutionException.class,
+                    () -> request.result().get(3, TimeUnit.SECONDS));
+                assertTrue(failure.getCause() instanceof java.sql.SQLException);
+                assertEquals(1, request.progress().databaseBusyRetries());
+                assertTrue(request.progress().resumable());
+                assertTrue(request.progress().rowsDeleted() > 0);
+                long started = System.nanoTime();
+                for(int index = 0; index < 2000; index++)
+                    writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, System.currentTimeMillis() + index));
+                assertTrue(System.nanoTime() - started < TimeUnit.SECONDS.toNanos(2),
+                    "Decode producers must never wait for a cleanup or a contended database");
+                assertTrue(writer.getDroppedRecords() > 0);
+            }
+            finally { statement.execute("ROLLBACK"); }
+        }
+        StatsDatabaseMaintenanceRequest continuation = request.resume();
+        writer.submitMaintenance(continuation);
+        assertEquals(ReceiverActivityMaintenance.DeletionOutcome.DELETED,
+            continuation.result().get(15, TimeUnit.SECONDS).deletionOutcome());
+        assertEquals(request.progress().cutoffMs(), continuation.progress().cutoffMs());
+        assertEquals(20_000, continuation.progress().rowsDeleted());
+        assertEquals(1, continuation.progress().databaseBusyRetries());
+        assertEquals(ReceiverActivityStatus.State.RUNNING, writer.getStatus().state());
+        writer.close();
+    }
+
+    private static void awaitCleanupPass(StatsDatabaseMaintenanceRequest request) throws Exception
+    {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while(request.progress().batchesCompleted() == 0 && !request.result().isDone() && System.nanoTime() < deadline)
+            Thread.sleep(5);
+        assertTrue(request.progress().batchesCompleted() > 0);
+    }
+
+    private static StatsDatabaseMaintenanceRequest seedCleanupQuality(Path database, int rows) throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            long oldest = System.currentTimeMillis() / 10_000 * 10_000 - rows * 10_000L;
+            statement.executeUpdate("WITH RECURSIVE n(value) AS (VALUES(0) UNION ALL SELECT value+1 FROM n WHERE value<" + (rows-1) + ") " +
+                "INSERT INTO trunked_control_channel_quality(channel_id,frequency_hz,bucket_start_ms,observed_at_ms) " +
+                "SELECT 1,854187500," + oldest + "+value*10000," + oldest + "+value*10000+100 FROM n");
+            String site = ReceiverActivityDeletion.savedChannel(connection, CONFIGURATION_ID).siteKey();
+            return StatsDatabaseMaintenanceRequest.delete(new StatsDatabaseMaintenanceRequest.ScopedData("radio_system",
+                "p25:bee00:3a9", CONFIGURATION_ID, site, "control_quality", null, List.of("buckets")));
+        }
+    }
+
+    @Test
     void maintenanceIsRejectedWhenTheWriterIsNotRunning()
     {
         ReceiverActivityWriter writer = new ReceiverActivityWriter(

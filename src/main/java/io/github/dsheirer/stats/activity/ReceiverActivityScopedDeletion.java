@@ -31,7 +31,6 @@ import java.util.stream.Collectors;
 /** Exact, owner-bound delete plans shared by read-only preview and the statistics writer. */
 final class ReceiverActivityScopedDeletion
 {
-    private static final long MAXIMUM_LIVE_SELECTION_ROWS = 100_000;
     private static final String CONVENTIONAL_CALL_RESET =
         "call_count=0,encrypted_count=0,recorded_count=0,streamed_count=0";
     private static final String CONVENTIONAL_CALL_MATCH =
@@ -68,47 +67,7 @@ final class ReceiverActivityScopedDeletion
 
     static Preview preview(Connection connection, ScopedData target) throws SQLException
     {
-        Plan plan = plan(connection, target);
-        if(plan.outcome != ReceiverActivityMaintenance.DeletionOutcome.DELETED)
-        {
-            return new Preview(plan.outcome, Map.of(), 0, List.of());
-        }
-        Map<String,Integer> counts = new LinkedHashMap<>();
-        int total = 0;
-        if("alias_activity".equals(target.sourceKind()))
-        {
-            int count = target.recordKey() == null ? count(connection, "alias_activity_summary", "1=1", List.of()) :
-                count(connection, "alias_activity_summary", "alias_id=?", List.of(parsePositive(target.recordKey())));
-            counts.put("summary", count);
-            total = count;
-        }
-        else
-        {
-            for(Step step: plan.steps)
-            {
-                int count = count(connection, step.table, step.predicate, step.parameters);
-                counts.merge(step.part, count, Math::addExact);
-                total = Math.addExact(total, count);
-            }
-            if("frequencies".equals(target.dataType()) && target.recordKey() != null &&
-                target.parts().contains("current"))
-            {
-                int pointers = snapshotFrequencyCount(connection, plan.scope, parsePositive(target.recordKey()));
-                counts.merge("current", pointers, Math::addExact);
-                total = Math.addExact(total, pointers);
-            }
-        }
-        for(String part: target.parts()) counts.putIfAbsent(part, 0);
-        long estimated = (long)total + estimatedCascadeRows(connection, plan, target);
-        List<String> effects = new ArrayList<>(plan.effects);
-        if(estimated > MAXIMUM_LIVE_SELECTION_ROWS)
-        {
-            effects.add("This selection exceeds the 100,000-row live removal limit. Narrow the scope and retry.");
-            return new Preview(ReceiverActivityMaintenance.DeletionOutcome.TOO_LARGE, Map.copyOf(counts), total,
-                List.copyOf(effects));
-        }
-        return new Preview(ReceiverActivityMaintenance.DeletionOutcome.DELETED, Map.copyOf(counts), total,
-            List.copyOf(effects));
+        return Batch.start(connection, target, System.currentTimeMillis()).preview();
     }
 
     static ReceiverActivityDeletion.Result delete(Connection connection, ScopedData target) throws SQLException
@@ -118,8 +77,6 @@ final class ReceiverActivityScopedDeletion
             return ReceiverActivityDeletion.Result.missing();
         if(plan.outcome == ReceiverActivityMaintenance.DeletionOutcome.STALE_SITE)
             return ReceiverActivityDeletion.Result.staleSite();
-        if(preview(connection, target).outcome() == ReceiverActivityMaintenance.DeletionOutcome.TOO_LARGE)
-            return ReceiverActivityDeletion.Result.tooLarge();
         if("alias_activity".equals(target.sourceKind()))
         {
             int removed = target.recordKey() == null ? AliasActivitySummaryMaintenance.resetAll(connection) :
@@ -152,52 +109,6 @@ final class ReceiverActivityScopedDeletion
             ReceiverActivityDeletion.Result.missing();
     }
 
-    private static long estimatedCascadeRows(Connection connection, Plan plan, ScopedData target)
-        throws SQLException
-    {
-        if(plan.scope == null || "alias_activity".equals(target.sourceKind())) return 0;
-        if("all".equals(target.dataType()) &&
-            target.parts().containsAll(plan.scope.conventional ?
-                List.of("summary", "buckets", "events") :
-                List.of("current", "summary", "buckets", "events")))
-            return 0; // The complete all-data plan counts descendant tables directly.
-
-        long extra = 0;
-        for(Step step: plan.steps)
-        {
-            if("radio_system_identity_summary".equals(step.table) && step.updateSet == null)
-            {
-                String ids = "SELECT id FROM radio_system_identity_summary WHERE " + step.predicate;
-                List<Object> twice = new ArrayList<>(step.parameters);
-                twice.addAll(step.parameters);
-                extra += count(connection, "receiver_activity_event",
-                    "source_identity_summary_id IN (" + ids + ") OR target_identity_summary_id IN (" + ids + ")",
-                    twice);
-                for(String table: List.of("trunked_logical_call_identity_bucket",
-                    "p25_site_call_identity_bucket"))
-                    extra += count(connection, table, "identity_summary_id IN (" + ids + ")",
-                        step.parameters);
-            }
-            else if(("p25_site_snapshot".equals(step.table) ||
-                "trunked_site_snapshot".equals(step.table)) && step.updateSet == null)
-            {
-                List<String> children = "p25_site_snapshot".equals(step.table) ? List.of(
-                    "p25_site_channel", "p25_site_channel_summary", "p25_site_channel_tag",
-                    "p25_site_channel_tag_summary", "p25_site_frequency_band",
-                    "p25_site_frequency_band_summary", "p25_foreign_system_band",
-                    "p25_foreign_system_band_summary", "p25_site_neighbor", "p25_site_neighbor_summary",
-                    "p25_site_patch_group", "p25_site_patch_group_summary",
-                    "p25_site_patch_group_radio", "p25_site_patch_group_radio_summary",
-                    "p25_site_patch_group_talkgroup", "p25_site_patch_group_talkgroup_summary") :
-                    List.of("trunked_site_channel_summary", "trunked_site_neighbor_summary");
-                for(String table: children)
-                    extra += count(connection, table, step.predicate, step.parameters);
-            }
-            if(extra > MAXIMUM_LIVE_SELECTION_ROWS) return extra;
-        }
-        return extra;
-    }
-
     private static Plan plan(Connection connection, ScopedData target) throws SQLException
     {
         if("alias_activity".equals(target.sourceKind()))
@@ -224,6 +135,7 @@ final class ReceiverActivityScopedDeletion
         else if(target.dataType().equals("site_state")) addSiteState(plan);
         else addFamily(plan, target, target.dataType());
 
+        applyHistoryFilters(plan, target);
         plan.steps.sort(Comparator.comparingInt(ReceiverActivityScopedDeletion::priority));
         if(plan.steps.stream().anyMatch(step -> "receiver_activity_event".equals(step.table)))
             plan.effects.add("Matching detailed events also remove their linked identity-member rows.");
@@ -235,7 +147,6 @@ final class ReceiverActivityScopedDeletion
         Scope scope = plan.scope;
         if(has(target, "events"))
         {
-            plan.eventMembers("events");
             plan.event("events", "receiver_activity_event");
         }
         if(has(target, "buckets"))
@@ -282,20 +193,53 @@ final class ReceiverActivityScopedDeletion
             }
             addSiteState(plan);
         }
-        boolean complete = target.parts().containsAll(scope.conventional ?
-            List.of("summary", "buckets", "events") :
-            List.of("current", "summary", "buckets", "events"));
-        if(complete)
+    }
+
+    private static void applyHistoryFilters(Plan plan, ScopedData target) throws SQLException
+    {
+        if(target.fromMs() == null && target.toMs() == null && target.frequencyHz() == null) return;
+        for(int i = 0; i < plan.steps.size(); i++)
         {
-            if(scope.systemWide)
+            Step step = plan.steps.get(i);
+            Set<String> columns = tableColumns(plan.connection, step.table);
+            String time = columns.contains("observed_at_ms") ? "observed_at_ms" : "bucket_start_ms";
+            String predicate = step.predicate;
+            List<Object> arguments = new ArrayList<>(step.parameters);
+            if(target.fromMs() != null)
             {
-                plan.add("current", "receiver_channel",
-                    "radio_system_id=? OR configuration_id=(SELECT configuration_id FROM radio_system WHERE id=?)",
-                    List.of(scope.systemId, scope.systemId), null, List.of());
-                plan.add("current", "radio_system", "id=?", List.of(scope.systemId), null, List.of());
+                predicate += " AND " + time + ">=?";
+                arguments.add(target.fromMs());
             }
-            else plan.add("current", "receiver_channel", "id=?", List.of(scope.channelId), null, List.of());
+            if(target.toMs() != null)
+            {
+                predicate += " AND " + time + "<?";
+                arguments.add(target.toMs());
+            }
+            if(target.frequencyHz() != null)
+            {
+                // Some hourly totals are system-wide and contain no physical-frequency attribution.
+                if(!columns.contains("frequency_hz"))
+                {
+                    predicate += " AND 0=1";
+                }
+                else
+                {
+                    predicate += " AND frequency_hz=?";
+                    arguments.add(target.frequencyHz());
+                }
+            }
+            plan.steps.set(i, new Step(step.part, step.table, predicate, List.copyOf(arguments), step.updateSet));
         }
+    }
+
+    private static Set<String> tableColumns(Connection connection, String table) throws SQLException
+    {
+        Set<String> columns = new LinkedHashSet<>();
+        try(var statement = connection.createStatement(); var rows = statement.executeQuery("PRAGMA table_info(" + table + ")"))
+        {
+            while(rows.next()) columns.add(rows.getString("name"));
+        }
+        return columns;
     }
 
     private static void validateTarget(ScopedData target, Scope scope)
@@ -363,12 +307,12 @@ final class ReceiverActivityScopedDeletion
         ReceiverActivityDeletion.SavedChannel channel =
             ReceiverActivityDeletion.savedChannel(connection, target.siteConfigurationId());
         if(channel == null) return null;
-        if(!target.expectedSiteKey().equals(channel.siteKey()))
-            return new Scope(systemId, channel.id(), protocol, false, false, true);
         int owner = scalar(connection,
             "SELECT radio_system_id FROM receiver_channel WHERE id=? AND radio_system_id=?",
             List.of(channel.id(), systemId));
         if(owner == 0 || !"TRUNKED".equals(channel.kind())) return null;
+        if(!target.expectedSiteKey().equals(channel.siteKey()))
+            return new Scope(systemId, channel.id(), protocol, false, false, true);
         return new Scope(systemId, channel.id(), protocol, false, false, false);
     }
 
@@ -586,11 +530,7 @@ final class ReceiverActivityScopedDeletion
             }
             case "detailed_events" ->
             {
-                if(has(target, "events"))
-                {
-                    plan.eventMembers("events");
-                    plan.event("events", "receiver_activity_event");
-                }
+                if(has(target, "events")) plan.event("events", "receiver_activity_event");
             }
             default -> throw new IllegalArgumentException("Data type is invalid");
         }
@@ -936,6 +876,350 @@ final class ReceiverActivityScopedDeletion
         {
         }
         throw new IllegalArgumentException("Foreign band key is invalid");
+    }
+
+    /** One process-local plan. Each writer pass commits at most this many directly changed rows. */
+    static final class Batch
+    {
+        static final int MAXIMUM_ROWS_PER_PASS = 512;
+        private final ScopedData target;
+        private final Plan plan;
+        private final List<BatchStep> steps;
+        private final long cutoffMs;
+        private final Map<String,Integer> countsByPart;
+        private final long rowsTotal;
+        private int cursor;
+        private boolean removedOwnSnapshot;
+        private ReceiverActivityMaintenance.DeletionOutcome outcome;
+
+        private Batch(Connection connection, ScopedData target, long cutoffMs) throws SQLException
+        {
+            this.target = target;
+            this.cutoffMs = cutoffMs;
+            plan = plan(connection, target);
+            outcome = plan.outcome;
+            steps = new ArrayList<>();
+            countsByPart = new LinkedHashMap<>();
+            if(outcome != ReceiverActivityMaintenance.DeletionOutcome.DELETED)
+            {
+                rowsTotal = 0;
+                return;
+            }
+            if("alias_activity".equals(target.sourceKind())) addAliasReset(plan, target, cutoffMs);
+            addFinalReferences(plan, target);
+            Metadata metadata = new Metadata(connection);
+            Map<String,Step> expanded = new LinkedHashMap<>();
+            for(Step step: plan.steps) expand(step, metadata, expanded, new LinkedHashSet<>());
+            List<Step> ordered = new ArrayList<>(expanded.values());
+            ordered.sort(Comparator.comparingInt((Step step) -> metadata.rank(step.table))
+                .thenComparingInt(ReceiverActivityScopedDeletion::priority));
+            long total = 0;
+            for(Step step: ordered)
+            {
+                Table table = metadata.tables.get(step.table);
+                Step eligible = boundedByTime(connection, step, table, cutoffMs);
+                String guards = step.updateSet == null ? metadata.childGuards(table) : "";
+                int rows = count(connection, step.table, eligible.predicate, eligible.parameters);
+                countsByPart.merge(step.part, rows, Math::addExact);
+                total += rows;
+                steps.add(new BatchStep(eligible, table, guards));
+            }
+            for(String part: target.parts()) countsByPart.putIfAbsent(part, 0);
+            rowsTotal = total;
+        }
+
+        record Position(int cursor, boolean removedOwnSnapshot, ReceiverActivityMaintenance.DeletionOutcome outcome) { }
+        Position position() { return new Position(cursor, removedOwnSnapshot, outcome); }
+        void restore(Position position)
+        {
+            cursor = position.cursor;
+            removedOwnSnapshot = position.removedOwnSnapshot;
+            outcome = position.outcome;
+        }
+
+        static Batch start(Connection connection, ScopedData target, long cutoffMs) throws SQLException
+        {
+            return new Batch(connection, target, cutoffMs);
+        }
+
+        long rowsTotal() { return rowsTotal; }
+        long cutoffMs() { return cutoffMs; }
+        ReceiverActivityMaintenance.DeletionOutcome outcome() { return outcome; }
+        boolean done() { return outcome != ReceiverActivityMaintenance.DeletionOutcome.DELETED || cursor >= steps.size(); }
+
+        Preview preview()
+        {
+            List<String> effects = new ArrayList<>(plan.effects);
+            if(outcome == ReceiverActivityMaintenance.DeletionOutcome.DELETED)
+            {
+                effects.add("Cleanup runs in small background batches. New observations and active history buckets are kept.");
+                if(target.frequencyHz() != null && "hourly_history".equals(target.dataType()))
+                    effects.add("Frequency filtering omits hourly totals without frequency attribution.");
+            }
+            return new Preview(outcome, Map.copyOf(countsByPart), Math.toIntExact(rowsTotal), List.copyOf(effects));
+        }
+
+        /** Called inside one writer transaction. Cursor changes only after successful statements. */
+        int runPass(Connection connection) throws SQLException
+        {
+            if(done()) return 0;
+            ReceiverActivityMaintenance.DeletionOutcome valid = revalidate(connection);
+            if(valid != ReceiverActivityMaintenance.DeletionOutcome.DELETED)
+            {
+                outcome = valid;
+                return 0;
+            }
+            int remaining = MAXIMUM_ROWS_PER_PASS;
+            int changed = 0;
+            int nextCursor = cursor;
+            while(remaining > 0 && nextCursor < steps.size())
+            {
+                BatchStep step = steps.get(nextCursor);
+                int rows = step.change(connection, remaining);
+                changed = Math.addExact(changed, rows);
+                remaining -= rows;
+                if(rows > 0 && (step.step.table.equals("p25_site_snapshot") ||
+                    step.step.table.equals("trunked_site_snapshot"))) removedOwnSnapshot = true;
+                if(rows < remaining + rows) nextCursor++;
+                else break;
+            }
+            cursor = nextCursor;
+            return changed;
+        }
+
+        private ReceiverActivityMaintenance.DeletionOutcome revalidate(Connection connection) throws SQLException
+        {
+            if("alias_activity".equals(target.sourceKind()))
+            {
+                if(target.recordKey() == null || scalar(connection, "SELECT id FROM alias WHERE id=?",
+                    List.of(parsePositive(target.recordKey()))) > 0)
+                    return ReceiverActivityMaintenance.DeletionOutcome.DELETED;
+                return ReceiverActivityMaintenance.DeletionOutcome.NOT_FOUND;
+            }
+            Scope current = resolve(connection, target);
+            if(current == null || current.systemId != plan.scope.systemId || current.channelId != plan.scope.channelId)
+                return ReceiverActivityMaintenance.DeletionOutcome.NOT_FOUND;
+            if(!current.stale) return ReceiverActivityMaintenance.DeletionOutcome.DELETED;
+            if(removedOwnSnapshot)
+            {
+                ReceiverActivityDeletion.SavedChannel channel =
+                    ReceiverActivityDeletion.savedChannel(connection, target.siteConfigurationId());
+                if(channel != null && channel.siteKey().startsWith("trunked-unsited:"))
+                    return ReceiverActivityMaintenance.DeletionOutcome.DELETED;
+            }
+            return ReceiverActivityMaintenance.DeletionOutcome.STALE_SITE;
+        }
+
+        private static void addAliasReset(Plan plan, ScopedData target, long cutoffMs)
+        {
+            String reset = "metrics_state=CASE WHEN protocol_code=0 THEN 'unsupported' ELSE 'not_collected' END," +
+                "logical_call_count=NULL,recorded_logical_call_count=NULL,stream_submitted_logical_call_count=NULL," +
+                "encrypted_logical_call_count=NULL,grant_observation_count=NULL,join_observation_count=NULL," +
+                "emergency_observation_count=NULL,register_observation_count=NULL,logout_observation_count=NULL," +
+                "denial_observation_count=NULL,data_observation_count=NULL,other_signaling_observation_count=NULL," +
+                "signaling_observation_count=NULL,first_evidence_ms=NULL,last_evidence_ms=NULL," +
+                "updated_at_ms=" + Math.max(1, cutoffMs + 1);
+            plan.add("summary", "alias_activity_summary", target.recordKey() == null ? "1=1" : "alias_id=?",
+                target.recordKey() == null ? List.of() : List.of(parsePositive(target.recordKey())), null, List.of(), reset);
+        }
+
+        private static void addFinalReferences(Plan plan, ScopedData target)
+        {
+            if(plan.scope == null) return;
+            if("frequencies".equals(target.dataType()) && target.recordKey() != null && has(target, "current"))
+            {
+                long hz = parsePositive(target.recordKey());
+                String set = "primary_frequency_hz=CASE WHEN primary_frequency_hz=" + hz +
+                    " THEN NULL ELSE primary_frequency_hz END,current_control_hz=CASE WHEN current_control_hz=" + hz +
+                    " THEN NULL ELSE current_control_hz END";
+                for(String table: List.of("p25_site_snapshot", "trunked_site_snapshot"))
+                    plan.updateChannel("current", table, set, "primary_frequency_hz=" + hz + " OR current_control_hz=" + hz);
+            }
+            if(plan.scope.conventional && has(target, "summary") &&
+                Set.of("radios", "talkgroups").contains(target.dataType()))
+            {
+                String suffix = "";
+                String[] key = target.recordKey() == null ? null : target.recordKey().split(":", -1);
+                if(key != null) suffix = " AND frequency_hz=" + parsePositive(key[0]) +
+                    " AND timeslot=" + parseRange(key[1], 1, 2);
+                if("radios".equals(target.dataType()))
+                {
+                    for(String[] reference: List.of(new String[]{"dmr_conventional_talkgroup_summary", "last_source_radio_id"},
+                        new String[]{"dmr_conventional_radio_summary", "last_peer_radio_id"}))
+                        plan.updateChannel("summary", reference[0], reference[1] + "=NULL", reference[1] +
+                            (key == null ? " IS NOT NULL" : "=" + parsePositive(key[2])) + suffix);
+                }
+                else plan.updateChannel("summary", "dmr_conventional_radio_summary", "last_talkgroup_id=NULL",
+                    "last_talkgroup_id" + (key == null ? " IS NOT NULL" : "=" + parsePositive(key[2])) + suffix);
+            }
+        }
+
+        private static void expand(Step step, Metadata metadata, Map<String,Step> expanded, Set<String> ancestry)
+        {
+            if(!ancestry.add(step.table)) throw new IllegalArgumentException("Cyclic retained-data ownership");
+            String key = step.table + "|" + step.updateSet;
+            Step existing = expanded.get(key);
+            if(existing == null) expanded.put(key, step);
+            else if(!existing.predicate.equals(step.predicate) || !existing.parameters.equals(step.parameters))
+            {
+                List<Object> arguments = new ArrayList<>(existing.parameters);
+                arguments.addAll(step.parameters);
+                expanded.put(key, new Step(existing.part, existing.table,
+                    "(" + existing.predicate + ") OR (" + step.predicate + ")", List.copyOf(arguments), step.updateSet));
+            }
+            if(step.updateSet == null)
+            {
+                for(ForeignKey child: metadata.children.getOrDefault(step.table, List.of()))
+                {
+                    String match = child.match(step.table);
+                    Step descendant = new Step(partFor(child.child), child.child,
+                        "EXISTS (SELECT 1 FROM " + step.table + " WHERE (" + step.predicate + ") AND " + match + ")",
+                        step.parameters, null);
+                    expand(descendant, metadata, expanded, new LinkedHashSet<>(ancestry));
+                }
+            }
+        }
+
+        private static String partFor(String table)
+        {
+            if(table.equals("receiver_activity_event") || table.equals("activity_event_identity_member")) return "events";
+            if(table.endsWith("_bucket") || table.equals("trunked_control_channel_quality")) return "buckets";
+            if(table.endsWith("_summary")) return "summary";
+            return "current";
+        }
+
+        private static Step boundedByTime(Connection connection, Step step, Table table, long cutoffMs) throws SQLException
+        {
+            String predicate = "(" + step.predicate + ")";
+            List<Object> arguments = new ArrayList<>(step.parameters);
+            if(table.columns.contains("bucket_start_ms"))
+            {
+                long interval = table.name.equals("trunked_control_channel_quality") ? 10_000 : 3_600_000;
+                predicate += " AND bucket_start_ms<?";
+                arguments.add(cutoffMs - Math.floorMod(cutoffMs, interval));
+            }
+            for(String time: List.of("last_seen_ms", "confirmed_at_ms", "observed_at_ms", "cleared_at_ms", "updated_at_ms"))
+            {
+                if(table.columns.contains(time))
+                {
+                    predicate += " AND " + time + "<=?";
+                    arguments.add(cutoffMs);
+                    break;
+                }
+            }
+            if(table.name.equals("receiver_activity_event"))
+            {
+                predicate += " AND id<=?";
+                arguments.add(scalar(connection, "SELECT coalesce(max(id),0) FROM receiver_activity_event", List.of()));
+            }
+            // Member rows have no timestamp; bind their ownership to the same fixed event cutoff.
+            if(table.name.equals("activity_event_identity_member"))
+            {
+                predicate += " AND event_id IN (SELECT id FROM receiver_activity_event WHERE observed_at_ms<=? AND id<=?)";
+                arguments.add(cutoffMs);
+                arguments.add(scalar(connection, "SELECT coalesce(max(id),0) FROM receiver_activity_event", List.of()));
+            }
+            return new Step(step.part, step.table, predicate, List.copyOf(arguments), step.updateSet);
+        }
+    }
+
+    private record BatchStep(Step step, Table table, String guards)
+    {
+        int change(Connection connection, int limit) throws SQLException
+        {
+            String keys = String.join(",", table.primaryKey);
+            String tuple = table.primaryKey.size() == 1 ? keys : "(" + keys + ")";
+            String statement = (step.updateSet == null ? "DELETE FROM " + step.table :
+                "UPDATE " + step.table + " SET " + step.updateSet) + " WHERE " + tuple + " IN (SELECT " + keys +
+                " FROM " + step.table + " WHERE (" + step.predicate + ")" + guards +
+                " ORDER BY " + keys + " LIMIT ?)";
+            try(PreparedStatement sql = connection.prepareStatement(statement))
+            {
+                bind(sql, step.parameters);
+                sql.setInt(step.parameters.size() + 1, limit);
+                return sql.executeUpdate();
+            }
+        }
+    }
+
+    private record Table(String name, Set<String> columns, List<String> primaryKey) { }
+    private record ForeignKey(String child, String parent, List<String> from, List<String> to)
+    {
+        String match(String parentTable)
+        {
+            List<String> conditions = new ArrayList<>();
+            for(int i = 0; i < from.size(); i++) conditions.add(child + "." + from.get(i) + "=" + parentTable + "." + to.get(i));
+            return String.join(" AND ", conditions);
+        }
+    }
+
+    /** Reads only the already-validated schema; no indexes, tables, or persisted job state are added. */
+    private static final class Metadata
+    {
+        private final Map<String,Table> tables = new LinkedHashMap<>();
+        private final Map<String,List<ForeignKey>> children = new LinkedHashMap<>();
+
+        private Metadata(Connection connection) throws SQLException
+        {
+            List<String> names = new ArrayList<>();
+            try(var statement = connection.createStatement(); var rows = statement.executeQuery(
+                "SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE 'p25_%' OR name LIKE 'trunked_%' " +
+                    "OR name LIKE 'conventional_%' OR name LIKE 'dmr_conventional_%' OR name LIKE 'radio_system%' " +
+                    "OR name IN ('receiver_channel','receiver_activity_event','activity_event_identity_member','alias_activity_summary'))"))
+            {
+                while(rows.next()) names.add(rows.getString(1));
+            }
+            for(String name: names)
+            {
+                Set<String> columns = new LinkedHashSet<>();
+                Map<Integer,String> primaryKey = new java.util.TreeMap<>();
+                try(var statement = connection.createStatement(); var rows = statement.executeQuery("PRAGMA table_info(" + name + ")"))
+                {
+                    while(rows.next())
+                    {
+                        columns.add(rows.getString("name"));
+                        if(rows.getInt("pk") > 0) primaryKey.put(rows.getInt("pk"), rows.getString("name"));
+                    }
+                }
+                if(primaryKey.isEmpty()) throw new SQLException("Retained-data table has no bounded primary key: " + name);
+                tables.put(name, new Table(name, Set.copyOf(columns), List.copyOf(primaryKey.values())));
+            }
+            for(String name: names)
+            {
+                Map<Integer,List<String>> from = new LinkedHashMap<>();
+                Map<Integer,List<String>> to = new LinkedHashMap<>();
+                Map<Integer,String> parents = new LinkedHashMap<>();
+                try(var statement = connection.createStatement(); var rows = statement.executeQuery("PRAGMA foreign_key_list(" + name + ")"))
+                {
+                    while(rows.next())
+                    {
+                        String parent = rows.getString("table");
+                        if(!tables.containsKey(parent) || !"CASCADE".equalsIgnoreCase(rows.getString("on_delete"))) continue;
+                        int id = rows.getInt("id");
+                        parents.put(id, parent);
+                        from.computeIfAbsent(id, ignored -> new ArrayList<>()).add(rows.getString("from"));
+                        to.computeIfAbsent(id, ignored -> new ArrayList<>()).add(rows.getString("to"));
+                    }
+                }
+                for(var parent: parents.entrySet()) children.computeIfAbsent(parent.getValue(), ignored -> new ArrayList<>())
+                    .add(new ForeignKey(name, parent.getValue(), List.copyOf(from.get(parent.getKey())), List.copyOf(to.get(parent.getKey()))));
+            }
+        }
+
+        private int rank(String table)
+        {
+            int rank = 0;
+            for(ForeignKey child: children.getOrDefault(table, List.of())) rank = Math.max(rank, rank(child.child) + 1);
+            return rank;
+        }
+
+        private String childGuards(Table table)
+        {
+            StringBuilder guards = new StringBuilder();
+            for(ForeignKey child: children.getOrDefault(table.name, List.of())) guards.append(" AND NOT EXISTS (SELECT 1 FROM ")
+                .append(child.child).append(" WHERE ").append(child.match(table.name)).append(')');
+            return guards.toString();
+        }
     }
 
     private record Scope(int systemId, int channelId, int protocol, boolean conventional,

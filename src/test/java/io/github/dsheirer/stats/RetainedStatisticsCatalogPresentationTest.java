@@ -72,7 +72,7 @@ class RetainedStatisticsCatalogPresentationTest
         assertEquals(1, mCatalog.sources("radio_system", "Metro P25 aliases", 10, 0).totalCount());
 
         RetainedStatisticsCatalog.Page channels = mCatalog.sources("saved_channel", null, 10, 0);
-        assertEquals(4, channels.totalCount());
+        assertEquals(2, channels.totalCount(), "Saved channel selection contains conventional channels");
         Map<String,Object> portable = row(channels, "source_key", P25_CONVENTIONAL);
         assertEquals("Portable P25", portable.get("label"), "an unassigned channel uses its saved name");
         assertNull(portable.get("radio_system_key"));
@@ -131,8 +131,9 @@ class RetainedStatisticsCatalogPresentationTest
         String engineKey = "v1-r-bee00-49f-202";
         assertEquals(Map.of("kind", "radio", "radio_system_key", METRO,
             "identity_key", engineKey), engine.get("entity_ref"));
-        assertEquals(Map.of("kind", "radio", "radio_system_key", METRO,
-            "identity_key", engineKey), engine.get("target"));
+        assertEquals(Map.of("kind", "scoped_data", "source_kind", "radio_system", "source_key", METRO,
+            "data_type", "radios", "record_key", engineKey,
+            "parts", java.util.List.of("summary", "buckets", "events")), engine.get("target"));
 
         RetainedStatisticsCatalog.Page searched = mCatalog.results("radio_system", METRO,
             "radios", null, "Support radios", 1, 0);
@@ -149,13 +150,15 @@ class RetainedStatisticsCatalogPresentationTest
         assertEquals(30, number(dispatch, "native_id"));
         assertEquals(Map.of("kind", "talkgroup", "radio_system_key", METRO,
             "identity_key", "v1-g-bee00-49f-30"), dispatch.get("entity_ref"));
-        assertEquals(dispatch.get("entity_ref"), dispatch.get("target"));
+        assertEquals(Map.of("kind", "scoped_data", "source_kind", "radio_system", "source_key", METRO,
+            "data_type", "talkgroups", "record_key", "v1-g-bee00-49f-30",
+            "parts", java.util.List.of("summary", "buckets", "events")), dispatch.get("target"));
 
         Map<String,Object> county = mCatalog.results("radio_system", COUNTY, "radios",
             null, null, 10, 0).rows().getFirst();
         assertEquals("County Engine (Radio 202)", county.get("label"));
         assertEquals("County P25 aliases", county.get("alias_list_name"));
-        assertEquals(COUNTY, ((Map<?,?>)county.get("target")).get("radio_system_key"));
+        assertEquals(COUNTY, ((Map<?,?>)county.get("target")).get("source_key"));
         assertEquals(0, mCatalog.results("radio_system", METRO, "radios", null,
             "County Engine", 10, 0).totalCount());
         assertEquals(0, mCatalog.results("radio_system", COUNTY, "radios", null,
@@ -173,8 +176,9 @@ class RetainedStatisticsCatalogPresentationTest
         assertEquals("Operations", radio.get("alias_group"));
         assertEquals("Metro DMR aliases", radio.get("alias_list_name"));
         assertEquals(Map.of("kind", "channel", "key", DMR_CONVENTIONAL), radio.get("entity_ref"));
-        assertEquals(Map.of("kind", "conventional_radio", "configuration_id", DMR_CONVENTIONAL,
-            "frequency_hz", 460012500L, "timeslot", 2, "native_id", 202), radio.get("target"));
+        assertEquals(Map.of("kind", "scoped_data", "source_kind", "saved_channel", "source_key", DMR_CONVENTIONAL,
+            "data_type", "radios", "record_key", "460012500:2:202",
+            "parts", java.util.List.of("summary", "events")), radio.get("target"));
 
         RetainedStatisticsCatalog.Page rangeSearch = mCatalog.results("saved_channel", DMR_CONVENTIONAL,
             "radios", null, "DMR Response", 1, 0);
@@ -185,8 +189,9 @@ class RetainedStatisticsCatalogPresentationTest
             "talkgroups", null, null, 10, 0).rows().getFirst();
         assertEquals("DMR Dispatch (Talkgroup 7)", group.get("label"));
         assertEquals(Map.of("kind", "channel", "key", DMR_CONVENTIONAL), group.get("entity_ref"));
-        assertEquals(Map.of("kind", "conventional_talkgroup", "configuration_id", DMR_CONVENTIONAL,
-            "frequency_hz", 460012500L, "timeslot", 2, "native_id", 7), group.get("target"));
+        assertEquals(Map.of("kind", "scoped_data", "source_kind", "saved_channel", "source_key", DMR_CONVENTIONAL,
+            "data_type", "talkgroups", "record_key", "460012500:2:7",
+            "parts", java.util.List.of("summary", "events")), group.get("target"));
     }
 
     private static Map<String,Object> row(RetainedStatisticsCatalog.Page page, String field, String value)

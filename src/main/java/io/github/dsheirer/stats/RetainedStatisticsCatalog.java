@@ -16,6 +16,7 @@ import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.stats.activity.RetainedSiteKey;
 import io.github.dsheirer.stats.activity.ReceiverActivityMaintenance;
 import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest.ScopedData;
+import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -186,6 +187,48 @@ final class RetainedStatisticsCatalog
     ReceiverActivityMaintenance.Preview preview(ScopedData target)
     {
         return read(connection -> ReceiverActivityMaintenance.preview(connection, target));
+    }
+
+    /** Captured once when a job is submitted; polling never repeats source discovery queries. */
+    String jobLabel(StatsDatabaseMaintenanceRequest.DeletionTarget target)
+    {
+        if(!(target instanceof ScopedData scoped)) return "Saved statistics";
+        if("alias_activity".equals(scoped.sourceKind())) return "Alias Activity";
+        return read(connection -> {
+            List<Map<String,Object>> sources = "radio_system".equals(scoped.sourceKind()) ?
+                queryRows(connection, "SELECT " + SYSTEM_LABEL + " AS label FROM radio_system system " +
+                    "WHERE system.system_key=?", scoped.sourceKey()) :
+                queryRows(connection, "SELECT " + CHANNEL_LABEL + " AS label FROM configuration_channel config " +
+                    "WHERE config.configuration_id=?", scoped.sourceKey());
+            String scope = sources.isEmpty() ? scoped.sourceKey() : String.valueOf(sources.getFirst().get("label"));
+            if(scoped.siteConfigurationId() != null && !scoped.siteConfigurationId().equals(scoped.sourceKey()))
+            {
+                List<Map<String,Object>> sites = queryRows(connection, "SELECT " + SITE_LABEL + " AS label " +
+                    "FROM configuration_channel config WHERE config.configuration_id=?", scoped.siteConfigurationId());
+                scope += " · " + (sites.isEmpty() ? scoped.siteConfigurationId() : sites.getFirst().get("label"));
+            }
+            String type = switch(scoped.dataType())
+            {
+                case "all" -> "All retained data";
+                case "site_state" -> "Site state";
+                case "frequencies" -> "Frequencies";
+                case "band_plans" -> "Band plans";
+                case "foreign_band_plans" -> "Foreign band plans";
+                case "neighbors" -> "Neighbors";
+                case "patches" -> "Patch groups";
+                case "control_quality" -> "Quality history";
+                case "radios" -> "Radio IDs";
+                case "talkgroups" -> "Talkgroups";
+                case "relationships" -> "Radio relationships";
+                case "affiliations" -> "Affiliations & presence";
+                case "call_activity" -> "Call totals";
+                case "signaling_activity" -> "Signaling totals";
+                case "hourly_history" -> "Hourly history";
+                case "detailed_events" -> "Detailed events";
+                default -> "Saved statistics";
+            };
+            return type + " · " + scope;
+        });
     }
 
     Page results(String sourceKind, String sourceKey, String dataType, String siteConfigurationId,

@@ -15,6 +15,7 @@ import java.util.Objects;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Requests database maintenance on the single statistics database writer.
@@ -25,6 +26,124 @@ public final class StatsDatabaseMaintenanceRequest
     private final String mConfigurationId;
     private final DeletionTarget mDeletionTarget;
     private final CompletableFuture<ReceiverActivityMaintenance.Result> mResult = new CompletableFuture<>();
+    private final AtomicBoolean mCancelled = new AtomicBoolean();
+    private final AtomicBoolean mSubmitted = new AtomicBoolean();
+    private final AtomicBoolean mResumeClaimed = new AtomicBoolean();
+    private ProgressState mProgress = new ProgressState();
+    private ReceiverActivityScopedDeletion.Batch mDeletionBatch;
+
+    /** Transient job counters. Jobs and their continuation are retained only for this receiver process. */
+    public record Progress(long rowsTotal, long rowsDeleted, long batchesCompleted, long cutoffMs,
+                           boolean resumable, long rowsRetained, long databaseBusyRetries, long maximumBatchMs,
+                           long observationQueueHighWater, long recordsDropped)
+    {
+    }
+
+    public Progress progress()
+    {
+        return mProgress.snapshot;
+    }
+
+    /** Stops before the next committed batch; rows already removed remain removed. */
+    public void cancel()
+    {
+        mCancelled.set(true);
+    }
+
+    /** Creates one continuation with the same cutoff, plan, and committed counters. */
+    public StatsDatabaseMaintenanceRequest resume()
+    {
+        if(!mResult.isDone() || !progress().resumable() || !mResumeClaimed.compareAndSet(false, true))
+            throw new IllegalStateException("Deletion is not available to resume");
+        StatsDatabaseMaintenanceRequest continuation = delete(mDeletionTarget);
+        continuation.mProgress = mProgress;
+        continuation.mDeletionBatch = mDeletionBatch;
+        return continuation;
+    }
+
+    boolean claimSubmission()
+    {
+        return mSubmitted.compareAndSet(false, true);
+    }
+
+    boolean cancelled()
+    {
+        return mCancelled.get();
+    }
+
+    ReceiverActivityScopedDeletion.Batch deletionBatch()
+    {
+        return mDeletionBatch;
+    }
+
+    void deletionBatch(ReceiverActivityScopedDeletion.Batch batch)
+    {
+        mDeletionBatch = batch;
+    }
+
+    void initializeProgress(long total, long cutoffMs, long droppedRecords)
+    {
+        mProgress.droppedAtStart = droppedRecords;
+        mProgress.snapshot = new Progress(total, 0, 0, cutoffMs, false, 0, 0, 0, 0, 0);
+    }
+
+    void matchedRows(long total)
+    {
+        Progress previous = progress();
+        mProgress.snapshot = new Progress(total, previous.rowsDeleted(), previous.batchesCompleted(),
+            previous.cutoffMs(), previous.resumable(), previous.rowsRetained(), previous.databaseBusyRetries(),
+            previous.maximumBatchMs(), previous.observationQueueHighWater(), previous.recordsDropped());
+    }
+
+    void preparationDuration(long elapsedMilliseconds)
+    {
+        Progress previous = progress();
+        mProgress.snapshot = new Progress(previous.rowsTotal(), previous.rowsDeleted(), previous.batchesCompleted(),
+            previous.cutoffMs(), previous.resumable(), previous.rowsRetained(), previous.databaseBusyRetries(),
+            Math.max(previous.maximumBatchMs(), elapsedMilliseconds), previous.observationQueueHighWater(),
+            previous.recordsDropped());
+    }
+
+    void committedBatch(long deleted, long elapsedMilliseconds)
+    {
+        Progress previous = progress();
+        mProgress.snapshot = new Progress(previous.rowsTotal(), previous.rowsDeleted() + deleted,
+            previous.batchesCompleted() + 1, previous.cutoffMs(), false, 0, previous.databaseBusyRetries(),
+            Math.max(previous.maximumBatchMs(), elapsedMilliseconds), previous.observationQueueHighWater(),
+            previous.recordsDropped());
+    }
+
+    void observeWriter(int queued, long droppedRecords)
+    {
+        Progress previous = progress();
+        mProgress.snapshot = new Progress(previous.rowsTotal(), previous.rowsDeleted(), previous.batchesCompleted(),
+            previous.cutoffMs(), previous.resumable(), previous.rowsRetained(), previous.databaseBusyRetries(),
+            previous.maximumBatchMs(), Math.max(previous.observationQueueHighWater(), queued),
+            Math.max(previous.recordsDropped(), Math.max(0, droppedRecords - mProgress.droppedAtStart)));
+    }
+
+    void databaseBusy()
+    {
+        Progress previous = progress();
+        mProgress.snapshot = new Progress(previous.rowsTotal(), previous.rowsDeleted(), previous.batchesCompleted(),
+            previous.cutoffMs(), previous.resumable(), previous.rowsRetained(), previous.databaseBusyRetries() + 1,
+            previous.maximumBatchMs(), previous.observationQueueHighWater(), previous.recordsDropped());
+    }
+
+    void setResumable(boolean resumable)
+    {
+        Progress previous = progress();
+        mProgress.snapshot = new Progress(previous.rowsTotal(), previous.rowsDeleted(), previous.batchesCompleted(),
+            previous.cutoffMs(), resumable, resumable ? 0 : Math.max(0, previous.rowsTotal() - previous.rowsDeleted()),
+            previous.databaseBusyRetries(), previous.maximumBatchMs(), previous.observationQueueHighWater(),
+            previous.recordsDropped());
+    }
+
+    private static final class ProgressState
+    {
+        private volatile Progress snapshot = new Progress(0, 0, 0, 0, false, 0, 0, 0, 0, 0);
+        private long droppedAtStart;
+    }
 
     private StatsDatabaseMaintenanceRequest(ReceiverActivityMaintenance.Operation operation, String configurationId,
                                             DeletionTarget deletionTarget)
@@ -166,7 +285,8 @@ public final class StatsDatabaseMaintenanceRequest
 
     /** A bounded, source-owned family of retained observations. No configuration rows are targets. */
     public record ScopedData(String sourceKind, String sourceKey, String siteConfigurationId,
-                             String expectedSiteKey, String dataType, String recordKey, List<String> parts)
+                             String expectedSiteKey, String dataType, String recordKey, List<String> parts,
+                             Long fromMs, Long toMs, Long frequencyHz)
         implements DeletionTarget
     {
         private static final Set<String> SOURCE_KINDS = Set.of("radio_system", "saved_channel", "alias_activity");
@@ -176,8 +296,23 @@ public final class StatsDatabaseMaintenanceRequest
             "hourly_history", "alias_activity");
         private static final Set<String> PARTS = Set.of("current", "summary", "buckets", "events");
 
+        public ScopedData(String sourceKind, String sourceKey, String siteConfigurationId, String expectedSiteKey,
+                          String dataType, String recordKey, List<String> parts)
+        {
+            this(sourceKind, sourceKey, siteConfigurationId, expectedSiteKey, dataType, recordKey, parts,
+                null, null, null);
+        }
+
         public ScopedData
         {
+            if(fromMs != null && fromMs < 0 || toMs != null && toMs <= 0 ||
+                fromMs != null && toMs != null && toMs <= fromMs)
+                throw new IllegalArgumentException("History range must have an inclusive start and later exclusive end");
+            if(frequencyHz != null && frequencyHz <= 0)
+                throw new IllegalArgumentException("History frequency must be positive");
+            if((fromMs != null || toMs != null || frequencyHz != null) &&
+                !Set.of("control_quality", "hourly_history", "detailed_events").contains(dataType))
+                throw new IllegalArgumentException("Filters are available for history data only");
             if(!SOURCE_KINDS.contains(sourceKind)) throw new IllegalArgumentException("Source kind is invalid");
             if(!DATA_TYPES.contains(dataType)) throw new IllegalArgumentException("Data type is invalid");
             if((siteConfigurationId == null) != (expectedSiteKey == null))

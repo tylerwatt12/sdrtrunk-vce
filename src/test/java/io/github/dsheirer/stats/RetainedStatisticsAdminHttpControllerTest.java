@@ -45,6 +45,8 @@ import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
@@ -590,6 +592,213 @@ class RetainedStatisticsAdminHttpControllerTest
             "/deletions/" + lastId).header("Cookie", admin.cookie()).GET());
         assertEquals(200, latest.statusCode(), latest.body());
         assertEquals("not_found", json(latest).at("/data/outcome").textValue());
+    }
+
+    @Test
+    void qualityPreviewAcceptsLargeScopeAndStrictOptionalHistoryFilters() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabase);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                WITH RECURSIVE buckets(value) AS (
+                    SELECT 0 UNION ALL SELECT value+1 FROM buckets WHERE value<100000
+                ) INSERT INTO trunked_control_channel_quality(channel_id,frequency_hz,bucket_start_ms,observed_at_ms)
+                  SELECT 71,851012500,value*10000,value*10000+1000 FROM buckets
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_control_channel_quality(channel_id,frequency_hz,bucket_start_ms,observed_at_ms)
+                VALUES(72,851012500,10000,11000),(71,851025000,10000,11000)
+                """);
+        }
+        Session admin = login();
+        String path = RetainedStatisticsAdminHttpController.PATH + "/preview";
+        Map<String,Object> target = qualityTarget();
+        HttpResponse<String> large = send(mutation(path, admin).POST(HttpRequest.BodyPublishers.ofString(
+            MAPPER.writeValueAsString(Map.of("target", target)))));
+        assertEquals(200, large.statusCode(), large.body());
+        assertEquals("found", json(large).at("/data/outcome").textValue());
+        assertEquals(100002, json(large).at("/data/rows_total").longValue());
+
+        target.put("from_ms", 11000);
+        target.put("to_ms", 21000);
+        target.put("frequency_hz", 851012500L);
+        HttpResponse<String> filtered = send(mutation(path, admin).POST(HttpRequest.BodyPublishers.ofString(
+            MAPPER.writeValueAsString(Map.of("target", target)))));
+        assertEquals(200, filtered.statusCode(), filtered.body());
+        assertEquals(1, json(filtered).at("/data/rows_total").longValue(),
+            "From is inclusive and Before exclusive, with exact site and physical frequency ownership");
+
+        for(Object invalid: new Object[]{-1, "11000", 11000.5, null})
+        {
+            target.put("from_ms", invalid);
+            assertEquals(400, send(mutation(path, admin).POST(HttpRequest.BodyPublishers.ofString(
+                MAPPER.writeValueAsString(Map.of("target", target))))).statusCode());
+        }
+        target.put("from_ms", 21000);
+        HttpResponse<String> reversed = send(mutation(path, admin).POST(HttpRequest.BodyPublishers.ofString(
+            MAPPER.writeValueAsString(Map.of("target", target)))));
+        assertEquals(400, reversed.statusCode());
+        assertEquals("to_ms", json(reversed).at("/error/field").textValue());
+        target.put("from_ms", 0);
+        target.put("frequency_hz", 0);
+        assertEquals(400, send(mutation(path, admin).POST(HttpRequest.BodyPublishers.ofString(
+            MAPPER.writeValueAsString(Map.of("target", target))))).statusCode());
+        target.put("frequency_hz", 851012500L);
+        target.put("data_type", "call_activity");
+        assertEquals(400, send(mutation(path, admin).POST(HttpRequest.BodyPublishers.ofString(
+            MAPPER.writeValueAsString(Map.of("target", target))))).statusCode(),
+            "history filters cannot silently change summary deletion scope");
+        target.put("data_type", "control_quality");
+        target.put("unsupported_filter", true);
+        assertEquals(400, send(mutation(path, admin).POST(HttpRequest.BodyPublishers.ofString(
+            MAPPER.writeValueAsString(Map.of("target", target))))).statusCode());
+        target.remove("unsupported_filter");
+        String overflow = MAPPER.writeValueAsString(Map.of("target", target))
+            .replace("\"from_ms\":0", "\"from_ms\":9223372036854775808");
+        assertEquals(400, send(mutation(path, admin).POST(HttpRequest.BodyPublishers.ofString(overflow)))
+            .statusCode());
+    }
+
+    @Test
+    void cancellationResumeAndRecentJobsKeepOneTargetAndCumulativeProgress() throws Exception
+    {
+        Session admin = login();
+        String base = RetainedStatisticsAdminHttpController.PATH + "/deletions";
+        String id = UUID.randomUUID().toString();
+        String body = MAPPER.writeValueAsString(Map.of("request_id", id, "target", qualityTarget()));
+        assertEquals(202, send(mutation(base, admin).POST(HttpRequest.BodyPublishers.ofString(body))).statusCode());
+        StatsDatabaseMaintenanceRequest first = mDispatched.get();
+        writerProgress(first, "initializeProgress", new Class<?>[]{long.class, long.class, long.class},
+            213000L, 4000L, 5L);
+        writerProgress(first, "committedBatch", new Class<?>[]{long.class, long.class}, 1000L, 11L);
+        writerProgress(first, "observeWriter", new Class<?>[]{int.class, long.class}, 17, 5L);
+        JsonNode progress = json(send(request(base + "/" + id).header("Cookie", admin.cookie()).GET()))
+            .get("data");
+        assertEquals(213000, progress.get("rows_total").longValue());
+        assertEquals(1000, progress.get("rows_deleted").longValue());
+        assertEquals(1, progress.get("batches_completed").longValue());
+        assertEquals(4000, progress.get("cutoff_ms").longValue());
+        assertEquals(11, progress.get("maximum_batch_ms").longValue());
+        assertEquals(17, progress.get("observation_queue_high_water").longValue());
+        assertEquals(0, progress.get("records_dropped").longValue());
+        assertEquals("scoped_data", progress.at("/target/kind").textValue());
+        assertEquals(SYSTEM, progress.at("/target/source_key").textValue());
+        assertFalse(progress.get("target").has("from_ms"), "Unselected filters must remain absent on recovery");
+        assertEquals("Quality history · Shared P25 · North", progress.get("label").textValue());
+        assertEquals(202, send(mutation(base, admin).POST(HttpRequest.BodyPublishers.ofString(
+            MAPPER.writeValueAsString(Map.of("request_id", id, "target", progress.get("target")))))).statusCode());
+        assertEquals(1, mDispatchCount.get(), "Recovered target retries the original job without another deletion");
+
+        assertEquals(401, send(request(base + "/" + id + "/cancel")
+            .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString("{}")))
+            .statusCode());
+        assertEquals(403, send(request(base + "/" + id + "/cancel")
+            .header("Cookie", admin.cookie()).header("Origin", mOrigin.toString())
+            .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString("{}")))
+            .statusCode());
+        HttpResponse<String> cancelling = send(mutation(base + "/" + id + "/cancel", admin)
+            .POST(HttpRequest.BodyPublishers.ofString("{}")));
+        assertEquals(202, cancelling.statusCode(), cancelling.body());
+        assertEquals("cancelling", json(cancelling).at("/data/state").textValue());
+        assertEquals(202, send(mutation(base + "/" + id + "/cancel", admin)
+            .POST(HttpRequest.BodyPublishers.ofString("{}"))).statusCode());
+        writerProgress(first, "setResumable", new Class<?>[]{boolean.class}, true);
+        first.result().complete(new ReceiverActivityMaintenance.Result(
+            ReceiverActivityMaintenance.Operation.DELETE_RETAINED_STATS, 1000, null, 0, 0, 0, 0,
+            ReceiverActivityMaintenance.DeletionOutcome.INTERRUPTED));
+        JsonNode cancelled = json(send(request(base + "/" + id).header("Cookie", admin.cookie()).GET()))
+            .get("data");
+        assertEquals("cancelled", cancelled.get("state").textValue());
+        assertTrue(cancelled.get("can_resume").booleanValue());
+        assertEquals(1000, cancelled.get("rows_deleted").longValue());
+
+        String otherId = UUID.randomUUID().toString();
+        assertEquals(202, send(mutation(base, admin).POST(HttpRequest.BodyPublishers.ofString(
+            body.replace(id, otherId)))).statusCode());
+        StatsDatabaseMaintenanceRequest other = mDispatched.get();
+        assertEquals(429, send(mutation(base + "/" + id + "/resume", admin)
+            .POST(HttpRequest.BodyPublishers.ofString("{}"))).statusCode());
+        other.result().completeExceptionally(new IllegalStateException("test dispatcher failed"));
+        assertEquals(202, send(mutation(base + "/" + id + "/resume", admin)
+            .POST(HttpRequest.BodyPublishers.ofString("{}"))).statusCode());
+        StatsDatabaseMaintenanceRequest resumed = mDispatched.get();
+        assertEquals(first.deletionTarget(), resumed.deletionTarget());
+        assertEquals(4000, resumed.progress().cutoffMs(), "Resume must retain the original observation cutoff");
+        assertEquals(1000, resumed.progress().rowsDeleted());
+        assertEquals(3, mDispatchCount.get());
+        assertEquals(202, send(mutation(base + "/" + id + "/resume", admin)
+            .POST(HttpRequest.BodyPublishers.ofString("{}"))).statusCode());
+        assertEquals(3, mDispatchCount.get(), "Retrying Resume must dispatch once");
+        writerProgress(resumed, "committedBatch", new Class<?>[]{long.class, long.class}, 212000L, 12L);
+        writerProgress(resumed, "setResumable", new Class<?>[]{boolean.class}, false);
+        resumed.result().complete(new ReceiverActivityMaintenance.Result(
+            ReceiverActivityMaintenance.Operation.DELETE_RETAINED_STATS, 213000, null, 0, 0, 0, 0,
+            ReceiverActivityMaintenance.DeletionOutcome.DELETED));
+        JsonNode recent = json(send(request(base).header("Cookie", admin.cookie()).GET())).get("data");
+        assertEquals(2, recent.size());
+        assertTrue(recent.findValuesAsText("job_id").contains(id));
+        JsonNode complete = json(send(request(base + "/" + id).header("Cookie", admin.cookie()).GET()))
+            .get("data");
+        assertEquals("succeeded", complete.get("state").textValue());
+        assertEquals(213000, complete.get("rows_deleted").longValue());
+        assertEquals(2, complete.get("batches_completed").longValue());
+        assertFalse(complete.get("can_resume").booleanValue());
+        assertEquals(409, send(mutation(base + "/" + id + "/resume", admin)
+            .POST(HttpRequest.BodyPublishers.ofString("{}"))).statusCode());
+        assertEquals(202, send(mutation(base + "/" + id + "/cancel", admin)
+            .POST(HttpRequest.BodyPublishers.ofString("{}"))).statusCode(), "Cancel terminal job is harmless");
+        assertEquals(400, send(mutation(base + "/" + id + "/cancel", admin)
+            .POST(HttpRequest.BodyPublishers.ofString("{\"target\":{}}"))).statusCode());
+        HttpResponse<String> missing = send(request(base + "/" + UUID.randomUUID())
+            .header("Cookie", admin.cookie()).GET());
+        assertEquals(404, missing.statusCode());
+        assertEquals("job_not_found", json(missing).at("/error/code").textValue());
+        assertTrue(json(missing).at("/error/message").textValue().contains("remaining records"));
+
+        String failedId = UUID.randomUUID().toString();
+        assertEquals(202, send(mutation(base, admin).POST(HttpRequest.BodyPublishers.ofString(
+            body.replace(id, failedId)))).statusCode());
+        StatsDatabaseMaintenanceRequest interrupted = mDispatched.get();
+        writerProgress(interrupted, "initializeProgress", new Class<?>[]{long.class, long.class, long.class},
+            2000L, 5000L, 0L);
+        writerProgress(interrupted, "committedBatch", new Class<?>[]{long.class, long.class}, 500L, 9L);
+        writerProgress(interrupted, "databaseBusy", new Class<?>[]{});
+        writerProgress(interrupted, "setResumable", new Class<?>[]{boolean.class}, true);
+        interrupted.result().completeExceptionally(new IllegalStateException("SQLite busy"));
+        JsonNode failed = json(send(request(base + "/" + failedId).header("Cookie", admin.cookie()).GET()))
+            .get("data");
+        assertEquals("failed", failed.get("state").textValue());
+        assertEquals(500, failed.get("rows_deleted").longValue());
+        assertEquals(1, failed.get("database_busy_retries").longValue());
+        assertTrue(failed.get("can_resume").booleanValue());
+        assertTrue(failed.get("error").textValue().contains("Resume"));
+        assertEquals(202, send(mutation(base + "/" + failedId + "/resume", admin)
+            .POST(HttpRequest.BodyPublishers.ofString("{}"))).statusCode());
+        assertEquals(5000, mDispatched.get().progress().cutoffMs());
+        assertEquals(500, mDispatched.get().progress().rowsDeleted());
+    }
+
+    private static Map<String,Object> qualityTarget()
+    {
+        Map<String,Object> target = new LinkedHashMap<>();
+        target.put("kind", "scoped_data");
+        target.put("source_kind", "radio_system");
+        target.put("source_key", SYSTEM);
+        target.put("site_configuration_id", SITE_A);
+        target.put("expected_site_key", RetainedSiteKey.p25(1, 1, 71, 71, 1000));
+        target.put("data_type", "control_quality");
+        target.put("parts", List.of("buckets"));
+        return target;
+    }
+
+    /** Stand-in for the background writer; the HTTP controller only reads these counters. */
+    private static void writerProgress(StatsDatabaseMaintenanceRequest request, String method,
+                                       Class<?>[] types, Object... values) throws Exception
+    {
+        var writerMethod = StatsDatabaseMaintenanceRequest.class.getDeclaredMethod(method, types);
+        writerMethod.setAccessible(true);
+        writerMethod.invoke(request, values);
     }
 
     private Session login() throws Exception

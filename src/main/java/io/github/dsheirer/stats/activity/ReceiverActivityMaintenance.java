@@ -51,7 +51,8 @@ public final class ReceiverActivityMaintenance
         DELETED,
         NOT_FOUND,
         STALE_SITE,
-        TOO_LARGE
+        TOO_LARGE,
+        INTERRUPTED
     }
 
     /** Read-only preview. Counts describe directly matched rows; effects describe FK cascades. */
@@ -98,11 +99,13 @@ public final class ReceiverActivityMaintenance
                     case NOT_FOUND -> "Target is no longer available";
                     case STALE_SITE -> "Selected site changed; choose it again";
                     case TOO_LARGE -> "Selection is too large for live removal; narrow the scope";
+                    case INTERRUPTED -> "Cleanup stopped; completed batches remain deleted";
                     default -> "Retained statistics removed";
                 });
             }
 
-            if(operation == Operation.DELETE_RETAINED_STATS && deletionOutcome == DeletionOutcome.DELETED)
+            if(operation == Operation.DELETE_RETAINED_STATS &&
+                (deletionOutcome == DeletionOutcome.DELETED || deletionOutcome == DeletionOutcome.INTERRUPTED))
             {
                 sb.append(". Removed ").append(rowsDeleted).append(" directly matched row(s)");
             }
@@ -230,11 +233,84 @@ public final class ReceiverActivityMaintenance
 
         long databaseBytesBefore = size(databasePath);
         long walBytesBefore = size(walPath(databasePath));
-        ReceiverActivityDeletion.Result deleted = inTransaction(connection,
-            () -> ReceiverActivityDeletion.delete(connection, target));
+        ReceiverActivityDeletion.Result deleted = ReceiverActivityDeletion.legacySelectionTooLarge(connection, target) ?
+            ReceiverActivityDeletion.Result.tooLarge() : inTransaction(connection,
+                () -> ReceiverActivityDeletion.delete(connection, target));
         return new Result(Operation.DELETE_RETAINED_STATS, deleted.rowsDeleted(), null, databaseBytesBefore,
             size(databasePath), walBytesBefore, size(walPath(databasePath)),
             deleted.outcome());
+    }
+
+    /** Executes exactly one bounded scoped-deletion transaction; null means more passes remain. */
+    static Result deleteRetainedStatsPass(Connection connection, Path databasePath,
+                                          StatsDatabaseMaintenanceRequest request, long droppedRecords)
+        throws IOException, SQLException
+    {
+        if(!(request.deletionTarget() instanceof ScopedData target))
+            throw new IllegalArgumentException("Batched cleanup requires a scoped retained-data target");
+        long before = size(databasePath);
+        long walBefore = size(walPath(databasePath));
+        if(request.cancelled())
+        {
+            request.setResumable(true);
+            return deletionResult(request, databasePath, before, walBefore, DeletionOutcome.INTERRUPTED);
+        }
+        ReceiverActivityScopedDeletion.Batch batch = request.deletionBatch();
+        if(batch == null)
+        {
+            long preparationStart = System.nanoTime();
+            if(request.progress().cutoffMs() == 0)
+                request.initializeProgress(0, System.currentTimeMillis(), droppedRecords);
+            try
+            {
+                batch = ReceiverActivityScopedDeletion.Batch.start(connection, target, request.progress().cutoffMs());
+                request.deletionBatch(batch);
+                request.matchedRows(batch.rowsTotal());
+            }
+            finally
+            {
+                request.preparationDuration(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - preparationStart));
+            }
+        }
+        if(!batch.done())
+        {
+            ReceiverActivityScopedDeletion.Batch.Position position = batch.position();
+            long started = System.nanoTime();
+            try
+            {
+                ReceiverActivityScopedDeletion.Batch active = batch;
+                int changed = inTransaction(connection, () -> active.runPass(connection));
+                request.committedBatch(changed, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started));
+            }
+            catch(SQLException | RuntimeException failure)
+            {
+                batch.restore(position);
+                request.preparationDuration(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started));
+                request.setResumable(true);
+                throw failure;
+            }
+        }
+        if(batch.done())
+        {
+            request.setResumable(false);
+            return deletionResult(request, databasePath, before, walBefore, batch.outcome());
+        }
+        return null;
+    }
+
+    static Result interruptRetainedStats(Path databasePath, StatsDatabaseMaintenanceRequest request)
+        throws IOException
+    {
+        request.setResumable(true);
+        return deletionResult(request, databasePath, size(databasePath), size(walPath(databasePath)),
+            DeletionOutcome.INTERRUPTED);
+    }
+
+    private static Result deletionResult(StatsDatabaseMaintenanceRequest request, Path databasePath,
+                                          long before, long walBefore, DeletionOutcome outcome) throws IOException
+    {
+        return new Result(Operation.DELETE_RETAINED_STATS, Math.toIntExact(request.progress().rowsDeleted()), null,
+            before, size(databasePath), walBefore, size(walPath(databasePath)), outcome);
     }
 
     static int runLightMaintenance(Connection connection, int retentionDays) throws SQLException
@@ -379,6 +455,6 @@ public final class ReceiverActivityMaintenance
 
     private static Path walPath(Path databasePath)
     {
-        return Path.of(databasePath.toString() + "-wal");
+        return databasePath == null ? null : Path.of(databasePath.toString() + "-wal");
     }
 }

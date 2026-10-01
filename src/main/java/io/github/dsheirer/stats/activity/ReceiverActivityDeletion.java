@@ -68,6 +68,111 @@ final class ReceiverActivityDeletion
         }
     }
 
+    /** Legacy atomic operations keep a safety cap; current scoped requests use the yielding batch engine. */
+    static boolean legacySelectionTooLarge(Connection connection, DeletionTarget target) throws SQLException
+    {
+        if(target instanceof ScopedData) return false;
+        ScopedData estimate = switch(target)
+        {
+            case Identity identity -> new ScopedData("radio_system", identity.radioSystemKey(), null, null,
+                identity.kind() == IdentityKind.RADIO ? "radios" : "talkgroups", identity.identityKey(), List.of("summary"));
+            case System system -> new ScopedData("radio_system", system.radioSystemKey(), null, null,
+                "all", null, List.of("current", "summary", "buckets", "events"));
+            case LearnedSite site -> new ScopedData("radio_system", site.radioSystemKey(), null, null,
+                "all", null, List.of("current", "summary", "buckets", "events"));
+            case ConventionalIdentity identity -> new ScopedData("saved_channel", identity.configurationId(), null, null,
+                identity.kind() == IdentityKind.RADIO ? "radios" : "talkgroups",
+                identity.frequencyHz() + ":" + identity.timeslot() + ":" + identity.identityId(), List.of("summary"));
+            case Channel channel -> legacyChannelScope(connection, channel.configurationId(), "all", null,
+                List.of("current", "summary", "buckets", "events"));
+            case SavedSite site -> legacyChannelScope(connection, site.configurationId(),
+                site.includeChannelHistory() ? "all" : "site_state", null, site.includeChannelHistory() ?
+                    List.of("current", "summary", "buckets", "events") : List.of("current"));
+            case Frequency frequency -> legacyChannelScope(connection, frequency.configurationId(), "frequencies",
+                Long.toString(frequency.frequencyHz()), List.of("current", "summary"));
+            case ScopedData ignored -> null;
+        };
+        if(estimate != null)
+            return ReceiverActivityScopedDeletion.Batch.start(connection, estimate, Long.MAX_VALUE).rowsTotal() > 100_000;
+        if(target instanceof Channel channel) return orphanChannelTooLarge(connection, channel.configurationId());
+        if(target instanceof SavedSite site && site.includeChannelHistory())
+            return orphanChannelTooLarge(connection, site.configurationId());
+        return false;
+    }
+
+    private static ScopedData legacyChannelScope(Connection connection, String configurationId, String type,
+                                                  String recordKey, List<String> parts) throws SQLException
+    {
+        SavedChannel channel = savedChannel(connection, configurationId);
+        if(channel == null)
+        {
+            try(PreparedStatement statement = connection.prepareStatement("SELECT system_key FROM radio_system WHERE configuration_id=?"))
+            {
+                statement.setString(1, configurationId);
+                try(ResultSet rows = statement.executeQuery())
+                {
+                    if(rows.next()) return new ScopedData("radio_system", rows.getString(1), null, null,
+                        "all", null, List.of("current", "summary", "buckets", "events"));
+                }
+            }
+            return null;
+        }
+        if(type.equals("site_state") && !"TRUNKED".equals(channel.kind())) return null;
+        if("CONVENTIONAL".equals(channel.kind()))
+            return new ScopedData("saved_channel", configurationId, null, null, type, recordKey,
+                type.equals("frequencies") ? List.of("summary", "buckets") :
+                    parts.stream().filter(part -> !part.equals("current")).toList());
+        String systemKey = null;
+        try(PreparedStatement statement = connection.prepareStatement("SELECT system.system_key FROM radio_system system " +
+            "JOIN receiver_channel channel ON channel.radio_system_id=system.id WHERE channel.id=?"))
+        {
+            statement.setInt(1, channel.id());
+            try(ResultSet rows = statement.executeQuery()) { if(rows.next()) systemKey = rows.getString(1); }
+        }
+        if(systemKey == null) return null;
+        return new ScopedData("radio_system", systemKey, configurationId, channel.siteKey(), type, recordKey, parts);
+    }
+
+    private static boolean orphanChannelTooLarge(Connection connection, String configurationId) throws SQLException
+    {
+        SavedChannel channel = savedChannel(connection, configurationId);
+        if(channel == null) return false;
+        List<String> tables = new ArrayList<>();
+        try(var statement = connection.createStatement(); var rows = statement.executeQuery("SELECT name FROM sqlite_master " +
+            "WHERE type='table' AND (name LIKE 'p25_%' OR name LIKE 'trunked_%' OR name LIKE 'conventional_%' " +
+                "OR name LIKE 'dmr_conventional_%' OR name='receiver_activity_event')"))
+        {
+            while(rows.next()) tables.add(rows.getString(1));
+        }
+        long total = 0;
+        for(String table: tables)
+        {
+            boolean owned = false;
+            try(var statement = connection.createStatement(); var rows = statement.executeQuery("PRAGMA table_info(" + table + ")"))
+            {
+                while(rows.next()) owned |= rows.getString("name").equals("channel_id");
+            }
+            if(!owned) continue;
+            try(PreparedStatement statement = connection.prepareStatement("SELECT count(*) FROM (SELECT 1 FROM " + table +
+                " WHERE channel_id=? LIMIT ?)"))
+            {
+                statement.setInt(1, channel.id());
+                statement.setLong(2, 100_001 - total);
+                try(ResultSet rows = statement.executeQuery()) { if(rows.next()) total += rows.getLong(1); }
+            }
+            if(total > 100_000) return true;
+        }
+        try(PreparedStatement statement = connection.prepareStatement("SELECT count(*) FROM (SELECT 1 FROM " +
+            "activity_event_identity_member member JOIN receiver_activity_event event ON event.id=member.event_id " +
+            "WHERE event.channel_id=? LIMIT ?)"))
+        {
+            statement.setInt(1, channel.id());
+            statement.setLong(2, 100_001 - total);
+            try(ResultSet rows = statement.executeQuery()) { if(rows.next()) total += rows.getLong(1); }
+        }
+        return total > 100_000;
+    }
+
     static Result delete(Connection connection, DeletionTarget target) throws SQLException
     {
         return switch(target)
