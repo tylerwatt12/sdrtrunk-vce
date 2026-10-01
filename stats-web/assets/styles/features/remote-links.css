@@ -48,8 +48,7 @@
 }
 
 .remote-links-card-header,
-.remote-links-feed-header,
-.remote-links-section-header {
+.remote-links-feed-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -62,8 +61,6 @@
 }
 
 .remote-links-card-identity h2,
-.remote-links-section-header h2,
-.remote-links-section-header p,
 .remote-links-card-identity p {
   margin: 0;
 }
@@ -252,7 +249,6 @@
     grid-column: 1;
   }
 
-  .remote-links-section-header,
   .remote-links-page-meta {
     align-items: stretch;
     flex-direction: column;
@@ -272,7 +268,6 @@
     width: 100%;
   }
 
-  .remote-links-section-header > .ui-button,
   .remote-links-credential-row > .ui-button {
     width: 100%;
   }

@@ -421,6 +421,50 @@
   border-bottom: 1px solid var(--line);
 }
 
+/* A standalone section introduction with a primary action beside its title and copy. */
+.ui-surface-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.ui-surface-heading > .ui-button {
+  flex: 0 0 auto;
+}
+
+.ui-heading-group {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.ui-heading-group > :where(h2, h3) {
+  margin: 0;
+  font-size: var(--font-size-section-title);
+  font-weight: var(--font-weight-heading);
+  line-height: 1.25;
+}
+
+.ui-heading-group > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-body);
+}
+
+@media (max-width: 620px) {
+  .ui-surface-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .ui-surface-heading > .ui-button {
+    width: 100%;
+  }
+}
+
 .ui-icon-tile {
   width: 34px;
   height: 34px;

@@ -1,7 +1,7 @@
 const ROOT = '/api/v1/admin/remote-links';
 const POLL_MS = 3000;
 
-// Reuse map: data-workspace, ui-catalog-toolbar, ui-surface, ui-facts, ui-status,
+// Reuse map: data-workspace, ui-surface-heading, ui-heading-group, ui-surface, ui-facts, ui-status,
 // ui-toggle-field, ui-field, ui-select-frame, ui-notice and the shared modal lifecycle
 // provide the visual language. This feature owns only Remote Links layout geometry.
 export function createRemoteLinksWorkspace(deps) {
@@ -12,8 +12,8 @@ export function createRemoteLinksWorkspace(deps) {
   const message = node('div');
   message.setAttribute('role', 'status');
   const overview = node('div', 'remote-links-overview');
-  const senderHeader = node('div', 'remote-links-section-header ui-catalog-toolbar');
-  const senderHeading = node('div');
+  const senderHeader = node('div', 'remote-links-section-header ui-surface ui-surface-heading');
+  const senderHeading = node('div', 'ui-heading-group');
   senderHeading.append(node('h2', '', 'Trusted senders'),
     node('p', 'muted', 'Create credentials for installations allowed to send P25 feeds to this receiver.'));
   const addSender = button('Add trusted sender', () => openCreateSender(), true, 'add-sender');
