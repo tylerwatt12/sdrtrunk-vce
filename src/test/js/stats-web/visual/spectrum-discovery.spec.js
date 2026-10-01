@@ -23,7 +23,7 @@ function snapshot(protocolId, state) {
     .filter((field) => field.path.startsWith('settings.') && Object.hasOwn(field, 'default'))
     .map((field) => [field.path.substring(9), field.default]));
   return { session_id: 'discovery-a', state: state.phase || 'ready', protocol_id: protocolId,
-    tuner_id: 'idle-a', target_id: 'target-a', frequency_hz: 851012500,
+    tuner_id: 'idle-a', target_id: 'target-a', frequency_hz: state.frequencyHz || 851012500,
     expires_at_ms: Date.now() + 30000,
     probe: protocolId === 'p25-phase1' ? {
       c4fm: { valid_messages: 18, valid_control_messages: 12, invalid_control_messages: 4, quality_pct: 81.2 },
@@ -100,6 +100,7 @@ async function install(page, state = {}) {
       reason: state.known ? 'This frequency belongs to County Control.' : null, matches: [] });
     if (path === '/api/v1/admin/spectrum-discovery' && request.method() === 'POST') {
       state.protocolId = body.protocol_id;
+      state.frequencyHz = body.frequency_hz;
       return respond(snapshot(state.protocolId, state));
     }
     if (path === '/api/v1/admin/spectrum-discovery/discovery-a') {
@@ -134,7 +135,7 @@ async function install(page, state = {}) {
   await expect(page.getByRole('heading', { name: 'Tuner Spectrum', exact: true })).toBeVisible();
   if (!state.browseError) await expect(page.locator('.spectrum-browse-center')).toContainText('0851.01250MHz');
   await page.evaluate(async () => {
-    window.discoveryApi = await import('/assets/app.js?v=351');
+    window.discoveryApi = await import('/assets/app.js?v=352');
     window.discoveryProbeStates = [];
     window.openDiscovery = () => window.discoveryApi.openSpectrumDiscoveryWizard({
       tunerId: 'idle-a', targetId: 'target-a', frequencyHz: 851012500, browseLeaseId: 'browse-a',
@@ -400,6 +401,27 @@ for (const [protocolId, theme, width] of [['am', 'light', 1280], ['nbfm', 'dark'
     expect(save.new_alias_list_name).toBe('P25 B0001-123');
   });
 }
+
+test('a fractional Hertz spectrum selection displays and submits the same integer frequency', async ({ page }) => {
+  const state = {};
+  await install(page, state);
+  await page.evaluate(() => window.discoveryApi.openTunerFrequencyActions({
+    tunerId: 'idle-a', targetId: 'target-a', browseLeaseId: 'browse-a',
+    frequencyHz: 776715007.9617834, rawFrequencyHz: 776715007.9617834
+  }));
+  const add = page.getByRole('button', { name: 'Add channel / system', exact: true });
+  await expect(add).toBeEnabled();
+  await add.click();
+  const dialog = wizard(page);
+  await expect(dialog.locator('.spectrum-discovery-workspace > p')).toHaveText('776.715008 MHz');
+  await dialog.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(dialog.getByRole('heading', { name: 'Review and start listening' })).toBeVisible();
+  await expect(dialog.locator('.spectrum-discovery-workspace > p')).toHaveText('776.715008 MHz');
+  expect(state.requests.find((request) => request.path === '/api/v1/admin/spectrum-discovery' &&
+    request.method === 'POST').body.frequency_hz).toBe(776715008);
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(0);
+});
 
 test('configured or learned channel frequency blocks Add using receiver eligibility', async ({ page }) => {
   const state = { known: true };

@@ -12929,6 +12929,7 @@ function spectrumDiscoveryIdentity(identity) {
 }
 
 function openSpectrumDiscoveryWizard(selection) {
+  selection = { ...selection, frequencyHz: Math.round(Number(selection.frequencyHz)) };
   const abort = new AbortController();
   const host = node('div', 'spectrum-discovery-workspace editor-workspace');
   const frequency = node('p', 'muted', `${channelMHz(selection.frequencyHz)} MHz`);
@@ -13030,7 +13031,7 @@ function openSpectrumDiscoveryWizard(selection) {
       if (!profile) throw new Error('This protocol is unavailable. Reload the page and try again.');
       selection.setProbeActive?.(true);
       const created = await request(path, { method: 'POST', body: {
-        tuner_id: selection.tunerId, frequency_hz: Math.round(selection.frequencyHz),
+        tuner_id: selection.tunerId, frequency_hz: selection.frequencyHz,
         protocol_id: protocolId, browse_lease_id: selection.browseLeaseId || null
       } });
       if (!current() || generation !== operation) {
