@@ -1,5 +1,6 @@
 const { expect, test } = require('@playwright/test');
 const { expectMetricGridSpacing, expectNoHorizontalOverflow } = require('./fixtures/metric-geometry.cjs');
+const { expectBoxedFacts, expectFlatFacts } = require('./fixtures/fact-geometry.cjs');
 
 const galleryCases = [
   ['components-light-desktop', 'light', { width: 1280, height: 900 }],
@@ -162,11 +163,46 @@ for (const [, theme, viewport] of galleryCases) {
     await page.setViewportSize(viewport);
     await page.goto(`/design-system.html?theme=${theme}&view=entity-details`);
     await expectMetricGridSpacing(page.locator('.visual-entity-details-example .ui-section > .ui-metric-grid'));
+    await expectBoxedFacts(page.locator('.visual-entity-details-example .ui-section > dl.ui-facts'),
+      page.locator('.visual-entity-details-example .ui-metric:not(.ui-metric-compact)').first());
+    const systemInfo = page.locator('.visual-system-info-card');
+    await expect(systemInfo.locator('dt')).toHaveText(['Radio System', 'Alias Lists', 'First Seen', 'Last Seen']);
+    const aliasList = systemInfo.getByRole('link', {
+      name: 'County P25 and Regional Emergency Services Shared Alias List', exact: true
+    });
+    await expect(aliasList).toHaveAttribute('href', '?view=aliases&list=7');
+    await aliasList.focus();
+    await expect(aliasList).toBeFocused();
+    await expect(systemInfo).toHaveScreenshot(`system-info-${theme}-${viewport.width}.png`);
     const affiliation = page.locator('.visual-entity-details-example .ui-metric a');
     await expect(affiliation).toHaveText('9');
     await expect(affiliation).toHaveAttribute('href', '#');
     await affiliation.focus();
     await expect(affiliation).toBeFocused();
+    await expectNoHorizontalOverflow(page);
+  });
+
+  test(`record and settings fact rows retain their flat composition in ${theme} at ${viewport.width}px`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto(`/design-system.html?theme=${theme}&view=admin-navigation`);
+    await expectFlatFacts(page.locator('.visual-admin-navigation-example :is(.ui-record-facts, .ui-admin-facts) > .ui-fact'));
+    await expectNoHorizontalOverflow(page);
+  });
+
+  test(`scan list counts share metric cards in ${theme} at ${viewport.width}px`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto(`/design-system.html?theme=${theme}&view=admin-scan-lists`);
+    const summary = page.locator('.scan-list-detail-facts');
+    await expect(summary.locator(':scope > .ui-metric')).toHaveCount(2);
+    await expect(summary.locator('.ui-fact')).toHaveCount(0);
+    await expect(summary.locator('.ui-metric-label')).toHaveText([
+      'Assigned aliases', 'Alias Lists routing unmatched calls'
+    ]);
+    await expect(summary.locator('strong')).toHaveText(['124', '2']);
+    await expectMetricGridSpacing(summary, { inset: 0, sectionInset: false });
+    await page.getByRole('button', { name: /City Services.*38 aliases/ }).click();
+    await expect(summary.locator('strong')).toHaveText(['38', '0']);
+    await expect(page.getByRole('link', { name: 'Manage 38 aliases for City Services' })).toBeVisible();
     await expectNoHorizontalOverflow(page);
   });
 

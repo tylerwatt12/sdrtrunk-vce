@@ -1825,18 +1825,18 @@ export function createRecordingsFeature(deps) {
         const control = button(node, `Run ${name.toLowerCase()}`, () => {
           const details = [];
           if (action === 'recount') {
-            const facts = node('dl', 'ui-facts ui-admin-facts recordings-admin-facts');
             const counts = currentCatalog?.catalog || currentCatalog;
-            for (const [label, detail] of [
-              ['Listed calls', Number(value(counts, 'call_count', 'total_calls') || 0).toLocaleString()],
-              ['Last recount', dateTime(value(currentCatalog, 'last_recount_ms'))]
-            ]) {
-              if (!detail) continue;
+            details.push(metrics([
+              ['Listed calls', Number(value(counts, 'call_count', 'total_calls') || 0)]
+            ], true));
+            const lastRecount = dateTime(value(currentCatalog, 'last_recount_ms'));
+            if (lastRecount) {
+              const facts = node('dl', 'ui-facts ui-admin-facts recordings-admin-facts');
               const fact = node('div', 'ui-fact');
-              fact.append(node('dt', '', label), node('dd', '', detail));
+              fact.append(node('dt', '', 'Last recount'), node('dd', '', lastRecount));
               facts.append(fact);
+              details.push(facts);
             }
-            details.push(facts);
           } else {
             details.push(node('div', 'ui-notice ui-notice-warning', reindexWarning),
               node('p', 'recordings-admin-note', reindexLimitation));

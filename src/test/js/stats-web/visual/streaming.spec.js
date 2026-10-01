@@ -233,6 +233,34 @@ test('delivery counters retain their live values and update error severity after
     document.querySelector('.streaming-destination-metrics .ui-metric:last-child strong span'))).toBe(true);
 });
 
+test('destination status keeps shared delivery cards and metadata through severity recovery', async ({page}) => {
+  await page.setViewportSize({width:390,height:844});
+  await install(page, 'dark');
+  await page.getByRole('button',{name:'County Calls',exact:true}).click();
+  const modal = page.getByRole('dialog');
+  await modal.getByRole('button',{name:'Status',exact:true}).click();
+  const panel = modal.locator('.streaming-panel:not([hidden])');
+  const errors = panel.locator('.ui-metric').filter({hasText:'Errors'});
+  await expect(panel.locator('.ui-metric-label')).toHaveText(['Queued','Sent / uploaded','Aged off','Errors']);
+  await expect(panel.locator('.ui-fact dt')).toHaveText(['Last error','Provider']);
+  await expect(errors).toHaveClass(/\bui-metric-blue\b/);
+  await page.evaluate(() => Object.assign(window.streamingTest.status,
+    {queued:7, sent:141, errors:2, attention:true, last_error:'Delivery unavailable'}));
+  await panel.getByRole('button',{name:'Refresh status',exact:true}).click();
+  await expect(panel.locator('.ui-metric strong')).toHaveText(['7','141','0','2']);
+  await expect(errors).toHaveClass(/\bui-metric-danger\b/);
+  await expect(panel.locator('.ui-fact dd')).toHaveText(['Delivery unavailable','Broadcastify Calls']);
+  await page.evaluate(() => Object.assign(window.streamingTest.status, {attention:false, last_error:null}));
+  await panel.getByRole('button',{name:'Refresh status',exact:true}).click();
+  await expect(errors).toHaveClass(/\bui-metric-warning\b/);
+  await page.evaluate(() => Object.assign(window.streamingTest.status, {errors:null}));
+  await panel.getByRole('button',{name:'Refresh status',exact:true}).click();
+  await expect(errors).toHaveClass(/\bui-metric-blue\b/);
+  await expect(errors.locator('strong')).toHaveText('—');
+  await expect(panel.locator('.ui-fact dd')).toHaveText(['None','Broadcastify Calls']);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+});
+
 test('alias changes survive paging and save only explicit selections',async({page})=>{
   await install(page);await page.getByRole('button',{name:'County Calls',exact:true}).click();
   const modal=page.getByRole('dialog');await modal.getByRole('button',{name:'Aliases',exact:true}).click();

@@ -87,6 +87,14 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.remote-links-connection-metrics {
+  margin-inline: var(--space-4);
+}
+
+.remote-links-connection-facts {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .remote-links-dependencies,
 .remote-links-feed-grid {
   display: grid;

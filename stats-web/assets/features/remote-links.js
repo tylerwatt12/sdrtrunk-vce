@@ -1,12 +1,12 @@
 const ROOT = '/api/v1/admin/remote-links';
 const POLL_MS = 3000;
 
-// Reuse map: data-workspace, ui-surface-heading, ui-heading-group, ui-surface, ui-facts, ui-status,
+// Reuse map: data-workspace, ui-surface-heading, ui-heading-group, ui-surface, ui-facts, ui-metric, ui-status,
 // ui-toggle-field, ui-field, ui-select-frame, ui-notice and the shared modal lifecycle
 // provide the visual language. This feature owns only Remote Links layout geometry.
 export function createRemoteLinksWorkspace(deps) {
   const { node, formField, uiSelectFrame, uiToggleField, uiStatus, iconGlyph,
-    openReadOnlyModal, requestJson, modalFooter, signal } = deps;
+    openReadOnlyModal, requestJson, modalFooter, metrics, signal } = deps;
   const host = node('div', 'remote-links-page data-workspace');
   const summary = node('div', 'remote-links-summary');
   const message = node('div');
@@ -127,11 +127,16 @@ export function createRemoteLinksWorkspace(deps) {
     const card = node('article', 'remote-links-card ui-surface');
     const destination = connection.destination_host && connection.destination_port ?
       `${connection.destination_host}:${connection.destination_port}` : 'Not configured';
-    card.append(heading('Send local P25 feeds', destination, connection.state), facts([
+    const counts = metrics([
+      ['Exported systems', selected, undefined, { icon: 'icon-trunked' }]
+    ]);
+    counts.classList.add('remote-links-connection-metrics');
+    const details = facts([
       ['Authentication', connection.credential_configured ? 'Credential saved' : 'Not configured'],
-      ['Exported systems', selected],
       ['Last connected', age(connection.last_connected_at_ms)]
-    ]));
+    ]);
+    details.classList.add('remote-links-connection-facts');
+    card.append(heading('Send local P25 feeds', destination, connection.state), counts, details);
     if (connection.status_message) card.append(notice(connection.status_message,
       ['ERROR', 'AUTHENTICATION_FAILED'].includes(stateKey(connection.state)) ? 'danger' : 'warning'));
     const actions = node('footer', 'remote-links-card-actions ui-action-row');

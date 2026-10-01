@@ -4,6 +4,7 @@ const { expect, test } = require('@playwright/test');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const fs = require('node:fs');
+const { expectFlatFacts } = require('./fixtures/fact-geometry.cjs');
 
 let defaultPreferences;
 
@@ -78,6 +79,8 @@ test('public listener sees geographic map, trail, standard icon, and selected de
   await expect(page.locator('.listen-map-details')).toContainText('County P25');
   await expect(page.locator('.listen-map-details')).toContainText('41.50200, -81.68500');
   await expect(page.locator('.listen-map-details')).toContainText('41 km/h');
+  await expectFlatFacts(page.locator('.listen-map-facts > .ui-fact'), { padding: '5px 0px', radius: null });
+  await expect(page.locator('.listen-map-facts')).toHaveJSProperty('tagName', 'DL');
   await expect(page.locator('.listen-map-attribution a')).toHaveAttribute('href',
     'https://www.openstreetmap.org/copyright');
   const tileImages = page.locator('.listen-map-tiles img');
@@ -88,6 +91,7 @@ test('public listener sees geographic map, trail, standard icon, and selected de
   await expect(page.locator('.listen-map-layout')).toHaveCSS('grid-template-columns', /^\d+(?:\.\d+)?px$/);
   await expect(page.locator('.listen-map-list-item')).toBeVisible();
   await expect(page.getByLabel('Trail length')).toBeVisible();
+  await expectFlatFacts(page.locator('.listen-map-facts > .ui-fact'), { padding: '5px 0px', radius: null });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 });
 

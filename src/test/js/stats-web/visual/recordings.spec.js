@@ -744,7 +744,8 @@ test('recording settings retain mode, retention, catalog facts, and both mainten
     const dialog = page.getByRole('dialog', { name: title });
     await expect(dialog).toBeVisible();
     if (action === 'recount') {
-      await expect(dialog).toContainText('28,416');
+      await expect(dialog.locator('.ui-metric-label')).toHaveText('Listed calls');
+      await expect(dialog.locator('.ui-metric strong')).toHaveText('28,416');
       await expect(dialog).toContainText('Last recount');
     } else {
       await expect(dialog).toContainText('may cause some to be dropped');

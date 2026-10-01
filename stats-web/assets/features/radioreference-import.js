@@ -815,10 +815,14 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     appendFact('System type', flavor || protocol);
     if (voice && voice.toLowerCase() !== protocol.toLowerCase())
       appendFact('Voice', voice, 'radioreference-site-fact-wide');
-    appendFact('Frequencies', `${uniqueChannels.length} available`);
     if (modulation) appendFact('P25 modulation', uiPill(modulation,
       modulation.toUpperCase().includes('CQPSK') || modulation.toUpperCase().includes('LSM') ? 'blue' : 'neutral'));
-    detection.append(detectionFacts);
+    const frequencyMetrics = node('div', 'ui-metric-grid ui-metric-grid-embedded');
+    const frequencyCount = metricCard('Frequencies', uniqueChannels.length,
+      formatNumber(uniqueChannels.length));
+    frequencyCount.querySelector('.ui-metric-copy').append(node('small', 'ui-metric-detail', 'Available'));
+    frequencyMetrics.append(frequencyCount);
+    detection.append(detectionFacts, frequencyMetrics);
     if (!hasControl) detection.append(node('p', 'radioreference-detection-help muted', capacityPlus(system) ?
       'Capacity Plus uses a moving rest channel. All site frequencies are selected by default.' :
       conventionalNetworked(system) ?

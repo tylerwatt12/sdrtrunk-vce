@@ -924,9 +924,16 @@ test('site sorting and preview use the RadioReference database system ID', async
   await page.getByRole('button', { name: 'Alpha Site' }).click();
   const importModal = page.getByRole('dialog', { name: /Import Alpha Site/ });
   await expect(importModal.locator('.radioreference-site-facts dt'))
-    .toHaveText(['Protocol', 'System type', 'Voice', 'Frequencies', 'P25 modulation']);
+    .toHaveText(['Protocol', 'System type', 'Voice', 'P25 modulation']);
   await expect(importModal.locator('.radioreference-site-facts')).toContainText('Phase II');
   await expect(importModal.locator('.radioreference-site-facts')).toContainText('C4FM');
+  const frequencies = importModal.locator('.radioreference-detection .ui-metric');
+  await expect(frequencies.locator('.ui-metric-label')).toHaveText('Frequencies');
+  await expect(frequencies.locator('.ui-metric-copy > strong')).toHaveText('1');
+  await expect(frequencies.locator('.ui-metric-detail')).toHaveText('Available');
+  await expect(frequencies).toHaveCSS('padding', '16px');
+  await expect(frequencies.locator('.ui-metric-copy > strong')).toHaveCSS('font-size', '29px');
+  await expect(importModal.locator('.radioreference-frequency-choices input')).toHaveCount(1);
   await expect(importModal).toHaveScreenshot('radioreference-p25-import-light-desktop.png');
   await importModal.getByLabel('Alias List').selectOption('7');
   await importModal.getByRole('button', { name: 'Review Channel' }).click();
@@ -952,6 +959,8 @@ test('Capacity Plus defaults to all frequencies without P25-only labels', async 
   const modal = page.getByRole('dialog', { name: /Import Ford Plant Primary/ });
   await expect(modal.getByText('Motorola Capacity Plus Single Site (TRBO)')).toBeVisible();
   await expect(modal.getByText('P25 modulation')).toHaveCount(0);
+  await expect(modal.locator('.radioreference-detection .ui-metric-copy > strong')).toHaveText('5');
+  await expect(modal.locator('.radioreference-frequency-choices input')).toHaveCount(5);
   await expect(modal.locator('input[value="CONTROL_AND_ALTERNATES"]')).toBeDisabled();
   await expect(modal.locator('input[value="ALL"]')).toBeChecked();
   await modal.getByRole('button', { name: 'Review Channel' }).click();

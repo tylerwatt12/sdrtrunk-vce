@@ -19,11 +19,11 @@ import {
   createAliasList,
   createAliasListPopupTrigger as buildAliasListPopupTrigger
 } from './features/alias-list-create.js?v=2';
-import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=20';
-import { createStreamingWorkspace } from './features/streaming.js?v=6';
+import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=21';
+import { createStreamingWorkspace } from './features/streaming.js?v=7';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=6';
-import { createRemoteLinksWorkspace } from './features/remote-links.js?v=9';
-import { createRecordingsFeature } from './features/recordings.js?v=15';
+import { createRemoteLinksWorkspace } from './features/remote-links.js?v=10';
+import { createRecordingsFeature } from './features/recordings.js?v=16';
 import { createAudioDock } from './core/audio-dock.js?v=4';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=5';
@@ -22494,18 +22494,17 @@ function adminScanListDetail(scanList, revision) {
   const description = String(scanList.description || '').trim();
   if (description) detail.append(node('p', 'scan-list-detail-description muted', description));
 
-  const facts = node('dl', 'scan-list-detail-facts ui-facts');
-  const assigned = node('div', 'ui-fact ui-fact-emphasis');
-  const assignedValue = node('dd', '', number(scanList.alias_count || 0));
-  assignedValue.append(node('small', 'ui-fact-help',
+  const facts = metrics([], true);
+  facts.classList.add('scan-list-detail-facts');
+  const assigned = metricCard('Assigned aliases', scanList.alias_count || 0,
+    undefined, { icon: 'icon-aliases' });
+  assigned.querySelector('.ui-metric-copy').append(node('small', 'ui-metric-detail',
     'Existing Aliases explicitly included in this Scan List.'));
-  assigned.append(node('dt', '', 'Assigned aliases'), assignedValue);
-  const defaults = node('div', 'ui-fact ui-fact-emphasis');
-  const defaultsValue = node('dd', '', number(scanList.unmatched_alias_list_count || 0));
-  defaultsValue.append(node('small', 'ui-fact-help',
+  const defaults = metricCard('Alias Lists routing unmatched calls',
+    scanList.unmatched_alias_list_count || 0, undefined, { icon: 'icon-scan-lists' });
+  defaults.querySelector('.ui-metric-copy').append(node('small', 'ui-metric-detail',
     'Alias Lists set to send calls here when no talkgroup or patch-group Alias matches. ' +
     'Their existing Aliases are not automatically included.'));
-  defaults.append(node('dt', '', 'Alias Lists routing unmatched calls'), defaultsValue);
   facts.append(assigned, defaults);
 
   const routes = node('div', 'scan-list-detail-routes');
@@ -24765,7 +24764,7 @@ async function renderStreaming() {
 
 function renderAdminRemoteLinks(renderContext) {
   const workspace = createRemoteLinksWorkspace({
-    node, formField, uiSelectFrame, uiToggleField, uiStatus, iconGlyph,
+    node, metrics, formField, uiSelectFrame, uiToggleField, uiStatus, iconGlyph,
     openReadOnlyModal, requestJson, modalFooter: aliasModalFooter, signal: renderContext.signal
   });
   const close = () => workspace.close();

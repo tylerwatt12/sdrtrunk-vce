@@ -70,6 +70,9 @@ async function openApp(page, theme = 'light') {
   return {
     reads: () => reads,
     updateListener: (changes) => { current = { ...current, listener: { ...current.listener, ...changes } }; },
+    updateSenderConnection: (changes) => {
+      current = { ...current, sender_connection: { ...current.sender_connection, ...changes } };
+    },
     updateFeed: (changes) => { current = { ...current, senders: [{ ...current.senders[0],
       feeds: [{ ...current.senders[0].feeds[0], ...changes }] }] }; }
   };
@@ -92,6 +95,16 @@ for (const [theme, viewport] of [
     expect(manageBox.y).toBeGreaterThanOrEqual(feedBox.y + feedBox.height + 8);
     await expect(card).toContainText('P25 Phase 1');
     await expect(page.locator('.remote-links-overview')).not.toContainText('No optional dependency status reported.');
+    const outbound = page.locator('.remote-links-card').filter({ hasText: 'Send local P25 feeds' });
+    await expect(outbound.locator('.ui-metric-label')).toHaveText('Exported systems');
+    await expect(outbound.locator('.ui-metric strong')).toHaveText('0');
+    await expect(outbound.locator('.ui-fact dt')).toHaveText(['Authentication', 'Last connected']);
+    const outboundBox = await outbound.boundingBox();
+    const metricBox = await outbound.locator('.ui-metric').boundingBox();
+    const factBox = await outbound.locator('.ui-fact').first().boundingBox();
+    expect(metricBox.x - outboundBox.x).toBeGreaterThanOrEqual(12);
+    expect(outboundBox.x + outboundBox.width - metricBox.x - metricBox.width).toBeGreaterThanOrEqual(12);
+    expect(Math.abs(metricBox.x - factBox.x)).toBeLessThan(1);
     await expect(page.locator('.remote-links-card-header svg')).toHaveCount(0);
     await expect(card.locator('.remote-links-feed-title svg')).toHaveCount(1);
     await expect(page.locator('#icon-cloud path')).toHaveAttribute('fill', 'currentColor');
@@ -195,13 +208,22 @@ test('new credential is announced and guarded until its secret is copied', async
 
 test('polling refreshes status and restores a focused remote action', async ({ page }) => {
   const app = await openApp(page);
+  const outbound = page.locator('.remote-links-card').filter({ hasText: 'Send local P25 feeds' });
+  await expect(outbound.locator('.ui-metric strong')).toHaveText('0');
   const action = page.getByRole('button', { name: 'Configure listener' });
   await action.focus();
   const handle = await action.elementHandle();
   app.updateListener({ enabled: true, state: 'LISTENING' });
+  app.updateSenderConnection({ credential_configured: true,
+    exported_channel_configuration_ids: ['local-channel-1', 'local-channel-2'] });
   await expect(page.locator('.remote-links-summary')).toContainText('Listening', { timeout: 7000 });
+  await expect(outbound.locator('.ui-metric strong')).toHaveText('2');
+  await expect(outbound.locator('.ui-fact dd')).toHaveText(['Credential saved', 'Never']);
   expect(await handle.evaluate((element) => element.isConnected)).toBe(false);
   await expect(action).toBeFocused();
+  app.updateSenderConnection({ exported_channel_configuration_ids: [] });
+  await expect(outbound.locator('.ui-metric strong')).toHaveText('0', { timeout: 7000 });
+  await expect(outbound.locator('.ui-fact dd')).toHaveText(['Credential saved', 'Never']);
   await action.click();
   await expect(page.getByRole('dialog', { name: 'Remote listener' })).toBeVisible();
 });

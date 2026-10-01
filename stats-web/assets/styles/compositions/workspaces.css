@@ -215,23 +215,18 @@
 
 .ui-fact > dt {
   color: var(--muted);
-  font-size: var(--font-size-meta);
-  font-weight: 700;
-  letter-spacing: .035em;
+  font-size: var(--font-size-label);
+  font-weight: var(--metric-value-weight);
+  line-height: var(--line-height-body);
 }
 
 .ui-fact > dd {
   min-width: 0;
   margin: 0;
   color: var(--ink);
-  font-size: var(--font-size-body);
-  font-weight: var(--font-weight-medium);
+  font-size: var(--metric-state-size);
+  font-weight: var(--metric-value-weight);
   overflow-wrap: anywhere;
-}
-
-.ui-fact-emphasis > dd {
-  font-size: var(--font-size-section-title);
-  font-variant-numeric: tabular-nums;
 }
 
 .ui-fact-help {
@@ -283,15 +278,24 @@
 .ui-section > .ui-metric-grid-embedded { padding: var(--space-3); }
 .ui-metric-grid-fit { grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); }
 
+/* Boxed metadata and counts share one card foundation. Definition lists keep
+   text, dates, and linked identities at a readable size; record and map rows
+   retain their unboxed composition overrides. */
+.ui-facts > .ui-fact,
 .ui-metric {
   min-width: 0;
-  min-height: var(--metric-min-height);
-  display: flex;
-  align-items: center;
   padding: var(--space-4);
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-control);
+}
+
+.ui-facts > .ui-fact { gap: var(--space-2); }
+
+.ui-metric {
+  min-height: var(--metric-min-height);
+  display: flex;
+  align-items: center;
 }
 
 .ui-metric-copy {

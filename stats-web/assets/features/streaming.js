@@ -367,13 +367,16 @@ export function createStreamingWorkspace(deps) {
     }
     function drawStatus(row) {
       if (!row) { statusPanel.replaceChildren(feedback('Destination no longer exists.', 'error')); return; }
+      const counters = metrics([
+        ['queued', 'Queued', 'icon-replay'], ['sent', 'Sent / uploaded', 'icon-share'],
+        ['aged_off', 'Aged off', 'icon-skip'], ['errors', 'Errors', 'icon-warning']
+      ].map(([key, label, icon]) => [label, row[key], count(row[key]),
+        { icon, tone: key === 'errors' ? errorTone(row) : 'blue' }]));
       const facts = node('dl', 'ui-facts');
-      for (const [label, value] of [['Queued', count(row.queued)], ['Sent / Uploaded', count(row.sent)],
-        ['Aged off', count(row.aged_off)], ['Errors', count(row.errors)], ['Last error', row.last_error || 'None'],
-        ['Provider', row.provider_label]]) {
+      for (const [label, value] of [['Last error', row.last_error || 'None'], ['Provider', row.provider_label]]) {
         const fact = node('div', 'ui-fact'); fact.append(node('dt', '', label), node('dd', '', value)); facts.append(fact);
       }
-      statusPanel.replaceChildren(uiStatus(row.state_label, statusTone(row)), facts,
+      statusPanel.replaceChildren(uiStatus(row.state_label, statusTone(row)), counters, facts,
         node('p', 'muted', 'Counts describe delivery by this sender, not the dashboard’s “Submitted to Streamer” total.'),
         button('Refresh status', () => void updateStatus()));
     }

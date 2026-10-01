@@ -4,6 +4,7 @@ const { expect, test } = require('@playwright/test');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { expectMetricGridSpacing, expectNoHorizontalOverflow } = require('./fixtures/metric-geometry.cjs');
+const { expectBoxedFacts } = require('./fixtures/fact-geometry.cjs');
 
 const systemKey = 'p25:00001:001';
 const systemPath = `/api/v1/radio-systems/${encodeURIComponent(systemKey)}`;
@@ -12,6 +13,8 @@ const radioKey = 'v1-r-00001-001-30914';
 const channelId = '11111111-1111-4111-8111-111111111111';
 const systemRef = { kind: 'radio_system', key: systemKey };
 const groupRef = { kind: 'talkgroup', radio_system_key: systemKey, identity_key: groupKey };
+const systemName = 'County Public Safety and Regional Emergency Services Communications Network';
+const aliasListName = 'County P25 and Regional Emergency Services Shared Alias List';
 let defaultPreferences;
 
 test.beforeAll(async () => {
@@ -29,7 +32,7 @@ async function mockEntities(page, theme) {
   };
   const identity = {
     radio_system_key: systemKey, protocol: 'P25', wacn: 1, system_id: 1,
-    system_name: 'County Public Safety', radio_system_entity_ref: systemRef,
+    system_name: systemName, radio_system_entity_ref: systemRef,
     first_seen_ms: Date.UTC(2026, 8, 5, 11), last_seen_ms: Date.UTC(2026, 9, 1, 13),
     capabilities: { current_affiliations: true, radio_channel_presence: true,
       group_identities: true, radios: true, activity: true },
@@ -41,7 +44,7 @@ async function mockEntities(page, theme) {
     if (pathname === '/api/v1/auth/session') {
       return respond({ configured: true, authenticated: true, username: 'operator', tier: 'admin',
         primary: true, capabilities: { radio: true, dashboard: true, 'csv-export': true,
-          'admin-aliases': true } });
+          'admin-aliases': true, 'admin-configuration': true } });
     }
     if (pathname === '/api/v1/me/preferences') {
       return route.fulfill({ json: { revision: 1, preferences: {
@@ -54,9 +57,14 @@ async function mockEntities(page, theme) {
       database: { detailed_history_available: true } });
     }
     if (pathname === '/api/v1/channel-catalog') return respond({ revision: 1, channels: [] });
+    if (pathname === '/api/v1/admin/scan-lists') return respond({ revision: 1, scan_lists: [
+      { id: 1, name: 'County Dispatch', alias_count: 124, unmatched_alias_list_count: 2,
+        default: true, published: true },
+      { id: 2, name: 'City Services', alias_count: 38, unmatched_alias_list_count: 0, published: true }
+    ] });
     if (pathname === systemPath) {
       return respond({ ...identity, channels: 1, talkgroups: 180, patch_groups: 0, radios: 1_004,
-        affiliated_radios: 291, channel_names: 'North Simulcast', alias_lists: [{ id: 7, name: 'County P25' }],
+        affiliated_radios: 291, channel_names: 'North Simulcast', alias_lists: [{ id: 7, name: aliasListName }],
         action_counts: ['ACTIVE', 'JOIN', 'REGISTER', 'DENIAL'].map((action, index) =>
           ({ action, observation_count: [136_317, 36_060, 32_789, 553][index] })) });
     }
@@ -83,6 +91,27 @@ async function mockEntities(page, theme) {
   });
 }
 
+test('Scan List details use shared counters and preserve help when selecting another list', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockEntities(page, 'dark');
+  await page.goto('/app.html?view=scan-lists');
+  const summary = page.locator('.scan-list-detail-facts');
+  await expect(summary.locator('.ui-metric-label')).toHaveText([
+    'Assigned aliases', 'Alias Lists routing unmatched calls'
+  ]);
+  await expect(summary.locator('strong')).toHaveText(['124', '2']);
+  await expectMetricGridSpacing(summary, { inset: 0, sectionInset: false });
+  await page.getByRole('button', { name: /City Services.*38 aliases/ }).click();
+  await expect(summary.locator('strong')).toHaveText(['38', '0']);
+  await expect(summary.locator('.ui-metric-detail')).toHaveText([
+    'Existing Aliases explicitly included in this Scan List.',
+    'Alias Lists set to send calls here when no talkgroup or patch-group Alias matches. ' +
+      'Their existing Aliases are not automatically included.'
+  ]);
+  await expect(page.getByRole('link', { name: /Manage.*aliases/ })).toHaveAttribute('href', /scanListId=2/);
+  await expectNoHorizontalOverflow(page);
+});
+
 for (const theme of ['light', 'dark']) {
   for (const width of [1280, 390]) {
     test(`entity stat cards retain one inset and drilldown links in ${theme} at ${width}px`, async ({ page }, testInfo) => {
@@ -95,17 +124,29 @@ for (const theme of ['light', 'dark']) {
       await expect.poll(() => page.locator('html').getAttribute('data-theme'))
         .toBe(theme === 'dark' ? 'dark' : null);
       await expectMetricGridSpacing(page.locator('.system-info-column .ui-metric-grid'));
-      await expect(page.getByRole('link', { name: 'County P25', exact: true }))
+      const systemInfo = page.locator('.system-info-column .ui-section')
+        .filter({ has: page.locator('.ui-section-title:text-is("System Info")') });
+      await expectBoxedFacts(systemInfo.locator(':scope > dl.ui-facts'),
+        page.locator('.system-info-column .ui-metric').first());
+      await expect(systemInfo.locator('dt')).toHaveText(['Radio System', 'Alias Lists', 'First Seen', 'Last Seen']);
+      await expect(page.getByRole('link', { name: aliasListName, exact: true }))
         .toHaveAttribute('href', /view=aliases.*list=7/);
+      await systemInfo.getByRole('link', { name: aliasListName, exact: true }).focus();
+      await expect(systemInfo.getByRole('link', { name: aliasListName, exact: true })).toBeFocused();
       await expect(page.getByRole('link', { name: 'North Simulcast', exact: true }))
         .toHaveAttribute('href', new RegExp(`view=channel.*configuration_id=${channelId}`));
       await expectNoHorizontalOverflow(page);
+      await page.evaluate(() => window.scrollTo(0, 0));
       await page.screenshot({ path: testInfo.outputPath(`radio-system-stat-cards-${theme}-${width}.png`),
         fullPage: true });
 
       await page.goto(`/app.html?view=group-identity&${scope}&identity_key=${groupKey}`);
       await expect(page.locator('.entity-info-layout .ui-metric-grid')).toHaveCount(5);
       await expectMetricGridSpacing(page.locator('.entity-info-layout .ui-metric-grid'));
+      await expectBoxedFacts(page.locator('.entity-info-layout .ui-section > dl.ui-facts'),
+        page.locator('.entity-info-layout .ui-metric:not(.ui-metric-compact)').first());
+      await expect(page.locator('.entity-info-layout .ui-facts a').first())
+        .toHaveAttribute('href', new RegExp(`view=radio-system.*radio_system_key=${encodeURIComponent(systemKey)}`));
       const affiliation = page.locator('.ui-metric').filter({ hasText: 'Currently Affiliated' })
         .getByRole('link', { name: '9', exact: true });
       const destination = new URL(await affiliation.getAttribute('href'), page.url());
@@ -120,6 +161,8 @@ for (const theme of ['light', 'dark']) {
       await page.goto(`/app.html?view=radio&${scope}&identity_key=${radioKey}`);
       await expect(page.locator('.entity-info-standalone .ui-metric-grid')).toHaveCount(3);
       await expectMetricGridSpacing(page.locator('.entity-info-standalone .ui-metric-grid'));
+      await expectBoxedFacts(page.locator('.entity-info-standalone .ui-section > dl.ui-facts'),
+        page.locator('.entity-info-standalone .ui-metric').first());
       await expect(page.getByRole('link', { name: 'County Fire Dispatch', exact: true }))
         .toHaveAttribute('href', new RegExp(`view=group-identity.*identity_key=${groupKey}`));
       await expectNoHorizontalOverflow(page);
