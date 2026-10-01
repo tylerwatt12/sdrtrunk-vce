@@ -874,23 +874,30 @@ async function expectChannelMobileActions(page) {
   await expect(rows).toHaveCount(2);
   for (const row of await rows.all()) {
     const alias = row.locator('td[data-label="Alias List"]');
+    const edit = row.getByRole('button', { name: 'Edit', exact: true });
     const details = row.getByRole('link', { name: 'Details', exact: true });
     const live = row.getByRole('link', { name: 'Live', exact: true });
     const startup = row.locator('.channel-startup-order');
+    await expect(edit).toBeVisible();
     await expect(details).toBeVisible();
     await expect(live).toBeVisible();
     await expect(startup).toHaveCSS('text-align', 'left');
     expect(await startup.evaluate((cell) => getComputedStyle(cell, '::before').textAlign)).toBe('left');
-    const [aliasBox, detailsBox, liveBox, rowBox] = await Promise.all([
-      alias.boundingBox(), details.boundingBox(), live.boundingBox(), row.boundingBox()
+    const [aliasBox, editBox, detailsBox, liveBox, rowBox] = await Promise.all([
+      alias.boundingBox(), edit.boundingBox(), details.boundingBox(), live.boundingBox(), row.boundingBox()
     ]);
-    for (const actionBox of [detailsBox, liveBox]) {
+    for (const actionBox of [editBox, detailsBox, liveBox]) {
       expect(actionBox.y).toBeGreaterThanOrEqual(aliasBox.y + aliasBox.height);
       expect(actionBox.height).toBeGreaterThanOrEqual(40);
+      expect(actionBox.height).toBe(40);
       expect(actionBox.x).toBeGreaterThanOrEqual(rowBox.x);
       expect(actionBox.x + actionBox.width).toBeLessThanOrEqual(rowBox.x + rowBox.width);
     }
     expect(Math.abs(detailsBox.width - liveBox.width)).toBeLessThanOrEqual(1);
+    const actionGap = liveBox.x - detailsBox.x - detailsBox.width;
+    expect(Math.abs(editBox.width - detailsBox.width - actionGap - liveBox.width)).toBeLessThanOrEqual(1);
+    expect(Math.abs(editBox.x - detailsBox.x)).toBeLessThanOrEqual(1);
+    expect(detailsBox.y).toBeGreaterThan(editBox.y + editBox.height);
     expect(detailsBox.y).toBe(liveBox.y);
     expect(liveBox.x).toBeGreaterThan(detailsBox.x + detailsBox.width);
   }
@@ -918,10 +925,10 @@ test('channel protocol groups expose an accessible full-width disclosure', async
   await page.setViewportSize({ width: 960, height: 720 });
   await page.goto('/design-system.html?theme=light&view=channels');
   const disclosure = page.locator('.table-row-group-disclosure[data-row-group="gallery-group-1"]');
-  await expect(disclosure).toHaveAccessibleName('Collapse NBFM');
+  await expect(disclosure).toHaveAccessibleName('Collapse P25 Trunked');
   await expect(disclosure).toHaveAttribute('aria-expanded', 'true');
   await disclosure.click();
-  await expect(disclosure).toHaveAccessibleName('Expand NBFM');
+  await expect(disclosure).toHaveAccessibleName('Expand P25 Trunked');
   await expect(disclosure).toHaveAttribute('aria-expanded', 'false');
   await expect(page.locator('tr[data-row-group="gallery-group-1"].ui-table-row-group-item')).toBeHidden();
 });

@@ -193,6 +193,16 @@ test('editing a channel opens and creates the selected Alias List without losing
   await page.goto(`/app.html?view=channel-setup&channel=${configurationId}`);
   const dialog = page.getByRole('dialog', { name: 'Edit Test channel' });
   await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  const edit = page.locator(`tr[data-id="${configurationId}"]`)
+    .getByRole('button', { name: 'Edit', exact: true });
+  await edit.focus();
+  await page.keyboard.press('Enter');
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(edit).toBeFocused();
+  await edit.click();
+  await expect(dialog).toBeVisible();
   const select = dialog.getByLabel('Alias List', { exact: true });
   const link = dialog.getByRole('link', { name: 'Open Alias List' });
   await expect(link).toHaveAttribute('href', /view=aliases&list=1$/);
@@ -315,7 +325,8 @@ test('remote P25 editor shows applicable controls and preserves its linked sourc
     }
   });
 
-  await page.goto(`/app.html?view=channel-setup&channel=${remoteId}`);
+  await page.goto('/app.html?view=channel-setup');
+  await page.locator(`tr[data-id="${remoteId}"]`).getByRole('button', { name: 'Edit', exact: true }).click();
   const remoteDialog = page.getByRole('dialog', { name: 'Edit Remote Control' });
   await expect(remoteDialog).toBeVisible();
   await expect(remoteDialog.getByLabel('Maximum traffic channels')).toHaveValue('12');
@@ -332,6 +343,7 @@ test('remote P25 editor shows applicable controls and preserves its linked sourc
   await remoteDialog.getByLabel('Name', { exact: true }).fill('Remote Control Renamed');
   await remoteDialog.getByRole('button', { name: 'Save changes' }).click();
   await expect(remoteDialog).toHaveCount(0);
+  await expect(page.locator(`tr[data-id="${remoteId}"] .channel-edit-button`)).toBeFocused();
   expect(savedRemote).not.toBeNull();
   expect(savedRemote.name).toBe('Remote Control Renamed');
   expect(savedRemote.source).toMatchObject({ source_type: 'REMOTE', sender_id: senderId,
@@ -462,6 +474,7 @@ test('startup-order view moves keyed rows without replacing the page or losing p
   await expect(restrictedAliasCell.locator('a')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Grouped', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(catalog.locator('.table-row-group-disclosure')).toHaveCount(3);
+  await expect(catalog.locator('.table-row-group-label')).toHaveText(['P25 Trunked', 'DMR Trunked', 'FM']);
 
   await page.getByRole('button', { name: 'Startup order', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Startup order', exact: true }))

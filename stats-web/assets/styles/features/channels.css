@@ -528,6 +528,15 @@
     border-top: 1px solid var(--table-rule);
   }
 
+  .channel-catalog-table .channel-row-links:has(.channel-edit-button) {
+    grid-auto-flow: row;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .channel-catalog-table .channel-row-links .channel-edit-button {
+    grid-column: 1 / -1;
+  }
+
   .channel-admin-catalog td.channel-startup-order {
     text-align: left;
   }

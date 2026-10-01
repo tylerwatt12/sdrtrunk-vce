@@ -157,7 +157,7 @@ vm.runInContext(`
 assert.deepEqual(JSON.parse(vm.runInContext(
   "JSON.stringify(channelProtocolGroup({ protocol_id: 'p25-phase2', protocol_label: 'P25 Phase 2' }))",
   protocolContext)),
-{ key: 'p25-phase2', label: 'P25 Phase 2' });
+{ key: 'p25-trunked', label: 'P25 Trunked' });
 assert.deepEqual(JSON.parse(vm.runInContext(
   "JSON.stringify(channelProtocolGroup({ protocol_id: 'unsupported', protocol_label: 'Legacy Decoder' }))",
   protocolContext)), { key: 'unsupported.legacy-decoder', label: 'Legacy Decoder' });
@@ -165,7 +165,25 @@ assert.deepEqual(JSON.parse(vm.runInContext(`JSON.stringify([
   { name: 'Zulu', protocol_id: 'p25-phase2', protocol_label: 'P25 Phase 2' },
   { name: 'Bravo', protocol_id: 'nbfm', protocol_label: 'NBFM' },
   { name: 'Alpha', protocol_id: 'nbfm', protocol_label: 'NBFM' }
-].sort(channelProtocolOrder).map((row) => row.name))`, protocolContext)), ['Alpha', 'Bravo', 'Zulu']);
+].sort(channelProtocolOrder).map((row) => row.name))`, protocolContext)), ['Zulu', 'Alpha', 'Bravo']);
+const protocolGroups = JSON.parse(vm.runInContext(`JSON.stringify([
+  { protocol_id: 'am', protocol_label: 'AM' },
+  { protocol_id: 'unsupported', protocol_label: 'Legacy Decoder' },
+  { protocol_id: 'nxdn', protocol_label: 'NXDN', channel_kind: 'CONVENTIONAL' },
+  { protocol_id: 'dmr', protocol_label: 'DMR', channel_kind: 'CONVENTIONAL' },
+  { protocol_id: 'p25-conventional', protocol_label: 'P25 Conventional' },
+  { protocol_id: 'nbfm', protocol_label: 'NBFM' },
+  { protocol_id: 'nxdn', protocol_label: 'NXDN', channel_kind: 'TRUNKED' },
+  { protocol_id: 'p25-phase1', protocol_label: 'P25 Phase 1', name: 'Alpha' },
+  { protocol_id: 'dmr', protocol_label: 'DMR', channel_kind: 'TRUNKED' },
+  { protocol_id: 'p25-phase2', protocol_label: 'P25 Phase 2', name: 'Bravo' }
+].sort(channelProtocolOrder).map(channelProtocolGroup))`, protocolContext));
+assert.deepEqual(protocolGroups.map((group) => group.label), [
+  'P25 Trunked', 'P25 Trunked', 'P25 Conventional', 'DMR Trunked', 'DMR Conventional',
+  'NXDN Trunked', 'NXDN Conventional', 'FM', 'AM', 'Legacy Decoder'
+], 'Channel groups follow receiver protocol order and leave compatibility groups last');
+assert.equal(protocolGroups[0].key, protocolGroups[1].key,
+  'Both P25 trunked profiles share one group');
 const startupRows = JSON.parse(vm.runInContext(`JSON.stringify([
   { configuration_id: 'off-zulu', name: 'Zulu', protocol_id: 'p25', auto_start_order: null },
   { configuration_id: 'third', name: 'Third', protocol_id: 'nbfm', auto_start_order: 3 },

@@ -19392,6 +19392,13 @@ function channelViewLabel(row, context = '') {
 
 function channelInlineNavigation(row, nameLinksToDetails = false) {
   const links = node('span', 'channel-row-links');
+  if (row.editable !== false) {
+    const edit = uiActionButton('Edit', 'icon-edit', () =>
+      openChannelEditorModal('edit', row.configuration_id),
+      'ui-button ui-button-secondary channel-edit-button');
+    edit.title = `Edit ${row.name || 'channel'}`;
+    links.append(edit);
+  }
   if (!nameLinksToDetails) {
     const details = anchor(fragment(iconGlyph('icon-open-details'), node('span', '', 'Details')),
       href('channel', { configuration_id: row.configuration_id }), 'ui-button ui-button-secondary');
@@ -19473,7 +19480,7 @@ function channelAdminColumns(selected, state, selectionChanged, renderSelectionH
       const summary = node('div', 'channel-name-summary');
       let name;
       if (row.editable !== false) {
-        const edit = node('button', 'link-button channel-edit-button', row.name || 'Unnamed channel');
+        const edit = node('button', 'link-button channel-edit-name', row.name || 'Unnamed channel');
         edit.type = 'button';
         edit.addEventListener('click', () => openChannelEditorModal('edit', row.configuration_id));
         name = edit;
@@ -19549,6 +19556,18 @@ function channelAdminColumns(selected, state, selectionChanged, renderSelectionH
 function channelProtocolGroup(row) {
   const label = String(row.protocol_label || protocolFamily(row) || 'Other').trim() || 'Other';
   const protocolId = String(row.protocol_id || '').trim().toLowerCase();
+  if (protocolId === 'p25-phase1' || protocolId === 'p25-phase2') {
+    return { key: 'p25-trunked', label: 'P25 Trunked' };
+  }
+  if (protocolId === 'p25-conventional') return { key: protocolId, label: 'P25 Conventional' };
+  if (protocolId === 'dmr' || protocolId === 'nxdn') {
+    const kind = String(row.channel_kind || row.settings?.channel_mode || '').toUpperCase();
+    if (kind === 'TRUNKED' || kind === 'CONVENTIONAL') {
+      return { key: `${protocolId}-${kind.toLowerCase()}`,
+        label: `${protocolId.toUpperCase()} ${kind === 'TRUNKED' ? 'Trunked' : 'Conventional'}` };
+    }
+  }
+  if (protocolId === 'nbfm') return { key: protocolId, label: 'FM' };
   if (protocolId && protocolId !== 'unsupported') return { key: protocolId, label };
   const unsupportedLabel = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
     .slice(0, 51).replace(/-+$/g, '') || 'other';
@@ -19558,7 +19577,14 @@ function channelProtocolGroup(row) {
 function channelProtocolOrder(left, right) {
   const leftGroup = channelProtocolGroup(left);
   const rightGroup = channelProtocolGroup(right);
-  const byProtocol = leftGroup.label.localeCompare(
+  const groupOrder = {
+    'p25-trunked': 0, 'p25-conventional': 1,
+    'dmr-trunked': 2, 'dmr-conventional': 3, dmr: 3,
+    'nxdn-trunked': 4, 'nxdn-conventional': 5, nxdn: 5,
+    nbfm: 6, am: 7
+  };
+  const byProtocol = (groupOrder[leftGroup.key] ?? 8) - (groupOrder[rightGroup.key] ?? 8) ||
+    leftGroup.label.localeCompare(
     rightGroup.label, undefined, { numeric: true, sensitivity: 'base' }) ||
     leftGroup.key.localeCompare(rightGroup.key);
   if (byProtocol) return byProtocol;
@@ -20192,7 +20218,8 @@ async function renderModernChannelCatalog(renderContext) {
         (activeStatus === 'all' || activeStatus === 'running' && row.processing_state === 'RUNNING' ||
           activeStatus === 'stopped' && row.processing_state !== 'RUNNING' ||
           activeStatus === 'auto-start' && row.auto_start_order != null) &&
-        (!term || [row.name, row.system, row.site, row.protocol_label, row.alias_list_name,
+        (!term || [row.name, row.system, row.site, row.protocol_label,
+          channelProtocolGroup(row).label, row.alias_list_name,
           channelAdminFrequencyList(row.frequencies_hz)].some((value) =>
             String(value || '').toLowerCase().includes(term))));
       return rows.sort(activeCatalogView === 'auto-start' ? channelAutoStartOrder : channelProtocolOrder);
@@ -20948,7 +20975,9 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
   let squelchTuner = null;
   const modal = openReadOnlyModal(editing ? 'Edit Channel' : 'Create Channel', loading, {
     id: `${mode}-channel-${configurationId || 'new'}`, className: 'channel-editor-modal',
-    returnFocusSelector: editing ? `.channel-edit-button` : '.channel-admin-toolbar .ui-button-primary',
+    returnFocusSelector: editing ?
+      `tr[data-id="${CSS.escape(configurationId)}"] .channel-edit-button` :
+      '.channel-admin-toolbar .ui-button-primary',
     cleanup: () => squelchTuner?.close()
   });
   if (!modal) return;
@@ -21230,8 +21259,8 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
           });
           revision = Number(result.revision);
           modal.setDirty(false);
-          closeReadOnlyModal(true);
           await renderChannelSetup();
+          if (activeReadOnlyModal === modal.state) closeReadOnlyModal(true);
         } catch (error) {
           aliasMutationError(errors, error, () => {
             modal.setDirty(false);
