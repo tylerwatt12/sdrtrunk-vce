@@ -49,6 +49,8 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
     private volatile boolean mEnabled = true;
     private volatile OperatorState mOperatorState = OperatorState.LIVE;
     private volatile Thread mRestoreAllocationThread;
+    private volatile boolean mDiscoveryHeld;
+    private volatile long mOperatorGeneration;
     private String mErrorMessage;
     private List<IDiscoveredTunerStatusListener> mListeners = new CopyOnWriteArrayList<>();
     private final ReentrantLock mAllocationLifecycleLock = new ReentrantLock();
@@ -144,6 +146,10 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
         return mOperatorState;
     }
 
+    long operatorGeneration() { return mOperatorGeneration; }
+    boolean isDiscoveryHeld() { return mDiscoveryHeld; }
+    void setDiscoveryHeld(boolean held) { mDiscoveryHeld = held; }
+
     /**
      * Gates allocation before a related device starts.  RSPduo master mode can start tuner 2 from tuner 1's status
      * listener, so both logical tuners must be placed in Setup before either status change is published.
@@ -154,6 +160,7 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
 
         try
         {
+            mOperatorGeneration++;
             mRestoreAllocationThread = null;
             mOperatorState = OperatorState.SETUP;
         }
@@ -177,6 +184,7 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
 
         try
         {
+            mOperatorGeneration++;
             mRestoreAllocationThread = null;
             mOperatorState = OperatorState.SETUP;
             if(!mEnabled || !isAvailable() || !hasTuner())
@@ -217,6 +225,7 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
 
         try
         {
+            mOperatorGeneration++;
             if(!mEnabled || !isAvailable() || !hasTuner())
             {
                 return false;
@@ -238,6 +247,7 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
 
         try
         {
+            mOperatorGeneration++;
             if(!mEnabled)
             {
                 return false;
@@ -295,6 +305,7 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
 
         try
         {
+            mOperatorGeneration++;
             //If there was a change in state
             if(mEnabled ^ enabled)
             {

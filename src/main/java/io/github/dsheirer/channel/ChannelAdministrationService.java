@@ -12,6 +12,11 @@
 package io.github.dsheirer.channel;
 
 import io.github.dsheirer.alias.AliasListDefinition;
+import io.github.dsheirer.alias.AliasConfigurationSnapshot;
+import io.github.dsheirer.alias.AliasAdministrationService;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25;
+import io.github.dsheirer.scanlist.ScanListConfiguration;
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.configuration.ChannelConfigurationSnapshot;
 import io.github.dsheirer.configuration.ConfigurationManager;
@@ -232,6 +237,165 @@ public final class ChannelAdministrationService
             return new MutationTarget(Set.of(created.getConfigurationId()), List.of(created.getConfigurationId()));
         }));
     }
+
+    /** Saved frequencies remain reserved even when their channel is stopped. */
+    public List<DiscoveryFrequencyMatch> discoveryFrequencyMatches(long frequencyHz)
+    {
+        if(frequencyHz <= 0) throw new IllegalArgumentException("Frequency must be positive");
+        return onConfigurationThread(() ->
+        {
+            List<DiscoveryFrequencyMatch> matches = new ArrayList<>();
+            for(Channel channel: mConfigurationManager.getChannelModel().getChannels())
+            {
+                ChannelDefinition definition = mCodec.fromChannel(channel);
+                int halfBandwidth = channel.getDecodeConfiguration().getChannelSpecification().getBandwidth() / 2;
+                Set<Long> frequencies = new HashSet<>(definition.source().frequenciesHz());
+                frequencies.addAll(definition.observed().learnedControlFrequenciesHz());
+                definition.frequencyMap().forEach(entry -> frequencies.add(entry.downlinkHz()));
+                if(frequencies.stream().anyMatch(value -> value > 0 && Math.abs(value - frequencyHz) <= halfBandwidth))
+                    matches.add(new DiscoveryFrequencyMatch(channel.getConfigurationId(), channel.getName(),
+                        channel.getSystem(), channel.getSite(), "configured"));
+            }
+            return List.copyOf(matches);
+        });
+    }
+
+    public DiscoveryReview discoveryReview(String protocolId, long frequencyHz, String preferredTuner,
+                                           P25SiteIdentity identity, String modulation)
+    {
+        return onConfigurationThread(() ->
+        {
+            ChannelProtocolRegistry.Profile profile = discoveryProfile(protocolId);
+            List<DiscoveryAliasList> lists = discoveryAliasLists(profile, identity);
+            Long suggested = lists.size() == 1 ? lists.getFirst().id() : null;
+            String system = identity != null ? String.format("P25 %05X-%03X", identity.wacn(), identity.system()) : null;
+            String site = identity != null ? String.format("Site %02X-%02X", identity.rfss(), identity.site()) : null;
+            Map<String,Object> settings = new LinkedHashMap<>(profile.defaultSettings());
+            if(identity != null)
+            {
+                settings.put("modulation", modulation);
+                settings.put("learn_announced_control_channels", true);
+            }
+            ChannelDefinition template = new ChannelDefinition(null, protocolId, system, site,
+                identity != null ? site : String.format(java.util.Locale.ROOT, "%s %.6f MHz", profile.label(),
+                    frequencyHz / 1_000_000.0), null, suggested != null ? suggested : 0,
+                new ChannelDefinition.Source(List.of(frequencyHz), null, null,
+                    identity != null ? frequencyHz : null, preferredTuner, null), settings,
+                List.of(), List.of(), List.of(), List.of(), ChannelDefinition.Observed.EMPTY);
+            return new DiscoveryReview(revision(), template, lists, suggested,
+                identity != null ? system : "Analog Channels");
+        });
+    }
+
+    private ChannelProtocolRegistry.Profile discoveryProfile(String protocolId)
+    {
+        if(!Set.of("p25-phase1", "am", "nbfm").contains(protocolId))
+            throw new IllegalArgumentException("This protocol is not available for spectrum channel creation");
+        return mProtocolRegistry.require(protocolId);
+    }
+
+    private List<DiscoveryAliasList> discoveryAliasLists(ChannelProtocolRegistry.Profile profile,
+                                                       P25SiteIdentity identity)
+    {
+        Set<Long> matchingIds = new HashSet<>();
+        if(identity != null)
+            for(Channel channel: mConfigurationManager.getChannelModel().getChannels())
+            {
+                P25SiteIdentity known = channel.getP25SiteIdentity();
+                if(known != null && known.wacn() == identity.wacn() && known.system() == identity.system())
+                    matchingIds.add(channel.getAliasListId());
+            }
+        return mConfigurationManager.getAliasModel().aliasListDefinitions().stream()
+            .filter(list -> list.getFamily() == profile.aliasFamily() &&
+                (identity == null || matchingIds.contains(list.getId())))
+            .map(list -> new DiscoveryAliasList(list.getId(), list.getName(), identity != null))
+            .sorted(Comparator.comparing(DiscoveryAliasList::name, String.CASE_INSENSITIVE_ORDER)).toList();
+    }
+
+    /** Identity is supplied by the receiver's probe, never by a browser channel document. */
+    public DiscoveryCreated createDiscovered(ChannelDefinition definition, P25SiteIdentity identity,
+                                               String newAliasListName, long expectedRevision)
+    {
+        return admitted(() -> onConfigurationThread(() -> mConfigurationManager.applyConfigurationMutation(() ->
+        {
+            requireRevision(expectedRevision);
+            ChannelProtocolRegistry.Profile profile = discoveryProfile(definition.protocolId());
+            if("p25-phase1".equals(profile.id()) != (identity != null))
+                throw new IllegalArgumentException("A confirmed P25 identity is required");
+            if(definition.source().frequenciesHz().size() != 1 ||
+                !discoveryFrequencyMatches(definition.source().frequenciesHz().getFirst()).isEmpty())
+                throw new IllegalStateException("This frequency already belongs to a saved channel");
+            if(identity != null && mConfigurationManager.getChannelModel().getChannels().stream()
+                .anyMatch(channel -> identity.equals(channel.getP25SiteIdentity())))
+                throw new IllegalStateException("This P25 site already has a saved channel");
+            AliasConfigurationSnapshot aliases = mConfigurationManager.createDetachedAliasConfigurationSnapshot();
+            boolean newList = definition.aliasListId() == 0;
+            AliasListDefinition selected;
+            if(newList)
+            {
+                if(identity != null && !discoveryAliasLists(profile, identity).isEmpty())
+                    throw new IllegalArgumentException("Use an Alias List matching this P25 system");
+                String name = newAliasListName != null ? newAliasListName.strip() : "";
+                if(name.isBlank() || name.length() > AliasAdministrationService.MAX_ALIAS_LIST_NAME_LENGTH)
+                    throw new IllegalArgumentException("Alias List name must contain between 1 and 25 characters");
+                if(aliases.definitions().stream().anyMatch(list -> name.equalsIgnoreCase(list.getName())))
+                    throw new IllegalArgumentException("An Alias List with this name already exists");
+                selected = new AliasListDefinition(name, profile.aliasFamily());
+                selected.setId(mConfigurationManager.nextAliasListIds(aliases.definitions().stream()
+                    .map(AliasListDefinition::getId).toList(), 1).getFirst());
+                List<AliasListDefinition> definitions = new ArrayList<>(aliases.definitions());
+                definitions.add(selected);
+                ScanListConfiguration scans = aliases.scanLists();
+                Set<Long> defaultMembership = Set.of(scans.defaultScanList().getId());
+                Map<Long,Set<Long>> unmatched = new HashMap<>(scans.unmatchedAliasListMemberships());
+                Map<Long,Set<Long>> newAliases = new HashMap<>(scans.newAliasListMemberships());
+                unmatched.put(selected.getId(), defaultMembership);
+                newAliases.put(selected.getId(), defaultMembership);
+                aliases = new AliasConfigurationSnapshot(definitions, aliases.aliases(),
+                    new ScanListConfiguration(scans.scanLists(), scans.aliasMemberships(), unmatched, newAliases));
+            }
+            else
+            {
+                if(discoveryAliasLists(profile, identity).stream()
+                    .noneMatch(list -> list.id() == definition.aliasListId()))
+                    throw new IllegalArgumentException("Choose a compatible Alias List for this system");
+                selected = requireAliasList(definition.aliasListId());
+            }
+            ChannelDefinition normalized = new ChannelDefinition(null, definition.protocolId(), definition.system(),
+                definition.site(), definition.name(), null, selected.getId(), definition.source(), definition.settings(),
+                List.of(), List.of(), List.of(), List.of(), ChannelDefinition.Observed.EMPTY);
+            Channel created = mCodec.toChannel(normalized, selected, null);
+            if(created.getDecodeConfiguration() instanceof DecodeConfigP25 p25)
+            {
+                p25.setLearnAnnouncedControlChannels(true);
+                created.setP25SiteIdentity(identity);
+            }
+            List<Channel> channels = detachedChannels(false);
+            created.setAutoStart(true);
+            created.setAutoStartOrder(effectiveAutoStartIds(channels).size() + 1);
+            channels.add(created);
+            try
+            {
+                if(newList)
+                    mConfigurationManager.commitAndPublishDiscoveredChannel(aliases,
+                        new ChannelConfigurationSnapshot(channels), created.getConfigurationId());
+                else
+                    mConfigurationManager.commitAndPublishChannelConfiguration(new ChannelConfigurationSnapshot(channels),
+                        Set.of(created.getConfigurationId()), false);
+            }
+            catch(ConfigurationManager.ConfigurationCommitException exception)
+            {
+                throw new PersistenceException("The channel could not be saved", exception);
+            }
+            return new DiscoveryCreated(created.getConfigurationId(), selected.getId());
+        })));
+    }
+
+    public record DiscoveryFrequencyMatch(String configurationId, String name, String system, String site, String kind) {}
+    public record DiscoveryAliasList(long id, String name, boolean matched) {}
+    public record DiscoveryReview(long revision, ChannelDefinition template, List<DiscoveryAliasList> aliasLists,
+                                  Long suggestedAliasListId, String defaultNewAliasListName) {}
+    public record DiscoveryCreated(String configurationId, long aliasListId) {}
 
     public MutationResult update(String configurationId, ChannelDefinition definition, long expectedRevision)
     {

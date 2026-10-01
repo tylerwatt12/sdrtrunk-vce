@@ -69,6 +69,7 @@ import io.github.dsheirer.web.auth.WebAuthenticationService;
 import io.github.dsheirer.web.auth.WebCapability;
 import io.github.dsheirer.web.http.AliasAdminHttpController;
 import io.github.dsheirer.web.http.ChannelAdminHttpController;
+import io.github.dsheirer.web.http.SpectrumDiscoveryHttpController;
 import io.github.dsheirer.web.http.CallMatchingHttpController;
 import io.github.dsheirer.web.http.MapSnapshotHttpController;
 import io.github.dsheirer.web.http.OperationalPreferencesHttpController;
@@ -186,6 +187,7 @@ public class StatsWebServerService implements AutoCloseable
     private final TunerSettingsService mTunerSettingsService;
     private final TunerManager mTunerManager;
     private final FrequencyListenService mFrequencyListenService;
+    private final SpectrumDiscoveryService mSpectrumDiscoveryService;
     private final ReceiverHealthService mReceiverHealthService;
     private final SupportBundleService mSupportBundleService;
     private final StatsLiveEventHub mDecodeEventHub = new StatsLiveEventHub(32, 256);
@@ -385,6 +387,9 @@ public class StatsWebServerService implements AutoCloseable
             new TunerAdministrationService(tunerManager, mTunerDiagnosticService, mTunerSettingsService) : null;
         mFrequencyListenService = mTunerDiagnosticService != null ?
             new FrequencyListenService(mTunerDiagnosticService) : null;
+        mSpectrumDiscoveryService = mTunerAdministrationService != null && mChannelAdministrationService != null ?
+            new SpectrumDiscoveryService(mChannelAdministrationService, mTunerAdministrationService,
+                mTunerDiagnosticService, mTunerSettingsService, mDatabase) : null;
         mLiveService = new StatsLiveService(channelProcessingManager, mEntityCatalog,
             remoteLinkAdministrationService);
         mWebAccessDatabasePath = SdrTrunkDatabasePath.getDatabasePath(mUserPreferences);
@@ -902,6 +907,9 @@ public class StatsWebServerService implements AutoCloseable
                 WebCapability.RADIO_VIEW, channelController::handleCatalog));
             server.createContext(ChannelAdminHttpController.PATH, mWebRequestSecurity.protectApi(
                 WebCapability.ADMIN_CHANNELS, channelController::handle));
+            if(mSpectrumDiscoveryService != null)
+                server.createContext(SpectrumDiscoveryHttpController.PATH, mWebRequestSecurity.protectApi(
+                    WebCapability.ADMIN_CHANNELS, new SpectrumDiscoveryHttpController(mSpectrumDiscoveryService)::handle));
         }
 
         RadioReferenceHttpController radioReferenceController = new RadioReferenceHttpController(
@@ -1087,6 +1095,7 @@ public class StatsWebServerService implements AutoCloseable
 
     private void stopActiveListener()
     {
+        if(mSpectrumDiscoveryService != null) mSpectrumDiscoveryService.closeActiveSession();
         ListenerRuntime listener = mListener;
         mListener = null;
 
@@ -2484,6 +2493,7 @@ public class StatsWebServerService implements AutoCloseable
         // If this cannot quiesce, leave the rest of the web service intact so shutdown can be retried safely.
         if(mTunerSettingsService != null)
         {
+            if(mSpectrumDiscoveryService != null) mSpectrumDiscoveryService.close();
             mTunerSettingsService.close();
         }
 

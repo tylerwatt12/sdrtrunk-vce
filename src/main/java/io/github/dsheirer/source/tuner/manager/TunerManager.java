@@ -948,8 +948,10 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                 Tuner tuner = discoveredTuner.getTuner();
                 TunerController tunerController = tuner.getTunerController();
                 long previousCenterFrequency = tunerController.getFrequency();
-                TunerChannelSource source = polyphaseChannelSourceManager.getSource(tunerChannel,
-                    channelSpecification, threadName, tunerChannels, allocationMode);
+                TunerChannelSource source = discoveredTuner.isDiscoveryHeld() ?
+                    polyphaseChannelSourceManager.getSourceAtCurrentCenter(tunerChannel, channelSpecification,
+                        threadName) : polyphaseChannelSourceManager.getSource(tunerChannel,
+                        channelSpecification, threadName, tunerChannels, allocationMode);
 
                 long currentCenterFrequency = tunerController.getFrequency();
 

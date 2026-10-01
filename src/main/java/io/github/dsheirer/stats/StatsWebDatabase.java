@@ -3087,6 +3087,30 @@ class StatsWebDatabase
         });
     }
 
+    /** Historical serving-site frequencies remain reserved while the saved channel exists. */
+    List<Map<String,Object>> discoveryFrequencyOwners(long frequencyHz)
+    {
+        return read(connection -> queryRows(connection, """
+            SELECT DISTINCT config.configuration_id, config.name, config.system_name AS system,
+                config.site_name AS site, 'known' AS kind
+            FROM configuration_channel config
+            JOIN receiver_channel receiver ON receiver.configuration_id = config.configuration_id
+            WHERE EXISTS (
+                SELECT 1 FROM p25_site_channel_summary frequency
+                JOIN p25_site_channel_tag_summary tag
+                  ON tag.channel_id = frequency.channel_id AND tag.channel_key = frequency.channel_key
+                WHERE frequency.channel_id = receiver.id
+                  AND frequency.downlink_hz BETWEEN ? AND ?
+                  AND tag.tag IN ('CONFIGURED','CONTROL','CURRENT_CONTROL','ALTERNATE_CONTROL','VOICE')
+            ) OR EXISTS (
+                SELECT 1 FROM trunked_site_channel_summary frequency
+                WHERE frequency.channel_id = receiver.id
+                  AND frequency.frequency_hz BETWEEN ? AND ? AND frequency.role_flags != 0
+            )
+            ORDER BY config.configuration_id LIMIT 100
+            """, frequencyHz - 6250, frequencyHz + 6250, frequencyHz - 6250, frequencyHz + 6250));
+    }
+
     private List<Map<String,Object>> queryTrunkedChannelFrequencies(Connection connection,
         WebConfiguredEntityRepository.ConfiguredChannel configured, int limit, int offset) throws SQLException
     {

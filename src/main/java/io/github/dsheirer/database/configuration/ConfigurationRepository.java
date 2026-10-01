@@ -177,6 +177,25 @@ public final class ConfigurationRepository
         });
     }
 
+    /** Saves a newly discovered channel and its optional new Alias List in one transaction. */
+    public synchronized ConfigurationSnapshot commitDiscoveredChannel(AliasConfigurationSnapshot aliases,
+                                                                       ChannelConfigurationSnapshot channels)
+        throws IOException, SQLException
+    {
+        AliasConfigurationSnapshot detached = AliasConfigurationSnapshot.detachedCopyOf(aliases);
+        return inTransaction(connection ->
+        {
+            List<BroadcastConfiguration> broadcasts = mChannelAndBroadcastStore.load(connection)
+                .broadcastConfigurations();
+            ConfigurationSnapshotValidator.validateForWrite(new ConfigurationSnapshot(detached.definitions(),
+                detached.aliases(), detached.scanLists(), channels.channels(), broadcasts));
+            mAliasStore.replaceAliases(connection, detached.aliases(), detached.definitions());
+            mScanListStore.replaceConfiguration(connection, detached.scanLists());
+            mChannelAndBroadcastStore.replaceChannels(connection, channels.channels());
+            return load(connection);
+        });
+    }
+
     /** Commits only stream rows, validating every alias/default reference in the same transaction. */
     public synchronized List<BroadcastConfiguration> commitStreamingConfiguration(List<BroadcastConfiguration> proposed)
         throws IOException, SQLException

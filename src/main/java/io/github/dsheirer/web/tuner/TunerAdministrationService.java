@@ -86,6 +86,8 @@ public final class TunerAdministrationService
         return new Snapshot(List.copyOf(items));
     }
 
+    public Item item(DiscoveredTuner tuner) { return project(Objects.requireNonNull(tuner)); }
+
     /**
      * Discovered physical SDR profiles for an external RF planner.  Disabled devices use their saved sample rates;
      * removed/error devices and recordings are not offered as working RF capacity.

@@ -514,6 +514,51 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         }
     }
 
+    /** One persist-before-publish boundary for spectrum channel creation, including listening defaults. */
+    public synchronized void commitAndPublishDiscoveredChannel(AliasConfigurationSnapshot aliases,
+        ChannelConfigurationSnapshot channels, String configurationId)
+    {
+        if(mExternalConfigurationOperation)
+            throw new ConfigurationPublicationException("Configuration saves are suspended until VCE restarts");
+        ConfigurationSnapshot committed;
+        try
+        {
+            saveNow();
+            if(hasDirtyConfiguration()) throw new IllegalStateException("Pending configuration could not be saved");
+            committed = mConfigurationRepository.commitDiscoveredChannel(aliases, channels);
+        }
+        catch(Exception exception)
+        {
+            throw new ConfigurationCommitException("Unable to save discovered channel", exception);
+        }
+        try
+        {
+            publishDiscoveredChannel(committed, configurationId);
+        }
+        catch(RuntimeException | Error failure)
+        {
+            try
+            {
+                publishDiscoveredChannel(mConfigurationRepository.load(), configurationId);
+            }
+            catch(Exception recovery)
+            {
+                failure.addSuppressed(recovery);
+                mExternalConfigurationOperation = true;
+                throw new ConfigurationPublicationException("Channel saved but could not be published; restart VCE",
+                    failure);
+            }
+        }
+    }
+
+    private void publishDiscoveredChannel(ConfigurationSnapshot snapshot, String configurationId)
+    {
+        publishCommittedAliasConfiguration(snapshot.aliasConfiguration(),
+            new AliasConfigurationPublication(Set.of(), true, true, true));
+        publishCommittedChannelConfiguration(new ChannelConfigurationSnapshot(snapshot.channels()),
+            Set.of(configurationId), false);
+    }
+
     private void publishCommittedChannelConfiguration(ChannelConfigurationSnapshot committed,
                                                       Set<String> changedConfigurationIds, boolean autoStartOnly)
     {

@@ -48,6 +48,20 @@ class TunerAdminHttpControllerTest
     Path mTemporaryDirectory;
 
     @Test
+    void browseRouteRequiresExplicitLeaseAndValidMutationBodies() throws Exception
+    {
+        try(ServerFixture fixture = new ServerFixture(new FakeManager()))
+        {
+            String path = TunerAdminHttpController.PATH + "/" +
+                TunerAdministrationService.opaqueId(fixture.mPhysical) + "/browse";
+            assertEquals(405, fixture.send(path, "GET", null).statusCode());
+            assertEquals(400, fixture.send(path, "POST", "{\"unknown\":true}").statusCode());
+            assertEquals(422, fixture.send(path, "POST", "{\"lease_id\":17}").statusCode());
+            assertEquals(422, fixture.send(path, "DELETE", "{}").statusCode());
+        }
+    }
+
+    @Test
     void usbRescanReturnsWithoutWaitingForDiscovery() throws Exception
     {
         FakeManager manager = new FakeManager();

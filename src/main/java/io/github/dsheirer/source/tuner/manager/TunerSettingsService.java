@@ -5,6 +5,8 @@ import io.github.dsheirer.controller.channel.ChannelException;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager.TunerChannelAssignment;
 import io.github.dsheirer.source.tuner.TunerController;
+import io.github.dsheirer.source.tuner.Tuner;
+import io.github.dsheirer.source.tuner.TunerClass;
 import io.github.dsheirer.source.tuner.channel.TunerChannel;
 import io.github.dsheirer.source.tuner.airspy.AirspyTunerConfiguration;
 import io.github.dsheirer.source.tuner.airspy.AirspyTunerController;
@@ -35,14 +37,20 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
+import java.util.function.LongSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -60,6 +68,8 @@ public final class TunerSettingsService implements AutoCloseable
     private final Runnable mPersist;
     private final Predicate<DiscoveredTuner> mContains;
     private final Function<String,DiscoveredTuner> mFind;
+    private final Supplier<List<DiscoveredTuner>> mInventory;
+    private final LongSupplier mClock;
     private final ChannelProcessingManager mChannelProcessingManager;
     private final ThreadPoolExecutor mExecutor;
     private final Map<DiscoveredTuner,String> mTransitions = new ConcurrentHashMap<>();
@@ -67,6 +77,10 @@ public final class TunerSettingsService implements AutoCloseable
     private final Map<DiscoveredTuner,List<RememberedChannel>> mStoppedChannels = new ConcurrentHashMap<>();
     private final Map<DiscoveredTuner,RestoreResult> mRestoreResults = new ConcurrentHashMap<>();
     private final Map<DiscoveredTuner,String> mErrors = new ConcurrentHashMap<>();
+    private final Map<DiscoveredTuner,BrowseSession> mBrowseOwners = new HashMap<>();
+    private final Set<CompletableFuture<?>> mBrowseRequests = ConcurrentHashMap.newKeySet();
+    private final ScheduledExecutorService mBrowseExpiry;
+    private static final long BROWSE_LIFETIME_MS = 30_000;
     private static final int MAXIMUM_REMEMBERED_CHANNELS = 64;
     /** Serializes one-shot setting writes with close; decoder and channel allocation paths never take this lock. */
     private final Object mLifecycleLock = new Object();
@@ -81,7 +95,7 @@ public final class TunerSettingsService implements AutoCloseable
     {
         this(manager.getTunerConfigurationManager()::saveConfigurations,
             manager.getDiscoveredTunerRegistry()::contains, manager.getDiscoveredTunerRegistry()::find,
-            channelProcessingManager);
+            channelProcessingManager, manager.getDiscoveredTunerRegistry()::snapshot);
     }
 
     TunerSettingsService(Runnable persist, Predicate<DiscoveredTuner> contains,
@@ -93,9 +107,25 @@ public final class TunerSettingsService implements AutoCloseable
     TunerSettingsService(Runnable persist, Predicate<DiscoveredTuner> contains,
                          Function<String,DiscoveredTuner> find, ChannelProcessingManager channelProcessingManager)
     {
+        this(persist, contains, find, channelProcessingManager, List::of);
+    }
+
+    TunerSettingsService(Runnable persist, Predicate<DiscoveredTuner> contains,
+                         Function<String,DiscoveredTuner> find, ChannelProcessingManager channelProcessingManager,
+                         Supplier<List<DiscoveredTuner>> inventory)
+    {
+        this(persist, contains, find, channelProcessingManager, inventory, System::currentTimeMillis);
+    }
+
+    TunerSettingsService(Runnable persist, Predicate<DiscoveredTuner> contains,
+                         Function<String,DiscoveredTuner> find, ChannelProcessingManager channelProcessingManager,
+                         Supplier<List<DiscoveredTuner>> inventory, LongSupplier clock)
+    {
         mPersist = Objects.requireNonNull(persist);
         mContains = Objects.requireNonNull(contains);
         mFind = Objects.requireNonNull(find);
+        mInventory = Objects.requireNonNull(inventory);
+        mClock = Objects.requireNonNull(clock);
         mChannelProcessingManager = channelProcessingManager;
         mExecutor = new ThreadPoolExecutor(LIFECYCLE_WORKER_COUNT, LIFECYCLE_WORKER_COUNT, 0L,
             TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(LIFECYCLE_QUEUE_CAPACITY), task ->
@@ -105,6 +135,13 @@ public final class TunerSettingsService implements AutoCloseable
                 thread.setDaemon(true);
                 return thread;
             }, new ThreadPoolExecutor.AbortPolicy());
+        mBrowseExpiry = Executors.newSingleThreadScheduledExecutor(task ->
+        {
+            Thread thread = new Thread(task, "tuner-browse-expiry");
+            thread.setDaemon(true);
+            return thread;
+        });
+        mBrowseExpiry.scheduleWithFixedDelay(this::expireBrowsing, 5, 5, TimeUnit.SECONDS);
     }
 
     public List<TunerSettingCatalog.SettingDescriptor> describe(DiscoveredTuner tuner)
@@ -167,10 +204,32 @@ public final class TunerSettingsService implements AutoCloseable
      */
     public MutationResult set(DiscoveredTuner tuner, String settingId, Object submittedValue)
     {
+        return set(tuner, settingId, submittedValue, null);
+    }
+
+    public MutationResult set(DiscoveredTuner tuner, String settingId, Object submittedValue, String leaseId)
+    {
         synchronized(mLifecycleLock)
         {
             ensureOpen();
             ensurePresent(tuner);
+            if(lifecycleGroup(tuner).stream().anyMatch(DiscoveredTuner::isDiscoveryHeld))
+            {
+                throw new SettingUnavailableException("Signal identification is using this tuner");
+            }
+            BrowseSession owner = mBrowseOwners.get(tuner);
+            if(owner != null && !Objects.equals(owner.id, leaseId))
+            {
+                throw new SettingUnavailableException("Spectrum is using this tuner");
+            }
+            if(leaseId != null && !verifyBrowse(tuner, leaseId))
+            {
+                throw new SettingUnavailableException("Spectrum tuner session expired; reopen Spectrum");
+            }
+            if(owner != null && "frequency_mhz".equals(settingId) && !isIdle(tuner))
+            {
+                throw new SettingUnavailableException("Channels are using this tuner");
+            }
             if(lifecycleGroup(tuner).stream().anyMatch(mLifecycleReservations::contains))
             {
                 throw new SettingUnavailableException("Tuner busy");
@@ -222,6 +281,11 @@ public final class TunerSettingsService implements AutoCloseable
             ensureOpen();
             ensurePresent(tuner);
             Objects.requireNonNull(state);
+            if(lifecycleGroup(tuner).stream().anyMatch(DiscoveredTuner::isDiscoveryHeld))
+            {
+                throw new SettingUnavailableException("Signal identification is using this tuner");
+            }
+            abandonBrowse(tuner);
             String transition = switch(state)
             {
                 case DISABLED -> "disabling";
@@ -243,6 +307,11 @@ public final class TunerSettingsService implements AutoCloseable
         {
             ensureOpen();
             ensurePresent(tuner);
+            if(lifecycleGroup(tuner).stream().anyMatch(DiscoveredTuner::isDiscoveryHeld))
+            {
+                throw new SettingUnavailableException("Signal identification is using this tuner");
+            }
+            abandonBrowse(tuner);
             if(tuner.getOperatorState() != DiscoveredTuner.OperatorState.SETUP)
             {
                 throw new SettingUnavailableException("Use Setup");
@@ -274,6 +343,335 @@ public final class TunerSettingsService implements AutoCloseable
     public RestoreResult restoreResult(DiscoveredTuner tuner)
     {
         return mRestoreResults.get(tuner);
+    }
+
+    /** Borrows idle hardware for Spectrum without stopping any channel or saving an operator mode. */
+    public CompletableFuture<BrowseLease> browse(DiscoveredTuner tuner, String leaseId)
+    {
+        synchronized(mLifecycleLock)
+        {
+            ensureOpen();
+            ensurePresent(tuner);
+            if(leaseId != null)
+            {
+                if(!verifyBrowse(tuner, leaseId))
+                    throw new SettingUnavailableException("Spectrum tuner session expired; reopen Spectrum");
+                BrowseSession owner = mBrowseOwners.get(tuner);
+                owner.expiresAt = mClock.getAsLong() + BROWSE_LIFETIME_MS;
+                return CompletableFuture.completedFuture(owner.lease());
+            }
+            if(tuner.getTunerClass() == TunerClass.RECORDING_TUNER ||
+                tuner.getTunerStatus() == TunerStatus.ERROR || tuner.getTunerStatus() == TunerStatus.REMOVED)
+                throw new SettingUnavailableException("Selected tuner is unavailable for live Spectrum");
+            List<DiscoveredTuner> group = lifecycleGroup(tuner);
+            if(group.stream().anyMatch(mBrowseOwners::containsKey))
+                throw new SettingUnavailableException("Another Spectrum session is using this tuner");
+            if(group.stream().anyMatch(DiscoveredTuner::isDiscoveryHeld))
+                throw new SettingUnavailableException("Signal identification is using this tuner");
+            reserveTransition(tuner, group, "starting_browse");
+            return submitBrowse(tuner, group, () ->
+            {
+                List<DiscoveredTuner> locked = lockAllocationGroup(group);
+                Map<DiscoveredTuner,DiscoveredTuner.OperatorState> previous = new HashMap<>();
+                try
+                {
+                    boolean idle = group.stream().allMatch(TunerSettingsService::isIdle);
+                    if(!idle && (!tuner.isAvailable() || !tuner.hasTuner() || isIdle(tuner)))
+                        throw new SettingUnavailableException("Channels are using this tuner's paired hardware");
+                    if(idle)
+                    {
+                        for(DiscoveredTuner member: group)
+                        {
+                            previous.put(member, member.getOperatorState());
+                            member.prepareForSetup();
+                        }
+                        for(DiscoveredTuner member: group)
+                        {
+                            if(!member.enterSetup()) throw new IllegalStateException("Tuner unavailable");
+                        }
+                    }
+                    if(!tuner.isAvailable() || !tuner.hasTuner())
+                        throw new IllegalStateException("Tuner unavailable");
+                    BrowseSession session = new BrowseSession(tuner, group, previous, idle);
+                    synchronized(mLifecycleLock)
+                    {
+                        ensureOpen();
+                        group.forEach(member -> mBrowseOwners.put(member, session));
+                    }
+                    return session.lease();
+                }
+                catch(RuntimeException exception)
+                {
+                    restoreBrowseModes(previous, false);
+                    throw exception;
+                }
+                finally { unlockAllocationGroup(locked); }
+            });
+        }
+    }
+
+    public boolean verifyBrowse(DiscoveredTuner tuner, String leaseId)
+    {
+        synchronized(mLifecycleLock)
+        {
+            BrowseSession owner = mBrowseOwners.get(tuner);
+            return !mClosed && owner != null && owner.target == tuner && Objects.equals(owner.id, leaseId) &&
+                owner.expiresAt > mClock.getAsLong() && owner.ownsModes();
+        }
+    }
+
+    /** Explicit handoff leaves owned setup hardware Live; ordinary close restores only this session's changes. */
+    public CompletableFuture<Void> releaseBrowse(DiscoveredTuner tuner, String leaseId, boolean handoff)
+    {
+        return endBrowse(tuner, leaseId, handoff, null);
+    }
+
+    /** Starts the saved channel on the lifecycle worker before competing allocation can change this center. */
+    public <T> CompletableFuture<T> handoffBrowse(DiscoveredTuner tuner, String leaseId, Supplier<T> start)
+    {
+        return endBrowse(tuner, leaseId, true, Objects.requireNonNull(start));
+    }
+
+    private <T> CompletableFuture<T> endBrowse(DiscoveredTuner tuner, String leaseId, boolean handoff,
+                                             Supplier<T> start)
+    {
+        synchronized(mLifecycleLock)
+        {
+            ensureOpen();
+            BrowseSession owner = mBrowseOwners.get(tuner);
+            if(owner == null)
+            {
+                if(start != null) throw new SettingUnavailableException("Spectrum tuner session expired");
+                return CompletableFuture.completedFuture(null);
+            }
+            if(owner.target != tuner || !Objects.equals(owner.id, leaseId))
+                throw new SettingUnavailableException("Spectrum tuner session belongs to another browser");
+            if(owner.group.stream().anyMatch(DiscoveredTuner::isDiscoveryHeld))
+                throw new SettingUnavailableException("Stop signal identification before releasing the tuner");
+            reserveTransition(tuner, owner.group, "ending_browse");
+            return submitBrowse(tuner, owner.group, () ->
+            {
+                List<DiscoveredTuner> locked = lockAllocationGroup(owner.group);
+                try
+                {
+                    if(start != null && !owner.ownsModes())
+                        throw new SettingUnavailableException("The tuner changed; retry signal identification");
+                    if(owner.ownsModes() && owner.canTune)
+                    {
+                        if(!owner.group.stream().allMatch(TunerSettingsService::isIdle))
+                            throw new SettingUnavailableException("A sample source is still using this tuner");
+                        restoreBrowseModes(handoff ? owner.currentModes() : owner.previous, handoff);
+                    }
+                    if(start != null) owner.group.forEach(member -> member.setDiscoveryHeld(true));
+                    synchronized(mLifecycleLock) { abandonBrowse(tuner); }
+                    return start != null ? start.get() : null;
+                }
+                finally
+                {
+                    if(start != null) owner.group.forEach(member -> member.setDiscoveryHeld(false));
+                    unlockAllocationGroup(locked);
+                }
+            });
+        }
+    }
+
+    /** Freezes center allocation, while existing decoders and within-window source allocations continue. */
+    public ProbeHold holdForProbe(Tuner runtimeTuner)
+    {
+        DiscoveredTuner tuner = mInventory.get().stream().filter(candidate -> candidate.getTuner() == runtimeTuner)
+            .findFirst().orElseThrow(() -> new SettingUnavailableException("Selected tuner is unavailable"));
+        return holdForProbe(tuner);
+    }
+
+    public ProbeHold holdForProbe(DiscoveredTuner tuner)
+    {
+        synchronized(mLifecycleLock)
+        {
+            ensureOpen();
+            ensurePresent(tuner);
+            List<DiscoveredTuner> group = lifecycleGroup(tuner);
+            if(group.stream().anyMatch(member -> mLifecycleReservations.contains(member) || member.isDiscoveryHeld()))
+                throw new SettingUnavailableException("Tuner busy");
+            List<DiscoveredTuner> locked = lockAllocationGroup(group);
+            try
+            {
+                if(!tuner.isAvailable() || !tuner.hasTuner())
+                    throw new SettingUnavailableException("Selected tuner is unavailable");
+                ProbeHold hold = new ProbeHold(tuner, group);
+                group.forEach(member -> member.setDiscoveryHeld(true));
+                return hold;
+            }
+            finally { unlockAllocationGroup(locked); }
+        }
+    }
+
+    private <T> CompletableFuture<T> submitBrowse(DiscoveredTuner tuner, List<DiscoveredTuner> group,
+                                                 Supplier<T> operation)
+    {
+        CompletableFuture<T> result = new CompletableFuture<>();
+        mBrowseRequests.add(result);
+        try
+        {
+            mExecutor.execute(() ->
+            {
+                T value = null;
+                RuntimeException failure = null;
+                try
+                {
+                    if(mClosed || !mContains.test(tuner)) throw new IllegalStateException("Tuner unavailable");
+                    value = operation.get();
+                }
+                catch(RuntimeException exception) { failure = exception; }
+                finally
+                {
+                    mTransitions.remove(tuner);
+                    mLifecycleReservations.removeAll(group);
+                    mBrowseRequests.remove(result);
+                }
+                if(failure == null) result.complete(value);
+                else result.completeExceptionally(failure);
+            });
+        }
+        catch(RejectedExecutionException exception)
+        {
+            mTransitions.remove(tuner);
+            mLifecycleReservations.removeAll(group);
+            mBrowseRequests.remove(result);
+            result.completeExceptionally(new IllegalStateException("Tuner maintenance is unavailable"));
+        }
+        return result;
+    }
+
+    private static List<DiscoveredTuner> lockAllocationGroup(List<DiscoveredTuner> group)
+    {
+        List<DiscoveredTuner> locked = new ArrayList<>();
+        for(DiscoveredTuner member: group)
+        {
+            if(!member.tryAcquireForAllocation())
+            {
+                unlockAllocationGroup(locked);
+                throw new SettingUnavailableException("Tuner busy");
+            }
+            locked.add(member);
+        }
+        return locked;
+    }
+
+    private static void unlockAllocationGroup(List<DiscoveredTuner> locked)
+    {
+        for(int index = locked.size() - 1; index >= 0; index--) locked.get(index).releaseAfterAllocation();
+    }
+
+    private static void restoreBrowseModes(Map<DiscoveredTuner,DiscoveredTuner.OperatorState> modes,
+                                           boolean handoff)
+    {
+        for(var entry: modes.entrySet())
+        {
+            if(handoff || entry.getValue() == DiscoveredTuner.OperatorState.LIVE)
+            {
+                if(!entry.getKey().enterLive()) throw new IllegalStateException("Tuner unavailable");
+            }
+            else if(entry.getValue() == DiscoveredTuner.OperatorState.DISABLED) entry.getKey().setEnabled(false);
+        }
+    }
+
+    private void abandonBrowse(DiscoveredTuner tuner)
+    {
+        BrowseSession owner = mBrowseOwners.get(tuner);
+        if(owner != null) owner.group.forEach(member -> mBrowseOwners.remove(member, owner));
+    }
+
+    void expireBrowsing()
+    {
+        synchronized(mLifecycleLock)
+        {
+            if(mClosed) return;
+            for(BrowseSession owner: List.copyOf(mBrowseOwners.values()).stream().distinct().toList())
+            {
+                if(owner.expiresAt > mClock.getAsLong()) continue;
+                try { releaseBrowse(owner.target, owner.id, false); }
+                catch(RuntimeException ignored) { /* An active probe or finite hardware transition will retry. */ }
+            }
+        }
+    }
+
+    public final class ProbeHold implements AutoCloseable
+    {
+        private final DiscoveredTuner tuner;
+        private final List<DiscoveredTuner> group;
+        private final Tuner runtime;
+        private final long center;
+        private final double rate;
+        private final Map<DiscoveredTuner,Long> generations = new HashMap<>();
+        private boolean closed;
+
+        private ProbeHold(DiscoveredTuner tuner, List<DiscoveredTuner> group)
+        {
+            this.tuner = tuner;
+            this.group = group;
+            runtime = tuner.getTuner();
+            center = runtime.getTunerController().getFrequency();
+            rate = runtime.getTunerController().getSampleRate();
+            group.forEach(member -> generations.put(member, member.operatorGeneration()));
+        }
+
+        public boolean valid()
+        {
+            synchronized(mLifecycleLock)
+            {
+                return !closed && !mClosed && mContains.test(tuner) && tuner.getTuner() == runtime &&
+                    tuner.isAvailable() && runtime.getTunerController().getFrequency() == center &&
+                    runtime.getTunerController().getSampleRate() == rate && group.stream().allMatch(member ->
+                        mContains.test(member) && member.operatorGeneration() == generations.get(member));
+            }
+        }
+
+        @Override public void close()
+        {
+            synchronized(mLifecycleLock)
+            {
+                if(!closed) group.forEach(member -> member.setDiscoveryHeld(false));
+                closed = true;
+            }
+        }
+    }
+
+    public record BrowseLease(String leaseId, long expiresAtEpochMs, boolean canTune) { }
+
+    private final class BrowseSession
+    {
+        private final String id = UUID.randomUUID().toString();
+        private final DiscoveredTuner target;
+        private final List<DiscoveredTuner> group;
+        private final Map<DiscoveredTuner,DiscoveredTuner.OperatorState> previous;
+        private final Map<DiscoveredTuner,Long> generations = new HashMap<>();
+        private final boolean canTune;
+        private long expiresAt = mClock.getAsLong() + BROWSE_LIFETIME_MS;
+
+        private BrowseSession(DiscoveredTuner target, List<DiscoveredTuner> group,
+                              Map<DiscoveredTuner,DiscoveredTuner.OperatorState> previous, boolean canTune)
+        {
+            this.target = target;
+            this.group = group;
+            this.previous = Map.copyOf(previous);
+            this.canTune = canTune;
+            group.forEach(member -> generations.put(member, member.operatorGeneration()));
+        }
+
+        private boolean ownsModes()
+        {
+            return group.stream().allMatch(member -> mContains.test(member) &&
+                member.operatorGeneration() == generations.get(member));
+        }
+
+        private Map<DiscoveredTuner,DiscoveredTuner.OperatorState> currentModes()
+        {
+            Map<DiscoveredTuner,DiscoveredTuner.OperatorState> modes = new HashMap<>();
+            group.forEach(member -> modes.put(member, member.getOperatorState()));
+            return modes;
+        }
+
+        private BrowseLease lease() { return new BrowseLease(id, expiresAt, canTune); }
     }
 
     private TunerConfiguration configuration(DiscoveredTuner tuner)
@@ -1143,6 +1541,11 @@ public final class TunerSettingsService implements AutoCloseable
             if(!mClosed)
             {
                 mClosed = true;
+                mBrowseExpiry.shutdownNow();
+                mBrowseOwners.clear();
+                mBrowseRequests.forEach(request -> request.completeExceptionally(
+                    new IllegalStateException("Tuner settings service is stopping")));
+                mBrowseRequests.clear();
                 mTransitions.clear();
                 mLifecycleReservations.clear();
                 mStoppedChannels.clear();

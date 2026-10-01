@@ -37,10 +37,194 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.CompletableFuture;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class TunerSettingsServiceTest
 {
+    @Test
+    void spectrumBorrowsDisabledHardwareAndRestoresWithoutPersisting() throws Exception
+    {
+        FakeDiscoveredTuner tuner = new FakeDiscoveredTuner(true);
+        tuner.setTunerConfiguration(new AirspyTunerConfiguration(tuner.getId()));
+        CountingChannelManager channels = new CountingChannelManager();
+        tuner.prepareRestart(new TrackingAirspyController(), channels);
+        AtomicInteger saves = new AtomicInteger();
+        try(TunerSettingsService service = service(tuner, saves))
+        {
+            var lease = service.browse(tuner, null).get(2, TimeUnit.SECONDS);
+            assertTrue(lease.canTune());
+            assertEquals(DiscoveredTuner.OperatorState.SETUP, tuner.getOperatorState());
+            assertFalse(tuner.isAvailableForAllocation());
+            assertEquals(0, channels.getTunerChannelCount());
+            assertEquals(1, tuner.mStartCalls.get());
+            service.releaseBrowse(tuner, lease.leaseId(), false).get(2, TimeUnit.SECONDS);
+            assertEquals(DiscoveredTuner.OperatorState.DISABLED, tuner.getOperatorState());
+            assertEquals(0, saves.get());
+        }
+    }
+
+    @Test
+    void occupiedSpectrumRemainsReadOnlyAndNeverStopsChannels() throws Exception
+    {
+        CountingChannelManager channels = new CountingChannelManager();
+        channels.mCount.set(2);
+        FakeDiscoveredTuner tuner = runningTuner(new TrackingAirspyController(), channels);
+        try(TunerSettingsService service = service(tuner, new AtomicInteger()))
+        {
+            var lease = service.browse(tuner, null).get(2, TimeUnit.SECONDS);
+            assertFalse(lease.canTune());
+            assertEquals(DiscoveredTuner.OperatorState.LIVE, tuner.getOperatorState());
+            assertEquals(2, channels.mCount.get());
+            assertThrows(TunerSettingsService.SettingUnavailableException.class,
+                () -> service.set(tuner, "frequency_mhz", 851.0, lease.leaseId()));
+            service.releaseBrowse(tuner, lease.leaseId(), false).get(2, TimeUnit.SECONDS);
+            assertEquals(2, channels.mCount.get());
+            assertTrue(tuner.isAvailableForAllocation());
+        }
+    }
+
+    @Test
+    void browseOwnershipRenewalHandoffAndExpiryAreReceiverOwned() throws Exception
+    {
+        FakeDiscoveredTuner tuner = runningTuner(new TrackingAirspyController(), new CountingChannelManager());
+        AtomicLong clock = new AtomicLong(1000);
+        try(TunerSettingsService service = new TunerSettingsService(() -> {}, candidate -> candidate == tuner,
+            ignored -> tuner, null, () -> List.of(tuner), clock::get))
+        {
+            var lease = service.browse(tuner, null).get(2, TimeUnit.SECONDS);
+            assertTrue(service.verifyBrowse(tuner, lease.leaseId()));
+            assertThrows(TunerSettingsService.SettingUnavailableException.class,
+                () -> service.browse(tuner, null));
+            assertThrows(TunerSettingsService.SettingUnavailableException.class,
+                () -> service.releaseBrowse(tuner, "another-browser", false));
+            clock.addAndGet(10_000);
+            var renewed = service.browse(tuner, lease.leaseId()).get();
+            assertEquals(lease.leaseId(), renewed.leaseId());
+            assertTrue(renewed.expiresAtEpochMs() > lease.expiresAtEpochMs());
+            service.releaseBrowse(tuner, lease.leaseId(), true).get(2, TimeUnit.SECONDS);
+            assertTrue(tuner.isAvailableForAllocation());
+            lease = service.browse(tuner, null).get(2, TimeUnit.SECONDS);
+            clock.addAndGet(31_000);
+            assertFalse(service.verifyBrowse(tuner, lease.leaseId()));
+            service.expireBrowsing();
+            await(Duration.ofSeconds(2), tuner::isAvailableForAllocation);
+        }
+    }
+
+    @Test
+    void browseCleanupDoesNotUndoLaterOperatorMode() throws Exception
+    {
+        FakeDiscoveredTuner tuner = runningTuner(new TrackingAirspyController(), new CountingChannelManager());
+        try(TunerSettingsService service = service(tuner, new AtomicInteger()))
+        {
+            var lease = service.browse(tuner, null).get(2, TimeUnit.SECONDS);
+            tuner.setEnabled(false);
+            assertFalse(service.verifyBrowse(tuner, lease.leaseId()));
+            service.releaseBrowse(tuner, lease.leaseId(), false).get(2, TimeUnit.SECONDS);
+            assertEquals(DiscoveredTuner.OperatorState.DISABLED, tuner.getOperatorState());
+            assertFalse(tuner.hasTuner());
+        }
+    }
+
+    @Test
+    void handoffKeepsGroupedAllocationGateAndCenterHoldThroughStartup() throws Exception
+    {
+        FakeDiscoveredTuner tuner = runningTuner(new TrackingAirspyController(), new CountingChannelManager());
+        try(TunerSettingsService service = service(tuner, new AtomicInteger()))
+        {
+            var lease = service.browse(tuner, null).get(2, TimeUnit.SECONDS);
+            String result = service.handoffBrowse(tuner, lease.leaseId(), () ->
+            {
+                assertTrue(tuner.isAvailableForAllocation());
+                assertTrue(tuner.isDiscoveryHeld());
+                assertTrue(tuner.tryAcquireForAllocation(), "startup can reenter its own allocation gate");
+                tuner.releaseAfterAllocation();
+                assertFalse(CompletableFuture.supplyAsync(tuner::tryAcquireForAllocation)
+                    .orTimeout(1, TimeUnit.SECONDS).join(), "competing allocation must fail without waiting");
+                return "started";
+            }).get(2, TimeUnit.SECONDS);
+            assertEquals("started", result);
+            assertTrue(tuner.isAvailableForAllocation());
+            assertFalse(tuner.isDiscoveryHeld());
+            assertFalse(service.verifyBrowse(tuner, lease.leaseId()));
+        }
+    }
+
+    @Test
+    void probeHoldRejectsRetuneAndLifecycleButKeepsLiveAllocationAvailable()
+    {
+        FakeDiscoveredTuner tuner = runningTuner(new TrackingAirspyController(), new CountingChannelManager());
+        try(TunerSettingsService service = service(tuner, new AtomicInteger());
+            TunerSettingsService.ProbeHold hold = service.holdForProbe(tuner))
+        {
+            assertTrue(hold.valid());
+            assertTrue(tuner.isDiscoveryHeld());
+            assertTrue(tuner.isAvailableForAllocation());
+            assertThrows(TunerSettingsService.SettingUnavailableException.class,
+                () -> service.set(tuner, "frequency_mhz", 851.0));
+            assertThrows(TunerSettingsService.SettingUnavailableException.class,
+                () -> service.requestState(tuner, DiscoveredTuner.OperatorState.SETUP));
+            assertThrows(TunerSettingsService.SettingUnavailableException.class,
+                () -> service.holdForProbe(tuner));
+            hold.close();
+            assertFalse(tuner.isDiscoveryHeld());
+            assertFalse(hold.valid());
+        }
+    }
+
+    @Test
+    void browsingFailsFastWhenAllocationIsAlreadyReserved() throws Exception
+    {
+        FakeDiscoveredTuner tuner = runningTuner(new TrackingAirspyController(), new CountingChannelManager());
+        try(TunerSettingsService service = service(tuner, new AtomicInteger()))
+        {
+            assertTrue(tuner.tryAcquireForAllocation());
+            try
+            {
+                var request = service.browse(tuner, null);
+                assertThrows(CompletionException.class, request::join);
+                assertEquals(DiscoveredTuner.OperatorState.LIVE, tuner.getOperatorState());
+            }
+            finally { tuner.releaseAfterAllocation(); }
+        }
+    }
+
+    @Test
+    void idleMemberCannotStartBrowsingWhilePairedHardwareIsOccupied()
+    {
+        DeviceInfo masterInfo = new DeviceInfo(DeviceType.RSPduo, "browse-pair-test");
+        masterInfo.setDeviceSelectionMode(DeviceSelectionMode.MASTER_TUNER_1);
+        DeviceInfo slaveInfo = masterInfo.copy();
+        slaveInfo.setDeviceSelectionMode(DeviceSelectionMode.SLAVE_TUNER_2);
+        TestRspDuoMaster master = new TestRspDuoMaster(masterInfo);
+        TestRspDuoSlave slave = new TestRspDuoSlave(slaveInfo);
+        master.setTunerConfiguration(new RspDuoTuner1Configuration(master.getId()));
+        slave.setTunerConfiguration(new RspDuoTuner2Configuration(slave.getId()));
+        master.installRunning();
+        slave.installRunning();
+        slave.mChannels.mCount.set(1);
+        try(TunerSettingsService service = new TunerSettingsService(() -> {},
+            candidate -> candidate == master || candidate == slave,
+            id -> id.equals(master.getId()) ? master : id.equals(slave.getId()) ? slave : null))
+        {
+            assertThrows(CompletionException.class, () -> service.browse(master, null).join());
+            assertEquals(DiscoveredTuner.OperatorState.LIVE, master.getOperatorState());
+            assertEquals(DiscoveredTuner.OperatorState.LIVE, slave.getOperatorState());
+            assertEquals(1, slave.mChannels.mCount.get());
+            try(var hold = service.holdForProbe(master))
+            {
+                assertTrue(((DiscoveredTuner)slave).isDiscoveryHeld());
+                assertThrows(TunerSettingsService.SettingUnavailableException.class,
+                    () -> service.requestState(slave, DiscoveredTuner.OperatorState.DISABLED));
+            }
+            assertFalse(((DiscoveredTuner)slave).isDiscoveryHeld());
+        }
+    }
+
     @Test
     void stoppedChannelMetadataUsesPublicGroupingAndFrequencyFields()
     {
