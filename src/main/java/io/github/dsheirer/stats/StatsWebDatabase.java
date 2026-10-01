@@ -2554,7 +2554,7 @@ class StatsWebDatabase
             TRUNKED_IDENTITY_DIRECTORY_PROJECTION_SQL));
         List<Object> parameters = new ArrayList<>(List.of(radioSystemKey));
 
-        addTalkerAliasSearch(sql, parameters, request.search());
+        addRadioSystemIdentitySearch(sql, parameters, request.search(), "RADIO_ID", true);
 
         sql.append(" ORDER BY ").append(order(request, TALKER_ALIAS_SORT_COLUMNS, "talker_alias"))
             .append(", summary.identity_id LIMIT ? OFFSET ?");
@@ -2583,7 +2583,7 @@ class StatsWebDatabase
               AND trim(summary.last_talker_alias) <> ''
             """);
         List<Object> parameters = new ArrayList<>(List.of(radioSystemKey));
-        addTalkerAliasSearch(sql, parameters, request.search());
+        addRadioSystemIdentitySearch(sql, parameters, request.search(), "RADIO_ID", true);
         return scalarLong(connection, sql.toString(), parameters.toArray());
     }
 
@@ -7269,24 +7269,6 @@ class StatsWebDatabase
                                                      String aliasMatcher, boolean includeTalkerAlias)
     {
         StatsIdentitySearch.append(sql, parameters, search, aliasMatcher, includeTalkerAlias);
-    }
-
-    private static void addTalkerAliasSearch(StringBuilder sql, List<Object> parameters, String search)
-    {
-        if(search != null)
-        {
-            sql.append("""
-                 AND (CAST(summary.identity_id AS TEXT) LIKE ?
-                   OR (system.protocol_code = 4 AND system.address_domain_code = 2
-                     AND printf('%02d-%04d', ((summary.identity_id >> 11) & 31),
-                       (summary.identity_id & 2047)) LIKE ?)
-                   OR lower(summary.last_talker_alias) LIKE ?)
-                """);
-            String like = like(search);
-            parameters.add(like);
-            parameters.add(like);
-            parameters.add(like);
-        }
     }
 
     private static void addDmrAliasSearch(StringBuilder sql, List<Object> parameters, String search,

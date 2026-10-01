@@ -1841,6 +1841,85 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void talkerAliasSearchFindsConfiguredNamesBeforePaging() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE configuration_channel SET alias_list_id = 71 " +
+                "WHERE configuration_id = '" + P25_CHANNEL_B + "'");
+            statement.executeUpdate("""
+                UPDATE radio_system_identity_summary
+                SET last_talker_alias = 'Unit 202 OTA', last_talker_alias_seen_ms = 5000
+                WHERE id = 7102
+                """);
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary (
+                    id, radio_system_id, identity_kind_code, home_wacn, home_system_id, identity_id,
+                    first_seen_ms, last_seen_ms, last_talker_alias, last_talker_alias_seen_ms
+                ) VALUES (7103, 71, 2, 0xBEE00, 0x49F, 203, 1000, 5000, 'Unit 203 OTA', 5000),
+                         (7104, 71, 2, 0xBEE00, 0x49F, 204, 1000, 5000, NULL, NULL)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias (id, alias_list_id, name, matcher_type, protocol, value, min_value, max_value)
+                VALUES (7110, 71, 'Engine Twelve', 'RADIO_ID', 'APCO25', 202, NULL, NULL),
+                       (7111, 71, 'Engine Fleet', 'RADIO_ID_RANGE', 'APCO25_PHASE2', NULL, 203, 205),
+                       (7210, 72, 'Foreign Unit', 'RADIO_ID', 'APCO25', 202, NULL, NULL)
+                """);
+        }
+
+        Map<String,Object> firstPage = mDatabase.radioSystemTalkerAliases(RADIO_SYSTEM_KEY,
+            request("/?q=ENGINE&sort=radio&direction=asc&limit=1"));
+        assertEquals(2, number(firstPage.get("total_count")),
+            "Configured aliases must match before paging, excluding radios without an OTA alias");
+        assertEquals(202, number(rows(firstPage).getFirst().get("native_id")));
+        assertEquals("Engine Twelve", rows(firstPage).getFirst().get("alias_name"));
+        assertEquals(true, firstPage.get("has_more"));
+
+        Map<String,Object> secondPage = mDatabase.radioSystemTalkerAliases(RADIO_SYSTEM_KEY,
+            request("/?q=engine&sort=radio&direction=asc&limit=1&offset=1"));
+        assertEquals(2, number(secondPage.get("total_count")));
+        assertEquals(203, number(rows(secondPage).getFirst().get("native_id")));
+        assertEquals("Engine Fleet", rows(secondPage).getFirst().get("alias_name"));
+        assertEquals(false, secondPage.get("has_more"));
+
+        for(String query: List.of("engine%20twelve", "unit%20202%20ota", "202"))
+        {
+            Map<String,Object> result = mDatabase.radioSystemTalkerAliases(RADIO_SYSTEM_KEY,
+                request("/?q=" + query));
+            assertEquals(1, number(result.get("total_count")));
+            assertEquals(202, number(rows(result).getFirst().get("native_id")));
+        }
+        Map<String,Object> foreign = mDatabase.radioSystemTalkerAliases(RADIO_SYSTEM_KEY,
+            request("/?q=foreign%20unit"));
+        assertEquals(0, number(foreign.get("total_count")));
+        assertTrue(rows(foreign).isEmpty(), "Unassigned Alias Lists must not supply search matches");
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO alias (id, alias_list_id, name, matcher_type, protocol, value)
+                VALUES (7112, 71, 'Local Assignment', 'RADIO_ID', 'APCO25', 555)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_radio_channel_presence (
+                    radio_system_id, radio_identity_id, channel_id, observed_local_id,
+                    evidence_code, confirmed_at_ms)
+                VALUES (71, 7102, 71, 555, 1, 6000)
+                """);
+        }
+        Map<String,Object> local = mDatabase.radioSystemTalkerAliases(RADIO_SYSTEM_KEY,
+            request("/?q=local%20assignment"));
+        assertEquals(1, number(local.get("total_count")));
+        assertEquals(202, number(rows(local).getFirst().get("native_id")));
+        assertEquals("Local Assignment", rows(local).getFirst().get("alias_name"));
+        assertEquals(0, number(mDatabase.radioSystemTalkerAliases(RADIO_SYSTEM_KEY,
+            request("/?q=engine%20twelve")).get("total_count")),
+            "Search must use the same locally observed identity as the displayed alias");
+    }
+
+    @Test
     void radioSystemIdentityAliasSearchUsesSummaryAndMatcherIndexes() throws Exception
     {
         StatsWebDatabase.IdentityDirectoryQuery[] groupQuery = new StatsWebDatabase.IdentityDirectoryQuery[1];
