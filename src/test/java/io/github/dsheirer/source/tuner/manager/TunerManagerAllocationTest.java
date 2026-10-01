@@ -21,11 +21,14 @@ import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.Source;
 import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.SourceException;
+import io.github.dsheirer.source.config.SourceConfigTuner;
+import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.source.tuner.ITunerErrorListener;
 import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.TunerClass;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.channel.ChannelSpecification;
+import io.github.dsheirer.source.tuner.channel.MultiFrequencyTunerChannelSource;
 import io.github.dsheirer.source.tuner.channel.TunerChannel;
 import io.github.dsheirer.source.tuner.channel.TunerChannelSource;
 import io.github.dsheirer.source.tuner.test.TestTunerController;
@@ -48,6 +51,282 @@ class TunerManagerAllocationTest
     private static final long MAXIMUM_FREQUENCY = 862_000_000;
     private static final long WIDE_MAXIMUM_FREQUENCY = 870_000_000;
     private static final AtomicInteger TUNER_SEQUENCE = new AtomicInteger();
+
+    @Test
+    void discoveryStartupUsesExactSelectedTunerDespiteAnotherConfiguredPreference() throws Exception
+    {
+        TrackingTunerController otherController = createController(857_000_000);
+        TrackingTunerController selectedController = createController(857_000_000);
+        PolyphaseChannelSourceManager otherManager = new PolyphaseChannelSourceManager(otherController);
+        PolyphaseChannelSourceManager selectedManager = new PolyphaseChannelSourceManager(selectedController);
+        TestDiscoveredTuner other = new TestDiscoveredTuner(otherController, otherManager, "discovery-other");
+        TestDiscoveredTuner selected = new TestDiscoveredTuner(selectedController, selectedManager,
+            "discovery-selected");
+        TunerManager manager = new TunerManager(null);
+        manager.getDiscoveredTunerRegistry().add(other);
+        manager.getDiscoveredTunerRegistry().add(selected);
+        SourceConfigTuner config = new SourceConfigTuner(new TunerChannel(859_000_000, 12_500));
+        config.setPreferredTuner(other.getId());
+        otherController.clearFrequencyAttempts();
+        selectedController.clearFrequencyAttempts();
+        Source allocated = null;
+
+        try
+        {
+            assertFalse(selected.isDiscoveryHeld(), "Strict selection must work without a wizard hold flag");
+            allocated = manager.getSourceAtCurrentCenter(config, CHANNEL_SPECIFICATION,
+                "discovery-exact-selected", selected);
+
+            assertTrue(allocated instanceof TunerChannelSource);
+            assertEquals(selected.getId(), ((TunerChannelSource)allocated).getTunerIdentity());
+            assertEquals(1, selectedManager.getTunerChannelCount());
+            assertEquals(0, otherManager.getTunerChannelCount());
+            assertEquals(857_000_000, selectedController.getFrequency());
+            assertEquals(857_000_000, otherController.getFrequency());
+            assertTrue(selectedController.getFrequencyAttempts().isEmpty());
+            assertTrue(otherController.getFrequencyAttempts().isEmpty());
+        }
+        finally
+        {
+            stop(allocated);
+            selected.stop();
+            other.stop();
+        }
+    }
+
+    @Test
+    void discoveryStartupDoesNotReplaceUnavailableSelectedTuner() throws Exception
+    {
+        TrackingTunerController otherController = createController(857_000_000);
+        TrackingTunerController selectedController = createController(857_000_000);
+        PolyphaseChannelSourceManager otherManager = new PolyphaseChannelSourceManager(otherController);
+        PolyphaseChannelSourceManager selectedManager = new PolyphaseChannelSourceManager(selectedController);
+        TestDiscoveredTuner other = new TestDiscoveredTuner(otherController, otherManager, "discovery-available");
+        TestDiscoveredTuner selected = new TestDiscoveredTuner(selectedController, selectedManager,
+            "discovery-disabled");
+        TunerManager manager = new TunerManager(null);
+        manager.getDiscoveredTunerRegistry().add(other);
+        manager.getDiscoveredTunerRegistry().add(selected);
+        selected.setEnabled(false);
+        otherController.clearFrequencyAttempts();
+        selectedController.clearFrequencyAttempts();
+
+        try
+        {
+            assertTrue(manager.getAvailableTuners().contains(other));
+            assertFalse(manager.getAvailableTuners().contains(selected));
+            assertNull(manager.getSourceAtCurrentCenter(new SourceConfigTuner(new TunerChannel(859_000_000,
+                12_500)), CHANNEL_SPECIFICATION, "discovery-unavailable", selected));
+            assertFalse(selected.hasTuner(), "Disabled selected hardware must remain stopped");
+            assertEquals(0, otherManager.getTunerChannelCount());
+            assertEquals(857_000_000, selectedController.getFrequency());
+            assertEquals(857_000_000, otherController.getFrequency());
+            assertTrue(selectedController.getFrequencyAttempts().isEmpty());
+            assertTrue(otherController.getFrequencyAttempts().isEmpty());
+        }
+        finally
+        {
+            selected.stop();
+            other.stop();
+        }
+    }
+
+    @Test
+    void discoveryStartupMakesOnlyOneAttemptWhenSelectedLifecycleIsContended() throws Exception
+    {
+        TrackingTunerController otherController = createController(857_000_000);
+        TrackingTunerController selectedController = createController(857_000_000);
+        PolyphaseChannelSourceManager otherManager = new PolyphaseChannelSourceManager(otherController);
+        PolyphaseChannelSourceManager selectedManager = new PolyphaseChannelSourceManager(selectedController);
+        TestDiscoveredTuner other = new TestDiscoveredTuner(otherController, otherManager, "discovery-fallback");
+        RetryAllocationDiscoveredTuner selected = new RetryAllocationDiscoveredTuner(selectedController,
+            selectedManager, "discovery-lifecycle-busy");
+        TunerManager manager = new TunerManager(null);
+        manager.getDiscoveredTunerRegistry().add(other);
+        manager.getDiscoveredTunerRegistry().add(selected);
+        otherController.clearFrequencyAttempts();
+        selectedController.clearFrequencyAttempts();
+
+        try
+        {
+            assertNull(manager.getSourceAtCurrentCenter(new SourceConfigTuner(new TunerChannel(859_000_000,
+                12_500)), CHANNEL_SPECIFICATION, "discovery-one-attempt", selected));
+            assertEquals(1, selected.getAllocationAttempts(),
+                "A failed strict allocation must not retry through ordinary retune stages");
+            assertEquals(0, selectedManager.getTunerChannelCount());
+            assertEquals(0, otherManager.getTunerChannelCount());
+            assertTrue(selectedController.getFrequencyAttempts().isEmpty());
+            assertTrue(otherController.getFrequencyAttempts().isEmpty());
+        }
+        finally
+        {
+            selected.stop();
+            other.stop();
+        }
+    }
+
+    @Test
+    void discoveryStartupFailsFastOnSelectedControllerContentionWithoutFallback() throws Exception
+    {
+        TrackingTunerController otherController = createController(857_000_000);
+        TrackingTunerController selectedController = createController(857_000_000);
+        PolyphaseChannelSourceManager otherManager = new PolyphaseChannelSourceManager(otherController);
+        PolyphaseChannelSourceManager selectedManager = new PolyphaseChannelSourceManager(selectedController);
+        TestDiscoveredTuner other = new TestDiscoveredTuner(otherController, otherManager, "discovery-idle-fallback");
+        TestDiscoveredTuner selected = new TestDiscoveredTuner(selectedController, selectedManager,
+            "discovery-controller-busy");
+        TunerManager manager = new TunerManager(null);
+        manager.getDiscoveredTunerRegistry().add(other);
+        manager.getDiscoveredTunerRegistry().add(selected);
+        CountDownLatch lockAcquired = new CountDownLatch(1);
+        CountDownLatch releaseLock = new CountDownLatch(1);
+        CountDownLatch returned = new CountDownLatch(1);
+        AtomicReference<Source> result = new AtomicReference<>();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread lockHolder = new Thread(() -> {
+            selectedController.getLock().lock();
+            try
+            {
+                lockAcquired.countDown();
+                BlockingChannelSourceManager.await(releaseLock);
+            }
+            finally
+            {
+                selectedController.getLock().unlock();
+            }
+        }, "test selected discovery controller lock");
+        Thread allocation = new Thread(() -> {
+            try
+            {
+                result.set(manager.getSourceAtCurrentCenter(new SourceConfigTuner(new TunerChannel(859_000_000,
+                    12_500)), CHANNEL_SPECIFICATION, "discovery-contended-controller", selected));
+            }
+            catch(Throwable t)
+            {
+                failure.set(t);
+            }
+            finally
+            {
+                returned.countDown();
+            }
+        }, "test strict discovery allocation");
+        otherController.clearFrequencyAttempts();
+        selectedController.clearFrequencyAttempts();
+
+        try
+        {
+            lockHolder.start();
+            assertTrue(lockAcquired.await(2, TimeUnit.SECONDS));
+            allocation.start();
+            assertTrue(returned.await(2, TimeUnit.SECONDS),
+                "Strict allocation must return while the selected receiver remains contended");
+            assertTrue(lockHolder.isAlive());
+            assertNull(failure.get());
+            assertNull(result.get());
+            assertEquals(0, selectedManager.getTunerChannelCount());
+            assertEquals(0, otherManager.getTunerChannelCount());
+            assertTrue(selectedController.getFrequencyAttempts().isEmpty());
+            assertTrue(otherController.getFrequencyAttempts().isEmpty());
+        }
+        finally
+        {
+            releaseLock.countDown();
+            lockHolder.join(2_000);
+            allocation.join(2_000);
+            stop(result.get());
+            selected.stop();
+            other.stop();
+        }
+        assertFalse(lockHolder.isAlive());
+        assertFalse(allocation.isAlive());
+    }
+
+    @Test
+    void discoveryStartupRejectsOutsideSelectedWindowWithoutRetuningEitherReceiver() throws Exception
+    {
+        TrackingTunerController otherController = createController(860_000_000, WIDE_MAXIMUM_FREQUENCY);
+        TrackingTunerController selectedController = createController(857_000_000, WIDE_MAXIMUM_FREQUENCY);
+        PolyphaseChannelSourceManager otherManager = new PolyphaseChannelSourceManager(otherController);
+        PolyphaseChannelSourceManager selectedManager = new PolyphaseChannelSourceManager(selectedController);
+        TestDiscoveredTuner other = new TestDiscoveredTuner(otherController, otherManager, "discovery-covering-other");
+        TestDiscoveredTuner selected = new TestDiscoveredTuner(selectedController, selectedManager,
+            "discovery-outside-selected");
+        TunerManager manager = new TunerManager(null);
+        manager.getDiscoveredTunerRegistry().add(other);
+        manager.getDiscoveredTunerRegistry().add(selected);
+        otherController.clearFrequencyAttempts();
+        selectedController.clearFrequencyAttempts();
+
+        try
+        {
+            assertFalse(selectedController.isCenterFrequencyLocked());
+            assertFalse(selected.isDiscoveryHeld());
+            assertNull(manager.getSourceAtCurrentCenter(new SourceConfigTuner(new TunerChannel(862_000_000,
+                12_500)), CHANNEL_SPECIFICATION, "discovery-outside-window", selected));
+            assertEquals(0, selectedManager.getTunerChannelCount());
+            assertEquals(0, otherManager.getTunerChannelCount());
+            assertEquals(857_000_000, selectedController.getFrequency());
+            assertEquals(860_000_000, otherController.getFrequency());
+            assertTrue(selectedController.getFrequencyAttempts().isEmpty());
+            assertTrue(otherController.getFrequencyAttempts().isEmpty());
+        }
+        finally
+        {
+            selected.stop();
+            other.stop();
+        }
+    }
+
+    @Test
+    void discoveryStartupPreservesMultipleFrequencyWrapperAndSelectedInitialSource() throws Exception
+    {
+        TrackingTunerController otherController = createController(857_000_000, WIDE_MAXIMUM_FREQUENCY);
+        TrackingTunerController selectedController = createController(857_000_000, WIDE_MAXIMUM_FREQUENCY);
+        PolyphaseChannelSourceManager otherManager = new PolyphaseChannelSourceManager(otherController);
+        PolyphaseChannelSourceManager selectedManager = new PolyphaseChannelSourceManager(selectedController);
+        TestDiscoveredTuner other = new TestDiscoveredTuner(otherController, otherManager, "discovery-multiple-other");
+        TestDiscoveredTuner selected = new TestDiscoveredTuner(selectedController, selectedManager,
+            "discovery-multiple-selected");
+        TunerManager manager = new TunerManager(null);
+        manager.getDiscoveredTunerRegistry().add(other);
+        manager.getDiscoveredTunerRegistry().add(selected);
+        SourceConfigTunerMultipleFrequency config = new SourceConfigTunerMultipleFrequency();
+        config.setFrequencies(List.of(862_000_000L, 859_000_000L));
+        config.setPreferredFrequency(859_000_000);
+        config.setPreferredTuner(other.getId());
+        config.setMinimumFrequency(852_000_000L);
+        config.setMaximumFrequency(869_000_000L);
+        otherController.clearFrequencyAttempts();
+        selectedController.clearFrequencyAttempts();
+        Source allocated = null;
+
+        try
+        {
+            allocated = manager.getSourceAtCurrentCenter(config, CHANNEL_SPECIFICATION,
+                "discovery-multiple-initial", selected);
+
+            assertTrue(allocated instanceof MultiFrequencyTunerChannelSource,
+                "Strict initial allocation must retain the source wrapper used for learned control channels");
+            TunerChannelSource tunerSource = (TunerChannelSource)allocated;
+            assertEquals(selected.getId(), tunerSource.getTunerIdentity());
+            assertEquals(859_000_000, tunerSource.getTunerChannel().getFrequency());
+            assertEquals(List.of(862_000_000L, 859_000_000L), config.getFrequencies());
+            assertEquals(859_000_000, config.getPreferredFrequency());
+            assertEquals(1, selectedManager.getTunerChannelCount());
+            assertEquals(0, otherManager.getTunerChannelCount());
+            assertEquals(857_000_000, selectedController.getFrequency());
+            assertEquals(857_000_000, otherController.getFrequency());
+            assertTrue(selectedController.getFrequencyAttempts().isEmpty(),
+                "The wider future frequency envelope must not retune the initial discovery source");
+            assertTrue(otherController.getFrequencyAttempts().isEmpty());
+        }
+        finally
+        {
+            stop(allocated);
+            selected.stop();
+            other.stop();
+        }
+    }
 
     @Test
     void outOfRangeEnvelopeDoesNotAttemptToRetuneTuner() throws Exception

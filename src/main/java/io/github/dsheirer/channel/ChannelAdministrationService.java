@@ -29,6 +29,7 @@ import io.github.dsheirer.module.decode.nbfm.NBFMDecoder;
 import io.github.dsheirer.stats.activity.ReceiverActivityMaintenance;
 import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest;
 import io.github.dsheirer.source.config.SourceConfigRemote;
+import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.util.ThreadPool;
 import java.awt.GraphicsEnvironment;
 import java.util.ArrayList;
@@ -605,6 +606,16 @@ public final class ChannelAdministrationService
 
     public BatchResult setProcessing(Collection<String> configurationIds, boolean start)
     {
+        return setProcessing(configurationIds, start, null);
+    }
+
+    public LifecycleResult startAtCurrentCenter(String configurationId, DiscoveredTuner selectedTuner)
+    {
+        return setProcessing(List.of(configurationId), true, Objects.requireNonNull(selectedTuner)).results().getFirst();
+    }
+
+    private BatchResult setProcessing(Collection<String> configurationIds, boolean start, DiscoveredTuner selectedTuner)
+    {
         List<String> ids = boundedConfigurationIds(configurationIds);
         return admitted(() ->
         {
@@ -622,7 +633,12 @@ public final class ChannelAdministrationService
                 {
                     if(start)
                     {
-                        if(!isProcessing(id)) mConfigurationManager.getChannelProcessingManager().start(channel);
+                        if(!isProcessing(id))
+                        {
+                            if(selectedTuner != null)
+                                mConfigurationManager.getChannelProcessingManager().startAtCurrentCenter(channel, selectedTuner);
+                            else mConfigurationManager.getChannelProcessingManager().start(channel);
+                        }
                     }
                     else if(isProcessing(id))
                     {

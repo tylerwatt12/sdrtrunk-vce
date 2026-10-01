@@ -759,6 +759,19 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     public Source getSource(SourceConfiguration config, ChannelSpecification channelSpecification,
                             String threadName) throws SourceException
     {
+        return getSource(config, channelSpecification, threadName, null);
+    }
+
+    /** Initial wizard startup must use this exact receiver without moving its center or falling back. */
+    public Source getSourceAtCurrentCenter(SourceConfiguration config, ChannelSpecification channelSpecification,
+                                          String threadName, DiscoveredTuner selectedTuner) throws SourceException
+    {
+        return getSource(config, channelSpecification, threadName, Objects.requireNonNull(selectedTuner));
+    }
+
+    private Source getSource(SourceConfiguration config, ChannelSpecification channelSpecification,
+                             String threadName, DiscoveredTuner selectedTuner) throws SourceException
+    {
         if(config == null || config.getSourceType() == null || !config.getSourceType().isActive())
         {
             throw new SourceException("Channel source is retired or unsupported");
@@ -774,8 +787,9 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                     SourceConfigTuner sourceConfigTuner = (SourceConfigTuner)config;
                     TunerChannel tunerChannel = sourceConfigTuner.getTunerChannel(channelSpecification.getBandwidth());
                     String preferredTuner = sourceConfigTuner.getPreferredTuner();
-                    retVal = getSource(tunerChannel, channelSpecification, preferredTuner, threadName +
-                            " " + tunerChannel.getFrequency());
+                    retVal = selectedTuner != null ? getSourceAtCurrentCenter(selectedTuner, tunerChannel,
+                        channelSpecification, threadName) : getSource(tunerChannel, channelSpecification,
+                        preferredTuner, threadName + " " + tunerChannel.getFrequency());
                 }
                 break;
             case TUNER_MULTIPLE_FREQUENCIES:
@@ -786,8 +800,9 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                     String preferredTuner = sourceConfigTuner.getPreferredTuner();
                     SortedSet<TunerChannel> tunerChannels = getTunerChannels(sourceConfigTuner, channelSpecification);
 
-                    Source source = getSource(tunerChannel, channelSpecification, preferredTuner, threadName,
-                        tunerChannels);
+                    Source source = selectedTuner != null ? getSourceAtCurrentCenter(selectedTuner, tunerChannel,
+                        channelSpecification, threadName) : getSource(tunerChannel, channelSpecification,
+                        preferredTuner, threadName, tunerChannels);
 
                     if(source instanceof TunerChannelSource)
                     {
@@ -803,6 +818,31 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         }
 
         return retVal;
+    }
+
+    private Source getSourceAtCurrentCenter(DiscoveredTuner selectedTuner, TunerChannel tunerChannel,
+                                            ChannelSpecification channelSpecification, String threadName)
+    {
+        mChannelAllocationRequests.incrementAndGet();
+        try
+        {
+            if(mDiscoveredTunerRegistry.availableTuners().contains(selectedTuner))
+            {
+                Source source = getSource(selectedTuner, tunerChannel, channelSpecification, threadName, null,
+                    PolyphaseChannelSourceManager.AllocationMode.CURRENT_CENTER);
+                if(source != null)
+                {
+                    mChannelAllocationSuccesses.incrementAndGet();
+                    return source;
+                }
+            }
+        }
+        catch(Exception exception)
+        {
+            mLog.error("Error obtaining channel from selected tuner [{}]", selectedTuner.getId(), exception);
+        }
+        mChannelAllocationFailures.incrementAndGet();
+        return null;
     }
 
     /**

@@ -147,7 +147,12 @@ public final class SpectrumDiscoveryService implements AutoCloseable
         try
         {
             var start = (java.util.function.Supplier<ChannelAdministrationService.LifecycleResult>) () ->
-                mChannels.setProcessing(List.of(wizard.saved.configurationId()), true).results().getFirst();
+            {
+                DiscoveredTuner selected = requireTuner(wizard.tunerId);
+                if(selected.getTuner() != wizard.tuner || !wizard.current())
+                    throw new IllegalStateException("The selected tuner changed");
+                return mChannels.startAtCurrentCenter(wizard.saved.configurationId(), selected);
+            };
             ChannelAdministrationService.LifecycleResult result;
             if(wizard.browseLeaseId != null)
                 result = mSettings.handoffBrowse(requireTuner(wizard.tunerId), wizard.browseLeaseId, start).join();
@@ -164,6 +169,9 @@ public final class SpectrumDiscoveryService implements AutoCloseable
         }
         catch(RuntimeException exception)
         {
+            if(wizard.browseLeaseId != null &&
+                !mSettings.verifyBrowse(mTuners.find(wizard.tunerId), wizard.browseLeaseId))
+                wizard.browseLeaseId = null;
             wizard.startError = "The channel was saved but could not start. Check tuner availability and retry.";
         }
         return snapshot(wizard);

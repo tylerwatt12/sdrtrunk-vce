@@ -72,6 +72,7 @@ import io.github.dsheirer.source.tuner.channel.TunerChannelSource;
 import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitorPauseRequest;
 import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitorResumeRequest;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
+import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.util.ThreadPool;
 import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
 import java.awt.GraphicsEnvironment;
@@ -641,6 +642,12 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         }
 
         startProcessing(new ChannelStartProcessingRequest(channel));
+    }
+
+    /** Starts on the selected receiver's current window; a busy or changed receiver fails without fallback. */
+    public void startAtCurrentCenter(Channel channel, DiscoveredTuner selectedTuner) throws ChannelException
+    {
+        startProcessing(new ChannelStartProcessingRequest(channel), true, Objects.requireNonNull(selectedTuner));
     }
 
     /**
@@ -1317,6 +1324,12 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     private synchronized void startProcessing(ChannelStartProcessingRequest request, boolean strictFunctionalStartup)
         throws ChannelException
     {
+        startProcessing(request, strictFunctionalStartup, null);
+    }
+
+    private synchronized void startProcessing(ChannelStartProcessingRequest request, boolean strictFunctionalStartup,
+                                               DiscoveredTuner selectedTuner) throws ChannelException
+    {
         Channel channel = request.getChannel();
 
         if(mClosed || mShuttingDown)
@@ -1344,7 +1357,12 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             String threadName = "sdrtrunk channel [" + channel.getChannelID() + "/" +
                     channel.getDecodeConfiguration().getDecoderType().getShortDisplayString() + "]";
 
-            if(channel.getSourceConfiguration() instanceof SourceConfigRemote)
+            if(selectedTuner != null)
+            {
+                source = mTunerManager.getSourceAtCurrentCenter(channel.getSourceConfiguration(),
+                    channel.getDecodeConfiguration().getChannelSpecification(), threadName, selectedTuner);
+            }
+            else if(channel.getSourceConfiguration() instanceof SourceConfigRemote)
             {
                 P25RemoteBitstreamService remoteService = mP25RemoteBitstreamService;
 
