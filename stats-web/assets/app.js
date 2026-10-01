@@ -19360,13 +19360,13 @@ function channelViewLabel(row, context = '') {
 function channelInlineNavigation(row, nameLinksToDetails = false) {
   const links = node('span', 'channel-row-links');
   if (!nameLinksToDetails) {
-    const details = anchor('Details', href('channel', { configuration_id: row.configuration_id }),
-      'channel-row-link');
+    const details = anchor(fragment(iconGlyph('icon-open-details'), node('span', '', 'Details')),
+      href('channel', { configuration_id: row.configuration_id }), 'ui-button ui-button-secondary');
     details.title = channelViewLabel(row);
     links.append(details);
   }
-  const live = anchor('Live', href('live', { channel: row.configuration_id }),
-    'channel-row-link channel-row-link-live');
+  const live = anchor(fragment(iconGlyph('icon-live'), node('span', '', 'Live')),
+    href('live', { channel: row.configuration_id }), 'ui-button ui-button-secondary');
   live.title = `Open ${row.name || 'channel'} in Live`;
   links.append(live);
   return links;
@@ -19437,6 +19437,7 @@ function channelAdminColumns(selected, state, selectionChanged, renderSelectionH
     } },
     { id: 'name', label: 'Name', render: (row) => {
       const actions = node('div', 'channel-name-actions');
+      const summary = node('div', 'channel-name-summary');
       let name;
       if (row.editable !== false) {
         const edit = node('button', 'link-button channel-edit-button', row.name || 'Unnamed channel');
@@ -19447,15 +19448,15 @@ function channelAdminColumns(selected, state, selectionChanged, renderSelectionH
         name = anchor(row.name || 'Unnamed channel',
           href('channel', { configuration_id: row.configuration_id }), 'channel-name-link');
       }
-      actions.append(channelOriginName(name, row));
-      actions.append(node('span', 'channel-row-context',
+      summary.append(channelOriginName(name, row));
+      summary.append(node('span', 'channel-row-context',
         [row.system, row.site].filter(Boolean).join(' · ') || 'No system or site'));
       if (row.editable === false) {
         const locked = uiPill('Compatibility', 'warning', 'icon-lock');
         locked.title = row.restriction_message || 'This configuration is read-only on the web';
-        actions.append(locked);
+        summary.append(locked);
       }
-      actions.append(channelInlineNavigation(row, row.editable === false));
+      actions.append(summary, channelInlineNavigation(row, row.editable === false));
       return actions;
     }, sortValue: (row) => row.name || '' },
     { id: 'frequency', label: 'Frequencies', fullLabel: 'Frequencies (MHz)', render: (row) =>

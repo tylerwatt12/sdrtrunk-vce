@@ -865,13 +865,72 @@ test('alias-export-dark-mobile', async ({ page }) => {
 test('channels-dark-desktop', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/design-system.html?theme=dark&view=channels');
+  const rows = page.locator('.channel-catalog-table tbody tr').filter({
+    has: page.locator('.channel-name-actions')
+  });
+  await expect(rows).toHaveCount(2);
+  for (const row of await rows.all()) {
+    const name = row.locator('td[data-label="Name"]');
+    const summary = row.locator('.channel-name-summary');
+    const navigation = row.locator('.channel-row-links');
+    await expect(name).toHaveCSS('display', 'table-cell');
+    await expect(row.locator('.channel-name-actions')).toHaveCSS('display', 'grid');
+    const [nameBox, summaryBox, navigationBox] = await Promise.all([
+      name.boundingBox(), summary.boundingBox(), navigation.boundingBox()
+    ]);
+    expect(navigationBox.y).toBeGreaterThanOrEqual(summaryBox.y + summaryBox.height);
+    expect(navigationBox.x).toBeGreaterThanOrEqual(nameBox.x);
+    expect(navigationBox.x + navigationBox.width).toBeLessThanOrEqual(nameBox.x + nameBox.width);
+    expect(navigationBox.y + navigationBox.height).toBeLessThanOrEqual(nameBox.y + nameBox.height);
+  }
   await expect(page.locator('body')).toHaveScreenshot('channels-dark-desktop.png', { fullPage: true });
 });
+
+async function expectChannelMobileActions(page) {
+  const rows = page.locator('.channel-catalog-table tbody tr').filter({
+    has: page.locator('.channel-name-actions')
+  });
+  await expect(rows).toHaveCount(2);
+  for (const row of await rows.all()) {
+    const alias = row.locator('td[data-label="Alias List"]');
+    const details = row.getByRole('link', { name: 'Details', exact: true });
+    const live = row.getByRole('link', { name: 'Live', exact: true });
+    const startup = row.locator('.channel-startup-order');
+    await expect(details).toBeVisible();
+    await expect(live).toBeVisible();
+    await expect(startup).toHaveCSS('text-align', 'left');
+    expect(await startup.evaluate((cell) => getComputedStyle(cell, '::before').textAlign)).toBe('left');
+    const [aliasBox, detailsBox, liveBox, rowBox] = await Promise.all([
+      alias.boundingBox(), details.boundingBox(), live.boundingBox(), row.boundingBox()
+    ]);
+    for (const actionBox of [detailsBox, liveBox]) {
+      expect(actionBox.y).toBeGreaterThanOrEqual(aliasBox.y + aliasBox.height);
+      expect(actionBox.height).toBeGreaterThanOrEqual(40);
+      expect(actionBox.x).toBeGreaterThanOrEqual(rowBox.x);
+      expect(actionBox.x + actionBox.width).toBeLessThanOrEqual(rowBox.x + rowBox.width);
+    }
+    expect(Math.abs(detailsBox.width - liveBox.width)).toBeLessThanOrEqual(1);
+    expect(detailsBox.y).toBe(liveBox.y);
+    expect(liveBox.x).toBeGreaterThan(detailsBox.x + detailsBox.width);
+  }
+  const startupControls = page.locator('.channel-order-controls');
+  await expect(startupControls.getByRole('button', { name: 'Start earlier', exact: true })).toBeVisible();
+  await expect(startupControls.locator('.channel-order-number')).toHaveText('1');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+    page.viewportSize().width);
+}
 
 test('channels-light-mobile', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/design-system.html?theme=light&view=channels');
+  await expectChannelMobileActions(page);
   await expect(page.locator('body')).toHaveScreenshot('channels-light-mobile.png', { fullPage: true });
+});
+
+test('channels actions remain usable on a narrow dark mobile screen', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.goto('/design-system.html?theme=dark&view=channels');
+  await expectChannelMobileActions(page);
 });
 
 test('channel protocol groups expose an accessible full-width disclosure', async ({ page }) => {
