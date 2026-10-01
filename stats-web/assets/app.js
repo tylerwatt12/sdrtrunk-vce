@@ -21127,19 +21127,6 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
         (editing ? 'Save changes' : 'Create channel'), editing ? 'icon-edit' : 'icon-plus', () => {},
         'ui-button ui-button-primary');
       save.type = 'submit';
-      const clearStatistics = editing ? channelAdminButton('Clear Statistics', async () => {
-        if (!window.confirm(`Clear learned observations and activity history for ${channel.name || 'this channel'}?`))
-          return;
-        clearStatistics.disabled = true;
-        try {
-          const result = await requestJson(
-            `/api/v1/admin/channels/${encodeURIComponent(configurationId)}/statistics/clear`,
-            { method: 'POST', timeoutMs: 35_000 });
-          errors.replaceChildren(node('div', 'ui-notice', result.summary || 'Channel statistics cleared.'));
-        } catch (error) {
-          errors.replaceChildren(node('div', 'error', error.message));
-        } finally { clearStatistics.disabled = false; }
-      }, 'ui-button ui-button-danger') : null;
       const startStop = editing ? uiActionButton(entry.processing_state === 'RUNNING' ? 'Stop' : 'Start',
         entry.processing_state === 'RUNNING' ? 'icon-stop' : 'icon-play', async () => {
           if (modal.isDirty() || startStop.disabled) return;
@@ -21170,7 +21157,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
       sectionStack.append(...sectionNodes);
       sectionLayout.append(channelEditorSectionNavigation(panels, sectionPlan), sectionStack);
       const footer = node('footer', 'channel-editor-footer ui-action-row');
-      footer.append(...[startStop, clearStatistics, reset, node('span', 'channel-editor-footer-spacer'), cancel, save]
+      footer.append(...[startStop, reset, node('span', 'channel-editor-footer-spacer'), cancel, save]
         .filter(Boolean));
       form.append(sectionLayout, errors, footer);
       form.addEventListener('input', () => {
