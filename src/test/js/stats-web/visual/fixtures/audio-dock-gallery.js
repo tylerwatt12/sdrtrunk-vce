@@ -32,6 +32,18 @@ export async function mountAudioDockGallery(parameters) {
     button.append(svg);
     return button;
   };
+  const uiToggleField = (labelText, checked) => {
+    const field = node('div', 'ui-toggle-field');
+    const copy = node('span', 'ui-toggle-copy'); copy.append(node('strong', '', labelText));
+    const toggle = node('label', 'ui-toggle');
+    const input = node('input'); input.type = 'checkbox'; input.checked = checked;
+    input.setAttribute('aria-label', labelText);
+    const track = node('span', 'ui-toggle-track'); track.append(node('span', 'ui-toggle-thumb'));
+    const state = node('span', 'ui-toggle-state', checked ? 'On' : 'Off');
+    input.addEventListener('change', () => { state.textContent = input.checked ? 'On' : 'Off'; });
+    toggle.append(input, track, state); field.append(copy, toggle);
+    return field;
+  };
 
   const documentSource = await fetch('/app.html').then((response) => response.text());
   const sprite = new DOMParser().parseFromString(documentSource, 'text/html').querySelector('.icon-sprite');
@@ -83,7 +95,7 @@ export async function mountAudioDockGallery(parameters) {
     queue: empty ? [] : [2, 3, 4].map((index) => ({ ...currentRecording, id: 16 + index,
       source_id: 30910 + index, source_alias: `Engine ${index + 3}`, start_ms: started + index * 60_000 })),
     history: empty ? [] : [{ ...currentRecording, id: 16, source_alias: 'Engine 3', start_ms: started - 60_000 }],
-    playing: false, paused: true, stopped: true, loading: false,
+    playing: false, paused: !empty, stopped: empty, loading: false,
     status: empty ? 'Choose a recording to play' : 'Ready to play', currentTime: 8, duration: empty ? 0 : 42,
     volume: 0.7, canNext: !empty, canPrevious: !empty, clickMode: 'queue', continuation: false
   };
@@ -135,7 +147,7 @@ export async function mountAudioDockGallery(parameters) {
   const recordings = {
     viewState: () => ({ ...recordingState }),
     subscribeState: (listener) => subscribe(recordingState, recordingObservers, listener),
-    renderDetails: (host) => detailRenderer.playback.renderDetails(host, recordingState.current),
+    renderDetails: (host, call, options) => detailRenderer.playback.renderDetails(host, call, options),
     renderTranscript: (host) => detailRenderer.playback.renderTranscript(host, recordingState.current),
     toggle: async () => { recordingState.playing = !recordingState.playing; recordingState.stopped = false;
       recordingState.paused = !recordingState.playing; recordingState.status = recordingState.playing ? 'Playing recording' : 'Paused'; notifyRecording(); },
@@ -161,7 +173,7 @@ export async function mountAudioDockGallery(parameters) {
     loadSharedQueue: async () => {}
   };
   let titlePreference = true;
-  createAudioDock({ node, iconButton, recordings, getLivePlayer: () => live,
+  createAudioDock({ node, iconButton, uiToggleField, recordings, getLivePlayer: () => live,
     access: () => ({ live: true, recordings: fixture !== 'restricted' }), entityRefHref,
     canViewRadio: () => true, href, getTitlePreference: () => titlePreference,
     setTitlePreference: async (value) => { titlePreference = value; } });
@@ -171,8 +183,9 @@ export async function mountAudioDockGallery(parameters) {
     button.getClientRects().length && (button.getAttribute('aria-label') === label || button.textContent === label))?.click();
   if (parameters.get('audioSource') === 'recordings') clickNamed('Recordings');
   const size = parameters.get('audioState') || 'full';
-  if (size === 'collapsed') clickNamed('Collapse audio player');
-  else if (size === 'full') clickNamed('Expand audio player');
+  const handle = dock.querySelector('.ui-audio-handle');
+  if (size !== 'minimal') handle.dispatchEvent(new KeyboardEvent('keydown', {
+    key: size === 'collapsed' ? 'Home' : 'End', bubbles: true }));
   const panel = parameters.get('audioPanel');
   if (size === 'full' && panel) clickNamed(panel[0].toUpperCase() + panel.slice(1));
   document.querySelector('.visual-audio-dock-example').dataset.ready = 'true';

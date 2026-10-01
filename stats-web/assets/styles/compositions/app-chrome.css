@@ -636,6 +636,10 @@
   text-decoration: none;
 }
 
+.primary-nav .nav-account {
+  display: none;
+}
+
 .nav-group-links {
   position: absolute;
   top: calc(100% - 1px);
@@ -685,6 +689,11 @@
 }
 
 @media (max-width: 1180px) {
+  body.navigation-open .app-header {
+    /* Keep the drawer above the global dock and below shared modal backdrops. */
+    z-index: calc(var(--audio-dock-layer) + 1);
+  }
+
   .topbar {
     min-height: 54px;
     grid-template-columns: max-content max-content minmax(0, 1fr);
@@ -762,6 +771,10 @@
     padding: 8px 10px;
     border: 0;
     border-radius: var(--radius-control);
+  }
+
+  .primary-nav .nav-account:not([hidden]) {
+    display: flex;
   }
 
   .nav-group > summary::after {

@@ -759,6 +759,21 @@
   white-space: nowrap;
 }
 
+.alias-bulk-streams .alias-check-option {
+  align-items: flex-start;
+}
+
+.alias-bulk-streams .alias-check-option input {
+  flex: 0 0 auto;
+}
+
+.alias-bulk-streams .alias-check-option span {
+  min-width: 0;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 .alias-scan-list-option span {
   display: grid;
   gap: 2px;

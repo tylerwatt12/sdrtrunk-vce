@@ -14,7 +14,6 @@
 }
 .audio-dock [hidden] { display: none; }
 .audio-dock-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: var(--space-1); }
-.audio-dock-collapsed,
 .audio-dock-header {
   flex: 0 0 auto;
   display: flex;
@@ -24,7 +23,8 @@
   border-bottom: 1px solid var(--audio-line);
   background: var(--audio-raised);
 }
-.audio-dock-collapsed { min-height: var(--audio-collapsed-height); border-bottom: 0; gap: var(--space-3); }
+.audio-dock[data-state="collapsed"] { --audio-handle-height: var(--audio-collapsed-height); }
+.audio-dock[data-dragging="true"] .ui-audio-handle { cursor: grabbing; }
 .audio-dock-body { min-height: 0; display: flex; flex-direction: column; overflow: auto; overscroll-behavior: contain; }
 .audio-dock-now { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3) var(--space-1); flex: 0 0 auto; }
 .audio-dock-title { font-size: var(--audio-title-size); line-height: var(--line-height-control); overflow-wrap: anywhere; }
@@ -52,10 +52,9 @@
 .audio-dock-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-2) var(--space-3) var(--space-3); flex: 0 0 auto; }
 .audio-dock-actions > button { flex: 1; }
 .audio-dock-panel { min-height: 0; max-height: var(--audio-panel-height); flex: 1 1 auto; overflow: auto; overscroll-behavior: contain; padding: var(--space-3) var(--space-4) var(--space-5); }
-.audio-dock-panel h3 { font-size: var(--font-size-body); margin: var(--space-4) 0 var(--space-2); }
-.audio-dock-panel h3:first-child { margin-top: 0; }
 .audio-dock-facts { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); font-size: var(--font-size-label); }
 .audio-dock-facts > dt { overflow-wrap: anywhere; }
+.audio-dock-facts > dd:empty { min-height: calc(var(--font-size-label) * var(--line-height-body)); }
 .audio-dock-panel > details { margin-top: var(--space-3); }
 .audio-dock-panel > details > dl { padding: var(--space-3); }
 .audio-dock-queue-tools { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-3); }
@@ -63,10 +62,15 @@
 .audio-dock-queue-list { list-style: none; padding: 0; margin: 0; }
 .audio-dock-queue-row { display: flex; align-items: start; gap: var(--space-2); padding: var(--space-3) 0; border-top: 1px solid var(--audio-line); }
 .audio-dock-queue-row strong { overflow-wrap: anywhere; }
-.audio-dock-choice { display: flex; gap: var(--space-2); align-items: start; margin: var(--space-3) 0; }
-.audio-dock-choice > input[type="number"] { width: var(--audio-burst-width); margin-left: auto; }
+.audio-dock-choice { display: flex; gap: var(--space-2); align-items: start; }
+.audio-dock-panel .ui-settings-panel-header { margin: 0; }
 /* A spacer, rather than extra content padding, also works with sized workspaces. */
 body.has-audio-dock .content::after { content: ""; display: block; flex: 0 0 auto; height: calc(var(--audio-dock-height, 0px) + var(--space-5)); }
+:root:has(body.has-audio-dock) {
+  /* Keep automatic scrolling in the area between the sticky header and dock. */
+  scroll-padding-top: calc(var(--app-header-offset, 0px) + var(--space-2));
+  scroll-padding-bottom: calc(var(--audio-dock-height, 0px) + var(--space-2));
+}
 body.has-audio-dock[data-view="live"] .content { padding-bottom: calc(var(--audio-dock-height, 0px) + var(--space-3)); }
 body.has-audio-dock[data-view="live"] .content::after { display: none; }
 @media (max-width: 900px), (max-height: 500px) and (pointer: coarse) {

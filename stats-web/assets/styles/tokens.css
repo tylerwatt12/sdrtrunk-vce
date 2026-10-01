@@ -14,6 +14,8 @@
   --audio-dock-inset: 18px;
   --audio-dock-layer: 30;
   --audio-collapsed-height: 64px;
+  --audio-handle-height: 36px;
+  --audio-grip-width: 42px;
   --audio-action-size: 42px;
   --audio-play-size: 48px;
   --audio-source-height: 32px;

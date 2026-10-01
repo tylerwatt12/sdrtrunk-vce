@@ -26,13 +26,17 @@ body[data-view="network-visualizer"] .content {
   padding: var(--space-3);
 }
 
-.network-visualizer-layout {
-  --network-focus-motion: 180ms;
+.network-visualizer-layout,
+.network-visualizer-events {
   --network-denial: var(--chart-denial);
   --network-check: var(--chart-check);
   --network-emergency: var(--chart-emergency);
   --network-page: var(--chart-page);
   --network-busy: var(--chart-busy);
+}
+
+.network-visualizer-layout {
+  --network-focus-motion: 180ms;
   min-width: 0;
   min-height: 0;
   flex: 1 1 auto;
@@ -393,6 +397,7 @@ body[data-view="network-visualizer"] .content {
 }
 
 .network-visualizer-events {
+  color: var(--network-space-ink);
   position: absolute;
   z-index: 8;
   top: var(--space-3);
@@ -440,6 +445,33 @@ body[data-view="network-visualizer"] .content {
   padding: 0;
   overflow: auto;
   list-style: none;
+}
+
+.network-visualizer-events-modal .modal-content,
+.network-visualizer-events-sheet {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+.network-visualizer-events-modal .modal-content {
+  overflow: hidden;
+}
+
+.network-visualizer-events-sheet {
+  gap: var(--space-3);
+}
+
+.network-visualizer-events-modal .network-visualizer-events {
+  position: static;
+  width: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.network-visualizer-events-modal .network-visualizer-panel-header {
+  display: none;
 }
 
 .network-visualizer-event {

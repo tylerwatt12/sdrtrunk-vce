@@ -133,6 +133,8 @@ function createP25Visualizer(dependencies = {}) {
   const closeEvents = iconButton('icon-close', 'Close noteworthy activity');
   eventsHeader.append(eventsHeading, closeEvents);
   const eventList = node('ol', 'network-visualizer-event-list');
+  eventList.tabIndex = 0;
+  eventList.setAttribute('aria-label', 'Saved noteworthy P25 activity');
   events.append(eventsHeader, eventList);
   stage.append(canvas, back, scopeTitle, autoFocus, manualGuide, empty, legend, events);
   layout.append(toolbar, stage);
@@ -158,6 +160,8 @@ function createP25Visualizer(dependencies = {}) {
   let polling = false;
   let lastCameraPhase = 'roam';
   let navigationRevision = 0;
+  let eventsModal = null;
+  const shortViewport = window.matchMedia('(max-height: 640px)');
   const pressedKeys = new Set();
   const camera = createP25CameraCoordinator({ focusMs: 5_000, cooldownMs: 8_000, transitionMs: 900,
     returnMs: 900 });
@@ -195,6 +199,7 @@ function createP25Visualizer(dependencies = {}) {
     if (!rows.length) {
       eventList.replaceChildren(node('li', 'network-visualizer-event network-visualizer-event-empty',
         'No noteworthy saved activity in this scope.'));
+      ensureEventsSpace();
       return;
     }
     eventList.replaceChildren(...rows.map((event) => {
@@ -205,7 +210,35 @@ function createP25Visualizer(dependencies = {}) {
         node('time', '', formatTime(event.observedAtMs)));
       return item;
     }));
+    ensureEventsSpace();
   }
+
+  function openEventsSheet() {
+    if (eventsModal || closed || document.body.classList.contains('modal-open')) return;
+    const body = node('div', 'network-visualizer-events-sheet');
+    body.append(node('p', 'modal-introduction', 'Grouped from saved Activity history'), events);
+    eventsModal = openReadOnlyModal('Noteworthy P25 activity', body, {
+      id: 'p25-visualizer-events', className: 'network-visualizer-events-modal',
+      onClose: () => {
+        eventsModal = null;
+        events.hidden = true;
+        stage.append(events);
+        eventsToggle.setAttribute('aria-pressed', 'false');
+        if (!closed) eventsToggle.focus({ preventScroll: true });
+      }
+    });
+    if (!eventsModal) stage.append(events);
+    else if (document.fullscreenElement === layout) layout.append(eventsModal.state.backdrop);
+  }
+
+  function ensureEventsSpace() {
+    if (events.hidden || eventsModal || closed) return;
+    const entryHeight = eventList.firstElementChild?.getBoundingClientRect().height || 0;
+    if (shortViewport.matches || eventList.clientHeight < entryHeight) openEventsSheet();
+  }
+  shortViewport.addEventListener('change', ensureEventsSpace);
+  const eventsResizeObserver = new ResizeObserver(ensureEventsSpace);
+  eventsResizeObserver.observe(stage);
 
   function openSettings() {
     const form = node('form', 'admin-form network-visualizer-settings-form');
@@ -646,7 +679,10 @@ function createP25Visualizer(dependencies = {}) {
     if (introTimer) window.clearTimeout(introTimer);
     if (animationFrame) cancelAnimationFrame(animationFrame);
     window.removeEventListener('keyup', onKeyUp);
+    shortViewport.removeEventListener('change', ensureEventsSpace);
+    eventsResizeObserver.disconnect();
     document.removeEventListener('visibilitychange', onVisibilityChange);
+    eventsModal?.close();
     renderer?.dispose();
   };
   dependencies.signal?.addEventListener?.('abort', close, { once: true });

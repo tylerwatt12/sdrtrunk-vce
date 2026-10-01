@@ -36,15 +36,15 @@ for (const theme of ['light', 'dark']) {
             expect(viewport.height - bounds.y - bounds.height).toBe(18);
           }
           if (state === 'collapsed') {
-            await expect(dock.getByRole('button', { name: 'Expand audio player' })).toBeVisible();
+            await expect(dock.getByRole('button', { name: 'Change audio player size' })).toBeVisible();
             await expect(dock.getByRole('tab')).toHaveCount(0);
             await expect(dock.getByRole('slider')).toHaveCount(0);
           } else {
             await expect(dock.getByRole('button', { name: source === 'live' ? 'Pause live audio' : 'Play recording' }))
               .toBeVisible();
             await expect(dock.locator('.audio-dock-title')).toHaveText('Fire Dispatch');
-            if (state === 'full') await expect(dock.getByRole('button', { name: 'Show minimal controls' })
-              .locator('use')).toHaveAttribute('href', '#icon-minimize');
+            await expect(dock.getByRole('button', { name: 'Change audio player size' }))
+              .toHaveAttribute('aria-expanded', 'true');
           }
           await expect(dock).toHaveScreenshot(`${source}-${state}-${theme}-${device}.png`);
         });
@@ -131,8 +131,8 @@ test('audio dock gallery uses working production state controls and keyboard tab
   const slider = dock.getByRole('slider', { name: 'Recording position', exact: true });
   await slider.evaluate((input) => { input.value = '15'; input.dispatchEvent(new Event('input', { bubbles: true })); });
   await expect(slider).toHaveAttribute('aria-valuetext', '00:15 of 00:42');
-  await dock.getByRole('button', { name: 'Collapse audio player', exact: true }).click();
+  await dock.getByRole('button', { name: 'Change audio player size', exact: true }).press('Home');
   await expect(dock).toHaveAttribute('data-state', 'collapsed');
-  await dock.getByRole('button', { name: 'Expand audio player', exact: true }).click();
+  await dock.getByRole('button', { name: 'Change audio player size', exact: true }).click();
   await expect(dock).toHaveAttribute('data-state', 'minimal');
 });

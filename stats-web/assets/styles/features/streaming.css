@@ -6,6 +6,13 @@
   min-width: 0;
   gap: var(--space-4);
 }
+.streaming-alias-table-region {
+  min-width: 0;
+}
+.streaming-editor-modal .streaming-alias-actions {
+  top: 0;
+  margin-bottom: var(--space-4);
+}
 .streaming-toolbar,
 .streaming-summary {
   display: flex;

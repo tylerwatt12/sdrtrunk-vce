@@ -23,8 +23,8 @@ import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from
 import { createStreamingWorkspace } from './features/streaming.js?v=6';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=6';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=9';
-import { createRecordingsFeature } from './features/recordings.js?v=13';
-import { createAudioDock } from './core/audio-dock.js?v=1';
+import { createRecordingsFeature } from './features/recordings.js?v=14';
+import { createAudioDock } from './core/audio-dock.js?v=2';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=5';
 
@@ -752,10 +752,11 @@ function updateNavigationAccess() {
     const definition = applicationRoutes?.[link.dataset.view];
     const administratorOnly = String(definition?.access || '').startsWith('admin');
     link.hidden = administratorOnly && locked ||
+      link.dataset.view === 'settings' && !accessSession.authenticated ||
       link.dataset.view === 'network-visualizer' && !p25VisualizerMenuAvailable();
     link.classList.toggle('access-locked', locked);
     const lock = link.querySelector('.nav-lock');
-    if (lock) lock.hidden = !locked;
+    if (lock) lock.toggleAttribute('hidden', !locked);
     const label = link.querySelector('span')?.textContent?.trim() || routeViewLabel(link.dataset.view);
     link.title = locked ? `${label}: access required` : '';
   });
@@ -16537,7 +16538,7 @@ function saveP25VisualizerEventSettings(value) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=28');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=29');
   const visualizerModule = await p25VisualizerModulePromise;
   if (!renderIsCurrent(renderContext)) return;
   const visualizer = visualizerModule.createP25Visualizer({
@@ -27361,7 +27362,10 @@ const recordingsFeature = createRecordingsFeature({
 });
 
 const audioDock = createAudioDock({
-  node, iconButton, recordings: recordingsFeature.playback,
+  node, iconButton, uiToggleField, recordings: recordingsFeature.playback,
+  openRecordings: () => {
+    return route.get('view') === 'recordings' || navigateTo(href('recordings'));
+  },
   getLivePlayer: () => webCallPlayer,
   access: () => ({ live: capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO),
     recordings: capabilityAllowed(ACCESS_CAPABILITIES.RECORDINGS) }),

@@ -212,7 +212,9 @@ export function createStreamingWorkspace(deps) {
     };
     aliasActions.append(aliasCount, aliasLayoutHost);
     aliasPager.append(previous, next);
-    aliasesPanel.append(aliasQuery, aliasActions, aliasRows, aliasPager,
+    const aliasTableRegion = node('div', 'streaming-alias-table-region');
+    aliasTableRegion.append(aliasActions, aliasRows);
+    aliasesPanel.append(aliasQuery, aliasTableRegion, aliasPager,
       node('p', 'muted', 'These are the same assignments shown in the Alias Editor. Only your explicit changes are saved, up to 500 per save.'));
 
     function setBusy(value) {

@@ -395,7 +395,7 @@ for (const [theme, width] of [['light', 1440], ['dark', 1440], ['light', 320], [
       await expect(toggle).toHaveAttribute('aria-expanded', 'true');
       expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth))
         .toBeLessThanOrEqual(1);
-      await page.getByRole('button', { name: 'Collapse audio player', exact: true }).click();
+      await page.getByRole('button', { name: 'Change audio player size', exact: true }).press('Home');
       await page.screenshot({ path: testInfo.outputPath('receiver-status.png'), fullPage: true });
     });
 }

@@ -721,7 +721,7 @@ export function createRecordingsFeature(deps) {
     return list.childNodes.length ? list : '';
   }
 
-  function factGroups(row) {
+  function factGroups(row, { includeEmpty = false, empty = false } = {}) {
     const group = value(row, 'call_type') === 'PATCH' ? 'Patch' : 'Talkgroup';
     const target = label(row);
     const source = sourceLabel(row);
@@ -799,21 +799,26 @@ export function createRecordingsFeature(deps) {
         [`${prefix} home system`, hexIdentity(value(member, 'home_system_id'), 3)],
         [`${prefix} home identity`, value(member, 'home_identity_id'), member.entity_ref]];
     })]);
-    return groups.map(([title, facts]) => [title, facts.filter(([, detail]) =>
+    return groups.map(([title, facts]) => [title, facts.filter(([, detail]) => includeEmpty ||
       detail !== null && detail !== undefined && detail !== '').map(([name, detail, reference]) => [name,
-      reference ? entityLink(detail, typeof reference === 'string' ? row?.[reference] : reference) : detail])])
+      empty || detail === null || detail === undefined || detail === '' ? '' :
+        reference ? entityLink(detail, typeof reference === 'string' ? row?.[reference] : reference) : detail])])
       .filter(([, facts]) => facts.length);
   }
 
-  function renderDetails(host, call = player?.current) {
+  function renderDetails(host, call = player?.current, { shell = false, empty = false } = {}) {
     host.replaceChildren();
-    if (!call) {
+    if (!call && !shell) {
       host.append(makeNotice('Choose a recording to see its call details.'));
       return;
     }
-    factGroups(call).forEach(([title, facts]) => {
+    factGroups(call || {}, { includeEmpty: shell, empty }).forEach(([title, facts]) => {
       const list = node('dl', 'ui-fact-list audio-dock-facts');
-      facts.forEach(([name, detail]) => appendFact(node, list, name, detail));
+      facts.forEach(([name, detail]) => {
+        if (shell && (detail === '' || detail === null || detail === undefined)) {
+          list.append(node('dt', '', name), node('dd', '', ''));
+        } else appendFact(node, list, name, detail);
+      });
       if (!title) host.append(list);
       else {
         list.classList.add('ui-form-section');
@@ -822,6 +827,7 @@ export function createRecordingsFeature(deps) {
         host.append(group);
       }
     });
+    if (empty || !call) return;
     if (String(player?.current?.id) === String(call.id)) {
       if (player.detailsLoading) host.append(makeNotice('Loading complete call details…', 'loading'));
       else if (player.detailsError) host.append(makeNotice(player.detailsError, 'error'));

@@ -11,18 +11,13 @@ async function selectPanel(page, name) {
 
 async function fullControls(page) {
   const player = dock(page);
-  if (await player.getAttribute('data-state') === 'collapsed') {
-    await player.getByRole('button', { name: /Expand audio player/ }).click();
-  }
-  if (await player.getAttribute('data-state') !== 'full') {
-    await player.getByRole('button', { name: /Full controls|Expand audio player|Show full controls/ }).click();
-  }
+  await player.getByRole('button', { name: 'Change audio player size', exact: true }).press('End');
   await expect(player).toHaveAttribute('data-state', 'full');
 }
 
 async function chooseRecording(page, index = 0, mode = 'Play once') {
   if (await dock(page).getAttribute('data-state') === 'full') {
-    await dock(page).getByRole('button', { name: 'Show minimal controls', exact: true }).click();
+    await dock(page).getByRole('button', { name: 'Change audio player size', exact: true }).press('ArrowDown');
   }
   await page.locator('.recordings-play-glyph').nth(index).click();
   await page.getByRole('dialog', { name: 'Play recording', exact: true })
@@ -33,7 +28,9 @@ async function chooseRecording(page, index = 0, mode = 'Play once') {
 async function expectReachableControls(player) {
   const controls = player.locator('button:visible, input:visible, select:visible');
   for (let index = 0; index < await controls.count(); index++) {
-    const control = controls.nth(index);
+    const input = controls.nth(index);
+    const control = await input.evaluate((element) => element.matches('.ui-toggle input')) ?
+      input.locator('..') : input;
     await control.scrollIntoViewIfNeeded();
     const bounds = await control.evaluate((element) => {
       const rect = element.getBoundingClientRect();
@@ -67,12 +64,12 @@ for (const viewport of [{ width: 320, height: 740 }, { width: 390, height: 844 }
       await selectPanel(page, panel);
       await expectReachableControls(player);
     }
-    await player.getByRole('button', { name: /Collapse audio player/ }).click();
+    await player.getByRole('button', { name: 'Change audio player size', exact: true }).press('Home');
     await expect(player).toHaveAttribute('data-state', 'collapsed');
     await expect(player.getByRole('slider')).toHaveCount(0);
     await expect(player.getByRole('tab')).toHaveCount(0);
     await expectReachableControls(player);
-    await player.getByRole('button', { name: /Expand audio player/ }).click();
+    await player.getByRole('button', { name: 'Change audio player size', exact: true }).click();
     await expect(player).toHaveAttribute('data-state', 'minimal');
     await expectReachableControls(player);
     const bounds = await player.boundingBox();
@@ -239,7 +236,7 @@ test('adding a recording to the queue preserves live playback and its selected s
   await fullControls(page);
   await dock(page).getByRole('button', { name: 'Listen live', exact: true }).click();
   await expect(dock(page).getByRole('button', { name: 'Hold', exact: true })).toBeEnabled();
-  await dock(page).getByRole('button', { name: 'Show minimal controls', exact: true }).click();
+  await dock(page).getByRole('button', { name: 'Change audio player size', exact: true }).press('ArrowDown');
   await page.locator('.recordings-play-glyph').first().click();
   await page.getByRole('dialog', { name: 'Play recording', exact: true })
     .getByRole('button', { name: /Add to queue/ }).click();

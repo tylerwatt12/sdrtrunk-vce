@@ -459,6 +459,7 @@
 }
 
 .ui-toggle {
+  position: relative;
   min-height: 32px;
   display: inline-flex;
   align-items: center;
