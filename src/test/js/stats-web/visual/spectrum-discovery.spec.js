@@ -138,7 +138,8 @@ async function install(page, state = {}) {
     if (path === '/api/v1/auth/session') return respond({ configured: true, authenticated: true,
       tier: 'admin', username: 'admin', csrf_token: 'test-token', capabilities: {
         'web-access': true, dashboard: true, 'tuner-spectrum': true, 'admin-tuners': true,
-        'admin-channels': true, 'admin-aliases': true
+        'admin-channels': true, 'admin-aliases': true,
+        ...(state.listening ? { live: true, 'call-audio': true, recordings: true } : {})
       } });
     if (path === '/api/v1/me/preferences') return route.fulfill({ contentType: 'application/json',
       body: JSON.stringify({ revision: 1, preferences: { ...preferenceModule.defaults,
@@ -302,6 +303,51 @@ test('active monitoring keeps the Spectrum center lock disabled', async ({ page 
   await install(page, { locked: true, running: true });
   await expect(page.locator('.spectrum-browse-center').getByRole('checkbox', { name: 'Lock center' })).toBeDisabled();
 });
+
+for (const width of [1280, 1440]) {
+  test(`desktop Spectrum keeps its fixed panes while the visible audio player resizes at ${width}px`,
+    async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await install(page, { liveSpectrum: true, listening: true });
+      const dock = page.locator('#audio-dock');
+      const handle = dock.getByRole('button', { name: 'Change audio player size', exact: true });
+      await expect(dock).toBeVisible();
+      await expect(page.locator('.spectrum-browse-panel .channel-diagnostic-overlay').first()).toBeHidden();
+      const geometry = () => page.evaluate(() => {
+        const selectors = ['.spectrum-browse-workspace', '.spectrum-browse-panel', '.tuner-spectrum-plot',
+          '.tuner-spectrum-waterfall', '.spectrum-browse-control-rail'];
+        return selectors.map(selector => {
+          const bounds = document.querySelector(selector).getBoundingClientRect();
+          return [Math.round(bounds.x), Math.round(bounds.y), Math.round(bounds.width), Math.round(bounds.height)];
+        });
+      });
+      let baseline;
+      const heights = [];
+      for (const size of ['collapsed', 'minimal', 'full', 'collapsed']) {
+        await handle.focus();
+        await handle.press(size === 'full' ? 'End' : 'Home');
+        if (size === 'minimal') await handle.press('ArrowUp');
+        await expect(dock).toHaveAttribute('data-state', size);
+        await expect.poll(() => page.evaluate(() => {
+          const measured = parseFloat(getComputedStyle(document.documentElement)
+            .getPropertyValue('--audio-dock-height'));
+          return Math.abs(measured - document.querySelector('#audio-dock').getBoundingClientRect().height);
+        })).toBeLessThanOrEqual(1);
+        await expect(page.locator('.content')).toHaveCSS('overflow', 'visible');
+        expect(await page.locator('.content').evaluate(content => getComputedStyle(content, '::after').display))
+          .toBe('none');
+        if (!baseline) {
+          baseline = await geometry();
+          expect(baseline[1][3]).toBeGreaterThan(500);
+        }
+        await expect.poll(geometry).toEqual(baseline);
+        heights.push(await dock.evaluate(element => element.getBoundingClientRect().height));
+      }
+      expect(heights[1]).toBeGreaterThan(heights[0]);
+      expect(heights[2]).toBeGreaterThan(heights[1]);
+      expect(heights[3]).toBe(heights[0]);
+    });
+}
 
 test('managed Spectrum keeps its header actions and updates one persistent frequency rail', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });

@@ -260,7 +260,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
   const {
     node, iconGlyph, metricCard, formField, uiSelectFrame, uiPill, uiSegmentedControl, table,
     openReadOnlyModal, closeReadOnlyModal, requestJson, formatFrequency, formatNumber, href, anchor,
-    modalFooter, createAliasListPopupTrigger, directoryTimeoutMs = 15_000, mutationTimeoutMs = 65_000,
+    modalFooter, createAliasListPopupTrigger, browsingWorkflows, directoryTimeoutMs = 15_000, mutationTimeoutMs = 65_000,
     onLocationSaved = null
   } = dependencies;
 
@@ -550,22 +550,12 @@ export function createRadioReferenceImportWorkspace(dependencies) {
   };
 
   const internalPager = ({ offset, limit, visible, total, more, label, onPage }) => {
-    const pager = node('nav', 'radioreference-pager ui-pager ui-pager-surface');
-    pager.setAttribute('aria-label', `${label} pages`);
-    const first = visible ? offset + 1 : 0;
-    const last = offset + visible;
-    pager.append(node('span', 'muted', total === null ? `${label} ${formatNumber(first)}–${formatNumber(last)}` :
-      `${label} ${formatNumber(first)}–${formatNumber(last)} of ${formatNumber(total)}`));
-    const previous = button('Previous');
-    previous.disabled = offset <= 0;
-    previous.addEventListener('click', () => onPage(Math.max(0, offset - limit)));
-    const next = button('Next');
-    next.disabled = !more;
-    next.addEventListener('click', () => onPage(offset + limit));
-    const actions = node('div', 'ui-action-row');
-    actions.append(previous, next);
-    pager.append(actions);
-    return pager;
+    return browsingWorkflows.createBrowsingPager({ node, className: 'radioreference-pager ui-pager-surface',
+      ariaLabel: `${label} pages`,
+      countText: browsingWorkflows.pageRangeText({ offset, visible, total, label, format: formatNumber }),
+      previous: { enabled: offset > 0, onClick: () => onPage(Math.max(0, offset - limit)) },
+      next: { enabled: more === true, onClick: () => onPage(offset + limit) }
+    });
   };
 
   const renderPreviewDetails = (preview, kind) => {
@@ -651,7 +641,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     const modal = openReadOnlyModal(title, loading, {
       id: `radioreference-${kind}-preview`, className: 'radioreference-import-modal', returnFocusSelector
     });
-    if (!modal) return;
+    if (!modal || (modal.ready && !await modal.ready)) return;
     modal.setBusy(true);
     try {
       const preview = await api(path, { method: 'POST', body, timeoutMs: mutationTimeoutMs });

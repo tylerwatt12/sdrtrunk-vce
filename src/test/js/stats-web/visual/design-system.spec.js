@@ -379,6 +379,8 @@ test('icon actions show hints on hover and keyboard-visible focus only', async (
   const action = page.getByRole('button', { name: 'Receiver health' });
   await expect(action).toHaveCSS('width', '40px');
   await expect(action).toHaveCSS('height', '40px');
+  await action.scrollIntoViewIfNeeded();
+  await page.mouse.move(0, 0);
   await action.hover();
   const hint = page.locator('.ui-icon-hint');
   await expect(hint).toBeVisible();
@@ -940,13 +942,14 @@ test('aliases-dark-mobile', async ({ page }) => {
   await expect(page.locator('body')).toHaveScreenshot('aliases-dark-mobile.png', { fullPage: true });
 });
 
-test('alias search keeps advanced filters behind an accessible disclosure', async ({ page }) => {
+test('alias search keeps Filters behind an accessible disclosure', async ({ page }) => {
   for(const view of ['aliases', 'scan-list-members']) {
     await page.goto(`/design-system.html?theme=light&view=${view}`);
     const form = page.locator('.visual-feature-example:visible .alias-editor-filter-toolbar');
     await expect(form.getByRole('searchbox', { name: 'Search' })).toBeVisible();
     await expect(form.getByRole('button', { name: 'Search', exact: true })).toBeVisible();
-    const toggle = form.getByRole('button', { name: 'Advanced filters' });
+    const toggle = form.getByRole('button', { name: 'Filters', exact: true });
+    await expect(form).toHaveAttribute('data-shared-filters-ready', 'true');
     const panelId = await toggle.getAttribute('aria-controls');
     const panel = form.locator(`#${panelId}`);
     await expect(toggle).toHaveAttribute('aria-expanded', 'false');
@@ -977,11 +980,41 @@ for(const [name, theme, viewport] of [
     await page.setViewportSize(viewport);
     await page.goto(`/design-system.html?theme=${theme}&view=aliases`);
     const form = page.locator('.visual-aliases-example .alias-editor-filter-toolbar');
-    await form.getByRole('button', { name: 'Advanced filters' }).click();
-    await expect(form.locator('.alias-filter-advanced')).toBeVisible();
-    await expect(page.locator('body')).toHaveScreenshot(`${name}.png`, { fullPage: true });
+    await form.getByRole('button', { name: 'Filters', exact: true }).click();
+    const filters = viewport.width <= 700 ? page.getByRole('dialog', { name: 'Filters', exact: true }) : form;
+    await expect(filters.locator('.alias-filter-advanced')).toBeVisible();
+    if (viewport.width <= 700) await expect(filters).toHaveScreenshot(`${name}.png`);
+    else await expect(page.locator('body')).toHaveScreenshot(`${name}.png`, { fullPage: true });
   });
 }
+
+test('Alias and Scan List member phone Filters use the shared sheet and preserve draft controls on dismissal', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  for (const view of ['aliases', 'scan-list-members']) {
+    await page.goto(`/design-system.html?theme=dark&view=${view}`);
+    const form = page.locator('.visual-feature-example:visible .alias-editor-filter-toolbar');
+    await expect(form).toHaveAttribute('data-shared-filters-ready', 'true');
+    const toggle = form.getByRole('button', { name: 'Filters', exact: true });
+    await toggle.click();
+    const sheet = page.getByRole('dialog', { name: 'Filters', exact: true });
+    await expect(sheet).toHaveClass(/ui-filter-modal/);
+    await expect(sheet.getByRole('button', { name: 'Apply filters', exact: true })).toHaveCount(1);
+    await sheet.getByRole('textbox', { name: 'Group', exact: true }).fill('Fire');
+    await sheet.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(sheet).toHaveCount(0);
+    await expect(form.getByRole('button', { name: 'Filters (1)', exact: true })).toBeFocused();
+    await expect(form.locator('.alias-filter-advanced')).toBeHidden();
+    await expect(form.getByRole('textbox', { name: 'Group', exact: true, includeHidden: true })).toHaveValue('Fire');
+    await form.getByRole('button', { name: 'Filters (1)', exact: true }).click();
+    await sheet.getByRole('button', { name: 'Apply filters', exact: true }).click();
+    await expect(sheet).toHaveCount(0);
+    await expect(form.getByRole('button', { name: 'Filters (1)', exact: true })).toBeFocused();
+    await form.getByRole('button', { name: 'Clear filters', exact: true }).click();
+    await expect(form.getByRole('button', { name: 'Filters', exact: true })).toBeVisible();
+    await expect(form.getByRole('textbox', { name: 'Group', exact: true, includeHidden: true })).toHaveValue('');
+    await expect(page.locator('body')).not.toHaveClass(/modal-open/);
+  }
+});
 
 test('scan-list-members-dark-desktop', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -1678,5 +1711,49 @@ for(const theme of ['light', 'dark']) {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`/design-system.html?theme=${theme}&view=dashboard-activity`);
     await expect(page.locator('body')).toHaveScreenshot(`dashboard-activity-${theme}-mobile.png`, { fullPage: true });
+  });
+}
+
+for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 320], ['dark', 320]]) {
+  test(`workflow recipes ${theme} ${width} keep card geometry and failure drafts`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(`/design-system.html?view=workflows&theme=${theme}`);
+    const main = page.locator('.visual-workflows-example');
+    await expectMetricGridSpacing(main.locator('.ui-metric-grid'));
+    await expectBoxedFacts(main.locator('.ui-facts'), main.locator('.ui-metric').first());
+    await expectFlatFacts(main.locator('.ui-fact-list'));
+    await expectNoHorizontalOverflow(page);
+    const input = main.getByLabel('Display name', { exact: true });
+    const save = main.getByRole('button', { name: 'Save Changes', exact: true });
+    const cancel = main.getByRole('button', { name: 'Cancel', exact: true });
+    await expect(save).toBeDisabled();
+    await input.fill('MetropolitanEmergencyCommunicationsCountyPublicSafety');
+    await save.click();
+    await expect(main.locator('form')).toHaveAttribute('aria-busy', 'true');
+    await expect(input).toBeDisabled();
+    await expect(cancel).toBeDisabled();
+    await expect(main.getByRole('status')).toHaveText('Saving…');
+    await expect(main.getByRole('alert')).toHaveText('The changes could not be saved. Try again.');
+    await expect(input).toHaveValue('MetropolitanEmergencyCommunicationsCountyPublicSafety');
+    await expect(input).toBeEnabled();
+    await expect(main.getByLabel('Locked default', { exact: true })).toBeDisabled();
+    await expect(main).toHaveScreenshot(`workflow-recipes-${theme}-${width}-error.png`);
+    await save.click();
+    await expect(main.getByRole('status')).toHaveText('Saved.');
+    await expect(save).toBeDisabled();
+    await expect(cancel).toBeEnabled();
+    const pager = main.getByRole('navigation', { name: 'Results pages' });
+    await expect(pager).toContainText('Rows 1–10 of 30');
+    await expect(pager.getByRole('button', { name: 'Previous' })).toBeDisabled();
+    await pager.getByRole('button', { name: 'Next' }).click();
+    await expect(pager).toContainText('Rows 11–20 of 30');
+    await pager.getByRole('button', { name: 'Next' }).click();
+    await expect(pager).toContainText('Rows 21–30 of 30');
+    await expect(pager.getByRole('button', { name: 'Next' })).toBeDisabled();
+    await expect(main.locator('[data-workflow-availability] > .ui-pill')).toHaveText([
+      'Available to listeners', 'Hidden from listeners'
+    ]);
+    await expect(main.locator('[data-workflow-availability] .ui-pill-warning')).toHaveCount(0);
+    await expectNoHorizontalOverflow(page);
   });
 }

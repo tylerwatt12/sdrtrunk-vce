@@ -12,6 +12,7 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
   await page.evaluate(async (metricHelpers) => {
     const { createRadioReferenceImportWorkspace } = await import(
       '/assets/features/radioreference-import.js?visual-test=1');
+    const browsingWorkflows = await import('/assets/core/browsing-workflows.js');
     const tableDefaults = await import('/assets/core/table-defaults.js?visual-test=1');
     document.body.replaceChildren();
     document.documentElement.dataset.theme = new URLSearchParams(location.search).get('theme') || 'light';
@@ -365,12 +366,12 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
       return link;
     };
     const modalFooter = (...controls) => {
-      const footer = node('footer', 'alias-modal-footer ui-action-row');
+      const footer = node('footer', 'alias-modal-footer ui-modal-footer ui-action-row');
       footer.append(...controls);
       return footer;
     };
     const workspace = createRadioReferenceImportWorkspace({
-      node, iconGlyph, metricCard, formField, uiSelectFrame, uiPill, uiStatus, uiSegmentedControl, table,
+      node, iconGlyph, metricCard, formField, uiSelectFrame, uiPill, uiStatus, uiSegmentedControl, table, browsingWorkflows,
       openReadOnlyModal, closeReadOnlyModal, requestJson, createAliasListPopupTrigger,
       formatFrequency: (value) => (Number(value) / 1_000_000).toFixed(5),
       formatNumber: (value) => Number(value).toLocaleString('en-US'),

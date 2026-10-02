@@ -72,24 +72,27 @@
 :root:has(body.has-audio-dock) {
   /* Automatic scrolling still clears the sticky header on every screen. */
   scroll-padding-top: calc(var(--app-header-offset, 0px) + var(--space-2));
+  scroll-padding-bottom: calc(var(--audio-dock-height, 0px) + var(--space-2));
+}
+/* Final actions remain reachable beside the floating dock and below the mobile dock. */
+body.has-audio-dock .content::after {
+  content: "";
+  display: block;
+  flex: 0 0 auto;
+  height: calc(var(--audio-dock-height, 0px) + var(--space-5));
+}
+/* Live owns its fixed viewport and pane scrolling; the floating dock must not shrink it. */
+body.has-audio-dock[data-view="live"] .content::after { display: none; }
+@media (min-width: 921px) and (min-height: 601px) {
+  /* Spectrum also owns a fixed desktop viewport and scrolls its control rail. */
+  body.has-audio-dock[data-view="tuner-spectrum"] .content::after { display: none; }
 }
 @media (max-width: 900px), (max-height: 500px) and (pointer: coarse) {
-  /* Only the full-width mobile dock reserves room in the page workspace. */
-  body.has-audio-dock .content::after {
-    content: "";
-    display: block;
-    flex: 0 0 auto;
-    height: calc(var(--audio-dock-height, 0px) + var(--space-5));
-  }
-  :root:has(body.has-audio-dock) {
-    scroll-padding-bottom: calc(var(--audio-dock-height, 0px) + var(--space-2));
-  }
   body.has-audio-dock[data-view="live"] .content {
     padding-bottom: calc(var(--audio-dock-height, 0px) + var(--space-3));
     scroll-padding-top: var(--space-2);
     scroll-padding-bottom: calc(var(--audio-dock-height, 0px) + var(--space-2));
   }
-  body.has-audio-dock[data-view="live"] .content::after { display: none; }
   .audio-dock {
     right: 0;
     bottom: 0;

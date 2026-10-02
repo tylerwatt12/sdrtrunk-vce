@@ -175,6 +175,8 @@ test('delete confirmation returns focus to Delete and sends no request until con
   await trigger.click();
   const dialog = page.getByRole('dialog', { name: 'Delete account · field.operator' });
   await expect(dialog).toContainText('They will be signed out immediately.');
+  await expect(dialog.locator('footer.ui-modal-footer')).toHaveCount(1);
+  await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(dialog).not.toBeVisible();
   await expect(trigger).toBeFocused();

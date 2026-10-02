@@ -118,7 +118,7 @@ function canShowResults(sourceKind, source, type, site) {
 export function createRetainedStatisticsWorkspace(deps) {
   const { node, formField, uiSelectFrame, uiSegmentedControl, section, sectionActionHost,
     table, openReadOnlyModal, modalFooter, metrics, requestJson, formatNumber, formatDateTime,
-    renderItem, renderSource, renderAliasList, renderAlias, signal } = deps;
+    renderItem, renderSource, renderAliasList, renderAlias, browsingWorkflows, signal } = deps;
   const host = node('div', 'retained-statistics-page data-workspace');
   const pickerBody = node('div', 'retained-statistics-picker-body');
   const sourceBlock = node('div', 'retained-statistics-source-block');
@@ -267,8 +267,8 @@ export function createRetainedStatisticsWorkspace(deps) {
   const partsBlock = node('div', 'retained-statistics-parts');
   partsBlock.setAttribute('role', 'group');
   partsBlock.setAttribute('aria-label', 'Saved parts to delete');
-  const resultPager = node('nav', 'retained-statistics-pager pager ui-pager');
-  resultPager.setAttribute('aria-label', 'Results pages');
+  const resultPager = browsingWorkflows.createBrowsingPager({ node,
+    className: 'retained-statistics-pager', ariaLabel: 'Results pages' });
   resultsBody.append(resultContext, resultSearchForm, resultCount, partsBlock, resultStatus,
     resultTable, resultPager);
 
@@ -589,23 +589,17 @@ export function createRetainedStatisticsWorkspace(deps) {
   }
 
   function drawPager() {
-    resultPager.replaceChildren();
     const length = state.resultRows.length;
-    const first = length ? state.resultOffset + 1 : 0;
-    const last = state.resultOffset + length;
-    const range = state.resultTotal == null ? `${formatNumber(first)}–${formatNumber(last)}` :
-      `${formatNumber(first)}–${formatNumber(last)} of ${formatNumber(state.resultTotal)}`;
-    const previous = button('Previous', () => {
-      state.resultOffset = Math.max(0, state.resultOffset - PAGE_SIZE);
-      void loadResults();
+    resultPager.update({
+      countText: browsingWorkflows.pageRangeText({ offset: state.resultOffset, visible: length,
+        total: state.resultTotal, format: formatNumber }),
+      previous: { enabled: !state.resultLoading && state.resultOffset > 0, onClick: () => {
+        state.resultOffset = Math.max(0, state.resultOffset - PAGE_SIZE); void loadResults();
+      } },
+      next: { enabled: !state.resultLoading && state.resultMore, onClick: () => {
+        state.resultOffset += PAGE_SIZE; void loadResults();
+      } }
     });
-    const next = button('Next', () => {
-      state.resultOffset += PAGE_SIZE;
-      void loadResults();
-    });
-    previous.disabled = state.resultLoading || state.resultOffset === 0;
-    next.disabled = state.resultLoading || !state.resultMore;
-    resultPager.append(node('span', 'muted', range), previous, next);
     resultPager.hidden = !length && !state.resultOffset ||
       (state.resultOffset === 0 && !state.resultMore);
   }
@@ -848,6 +842,7 @@ export function createRetainedStatisticsWorkspace(deps) {
     }
 
     async function loadPreview() {
+      if (!modal || (modal.ready && !await modal.ready) || !body.isConnected) return;
       const generation = ++previewRequest;
       previewReady = false;
       updateConfirm();

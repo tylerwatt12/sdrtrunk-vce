@@ -739,8 +739,7 @@ body[data-view="live"] .channel-diagnostic-readouts {
   font-size: 14px;
 }
 
-.live-filter-type-actions,
-.live-filter-footer {
+.live-filter-type-actions {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
@@ -847,11 +846,6 @@ body[data-view="live"] .channel-diagnostic-readouts {
 .live-filter-search input {
   min-width: 0;
   width: 100%;
-}
-
-.live-filter-footer {
-  justify-content: flex-end;
-  padding-top: var(--space-1);
 }
 
 .live-detail-gap {
@@ -1001,10 +995,6 @@ body[data-view="live"] .channel-diagnostic-readouts {
   .live-filter-search {
     grid-column: auto;
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .live-filter-footer > button {
-    flex: 1 1 140px;
   }
 
   .channel-diagnostic-readouts {

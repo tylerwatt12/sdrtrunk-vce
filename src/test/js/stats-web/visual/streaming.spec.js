@@ -11,6 +11,7 @@ async function install(page, theme = 'light', empty = false) {
   await page.goto(`/design-system.html?theme=${theme}`);
   await page.evaluate(async ({helpersSource, theme, empty}) => {
     const { createStreamingWorkspace } = await import('/assets/features/streaming.js');
+    const browsingWorkflows = await import('/assets/core/browsing-workflows.js');
     const tableDefaults = await import('/assets/core/table-defaults.js');
     document.documentElement.dataset.theme = theme;
     document.body.replaceChildren();
@@ -112,7 +113,7 @@ async function install(page, theme = 'light', empty = false) {
 
     const shared = new Function('node', 'valueNode', 'iconButton', 'iconGlyph', 'number',
       `let activeReadOnlyModal = null; ${helpersSource}
-      return { openReadOnlyModal, uiToggleField, uiSegmentedControl, metrics };`)(node,
+      return { openReadOnlyModal, confirmAction, uiToggleField, uiSegmentedControl, metrics };`)(node,
         value => value instanceof Node ? value : document.createTextNode(String(value)), iconButton,
         iconGlyph, String);
     const fields = [
@@ -131,7 +132,7 @@ async function install(page, theme = 'light', empty = false) {
     let assignments=new Set([1,51]);
     const aliases=Array.from({length:60},(_,i)=>({id:i+1,name:`Dispatch ${i+1}`,identifier:String(100+i),alias_list_id:7,alias_list_name:'County Public Safety'}));
     const calls=[];
-    window.streamingTest={calls,status,fail:false,stale:false,feedMode:'ready',feedDelay:0,feeds:[
+    window.streamingTest={calls,status,fail:false,stale:false,references:{aliases:2,alias_lists:[]},feedMode:'ready',feedDelay:0,feeds:[
       {id:1042,name:'Metro Public Safety Dispatch and Regional Interoperability Network',configured:false},
       {id:2087,name:'County Fire and EMS',configured:true},
       {id:3194,name:'Citywide Events',configured:false}
@@ -150,6 +151,9 @@ async function install(page, theme = 'light', empty = false) {
       if(suffix==='/options') return {revision,providers:[{id:'BROADCASTIFY_CALL',label:'Broadcastify Calls',connection_test:true,fields}],sites:[]};
       if(suffix.startsWith('/templates/')) return {...structuredClone(definition),settings:{...definition.settings,name:'',enabled:false},configured_credentials:[]};
       if(suffix==='/test') return {success:true,message:'Connection accepted'};
+      if(suffix==='/destination'&&options.method==='DELETE') {
+        empty=true; return {revision:'2:1:1'};
+      }
       if(suffix==='/destination/aliases') {
         if(options.method==='POST') { options.body.add.forEach(id=>assignments.add(id)); options.body.remove.forEach(id=>assignments.delete(id)); revision='2:2:2'; return {revision,configuration_id:'destination'}; }
         const filtered=aliases.filter(row=>(!url.searchParams.get('q')||row.name.includes(url.searchParams.get('q')))&&(url.searchParams.get('assigned')!=='true'||assignments.has(row.id)));
@@ -160,15 +164,15 @@ async function install(page, theme = 'light', empty = false) {
         definition.settings={...definition.settings,...options.body.settings}; revision='2:1:1'; empty=false;
         return {revision,configuration_id:'destination'};
       }
-      if(suffix==='/destination') return {revision,destination:structuredClone(definition),status,references:{aliases:2,alias_lists:[]}};
+      if(suffix==='/destination') return {revision,destination:structuredClone(definition),status,references:structuredClone(window.streamingTest.references)};
       return {revision,destinations:empty?[]:[status,{...status,configuration_id:'other',name:'Regional Archive',provider_label:'RadioResolve',state:'ERROR',state_label:'Network unavailable',queued:12,sent:842,errors:1,last_error:'Network unavailable',attention:true}]};
     };
     const shell=node('main','content');
     const header=node('header','page-header ui-page-header');
     const labels=node('div'); labels.append(node('h1','page-title','Streaming'),node('div','page-subtitle','Manage destinations and monitor delivery')); header.append(labels);
     const abort=new AbortController();
-    const workspace=createStreamingWorkspace({node,formField,uiSelectFrame,uiStatus,table,...shared,requestJson,
-      modalFooter:(...controls)=>{const footer=node('footer','alias-modal-footer ui-action-row');footer.append(...controls);return footer;},
+    const workspace=createStreamingWorkspace({node,formField,uiSelectFrame,uiStatus,table,...shared,requestJson,browsingWorkflows,
+      modalFooter:(...controls)=>{const footer=node('footer','alias-modal-footer ui-modal-footer ui-action-row');footer.append(...controls);return footer;},
       formatNumber:String,href:(view,params)=>`/?${new URLSearchParams({view,...params})}`,signal:abort.signal});
     shell.append(header,workspace.element);document.body.append(shell);
   }, {helpersSource,theme,empty});
@@ -209,6 +213,28 @@ test('partial settings preserve saved credentials and stale edits remain reviewa
   const writes=await page.evaluate(()=>window.streamingTest.calls.filter(([,options])=>options.method==='PUT'));
   expect(writes.at(-1)[1].body.settings).toEqual({name:'Renamed calls'});
   await expect(modal.getByLabel('Provider',{exact:true})).toBeDisabled();
+});
+
+test('streaming deletion keeps its editor and sends no write until themed confirmation is accepted', async ({page}) => {
+  await install(page);
+  await page.evaluate(() => { window.streamingTest.references={aliases:0,alias_lists:[]}; });
+  await page.getByRole('button',{name:'County Calls',exact:true}).click();
+  const editor=page.getByRole('dialog',{name:'Streaming destination'});
+  const remove=editor.getByRole('button',{name:'Delete destination'});
+  const deletes=() => page.evaluate(() => window.streamingTest.calls.filter(([,options])=>options.method==='DELETE').length);
+  await remove.click();
+  const confirmation=page.getByRole('alertdialog',{name:'Delete streaming destination'});
+  await expect(confirmation.getByRole('button',{name:'Cancel'})).toBeFocused();
+  expect(await deletes()).toBe(0);
+  await confirmation.getByRole('button',{name:'Cancel'}).click();
+  await expect(editor).toBeVisible();
+  await expect(remove).toBeEnabled();
+  await expect(remove).toBeFocused();
+  expect(await deletes()).toBe(0);
+  await remove.click();
+  await confirmation.getByRole('button',{name:'Delete destination'}).click();
+  await expect(editor).toHaveCount(0);
+  expect(await deletes()).toBe(1);
 });
 
 test('delivery counters retain their live values and update error severity after recovery', async ({page}) => {

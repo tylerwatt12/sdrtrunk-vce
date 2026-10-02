@@ -84,23 +84,45 @@ async function expectBlankFacts(page) {
   await expect(player(page).locator('#audio-dock-panel dd a')).toHaveCount(0);
 }
 
-test('desktop page geometry stays unchanged in every audio dock size', async ({ page }) => {
+test('desktop dock sizes reserve bottom scrolling space without moving page content', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await openApp(page);
   const geometry = () => page.locator('.content').evaluate((content) => ({
-    height: content.getBoundingClientRect().height,
-    scrollHeight: content.scrollHeight,
+    children: [...content.children].map((child) => {
+      const bounds = child.getBoundingClientRect();
+      return { top: Math.round(bounds.top + window.scrollY), height: Math.round(bounds.height) };
+    }),
     paddingBottom: getComputedStyle(content).paddingBottom,
     spacer: getComputedStyle(content, '::after').content,
+    spacerHeight: parseFloat(getComputedStyle(content, '::after').height),
     documentHeight: document.documentElement.scrollHeight,
-    scrollPaddingBottom: getComputedStyle(document.documentElement).scrollPaddingBottom,
+    scrollPaddingBottom: parseFloat(getComputedStyle(document.documentElement).scrollPaddingBottom),
+    measuredDockHeight: parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--audio-dock-height')),
+    dockHeight: document.querySelector('#audio-dock').getBoundingClientRect().height,
+    spacerInset: parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--space-5')),
+    scrollInset: parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--space-2')),
   }));
   await size(page, 'collapsed');
+  await expect.poll(async () => {
+    const value = await geometry();
+    return Math.abs(value.measuredDockHeight - value.dockHeight);
+  }).toBeLessThanOrEqual(1);
   const baseline = await geometry();
-  expect(baseline.spacer).toBe('none');
+  expect(baseline.spacer).not.toBe('none');
+  expect(baseline.spacerHeight - baseline.measuredDockHeight).toBe(baseline.spacerInset);
+  expect(baseline.scrollPaddingBottom - baseline.measuredDockHeight).toBe(baseline.scrollInset);
   for (const state of ['minimal', 'full', 'collapsed']) {
     await size(page, state);
-    await expect.poll(geometry).toEqual(baseline);
+    await expect.poll(async () => {
+      const value = await geometry();
+      return { children: value.children, paddingBottom: value.paddingBottom,
+        contentHeight: Math.round(value.documentHeight - value.spacerHeight),
+        measurementError: Math.abs(value.measuredDockHeight - value.dockHeight) <= 1,
+        spacerGap: value.spacerHeight - value.measuredDockHeight,
+        scrollPaddingGap: value.scrollPaddingBottom - value.measuredDockHeight };
+    }).toEqual({ children: baseline.children, paddingBottom: baseline.paddingBottom,
+      contentHeight: Math.round(baseline.documentHeight - baseline.spacerHeight),
+      measurementError: true, spacerGap: baseline.spacerInset, scrollPaddingGap: baseline.scrollInset });
   }
 });
 

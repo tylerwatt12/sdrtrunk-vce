@@ -1,0 +1,192 @@
+[
+  {
+    "file": "features/channels.css",
+    "atRules": [
+      "@media (max-width: 720px)"
+    ],
+    "selector": ".channel-admin-catalog .ui-search",
+    "declarations": "width: 100%;"
+  },
+  {
+    "file": "features/channels.css",
+    "atRules": [
+      "@media (max-width: 720px)"
+    ],
+    "selector": ".channel-admin-catalog .ui-segmented",
+    "declarations": "width: 100%;"
+  },
+  {
+    "file": "features/channels.css",
+    "atRules": [
+      "@media (max-width: 720px)"
+    ],
+    "selector": ".channel-admin-catalog .ui-segmented-option",
+    "declarations": "flex: 1 1 0;"
+  },
+  {
+    "file": "features/channels.css",
+    "atRules": [
+      "@media (max-width: 720px)"
+    ],
+    "selector": ".channel-map-row .ui-icon-button",
+    "declarations": "grid-column: 2;"
+  },
+  {
+    "file": "features/radio-directory.css",
+    "atRules": [],
+    "selector": ".alias-coverage-field .ui-select-frame",
+    "declarations": "width: 100%;"
+  },
+  {
+    "file": "features/radio-directory.css",
+    "atRules": [],
+    "selector": ".alias-coverage-field .ui-select",
+    "declarations": "width: 100%;"
+  },
+  {
+    "file": "features/radio-directory.css",
+    "atRules": [],
+    "selector": ".alias-coverage-search .ui-search",
+    "declarations": "min-width: 0; flex: 1;"
+  },
+  {
+    "file": "features/radio-directory.css",
+    "atRules": [
+      "@media (max-width: 760px)"
+    ],
+    "selector": ".alias-coverage-table-header .ui-segmented",
+    "declarations": "grid-column: 1 / -1; grid-row: 2; max-width: 100%;"
+  },
+  {
+    "file": "features/radio-directory.css",
+    "atRules": [
+      "@media (max-width: 520px)"
+    ],
+    "selector": ".radio-directory-perspective .ui-segmented-option",
+    "declarations": "width: 100%;"
+  },
+  {
+    "file": "features/radio-directory.css",
+    "atRules": [
+      "@media (max-width: 520px)"
+    ],
+    "selector": ".alias-coverage-table-toolbar .ui-segmented",
+    "declarations": "width: 100%; overflow-x: auto;"
+  },
+  {
+    "file": "features/tuner-spectrum.css",
+    "atRules": [],
+    "selector": ".spectrum-discovery-stage > .ui-feedback",
+    "declarations": "order: 99;"
+  },
+  {
+    "file": "features/listen-map.css",
+    "atRules": [],
+    "selector": ".listen-map-selected-actions .ui-button",
+    "declarations": "flex: 1 1 auto;"
+  },
+  {
+    "file": "features/listen-map.css",
+    "atRules": [],
+    "selector": ".listen-map-facts .ui-fact",
+    "declarations": "grid-template-columns: minmax(72px, .7fr) minmax(0, 1.3fr); gap: var(--space-2); padding: 5px 0; background: transparent; border: 0;"
+  },
+  {
+    "file": "features/listen-map.css",
+    "atRules": [],
+    "selector": ".listen-map-facts .ui-fact > dd",
+    "declarations": "text-align: right; overflow-wrap: anywhere;"
+  },
+  {
+    "file": "features/listen-map.css",
+    "atRules": [
+      "@media (max-width: 620px)"
+    ],
+    "selector": ".listen-map-panel > .ui-section-title",
+    "declarations": "align-items: flex-start; flex-direction: column;"
+  },
+  {
+    "file": "features/aliases.css",
+    "atRules": [],
+    "selector": ".alias-stream-options > :is(.muted, .empty, .ui-notice)",
+    "declarations": "grid-column: 1 / -1;"
+  },
+  {
+    "file": "features/dashboard.css",
+    "atRules": [],
+    "selector": ".dashboard-activity-mix-body > .ui-section-note",
+    "declarations": "margin: 0 var(--space-4) var(--space-3);"
+  },
+  {
+    "file": "features/dashboard.css",
+    "atRules": [],
+    "selector": ".dashboard-activity-radio-result > .ui-section-note",
+    "declarations": "border-top: 0;"
+  },
+  {
+    "file": "features/radioreference.css",
+    "atRules": [],
+    "selector": ".radioreference-result-actions .ui-button",
+    "declarations": "flex: 1 1 150px; min-width: 0; white-space: nowrap;"
+  },
+  {
+    "file": "features/radioreference.css",
+    "atRules": [],
+    "selector": ".radioreference-sites-list > .ui-feedback-error",
+    "declarations": "display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2);"
+  },
+  {
+    "file": "features/radioreference.css",
+    "atRules": [
+      "@media (max-width: 640px)"
+    ],
+    "selector": ".data-table[data-table-type^=\"radioreference-\"] .ui-button",
+    "declarations": "white-space: nowrap;"
+  },
+  {
+    "file": "features/remote-links.css",
+    "atRules": [],
+    "selector": ".remote-links-card > .ui-notice",
+    "declarations": "margin-inline: var(--space-4);"
+  },
+  {
+    "file": "features/remote-links.css",
+    "atRules": [],
+    "selector": ".remote-links-feed-card > .ui-button",
+    "declarations": "grid-column: 2; grid-row: 1 / span 2;"
+  },
+  {
+    "file": "features/remote-links.css",
+    "atRules": [],
+    "selector": ".remote-links-fields > .ui-toggle-field",
+    "declarations": "grid-column: 1 / -1;"
+  },
+  {
+    "file": "features/remote-links.css",
+    "atRules": [],
+    "selector": ".remote-links-fields > .ui-notice",
+    "declarations": "grid-column: 1 / -1;"
+  },
+  {
+    "file": "features/remote-links.css",
+    "atRules": [],
+    "selector": ".remote-links-credential-row > .ui-field",
+    "declarations": "min-width: 0;"
+  },
+  {
+    "file": "features/remote-links.css",
+    "atRules": [
+      "@media (max-width: 620px)"
+    ],
+    "selector": ".remote-links-feed-card > .ui-button",
+    "declarations": "grid-column: 1; grid-row: auto; width: 100%;"
+  },
+  {
+    "file": "features/remote-links.css",
+    "atRules": [
+      "@media (max-width: 620px)"
+    ],
+    "selector": ".remote-links-credential-row > .ui-button",
+    "declarations": "width: 100%;"
+  }
+]

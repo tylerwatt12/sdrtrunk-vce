@@ -94,10 +94,35 @@ body.modal-open {
 }
 
 .modal-content {
+  --ui-modal-footer-inset: var(--space-4);
   min-height: 0;
   padding: var(--space-4);
   overflow: auto;
   overscroll-behavior: contain;
+}
+
+.ui-modal-footer,
+.read-only-modal .settings-form-footer {
+  width: auto;
+  position: sticky;
+  bottom: calc(-1 * var(--ui-modal-footer-inset, var(--space-4)));
+  z-index: 2;
+  margin: var(--space-3) calc(-1 * var(--ui-modal-footer-inset, var(--space-4)))
+    calc(-1 * var(--ui-modal-footer-inset, var(--space-4)));
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+}
+
+.ui-modal-footer-flush {
+  --ui-modal-footer-inset: 0px;
+  margin: 0;
+}
+
+.ui-modal-footer-spacer { flex: 1 1 auto; }
+
+.modal-content:has(.ui-modal-footer) {
+  scroll-padding-bottom: calc(var(--control-height-comfortable) + var(--space-3) * 2 + var(--space-4));
 }
 
 @media (max-width: 560px) {
@@ -119,6 +144,21 @@ body.modal-open {
   }
 
   .modal-content {
+    --ui-modal-footer-inset: var(--space-2);
     padding: var(--space-2);
   }
+
+  .ui-modal-footer {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ui-modal-footer > .ui-button { width: 100%; }
+  .ui-modal-footer > .ui-button:only-child { grid-column: 1 / -1; }
+  .ui-modal-footer-primary-row > .ui-button-primary { grid-column: 1 / -1; }
+  .modal-content:has(.ui-modal-footer-primary-row) {
+    scroll-padding-bottom: calc(var(--control-height-comfortable) * 2 + var(--space-3) * 2 + var(--space-2) + var(--space-4));
+  }
+  .ui-modal-footer > .ui-modal-footer-spacer { display: none; }
+  .read-only-modal .settings-form-footer .ui-action-row > .ui-button { width: 100%; }
 }

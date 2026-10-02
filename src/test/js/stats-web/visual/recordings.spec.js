@@ -154,7 +154,8 @@ async function openRecordings(page, options = {}) {
       const calls = matching ? state.calls || [state.call] : [];
       const offset = state.paginate ? Number((url.searchParams.get('cursor') || 'fixture:0').split(':')[1]) : 0;
       const limit = state.paginate ? Number(url.searchParams.get('limit')) : calls.length;
-      await route.fulfill({ json: { data: { calls: calls.slice(offset, offset + limit),
+      await route.fulfill({ json: { data: { calls: options.emptyFirstBatch && offset === 0 ? [] :
+        calls.slice(offset, offset + limit),
         next_cursor: state.paginate && offset + limit < calls.length ? `fixture:${offset + limit}` : null,
         total: null } } });
     } else if (/^\/api\/v1\/recordings\/calls\/\d+$/.test(pathname)) {
@@ -276,7 +277,7 @@ for (const theme of ['light', 'dark']) {
     expect(queryBox.y).toBeGreaterThan(timeBox.y + timeBox.height);
     expect(Math.abs(timeBox.height - queryBox.height)).toBeLessThan(2);
     expect(queryBox.width).toBeGreaterThan(150);
-    await expect(page.getByRole('button', { name: 'More filters' })).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Filters/ })).toBeVisible();
     await expect(page.locator('.recordings-library')).toHaveScreenshot(`recordings-desktop-${theme}.png`, componentScreenshot);
 
     await query.fill('fire');
@@ -299,7 +300,7 @@ for (const theme of ['light', 'dark']) {
     await expect(page.locator('.recordings-selected-filters')).toContainText('Fire Dispatch');
     if (theme === 'light') await expect(page.locator('.recordings-library'))
       .toHaveScreenshot('recordings-filtered-context-light.png', componentScreenshot);
-    await page.getByRole('button', { name: /More filters/ }).click();
+    await page.getByRole('button', { name: /^Filters/ }).click();
     await expect(page.getByRole('combobox', { name: 'Radio system' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Clear filters' })).toBeVisible();
     const fields = page.locator('.recordings-search-fields .recordings-field');
@@ -340,7 +341,7 @@ test('call length steps from sub-second to whole seconds with a thirty-second-pl
   await page.setViewportSize({ width: 1280, height: 900 });
   const state = await openRecordings(page);
   await expect(page.locator('.recordings-call')).toHaveCount(1);
-  await page.getByRole('button', { name: 'More filters' }).click();
+  await page.getByRole('button', { name: /^Filters/ }).click();
   for (const name of ['WACN', 'SysID', 'RFSS', 'Site ID', 'Minimum length', 'Maximum length']) {
     await expect(page.getByLabel(name, { exact: true })).toHaveCount(0);
   }
@@ -378,7 +379,7 @@ test('call length steps from sub-second to whole seconds with a thirty-second-pl
 
   await page.getByRole('button', { name: 'Clear filters' }).click();
   await expect(page.locator('.recordings-call')).toHaveCount(1);
-  await page.getByRole('button', { name: 'More filters' }).click();
+  await page.getByRole('button', { name: /^Filters/ }).click();
   await expect(page.getByRole('slider', { name: 'Call length: Minimum', exact: true })).toHaveValue('0');
   await expect(page.getByRole('slider', { name: 'Call length: Maximum', exact: true }))
     .toHaveAttribute('aria-valuetext', '30 seconds+');
@@ -400,7 +401,7 @@ test('numeric talkgroups can be selected in Find a call and the dedicated filter
   expect(state.requestedFilters.at(-1)).toMatchObject({ talkgroup_id: '7', system_key: 'metro' });
   expect(state.requestedFilters.at(-1)).not.toHaveProperty('q');
 
-  await page.getByRole('button', { name: 'More filters' }).click();
+  await page.getByRole('button', { name: /^Filters/ }).click();
   const talkgroup = page.getByRole('combobox', { name: 'Talkgroup', exact: true });
   await talkgroup.fill('7');
   await expect(page.locator('#recordings-options-talkgroup_id').getByRole('option')).toHaveCount(1);
@@ -441,7 +442,7 @@ test('named site suggestions use channel names and preserve their hidden site tu
     label: 'North Ridge Channel', detail: 'Metro Public Safety · North Ridge · RFSS 1 · Site 2',
     wacn: 1, sysid: 1, rfss: 1, site_id: 2 };
   const state = await openRecordings(page, { suggestions: [recordedSite] });
-  await page.getByRole('button', { name: 'More filters' }).click();
+  await page.getByRole('button', { name: /^Filters/ }).click();
   const site = page.getByRole('combobox', { name: 'Site', exact: true });
   await site.fill('ridge');
   await expect(page.locator('#recordings-options-site').getByRole('option'))
@@ -476,8 +477,8 @@ test.describe('touch call length', () => {
   test('mobile duration handles survive filter dialog reopen and support touch', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     const state = await openRecordings(page);
-    await page.getByRole('button', { name: 'Filters' }).click();
-    const dialog = page.getByRole('dialog', { name: 'Filters' });
+    await page.getByRole('button', { name: /^Filters/ }).click();
+    const dialog = page.getByRole('dialog', { name: /^Filters/ });
     const lower = dialog.getByRole('slider', { name: 'Call length: Minimum', exact: true });
     const upper = dialog.getByRole('slider', { name: 'Call length: Maximum', exact: true });
     await lower.scrollIntoViewIfNeeded();
@@ -486,23 +487,23 @@ test.describe('touch call length', () => {
     await expect(lower).toHaveValue('10');
     await page.touchscreen.tap(rail.x + rail.width * 2 / 3, rail.y + rail.height / 2);
     await expect(upper).toHaveValue('20');
-    await dialog.getByRole('button', { name: 'Show calls' }).click();
+    await dialog.getByRole('button', { name: 'Apply filters' }).click();
     await expect(dialog).toBeHidden();
     expect(state.requestedFilters.at(-1)).toMatchObject({ min_duration_ms: '10000', max_duration_ms: '20000' });
-    await page.getByRole('button', { name: 'Filters' }).click();
+    await page.getByRole('button', { name: /^Filters/ }).click();
     await expect(lower).toHaveValue('10');
     await expect(upper).toHaveValue('20');
     await lower.press('Home');
     await upper.press('Home');
     await expect(upper).toHaveAttribute('aria-valuetext', '<1 second');
-    await dialog.getByRole('button', { name: 'Show calls' }).click();
+    await dialog.getByRole('button', { name: 'Apply filters' }).click();
     expect(state.requestedFilters.at(-1)).toHaveProperty('max_duration_ms', '999');
     expect(state.requestedFilters.at(-1)).not.toHaveProperty('min_duration_ms');
-    await page.getByRole('button', { name: 'Filters' }).click();
+    await page.getByRole('button', { name: /^Filters/ }).click();
     await expect(upper).toHaveValue('0');
     await expect(upper).toHaveAttribute('aria-valuetext', '<1 second');
     await dialog.getByRole('button', { name: 'Clear filters' }).click();
-    await page.getByRole('button', { name: 'Filters' }).click();
+    await page.getByRole('button', { name: /^Filters/ }).click();
     await expect(dialog.getByRole('slider', { name: 'Call length: Minimum', exact: true })).toHaveValue('0');
     await expect(dialog.getByRole('slider', { name: 'Call length: Maximum', exact: true }))
       .toHaveAttribute('aria-valuetext', '30 seconds+');
@@ -570,8 +571,8 @@ for (const theme of ['light', 'dark']) {
     const state = await openRecordings(page, { theme });
     await expect(page.locator('.recordings-call')).toHaveCount(1);
     await expect(page.locator('.recordings-library')).toHaveScreenshot(`recordings-mobile-${theme}.png`, componentScreenshot);
-    await page.getByRole('button', { name: 'Filters' }).click();
-    const sheet = page.getByRole('dialog', { name: 'Filters' });
+    await page.getByRole('button', { name: /^Filters/ }).click();
+    const sheet = page.getByRole('dialog', { name: /^Filters/ });
     await expect(sheet).toBeVisible();
     const bounds = await sheet.boundingBox();
     expect(bounds.width).toBe(390);
@@ -583,9 +584,9 @@ for (const theme of ['light', 'dark']) {
     await expect(duration).toHaveScreenshot(`recordings-duration-defaults-mobile-${theme}.png`, componentScreenshot);
     await sheet.locator('.modal-content').evaluate((content) => { content.scrollTop = content.scrollHeight; });
     const lastField = await sheet.locator('.recordings-search-fields .recordings-field').last().boundingBox();
-    const footer = await sheet.locator('.recordings-filter-sheet-actions').boundingBox();
+    const footer = await sheet.locator('.ui-filter-sheet-actions').boundingBox();
     expect(lastField.y + lastField.height).toBeLessThanOrEqual(footer.y);
-    await sheet.getByRole('button', { name: 'Show calls' }).click();
+    await sheet.getByRole('button', { name: 'Apply filters' }).click();
     await expect(sheet).toBeHidden();
     expect(state.requestedFilters.length).toBeGreaterThan(1);
   });
@@ -743,6 +744,7 @@ test('recording settings retain mode, retention, catalog facts, and both mainten
     await workspace.getByRole('button', { name: `Run ${title.toLowerCase()}` }).click();
     const dialog = page.getByRole('dialog', { name: title });
     await expect(dialog).toBeVisible();
+    await expect(dialog.locator('footer.ui-modal-footer')).toHaveCount(1);
     if (action === 'recount') {
       await expect(dialog.locator('.ui-metric-label')).toHaveText('Listed calls');
       await expect(dialog.locator('.ui-metric strong')).toHaveText('28,416');
@@ -1003,7 +1005,7 @@ for (const theme of ['light', 'dark']) {
     await firstCard.locator('.recordings-call-select').check();
     await expect(chooser).toHaveCount(0);
     await expect(page.locator('.recordings-selected')).toContainText('1 selected');
-    await page.getByRole('button', { name: /More filters/ }).click();
+    await page.getByRole('button', { name: /^Filters/ }).click();
     await page.getByLabel('Transcript text').fill('arriving');
     await page.getByRole('button', { name: 'Search', exact: true }).click();
     await expect.poll(() => state.requestedFilters.at(-1).transcript).toBe('arriving');
@@ -1031,7 +1033,7 @@ test('playback choices retain the selected call and continuation search', async 
     HTMLMediaElement.prototype.pause = function () {};
   });
   const state = await openRecordings(page, { call: { ...call, transcript_excerpt: 'Engine arriving' } });
-  await page.getByRole('button', { name: /More filters/ }).click();
+  await page.getByRole('button', { name: /^Filters/ }).click();
   await page.getByLabel('Transcript text').fill('arriving');
   await page.getByRole('button', { name: 'Search', exact: true }).click();
   await expect.poll(() => state.requestedFilters.at(-1).transcript).toBe('arriving');
@@ -1124,6 +1126,85 @@ test('shared system and channel use stable identities when some labels and links
   const details = page.getByRole('dialog', { name: 'Shared call details' });
   await expect(details).toContainText('Metro Public Safety');
   await expect(details).toContainText('North Ridge Channel');
+});
+
+test('phone filters retain cancelled choices and Enter applies one query with its count', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const state = await openRecordings(page);
+  await expect(page.locator('.recordings-call')).toHaveCount(1);
+  const query = page.getByRole('combobox', { name: 'Find a call' });
+  await query.fill('unit arriving');
+  await query.press('Escape');
+  const filters = page.locator('#recordings-filters-toggle');
+  await filters.click();
+  const dialog = page.getByRole('dialog', { name: 'Filters', exact: true });
+  const transcript = dialog.getByLabel('Transcript text', { exact: true });
+  await transcript.fill('dispatch');
+  await dialog.getByRole('combobox', { name: 'Date & time' }).selectOption('custom');
+  await expect(dialog.getByLabel('From', { exact: true })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(filters).toBeFocused();
+  await expect(query).toHaveValue('unit arriving');
+  expect(state.requestedFilters).toHaveLength(1);
+  await expect(filters.locator('.recordings-filter-count')).toBeHidden();
+  await filters.click();
+  await expect(transcript).toHaveValue('dispatch');
+  await expect(dialog.getByRole('combobox', { name: 'Date & time' })).toHaveValue('custom');
+  await expect(dialog.getByLabel('From', { exact: true })).toBeVisible();
+  await expect(dialog.getByLabel('To', { exact: true })).toBeVisible();
+  await dialog.getByRole('combobox', { name: 'Date & time' }).selectOption('24h');
+  await transcript.press('Enter');
+  await expect(dialog).toBeHidden();
+  await expect.poll(() => state.requestedFilters.length).toBe(2);
+  expect(state.requestedFilters.at(-1)).toMatchObject({ q: 'unit arriving', transcript: 'dispatch' });
+  await expect(filters.locator('.recordings-filter-count')).toHaveText('1');
+});
+
+test('cursor paging keeps selection across pages and Clear selection leaves results intact', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const state = await openRecordings(page, { calls: mixedRecordingCalls(), paginate: true });
+  const pager = page.locator('.recordings-pager');
+  await expect(page.locator('.recordings-call')).toHaveCount(25);
+  await expect(pager.locator('.ui-browse-pager-count')).toHaveText('Page 1');
+  await expect(page.locator('.recordings-result-count')).not.toContainText(/page/i);
+  await expect(pager.getByRole('button', { name: 'Previous', exact: true })).toBeDisabled();
+  await page.locator('.recordings-call-select').first().check();
+  await pager.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(page.locator('.recordings-call')).toHaveCount(5);
+  await expect(pager.locator('.ui-browse-pager-count')).toHaveText('Page 2');
+  await expect(pager.getByRole('button', { name: 'Next', exact: true })).toBeDisabled();
+  await page.locator('.recordings-call-select').first().check();
+  const selection = page.locator('.recordings-selected');
+  await expect(selection).toContainText('2 selected');
+  const requests = state.requestedFilters.length;
+  await selection.getByRole('button', { name: 'Clear selection', exact: true }).click();
+  await expect(selection).toBeHidden();
+  await expect(page.locator('.recordings-call-select:checked')).toHaveCount(0);
+  await expect(page.locator('.recordings-call-select').first()).toBeFocused();
+  expect(state.requestedFilters).toHaveLength(requests);
+  await expect(page.locator('.recordings-call')).toHaveCount(5);
+  await pager.getByRole('button', { name: 'Previous', exact: true }).click();
+  await expect(page.locator('.recordings-call')).toHaveCount(25);
+  await expect(page.locator('.recordings-call-select:checked')).toHaveCount(0);
+  expect(state.requestedFilters.at(-1)).not.toHaveProperty('cursor');
+});
+
+test('single call hides paging while an empty cursor batch retains Next', async ({ page }) => {
+  await openRecordings(page);
+  await expect(page.locator('.recordings-call')).toHaveCount(1);
+  await expect(page.locator('.recordings-pager')).toBeHidden();
+  await page.unroute('**/api/v1/**');
+  const state = await openRecordings(page, { calls: mixedRecordingCalls(), paginate: true,
+    emptyFirstBatch: true });
+  await expect(page.locator('.recordings-call')).toHaveCount(0);
+  await expect(page.locator('.recordings-results')).toContainText('No matches in this batch.');
+  const pager = page.locator('.recordings-pager');
+  await expect(pager.locator('.ui-browse-pager-count')).toHaveText('Page 1');
+  await expect(pager.getByRole('button', { name: 'Previous', exact: true })).toBeDisabled();
+  await pager.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(page.locator('.recordings-call')).toHaveCount(5);
+  expect(state.requestedFilters.at(-1)).toMatchObject({ cursor: 'fixture:25' });
 });
 
 test('same display names do not share identities across different systems', async ({ page }) => {

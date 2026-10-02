@@ -43,10 +43,6 @@
   min-width: 0;
 }
 
-.recordings-filter-label-mobile {
-  display: none;
-}
-
 .recordings-filter-count {
   margin-left: var(--space-1);
 }
@@ -150,8 +146,7 @@
   padding: var(--space-2);
 }
 
-.recordings-search-actions,
-.recordings-selected {
+.recordings-search-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -175,28 +170,6 @@
   font-size: var(--font-size-meta);
 }
 
-.recordings-filter-sheet {
-  min-height: 0;
-  display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
-}
-
-.recordings-filter-sheet-fields {
-  min-height: 0;
-  display: grid;
-  align-content: start;
-  gap: var(--space-3);
-  padding-bottom: var(--space-3);
-}
-
-.recordings-filter-sheet-actions {
-  position: sticky;
-  bottom: 0;
-  padding-top: var(--space-3);
-  background: var(--surface);
-  border-top: 1px solid var(--line);
-}
-
 .recordings-selected-filters:not(:empty) {
   display: flex;
   flex-wrap: wrap;
@@ -211,8 +184,7 @@
   min-width: 0;
 }
 
-.recordings-shared:not(:empty),
-.recordings-selected:not(:empty) {
+.recordings-shared:not(:empty) {
   padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--line);
   background: var(--surface-2);
@@ -254,14 +226,7 @@
   text-overflow: ellipsis;
 }
 .recordings-selected {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.recordings-selected {
-  background: var(--surface-2);
+  margin: var(--space-3) var(--space-4);
 }
 
 .recordings-result-count {
@@ -657,41 +622,8 @@
     grid-row: 2;
   }
 
-  .recordings-filter-label-desktop {
-    display: none;
-  }
-
-  .recordings-filter-label-mobile {
-    display: inline;
-  }
-
   .recordings-search-advanced {
     display: none;
-  }
-
-  .modal-backdrop:has(.recordings-filter-modal) {
-    padding: 0;
-  }
-
-  .read-only-modal.recordings-filter-modal {
-    width: 100vw;
-    height: 100dvh;
-    max-height: none;
-    border: 0;
-    border-radius: 0;
-  }
-
-  .recordings-filter-modal .modal-content {
-    min-height: 0;
-    flex: 1;
-  }
-
-  .recordings-filter-sheet-fields {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-.recordings-sheet-action {
-    flex: 1 1 auto;
   }
 
   .recordings-search,

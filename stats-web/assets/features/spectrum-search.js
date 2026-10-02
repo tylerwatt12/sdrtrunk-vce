@@ -10,7 +10,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
   const stage = node('div', 'spectrum-discovery-stage');
   const feedback = node('div', 'ui-feedback');
   feedback.setAttribute('role', 'status');
-  const actions = node('div', 'ui-action-row spectrum-discovery-actions');
+  const actions = node('footer', 'ui-modal-footer ui-action-row spectrum-discovery-actions');
   host.append(summary, steps, stage, actions);
   let catalog = null;
   let receiverId = '';
@@ -23,6 +23,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
   let renewalTimer = null;
   let closed = false;
   let busy = false;
+  let paused = false;
   let generation = 0;
   let firstCandidateId = null;
   let progressNodes = null;
@@ -39,12 +40,18 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       disposeBandPicker();
       abort.abort();
       window.removeEventListener('pagehide', abandon);
-      void releaseJob().finally(() => releaseLease()).finally(() => context.resume?.(usedReceiverId));
+      void releaseJob().finally(() => releaseLease()).finally(() => {
+        if (paused) return context.resume?.(usedReceiverId);
+      });
     }
   });
   if (!modal) return null;
   const current = () => !closed && !abort.signal.aborted;
-  const request = (url, options = {}) => requestJson(url, { page: false, signal: abort.signal, ...options });
+  const request = async (url, options = {}) => {
+    if (modal.ready && !await modal.ready || !current())
+      throw new DOMException('Dialog dismissed', 'AbortError');
+    return requestJson(url, { page: false, signal: abort.signal, ...options });
+  };
   const jobPath = () => `${path}/${encodeURIComponent(job.job_id)}`;
   const browsePath = (id) => `/api/v1/admin/tuners/${encodeURIComponent(id)}/browse`;
   const releaseLease = async () => {
@@ -287,6 +294,8 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       if (open) {
         positionBandMenu();
         window.requestAnimationFrame(() => {
+          if (!current() || !bandMenu.matches(':popover-open') ||
+            bandMenu.contains(document.activeElement)) return;
           const choices = [...bandMenu.querySelectorAll('input:not(:disabled)')];
           (choices.find((choice) => choice.checked) || choices[0])?.focus();
         });
@@ -727,10 +736,17 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     button('Done', () => modal.close(), true);
   };
   const load = async () => {
+    if (modal.ready && !await modal.ready || !current()) return;
     show('loading', 0, 'Preparing the search…');
     setBusy(true);
     try {
       await context.pause?.();
+      paused = true;
+      if (!current()) {
+        paused = false;
+        await context.resume?.(usedReceiverId);
+        return;
+      }
       catalog = await request(`${path}/catalog`, { csrf: false });
       if (current()) showBand();
     } catch (cause) {

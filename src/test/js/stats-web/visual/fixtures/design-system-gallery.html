@@ -190,6 +190,13 @@
         </div>
       </section>
 
+      <section class="visual-section visual-section-wide">
+        <h2>Cards and workflows</h2>
+        <p class="visual-section-copy">Numeric counters and boxed metadata share tile padding and grid spacing. Use readable text for status and metadata, flat rows for compact details, and integrated readouts for instruments.</p>
+        <p class="visual-section-copy">Editor actions share save feedback and busy controls. Use themed confirmations, phone Filters sheets, one result range with Previous/Next, and neutral availability labels.</p>
+        <a class="ui-button ui-button-secondary" href="/design-system.html?view=workflows">Try the workflow examples</a>
+      </section>
+
       <section class="visual-section visual-mobile-boundaries">
         <h2>Long content and nested controls</h2>
         <p class="visual-section-copy">Keep full names readable and search fields inside their card padding on small screens.</p>
@@ -405,7 +412,7 @@
               <label class="ui-field"><span class="ui-field-label">Notes</span><textarea class="ui-textarea" rows="5">Additional operator notes remain inside the scrollable content region.</textarea></label>
             </div>
             <div class="ui-notice ui-notice-warning">Saving restarts this channel if it is running.</div>
-            <div class="ui-action-row"><button class="ui-button" type="button">Cancel</button><button class="ui-button ui-button-primary" type="button">Save channel</button></div>
+            <footer class="ui-modal-footer ui-action-row"><button class="ui-button ui-button-secondary" type="button">Cancel</button><button class="ui-button ui-button-primary" type="button">Save channel</button></footer>
           </form>
         </div>
       </section>
@@ -424,7 +431,7 @@
             <label class="ui-field"><span class="ui-field-label">Name</span><input class="ui-input" value="Lorain Public Safety"></label>
             <div class="ui-field-detail">Protocol family: <span class="ui-pill ui-pill-neutral">P25</span></div>
             <div class="ui-field-detail">The list is created immediately and selected for this workflow.</div>
-            <div class="ui-action-row"><button class="ui-button ui-button-secondary" type="button">Cancel</button><button class="ui-button ui-button-primary" type="button">Create and use</button></div>
+            <footer class="ui-modal-footer ui-action-row"><button class="ui-button ui-button-secondary" type="button">Cancel</button><button class="ui-button ui-button-primary" type="button">Create and use</button></footer>
           </form>
         </div>
       </section>
@@ -468,14 +475,14 @@
             <span class="ui-field-label">Destination</span>
             <button class="ui-button ui-button-secondary activity-filter-picker-trigger" id="visual-activity-destination-trigger" popovertarget="visual-activity-destination-popover" type="button"><svg aria-hidden="true"><use href="#visual-icon-search"></use></svg><span class="activity-filter-picker-label">Any destination</span></button>
           </div>
-          <button class="ui-button ui-button-secondary activity-filter-more-trigger" id="visual-activity-more-trigger" popovertarget="visual-activity-more-panel" type="button"><svg aria-hidden="true"><use href="#visual-icon-filter"></use></svg><span>More filters</span></button>
-          <div class="activity-filter-primary-actions"><button class="ui-button ui-button-primary" type="submit">Apply</button></div>
+          <button class="ui-button ui-button-secondary activity-filter-more-trigger" id="visual-activity-more-trigger" popovertarget="visual-activity-more-panel" type="button"><svg aria-hidden="true"><use href="#visual-icon-filter"></use></svg><span>Filters</span></button>
+          <div class="activity-filter-primary-actions"><button class="ui-button ui-button-primary" type="submit">Apply filters</button></div>
         </div>
         <div class="activity-filter-chips" aria-label="Active filters">
           <button class="ui-button ui-button-secondary activity-filter-chip" type="button"><span class="activity-filter-chip-label">Source:</span><span class="activity-filter-chip-value">2808137 · Engine 12 Portable — Northside Operations</span><svg aria-hidden="true"><use href="#visual-icon-close"></use></svg></button>
           <button class="ui-button ui-button-secondary activity-filter-chip" type="button"><span class="activity-filter-chip-label">Destination:</span><span class="activity-filter-chip-value">56131 · CPD D3 DISP — Downtown Dispatch</span><svg aria-hidden="true"><use href="#visual-icon-close"></use></svg></button>
           <button class="ui-button ui-button-secondary activity-filter-chip" type="button"><span class="activity-filter-chip-value">Encrypted only</span><svg aria-hidden="true"><use href="#visual-icon-close"></use></svg></button>
-          <button class="link-button activity-filter-clear" type="button">Clear all</button>
+          <button class="link-button activity-filter-clear" type="button">Clear filters</button>
         </div>
         <p class="activity-filter-error ui-notice ui-notice-danger" hidden></p>
       </form>
@@ -507,7 +514,7 @@
       <div class="activity-identity-picker-footer"><button class="link-button activity-identity-picker-clear" type="button">Any destination</button><p class="ui-field-detail activity-identity-status">3 matching identities</p></div>
     </div>
 
-    <div class="ui-popover activity-filter-more-panel" id="visual-activity-more-panel" popover="auto" role="dialog" aria-label="More activity filters">
+    <div class="ui-popover activity-filter-more-panel" id="visual-activity-more-panel" popover="auto" role="dialog" aria-label="Activity filters">
       <div class="activity-filter-more-content">
       <section class="activity-filter-group">
         <h3>Scope</h3>
@@ -1168,7 +1175,7 @@
         <section class="alias-channel-usage ui-summary-card"><h3>Channels using this Alias List</h3><div class="alias-channel-usage-body"><ul class="alias-channel-usage-links"><li><a href="#">Fire Dispatch</a></li><li><a href="#">EMS Operations</a></li><li><a href="#">Police East</a></li><li><a href="#">Police West</a></li><li><a href="#">Sheriff Dispatch</a></li><li><a href="#">County Operations</a></li><li><a href="#">Fireground 1</a></li><li><a href="#">Fireground 2</a></li><li><a href="#">EMS East</a></li><li><a href="#">EMS West</a></li><li><a href="#">County Events</a></li><li><a href="#">Mutual Aid</a></li></ul></div></section>
         <div class="alias-editor-view-switcher"><nav class="ui-page-nav ui-segmented alias-editor-view-tabs" aria-label="Section navigation"><a class="ui-segmented-option active" data-alias-view="configure" aria-current="page" href="#">Configure</a><a class="ui-segmented-option" data-alias-view="activity" href="#">Activity</a><a class="ui-segmented-option" data-alias-view="custom" href="#">Custom</a></nav><a class="ui-button ui-button-secondary alias-discover-link" data-alias-view="discover" href="#">Discover</a></div>
         <form class="ui-toolbar ui-catalog-toolbar alias-catalog-toolbar alias-editor-filter-toolbar data-workspace">
-          <div class="alias-filter-primary"><label class="alias-filter alias-search-filter ui-field"><span class="ui-field-label">Search</span><input class="ui-input" type="search" placeholder="Alias, description, group, or identifier"></label><button class="ui-button ui-button-primary" type="button">Search</button><button class="ui-button ui-button-secondary alias-filter-advanced-toggle" type="button" aria-controls="visual-alias-advanced-filters" aria-expanded="false"><span>Advanced filters</span></button></div>
+          <div class="alias-filter-primary"><label class="alias-filter alias-search-filter ui-field"><span class="ui-field-label">Search</span><input class="ui-input" type="search" placeholder="Alias, description, group, or identifier"></label><button class="ui-button ui-button-primary" type="button">Search</button><button class="ui-button ui-button-secondary alias-filter-advanced-toggle" type="button" aria-controls="visual-alias-advanced-filters" aria-expanded="false" disabled><span>Filters</span></button></div>
           <div class="alias-filter-advanced" id="visual-alias-advanced-filters" hidden>
             <fieldset class="alias-filter-group alias-filter-group-identity"><legend>Identity and matching</legend><div class="alias-filter-group-fields"><label class="alias-filter ui-field"><span class="ui-field-label">Identity</span><select class="ui-select"><option>All identities</option></select></label><label class="alias-filter ui-field"><span class="ui-field-label">Matcher</span><select class="ui-select"><option>All matchers</option></select></label><label class="alias-filter ui-field"><span class="ui-field-label">Group</span><input class="ui-input" placeholder="Exact group"></label></div></fieldset>
             <fieldset class="alias-filter-group alias-filter-group-behavior"><legend>Call handling</legend><div class="alias-filter-group-fields"><label class="alias-filter ui-field"><span class="ui-field-label">Scan list</span><select class="ui-select"><option>Any scan list</option></select></label><label class="alias-filter ui-field"><span class="ui-field-label">Record</span><select class="ui-select"><option>Any</option></select></label><label class="alias-filter ui-field"><span class="ui-field-label">Stream</span><select class="ui-select"><option>Any</option></select></label><label class="alias-filter ui-field"><span class="ui-field-label">Calls</span><select class="ui-select"><option>Any</option></select></label></div></fieldset>
@@ -1195,7 +1202,7 @@
       <div class="alias-editor-main">
         <section class="alias-list-summary scan-list-member-summary ui-summary-card"><div class="alias-list-summary-copy"><h2>Dispatch Favorites</h2><span class="badge ui-pill state-current">Scan List</span><span class="badge ui-pill state-current">Default</span><span class="muted scan-list-member-summary-metrics">386 assigned aliases · 2 Alias Lists route unmatched calls here</span></div><div class="alias-list-summary-actions"><button class="ui-button ui-button-secondary" type="button">Back to Scan Lists</button><button class="ui-button ui-button-secondary" type="button">Add an Entire Alias List</button><button class="ui-button ui-button-danger-quiet" type="button">Remove All Assigned Aliases</button></div></section>
         <form class="ui-toolbar ui-catalog-toolbar alias-catalog-toolbar alias-editor-filter-toolbar data-workspace">
-          <div class="alias-filter-primary"><label class="alias-filter alias-search-filter ui-field"><span class="ui-field-label">Search</span><input class="ui-input" type="search" placeholder="Alias, description, group, or identifier"></label><button class="ui-button ui-button-primary" type="button">Search</button><button class="ui-button ui-button-secondary alias-filter-advanced-toggle" type="button" aria-controls="visual-scan-list-member-advanced-filters" aria-expanded="false"><span>Advanced filters</span></button></div>
+          <div class="alias-filter-primary"><label class="alias-filter alias-search-filter ui-field"><span class="ui-field-label">Search</span><input class="ui-input" type="search" placeholder="Alias, description, group, or identifier"></label><button class="ui-button ui-button-primary" type="button">Search</button><button class="ui-button ui-button-secondary alias-filter-advanced-toggle" type="button" aria-controls="visual-scan-list-member-advanced-filters" aria-expanded="false" disabled><span>Filters</span></button></div>
           <div class="alias-filter-advanced" id="visual-scan-list-member-advanced-filters" hidden>
             <fieldset class="alias-filter-group alias-filter-group-identity"><legend>Identity and matching</legend><div class="alias-filter-group-fields"><label class="alias-filter ui-field"><span class="ui-field-label">Identity</span><select class="ui-select"><option>All identities</option></select></label><label class="alias-filter ui-field"><span class="ui-field-label">Matcher</span><select class="ui-select"><option>All matchers</option></select></label><label class="alias-filter ui-field"><span class="ui-field-label">Group</span><input class="ui-input" placeholder="Exact group"></label></div></fieldset>
             <fieldset class="alias-filter-group alias-filter-group-behavior"><legend>Call handling</legend><div class="alias-filter-group-fields"><label class="alias-filter ui-field"><span class="ui-field-label">Scan list</span><select class="ui-select"><option>Dispatch Favorites</option></select></label><label class="alias-filter ui-field"><span class="ui-field-label">Record</span><select class="ui-select"><option>Any</option></select></label><label class="alias-filter ui-field"><span class="ui-field-label">Stream</span><select class="ui-select"><option>Any</option></select></label><label class="alias-filter ui-field"><span class="ui-field-label">Calls</span><select class="ui-select"><option>Any</option></select></label></div></fieldset>
@@ -1222,7 +1229,7 @@
               <fieldset class="alias-stream-options"><legend>Streaming destinations</legend><div class="ui-toggle-field ui-toggle-field-compact alias-assignment-toggle"><span class="ui-toggle-copy"><strong>RadioResolve</strong></span><label class="ui-toggle"><input type="checkbox" checked aria-label="RadioResolve"><span class="ui-toggle-track"><span class="ui-toggle-thumb"></span></span><span class="ui-toggle-state">On</span></label></div><div class="ui-toggle-field ui-toggle-field-compact alias-assignment-toggle"><span class="ui-toggle-copy"><strong>Backup stream</strong></span><label class="ui-toggle"><input type="checkbox" aria-label="Backup stream"><span class="ui-toggle-track"><span class="ui-toggle-thumb"></span></span><span class="ui-toggle-state">Off</span></label></div></fieldset>
               <label class="alias-editor-field ui-field"><span class="alias-editor-field-label ui-field-label">Stream as talkgroup</span><input class="ui-input alias-editor-control" type="number"><small class="ui-field-detail">Optional talkgroup ID sent to configured streaming destinations.</small></label>
             </section>
-            <footer class="alias-modal-footer ui-action-row"><button class="ui-button ui-button-danger-quiet" type="button">Delete</button><button class="ui-button ui-button-secondary" type="button">Clone</button><span class="alias-modal-footer-spacer"></span><button class="ui-button ui-button-secondary" type="button">Cancel</button><button class="ui-button ui-button-primary" type="button">Save Changes</button></footer>
+            <footer class="alias-modal-footer ui-action-row ui-modal-footer"><button class="ui-button ui-button-danger-quiet" type="button">Delete</button><button class="ui-button ui-button-secondary" type="button">Clone</button><span class="alias-modal-footer-spacer ui-modal-footer-spacer"></span><button class="ui-button ui-button-secondary" type="button">Cancel</button><button class="ui-button ui-button-primary" type="button">Save Changes</button></footer>
           </form>
         </div>
       </section>
@@ -1238,7 +1245,7 @@
             <div class="alias-transfer-destination"><strong>County Public Safety · P25 Alias List</strong><span class="muted">1,248 aliases will be saved in an importable VCE file.</span></div>
             <div class="alias-transfer-panel">
               <fieldset class="alias-transfer-mode-choices alias-transfer-export-choices"><legend>Choose what to export</legend><label class="alias-transfer-mode-choice ui-choice-card"><input class="ui-choice-radio" type="radio" name="visualAliasExportScope" checked><span class="alias-transfer-choice-copy"><strong>All aliases in this Alias List</strong><span class="muted">Export all 1,248 aliases, regardless of the current search and filters.</span></span></label><label class="alias-transfer-mode-choice ui-choice-card"><input class="ui-choice-radio" type="radio" name="visualAliasExportScope"><span class="alias-transfer-choice-copy"><strong>Current filtered results</strong><span class="muted">Export every matching alias in the current search and filters, not only the visible page.</span></span></label></fieldset>
-              <footer class="alias-modal-footer ui-action-row"><button class="ui-button ui-button-secondary" type="button">Cancel</button><span class="alias-modal-footer-spacer"></span><button class="ui-button ui-button-primary ui-icon-button" type="button" aria-label="Export alias list as CSV" title="Export alias list as CSV"><svg aria-hidden="true"><use href="#visual-icon-share"></use></svg></button></footer>
+              <footer class="alias-modal-footer ui-action-row ui-modal-footer"><button class="ui-button ui-button-secondary" type="button">Cancel</button><span class="alias-modal-footer-spacer ui-modal-footer-spacer"></span><button class="ui-button ui-button-primary ui-icon-button" type="button" aria-label="Export alias list as CSV" title="Export alias list as CSV"><svg aria-hidden="true"><use href="#visual-icon-share"></use></svg></button></footer>
             </div>
           </div>
         </div>
@@ -1418,7 +1425,7 @@
             </li>
             <li class="live-filter-tree-item branch"><div class="live-filter-node-row visual-live-filter-depth-0"><label class="live-filter-node-label"><input class="ui-selection-check" type="checkbox" checked><span>Registration</span><span class="live-filter-node-count">4/4</span></label><button class="ui-icon-button ui-disclosure-button live-filter-expand" type="button" aria-label="Expand Registration" title="Expand Registration" aria-expanded="false" aria-controls="visual-filter-registration"><svg aria-hidden="true"><use href="#visual-icon-chevron"></use></svg></button></div><ul class="live-filter-tree-children" id="visual-filter-registration" hidden></ul></li>
           </ul>
-        </section><div class="live-filter-settings"><label class="live-filter-search"><span>Search</span><input class="ui-input" type="search" placeholder="Search parties or details"></label></div><div class="live-filter-footer"><button class="ui-button ui-button-secondary" type="button">Reset filters</button><button class="ui-button ui-button-primary" type="button">Done</button></div></div></div>
+        </section><div class="live-filter-settings"><label class="live-filter-search"><span>Search</span><input class="ui-input" type="search" placeholder="Search parties or details"></label></div><div class="live-filter-footer ui-action-row ui-modal-footer"><button class="ui-button ui-button-secondary" type="button">Reset filters</button><button class="ui-button ui-button-primary" type="button">Done</button></div></div></div>
       </section>
     </div>
   </div>
@@ -1438,7 +1445,7 @@
               <dl class="ui-fact-list"><dt>WACN (hex)</dt><dd>B0001</dd><dt>System ID (hex)</dt><dd>123</dd><dt>RFSS</dt><dd>1</dd><dt>Site ID</dt><dd>2</dd></dl>
             </div><div class="ui-table-wrap"><table class="ui-data-table ui-data-table-quiet spectrum-discovery-probe-table"><caption class="visually-hidden">P25 modulation comparison</caption><thead><tr><th scope="col">Signal setting</th><th scope="col">Valid messages</th><th scope="col">Control messages</th><th scope="col">Invalid control</th><th scope="col">Message quality</th></tr></thead><tbody><tr><th scope="row">C4FM</th><td>18</td><td>12</td><td>4</td><td>81%</td></tr><tr><th scope="row">CQPSK <span class="ui-pill ui-pill-success">Selected</span></th><td>52</td><td>41</td><td>1</td><td>99%</td></tr></tbody></table></div><p class="ui-field-hint">Message quality is the proportion of messages that passed the decoder’s checks. It is not a confidence score. The selection also requires repeated, matching system and site information.</p></details>
           </div>
-          <div class="ui-action-row spectrum-discovery-actions"><button class="ui-button ui-button-secondary" type="button">Cancel</button><button class="ui-button ui-button-primary" type="button">Review channel</button></div>
+          <div class="ui-action-row ui-modal-footer spectrum-discovery-actions"><button class="ui-button ui-button-secondary" type="button">Cancel</button><button class="ui-button ui-button-primary" type="button">Review channel</button></div>
         </div></div>
       </section>
     </div>
@@ -1468,7 +1475,7 @@
             <details class="ui-section-disclosure ui-section-disclosure-flat spectrum-discovery-technical"><summary class="ui-section-summary">What are P25 channels?</summary><p>P25 radio systems use a steady control signal to coordinate a group of radio frequencies. This search finds and checks those control signals. Voice-only and other radio signals are not added.</p><p>A receiver sees a limited frequency window at once. Searching moves this window through the bands you choose.</p></details>
           </form>
         </div>
-        <div class="ui-action-row spectrum-discovery-actions"><button class="ui-button ui-button-secondary" type="button">Cancel</button><button class="ui-button ui-button-primary" type="button">Find signals</button></div>
+        <div class="ui-action-row ui-modal-footer spectrum-discovery-actions"><button class="ui-button ui-button-secondary" type="button">Cancel</button><button class="ui-button ui-button-primary" type="button">Find signals</button></div>
       </div></div>
     </section></div>
   </div>
@@ -1511,19 +1518,30 @@
     </div></div>
   </main>
 
+  <main class="visual-feature-example visual-workflows-example">
+    <header class="page-header ui-page-header visual-feature-header"><div><h1 class="page-title">Cards and workflows</h1><p class="page-subtitle">Approved shared recipes, including failure and retry</p></div></header>
+    <section class="ui-section"><div class="ui-section-title">Numeric counters and short status</div><div class="ui-metric-grid ui-metric-grid-embedded">
+      <div class="ui-metric"><div class="ui-metric-copy"><span class="ui-metric-label"><span class="ui-metric-icon"><svg aria-hidden="true"><use href="#visual-icon-radio"></use></svg></span>Known radios</span><strong>1,004</strong></div></div>
+      <div class="ui-metric ui-metric-text"><div class="ui-metric-copy"><span class="ui-metric-label"><span class="ui-metric-icon"><svg aria-hidden="true"><use href="#visual-icon-health"></use></svg></span>Receiver state</span><strong>Ready</strong></div></div>
+    </div></section>
+    <section class="ui-section"><div class="ui-section-title">Boxed metadata</div><dl class="ui-facts"><div class="ui-fact"><dt>Radio system</dt><dd><a href="#system">Metropolitan Emergency Communications County Public Safety</a><small class="ui-fact-help">00001-047 · P25</small></dd></div><div class="ui-fact"><dt>Last seen</dt><dd>2026-10-02 11:09:28</dd></div></dl></section>
+    <section class="ui-surface settings-card"><div class="settings-card-header"><h2>Flat detail rows</h2></div><div class="settings-card-body"><dl class="ui-fact-list"><dt>Channel</dt><dd>County Dispatch</dd><dt>Protocol</dt><dd>P25</dd></dl></div></section>
+    <section class="ui-section visual-workflow-editor"><div class="ui-section-title">Save, failure, and retry</div><div class="modal-content"><form class="settings-page-form">
+      <label class="ui-field"><span class="ui-field-label">Display name</span><input class="ui-input" name="display_name" value="County Dispatch" required maxlength="200"></label>
+      <label class="ui-field"><span class="ui-field-label">Locked default</span><select class="ui-select" aria-label="Locked default" disabled><option>Default receiver</option></select></label>
+      <p class="ui-field-detail">The example fails once. Retry keeps your draft and saves it.</p>
+      <div class="ui-feedback" data-workflow-feedback hidden></div>
+      <footer class="ui-modal-footer ui-action-row"><button type="button" class="ui-button ui-button-secondary" data-workflow-cancel>Cancel</button><span class="ui-modal-footer-spacer"></span><button type="submit" class="ui-button ui-button-primary">Save Changes</button></footer>
+    </form></div></section>
+    <section class="ui-section"><div class="ui-section-title">Filters, result pages, and availability</div><div class="modal-content"><p class="ui-field-detail">Catalogs use Clear filters, an active filter count, and a phone Filters sheet. Selection has its own Clear selection action. Availability is a neutral category.</p><div class="ui-badge-group" data-workflow-availability></div></div><div data-workflow-pager></div></section>
+  </main>
+
   <script>
     const scannerPlaybackMenu = document.querySelector('.visual-scanner-example .playback-control-menu');
     const scannerDesktopPlayback = window.matchMedia('(min-width: 1181px)');
     const updateScannerPlaybackMenu = () => { scannerPlaybackMenu.open = scannerDesktopPlayback.matches; };
     updateScannerPlaybackMenu();
     scannerDesktopPlayback.addEventListener('change', updateScannerPlaybackMenu);
-    document.querySelectorAll('.visual-feature-example .alias-filter-advanced-toggle').forEach((toggle) => {
-      const panel = document.getElementById(toggle.getAttribute('aria-controls'));
-      toggle.addEventListener('click', () => {
-        panel.hidden = !panel.hidden;
-        toggle.setAttribute('aria-expanded', String(!panel.hidden));
-      });
-    });
   </script>
   <script type="module" src="/visual/design-system-gallery.js"></script>
   <script type="module">import { installIconHints } from '/assets/core/icon-hints.js'; installIconHints();</script>

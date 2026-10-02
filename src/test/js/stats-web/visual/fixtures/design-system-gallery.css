@@ -610,6 +610,7 @@ body:not([data-gallery-view="access-login-modal"]) .visual-access-login-modal-ex
 body:not([data-gallery-view="mobile-table"]) .visual-mobile-table-example,
 body:not([data-gallery-view="app-chrome"]) .visual-app-chrome-example,
 body:not([data-gallery-view="gallery"]) .design-system-gallery,
+body:not([data-gallery-view="workflows"]) .visual-workflows-example,
 body:not([data-gallery-view="modal"]):not([data-gallery-view="modal-long"]) .visual-modal-example,
 body:not([data-gallery-view="alias-list-create-modal"]) .visual-alias-list-create-modal-example,
 body:not([data-gallery-view="activity-action-tooltip"]) .visual-activity-action-tooltip-example,
@@ -730,4 +731,13 @@ body:not([data-gallery-view="tuner-frequency-popover"]) .visual-tuner-frequency-
   .visual-radio-directory-example {
     width: min(100% - 20px, 1180px);
   }
+}
+
+.visual-workflows-example {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.visual-workflows-example .settings-card {
+  margin: 0;
 }

@@ -122,8 +122,8 @@ test('P25 Activity provides compact identity-first filters in the actual applica
   await expect(action).toContainText('All actions (grants hidden)');
   await expect(action).toContainText('All actions (including grants)');
   await expect(primary.getByText('Include grants', { exact: true })).toHaveCount(0);
-  await expect(primary.getByRole('button', { name: 'More filters' })).toBeVisible();
-  await expect(primary.getByRole('button', { name: 'Apply', exact: true })).toBeVisible();
+  await expect(primary.getByRole('button', { name: 'Filters', exact: true })).toBeVisible();
+  await expect(primary.getByRole('button', { name: 'Apply filters', exact: true })).toBeVisible();
 
   const sourceTrigger = toolbar.locator('.activity-filter-picker-source .activity-filter-picker-trigger');
   await sourceTrigger.click();
@@ -159,8 +159,8 @@ test('P25 Activity provides compact identity-first filters in the actual applica
   await identityResults.filter({ hasText: 'CPD D3 DISP' }).click();
 
   await action.selectOption('__include_grants__');
-  await primary.getByRole('button', { name: 'More filters' }).click();
-  const more = page.getByRole('dialog', { name: 'More activity filters' });
+  await primary.getByRole('button', { name: 'Filters', exact: true }).click();
+  const more = page.getByRole('dialog', { name: 'Activity filters' });
   await expect(more.locator('.activity-filter-group-title')).toHaveText([
     'Scope', 'Event details', 'Technical'
   ]);
@@ -173,7 +173,7 @@ test('P25 Activity provides compact identity-first filters in the actual applica
     'label.activity-filter-field:has(> .ui-field-label:text-is("Encryption")) select')
     .selectOption('encrypted');
   await more.getByRole('button', { name: 'Done', exact: true }).click();
-  await primary.getByRole('button', { name: 'Apply', exact: true }).click();
+  await primary.getByRole('button', { name: 'Apply filters', exact: true }).click();
 
   await expect.poll(() => new URL(page.url()).searchParams.get('activity_include_grants')).toBe('true');
   await expect.poll(() => new URL(page.url()).searchParams.get('activity_target_identity_key'))
@@ -194,7 +194,7 @@ test('P25 Activity provides compact identity-first filters in the actual applica
   await expect.poll(() => requests.activity.at(-1)?.hide_grants).toBe('false');
 });
 
-test('P25 Activity More filters is a usable mobile sheet and the table stays contained', async ({ page }) => {
+test('P25 Activity Filters is a usable mobile sheet and the table stays contained', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openActivity(page);
   const toolbar = page.locator('.activity-filter-toolbar');
@@ -203,8 +203,8 @@ test('P25 Activity More filters is a usable mobile sheet and the table stays con
   expect(toolbarBox.x + toolbarBox.width).toBeLessThanOrEqual(390);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 
-  await toolbar.getByRole('button', { name: 'More filters' }).click();
-  const more = page.getByRole('dialog', { name: 'More activity filters' });
+  await toolbar.getByRole('button', { name: 'Filters', exact: true }).click();
+  const more = page.getByRole('dialog', { name: 'Activity filters' });
   await expect(more).toBeVisible();
   const panelBox = await more.boundingBox();
   expect(panelBox.x).toBeGreaterThanOrEqual(7);
@@ -218,6 +218,16 @@ test('P25 Activity More filters is a usable mobile sheet and the table stays con
   await expect(more.getByRole('button', { name: 'Done', exact: true })).toBeVisible();
   const doneBox = await more.getByRole('button', { name: 'Done', exact: true }).boundingBox();
   expect(doneBox.y + doneBox.height).toBeLessThanOrEqual(837);
+  const encryption = more.locator(
+    'label.activity-filter-field:has(> .ui-field-label:text-is("Encryption")) select');
+  await encryption.selectOption('encrypted');
+  await more.getByRole('button', { name: 'Done', exact: true }).click();
+  expect(new URL(page.url()).searchParams.get('activity_encryption')).toBe(null);
+  await toolbar.getByRole('button', { name: 'Filters', exact: true }).click();
+  await expect(encryption).toHaveValue('encrypted');
+  await more.getByRole('button', { name: 'Done', exact: true }).click();
+  await toolbar.getByRole('button', { name: 'Apply filters', exact: true }).click();
+  await expect.poll(() => new URL(page.url()).searchParams.get('activity_encryption')).toBe('encrypted');
 });
 
 test('Destination identity results stay contained and scrollable after async search', async ({ page }) => {
@@ -316,7 +326,7 @@ test('Destination selections filter requested activity and rendered rows by iden
     const picker = page.getByRole('dialog', { name: 'Choose a destination' });
     await picker.locator('input[type="search"]').fill(query);
     await picker.locator('.activity-identity-result[data-identity-key]').filter({ hasText: alias }).click();
-    await toolbar.getByRole('button', { name: 'Apply', exact: true }).click();
+    await toolbar.getByRole('button', { name: 'Apply filters', exact: true }).click();
   };
   const expectFilter = async (identityKey, kind, alias, rowCount = 1) => {
     await expect.poll(() => new URL(page.url()).searchParams.get('activity_target_identity_key'))
@@ -343,6 +353,6 @@ test('Destination selections filter requested activity and rendered rows by iden
   const picker = page.getByRole('dialog', { name: 'Choose a destination' });
   await picker.getByRole('button', { name: 'Talkgroups', exact: true }).click();
   await picker.locator('.activity-identity-any-kind').click();
-  await toolbar.getByRole('button', { name: 'Apply', exact: true }).click();
+  await toolbar.getByRole('button', { name: 'Apply filters', exact: true }).click();
   await expectFilter('', 'talkgroup', 'Alpha Dispatch');
 });

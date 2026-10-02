@@ -967,6 +967,7 @@ test('recording removal closes its busy modal and keeps the WAV file', async ({ 
   await page.goto('/app.html?view=tuners');
   await page.locator('#selected-tuner-remove').click();
   const dialog = page.getByRole('dialog', { name: 'Remove recording tuner' });
+  await expect(dialog.locator('footer.ui-modal-footer')).toHaveCount(1);
   await expect(dialog.getByText('The WAV file will stay on disk.')).toBeVisible();
   await dialog.getByRole('button', { name: 'Remove recording tuner', exact: true }).click();
   await expect(dialog).toBeHidden();

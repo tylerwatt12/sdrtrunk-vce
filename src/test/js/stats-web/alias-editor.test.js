@@ -301,16 +301,16 @@ assert.match(aliasFilterToolbar, /aliasEditorFilterInput\('q'/,
   'Alias Editor filter searches must use the shared input control styling.');
 assert.match(aliasFilterToolbar, /primary\.append\(search, searchButton, advancedButton\)/,
   'The default Alias Editor row must expose Search and the advanced disclosure together.');
-assert.match(aliasFilterToolbar, /advancedButton\.setAttribute\('aria-controls', advancedFilters\.id\)/);
-assert.match(aliasFilterToolbar, /advancedButton\.setAttribute\('aria-expanded', String\(activeAdvanced\.length > 0\)\)/);
-assert.match(aliasFilterToolbar, /advancedFilters\.hidden = activeAdvanced\.length === 0/,
-  'Advanced controls must start collapsed when no advanced filter is active.');
+assert.match(aliasFilterToolbar, /browsingWorkflows\.createFilterDisclosure\(\{/,
+  'Alias filters must use the shared disclosure and mobile sheet lifecycle.');
+assert.match(aliasFilterToolbar, /panel: advancedFilters,\s*button: advancedButton/);
+assert.match(aliasFilterToolbar, /initialExpanded: activeAdvanced\.length > 0/,
+  'Applied advanced filters must control the initial desktop disclosure state.');
 assert.match(aliasFilterToolbar, /if \(activeAdvanced\.length\) advancedButton\.append\(uiPill\(/,
   'The disclosure must show a count when advanced filters are active.');
-assert.match(aliasFilterToolbar,
-  /advancedButton\.addEventListener\('click',[\s\S]*advancedFilters\.hidden = !advancedFilters\.hidden;[\s\S]*setAttribute\('aria-expanded', String\(!advancedFilters\.hidden\)\)/,
-  'The disclosure state must stay synchronized with the accessible expanded state.');
-assert.match(aliasFilterToolbar, /anchor\('Clear all'/,
+assert.match(aliasFilterToolbar, /clearAction: clearFilters/,
+  'Both the filter bar and mobile sheet must use the same clear action.');
+assert.match(aliasFilterToolbar, /anchor\('Clear filters'/,
   'Clearing applied search and advanced filters must be available from the compact row.');
 assert.match(aliasFilterToolbar, /'alias-filter-active-summary ui-section-note'/);
 assert.match(aliasFilterToolbar, /activeAdvanced\.join\(' · '\)/,
@@ -477,8 +477,8 @@ assert.match(transferModal, /step\.append\(node\('span'/);
 assert.doesNotMatch(transferModal, /node\('div', 'alias-transfer-destination',\s*node\(/);
 assert.doesNotMatch(transferModal, /node\('li', '', node\(/);
 assert.match(transferModal, /preview\.counts\.deleted > 0/);
-assert.match(transferModal, /node\('div', 'pager ui-pager'\)/,
-  'Alias transfer review pagination must use the shared padded pager');
+assert.match(transferModal, /browsingWorkflows\.createBrowsingPager\([\s\S]*Import review pages/,
+  'Alias transfer review pagination must use the shared count and action placement');
 assert.match(transferModal, /exportFrame/);
 assert.match(transferModal, /Preparing the complete CSV/);
 assert.match(transferModal, /aliasTransferExportDownloadHref/);

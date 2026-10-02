@@ -36,6 +36,8 @@ async function openApp(page, theme = 'light') {
   preferences.appearance.theme = theme;
   let current = snapshot();
   let reads = 0;
+  let revocations = 0;
+  let revocationBlock = null;
   await page.route('**/api/v1/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname;
     if (pathname === '/api/v1/auth/session') {
@@ -49,6 +51,19 @@ async function openApp(page, theme = 'light') {
       await route.fulfill({ json: { data: current } });
     } else if (pathname === '/api/v1/admin/remote-links/senders' && route.request().method() === 'POST') {
       await route.fulfill({ json: { data: { sender_id: senderId, secret: fixtureSecret } } });
+    } else if (pathname === `/api/v1/admin/remote-links/senders/${senderId}` &&
+      route.request().method() === 'DELETE') {
+      revocations += 1;
+      if (revocationBlock) {
+        const error = await revocationBlock;
+        revocationBlock = null;
+        if (error) {
+          await route.fulfill({ status: 503, json: { error: { status: 503, message: error } } });
+          return;
+        }
+      }
+      current = { ...current, senders: [] };
+      await route.fulfill({ json: { data: current } });
     } else if (pathname === `/api/v1/admin/remote-links/senders/${senderId}` &&
       route.request().method() === 'PUT') {
       const body = route.request().postDataJSON();
@@ -69,6 +84,12 @@ async function openApp(page, theme = 'light') {
   await expect(page.locator('.remote-links-sender-card')).toBeVisible();
   return {
     reads: () => reads,
+    revocations: () => revocations,
+    deferRevocation: (error = null) => {
+      let release;
+      revocationBlock = new Promise(resolve => { release = () => resolve(error); });
+      return release;
+    },
     updateListener: (changes) => { current = { ...current, listener: { ...current.listener, ...changes } }; },
     updateSenderConnection: (changes) => {
       current = { ...current, sender_connection: { ...current.sender_connection, ...changes } };
@@ -193,17 +214,73 @@ test('new credential is announced and guarded until its secret is copied', async
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole('alert')).toBeFocused();
   await expect(dialog).toHaveScreenshot('remote-credential-light.png');
-  page.once('dialog', async (confirmation) => {
-    expect(confirmation.message()).toBe('Close this one-time credential? The shared secret will not be shown again.');
-    await confirmation.dismiss();
-  });
   await dialog.getByRole('button', { name: 'Close Credential created' }).click();
+  const confirmation = page.getByRole('alertdialog', { name: 'Discard unsaved changes' });
+  await expect(confirmation).toContainText('Close this one-time credential? The shared secret will not be shown again.');
+  await confirmation.getByRole('button', { name: 'Keep editing' }).click();
   await expect(dialog).toBeVisible();
   await dialog.getByRole('button', { name: 'Copy Shared secret' }).click();
   await expect(dialog.getByRole('status')).toHaveText('Shared secret copied.');
   await dialog.getByRole('button', { name: 'Done' }).click();
   await expect(dialog).not.toBeVisible();
   await expect(page.getByRole('button', { name: 'Add trusted sender' })).toBeFocused();
+});
+
+test('trusted sender revocation waits for themed confirmation and preserves cancellation', async ({ page }) => {
+  const app = await openApp(page);
+  await page.getByRole('button', { name: 'Manage sender' }).click();
+  const editor = page.getByRole('dialog', { name: 'Trusted sender' });
+  const revoke = editor.getByRole('button', { name: 'Revoke sender' });
+  await revoke.click();
+  const confirmation = page.getByRole('alertdialog', { name: 'Revoke trusted sender' });
+  await expect(confirmation.getByRole('button', { name: 'Cancel' })).toBeFocused();
+  expect(app.revocations()).toBe(0);
+  await confirmation.getByRole('button', { name: 'Cancel' }).click();
+  await expect(editor).toBeVisible();
+  await expect(revoke).toBeFocused();
+  expect(app.revocations()).toBe(0);
+  await revoke.click();
+  await confirmation.getByRole('button', { name: 'Revoke sender' }).click();
+  await expect(editor).toHaveCount(0);
+  expect(app.revocations()).toBe(1);
+});
+
+test('pending revocation freezes sender actions, bypasses edit validation, and restores controls on failure', async ({ page }) => {
+  const app = await openApp(page);
+  const writes = [];
+  page.on('request', request => {
+    if (request.method() === 'PUT' && request.url().includes('/remote-links/senders/')) writes.push(request);
+  });
+  await page.getByRole('button', { name: 'Manage sender' }).click();
+  const editor = page.getByRole('dialog', { name: 'Trusted sender' });
+  const name = editor.getByLabel('Sender name');
+  await name.fill('');
+  const release = app.deferRevocation('Sender could not be revoked. Try again.');
+  const revoke = editor.getByRole('button', { name: 'Revoke sender', exact: true });
+  await revoke.click();
+  await page.getByRole('alertdialog', { name: 'Revoke trusted sender' })
+    .getByRole('button', { name: 'Revoke sender', exact: true }).click();
+  await expect.poll(() => app.revocations()).toBe(1);
+  await expect(editor).toHaveAttribute('aria-busy', 'true');
+  await expect(revoke).toBeDisabled();
+  await expect(editor.getByRole('button', { name: 'Save sender' })).toBeDisabled();
+  await expect(name).toBeDisabled();
+  await editor.locator('form').evaluate(form => {
+    form.querySelector('input').value = 'Field receiver';
+    form.querySelector('input').dispatchEvent(new Event('input', { bubbles: true }));
+    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    form.querySelector('.ui-button-danger').dispatchEvent(new Event('click', { bubbles: true }));
+  });
+  expect(app.revocations()).toBe(1);
+  expect(writes).toHaveLength(0);
+  await expect(page.getByRole('alertdialog')).toHaveCount(0);
+  release();
+  await expect(editor.getByRole('alert')).toContainText('Sender could not be revoked. Try again.');
+  await expect(editor).not.toHaveAttribute('aria-busy', 'true');
+  await expect(revoke).toBeEnabled();
+  await expect(name).toBeEnabled();
+  await name.fill('Field receiver');
+  await expect(editor.getByRole('button', { name: 'Save sender' })).toBeEnabled();
 });
 
 test('polling refreshes status and restores a focused remote action', async ({ page }) => {
@@ -251,3 +328,66 @@ for (const activation of ['pointer', 'keyboard']) {
     await expect(page.getByRole('dialog', { name: 'Remote listener' })).toBeVisible();
   });
 }
+
+test('listener save shares busy guards, preserves failed drafts, and retries the same revision', async ({ page }) => {
+  await openApp(page);
+  const writes = [];
+  const pending = [];
+  await page.route('**/api/v1/admin/remote-links/listener', async (route) => {
+    writes.push(route.request().postDataJSON());
+    await new Promise((resolve) => pending.push(async (status) => {
+      await route.fulfill(status === 200 ? { json: { data: {
+        ...snapshot(), listener: { ...snapshot().listener, bind_address: writes.at(-1).bind_address }
+      } } } : { status, json: { error: { message: 'Listener could not be saved. Try again.' } } });
+      resolve();
+    }));
+  });
+  await page.getByRole('button', { name: 'Configure listener' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Remote listener' });
+  const address = dialog.getByRole('textbox', { name: /^Bind address/ });
+  const save = dialog.getByRole('button', { name: 'Save listener', exact: true });
+  await address.fill('127.0.0.1');
+  await expect(dialog.getByRole('status')).toHaveText('Unsaved changes');
+  await save.click();
+  await expect.poll(() => pending.length).toBe(1);
+  await expect(address).toBeDisabled();
+  await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeDisabled();
+  await expect(dialog).toHaveAttribute('aria-busy', 'true');
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeVisible();
+  await dialog.locator('form').evaluate((form) => form.dispatchEvent(new Event('submit', { cancelable: true })));
+  expect(writes).toHaveLength(1);
+  await pending.shift()(503);
+  await expect(dialog.getByRole('alert')).toHaveText('Listener could not be saved. Try again.');
+  await expect(address).toHaveValue('127.0.0.1');
+  await expect(address).toBeEnabled();
+  await expect(save).toBeEnabled();
+  await save.click();
+  await expect.poll(() => pending.length).toBe(1);
+  await pending.shift()(200);
+  await expect(dialog).toHaveCount(0);
+  expect(writes).toEqual(Array(2).fill({ revision: 'fixture-revision', enabled: false,
+    bind_address: '127.0.0.1', port: 53800 }));
+});
+
+test('one-time credential transition cannot submit a second creation request', async ({ page }) => {
+  await openApp(page);
+  let creations = 0;
+  await page.route('**/api/v1/admin/remote-links/senders', async (route) => {
+    creations += 1;
+    await route.fulfill({ json: { data: { sender_id: senderId, secret: fixtureSecret } } });
+  });
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: async () => {} }, configurable: true });
+  });
+  await page.getByRole('button', { name: 'Add trusted sender' }).click();
+  await page.getByLabel('Sender name').fill('Additional field receiver');
+  await page.getByRole('button', { name: 'Create credential' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Credential created' });
+  await expect(dialog.getByRole('button', { name: 'Done', exact: true })).toBeEnabled();
+  await dialog.locator('form').evaluate((form) => form.dispatchEvent(new Event('submit', { cancelable: true })));
+  await dialog.getByRole('button', { name: 'Copy Shared secret' }).click();
+  await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(creations).toBe(1);
+});

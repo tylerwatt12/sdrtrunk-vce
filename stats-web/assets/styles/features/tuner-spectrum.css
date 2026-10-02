@@ -1323,14 +1323,6 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   min-width: 0;
 }
 
-.spectrum-discovery-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-}
-
 .read-only-modal.spectrum-search-modal {
   width: min(var(--modal-size-large), 96vw);
 }
