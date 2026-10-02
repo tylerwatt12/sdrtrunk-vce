@@ -101,6 +101,12 @@ class AudioCallCoordinatorTest
                 .filter(summary -> summary.callLegId().producerId() == 1L).findFirst().orElseThrow();
             assertEquals(new TimestampedVoiceFingerprint(11L, 1_000L),
                 first.voiceFrameFingerprints().getFirst());
+            await(() -> coordinator.getDiagnosticSnapshot().counters().emittedLogicalCalls() == 1L);
+            LogicalCallDiagnosticCounters counters = coordinator.getDiagnosticSnapshot().counters();
+            assertEquals(3L, counters.completedReceiverLegs());
+            assertEquals(1L, counters.mergedLogicalCalls());
+            assertEquals(2L, counters.mergedReceiverCopies(),
+                "Three receptions contain two extra copies, not three pairwise comparisons");
         }
         finally
         {
@@ -374,6 +380,118 @@ class AudioCallCoordinatorTest
     }
 
     @Test
+    void sharedVoiceStillMergesDifferentDecodersInOneConfigurationAndSite() throws Exception
+    {
+        AliasList aliasList = aliasList(760);
+        List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = coordinator(resolved, null, null, null);
+
+        try
+        {
+            Leg first = withConfiguration(leg(201, aliasList, 0x6, 6, 60, 61, 9401,
+                1_000, 3_000, GOOD_QUALITY, true, Set.of()), "shared-channel");
+            Leg second = withConfiguration(leg(202, aliasList, 0x6, 6, 60, 61, 9401,
+                1_050, 3_050, GOOD_QUALITY, true, Set.of()), "shared-channel");
+            emitLeg(coordinator, first, fingerprints(61));
+            emitLeg(coordinator, second, fingerprints(61));
+
+            await(() -> resolved.size() == 1);
+            assertEquals(2, resolved.getFirst().receiverLegCount());
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
+    void separateCallsFromOneAudioProducerNeverCountAsReceiverCopies() throws Exception
+    {
+        AliasList aliasList = aliasList(761);
+        List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = coordinator(resolved, null, null, null);
+
+        try
+        {
+            Leg first = leg(203, 1, new CallLegId(203, 1, 0), aliasList, 0x6, 6, 60, 61,
+                9402, 9001, 1_000, 3_000, GOOD_QUALITY, true, Set.of());
+            Leg second = leg(203, 2, new CallLegId(203, 2, 0), aliasList, 0x6, 6, 60, 61,
+                9402, 9001, 1_050, 3_050, GOOD_QUALITY, true, Set.of());
+            emitLeg(coordinator, first, fingerprints(62));
+            emitLeg(coordinator, second, fingerprints(62));
+
+            await(() -> resolved.size() == 2 &&
+                coordinator.getDiagnosticSnapshot().counters().emittedLogicalCalls() == 2L);
+            assertTrue(resolved.stream().allMatch(call -> call.receiverLegCount() == 1));
+            assertEquals(0L, coordinator.getDiagnosticSnapshot().counters().mergedReceiverCopies());
+            assertEquals(2L, coordinator.getDiagnosticSnapshot().counters().independentLogicalCalls());
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
+    void completedCallDoesNotWaitForAnotherSequenceFromItsOwnAudioProducer() throws Exception
+    {
+        AliasList aliasList = aliasList(762);
+        List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator.ResolverConfiguration configuration = new AudioCallCoordinator.ResolverConfiguration(
+            256, 32, 25, 5_000, 32, 16, 1_000_000, 4_000_000);
+        AudioCallCoordinator coordinator = new AudioCallCoordinator(resolved::add, null, null, null, configuration);
+
+        try
+        {
+            Leg first = leg(204, 1, new CallLegId(204, 1, 0), aliasList, 0x6, 6, 60, 61,
+                9403, 9001, 1_000, 3_000, GOOD_QUALITY, true, Set.of());
+            Leg second = leg(204, 2, new CallLegId(204, 2, 0), aliasList, 0x6, 6, 60, 61,
+                9403, 9001, 1_050, 3_050, GOOD_QUALITY, true, Set.of());
+            coordinator.receive(new AudioCallEvent(AudioCallEventType.CALL_CREATED,
+                snapshot(second, false), null, false, 0L, 0L));
+            emitLeg(coordinator, first, fingerprints(63));
+
+            await(() -> resolved.size() == 1);
+            assertEquals(first.callId(), resolved.getFirst().snapshot().callId());
+            assertEquals(1, coordinator.getDiagnosticSnapshot().activeLegCount());
+            coordinator.receive(new AudioCallEvent(AudioCallEventType.CALL_COMPLETED,
+                snapshot(second, true), null, false, 0L, 0L));
+            await(() -> resolved.size() == 2);
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
+    void fullUnrelatedCohortDoesNotReportCapacityFailure() throws Exception
+    {
+        AliasList aliasList = aliasList(763);
+        List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator.ResolverConfiguration configuration = new AudioCallCoordinator.ResolverConfiguration(
+            256, 32, 25, 150, 32, 1, 1_000_000, 4_000_000);
+        AudioCallCoordinator coordinator = new AudioCallCoordinator(resolved::add, null, null, null, configuration);
+
+        try
+        {
+            emitLeg(coordinator, leg(205, aliasList, 0x6, 6, 60, 61, 9404,
+                1_000, 3_000, GOOD_QUALITY, true, Set.of()), fingerprints(64));
+            emitLeg(coordinator, leg(206, aliasList, 0x6, 6, 61, 62, 9405,
+                1_050, 3_050, GOOD_QUALITY, true, Set.of()), fingerprints(64));
+
+            await(() -> resolved.size() == 2 &&
+                coordinator.getDiagnosticSnapshot().counters().emittedLogicalCalls() == 2L);
+            assertEquals(0L, coordinator.getDiagnosticSnapshot().counters().failOpenLogicalCalls());
+            assertEquals(2L, coordinator.getDiagnosticSnapshot().counters().independentLogicalCalls());
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
     void matchingVoiceFramesCanProveDuplicateWhenSourceRadioIsMissing() throws Exception
     {
         AliasList aliasList = aliasList(77);
@@ -609,6 +727,49 @@ class AudioCallCoordinatorTest
     }
 
     @Test
+    void radioTimingAloneCannotMergeDifferentSitesWithinOneConfiguration() throws Exception
+    {
+        AliasList aliasList = aliasList(8520);
+        Leg good = withConfiguration(leg(207, aliasList, 0xE, 14, 144, 145, 10_304, 8_804,
+            1_000, 4_000, GOOD_QUALITY, true, Set.of()), "shared-channel");
+        Leg damaged = withConfiguration(leg(208, aliasList, 0xE, 14, 145, 146, 10_304, 8_804,
+            1_050, 4_050, DAMAGED_QUALITY, true, Set.of()), "shared-channel");
+        assertRadioTimingFallbackStaysSeparate(good, damaged);
+    }
+
+    @Test
+    void radioTimingAloneCannotMergeIndependentConfigurationsOnOneSite() throws Exception
+    {
+        AliasList aliasList = aliasList(8521);
+        Leg good = leg(209, aliasList, 0xE, 14, 144, 145, 10_305, 8_805,
+            1_000, 4_000, GOOD_QUALITY, true, Set.of());
+        Leg damaged = leg(210, aliasList, 0xE, 14, 144, 145, 10_305, 8_805,
+            1_050, 4_050, DAMAGED_QUALITY, true, Set.of());
+        assertRadioTimingFallbackStaysSeparate(good, damaged);
+    }
+
+    private static void assertRadioTimingFallbackStaysSeparate(Leg good, Leg damaged) throws Exception
+    {
+        List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = coordinator(resolved, null, null, null);
+
+        try
+        {
+            emitLegWithFrameEvidence(coordinator, good, fingerprintRange(5_000L, 31),
+                frameTimestamps(2_000L, 31));
+            emitLegWithFrameEvidence(coordinator, damaged, fingerprintRange(6_000L, 31),
+                frameTimestamps(2_050L, 31));
+
+            await(() -> resolved.size() == 2);
+            assertTrue(resolved.stream().allMatch(call -> call.receiverLegCount() == 1));
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
     void sourceFallbackRejectsSequentialFrameTimelinesDespiteOverlappingCallObjects() throws Exception
     {
         AliasList aliasList = aliasList(853);
@@ -660,6 +821,30 @@ class AudioCallCoordinatorTest
             assertTrue(recorded.isEmpty(), "Metadata-only calls must not reach recording");
             assertTrue(streamed.isEmpty(), "Metadata-only calls must not reach streaming");
             assertTrue(web.isEmpty(), "Metadata-only calls must not reach audio-oriented browser output");
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
+    void encryptedMessageProofStillMergesIndependentDecodersOnOneConfigurationAndSite() throws Exception
+    {
+        AliasList aliasList = aliasList(860);
+        List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = coordinator(resolved, null, null, null);
+
+        try
+        {
+            CallEncryptionEvidence evidence = new CallEncryptionEvidence(0x84, 0x1001, 0x1234L);
+            emitLeg(coordinator, withConfiguration(encryptedLeg(211, aliasList, 0xF, 15, 150, 151,
+                10_401, 1_000, 3_000, evidence), "shared-channel"), List.of());
+            emitLeg(coordinator, withConfiguration(encryptedLeg(212, aliasList, 0xF, 15, 150, 151,
+                10_401, 1_050, 3_050, evidence), "shared-channel"), List.of());
+
+            await(() -> resolved.size() == 1);
+            assertEquals(2, resolved.getFirst().receiverLegCount());
         }
         finally
         {
@@ -1754,6 +1939,17 @@ class AudioCallCoordinatorTest
                 io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.NXDN_TYPE_C :
                 io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.STANDARD,
             io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED, true);
+        return new Leg(leg.callId(), leg.callLegId(), leg.aliasList(), source, leg.talkgroup(), leg.radio(),
+            leg.start(), leg.end(), leg.quality(), leg.record(), leg.routes(), leg.encrypted(),
+            leg.callEncryptionEvidence());
+    }
+
+    private static Leg withConfiguration(Leg leg, String configurationId)
+    {
+        CallLegSource original = leg.source();
+        CallLegSource source = new CallLegSource(original.decoderType(), configurationId, original.channelName(),
+            original.radioResolveId(), original.aliasListId(), original.p25SiteIdentity(), original.identityDomain(),
+            original.channelKind(), original.trafficChannel());
         return new Leg(leg.callId(), leg.callLegId(), leg.aliasList(), source, leg.talkgroup(), leg.radio(),
             leg.start(), leg.end(), leg.quality(), leg.record(), leg.routes(), leg.encrypted(),
             leg.callEncryptionEvidence());

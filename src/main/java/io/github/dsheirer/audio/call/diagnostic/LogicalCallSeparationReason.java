@@ -20,6 +20,7 @@ public enum LogicalCallSeparationReason
     MISSING_ENCRYPTION_STATE(true),
     INVALID_CALL_TIMING(true),
     COHORT_CAPACITY(true),
+    SAME_AUDIO_PRODUCER(false),
     WACN_MISMATCH(false),
     SYSTEM_ID_MISMATCH(false),
     DESTINATION_MISMATCH(false),

@@ -103,7 +103,8 @@ public final class CallMatchingHttpController
             return;
         }
 
-        ApiHttpResponse.sendData(exchange, 200, document(history, resolver, queue, System.currentTimeMillis()));
+        ApiHttpResponse.sendData(exchange, 200,
+            document(history, resolver, queue, service.retentionCapacity(), System.currentTimeMillis()));
     }
 
     private static void unavailable(HttpExchange exchange) throws IOException
@@ -114,7 +115,7 @@ public final class CallMatchingHttpController
 
     private static Document document(LogicalCallDiagnosticServiceSnapshot history,
                                      LogicalCallDiagnosticSnapshot resolver,
-                                     AudioCallCoordinator.CoordinatorQueueStatus queue, long now)
+                                     AudioCallCoordinator.CoordinatorQueueStatus queue, int retentionCapacity, long now)
     {
         List<DuplicateDecision> duplicates = new ArrayList<>(MAXIMUM_VISIBLE_DUPLICATES);
         List<LogicalCallDiagnosticDecision> decisions = history.recentDuplicates();
@@ -141,7 +142,7 @@ public final class CallMatchingHttpController
             queue.totalIngressCapacity(), queue.acceptedIngress(), queue.droppedIngress(),
             queue.droppedLifecycle(), queue.droppedOperations(), queue.abortedCalls());
         HistoryStatus historyStatus = new HistoryStatus(decisions.size(), history.duplicatesEvicted(),
-            MAXIMUM_VISIBLE_DUPLICATES);
+            MAXIMUM_VISIBLE_DUPLICATES, duplicates.size(), retentionCapacity);
         return new Document(true, safeLabel(history.sessionId()), history.sessionStartedAtEpochMillis(),
             resolverStatus, queueStatus, diagnosticStatus(status), historyStatus, List.copyOf(duplicates));
     }
@@ -196,6 +197,9 @@ public final class CallMatchingHttpController
             selectedCopy = ordered.stream().filter(LogicalCallDiagnosticLeg::winner).findFirst().orElse(null);
         }
 
+        // Ordinals describe configuration relationships inside this decision without exposing private identifiers.
+        Map<String,Integer> configurationRefs = new LinkedHashMap<>();
+
         for(int index = 0; index < ordered.size(); index++)
         {
             LogicalCallDiagnosticLeg leg = ordered.get(index);
@@ -209,7 +213,10 @@ public final class CallMatchingHttpController
             {
                 runnerUpIndex = copyIndex;
             }
-            copies.add(copy(decision, leg, copyIndex, selected));
+            String configurationId = leg.channelConfigurationId();
+            Integer configurationRef = configurationId != null && !configurationId.isBlank() ?
+                configurationRefs.computeIfAbsent(configurationId, ignored -> configurationRefs.size() + 1) : null;
+            copies.add(copy(decision, leg, copyIndex, selected, configurationRef));
         }
 
         return new DuplicateDecision(decision.decisionSequence(), decision.decidedAtMs(), "MERGED",
@@ -332,7 +339,7 @@ public final class CallMatchingHttpController
     }
 
     private static CopyView copy(LogicalCallDiagnosticDecision decision, LogicalCallDiagnosticLeg leg,
-                                 int index, boolean selected)
+                                 int index, boolean selected, Integer configurationRef)
     {
         LogicalCallDiagnosticOverlap overlap = LogicalCallDiagnosticOverlap.forCopy(decision, leg).orElse(null);
         return new CopyView(index, selected, safeLabel(leg.decoder()), safeLabel(leg.channelName()),
@@ -345,7 +352,8 @@ public final class CallMatchingHttpController
             leg.ingressLoss(), leg.audioTruncated(), overlap != null ? new OverlapView(
                 overlap.overlapMilliseconds(), overlap.shorterCopyOverlapPercent(),
                 overlap.selectedCopyCoveragePercent(), overlap.startOffsetFromSelectedMilliseconds(),
-                overlap.endOffsetFromSelectedMilliseconds()) : null);
+                overlap.endOffsetFromSelectedMilliseconds()) : null,
+            configurationRef, leg.frequencyHz(), leg.timeslot());
     }
 
     private static EvidenceView evidence(LogicalCallDiagnosticEvidence evidence)
@@ -487,7 +495,8 @@ public final class CallMatchingHttpController
     {
     }
 
-    private record HistoryStatus(int duplicatesRetained, long duplicatesEvicted, int limit)
+    private record HistoryStatus(int duplicatesRetained, long duplicatesEvicted, int limit,
+                                 int visibleCount, int retentionCapacity)
     {
     }
 
@@ -527,7 +536,8 @@ public final class CallMatchingHttpController
                             long fecErrorCount, long fecProtectedBitCount, double qualityPercent,
                             double missingAndConcealedRate, double repeatedFrameRate,
                             double normalizedFecErrorRate, long retainedAudioSampleCount,
-                            boolean ingressLoss, boolean audioTruncated, OverlapView overlap)
+                            boolean ingressLoss, boolean audioTruncated, OverlapView overlap,
+                            Integer configurationRef, Long frequencyHz, Integer timeslot)
     {
     }
 

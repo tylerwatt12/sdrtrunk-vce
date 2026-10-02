@@ -73,6 +73,12 @@ public final class LogicalCallDiagnosticService implements LogicalCallDiagnostic
             mRecordsRejectedAfterClose.get());
     }
 
+    /** Fixed history capacity, independent of the number of decisions currently retained or displayed. */
+    public int retentionCapacity()
+    {
+        return mHistory.capacity();
+    }
+
     /** Stops accepting new observations; there are no threads or files to drain. */
     @Override
     public void close()

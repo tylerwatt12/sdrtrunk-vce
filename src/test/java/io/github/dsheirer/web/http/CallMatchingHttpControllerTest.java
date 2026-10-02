@@ -79,6 +79,8 @@ class CallMatchingHttpControllerTest
             assertEquals(0, data.at("/history/duplicates_evicted").longValue());
             assertEquals(151, data.at("/history/duplicates_retained").intValue());
             assertEquals(100, data.at("/history/limit").intValue());
+            assertEquals(100, data.at("/history/visible_count").intValue());
+            assertEquals(256, data.at("/history/retention_capacity").intValue());
             assertEquals(151, data.at("/diagnostic_status/decisions_observed").longValue());
             assertTrue(data.at("/queue/total_ingress_capacity").intValue() > 0);
             assertNotNull(data.at("/resolver/health_state").textValue());
@@ -132,6 +134,89 @@ class CallMatchingHttpControllerTest
             JsonNode closedData = MAPPER.readTree(closedHistory.body()).path("data");
             assertFalse(closedData.at("/diagnostic_status/accepting").booleanValue());
             assertEquals("WARNING", closedData.at("/resolver/health_state").textValue());
+        }
+        finally
+        {
+            coordinator.disposeAndAwait(2, TimeUnit.SECONDS);
+            service.close();
+        }
+    }
+
+    @Test
+    void copyDetailsDistinguishSharedConfigurationsWithoutExposingTheirIdentifiers() throws Exception
+    {
+        String sharedConfiguration = "970eecf2-652b-4968-9172-d8c9a61a9d07";
+        String otherConfiguration = "642adcb4-5c0a-4df3-adc7-4a6de5805a80";
+        List<LogicalCallDiagnosticLeg> legs = List.of(
+            leg(0, "Same visible name", false, sharedConfiguration, 851_012_500L, 2),
+            leg(1, "Same visible name", true, sharedConfiguration, 851_012_500L, 2),
+            leg(2, "Same visible name", false, otherConfiguration, 0L, 0));
+        LogicalCallDiagnosticWinner winner = new LogicalCallDiagnosticWinner("physical-leg-1",
+            "physical-leg-0", LogicalCallWinnerCriterion.CALL_LEG_ID,
+            new LogicalCallDiagnosticWinner.CriterionValue("physical-leg-1", null, null),
+            new LogicalCallDiagnosticWinner.CriterionValue("physical-leg-0", null, null));
+        LogicalCallDiagnosticEvidence evidence = new LogicalCallDiagnosticEvidence(3, 0, 0,
+            Map.of(LogicalCallMergeProof.SHARED_VOICE_CONTENT, 3L), Map.of());
+        LogicalCallDiagnosticDecision decision = new LogicalCallDiagnosticDecision(1, 2_200,
+            new LogicalCallId(77, 1), LogicalCallDecisionOutcome.MERGED, null, null, winner, legs,
+            evidence, List.of());
+        LogicalCallDiagnosticService service = diagnosticService();
+        AudioCallCoordinator coordinator = new AudioCallCoordinator(null, null, null, null, service);
+
+        try
+        {
+            assertTrue(service.offer(decision));
+            TestExchange exchange = new TestExchange(CallMatchingHttpController.PATH, "GET");
+            new CallMatchingHttpController(() -> service, () -> coordinator).handle(exchange);
+            JsonNode duplicate = MAPPER.readTree(exchange.body()).at("/data/duplicates/0");
+            assertEquals(3, duplicate.path("legs").size());
+            assertEquals(3, duplicate.at("/evidence/confirmed_duplicate_pair_count").longValue());
+            assertEquals(1, duplicate.at("/winner/selected_copy_index").intValue());
+            assertEquals(2, duplicate.at("/winner/runner_up_copy_index").intValue());
+            assertEquals(1, duplicate.at("/legs/0/configuration_ref").intValue());
+            assertEquals(1, duplicate.at("/legs/1/configuration_ref").intValue());
+            assertEquals(2, duplicate.at("/legs/2/configuration_ref").intValue());
+            assertEquals(851_012_500L, duplicate.at("/legs/0/frequency_hz").longValue());
+            assertEquals(2, duplicate.at("/legs/0/timeslot").intValue());
+            assertTrue(duplicate.at("/legs/2/frequency_hz").isNull());
+            assertTrue(duplicate.at("/legs/2/timeslot").isNull());
+            assertFalse(exchange.body().contains(sharedConfiguration));
+            assertFalse(exchange.body().contains(otherConfiguration));
+            assertFalse(exchange.body().contains("physical-leg"));
+            duplicate.path("legs").forEach(copy -> assertFalse(copy.has("channel_configuration_id")));
+        }
+        finally
+        {
+            coordinator.disposeAndAwait(2, TimeUnit.SECONDS);
+            service.close();
+        }
+    }
+
+    @Test
+    void reportsRetainedHistoryAndDisplayedHistoryAsSeparateScopes() throws Exception
+    {
+        LogicalCallDiagnosticService service =
+            new LogicalCallDiagnosticService(new LogicalCallDiagnosticConfiguration(128));
+        AudioCallCoordinator coordinator = new AudioCallCoordinator(null, null, null, null, service);
+
+        try
+        {
+            for(int sequence = 1; sequence <= 200; sequence++)
+            {
+                assertTrue(service.offer(decision(sequence, LogicalCallDecisionOutcome.MERGED)));
+            }
+
+            TestExchange exchange = new TestExchange(CallMatchingHttpController.PATH, "GET");
+            new CallMatchingHttpController(() -> service, () -> coordinator).handle(exchange);
+            JsonNode data = MAPPER.readTree(exchange.body()).path("data");
+            assertEquals(128, data.at("/history/retention_capacity").intValue());
+            assertEquals(128, data.at("/history/duplicates_retained").intValue());
+            assertEquals(72, data.at("/history/duplicates_evicted").longValue());
+            assertEquals(100, data.at("/history/limit").intValue());
+            assertEquals(100, data.at("/history/visible_count").intValue());
+            assertEquals(data.path("duplicates").size(), data.at("/history/visible_count").intValue());
+            assertEquals(200, data.at("/duplicates/0/decision_sequence").longValue());
+            assertEquals(101, data.at("/duplicates/99/decision_sequence").longValue());
         }
         finally
         {
@@ -257,11 +342,17 @@ class CallMatchingHttpControllerTest
 
     private static LogicalCallDiagnosticLeg leg(int index, String channelName, boolean selected)
     {
-        return new LogicalCallDiagnosticLeg("physical-leg-" + index, "P25", "configuration-id-" + index,
+        return leg(index, channelName, selected, "configuration-id-" + index, null, null);
+    }
+
+    private static LogicalCallDiagnosticLeg leg(int index, String channelName, boolean selected,
+                                                String configurationId, Long frequencyHz, Integer timeslot)
+    {
+        return new LogicalCallDiagnosticLeg("physical-leg-" + index, "P25", configurationId,
             channelName, "radio-resolve-internal-id", 91, 1, 2, 3, 4,
             index == 20 ? 1_500 : 1_000, index == 20 ? 2_500 : 2_000, 1_000,
             50, 50, 48, 47, 1, 1, 1, 2, 100, 96.0, 4.0, 2.0, 2.0,
-            8_000, false, false, selected);
+            8_000, false, false, selected, frequencyHz, timeslot);
     }
 
     private static void assertNoPathField(JsonNode node)
