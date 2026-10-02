@@ -480,20 +480,6 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
 
         for(ResolutionCohort candidate : candidates)
         {
-            if(candidate.legs.size() >= mConfiguration.maximumCohortLegs())
-            {
-                if(!candidate.legs.isEmpty())
-                {
-                    DuplicateEvaluation evaluation =
-                        DuplicateEvaluation.failOpen(LogicalCallSeparationReason.COHORT_CAPACITY);
-                    rejectedEvidence.add(evaluation);
-                    candidate.recordRejectedEvaluation(evaluation,
-                        candidate.legs.getFirst().snapshot.callLegId());
-                }
-
-                continue;
-            }
-
             boolean compatible = true;
             List<MergeEvidenceContribution> candidateMergeEvidence = new ArrayList<>();
 
@@ -521,6 +507,16 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
 
             if(compatible)
             {
+                if(candidate.legs.size() >= mConfiguration.maximumCohortLegs())
+                {
+                    DuplicateEvaluation evaluation =
+                        DuplicateEvaluation.failOpen(LogicalCallSeparationReason.COHORT_CAPACITY);
+                    rejectedEvidence.add(evaluation);
+                    candidate.recordRejectedEvaluation(evaluation,
+                        candidate.legs.getFirst().snapshot.callLegId());
+                    continue;
+                }
+
                 cohort = candidate;
                 cohort.recordMergeEvidence(candidateMergeEvidence);
                 cohort.legs.add(completedLeg);
@@ -632,12 +628,13 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             return DuplicateEvaluation.merged(LogicalCallMergeProof.MATCHING_ENCRYPTION_MESSAGE_INDICATOR);
         }
 
-        //Known matching source metadata can rescue damaged copies whose hashes no longer agree, but only when their
-        //actual carrier-frame timelines strongly overlap.  Call-object timing is a fallback solely when one leg
-        //truly lacks enough timestamped frames to establish a timeline.
+        //Radio/timing evidence can rescue damaged observations from different identified sites. Within one
+        //configuration or site it cannot distinguish independent receptions from decoder lifecycle anomalies;
+        //those comparisons require the voice or encrypted-message proof above.
         boolean matchingKnownSource = first.sourceIdentity != null && second.sourceIdentity != null;
 
-        if(matchingKnownSource && (hasStrongVoiceTimelineOverlap(firstVoice, secondVoice) ||
+        if(matchingKnownSource && hasDifferentSiteObservations(first, second) &&
+            (hasStrongVoiceTimelineOverlap(firstVoice, secondVoice) ||
             (firstVoice.frameCount() < 3 || secondVoice.frameCount() < 3) &&
                 hasStrongCallIntervalFallbackOverlap(first, second, overlap)))
         {
@@ -645,6 +642,17 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         }
 
         return DuplicateEvaluation.failOpen(LogicalCallSeparationReason.INSUFFICIENT_DUPLICATE_PROOF);
+    }
+
+    private static boolean hasDifferentSiteObservations(CompletedReceiverLeg first, CompletedReceiverLeg second)
+    {
+        CallLegSource firstSource = first.snapshot.callLegSource();
+        CallLegSource secondSource = second.snapshot.callLegSource();
+        P25SiteIdentity firstSite = firstSource.p25SiteIdentity();
+        P25SiteIdentity secondSite = secondSource.p25SiteIdentity();
+        return firstSite != null && secondSite != null && !firstSite.equals(secondSite) &&
+            (firstSource.channelConfigurationId() == null ||
+                !firstSource.channelConfigurationId().equals(secondSource.channelConfigurationId()));
     }
 
     /**
@@ -664,8 +672,11 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             return List.copyOf(new LinkedHashSet<>(reasons));
         }
 
-        CallLegSource firstSource = first.snapshot.callLegSource();
-        CallLegSource secondSource = second.snapshot.callLegSource();
+        if(sameAudioProducer(first.snapshot.callLegId(), second.snapshot.callLegId()))
+        {
+            reasons.add(LogicalCallSeparationReason.SAME_AUDIO_PRODUCER);
+        }
+
         P25SystemIdentity firstSystem = p25SystemIdentity(first.snapshot);
         P25SystemIdentity secondSystem = p25SystemIdentity(second.snapshot);
 
@@ -696,6 +707,12 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         }
 
         return List.copyOf(reasons);
+    }
+
+    private static boolean sameAudioProducer(CallLegId first, CallLegId second)
+    {
+        return first != null && second != null && first.producerId() == second.producerId() &&
+            first.timeslot() == second.timeslot();
     }
 
     private static long intervalOverlapMilliseconds(CompletedReceiverLeg first, CompletedReceiverLeg second)
@@ -1454,7 +1471,8 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             quality.repeatedFrameCount(), quality.concealedFrameCount(), effectiveMissing,
             quality.fecErrorCount(), quality.fecProtectedBitCount(), qualityPercent,
             score.missingAndConcealedRate, score.repeatedRate, score.normalizedFecRate,
-            leg.audioSampleCount, leg.ingressLoss, leg.audioTruncated, winner);
+            leg.audioSampleCount, leg.ingressLoss, leg.audioTruncated, winner,
+            frequency(leg.snapshot.identifierCollection()), positiveTimeslot(leg.snapshot.timeslot()));
     }
 
     private LogicalCallDiagnosticLeg diagnosticLeg(ReceiverLeg leg)
@@ -2830,11 +2848,11 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
     }
 
     /** Immutable, compact subset needed only to decide whether an active leg could belong to a completed cohort. */
-    private record PreliminaryLegScope(boolean eligible, DecoderType decoderType,
+    private record PreliminaryLegScope(boolean eligible, DecoderType decoderType, CallLegId callLegId,
                                        P25SystemIdentity systemIdentity, DestinationIdentity destinationIdentity,
                                        CallEncryptionState encryptionState, SourceIdentity sourceIdentity)
     {
-        private static final PreliminaryLegScope INELIGIBLE = new PreliminaryLegScope(false, null, null,
+        private static final PreliminaryLegScope INELIGIBLE = new PreliminaryLegScope(false, null, null, null,
             null, CallEncryptionState.UNKNOWN, null);
 
         private static PreliminaryLegScope from(AudioCallSnapshot snapshot, DestinationIdentity destinationIdentity,
@@ -2852,13 +2870,14 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                 (decoderType == DecoderType.P25_PHASE1 || decoderType == DecoderType.P25_PHASE2) &&
                 systemIdentity != null && destinationIdentity != null &&
                 snapshot.isEncryptionKnown();
-            return new PreliminaryLegScope(eligible, decoderType, systemIdentity,
+            return new PreliminaryLegScope(eligible, decoderType, snapshot.callLegId(), systemIdentity,
                 destinationIdentity, snapshot.encryptionState(), sourceIdentity);
         }
 
         private boolean compatible(PreliminaryLegScope other)
         {
-            if(!eligible || other == null || !other.eligible || decoderType == null ||
+            if(!eligible || other == null || !other.eligible || sameAudioProducer(callLegId, other.callLegId) ||
+                decoderType == null ||
                 other.decoderType == null || systemIdentity == null || other.systemIdentity == null ||
                 systemIdentity.wacn() != other.systemIdentity.wacn() ||
                 systemIdentity.system() != other.systemIdentity.system() ||

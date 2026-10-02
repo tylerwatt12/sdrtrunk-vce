@@ -15,6 +15,7 @@ function copy(index, selected) {
   return {
     copy_index: index, selected, decoder: 'P25 Phase 1',
     channel_name: selected ? 'Cuyahoga Simulcast' : 'Elyria',
+    configuration_ref: index, frequency_hz: selected ? 851_012_500 : 852_012_500, timeslot: 1,
     wacn: 1, system: 1, rfss: 1, site: selected ? 1 : 6,
     start_timestamp: 1_700_000_000_000 + (selected ? 0 : 48),
     end_timestamp: 1_700_000_003_600 - (selected ? 0 : 10),
@@ -96,7 +97,9 @@ function snapshot(duplicates = [duplicate()]) {
     history: {
       duplicates_evicted: 6,
       duplicates_retained: duplicates.filter((item) => item.outcome === 'MERGED').length,
-      limit: 100
+      limit: 100,
+      visible_count: Math.min(100, duplicates.filter((item) => item.outcome === 'MERGED').length),
+      retention_capacity: 256
     },
     duplicates
   };
@@ -154,7 +157,8 @@ test('administrator sees only confirmed duplicates and compares receiver copies'
   const table = page.locator('table[data-table-type="call-matching-duplicates"]');
   await expect(table.locator('tbody tr')).toHaveCount(1);
   await expect(table.locator('tbody td')).toHaveCount(8);
-  await expect(table).toContainText('Matching voice frames');
+  await expect(table).toContainText('More usable voice frames');
+  await expect(table).not.toContainText('Matching voice frames');
   await expect(table).toContainText('County Fire Dispatch');
   await expect(table).toContainText('27101');
   await expect(table).toContainText('Engine 4');
@@ -168,26 +172,69 @@ test('administrator sees only confirmed duplicates and compares receiver copies'
   await expect(page.locator('.call-matching-metric-group').first().locator('.ui-metric')).toHaveCount(2);
   await expect(page.locator('.call-matching-metric-group').last()).toContainText('This receiver session');
   await expect(page.locator('.call-matching-metric-group').last().locator('.ui-metric')).toHaveCount(3);
+  await expect(page.locator('.call-matching-status-content')).toContainText('Calls with matched copies');
+  await expect(page.locator('.call-matching-status-content')).toContainText('Extra copies removed');
+  await expect(page.locator('.call-matching-status-content')).toContainText('Calls kept with incomplete matching');
+  await expect(page.locator('.call-matching-workspace')).toContainText(
+    'Latest 100 matched calls; totals above cover this receiver session.');
   await expect(page.locator('.call-matching-workspace .ui-toggle')).toHaveCount(0);
   await expect(page.locator('.call-matching-status-content')).not.toContainText('Diagnostic file');
   await expect(page.locator('.call-matching-status-content')).not.toContainText('Diagnostic queue');
   await expect(page.locator('.call-matching-history-footer')).toHaveCount(0);
-  const compare = page.getByRole('button', { name: 'Compare duplicate call 71' });
+  const compare = page.getByRole('button', { name: 'Compare matched call 71' });
   await compare.click();
-  const dialog = page.getByRole('dialog', { name: 'Duplicate call details' });
+  const dialog = page.getByRole('dialog', { name: 'Matched call details' });
   await expect(dialog).toContainText('167 usable frames');
   await expect(dialog).toContainText('164 usable frames');
-  await expect(dialog).toContainText('3.5 s shared');
+  await expect(dialog).toContainText('Time overlap');
+  await expect(dialog).not.toContainText('s shared');
+  await expect(dialog).toContainText('Configuration 1');
+  await expect(dialog).toContainText('Configuration 2');
+  await expect(dialog).toContainText('851.01250 MHz');
+  await expect(dialog).toContainText('852.01250 MHz');
+  await expect(dialog).toContainText('Timeslot');
+  await expect(dialog).toContainText('Selected for');
   await expect(dialog).toContainText('Matching voice frames');
   await expect(dialog).toContainText('27101');
   await expect(dialog).toContainText('1204185');
   await expect(dialog.locator('.call-matching-comparison-summary .ui-fact')).toHaveCount(7);
-  await expect(dialog.locator('.call-matching-comparison-table tbody tr')).toHaveCount(9);
+  await expect(dialog.locator('.call-matching-comparison-table tbody tr')).toHaveCount(12);
   await expect(dialog.locator('.call-matching-comparison-table thead th.ui-data-table-selected-column'))
     .toHaveCount(1);
   await page.keyboard.press('Escape');
   await expect(dialog).not.toBeVisible();
   await expect(compare).toBeFocused();
+});
+
+test('inferred matches stay in the details without splitting session totals', async ({ page }) => {
+  const decision = duplicate();
+  decision.evidence.merge_proof_counts = { matching_source_identity_fallback: 1 };
+  await openApp(page, { matching: async () => ({ data: snapshot([decision]) }) });
+  const table = page.locator('table[data-table-type="call-matching-duplicates"]');
+  await expect(table).not.toContainText('Inferred');
+  await expect(page.locator('.call-matching-session-counts .ui-metric')).toHaveCount(3);
+  await page.getByRole('button', { name: 'Compare matched call 71' }).click();
+  await expect(page.getByRole('dialog', { name: 'Matched call details' })).toContainText(
+    'Inferred from matching radio and overlapping timing');
+});
+
+test('same-configuration encrypted matches expose their basis only in the comparison', async ({ page }) => {
+  const decision = duplicate();
+  decision.call_identity.encryption_state = 'ENCRYPTED';
+  decision.evidence.merge_proof_counts = { matching_encryption_message_indicator: 1 };
+  decision.legs[1].configuration_ref = 1;
+  decision.legs[1].channel_name = decision.legs[0].channel_name;
+  decision.legs[1].site = 1;
+  await openApp(page, { matching: async () => ({ data: snapshot([decision]) }) });
+  const table = page.locator('table[data-table-type="call-matching-duplicates"]');
+  await expect(table).not.toContainText('encryption');
+  await expect(page.locator('.call-matching-status-content')).not.toContainText('Encrypted');
+  await page.getByRole('button', { name: 'Compare matched call 71' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Matched call details' });
+  await expect(dialog).toContainText('Matching encryption message indicator');
+  const configuration = dialog.locator('.call-matching-comparison-table tbody tr')
+    .filter({ has: page.getByRole('rowheader', { name: 'Configuration', exact: true }) });
+  await expect(configuration.locator('td')).toHaveText(['Configuration 1', 'Configuration 1']);
 });
 
 test('non-administrator never requests the protected monitor', async ({ page }) => {
@@ -205,14 +252,14 @@ test('bounded duplicate history keeps the selected sequence across refreshes', a
   await expect(table.locator('tbody tr').first()).toHaveAttribute('data-id', '125');
   await expect(page.locator('.call-matching-history-pager'))
     .toContainText('Matched calls 1–20 of 100 · Page 1 of 5');
-  await page.getByRole('button', { name: 'Compare duplicate call 125' }).click();
+  await page.getByRole('button', { name: 'Compare matched call 125' }).click();
   await expect(page.locator('tbody tr[data-id="125"]')).toHaveClass(/selected/);
   current = snapshot([duplicate(126), duplicate(125)]);
   await expect(table.locator('tbody tr').first()).toHaveAttribute('data-id', '126', { timeout: 3500 });
   await expect(page.locator('tbody tr[data-id="125"]')).toHaveClass(/selected/);
-  await expect(page.getByRole('dialog', { name: 'Duplicate call details' })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Matched call details' })).toBeVisible();
   current = snapshot([duplicate(127)]);
-  await expect(page.getByRole('dialog', { name: 'Duplicate call details' })).not.toBeVisible({ timeout: 3500 });
+  await expect(page.getByRole('dialog', { name: 'Matched call details' })).not.toBeVisible({ timeout: 3500 });
 });
 
 test('new duplicate calls use the shared row fade across refreshes', async ({ page }) => {
@@ -293,9 +340,9 @@ test('slow polling has one request in flight and navigation aborts it', async ({
 test('late authorization loss clears details and stops polling', async ({ page }) => {
   const app = await openApp(page, { matching: async (count) => count === 1 ?
     { data: snapshot() } : { status: 403, message: 'Administrator required' } });
-  await page.getByRole('button', { name: 'Compare duplicate call 71' }).click();
+  await page.getByRole('button', { name: 'Compare matched call 71' }).click();
   await expect(page.locator('.call-matching-live-status')).toContainText('Access denied', { timeout: 3500 });
-  await expect(page.getByRole('dialog', { name: 'Duplicate call details' })).not.toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Matched call details' })).not.toBeVisible();
   await expect(page.locator('table[data-table-type="call-matching-duplicates"] tbody td.empty')).toBeVisible();
   const count = app.requests();
   await page.waitForTimeout(1300);
@@ -313,7 +360,7 @@ test('empty and failed snapshots recover on a later poll', async ({ page }) => {
   await expect(page.locator('.call-matching-live-status')).toContainText('Live');
   await expect(page.locator('.call-matching-health-state')).toContainText('Healthy');
   await expect(page.locator('table[data-table-type="call-matching-duplicates"] tbody td.empty')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Compare duplicate call 71' })).toBeVisible({ timeout: 3500 });
+  await expect(page.getByRole('button', { name: 'Compare matched call 71' })).toBeVisible({ timeout: 3500 });
 });
 
 test('published warning state appears without file-debug health', async ({ page }) => {
@@ -322,7 +369,7 @@ test('published warning state appears without file-debug health', async ({ page 
   await openApp(page, { matching: async () => ({ data }) });
   await expect(page.locator('.call-matching-health-state')).toContainText('Warning');
   await expect(page.locator('.call-matching-health-summary')).not.toContainText('Diagnostic file');
-  await expect(page.locator('.call-matching-status-content')).toContainText('Calls being matched');
+  await expect(page.locator('.call-matching-status-content')).toContainText('Calls awaiting a decision');
 });
 
 test('saved displayed fields remain editable and do not force a wide history table', async ({ page }) => {
@@ -352,7 +399,7 @@ test('saved displayed fields remain editable and do not force a wide history tab
   await expect(table.locator('tbody tr').first().locator('td').first()).toHaveAttribute('data-column', 'talkgroup');
   await expect(menu.locator('.table-layout-column > span')).toHaveText([
     'Talkgroup', 'Radio', 'Selected site', 'Compare receiver copies', 'Matched at', 'Copies',
-    'Why matched / selected', 'Used for'
+    'Why selected', 'Selected for'
   ]);
   await expect(menu.getByRole('button', { name: 'Move Talkgroup left', exact: true })).toBeDisabled();
   expect(app.preferences().tables['call-matching-duplicates']).toBeUndefined();
@@ -468,8 +515,8 @@ test('comparison keeps every receiver copy and trusts the selected copy index', 
     fec_protected_bit_count: 0, ingress_loss: true, audio_truncated: true };
   decision.legs.push(third);
   await openApp(page, { matching: async () => ({ data: snapshot([decision]) }) });
-  await page.getByRole('button', { name: 'Compare duplicate call 71' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Duplicate call details' });
+  await page.getByRole('button', { name: 'Compare matched call 71' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Matched call details' });
   await expect(dialog.locator('.call-matching-comparison-table thead th')).toHaveCount(4);
   await expect(dialog.locator('.ui-data-table-selected-column').first()).toContainText('Selected copy');
   await expect(dialog.locator('.ui-data-table-selected-column').first()).toContainText('Cuyahoga Simulcast');
@@ -477,7 +524,7 @@ test('comparison keeps every receiver copy and trusts the selected copy index', 
   await expect(dialog).toContainText('Not measured');
   await expect(dialog).toContainText('Receiver input loss');
   await expect(dialog).toContainText('Audio truncated');
-  await expect(dialog.locator('.call-matching-comparison-table tbody tr')).toHaveCount(9);
+  await expect(dialog.locator('.call-matching-comparison-table tbody tr')).toHaveCount(12);
 });
 
 test('transient polling failure retains the latest call list and health', async ({ page }) => {
@@ -485,7 +532,7 @@ test('transient polling failure retains the latest call list and health', async 
     { status: 503, message: 'Temporarily unavailable' } });
   await expect(page.locator('.call-matching-live-status')).toContainText('Unavailable', { timeout: 3500 });
   await expect(page.locator('.call-matching-health-state')).toContainText('Healthy');
-  await expect(page.getByRole('button', { name: 'Compare duplicate call 71' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Compare matched call 71' })).toBeVisible();
   await expect(page.locator('.call-matching-metric-group')).toHaveCount(2);
 });
 
@@ -493,9 +540,9 @@ test('a new receiver session resets history paging and closes old comparisons', 
   let current = snapshot(Array.from({ length: 45 }, (_, index) => duplicate(index + 1)));
   await openApp(page, { matching: async () => ({ data: current }) });
   await page.locator('.call-matching-history-pager').getByRole('button', { name: 'Next' }).click();
-  await page.getByRole('button', { name: 'Compare duplicate call 25' }).click();
+  await page.getByRole('button', { name: 'Compare matched call 25' }).click();
   current = { ...current, session_id: 'replacement-session' };
-  await expect(page.getByRole('dialog', { name: 'Duplicate call details' })).not.toBeVisible({ timeout: 3500 });
+  await expect(page.getByRole('dialog', { name: 'Matched call details' })).not.toBeVisible({ timeout: 3500 });
   await expect(page.locator('.call-matching-history-pager')).toContainText('Page 1 of 3');
 });
 
@@ -558,11 +605,11 @@ test('paused history keeps paging, displayed fields, and copy comparison usable'
   await expect(table.locator('tbody td[data-column="radio"]')).toHaveCount(0);
   await expect.poll(() => app.preferenceWrites().length).toBe(1);
   await page.keyboard.press('Escape');
-  const compare = page.getByRole('button', { name: 'Compare duplicate call 25', exact: true });
+  const compare = page.getByRole('button', { name: 'Compare matched call 25', exact: true });
   await compare.click();
-  const dialog = page.getByRole('dialog', { name: 'Duplicate call details' });
+  const dialog = page.getByRole('dialog', { name: 'Matched call details' });
   await expect(dialog).toContainText('Cuyahoga Simulcast');
-  await expect(dialog.locator('.call-matching-comparison-table tbody tr')).toHaveCount(9);
+  await expect(dialog.locator('.call-matching-comparison-table tbody tr')).toHaveCount(12);
   await page.keyboard.press('Escape');
   await expect(compare).toBeFocused();
   await expect(pager).toContainText('Page 2 of 3');
@@ -581,8 +628,8 @@ test('resuming a paused replacement receiver resets frozen paging and the select
   await page.getByRole('button', { name: 'Pause call matching monitor', exact: true }).click();
   const pager = page.getByRole('navigation', { name: 'Matched call pages', includeHidden: true });
   await pager.getByRole('button', { name: 'Next', exact: true }).click();
-  await page.getByRole('button', { name: 'Compare duplicate call 25', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'Duplicate call details' });
+  await page.getByRole('button', { name: 'Compare matched call 25', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Matched call details' });
   const before = app.requests();
   current = { ...snapshot([duplicate(200)]), session_id: 'replacement-session' };
   await expect.poll(() => app.requests()).toBeGreaterThanOrEqual(before + 2);
@@ -602,12 +649,12 @@ for (const authorizationStatus of [401, 403]) {
     let authorized = true;
     const app = await openApp(page, { matching: async () => authorized ?
       { data: snapshot() } : { status: authorizationStatus, message: 'Administrator required' } });
-    await expect(page.getByRole('button', { name: 'Compare duplicate call 71', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Compare matched call 71', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Pause call matching monitor', exact: true }).click();
-    await page.getByRole('button', { name: 'Compare duplicate call 71', exact: true }).click();
+    await page.getByRole('button', { name: 'Compare matched call 71', exact: true }).click();
     authorized = false;
     await expect(page.locator('.call-matching-live-status')).toContainText('Access denied', { timeout: 3500 });
-    await expect(page.getByRole('dialog', { name: 'Duplicate call details' })).not.toBeVisible();
+    await expect(page.getByRole('dialog', { name: 'Matched call details' })).not.toBeVisible();
     await expect(page.locator('table[data-table-type="call-matching-duplicates"] tbody td.empty')).toBeVisible();
     await expect(page.locator('.call-matching-status-content .ui-metric')).toHaveCount(0);
     await expect(page.getByRole('navigation', { name: 'Matched call pages' })).toHaveCount(0);
@@ -677,7 +724,7 @@ for (const theme of ['light', 'dark']) {
     await page.emulateMedia({ colorScheme: theme });
     let current = snapshot([duplicate(71)]);
     const app = await openApp(page, { theme, matching: async () => ({ data: current }) });
-    await expect(page.getByRole('button', { name: 'Compare duplicate call 71', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Compare matched call 71', exact: true })).toBeVisible();
     const pause = page.getByRole('button', { name: 'Pause call matching monitor', exact: true });
     await pause.focus();
     await pause.press('Enter');
@@ -731,8 +778,8 @@ for (const [name, viewport, theme] of [
     await expect(resume).toHaveAttribute('aria-pressed', 'true');
     await page.screenshot({ path: testInfo.outputPath(`call-matching-${name}-paused.png`), fullPage: true });
     await resume.click();
-    await page.getByRole('button', { name: 'Compare duplicate call 71' }).click();
-    await expect(page.getByRole('dialog', { name: 'Duplicate call details' })).toBeVisible();
+    await page.getByRole('button', { name: 'Compare matched call 71' }).click();
+    await expect(page.getByRole('dialog', { name: 'Matched call details' })).toBeVisible();
     if (viewport.width < 760) {
       await expect(page.locator('.call-matching-comparison-hint')).toBeVisible();
     }

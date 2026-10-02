@@ -227,7 +227,7 @@ const DASHBOARD_ACTIVITY_RANGES = Object.freeze([
   ['6h', '6 hours'], ['24h', '24 hours'], ['7d', '7 days']
 ]);
 const CALL_METRIC_GUIDE = Object.freeze([
-  ['Logical Calls', 'One transmission after matching copies heard by multiple monitored sites have been combined.'],
+  ['Logical Calls', 'Calls emitted after accepted matching copies are combined. Copies without enough matching evidence remain separate.'],
   ['Recorded', 'Logical calls whose selected best copy was written to a nonempty recording file.'],
   ['Submitted to Streamer', 'Logical calls whose selected best copy was encoded and handed to at least one configured stream. This does not mean the remote service accepted the upload.'],
   ['Encrypted', 'Logical calls for which encrypted voice was confirmed.']
@@ -3430,9 +3430,9 @@ const METRIC_ICONS = {
   Current: 'icon-spectrum', '30s average': 'icon-live', Decode: 'icon-channel',
   'Last sample': 'icon-replay', Pending: 'icon-replay', Completed: 'icon-health',
   Failed: 'icon-warning', 'Listed calls': 'icon-recording',
-  'Copies being compared': 'icon-recording', 'Calls being matched': 'icon-call-matching',
-  'Duplicates combined': 'icon-call-matching', 'Extra copies combined': 'icon-recording',
-  'Uncertain calls kept separate': 'icon-warning',
+  'Calls being received': 'icon-recording', 'Calls awaiting a decision': 'icon-call-matching',
+  'Calls with matched copies': 'icon-call-matching', 'Extra copies removed': 'icon-recording',
+  'Calls kept with incomplete matching': 'icon-warning',
   Decoded: 'icon-channel', Repeated: 'icon-replay', Concealed: 'icon-speaker',
   Missing: 'icon-warning', 'FEC Errors': 'icon-warning', 'FEC Protected': 'icon-health'
 };
@@ -3444,7 +3444,7 @@ function metricCard(label, value, displayValue = undefined, options = {}) {
   const hasAlert = Number(value) > 0;
   const tone = options.tone || (hasAlert && ['Need action', 'Errors'].includes(name) ? 'danger' :
     hasAlert && ['Check soon', 'Degraded channels', 'Emergency', 'Denial', 'Failed',
-      'Uncertain calls kept separate'].includes(name) ?
+      'Calls kept with incomplete matching'].includes(name) ?
       'warning' : 'blue');
   const metric = node('div', `metric ui-metric ui-metric-${tone}`);
   const icon = node('span', 'ui-metric-icon');
@@ -3670,7 +3670,7 @@ function aliasActivityColumns() {
   });
   return [
     count('calls', 'Calls', 'logical_call_count', 'Activity',
-      'Unique transmissions associated with this alias after matching multisite copies are combined.'),
+      'Calls associated with this alias after accepted matching copies are combined. Copies without enough matching evidence remain separate.'),
     count('signaling', 'Signaling', 'signaling_observation_count', 'Activity',
       'Recognized grants, joins, registrations, logouts, emergencies, denials, data, and other signaling actions.'),
     { id: 'last-seen', label: 'Last Seen', field: 'last_evidence_ms', group: 'Activity',
@@ -27738,12 +27738,12 @@ function callMatchingCopies(decision) {
 function callMatchingProof(decision) {
   const labels = {
     shared_voice_content: 'Matching voice frames',
-    matching_source_identity_fallback: 'Shared source identity',
-    matching_encryption_message_indicator: 'Matching encryption identity'
+    matching_source_identity_fallback: 'Inferred from matching radio and overlapping timing',
+    matching_encryption_message_indicator: 'Matching encryption message indicator'
   };
   const proofs = Object.entries(decision?.evidence?.merge_proof_counts || {})
     .filter(([, count]) => Number(count) > 0).map(([proof]) => labels[proof] || 'Other match evidence');
-  return proofs.length ? proofs.join(', ') : 'Confirmed duplicate';
+  return proofs.length ? proofs.join(', ') : 'Match evidence unavailable';
 }
 
 function callMatchingCriterion(value) {
@@ -27841,12 +27841,12 @@ function callMatchingComparison(decision) {
 
   const summary = keyValues([
     ['Why matched', callMatchingProof(decision)],
-    ['Why this copy was used', callMatchingCriterion(decision.winner?.criterion)],
+    ['Why this copy was selected', callMatchingCriterion(decision.winner?.criterion)],
     ['Selected site', winner ? callMatchingCopySite(winner) : 'Unavailable'],
     ['Runner-up site', runnerUp ? callMatchingCopySite(runnerUp) : 'Unavailable'],
     ['Best measurement', decision.winner?.winner_value?.display || '—'],
     ['Runner-up measurement', decision.winner?.runner_up_value?.display || '—'],
-    ['Used for', callMatchingOutputTags(decision.output_policy)]
+    ['Selected for', callMatchingOutputTags(decision.output_policy)]
   ]);
   summary.classList.add('ui-admin-facts', 'call-matching-comparison-summary');
   body.append(summary);
@@ -27877,8 +27877,13 @@ function callMatchingComparison(decision) {
   const tbody = node('tbody');
   const measurement = (value, detail) => identitySummaryValue(value, detail);
   const rows = [
-    ['Match', (copy) => copy.copy_index === winner?.copy_index ? 'Selected copy' :
-      (copy.overlap ? measurement(`${callMatchingDuration(copy.overlap.overlap_milliseconds)} shared`,
+    ['Configuration', (copy) => Number(copy.configuration_ref) > 0 ?
+      `Configuration ${callMatchingCount(copy.configuration_ref)}` : 'Unknown'],
+    ['Carrier frequency', (copy) => Number(copy.frequency_hz) > 0 ?
+      `${frequency(copy.frequency_hz)} MHz` : 'Unknown'],
+    ['Timeslot', (copy) => Number(copy.timeslot) > 0 ? callMatchingCount(copy.timeslot) : 'Unknown'],
+    ['Time overlap', (copy) => copy.copy_index === winner?.copy_index ? 'Selected copy' :
+      (copy.overlap ? measurement(callMatchingDuration(copy.overlap.overlap_milliseconds),
         `${callMatchingPercent(copy.overlap.shorter_copy_overlap_percent)} of shorter copy · ` +
         `${callMatchingPercent(copy.overlap.selected_copy_coverage_percent)} of selected copy`) :
         callMatchingProof(decision))],
@@ -27917,6 +27922,7 @@ function callMatchingComparison(decision) {
   matrix.append(thead, tbody);
   wrap.append(matrix);
   body.append(wrap, node('p', 'muted call-matching-comparison-hint',
+    'Matching configuration numbers mean the same saved channel. Time overlap measures call timing. ' +
     'Swipe left or right to compare every receiver copy.'));
   return body;
 }
@@ -27970,23 +27976,22 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
       render: (row) => callMatchingCopySummary(callMatchingWinner(row)) },
     { id: 'copies', label: 'Copies', className: 'call-matching-field-copies',
       render: (row) => callMatchingCount(row.legs?.length) },
-    { id: 'match', label: 'Why matched / selected', className: 'call-matching-field-match',
-      render: (row) => identitySummaryValue(callMatchingProof(row),
-        callMatchingCriterion(row.winner?.criterion)) },
-    { id: 'outputs', label: 'Used for', className: 'call-matching-field-outputs',
+    { id: 'match', label: 'Why selected', className: 'call-matching-field-match',
+      render: (row) => callMatchingCriterion(row.winner?.criterion) },
+    { id: 'outputs', label: 'Selected for', className: 'call-matching-field-outputs',
       render: (row) => callMatchingOutputTags(row.output_policy) },
     { id: 'action', label: '', fullLabel: 'Compare receiver copies', essential: true,
       className: 'call-matching-field-action ui-record-action', render: (row) => {
       const button = node('button', 'ui-button ui-button-secondary call-matching-compare', 'Compare');
       button.type = 'button';
       button.dataset.decisionSequence = String(row.decision_sequence);
-      button.setAttribute('aria-label', `Compare duplicate call ${row.decision_sequence}`);
+        button.setAttribute('aria-label', `Compare matched call ${row.decision_sequence}`);
       button.addEventListener('click', () => {
         selectedSequence = Number(row.decision_sequence);
         tableWrap.querySelectorAll('tbody tr.selected').forEach((candidate) =>
           candidate.classList.remove('selected'));
         button.closest('tr')?.classList.add('selected');
-        selectedModal = openReadOnlyModal('Duplicate call details', callMatchingComparison(row), {
+        selectedModal = openReadOnlyModal('Matched call details', callMatchingComparison(row), {
           id: 'call-matching-details', className: 'call-matching-modal',
           returnFocusSelector: `.call-matching-compare[data-decision-sequence="${row.decision_sequence}"]`,
           onClose: () => { selectedModal = null; }
@@ -27995,7 +28000,7 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
       return button;
     } }
   ];
-  const tableWrap = table([], columns, 'No duplicate calls have been matched recently.', {
+  const tableWrap = table([], columns, 'No calls with matching copies have been found recently.', {
     type: 'call-matching-duplicates', layoutMenuHost: tableActions, controller: tableController,
     sortable: false, recordList: true, tableClass: 'ui-record-list-compact call-matching-history-list',
     recordListOrder: ['talkgroup', 'radio', 'site', 'action', 'time', 'copies', 'match', 'outputs'],
@@ -28008,7 +28013,9 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
     ].filter(Boolean).join(' ')
   });
   const historyPager = node('div', 'call-matching-history-pagination');
-  const historySection = section('Recent duplicate calls', fragment(tableWrap, historyPager), tableActions);
+  const historySection = section('Recent matched calls', fragment(
+    node('p', 'ui-section-note', `Latest ${CALL_MATCHING_HISTORY_LIMIT} matched calls; totals above cover this receiver session.`),
+    tableWrap, historyPager), tableActions);
   workspace.append(historySection);
   content.append(workspace);
 
@@ -28059,17 +28066,17 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
     const currentHeading = node('div', 'ui-heading-group ui-heading-group-quiet call-matching-metric-group-heading');
     currentHeading.append(node('h3', '', 'Matching now'));
     current.append(currentHeading, metrics([
-      ['Copies being compared', resolver.active_leg_count],
-      ['Calls being matched', resolver.active_cohort_count]
+      ['Calls being received', resolver.active_leg_count],
+      ['Calls awaiting a decision', resolver.active_cohort_count]
     ], true));
     current.lastElementChild.classList.add('ui-metric-grid-inline', 'call-matching-current-counts');
     const session = node('section', 'call-matching-metric-group');
     const sessionHeading = node('div', 'ui-heading-group ui-heading-group-quiet call-matching-metric-group-heading');
     sessionHeading.append(node('h3', '', 'This receiver session'));
     session.append(sessionHeading, metrics([
-      ['Duplicates combined', counters.merged_logical_calls],
-      ['Extra copies combined', counters.merged_receiver_copies],
-      ['Uncertain calls kept separate', counters.fail_open_logical_calls]
+      ['Calls with matched copies', counters.merged_logical_calls],
+      ['Extra copies removed', counters.merged_receiver_copies],
+      ['Calls kept with incomplete matching', counters.fail_open_logical_calls]
     ], true));
     session.lastElementChild.classList.add('ui-metric-grid-inline', 'call-matching-session-counts');
     groups.append(current, session);

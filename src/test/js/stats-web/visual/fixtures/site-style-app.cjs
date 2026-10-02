@@ -151,6 +151,7 @@ function copy(index, selected) {
   return {
     copy_index: index, selected, decoder: 'P25 Phase 1',
     channel_name: selected ? 'Cuyahoga Simulcast' : 'Elyria',
+    configuration_ref: index, frequency_hz: selected ? 851_012_500 : 852_012_500, timeslot: 1,
     wacn: 1, system: 1, rfss: 1, site: selected ? 1 : 6,
     start_timestamp: 1_700_000_000_000 + (selected ? 0 : 48),
     end_timestamp: 1_700_000_003_600 - (selected ? 0 : 10),
