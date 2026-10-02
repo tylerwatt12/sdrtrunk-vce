@@ -26,6 +26,7 @@ import { createRemoteLinksWorkspace } from './features/remote-links.js?v=10';
 import { createRecordingsFeature } from './features/recordings.js?v=16';
 import { openSpectrumSearchWizard } from './features/spectrum-search.js?v=3';
 import { createAudioDock } from './core/audio-dock.js?v=6';
+import { createApplicationLogWorkspace } from './core/application-log.js?v=1';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=5';
 
@@ -25725,6 +25726,15 @@ function renderAdminRemoteLinks(renderContext) {
   content.append(workspace.element);
 }
 
+function renderAdminApplicationLog(renderContext) {
+  const workspace = createApplicationLogWorkspace({
+    node, formField, uiSelectFrame, uiStatus, iconButton, setIconButton, uiActionButton,
+    api, signal: renderContext.signal
+  });
+  content.append(workspace.element);
+  pageConnections.add(workspace);
+}
+
 function renderListenMap() {
   const renderContext = captureRenderContext();
   const map = createListenMap({
@@ -27925,6 +27935,8 @@ function adminSettingsGroups() {
         description: 'Check the receiver and issues that need attention.' },
       { id: 'call-matching', label: 'Call matching', icon: 'call-matching', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         description: 'Monitor how duplicate calls are matched.' },
+      { id: 'application-log', label: 'Application log', icon: 'activity', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+        description: 'View recent receiver messages and errors.' },
       { id: 'support', label: 'Report a problem', icon: 'bug', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         description: 'Create and submit a support report.' }
     ] },
@@ -28016,6 +28028,7 @@ async function renderAdmin() {
   pageTitleController.update({ pageTitle: current.label });
   if (active === 'health') await renderAdminHealth();
   else if (active === 'call-matching') await renderAdminCallMatching(renderContext);
+  else if (active === 'application-log') renderAdminApplicationLog(renderContext);
   else if (active === 'support') renderAdminSupportReport();
   else if (active === 'display') {
     const display = node('div', 'admin-display-settings');

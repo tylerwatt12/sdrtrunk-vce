@@ -634,6 +634,7 @@ initializeReceiverHealth();
   const picker = workspace.querySelector('[data-visual-admin-picker]');
   const groups = [
     ['Status & support', [['health', 'Receiver status', 'health'], ['matching', 'Call matching', 'call-matching'],
+      ['application-log', 'Application log', 'activity'],
       ['support', 'Report a problem', 'bug']]],
     ['Audio & recordings', [['recording', 'Recording settings', 'recording-settings'],
       ['audio', 'Audio quality', 'audio-quality'], ['transcription', 'Transcription', 'transcription']]],

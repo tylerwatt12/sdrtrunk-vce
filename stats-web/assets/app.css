@@ -35,6 +35,7 @@
 @import url("./styles/features/administration.css?v=8") layer(features);
 @import url("./styles/features/retained-statistics.css?v=4") layer(features);
 @import url("./styles/features/call-matching.css?v=4") layer(features);
+@import url("./styles/features/application-log.css?v=1") layer(features);
 @import url("./styles/features/signal-quality.css?v=4") layer(features);
 @import url("./styles/features/radioreference.css?v=16") layer(features);
 @import url("./styles/features/streaming.css?v=5") layer(features);

@@ -145,10 +145,10 @@ test('desktop administration navigation includes every grouped page and its icon
   await openAdmin(page);
   const navigation = page.getByRole('navigation', { name: 'Administration sections' });
   const links = navigation.getByRole('link');
-  await expect(links).toHaveText(['Receiver status', 'Call matching', 'Report a problem',
+  await expect(links).toHaveText(['Receiver status', 'Call matching', 'Application log', 'Report a problem',
     'Recording settings', 'Audio quality', 'Transcription', 'Activity settings', 'Saved data cleanup',
     'Remote Links', 'P25 band plans', 'Display settings', 'Web accounts', 'Page access']);
-  await expect(links.locator('svg')).toHaveCount(13);
+  await expect(links.locator('svg')).toHaveCount(14);
   await expect(links.locator('svg:not([aria-hidden="true"])')).toHaveCount(0);
   for (const label of ['Status & support', 'Audio & recordings', 'Activity & storage',
     'Receiver configuration', 'Web interface']) {
