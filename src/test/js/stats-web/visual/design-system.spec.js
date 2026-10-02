@@ -1193,6 +1193,18 @@ test('radio directory exposes Live only for running channels', async ({ page }) 
   await expect(running).toHaveAccessibleName('Open Parma in Live; channel is running');
 });
 
+test('matching-status-light-desktop', async ({ page }) => {
+  await page.setViewportSize({ width: 1180, height: 900 });
+  await page.goto('/design-system.html?theme=light&view=call-matching');
+  await expect(page.locator('.visual-call-matching-example')).toHaveScreenshot('matching-status-light-desktop.png');
+});
+
+test('matching-status-dark-mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/design-system.html?theme=dark&view=call-matching');
+  await expect(page.locator('.visual-call-matching-example')).toHaveScreenshot('matching-status-dark-mobile.png');
+});
+
 test('entity-details-light-desktop', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/design-system.html?theme=light&view=entity-details');

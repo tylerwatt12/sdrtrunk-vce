@@ -407,7 +407,7 @@ const view = ['control-states', 'mobile-table', 'gallery', 'workflows', 'app-chr
   'signal-quality-detail', 'radioreference-results',
   'radio-directory-coverage', 'radio-directory-panel', 'admin-scan-lists',
   'scanner', 'tuner-spectrum', 'tuners', 'aliases', 'alias-modal', 'alias-export', 'scan-list-members', 'channels',
-  'radio-directory', 'entity-details', 'live-notice', 'live-filter', 'tuner-frequency-popover',
+  'radio-directory', 'entity-details', 'call-matching', 'live-notice', 'live-filter', 'tuner-frequency-popover',
   'spectrum-discovery', 'spectrum-search'].includes(parameters.get('view')) ?
   parameters.get('view') : 'gallery';
 document.documentElement.dataset.theme = theme;

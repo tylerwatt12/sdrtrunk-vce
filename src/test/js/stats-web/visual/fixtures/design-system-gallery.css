@@ -642,6 +642,7 @@ body:not([data-gallery-view="scan-list-members"]) .visual-scan-list-members-exam
 body:not([data-gallery-view="channels"]) .visual-channels-example,
 body:not([data-gallery-view="radio-directory"]) .visual-radio-directory-example,
 body:not([data-gallery-view="entity-details"]) .visual-entity-details-example,
+body:not([data-gallery-view="call-matching"]) .visual-call-matching-example,
 body:not([data-gallery-view="live-notice"]) .visual-live-example,
 body:not([data-gallery-view="live-filter"]) .visual-live-filter-example,
 body:not([data-gallery-view="spectrum-discovery"]) .visual-spectrum-discovery-example,

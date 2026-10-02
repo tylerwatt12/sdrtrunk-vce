@@ -149,6 +149,40 @@ async function openApp(page, options = {}) {
     preferenceWrites: () => preferenceWrites };
 }
 
+test('matching status keeps wrapped labels and counter values aligned', async ({ page }, testInfo) => {
+  await openApp(page);
+  const status = page.locator('.call-matching-status-content');
+  await expect(status.locator('.ui-metric')).toHaveCount(5);
+  for (const width of [1440, 1180, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    const groups = await status.locator('.call-matching-metric-group').evaluateAll((sections) =>
+      sections.map((section) => [...section.querySelectorAll('.ui-metric')].map((card) => {
+        const bounds = card.getBoundingClientRect();
+        const label = card.querySelector('.ui-metric-label').getBoundingClientRect();
+        const value = card.querySelector('strong').getBoundingClientRect();
+        return { top: bounds.top, bottom: bounds.bottom, height: bounds.height,
+          labelTop: label.top, valueTop: value.top, labelBottom: label.bottom,
+          left: bounds.left, right: bounds.right, textClipped: card.scrollWidth > card.clientWidth };
+      })));
+    const rows = width > 1100 ? [groups.flat()] : groups;
+    for (const row of rows) {
+      for (const property of ['top', 'bottom', 'height', 'labelTop', 'valueTop']) {
+        const positions = row.map((card) => card[property]);
+        expect(Math.max(...positions) - Math.min(...positions), `${property} at ${width}px`).toBeLessThan(1);
+      }
+      for (const card of row) {
+        expect(card.labelBottom).toBeLessThanOrEqual(card.valueTop);
+        expect(card.left).toBeGreaterThanOrEqual(0);
+        expect(card.right).toBeLessThanOrEqual(width);
+        expect(card.textClipped).toBe(false);
+      }
+    }
+    if (width === 1440 || width === 390) {
+      await status.screenshot({ path: testInfo.outputPath(`matching-status-${width}.png`) });
+    }
+  }
+});
+
 test('administrator sees only confirmed duplicates and compares receiver copies', async ({ page }) => {
   const data = snapshot([duplicate(71), { ...duplicate(70), outcome: 'INDEPENDENT' }]);
   await openApp(page, { matching: async () => ({ data }) });

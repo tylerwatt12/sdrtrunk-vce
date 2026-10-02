@@ -423,6 +423,24 @@
 }
 
 .ui-metric-compact .ui-metric-copy > strong { font-size: var(--metric-value-compact-size); }
+
+/* Opt in when neighboring counters need shared label and value rows. Wrapped
+   labels determine the row height without shifting individual values. */
+.ui-metric-grid-aligned > .ui-metric {
+  display: grid;
+  grid-row: span 2;
+  grid-template-rows: subgrid;
+  align-items: start;
+  row-gap: var(--space-2);
+}
+
+.ui-metric-grid-aligned .ui-metric-copy {
+  grid-row: span 2;
+  grid-template-rows: subgrid;
+}
+
+.ui-metric-grid-aligned .ui-metric-label { align-items: start; }
+
 .ui-metric-text .ui-metric-copy > strong {
   font-size: var(--metric-state-size);
   line-height: var(--line-height-body);

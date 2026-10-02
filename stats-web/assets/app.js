@@ -156,7 +156,7 @@ const SIGNAL_RANGES = Object.freeze([
   ['1h', '1 hour'], ['6h', '6 hours'], ['24h', '24 hours'], ['7d', '7 days'], ['30d', '30 days']
 ]);
 const ACTIVITY_RANGES = Object.freeze([
-  ['6h', '6 hours'], ['24h', '24 hours'], ['7d', '7 days'], ['30d', '30 days']
+  ['6h', '6h'], ['24h', '24h'], ['7d', '7d'], ['30d', '30d']
 ]);
 const LIVE_EVENT_CATEGORY_CLASSES = Object.freeze({
   VOICE: 'live-event-category-voice',
@@ -28412,7 +28412,8 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
       ['Calls being received', resolver.active_leg_count],
       ['Calls awaiting a decision', resolver.active_cohort_count]
     ], true));
-    current.lastElementChild.classList.add('ui-metric-grid-inline', 'call-matching-current-counts');
+    current.lastElementChild.classList.add('ui-metric-grid-inline', 'ui-metric-grid-aligned',
+      'call-matching-current-counts');
     const session = node('section', 'call-matching-metric-group');
     const sessionHeading = node('div', 'ui-heading-group ui-heading-group-quiet call-matching-metric-group-heading');
     sessionHeading.append(node('h3', '', 'This receiver session'));
@@ -28421,7 +28422,8 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
       ['Extra copies removed', counters.merged_receiver_copies],
       ['Calls kept with incomplete matching', counters.fail_open_logical_calls]
     ], true));
-    session.lastElementChild.classList.add('ui-metric-grid-inline', 'call-matching-session-counts');
+    session.lastElementChild.classList.add('ui-metric-grid-inline', 'ui-metric-grid-aligned',
+      'call-matching-session-counts');
     groups.append(current, session);
     summary.append(groups);
     statusContent.replaceChildren(summary);
