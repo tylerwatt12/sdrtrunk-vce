@@ -1,0 +1,630 @@
+export function openSpectrumSearchWizard(ui, context = {}) {
+  const { node, openReadOnlyModal, requestJson, uiActionButton, uiSelect, uiSelectFrame, uiPill,
+    formField, uiToggleField, anchor, href, entityRefHref, channelMHz, hex } = ui;
+  const path = '/api/v1/admin/spectrum-search';
+  const abort = new AbortController();
+  const host = node('div', 'spectrum-discovery-workspace spectrum-search-workspace editor-workspace');
+  const summary = node('div', 'spectrum-discovery-context');
+  const steps = node('ol', 'spectrum-discovery-progress');
+  steps.setAttribute('aria-label', 'Find P25 channels steps');
+  const stage = node('div', 'spectrum-discovery-stage');
+  const feedback = node('div', 'ui-feedback');
+  feedback.setAttribute('role', 'status');
+  const actions = node('div', 'ui-action-row spectrum-discovery-actions');
+  host.append(summary, steps, stage, actions);
+  let catalog = null;
+  let receiverId = '';
+  let usedReceiverId = '';
+  let presetId = '';
+  let lease = null;
+  let job = null;
+  let pollTimer = null;
+  let renewalTimer = null;
+  let closed = false;
+  let busy = false;
+  let generation = 0;
+  let firstCandidateId = null;
+  let progressNodes = null;
+  const selected = new Set();
+  const drafts = new Map();
+  const groups = new Map();
+  const disabled = new Map();
+  const modal = openReadOnlyModal('Find P25 channels', host, {
+    id: 'spectrum-search', className: 'channel-editor-modal spectrum-search-modal',
+    cleanup: () => {
+      closed = true;
+      generation += 1;
+      abort.abort();
+      window.removeEventListener('pagehide', abandon);
+      void releaseJob().finally(() => releaseLease()).finally(() => context.resume?.(usedReceiverId));
+    }
+  });
+  if (!modal) return null;
+  const current = () => !closed && !abort.signal.aborted;
+  const request = (url, options = {}) => requestJson(url, { page: false, signal: abort.signal, ...options });
+  const jobPath = () => `${path}/${encodeURIComponent(job.job_id)}`;
+  const browsePath = (id) => `/api/v1/admin/tuners/${encodeURIComponent(id)}/browse`;
+  const releaseLease = async () => {
+    window.clearTimeout(renewalTimer);
+    const previous = lease;
+    lease = null;
+    if (previous?.lease_id) await requestJson(browsePath(usedReceiverId), {
+      method: 'DELETE', body: { lease_id: previous.lease_id }, page: false, keepalive: true
+    }).catch(() => {});
+  };
+  const releaseJob = async () => {
+    window.clearTimeout(pollTimer);
+    const previous = job;
+    job = null;
+    if (previous?.job_id) await requestJson(`${path}/${encodeURIComponent(previous.job_id)}`, {
+      method: 'DELETE', page: false, keepalive: true
+    }).catch(() => {});
+  };
+  const abandon = () => {
+    abort.abort();
+    void releaseJob().finally(() => releaseLease());
+  };
+  window.addEventListener('pagehide', abandon);
+  const button = (label, action, primary = false, host = actions) => {
+    const control = uiActionButton(label, '', action, `ui-button ui-button-${primary ? 'primary' : 'secondary'}`);
+    host.append(control);
+    return control;
+  };
+  const setBusy = (value) => {
+    busy = value;
+    modal.setBusy(value);
+    stage.setAttribute('aria-busy', String(value));
+    if (value) host.querySelectorAll('input,select,button').forEach((control) => {
+      disabled.set(control, control.disabled);
+      control.disabled = true;
+    });
+    else {
+      disabled.forEach((wasDisabled, control) => { if (control.isConnected) control.disabled = wasDisabled; });
+      disabled.clear();
+    }
+  };
+  const disclosure = (label, ...children) => {
+    const details = node('details', 'ui-section-disclosure ui-section-disclosure-flat spectrum-discovery-technical');
+    details.append(node('summary', 'ui-section-summary', label), ...children);
+    return details;
+  };
+  const error = (copy, cause) => {
+    feedback.replaceChildren(node('p', '', copy));
+    if (cause?.message) feedback.append(disclosure('Error details', node('p', 'muted', cause.message)));
+  };
+  const show = (next, index, title) => {
+    progressNodes = null;
+    steps.hidden = next === 'saved';
+    steps.replaceChildren(...['Band', 'Find channels', 'Review'].map((label, position) => {
+      const step = node('li');
+      step.append(uiPill(position < index ? '✓' : String(position + 1),
+        position < index ? 'success' : position === index ? 'blue' : 'neutral'), node('span', '', label));
+      if (position === index) step.setAttribute('aria-current', 'step');
+      return step;
+    }));
+    const heading = node('h3', '', title);
+    heading.tabIndex = -1;
+    stage.replaceChildren(heading, feedback);
+    feedback.replaceChildren();
+    actions.replaceChildren();
+    heading.focus({ preventScroll: true });
+  };
+  const receiver = () => catalog?.tuners?.find((tuner) => tuner.id === receiverId);
+  const candidates = () => job?.candidates || [];
+  const selectedCandidates = () => candidates().filter((candidate) => selected.has(candidate.candidate_id));
+  const identityText = (candidate) => {
+    const identity = candidate.identity;
+    return identity ? `WACN ${hex(identity.wacn, 5)} · System ${hex(identity.system, 3)} · RFSS ${identity.rfss} · Site ${identity.site}` : 'Identity unavailable';
+  };
+  const candidateName = (candidate) => candidate.name || candidate.site_name || `${channelMHz(candidate.frequency_hz)} MHz`;
+  const systemLabel = (candidate) => candidate.system_name || candidate.alias_name ||
+    (candidate.identity ? `P25 ${hex(candidate.identity.wacn, 5)}-${hex(candidate.identity.system, 3)}` : 'P25 system');
+  const factList = (entries) => {
+    const list = node('dl', 'ui-fact-list');
+    entries.forEach(([label, value]) => list.append(node('dt', '', label), node('dd', '', String(value ?? '—'))));
+    return list;
+  };
+  const updateContext = () => {
+    const tuner = receiver();
+    summary.replaceChildren(node('strong', '', tuner?.name || 'Choose an idle receiver'),
+      node('p', 'muted', tuner ? `Sees about ${(Number(tuner.usable_bandwidth_hz) / 1_000_000).toFixed(2)} MHz at once` :
+        'Search a band for P25 control channels.'));
+  };
+  const renew = async () => {
+    if (!current() || (!lease && !job)) return;
+    const previous = lease;
+    const operation = generation;
+    try {
+      if (previous) {
+        const renewed = await request(browsePath(usedReceiverId), {
+          method: 'POST', body: { lease_id: previous.lease_id }
+        });
+        if (!current() || lease?.lease_id !== previous.lease_id || operation !== generation) return;
+        lease = renewed;
+      }
+      if (!busy && job && !['scanning', 'checking'].includes(job.phase)) {
+        const updated = await request(jobPath(), { csrf: false });
+        if (current() && !busy && operation === generation && job?.job_id === updated.job_id) {
+          job = updated;
+          if (updated.phase !== 'complete' || updated.restart_required) drawJob();
+        }
+      }
+    } catch (cause) {
+      if (current() && !busy) {
+        if (isExpired(cause)) showExpired();
+        else error('We couldn’t refresh this search. Check your connection before continuing.', cause);
+      }
+    }
+    if (current() && operation === generation && (lease || job))
+      renewalTimer = window.setTimeout(() => void renew(), 10000);
+  };
+  const showBand = () => {
+    show('band', 0, 'Choose where to look');
+    const available = (catalog.tuners || []).filter((tuner) => tuner.eligible);
+    if (!available.length) {
+      stage.append(node('div', 'ui-notice ui-notice-warning', 'An idle receiver is needed to search. Stop its channels or connect another receiver, then try again.'),
+        ...(catalog.tuners || []).map((tuner) => node('p', 'muted', `${tuner.name}: ${tuner.reason || 'Unavailable'}`)));
+      button('Close', () => modal.close());
+      button('Refresh receivers', () => void load(), true);
+      return;
+    }
+    if (!available.some((tuner) => tuner.id === receiverId)) receiverId = catalog.suggested_tuner_id ||
+      available.slice().sort((a, b) => b.usable_bandwidth_hz - a.usable_bandwidth_hz)[0].id;
+    if (!available.some((tuner) => tuner.id === receiverId)) receiverId = available[0].id;
+    const form = node('form', 'spectrum-search-form');
+    const chooser = uiSelect(available.map((tuner) => ({ value: tuner.id,
+      label: `${tuner.name} · ${(tuner.usable_bandwidth_hz / 1_000_000).toFixed(2)} MHz window` })), receiverId);
+    chooser.setAttribute('aria-label', 'Receiver');
+    chooser.addEventListener('change', () => { receiverId = chooser.value; updateContext(); });
+    const presets = [...(catalog.presets || [])];
+    const publicSafety = ['700mhz', '800mhz'].map((id) => presets.find((preset) => preset.id === id));
+    if (publicSafety.every(Boolean)) presets.unshift({ id: 'public-safety', label: '700 and 800 MHz public safety',
+      ranges: publicSafety.flatMap((preset) => preset.ranges) });
+    if (!presetId) presetId = presets[0]?.id || 'custom';
+    const band = uiSelect([...presets.map((preset) => ({ value: preset.id, label: preset.label })),
+      { value: 'custom', label: 'Custom frequency range' }], presetId);
+    band.setAttribute('aria-label', 'Band');
+    const custom = node('div', 'channel-editor-grid');
+    const minimum = node('input', 'ui-input');
+    const maximum = node('input', 'ui-input');
+    [minimum, maximum].forEach((input) => { input.type = 'number'; input.step = '0.000001'; });
+    minimum.value = '769';
+    maximum.value = '775';
+    custom.append(formField('Start frequency (MHz)', minimum), formField('End frequency (MHz)', maximum));
+    const description = node('p', 'ui-field-hint');
+    const updateBand = () => {
+      presetId = band.value;
+      custom.hidden = presetId !== 'custom';
+      minimum.required = maximum.required = !custom.hidden;
+      const tuner = receiver();
+      [minimum, maximum].forEach((input) => {
+        input.min = String((tuner?.minimum_frequency_hz || 0) / 1_000_000);
+        input.max = String((tuner?.maximum_frequency_hz || 0) / 1_000_000);
+      });
+      const ranges = presets.find((preset) => preset.id === presetId)?.ranges;
+      description.textContent = ranges ? ranges.map((range) =>
+        `${channelMHz(range.minimum_hz)}–${channelMHz(range.maximum_hz)} MHz`).join(' · ') :
+        `Enter one range within this receiver’s coverage. Maximum search span: ${(catalog.bounds.maximum_total_hz / 1_000_000).toFixed(0)} MHz.`;
+    };
+    band.addEventListener('change', updateBand);
+    chooser.addEventListener('change', updateBand);
+    updateBand();
+    form.append(formField('Receiver', uiSelectFrame(chooser)), formField('Band', uiSelectFrame(band)), custom, description,
+      node('div', 'ui-notice', 'The receiver will move through this band, then check promising signals. Results appear when both steps are complete. Other receivers keep running.'),
+      disclosure('What are P25 channels?', node('p', '', 'P25 radio systems use a steady control signal to coordinate a group of radio frequencies. This search finds and checks those control signals. Voice-only and other radio signals are not added.'),
+        node('p', '', 'A receiver sees a limited frequency window at once. Searching moves this window through the band you choose.')));
+    form.addEventListener('submit', (event) => event.preventDefault());
+    stage.append(form);
+    updateContext();
+    button('Cancel', () => modal.close());
+    button('Find signals', () => {
+      if (!form.reportValidity()) return;
+      const ranges = presetId === 'custom' ? [{ minimum_hz: Math.round(Number(minimum.value) * 1_000_000),
+        maximum_hz: Math.round(Number(maximum.value) * 1_000_000) }] : presets.find((preset) => preset.id === presetId)?.ranges;
+      if (!ranges?.length || ranges.some((range) => range.minimum_hz >= range.maximum_hz) ||
+        ranges.reduce((total, range) => total + range.maximum_hz - range.minimum_hz, 0) > catalog.bounds.maximum_total_hz) {
+        error('Choose a valid band, or enter a smaller range with the end frequency above the start.');
+        return;
+      }
+      if (ranges.some((range) => range.minimum_hz < receiver().minimum_frequency_hz || range.maximum_hz > receiver().maximum_frequency_hz)) {
+        error('This receiver does not cover the selected band. Choose another receiver or a range within its coverage.');
+        return;
+      }
+      void begin(ranges);
+    }, true);
+  };
+  const begin = async (ranges) => {
+    const operation = ++generation;
+    setBusy(true);
+    try {
+      await releaseJob();
+      await releaseLease();
+      if (!current() || operation !== generation) return;
+      usedReceiverId = receiverId;
+      const acquired = await request(browsePath(receiverId), { method: 'POST', body: {} });
+      if (!current() || operation !== generation) {
+        void requestJson(browsePath(receiverId), { method: 'DELETE', body: { lease_id: acquired.lease_id }, page: false });
+        return;
+      }
+      lease = acquired;
+      const created = await request(path, { method: 'POST', body: {
+        tuner_id: receiverId, browse_lease_id: lease.lease_id, ranges
+      }, timeoutMs: 30000 });
+      if (!current() || operation !== generation) {
+        void requestJson(`${path}/${encodeURIComponent(created.job_id)}`, { method: 'DELETE', page: false });
+        return;
+      }
+      job = created;
+      selected.clear();
+      drafts.clear();
+      groups.clear();
+      firstCandidateId = null;
+      modal.setDirty(false);
+      renewalTimer = window.setTimeout(() => void renew(), 10000);
+      drawJob();
+    } catch (cause) {
+      if (current() && operation === generation) error(cause.code === 'invalid_request' ?
+        cause.message || 'This search is too large for this receiver. Choose a smaller range or a wider receiver.' :
+        'We couldn’t start the search. Check the receiver and try again.', cause);
+      await releaseLease();
+    } finally { if (current() && operation === generation) setBusy(false); }
+  };
+  const restart = async () => {
+    generation += 1;
+    setBusy(true);
+    await releaseJob();
+    await releaseLease();
+    if (current()) { modal.setDirty(false); showBand(); setBusy(false); }
+  };
+  const drawProgress = () => {
+    if (!progressNodes) {
+      show('progress', 1, job.phase === 'checking' ? 'Check signals' : 'Find signals');
+      const notice = node('div', 'ui-notice spectrum-discovery-status');
+      notice.setAttribute('role', 'status');
+      const heading = node('strong');
+      const copy = node('p');
+      const count = node('p', 'muted');
+      notice.append(heading, copy, count);
+      stage.append(notice, node('p', 'ui-field-hint', 'Nothing is saved during the search. Stop at any time to return to Spectrum.'));
+      button('Stop search', () => modal.close());
+      progressNodes = { title: stage.querySelector('h3'), heading, copy, count };
+    }
+    const checking = job.phase === 'checking';
+    progressNodes.title.textContent = checking ? 'Check signals' : 'Find signals';
+    progressNodes.heading.textContent = checking ? 'Reading P25 control signals' : 'Looking for signal peaks';
+    progressNodes.copy.textContent = checking ? 'We’re checking the system, site, and signal settings for each candidate.' :
+      'The receiver is moving through your selected band.';
+    const progress = job.progress || {};
+    progressNodes.count.textContent = checking ? `${progress.checked || 0} of ${progress.total_signals || 0} signals checked` :
+      `${progress.completed || 0} of ${progress.total || 0} receiver windows searched${progress.current_frequency_hz ?
+        ` · ${channelMHz(progress.current_frequency_hz)} MHz` : ''}`;
+    pollTimer = window.setTimeout(() => void poll(), 750);
+  };
+  const poll = async () => {
+    if (!current() || !job) return;
+    const operation = generation;
+    try {
+      const updated = await request(jobPath(), { csrf: false });
+      if (!current() || operation !== generation) return;
+      job = updated;
+      feedback.replaceChildren();
+      drawJob();
+    } catch (cause) {
+      if (!current() || operation !== generation) return;
+      if (isExpired(cause)) { showExpired(); return; }
+      error('We lost the connection during the search. Retry to check its progress, or stop.', cause);
+      actions.replaceChildren();
+      button('Stop search', () => modal.close());
+      button('Retry connection', () => { progressNodes = null; void poll(); }, true);
+    }
+  };
+  const drawJob = () => {
+    window.clearTimeout(pollTimer);
+    if (job.restart_required) showSaved();
+    else if (['scanning', 'checking'].includes(job.phase)) drawProgress();
+    else if (job.phase === 'complete') showResults();
+    else if (candidates().some((candidate) => candidate.saved)) showSaved();
+    else {
+      show('failed', 1, 'Search stopped');
+      stage.append(node('div', 'ui-notice ui-notice-warning', job.reason || 'The search could not finish. Try again with an idle receiver.'),
+        node('p', 'muted', 'Nothing has been added.'));
+      button('Close', () => modal.close());
+      button('Try another search', () => void restart(), true);
+    }
+  };
+  const showResults = () => {
+    show('results', 2, 'Choose channels to add');
+    stage.append(node('p', 'muted', `${candidates().length} P25 control channels found. Choose the channels you want to keep.`),
+      node('p', 'ui-field-hint', 'Reception is a snapshot from this search, not a live measurement.'));
+    if (job.truncated_reason) stage.append(node('div', 'ui-notice ui-notice-warning',
+      'This search reached its signal limit. Try a smaller range to check the remaining signals.'));
+    const search = node('input', 'ui-input');
+    search.type = 'search';
+    search.setAttribute('aria-label', 'Search results');
+    search.placeholder = 'Search names, frequencies, or system and site IDs';
+    const toolbar = node('div', 'spectrum-search-results-toolbar');
+    const count = node('span', 'muted');
+    const filter = formField('Search results', search);
+    filter.classList.add('spectrum-search-results-filter');
+    toolbar.append(filter, count);
+    const rows = [];
+    const table = node('table', 'ui-data-table ui-data-table-quiet ui-mobile-cards');
+    const head = node('tr');
+    ['Choose', 'Channel', 'System and site', 'Reception during search'].forEach((label) => {
+      const cell = node('th', '', label); cell.scope = 'col'; head.append(cell);
+    });
+    const thead = node('thead'); thead.append(head);
+    const body = node('tbody');
+    const review = button('Review selected', showReview, true);
+    button('Search another band', () => void restart());
+    actions.prepend(actions.lastChild);
+    const updateSelection = () => {
+      count.textContent = `${selected.size} selected`;
+      review.disabled = selected.size === 0;
+    };
+    const selectAll = button('Select all available', () => {
+      rows.forEach(({ candidate, check }) => {
+        if (!check.disabled) { check.checked = true; selected.add(candidate.candidate_id); }
+      });
+      updateSelection();
+    }, false, toolbar);
+    candidates().forEach((candidate) => {
+      const row = node('tr');
+      const cells = ['Choose', 'Channel', 'System and site', 'Reception during search'].map((label) => {
+        const cell = node('td'); cell.dataset.label = label; row.append(cell); return cell;
+      });
+      const check = node('input', 'ui-selection-check');
+      check.type = 'checkbox';
+      check.setAttribute('aria-label', `Select ${candidateName(candidate)}`);
+      check.disabled = candidate.selectable === false || Boolean(candidate.known_channel) || candidate.saved === true;
+      check.checked = selected.has(candidate.candidate_id);
+      check.addEventListener('change', () => {
+        if (check.checked) selected.add(candidate.candidate_id); else selected.delete(candidate.candidate_id);
+        updateSelection();
+      });
+      cells[0].append(check);
+      const name = node('div', 'identity-summary');
+      name.append(node('strong', 'identity-summary-primary', candidateName(candidate)),
+        node('span', 'muted', `${channelMHz(candidate.frequency_hz)} MHz`));
+      if (candidate.known_channel) {
+        const known = candidate.known_channel;
+        const link = entityRefHref(known.entity_ref) || (known.configuration_id ? href('channel', { configuration_id: known.configuration_id }) : null);
+        name.append(uiPill('Already added'), link ? anchor(known.name || 'Open channel', link) : node('span', 'muted', known.name || 'Known channel'));
+      } else if (check.disabled) name.append(node('span', 'muted', candidate.reason || 'Unavailable to add'));
+      cells[1].append(name);
+      const systemHref = entityRefHref(candidate.entity_ref);
+      const system = node('div', 'spectrum-search-cell');
+      system.append(systemHref ? anchor(systemLabel(candidate), systemHref) : node('strong', '', systemLabel(candidate)),
+        node('p', 'muted', identityText(candidate)));
+      cells[2].append(system);
+      const health = candidate.health || {};
+      const strength = Number.isFinite(Number(candidate.strength_dbfs)) && candidate.strength_dbfs != null ?
+        `${Number(candidate.strength_dbfs).toFixed(1)} dBFS` : 'Signal level unavailable';
+      const reception = node('div', 'spectrum-search-cell');
+      reception.append(node('strong', '', strength), node('p', 'muted', health.quality_pct == null ?
+        'Reception details unavailable' : health.quality_pct >= 90 ? 'Clean reception' :
+          health.quality_pct >= 60 ? 'Some decoding errors' : 'Unreliable reception'),
+      disclosure('Signal details', factList([
+        ['Modulation', candidate.modulation], ['Decoder quality', health.quality_pct == null ? null : `${Math.round(health.quality_pct)}%`],
+        ['Valid control messages', health.valid_control_messages],
+        ['Invalid control messages', health.invalid_control_messages],
+        ['Last checked', health.checked_at_ms ? new Date(health.checked_at_ms).toLocaleTimeString() : 'During this search']
+      ]), node('p', 'ui-field-hint', 'Decoder quality reflects reception errors; it is not a confidence score. dBFS is a relative receiver signal level. Values closer to zero mean a stronger signal. Receiver gain settings affect this reading.')));
+      cells[3].append(reception);
+      row.hidden = false;
+      rows.push({ candidate, row, check, text: [candidateName(candidate), systemLabel(candidate), identityText(candidate),
+        candidate.known_channel?.name, channelMHz(candidate.frequency_hz), ...(groupFor(candidate)?.alias_lists || []).map((list) => list.name),
+        ...Object.values(candidate.identity || {})].filter((value) => value != null).join(' ').toLowerCase() });
+      body.append(row);
+    });
+    search.addEventListener('input', () => {
+      const query = search.value.trim().toLowerCase();
+      rows.forEach(({ row, text }) => { row.hidden = !text.includes(query); });
+    });
+    selectAll.disabled = rows.every(({ check }) => check.disabled);
+    table.append(thead, body);
+    const wrap = node('div', 'ui-table-wrap spectrum-search-results'); wrap.append(table);
+    stage.append(toolbar, candidates().length ? wrap : node('div', 'ui-empty-state', 'No P25 control channels were identified. Try another band or a different receiver.'));
+    updateSelection();
+  };
+  const groupFor = (candidate) => (job.alias_groups || []).find((group) => group.group_id === candidate.alias_group_id);
+  const showReview = () => {
+    if (job.restart_required) { showSaved(); return; }
+    show('review', 2, 'Review your channels');
+    const form = node('form', 'spectrum-discovery-review');
+    form.addEventListener('submit', (event) => event.preventDefault());
+    const selectedGroups = (job.alias_groups || []).filter((group) => selectedCandidates().some((candidate) =>
+      !candidate.saved && !candidate.known_channel && candidate.alias_group_id === group.group_id));
+    selectedGroups.forEach((group) => {
+      const lists = group.alias_lists || [];
+      const draft = groups.get(group.group_id) || { alias_list_id: group.suggested_alias_list_id || (lists.length === 1 ? lists[0].id : lists.length ? '' : 0),
+        new_alias_list_name: group.default_new_alias_list_name || `P25 ${hex(group.wacn, 5)}-${hex(group.system, 3)}` };
+      if (lists.length === 1) draft.alias_list_id = lists[0].id;
+      else if (lists.length > 1 && !lists.some((list) => list.id === Number(draft.alias_list_id))) draft.alias_list_id = '';
+      groups.set(group.group_id, draft);
+      const section = node('section', 'ui-form-section spectrum-discovery-alias');
+      const systemName = selectedCandidates().find((candidate) => candidate.alias_group_id === group.group_id)?.system_name ||
+        lists[0]?.name || group.default_new_alias_list_name || 'P25 system';
+      section.append(node('h4', '', systemName), node('p', 'muted', `WACN ${hex(group.wacn, 5)} · System ${hex(group.system, 3)}`));
+      if (lists.length === 1) section.append(node('strong', '', `Use ${lists[0].name}`),
+        node('p', 'muted', 'These channels belong to a system you already added. Its names and listening settings will be kept.'));
+      else if (lists.length > 1) {
+        const select = uiSelect(lists.map((list) => ({ value: list.id, label: list.name })), draft.alias_list_id, !draft.alias_list_id, 'Choose listening settings');
+        select.required = true;
+        select.setAttribute('aria-label', `Listening settings for ${hex(group.wacn, 5)}-${hex(group.system, 3)}`);
+        select.addEventListener('change', () => { draft.alias_list_id = Number(select.value); modal.setDirty(true); });
+        section.append(formField('Use existing listening settings', uiSelectFrame(select)));
+      } else {
+        const name = node('input', 'ui-input'); name.type = 'text'; name.required = true; name.maxLength = 25;
+        name.value = draft.new_alias_list_name;
+        name.setAttribute('aria-label', `New settings name for ${hex(group.wacn, 5)}-${hex(group.system, 3)}`);
+        name.addEventListener('input', () => { draft.new_alias_list_name = name.value; modal.setDirty(true); });
+        section.append(formField('New settings name', name), node('p', 'muted', 'One Alias List will be shared by this system’s selected sites. New lists include listening through your Default scan list.'));
+      }
+      form.append(section);
+    });
+    if (firstCandidateId === null || (firstCandidateId && !selected.has(firstCandidateId)))
+      firstCandidateId = selectedCandidates()[0]?.candidate_id || '';
+    const preview = node('p', 'ui-field-hint');
+    const canListenNow = !candidates().some((candidate) => candidate.running);
+    const updatePreview = () => {
+      const first = candidates().find((candidate) => candidate.candidate_id === firstCandidateId);
+      preview.textContent = !canListenNow ? 'Already added channels keep their saved settings. New channels will be available to start later.' :
+        first ? `Start with ${candidateName(first)}. Other selected channels will listen now only if they fit the same receiver window. All added channels remain available for later.` :
+        'Your channels will be saved without starting now. Start automatically still applies when VCE starts.';
+    };
+    selectedCandidates().forEach((candidate) => {
+      const draft = drafts.get(candidate.candidate_id) || { name: candidateName(candidate), auto_start: true };
+      drafts.set(candidate.candidate_id, draft);
+      const section = node('section', 'ui-form-section spectrum-discovery-review');
+      section.append(node('strong', '', `${channelMHz(candidate.frequency_hz)} MHz`), node('p', 'muted', identityText(candidate)));
+      if (candidate.saved || candidate.known_channel) {
+        section.append(node('strong', '', candidateName(candidate)), uiPill(candidate.running ? 'Added and listening' :
+          candidate.saved ? 'Added, available later' : 'Already added', candidate.running ? 'success' : 'neutral'));
+        form.append(section);
+        return;
+      }
+      const name = node('input', 'ui-input'); name.type = 'text'; name.required = true; name.maxLength = 255;
+      name.value = draft.name;
+      name.setAttribute('aria-label', `Channel name for ${channelMHz(candidate.frequency_hz)} MHz`);
+      name.addEventListener('input', () => { draft.name = name.value; modal.setDirty(true); });
+      const startup = uiToggleField('Start automatically', draft.auto_start,
+        `Start automatically for ${channelMHz(candidate.frequency_hz)} MHz`, 'Start this channel when VCE starts.');
+      startup.querySelector('input').addEventListener('change', (event) => { draft.auto_start = event.target.checked; modal.setDirty(true); });
+      const first = node('label', 'spectrum-search-listen-option');
+      const radio = node('input', 'ui-choice-radio'); radio.type = 'radio'; radio.name = 'spectrum-search-first';
+      radio.checked = firstCandidateId === candidate.candidate_id;
+      radio.setAttribute('aria-label', `Listen first to ${candidateName(candidate)}`);
+      radio.addEventListener('change', () => { firstCandidateId = candidate.candidate_id; updatePreview(); });
+      first.append(radio, node('span', '', 'Listen to this channel first'));
+      section.append(formField('Channel name', name), startup);
+      if (canListenNow) section.append(first);
+      form.append(section);
+    });
+    const later = node('label', 'spectrum-search-listen-option');
+    const radio = node('input', 'ui-choice-radio'); radio.type = 'radio'; radio.name = 'spectrum-search-first';
+    radio.setAttribute('aria-label', 'Listen later'); radio.checked = !firstCandidateId;
+    radio.addEventListener('change', () => { firstCandidateId = ''; updatePreview(); });
+    later.append(radio, node('span', '', 'Add channels and listen later'));
+    if (canListenNow) form.append(later);
+    form.append(preview, disclosure('What will be saved?', node('p', '', 'Each P25 channel keeps its learned modulation, follows announced control frequencies, and uses the listening settings chosen above.'),
+      node('p', '', 'Startup is separate from listening now. Channels in different receiver windows can compete for a receiver when automatic startup is enabled.')));
+    updatePreview();
+    stage.append(form);
+    button('Back', showResults);
+    button('Add selected channels', () => {
+      if (!form.reportValidity()) return;
+      void save(selectedCandidates().map((candidate) => candidate.candidate_id), canListenNow);
+    }, true);
+  };
+  const payload = (ids) => ({ revision: job.revision,
+    candidates: candidates().filter((candidate) => ids.includes(candidate.candidate_id) && !candidate.saved && !candidate.known_channel).map((candidate) => ({
+      candidate_id: candidate.candidate_id, name: drafts.get(candidate.candidate_id)?.name.trim() || candidateName(candidate),
+      auto_start: drafts.get(candidate.candidate_id)?.auto_start !== false
+    })),
+    alias_groups: (job.alias_groups || []).filter((group) => candidates().some((candidate) =>
+      ids.includes(candidate.candidate_id) && candidate.alias_group_id === group.group_id)).map((group) => ({
+      group_id: group.group_id, alias_list_id: Number(groups.get(group.group_id)?.alias_list_id || 0),
+      new_alias_list_name: groups.get(group.group_id)?.new_alias_list_name.trim() || null
+    }))
+  });
+  const isExpired = (cause) => [404, 410].includes(cause?.status) ||
+    ['search_expired', 'spectrum_search_expired'].includes(cause?.code);
+  const showExpired = () => {
+    if (candidates().some((candidate) => candidate.saved)) {
+      showSaved();
+      error('This search expired. Your added channels are saved; open them to continue.');
+      stage.querySelectorAll('button').forEach((control) => { control.disabled = true; });
+    } else {
+      show('expired', 2, 'This search expired');
+      stage.append(node('div', 'ui-notice ui-notice-warning', 'Nothing was added. Start a new search to check the signals again.'));
+      button('Close', () => modal.close());
+      button('Start a new search', () => void restart(), true);
+    }
+    void releaseJob().finally(() => releaseLease());
+  };
+  const save = async (ids, startNow = true) => {
+    if (job.restart_required) { showSaved(); return; }
+    setBusy(true);
+    let added = false;
+    try {
+      const plan = payload(ids);
+      if (plan.candidates.length) job = await request(`${jobPath()}/save`, { method: 'POST', body: plan, timeoutMs: 30000 });
+      if (!current()) return;
+      added = true;
+      const saved = selectedCandidates().filter((candidate) => candidate.saved);
+      if (!job.restart_required && startNow && firstCandidateId && saved.some((candidate) => candidate.candidate_id === firstCandidateId))
+        job = await request(`${jobPath()}/start`, { method: 'POST', body: {
+          candidate_ids: saved.map((candidate) => candidate.candidate_id), first_candidate_id: firstCandidateId
+        }, timeoutMs: 30000 });
+      if (!current()) return;
+      modal.setDirty(false);
+      showSaved();
+      if (candidates().some((candidate) => candidate.running)) {
+        await releaseLease();
+        context.resume?.(usedReceiverId);
+        renewalTimer = window.setTimeout(() => void renew(), 10000);
+      }
+    } catch (cause) {
+      if (!current()) return;
+      if (isExpired(cause)) { showExpired(); return; }
+      let ledgerConfirmed = false;
+      try { job = await request(jobPath(), { csrf: false }); ledgerConfirmed = true; } catch (_) { /* Preserve the last confirmed ledger. */ }
+      if (!current()) return;
+      if (cause.code === 'channel_saved_restart_required' && !ledgerConfirmed)
+        job = { ...job, restart_required: true, ledger_unavailable: true };
+      if (job.restart_required || added || candidates().some((candidate) => candidate.saved)) {
+        modal.setDirty(false);
+        showSaved();
+        if (!job.restart_required) error('Some channels were added. Check each result before retrying.', cause);
+      } else if (cause.code === 'stale_revision' && job?.phase === 'complete') {
+        showReview();
+        error('Listening settings changed. Check the choices and try adding again.', cause);
+      } else error('We couldn’t add your channels. Your choices are still here. Try again.', cause);
+    } finally { if (current()) setBusy(false); }
+  };
+  const showSaved = () => {
+    show('saved', 2, 'Your channel results');
+    if (job.restart_required) stage.append(node('div', 'ui-notice ui-notice-warning',
+      `${candidates().some((candidate) => candidate.saved) ? 'Some channels were saved, but VCE could not load the changes.' :
+        'VCE needs to restart before changes can be loaded.'} Restart VCE before opening these channels, adding more, or listening. Saved channels do not need to be added again.`));
+    selectedCandidates().forEach((candidate) => {
+      const row = node('section', 'ui-form-section spectrum-discovery-review');
+      const known = !candidate.saved && candidate.known_channel;
+      const status = candidate.running ? 'Added and listening' : candidate.saved ? 'Added, available later' : known ? 'Already added' :
+        job.ledger_unavailable ? 'Status unavailable' : job.restart_required ? 'Not added' : 'Could not add';
+      row.append(node('strong', '', drafts.get(candidate.candidate_id)?.name || candidateName(candidate)),
+        node('p', 'muted', `${channelMHz(candidate.frequency_hz)} MHz · ${identityText(candidate)}`),
+        uiPill(status, candidate.running ? 'success' : candidate.saved || known ? 'neutral' : 'warning'));
+      if (candidate.saved && candidate.auto_start != null) row.append(node('p', 'muted',
+        `Start automatically: ${candidate.auto_start ? 'On' : 'Off'}`));
+      const channelId = candidate.configuration_id || known?.configuration_id;
+      if (channelId && (!job.restart_required || known)) row.append(anchor(known?.name || 'Open channel',
+        href('channel', { configuration_id: channelId }), 'ui-button ui-button-secondary'));
+      if (!candidate.saved && !known && !job.restart_required) {
+        if (candidate.save_error) row.append(node('p', 'muted', candidate.save_error));
+        button('Retry', () => void save([candidate.candidate_id], false), true, row).setAttribute('aria-label', `Retry adding ${candidateName(candidate)}`);
+        button('Review choices', showReview, false, row);
+      } else if (candidate.start_error) row.append(node('p', 'muted', candidate.start_error));
+      stage.append(row);
+    });
+    button('Done', () => modal.close(), true);
+  };
+  const load = async () => {
+    show('loading', 0, 'Preparing the search…');
+    setBusy(true);
+    try {
+      await context.pause?.();
+      catalog = await request(`${path}/catalog`, { csrf: false });
+      if (current()) showBand();
+    } catch (cause) {
+      if (current()) {
+        error('We couldn’t load the search options. Check your connection and try again.', cause);
+        button('Close', () => modal.close());
+        button('Try again', () => void load(), true);
+      }
+    } finally { if (current()) setBusy(false); }
+  };
+  void load();
+  return modal;
+}

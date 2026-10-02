@@ -977,7 +977,8 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   width: min(var(--modal-size-medium), 96vw);
 }
 
-.spectrum-discovery-modal .modal-content {
+.spectrum-discovery-modal .modal-content,
+.spectrum-search-modal .modal-content {
   display: flex;
   flex: 1 1 auto;
   overflow: hidden;
@@ -1017,7 +1018,6 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 .spectrum-discovery-review > p,
 .spectrum-discovery-alias > h4,
 .spectrum-discovery-alias > p,
-.spectrum-discovery-alias > h4,
 .spectrum-discovery-summary > p,
 .spectrum-discovery-technical > p,
 .spectrum-discovery-optional > p {
@@ -1117,6 +1117,62 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   gap: var(--space-3);
 }
 
+.read-only-modal.spectrum-search-modal {
+  width: min(var(--modal-size-large), 96vw);
+}
+
+.spectrum-search-form {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-4);
+}
+
+.spectrum-search-form > p {
+  margin: 0;
+}
+
+.spectrum-search-results-toolbar {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: end;
+  gap: var(--space-3);
+}
+
+.spectrum-search-results-filter {
+  min-width: 0;
+  width: 100%;
+}
+
+.spectrum-search-results .identity-summary {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+
+.spectrum-search-cell {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.spectrum-search-cell > p {
+  margin: 0;
+}
+
+.spectrum-search-results th:first-child {
+  min-width: 4.5rem;
+}
+
+.spectrum-search-listen-option {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 @media (max-width: 760px) {
   body[data-view="tuner-spectrum"]:has(.spectrum-browse-workspace) {
     height: auto;
@@ -1132,7 +1188,8 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
     flex-basis: 100%;
   }
 
-  .spectrum-discovery-modal .channel-editor-grid {
+  .spectrum-discovery-modal .channel-editor-grid,
+  .spectrum-search-modal .channel-editor-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -1149,4 +1206,14 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   .spectrum-discovery-protocols {
     grid-template-columns: minmax(0, 1fr);
   }
+
+  .read-only-modal.spectrum-search-modal {
+    width: 100vw;
+  }
+
+  .spectrum-search-results-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: start;
+  }
+
 }

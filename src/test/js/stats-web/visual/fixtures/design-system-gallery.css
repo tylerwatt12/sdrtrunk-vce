@@ -648,6 +648,7 @@ body:not([data-gallery-view="entity-details"]) .visual-entity-details-example,
 body:not([data-gallery-view="live-notice"]) .visual-live-example,
 body:not([data-gallery-view="live-filter"]) .visual-live-filter-example,
 body:not([data-gallery-view="spectrum-discovery"]) .visual-spectrum-discovery-example,
+body:not([data-gallery-view="spectrum-search"]) .visual-spectrum-search-example,
 body:not([data-gallery-view="tuner-frequency-popover"]) .visual-tuner-frequency-popover-example {
   display: none;
 }

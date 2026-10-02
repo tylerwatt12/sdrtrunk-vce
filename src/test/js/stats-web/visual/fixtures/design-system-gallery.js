@@ -362,7 +362,7 @@ const view = ['mobile-table', 'gallery', 'app-chrome', 'audio-dock', 'access-lan
   'radio-directory-coverage', 'radio-directory-panel', 'admin-scan-lists',
   'scanner', 'tuner-spectrum', 'tuners', 'aliases', 'alias-modal', 'alias-export', 'scan-list-members', 'channels',
   'radio-directory', 'entity-details', 'live-notice', 'live-filter', 'tuner-frequency-popover',
-  'spectrum-discovery'].includes(parameters.get('view')) ?
+  'spectrum-discovery', 'spectrum-search'].includes(parameters.get('view')) ?
   parameters.get('view') : 'gallery';
 document.documentElement.dataset.theme = theme;
 document.body.dataset.galleryView = view;

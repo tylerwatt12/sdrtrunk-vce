@@ -24,6 +24,7 @@ import { createStreamingWorkspace } from './features/streaming.js?v=7';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=6';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=10';
 import { createRecordingsFeature } from './features/recordings.js?v=16';
+import { openSpectrumSearchWizard } from './features/spectrum-search.js?v=2';
 import { createAudioDock } from './core/audio-dock.js?v=6';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=5';
@@ -14353,9 +14354,9 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     element: layout,
     refreshTargets,
     selectTarget(targetId) {
-      if (!managedSelection || disposed) return;
+      if (!managedSelection || disposed) return streamRelease;
       managedTargetId = String(targetId || '');
-      if (targetSelect.value === managedTargetId) return;
+      if (targetSelect.value === managedTargetId) return streamRelease;
       targetSelect.value = targetsById.has(managedTargetId) ? managedTargetId : '';
       pause.disabled = !targetSelect.value;
       closeStreams();
@@ -14365,6 +14366,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
       if (!targetSelect.value) setStatus('Idle');
       sync();
       if (managedTargetId && !targetsById.has(managedTargetId)) refreshTargets();
+      return streamRelease;
     },
     close: () => {
       if (disposed) return;
@@ -17272,12 +17274,45 @@ async function renderTunerSpectrum() {
   const retryBrowse = uiActionButton('Retry browsing', '', () => void chooseTuner(select.value),
     'ui-button ui-button-secondary');
   retryBrowse.hidden = true;
-  toolbar.append(selectField, centerHost, message, retryBrowse);
+  const findChannels = uiActionButton('Find P25 channels', 'icon-search', () => {
+    const owner = {};
+    openSpectrumSearchWizard({ node, openReadOnlyModal, requestJson, uiActionButton, uiSelect, uiSelectFrame, uiPill,
+      formField, uiToggleField, anchor, href, entityRefHref, channelMHz, hex }, {
+      pause: async () => {
+        if (disposed) return;
+        searchOwner = owner;
+        searchActive = true;
+        probeActive = true;
+        operation += 1;
+        select.disabled = true;
+        findChannels.disabled = true;
+        retryBrowse.hidden = true;
+        await spectrum.selectTarget('');
+        await releaseLease();
+        if (!disposed) {
+          renderCenter();
+          message.textContent = 'Searching for P25 channels. Finish or stop the search to tune.';
+        }
+      },
+      resume: (id) => {
+        if (disposed || searchOwner !== owner || !searchActive) return;
+        searchActive = false;
+        probeActive = false;
+        findChannels.disabled = false;
+        void chooseTuner(id || selectedTuner?.id || select.value);
+      }
+    });
+  }, 'ui-button ui-button-primary');
+  findChannels.hidden = !capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_CHANNELS);
+  findChannels.disabled = true;
+  toolbar.append(selectField, centerHost, findChannels, message, retryBrowse);
   let tuners = [];
   let selectedTuner = null;
   let lease = null;
   let leaseTimer = null;
   let probeActive = false;
+  let searchActive = false;
+  let searchOwner = null;
   let centerControl = null;
   let disposed = false;
   let operation = 0;
@@ -17317,7 +17352,7 @@ async function renderTunerSpectrum() {
     if (!setting) { centerHost.replaceChildren(); return; }
     const usability = canEditCenter() ? tunerSettingUsability(setting, selectedTuner, selectedTuner.settings) :
       { enabled: false, reason: tuning ? 'Saving center frequency settings' :
-        probeActive ? 'Finish or cancel signal identification to tune' :
+        probeActive ? 'Finish or close channel discovery to tune' :
         'Active channels keep the center frequency fixed' };
     centerControl = tunerCenterFrequencyControl(selectedTuner, setting, usability, {
       save: async (_tuner, _setting, value) => tune(Math.round(value * 1_000_000))
@@ -17341,6 +17376,7 @@ async function renderTunerSpectrum() {
     const restoreFocus = document.activeElement?.dataset.tunerSetting === setting.id;
     tuning = true;
     select.disabled = true;
+    findChannels.disabled = true;
     renderCenter();
     try {
       await requestJson(`/api/v1/admin/tuners/${encodeURIComponent(selectedTuner.id)}/settings/${setting.id}`, {
@@ -17366,6 +17402,7 @@ async function renderTunerSpectrum() {
       tuning = false;
       if (!disposed) {
         select.disabled = probeActive;
+        findChannels.disabled = probeActive || searchActive || !tuners.length;
         renderCenter();
         if (restoreFocus) centerHost.querySelector(`[data-tuner-setting="${setting.id}"]`)?.focus();
       }
@@ -17386,6 +17423,7 @@ async function renderTunerSpectrum() {
       setProbeActive: (active) => {
         probeActive = active;
         select.disabled = active;
+        findChannels.disabled = active || searchActive;
         renderCenter();
       },
       onSaved: (savedSession) => {
@@ -17393,6 +17431,7 @@ async function renderTunerSpectrum() {
         lease = null;
         probeActive = false;
         select.disabled = false;
+        findChannels.disabled = searchActive;
         if (savedSession.saved?.running) void chooseTuner(selectedTuner.id);
         else {
           renderCenter();
@@ -17459,7 +17498,12 @@ async function renderTunerSpectrum() {
       message.textContent = error.message || 'Could not browse this tuner. Retry or choose another tuner.';
       retryBrowse.hidden = false;
     }
-    finally { if (!disposed) select.disabled = false; }
+    finally {
+      if (!disposed) {
+        select.disabled = probeActive || searchActive;
+        findChannels.disabled = probeActive || searchActive || !tuners.length;
+      }
+    }
   };
   const loadTuners = async (choose = true) => {
     try {
@@ -17475,6 +17519,7 @@ async function renderTunerSpectrum() {
         return option;
       }));
       select.disabled = probeActive || !tuners.length;
+      findChannels.disabled = probeActive || searchActive || !tuners.length;
       if (!tuners.length) { message.textContent = 'No tuners are available. Connect a tuner and reload.'; return; }
       if (!choose) {
         selectedTuner = tuners.find((tuner) => tuner.id === selectedId) || selectedTuner;
