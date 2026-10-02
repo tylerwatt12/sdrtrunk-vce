@@ -48,6 +48,110 @@ import org.junit.jupiter.api.Test;
 class TunerSettingsServiceTest
 {
     @Test
+    void searchTuningReservesIdleHardwareAndDoesNotSaveHops() throws Exception
+    {
+        TrackingAirspyController controller = new TrackingAirspyController();
+        CountingChannelManager channels = new CountingChannelManager();
+        FakeDiscoveredTuner tuner = runningTuner(controller, channels);
+        AtomicInteger saves = new AtomicInteger();
+        try(TunerSettingsService service = service(tuner, saves))
+        {
+            var lease = service.browse(tuner, null).get(2, TimeUnit.SECONDS);
+            long savedCenter = tuner.getTunerConfiguration().getFrequency();
+            try(var hold = service.holdForSearch(tuner, lease.leaseId()))
+            {
+                hold.tune(851_000_000);
+                assertTrue(hold.valid());
+                assertEquals(851_000_000, controller.getFrequency());
+                assertEquals(savedCenter, tuner.getTunerConfiguration().getFrequency());
+                assertEquals(0, saves.get());
+                assertThrows(TunerSettingsService.SettingUnavailableException.class,
+                    () -> service.set(tuner, "frequency_mhz", 852.0, lease.leaseId()));
+                assertThrows(TunerSettingsService.SettingUnavailableException.class,
+                    () -> service.releaseBrowse(tuner, lease.leaseId(), false));
+                channels.mCount.set(1);
+                assertThrows(TunerSettingsService.SettingUnavailableException.class, () -> hold.tune(852_000_000));
+                assertEquals(851_000_000, controller.getFrequency());
+                channels.mCount.set(0);
+                hold.tune(852_000_000);
+                assertTrue(hold.valid());
+            }
+            assertFalse(tuner.isDiscoveryHeld());
+            service.releaseBrowse(tuner, lease.leaseId(), false).get(2, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void searchRejectsOccupiedAndLockedReceivers() throws Exception
+    {
+        TrackingAirspyController controller = new TrackingAirspyController();
+        CountingChannelManager channels = new CountingChannelManager();
+        FakeDiscoveredTuner tuner = runningTuner(controller, channels);
+        try(TunerSettingsService service = service(tuner, new AtomicInteger()))
+        {
+            channels.mCount.set(1);
+            var lease = service.browse(tuner, null).get(2, TimeUnit.SECONDS);
+            String occupiedLeaseId = lease.leaseId();
+            assertThrows(TunerSettingsService.SettingUnavailableException.class,
+                () -> service.holdForSearch(tuner, occupiedLeaseId));
+            service.releaseBrowse(tuner, lease.leaseId(), false).get();
+            channels.mCount.set(0);
+            lease = service.browse(tuner, null).get();
+            controller.setCenterFrequencyLocked(true);
+            String id = lease.leaseId();
+            assertThrows(TunerSettingsService.SettingUnavailableException.class,
+                () -> service.holdForSearch(tuner, id));
+            controller.setCenterFrequencyLocked(false);
+            service.releaseBrowse(tuner, id, false).get();
+        }
+    }
+
+    @Test
+    void searchCannotTuneAfterLeaseExpiryOrWhileControllerIsContended() throws Exception
+    {
+        TrackingAirspyController controller = new TrackingAirspyController();
+        FakeDiscoveredTuner tuner = runningTuner(controller, new CountingChannelManager());
+        AtomicLong clock = new AtomicLong(1000);
+        try(TunerSettingsService service = new TunerSettingsService(() -> {}, candidate -> candidate == tuner,
+            ignored -> tuner, null, () -> List.of(tuner), clock::get))
+        {
+            var lease = service.browse(tuner, null).get(2, TimeUnit.SECONDS);
+            long originalCenter = controller.getFrequency();
+            try(var hold = service.holdForSearch(tuner, lease.leaseId()))
+            {
+                CountDownLatch locked = new CountDownLatch(1);
+                CountDownLatch release = new CountDownLatch(1);
+                Thread competitor = new Thread(() ->
+                {
+                    controller.getLock().lock();
+                    locked.countDown();
+                    try { release.await(2, TimeUnit.SECONDS); }
+                    catch(InterruptedException exception) { Thread.currentThread().interrupt(); }
+                    finally { controller.getLock().unlock(); }
+                });
+                competitor.start();
+                assertTrue(locked.await(1, TimeUnit.SECONDS));
+                try
+                {
+                    assertTimeoutPreemptively(Duration.ofMillis(250), () ->
+                        assertThrows(TunerSettingsService.SettingUnavailableException.class,
+                            () -> hold.tune(851_000_000)));
+                }
+                finally { release.countDown(); competitor.join(1000); }
+                hold.tune(852_000_000);
+                clock.addAndGet(31_000);
+                assertThrows(TunerSettingsService.SettingUnavailableException.class,
+                    () -> hold.tune(851_000_000));
+                assertEquals(852_000_000, controller.getFrequency());
+                hold.restoreSearchCenter();
+                assertEquals(originalCenter, controller.getFrequency());
+                assertEquals(2, controller.mFrequencyCalls.get());
+            }
+            service.releaseBrowse(tuner, lease.leaseId(), false).get(2, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
     void spectrumBorrowsDisabledHardwareAndRestoresWithoutPersisting() throws Exception
     {
         FakeDiscoveredTuner tuner = new FakeDiscoveredTuner(true);

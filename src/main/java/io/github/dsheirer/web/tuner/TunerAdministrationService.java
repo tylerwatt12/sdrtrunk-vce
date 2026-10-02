@@ -174,7 +174,10 @@ public final class TunerAdministrationService
         return new Item(opaqueId(discovered), deviceGroup(discovered), displayName(discovered, tuner),
             discovered.getTunerClass().name().toLowerCase(Locale.ROOT), tunerType.name().toLowerCase(Locale.ROOT),
             discovered.getTunerStatus().name().toLowerCase(Locale.ROOT), available, channelCount, frequency,
-            sampleRate, configuration != null ? configuration.getFrequency() : null,
+            sampleRate, available ? (long)tuner.getTunerController().getUsableBandwidth() : null,
+            available ? tuner.getTunerController().getMinimumFrequency() : null,
+            available ? tuner.getTunerController().getMaximumFrequency() : null,
+            configuration != null ? configuration.getFrequency() : null,
             configuration != null && configuration.getConfiguredSampleRate() > 0 ?
                 (long)configuration.getConfiguredSampleRate() : null,
             measuredError,
@@ -250,6 +253,7 @@ public final class TunerAdministrationService
     public record MeasuredError(int hertz, double ppm) { }
     public record Item(String id, DeviceGroup deviceGroup, String name, String tunerClass, String tunerType,
                        String status, boolean available, int channelCount, Long frequencyHz, Long sampleRateHz,
+                       Long usableBandwidthHz, Long minimumFrequencyHz, Long maximumFrequencyHz,
                        Long configuredFrequencyHz, Long configuredSampleRateHz,
                        MeasuredError measuredError,
                        String spectrumTargetId, boolean spectrumAvailable, Planner planner, Object settings,

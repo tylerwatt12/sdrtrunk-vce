@@ -802,15 +802,31 @@ public class ConfigurationManager implements Listener<ChannelEvent>
 
     public static final class ConfigurationPublicationException extends RuntimeException
     {
+        private final String mCommittedConfigurationId;
+        private final Long mCommittedAliasListId;
+
         public ConfigurationPublicationException(String message)
         {
-            super(message);
+            this(message, null);
         }
 
         public ConfigurationPublicationException(String message, Throwable cause)
         {
             super(message, cause);
+            mCommittedConfigurationId = null;
+            mCommittedAliasListId = null;
         }
+
+        /** Definitive identity for a discovered channel whose database commit preceded publication failure. */
+        public ConfigurationPublicationException(String message, Throwable cause, String configurationId, long aliasListId)
+        {
+            super(message, cause);
+            mCommittedConfigurationId = Objects.requireNonNull(configurationId);
+            mCommittedAliasListId = aliasListId;
+        }
+
+        public String committedConfigurationId() { return mCommittedConfigurationId; }
+        public Long committedAliasListId() { return mCommittedAliasListId; }
     }
 
     private void clearModels()

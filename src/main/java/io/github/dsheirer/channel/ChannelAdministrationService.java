@@ -271,6 +271,17 @@ public final class ChannelAdministrationService
             Long suggested = lists.size() == 1 ? lists.getFirst().id() : null;
             String system = identity != null ? String.format("P25 %05X-%03X", identity.wacn(), identity.system()) : null;
             String site = identity != null ? String.format("Site %02X-%02X", identity.rfss(), identity.site()) : null;
+            if(identity != null)
+            {
+                List<Channel> known = mConfigurationManager.getChannelModel().getChannels().stream()
+                    .filter(channel -> channel.getP25SiteIdentity() != null &&
+                        channel.getP25SiteIdentity().wacn() == identity.wacn() &&
+                        channel.getP25SiteIdentity().system() == identity.system()).toList();
+                system = known.stream().map(Channel::getSystem).filter(value -> value != null && !value.isBlank())
+                    .findFirst().orElse(lists.size() == 1 ? lists.getFirst().name() : system);
+                site = known.stream().filter(channel -> identity.equals(channel.getP25SiteIdentity()))
+                    .map(Channel::getSite).filter(value -> value != null && !value.isBlank()).findFirst().orElse(site);
+            }
             Map<String,Object> settings = new LinkedHashMap<>(profile.defaultSettings());
             if(identity != null)
             {
@@ -283,9 +294,21 @@ public final class ChannelAdministrationService
                 new ChannelDefinition.Source(List.of(frequencyHz), null, null,
                     identity != null ? frequencyHz : null, preferredTuner, null), settings,
                 List.of(), List.of(), List.of(), List.of(), ChannelDefinition.Observed.EMPTY);
-            return new DiscoveryReview(revision(), template, lists, suggested,
-                identity != null ? system : "Analog Channels");
+            String newListName = identity != null ? system : "Analog Channels";
+            if(newListName.length() > AliasAdministrationService.MAX_ALIAS_LIST_NAME_LENGTH)
+                newListName = String.format("P25 %05X-%03X", identity.wacn(), identity.system());
+            return new DiscoveryReview(revision(), template, lists, suggested, newListName);
         });
+    }
+
+    /** A serving site remains configured even when its control frequency changes. */
+    public DiscoveryFrequencyMatch discoverySiteMatch(P25SiteIdentity identity)
+    {
+        Objects.requireNonNull(identity);
+        return onConfigurationThread(() -> mConfigurationManager.getChannelModel().getChannels().stream()
+            .filter(channel -> identity.equals(channel.getP25SiteIdentity()))
+            .map(channel -> new DiscoveryFrequencyMatch(channel.getConfigurationId(), channel.getName(),
+                channel.getSystem(), channel.getSite(), "site")).findFirst().orElse(null));
     }
 
     private ChannelProtocolRegistry.Profile discoveryProfile(String protocolId)
@@ -317,8 +340,18 @@ public final class ChannelAdministrationService
     public DiscoveryCreated createDiscovered(ChannelDefinition definition, P25SiteIdentity identity,
                                                String newAliasListName, long expectedRevision)
     {
+        return createDiscovered(definition, identity, newAliasListName, expectedRevision, true);
+    }
+
+    /** Search results can be saved for later without joining the receiver's automatic startup order. */
+    public DiscoveryCreated createDiscovered(ChannelDefinition definition, P25SiteIdentity identity,
+                                               String newAliasListName, long expectedRevision, boolean autoStart)
+    {
         return admitted(() -> onConfigurationThread(() -> mConfigurationManager.applyConfigurationMutation(() ->
         {
+            // The configuration monitor stays held through commit, so a later publication exception proves a commit.
+            // Suspended saves fail here before creating a candidate or assigning a committed identity.
+            mConfigurationManager.flushConfiguration();
             requireRevision(expectedRevision);
             ChannelProtocolRegistry.Profile profile = discoveryProfile(definition.protocolId());
             if("p25-phase1".equals(profile.id()) != (identity != null))
@@ -372,8 +405,8 @@ public final class ChannelAdministrationService
                 created.setP25SiteIdentity(identity);
             }
             List<Channel> channels = detachedChannels(false);
-            created.setAutoStart(true);
-            created.setAutoStartOrder(effectiveAutoStartIds(channels).size() + 1);
+            created.setAutoStart(autoStart);
+            created.setAutoStartOrder(autoStart ? effectiveAutoStartIds(channels).size() + 1 : null);
             channels.add(created);
             try
             {
@@ -387,6 +420,11 @@ public final class ChannelAdministrationService
             catch(ConfigurationManager.ConfigurationCommitException exception)
             {
                 throw new PersistenceException("The channel could not be saved", exception);
+            }
+            catch(ConfigurationManager.ConfigurationPublicationException exception)
+            {
+                throw new ConfigurationManager.ConfigurationPublicationException(exception.getMessage(), exception,
+                    created.getConfigurationId(), selected.getId());
             }
             return new DiscoveryCreated(created.getConfigurationId(), selected.getId());
         })));

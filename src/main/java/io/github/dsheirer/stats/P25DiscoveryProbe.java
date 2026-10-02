@@ -69,6 +69,13 @@ public final class P25DiscoveryProbe implements AutoCloseable
         Objects.requireNonNull(settings);
     }
 
+    /** A band search already owns idle hardware; each short probe borrows that reservation. */
+    public P25DiscoveryProbe(TunerDiagnosticService tuners, TunerSettingsService.ProbeHold searchHold)
+    {
+        this((targetId, frequencyHz) -> allocate(tuners, null, targetId, frequencyHz,
+            Objects.requireNonNull(searchHold)), P25DiscoveryProbe::decoder, System::currentTimeMillis);
+    }
+
     /** Hardware/decoder seam for exercising saturated and stalled consumers without receiver hardware. */
     P25DiscoveryProbe(SourceFactory sources, DecoderFactory decoders, LongSupplier clock)
     {
@@ -111,13 +118,20 @@ public final class P25DiscoveryProbe implements AutoCloseable
     private static SourceLease allocate(TunerDiagnosticService tuners, TunerSettingsService settings,
                                         String targetId, long frequencyHz)
     {
+        return allocate(tuners, settings, targetId, frequencyHz, null);
+    }
+
+    private static SourceLease allocate(TunerDiagnosticService tuners, TunerSettingsService settings,
+                                        String targetId, long frequencyHz,
+                                        TunerSettingsService.ProbeHold borrowedHold)
+    {
         Tuner tuner = tuners.tunerForTarget(targetId);
         if(tuner == null || !(tuner.getChannelSourceManager() instanceof PolyphaseChannelSourceManager manager))
         {
             throw new IllegalStateException("Selected tuner is unavailable for P25 discovery");
         }
 
-        TunerSettingsService.ProbeHold hold = settings.holdForProbe(tuner);
+        TunerSettingsService.ProbeHold hold = borrowedHold != null ? borrowedHold : settings.holdForProbe(tuner);
         try
         {
             long center = tuner.getTunerController().getFrequency();
@@ -195,7 +209,7 @@ public final class P25DiscoveryProbe implements AutoCloseable
                         }
                         finally
                         {
-                            hold.close();
+                            if(borrowedHold == null) hold.close();
                         }
                     }
                 }
@@ -203,7 +217,7 @@ public final class P25DiscoveryProbe implements AutoCloseable
         }
         catch(RuntimeException exception)
         {
-            hold.close();
+            if(borrowedHold == null) hold.close();
             throw exception;
         }
     }

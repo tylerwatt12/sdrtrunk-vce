@@ -24,6 +24,78 @@ class SpectrumChannelCreationTest
 {
     @TempDir Path temporary;
 
+    @Test void discoveryReusesFriendlyNamesAndRecognizesAnAlreadySavedServingSite() throws Exception
+    {
+        try(Fixture fixture = fixture())
+        {
+            P25SiteIdentity identity = new P25SiteIdentity(0xBEE00, 0x123, 1, 2);
+            var review = fixture.channels.discoveryReview("p25-phase1", 851_012_500, "Tuner", identity, "C4FM");
+            var template = review.template();
+            var named = new ChannelDefinition(null, template.protocolId(), "County Public Safety", "North",
+                "North control", null, template.aliasListId(), template.source(), template.settings(),
+                List.of(), List.of(), List.of(), List.of(), ChannelDefinition.Observed.EMPTY);
+            var saved = fixture.channels.createDiscovered(named, identity, "County P25", review.revision(), false);
+            var known = fixture.channels.discoverySiteMatch(identity);
+            assertEquals(saved.configurationId(), known.configurationId());
+            assertEquals("North control", known.name());
+            assertEquals("County Public Safety", known.system());
+            assertEquals("North", known.site());
+            var sameSite = fixture.channels.discoveryReview("p25-phase1", 852_012_500, "Tuner", identity, "C4FM");
+            assertEquals("County Public Safety", sameSite.template().system());
+            assertEquals("North", sameSite.template().site());
+            var otherSite = fixture.channels.discoveryReview("p25-phase1", 852_012_500, "Tuner",
+                new P25SiteIdentity(0xBEE00, 0x123, 1, 3), "CQPSK");
+            assertEquals("County Public Safety", otherSite.template().system());
+            assertNull(fixture.channels.discoverySiteMatch(new P25SiteIdentity(0xBEE00, 0x123, 1, 3)));
+            var unrelated = fixture.channels.discoveryReview("p25-phase1", 853_012_500, "Tuner",
+                new P25SiteIdentity(0xBEE01, 0x123, 1, 2), "CQPSK");
+            assertEquals("P25 BEE01-123", unrelated.template().system());
+        }
+    }
+
+    @Test void savedForLaterKeepsAutomaticStartupOffWithoutLeavingAnOrderGap() throws Exception
+    {
+        try(Fixture fixture = fixture())
+        {
+            P25SiteIdentity first = new P25SiteIdentity(0xBEE00, 0x123, 1, 2);
+            var review = fixture.channels.discoveryReview("p25-phase1", 851_012_500, "Tuner", first, "C4FM");
+            var saved = fixture.channels.createDiscovered(review.template(), first, "County P25",
+                review.revision(), false);
+            var disk = new ConfigurationRepository(fixture.database).load();
+            assertFalse(disk.channels().getFirst().isAutoStart());
+            assertNull(disk.channels().getFirst().getAutoStartOrder());
+            assertEquals("C4FM", fixture.channels.get(saved.configurationId()).channel().settings().get("modulation"));
+            P25SiteIdentity second = new P25SiteIdentity(0xBEE00, 0x123, 1, 3);
+            var next = fixture.channels.discoveryReview("p25-phase1", 852_012_500, "Tuner", second, "CQPSK");
+            var listening = fixture.channels.createDiscovered(next.template(), second, null, next.revision(), true);
+            disk = new ConfigurationRepository(fixture.database).load();
+            var enabled = disk.channels().stream().filter(channel ->
+                channel.getConfigurationId().equals(listening.configurationId())).findFirst().orElseThrow();
+            assertTrue(enabled.isAutoStart());
+            assertEquals(1, enabled.getAutoStartOrder());
+            assertEquals(saved.aliasListId(), listening.aliasListId());
+        }
+    }
+
+    @Test void longSystemNamesKeepAValidSuggestedAliasListName() throws Exception
+    {
+        try(Fixture fixture = fixture())
+        {
+            P25SiteIdentity identity = new P25SiteIdentity(0xBEE00, 0x123, 1, 2);
+            var review = fixture.channels.discoveryReview("p25-phase1", 851_012_500, "Tuner", identity, "C4FM");
+            var template = review.template();
+            String system = "Countywide Regional Public Safety Radio System";
+            var named = new ChannelDefinition(null, template.protocolId(), system, template.site(), template.name(),
+                null, template.aliasListId(), template.source(), template.settings(), List.of(), List.of(),
+                List.of(), List.of(), ChannelDefinition.Observed.EMPTY);
+            fixture.channels.createDiscovered(named, identity, "County P25", review.revision(), false);
+            var next = fixture.channels.discoveryReview("p25-phase1", 852_012_500, "Tuner",
+                new P25SiteIdentity(0xBEE00, 0x123, 1, 3), "CQPSK");
+            assertEquals(system, next.template().system());
+            assertEquals("P25 BEE00-123", next.defaultNewAliasListName());
+        }
+    }
+
     @Test void newP25ListAndChannelAreSavedTogetherWithListeningDefaultsAndIdentity() throws Exception
     {
         try(Fixture fixture = fixture())

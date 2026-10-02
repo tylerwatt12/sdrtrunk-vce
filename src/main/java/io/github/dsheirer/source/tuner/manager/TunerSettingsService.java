@@ -511,6 +511,22 @@ public final class TunerSettingsService implements AutoCloseable
         }
     }
 
+    /** Reserves idle Spectrum hardware for temporary search tuning. No saved tuner setting is changed. */
+    public ProbeHold holdForSearch(DiscoveredTuner tuner, String leaseId)
+    {
+        synchronized(mLifecycleLock)
+        {
+            if(!verifyBrowse(tuner, leaseId) || !mBrowseOwners.get(tuner).canTune ||
+                !lifecycleGroup(tuner).stream().allMatch(TunerSettingsService::isIdle))
+                throw new SettingUnavailableException("Choose an idle receiver for the search");
+            if(tuner.getTuner().getTunerController().isCenterFrequencyLocked())
+                throw new SettingUnavailableException("Unlock the receiver's center frequency before searching");
+            ProbeHold hold = holdForProbe(tuner);
+            hold.searchLeaseId = leaseId;
+            return hold;
+        }
+    }
+
     private <T> CompletableFuture<T> submitBrowse(DiscoveredTuner tuner, List<DiscoveredTuner> group,
                                                  Supplier<T> operation)
     {
@@ -604,10 +620,12 @@ public final class TunerSettingsService implements AutoCloseable
         private final DiscoveredTuner tuner;
         private final List<DiscoveredTuner> group;
         private final Tuner runtime;
-        private final long center;
+        private long center;
+        private final long originalCenter;
         private final double rate;
         private final Map<DiscoveredTuner,Long> generations = new HashMap<>();
         private boolean closed;
+        private String searchLeaseId;
 
         private ProbeHold(DiscoveredTuner tuner, List<DiscoveredTuner> group)
         {
@@ -615,6 +633,7 @@ public final class TunerSettingsService implements AutoCloseable
             this.group = group;
             runtime = tuner.getTuner();
             center = runtime.getTunerController().getFrequency();
+            originalCenter = center;
             rate = runtime.getTunerController().getSampleRate();
             group.forEach(member -> generations.put(member, member.operatorGeneration()));
         }
@@ -627,6 +646,53 @@ public final class TunerSettingsService implements AutoCloseable
                     tuner.isAvailable() && runtime.getTunerController().getFrequency() == center &&
                     runtime.getTunerController().getSampleRate() == rate && group.stream().allMatch(member ->
                         mContains.test(member) && member.operatorGeneration() == generations.get(member));
+            }
+        }
+
+        /** Search worker only. Allocation and hardware locks are attempted once; occupied hardware is never tuned. */
+        public void tune(long frequencyHz)
+        {
+            tune(frequencyHz, false);
+        }
+
+        /** Expired searches may restore only their still-owned idle hardware, never a later owner's settings. */
+        public void restoreSearchCenter()
+        {
+            tune(originalCenter, true);
+        }
+
+        private void tune(long frequencyHz, boolean restoring)
+        {
+            synchronized(mLifecycleLock)
+            {
+                BrowseSession owner = mBrowseOwners.get(tuner);
+                if(searchLeaseId == null || !valid() || owner == null || !owner.id.equals(searchLeaseId) ||
+                    !owner.ownsModes() || !restoring && !verifyBrowse(tuner, searchLeaseId))
+                    throw new SettingUnavailableException("The search receiver changed; begin again");
+                List<DiscoveredTuner> locked = lockAllocationGroup(group);
+                TunerController controller = runtime.getTunerController();
+                try
+                {
+                    if(!group.stream().allMatch(TunerSettingsService::isIdle))
+                        throw new SettingUnavailableException("Channels are using this receiver");
+                    if(!controller.getLock().tryLock())
+                        throw new SettingUnavailableException("Receiver settings are changing; retry the search");
+                    try
+                    {
+                        if(controller.isCenterFrequencyLocked())
+                            throw new SettingUnavailableException("The receiver's center frequency is locked");
+                        if(frequencyHz < controller.getMinimumFrequency() || frequencyHz > controller.getMaximumFrequency())
+                            throw new IllegalArgumentException("This frequency is outside the receiver's tuning range");
+                        controller.setFrequency(frequencyHz);
+                        center = controller.getFrequency();
+                    }
+                    catch(io.github.dsheirer.source.SourceException exception)
+                    {
+                        throw new SettingUnavailableException("The receiver could not tune to this frequency");
+                    }
+                    finally { controller.getLock().unlock(); }
+                }
+                finally { unlockAllocationGroup(locked); }
             }
         }
 
