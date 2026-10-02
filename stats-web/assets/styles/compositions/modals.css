@@ -69,7 +69,11 @@ body.modal-open {
 }
 
 .read-only-modal.tuner-frequency-lookup-modal {
-  width: min(var(--modal-size-large), 96vw);
+  width: min(800px, 96vw);
+}
+
+.read-only-modal.ui-confirmation-modal {
+  width: min(var(--modal-size-small), 96vw);
 }
 
 .modal-header {
@@ -124,6 +128,21 @@ body.modal-open {
 
 .modal-content:has(.ui-modal-footer) {
   scroll-padding-bottom: calc(var(--control-height-comfortable) + var(--space-3) * 2 + var(--space-4));
+}
+
+.ui-confirmation-content {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-4);
+}
+
+.ui-confirmation-message {
+  margin: 0;
+  line-height: var(--line-height-body);
+}
+
+.ui-confirmation-content > .ui-modal-footer {
+  margin-top: 0;
 }
 
 @media (max-width: 560px) {

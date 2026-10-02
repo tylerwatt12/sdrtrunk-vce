@@ -597,6 +597,7 @@ final class StatsLiveService implements AutoCloseable
                 .anyMatch(tag -> tag.length() > MAXIMUM_LIVE_TAG_LENGTH)));
         putText(row, "lcn", snapshot.lcn(), MAXIMUM_LIVE_TEXT_LENGTH);
         row.put("frequency_hz", snapshot.frequencyHz());
+        put(row, "bandwidth_hz", snapshot.bandwidthHz());
         put(row, "signal_dbfs", snapshot.signalDbfs());
         put(row, "decode_health_pct", snapshot.decodeHealthPercent());
 

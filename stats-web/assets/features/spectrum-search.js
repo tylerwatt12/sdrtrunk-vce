@@ -28,6 +28,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
   let firstCandidateId = null;
   let progressNodes = null;
   let disposeBandPicker = () => {};
+  const preparedCatalogTuners = new Map();
   const selected = new Set();
   const drafts = new Map();
   const groups = new Map();
@@ -40,9 +41,8 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       disposeBandPicker();
       abort.abort();
       window.removeEventListener('pagehide', abandon);
-      void releaseJob().finally(() => releaseLease()).finally(() => {
-        if (paused) return context.resume?.(usedReceiverId);
-      });
+      void releaseJob({ bestEffort: true }).finally(() => releaseLease({ bestEffort: true }))
+        .finally(() => resumeSpectrum());
     }
   });
   if (!modal) return null;
@@ -54,25 +54,69 @@ export function openSpectrumSearchWizard(ui, context = {}) {
   };
   const jobPath = () => `${path}/${encodeURIComponent(job.job_id)}`;
   const browsePath = (id) => `/api/v1/admin/tuners/${encodeURIComponent(id)}/browse`;
-  const releaseLease = async () => {
+  const leaseNoLongerExists = (cause) => [404, 410].includes(Number(cause?.status)) ||
+    ['tuner_not_found', 'tuner_browse_expired'].includes(String(cause?.code || ''));
+  const leaseRenewalLostOwnership = (cause) => leaseNoLongerExists(cause) ||
+    Number(cause?.status) === 409 || String(cause?.code || '') === 'tuner_browse_unavailable';
+  const jobNoLongerExists = (cause) => [404, 410].includes(Number(cause?.status)) ||
+    ['search_expired', 'spectrum_search_expired'].includes(String(cause?.code || ''));
+  const clearRenewal = () => {
     window.clearTimeout(renewalTimer);
-    const previous = lease;
-    lease = null;
-    if (previous?.lease_id) await requestJson(browsePath(usedReceiverId), {
-      method: 'DELETE', body: { lease_id: previous.lease_id }, page: false, keepalive: true
-    }).catch(() => {});
+    renewalTimer = null;
   };
-  const releaseJob = async () => {
+  const scheduleRenewal = () => {
+    clearRenewal();
+    if (current() && (lease || job)) renewalTimer = window.setTimeout(() => void renew(), 10000);
+  };
+  const releaseLease = async ({ bestEffort = false } = {}) => {
+    clearRenewal();
+    const previous = lease;
+    if (!previous?.lease_id) return;
+    try {
+      await requestJson(browsePath(previous.tuner?.id || usedReceiverId), {
+        method: 'DELETE', body: { lease_id: previous.lease_id }, page: false, keepalive: true
+      });
+      if (lease?.lease_id === previous.lease_id) lease = null;
+    } catch (cause) {
+      if (bestEffort || leaseNoLongerExists(cause)) {
+        if (lease?.lease_id === previous.lease_id) lease = null;
+        if (bestEffort) return;
+        return;
+      }
+      if (current() && lease?.lease_id === previous.lease_id) scheduleRenewal();
+      throw cause;
+    }
+  };
+  const releaseJob = async ({ bestEffort = false } = {}) => {
     window.clearTimeout(pollTimer);
+    pollTimer = null;
     const previous = job;
-    job = null;
-    if (previous?.job_id) await requestJson(`${path}/${encodeURIComponent(previous.job_id)}`, {
-      method: 'DELETE', page: false, keepalive: true
-    }).catch(() => {});
+    if (!previous?.job_id) return true;
+    try {
+      await requestJson(`${path}/${encodeURIComponent(previous.job_id)}`, {
+        method: 'DELETE', page: false, keepalive: true
+      });
+      if (job?.job_id === previous.job_id) job = null;
+      scheduleRenewal();
+      return true;
+    } catch (cause) {
+      if (jobNoLongerExists(cause)) {
+        if (job?.job_id === previous.job_id) job = null;
+        scheduleRenewal();
+        return true;
+      }
+      if (bestEffort) return false;
+      throw cause;
+    }
+  };
+  const resumeSpectrum = () => {
+    if (!paused) return;
+    paused = false;
+    return context.resume?.(usedReceiverId);
   };
   const abandon = () => {
     abort.abort();
-    void releaseJob().finally(() => releaseLease());
+    void releaseJob({ bestEffort: true }).finally(() => releaseLease({ bestEffort: true }));
   };
   window.addEventListener('pagehide', abandon);
   const button = (label, action, primary = false, host = actions) => {
@@ -99,8 +143,12 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     return details;
   };
   const error = (copy, cause) => {
+    feedback.hidden = false;
     feedback.replaceChildren(node('p', '', copy));
     if (cause?.message) feedback.append(disclosure('Error details', node('p', 'muted', cause.message)));
+  };
+  const clearFeedback = () => {
+    feedback.replaceChildren();
   };
   const show = (next, index, title) => {
     disposeBandPicker();
@@ -117,7 +165,8 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     const heading = node('h3', '', title);
     heading.tabIndex = -1;
     stage.replaceChildren(heading, feedback);
-    feedback.replaceChildren();
+    feedback.hidden = false;
+    clearFeedback();
     actions.replaceChildren();
     heading.focus({ preventScroll: true });
   };
@@ -142,8 +191,83 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       node('p', 'muted', tuner ? `Sees about ${(Number(tuner.usable_bandwidth_hz) / 1_000_000).toFixed(2)} MHz at once` :
         'Search a band for P25 control channels.'));
   };
+  const receiverPreparationState = (tuner) => {
+    const channelCount = Math.max(0, Number(tuner.channel_count || 0));
+    const lockSetting = (tuner.settings || []).find((setting) => setting.id === 'center_frequency_locked');
+    const reasonText = String(tuner.reason || '');
+    const needsStop = channelCount > 0 || /channel|serving/i.test(reasonText);
+    const locked = tuner.center_frequency_locked === true || lockSetting?.value === true ||
+      /lock center|center.*lock|unlock/i.test(reasonText);
+    const canPrepare = typeof context.prepareReceiver === 'function' && tuner.takeover_allowed !== false &&
+      (needsStop || locked);
+    return { tuner, channelCount, reasonText, needsStop, locked, canPrepare };
+  };
+  const prepareReceiver = async ({ tuner }) => {
+    if (busy) return;
+    setBusy(true);
+    clearFeedback();
+    feedback.hidden = true;
+    try {
+      const acquired = await context.prepareReceiver(tuner);
+      if (!acquired) return;
+      if (!current()) {
+        void requestJson(browsePath(tuner.id), {
+          method: 'DELETE', body: { lease_id: acquired.lease_id }, page: false, keepalive: true
+        }).catch(() => {});
+        return;
+      }
+      if (!preparedCatalogTuners.has(tuner.id)) preparedCatalogTuners.set(tuner.id, tuner);
+      receiverId = tuner.id;
+      usedReceiverId = tuner.id;
+      lease = acquired;
+      const prepared = { ...tuner, ...(acquired.tuner || {}), eligible: true, reason: null,
+        channel_count: 0, center_frequency_locked: false };
+      catalog.tuners = (catalog.tuners || []).map((candidate) =>
+        candidate.id === tuner.id ? prepared : candidate);
+      scheduleRenewal();
+      showBand();
+    } catch (cause) {
+      error('This receiver could not be prepared. Check its channels and try again.', cause);
+    } finally { if (current()) setBusy(false); }
+  };
+  const receiverCard = (state) => {
+    const { tuner, channelCount, reasonText, needsStop, locked, canPrepare } = state;
+    const status = channelCount ? `${channelCount} channel${channelCount === 1 ? '' : 's'} running` :
+      needsStop ? 'Channels running' : locked ? 'Center locked' : 'Unavailable';
+    const row = node('article', 'ui-surface spectrum-search-receiver-card');
+    row.setAttribute('role', 'listitem');
+    const heading = node('div', 'spectrum-search-receiver-heading');
+    const statusPill = uiPill(status, 'warning');
+    statusPill.classList.add('spectrum-search-receiver-status');
+    heading.append(node('strong', '', tuner.name || 'Receiver'), statusPill);
+    const reason = needsStop ? 'VCE restarts the channels it stopped; calls in progress will end' :
+      locked ? 'Center lock returns after the search' : reasonText || 'Not available for searching';
+    const details = node('p', 'muted spectrum-search-receiver-detail', [
+      Number(tuner.usable_bandwidth_hz) > 0 ?
+        `${(Number(tuner.usable_bandwidth_hz) / 1_000_000).toFixed(2)} MHz scan width` : '',
+      reason
+    ].filter(Boolean).join(' · '));
+    const copy = node('div', 'spectrum-search-receiver-copy');
+    copy.append(heading, details);
+    row.append(copy);
+    if (canPrepare) {
+      const prepareLabel = needsStop ? 'Stop channels and use' : 'Unlock and use';
+      const prepare = uiActionButton(prepareLabel, '', () => void prepareReceiver(state),
+        'ui-button ui-button-primary spectrum-search-prepare-receiver');
+      prepare.setAttribute('aria-label', `${prepareLabel}: ${tuner.name || 'Receiver'}`);
+      row.append(prepare);
+    }
+    return row;
+  };
+  const receiverList = (states) => {
+    const list = node('div', 'spectrum-search-receiver-list');
+    list.setAttribute('role', 'list');
+    states.forEach((state) => list.append(receiverCard(state)));
+    return list;
+  };
   const renew = async () => {
     if (!current() || (!lease && !job)) return;
+    clearRenewal();
     const previous = lease;
     const operation = generation;
     try {
@@ -163,24 +287,51 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       }
     } catch (cause) {
       if (current() && !busy) {
+        if (previous && leaseRenewalLostOwnership(cause)) {
+          if (lease?.lease_id === previous.lease_id) lease = null;
+          showExpired();
+          return;
+        }
         if (isExpired(cause)) showExpired();
         else error('We couldn’t refresh this search. Check your connection before continuing.', cause);
       }
     }
-    if (current() && operation === generation && (lease || job))
-      renewalTimer = window.setTimeout(() => void renew(), 10000);
+    if (current() && operation === generation && (lease || job)) scheduleRenewal();
   };
   const showBand = () => {
-    show('band', 0, 'Choose where to look');
     const available = (catalog.tuners || []).filter((tuner) => tuner.eligible);
+    show('band', 0, available.length ? 'Choose where to look' : 'Choose a receiver');
     if (!available.length) {
-      stage.append(node('div', 'ui-notice ui-notice-warning',
-        'Band search needs an idle receiver with Lock center off. Stop its channels, turn off Lock center, or connect another receiver, then try again.'),
-        ...(catalog.tuners || []).map((tuner) => node('p', 'muted', `${tuner.name}: ${tuner.reason || 'Unavailable'}`)));
+      summary.replaceChildren();
+      summary.hidden = true;
+      feedback.hidden = true;
+      const blockedTuners = (catalog.tuners || []).map(receiverPreparationState);
+      const allStopping = blockedTuners.length > 0 && blockedTuners.every((state) =>
+        state.needsStop && state.canPrepare);
+      const anyPreparation = blockedTuners.some((state) => state.canPrepare);
+      const anyStopping = blockedTuners.some((state) => state.needsStop && state.canPrepare);
+      const unavailable = node('div', 'spectrum-search-unavailable');
+      const introduction = node('div', 'ui-notice ui-notice-warning spectrum-search-unavailable-intro');
+      introduction.append(node('strong', '', !blockedTuners.length ? 'No receivers are available' :
+        allStopping ? 'All receivers are in use' : anyPreparation ? 'A receiver needs to be prepared' :
+          'No receiver is ready for a search'),
+      node('p', '', !blockedTuners.length ? 'Connect or enable a supported receiver, then refresh this list.' :
+        allStopping ? 'Choose one below. VCE will stop its active channels for the search and restart the channels it stopped when you finish. Calls in progress will end and will not resume.' :
+          anyPreparation ? (anyStopping ?
+            'Choose an action below. VCE restores temporary changes when you finish. Stopping channels may end calls in progress.' :
+            'Choose Unlock and use below. VCE will restore Lock center when you finish.') :
+            'Check the reason below, then manage receivers or refresh this list.'));
+      const manage = node('p', 'ui-field-hint');
+      manage.append('Need to change receiver settings? ', anchor('Manage receivers', href('tuners')));
+      introduction.append(manage);
+      const list = receiverList(blockedTuners);
+      unavailable.append(introduction, list);
+      stage.append(unavailable);
       button('Close', () => modal.close());
-      button('Refresh receivers', () => void load(), true);
+      button('Refresh receivers', () => void load(), !anyPreparation);
       return;
     }
+    summary.hidden = false;
     if (!available.some((tuner) => tuner.id === receiverId)) receiverId = catalog.suggested_tuner_id ||
       available.slice().sort((a, b) => b.usable_bandwidth_hz - a.usable_bandwidth_hz)[0].id;
     if (!available.some((tuner) => tuner.id === receiverId)) receiverId = available[0].id;
@@ -334,8 +485,15 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       if (bandMenu.matches(':popover-open')) bandMenu.hidePopover();
     };
     chooser.addEventListener('change', updateBands);
+    const otherReceivers = (catalog.tuners || []).filter((tuner) => !tuner.eligible)
+      .map(receiverPreparationState).filter((state) => state.canPrepare);
+    const otherReceiverChoice = otherReceivers.length ? disclosure('Use another receiver',
+      node('p', 'ui-field-hint',
+        'You can temporarily stop channels or unlock a receiver if it is a better fit for this search.'),
+      receiverList(otherReceivers)) : null;
     form.append(formField('Receiver', uiSelectFrame(chooser)), bands, custom, description,
       node('div', 'ui-notice', 'The receiver will move through the selected bands, then check promising signals. Results appear when both steps are complete. Other receivers keep running.'),
+      ...(otherReceiverChoice ? [otherReceiverChoice] : []),
       disclosure('What are P25 channels?', node('p', '', 'P25 radio systems use a steady control signal to coordinate a group of radio frequencies. This search finds and checks those control signals. Voice-only and other radio signals are not added.'),
         node('p', '', 'A receiver sees a limited frequency window at once. Searching moves this window through the bands you choose.')));
     form.addEventListener('submit', (event) => event.preventDefault());
@@ -358,15 +516,28 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     }, true);
     updateBands();
   };
+  const restorePreparedCatalog = () => {
+    if (!catalog || !preparedCatalogTuners.size) return;
+    catalog.tuners = (catalog.tuners || []).map((tuner) => preparedCatalogTuners.get(tuner.id) || tuner);
+    preparedCatalogTuners.clear();
+  };
+  const refreshReceiverCatalog = async () => {
+    const refreshed = await request(`${path}/catalog`, { csrf: false });
+    catalog = refreshed;
+    preparedCatalogTuners.clear();
+  };
   const begin = async (ranges) => {
     const operation = ++generation;
     setBusy(true);
     try {
       await releaseJob();
-      await releaseLease();
+      if (!current() || operation !== generation) return;
+      const reusingPreparedReceiver = Boolean(lease?.lease_id && usedReceiverId === receiverId);
+      if (!reusingPreparedReceiver) await releaseLease();
       if (!current() || operation !== generation) return;
       usedReceiverId = receiverId;
-      const acquired = await request(browsePath(receiverId), { method: 'POST', body: {} });
+      const acquired = await request(browsePath(receiverId), { method: 'POST',
+        body: reusingPreparedReceiver ? { lease_id: lease.lease_id } : {} });
       if (!current() || operation !== generation) {
         void requestJson(browsePath(receiverId), { method: 'DELETE', body: { lease_id: acquired.lease_id }, page: false });
         return;
@@ -385,21 +556,55 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       groups.clear();
       firstCandidateId = null;
       modal.setDirty(false);
-      renewalTimer = window.setTimeout(() => void renew(), 10000);
+      scheduleRenewal();
       drawJob();
     } catch (cause) {
-      if (current() && operation === generation) error(cause.code === 'invalid_request' ?
-        cause.message || 'This search is too large for this receiver. Choose a smaller range or a wider receiver.' :
-        'We couldn’t start the search. Check the receiver and try again.', cause);
-      await releaseLease();
+      try { await releaseLease(); } catch (releaseCause) {
+        if (current() && operation === generation) {
+          error('The search did not start, and this receiver could not be released yet. Try again.', releaseCause);
+        }
+        return;
+      }
+      if (!current() || operation !== generation) return;
+      restorePreparedCatalog();
+      try { await refreshReceiverCatalog(); } catch (_) {
+        /* The original catalog row is safer than leaving the borrowed receiver shown as idle. */
+      }
+      if (current() && operation === generation) {
+        showBand();
+        error(cause.code === 'invalid_request' ?
+          cause.message || 'This search is too large for this receiver. Choose a smaller range or a wider receiver.' :
+          'We couldn’t start the search. The receiver was restored; check it and try again.', cause);
+      }
     } finally { if (current() && operation === generation) setBusy(false); }
   };
   const restart = async () => {
-    generation += 1;
+    const operation = ++generation;
     setBusy(true);
-    await releaseJob();
-    await releaseLease();
-    if (current()) { modal.setDirty(false); showBand(); setBusy(false); }
+    let step = 'job';
+    try {
+      await releaseJob();
+      step = 'receiver';
+      await releaseLease();
+      step = 'catalog';
+      if (!current() || operation !== generation) return;
+      await refreshReceiverCatalog();
+      if (!current() || operation !== generation) return;
+      modal.setDirty(false);
+      showBand();
+    } catch (cause) {
+      if (!current() || operation !== generation) return;
+      show('failed', 0, 'Choose where to look');
+      error(step === 'job' ?
+        'The previous search could not be stopped yet. Try again before starting another search.' :
+        step === 'receiver' ?
+        (lease?.takeover ?
+          'This receiver could not resume its channels yet. Try again before starting another search.' :
+          'This receiver could not return to Spectrum yet. Try again before starting another search.') :
+        'We couldn’t refresh the receiver list. Check your connection and try again.', cause);
+      button('Close', () => modal.close());
+      button('Try again', () => void restart(), true);
+    } finally { if (current() && operation === generation) setBusy(false); }
   };
   const drawProgress = () => {
     if (!progressNodes) {
@@ -432,7 +637,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       const updated = await request(jobPath(), { csrf: false });
       if (!current() || operation !== generation) return;
       job = updated;
-      feedback.replaceChildren();
+      clearFeedback();
       drawJob();
     } catch (cause) {
       if (!current() || operation !== generation) return;
@@ -655,6 +860,35 @@ export function openSpectrumSearchWizard(ui, context = {}) {
   });
   const isExpired = (cause) => [404, 410].includes(cause?.status) ||
     ['search_expired', 'spectrum_search_expired'].includes(cause?.code);
+  const surfaceReceiverReleaseFailure = (cause) => {
+    const takeover = lease?.takeover === true;
+    error(takeover ?
+      'This receiver could not resume its channels yet. Try again before closing the search.' :
+      'This receiver could not return to Spectrum yet. Try again before closing the search.', cause);
+    if (actions.querySelector('[data-retry-receiver-release]')) return;
+    const retry = button(takeover ? 'Try resuming channels' : 'Try releasing receiver',
+      () => void retryReceiverRelease(), true);
+    retry.dataset.retryReceiverRelease = 'true';
+  };
+  const finishReceiverUse = async () => {
+    try {
+      await releaseLease();
+      await resumeSpectrum();
+      actions.querySelector('[data-retry-receiver-release]')?.remove();
+      clearFeedback();
+      if (current() && job) scheduleRenewal();
+      return true;
+    } catch (cause) {
+      if (current()) surfaceReceiverReleaseFailure(cause);
+      return false;
+    }
+  };
+  const retryReceiverRelease = async () => {
+    if (busy) return;
+    setBusy(true);
+    try { await finishReceiverUse(); }
+    finally { if (current()) setBusy(false); }
+  };
   const showExpired = () => {
     if (candidates().some((candidate) => candidate.saved)) {
       showSaved();
@@ -666,7 +900,15 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       button('Close', () => modal.close());
       button('Start a new search', () => void restart(), true);
     }
-    void releaseJob().finally(() => releaseLease());
+    void releaseJob().then(() => finishReceiverUse()).catch((cause) => {
+      if (current()) error('This search could not be closed yet. Try starting a new search again.', cause);
+    });
+  };
+  const finishReceiverIfComplete = async () => {
+    const finished = job?.restart_required || selectedCandidates().every((candidate) =>
+      candidate.saved || candidate.known_channel);
+    if (!finished) return false;
+    return finishReceiverUse();
   };
   const save = async (ids, startNow = true) => {
     if (job.restart_required) { showSaved(); return; }
@@ -685,11 +927,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       if (!current()) return;
       modal.setDirty(false);
       showSaved();
-      if (candidates().some((candidate) => candidate.running)) {
-        await releaseLease();
-        context.resume?.(usedReceiverId);
-        renewalTimer = window.setTimeout(() => void renew(), 10000);
-      }
+      await finishReceiverIfComplete();
     } catch (cause) {
       if (!current()) return;
       if (isExpired(cause)) { showExpired(); return; }
@@ -701,6 +939,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       if (job.restart_required || added || candidates().some((candidate) => candidate.saved)) {
         modal.setDirty(false);
         showSaved();
+        await finishReceiverIfComplete();
         if (!job.restart_required) error('Some channels were added. Check each result before retrying.', cause);
       } else if (cause.code === 'stale_revision' && job?.phase === 'complete') {
         showReview();
@@ -740,14 +979,29 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     show('loading', 0, 'Preparing the search…');
     setBusy(true);
     try {
-      await context.pause?.();
+      const inheritedLease = await context.pause?.();
       paused = true;
+      if (inheritedLease?.lease_id) {
+        lease = inheritedLease;
+        receiverId = inheritedLease.tuner?.id || receiverId;
+        usedReceiverId = receiverId;
+        scheduleRenewal();
+      }
       if (!current()) {
-        paused = false;
-        await context.resume?.(usedReceiverId);
+        await resumeSpectrum();
         return;
       }
       catalog = await request(`${path}/catalog`, { csrf: false });
+      preparedCatalogTuners.clear();
+      if (lease?.lease_id && usedReceiverId) {
+        const catalogTuner = (catalog.tuners || []).find((tuner) => tuner.id === usedReceiverId) || {};
+        const prepared = { ...catalogTuner, ...(lease.tuner || {}), id: usedReceiverId, eligible: true,
+          reason: null, channel_count: 0, center_frequency_locked: false };
+        catalog.tuners = (catalog.tuners || []).some((tuner) => tuner.id === usedReceiverId) ?
+          catalog.tuners.map((tuner) => tuner.id === usedReceiverId ? prepared : tuner) :
+          [...(catalog.tuners || []), prepared];
+        catalog.suggested_tuner_id = usedReceiverId;
+      }
       if (current()) showBand();
     } catch (cause) {
       if (current()) {

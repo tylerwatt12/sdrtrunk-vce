@@ -17,7 +17,7 @@
 @import url("./styles/compositions/app-chrome.css?v=14") layer(compositions);
 @import url("./styles/compositions/audio-dock.css?v=7") layer(compositions);
 @import url("./styles/compositions/charts.css?v=4") layer(compositions);
-@import url("./styles/compositions/modals.css?v=8") layer(compositions);
+@import url("./styles/compositions/modals.css?v=9") layer(compositions);
 @import url("./styles/compositions/settings.css?v=8") layer(compositions);
 @import url("./styles/features/access-landing.css?v=2") layer(features);
 @import url("./styles/features/about.css?v=1") layer(features);
@@ -25,7 +25,7 @@
 @import url("./styles/features/entity-details.css?v=12") layer(features);
 @import url("./styles/features/live.css?v=18") layer(features);
 @import url("./styles/features/radio-directory.css?v=8") layer(features);
-@import url("./styles/features/tuner-spectrum.css?v=17") layer(features);
+@import url("./styles/features/tuner-spectrum.css?v=18") layer(features);
 @import url("./styles/features/tuners.css?v=11") layer(features);
 @import url("./styles/features/listen-map.css?v=3") layer(features);
 @import url("./styles/features/network-visualizer.css?v=11") layer(features);

@@ -635,19 +635,25 @@ public final class SpectrumSearchService implements AutoCloseable
                         minimum = Math.round(setting.minimum().doubleValue() * 1_000_000);
                         maximum = Math.round(setting.maximum().doubleValue() * 1_000_000);
                     }
-            boolean groupBusy = item.deviceGroup() != null && inventory.stream().anyMatch(other ->
-                other.deviceGroup() != null && other.deviceGroup().id().equals(item.deviceGroup().id()) &&
-                    (other.channelCount() > 0 || other.transition() != null));
+            List<TunerAdministrationService.Item> group = item.deviceGroup() == null ? List.of(item) :
+                inventory.stream().filter(other -> other.deviceGroup() != null &&
+                    other.deviceGroup().id().equals(item.deviceGroup().id())).toList();
+            int channelCount = group.stream().mapToInt(TunerAdministrationService.Item::channelCount).sum();
+            boolean groupTransition = group.stream().anyMatch(other -> other.transition() != null);
+            boolean groupBusy = channelCount > 0 || groupTransition;
             boolean locked = configuration != null && configuration.isCenterFrequencyLocked();
             boolean supported = found != null && configuration != null && found.getTunerClass() != TunerClass.RECORDING_TUNER &&
                 (found.getTunerStatus() == TunerStatus.ENABLED || found.getTunerStatus() == TunerStatus.DISABLED) &&
                 bandwidth >= 100000 && maximum > minimum;
             boolean eligible = supported && item.channelCount() == 0 && item.transition() == null && !groupBusy && !locked &&
                 (runtime == null || !runtime.getTunerController().isLockedSampleRate());
-            String reason = eligible ? null : locked ? "Unlock the receiver's center frequency before searching" :
-                groupBusy || item.channelCount() > 0 ? "This receiver or its paired receiver is serving channels" :
-                    "Choose an available idle receiver";
-            targets.add(new SearchTuner(item.id(), item.name(), eligible, reason, bandwidth, minimum, maximum,
+            boolean takeoverAllowed = supported && !groupTransition;
+            String reason = eligible ? null : channelCount > 0 ?
+                channelCount + " active channel" + (channelCount == 1 ? "" : "s") + " will stop" :
+                locked ? "Center frequency is locked" : groupTransition ? "Receiver settings are changing" :
+                    "Choose an available receiver";
+            targets.add(new SearchTuner(item.id(), item.name(), eligible, takeoverAllowed, reason, channelCount,
+                locked, item.operatorState(), bandwidth, minimum, maximum,
                 item.frequencyHz() != null ? item.frequencyHz() : item.configuredFrequencyHz()));
         }
         String suggested = targets.stream().filter(SearchTuner::eligible)
@@ -733,8 +739,10 @@ public final class SpectrumSearchService implements AutoCloseable
     public record Range(long minimumHz, long maximumHz) { }
     public record Bounds(int maximumRanges, int maximumWindows, int maximumCandidates, long maximumTotalHz,
                          long minimumDwellMs, long maximumDwellMs, long defaultDwellMs, long maximumScanMs) { }
-    public record SearchTuner(String id, String name, boolean eligible, String reason, long usableBandwidthHz,
-                              long minimumFrequencyHz, long maximumFrequencyHz, Long centerFrequencyHz) { }
+    public record SearchTuner(String id, String name, boolean eligible, boolean takeoverAllowed, String reason,
+                              int channelCount, boolean centerFrequencyLocked, String operatorState,
+                              long usableBandwidthHz, long minimumFrequencyHz, long maximumFrequencyHz,
+                              Long centerFrequencyHz) { }
     public record Preset(String id, String label, List<Range> ranges) { }
     public record Catalog(List<SearchTuner> tuners, String suggestedTunerId, List<Preset> presets, Bounds bounds) { }
     public record Health(double qualityPct, long validMessages, long validControlMessages,

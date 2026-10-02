@@ -26,7 +26,7 @@ import { createStreamingWorkspace } from './features/streaming.js?v=8';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=7';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=12';
 import { createRecordingsFeature } from './features/recordings.js?v=17';
-import { openSpectrumSearchWizard } from './features/spectrum-search.js?v=5';
+import { openSpectrumSearchWizard } from './features/spectrum-search.js?v=6';
 import { createAudioDock } from './core/audio-dock.js?v=7';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=1';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
@@ -12796,6 +12796,7 @@ const TUNER_SPECTRUM_PROFILES = Object.freeze({
 const TUNER_ACTIVITY_PRIORITY = Object.freeze({
   ENCRYPTED: 6, CALL: 5, DATA: 4, CONTROL: 3, ACTIVE: 2, IDLE: 1
 });
+const TUNER_ACTIVITY_FALLBACK_BANDWIDTH_HZ = 12_500;
 const TUNER_ACTIVITY_LABELS = Object.freeze({
   ENCRYPTED: 'Encrypted voice',
   CALL: 'Voice call',
@@ -12896,7 +12897,7 @@ function radioReferenceResultView(matches, frequencyHz, signal = null) {
         addFact('callsign', 'Callsign', callsignLink(row.callsign));
       }
 
-      const actions = node('div', 'radioreference-result-actions');
+      const actions = node('div', 'radioreference-result-actions ui-action-row');
       if (!isTrunked && row.radio_reference_url) {
         const open = externalAnchor('Open RadioReference', row.radio_reference_url);
         open.classList.add('ui-button', 'ui-button-secondary');
@@ -13642,8 +13643,10 @@ function openTunerRadioReferenceLookup(selectedHz) {
   const message = node('p', 'tuner-frequency-action-message',
     'Checking RadioReference account and lookup region…');
   message.setAttribute('role', 'status');
+  const summary = node('header', 'tuner-frequency-lookup-summary');
+  summary.append(frequency, message);
   const results = node('div', 'tuner-frequency-results');
-  body.append(frequency, message, results);
+  body.append(summary, results);
   const modal = openReadOnlyModal('RadioReference lookup', body, {
     id: 'tuner-radioreference-lookup', className: 'tuner-frequency-lookup-modal',
     cleanup: () => detailController.abort()
@@ -14160,15 +14163,21 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const zoomOut = iconButton('icon-zoom-out', 'Zoom out', 'ui-button ui-button-secondary ui-icon-button');
   zoomOut.disabled = true;
   const resetZoom = iconButton('icon-replay', 'Reset zoom', 'ui-button ui-button-secondary ui-icon-button');
+  resetZoom.classList.remove('ui-icon-button');
+  resetZoom.classList.add('tuner-spectrum-labeled-action');
+  resetZoom.replaceChildren(node('span', '', 'Reset'));
   resetZoom.disabled = true;
   const pause = iconButton('icon-pause', 'Pause', 'ui-button ui-button-secondary ui-icon-button');
+  pause.classList.remove('ui-icon-button');
+  pause.classList.add('tuner-spectrum-labeled-action');
+  pause.append(node('span', '', 'Pause'));
   pause.disabled = true;
   pause.setAttribute('aria-pressed', 'false');
   const zoomActions = node('div', 'tuner-spectrum-zoom-actions ui-control-group');
   zoomActions.setAttribute('role', 'group');
   zoomActions.setAttribute('aria-label', 'Spectrum zoom');
-  zoomActions.append(zoomIn, zoomOut, resetZoom);
-  const playbackActions = node('div', 'tuner-spectrum-playback-actions ui-control-group');
+  zoomActions.append(zoomOut, zoomIn, resetZoom);
+  const playbackActions = node('div', 'tuner-spectrum-playback-actions');
   playbackActions.setAttribute('role', 'group');
   playbackActions.setAttribute('aria-label', 'Spectrum playback');
   playbackActions.append(pause);
@@ -14182,7 +14191,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const displayControls = node('div', 'tuner-spectrum-display-controls');
   const options = node('details', 'tuner-spectrum-options');
   const optionsSummary = node('summary', 'ui-button ui-button-secondary tuner-spectrum-options-summary');
-  optionsSummary.append(iconGlyph('icon-playback-controls'), node('span', '', 'Display options'));
+  optionsSummary.append(iconGlyph('icon-playback-controls'), node('span', '', 'Display'));
   optionsSummary.setAttribute('role', 'button');
   optionsSummary.setAttribute('aria-label', 'Display options');
   optionsSummary.setAttribute('aria-expanded', 'false');
@@ -14378,7 +14387,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const fftBandRail = node('div', 'tuner-spectrum-band-rail');
   fftBandRail.setAttribute('role', 'img');
   fftBandRail.setAttribute('aria-label', `${snapPresetDocument.countryLabel} frequency bands`);
-  if (!basicOperator) spectrum.card.append(fftBandRail);
+  if (!basicOperator) spectrum.card.insertBefore(fftBandRail, spectrum.host);
   const spectrumActiveFlags = node('div', 'tuner-spectrum-active-flags');
   const activeFlagLayers = [spectrumActiveFlags];
   if (!basicOperator) spectrum.host.insertBefore(spectrumActiveFlags, spectrum.guide);
@@ -15852,6 +15861,12 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     return activeCarrierFields(carrier).map((field) => `${field.label}: ${field.value}`).join(', ');
   }
 
+  function activeCarrierBandwidthHz(carrier) {
+    const bandwidths = (carrier?.rows || []).map((row) => Number(row?.bandwidth_hz))
+      .filter((bandwidth) => Number.isFinite(bandwidth) && bandwidth > 0);
+    return bandwidths.length ? Math.max(...bandwidths) : TUNER_ACTIVITY_FALLBACK_BANDWIDTH_HZ;
+  }
+
   function renderActiveCarrierFields(carrier, power) {
     const fragments = [];
     activeCarrierFields(carrier, power).forEach((field) => {
@@ -15902,7 +15917,8 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     const visibleSpanHz = Math.max(1, viewport.endHz - viewport.startHz);
     const signature = JSON.stringify([viewport.startHz, viewport.endHz,
       idleChannelsInput.checked,
-      carriers.map((carrier) => [carrier.frequencyHz, carrier.status, activeCarrierDescription(carrier)])]);
+      carriers.map((carrier) => [carrier.frequencyHz, activeCarrierBandwidthHz(carrier), carrier.status,
+        activeCarrierDescription(carrier)])]);
     if (signature === activeFlagSignature) return;
     if (hoverFlag) hideCursor();
     activeFlagSignature = signature;
@@ -15911,6 +15927,9 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
         `tuner-spectrum-active-flag status-${carrier.status.toLowerCase()}`);
       if (!basicOperator) flag.type = 'button';
       flag.style.left = `${((carrier.frequencyHz - viewport.startHz) / visibleSpanHz * 100).toFixed(3)}%`;
+      const bandwidthHz = activeCarrierBandwidthHz(carrier);
+      flag.style.width = `${(Math.min(1, bandwidthHz / visibleSpanHz) * 100).toFixed(4)}%`;
+      flag.dataset.bandwidthHz = String(bandwidthHz);
       flag.style.zIndex = String(TUNER_ACTIVITY_PRIORITY[carrier.status]);
       const details = activeCarrierDescription(carrier).replaceAll('\n', ', ');
       flag.setAttribute('aria-label', `${TUNER_ACTIVITY_LABELS[carrier.status]}, ${
@@ -15998,6 +16017,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   pause.addEventListener('click', () => {
     paused = !paused;
     setIconButton(pause, paused ? 'icon-play' : 'icon-pause', paused ? 'Resume' : 'Pause');
+    pause.append(node('span', '', paused ? 'Resume' : 'Pause'));
     pause.setAttribute('aria-pressed', String(paused));
     sync();
     setReadouts(true);
@@ -17472,6 +17492,26 @@ async function renderTunerSpectrum() {
   const retryBrowse = uiActionButton('Retry browsing', '', () => void chooseTuner(select.value),
     'ui-button ui-button-secondary');
   retryBrowse.hidden = true;
+  const confirmTakeover = (tuner, purpose = 'browse') => {
+    const channelCount = purpose === 'search' ? Math.max(0, Number(tuner?.channel_count) || 0) :
+      allocationGroupChannelCount(tuner);
+    const needsStop = channelCount > 0 || /channel|serving/i.test(String(tuner?.reason || ''));
+    const name = String(tuner?.name || 'This receiver');
+    const finish = purpose === 'search' ? 'when you finish or close the search' :
+      'when you resume, switch receivers, or leave Spectrum';
+    const message = needsStop ?
+      `${name} is running ${channelCount ? `${channelCount} active channel${channelCount === 1 ? '' : 's'}` :
+        'active channels'}. Stopping them will end any calls in progress; those calls will not resume. ` +
+        `VCE will restart the same configured channels ${finish}.` :
+      `${name} has Lock center on. VCE will unlock it temporarily and restore the lock ${finish}.`;
+    return confirmAction(message, {
+      title: needsStop ? (purpose === 'search' ? 'Stop channels for this search?' : 'Stop channels to tune?') :
+        'Unlock center temporarily?',
+      confirmLabel: needsStop ? (purpose === 'search' ? 'Stop channels and search' : 'Stop channels and tune') :
+        (purpose === 'search' ? 'Unlock and search' : 'Unlock and tune'),
+      cancelLabel: 'Cancel', tone: 'primary'
+    });
+  };
   const frequencyRail = node('aside', 'spectrum-browse-control-rail ui-surface');
   frequencyRail.setAttribute('aria-label', 'Selected frequency');
   frequencyRail.setAttribute('aria-live', 'polite');
@@ -17491,6 +17531,7 @@ async function renderTunerSpectrum() {
       formField, uiToggleField, anchor, href, entityRefHref, channelMHz, hex }, {
       pause: async () => {
         if (disposed) return;
+        const transferredLease = lease?.takeover === true && lease?.lease_id ? lease : null;
         searchOwner = owner;
         searchActive = true;
         probeActive = true;
@@ -17500,7 +17541,28 @@ async function renderTunerSpectrum() {
         retryBrowse.hidden = true;
         resetFrequencyRail();
         await spectrum.selectTarget('');
-        await releaseLease();
+        if (transferredLease) {
+          window.clearTimeout(leaseTimer);
+          syncTakeoverActions();
+          renderCenter();
+          message.textContent = 'Searching for P25 channels. Finish or stop the search to tune.';
+          return transferredLease;
+        }
+        try {
+          await releaseLease(false);
+        } catch (error) {
+          if (!disposed && searchOwner === owner) {
+            searchActive = false;
+            probeActive = false;
+            select.disabled = false;
+            findChannels.disabled = !tuners.length;
+            spectrum.selectTarget(selectedTuner?.spectrum_target_id || '');
+            spectrum.refreshTargets();
+            renderCenter();
+            syncTakeoverActions();
+          }
+          throw error;
+        }
         if (!disposed) {
           renderCenter();
           message.textContent = 'Searching for P25 channels. Finish or stop the search to tune.';
@@ -17512,6 +17574,12 @@ async function renderTunerSpectrum() {
         probeActive = false;
         findChannels.disabled = false;
         void chooseTuner(id || selectedTuner?.id || select.value);
+      },
+      prepareReceiver: async (tuner) => {
+        if (!await confirmTakeover(tuner, 'search')) return null;
+        return requestJson(leasePath(tuner.id), {
+          method: 'POST', body: { takeover: true }, page: false
+        });
       }
     });
   }, 'ui-button ui-button-primary');
@@ -17528,16 +17596,41 @@ async function renderTunerSpectrum() {
   let disposed = false;
   let operation = 0;
   let tuning = false;
+  let leaseRetrying = false;
+  const takeControl = uiActionButton('Stop channels to tune', '', () => void takeOverSelectedTuner(),
+    'ui-button ui-button-secondary spectrum-browse-takeover');
+  const resumeChannels = uiActionButton('Resume channels', '', () => void finishTakeover(),
+    'ui-button ui-button-secondary spectrum-browse-takeover');
+  takeControl.hidden = true;
+  resumeChannels.hidden = true;
+  const allocationGroupKey = (tuner) => String(tuner?.device_group?.id || tuner?.id || '');
+  const allocationGroupChannelCount = (tuner) => {
+    const key = allocationGroupKey(tuner);
+    if (!key) return Math.max(0, Number(tuner?.channel_count) || 0);
+    if (lease?.takeover === true && allocationGroupKey(lease.tuner) === key) return 0;
+    return tuners.filter((candidate) => allocationGroupKey(candidate) === key)
+      .reduce((total, candidate) => total + Math.max(0, Number(candidate.channel_count) || 0), 0);
+  };
+  const selectedInventoryTuner = () => tuners.find((candidate) => candidate.id === select.value) || selectedTuner;
   const tunerOptionLabel = (tuner) => {
     const rate = tunerInventoryRate(tuner.sample_rate_hz ?? tuner.configured_sample_rate_hz);
-    return `${tuner.name} · ${Number(tuner.channel_count || 0) ?
-      `${tuner.channel_count} active` : 'Idle'}${rate === 'Unavailable' ? '' : ` · ${rate}`}`;
+    const takeoverGroup = lease?.takeover === true &&
+      allocationGroupKey(lease.tuner) === allocationGroupKey(tuner);
+    const ownChannels = takeoverGroup ? 0 : Math.max(0, Number(tuner.channel_count) || 0);
+    const groupChannels = allocationGroupChannelCount(tuner);
+    const activity = ownChannels ? `${ownChannels} active` : groupChannels ? `${groupChannels} active in pair` : 'Idle';
+    return `${tuner.name} · ${activity}${rate === 'Unavailable' ? '' : ` · ${rate}`}`;
+  };
+  const refreshTunerOptionLabels = () => {
+    [...select.options].forEach((option) => {
+      const tuner = tuners.find((candidate) => candidate.id === option.value);
+      if (tuner) option.textContent = tunerOptionLabel(tuner);
+    });
   };
   const confirmSelectedTuner = (tuner) => {
     selectedTuner = tuner;
     tuners = tuners.map((candidate) => candidate.id === tuner.id ? tuner : candidate);
-    const option = [...select.options].find((candidate) => candidate.value === tuner.id);
-    if (option) option.textContent = tunerOptionLabel(tuner);
+    refreshTunerOptionLabels();
   };
   const centerSettingsSignature = (browse) => JSON.stringify([
     browse?.can_tune, tunerOperatorState(browse?.tuner), Number(browse?.tuner?.channel_count || 0),
@@ -17551,14 +17644,78 @@ async function renderTunerSpectrum() {
     const setting = settings.find((candidate) => candidate.id === 'frequency_mhz');
     return canEditCenter() && setting && tunerSettingUsability(setting, selectedTuner, settings).enabled;
   };
+  const browseMessage = (browse) => {
+    const stoppedCount = Array.isArray(browse?.stopped_channels) ? browse.stopped_channels.length : 0;
+    return browse?.takeover ? (stoppedCount ?
+      `${stoppedCount} active channel${stoppedCount === 1 ? '' : 's'} stopped while you tune. ` +
+        'VCE restarts those configured channels when you resume, switch receivers, or leave Spectrum. ' +
+        'Calls that were in progress will not resume.' :
+      'Center unlocked temporarily. Its previous setting returns when you switch receivers or leave Spectrum.') :
+      canTune() ? 'Click a signal to inspect it. Drag the full view to tune; zoom to pan.' :
+        canEditCenter() ? 'Center frequency locked. Unlock to tune; zoom to pan.' :
+          'Monitoring active channels. Click a signal to inspect it within this receiver window.';
+  };
   const leasePath = (id) => `/api/v1/admin/tuners/${encodeURIComponent(id)}/browse`;
-  const releaseLease = async () => {
+  const leaseOwnershipLost = (error) => [404, 409, 410].includes(Number(error?.status)) ||
+    ['tuner_not_found', 'tuner_browse_unavailable', 'tuner_browse_expired'].includes(String(error?.code || ''));
+  const syncTakeoverActions = () => {
+    const takeover = lease?.takeover === true;
+    const active = allocationGroupChannelCount(selectedInventoryTuner());
+    takeControl.hidden = takeover || lease?.can_tune === true || active === 0;
+    resumeChannels.hidden = !takeover;
+    takeControl.disabled = resumeChannels.disabled = probeActive || searchActive || tuning;
+  };
+  const releaseLease = async (suppressFailure = true) => {
     window.clearTimeout(leaseTimer);
+    leaseRetrying = false;
     const previous = lease;
-    lease = null;
-    if (previous?.lease_id) await requestJson(leasePath(previous.tuner.id), {
-      method: 'DELETE', body: { lease_id: previous.lease_id }, page: false, keepalive: true
-    }).catch(() => {});
+    if (!previous?.lease_id) {
+      lease = null;
+      syncTakeoverActions();
+      return;
+    }
+    try {
+      await requestJson(leasePath(previous.tuner.id), {
+        method: 'DELETE', body: { lease_id: previous.lease_id }, page: false, keepalive: true
+      });
+      if (lease?.lease_id === previous.lease_id) lease = null;
+    } catch (error) {
+      if (!suppressFailure) {
+        if (!disposed && lease?.lease_id === previous.lease_id) {
+          window.clearTimeout(leaseTimer);
+          leaseTimer = window.setTimeout(() => void renewLease(), 10_000);
+        }
+        throw error;
+      }
+      if (lease?.lease_id === previous.lease_id) lease = null;
+    } finally {
+      refreshTunerOptionLabels();
+      syncTakeoverActions();
+    }
+  };
+  const takeOverSelectedTuner = async () => {
+    const tuner = selectedInventoryTuner();
+    if (!tuner || !await confirmTakeover(tuner)) return;
+    await chooseTuner(tuner.id, true);
+  };
+  const finishTakeover = async () => {
+    const id = selectedTuner?.id;
+    if (!id || lease?.takeover !== true) return;
+    const generation = ++operation;
+    select.disabled = true;
+    findChannels.disabled = true;
+    resumeChannels.disabled = true;
+    message.textContent = 'Resuming the channels this Spectrum session stopped…';
+    try {
+      await releaseLease(false);
+      if (!disposed && generation === operation) await chooseTuner(id);
+    } catch (error) {
+      if (disposed || generation !== operation) return;
+      message.textContent = error.message || 'The channels could not be resumed yet. Try again.';
+      select.disabled = probeActive || searchActive;
+      findChannels.disabled = probeActive || searchActive || !tuners.length;
+      syncTakeoverActions();
+    }
   };
   const renderCenter = () => {
     centerControl?.close();
@@ -17577,8 +17734,11 @@ async function renderTunerSpectrum() {
       const control = tunerSettingInput(lock);
       control.element.classList.add('tuners-center-lock-field');
       control.input.dataset.tunerSetting = lock.id;
-      control.input.disabled = !canEditCenter() ||
+      control.input.disabled = lease?.takeover === true || !canEditCenter() ||
         !tunerSettingUsability(lock, selectedTuner, selectedTuner.settings).enabled;
+      if (lease?.takeover === true) {
+        control.element.title = 'Lock center returns to its previous setting when this Spectrum session ends';
+      }
       control.input.addEventListener('change', () => {
         void saveCenterSetting(lock, control.read(control.input)).catch(() => {});
       });
@@ -17591,6 +17751,7 @@ async function renderTunerSpectrum() {
     tuning = true;
     select.disabled = true;
     findChannels.disabled = true;
+    syncTakeoverActions();
     renderCenter();
     try {
       await requestJson(`/api/v1/admin/tuners/${encodeURIComponent(selectedTuner.id)}/settings/${setting.id}`, {
@@ -17617,6 +17778,7 @@ async function renderTunerSpectrum() {
       if (!disposed) {
         select.disabled = probeActive;
         findChannels.disabled = probeActive || searchActive || !tuners.length;
+        syncTakeoverActions();
         renderCenter();
         if (restoreFocus) centerHost.querySelector(`[data-tuner-setting="${setting.id}"]`)?.focus();
       }
@@ -17648,6 +17810,7 @@ async function renderTunerSpectrum() {
         probeActive = active;
         select.disabled = active;
         findChannels.disabled = active || searchActive;
+        syncTakeoverActions();
         renderCenter();
       },
       onSaved: (savedSession) => {
@@ -17656,6 +17819,7 @@ async function renderTunerSpectrum() {
         probeActive = false;
         select.disabled = false;
         findChannels.disabled = searchActive;
+        syncTakeoverActions();
         if (savedSession.saved?.running) void chooseTuner(selectedTuner.id);
         else {
           renderCenter();
@@ -17667,29 +17831,46 @@ async function renderTunerSpectrum() {
     })
   });
   const renewLease = async () => {
-    if (disposed || !lease) return;
+    if (disposed || !lease || searchActive) return;
     const existing = lease;
     try {
       const renewed = await requestJson(leasePath(existing.tuner.id), {
         method: 'POST', body: { lease_id: existing.lease_id }, page: false
       });
-      if (disposed || lease?.lease_id !== existing.lease_id) return;
+      if (disposed || searchActive || lease?.lease_id !== existing.lease_id) return;
       const centerChanged = centerSettingsSignature(lease) !== centerSettingsSignature(renewed);
       lease = renewed;
       confirmSelectedTuner(renewed.tuner);
       if (centerChanged) renderCenter();
+      if (leaseRetrying) {
+        leaseRetrying = false;
+        message.textContent = browseMessage(renewed);
+      }
+      syncTakeoverActions();
     } catch (error) {
-      if (disposed) return;
-      lease = null;
-      spectrum.selectTarget('');
-      message.textContent = error.message || 'Tuner browsing expired. Retry to resume.';
-      retryBrowse.hidden = false;
-      renderCenter();
+      if (disposed || searchActive || lease?.lease_id !== existing.lease_id) return;
+      if (leaseOwnershipLost(error)) {
+        lease = null;
+        leaseRetrying = false;
+        spectrum.selectTarget('');
+        message.textContent = error.message || 'Tuner browsing expired. Retry to resume.';
+        retryBrowse.hidden = false;
+        syncTakeoverActions();
+        renderCenter();
+        return;
+      }
+      leaseRetrying = true;
+      message.textContent = existing.takeover ?
+        'Connection interrupted. Your stopped channels are still under Spectrum control; retrying automatically.' :
+        'Connection interrupted. Spectrum will retry this receiver automatically.';
+      retryBrowse.hidden = true;
+      syncTakeoverActions();
+      leaseTimer = window.setTimeout(() => void renewLease(), 10_000);
       return;
     }
     leaseTimer = window.setTimeout(() => void renewLease(), 10_000);
   };
-  const chooseTuner = async (id) => {
+  const chooseTuner = async (id, takeover = false) => {
     const generation = ++operation;
     resetFrequencyRail();
     retryBrowse.hidden = true;
@@ -17698,35 +17879,47 @@ async function renderTunerSpectrum() {
     spectrum.selectTarget('');
     centerControl?.close();
     centerHost.replaceChildren();
-    await releaseLease();
-    if (disposed || generation !== operation) return;
     try {
-      const acquired = await requestJson(leasePath(id), { method: 'POST', body: {}, page: false });
+      await releaseLease(false);
+      if (disposed || generation !== operation) return;
+      const acquired = await requestJson(leasePath(id), {
+        method: 'POST', body: takeover ? { takeover: true } : {}, page: false
+      });
       if (disposed || generation !== operation) {
         void requestJson(leasePath(id), { method: 'DELETE', body: { lease_id: acquired.lease_id },
           page: false }).catch(() => {});
         return;
       }
       lease = acquired;
+      leaseRetrying = false;
       confirmSelectedTuner(acquired.tuner);
       select.value = id;
       storeTunerChoice('session-target', selectedTuner.spectrum_target_id || id);
       spectrum.selectTarget(selectedTuner.spectrum_target_id || '');
       spectrum.refreshTargets();
       renderCenter();
-      message.textContent = canTune() ?
-        'Click a signal to inspect it. Drag the full view to tune; zoom to pan.' :
-        canEditCenter() ? 'Center frequency locked. Unlock to tune; zoom to pan.' :
-          'Monitoring active channels. Click a signal to inspect it within this receiver window.';
+      message.textContent = browseMessage(acquired);
+      syncTakeoverActions();
       leaseTimer = window.setTimeout(() => void renewLease(), 10_000);
     } catch (error) {
-      message.textContent = error.message || 'Could not browse this tuner. Retry or choose another tuner.';
-      retryBrowse.hidden = false;
+      if (disposed || generation !== operation) return;
+      if (lease?.lease_id) {
+        select.value = selectedTuner?.id || '';
+        spectrum.selectTarget(selectedTuner?.spectrum_target_id || '');
+        spectrum.refreshTargets();
+        renderCenter();
+        message.textContent = error.message || 'Could not release this tuner. Try again before switching.';
+        retryBrowse.hidden = true;
+      } else {
+        message.textContent = error.message || 'Could not browse this tuner. Retry or choose another tuner.';
+        retryBrowse.hidden = false;
+      }
     }
     finally {
       if (!disposed) {
         select.disabled = probeActive || searchActive;
         findChannels.disabled = probeActive || searchActive || !tuners.length;
+        syncTakeoverActions();
       }
     }
   };
@@ -17762,7 +17955,7 @@ async function renderTunerSpectrum() {
   const browseControls = node('div', 'spectrum-browse-controls');
   browseControls.append(selectField, centerHost);
   const browseState = node('div', 'spectrum-browse-state');
-  browseState.append(spectrum.controls.status, message, retryBrowse);
+  browseState.append(spectrum.controls.status, message, retryBrowse, takeControl, resumeChannels);
   const toolbarSide = node('div', 'spectrum-browse-toolbar-side');
   toolbarSide.append(browseState, spectrum.controls.actions);
   spectrum.controls.selection.classList.add('spectrum-browse-selection');
@@ -17771,8 +17964,10 @@ async function renderTunerSpectrum() {
   spectrum.controls.toolbar.setAttribute('aria-label', 'Spectrum receiver controls');
   spectrum.controls.toolbar.replaceChildren(spectrum.controls.selection, toolbarSide);
   spectrum.element.classList.add('spectrum-browse-panel');
-  spectrum.element.append(spectrum.surfaces.visualWindow, spectrum.surfaces.displayControls,
+  const instrument = node('div', 'spectrum-browse-instrument');
+  instrument.append(spectrum.surfaces.visualWindow, spectrum.surfaces.displayControls,
     spectrum.surfaces.readoutPanel);
+  spectrum.element.append(instrument);
   const main = node('div', 'spectrum-browse-main');
   main.append(spectrum.element, frequencyRail);
   workspace.append(spectrum.controls.toolbar, main);

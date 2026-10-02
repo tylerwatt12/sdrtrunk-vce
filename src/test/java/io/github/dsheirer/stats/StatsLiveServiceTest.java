@@ -90,6 +90,7 @@ class StatsLiveServiceTest
                 @SuppressWarnings("unchecked")
                 List<Map<String,Object>> rows = (List<Map<String,Object>>)trunked.get("rows");
                 assertFalse(rows.isEmpty(), "the configured control row supplies the wideband channel marker");
+                assertEquals(12_500, rows.getFirst().get("bandwidth_hz"));
                 List<Thread> projectionWorkers = Thread.getAllStackTraces().keySet().stream()
                     .filter(thread -> thread.isAlive() && thread.getName().startsWith("stats live projection"))
                     .toList();
@@ -298,7 +299,7 @@ class StatsLiveServiceTest
             null, null, 0L, 0L, 0L, 0L, 0L, 0L, 0L, null, null, null, null, null, null, null, null,
             null, null, null, null, "NBFM", null, null, "CONVENTIONAL",
             new ChannelActivitySnapshot.Transmission("leg-17", "active", 1_050L, 1_000L, 1_075L, false,
-                3L, 1_025L));
+                3L, 1_025L), 12_500);
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("conventional", "Conventional",
             "", "", "Conventional", null, false, true, List.of(), List.of(row));
         return new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot);
@@ -346,6 +347,7 @@ class StatsLiveServiceTest
         assertEquals(expectedStatus, rows.getFirst().get("status"));
         assertEquals(0L, rows.getFirst().get("activation_order"));
         assertEquals("CONVENTIONAL", rows.getFirst().get("role"));
+        assertEquals(12_500, rows.getFirst().get("bandwidth_hz"));
         assertEquals("leg-17", rows.getFirst().get("call_leg_id"));
         assertEquals("active", rows.getFirst().get("tx_state"));
         assertEquals(1_050L, rows.getFirst().get("tx_observed_at_ms"));

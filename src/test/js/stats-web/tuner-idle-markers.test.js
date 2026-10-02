@@ -25,7 +25,7 @@ function functionSource(signature) {
 class Element {
   constructor(tag = 'div', className = '', text = '') {
     Object.assign(this, { tag, className, textContent: text, children: [], style: {}, attributes: {},
-      listeners: {}, hidden: false, checked: false });
+      listeners: {}, dataset: {}, hidden: false, checked: false });
     this.classList = { add: (...names) => {
       this.className = [...new Set([...(this.className || '').split(/\s+/).filter(Boolean), ...names])].join(' ');
     } };
@@ -103,6 +103,7 @@ function harness(liveAllowed = true) {
     'function activityValues(rows, selector)', 'function activityTokenLabel(value)',
     'function targetIdentifierLabel(form)', 'function activityAliasLabel(row, prefix)',
     'function activeCarrierFields(carrier, fftPower = null)', 'function activeCarrierDescription(carrier)',
+    'function activeCarrierBandwidthHz(carrier)',
     'function renderActiveCarrierFields(carrier, power)', 'function showActiveFlag(carrier, flag)',
     'function hideActiveFlag(flag)', 'function renderActiveChannels()',
     'function connectActiveChannels()', 'function closeActiveChannels()'
@@ -450,6 +451,27 @@ test('idle buttons use the same accessible hover details and clear on active tra
   assert.equal(h.context.spectrumActiveFlags.children[0].className, 'tuner-spectrum-active-flag status-call');
   h.subscriber().activityTable({ table: table([row('IDLE')]) });
   assert.equal(h.context.spectrumActiveFlags.children[0].className, 'tuner-spectrum-active-flag status-idle');
+});
+
+test('activity marker widths track channel bandwidth across viewport zoom levels', () => {
+  const h = harness();
+  h.context.connectActiveChannels();
+  h.subscriber().snapshot({ tables: [table([row('CALL', 150_250_000, { bandwidth_hz: 25_000 })])] });
+  let flag = h.context.spectrumActiveFlags.children[0];
+  assert.equal(flag.style.width, '2.5000%');
+  assert.equal(flag.dataset.bandwidthHz, '25000');
+
+  h.context.viewport = { startHz: 150_200_000, endHz: 150_300_000 };
+  h.context.renderActiveChannels();
+  flag = h.context.spectrumActiveFlags.children[0];
+  assert.equal(flag.style.width, '25.0000%');
+  assert.equal(flag.style.left, '50.000%');
+
+  h.subscriber().snapshot({ tables: [table([row('CALL', 150_250_000)])] });
+  flag = h.context.spectrumActiveFlags.children[0];
+  assert.equal(flag.style.width, '12.5000%', 'older payloads use the 12.5 kHz visibility fallback');
+  const css = readStylesheetSource(path.join(path.dirname(applicationPath), 'app.css'));
+  assert.match(css, /\.tuner-spectrum-active-flag\s*\{[^}]*min-width:\s*4px;/s);
 });
 
 test('current control stays visible, alternate control stays hidden, invalid/out-of-view and removed rows clear', () => {

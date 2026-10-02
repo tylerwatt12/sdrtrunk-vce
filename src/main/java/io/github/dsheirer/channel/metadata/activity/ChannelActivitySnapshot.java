@@ -116,8 +116,28 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
                       Integer timeslot, String sourceId, String sourceForm, String sourceAlias,
                       String sourceAliasDescription, String talkerAlias, String sourceAliasDisplay, String targetId,
                       String targetForm, String targetAlias, String targetAliasDescription, String decoder,
-                      String encryptionDetails, Navigation navigation, String role, Transmission transmission)
+                      String encryptionDetails, Navigation navigation, String role, Transmission transmission,
+                      Integer bandwidthHz)
     {
+        /** Source-compatible constructor for snapshots that do not carry channel bandwidth. */
+        public Row(String key, String channelName, String configurationId, String status, List<String> tags,
+                   long activationOrder, String lcn, long frequencyHz, String callsign, Double signalDbfs,
+                   Double decodeHealthPercent, long qualityObservedAtMs, long controlValidFrames,
+                   long controlInvalidFrames, long controlCorrectedBits, long controlSyncLossBits,
+                   long controlDroppedBits, long controlLastValidDecodeMs, VoiceCallQuality voiceQuality,
+                   Integer timeslot, String sourceId, String sourceForm, String sourceAlias,
+                   String sourceAliasDescription, String talkerAlias, String sourceAliasDisplay, String targetId,
+                   String targetForm, String targetAlias, String targetAliasDescription, String decoder,
+                   String encryptionDetails, Navigation navigation, String role, Transmission transmission)
+        {
+            this(key, channelName, configurationId, status, tags, activationOrder, lcn, frequencyHz, callsign,
+                signalDbfs, decodeHealthPercent, qualityObservedAtMs, controlValidFrames, controlInvalidFrames,
+                controlCorrectedBits, controlSyncLossBits, controlDroppedBits, controlLastValidDecodeMs, voiceQuality,
+                timeslot, sourceId, sourceForm, sourceAlias, sourceAliasDescription, talkerAlias, sourceAliasDisplay,
+                targetId, targetForm, targetAlias, targetAliasDescription, decoder, encryptionDetails, navigation,
+                role, transmission, null);
+        }
+
         /** Source-compatible constructor for snapshots that do not carry live RF transmission evidence. */
         public Row(String key, String channelName, String configurationId, String status, List<String> tags,
                    long activationOrder, String lcn, long frequencyHz, String callsign, Double signalDbfs,
@@ -134,7 +154,7 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
                 controlCorrectedBits, controlSyncLossBits, controlDroppedBits, controlLastValidDecodeMs, voiceQuality,
                 timeslot, sourceId, sourceForm, sourceAlias, sourceAliasDescription, talkerAlias, sourceAliasDisplay,
                 targetId, targetForm, targetAlias, targetAliasDescription, decoder, encryptionDetails, navigation,
-                role, null);
+                role, null, null);
         }
 
         private static Row from(ChannelActivityRow row, Channel owner)
@@ -142,6 +162,7 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
             String channelName = row.getRole() == ChannelActivityRow.Role.CONVENTIONAL ? row.getChannelName() : null;
             String configurationId = persistedConfigurationId(row.getChannel());
             Channel channel = owner != null ? owner : row.getChannel();
+            Channel bandwidthChannel = row.getChannel() != null ? row.getChannel() : owner;
             ChannelActivityDecodeQuality quality = row.getDecodeQuality();
             return new Row(row.getKey(), channelName, configurationId, row.getState().name(),
                 row.getTags().stream().map(Enum::name).toList(), row.getActivationOrder(), row.getLcn(),
@@ -168,7 +189,20 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
                         row.getTransmissionState().name().toLowerCase(java.util.Locale.ROOT) : null,
                     row.getTransmissionObservedAt(), row.getTransmissionStart(),
                     row.getTransmissionLastObservedAt(), row.isTransmissionEndCertain(),
-                    row.getTransmissionBurstGeneration(), row.getTransmissionBurstStart()) : null);
+                    row.getTransmissionBurstGeneration(), row.getTransmissionBurstStart()) : null,
+                bandwidth(bandwidthChannel));
+        }
+
+        private static Integer bandwidth(Channel channel)
+        {
+            if(channel == null || channel.getDecodeConfiguration() == null ||
+                channel.getDecodeConfiguration().getChannelSpecification() == null)
+            {
+                return null;
+            }
+
+            int bandwidth = channel.getDecodeConfiguration().getChannelSpecification().getBandwidth();
+            return bandwidth > 0 ? bandwidth : null;
         }
 
         private static String protocol(Identifier<?> first, Identifier<?> second)

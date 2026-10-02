@@ -401,34 +401,46 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         }
 
         List<TunerChannelAssignment> assignments = new ArrayList<>();
-        for(Map.Entry<Channel,ProcessingChain> entry: mProcessingChainsMap.entrySet())
+        mLock.lock();
+        try
         {
-            Channel channel = entry.getKey();
-            ProcessingChain chain = entry.getValue();
-            Source source = chain != null ? chain.getSource() : null;
-            if(channel == null || !(source instanceof TunerChannelSource tunerSource) ||
-                !tunerIdentity.equals(tunerSource.getTunerIdentity()))
+            for(Map.Entry<Channel,ProcessingChain> entry: mProcessingChainsMap.entrySet())
             {
-                continue;
+                Channel channel = entry.getKey();
+                ProcessingChain chain = entry.getValue();
+                Source source = chain != null ? chain.getSource() : null;
+                if(channel == null || !(source instanceof TunerChannelSource tunerSource) ||
+                    !tunerIdentity.equals(tunerSource.getTunerIdentity()))
+                {
+                    continue;
+                }
+                long activeFrequencyHz;
+                try
+                {
+                    activeFrequencyHz = tunerSource instanceof MultiFrequencyTunerChannelSource rotating ?
+                        rotating.getActiveSourceFrequency() : tunerSource.getFrequency();
+                }
+                catch(RuntimeException ignored)
+                {
+                    // A source being removed still leaves its saved channel identity available for the Setup notice.
+                    activeFrequencyHz = 0;
+                }
+                assignments.add(tunerChannelAssignment(channel, activeFrequencyHz,
+                    channel.getProcessingIncarnation()));
             }
-            long activeFrequencyHz;
-            try
-            {
-                activeFrequencyHz = tunerSource instanceof MultiFrequencyTunerChannelSource rotating ?
-                    rotating.getActiveSourceFrequency() : tunerSource.getFrequency();
-            }
-            catch(RuntimeException ignored)
-            {
-                // A source being removed still leaves its saved channel identity available for the Setup notice.
-                activeFrequencyHz = 0;
-            }
-            assignments.add(tunerChannelAssignment(channel, activeFrequencyHz));
         }
+        finally { mLock.unlock(); }
         return List.copyOf(assignments);
     }
 
     /** Capture the allocated frequency before stopping a chain, which can discard its rotating source. */
     static TunerChannelAssignment tunerChannelAssignment(Channel channel, long activeFrequencyHz)
+    {
+        return tunerChannelAssignment(channel, activeFrequencyHz, channel.getProcessingIncarnation());
+    }
+
+    static TunerChannelAssignment tunerChannelAssignment(Channel channel, long activeFrequencyHz,
+                                                          long processingIncarnation)
     {
         boolean standard = channel.isStandardChannel();
         String parentId = channel.getConfigurationId();
@@ -437,7 +449,8 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         Long frequencyHz = activeFrequencyHz > 0 ? Long.valueOf(activeFrequencyHz) :
             configuredAssignmentFrequency(channel);
         return new TunerChannelAssignment(channel, id, name, standard, parentId,
-            standard ? "standard" : "traffic", frequencyHz, channel.getSystem(), channel.getSite());
+            standard ? "standard" : "traffic", frequencyHz, channel.getSystem(), channel.getSite(),
+            processingIncarnation);
     }
 
     private static Long configuredAssignmentFrequency(Channel channel)
@@ -451,8 +464,22 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
     /** Internal receiver object plus the stable, browser-safe identity used by the tuner workflow. */
     public record TunerChannelAssignment(Channel channel, String id, String name, boolean restorable,
-                                         String parentId, String kind, Long frequencyHz, String system, String site)
+                                         String parentId, String kind, Long frequencyHz, String system, String site,
+                                         long processingIncarnation)
     {
+    }
+
+    /** Result of compare-stopping one exact processing-chain incarnation. */
+    public enum StopCurrentResult
+    {
+        CLAIMED,
+        CLAIMED_WITH_CLEANUP_FAILURE,
+        NOT_OWNED;
+
+        public boolean claimed()
+        {
+            return this != NOT_OWNED;
+        }
     }
 
     static List<Long> activeSourceFrequencies(Iterable<ProcessingChain> chains)
@@ -1312,6 +1339,29 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     }
 
     /**
+     * Stops only the processing-chain incarnation captured in a tuner assignment. A concurrent stop or replacement
+     * therefore cannot make an administrator workflow claim ownership of a channel it did not stop.
+     */
+    public StopCurrentResult stopIfCurrent(TunerChannelAssignment expected) throws ChannelException
+    {
+        if(expected == null || expected.channel() == null || expected.processingIncarnation() == 0)
+        {
+            return StopCurrentResult.NOT_OWNED;
+        }
+
+        Channel channel = expected.channel();
+        if(requiresDmrRestChannelLifecycleSerialization(channel))
+        {
+            synchronized(this)
+            {
+                return stopProcessingInternal(channel, true, expected.processingIncarnation());
+            }
+        }
+
+        return stopProcessingInternal(channel, false, expected.processingIncarnation());
+    }
+
+    /**
      * Starts a channel processing
      * @param request containing channel and other details
      * @throws ChannelException if a source is not available for the channel
@@ -1741,29 +1791,47 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         return added;
     }
 
-    /**
-     * Thread-safe remove processing chain.
-     * @param channel for identifying the processing chain
-     * @return the removed processing chain or null
-     */
-    private ProcessingChain removeProcessingChain(Channel channel)
+    /** Compare-removes one exact processing incarnation and retains observer cleanup failures for its owner. */
+    private ProcessingChainRemoval removeProcessingChain(Channel channel, long expectedIncarnation)
     {
         ProcessingChain removed = null;
+        RuntimeException cleanupFailure = null;
 
         mLock.lock();
 
         try
         {
-            RemovedProcessingMapping mapping = removeProcessingChainMapping(channel, null);
+            ProcessingChain expected = mProcessingChainsMap.get(channel);
+            if(expectedIncarnation != 0 && (expected == null ||
+                !channel.matchesProcessingIncarnation(expectedIncarnation, true)))
+            {
+                return new ProcessingChainRemoval(null, null);
+            }
+            RemovedProcessingMapping mapping = removeProcessingChainMapping(channel, expected);
             removed = mapping != null ? mapping.processingChain() : null;
 
             if(removed != null)
             {
-                getChannelActivityModel().channelStopped(channel);
+                try
+                {
+                    getChannelActivityModel().channelStopped(channel);
+                }
+                catch(RuntimeException exception)
+                {
+                    cleanupFailure = exception;
+                }
 
                 for(ChannelMetadata channelMetadata: removed.getChannelState().getChannelMetadata())
                 {
-                    channelMetadata.removeUpdateEventListener();
+                    try
+                    {
+                        channelMetadata.removeUpdateEventListener();
+                    }
+                    catch(RuntimeException exception)
+                    {
+                        if(cleanupFailure == null) cleanupFailure = exception;
+                        else cleanupFailure.addSuppressed(exception);
+                    }
                 }
             }
         }
@@ -1772,7 +1840,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             mLock.unlock();
         }
 
-        return removed;
+        return new ProcessingChainRemoval(removed, cleanupFailure);
     }
 
     /**
@@ -1849,7 +1917,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             //reentrantly. Do not acquire the shutdown lock here or that path can invert shutdown's lock order.
             synchronized(this)
             {
-                stopProcessingInternal(channel, true);
+                stopProcessingInternal(channel, true, 0);
             }
         }
         else
@@ -1857,7 +1925,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             //P25 and NXDN traffic managers synchronously request lifecycle changes while holding protocol-owned
             //locks. Do not hold a manager-wide lock across their stop notifications or those callbacks can invert
             //the lock order with a concurrent traffic-channel start or teardown.
-            stopProcessingInternal(channel, false);
+            stopProcessingInternal(channel, false, 0);
         }
     }
 
@@ -1865,9 +1933,15 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
      * Stops a claimed processing-chain incarnation. DMR stops share the lifecycle monitor with Capacity Plus
      * rest-channel conversion; other protocols must not hold that monitor while notifying their traffic managers.
      */
-    private void stopProcessingInternal(Channel channel, boolean handleDmrRestChannelLifecycle)
+    private StopCurrentResult stopProcessingInternal(Channel channel, boolean handleDmrRestChannelLifecycle,
+                                                     long expectedIncarnation)
         throws ChannelException
     {
+        if(handleDmrRestChannelLifecycle && expectedIncarnation != 0 &&
+            !isCurrentProcessingIncarnation(channel, expectedIncarnation))
+        {
+            return StopCurrentResult.NOT_OWNED;
+        }
         //mDmrRestChannelAttempts is owned by the DMR lifecycle monitor. Non-DMR stops deliberately avoid both that
         //monitor and this mutable map so their synchronous stop notifications cannot invert a traffic-manager lock.
         DMRRestChannelAttempt detachedTrafficAttempt = handleDmrRestChannelLifecycle ?
@@ -1878,38 +1952,47 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             cancelDmrRestChannelHandoff(channel);
         }
 
-        ProcessingChain processingChain = removeProcessingChain(channel);
+        ProcessingChainRemoval removal = removeProcessingChain(channel, expectedIncarnation);
+        ProcessingChain processingChain = removal.processingChain();
+        RuntimeException cleanupFailure = removal.cleanupFailure();
 
         if(processingChain != null)
         {
-            if(GraphicsEnvironment.isHeadless())
+            try
             {
-                channel.setProcessing(false);
-            }
-            else
-            {
-                //When we're in non-headless mode we have to change the processing property on the JavaFX
-                //event thread.  However, if it hasn't yet been initialized (ie an FX window opened), we'll
-                //get an ISE.  In that case, just set the property to false because there won't be any
-                //property listeners being triggered.
-                try
-                {
-                    Platform.runLater(() -> {
-                        try
-                        {
-                            channel.setProcessing(false);
-                        }
-                        catch(Exception e)
-                        {
-                            mLog.error("Error during channel stop while setting processing to false [{}] - continuing channel stop process",
-                                channel, e);
-                        }
-                    });
-                }
-                catch(IllegalStateException _)
+                if(GraphicsEnvironment.isHeadless())
                 {
                     channel.setProcessing(false);
                 }
+                else
+                {
+                    //When we're in non-headless mode we have to change the processing property on the JavaFX
+                    //event thread.  However, if it hasn't yet been initialized (ie an FX window opened), we'll
+                    //get an ISE.  In that case, just set the property to false because there won't be any
+                    //property listeners being triggered.
+                    try
+                    {
+                        Platform.runLater(() -> {
+                            try
+                            {
+                                channel.setProcessing(false);
+                            }
+                            catch(Exception e)
+                            {
+                                mLog.error("Error during channel stop while setting processing to false [{}] - continuing channel stop process",
+                                    channel, e);
+                            }
+                        });
+                    }
+                    catch(IllegalStateException _)
+                    {
+                        channel.setProcessing(false);
+                    }
+                }
+            }
+            catch(RuntimeException exception)
+            {
+                cleanupFailure = appendFailure(cleanupFailure, exception);
             }
 
             try
@@ -1938,15 +2021,50 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             catch(Exception e)
             {
                 mLog.error("Error during shutdown of processing chain for channel [" + channel.getName() + "}", e);
+                cleanupFailure = appendFailure(cleanupFailure, e instanceof RuntimeException runtime ? runtime :
+                    new IllegalStateException("Channel cleanup failed", e));
             }
         }
 
-        if(detachedTrafficAttempt != null)
+        if(detachedTrafficAttempt != null && (expectedIncarnation == 0 || processingChain != null))
         {
-            detachedTrafficAttempt.getExpectedChain().unrouteDecodeEventsFrom(
-                detachedTrafficAttempt.getPrepared().handoff().owner());
-            processDetachedTrafficTeardown(detachedTrafficAttempt);
+            try
+            {
+                detachedTrafficAttempt.getExpectedChain().unrouteDecodeEventsFrom(
+                    detachedTrafficAttempt.getPrepared().handoff().owner());
+                processDetachedTrafficTeardown(detachedTrafficAttempt);
+            }
+            catch(RuntimeException exception)
+            {
+                cleanupFailure = appendFailure(cleanupFailure, exception);
+            }
         }
+
+        if(cleanupFailure != null)
+        {
+            mLog.error("Cleanup failed after stopping channel [{}]", channel.getName(), cleanupFailure);
+        }
+        if(processingChain == null) return StopCurrentResult.NOT_OWNED;
+        return cleanupFailure == null ? StopCurrentResult.CLAIMED :
+            StopCurrentResult.CLAIMED_WITH_CLEANUP_FAILURE;
+    }
+
+    private static RuntimeException appendFailure(RuntimeException existing, RuntimeException added)
+    {
+        if(existing == null) return added;
+        existing.addSuppressed(added);
+        return existing;
+    }
+
+    private boolean isCurrentProcessingIncarnation(Channel channel, long processingIncarnation)
+    {
+        mLock.lock();
+        try
+        {
+            return mProcessingChainsMap.containsKey(channel) &&
+                channel.matchesProcessingIncarnation(processingIncarnation, true);
+        }
+        finally { mLock.unlock(); }
     }
 
     private void notifyRemoteChannelStarted(Channel channel, ChannelStartProcessingRequest request,
@@ -2666,6 +2784,10 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     }
 
     private record RemovedProcessingMapping(ProcessingChain processingChain, long processingIncarnation)
+    {
+    }
+
+    private record ProcessingChainRemoval(ProcessingChain processingChain, RuntimeException cleanupFailure)
     {
     }
 

@@ -8,9 +8,15 @@ package io.github.dsheirer.web.tuner;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
+import io.github.dsheirer.source.tuner.ITunerErrorListener;
+import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.TunerClass;
+import io.github.dsheirer.source.tuner.TunerController;
+import io.github.dsheirer.source.tuner.airspy.AirspyTunerConfiguration;
+import io.github.dsheirer.source.tuner.airspy.AirspyTunerController;
 import io.github.dsheirer.source.tuner.manager.DiscoveredRecordingTuner;
 import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
+import io.github.dsheirer.source.tuner.manager.PassThroughSourceManager;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.manager.TunerSettingsService;
 import io.github.dsheirer.source.tuner.recording.RecordingTunerConfiguration;
@@ -57,7 +63,27 @@ class TunerAdminHttpControllerTest
             assertEquals(405, fixture.send(path, "GET", null).statusCode());
             assertEquals(400, fixture.send(path, "POST", "{\"unknown\":true}").statusCode());
             assertEquals(422, fixture.send(path, "POST", "{\"lease_id\":17}").statusCode());
+            assertEquals(422, fixture.send(path, "POST", "{\"takeover\":\"yes\"}").statusCode());
             assertEquals(422, fixture.send(path, "DELETE", "{}").statusCode());
+        }
+    }
+
+    @Test
+    void browseRouteReturnsTakeoverOwnershipAndStoppedChannelProjection() throws Exception
+    {
+        try(ServerFixture fixture = new ServerFixture(new FakeManager(), true))
+        {
+            String path = TunerAdminHttpController.PATH + "/" +
+                TunerAdministrationService.opaqueId(fixture.mPhysical) + "/browse";
+            HttpResponse<String> acquired = fixture.send(path, "POST", "{\"takeover\":true}");
+            assertEquals(200, acquired.statusCode());
+            var data = MAPPER.readTree(acquired.body()).path("data");
+            assertEquals(true, data.path("takeover").booleanValue());
+            assertEquals(true, data.path("can_tune").booleanValue());
+            assertEquals(true, data.path("stopped_channels").isArray());
+
+            assertEquals(200, fixture.send(path, "DELETE", "{\"lease_id\":\"" +
+                data.path("lease_id").textValue() + "\"}").statusCode());
         }
     }
 
@@ -205,13 +231,24 @@ class TunerAdminHttpControllerTest
             this(manager, security, List::of);
         }
 
+        private ServerFixture(FakeManager manager, boolean runningPhysical) throws Exception
+        {
+            this(manager, null, List::of, runningPhysical);
+        }
+
         private ServerFixture(FakeManager manager, WebRequestSecurity security,
                               Supplier<List<Long>> activeFrequencies) throws Exception
+        {
+            this(manager, security, activeFrequencies, false);
+        }
+
+        private ServerFixture(FakeManager manager, WebRequestSecurity security,
+                              Supplier<List<Long>> activeFrequencies, boolean runningPhysical) throws Exception
         {
             RecordingTunerConfiguration configuration = RecordingTunerConfiguration.createWithUniqueId();
             configuration.setPath("/not-exposed/recording.wav");
             mRecording = new DiscoveredRecordingTuner(configuration);
-            mPhysical = new DiscoveredTuner()
+            mPhysical = runningPhysical ? new RunningPhysicalTuner() : new DiscoveredTuner()
             {
                 @Override public TunerClass getTunerClass() { return TunerClass.TEST_TUNER; }
                 @Override public String getId() { return "physical"; }
@@ -263,6 +300,47 @@ class TunerAdminHttpControllerTest
             mServer.stop(0);
             mSettings.close();
         }
+    }
+
+    private static final class RunningPhysicalTuner extends DiscoveredTuner
+    {
+        private RunningPhysicalTuner()
+        {
+            setTunerConfiguration(new AirspyTunerConfiguration(getId()));
+            TestAirspyController controller = new TestAirspyController();
+            getTunerConfiguration().setCenterFrequencyLocked(true);
+            controller.setCenterFrequencyLocked(true);
+            mTuner = new TestTuner(controller, this);
+        }
+
+        @Override public TunerClass getTunerClass() { return TunerClass.TEST_TUNER; }
+        @Override public String getId() { return "physical"; }
+        @Override public void start() { }
+    }
+
+    private static final class TestAirspyController extends AirspyTunerController
+    {
+        private TestAirspyController()
+        {
+            super(0, "test", null);
+        }
+
+        @Override public synchronized void setTunedFrequency(long frequency) { }
+        @Override public void apply(io.github.dsheirer.source.tuner.configuration.TunerConfiguration configuration) { }
+    }
+
+    private static final class TestTuner extends Tuner
+    {
+        private TestTuner(TunerController controller, ITunerErrorListener listener)
+        {
+            super(controller, listener, new PassThroughSourceManager(controller));
+        }
+
+        @Override public int getMaximumUSBBitsPerSecond() { return 0; }
+        @Override public String getUniqueID() { return "physical"; }
+        @Override public TunerClass getTunerClass() { return TunerClass.AIRSPY; }
+        @Override public String getPreferredName() { return "Test Airspy"; }
+        @Override public double getSampleSize() { return 12.0; }
     }
 
     private static final class FakeManager extends TunerManager

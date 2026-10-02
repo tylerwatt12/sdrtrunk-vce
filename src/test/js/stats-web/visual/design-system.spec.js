@@ -727,6 +727,11 @@ test('tuner-spectrum-dark-desktop', async ({ page }) => {
   expect(railBox).not.toBeNull();
   expect(railBox.x).toBeGreaterThan(panelBox.x + panelBox.width);
   expect(Math.abs(railBox.y - panelBox.y)).toBeLessThanOrEqual(1);
+  const waterfallBox = await example.locator('.tuner-spectrum-waterfall').boundingBox();
+  const legendBox = await example.locator('.tuner-spectrum-display-controls').boundingBox();
+  expect(waterfallBox).not.toBeNull();
+  expect(legendBox).not.toBeNull();
+  expect(Math.abs(waterfallBox.y + waterfallBox.height - legendBox.y)).toBeLessThanOrEqual(1);
   await expect(page.locator('body')).toHaveScreenshot('tuner-spectrum-dark-desktop.png', { fullPage: true });
 });
 

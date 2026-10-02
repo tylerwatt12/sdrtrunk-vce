@@ -64,7 +64,9 @@ async function install(page, state = {}) {
   state.requests = [];
   state.ledger = {};
   state.tuners = [tuner('idle-a', 2200000), tuner('idle-b', 9000000)];
+  if (state.busyWide) state.tuners[1] = { ...state.tuners[1], operator_state: 'live', channel_count: 2 };
   let leaseSequence = 0;
+  const takeoverLeases = new Set();
   const preferenceModule = await import(pathToFileURL(resolve(root, 'stats-web/assets/core/preference-schema.js')).href);
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request();
@@ -83,15 +85,45 @@ async function install(page, state = {}) {
       revision: 1, country_code: 'US', country_label: 'United States', countries: [{ code: 'US', label: 'United States' }], scopes: [] }) });
     if (path === '/api/v1/admin/tuners') return respond({ tuners: state.tuners });
     if (path.endsWith('/browse')) {
-      if (request.method() === 'DELETE') return respond(null, 204);
+      if (request.method() === 'DELETE') {
+        if (state.failNextBrowseDeleteConflict) {
+          state.failNextBrowseDeleteConflict = false;
+          return fail('Signal identification still holds this receiver', 'tuner_browse_unavailable', 409);
+        }
+        if (state.failNextBrowseDelete) {
+          state.failNextBrowseDelete = false;
+          return fail('Receiver release failed', 'tuner_browse_failed', 503);
+        }
+        return respond(null, 204);
+      }
+      if (body.lease_id && state.failNextBrowseRenewConflict) {
+        state.failNextBrowseRenewConflict = false;
+        return fail('Receiver session no longer exists', 'tuner_browse_unavailable', 409);
+      }
       const id = path.split('/').at(-2);
       const receiver = state.tuners.find((candidate) => candidate.id === id);
-      return respond({ lease_id: body.lease_id || `lease-${++leaseSequence}`, tuner: receiver,
-        expires_at_epoch_ms: Date.now() + 30000, can_tune: !receiver.channel_count });
+      const leaseId = body.lease_id || `lease-${++leaseSequence}`;
+      if (body.takeover === true) takeoverLeases.add(leaseId);
+      const takeover = takeoverLeases.has(leaseId);
+      const leasedReceiver = takeover ? { ...receiver, operator_state: 'setup', channel_count: 0 } : receiver;
+      return respond({ lease_id: leaseId, tuner: leasedReceiver, takeover,
+        stopped_channels: takeover ? [{ configuration_id: 'channel-a' }] : [],
+        expires_at_epoch_ms: Date.now() + 30000, can_tune: takeover || !receiver.channel_count });
     }
     if (path === '/api/v1/diagnostics/tuners') return respond({ rows: [] });
-    if (path === `${searchPath}/catalog`) return respond({ tuners: state.tuners.map((receiver) => ({ ...receiver,
-      eligible: !state.noIdle, reason: state.noIdle ? 'Channels are running' : null })), suggested_tuner_id: 'idle-b',
+    if (path === `${searchPath}/catalog`) return respond({ tuners: state.noCatalogTuners ? [] :
+      state.tuners.map((receiver) => {
+        const channelCount = state.noIdle ? 2 : receiver.channel_count;
+        const locked = Boolean(state.lockedOnly);
+        return { ...receiver,
+        channel_count: channelCount,
+        center_frequency_locked: locked,
+        takeover_allowed: true,
+        eligible: channelCount === 0 && !locked,
+        reason: channelCount ? 'Channels are running' : locked ? 'Center frequency is locked' : null };
+      }),
+      suggested_tuner_id: state.noIdle || state.lockedOnly || state.noCatalogTuners ? null :
+        (state.busyWide ? 'idle-a' : 'idle-b'),
       presets: [{ id: 'vhf-high', label: 'VHF high · 138–174 MHz', ranges: [{ minimum_hz: 138000000, maximum_hz: 174000000 }] },
         { id: 'uhf', label: 'UHF · 406–470 MHz', ranges: [{ minimum_hz: 406000000, maximum_hz: 470000000 }] },
         { id: '700mhz', label: '700 MHz · 769–775 MHz', ranges: [{ minimum_hz: 769000000, maximum_hz: 775000000 }] },
@@ -99,11 +131,21 @@ async function install(page, state = {}) {
       bounds: { maximum_ranges: 8, maximum_windows: 64, maximum_candidates: 32, maximum_total_hz: 150000000,
         minimum_dwell_ms: 750, maximum_dwell_ms: 5000, default_dwell_ms: 1500, maximum_scan_ms: 900000 } });
     if (path === searchPath && request.method() === 'POST') {
+      if (state.failSearchCreateOnce) {
+        state.failSearchCreateOnce = false;
+        return fail('Search could not start', 'spectrum_search_failed', 503);
+      }
       if (state.invalidRequest) return fail(state.invalidRequest, 'invalid_request', 400);
       return respond(snapshot(state));
     }
     if (path === `${searchPath}/search-a`) {
-      if (request.method() === 'DELETE') return respond(null, 204);
+      if (request.method() === 'DELETE') {
+        if (state.failNextJobDelete) {
+          state.failNextJobDelete = false;
+          return fail('Search release failed', 'spectrum_search_failed', 503);
+        }
+        return respond(null, 204);
+      }
       if (state.expired) return fail('Search expired', 'search_expired', 410);
       if (state.restartRequired && state.failLedgerOnce) { state.failLedgerOnce = false; return fail('Connection interrupted'); }
       if (state.failPollOnce) { state.failPollOnce = false; return fail('Connection interrupted'); }
@@ -147,7 +189,9 @@ async function install(page, state = {}) {
   }
   await expect(page.getByRole('button', { name: 'Find P25 channels', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Find P25 channels', exact: true }).click();
-  await expect(dialog(page).getByRole('heading', { name: 'Choose where to look' })).toBeVisible();
+  await expect(dialog(page).getByRole('heading', {
+    name: state.noIdle || state.lockedOnly || state.noCatalogTuners ? 'Choose a receiver' : 'Choose where to look'
+  })).toBeVisible();
   return state;
 }
 
@@ -201,6 +245,72 @@ test('uses one widest idle receiver, supports multiple ranges, and releases brow
   await expect(dialog(page).locator('tbody tr:visible')).toHaveCount(1);
   await dialog(page).getByLabel('Search results', { exact: true }).fill('840');
   await expect(dialog(page).locator('tbody tr:visible')).toHaveCount(3);
+});
+
+test('keeps a busy wider receiver available without adding it to the normal receiver picker', async ({ page }) => {
+  const state = await install(page, { busyWide: true });
+  const search = dialog(page);
+  const receiver = search.getByLabel('Receiver', { exact: true });
+  await expect(receiver).toHaveValue('idle-a');
+  await expect(receiver.locator('option')).toHaveText(['Small receiver · 2.20 MHz window']);
+
+  await search.getByText('Use another receiver', { exact: true }).click();
+  const prepare = search.getByRole('button', { name: 'Stop channels and use: Wide receiver', exact: true });
+  await expect(prepare).toBeVisible();
+  await expect(prepare).toHaveClass(/ui-button-primary/);
+  await expect(search.getByText('2 channels running', { exact: true })).toBeVisible();
+  await prepare.click();
+  const warning = page.getByRole('alertdialog', { name: 'Stop channels for this search?' });
+  await expect(warning).toContainText('2 active channels');
+  await expect(warning).toContainText('those calls will not resume');
+  await warning.getByRole('button', { name: 'Stop channels and search', exact: true }).click();
+
+  await expect(receiver).toHaveValue('idle-b');
+  await expect(receiver.locator('option')).toHaveText([
+    'Small receiver · 2.20 MHz window', 'Wide receiver · 9.00 MHz window'
+  ]);
+  expect(state.requests.some((request) => request.path === '/api/v1/admin/tuners/idle-b/browse' &&
+    request.method === 'POST' && request.body.takeover === true)).toBe(true);
+});
+
+test('failed search creation restores a borrowed receiver and refreshes its catalog row', async ({ page }) => {
+  const state = await install(page, { busyWide: true, failSearchCreateOnce: true });
+  const search = dialog(page);
+  await search.getByText('Use another receiver', { exact: true }).click();
+  await search.getByRole('button', { name: 'Stop channels and use: Wide receiver', exact: true }).click();
+  await page.getByRole('alertdialog', { name: 'Stop channels for this search?' })
+    .getByRole('button', { name: 'Stop channels and search', exact: true }).click();
+  const catalogsBefore = state.requests.filter((request) => request.path === `${searchPath}/catalog`).length;
+
+  await search.getByRole('button', { name: 'Find signals', exact: true }).click();
+
+  await expect(search).toContainText('The receiver was restored');
+  await expect(search.getByLabel('Receiver', { exact: true })).toHaveValue('idle-a');
+  await search.getByText('Use another receiver', { exact: true }).click();
+  await expect(search.getByRole('button', { name: 'Stop channels and use: Wide receiver', exact: true }))
+    .toBeVisible();
+  expect(state.requests.filter((request) => request.path === `${searchPath}/catalog`)).toHaveLength(catalogsBefore + 1);
+  expect(state.requests.some((request) => request.path === '/api/v1/admin/tuners/idle-b/browse' &&
+    request.method === 'DELETE' && request.body.lease_id === 'lease-2')).toBe(true);
+});
+
+test('preparing and starting with a borrowed receiver leaves one renewal timer', async ({ page }) => {
+  await page.clock.install();
+  const state = await install(page, { noIdle: true });
+  const search = dialog(page);
+  await search.getByRole('button', { name: 'Stop channels and use: Small receiver', exact: true }).click();
+  await page.getByRole('alertdialog', { name: 'Stop channels for this search?' })
+    .getByRole('button', { name: 'Stop channels and search', exact: true }).click();
+  await search.getByRole('button', { name: 'Find signals', exact: true }).click();
+  await expect(search.getByRole('heading', { name: 'Choose channels to add' })).toBeVisible();
+  const renewalCount = () => state.requests.filter((request) =>
+    request.path === '/api/v1/admin/tuners/idle-a/browse' && request.method === 'POST' &&
+    request.body.lease_id === 'lease-2').length;
+  const before = renewalCount();
+
+  await page.clock.fastForward(10_100);
+
+  await expect.poll(renewalCount).toBe(before + 1);
 });
 
 test('band picker remains bounded and keyboard accessible on a narrow screen', async ({ page }) => {
@@ -528,9 +638,39 @@ test('renews the browse lease while a save is pending', async ({ page }) => {
   await expect(dialog(page)).toContainText('Added and listening');
 });
 
+test('a confirmed receiver lease conflict expires the search instead of retrying stale ownership', async ({ page }) => {
+  await page.clock.install();
+  const state = await install(page);
+  await complete(page);
+  state.failNextBrowseRenewConflict = true;
+  await page.clock.fastForward(11000);
+  await expect(dialog(page).getByRole('heading', { name: 'This search expired' })).toBeVisible();
+  const renewals = state.requests.filter((request) =>
+    request.path === '/api/v1/admin/tuners/idle-b/browse' && request.body.lease_id === 'lease-2').length;
+  await page.clock.fastForward(20000);
+  expect(state.requests.filter((request) =>
+    request.path === '/api/v1/admin/tuners/idle-b/browse' && request.body.lease_id === 'lease-2')).toHaveLength(renewals);
+});
+
 test('no idle receiver, failed search and empty results provide an actionable next step', async ({ page }) => {
   const state = await install(page, { noIdle: true });
-  await expect(dialog(page)).toContainText('Band search needs an idle receiver with Lock center off');
+  await expect(dialog(page)).toContainText('All receivers are in use');
+  await expect(dialog(page).locator('.spectrum-search-receiver-card')).toHaveCount(2);
+  await expect(dialog(page).getByText('2 channels running', { exact: true })).toHaveCount(2);
+  const prepare = dialog(page).getByRole('button', { name: 'Stop channels and use' });
+  await expect(prepare).toHaveCount(2);
+  await expect(prepare.first()).toHaveClass(/ui-button-primary/);
+  await expect(dialog(page).getByRole('link', { name: 'Manage receivers' })).toHaveAttribute('href', /view=tuners/);
+  await expect(dialog(page).locator('.spectrum-discovery-actions > .ui-button')).toHaveCount(2);
+  await expect(dialog(page).getByRole('button', { name: 'Refresh receivers', exact: true }))
+    .toHaveClass(/ui-button-secondary/);
+  const blockedGeometry = await dialog(page).evaluate((element) => {
+    const list = element.querySelector('.spectrum-search-receiver-list').getBoundingClientRect();
+    const footer = element.querySelector('.spectrum-discovery-actions').getBoundingClientRect();
+    return { gap: footer.top - list.bottom };
+  });
+  expect(blockedGeometry.gap).toBeLessThanOrEqual(40);
+  await expect(dialog(page)).toHaveScreenshot('spectrum-search-unavailable-light-1280.png');
   await expect(dialog(page).getByRole('button', { name: 'Find signals', exact: true })).toHaveCount(0);
   state.noIdle = false;
   await dialog(page).getByRole('button', { name: 'Refresh receivers' }).click();
@@ -545,6 +685,161 @@ test('no idle receiver, failed search and empty results provide an actionable ne
   await complete(page);
   await expect(dialog(page)).toContainText('No P25 control channels were identified');
   await expect(dialog(page).getByRole('button', { name: 'Review selected' })).toBeDisabled();
+});
+
+test('blocked receiver copy and actions match the actual reason', async ({ page }) => {
+  await install(page, { lockedOnly: true });
+  await expect(dialog(page)).toContainText('A receiver needs to be prepared');
+  await expect(dialog(page)).toContainText('VCE will restore Lock center when you finish');
+  await expect(dialog(page)).not.toContainText('Calls in progress will end');
+  await expect(dialog(page).getByRole('button', { name: 'Unlock and use: Small receiver', exact: true }))
+    .toBeVisible();
+  await expect(dialog(page).getByRole('button', { name: 'Unlock and use: Wide receiver', exact: true }))
+    .toBeVisible();
+});
+
+test('an empty receiver catalog explains how to recover', async ({ page }) => {
+  await install(page, { noCatalogTuners: true });
+  await expect(dialog(page)).toContainText('No receivers are available');
+  await expect(dialog(page)).toContainText('Connect or enable a supported receiver, then refresh this list');
+  await expect(dialog(page).locator('.spectrum-search-receiver-card')).toHaveCount(0);
+});
+
+test('warns before stopping active channels and keeps the takeover lease for the search', async ({ page }) => {
+  const state = await install(page, { noIdle: true });
+  await dialog(page).getByRole('button', { name: 'Stop channels and use' }).first().click();
+  const warning = page.getByRole('alertdialog', { name: 'Stop channels for this search?' });
+  await expect(warning).toContainText('2 active channels');
+  await expect(warning).toContainText('those calls will not resume');
+  await expect(warning).toContainText('restart the same configured channels');
+  await expect(warning).toHaveScreenshot('spectrum-search-takeover-warning-light-1280.png');
+  await warning.getByRole('button', { name: 'Stop channels and search', exact: true }).click();
+  await expect(dialog(page).getByLabel('Receiver', { exact: true })).toHaveValue('idle-a');
+  await dialog(page).getByRole('button', { name: 'Find signals', exact: true }).click();
+  await expect(dialog(page).getByRole('heading', { name: 'Choose channels to add' })).toBeVisible();
+  const browsePosts = state.requests.filter((request) =>
+    request.path === '/api/v1/admin/tuners/idle-a/browse' && request.method === 'POST');
+  const takeoverIndex = browsePosts.findIndex((request) => request.body.takeover === true);
+  expect(takeoverIndex).toBeGreaterThanOrEqual(0);
+  expect(browsePosts[takeoverIndex + 1].body).toEqual({ lease_id: 'lease-2' });
+});
+
+test('searching another band refreshes receiver availability after restoring a borrowed tuner', async ({ page }) => {
+  const state = await install(page, { noIdle: true });
+  await dialog(page).getByRole('button', { name: 'Stop channels and use' }).first().click();
+  const warning = page.getByRole('alertdialog', { name: 'Stop channels for this search?' });
+  await warning.getByRole('button', { name: 'Stop channels and search', exact: true }).click();
+  await complete(page);
+
+  await dialog(page).getByRole('button', { name: 'Search another band', exact: true }).click();
+  await expect(dialog(page).getByRole('heading', { name: 'Choose a receiver' })).toBeVisible();
+  await expect(dialog(page).locator('.spectrum-discovery-context')).toBeEmpty();
+  await expect(dialog(page)).toContainText('All receivers are in use');
+  await expect(dialog(page).getByRole('button', { name: 'Stop channels and use' })).toHaveCount(2);
+  expect(state.requests.filter((request) => request.path === `${searchPath}/catalog`).length).toBeGreaterThan(1);
+});
+
+test('listen later restores a borrowed tuner as soon as saving finishes', async ({ page }) => {
+  const state = await install(page, { noIdle: true });
+  await dialog(page).getByRole('button', { name: 'Stop channels and use' }).first().click();
+  const warning = page.getByRole('alertdialog', { name: 'Stop channels for this search?' });
+  await warning.getByRole('button', { name: 'Stop channels and search', exact: true }).click();
+  await complete(page);
+  await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).check();
+  await dialog(page).getByRole('button', { name: 'Review selected', exact: true }).click();
+  await dialog(page).getByRole('radio', { name: 'Listen later', exact: true }).check();
+  await dialog(page).getByRole('button', { name: 'Add selected channels', exact: true }).click();
+  await expect(dialog(page)).toContainText('Added, available later');
+
+  const saveIndex = state.requests.findIndex((request) => request.path.endsWith('/save'));
+  const releaseIndex = state.requests.findIndex((request, index) => index > saveIndex &&
+    request.path === '/api/v1/admin/tuners/idle-a/browse' && request.method === 'DELETE' &&
+    request.body.lease_id === 'lease-2');
+  const resumeIndex = state.requests.findIndex((request, index) => index > releaseIndex &&
+    request.path === '/api/v1/admin/tuners/idle-a/browse' && request.method === 'POST' &&
+    Object.keys(request.body).length === 0);
+  expect(releaseIndex).toBeGreaterThan(saveIndex);
+  expect(resumeIndex).toBeGreaterThan(releaseIndex);
+});
+
+test('a release conflict keeps ownership until retry resumes the borrowed tuner', async ({ page }) => {
+  const state = await install(page, { noIdle: true });
+  await dialog(page).getByRole('button', { name: 'Stop channels and use' }).first().click();
+  await page.getByRole('alertdialog', { name: 'Stop channels for this search?' })
+    .getByRole('button', { name: 'Stop channels and search', exact: true }).click();
+  await complete(page);
+  await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).check();
+  await dialog(page).getByRole('button', { name: 'Review selected', exact: true }).click();
+  await dialog(page).getByRole('radio', { name: 'Listen later', exact: true }).check();
+  state.failNextBrowseDeleteConflict = true;
+  await dialog(page).getByRole('button', { name: 'Add selected channels', exact: true }).click();
+
+  await expect(dialog(page)).toContainText('This receiver could not resume its channels yet');
+  const retry = dialog(page).getByRole('button', { name: 'Try resuming channels', exact: true });
+  await expect(retry).toBeVisible();
+  const failedRelease = state.requests.findIndex((request) => request.path === '/api/v1/admin/tuners/idle-a/browse' &&
+    request.method === 'DELETE' && request.body.lease_id === 'lease-2');
+  expect(failedRelease).toBeGreaterThanOrEqual(0);
+  expect(state.requests.slice(failedRelease + 1).some((request) =>
+    request.path === '/api/v1/admin/tuners/idle-a/browse' && request.method === 'POST' &&
+    Object.keys(request.body).length === 0)).toBe(false);
+
+  await retry.click();
+  await expect(retry).toHaveCount(0);
+  const successfulRelease = state.requests.findIndex((request, index) => index > failedRelease &&
+    request.path === '/api/v1/admin/tuners/idle-a/browse' && request.method === 'DELETE' &&
+    request.body.lease_id === 'lease-2');
+  const resume = state.requests.findIndex((request, index) => index > successfulRelease &&
+    request.path === '/api/v1/admin/tuners/idle-a/browse' && request.method === 'POST' &&
+    Object.keys(request.body).length === 0);
+  expect(successfulRelease).toBeGreaterThan(failedRelease);
+  expect(resume).toBeGreaterThan(successfulRelease);
+});
+
+test('failed restart release retains the lease and retries before refreshing receivers', async ({ page }) => {
+  const state = await install(page);
+  await complete(page);
+  state.failNextBrowseDelete = true;
+  const catalogsBefore = state.requests.filter((request) => request.path === `${searchPath}/catalog`).length;
+
+  await dialog(page).getByRole('button', { name: 'Search another band', exact: true }).click();
+  await expect(dialog(page)).toContainText('This receiver could not return to Spectrum yet');
+  await expect(dialog(page).getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
+  expect(state.requests.filter((request) => request.path === `${searchPath}/catalog`)).toHaveLength(catalogsBefore);
+
+  await dialog(page).getByRole('button', { name: 'Try again', exact: true }).click();
+  await expect.poll(() => state.requests.filter((request) => request.path === `${searchPath}/catalog`).length)
+    .toBe(catalogsBefore + 1);
+  await expect(dialog(page).getByRole('button', { name: 'Find signals', exact: true })).toBeEnabled();
+  const browseDeletes = state.requests.filter((request) =>
+    request.path === '/api/v1/admin/tuners/idle-b/browse' && request.method === 'DELETE' &&
+    request.body.lease_id === 'lease-2');
+  expect(browseDeletes).toHaveLength(2);
+});
+
+test('failed search cleanup retains the job id and retries before releasing the receiver', async ({ page }) => {
+  const state = await install(page);
+  await complete(page);
+  state.failNextJobDelete = true;
+  const receiverDeletesBefore = state.requests.filter((request) =>
+    request.path === '/api/v1/admin/tuners/idle-b/browse' && request.method === 'DELETE').length;
+
+  await dialog(page).getByRole('button', { name: 'Search another band', exact: true }).click();
+
+  await expect(dialog(page)).toContainText('The previous search could not be stopped yet');
+  await expect(dialog(page).getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
+  expect(state.requests.filter((request) => request.path === `${searchPath}/search-a` &&
+    request.method === 'DELETE')).toHaveLength(1);
+  expect(state.requests.filter((request) => request.path === '/api/v1/admin/tuners/idle-b/browse' &&
+    request.method === 'DELETE')).toHaveLength(receiverDeletesBefore);
+
+  await dialog(page).getByRole('button', { name: 'Try again', exact: true }).click();
+
+  await expect(dialog(page).getByRole('button', { name: 'Find signals', exact: true })).toBeEnabled();
+  expect(state.requests.filter((request) => request.path === `${searchPath}/search-a` &&
+    request.method === 'DELETE')).toHaveLength(2);
+  expect(state.requests.filter((request) => request.path === '/api/v1/admin/tuners/idle-b/browse' &&
+    request.method === 'DELETE').length).toBe(receiverDeletesBefore + 1);
 });
 
 for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {

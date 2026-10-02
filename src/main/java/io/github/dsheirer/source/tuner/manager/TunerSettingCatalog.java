@@ -179,6 +179,13 @@ public final class TunerSettingCatalog
     /** Validate and normalize a submitted value before a one-shot hardware write. */
     public static Object validate(DiscoveredTuner discovered, String settingId, Object rawValue)
     {
+        return validate(discovered, settingId, rawValue, false);
+    }
+
+    /** Validates a center retune while a receiver-owned browse lease temporarily unlocks runtime hardware. */
+    static Object validate(DiscoveredTuner discovered, String settingId, Object rawValue,
+                           boolean temporaryCenterUnlock)
+    {
         TunerConfiguration configuration = discovered.getTunerConfiguration();
         if(RESET_FREQUENCY_EXTENTS.equals(settingId))
         {
@@ -199,7 +206,8 @@ public final class TunerSettingCatalog
                 throw new IllegalArgumentException("Setting is not editable in the current tuner mode");
             }
 
-            if(!dependencyEditable(configuration, settingId))
+            if(!dependencyEditable(configuration, settingId) &&
+                !(temporaryCenterUnlock && "frequency_mhz".equals(settingId)))
             {
                 throw new IllegalArgumentException("frequency_correction_ppm".equals(settingId) ?
                     "Turn off Auto PPM" : "Unlock center");

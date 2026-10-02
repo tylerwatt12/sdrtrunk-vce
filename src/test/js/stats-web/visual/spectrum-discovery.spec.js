@@ -371,6 +371,14 @@ test('managed Spectrum keeps its header actions and updates one persistent frequ
   await expect(rail.getByText('Select a signal', { exact: true })).toBeVisible();
   await expect(rail).toContainText(
     'Click a signal in the spectrum or waterfall to see its frequency and available actions.');
+  const toolbarRows = await toolbar.evaluate((element) => {
+    const controls = element.querySelector('.spectrum-browse-controls').getBoundingClientRect();
+    const side = element.querySelector('.spectrum-browse-toolbar-side').getBoundingClientRect();
+    const lockField = element.querySelector('.tuners-center-lock-field').getBoundingClientRect();
+    return { controlsBottom: controls.bottom, sideTop: side.top, lockHeight: lockField.height };
+  });
+  expect(toolbarRows.sideTop).toBeGreaterThanOrEqual(toolbarRows.controlsBottom);
+  expect(toolbarRows.lockHeight).toBeLessThanOrEqual(40);
   await page.evaluate(() => {
     window.originalSpectrumFrequencyRail = document.querySelector('.spectrum-browse-control-rail');
   });
@@ -406,6 +414,50 @@ test('managed Spectrum keeps its header actions and updates one persistent frequ
     const bounds = element.getBoundingClientRect();
     return bounds.top >= 0 && bounds.top < window.innerHeight;
   })).toBe(true);
+});
+
+test('bands, FFT, waterfall, legend, and measurements render as one continuous instrument', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await install(page, { liveSpectrum: true });
+  const geometry = await page.locator('.spectrum-browse-instrument').evaluate((instrument) => {
+    const visual = instrument.querySelector('.tuner-spectrum-visual-window');
+    const fft = visual.querySelector('.tuner-spectrum-fft');
+    const plot = fft.querySelector('.tuner-spectrum-plot');
+    const bands = fft.querySelector('.tuner-spectrum-band-rail');
+    const waterfall = visual.querySelector('.tuner-spectrum-waterfall');
+    const legend = instrument.querySelector('.tuner-spectrum-display-controls');
+    const measurements = instrument.querySelector('.tuner-spectrum-measurement-panel');
+    const bounds = (element) => {
+      const rect = element.getBoundingClientRect();
+      return { top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left };
+    };
+    return {
+      instrument: bounds(instrument), visual: bounds(visual), fft: bounds(fft), plot: bounds(plot),
+      bands: bounds(bands), waterfall: bounds(waterfall), legend: bounds(legend),
+      measurements: bounds(measurements),
+      instrumentBorder: getComputedStyle(instrument).borderTopWidth,
+      visualBorder: getComputedStyle(visual).borderTopWidth,
+      bandBorderTop: getComputedStyle(bands).borderTopWidth,
+      bandBorderBottom: getComputedStyle(bands).borderBottomWidth,
+      plotBorderBottom: getComputedStyle(plot).borderBottomWidth,
+      legendBorderTop: getComputedStyle(legend).borderTopWidth,
+      measurementBorderTop: getComputedStyle(measurements).borderTopWidth
+    };
+  });
+  expect(geometry.bands.top).toBeLessThan(geometry.plot.top);
+  expect(Math.abs(geometry.bands.bottom - geometry.plot.top)).toBeLessThanOrEqual(0.5);
+  expect(Math.abs(geometry.fft.bottom - geometry.waterfall.top)).toBeLessThanOrEqual(0.5);
+  expect(Math.abs(geometry.fft.left - geometry.waterfall.left)).toBeLessThanOrEqual(0.5);
+  expect(Math.abs(geometry.fft.right - geometry.waterfall.right)).toBeLessThanOrEqual(0.5);
+  expect(Math.abs(geometry.visual.bottom - geometry.legend.top)).toBeLessThanOrEqual(0.5);
+  expect(Math.abs(geometry.legend.bottom - geometry.measurements.top)).toBeLessThanOrEqual(0.5);
+  expect(geometry.instrumentBorder).toBe('1px');
+  expect(geometry.visualBorder).toBe('0px');
+  expect(geometry.bandBorderTop).toBe('0px');
+  expect(geometry.bandBorderBottom).toBe('1px');
+  expect(geometry.plotBorderBottom).toBe('1px');
+  expect(geometry.legendBorderTop).toBe('1px');
+  expect(geometry.measurementBorderTop).toBe('1px');
 });
 
 test('confirmed lease activity updates the existing tuner option and preserves picker focus', async ({ page }) => {

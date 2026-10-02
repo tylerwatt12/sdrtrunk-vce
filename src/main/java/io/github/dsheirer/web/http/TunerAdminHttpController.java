@@ -264,7 +264,7 @@ public final class TunerAdminHttpController
         try
         {
             JsonNode request = WebHttpSupport.readJsonObject(exchange, "POST".equals(method) ?
-                Set.of("lease_id") : Set.of("lease_id", "handoff"));
+                Set.of("lease_id", "takeover") : Set.of("lease_id", "handoff"));
             String leaseId = optionalLease(request);
             if("DELETE".equals(method))
             {
@@ -277,9 +277,14 @@ public final class TunerAdminHttpController
             }
             else
             {
-                TunerSettingsService.BrowseLease lease = mSettings.browse(tuner, leaseId).join();
+                JsonNode takeoverValue = request.get("takeover");
+                if(takeoverValue != null && !takeoverValue.isBoolean())
+                    throw new IllegalArgumentException("takeover must be true or false");
+                boolean takeover = takeoverValue != null && takeoverValue.booleanValue();
+                TunerSettingsService.BrowseLease lease = mSettings.browse(tuner, leaseId, takeover).join();
                 ApiHttpResponse.sendData(exchange, 200, Map.of("lease_id", lease.leaseId(),
                     "expires_at_epoch_ms", lease.expiresAtEpochMs(), "can_tune", lease.canTune(),
+                    "takeover", lease.takeover(), "stopped_channels", lease.stoppedChannels(),
                     "tuner", mAdministration.item(tuner)));
             }
         }
