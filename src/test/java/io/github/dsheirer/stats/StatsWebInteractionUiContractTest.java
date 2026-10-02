@@ -1864,7 +1864,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(resolvedSegments.contains("scope.maxHz - scope.minHz === smallestSpanHz"));
         assertTrue(resolvedSegments.contains("previous?.key === key"));
         assertTrue(tuner.contains("tuner-spectrum-band-rail"));
-        assertTrue(tuner.contains("spectrum.card.append(fftBandRail)"));
+        assertTrue(tuner.contains("spectrum.card.insertBefore(fftBandRail, spectrum.host)"));
         assertFalse(tuner.contains("waterfall.host.insertBefore(fftBandRail"));
         assertFalse(tuner.contains("tuner-spectrum-scope-layer"));
         assertTrue(tuner.contains("function renderFrequencyBands()"));
@@ -1919,7 +1919,7 @@ class StatsWebInteractionUiContractTest
         assertFalse(css.contains(".tuner-spectrum-modal"));
         assertTrue(css.contains("body[data-view=\"tuner-spectrum\"] .content > .tuner-spectrum-layout"));
         assertTrue(css.contains(".tuner-spectrum-plot"));
-        assertTrue(css.contains(".tuner-spectrum-active-flag {\n  width: 6px;\n  height: 12px;\n  min-height: 12px;"));
+        assertTrue(css.contains(".tuner-spectrum-active-flag {\n  width: 6px;\n  min-width: 4px;\n  height: 12px;\n  min-height: 12px;"));
         assertTrue(css.contains(".tuner-spectrum-flag-legend"));
         assertFalse(tuner.contains("openReadOnlyModal('Spectrum options'"));
         assertFalse(css.contains(".tuner-spectrum-options-modal"));
