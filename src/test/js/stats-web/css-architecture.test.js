@@ -11,11 +11,11 @@ const entryStylesheet = path.resolve(process.argv[2]
 const EXPECTED_ENTRY_MANIFEST = [
   '@layer reset, tokens, components, compositions, features, utilities;',
   '@import url("./styles/base.css?v=2") layer(reset);',
-  '@import url("./styles/tokens.css?v=20") layer(tokens);',
+  '@import url("./styles/tokens.css?v=21") layer(tokens);',
   '@import url("./styles/components/semantic-text.css?v=3") layer(components);',
   '@import url("./styles/components/controls.css?v=29") layer(components);',
   '@import url("./styles/components/audio-controls.css?v=5") layer(components);',
-  '@import url("./styles/compositions/workspaces.css?v=21") layer(compositions);',
+  '@import url("./styles/compositions/workspaces.css?v=22") layer(compositions);',
   '@import url("./styles/compositions/tables.css?v=12") layer(compositions);',
   '@import url("./styles/compositions/browsing.css?v=1") layer(compositions);',
   '@import url("./styles/compositions/app-chrome.css?v=14") layer(compositions);',

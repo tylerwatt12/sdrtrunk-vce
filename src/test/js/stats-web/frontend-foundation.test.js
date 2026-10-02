@@ -849,7 +849,7 @@ async function main() {
   assert.match(functionBinding(appSource, 'radioDirectorySystemCard'),
     /ui-surface radio-directory-system-card[\s\S]+uiIconTile\('icon-trunked'\)/);
   assert.match(functionBinding(appSource, 'radioDirectoryConventionalSystemCard'),
-    /ui-surface radio-directory-system-card radio-directory-conventional-card[\s\S]+uiIconTile\('icon-conventional', 'blue'\)/);
+    /ui-surface radio-directory-system-card radio-directory-conventional-card[\s\S]+uiIconTile\('icon-conventional', 'secondary'\)/);
   assert.match(functionBinding(appSource, 'radioDirectoryConventionalRow'),
     /radio-directory-site-row radio-directory-conventional-row/);
   const radioDirectoryLiveStateSource = functionBinding(appSource, 'radioDirectoryLiveState');

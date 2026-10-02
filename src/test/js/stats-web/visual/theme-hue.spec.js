@@ -338,7 +338,11 @@ for (const theme of ['light', 'dark']) {
       const root = document.documentElement;
       const button = document.createElement('button');
       button.className = 'ui-button ui-button-primary';
-      document.querySelector('#content').append(button);
+      const link = document.createElement('a');
+      link.href = '#';
+      const tile = document.createElement('span');
+      tile.className = 'ui-icon-tile ui-icon-tile-secondary';
+      document.querySelector('#content').append(button, link, tile);
       const canvas = document.createElement('canvas');
       canvas.width = canvas.height = 1;
       const context = canvas.getContext('2d', { willReadFrequently: true });
@@ -363,15 +367,22 @@ for (const theme of ['light', 'dark']) {
       const qualityBorder = getComputedStyle(qualityBar).borderColor;
       const minima = { general: Infinity, muted: Infinity, link: Infinity, primary: Infinity };
       const statusChanges = [];
+      const companionColors = new Set();
+      const paletteMismatches = [];
       for (let hue = 0; hue < 360; hue++) {
         applyThemeHue(hue);
         const palette = getComputedStyle(root);
         const token = (name) => palette.getPropertyValue(name).trim();
         const primary = getComputedStyle(button);
+        const companion = getComputedStyle(link).color;
+        companionColors.add(companion);
+        if (companion === primary.backgroundColor || getComputedStyle(tile).color !== companion) {
+          paletteMismatches.push(hue);
+        }
         const pairs = {
           general: [token('--ink'), token('--bg')],
           muted: [token('--muted'), token('--surface-2')],
-          link: [token('--link'), token('--surface')],
+          link: [companion, token('--surface')],
           primary: [primary.color, primary.backgroundColor]
         };
         for (const [name, pair] of Object.entries(pairs)) minima[name] = Math.min(minima[name], contrast(...pair));
@@ -380,13 +391,20 @@ for (const theme of ['light', 'dark']) {
             getComputedStyle(qualityBar).borderColor !== qualityBorder) statusChanges.push(hue);
       }
       button.remove();
+      link.remove();
+      tile.remove();
       applyThemeHue(null);
-      return { original, minima, statusChanges };
+      return { original, minima, statusChanges, companionColors: companionColors.size, paletteMismatches };
     });
     expect(result.original).toBe(theme === 'light' ? '#edf1f4' : '#10161c');
     expect(result.statusChanges).toEqual([]);
+    expect(result.companionColors).toBeGreaterThan(12);
+    expect(result.paletteMismatches).toEqual([]);
     for (const [name, minimum] of Object.entries(result.minima)) {
       expect(minimum, `${theme} ${name} must stay readable at every hue`).toBeGreaterThanOrEqual(4.5);
     }
+    await page.goto(`/design-system.html?theme=${theme}&view=radio-directory&hue=335`);
+    await expect(page.locator('.radio-directory-conventional-card .ui-icon-tile-secondary').first()).toBeVisible();
+    await expect(page.locator('body')).toHaveScreenshot(`coordinated-directory-${theme}.png`, { fullPage: true });
   });
 }

@@ -20747,7 +20747,7 @@ function channelSummaryCards(catalog, editable) {
     ['Running now', channels.filter((row) => row.processing_state === 'RUNNING').length, 'icon-play', 'success']
   ];
   cards.push(editable ?
-    ['Auto-start enabled', channels.filter((row) => row.auto_start_order != null).length, 'icon-play', 'blue'] :
+    ['Auto-start enabled', channels.filter((row) => row.auto_start_order != null).length, 'icon-play', 'secondary'] :
     ['Stopped', channels.filter((row) => row.processing_state !== 'RUNNING').length, 'icon-stop', 'neutral']);
   const wrapper = metrics(cards.map(([label, value, icon, tone]) =>
     [label, value, undefined, { icon, tone }]), true);
@@ -21222,7 +21222,7 @@ function radioDirectoryConventionalSystemCard(row) {
   metadata.append(aliases);
   identity.append(metadata);
   const headingGroup = node('div', 'radio-directory-system-heading');
-  headingGroup.append(uiIconTile('icon-conventional', 'blue'), identity);
+  headingGroup.append(uiIconTile('icon-conventional', 'secondary'), identity);
   const total = Number(row.child_count || row.children?.length || 0);
   const running = Number(row.running_count || 0);
   const statusLabel = running === total && total > 0 ? `${number(running)} running` :
@@ -25699,7 +25699,7 @@ function userPreferenceSummaryCards(preferences) {
   const disabledAlerts = preferences.health_alerts.disabled_codes;
   const knownDisabledAlerts = receiverHealthAlertIds.filter((id) => disabledAlerts.includes(id)).length;
   return settingsCardGrid(
-    settingsCard('Appearance', 'Change the hue here or switch the theme in the header.', settingsSummary([
+    settingsCard('Appearance', 'Choose coordinated colors here or switch the theme in the header.', settingsSummary([
       ['Theme', semanticLabel(preferences.appearance.theme)],
       ['Hue', preferences.appearance.hue === null ? 'Original colors' : `${preferences.appearance.hue}°`]
     ])),
@@ -25763,6 +25763,9 @@ async function openAppearanceSettings(returnFocusSelector = null) {
   value.htmlFor = hue.id;
   const field = node('label', 'ui-field');
   field.append(node('span', 'ui-field-label', 'Hue'), hue);
+  const paletteHint = node('span', 'ui-field-detail', 'Matching accent colors update with your choice.');
+  paletteHint.id = 'appearance-palette-hint';
+  hue.setAttribute('aria-describedby', paletteHint.id);
   const useDefault = node('button', 'ui-button ui-button-secondary', 'Use original colors');
   useDefault.type = 'button';
   const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
@@ -25771,7 +25774,7 @@ async function openAppearanceSettings(returnFocusSelector = null) {
   save.type = 'submit';
   const feedback = node('div', 'admin-form-message');
   const actions = aliasModalFooter(cancel, save);
-  form.append(field, value, useDefault, feedback, actions);
+  form.append(field, value, paletteHint, useDefault, feedback, actions);
   let preview = null;
   const modal = openReadOnlyModal('Appearance', form, {
     id: 'appearance-settings', className: 'admin-modal', returnFocusSelector,

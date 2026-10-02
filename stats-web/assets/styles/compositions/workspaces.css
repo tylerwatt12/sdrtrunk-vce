@@ -367,6 +367,7 @@
 .ui-metric-danger .ui-metric-icon { color: var(--danger); }
 .ui-metric-success .ui-metric-icon { color: var(--success); }
 .ui-metric-accent .ui-metric-icon { color: var(--accent); }
+.ui-metric-secondary .ui-metric-icon { color: var(--accent-secondary); }
 
 .ui-metric-unit,
 .ui-metric-detail {
@@ -569,6 +570,11 @@
 .ui-icon-tile-blue {
   color: var(--info);
   background: var(--info-soft);
+}
+
+.ui-icon-tile-secondary {
+  color: var(--accent-secondary);
+  background: var(--accent-secondary-soft);
 }
 
 .ui-summary-card {
