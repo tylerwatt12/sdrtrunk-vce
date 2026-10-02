@@ -1131,6 +1131,13 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   margin: 0;
 }
 
+.spectrum-search-band-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
 .spectrum-search-results-toolbar {
   min-width: 0;
   display: grid;

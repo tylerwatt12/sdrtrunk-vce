@@ -15,7 +15,8 @@ export function openSpectrumSearchWizard(ui, context = {}) {
   let catalog = null;
   let receiverId = '';
   let usedReceiverId = '';
-  let presetId = '';
+  let selectedBandIds = null;
+  const customRange = { minimum: '769', maximum: '775' };
   let lease = null;
   let job = null;
   let pollTimer = null;
@@ -95,7 +96,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
   const show = (next, index, title) => {
     progressNodes = null;
     steps.hidden = next === 'saved';
-    steps.replaceChildren(...['Band', 'Find channels', 'Review'].map((label, position) => {
+    steps.replaceChildren(...['Bands', 'Find channels', 'Review'].map((label, position) => {
       const step = node('li');
       step.append(uiPill(position < index ? '✓' : String(position + 1),
         position < index ? 'success' : position === index ? 'blue' : 'neutral'), node('span', '', label));
@@ -176,51 +177,67 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       label: `${tuner.name} · ${(tuner.usable_bandwidth_hz / 1_000_000).toFixed(2)} MHz window` })), receiverId);
     chooser.setAttribute('aria-label', 'Receiver');
     chooser.addEventListener('change', () => { receiverId = chooser.value; updateContext(); });
-    const presets = [...(catalog.presets || [])];
-    const publicSafety = ['700mhz', '800mhz'].map((id) => presets.find((preset) => preset.id === id));
-    if (publicSafety.every(Boolean)) presets.unshift({ id: 'public-safety', label: '700 and 800 MHz public safety',
-      ranges: publicSafety.flatMap((preset) => preset.ranges) });
-    if (!presetId) presetId = presets[0]?.id || 'custom';
-    const band = uiSelect([...presets.map((preset) => ({ value: preset.id, label: preset.label })),
-      { value: 'custom', label: 'Custom frequency range' }], presetId);
-    band.setAttribute('aria-label', 'Band');
+    const presets = catalog.presets || [];
+    if (selectedBandIds === null) {
+      const defaults = presets.filter((preset) => ['700mhz', '800mhz'].includes(preset.id)).map((preset) => preset.id);
+      selectedBandIds = new Set(defaults.length ? defaults : [presets[0]?.id || 'custom']);
+    }
+    const bands = node('fieldset', 'ui-form-section');
+    const choices = node('div', 'channel-editor-grid');
+    bands.append(node('legend', 'ui-field-label', 'Bands'), choices);
     const custom = node('div', 'channel-editor-grid');
     const minimum = node('input', 'ui-input');
     const maximum = node('input', 'ui-input');
     [minimum, maximum].forEach((input) => { input.type = 'number'; input.step = '0.000001'; });
-    minimum.value = '769';
-    maximum.value = '775';
+    minimum.value = customRange.minimum;
+    maximum.value = customRange.maximum;
+    minimum.addEventListener('input', () => { customRange.minimum = minimum.value; });
+    maximum.addEventListener('input', () => { customRange.maximum = maximum.value; });
     custom.append(formField('Start frequency (MHz)', minimum), formField('End frequency (MHz)', maximum));
     const description = node('p', 'ui-field-hint');
-    const updateBand = () => {
-      presetId = band.value;
-      custom.hidden = presetId !== 'custom';
+    let findSignals;
+    const selectedRanges = () => [
+      ...presets.filter((preset) => selectedBandIds.has(preset.id)).flatMap((preset) => preset.ranges),
+      ...(selectedBandIds.has('custom') ? [{ minimum_hz: Math.round(Number(minimum.value) * 1_000_000),
+        maximum_hz: Math.round(Number(maximum.value) * 1_000_000) }] : [])
+    ];
+    const updateBands = () => {
+      custom.hidden = !selectedBandIds.has('custom');
       minimum.required = maximum.required = !custom.hidden;
+      minimum.disabled = maximum.disabled = custom.hidden;
       const tuner = receiver();
       [minimum, maximum].forEach((input) => {
         input.min = String((tuner?.minimum_frequency_hz || 0) / 1_000_000);
         input.max = String((tuner?.maximum_frequency_hz || 0) / 1_000_000);
       });
-      const ranges = presets.find((preset) => preset.id === presetId)?.ranges;
-      description.textContent = ranges ? ranges.map((range) =>
-        `${channelMHz(range.minimum_hz)}–${channelMHz(range.maximum_hz)} MHz`).join(' · ') :
-        `Enter one range within this receiver’s coverage. Maximum search span: ${(catalog.bounds.maximum_total_hz / 1_000_000).toFixed(0)} MHz.`;
+      description.textContent = `Choose one or more bands. Maximum search span: ${(catalog.bounds.maximum_total_hz / 1_000_000).toFixed(0)} MHz.`;
+      if (findSignals) findSignals.disabled = !presets.some((preset) => selectedBandIds.has(preset.id)) && custom.hidden;
     };
-    band.addEventListener('change', updateBand);
-    chooser.addEventListener('change', updateBand);
-    updateBand();
-    form.append(formField('Receiver', uiSelectFrame(chooser)), formField('Band', uiSelectFrame(band)), custom, description,
-      node('div', 'ui-notice', 'The receiver will move through this band, then check promising signals. Results appear when both steps are complete. Other receivers keep running.'),
+    [...presets, { id: 'custom', label: 'Custom frequency range' }].forEach((preset) => {
+      const choice = node('label', 'ui-choice-card spectrum-search-band-option');
+      const check = node('input', 'ui-selection-check');
+      check.type = 'checkbox';
+      check.value = preset.id;
+      check.checked = selectedBandIds.has(preset.id);
+      check.addEventListener('change', () => {
+        if (check.checked) selectedBandIds.add(preset.id); else selectedBandIds.delete(preset.id);
+        updateBands();
+      });
+      choice.append(check, node('span', '', preset.label));
+      choices.append(choice);
+    });
+    chooser.addEventListener('change', updateBands);
+    form.append(formField('Receiver', uiSelectFrame(chooser)), bands, custom, description,
+      node('div', 'ui-notice', 'The receiver will move through the selected bands, then check promising signals. Results appear when both steps are complete. Other receivers keep running.'),
       disclosure('What are P25 channels?', node('p', '', 'P25 radio systems use a steady control signal to coordinate a group of radio frequencies. This search finds and checks those control signals. Voice-only and other radio signals are not added.'),
-        node('p', '', 'A receiver sees a limited frequency window at once. Searching moves this window through the band you choose.')));
+        node('p', '', 'A receiver sees a limited frequency window at once. Searching moves this window through the bands you choose.')));
     form.addEventListener('submit', (event) => event.preventDefault());
     stage.append(form);
     updateContext();
     button('Cancel', () => modal.close());
-    button('Find signals', () => {
+    findSignals = button('Find signals', () => {
       if (!form.reportValidity()) return;
-      const ranges = presetId === 'custom' ? [{ minimum_hz: Math.round(Number(minimum.value) * 1_000_000),
-        maximum_hz: Math.round(Number(maximum.value) * 1_000_000) }] : presets.find((preset) => preset.id === presetId)?.ranges;
+      const ranges = selectedRanges();
       if (!ranges?.length || ranges.some((range) => range.minimum_hz >= range.maximum_hz) ||
         ranges.reduce((total, range) => total + range.maximum_hz - range.minimum_hz, 0) > catalog.bounds.maximum_total_hz) {
         error('Choose a valid band, or enter a smaller range with the end frequency above the start.');
@@ -232,6 +249,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       }
       void begin(ranges);
     }, true);
+    updateBands();
   };
   const begin = async (ranges) => {
     const operation = ++generation;

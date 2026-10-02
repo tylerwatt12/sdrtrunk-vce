@@ -5,6 +5,9 @@ const root = resolve(__dirname, '../../../../..');
 const searchPath = '/api/v1/admin/spectrum-search';
 const configurationId = '7f408d02-7c20-44b2-97ce-f6202b24b0f7';
 const dialog = (page) => page.locator('.spectrum-search-modal');
+const bandLabels = ['VHF high · 138–174 MHz', 'UHF · 406–470 MHz', '700 MHz · 769–775 MHz',
+  '800 MHz · 851–869 MHz', 'Custom frequency range'];
+const bandCheckbox = (page, label) => dialog(page).getByRole('checkbox', { name: label, exact: true });
 
 function tuner(id, bandwidth) {
   return { id, name: id === 'idle-a' ? 'Small receiver' : 'Wide receiver', tuner_class: 'AIRSPY',
@@ -143,6 +146,19 @@ test('uses one widest idle receiver, supports multiple ranges, and releases brow
   const state = await install(page);
   await expect(dialog(page).getByLabel('Receiver', { exact: true })).toHaveValue('idle-b');
   await expect(page.locator('.spectrum-browse-tuner select')).toBeDisabled();
+  await expect(dialog(page).getByRole('group', { name: 'Bands', exact: true }).getByRole('checkbox')).toHaveCount(5);
+  for (const label of bandLabels) await expect(bandCheckbox(page, label)).toBeVisible();
+  await expect(bandCheckbox(page, bandLabels[0])).not.toBeChecked();
+  await expect(bandCheckbox(page, bandLabels[1])).not.toBeChecked();
+  await expect(bandCheckbox(page, bandLabels[2])).toBeChecked();
+  await expect(bandCheckbox(page, bandLabels[3])).toBeChecked();
+  await expect(bandCheckbox(page, bandLabels[4])).not.toBeChecked();
+  await expect(dialog(page).getByRole('combobox', { name: 'Band', exact: true })).toHaveCount(0);
+  await expect(dialog(page).getByText('700 and 800 MHz public safety', { exact: true })).toHaveCount(0);
+  await expect(dialog(page).getByLabel('Start frequency (MHz)')).toBeHidden();
+  await expect(dialog(page).getByLabel('End frequency (MHz)')).toBeHidden();
+  await expect(dialog(page).getByLabel('Start frequency (MHz)')).not.toHaveAttribute('required', '');
+  await expect(dialog(page).getByLabel('End frequency (MHz)')).not.toHaveAttribute('required', '');
   await complete(page);
   const create = state.requests.find((request) => request.path === searchPath && request.method === 'POST');
   expect(create.body).toEqual({ tuner_id: 'idle-b', browse_lease_id: 'lease-2', ranges: [
@@ -168,10 +184,45 @@ test('search requires both tuner and channel administration access', async ({ pa
   expect(withoutTuners.requests.some((request) => request.path.startsWith(searchPath))).toBe(false);
 });
 
+test('requires at least one independent band and preserves selected presets after restarting', async ({ page }) => {
+  const state = await install(page);
+  const find = dialog(page).getByRole('button', { name: 'Find signals', exact: true });
+  await bandCheckbox(page, bandLabels[2]).uncheck();
+  await bandCheckbox(page, bandLabels[3]).uncheck();
+  await expect(find).toBeDisabled();
+  expect(state.requests.some((request) => request.path === searchPath)).toBe(false);
+  await bandCheckbox(page, bandLabels[0]).check();
+  await bandCheckbox(page, bandLabels[1]).check();
+  await expect(find).toBeEnabled();
+  await complete(page);
+  expect(state.requests.find((request) => request.path === searchPath).body.ranges).toEqual([
+    { minimum_hz: 138000000, maximum_hz: 174000000 }, { minimum_hz: 406000000, maximum_hz: 470000000 }]);
+  await dialog(page).getByRole('button', { name: 'Search another band' }).click();
+  await expect(dialog(page).getByRole('heading', { name: 'Choose where to look' })).toBeVisible();
+  await expect(bandCheckbox(page, bandLabels[0])).toBeChecked();
+  await expect(bandCheckbox(page, bandLabels[1])).toBeChecked();
+  await expect(bandCheckbox(page, bandLabels[2])).not.toBeChecked();
+  await expect(bandCheckbox(page, bandLabels[3])).not.toBeChecked();
+  await expect(bandCheckbox(page, bandLabels[4])).not.toBeChecked();
+  await bandCheckbox(page, bandLabels[0]).uncheck();
+  await bandCheckbox(page, bandLabels[1]).uncheck();
+  await expect(find).toBeDisabled();
+  expect(state.requests.filter((request) => request.path === searchPath)).toHaveLength(1);
+});
+
 test('honors manual receiver choice and validates a bounded custom range before opening a job', async ({ page }) => {
   const state = await install(page);
   await dialog(page).getByLabel('Receiver', { exact: true }).selectOption('idle-a');
-  await dialog(page).getByLabel('Band', { exact: true }).selectOption('custom');
+  await bandCheckbox(page, bandLabels[2]).uncheck();
+  await bandCheckbox(page, bandLabels[3]).uncheck();
+  await bandCheckbox(page, bandLabels[4]).check();
+  await expect(dialog(page).getByLabel('Start frequency (MHz)')).toBeVisible();
+  await expect(dialog(page).getByLabel('End frequency (MHz)')).toBeVisible();
+  await expect(dialog(page).getByLabel('Start frequency (MHz)')).toHaveAttribute('required', '');
+  await expect(dialog(page).getByLabel('End frequency (MHz)')).toHaveAttribute('required', '');
+  await dialog(page).getByLabel('Start frequency (MHz)').fill('');
+  await dialog(page).getByRole('button', { name: 'Find signals', exact: true }).click();
+  expect(state.requests.some((request) => request.path === searchPath)).toBe(false);
   await dialog(page).getByLabel('Start frequency (MHz)').fill('773.2');
   await dialog(page).getByLabel('End frequency (MHz)').fill('773.1');
   await dialog(page).getByRole('button', { name: 'Find signals', exact: true }).click();
@@ -184,6 +235,53 @@ test('honors manual receiver choice and validates a bounded custom range before 
   expect(create.body.ranges).toEqual([{ minimum_hz: 773200000, maximum_hz: 773900000 }]);
   await dialog(page).getByRole('button', { name: 'Search another band' }).click();
   await expect(dialog(page).getByLabel('Receiver', { exact: true })).toHaveValue('idle-a');
+  await expect(bandCheckbox(page, bandLabels[2])).not.toBeChecked();
+  await expect(bandCheckbox(page, bandLabels[3])).not.toBeChecked();
+  await expect(bandCheckbox(page, bandLabels[4])).toBeChecked();
+  await expect(dialog(page).getByLabel('Start frequency (MHz)')).toHaveValue('773.2');
+  await expect(dialog(page).getByLabel('End frequency (MHz)')).toHaveValue('773.9');
+});
+
+test('keyboard band choices combine presets with a custom range and preserve the custom draft', async ({ page }) => {
+  const state = await install(page);
+  const custom = bandCheckbox(page, bandLabels[4]);
+  const minimum = dialog(page).getByLabel('Start frequency (MHz)');
+  const maximum = dialog(page).getByLabel('End frequency (MHz)');
+  await bandCheckbox(page, bandLabels[3]).press('Space');
+  await bandCheckbox(page, bandLabels[0]).press('Space');
+  await custom.press('Space');
+  await expect(custom).toBeChecked();
+  await expect(minimum).toBeVisible();
+  await minimum.fill('482');
+  await maximum.fill('484');
+  await custom.press('Space');
+  await expect(custom).not.toBeChecked();
+  await expect(minimum).toBeHidden();
+  await expect(maximum).toBeHidden();
+  await expect(minimum).not.toHaveAttribute('required', '');
+  await expect(maximum).not.toHaveAttribute('required', '');
+  await expect(minimum).toHaveValue('482');
+  await expect(maximum).toHaveValue('484');
+  await custom.press('Space');
+  await expect(custom).toBeChecked();
+  await expect(minimum).toHaveAttribute('required', '');
+  await expect(maximum).toHaveAttribute('required', '');
+  await expect(minimum).toHaveValue('482');
+  await expect(maximum).toHaveValue('484');
+  await complete(page);
+  expect(state.requests.find((request) => request.path === searchPath).body.ranges).toEqual([
+    { minimum_hz: 138000000, maximum_hz: 174000000 }, { minimum_hz: 769000000, maximum_hz: 775000000 },
+    { minimum_hz: 482000000, maximum_hz: 484000000 }]);
+  await dialog(page).getByRole('button', { name: 'Search another band' }).click();
+  await expect(bandCheckbox(page, bandLabels[0])).toBeChecked();
+  await expect(bandCheckbox(page, bandLabels[1])).not.toBeChecked();
+  await expect(bandCheckbox(page, bandLabels[2])).toBeChecked();
+  await expect(bandCheckbox(page, bandLabels[3])).not.toBeChecked();
+  await expect(custom).toBeChecked();
+  await expect(minimum).toBeVisible();
+  await expect(maximum).toBeVisible();
+  await expect(minimum).toHaveValue('482');
+  await expect(maximum).toHaveValue('484');
 });
 
 test('hides partial results, retries polling and discards the job before rebinding Spectrum', async ({ page }) => {
@@ -403,12 +501,11 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
     await receiver.click();
     await expect(dialog(page)).toHaveScreenshot(`spectrum-search-receiver-control-${theme}-${width}.png`);
     await receiver.press('Enter');
-    const band = dialog(page).getByLabel('Band', { exact: true });
-    await expect(band.locator('option')).toHaveText(['700 and 800 MHz public safety', 'VHF high · 138–174 MHz',
-      'UHF · 406–470 MHz', '700 MHz · 769–775 MHz', '800 MHz · 851–869 MHz', 'Custom frequency range']);
-    await band.click();
-    await expect(dialog(page)).toHaveScreenshot(`spectrum-search-band-control-${theme}-${width}.png`);
-    await band.press('Enter');
+    await expect(dialog(page).getByRole('group', { name: 'Bands', exact: true }).getByRole('checkbox')).toHaveCount(5);
+    for (const label of bandLabels) await expect(bandCheckbox(page, label)).toBeVisible();
+    await bandCheckbox(page, bandLabels[2]).focus();
+    await expect(bandCheckbox(page, bandLabels[2])).toBeFocused();
+    await expect(dialog(page)).toHaveScreenshot(`spectrum-search-band-selection-${theme}-${width}.png`);
     await dialog(page).getByRole('button', { name: 'Find signals', exact: true }).click();
     await expect(dialog(page).getByRole('heading', { name: 'Find signals', exact: true })).toBeVisible();
     await expect(dialog(page)).toHaveScreenshot(`spectrum-search-scanning-${theme}-${width}.png`);
