@@ -38,7 +38,7 @@
   gap: var(--space-2);
   color: var(--muted);
   font-size: var(--font-size-label);
-  font-weight: 650;
+  font-weight: var(--font-weight-medium);
 }
 
 .listen-map-trail-select {
@@ -180,6 +180,10 @@
   font-size: var(--font-size-meta);
 }
 
+.listen-map-list-item[aria-pressed="true"] .listen-map-list-copy small {
+  color: currentColor;
+}
+
 .listen-map-catalog-controls {
   display: grid;
   gap: var(--space-2);
@@ -193,7 +197,7 @@
   gap: var(--space-2);
   color: var(--muted);
   font-size: var(--font-size-label);
-  font-weight: 650;
+  font-weight: var(--font-weight-medium);
 }
 
 .listen-map-follow-status {
@@ -205,7 +209,7 @@
   background: var(--accent-soft);
   border-radius: 999px;
   font-size: var(--font-size-meta);
-  font-weight: 700;
+  font-weight: var(--font-weight-control);
   text-overflow: ellipsis;
   white-space: nowrap;
 }

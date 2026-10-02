@@ -11,7 +11,7 @@
 
 .encrypted {
   color: var(--danger);
-  font-weight: 650;
+  font-weight: var(--font-weight-control);
 }
 
 .ui-muted { color: var(--muted); }

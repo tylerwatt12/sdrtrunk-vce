@@ -20,7 +20,7 @@
 
 .chart-axis-label {
   fill: var(--muted);
-  font-size: 11px;
+  font-size: var(--font-size-meta);
 }
 
 .activity-line-path {
@@ -63,14 +63,14 @@
 
 .activity-series-total {
   color: inherit;
-  font-weight: 600;
+  font-weight: var(--font-weight-control);
   font-variant-numeric: tabular-nums;
   opacity: .88;
 }
 
 .activity-series-status {
   color: inherit;
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   opacity: .8;
 }
 
@@ -112,7 +112,7 @@
   border: 1px solid color-mix(in srgb, var(--line-dark) 28%, transparent);
   border-radius: var(--radius-control);
   box-shadow: var(--shadow-surface);
-  font-size: 11px;
+  font-size: var(--font-size-meta);
   font-variant-numeric: tabular-nums;
   line-height: 1.45;
   white-space: pre-line;

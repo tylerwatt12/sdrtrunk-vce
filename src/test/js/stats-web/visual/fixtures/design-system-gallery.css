@@ -735,3 +735,28 @@ body:not([data-gallery-view="tuner-frequency-popover"]) .visual-tuner-frequency-
     width: min(100% - 20px, 1180px);
   }
 }
+
+/* State examples exercise the production primitives without restyling them. */
+.visual-control-states-example {
+  width: min(1180px, calc(100% - 32px));
+  margin: 28px auto;
+}
+body:not([data-gallery-view="control-states"]) .visual-control-states-example {
+  display: none;
+}
+.visual-state-grid {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr));
+  align-items: start;
+  gap: var(--space-4);
+  padding: var(--space-4);
+}
+.visual-state-group {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+.visual-state-group > .ui-segmented {
+  flex-wrap: wrap;
+}

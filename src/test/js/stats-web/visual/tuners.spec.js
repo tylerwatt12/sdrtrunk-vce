@@ -239,16 +239,28 @@ test('two-column tuner workspace keeps settings below signal and recordings in t
   const sampleRateChoice = page.locator('.tuners-readouts').getByLabel('Sample rate');
   await expect(sampleRateChoice.locator('option')).toHaveText(['10 MHz', '2.5 MHz']);
   await expect(sampleRateChoice).toHaveValue('10 MHz');
-  const readoutFonts = await page.evaluate(() => [
-    '.tuners-channel-readout .tuners-readout-value',
-    '.tuners-common-sample .ui-select',
-    '.tuners-readout-center .tuners-frequency-digit > span',
-    '.tuners-lock-readout .ui-toggle-copy strong'
-  ].map((selector) => {
-    const style = getComputedStyle(document.querySelector(selector));
-    return [style.fontFamily, style.fontSize, style.fontWeight];
-  }));
-  expect(new Set(readoutFonts.map((font) => font.join('|'))).size).toBe(1);
+  const { readoutFonts, controlSize, controlWeight } = await page.evaluate(() => {
+    const foundation = getComputedStyle(document.documentElement);
+    return {
+      readoutFonts: [
+        '.tuners-channel-readout .tuners-readout-value',
+        '.tuners-common-sample .ui-select',
+        '.tuners-readout-center .tuners-frequency-digit > span',
+        '.tuners-lock-readout .ui-toggle-copy strong'
+      ].map((selector) => {
+        const style = getComputedStyle(document.querySelector(selector));
+        return [style.fontFamily, style.fontSize, style.fontWeight];
+      }),
+      controlSize: foundation.getPropertyValue('--font-size-control').trim(),
+      controlWeight: foundation.getPropertyValue('--font-weight-control').trim()
+    };
+  });
+  expect(new Set(readoutFonts.map(([family]) => family)).size).toBe(1);
+  // Counts and frequency digits share summary typography; fields and toggle
+  // labels retain the same readable control role used elsewhere on the site.
+  expect(readoutFonts[0]).toEqual(readoutFonts[2]);
+  expect(readoutFonts[1][1]).toBe(controlSize);
+  expect(readoutFonts[3].slice(1)).toEqual([controlSize, controlWeight]);
   await expect(page.locator('.tuners-main').getByRole('button', { name: /Queue/i })).toHaveCount(0);
   await expect(page.locator('main')).toHaveScreenshot('tuners-operator-light-desktop.png');
 

@@ -11,17 +11,13 @@
 }
 
 .alias-list-rail {
-  max-height: calc(100vh - 132px);
-  max-height: calc(100dvh - 132px);
+  max-height: calc(100vh - var(--app-header-offset, 64px) - var(--space-5) * 2);
+  max-height: calc(100dvh - var(--app-header-offset, 64px) - var(--space-5) * 2);
   position: sticky;
-  top: 112px;
+  top: calc(var(--app-header-offset, 64px) + var(--space-4));
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-surface-soft);
 }
 
 .alias-list-rail-header,
@@ -73,7 +69,7 @@
 
 .alias-list-item-name {
   overflow: hidden;
-  font-weight: 650;
+  font-weight: var(--font-weight-medium);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -84,20 +80,19 @@
   justify-content: space-between;
   gap: 6px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--font-size-meta);
 }
 
 .alias-list-family {
-  font-weight: 700;
-  letter-spacing: .03em;
+  font-weight: var(--font-weight-medium);
 }
 
 .alias-list-item-channels {
   min-width: 0;
   overflow: hidden;
   color: var(--muted);
-  font-size: 11px;
-  line-height: 1.35;
+  font-size: var(--font-size-meta);
+  line-height: var(--line-height-body);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -174,7 +169,7 @@
   max-width: 100%;
   margin: 0;
   overflow: hidden;
-  font-size: 18px;
+  font-size: var(--font-size-lead);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -194,7 +189,7 @@
 
 .alias-channel-usage h3 {
   margin: 0 0 var(--space-2);
-  font-size: 14px;
+  font-size: var(--font-size-body);
 }
 
 .alias-channel-usage-body p {
@@ -263,20 +258,13 @@
 .alias-filter-group {
   min-width: 0;
   margin: 0;
-  padding: var(--space-3);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-surface-soft);
 }
 
 .alias-filter-group legend {
-  padding: 0 5px;
+  padding: 0 var(--space-1);
   color: var(--muted);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: .04em;
-  text-transform: uppercase;
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-medium);
 }
 
 .alias-filter-group-fields {
@@ -405,7 +393,7 @@
   padding: 7px 9px;
   color: var(--muted);
   border-bottom: 3px solid var(--line);
-  font-size: 12px;
+  font-size: var(--font-size-label);
 }
 
 .alias-transfer-progress li > span {
@@ -422,7 +410,7 @@
 .alias-transfer-progress li.active {
   color: var(--ink);
   border-bottom-color: var(--accent);
-  font-weight: 700;
+  font-weight: var(--font-weight-medium);
 }
 
 .alias-transfer-progress li.active > span,
@@ -454,7 +442,7 @@
 }
 
 .alias-transfer-file-drop:focus-within {
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent);
+  box-shadow: var(--shadow-focus);
 }
 
 .alias-transfer-file-drop.has-file {
@@ -465,7 +453,7 @@
 
 .alias-transfer-file-drop > strong {
   overflow-wrap: anywhere;
-  font-size: 18px;
+  font-size: var(--font-size-lead);
 }
 
 .alias-transfer-file-action {
@@ -505,16 +493,9 @@
 .alias-transfer-review,
 .alias-transfer-radio-defaults {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   min-width: 0;
-}
-
-.alias-transfer-section,
-.alias-transfer-review {
-  padding: 14px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
-  background: var(--surface-2);
 }
 
 .alias-transfer-section > h3,
@@ -539,7 +520,7 @@
 
 .alias-transfer-overrides > summary {
   cursor: pointer;
-  font-weight: 650;
+  font-weight: var(--font-weight-medium);
 }
 
 .alias-transfer-assignment-choices {
@@ -656,7 +637,7 @@
 }
 
 .alias-editor-form legend {
-  font-weight: 650;
+  font-weight: var(--font-weight-medium);
 }
 
 .alias-editor-control,
@@ -697,8 +678,6 @@
 
 .alias-membership-operation button {
   width: 48px;
-  font-size: 20px;
-  line-height: 1;
 }
 
 .alias-modal-tabs {
@@ -715,9 +694,7 @@
 
 .alias-defaults-tab-panel {
   display: grid;
-  gap: 12px;
-  padding: 12px;
-  border: 1px solid var(--line);
+  gap: var(--space-3);
 }
 
 .alias-defaults-tab-panel[hidden] {
@@ -728,14 +705,12 @@
   min-width: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
+  gap: var(--space-2);
   margin: 0;
-  padding: 10px;
-  border: 1px solid var(--line);
 }
 
 .alias-stream-options legend {
-  padding: 0 4px;
+  padding: 0 var(--space-1);
 }
 
 .alias-stream-options > :is(.muted, .empty, .ui-notice) {
@@ -807,17 +782,10 @@
 }
 
 .alias-modal-footer {
-  position: sticky;
-  bottom: -12px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
-  margin: 4px -12px -12px;
-  padding: var(--space-3);
-  background: color-mix(in srgb, var(--surface) 94%, transparent);
-  border-top: 1px solid var(--line);
-  backdrop-filter: blur(10px);
 }
 
 .alias-modal-footer-spacer {
@@ -925,7 +893,7 @@
 .observed-group-identity-match small,
 .observed-group-identity-value small {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--font-size-meta);
 }
 
 .observed-group-identity-create {
@@ -982,8 +950,8 @@
     gap: var(--space-2);
     padding: var(--space-3);
     color: var(--muted);
-    font-size: 11px;
-    font-weight: 650;
+    font-size: var(--font-size-label);
+    font-weight: var(--font-weight-medium);
   }
 
   .alias-list-mobile select,
@@ -1071,7 +1039,7 @@
   }
 
   .alias-transfer-progress li > span {
-    font-size: 12px;
+    font-size: var(--font-size-label);
   }
 
   .alias-transfer-mode-choices,

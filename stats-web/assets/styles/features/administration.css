@@ -62,7 +62,6 @@
 .support-report-textarea {
   min-height: 120px;
   resize: vertical;
-  line-height: 1.45;
 }
 
 .support-report-output {
@@ -86,9 +85,9 @@
 }
 
 .support-report-output > summary {
-  padding: 12px 14px;
+  padding: var(--space-3) var(--space-4);
   cursor: pointer;
-  font-weight: 750;
+  font-weight: var(--font-weight-heading);
 }
 
 .support-report-choice-list {
@@ -122,11 +121,13 @@
 .support-report-output pre {
   max-height: 220px;
   margin: 0;
-  padding: 0 14px 14px;
+  padding: 0 var(--space-4) var(--space-4);
   overflow: auto;
   color: var(--muted);
   white-space: pre-wrap;
-  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-label);
+  line-height: var(--line-height-body);
 }
 
 .support-report-message {
@@ -187,10 +188,6 @@
   color: var(--muted);
 }
 
-.operational-preference-card .settings-card-header {
-  background: color-mix(in srgb, var(--accent-soft) 32%, var(--surface));
-}
-
 .operational-preferences .settings-card-body {
   align-content: start;
 }
@@ -223,7 +220,7 @@
 
 .operational-preference-form.is-dirty .operational-preference-state {
   color: var(--accent);
-  font-weight: 700;
+  font-weight: var(--font-weight-medium);
 }
 
 @media (max-width: 820px) {

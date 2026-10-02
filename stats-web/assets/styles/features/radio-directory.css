@@ -43,18 +43,6 @@
 
 .alias-coverage-field {
   min-width: 0;
-  display: grid;
-  gap: 6px;
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: .06em;
-  text-transform: uppercase;
-}
-
-.alias-coverage-field .ui-select-frame,
-.alias-coverage-field .ui-select {
-  width: 100%;
 }
 
 .alias-coverage-manage {
@@ -79,7 +67,7 @@
 
 .alias-coverage-section-header h2,
 .alias-coverage-table-header h2 {
-  font-size: 17px;
+  font-size: var(--font-size-subheading);
 }
 
 .alias-coverage-summary {
@@ -163,11 +151,6 @@
   flex: 1;
 }
 
-.alias-coverage-table-section .table-scroll {
-  border: 0;
-  border-radius: 0;
-}
-
 .radio-directory-content {
   gap: var(--space-5);
 }
@@ -185,11 +168,11 @@
 
 .radio-directory-section-header h2 {
   margin: 0;
-  font-size: 18px;
+  font-size: var(--font-size-section-title);
 }
 
 .radio-directory-section-header > span {
-  font-size: 11px;
+  font-size: var(--font-size-meta);
 }
 
 .radio-directory-system-grid {
@@ -238,7 +221,7 @@
 .radio-directory-system-identity h3 {
   margin: 0;
   overflow-wrap: anywhere;
-  font-size: 14px;
+  font-size: var(--font-size-body);
   line-height: 1.25;
 }
 
@@ -250,7 +233,7 @@
   flex-wrap: wrap;
   gap: 4px 7px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
 }
 
 .radio-directory-system-aliases,
@@ -288,7 +271,7 @@
   min-width: 0;
   color: var(--muted);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
@@ -304,7 +287,7 @@
 
 .radio-directory-channel-alias {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
 }
 
 @media (max-width: 1180px) {

@@ -36,7 +36,7 @@ body[data-view="tuner-spectrum"] {
 .tuner-frequency-action-summary dd {
   min-width: 0;
   margin: 0;
-  font-weight: 700;
+  font-weight: var(--font-weight-control);
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
@@ -79,7 +79,7 @@ body[data-view="tuner-spectrum"] {
 
 .tuner-frequency-lookup-frequency {
   margin: 0;
-  font-weight: 700;
+  font-weight: var(--font-weight-control);
   font-variant-numeric: tabular-nums;
 }
 
@@ -137,10 +137,6 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   align-items: center;
   gap: var(--space-4);
   padding: var(--space-4);
-  background: linear-gradient(135deg, var(--surface) 0%, var(--surface-2) 100%);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-surface);
 }
 
 .tuner-spectrum-selection {
@@ -166,17 +162,6 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 
 .tuner-spectrum-zoom-actions > button + button {
   margin-left: 1px;
-}
-
-.tuner-spectrum-toolbar-actions > button svg,
-.tuner-spectrum-options-summary svg {
-  width: 17px;
-  height: 17px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
 }
 
 .tuner-spectrum-options {
@@ -206,12 +191,6 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   border-bottom: 2px solid currentColor;
   transform: translateY(-2px) rotate(45deg);
   transition: transform 120ms ease;
-}
-
-.tuner-spectrum-options[open] .tuner-spectrum-options-summary {
-  color: var(--accent);
-  border-color: var(--accent);
-  background: var(--accent-soft);
 }
 
 .tuner-spectrum-options[open] .tuner-spectrum-options-summary::after {
@@ -252,20 +231,19 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 }
 
 .tuner-spectrum-options-header strong {
-  font-size: 17px;
-  letter-spacing: -.01em;
+  font-size: var(--font-size-subheading);
 }
 
 .tuner-spectrum-options-header span {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--font-size-label);
   line-height: 1.45;
 }
 
 .tuner-spectrum-options-kicker {
   color: var(--accent);
-  font-size: 10px;
-  font-weight: 800;
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-control);
   letter-spacing: .08em;
   text-transform: uppercase;
 }
@@ -280,8 +258,8 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 }
 
 .tuner-spectrum-legend-label {
-  font-size: 10px;
-  font-weight: 800;
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-control);
   letter-spacing: .06em;
   text-transform: uppercase;
 }
@@ -293,8 +271,8 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   align-items: center;
   gap: var(--space-2);
   color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-control);
 }
 
 .tuner-spectrum-display-control input {
@@ -396,7 +374,7 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 .tuner-spectrum-control-help {
   margin: 0;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--font-size-meta);
   line-height: 1.4;
 }
 
@@ -415,13 +393,13 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 }
 
 .tuner-spectrum-toggle-copy strong {
-  font-size: 12px;
+  font-size: var(--font-size-label);
 }
 
 .tuner-spectrum-toggle-copy small {
   color: var(--muted);
-  font-size: 11px;
-  font-weight: 400;
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-normal);
   line-height: 1.35;
 }
 
@@ -441,8 +419,8 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 .tuner-spectrum-display-section legend {
   padding: 0;
   color: var(--ink);
-  font-size: 13px;
-  font-weight: 800;
+  font-size: var(--font-size-secondary);
+  font-weight: var(--font-weight-heading);
 }
 
 .tuner-spectrum-profile .tuner-spectrum-display-control {
@@ -451,8 +429,8 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 
 .tuner-spectrum-refining {
   color: var(--accent);
-  font-size: 12px;
-  font-weight: 700;
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-control);
   white-space: nowrap;
 }
 
@@ -462,7 +440,7 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   align-items: center;
   gap: var(--space-1) var(--space-3);
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
 }
 
 .tuner-spectrum-flag-legend-item {
@@ -486,9 +464,6 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   display: grid;
   flex: 1 1 420px;
   gap: var(--space-1);
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
 }
 
 .tuner-spectrum-target > span,
@@ -543,7 +518,7 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   background: var(--spectrum-band);
   border: 1px solid var(--spectrum-band-line);
   border-radius: 2px;
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   line-height: 16px;
   text-shadow: var(--shadow-control);
 }
@@ -572,7 +547,7 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 }
 
 .tuner-spectrum-band-label {
-  font-weight: 700;
+  font-weight: var(--font-weight-control);
   text-align: center;
 }
 
@@ -585,7 +560,7 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   overflow: hidden;
   padding: 5px 10px;
   color: var(--spectrum-canvas-muted);
-  font-size: 11px;
+  font-size: var(--font-size-meta);
   line-height: 17px;
   text-align: center;
   text-overflow: ellipsis;
@@ -691,7 +666,7 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   border: 1px solid var(--spectrum-popup-line);
   border-radius: var(--radius-compact);
   box-shadow: var(--shadow-raised);
-  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--font-size-meta) var(--font-mono);
   pointer-events: none;
   text-align: center;
 }
@@ -702,7 +677,7 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 
 .tuner-spectrum-cursor-snap {
   color: var(--spectrum-active);
-  font-weight: 700;
+  font-weight: var(--font-weight-control);
 }
 
 .tuner-spectrum-cursor-channel {
@@ -719,7 +694,7 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 
 .tuner-spectrum-cursor-field-label {
   color: var(--spectrum-idle);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   text-transform: uppercase;
   white-space: nowrap;
 }
@@ -753,10 +728,6 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: stretch;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-surface-soft);
 }
 
 .tuner-spectrum-readouts .channel-diagnostic-readout {
@@ -776,7 +747,6 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 
 .tuner-spectrum-more-measurements summary {
   --ui-control-height: var(--control-height-compact);
-  font-size: var(--font-size-meta);
 }
 
 .tuner-spectrum-more-readouts {
@@ -818,14 +788,14 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 }
 
 .tuner-spectrum-readouts .channel-diagnostic-readout small {
-  font-size: 9px;
-  font-weight: 800;
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-heading);
   letter-spacing: .05em;
   text-transform: uppercase;
 }
 
 .tuner-spectrum-readouts .channel-diagnostic-readout strong {
-  font-size: 13px;
+  font-size: var(--font-size-secondary);
 }
 
 @media (max-width: 900px) {

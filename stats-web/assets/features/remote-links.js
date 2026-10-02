@@ -146,7 +146,7 @@ export function createRemoteLinksWorkspace(deps) {
   }
 
   function drawFeed(sender, feed) {
-    const card = node('article', 'remote-links-feed-card');
+    const card = node('article', 'remote-links-feed-card ui-surface-inset');
     const header = node('header', 'remote-links-feed-header');
     const title = node('div', 'remote-links-feed-title');
     title.append(iconGlyph('icon-cloud'), node('strong', '', feed.display_name || feed.advertised_name || feed.feed_id));
@@ -396,7 +396,7 @@ export function createRemoteLinksWorkspace(deps) {
     const secret = input('password', '');
     secret.maxLength = 256; secret.autocomplete = 'new-password';
     secret.placeholder = current.credential_configured ? 'Leave blank to keep saved secret' : 'Paste host-issued secret';
-    const choices = node('fieldset', 'remote-links-export-list');
+    const choices = node('fieldset', 'remote-links-export-list ui-form-section');
     choices.append(node('legend', '', 'P25 trunked systems to export'));
     const selected = new Set(current.exported_channel_configuration_ids || []);
     const options = snapshot.export_channel_options || [];

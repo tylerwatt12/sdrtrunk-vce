@@ -231,14 +231,12 @@ body[data-view="live"] .channel-diagnostic-readouts {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-control);
-  box-shadow: var(--shadow-control);
 }
 
 .channels-live-tab.active {
   color: var(--ink);
   background: var(--accent-soft);
   border-color: var(--interactive-border);
-  box-shadow: var(--shadow-selected);
 }
 
 .channels-tab-select {
@@ -334,7 +332,7 @@ body[data-view="live"] .channel-diagnostic-readouts {
   margin-top: 2px;
   color: var(--muted);
   font-size: var(--font-size-meta);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 .live-selected-view-actions {
@@ -368,9 +366,6 @@ body[data-view="live"] .channel-diagnostic-readouts {
 .channels-live-table td:nth-child(8) { text-align: center; }
 
 .channels-live-table td {
-  height: 29px;
-  padding: 4px 7px;
-  font-size: 12px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -381,19 +376,9 @@ body[data-view="live"] .channel-diagnostic-readouts {
   white-space: nowrap;
 }
 
-.channels-live-table .live-alias-link,
-.channels-live-table .live-channel-link {
-  color: var(--accent);
-}
-
 .channels-live-table .live-alias-link:hover,
 .channels-live-table .live-channel-link:hover {
   text-decoration: underline;
-}
-
-.channels-live-table th {
-  height: 30px;
-  padding: 4px 7px;
 }
 
 .channels-live-table tr.selected td {
@@ -475,10 +460,7 @@ body[data-view="live"] .channel-diagnostic-readouts {
 
 .live-events-table th,
 .live-events-table td {
-  height: 25px;
-  padding: 3px 6px;
   overflow: hidden;
-  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -496,7 +478,7 @@ body[data-view="live"] .channel-diagnostic-readouts {
 .live-event-stack small,
 .live-event-time small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
 }
 
 .live-event-time {
@@ -552,9 +534,9 @@ body[data-view="live"] .channel-diagnostic-readouts {
   display: inline-block;
   padding: 2px 5px;
   color: var(--ink);
-  font-size: 12px;
+  font-size: var(--font-size-label);
   font-variant-numeric: tabular-nums;
-  font-weight: 750;
+  font-weight: var(--font-weight-heading);
   line-height: 1.15;
   text-align: center;
   background: color-mix(in srgb, var(--surface) 82%, transparent);
@@ -582,10 +564,7 @@ body[data-view="live"] .channel-diagnostic-readouts {
 
 .live-messages-table th,
 .live-messages-table td {
-  height: 25px;
-  padding: 3px 6px;
   overflow: hidden;
-  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -595,7 +574,7 @@ body[data-view="live"] .channel-diagnostic-readouts {
 }
 
 .live-message-text {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--font-mono);
 }
 
 .channel-diagnostic-grid {
@@ -627,7 +606,7 @@ body[data-view="live"] .channel-diagnostic-readouts {
 .channel-diagnostic-title {
   margin: 0;
   padding: 0;
-  font-size: 13px;
+  font-size: var(--font-size-secondary);
 }
 
 .channel-diagnostic-view-toggle {
@@ -678,11 +657,11 @@ body[data-view="live"] .channel-diagnostic-readouts {
 
 .channel-diagnostic-readout small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
 }
 
 .channel-diagnostic-readout strong {
-  font-size: 12px;
+  font-size: var(--font-size-label);
   font-variant-numeric: tabular-nums;
 }
 
@@ -699,8 +678,8 @@ body[data-view="live"] .channel-diagnostic-readouts {
 .activity-status.state-teardown { color: var(--muted); background: var(--surface-2); }
 .activity-status.state-reset { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, var(--surface)); }
 .activity-status.state-idle { color: var(--muted); background: var(--surface); }
-.control-current { color: var(--control); font-weight: 700; }
-.control-alternate { color: var(--alternate); font-weight: 700; }
+.control-current { color: var(--control); font-weight: var(--font-weight-control); }
+.control-alternate { color: var(--alternate); font-weight: var(--font-weight-control); }
 .live-detail-filter-summary {
   min-width: 0;
   gap: var(--space-1);
@@ -736,7 +715,7 @@ body[data-view="live"] .channel-diagnostic-readouts {
 
 .live-filter-section h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--font-size-body);
 }
 
 .live-filter-type-actions,
@@ -801,7 +780,7 @@ body[data-view="live"] .channel-diagnostic-readouts {
 
 .live-filter-node-count {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--font-size-meta);
   font-variant-numeric: tabular-nums;
 }
 
@@ -828,8 +807,8 @@ body[data-view="live"] .channel-diagnostic-readouts {
 .live-filter-choice-group legend,
 .live-filter-search > span {
   color: var(--muted);
-  font-size: 11px;
-  font-weight: 700;
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-control);
 }
 
 .live-filter-choice-group label {
@@ -859,7 +838,7 @@ body[data-view="live"] .channel-diagnostic-readouts {
   color: var(--warning-ink);
   background: var(--warning-soft);
   border-bottom: 1px solid color-mix(in srgb, var(--warning) 44%, var(--line));
-  font-size: 12px;
+  font-size: var(--font-size-label);
 }
 
 @media (max-width: 1120px) {

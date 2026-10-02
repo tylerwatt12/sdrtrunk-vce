@@ -45,7 +45,7 @@
   padding: 5px 8px;
   color: var(--muted);
   background: var(--surface-2);
-  font-size: 14px;
+  font-size: var(--font-size-body);
   font-variant-caps: all-small-caps;
   letter-spacing: 0.06em;
   text-align: left;
@@ -62,7 +62,7 @@
   background: color-mix(in srgb, var(--accent-soft) 48%, var(--surface-2));
   border-top: 1px solid var(--line-dark);
   border-bottom: 1px solid var(--line-dark);
-  font-size: 12px;
+  font-size: var(--font-size-label);
   letter-spacing: .02em;
 }
 
@@ -118,13 +118,13 @@
 }
 
 .table-row-group-label {
-  font-size: 13px;
+  font-size: var(--font-size-secondary);
 }
 
 .table-row-group-count {
   margin-left: auto;
-  font-size: 11px;
-  font-weight: 600;
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-control);
 }
 
 
@@ -157,8 +157,8 @@
 
 .ui-muted-state {
   color: var(--muted);
-  font-size: 11px;
-  font-weight: 650;
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-control);
 }
 
 .ui-time-stacked {
@@ -169,7 +169,7 @@
 
 .ui-time-stacked > span:last-child {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--font-size-meta);
 }
 
 /* A calmer catalog treatment where vertical gridlines do not aid scanning. */
@@ -181,7 +181,7 @@
 
 .ui-data-table.ui-data-table-quiet th {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--font-size-label);
 }
 
 .ui-data-table th {
@@ -189,8 +189,8 @@
   top: 0;
   z-index: 1;
   color: var(--ink);
-  font-size: 12px;
-  font-weight: 650;
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-control);
   background: var(--surface-2);
 }
 
@@ -314,7 +314,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-weight: 650;
+  font-weight: var(--font-weight-control);
 }
 
 .ui-data-table.resizable-table .alias-cell {
@@ -423,7 +423,7 @@
   .ui-mobile-cards tbody td::before {
     content: attr(data-label);
     color: var(--muted);
-    font-weight: 650;
+    font-weight: var(--font-weight-control);
   }
   .ui-mobile-cards tbody td:has(> input[type="checkbox"]) {
     display: flex;
@@ -507,3 +507,14 @@
 }
 
 .ui-record-list-compact tbody td.empty::before { display: none; }
+
+/* Dense live operator tables share geometry while retaining their event markers. */
+.ui-data-table.ui-data-table-compact td {
+  height: var(--control-height-compact);
+  padding: 6px var(--space-2);
+  font-size: var(--font-size-secondary);
+}
+.ui-data-table.ui-data-table-compact th {
+  padding: var(--space-2);
+  font-size: var(--font-size-label);
+}

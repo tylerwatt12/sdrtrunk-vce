@@ -24,14 +24,14 @@
 }
 
 .radioreference-login-gate h2 {
-  font-size: clamp(24px, 3vw, 30px);
+  font-size: var(--font-size-page-title);
   line-height: 1.2;
 }
 
 .radioreference-gate-eyebrow {
   color: var(--accent);
-  font-size: 12px;
-  font-weight: 800;
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-heading);
   letter-spacing: .08em;
   text-transform: uppercase;
 }
@@ -185,7 +185,7 @@
   color: var(--muted);
   background: var(--surface-2);
   border-bottom: 1px solid var(--line);
-  font-weight: 700;
+  font-weight: var(--font-weight-control);
 }
 
 .radioreference-directory-branch {
@@ -201,7 +201,7 @@
   padding: var(--space-2) var(--space-3);
   background: var(--surface-2);
   color: var(--ink);
-  font-weight: 700;
+  font-weight: var(--font-weight-control);
   cursor: pointer;
   list-style: none;
 }
@@ -215,7 +215,7 @@
   display: inline-block;
   width: 20px;
   color: var(--muted);
-  font-size: 20px;
+  font-size: var(--font-size-title-small);
   line-height: 0;
   transform-origin: 6px center;
   transition: transform 120ms ease;
@@ -275,7 +275,7 @@
 
 .radioreference-frequency-group h3 {
   margin: 0 0 var(--space-2);
-  font-size: 14px;
+  font-size: var(--font-size-body);
 }
 
 .radioreference-result-grid {
@@ -306,11 +306,11 @@
 }
 
 .radioreference-result-card h4 {
-  font-size: 15px;
+  font-size: var(--font-size-section-title);
 }
 
 .radioreference-result-card h5 {
-  font-size: 13px;
+  font-size: var(--font-size-secondary);
 }
 
 .radioreference-result-type {
@@ -381,7 +381,7 @@
 .radioreference-detail-header h2 {
   margin-block: 2px;
   overflow-wrap: anywhere;
-  font-size: 20px;
+  font-size: var(--font-size-title-small);
 }
 
 .radioreference-detail-header .radioreference-back {
@@ -718,8 +718,8 @@
 
 .radioreference-talkgroup-changes dt {
   color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-control);
 }
 
 .radioreference-talkgroup-changes dd {
@@ -751,7 +751,7 @@
 
 .radioreference-preview-facts dt {
   color: var(--muted);
-  font-weight: 700;
+  font-weight: var(--font-weight-control);
 }
 
 .radioreference-import-complete {
@@ -996,8 +996,8 @@
   .data-table[data-table-type^="radioreference-"] tbody td::before {
     content: attr(data-label);
     color: var(--muted);
-    font-size: 11px;
-    font-weight: 800;
+    font-size: var(--font-size-meta);
+    font-weight: var(--font-weight-heading);
     letter-spacing: .04em;
     text-transform: uppercase;
   }

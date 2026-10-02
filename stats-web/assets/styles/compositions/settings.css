@@ -313,7 +313,7 @@
   justify-content: space-between;
   gap: var(--space-3);
   box-shadow: var(--shadow-raised);
-  font-size: 13px;
+  font-size: var(--font-size-secondary);
   text-align: left;
 }
 
@@ -369,8 +369,8 @@
 }
 
 .settings-page-form {
-  gap: 18px;
-  padding: 20px;
+  gap: var(--space-4);
+  padding: var(--space-4);
   background: var(--surface-2);
 }
 
@@ -379,7 +379,7 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
   align-items: stretch;
-  gap: 18px;
+  gap: var(--space-4);
 }
 
 .settings-card {
@@ -399,7 +399,7 @@
 }
 
 .settings-card-header {
-  padding: 17px 18px 14px;
+  padding: var(--space-3) var(--space-4);
   background: var(--surface);
   border-bottom: 1px solid var(--line);
 }
@@ -415,6 +415,8 @@
 .settings-card-description {
   margin: 6px 0 0;
   color: var(--muted);
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-normal);
   line-height: var(--line-height-body);
 }
 
@@ -422,7 +424,7 @@
   flex: 1 1 auto;
   display: grid;
   gap: var(--space-3);
-  padding: var(--space-4) 18px 18px;
+  padding: var(--space-4);
 }
 
 .settings-card-body .admin-toggle-control,
@@ -435,7 +437,7 @@
 .settings-field-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+  gap: var(--space-4);
   padding-top: 2px;
 }
 
@@ -448,7 +450,7 @@
   justify-self: stretch;
   gap: var(--space-3);
   padding-top: var(--space-4);
-  border-top: 1px solid var(--line-dark);
+  border-top: 1px solid var(--line);
 }
 
 .settings-form-footer .admin-form-message {
@@ -510,7 +512,7 @@
   justify-content: space-between;
   gap: var(--space-3);
   padding-top: var(--space-4);
-  border-top: 1px solid var(--line-dark);
+  border-top: 1px solid var(--line);
 }
 
 .settings-summary-footer p {
@@ -523,7 +525,7 @@
   max-width: none;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: start;
-  padding: 18px;
+  padding: var(--space-4);
 }
 
 .admin-settings-form-title,
@@ -581,7 +583,7 @@
 }
 
 .admin-form-help {
-  font-weight: 400;
+  font-weight: var(--font-weight-normal);
 }
 
 .admin-form-message {

@@ -21,20 +21,6 @@
   }
 }
 
-body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .page-header {
-  margin-bottom: var(--space-3);
-  padding: var(--space-4);
-  background: linear-gradient(135deg, var(--surface) 0%, var(--surface-2) 100%);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-surface);
-}
-
-body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .page-title {
-  font-weight: 800;
-  letter-spacing: -.025em;
-}
-
 .entity-info-layout {
   min-width: 0;
   display: grid;
@@ -56,7 +42,7 @@ body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="ra
 }
 
 .activity-refresh-controls {
-  font-weight: 400;
+  font-weight: var(--font-weight-normal);
 }
 
 .activity-refresh-countdown {
@@ -117,7 +103,6 @@ body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="ra
 
 .group-identity-activity-chart .activity-series-button {
   --ui-control-height: var(--control-height-compact);
-  opacity: 1;
 }
 
 .group-identity-activity-chart .activity-line-chart {
@@ -140,25 +125,6 @@ body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="ra
 
 .group-identity-activity-chart .activity-line-point {
   fill: var(--surface-2);
-}
-
-body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .table-scroll {
-  border: 0;
-  border-radius: 0;
-}
-
-body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .table-wrap th {
-  height: 42px;
-  color: var(--muted);
-  background: var(--surface-2);
-  font-size: 11px;
-  letter-spacing: 0;
-  text-transform: none;
-}
-
-body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .table-wrap td {
-  min-height: 44px;
-  padding-block: 9px;
 }
 
 @media (max-width: 900px) {

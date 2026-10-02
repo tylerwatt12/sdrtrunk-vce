@@ -20,8 +20,17 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--ink);
+  accent-color: var(--accent);
   font-size: var(--font-size-body);
   line-height: var(--line-height-body);
+}
+
+.app-shell :where(button, input, select, textarea),
+.modal-backdrop :where(button, input, select, textarea),
+.ui-popover :where(button, input, select, textarea),
+.access-landing :where(button, input, select, textarea) {
+  font: inherit;
+  letter-spacing: inherit;
 }
 
 a {

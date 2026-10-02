@@ -19,7 +19,7 @@
 
 .signal-health-summary {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--font-size-label);
 }
 
 .signal-current-grid {
@@ -55,7 +55,7 @@
 .signal-current-system {
   margin-top: 2px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--font-size-meta);
 }
 
 .signal-state {
@@ -71,13 +71,14 @@
 }
 
 .signal-current-power strong {
-  font-size: 21px;
+  font-size: var(--font-size-title-small);
+  font-weight: var(--metric-value-weight);
   font-variant-numeric: tabular-nums;
 }
 
 .signal-current-power span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--font-size-meta);
   white-space: nowrap;
 }
 
@@ -86,7 +87,7 @@
   flex-wrap: wrap;
   gap: 3px 10px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--font-size-meta);
   font-variant-numeric: tabular-nums;
 }
 
@@ -126,15 +127,12 @@
 .signal-history-identity {
   min-width: 0;
   padding: var(--space-2);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
 }
 
 .signal-history-identity a {
   display: block;
   overflow: hidden;
-  font-weight: 650;
+  font-weight: var(--font-weight-medium);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -142,7 +140,7 @@
 .signal-history-identity span {
   display: block;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--font-size-meta);
 }
 
 .quality-chart-stack {
@@ -165,12 +163,12 @@
 }
 
 .quality-chart-heading strong {
-  font-size: 13px;
+  font-size: var(--font-size-secondary);
 }
 
 .quality-chart-heading span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
 }
 
 .quality-chart {
@@ -192,7 +190,7 @@
 
 .quality-axis-label {
   fill: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
 }
 
 .signal-range-path {

@@ -17,7 +17,7 @@
 .ui-select {
   appearance: none;
   padding-right: 36px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236b7b88' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-image: var(--select-chevron);
   background-repeat: no-repeat;
   background-position: right 10px center;
   background-size: 16px;
@@ -59,7 +59,6 @@
 
 .ui-select-frame:has(select:disabled) {
   cursor: not-allowed;
-  opacity: .62;
 }
 
 .ui-select:focus-visible,
@@ -70,6 +69,7 @@
   box-shadow: var(--shadow-focus);
 }
 
+.ui-select:disabled,
 .ui-input:disabled,
 .ui-textarea:disabled {
   color: var(--muted);
@@ -95,6 +95,7 @@
   font-size: var(--font-size-control);
   font-weight: var(--font-weight-control);
   line-height: var(--line-height-control);
+  text-decoration: none;
   cursor: pointer;
   transition: transform 100ms ease, border-color 120ms ease, background-color 120ms ease,
     box-shadow 120ms ease;
@@ -124,12 +125,17 @@
   border-color: var(--accent);
   background: var(--surface-2);
   box-shadow: var(--shadow-button-hover);
-  transform: translateY(-1px);
+  transform: none;
 }
 
 .ui-button:active:not(:disabled, [aria-disabled="true"]) {
   box-shadow: var(--shadow-button-pressed);
   transform: translateY(0);
+}
+
+.ui-button:hover,
+.ui-button:focus-visible {
+  text-decoration: none;
 }
 
 .ui-control-group > .ui-button:hover:not(:disabled, [aria-disabled="true"]),
@@ -198,7 +204,7 @@
   background: none;
   border: 0;
   font: inherit;
-  font-weight: 650;
+  font-weight: var(--font-weight-control);
   text-align: left;
   cursor: pointer;
 }
@@ -230,12 +236,12 @@
 
 .ui-time-pair strong {
   color: var(--ink);
-  font-size: 11px;
+  font-size: var(--font-size-meta);
 }
 
 .ui-time-pair-exact {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-variant-numeric: tabular-nums;
 }
 
@@ -437,7 +443,7 @@
   border-radius: var(--radius-control);
   box-shadow: var(--shadow-raised);
   font-size: var(--hint-font-size);
-  font-weight: 600;
+  font-weight: var(--font-weight-control);
   line-height: 1.35;
   text-align: center;
   pointer-events: none;
@@ -520,7 +526,7 @@
   min-width: 22px;
   color: var(--muted);
   font-size: var(--font-size-label);
-  font-weight: 650;
+  font-weight: var(--font-weight-control);
 }
 
 .ui-pill {
@@ -533,14 +539,14 @@
   background: var(--surface-2);
   border: 1px solid var(--line-dark);
   border-radius: 999px;
-  font-size: 11px;
-  font-weight: 700;
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-control);
   white-space: nowrap;
 }
 
 .ui-pill-compact {
   padding: 2px 6px;
-  font-size: 10px;
+  font-size: var(--font-size-micro);
 }
 
 .ui-pill-success {
@@ -551,9 +557,9 @@
 
 .ui-pill-blue,
 .ui-pill-protocol {
-  color: var(--link);
-  background: var(--blue-soft);
-  border-color: color-mix(in srgb, var(--link) 42%, var(--line));
+  color: var(--info);
+  background: var(--info-soft);
+  border-color: color-mix(in srgb, var(--info) 42%, var(--line));
 }
 
 .ui-pill-warning {
@@ -606,9 +612,9 @@
 }
 
 .ui-pill.role-data {
-  color: var(--link);
-  background: var(--blue-soft);
-  border-color: color-mix(in srgb, var(--link) 42%, var(--line));
+  color: var(--info);
+  background: var(--info-soft);
+  border-color: color-mix(in srgb, var(--info) 42%, var(--line));
 }
 
 .ui-toolbar {
@@ -621,6 +627,11 @@
 
 .ui-toolbar > .ui-input[type="search"] {
   width: min(340px, 100%);
+}
+
+.ui-toolbar > .ui-search {
+  flex: 1 1 240px;
+  max-width: 420px;
 }
 
 .ui-pager {
@@ -653,7 +664,7 @@
   gap: 6px;
   color: var(--muted);
   font-size: var(--font-size-meta);
-  font-weight: 700;
+  font-weight: var(--font-weight-control);
   white-space: nowrap;
 }
 
@@ -673,10 +684,11 @@
 .ui-segmented {
   display: inline-flex;
   align-items: center;
-  padding: 3px;
+  gap: 2px;
+  padding: var(--space-1);
   background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: var(--radius-card);
+  border-radius: var(--radius-control);
   box-shadow: var(--shadow-inset-group);
 }
 
@@ -690,7 +702,7 @@
   color: var(--muted);
   background: transparent;
   border: 0;
-  border-radius: var(--radius-control);
+  border-radius: var(--radius-segment);
   font: inherit;
   font-size: var(--font-size-control);
   font-weight: var(--font-weight-control);
@@ -701,9 +713,20 @@
 .ui-segmented-option.active,
 .ui-segmented-option[aria-pressed="true"],
 .ui-segmented-option[aria-selected="true"] {
-  color: var(--ink);
-  background: var(--surface);
+  color: var(--primary-control-ink);
+  background: var(--primary-control);
   box-shadow: var(--shadow-selected);
+}
+
+.ui-segmented-option:hover:not(:disabled, [aria-disabled="true"], .active, [aria-pressed="true"], [aria-selected="true"]) {
+  color: var(--ink);
+  background: var(--accent-soft);
+}
+
+.ui-segmented-option:disabled,
+.ui-segmented-option[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: .5;
 }
 
 .ui-control-group {
@@ -759,7 +782,7 @@
   color: var(--primary-control-ink);
   background: var(--surface);
   border: 1px solid var(--interactive-border);
-  border-radius: var(--radius-compact);
+  border-radius: var(--radius-selection);
   accent-color: var(--accent);
   cursor: pointer;
   transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
@@ -865,6 +888,8 @@
 }
 
 .ui-choice-card {
+  font: inherit;
+  line-height: var(--line-height-body);
   padding: var(--ui-choice-card-padding, var(--space-3));
   color: var(--ink);
   background: var(--surface-2);
@@ -968,6 +993,7 @@
 .ui-toggle-copy strong {
   color: var(--ink);
   font-size: var(--font-size-body);
+  font-weight: var(--font-weight-control);
 }
 
 .ui-toggle-copy small {
@@ -1134,19 +1160,20 @@
 .ui-input-unit {
   color: var(--muted);
   font-size: var(--font-size-meta);
-  font-weight: 700;
+  font-weight: var(--font-weight-control);
 }
 
 .ui-field {
   min-width: 0;
   display: grid;
+  align-content: start;
   gap: var(--space-2);
   color: var(--ink);
 }
 
 .ui-field-label {
   font-size: var(--font-size-label);
-  font-weight: 750;
+  font-weight: var(--font-weight-heading);
 }
 
 .ui-field-detail {
@@ -1234,7 +1261,7 @@
 .quality-good,
 .quality-warn,
 .quality-bad {
-  font-weight: 700;
+  font-weight: var(--font-weight-control);
 }
 
 .quality-good { color: var(--success); }

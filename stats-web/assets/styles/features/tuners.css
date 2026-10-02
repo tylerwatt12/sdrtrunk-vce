@@ -114,12 +114,6 @@
   text-align: left;
 }
 
-.tuners-list-item[aria-pressed="true"] {
-  border-color: var(--focus-ring);
-  background: var(--accent-soft);
-  box-shadow: var(--shadow-selection-inset);
-}
-
 .tuners-list-item-main {
   min-width: 0;
   display: flex;
@@ -204,7 +198,7 @@
 .tuners-detail-identity small {
   color: var(--muted);
   font-size: var(--font-size-label);
-  font-weight: normal;
+  font-weight: var(--font-weight-normal);
 }
 
 .tuners-header-actions {
@@ -234,7 +228,7 @@
 }
 
 .tuners-readouts {
-  --ui-summary-number-size: 20px;
+  --ui-summary-number-size: var(--font-size-title-small);
   display: grid;
   grid-template-columns: minmax(110px, .72fr) minmax(150px, 1fr) minmax(255px, 1.35fr) minmax(145px, .85fr);
   border-top: 1px solid var(--line);
@@ -271,9 +265,7 @@
   line-height: 1.2;
 }
 
-.tuners-readout-value,
-.tuners-readout select,
-.tuners-lock-readout strong {
+.tuners-readout-value {
   min-width: 0;
   font-family: inherit;
   font-size: var(--ui-summary-number-size);
@@ -294,7 +286,7 @@
 .tuners-common-sample label > span:first-child {
   color: var(--muted);
   font-size: var(--font-size-label);
-  font-weight: normal;
+  font-weight: var(--font-weight-normal);
 }
 
 .tuners-center-value {
@@ -1025,12 +1017,28 @@
 }
 
 @media (max-width: 390px) {
+  .tuners-readouts,
+  .tuners-readouts[data-count="3"] {
+    grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr);
+  }
+
   .tuners-readouts {
-    --ui-summary-number-size: 18px;
+    --ui-summary-number-size: var(--font-size-lead);
   }
 
   .tuners-spectrum .tuner-spectrum-quality-control > button {
     min-width: 58px;
     padding-inline: var(--space-2);
+  }
+}
+
+@media (max-width: 360px) {
+  .tuners-readouts,
+  .tuners-readouts[data-count="3"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tuners-readout {
+    border-right: 0;
   }
 }

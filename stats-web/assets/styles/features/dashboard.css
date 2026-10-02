@@ -38,7 +38,7 @@
 
 .dashboard-identity-context {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
 }
 
 .dashboard-activity-controls {
@@ -59,8 +59,8 @@
 .dashboard-control-label {
   margin: 0 var(--space-1);
   color: var(--muted);
-  font-size: 11px;
-  font-weight: 700;
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-medium);
   letter-spacing: .02em;
   text-transform: uppercase;
 }
@@ -72,7 +72,7 @@
 }
 
 .dashboard-metric-coverage {
-  font-size: 9px;
+  font-size: var(--font-size-micro);
   opacity: .78;
 }
 
@@ -89,7 +89,7 @@
 .dashboard-coverage summary {
   padding: var(--space-2) 0 var(--space-1);
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--font-size-meta);
   cursor: pointer;
 }
 
@@ -118,7 +118,7 @@
   justify-content: space-between;
   gap: var(--space-2);
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--font-size-meta);
 }
 
 .dashboard-activity-page-controls {
@@ -192,14 +192,14 @@
 }
 
 .dashboard-activity-center-count {
-  font-size: 25px;
-  font-weight: 700;
+  font-size: var(--metric-value-mobile-size);
+  font-weight: var(--metric-value-weight);
   font-variant-numeric: tabular-nums;
 }
 
 .dashboard-activity-center-label {
   fill: var(--muted);
-  font-size: 12px;
+  font-size: var(--font-size-label);
 }
 
 .dashboard-activity-legend {

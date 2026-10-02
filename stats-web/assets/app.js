@@ -22,7 +22,7 @@ import {
 import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=21';
 import { createStreamingWorkspace } from './features/streaming.js?v=7';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=6';
-import { createRemoteLinksWorkspace } from './features/remote-links.js?v=10';
+import { createRemoteLinksWorkspace } from './features/remote-links.js?v=11';
 import { createRecordingsFeature } from './features/recordings.js?v=16';
 import { openSpectrumSearchWizard } from './features/spectrum-search.js?v=2';
 import { createAudioDock } from './core/audio-dock.js?v=6';
@@ -3390,7 +3390,9 @@ function searchBar(placeholder = 'Search') {
   input.value = route.get('q') || '';
   input.placeholder = placeholder;
   input.setAttribute('aria-label', placeholder);
-  form.append(input, node('button', 'ui-button ui-button-primary', 'Search'));
+  const search = node('div', 'ui-search');
+  search.append(iconGlyph('icon-search'), input);
+  form.append(search, node('button', 'ui-button ui-button-primary', 'Search'));
   if (route.get('q')) form.append(anchor('Clear', currentHref({ q: null, offset: null }),
     'ui-button ui-button-secondary'));
   return form;
@@ -3812,7 +3814,7 @@ function aliasOptionLimitNotice(options, name, label, guidance = '') {
 }
 
 function aliasListRail(lists, selectedList, usage) {
-  const rail = node('aside', 'alias-list-rail');
+  const rail = node('aside', 'alias-list-rail ui-surface');
   const header = node('div', 'alias-list-rail-header');
   header.append(node('strong', '', 'Alias Lists'));
   const create = node('button', 'ui-button ui-button-primary alias-list-create', 'New');
@@ -4030,7 +4032,7 @@ function aliasEditorFilterToolbar(aliasPage, options = null) {
   const lastBefore = aliasEditorFilterInput('', aliasLocalDateTimeValue(route.get('lastActivityBefore')),
     'datetime-local');
   const filterGroup = (label, className, controls) => {
-    const group = node('fieldset', `alias-filter-group ${className}`);
+    const group = node('fieldset', `alias-filter-group ui-form-section ${className}`);
     const fields = node('div', 'alias-filter-group-fields');
     fields.append(...controls);
     group.append(node('legend', '', label), fields);
@@ -4271,7 +4273,7 @@ function aliasAssignmentToggle(labelText, checked, inputName, value, detail = ''
 }
 
 function aliasScanListChoices(options, selectedValues = []) {
-  const fieldset = node('fieldset', 'alias-stream-options alias-scan-list-options');
+  const fieldset = node('fieldset', 'alias-stream-options alias-scan-list-options ui-form-section');
   fieldset.append(node('legend', '', 'Scan list membership'));
   const selected = new Set((selectedValues || []).map((value) => Number(value))
     .filter((value) => Number.isInteger(value) && value > 0));
@@ -4370,7 +4372,7 @@ function aliasEditorFilterInput(name, value = '', type = 'text') {
 }
 
 function aliasModalFooter(...controls) {
-  const footer = node('footer', 'alias-modal-footer ui-action-row');
+  const footer = node('footer', 'alias-modal-footer ui-action-row ui-modal-footer');
   footer.append(...controls.filter(Boolean));
   return footer;
 }
@@ -5010,7 +5012,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     record.name = 'recordable';
     const audioGrid = node('div', 'alias-editor-grid');
     audioGrid.append(recordField);
-    const streams = node('fieldset', 'alias-stream-options');
+    const streams = node('fieldset', 'alias-stream-options ui-form-section');
     streams.append(node('legend', '', 'Streaming destinations'));
     const selectedStreams = new Set(source.broadcast_configuration_ids || []);
     const configuredStreams = new Map((options.streams || []).map((entry) =>
@@ -5304,7 +5306,7 @@ function aliasBulkBar(onClear) {
 }
 
 function aliasBulkStreamChoices(options) {
-  const fieldset = node('fieldset', 'alias-stream-options alias-bulk-streams');
+  const fieldset = node('fieldset', 'alias-stream-options alias-bulk-streams ui-form-section');
   fieldset.append(node('legend', '', 'Destinations'));
   (options?.streams || []).forEach((stream) => {
     const label = node('label', 'alias-check-option ui-choice-card');
@@ -5764,7 +5766,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   const fileAction = node('span', 'ui-button ui-button-secondary alias-transfer-file-action', 'Choose CSV file');
   const fileStatus = node('span', 'muted', 'VCE alias exports and RadioReference talkgroup CSV files are supported.');
   fileDrop.append(file, filePrompt, node('span', 'muted', 'or'), fileAction, fileStatus);
-  const sourceSection = node('section', 'alias-transfer-section');
+  const sourceSection = node('section', 'alias-transfer-section ui-surface-inset');
   sourceSection.append(node('h3', '', 'Choose a source file'), fileDrop, formatField);
   const help = node('details');
   help.append(node('summary', '', 'CSV format help'), node('p', '',
@@ -5774,7 +5776,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
     'Existing aliases update name, description, and group only. New fully encrypted talkgroups have recording, ' +
     'scan-list playback, and streaming disabled. Download talkgroups for a system compatible with this list.'));
   sourceSection.append(help);
-  const behaviorSection = node('section', 'alias-transfer-section');
+  const behaviorSection = node('section', 'alias-transfer-section ui-surface-inset');
   behaviorSection.hidden = true;
   const modeChoices = node('fieldset', 'alias-transfer-mode-choices');
   modeChoices.append(node('legend', 'visually-hidden', 'Import behavior'));
@@ -5822,7 +5824,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   overrides.append(field('Recording', record));
   let busy = false;
   const assignmentOverride = (title, choices, defaultNames, id, allowExactNames = false) => {
-    const wrapper = node('fieldset', 'alias-stream-options alias-transfer-assignment-override');
+    const wrapper = node('fieldset', 'alias-stream-options alias-transfer-assignment-override ui-form-section');
     const overrideField = uiToggleField(`Override ${title.toLowerCase()}`, false,
       `Override ${title.toLowerCase()}`, 'Use different destinations for new aliases in this import.');
     overrideField.classList.add('alias-transfer-override-toggle');
@@ -5911,7 +5913,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   const previewButton = node('button', 'ui-button ui-button-primary', 'Review import'); previewButton.type = 'submit';
   behaviorSection.append(aliasModalFooter(behaviorBack, node('span', 'alias-modal-footer-spacer'), previewButton));
   const errorHost = node('div', 'alias-form-message'); errorHost.setAttribute('role', 'status');
-  const review = node('section', 'alias-transfer-review');
+  const review = node('section', 'alias-transfer-review ui-surface-inset');
   review.hidden = true;
   review.append(node('h3', '', 'Review changes'));
   const destination = node('p', 'muted');
@@ -6258,14 +6260,14 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
     'Set how this Alias List handles unknown traffic and how future Aliases begin.'));
 
   const behaviorPanel = (kind, policy, description, recordCopy, scanCopy, streamCopy, warning = null) => {
-    const panel = node('section', 'alias-defaults-tab-panel');
+    const panel = node('section', 'alias-defaults-tab-panel ui-form-section');
     panel.dataset.behavior = kind;
     panel.append(node('p', 'muted', description));
     const recordField = uiToggleField('Record calls', Boolean(policy?.recordable), 'Record calls', recordCopy);
     recordField.classList.add('alias-record-toggle');
     const record = recordField.querySelector('input');
     record.name = `${kind}Recordable`;
-    const recording = node('fieldset', 'alias-stream-options alias-defaults-section');
+    const recording = node('fieldset', 'alias-stream-options alias-defaults-section ui-form-section');
     recording.append(node('legend', '', 'Recording'), recordField);
 
     const scanLists = aliasScanListChoices(options, policy?.scan_list_ids || []);
@@ -6273,7 +6275,7 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
     if (scanListLegend) scanListLegend.textContent = 'Scan List';
     scanListLegend?.after(node('p', 'muted', scanCopy));
 
-    const streams = node('fieldset', 'alias-stream-options');
+    const streams = node('fieldset', 'alias-stream-options ui-form-section');
     streams.append(node('legend', '', 'Streaming'), node('p', 'muted', streamCopy));
     const selectedStreams = new Set(policy?.broadcast_configuration_ids || []);
     const configuredStreams = new Map((options.streams || []).map((entry) =>
@@ -8125,7 +8127,7 @@ function signalOverview(channel, includeName = true, decodeOnly = false) {
   overview.classList.toggle('without-identity', !includeName);
   overview.classList.toggle('decode-only', decodeOnly);
   if (includeName) {
-    const identity = node('div', 'signal-history-identity');
+    const identity = node('div', 'signal-history-identity ui-surface');
     const system = node('span');
     system.append(radioSystemValue(channel));
     identity.append(channelLink(channel), system);
@@ -10148,7 +10150,7 @@ function scannerField(label, value, level, action, wide = false) {
 }
 
 function scannerParticipant(title, alias, identifier, description, group, aliasAction, identifierAction) {
-  const participant = node('section', 'scanner-participant');
+  const participant = node('section', 'scanner-participant ui-surface');
   participant.append(node('strong', 'scanner-participant-heading', title));
   const fields = node('div', 'scanner-participant-fields');
   const primaryIdentity = alias || identifier;
@@ -10392,12 +10394,12 @@ function scanListCoverageTree(coverage) {
     return host;
   }
   lists.forEach((list) => {
-    const listDetails = node('details', 'scanner-coverage-list');
+    const listDetails = node('details', 'scanner-coverage-list ui-surface');
     listDetails.open = true;
     listDetails.append(node('summary', '', `${list.name} · ${[...list.groups.values()]
       .reduce((count, rows) => count + rows.length, 0)} aliases`));
     list.groups.forEach((rows, groupName) => {
-      const group = node('details', 'scanner-coverage-group');
+      const group = node('details', 'scanner-coverage-group ui-surface');
       group.open = true;
       group.append(node('summary', '', `${groupName} · ${rows.length}`));
       const values = node('ul');
@@ -10414,7 +10416,7 @@ function scanListCoverageTree(coverage) {
   });
   const unmatched = Array.isArray(coverage?.unmatched_alias_lists) ? coverage.unmatched_alias_lists : [];
   if (unmatched.length) {
-    const rules = node('div', 'scanner-unmatched-rules');
+    const rules = node('div', 'scanner-unmatched-rules ui-surface');
     rules.append(node('strong', '', 'Unmatched talkgroups'));
     unmatched.forEach((item) => rules.append(node('span', '', `${item.name} · ${semanticLabel(item.family)}`)));
     host.append(rules);
@@ -12044,7 +12046,7 @@ function liveMessagesPane() {
   ], 'Select a live row above', {
     type: 'live-messages', sortable: false, rowKey: (message) => message.message_id,
     rowClass: (message) => message.valid ? '' : 'message-invalid',
-    wrapperClass: 'live-messages-scroll', tableClass: 'live-messages-table',
+    wrapperClass: 'live-messages-scroll', tableClass: 'live-messages-table ui-data-table-compact',
     layoutMenuHost: columnsHost
   });
   pane.append(gap, messagesTable);
@@ -13980,8 +13982,8 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     ' tuner-spectrum-layout-inline-options' : ''}${basicOperator ? ' tuner-spectrum-layout-basic' : ''}${
     frequencyCursor ? ' tuner-spectrum-layout-cursor' : ''}${
     viewportControls ? ' tuner-spectrum-layout-viewport' : ''}`);
-  const toolbar = node('div', 'tuner-spectrum-toolbar');
-  const targetLabel = node('label', 'tuner-spectrum-target');
+  const toolbar = node('div', 'tuner-spectrum-toolbar ui-surface');
+  const targetLabel = node('label', 'tuner-spectrum-target ui-field');
   const targetSelect = node('select', 'ui-select');
   targetSelect.setAttribute('aria-label', 'Receiver window');
   targetSelect.disabled = true;
@@ -14231,7 +14233,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const moreMeasurements = node('details', 'tuner-spectrum-more-measurements');
   const moreReadouts = node('div', 'tuner-spectrum-more-readouts channel-diagnostic-readouts');
   moreMeasurements.append(node('summary', 'ui-button ui-button-secondary', 'More measurements'), moreReadouts);
-  const readoutPanel = node('div', 'tuner-spectrum-measurement-panel');
+  const readoutPanel = node('div', 'tuner-spectrum-measurement-panel ui-surface');
   readoutPanel.append(readouts, moreMeasurements);
   const visualWindow = node('div', 'tuner-spectrum-visual-window');
   visualWindow.append(spectrum.card, waterfall.card);
@@ -14561,6 +14563,9 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     context.fillRect(0, 0, cssWidth, cssHeight);
     context.strokeStyle = 'rgba(150, 177, 199, 0.18)';
     context.lineWidth = 1;
+    const typeStyle = getComputedStyle(document.documentElement);
+    context.font = `${typeStyle.getPropertyValue('--font-size-meta').trim()} ${typeStyle.getPropertyValue('--font-mono').trim()}`;
+    context.textBaseline = 'middle';
     for (let line = 1; line < 6; line += 1) {
       const power = dbFloor + (dbCeiling - dbFloor) * (1 - line / 6);
       const y = cssHeight * line / 6;
@@ -14571,8 +14576,6 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
       context.fillStyle = 'rgba(7, 17, 29, 0.82)';
       context.fillRect(4, y - 8, 57, 16);
       context.fillStyle = '#8fa8b7';
-      context.font = '10px ui-monospace, SFMono-Regular, Menlo, monospace';
-      context.textBaseline = 'middle';
       context.fillText(`${Math.round(power)} dB`, 7, y);
     }
     for (let line = 1; line < 4; line += 1) {
@@ -16059,7 +16062,7 @@ function liveEventsPanel(onCollapse) {
   ], 'Select a live row above', {
     type: 'live-events', sortable: false, rowKey: (event) => event.event_id,
     rowClass: (event) => liveEventCategoryClass(event.category),
-    wrapperClass: 'live-events-scroll', tableClass: 'live-events-table',
+    wrapperClass: 'live-events-scroll', tableClass: 'live-events-table ui-data-table-compact',
     layoutMenuHost: eventColumnsHost
   });
   eventPane.append(eventGap, eventsTable);
@@ -16781,7 +16784,7 @@ function liveChannelsSection(onSelectionChange) {
       const value = tables.get(activeTableId);
       if (value) selectRow(value, row);
     },
-    wrapperClass: 'table-scroll', tableClass: 'channels-live-table', mobileCards: true,
+    wrapperClass: 'table-scroll', tableClass: 'channels-live-table ui-data-table-compact', mobileCards: true,
     layoutMenuHost: titleActions
   });
   const host = node('div', 'channels-live');
@@ -17196,7 +17199,7 @@ function saveP25VisualizerEventSettings(value) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=29');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=30');
   const visualizerModule = await p25VisualizerModulePromise;
   if (!renderIsCurrent(renderContext)) return;
   const visualizer = visualizerModule.createP25Visualizer({
@@ -17615,7 +17618,7 @@ async function renderRadioSystem() {
       loadingMessage: 'Loading groups…',
       errorMessage: 'The radio system groups could not be loaded.'
     });
-    content.append(searchBar('Search group ID'), directory.element);
+    content.append(searchBar('Search talkgroups by name or ID'), directory.element);
     await directory.load(
       () => apiPage(radioSystemApiPath(radioSystem.radio_system_key, 'group-identities'), pageParameters()),
       (page) => pagedTableContent(page, groupIdentityColumns, 'group-identities', {
@@ -17635,7 +17638,7 @@ async function renderRadioSystem() {
       loadingMessage: 'Loading radios…',
       errorMessage: 'The radio system radios could not be loaded.'
     });
-    content.append(searchBar('Search radio ID'), directory.element);
+    content.append(searchBar('Search radios by name or ID'), directory.element);
     await directory.load(
       () => apiPage(radioSystemApiPath(radioSystem.radio_system_key, 'radios'), pageParameters(filters)),
       (page) => pagedTableContent(page, columns, radioTableType('radios', columns), {
@@ -21412,7 +21415,7 @@ function channelEditorControl(field, profile, options, channel, protocolCatalog)
       const toggle = uiToggle(selected.has(entry.value), entry.label);
       const input = toggle.querySelector('input');
       input.value = entry.value;
-      const option = node('div', 'channel-output-option');
+      const option = node('div', 'channel-output-option ui-toggle-field ui-toggle-field-compact');
       option.append(node('span', '', entry.label), toggle);
       control.append(option);
     });
@@ -21973,7 +21976,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
         entry.processing_state === 'RUNNING' ? 'icon-play' : 'icon-stop'));
       form.append(hero);
       if (editing && entry.processing_state === 'RUNNING') {
-        const notice = node('div', 'channel-restart-notice');
+        const notice = node('div', 'channel-restart-notice ui-notice ui-notice-warning');
         notice.append(iconGlyph('icon-warning'), node('span', '',
           'Saving safely stops this channel, applies the change, and restores its running state.'));
         form.append(notice);
@@ -21999,7 +22002,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
         });
         const protocolField = formField('Protocol', uiSelectFrame(protocolSelect, 'channel-protocol-select'),
           'The protocol determines the available source, decoder, logging, and recording settings.');
-        protocolField.classList.add('channel-editor-field', 'channel-protocol-picker');
+        protocolField.classList.add('channel-editor-field', 'channel-protocol-picker', 'ui-form-section');
         form.append(protocolField);
       }
       const panels = new Map();
@@ -22179,7 +22182,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
       const sectionStack = node('div', 'channel-editor-sections ui-editor-sections');
       sectionStack.append(...sectionNodes);
       sectionLayout.append(channelEditorSectionNavigation(panels, sectionPlan), sectionStack);
-      const footer = node('footer', 'channel-editor-footer ui-action-row');
+      const footer = node('footer', 'channel-editor-footer ui-action-row ui-modal-footer');
       footer.append(...[startStop, reset, node('span', 'channel-editor-footer-spacer'), cancel, save]
         .filter(Boolean));
       form.append(sectionLayout, errors, footer);
@@ -22484,8 +22487,8 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
     wrapper.dataset.uiDensity = 'compact';
     const toolbar = node('div', 'alias-coverage-toolbar ui-catalog-toolbar');
     toolbar.classList.toggle('alias-coverage-awaiting-selection', !selectedListId);
-    const listControl = node('label', 'alias-coverage-field');
-    listControl.append(node('span', '', 'Alias List'));
+    const listControl = node('label', 'alias-coverage-field ui-field');
+    listControl.append(node('span', 'ui-field-label', 'Alias List'));
     const listSelect = uiSelect(lists.rows.map((row) => ({ value: row.alias_list_id,
       label: `${row.name} · ${aliasListFamilyLabel(row)} · ${number(row.alias_count)} ` +
         (Number(row.alias_count) === 1 ? 'alias' : 'aliases') })),
@@ -22504,8 +22507,8 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
       });
       return wrapper;
     }
-    const rangeControl = node('label', 'alias-coverage-field');
-    rangeControl.append(node('span', '', 'Recent period'));
+    const rangeControl = node('label', 'alias-coverage-field ui-field');
+    rangeControl.append(node('span', 'ui-field-label', 'Recent period'));
     const rangeSelect = uiSelect([
       { value: '1h', label: 'Last hour' }, { value: '24h', label: 'Last day' },
       { value: '7d', label: 'Last week' }, { value: '30d', label: 'Last 30 days' }

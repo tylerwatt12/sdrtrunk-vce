@@ -10,39 +10,39 @@ const entryStylesheet = path.resolve(process.argv[2]
 
 const EXPECTED_ENTRY_MANIFEST = [
   '@layer reset, tokens, components, compositions, features, utilities;',
-  '@import url("./styles/base.css?v=1") layer(reset);',
-  '@import url("./styles/tokens.css?v=16") layer(tokens);',
-  '@import url("./styles/components/semantic-text.css?v=2") layer(components);',
-  '@import url("./styles/components/controls.css?v=28") layer(components);',
+  '@import url("./styles/base.css?v=2") layer(reset);',
+  '@import url("./styles/tokens.css?v=17") layer(tokens);',
+  '@import url("./styles/components/semantic-text.css?v=3") layer(components);',
+  '@import url("./styles/components/controls.css?v=29") layer(components);',
   '@import url("./styles/components/audio-controls.css?v=4") layer(components);',
-  '@import url("./styles/compositions/workspaces.css?v=20") layer(compositions);',
-  '@import url("./styles/compositions/tables.css?v=11") layer(compositions);',
-  '@import url("./styles/compositions/app-chrome.css?v=13") layer(compositions);',
+  '@import url("./styles/compositions/workspaces.css?v=21") layer(compositions);',
+  '@import url("./styles/compositions/tables.css?v=12") layer(compositions);',
+  '@import url("./styles/compositions/app-chrome.css?v=14") layer(compositions);',
   '@import url("./styles/compositions/audio-dock.css?v=5") layer(compositions);',
-  '@import url("./styles/compositions/charts.css?v=3") layer(compositions);',
-  '@import url("./styles/compositions/modals.css?v=6") layer(compositions);',
-  '@import url("./styles/compositions/settings.css?v=7") layer(compositions);',
+  '@import url("./styles/compositions/charts.css?v=4") layer(compositions);',
+  '@import url("./styles/compositions/modals.css?v=7") layer(compositions);',
+  '@import url("./styles/compositions/settings.css?v=8") layer(compositions);',
   '@import url("./styles/features/access-landing.css?v=2") layer(features);',
   '@import url("./styles/features/about.css?v=1") layer(features);',
-  '@import url("./styles/features/channels.css?v=17") layer(features);',
-  '@import url("./styles/features/entity-details.css?v=11") layer(features);',
-  '@import url("./styles/features/live.css?v=16") layer(features);',
-  '@import url("./styles/features/radio-directory.css?v=7") layer(features);',
-  '@import url("./styles/features/tuner-spectrum.css?v=13") layer(features);',
-  '@import url("./styles/features/tuners.css?v=10") layer(features);',
-  '@import url("./styles/features/listen-map.css?v=2") layer(features);',
-  '@import url("./styles/features/network-visualizer.css?v=10") layer(features);',
-  '@import url("./styles/features/scanner.css?v=7") layer(features);',
-  '@import url("./styles/features/aliases.css?v=17") layer(features);',
+  '@import url("./styles/features/channels.css?v=18") layer(features);',
+  '@import url("./styles/features/entity-details.css?v=12") layer(features);',
+  '@import url("./styles/features/live.css?v=17") layer(features);',
+  '@import url("./styles/features/radio-directory.css?v=8") layer(features);',
+  '@import url("./styles/features/tuner-spectrum.css?v=14") layer(features);',
+  '@import url("./styles/features/tuners.css?v=11") layer(features);',
+  '@import url("./styles/features/listen-map.css?v=3") layer(features);',
+  '@import url("./styles/features/network-visualizer.css?v=11") layer(features);',
+  '@import url("./styles/features/scanner.css?v=8") layer(features);',
+  '@import url("./styles/features/aliases.css?v=18") layer(features);',
   '@import url("./styles/features/scan-lists.css?v=3") layer(features);',
-  '@import url("./styles/features/dashboard.css?v=3") layer(features);',
-  '@import url("./styles/features/administration.css?v=8") layer(features);',
+  '@import url("./styles/features/dashboard.css?v=4") layer(features);',
+  '@import url("./styles/features/administration.css?v=9") layer(features);',
   '@import url("./styles/features/retained-statistics.css?v=4") layer(features);',
   '@import url("./styles/features/call-matching.css?v=4") layer(features);',
-  '@import url("./styles/features/signal-quality.css?v=4") layer(features);',
-  '@import url("./styles/features/radioreference.css?v=16") layer(features);',
+  '@import url("./styles/features/signal-quality.css?v=5") layer(features);',
+  '@import url("./styles/features/radioreference.css?v=17") layer(features);',
   '@import url("./styles/features/streaming.css?v=5") layer(features);',
-  '@import url("./styles/features/remote-links.css?v=6") layer(features);',
+  '@import url("./styles/features/remote-links.css?v=7") layer(features);',
   '@import url("./styles/features/p25-settings.css?v=4") layer(features);',
   '@import url("./styles/features/receiver-health.css?v=6") layer(features);',
   '@import url("./styles/features/activity.css?v=3") layer(features);',
@@ -52,7 +52,7 @@ const EXPECTED_ENTRY_MANIFEST = [
 
 // Feature styles may shape shared primitives only where page-specific composition requires it.
 // This is a shrinking migration budget, not permission for new shared-component overrides.
-const FEATURE_SHARED_SELECTOR_BUDGET = 30;
+const FEATURE_SHARED_SELECTOR_BUDGET = 28;
 
 function locator(source) {
   const lineStarts = [0];
@@ -487,7 +487,7 @@ function validateModernDesignSystemBoundaries(stylesheets, entry) {
     const relative = relativeStyleName(stylesheet, entry);
     if(relative === 'tokens.css' || relative.startsWith('..')) continue;
 
-    const rawColors = stylesheet.source.match(/#[0-9a-f]{3,8}\b|rgba?\s*\(/gi) || [];
+    const rawColors = stylesheet.source.match(/#[0-9a-f]{3,8}\b|%23[0-9a-f]{3,8}\b|(?:rgba?|hsla?)\s*\(/gi) || [];
     if(rawColors.length) {
       violations.push(`${relative}: ${rawColors.length} raw color value(s); add a semantic token in tokens.css`);
     }
@@ -504,6 +504,13 @@ function validateModernDesignSystemBoundaries(stylesheets, entry) {
     }
 
     for(const rule of stylesheet.rules) {
+      for(const declaration of rule.body.matchAll(/(?:^|[;\n])\s*(font(?:-(?:size|weight|family))?)\s*:\s*([^;{}]+)/g)) {
+        const value = declaration[2].trim();
+        if(value === '0' || /^(?:inherit|normal|bold|initial|unset)$/.test(value)
+          || /^var\(--/.test(value) && !/[\d.]+(?:px|rem|em|pt)\b/.test(value)) continue;
+        const { line, column } = stylesheet.locate(rule.index);
+        violations.push(`${relative}:${line}:${column}: ${declaration[1]} must use shared typography tokens or inherit`);
+      }
       for(const selector of splitSelectorList(rule.header)) {
         if(relative.startsWith('features/') && /\.ui-[a-z0-9_-]+/i.test(selector)) {
           featureSharedSelectors += 1;
@@ -863,6 +870,22 @@ function validateReducedMotionCoverage(stylesheets, entry) {
 }
 
 function runFocusedContractTests() {
+  const themeBoundaryFixture = (declaration) => {
+    const source = `.fixture { ${declaration} }`;
+    return [{ file: path.resolve(path.dirname(entryStylesheet), 'styles/components/fixture.css'),
+      source, ...parseStylesheet(source, 'theme-boundary-fixture.css') }];
+  };
+  validateModernDesignSystemBoundaries(themeBoundaryFixture('font-size: var(--font-size-body);'), entryStylesheet);
+  for(const declaration of ['font-size: 17px;', 'font-weight: 800;', 'font-family: Arial;',
+    'font: 12px monospace;', 'font-size: var(--custom-size, 17px);']) {
+    assert.throws(() => validateModernDesignSystemBoundaries(themeBoundaryFixture(declaration), entryStylesheet),
+      /must use shared typography tokens or inherit/);
+  }
+  for(const declaration of ['color: hsl(140 30% 40%);',
+    'background-image: url("data:image/svg+xml,%3Csvg fill=%23ffffff%3E");']) {
+    assert.throws(() => validateModernDesignSystemBoundaries(themeBoundaryFixture(declaration), entryStylesheet),
+      /raw color value/);
+  }
   const valid = parseStylesheet(
     '/* } */ @media (width > 1px) { .card:is(.wide, .narrow) { content: "}"; } }',
     'balanced-fixture.css',

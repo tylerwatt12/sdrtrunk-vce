@@ -7,12 +7,12 @@
   width: 100%;
   max-width: 1600px;
   margin: 0 auto;
-  padding: 14px;
+  padding: var(--space-4);
 }
 
 @media (max-width: 560px) {
   .content {
-    padding: var(--space-2);
+    padding: var(--space-3);
   }
 }
 
@@ -98,7 +98,7 @@
   max-width: 190px;
   overflow: hidden;
   color: var(--header-muted);
-  font-size: 12px;
+  font-size: var(--font-size-label);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -156,7 +156,7 @@
 }
 
 .playback-letter-command {
-  font: 900 14px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font: var(--font-weight-heading) var(--font-size-body)/1 var(--font-mono);
 }
 
 .playback-command-group {
@@ -221,20 +221,20 @@
 
 .playback-current-primary {
   color: var(--transport-accent);
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--font-size-secondary);
+  font-weight: var(--font-weight-control);
 }
 
 .playback-current-secondary {
   margin-top: 1px;
   color: var(--transport-muted);
-  font-size: 12px;
-  font-weight: 400;
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-normal);
 }
 
 .playback-field {
   color: var(--transport-muted);
-  font-weight: 400;
+  font-weight: var(--font-weight-normal);
 }
 
 .playback-volume {
@@ -336,7 +336,7 @@
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  font: 950 10px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font: var(--font-weight-heading) var(--font-size-meta)/1 var(--font-mono);
   letter-spacing: .04em;
   pointer-events: none;
 }
@@ -368,8 +368,8 @@
 
 .playback-scan-list-label {
   color: var(--transport-muted);
-  font-size: 12px;
-  font-weight: 750;
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-heading);
   text-transform: uppercase;
 }
 
@@ -401,7 +401,7 @@
   margin-bottom: var(--space-2);
   padding-inline: var(--space-1);
   color: var(--transport-ink);
-  font-weight: 700;
+  font-weight: var(--font-weight-control);
 }
 
 .playback-scan-list-options {
@@ -450,7 +450,7 @@
 .playback-scan-list-option small,
 .playback-panel-note {
   color: var(--transport-muted);
-  font-size: 11px;
+  font-size: var(--font-size-meta);
   line-height: 1.35;
 }
 
@@ -680,7 +680,7 @@
 
 .nav-group-links a small {
   color: var(--header-muted);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   white-space: nowrap;
 }
 
@@ -984,7 +984,7 @@
 .playback-command {
   min-width: var(--icon-action-size);
   padding: 0;
-  font-weight: 780;
+  font-weight: var(--font-weight-heading);
   cursor: pointer;
 }
 

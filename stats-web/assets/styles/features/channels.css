@@ -40,7 +40,6 @@
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--ui-surface-radius);
-  box-shadow: var(--ui-surface-shadow);
 }
 
 .channel-catalog-table {
@@ -50,14 +49,7 @@
 }
 
 .channel-catalog-table thead th {
-  height: 44px;
-  padding: 8px 10px;
-  color: var(--muted);
-  background: var(--surface);
-  border-bottom: 1px solid var(--line-dark);
-  font-size: 12px;
-  letter-spacing: 0;
-  text-transform: none;
+  height: var(--control-height-comfortable);
 }
 
 .channel-catalog-table tbody tr {
@@ -79,9 +71,7 @@
 }
 
 .channel-catalog-table td {
-  height: max(var(--ui-row-height), 52px);
-  padding: 9px 10px;
-  border-bottom-color: var(--table-rule);
+  height: max(var(--ui-row-height), var(--control-height-comfortable));
 }
 
 .channel-catalog-table tbody tr:last-child td {
@@ -111,14 +101,13 @@
 .channel-name-actions .link-button,
 .channel-name-link {
   width: fit-content;
-  color: var(--link);
-  font-size: 12px;
-  font-weight: 750;
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-medium);
 }
 
 .channel-row-context {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-size-meta);
 }
 
 .channel-row-links {
@@ -137,7 +126,7 @@
 
 .channel-order-number,
 .channel-order-readonly {
-  font-weight: 750;
+  font-weight: var(--font-weight-medium);
   font-variant-numeric: tabular-nums;
   text-align: center;
 }
@@ -153,13 +142,8 @@
 }
 
 .channel-editor-modal {
-  width: min(1060px, 96vw);
-  border-radius: var(--radius-modal);
-  box-shadow: var(--shadow-raised);
-}
-
-.channel-editor-modal .modal-content {
-  padding: 0;
+  --modal-content-padding: 0px;
+  width: min(var(--modal-size-wide), 96vw);
 }
 
 .channel-editor-form {
@@ -183,16 +167,16 @@
   min-height: 72px;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 13px 18px;
-  background: linear-gradient(120deg, var(--surface-2), var(--surface));
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--surface-2);
   border-bottom: 1px solid var(--line);
 }
 
 .channel-editor-hero > svg {
   width: 38px;
   height: 38px;
-  padding: 8px;
+  padding: var(--space-2);
   color: var(--accent);
   background: var(--accent-soft);
   border-radius: var(--radius-control);
@@ -213,12 +197,12 @@
 
 .channel-editor-hero strong {
   overflow-wrap: anywhere;
-  font-size: 16px;
+  font-size: var(--font-size-subheading);
 }
 
 .channel-editor-hero > div span {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--font-size-label);
 }
 
 .channel-protocol-picker {
@@ -226,29 +210,13 @@
   display: grid;
   grid-template-columns: minmax(220px, 360px) minmax(0, 1fr);
   align-items: center;
-  gap: 5px 18px;
-  margin: 16px 18px 0;
-  padding: 14px 16px;
-  background: linear-gradient(120deg, var(--accent-soft), var(--surface-2));
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line));
-  border-radius: var(--radius-card);
+  gap: var(--space-2) var(--space-4);
+  margin: var(--space-4) var(--space-4) 0;
 }
 
 .channel-protocol-picker .admin-form-label,
 .channel-protocol-picker .channel-protocol-select {
   grid-column: 1;
-}
-
-.channel-protocol-picker .admin-form-label {
-  color: var(--ink);
-  font-size: 12px;
-}
-
-.channel-protocol-picker .channel-protocol-select select {
-  min-height: 46px;
-  font-weight: 750;
-  border-color: color-mix(in srgb, var(--accent) 50%, var(--interactive-border));
-  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .channel-protocol-picker > small {
@@ -261,13 +229,8 @@
 .channel-restart-notice {
   display: flex;
   align-items: center;
-  gap: 9px;
-  margin: 12px 18px 0;
-  padding: 10px 12px;
-  color: var(--warning);
-  background: color-mix(in srgb, var(--warning) 9%, var(--surface));
-  border: 1px solid color-mix(in srgb, var(--warning) 42%, var(--line));
-  border-radius: var(--radius-control);
+  gap: var(--space-2);
+  margin: var(--space-3) var(--space-4) 0;
 }
 
 .channel-editor-panel {
@@ -281,10 +244,10 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  margin: 0 0 14px;
-  font-size: 14px;
-  font-weight: 750;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-3);
+  font-size: var(--font-size-subheading);
+  font-weight: var(--font-weight-heading);
 }
 
 .channel-editor-panel-title {
@@ -344,15 +307,7 @@
 }
 
 .channel-output-option {
-  min-height: 48px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 10px;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
+  min-width: 0;
 }
 
 .channel-input-with-unit {
@@ -380,10 +335,8 @@
 .channel-map-header {
   padding: 0 2px;
   color: var(--muted);
-  font-size: 10px;
-  font-weight: 750;
-  letter-spacing: .03em;
-  text-transform: uppercase;
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-medium);
 }
 
 .channel-map-field {
@@ -426,30 +379,19 @@
 
 .channel-observed-item span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-size-meta);
 }
 
 .channel-field-action {
   width: fit-content;
   margin-top: 4px;
-  color: var(--link);
-  font-size: 12px;
-  font-weight: 650;
 }
 
 .channel-editor-footer {
-  position: sticky;
-  bottom: 0;
-  z-index: 2;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 7px;
-  margin: 0;
-  padding: 11px 18px;
-  background: color-mix(in srgb, var(--surface) 94%, transparent);
-  border-top: 1px solid var(--line);
-  backdrop-filter: blur(10px);
+  gap: var(--space-2);
 }
 
 .channel-editor-footer-spacer {
@@ -473,10 +415,10 @@
   }
 
   .channel-catalog-table td::before {
-    font-size: 10px;
-    font-weight: 750;
-    letter-spacing: .03em;
-    text-transform: uppercase;
+    font-size: var(--font-size-label);
+    font-weight: var(--font-weight-medium);
+    letter-spacing: normal;
+    text-transform: none;
   }
 
   .channel-catalog-table .channel-select-cell {
@@ -574,8 +516,7 @@
 
   .channel-protocol-picker {
     grid-template-columns: minmax(0, 1fr);
-    margin: 12px 12px 0;
-    padding: 12px;
+    margin: var(--space-3) var(--space-3) 0;
   }
 
   .channel-protocol-picker > small {
@@ -621,10 +562,8 @@
   .channel-map-mobile-label {
     display: block;
     color: var(--muted);
-    font-size: 10px;
-    font-weight: 750;
-    letter-spacing: .03em;
-    text-transform: uppercase;
+    font-size: var(--font-size-label);
+    font-weight: var(--font-weight-medium);
   }
 
   .channel-map-row .ui-icon-button {
@@ -678,7 +617,7 @@
 
 .channel-squelch-quality-value {
   color: var(--accent);
-  font-size: 1.25rem;
+  font-size: var(--font-size-title-small);
 }
 
 .channel-squelch-quality-meter {

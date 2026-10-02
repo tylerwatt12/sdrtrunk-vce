@@ -62,7 +62,7 @@ function createP25Visualizer(dependencies = {}) {
     settingsCard, settingsCardGrid, modalFooter, loadEventSettings, saveEventSettings } = dependencies;
   const layout = node('section', 'network-visualizer-layout');
   layout.setAttribute('aria-label', 'P25 Visualizer');
-  const toolbar = node('div', 'network-visualizer-toolbar');
+  const toolbar = node('div', 'network-visualizer-toolbar ui-surface');
   toolbar.setAttribute('role', 'toolbar');
   toolbar.setAttribute('aria-label', 'P25 Visualizer controls');
   const brand = node('div', 'network-visualizer-brand');
