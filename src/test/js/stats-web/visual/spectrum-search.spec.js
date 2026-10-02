@@ -752,14 +752,16 @@ test('listen later restores a borrowed tuner as soon as saving finishes', async 
   await expect(dialog(page)).toContainText('Added, available later');
 
   const saveIndex = state.requests.findIndex((request) => request.path.endsWith('/save'));
-  const releaseIndex = state.requests.findIndex((request, index) => index > saveIndex &&
+  const releaseRequestIndex = () => state.requests.findIndex((request, index) => index > saveIndex &&
     request.path === '/api/v1/admin/tuners/idle-a/browse' && request.method === 'DELETE' &&
     request.body.lease_id === 'lease-2');
-  const resumeIndex = state.requests.findIndex((request, index) => index > releaseIndex &&
+  await expect.poll(releaseRequestIndex).toBeGreaterThan(saveIndex);
+  const releaseIndex = releaseRequestIndex();
+  const resumeRequestIndex = () => state.requests.findIndex((request, index) => index > releaseIndex &&
     request.path === '/api/v1/admin/tuners/idle-a/browse' && request.method === 'POST' &&
     Object.keys(request.body).length === 0);
   expect(releaseIndex).toBeGreaterThan(saveIndex);
-  expect(resumeIndex).toBeGreaterThan(releaseIndex);
+  await expect.poll(resumeRequestIndex).toBeGreaterThan(releaseIndex);
 });
 
 test('a release conflict keeps ownership until retry resumes the borrowed tuner', async ({ page }) => {
