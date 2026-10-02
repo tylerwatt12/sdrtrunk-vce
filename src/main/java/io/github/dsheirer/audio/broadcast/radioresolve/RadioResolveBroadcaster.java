@@ -1110,15 +1110,12 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
                     safeMessage(exception));
             }
 
-            int acceptedCount = 0;
-
             for(AcknowledgedUpload upload : acknowledged)
             {
                 BatchUploadDecision decision = upload.decision();
 
                 if(decision.disposition() == UploadDisposition.ACCEPTED)
                 {
-                    acceptedCount++;
                     incrementStreamedAudioCount();
                     broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_STREAMED_COUNT_CHANGE));
                 }
@@ -1136,11 +1133,6 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
                     mLog.error("RadioResolve v3 permanently rejected call {} with HTTP {}",
                         decision.submissionId(), decision.httpStatus());
                 }
-            }
-
-            if(acceptedCount > 0)
-            {
-                mLog.info("RadioResolve v3 accepted {} call(s) in batch", acceptedCount);
             }
         }
 
