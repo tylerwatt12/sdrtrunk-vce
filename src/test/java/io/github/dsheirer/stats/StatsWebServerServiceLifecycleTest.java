@@ -28,6 +28,7 @@ import io.github.dsheirer.preference.application.WebCertificateMode;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
 import io.github.dsheirer.web.http.WebSessionHttpController;
 import io.github.dsheirer.web.http.CallMatchingHttpController;
+import io.github.dsheirer.web.http.ApplicationLogHttpController;
 import io.github.dsheirer.web.http.WebRequestSecurity;
 import io.github.dsheirer.web.tls.TlsMaterial;
 import io.github.dsheirer.web.tls.WebTlsMaterialService;
@@ -144,6 +145,84 @@ class StatsWebServerServiceLifecycleTest
                 assertEquals(200, response.statusCode(), response.body());
                 assertTrue(response.body().contains("receiver"));
             }
+        }
+        finally
+        {
+            if(previousAssetOverride == null)
+            {
+                System.clearProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY);
+            }
+            else
+            {
+                System.setProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY, previousAssetOverride);
+            }
+        }
+    }
+
+    @Test
+    void applicationLogRouteIsRegisteredAndSurvivesListenerReload() throws Exception
+    {
+        Path dataRoot = mTemporaryDirectory.resolve("log-viewer-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Path logDirectory = Files.createDirectories(dataRoot.resolve("logs"));
+        Files.writeString(logDirectory.resolve("sdrtrunk_app.log"),
+            "20261002 101500.125 [main] INFO example.Application - Saved log route works\n");
+        Path assets = Files.createDirectories(mTemporaryDirectory.resolve("log-viewer-assets"));
+        Files.writeString(assets.resolve("index.html"), "<!doctype html><title>test</title>");
+        String previousAssetOverride = System.getProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY);
+        System.setProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY, assets.toString());
+        DirectoryPreference directoryPreference = new DirectoryPreference(preferenceType -> {})
+        {
+            @Override
+            public Path getDirectoryApplicationRoot()
+            {
+                return dataRoot;
+            }
+
+            @Override
+            public Path getDirectoryApplicationLog()
+            {
+                return logDirectory;
+            }
+        };
+        TestUserPreferences preferences = new TestUserPreferences(
+            new TestApplicationPreference(0, false, false, true), directoryPreference);
+
+        try(StatsWebServerService service = new StatsWebServerService(preferences))
+        {
+            URI origin = origin(service.getRuntimeState().port());
+            HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+            URI endpoint = origin.resolve(ApplicationLogHttpController.PATH);
+            assertEquals(401, client.send(HttpRequest.newBuilder(endpoint).GET().build(),
+                HttpResponse.BodyHandlers.discarding()).statusCode());
+            char[] password = "application-log-lifecycle-password".toCharArray();
+            try
+            {
+                service.provisionOrResetPrimaryAdmin(password);
+            }
+            finally
+            {
+                Arrays.fill(password, '\u0000');
+            }
+            String cookie = login(client, origin, "application-log-lifecycle-password");
+            HttpRequest request = HttpRequest.newBuilder(endpoint).timeout(Duration.ofSeconds(5))
+                .header("Cookie", cookie).GET().build();
+            HttpResponse<String> initial = client.send(request, HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, initial.statusCode(), initial.body());
+            assertEquals("Saved log route works",
+                OBJECT_MAPPER.readTree(initial.body()).at("/data/entries/0/message").asText());
+            WebServerRuntimeState reloadedState = service.reloadActiveListener();
+            assertTrue(reloadedState.running());
+            HttpRequest reloadedRequest = HttpRequest.newBuilder(
+                origin(reloadedState.port()).resolve(ApplicationLogHttpController.PATH))
+                .timeout(Duration.ofSeconds(5)).header("Cookie", cookie).GET().build();
+            HttpResponse<String> reloaded = client.send(reloadedRequest, HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, reloaded.statusCode(), reloaded.body());
+            assertEquals("no-store", reloaded.headers().firstValue("Cache-Control").orElseThrow());
+            assertEquals("Saved log route works",
+                OBJECT_MAPPER.readTree(reloaded.body()).at("/data/entries/0/message").asText());
         }
         finally
         {
