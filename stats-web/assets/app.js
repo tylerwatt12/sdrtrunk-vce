@@ -1,5 +1,5 @@
 import * as routeFoundation from './core/routes.js?v=8';
-import * as preferenceSchema from './core/preference-schema.js?v=2';
+import * as preferenceSchema from './core/preference-schema.js?v=3';
 import { Controller as UserPreferenceController } from './core/user-preferences.js';
 import * as tableLayouts from './core/table-layout.js';
 import * as tableDefaults from './core/table-defaults.js?v=10';
@@ -8,6 +8,7 @@ import { href as entityRefHref } from './core/entity-ref.js';
 import * as pageLifecycle from './core/page-lifecycle.js';
 import { installIconHints } from './core/icon-hints.js?v=3';
 import { createFormWorkflow } from './core/form-workflows.js?v=1';
+import { applyThemeHue } from './core/theme.js?v=1';
 import * as browsingWorkflows from './core/browsing-workflows.js?v=1';
 import {
   receiverHealthAlertGroups,
@@ -300,6 +301,7 @@ let accessSession = anonymousAccessSession();
 let accessSessionAvailable = false;
 let applicationRoutes = null;
 let userPreferenceError = null;
+let appearanceHuePreview = null;
 const tableLayoutResetPending = new Set();
 const tableSchemaRegistry = new Map();
 let tableLayoutPanelSequence = 0;
@@ -410,6 +412,7 @@ function applyUserPreferenceSnapshot(snapshot) {
   if (snapshot.loaded || snapshot.identity === null) clearUserPreferenceError();
   const preferences = snapshot.loaded ? snapshot.preferences : anonymousUserPreferences;
   applyTheme();
+  appearanceHuePreview?.onSnapshot(snapshot);
   pageTitleController.update({ prependPlaying: preferences.page_titles.prepend_playing_call });
   const player = webCallPlayer;
   if (player && typeof player.applyPreferences === 'function') player.applyPreferences(preferences.playback, { identity: snapshot.identity });
@@ -640,6 +643,10 @@ function applyTheme() {
   if (theme === 'dark') document.documentElement.dataset.theme = 'dark';
   else document.documentElement.removeAttribute('data-theme');
   updateThemeButton(document.getElementById('theme-toggle'), theme);
+  applyThemeHue(activeUserPreferences().appearance.hue);
+  if (appearanceHuePreview?.identity === userPreferenceController.snapshot().identity) {
+    applyThemeHue(appearanceHuePreview.hue);
+  }
 }
 
 function setTheme(theme) {
@@ -25692,8 +25699,9 @@ function userPreferenceSummaryCards(preferences) {
   const disabledAlerts = preferences.health_alerts.disabled_codes;
   const knownDisabledAlerts = receiverHealthAlertIds.filter((id) => disabledAlerts.includes(id)).length;
   return settingsCardGrid(
-    settingsCard('Appearance', 'Changed with the theme button in the header.', settingsSummary([
-      ['Theme', semanticLabel(preferences.appearance.theme)]
+    settingsCard('Appearance', 'Change the hue here or switch the theme in the header.', settingsSummary([
+      ['Theme', semanticLabel(preferences.appearance.theme)],
+      ['Hue', preferences.appearance.hue === null ? 'Original colors' : `${preferences.appearance.hue}°`]
     ])),
     settingsCard('Scanner', 'Changed on the Scanner page.', settingsSummary([
       ['Playing call in every page title', settingsEnabled(preferences.page_titles.prepend_playing_call)],
@@ -25730,6 +25738,139 @@ function userPreferenceSummaryCards(preferences) {
     settingsCard('Table layouts', 'Changed with the Columns control on each table.',
       tableLayoutSummary(preferences.tables))
   );
+}
+
+// Reuse map: My Settings summary, shared range/field controls, form feedback,
+// and the shared modal lifecycle cover light/dark and desktop/phone layouts.
+async function openAppearanceSettings(returnFocusSelector = null) {
+  const snapshot = userPreferenceController.snapshot();
+  if (!snapshot.loaded) return;
+  const identity = snapshot.identity;
+  let savedHue = snapshot.preferences.appearance.hue;
+  let draftHue = savedHue;
+  let sessionChanged = false;
+  const form = node('form', 'admin-form');
+  const hue = node('input', 'ui-range');
+  hue.type = 'range';
+  hue.id = 'appearance-hue';
+  hue.name = 'appearance-hue';
+  hue.min = '0';
+  hue.max = '359';
+  hue.step = '1';
+  hue.value = String(savedHue ?? 215);
+  hue.setAttribute('aria-valuetext', savedHue === null ? 'Original colors' : `${savedHue} degrees`);
+  const value = node('output', 'ui-field-detail', savedHue === null ? 'Original colors' : `${savedHue}°`);
+  value.htmlFor = hue.id;
+  const field = node('label', 'ui-field');
+  field.append(node('span', 'ui-field-label', 'Hue'), hue);
+  const useDefault = node('button', 'ui-button ui-button-secondary', 'Use original colors');
+  useDefault.type = 'button';
+  const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
+  cancel.type = 'button';
+  const save = node('button', 'ui-button ui-button-primary', 'Save appearance');
+  save.type = 'submit';
+  const feedback = node('div', 'admin-form-message');
+  const actions = aliasModalFooter(cancel, save);
+  form.append(field, value, useDefault, feedback, actions);
+  let preview = null;
+  const modal = openReadOnlyModal('Appearance', form, {
+    id: 'appearance-settings', className: 'admin-modal', returnFocusSelector,
+    cleanup: () => {
+      if (appearanceHuePreview === preview) appearanceHuePreview = null;
+      applyTheme();
+    }
+  });
+  if (!modal) return;
+  const workflow = createFormWorkflow({ form, submit: save, feedback, modal,
+    changed: () => !sessionChanged && draftHue !== savedHue });
+  const refreshPreview = () => {
+    value.textContent = draftHue === null ? 'Original colors' : `${draftHue}°`;
+    hue.setAttribute('aria-valuetext', draftHue === null ? 'Original colors' : `${draftHue} degrees`);
+    if (appearanceHuePreview === preview) {
+      preview.hue = draftHue;
+      applyTheme();
+    }
+  };
+  const loadSavedHue = (current) => {
+    savedHue = current.preferences.appearance.hue;
+    draftHue = savedHue;
+    hue.value = String(savedHue ?? 215);
+    refreshPreview();
+    workflow.refresh();
+  };
+  const closeForChangedSession = () => {
+    let owned = activeReadOnlyModal;
+    while (owned && owned !== modal.state) owned = owned.parent;
+    if (!owned) return;
+    // The former account's draft and any discard confirmation share this root.
+    // Close only that owned stack through the shared cleanup/focus lifecycle.
+    closeReadOnlyModal(true);
+    void render();
+  };
+  preview = {
+    identity, hue: savedHue,
+    onSnapshot: (current) => {
+      if (current.identity === identity) return;
+      sessionChanged = true;
+      if (appearanceHuePreview === preview) appearanceHuePreview = null;
+      workflow.setReady(false);
+      if (!workflow.isBusy()) closeForChangedSession();
+    }
+  };
+  hue.addEventListener('input', () => {
+    draftHue = Number(hue.value);
+    refreshPreview();
+  });
+  useDefault.addEventListener('click', () => {
+    draftHue = preferenceSchema.defaults.appearance.hue;
+    hue.value = String(draftHue ?? 215);
+    refreshPreview();
+    form.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  cancel.addEventListener('click', modal.close);
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const selectedHue = draftHue;
+    await workflow.save(async () => {
+      await updateUserPreferences((preferences) => {
+        preferences.appearance.hue = selectedHue;
+      }, false);
+      loadSavedHue(userPreferenceController.snapshot());
+    }, {
+      saving: 'Saving appearance…',
+      onSuccess: async () => {
+        modal.setDirty(false);
+        if (modal.close()) await render();
+        document.querySelector(returnFocusSelector || '#appearance-settings')?.focus({ preventScroll: true });
+      },
+      onError: (error) => {
+        if (sessionChanged || error?.code === 'preference_session_changed') {
+          sessionChanged = true;
+          workflow.setReady(false);
+          return { state: 'warning', message: 'The signed-in account changed. Reopen Appearance for this account.' };
+        }
+        if (error?.code === 'preference_conflict' && !error.reloadError) {
+          loadSavedHue(userPreferenceController.snapshot());
+          return { state: 'warning', message: 'Appearance changed in another session. The saved hue was loaded.' };
+        }
+        refreshPreview();
+        return { state: 'error', message: error?.code === 'preference_conflict' ?
+          'Appearance changed in another session, but the saved hue could not be loaded. Try saving again or reload the page.' :
+          'Appearance could not be saved. Your hue is still here. Try saving again.' };
+      }
+    });
+    if (sessionChanged) {
+      modal.setDirty(false);
+      closeForChangedSession();
+    }
+  });
+  if (!await modal.ready) return;
+  if (userPreferenceController.snapshot().identity !== identity) {
+    modal.close();
+    return;
+  }
+  appearanceHuePreview = preview;
+  modal.focus(hue);
 }
 
 function openStatusIconSettings(returnFocusSelector = null) {
@@ -26043,7 +26184,7 @@ function openScannerSettings(returnFocusSelector = null) {
 function openResetUserPreferences(returnFocusSelector = null) {
   const body = node('div', 'admin-confirmation');
   body.append(node('p', '', 'Reset every personal preference for this account to its default value?'),
-    node('p', 'muted', 'This resets the theme, Scanner and Live choices, volume and scan-list subscriptions, ' +
+    node('p', 'muted', 'This resets the theme and hue, Scanner and Live choices, volume and scan-list subscriptions, ' +
       'tuner display, status icon choices, and saved table layouts. It does not change the username, password, ' +
       'access, receiver configuration, or other users.'));
   const message = node('div', 'admin-form-message');
@@ -26098,7 +26239,7 @@ async function renderSettings() {
     window.history.replaceState({}, '', currentHref());
   }
   if (!beginPage(renderContext, pageHeader('My Settings',
-    'A read-only overview of every personal preference for this account'))) return;
+    'Review and customize personal preferences for this account'))) return;
   const snapshot = userPreferenceController.snapshot();
   if (!snapshot.loaded) {
     const unavailable = node('div', 'error', userPreferenceError?.message || 'My Settings could not be loaded.');
@@ -26115,6 +26256,10 @@ async function renderSettings() {
 
   const current = snapshot.preferences;
   const overview = node('div', 'settings-page-form user-settings-summary');
+  const appearance = node('button', 'ui-button ui-button-secondary', 'Change Appearance');
+  appearance.type = 'button';
+  appearance.id = 'appearance-settings';
+  appearance.addEventListener('click', () => { void openAppearanceSettings('#appearance-settings'); });
   const reset = node('button', 'ui-button ui-button-danger-quiet', 'Reset All Personal Preferences');
   reset.type = 'button';
   reset.id = 'reset-user-preferences';
@@ -26125,7 +26270,7 @@ async function renderSettings() {
   statusIcon.addEventListener('click', () => openStatusIconSettings('#status-icon-settings'));
   const footer = node('div', 'settings-summary-footer');
   const actions = node('div', 'admin-form-actions');
-  actions.append(statusIcon, reset);
+  actions.append(appearance, statusIcon, reset);
   footer.append(node('p', '', 'Reset affects only this account’s personal choices.'), actions);
   overview.append(userPreferenceSummaryCards(current), footer);
   content.append(section('Personal preferences', overview));

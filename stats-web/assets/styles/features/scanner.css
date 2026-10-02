@@ -323,7 +323,7 @@ body[data-view="scanner"] .content {
 .scanner-quality-bars i:nth-child(3) { height: 17px; }
 .scanner-quality-bars i:nth-child(4) { height: 22px; }
 .scanner-quality-bars i:nth-child(5) { height: 28px; }
-.scanner-quality-bars i.active { background: var(--accent); border-color: var(--accent); }
+.scanner-quality-bars i.active { background: var(--signal-fair); border-color: var(--signal-fair); }
 
 .scanner-engineer-grid {
   display: grid;

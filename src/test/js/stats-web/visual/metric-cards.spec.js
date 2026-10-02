@@ -48,7 +48,7 @@ async function mockEntities(page, theme) {
     }
     if (pathname === '/api/v1/me/preferences') {
       return route.fulfill({ json: { revision: 1, preferences: {
-        ...defaultPreferences, appearance: { theme }
+        ...defaultPreferences, appearance: { theme, hue: null }
       } } });
     }
     if (pathname === '/api/v1/status') {

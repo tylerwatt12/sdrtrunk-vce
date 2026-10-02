@@ -96,7 +96,7 @@ async function openStatistics(page, options = {}) {
           'admin-aliases': true } }) });
     } else if (pathname === '/api/v1/me/preferences') {
       await route.fulfill({ json: { revision: 1, preferences: { ...defaultPreferences,
-        appearance: { theme: options.theme || 'light' } } } });
+        appearance: { hue: null, theme: options.theme || 'light' } } } });
     } else if (pathname.endsWith('/retained-statistics/sources')) {
       const kind = url.searchParams.get('kind');
       requests.sources.push({ kind, q: url.searchParams.get('q') });

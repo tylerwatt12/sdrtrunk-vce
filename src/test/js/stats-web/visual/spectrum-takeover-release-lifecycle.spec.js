@@ -57,7 +57,7 @@ async function install(page) {
       } });
     if (path === '/api/v1/me/preferences') return route.fulfill({ contentType: 'application/json',
       body: JSON.stringify({ revision: 1, preferences: { ...preferenceModule.defaults,
-        appearance: { theme: 'light' } } }) });
+        appearance: { theme: 'light', hue: null } } }) });
     if (path === '/api/v1/spectrum-snap-presets') return route.fulfill({ contentType: 'application/json',
       body: JSON.stringify({ revision: 1, country_code: 'US', country_label: 'United States',
         countries: [{ code: 'US', label: 'United States' }], scopes: [] }) });

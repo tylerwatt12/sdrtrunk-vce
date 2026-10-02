@@ -1,27 +1,27 @@
 .receiver-health-indicator.receiver-health-healthy {
-  color: color-mix(in srgb, var(--success) 48%, var(--header-ink));
-  background: color-mix(in srgb, var(--success) 24%, var(--header));
-  border-color: color-mix(in srgb, var(--success) 58%, var(--header-line));
+  color: color-mix(in srgb, var(--success) 48%, var(--status-header-ink));
+  background: color-mix(in srgb, var(--success) 24%, var(--status-header));
+  border-color: color-mix(in srgb, var(--success) 58%, var(--status-header-line));
 }
 
 .receiver-health-indicator.receiver-health-warning {
-  color: color-mix(in srgb, var(--warning) 52%, var(--header-ink));
-  background: color-mix(in srgb, var(--warning) 24%, var(--header));
-  border-color: color-mix(in srgb, var(--warning) 58%, var(--header-line));
+  color: color-mix(in srgb, var(--warning) 52%, var(--status-header-ink));
+  background: color-mix(in srgb, var(--warning) 24%, var(--status-header));
+  border-color: color-mix(in srgb, var(--warning) 58%, var(--status-header-line));
 }
 
 .receiver-health-indicator.receiver-health-critical {
-  color: color-mix(in srgb, var(--danger) 52%, var(--header-ink));
-  background: color-mix(in srgb, var(--danger) 24%, var(--header));
-  border-color: color-mix(in srgb, var(--danger) 58%, var(--header-line));
+  color: color-mix(in srgb, var(--danger) 52%, var(--status-header-ink));
+  background: color-mix(in srgb, var(--danger) 24%, var(--status-header));
+  border-color: color-mix(in srgb, var(--danger) 58%, var(--status-header-line));
 }
 
 .receiver-health-indicator.receiver-health-neutral,
 .receiver-health-indicator.receiver-health-stale,
 .receiver-health-indicator.receiver-health-loading {
   color: var(--header-muted);
-  background: color-mix(in srgb, var(--header) 82%, var(--surface));
-  border-color: var(--header-line);
+  background: color-mix(in srgb, var(--status-header) 82%, var(--surface));
+  border-color: var(--status-header-line);
 }
 
 /* Receiver geometry uses shared sections, metrics, records, and feedback. */

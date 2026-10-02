@@ -33,7 +33,7 @@ async function openQuality(page, configurationId, { samples = false, theme = 'li
         primary: true, capabilities: { radio: true, 'csv-export': true } });
     } else if (pathname === '/api/v1/me/preferences') {
       await route.fulfill({ json: { revision: 1, preferences: {
-        ...defaultPreferences, appearance: { theme }
+        ...defaultPreferences, appearance: { theme, hue: null }
       } } });
     } else if (pathname === '/api/v1/status') {
       await respond({ stats_logging: { summary_configured: true, summary_active: true }, database: {} });

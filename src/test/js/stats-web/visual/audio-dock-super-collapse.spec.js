@@ -70,7 +70,7 @@ async function expectSuperCollapsed(page) {
   expect(geometry.bottom).toBeLessThanOrEqual(24);
   expect(geometry.reachable).toBe(true);
   expect(geometry.icon === '#icon-plus' || geometry.text === '+').toBe(true);
-  // Resolve the semantic green through a temporary CSS color parser rather
+  // Resolve the semantic primary color through a temporary CSS color parser rather
   // than assuming that computed rgb() serializes like the hex token.
   const primaryColor = await page.evaluate(() => {
     const canvas = document.createElement('canvas');
@@ -88,7 +88,7 @@ async function expectSuperCollapsed(page) {
 
 for (const theme of ['light', 'dark']) {
   for (const value of ['collapsed', 'minimal', 'full']) {
-    test(`desktop ${value} player hides to a green circle and restores its state in ${theme}`, async ({ page }) => {
+    test(`desktop ${value} player hides to a themed circle and restores its state in ${theme}`, async ({ page }) => {
       await page.setViewportSize({ width: 1280, height: 900 });
       await openApp(page, { theme });
       await size(page, 'full');

@@ -326,7 +326,7 @@ async function main() {
     /<link rel="icon" href="\/assets\/vce-icon-32\.png\?v=1" type="image\/png" sizes="32x32">/);
   assert.match(indexSource,
     /<link rel="apple-touch-icon" href="\/assets\/vce-apple-touch-icon\.png\?v=1" sizes="180x180">/);
-  assert.match(indexSource, /<link rel="manifest" href="\/assets\/site\.webmanifest\?v=1">/);
+  assert.match(indexSource, /<link rel="manifest" href="\/assets\/site\.webmanifest\?v=2">/);
   assert.match(indexSource,
     /<a class="brand" href="\/\?view=dashboard" aria-label="VCE home"><img class="brand-logo" src="\/assets\/vce-wordmark\.svg\?v=3" alt=""><\/a>/);
   assert.match(wordmarkSource, /<svg[^>]+viewBox="[^"]+"/);
@@ -357,7 +357,7 @@ async function main() {
   assert.doesNotMatch(appSource, /logging-notice/);
   assert.doesNotMatch(appCssSource, /\.logging-notice\b|\.preference-status\.preference-error/);
   const settingsSource = functionBinding(appSource, 'renderSettings');
-  assert.match(settingsSource, /A read-only overview of every personal preference/);
+  assert.match(settingsSource, /Review and customize personal preferences for this account/);
   assert.match(settingsSource, /userPreferenceSummaryCards\(current\)/);
   assert.match(settingsSource, /Reset All Personal Preferences/);
   assert.match(settingsSource, /openResetUserPreferences/);
@@ -1412,8 +1412,8 @@ async function main() {
 
   const decodedDefaults = preferenceSchema.validate(JSON.parse(JSON.stringify(preferenceSchema.defaults)));
   assert.deepEqual(decodedDefaults, {
-    version: 7,
-    appearance: { theme: 'light' },
+    version: 8,
+    appearance: { theme: 'light', hue: null },
     page_titles: { prepend_playing_call: false },
     playback: {
       volume: 1, selected_scan_list_ids: [], target_grouping: true, target_burst_limit: 4
@@ -1432,6 +1432,14 @@ async function main() {
     health_alerts: { disabled_codes: [] },
     tables: {}
   });
+  for (const hue of [0, 215, 359, null]) {
+    assert.equal(preferenceSchema.validate({ ...decodedDefaults,
+      appearance: { theme: 'light', hue } }).appearance.hue, hue);
+  }
+  for (const hue of [-1, 360, 0.5, '215', undefined, NaN]) {
+    assert.throws(() => preferenceSchema.validate({ ...decodedDefaults,
+      appearance: { theme: 'light', hue } }), /appearance.hue/);
+  }
   assert.equal(decodedDefaults.scanner.detail_mode, 'normal');
   assert.deepEqual(decodedDefaults.playback.selected_scan_list_ids, []);
   assert.equal(decodedDefaults.playback.target_grouping, true);
@@ -1450,7 +1458,7 @@ async function main() {
   } }).playback.selected_scan_list_ids, sixteenScanLists);
   assert.throws(() => preferenceSchema.validate({ ...decodedDefaults, mystery: true }), /unknown or missing/);
   assert.throws(() => preferenceSchema.validate({ ...decodedDefaults,
-    appearance: { theme: 'system' } }), /appearance.theme/);
+    appearance: { theme: 'system', hue: null } }), /appearance.theme/);
   assert.throws(() => preferenceSchema.validate({ ...decodedDefaults,
     playback: { ...decodedDefaults.playback, selected_scan_list_ids: ['1'] } }), /Selected scan lists/);
   assert.throws(() => preferenceSchema.validate({ ...decodedDefaults, playback: {
@@ -1734,7 +1742,7 @@ async function main() {
   queuedResponses.push(response(200, { revision: 3, preferences: decodedDefaults }));
   await controller.activate('alice');
   assert.equal(controller.snapshot().revision, 3);
-  const dark = { ...decodedDefaults, appearance: { theme: 'dark' } };
+  const dark = { ...decodedDefaults, appearance: { theme: 'dark', hue: null } };
   queuedResponses.push(response(200, { revision: 4, preferences: dark }));
   await controller.update((profile) => { profile.appearance.theme = 'dark'; });
   assert.equal(requests.at(-1)[1].headers['If-Match'], '"3"');
@@ -1752,7 +1760,7 @@ async function main() {
   const volumeSave = controller.update((profile) => { profile.playback.volume = 0.25; });
   slowThemeSave.resolve(response(200, {
     revision: 5,
-    preferences: { ...dark, appearance: { theme: 'light' } }
+    preferences: { ...dark, appearance: { theme: 'light', hue: null } }
   }));
   await Promise.all([themeSave, volumeSave]);
   assert.equal(controller.snapshot().preferences.appearance.theme, 'light');

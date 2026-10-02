@@ -623,10 +623,10 @@
 
 .channel-squelch-history-cell[data-quality="poor"] { background: var(--danger); }
 .channel-squelch-history-cell[data-quality="weak"] { background: var(--warning); }
-.channel-squelch-history-cell[data-quality="fair"] { background: var(--accent); }
+.channel-squelch-history-cell[data-quality="fair"] { background: var(--signal-fair); }
 .channel-squelch-history-cell[data-quality="good"] { background: var(--success); }
 .channel-squelch-history-cell[data-quality="excellent"] {
-  background: color-mix(in srgb, var(--success) 72%, var(--accent));
+  background: var(--signal-excellent);
 }
 
 .channel-squelch-sliders {

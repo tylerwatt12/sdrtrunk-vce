@@ -1,3 +1,4 @@
+import { applyThemeHue } from '/assets/core/theme.js?v=1';
 import * as tableDefaults from '/assets/core/table-defaults.js';
 import * as tableLayouts from '/assets/core/table-layout.js';
 import { createDualRange } from '/assets/core/dual-range.js';
@@ -410,6 +411,8 @@ const view = ['control-states', 'mobile-table', 'gallery', 'workflows', 'app-chr
   'spectrum-discovery', 'spectrum-search'].includes(parameters.get('view')) ?
   parameters.get('view') : 'gallery';
 document.documentElement.dataset.theme = theme;
+const requestedHue = parameters.get('hue');
+applyThemeHue(requestedHue === null ? null : Number(requestedHue));
 document.body.dataset.galleryView = view;
 
 document.querySelectorAll('[data-visual-disclosure]').forEach((toggle) => {
