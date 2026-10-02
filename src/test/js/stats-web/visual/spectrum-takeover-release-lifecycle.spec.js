@@ -1,8 +1,11 @@
 const { expect, test } = require('@playwright/test');
+const { readFileSync } = require('node:fs');
 const { resolve } = require('node:path');
 const { pathToFileURL } = require('node:url');
 
 const root = resolve(__dirname, '../../../../..');
+const app = readFileSync(resolve(root, 'stats-web/assets/app.js'), 'utf8');
+const protocols = require(resolve(root, 'src/main/resources/channel-protocols.json'));
 const browsePath = (id) => `/api/v1/admin/tuners/${id}/browse`;
 
 function tuner(id, { active = false } = {}) {
@@ -31,13 +34,108 @@ function preparedTuner() {
   return value;
 }
 
-async function install(page) {
+function discoverySnapshot(frequencyHz = 773081250) {
+  const profile = protocols.profiles.find((candidate) => candidate.id === 'p25-phase1');
+  const settings = Object.fromEntries(profile.sections.flatMap((section) => section.fields)
+    .filter((field) => field.path.startsWith('settings.') && Object.hasOwn(field, 'default'))
+    .map((field) => [field.path.substring(9), field.default]));
+  return {
+    session_id: 'discovery-a', state: 'ready', reason: null, protocol_id: 'p25-phase1',
+    tuner_id: 'active-a', target_id: 'target-active-a', frequency_hz: frequencyHz,
+    expires_at_ms: Date.now() + 30000,
+    probe: {
+      c4fm: { valid_messages: 18, valid_control_messages: 12, invalid_control_messages: 4, quality_pct: 81.2 },
+      cqpsk: { valid_messages: 52, valid_control_messages: 41, invalid_control_messages: 1, quality_pct: 99.1 },
+      elapsed_ms: 1500, timeout_ms: 15000, selected_modulation: 'CQPSK',
+      identity: { wacn: 0xb0001, system: 0x123, rfss: 1, site: 2 }
+    },
+    review: {
+      revision: 7,
+      template: { protocol_id: 'p25-phase1', name: 'Control', system: 'P25 B0001-123',
+        site: 'RFSS 1 Site 2', settings },
+      alias_lists: [], suggested_alias_list_id: null, default_new_alias_list_name: 'P25 B0001-123'
+    },
+    saved: null
+  };
+}
+
+async function installLiveSpectrumStream(page) {
+  await page.addInitScript(({ centerFrequencyHz, sampleRateHz }) => {
+    const nativeFetch = window.fetch.bind(window);
+    const encoder = new TextEncoder();
+    window.spectrumStreamLifecycle = { opened: 0, cancelled: 0 };
+
+    const multiplexFrame = (topic, kind, payload) => {
+      const frame = new Uint8Array(16 + payload.byteLength);
+      const header = new DataView(frame.buffer);
+      header.setUint32(0, 0x534c4d58);
+      header.setUint8(4, 2);
+      header.setUint8(5, kind);
+      header.setUint16(6, topic);
+      header.setUint32(8, payload.byteLength);
+      frame.set(payload, 16);
+      return frame;
+    };
+    const tunerStateFrame = () => {
+      const payload = encoder.encode(JSON.stringify({
+        stream_state: 'live', center_frequency_hz: centerFrequencyHz,
+        sample_rate_hz: sampleRateHz, profile: 'balanced'
+      }));
+      const frame = new Uint8Array(64 + payload.byteLength);
+      const header = new DataView(frame.buffer);
+      header.setUint32(0, 0x53444447, true);
+      header.setUint8(4, 1);
+      header.setUint8(5, 1);
+      header.setUint16(6, 64, true);
+      header.setUint32(8, payload.byteLength, true);
+      header.setBigInt64(16, BigInt(window.spectrumStreamLifecycle.opened), true);
+      header.setBigInt64(24, 1n, true);
+      header.setBigInt64(32, BigInt(Date.now()), true);
+      header.setBigInt64(40, BigInt(Date.now()), true);
+      header.setBigInt64(48, BigInt(centerFrequencyHz), true);
+      header.setInt32(56, sampleRateHz, true);
+      header.setInt32(60, 2048, true);
+      frame.set(payload, 64);
+      return frame;
+    };
+
+    window.fetch = (input, options = {}) => {
+      const rawUrl = typeof input === 'string' || input instanceof URL ? String(input) : input.url;
+      const url = new URL(rawUrl, window.location.href);
+      if (url.pathname === '/api/v1/live/multiplex') {
+        window.spectrumStreamLifecycle.opened += 1;
+        const ready = multiplexFrame(0, 1, encoder.encode(JSON.stringify({
+          event: 'ready', data: { client_id: url.searchParams.get('client_id') }
+        })));
+        return Promise.resolve(new Response(new ReadableStream({
+          start(controller) {
+            controller.enqueue(ready);
+            window.setTimeout(() => {
+              if (controller.desiredSize !== null) controller.enqueue(multiplexFrame(5, 2, tunerStateFrame()));
+            }, 50);
+          },
+          cancel() { window.spectrumStreamLifecycle.cancelled += 1; }
+        }), { status: 200, headers: { 'Content-Type': 'application/vnd.sdrtrunk.live+binary' } }));
+      }
+      return nativeFetch(input, options);
+    };
+  }, { centerFrequencyHz: 773081250, sampleRateHz: 10000000 });
+}
+
+async function install(page, options = {}) {
+  if (options.liveSpectrum) await installLiveSpectrumStream(page);
   const state = {
     requests: [], takeoverSequence: 0, monitorSequence: 0,
-    failNextDelete: false, delayNextDelete: false, releaseDelete: null, failNextRenewal: null
+    failNextDelete: false, delayNextDelete: false, releaseDelete: null, failNextRenewal: null,
+    failDiscoveryDeleteOnce: Boolean(options.failDiscoveryDeleteOnce),
+    releaseDiscoveryPost: null, releaseDiscoveryDelete: null
   };
   const preferenceModule = await import(pathToFileURL(resolve(root,
     'stats-web/assets/core/preference-schema.js')).href);
+
+  if (options.discovery) await page.route('**/assets/app.js*', (route) => route.fulfill({
+    contentType: 'text/javascript', body: `${app}\nexport { closeReadOnlyModal };`
+  }));
 
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request();
@@ -64,7 +162,37 @@ async function install(page) {
     if (path === '/api/v1/admin/tuners') return respond({ tuners: [
       tuner('active-a', { active: true }), tuner('idle-b')
     ] });
-    if (path === '/api/v1/diagnostics/tuners') return respond({ rows: [] });
+    if (path === '/api/v1/diagnostics/tuners') return respond({ rows: options.liveSpectrum ? [{
+      target_id: 'target-active-a', label: 'Dispatch receiver', center_frequency_hz: 773081250,
+      sample_rate_hz: 10000000
+    }] : [] });
+    if (path === '/api/v1/admin/channels/protocols') return respond(protocols);
+    if (path === '/api/v1/admin/spectrum-discovery/eligibility') return respond({
+      eligible: true, reason: null, matches: []
+    });
+    if (path === '/api/v1/admin/spectrum-discovery' && method === 'POST') {
+      if (options.delayDiscoveryPost) {
+        await new Promise((release) => { state.releaseDiscoveryPost = release; });
+        state.releaseDiscoveryPost = null;
+      }
+      return respond(discoverySnapshot(body.frequency_hz), 201);
+    }
+    if (path === '/api/v1/admin/spectrum-discovery/discovery-a') {
+      if (method === 'DELETE') {
+        if (state.failDiscoveryDeleteOnce) {
+          state.failDiscoveryDeleteOnce = false;
+          return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({
+            error: { message: 'Probe release interrupted', code: 'discovery_release_failed' }
+          }) });
+        }
+        if (options.delayDiscoveryDelete) {
+          await new Promise((release) => { state.releaseDiscoveryDelete = release; });
+          state.releaseDiscoveryDelete = null;
+        }
+        return respond({ closed: true });
+      }
+      return respond(discoverySnapshot());
+    }
     if (path === '/api/v1/admin/spectrum-search/catalog') return respond({
       tuners: [tuner('active-a', { active: true }), tuner('idle-b')], suggested_tuner_id: 'idle-b',
       presets: [
@@ -124,6 +252,10 @@ async function install(page) {
   await page.goto('/app.html?view=tuner-spectrum');
   await expect(page.getByRole('heading', { name: 'Tuner Spectrum', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Stop channels to tune', exact: true })).toBeVisible();
+  if (options.discovery) await page.evaluate(async () => {
+    const script = document.querySelector('script[type="module"][src*="/assets/app.js"]');
+    window.spectrumLifecycleApi = await import(script.src);
+  });
   return state;
 }
 
@@ -133,6 +265,20 @@ async function takeControl(page) {
   await expect(warning).toBeVisible();
   await warning.getByRole('button', { name: 'Stop channels and tune', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Resume channels', exact: true })).toBeVisible();
+}
+
+async function openDiscoveryFromSpectrum(page) {
+  const panel = page.locator('.spectrum-browse-panel');
+  const rail = page.locator('.spectrum-browse-control-rail');
+  await expect(page.locator('.spectrum-browse-state .badge')).toHaveText('Live');
+  await panel.getByRole('img', { name: 'Tuner frequency spectrum', exact: true })
+    .click({ position: { x: 240, y: 80 } });
+  const add = rail.getByRole('button', { name: 'Add channel or system', exact: true });
+  await expect(add).toBeEnabled();
+  await add.click();
+  const dialog = page.locator('.spectrum-discovery-modal');
+  await expect(dialog.getByRole('heading', { name: 'What kind of signal is this?', exact: true })).toBeVisible();
+  return dialog;
 }
 
 test('failed Resume keeps takeover ownership and renews its lease', async ({ page }) => {
@@ -189,6 +335,88 @@ test('Resume locks receiver choices until release and reacquisition finish', asy
   expect(reacquireIndex).toBeGreaterThan(releaseIndex);
 });
 
+test('channel discovery reconnects Spectrum only after its probe DELETE completes', async ({ page }) => {
+  const state = await install(page, {
+    discovery: true, liveSpectrum: true, failDiscoveryDeleteOnce: true, delayDiscoveryDelete: true
+  });
+  const status = page.locator('.spectrum-browse-state .badge');
+  const streams = () => page.evaluate(() => ({ ...window.spectrumStreamLifecycle }));
+  await expect.poll(async () => (await streams()).opened).toBe(1);
+  const dialog = await openDiscoveryFromSpectrum(page);
+
+  await dialog.getByRole('button', { name: 'Check signal', exact: true }).click();
+  await expect(dialog.getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
+  await expect(status).toHaveText('In use');
+  const createIndex = state.requests.findIndex((request) =>
+    request.path === '/api/v1/admin/spectrum-discovery' && request.method === 'POST');
+  const suspendIndex = state.requests.findIndex((request) =>
+    request.path === '/api/v1/live/multiplex/control' && request.method === 'POST' &&
+    Object.keys(request.body.subscriptions || {}).length === 0);
+  expect(suspendIndex).toBeGreaterThanOrEqual(0);
+  expect(createIndex).toBeGreaterThan(suspendIndex);
+
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect.poll(() => typeof state.releaseDiscoveryDelete).toBe('function');
+  const releaseDelete = state.releaseDiscoveryDelete;
+  try {
+    await expect(status).toHaveText('In use');
+    expect(await streams()).toEqual({ opened: 1, cancelled: 1 });
+  } finally {
+    releaseDelete();
+  }
+
+  await expect.poll(async () => (await streams()).opened).toBe(2);
+  await expect(status).toHaveText('Live');
+  const deleteIndexes = state.requests.map((request, index) => ({ request, index }))
+    .filter(({ request }) => request.path === '/api/v1/admin/spectrum-discovery/discovery-a' &&
+      request.method === 'DELETE').map(({ index }) => index);
+  expect(deleteIndexes).toHaveLength(2);
+  const resumeIndex = state.requests.findIndex((request, index) => index > deleteIndexes[1] &&
+    request.path === '/api/v1/live/multiplex/control' && request.method === 'POST' &&
+    request.body.subscriptions?.tuner_diagnostics);
+  expect(deleteIndexes[0]).toBeGreaterThan(createIndex);
+  expect(resumeIndex).toBeGreaterThan(deleteIndexes[1]);
+});
+
+test('forced close during discovery POST deletes the created probe before Spectrum reconnects', async ({ page }) => {
+  const state = await install(page, {
+    discovery: true, liveSpectrum: true, delayDiscoveryPost: true, delayDiscoveryDelete: true
+  });
+  const status = page.locator('.spectrum-browse-state .badge');
+  const streams = () => page.evaluate(() => ({ ...window.spectrumStreamLifecycle }));
+  await expect.poll(async () => (await streams()).opened).toBe(1);
+  const dialog = await openDiscoveryFromSpectrum(page);
+
+  await dialog.getByRole('button', { name: 'Check signal', exact: true }).click();
+  await expect.poll(() => typeof state.releaseDiscoveryPost).toBe('function');
+  await expect(status).toHaveText('In use');
+  await page.evaluate(() => window.spectrumLifecycleApi.closeReadOnlyModal(true));
+  await expect(dialog).toHaveCount(0);
+  expect(await streams()).toEqual({ opened: 1, cancelled: 1 });
+
+  state.releaseDiscoveryPost();
+  await expect.poll(() => typeof state.releaseDiscoveryDelete).toBe('function');
+  const releaseDelete = state.releaseDiscoveryDelete;
+  try {
+    await expect(status).toHaveText('In use');
+    expect(await streams()).toEqual({ opened: 1, cancelled: 1 });
+  } finally {
+    releaseDelete();
+  }
+
+  await expect.poll(async () => (await streams()).opened).toBe(2);
+  await expect(status).toHaveText('Live');
+  const createIndex = state.requests.findIndex((request) =>
+    request.path === '/api/v1/admin/spectrum-discovery' && request.method === 'POST');
+  const deleteIndex = state.requests.findIndex((request) =>
+    request.path === '/api/v1/admin/spectrum-discovery/discovery-a' && request.method === 'DELETE');
+  const resumeIndex = state.requests.findIndex((request, index) => index > deleteIndex &&
+    request.path === '/api/v1/live/multiplex/control' && request.method === 'POST' &&
+    request.body.subscriptions?.tuner_diagnostics);
+  expect(deleteIndex).toBeGreaterThan(createIndex);
+  expect(resumeIndex).toBeGreaterThan(deleteIndex);
+});
+
 test('temporary renewal failure keeps takeover ownership and retries automatically', async ({ page }) => {
   await page.clock.install();
   const state = await install(page);
@@ -206,8 +434,7 @@ test('temporary renewal failure keeps takeover ownership and retries automatical
   await page.clock.fastForward(10_100);
   await expect.poll(renewals).toBeGreaterThan(afterFailure);
   await expect(page.getByRole('button', { name: 'Resume channels', exact: true })).toBeVisible();
-  await expect(page.getByText(/1 active channel stopped while you tune/)).toBeVisible();
-  await expect(page.getByText(/Calls that were in progress will not resume/)).toBeVisible();
+  await expect(page.getByText('1 channel stopped · Resume when finished', { exact: true })).toBeVisible();
 });
 
 test('confirmed renewal ownership conflict clears the expired takeover', async ({ page }) => {

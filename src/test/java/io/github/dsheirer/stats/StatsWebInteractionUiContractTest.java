@@ -1615,7 +1615,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("frame.type !== DIAGNOSTIC_FRAME_TYPES.TUNER_FFT"));
         assertTrue(tuner.contains("let pageFocused = document.hasFocus()"));
         assertTrue(tuner.contains("let pageSuspended = false"));
-        assertTrue(tuner.contains("const shouldRun = () => !disposed && !paused && pageFocused && !pageSuspended"));
+        assertTrue(tuner.contains("const shouldRun = () => !disposed && !paused && !externallySuspended && pageFocused && !pageSuspended"));
         assertTrue(tuner.contains("!document.hidden && selectedTargetId()"));
         assertTrue(tuner.contains("const waterfallBuffer = document.createElement('canvas')"));
         assertTrue(tuner.contains("const firstBin ="));
@@ -1674,7 +1674,9 @@ class StatsWebInteractionUiContractTest
             "iconButton('icon-replay', 'Reset zoom', 'ui-button ui-button-secondary ui-icon-button')"));
         assertTrue(tuner.contains(
             "iconButton('icon-pause', 'Pause', 'ui-button ui-button-secondary ui-icon-button')"));
-        assertTrue(tuner.contains("node('summary', 'ui-button ui-button-secondary tuner-spectrum-options-summary')"));
+        assertTrue(tuner.contains("'ui-button ui-button-secondary ui-icon-button tuner-spectrum-options-summary'"));
+        assertTrue(tuner.contains("optionsSummary.setAttribute('aria-label', 'Display options')"));
+        assertTrue(tuner.contains("moreSummary.setAttribute('aria-label', 'More measurements')"));
         assertTrue(tuner.contains("setIconButton(pause, paused ? 'icon-play' : 'icon-pause',"));
         assertTrue(html.contains("id=\"icon-zoom-in\""));
         assertTrue(html.contains("id=\"icon-zoom-out\""));

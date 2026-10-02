@@ -60,7 +60,7 @@ public final class SpectrumDiscoveryService implements AutoCloseable
         List<Object> matches = new ArrayList<>(mChannels.discoveryFrequencyMatches(frequencyHz));
         matches.addAll(mDatabase.discoveryFrequencyOwners(frequencyHz));
         return new Eligibility(matches.isEmpty(), matches.isEmpty() ? null :
-            "This frequency already belongs to a known channel", List.copyOf(matches));
+            eligibilityReason(matches), List.copyOf(matches));
     }
 
     public synchronized Snapshot open(String tunerId, long frequencyHz, String protocolId, String browseLeaseId)
@@ -104,8 +104,8 @@ public final class SpectrumDiscoveryService implements AutoCloseable
         if(wizard.saved != null) return snapshot(wizard);
         Snapshot current = snapshot(wizard);
         if(!"ready".equals(current.state())) throw new IllegalStateException("Complete identification before saving");
-        if(!eligibility(wizard.tunerId, wizard.frequencyHz).eligible())
-            throw new IllegalStateException("This frequency now belongs to an existing channel");
+        Eligibility eligibility = eligibility(wizard.tunerId, wizard.frequencyHz);
+        if(!eligibility.eligible()) throw new IllegalStateException(eligibility.reason());
         ChannelAdministrationService.DiscoveryReview review = current.review();
         ChannelDefinition template = review.template();
         Map<String,Object> settings = new LinkedHashMap<>(request.settings() != null ? request.settings() : Map.of());
@@ -133,6 +133,25 @@ public final class SpectrumDiscoveryService implements AutoCloseable
         wizard.saved = mChannels.createDiscovered(definition, identity, request.newAliasListName(), request.revision());
         wizard.close();
         return startSaved(wizard);
+    }
+
+    static String eligibilityReason(List<Object> matches)
+    {
+        List<String> names = matches.stream().map(match ->
+        {
+            if(match instanceof ChannelAdministrationService.DiscoveryFrequencyMatch channel)
+                return channel.name() != null ? channel.name() : "";
+            if(match instanceof Map<?,?> channel)
+            {
+                Object name = channel.get("name");
+                return name != null ? String.valueOf(name) : "";
+            }
+            return "";
+        }).map(String::trim).filter(name -> !name.isEmpty()).distinct().toList();
+        if(names.isEmpty()) return "This frequency belongs to a known channel.";
+        if(names.size() == 1) return "This frequency belongs to " + names.getFirst() + ".";
+        return "This frequency belongs to " + names.getFirst() + " and " + (names.size() - 1) +
+            " other channel" + (names.size() == 2 ? "." : "s.");
     }
 
     public synchronized Snapshot start(String id)

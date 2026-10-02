@@ -175,7 +175,9 @@ async function install(page, state = {}) {
     }] : [] });
     if (path === '/api/v1/admin/channels/protocols') return respond(protocols);
     if (path.endsWith('/eligibility')) return respond({ eligible: !state.known,
-      reason: state.known ? 'This frequency belongs to County Control.' : null, matches: [] });
+      reason: state.known ? 'This frequency belongs to County Control.' : null,
+      matches: state.known ? [{ configuration_id: 'channel-a', name: 'County Control',
+        system: 'County P25', site: 'North' }] : [] });
     if (path === '/api/v1/admin/spectrum-discovery' && request.method() === 'POST') {
       state.protocolId = body.protocol_id;
       state.frequencyHz = body.frequency_hz;
@@ -364,20 +366,25 @@ test('managed Spectrum keeps its header actions and updates one persistent frequ
   const lock = toolbar.getByRole('checkbox', { name: 'Lock center', exact: true });
 
   await expect(lock).toHaveCount(1);
+  await expect(toolbar.locator('.spectrum-browse-field-label')).toHaveText('Tuner');
+  await expect(toolbar.locator('.spectrum-browse-lock-copy')).toHaveCount(1);
+  await expect(toolbar.locator('.tuners-center-lock-field')).toHaveAttribute('title', 'Lock center frequency');
   await expect(page.getByText('Keep tuner here', { exact: true })).toHaveCount(0);
   await expect(header.getByRole('button', { name: 'Find P25 channels', exact: true })).toBeVisible();
   await expect(toolbar.getByRole('button', { name: 'Find P25 channels', exact: true })).toHaveCount(0);
   await expect(rail).toHaveCount(1);
   await expect(rail.getByText('Select a signal', { exact: true })).toBeVisible();
+  await expect(toolbar.locator('.spectrum-browse-message')).toHaveText('Drag to tune · Zoom to pan');
   await expect(rail).toContainText(
     'Click a signal in the spectrum or waterfall to see its frequency and available actions.');
   const toolbarRows = await toolbar.evaluate((element) => {
     const controls = element.querySelector('.spectrum-browse-controls').getBoundingClientRect();
     const side = element.querySelector('.spectrum-browse-toolbar-side').getBoundingClientRect();
     const lockField = element.querySelector('.tuners-center-lock-field').getBoundingClientRect();
-    return { controlsBottom: controls.bottom, sideTop: side.top, lockHeight: lockField.height };
+    return { controlsCenter: controls.top + controls.height / 2,
+      sideCenter: side.top + side.height / 2, lockHeight: lockField.height };
   });
-  expect(toolbarRows.sideTop).toBeGreaterThanOrEqual(toolbarRows.controlsBottom);
+  expect(Math.abs(toolbarRows.sideCenter - toolbarRows.controlsCenter)).toBeLessThanOrEqual(1);
   expect(toolbarRows.lockHeight).toBeLessThanOrEqual(40);
   await page.evaluate(() => {
     window.originalSpectrumFrequencyRail = document.querySelector('.spectrum-browse-control-rail');
@@ -400,14 +407,19 @@ test('managed Spectrum keeps its header actions and updates one persistent frequ
   await expect(rail.getByRole('button', { name: 'Add channel or system', exact: true })).toBeEnabled();
   expect(await rail.evaluate((element) => element === window.originalSpectrumFrequencyRail)).toBe(true);
   await expect(page.locator('.tuner-frequency-popover')).toHaveCount(0);
+  await expect(rail.getByText('What can I do here?', { exact: true })).toHaveCount(0);
+  await expect(rail.locator('.tuner-frequency-action-tip')).toHaveCount(0);
   expect(state.requests.filter((request) => request.path.endsWith('/eligibility'))).toHaveLength(1);
 
   await page.setViewportSize({ width: 900, height: 900 });
   await expect.poll(() => page.evaluate(() => {
     const spectrum = document.querySelector('.spectrum-browse-panel').getBoundingClientRect();
     const actions = document.querySelector('.spectrum-browse-control-rail').getBoundingClientRect();
-    return { aligned: Math.abs(actions.x - spectrum.x) <= 1, stacked: actions.y >= spectrum.bottom };
-  })).toEqual({ aligned: true, stacked: true });
+    const controls = document.querySelector('.spectrum-browse-controls').getBoundingClientRect();
+    const side = document.querySelector('.spectrum-browse-toolbar-side').getBoundingClientRect();
+    return { aligned: Math.abs(actions.x - spectrum.x) <= 1,
+      railStacked: actions.y >= spectrum.bottom, toolbarStacked: side.top >= controls.bottom };
+  })).toEqual({ aligned: true, railStacked: true, toolbarStacked: true });
   await panel.getByRole('img', { name: 'Tuner frequency spectrum', exact: true })
     .click({ position: { x: 180, y: 80 } });
   await expect.poll(() => rail.evaluate((element) => {
@@ -435,6 +447,7 @@ test('bands, FFT, waterfall, legend, and measurements render as one continuous i
       instrument: bounds(instrument), visual: bounds(visual), fft: bounds(fft), plot: bounds(plot),
       bands: bounds(bands), waterfall: bounds(waterfall), legend: bounds(legend),
       measurements: bounds(measurements),
+      legendClientWidth: legend.clientWidth, legendScrollWidth: legend.scrollWidth,
       instrumentBorder: getComputedStyle(instrument).borderTopWidth,
       visualBorder: getComputedStyle(visual).borderTopWidth,
       bandBorderTop: getComputedStyle(bands).borderTopWidth,
@@ -450,7 +463,10 @@ test('bands, FFT, waterfall, legend, and measurements render as one continuous i
   expect(Math.abs(geometry.fft.left - geometry.waterfall.left)).toBeLessThanOrEqual(0.5);
   expect(Math.abs(geometry.fft.right - geometry.waterfall.right)).toBeLessThanOrEqual(0.5);
   expect(Math.abs(geometry.visual.bottom - geometry.legend.top)).toBeLessThanOrEqual(0.5);
-  expect(Math.abs(geometry.legend.bottom - geometry.measurements.top)).toBeLessThanOrEqual(0.5);
+  expect(Math.abs(geometry.legend.top - geometry.measurements.top)).toBeLessThanOrEqual(0.5);
+  expect(Math.abs(geometry.legend.right - geometry.measurements.left)).toBeLessThanOrEqual(0.5);
+  expect(Math.abs(geometry.legend.bottom - geometry.measurements.bottom)).toBeLessThanOrEqual(0.5);
+  expect(geometry.legendScrollWidth).toBeLessThanOrEqual(geometry.legendClientWidth);
   expect(geometry.instrumentBorder).toBe('1px');
   expect(geometry.visualBorder).toBe('0px');
   expect(geometry.bandBorderTop).toBe('0px');
@@ -458,6 +474,32 @@ test('bands, FFT, waterfall, legend, and measurements render as one continuous i
   expect(geometry.plotBorderBottom).toBe('1px');
   expect(geometry.legendBorderTop).toBe('1px');
   expect(geometry.measurementBorderTop).toBe('1px');
+
+  const reset = page.getByRole('button', { name: 'Reset zoom', exact: true });
+  const pause = page.getByRole('button', { name: 'Pause', exact: true });
+  const display = page.getByRole('button', { name: 'Display options', exact: true });
+  const more = page.locator('.tuner-spectrum-more-measurements > summary');
+  for (const control of [reset, pause, display, more]) {
+    await expect(control).toHaveClass(/ui-icon-button/);
+    await expect(control).toHaveText('');
+  }
+  await expect(more).toHaveAttribute('aria-label', 'More measurements');
+  await more.click();
+  const moreReadouts = page.locator('.tuner-spectrum-more-readouts');
+  await expect(moreReadouts).toBeVisible();
+  const popup = await moreReadouts.boundingBox();
+  const instrument = await page.locator('.spectrum-browse-instrument').boundingBox();
+  expect(popup.y).toBeGreaterThanOrEqual(instrument.y);
+  expect(popup.y + popup.height).toBeLessThanOrEqual(instrument.y + instrument.height);
+  await more.click();
+  await expect(pause).toBeEnabled();
+  await pause.click();
+  const resume = page.getByRole('button', { name: 'Resume', exact: true });
+  await expect(resume).toHaveClass(/ui-icon-button/);
+  await expect(resume).toHaveText('');
+  await expect(resume).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.tuner-spectrum-readouts .channel-diagnostic-readout small'))
+    .toHaveText(['Visible span', 'Zoom', 'Peak', 'Best SNR']);
 });
 
 test('confirmed lease activity updates the existing tuner option and preserves picker focus', async ({ page }) => {
@@ -539,13 +581,20 @@ test('the default P25 path uses plain language and waits for explicit review', a
   const types = dialog.getByRole('group', { name: 'Radio type', exact: true });
   await expect(types.getByRole('radio')).toHaveCount(3);
   await expect(types.getByRole('radio', { name: 'P25 radio system', exact: true })).toBeChecked();
-  await expect(dialog.locator('summary').filter({ hasText: /^Help me choose$/ })).toBeVisible();
+  await expect(dialog.getByText('Help me choose', { exact: true })).toHaveCount(0);
   expect(await dialog.innerText()).not.toMatch(/C4FM|CQPSK|WACN|RFSS|SysID|NAC|Alias List/);
   await dialog.getByRole('button', { name: 'Check signal', exact: true }).click();
-  await expect(dialog.getByRole('heading', { name: 'Ready to add', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
+  await expect(dialog.getByText('Ready to add', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('The system, site, and signal setting stayed consistent.', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('How does this work?', { exact: true })).toHaveCount(0);
+  const details = dialog.locator('details.spectrum-discovery-technical');
+  await expect(details).toHaveAttribute('open', '');
+  await expect(details.locator('summary')).toHaveText('Signal details');
+  await expect(details.getByRole('table')).toBeVisible();
   await expect(dialog.getByLabel('Channel name', { exact: true })).toHaveCount(0);
   await expect(dialog.getByRole('button', { name: 'Review channel', exact: true })).toBeVisible();
-  expect(await dialog.innerText()).not.toMatch(/C4FM|CQPSK|WACN|RFSS|SysID|NAC|Alias List/);
+  await expect(details.getByRole('rowheader', { name: 'CQPSK Selected', exact: true })).toBeVisible();
   expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(0);
   await review(page);
   await expect(dialog.getByLabel('Channel name', { exact: true })).toBeVisible();
@@ -568,7 +617,7 @@ test('P25 becoming ready preserves keyboard focus until the user reviews it', as
   await cancel.focus();
   state.phase = 'ready';
   await page.clock.fastForward(900);
-  await expect(dialog.getByRole('heading', { name: 'Ready to add', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
   await expect(cancel).toBeFocused();
   await expect(dialog.getByLabel('Channel name', { exact: true })).toHaveCount(0);
   await review(page);
@@ -583,17 +632,16 @@ test('P25 polling retains Cancel focus and cancellation releases the probe', asy
   const cancel = wizard(page).getByRole('button', { name: 'Cancel', exact: true });
   await expect(wizard(page).getByRole('heading', { name: 'Checking this radio system…', exact: true })).toBeVisible();
   await expect(wizard(page).getByRole('table')).toBeHidden();
-  await disclose(page, 'Technical details');
+  await disclose(page, 'Signal details');
   const table = wizard(page).getByRole('table');
   await expect(table.getByRole('columnheader')).toHaveText([
-    'Signal setting', 'Valid messages', 'Control messages', 'Invalid control', 'Message quality'
+    'Setting', 'Valid', 'Control', 'Rejected', 'Valid %'
   ]);
   await expect(table.locator('tbody tr').nth(0).getByRole('cell')).toHaveText(['18', '12', '4', '81%']);
   await expect(table.locator('tbody tr').nth(1).getByRole('cell')).toHaveText(['52', '41', '1', '99%']);
   await expect(table.getByRole('rowheader', { name: 'C4FM', exact: true })).toBeVisible();
   await expect(table.getByRole('rowheader', { name: 'CQPSK', exact: true })).toBeVisible();
-  await expect(wizard(page).getByText(/Message quality is the proportion of messages/)).toBeVisible();
-  await expect(wizard(page).getByText(/Message quality is the proportion of messages/)).toContainText('not a confidence score');
+  await expect(wizard(page).getByText(/Message quality is the proportion of messages/)).toHaveCount(0);
   await expect(cancel).toBeEnabled();
   await cancel.focus();
   await expect(cancel).toBeFocused();
@@ -605,7 +653,7 @@ test('P25 polling retains Cancel focus and cancellation releases the probe', asy
   await expect(wizard(page)).toHaveCount(0);
   await expect.poll(() => state.requests.some((request) => request.path.endsWith('/discovery-a') &&
     request.method === 'DELETE')).toBe(true);
-  expect(await page.evaluate(() => window.discoveryProbeStates)).toEqual([true, false]);
+  await expect.poll(() => page.evaluate(() => window.discoveryProbeStates)).toEqual([true, false]);
 });
 
 test('retrying inconclusive P25 identification restores Cancel while scanning and saves no channel', async ({ page }) => {
@@ -660,7 +708,7 @@ test('a setup that expires during review cannot add a channel and can retry sign
   state.phase = 'ready';
   state.reason = null;
   await dialog.getByRole('button', { name: 'Try again', exact: true }).click();
-  await expect(dialog.getByRole('heading', { name: 'Ready to add', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
   await expect(dialog.getByLabel('Channel name', { exact: true })).toHaveCount(0);
   await review(page);
   await expect(dialog.getByRole('button', { name: 'Add and start listening', exact: true })).toBeEnabled();
@@ -685,13 +733,13 @@ test('a delayed status from the previous radio type cannot replace a new signal 
   state.reason = null;
   await dialog.getByRole('radio', { name: 'P25 radio system', exact: true }).check();
   await dialog.getByRole('button', { name: 'Check signal', exact: true }).click();
-  await expect(dialog.getByRole('heading', { name: 'Ready to add', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
   const response = page.waitForResponse((candidate) => candidate.request().method() === 'GET' &&
     new URL(candidate.url()).pathname.endsWith('/spectrum-discovery/discovery-a'));
   state.releaseStatus();
   await response;
   await page.waitForTimeout(100);
-  await expect(dialog.getByRole('heading', { name: 'Ready to add', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
   await expect(dialog.getByRole('heading', { name: 'AM radio setup interrupted', exact: true })).toHaveCount(0);
   await review(page);
   const opens = state.requests.filter((request) => request.path === '/api/v1/admin/spectrum-discovery' &&
@@ -713,7 +761,7 @@ test('an expired session response requires a fresh check instead of leaving Add 
   await expect(dialog.getByRole('button', { name: 'Add and start listening', exact: true })).toHaveCount(0);
   state.expiredStatus = false;
   await dialog.getByRole('button', { name: 'Try again', exact: true }).click();
-  await expect(dialog.getByRole('heading', { name: 'Ready to add', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
   expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(0);
 });
 
@@ -1003,7 +1051,10 @@ test('configured or learned channel frequency blocks Add using receiver eligibil
   }));
   const add = page.getByRole('button', { name: 'Add channel / system', exact: true });
   await expect(add).toBeDisabled();
-  await expect(page.locator('.tuner-frequency-popover')).toContainText('This frequency belongs to County Control.');
+  const popover = page.locator('.tuner-frequency-popover');
+  await expect(popover).toContainText('This frequency belongs to County Control.');
+  await expect(popover.getByRole('link', { name: 'County Control', exact: true }))
+    .toHaveAttribute('href', /view=channel.*configuration_id=channel-a/);
   expect(state.requests.filter((request) => request.path.endsWith('/eligibility'))).toHaveLength(1);
 });
 

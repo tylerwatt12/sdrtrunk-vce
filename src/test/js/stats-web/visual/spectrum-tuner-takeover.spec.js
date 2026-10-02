@@ -155,17 +155,22 @@ test('Spectrum can temporarily stop an active locked tuner and resume its channe
   const state = await install(page);
   const stop = page.getByRole('button', { name: 'Stop channels to tune', exact: true });
   await expect(stop).toBeVisible();
+  await expect(stop).toHaveClass(/ui-icon-button/);
+  await expect(stop).toHaveText('');
 
   await stop.click();
   await confirmStopChannels(page);
 
-  await expect(page.getByRole('button', { name: 'Resume channels', exact: true })).toBeVisible();
+  const resume = page.getByRole('button', { name: 'Resume channels', exact: true });
+  await expect(resume).toBeVisible();
+  await expect(resume).toHaveClass(/ui-icon-button/);
+  await expect(resume).toHaveText('');
   const takeover = state.requests.find((request) => request.path === browsePath &&
     request.method === 'POST' && request.body.takeover === true);
   expect(takeover).toBeTruthy();
 
   const requestCount = state.requests.length;
-  await page.getByRole('button', { name: 'Resume channels', exact: true }).click();
+  await resume.click();
   await expect(stop).toBeVisible();
   await expect.poll(() => state.requests.length).toBeGreaterThan(requestCount);
 

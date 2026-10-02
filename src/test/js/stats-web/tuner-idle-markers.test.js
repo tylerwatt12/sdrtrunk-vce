@@ -156,6 +156,7 @@ function spectrumLifecycleHarness() {
   vm.runInContext(`
     let disposed = false;
     let paused = false;
+    let externallySuspended = false;
     let pageFocused = true;
     let pageSuspended = false;
     let stream = null;
@@ -167,7 +168,7 @@ function spectrumLifecycleHarness() {
     let refining = false;
     let drag = null;
     const selectedTargetId = () => targetSelect.value;
-    const shouldRun = () => !disposed && !paused && pageFocused && !pageSuspended &&
+    const shouldRun = () => !disposed && !paused && !externallySuspended && pageFocused && !pageSuspended &&
       !document.hidden && selectedTargetId();
     const diagnosticParameters = () => ({ target_id: selectedTargetId() });
   `, context);

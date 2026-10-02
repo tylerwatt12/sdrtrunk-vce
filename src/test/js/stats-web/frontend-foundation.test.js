@@ -765,10 +765,17 @@ async function main() {
     /radioStatus\.textContent = '';\s*radioStatus\.hidden = true;[\s\S]+Loading \$\{actionLabel\.toLowerCase\(\)\} source radios…/,
     'Dashboard activity must show one loading or prompt treatment instead of duplicate status rows');
   const tunerSpectrumPanel = functionBinding(appSource, 'tunerSpectrumPanel');
-  assert.match(tunerSpectrumPanel, /ui-button ui-button-secondary ui-icon-button/);
-  assert.match(tunerSpectrumPanel, /ui-button ui-button-secondary tuner-spectrum-options-summary/);
   assert.match(tunerSpectrumPanel,
-    /node\('summary', 'ui-button ui-button-secondary', 'More measurements'\)/);
+    /iconButton\('icon-replay', 'Reset zoom', 'ui-button ui-button-secondary ui-icon-button'\)/);
+  assert.match(tunerSpectrumPanel,
+    /iconButton\('icon-pause', 'Pause', 'ui-button ui-button-secondary ui-icon-button'\)/);
+  assert.match(tunerSpectrumPanel,
+    /ui-button ui-button-secondary ui-icon-button tuner-spectrum-options-summary/);
+  assert.match(tunerSpectrumPanel,
+    /optionsSummary\.setAttribute\('aria-label', 'Display options'\)/);
+  assert.match(tunerSpectrumPanel,
+    /node\('summary', 'ui-button ui-button-secondary ui-icon-button'\)[\s\S]+moreSummary\.setAttribute\('aria-label', 'More measurements'\)/);
+  assert.doesNotMatch(tunerSpectrumPanel, /tuner-spectrum-labeled-action/);
   assert.match(tunerSpectrumPanel, /const optionToggle = \(checked, label, detail\)[\s\S]+uiToggle\(checked, label\)/);
   assert.match(tunerSpectrumPanel, /tuner-spectrum-options-header/);
   assert.match(tunerSpectrumPanel, /uiSelectFrame\(targetSelect\)/);

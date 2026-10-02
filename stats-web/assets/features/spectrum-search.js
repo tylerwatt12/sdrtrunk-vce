@@ -41,8 +41,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       disposeBandPicker();
       abort.abort();
       window.removeEventListener('pagehide', abandon);
-      void releaseJob({ bestEffort: true }).finally(() => releaseLease({ bestEffort: true }))
-        .finally(() => resumeSpectrum());
+      void releaseForClose();
     }
   });
   if (!modal) return null;
@@ -71,18 +70,20 @@ export function openSpectrumSearchWizard(ui, context = {}) {
   const releaseLease = async ({ bestEffort = false } = {}) => {
     clearRenewal();
     const previous = lease;
-    if (!previous?.lease_id) return;
+    if (!previous?.lease_id) return true;
     try {
       await requestJson(browsePath(previous.tuner?.id || usedReceiverId), {
-        method: 'DELETE', body: { lease_id: previous.lease_id }, page: false, keepalive: true
+        method: 'DELETE', body: { lease_id: previous.lease_id }, page: false, keepalive: true,
+        timeoutMs: 3000
       });
       if (lease?.lease_id === previous.lease_id) lease = null;
+      return true;
     } catch (cause) {
-      if (bestEffort || leaseNoLongerExists(cause)) {
+      if (leaseNoLongerExists(cause)) {
         if (lease?.lease_id === previous.lease_id) lease = null;
-        if (bestEffort) return;
-        return;
+        return true;
       }
+      if (bestEffort) return false;
       if (current() && lease?.lease_id === previous.lease_id) scheduleRenewal();
       throw cause;
     }
@@ -94,7 +95,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     if (!previous?.job_id) return true;
     try {
       await requestJson(`${path}/${encodeURIComponent(previous.job_id)}`, {
-        method: 'DELETE', page: false, keepalive: true
+        method: 'DELETE', page: false, keepalive: true, timeoutMs: 3000
       });
       if (job?.job_id === previous.job_id) job = null;
       scheduleRenewal();
@@ -113,6 +114,25 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     if (!paused) return;
     paused = false;
     return context.resume?.(usedReceiverId);
+  };
+  const releaseDelay = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+  const releaseForClose = async () => {
+    clearRenewal();
+    const expiresAt = Math.max(Number(job?.expires_at_ms) || 0,
+      Number(lease?.expires_at_epoch_ms || lease?.expires_at_ms) || 0);
+    const deadline = Math.max(Date.now() + 10_000, expiresAt) + 500;
+    while (job?.job_id || lease?.lease_id) {
+      const jobReleased = await releaseJob({ bestEffort: true });
+      if (jobReleased) await releaseLease({ bestEffort: true });
+      if (!job?.job_id && !lease?.lease_id) break;
+      if (Date.now() >= deadline) {
+        job = null;
+        lease = null;
+        break;
+      }
+      await releaseDelay(Math.min(1000, Math.max(0, deadline - Date.now())));
+    }
+    await resumeSpectrum();
   };
   const abandon = () => {
     abort.abort();
@@ -485,17 +505,8 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       if (bandMenu.matches(':popover-open')) bandMenu.hidePopover();
     };
     chooser.addEventListener('change', updateBands);
-    const otherReceivers = (catalog.tuners || []).filter((tuner) => !tuner.eligible)
-      .map(receiverPreparationState).filter((state) => state.canPrepare);
-    const otherReceiverChoice = otherReceivers.length ? disclosure('Use another receiver',
-      node('p', 'ui-field-hint',
-        'You can temporarily stop channels or unlock a receiver if it is a better fit for this search.'),
-      receiverList(otherReceivers)) : null;
     form.append(formField('Receiver', uiSelectFrame(chooser)), bands, custom, description,
-      node('div', 'ui-notice', 'The receiver will move through the selected bands, then check promising signals. Results appear when both steps are complete. Other receivers keep running.'),
-      ...(otherReceiverChoice ? [otherReceiverChoice] : []),
-      disclosure('What are P25 channels?', node('p', '', 'P25 radio systems use a steady control signal to coordinate a group of radio frequencies. This search finds and checks those control signals. Voice-only and other radio signals are not added.'),
-        node('p', '', 'A receiver sees a limited frequency window at once. Searching moves this window through the bands you choose.')));
+      node('div', 'ui-notice', 'The receiver scans each band, then checks promising signals.'));
     form.addEventListener('submit', (event) => event.preventDefault());
     stage.append(form);
     updateContext();

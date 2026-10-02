@@ -231,6 +231,10 @@ test('uses one widest idle receiver, supports multiple ranges, and releases brow
   await expect(dialog(page).getByLabel('End frequency (MHz)')).toBeHidden();
   await expect(dialog(page).getByLabel('Start frequency (MHz)')).not.toHaveAttribute('required', '');
   await expect(dialog(page).getByLabel('End frequency (MHz)')).not.toHaveAttribute('required', '');
+  await expect(dialog(page).locator('.spectrum-search-form > .ui-notice'))
+    .toHaveText('The receiver scans each band, then checks promising signals.');
+  await expect(dialog(page).getByText('What are P25 channels?', { exact: true })).toHaveCount(0);
+  await expect(dialog(page).getByText('Use another receiver', { exact: true })).toHaveCount(0);
   await complete(page);
   const create = state.requests.find((request) => request.path === searchPath && request.method === 'POST');
   expect(create.body).toEqual({ tuner_id: 'idle-b', browse_lease_id: 'lease-2', ranges: [
@@ -247,37 +251,26 @@ test('uses one widest idle receiver, supports multiple ranges, and releases brow
   await expect(dialog(page).locator('tbody tr:visible')).toHaveCount(3);
 });
 
-test('keeps a busy wider receiver available without adding it to the normal receiver picker', async ({ page }) => {
+test('uses only eligible receivers when a wider receiver is busy', async ({ page }) => {
   const state = await install(page, { busyWide: true });
   const search = dialog(page);
   const receiver = search.getByLabel('Receiver', { exact: true });
   await expect(receiver).toHaveValue('idle-a');
   await expect(receiver.locator('option')).toHaveText(['Small receiver · 2.20 MHz window']);
-
-  await search.getByText('Use another receiver', { exact: true }).click();
-  const prepare = search.getByRole('button', { name: 'Stop channels and use: Wide receiver', exact: true });
-  await expect(prepare).toBeVisible();
-  await expect(prepare).toHaveClass(/ui-button-primary/);
-  await expect(search.getByText('2 channels running', { exact: true })).toBeVisible();
-  await prepare.click();
-  const warning = page.getByRole('alertdialog', { name: 'Stop channels for this search?' });
-  await expect(warning).toContainText('2 active channels');
-  await expect(warning).toContainText('those calls will not resume');
-  await warning.getByRole('button', { name: 'Stop channels and search', exact: true }).click();
-
-  await expect(receiver).toHaveValue('idle-b');
-  await expect(receiver.locator('option')).toHaveText([
-    'Small receiver · 2.20 MHz window', 'Wide receiver · 9.00 MHz window'
-  ]);
+  await expect(search.getByText('Use another receiver', { exact: true })).toHaveCount(0);
+  await expect(search.getByRole('button', { name: 'Stop channels and use: Wide receiver', exact: true }))
+    .toHaveCount(0);
+  await complete(page);
+  const create = state.requests.find((request) => request.path === searchPath && request.method === 'POST');
+  expect(create.body.tuner_id).toBe('idle-a');
   expect(state.requests.some((request) => request.path === '/api/v1/admin/tuners/idle-b/browse' &&
-    request.method === 'POST' && request.body.takeover === true)).toBe(true);
+    request.method === 'POST' && request.body.takeover === true)).toBe(false);
 });
 
 test('failed search creation restores a borrowed receiver and refreshes its catalog row', async ({ page }) => {
-  const state = await install(page, { busyWide: true, failSearchCreateOnce: true });
+  const state = await install(page, { noIdle: true, failSearchCreateOnce: true });
   const search = dialog(page);
-  await search.getByText('Use another receiver', { exact: true }).click();
-  await search.getByRole('button', { name: 'Stop channels and use: Wide receiver', exact: true }).click();
+  await search.getByRole('button', { name: 'Stop channels and use: Small receiver', exact: true }).click();
   await page.getByRole('alertdialog', { name: 'Stop channels for this search?' })
     .getByRole('button', { name: 'Stop channels and search', exact: true }).click();
   const catalogsBefore = state.requests.filter((request) => request.path === `${searchPath}/catalog`).length;
@@ -285,12 +278,10 @@ test('failed search creation restores a borrowed receiver and refreshes its cata
   await search.getByRole('button', { name: 'Find signals', exact: true }).click();
 
   await expect(search).toContainText('The receiver was restored');
-  await expect(search.getByLabel('Receiver', { exact: true })).toHaveValue('idle-a');
-  await search.getByText('Use another receiver', { exact: true }).click();
-  await expect(search.getByRole('button', { name: 'Stop channels and use: Wide receiver', exact: true }))
-    .toBeVisible();
+  await expect(search.getByRole('heading', { name: 'Choose a receiver', exact: true })).toBeVisible();
+  await expect(search.getByRole('button', { name: 'Stop channels and use' })).toHaveCount(2);
   expect(state.requests.filter((request) => request.path === `${searchPath}/catalog`)).toHaveLength(catalogsBefore + 1);
-  expect(state.requests.some((request) => request.path === '/api/v1/admin/tuners/idle-b/browse' &&
+  expect(state.requests.some((request) => request.path === '/api/v1/admin/tuners/idle-a/browse' &&
     request.method === 'DELETE' && request.body.lease_id === 'lease-2')).toBe(true);
 });
 
@@ -842,6 +833,39 @@ test('failed search cleanup retains the job id and retries before releasing the 
     request.method === 'DELETE')).toHaveLength(2);
   expect(state.requests.filter((request) => request.path === '/api/v1/admin/tuners/idle-b/browse' &&
     request.method === 'DELETE').length).toBe(receiverDeletesBefore + 1);
+});
+
+test('closing after a transient job release failure keeps Spectrum paused until retry succeeds', async ({ page }) => {
+  await page.clock.install();
+  const state = await install(page, { phase: 'scanning' });
+  await dialog(page).getByRole('button', { name: 'Find signals', exact: true }).click();
+  await expect(dialog(page).getByRole('heading', { name: 'Find signals', exact: true })).toBeVisible();
+  state.failNextJobDelete = true;
+  const checkpoint = state.requests.length;
+
+  await dialog(page).getByRole('button', { name: 'Stop search', exact: true }).click();
+  await expect(dialog(page)).toHaveCount(0);
+  const cleanupRequests = () => state.requests.slice(checkpoint);
+  const jobDeletes = () => cleanupRequests().filter((request) =>
+    request.path === `${searchPath}/search-a` && request.method === 'DELETE');
+  const leaseDeletes = () => cleanupRequests().filter((request) =>
+    request.path.endsWith('/browse') && request.method === 'DELETE');
+  const resumedBrowses = () => cleanupRequests().filter((request) =>
+    request.path.endsWith('/browse') && request.method === 'POST');
+
+  await expect.poll(() => jobDeletes().length).toBe(1);
+  expect(leaseDeletes()).toHaveLength(0);
+  expect(resumedBrowses()).toHaveLength(0);
+
+  await page.clock.fastForward(1100);
+  await expect.poll(() => jobDeletes().length).toBe(2);
+  await expect.poll(() => leaseDeletes().length).toBe(1);
+  await expect.poll(() => resumedBrowses().length).toBe(1);
+  const secondJobDelete = state.requests.lastIndexOf(jobDeletes()[1]);
+  const leaseDelete = state.requests.lastIndexOf(leaseDeletes()[0]);
+  const resumedBrowse = state.requests.lastIndexOf(resumedBrowses()[0]);
+  expect(leaseDelete).toBeGreaterThan(secondJobDelete);
+  expect(resumedBrowse).toBeGreaterThan(leaseDelete);
 });
 
 for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
