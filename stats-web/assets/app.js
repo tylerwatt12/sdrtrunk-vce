@@ -24,7 +24,7 @@ import { createStreamingWorkspace } from './features/streaming.js?v=7';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=6';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=10';
 import { createRecordingsFeature } from './features/recordings.js?v=16';
-import { openSpectrumSearchWizard } from './features/spectrum-search.js?v=3';
+import { openSpectrumSearchWizard } from './features/spectrum-search.js?v=4';
 import { createAudioDock } from './core/audio-dock.js?v=6';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=1';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
@@ -13521,13 +13521,16 @@ function openSpectrumDiscoveryWizard(selection) {
   return modal;
 }
 
-function tunerFrequencyAction(label, icon, hint, disabled = false) {
+function tunerFrequencyAction(label, icon, hint, disabled = false, showLabel = false, primary = false,
+    visibleLabel = label) {
   const button = node(disabled ? 'span' : 'button',
-    'ui-button ui-button-secondary tuner-frequency-action ui-icon-button');
+    `ui-button ${primary ? 'ui-button-primary tuner-frequency-action-primary' : 'ui-button-secondary'} tuner-frequency-action${
+      showLabel ? ' tuner-frequency-action-labeled' : ' ui-icon-button'}`);
   if (!disabled) button.type = 'button';
   button.title = hint;
-  button.setAttribute('aria-label', label);
+  button.setAttribute('aria-label', showLabel ? visibleLabel : label);
   button.append(iconGlyph(icon));
+  if (showLabel) button.append(node('span', 'tuner-frequency-action-label', visibleLabel));
   if (disabled) {
     button.setAttribute('role', 'button');
     button.setAttribute('aria-disabled', 'true');
@@ -13607,7 +13610,10 @@ function openTunerFrequencyActions(selection) {
   const selectedHz = Number(selection?.frequencyHz);
   const rawHz = Number(selection?.rawFrequencyHz);
   if (!Number.isFinite(selectedHz) || selectedHz <= 0) return null;
-  if (activeTunerFrequencyPopover?.matches(':popover-open')) {
+  const actionHost = selection?.actionHost?.nodeType === Node.ELEMENT_NODE ? selection.actionHost : null;
+  const inline = Boolean(actionHost);
+  if (inline) actionHost.tunerFrequencyActionCleanup?.();
+  else if (activeTunerFrequencyPopover?.matches(':popover-open')) {
     activeTunerFrequencyPopover.hidePopover();
   }
   const anchorRect = selection.anchorRect || {
@@ -13615,42 +13621,68 @@ function openTunerFrequencyActions(selection) {
     top: window.innerHeight / 2, bottom: window.innerHeight / 2
   };
   const body = node('div', 'tuner-frequency-action-body');
+  if (inline) {
+    const heading = node('div', 'tuner-frequency-action-heading');
+    const title = node('div');
+    title.append(node('span', 'tuner-frequency-action-kicker', 'Selected frequency'),
+      node('strong', 'tuner-frequency-action-frequency', `${(selectedHz / 1_000_000).toFixed(6)} MHz`));
+    heading.append(title);
+    const powerDb = Number(selection.powerDb);
+    if (Number.isFinite(powerDb)) heading.append(
+      node('span', 'tuner-frequency-action-power', `${powerDb.toFixed(1)} dB`));
+    body.append(heading);
+  }
   const summary = node('dl', 'tuner-frequency-action-summary');
-  [['Frequency', `${(selectedHz / 1_000_000).toFixed(6)} MHz`],
-    ['Pointer', `${((Number.isFinite(rawHz) ? rawHz : selectedHz) / 1_000_000).toFixed(6)} MHz`]]
+  const summaryRows = inline ? [
+    ['Pointer', `${((Number.isFinite(rawHz) ? rawHz : selectedHz) / 1_000_000).toFixed(6)} MHz`],
+    [selection.snap ? 'Snapped' : 'Selected', `${(selectedHz / 1_000_000).toFixed(6)} MHz`]
+  ] : [
+    ['Frequency', `${(selectedHz / 1_000_000).toFixed(6)} MHz`],
+    ['Pointer', `${((Number.isFinite(rawHz) ? rawHz : selectedHz) / 1_000_000).toFixed(6)} MHz`]
+  ];
+  summaryRows
     .forEach(([label, value]) => summary.append(node('dt', '', label), node('dd', '', value)));
 
   const actions = node('div', 'tuner-frequency-action-list');
   const radioReference = tunerFrequencyAction('RadioReference lookup', 'icon-radioreference',
-    'Look up this frequency in RadioReference');
+    'Look up this frequency in RadioReference', false, inline, false, 'Look up on RadioReference');
   const listen = tunerFrequencyAction('Listen to NBFM', 'icon-speaker', 'Listen to this frequency in NBFM',
-    !selection.targetId || !capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO));
-  const addSystem = tunerFrequencyAction('Add channel / system', 'icon-plus', 'Checking this frequency…');
+    !selection.targetId || !capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO), inline, false, 'Listen in NBFM');
+  const addSystem = tunerFrequencyAction('Add channel / system', 'icon-plus', 'Checking this frequency…',
+    false, inline, inline, 'Add channel or system');
   addSystem.disabled = true;
+  const actionController = new AbortController();
+  const message = node('div', 'tuner-frequency-action-message', inline ?
+    'Checking whether this frequency can be added…' : '');
+  message.setAttribute('role', 'status');
   if (selection.tunerId && capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_CHANNELS)) {
     const query = new URLSearchParams({ tuner_id: selection.tunerId,
       frequency_hz: String(Math.round(selectedHz)) });
     void requestJson(`/api/v1/admin/spectrum-discovery/eligibility?${query}`, {
-      csrf: false, page: false, signal: activeRenderController?.signal
+      csrf: false, page: false, signal: actionController.signal
     }).then((eligibility) => {
-      if (!panel.isConnected) return;
+      if (!body.isConnected || actionController.signal.aborted) return;
       addSystem.disabled = eligibility.eligible !== true;
       addSystem.title = addSystem.disabled ? eligibility.reason || 'This frequency is already configured.' :
         'Add a channel or P25 system from this signal';
-      if (addSystem.disabled) message.textContent = addSystem.title;
+      message.textContent = addSystem.disabled ? addSystem.title :
+        (inline ? 'No configured channel uses this frequency.' : '');
     }).catch((error) => {
-      if (!panel.isConnected) return;
-      addSystem.title = 'Could not check this frequency. Close and try again.';
+      if (!body.isConnected || actionController.signal.aborted) return;
+      addSystem.title = inline ? 'Could not check this frequency. Select the signal again to retry.' :
+        'Could not check this frequency. Close and try again.';
       message.textContent = error.message || addSystem.title;
     });
-  } else addSystem.title = 'Channel setup access is required.';
+  } else {
+    addSystem.title = 'Channel setup access is required.';
+    message.textContent = addSystem.title;
+  }
   addSystem.addEventListener('click', () => {
     if (addSystem.disabled) return;
-    panel.hidePopover();
+    stopListening();
+    if (!inline) panel.hidePopover();
     openSpectrumDiscoveryWizard(selection);
   });
-  const message = node('div', 'tuner-frequency-action-message');
-  message.setAttribute('role', 'status');
   const audioOptions = node('div', 'tuner-frequency-audio-options');
   audioOptions.hidden = true;
   const bandwidth = node('select', 'ui-select');
@@ -13664,6 +13696,7 @@ function openTunerFrequencyActions(selection) {
     });
   audioOptions.append(node('label', '', 'Bandwidth'), bandwidth);
   const player = diagnosticAudioPlayer();
+  const listenLabel = listen.querySelector('.tuner-frequency-action-label');
   let audioStream = null;
   let audioEpoch = 0;
   const stopListening = () => {
@@ -13673,7 +13706,8 @@ function openTunerFrequencyActions(selection) {
     player.stop();
     listen.classList.remove('active');
     listen.title = 'Listen to this frequency in NBFM';
-    listen.setAttribute('aria-label', 'Listen to NBFM');
+    listen.setAttribute('aria-label', inline ? 'Listen in NBFM' : 'Listen to NBFM');
+    if (listenLabel) listenLabel.textContent = 'Listen in NBFM';
   };
   const startListening = async () => {
     stopListening();
@@ -13698,6 +13732,7 @@ function openTunerFrequencyActions(selection) {
       listen.classList.add('active');
       listen.title = 'Stop listening';
       listen.setAttribute('aria-label', 'Stop listening');
+      if (listenLabel) listenLabel.textContent = 'Stop listening';
       message.textContent = 'Listening for NBFM audio…';
     } catch (error) {
       if (epoch === audioEpoch) {
@@ -13715,12 +13750,57 @@ function openTunerFrequencyActions(selection) {
   });
   bandwidth.addEventListener('change', () => { if (audioStream) void startListening(); });
   radioReference.addEventListener('click', () => {
-    panel.hidePopover();
+    stopListening();
+    if (!inline) panel.hidePopover();
     openTunerRadioReferenceLookup(selectedHz);
   });
   actions.append(radioReference, listen, addSystem);
-  body.append(summary, actions, audioOptions, message);
-  const panel = node('div', 'ui-popover tuner-frequency-popover');
+  body.append(summary, message, actions, audioOptions);
+  if (inline) {
+    const help = node('details', 'tuner-frequency-action-help');
+    help.append(node('summary', '', 'What can I do here?'), node('p', '',
+      'Listen briefly without saving, check RadioReference for a known use, or add a permanent channel.'));
+    const tip = node('p', 'tuner-frequency-action-tip',
+      'Click another signal to inspect it. At full width, drag to retune an idle receiver. Zoom in before dragging to pan.');
+    body.append(help, tip);
+  }
+  const panel = inline ? actionHost : node('div', 'ui-popover tuner-frequency-popover');
+  const renderSignal = activeRenderController?.signal;
+  let sizeObserver = null;
+  let cleaned = false;
+  const position = () => {
+    if (inline) return;
+    const placement = tunerFrequencyPopoverPlacement(anchorRect, panel.getBoundingClientRect());
+    panel.style.left = `${placement.left}px`;
+    panel.style.top = `${placement.top}px`;
+  };
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    stopListening();
+    actionController.abort();
+    sizeObserver?.disconnect();
+    renderSignal?.removeEventListener('abort', closeForRouteChange);
+    window.removeEventListener('resize', position);
+    window.removeEventListener('scroll', position, true);
+    if (inline) {
+      if (panel.tunerFrequencyActionCleanup === cleanup) delete panel.tunerFrequencyActionCleanup;
+      if (body.isConnected) body.remove();
+    } else {
+      if (activeTunerFrequencyPopover === panel) activeTunerFrequencyPopover = null;
+      panel.remove();
+    }
+  };
+  const closeForRouteChange = () => {
+    if (inline) cleanup();
+    else if (panel.matches(':popover-open')) panel.hidePopover();
+  };
+  renderSignal?.addEventListener('abort', closeForRouteChange, { once: true });
+  if (inline) {
+    panel.replaceChildren(body);
+    panel.tunerFrequencyActionCleanup = cleanup;
+    return { element: body, close: cleanup };
+  }
   panel.setAttribute('popover', 'auto');
   panel.setAttribute('role', 'dialog');
   panel.setAttribute('aria-label', 'Frequency actions');
@@ -13731,28 +13811,12 @@ function openTunerFrequencyActions(selection) {
   close.title = 'Close frequency actions';
   close.addEventListener('click', () => panel.hidePopover());
   panel.append(close, body);
-  const renderSignal = activeRenderController?.signal;
-  const position = () => {
-    const placement = tunerFrequencyPopoverPlacement(anchorRect, panel.getBoundingClientRect());
-    panel.style.left = `${placement.left}px`;
-    panel.style.top = `${placement.top}px`;
-  };
-  const sizeObserver = new ResizeObserver(position);
+  sizeObserver = new ResizeObserver(position);
   const onToggle = (event) => {
     if (event.newState === 'open') return;
-    stopListening();
-    sizeObserver.disconnect();
-    renderSignal?.removeEventListener('abort', closeForRouteChange);
-    window.removeEventListener('resize', position);
-    window.removeEventListener('scroll', position, true);
-    if (activeTunerFrequencyPopover === panel) activeTunerFrequencyPopover = null;
-    panel.remove();
-  };
-  const closeForRouteChange = () => {
-    if (panel.matches(':popover-open')) panel.hidePopover();
+    cleanup();
   };
   panel.addEventListener('toggle', onToggle);
-  renderSignal?.addEventListener('abort', closeForRouteChange, { once: true });
   document.body.append(panel);
   panel.showPopover();
   activeTunerFrequencyPopover = panel;
@@ -13974,6 +14038,8 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const viewportControls = !basicOperator || panelOptions.viewportControls === true;
   const profileSelection = !basicOperator || panelOptions.profileSelection === true;
   const frequencyActions = !basicOperator && panelOptions.frequencyActions !== false;
+  const frequencySelectionHandler = typeof panelOptions.onFrequencySelection === 'function' ?
+    panelOptions.onFrequencySelection : null;
   const plotInteractions = frequencyCursor || viewportControls || frequencyActions;
   let managedTargetId = typeof panelOptions.targetId === 'string' ? panelOptions.targetId : '';
   const managedSelection = panelOptions.managedSelection === true;
@@ -14201,11 +14267,13 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     }
     const guide = node('div', 'tuner-spectrum-cursor-guide');
     guide.hidden = true;
+    const selectionGuide = node('div', 'tuner-spectrum-selection-guide');
+    selectionGuide.hidden = true;
     const overlay = node('div', 'channel-diagnostic-overlay', 'Select a tuner');
-    if (frequencyCursor) host.append(canvas, guide, overlay);
+    if (frequencyCursor) host.append(canvas, selectionGuide, guide, overlay);
     else host.append(canvas, overlay);
     card.append(host);
-    return { card, host, canvas, guide, overlay };
+    return { card, host, canvas, guide, selectionGuide, overlay };
   };
   const spectrum = plot('Tuner frequency spectrum', 'tuner-spectrum-fft');
   const waterfall = plot(
@@ -14273,6 +14341,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const targetsById = new Map();
   let targetsRefreshPending = false;
   let activeFlagSignature = '';
+  let selectedFrequencyHz = null;
   let fftValues = new Float32Array(0);
   let smoothedFftValues = new Float32Array(0);
   let spectrumSmoothingKey = '';
@@ -14353,6 +14422,8 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
 
   const controller = {
     element: layout,
+    controls: { toolbar, selection: tunerSelection, status, actions: toolbarActions },
+    surfaces: { visualWindow, displayControls, readoutPanel },
     refreshTargets,
     selectTarget(targetId) {
       if (!managedSelection || disposed) return streamRelease;
@@ -15149,6 +15220,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     viewport = nextViewport;
     restoreWaterfallHistory();
     renderFrequencyBands();
+    renderSelectionGuides();
     setRefining(true);
     setReadouts(true);
     renderActiveChannels();
@@ -15192,13 +15264,15 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
       viewport.startHz + ratio * (viewport.endHz - viewport.startHz);
     if (!Number.isFinite(rawFrequencyHz)) return null;
     const snap = snapInput.checked ? tunerSnapFrequency(rawFrequencyHz, frequencyScopes) : null;
+    const selectedFrequencyHz = snap?.frequencyHz ?? rawFrequencyHz;
     const target = targetsById.get(selectedTargetId());
     return Object.freeze({
       ...panelOptions.selectionContext?.(),
       targetId: selectedTargetId(),
       targetLabel: String(target?.label || ''),
       rawFrequencyHz,
-      frequencyHz: snap?.frequencyHz ?? rawFrequencyHz,
+      frequencyHz: selectedFrequencyHz,
+      powerDb: activeCarrierPower({ frequencyHz: selectedFrequencyHz }),
       anchorRect: { left: event.clientX, right: event.clientX,
         top: event.clientY, bottom: event.clientY },
       snap,
@@ -15214,6 +15288,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
       targetLabel: String(target?.label || ''),
       rawFrequencyHz: carrier.frequencyHz,
       frequencyHz: carrier.frequencyHz,
+      powerDb: activeCarrierPower(carrier),
       snap: null,
       canvas: 'active-carrier',
       activeCarrier: carrier
@@ -15222,7 +15297,11 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
 
   function openFrequencyActionsAtPointer(event) {
     const selection = frequencySelectionAtPointer(event);
-    if (selection) openTunerFrequencyActions(selection);
+    if (!selection) return;
+    selectedFrequencyHz = selection.frequencyHz;
+    renderSelectionGuides();
+    if (frequencySelectionHandler) frequencySelectionHandler(selection);
+    else openTunerFrequencyActions(selection);
   }
 
   function waterfallHistoryRow(yRatio) {
@@ -15265,6 +15344,20 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     setWaterfallCursorGuide(ratio);
     spectrum.guide.hidden = false;
     waterfall.guide.hidden = false;
+  }
+
+  function renderSelectionGuides() {
+    if (!viewport || !Number.isFinite(selectedFrequencyHz) || selectedFrequencyHz < viewport.startHz ||
+        selectedFrequencyHz > viewport.endHz) {
+      spectrum.selectionGuide.hidden = true;
+      waterfall.selectionGuide.hidden = true;
+      return;
+    }
+    const ratio = (selectedFrequencyHz - viewport.startHz) / (viewport.endHz - viewport.startHz);
+    [spectrum.selectionGuide, waterfall.selectionGuide].forEach((guide) => {
+      guide.style.left = `${(ratio * 100).toFixed(3)}%`;
+      guide.hidden = false;
+    });
   }
 
   function waterfallRetuneLabel(retune) {
@@ -15730,9 +15823,15 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
         flag.addEventListener('pointerleave', () => hideActiveFlag(flag));
         flag.addEventListener('focus', () => showActiveFlag(carrier, flag));
         flag.addEventListener('blur', () => hideActiveFlag(flag));
-        flag.addEventListener('click', () => openTunerFrequencyActions({
-          ...frequencySelectionForCarrier(carrier), anchorRect: flag.getBoundingClientRect()
-        }));
+        flag.addEventListener('click', () => {
+          const selection = {
+            ...frequencySelectionForCarrier(carrier), anchorRect: flag.getBoundingClientRect()
+          };
+          selectedFrequencyHz = selection.frequencyHz;
+          renderSelectionGuides();
+          if (frequencySelectionHandler) frequencySelectionHandler(selection);
+          else openTunerFrequencyActions(selection);
+        });
       }
       return flag;
     });
@@ -15741,6 +15840,8 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   }
 
   function resetViewportForTarget() {
+    selectedFrequencyHz = null;
+    renderSelectionGuides();
     const target = targetsById.get(selectedTargetId());
     const center = Number(target?.center_frequency_hz ?? 0);
     const sampleRate = Number(target?.sample_rate_hz ?? 0);
@@ -17263,7 +17364,6 @@ async function renderTunerSpectrum() {
     return;
   }
   const workspace = node('div', 'spectrum-browse-workspace');
-  const toolbar = node('div', 'spectrum-browse-toolbar');
   const select = uiSelect([], '', false);
   select.setAttribute('aria-label', 'Tuner');
   select.disabled = true;
@@ -17275,6 +17375,19 @@ async function renderTunerSpectrum() {
   const retryBrowse = uiActionButton('Retry browsing', '', () => void chooseTuner(select.value),
     'ui-button ui-button-secondary');
   retryBrowse.hidden = true;
+  const frequencyRail = node('aside', 'spectrum-browse-control-rail ui-surface');
+  frequencyRail.setAttribute('aria-label', 'Selected frequency');
+  frequencyRail.setAttribute('aria-live', 'polite');
+  let frequencyActionController = null;
+  const resetFrequencyRail = () => {
+    frequencyActionController?.close?.();
+    frequencyActionController = null;
+    const empty = node('div', 'spectrum-browse-control-rail-empty ui-empty-state');
+    empty.append(iconGlyph('icon-spectrum'), node('h2', '', 'Select a signal'),
+      node('p', '', 'Click a signal in the spectrum or waterfall to see its frequency and available actions.'));
+    frequencyRail.replaceChildren(empty);
+  };
+  resetFrequencyRail();
   const findChannels = uiActionButton('Find P25 channels', 'icon-search', () => {
     const owner = {};
     openSpectrumSearchWizard({ node, openReadOnlyModal, requestJson, uiActionButton, uiSelect, uiSelectFrame, uiPill,
@@ -17288,6 +17401,7 @@ async function renderTunerSpectrum() {
         select.disabled = true;
         findChannels.disabled = true;
         retryBrowse.hidden = true;
+        resetFrequencyRail();
         await spectrum.selectTarget('');
         await releaseLease();
         if (!disposed) {
@@ -17306,7 +17420,6 @@ async function renderTunerSpectrum() {
   }, 'ui-button ui-button-primary');
   findChannels.hidden = !capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_CHANNELS);
   findChannels.disabled = true;
-  toolbar.append(selectField, centerHost, findChannels, message, retryBrowse);
   let tuners = [];
   let selectedTuner = null;
   let lease = null;
@@ -17318,8 +17431,11 @@ async function renderTunerSpectrum() {
   let disposed = false;
   let operation = 0;
   let tuning = false;
-  const tunerOptionLabel = (tuner) => `${tuner.name} · ${Number(tuner.channel_count || 0) ?
-    `${tuner.channel_count} active` : 'Idle'}`;
+  const tunerOptionLabel = (tuner) => {
+    const rate = tunerInventoryRate(tuner.sample_rate_hz ?? tuner.configured_sample_rate_hz);
+    return `${tuner.name} · ${Number(tuner.channel_count || 0) ?
+      `${tuner.channel_count} active` : 'Idle'}${rate === 'Unavailable' ? '' : ` · ${rate}`}`;
+  };
   const confirmSelectedTuner = (tuner) => {
     selectedTuner = tuner;
     tuners = tuners.map((candidate) => candidate.id === tuner.id ? tuner : candidate);
@@ -17395,7 +17511,7 @@ async function renderTunerSpectrum() {
       }
       message.textContent = setting.id === 'center_frequency_locked' && value === true ?
         'Center frequency locked. Unlock to tune; zoom to pan.' :
-        'Click a signal to add a channel. Drag the full view to tune; zoom to pan.';
+        'Click a signal to inspect it. Drag the full view to tune; zoom to pan.';
     } catch (error) {
       message.textContent = error.message || 'Could not save center frequency settings. Try again.';
       throw error;
@@ -17413,6 +17529,16 @@ async function renderTunerSpectrum() {
     selectedTuner.settings.find((candidate) => candidate.id === 'frequency_mhz'), frequencyHz / 1_000_000);
   const spectrum = tunerSpectrumPanel(snapPresetDocument, {
     managedSelection: true,
+    onFrequencySelection: (selection) => {
+      frequencyActionController?.close?.();
+      frequencyActionController = openTunerFrequencyActions({ ...selection, actionHost: frequencyRail });
+      if (window.matchMedia('(max-width: 920px)').matches) window.requestAnimationFrame(() => {
+        const bounds = frequencyRail.getBoundingClientRect();
+        if (bounds.top < 0 || bounds.bottom > window.innerHeight) {
+          frequencyRail.scrollIntoView({ block: 'start', behavior: 'auto' });
+        }
+      });
+    },
     canRetune: canTune,
     retune: (frequencyHz) => tune(frequencyHz).catch(() => {}),
     onRetunePreview: (deltaHz) => {
@@ -17468,6 +17594,7 @@ async function renderTunerSpectrum() {
   };
   const chooseTuner = async (id) => {
     const generation = ++operation;
+    resetFrequencyRail();
     retryBrowse.hidden = true;
     select.disabled = true;
     message.textContent = 'Preparing tuner…';
@@ -17491,9 +17618,9 @@ async function renderTunerSpectrum() {
       spectrum.refreshTargets();
       renderCenter();
       message.textContent = canTune() ?
-        'Click a signal to add a channel. Drag the full view to tune; zoom to pan.' :
+        'Click a signal to inspect it. Drag the full view to tune; zoom to pan.' :
         canEditCenter() ? 'Center frequency locked. Unlock to tune; zoom to pan.' :
-          'Monitoring active channels. Click a signal to add a channel within this receiver window.';
+          'Monitoring active channels. Click a signal to inspect it within this receiver window.';
       leaseTimer = window.setTimeout(() => void renewLease(), 10_000);
     } catch (error) {
       message.textContent = error.message || 'Could not browse this tuner. Retry or choose another tuner.';
@@ -17535,9 +17662,27 @@ async function renderTunerSpectrum() {
     } catch (error) { if (!disposed) message.textContent = error.message; }
   };
   select.addEventListener('change', () => void chooseTuner(select.value));
-  workspace.append(toolbar, spectrum.element);
-  if (!beginPage(renderContext, pageHeader('Tuner Spectrum',
-    'Browse signals and add channels from a selected frequency.'), workspace)) {
+  const browseControls = node('div', 'spectrum-browse-controls');
+  browseControls.append(selectField, centerHost);
+  const browseState = node('div', 'spectrum-browse-state');
+  browseState.append(spectrum.controls.status, message, retryBrowse);
+  const toolbarSide = node('div', 'spectrum-browse-toolbar-side');
+  toolbarSide.append(browseState, spectrum.controls.actions);
+  spectrum.controls.selection.classList.add('spectrum-browse-selection');
+  spectrum.controls.selection.replaceChildren(browseControls);
+  spectrum.controls.toolbar.classList.add('spectrum-browse-toolbar');
+  spectrum.controls.toolbar.setAttribute('aria-label', 'Spectrum receiver controls');
+  spectrum.controls.toolbar.replaceChildren(spectrum.controls.selection, toolbarSide);
+  spectrum.element.classList.add('spectrum-browse-panel');
+  spectrum.element.append(spectrum.surfaces.visualWindow, spectrum.surfaces.displayControls,
+    spectrum.surfaces.readoutPanel);
+  const main = node('div', 'spectrum-browse-main');
+  main.append(spectrum.element, frequencyRail);
+  workspace.append(spectrum.controls.toolbar, main);
+  const header = pageHeader('Tuner Spectrum',
+    'Browse live signals, find P25 channels, or inspect a frequency.');
+  header.append(findChannels);
+  if (!beginPage(renderContext, header, workspace)) {
     spectrum.close();
     return;
   }
@@ -17546,6 +17691,7 @@ async function renderTunerSpectrum() {
     disposed = true;
     operation += 1;
     centerControl?.close();
+    resetFrequencyRail();
     spectrum.close();
     void releaseLease();
     window.removeEventListener('pagehide', close);

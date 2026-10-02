@@ -714,12 +714,34 @@ test('older administration toggles keep shared switch behavior', async ({ page }
 test('tuner-spectrum-dark-desktop', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/design-system.html?theme=dark&view=tuner-spectrum');
+  const example = page.locator('.visual-tuner-spectrum-example');
+  await expect(example.locator(':scope > .page-header > .ui-button-primary'))
+    .toHaveText(/Find P25 channels/);
+  await expect(example.locator('.spectrum-browse-toolbar .spectrum-browse-controls')).toBeVisible();
+  await expect(example.getByText('Lock center', { exact: true })).toBeVisible();
+  const panelBox = await example.locator('.spectrum-browse-panel').boundingBox();
+  const railBox = await example.locator('.spectrum-browse-control-rail').boundingBox();
+  expect(panelBox).not.toBeNull();
+  expect(railBox).not.toBeNull();
+  expect(railBox.x).toBeGreaterThan(panelBox.x + panelBox.width);
+  expect(Math.abs(railBox.y - panelBox.y)).toBeLessThanOrEqual(1);
   await expect(page.locator('body')).toHaveScreenshot('tuner-spectrum-dark-desktop.png', { fullPage: true });
 });
 
 test('tuner-spectrum-light-mobile', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/design-system.html?theme=light&view=tuner-spectrum');
+  const example = page.locator('.visual-tuner-spectrum-example');
+  await expect(example.locator(':scope > .page-header > .ui-button-primary'))
+    .toHaveText(/Find P25 channels/);
+  await expect(example.getByText('Lock center', { exact: true })).toBeVisible();
+  const panelBox = await example.locator('.spectrum-browse-panel').boundingBox();
+  const railBox = await example.locator('.spectrum-browse-control-rail').boundingBox();
+  expect(panelBox).not.toBeNull();
+  expect(railBox).not.toBeNull();
+  expect(railBox.y).toBeGreaterThan(panelBox.y + panelBox.height);
+  expect(Math.abs(railBox.x - panelBox.x)).toBeLessThanOrEqual(1);
+  expect(Math.abs(railBox.width - panelBox.width)).toBeLessThanOrEqual(1);
   await expect(page.locator('body')).toHaveScreenshot('tuner-spectrum-light-mobile.png', { fullPage: true });
 });
 
@@ -743,7 +765,8 @@ for(const [name, theme, viewport] of [
   test(name, async ({ page }) => {
     await page.setViewportSize(viewport);
     await page.goto(`/design-system.html?theme=${theme}&view=tuner-spectrum`);
-    await page.locator('.visual-tuner-spectrum-example .tuner-spectrum-options > summary').click();
+    await expect(page.locator('.visual-tuner-spectrum-example .tuner-spectrum-options'))
+      .not.toHaveAttribute('open', '');
     await page.locator('.tuner-spectrum-more-measurements > summary').click();
     await expect(page.locator('.tuner-spectrum-more-measurements')).toHaveAttribute('open', '');
     await expect(page.locator('.tuner-spectrum-more-readouts')).toBeVisible();

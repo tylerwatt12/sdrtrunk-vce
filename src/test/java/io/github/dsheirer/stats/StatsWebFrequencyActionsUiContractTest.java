@@ -73,6 +73,7 @@ class StatsWebFrequencyActionsUiContractTest
         String lookup = block(source, "function openTunerRadioReferenceLookup(selectedHz)");
         String results = block(source, "function radioReferenceResultView(");
         String settings = block(source, "async function renderAdminRadioReferenceSettings()");
+        String spectrumPage = block(source, "async function renderTunerSpectrum()");
         String pointerUp = block(tuner, "function onPlotPointerUp(event)");
         String pointerCancel = block(tuner, "function onPlotPointerCancel(event)");
 
@@ -85,6 +86,10 @@ class StatsWebFrequencyActionsUiContractTest
         assertTrue(actions.contains("bandwidth_hz: Number(bandwidth.value)"));
         assertTrue(actions.contains("binaryFrameConnection('frequency_audio'"));
         assertTrue(actions.contains("true);"));
+        assertTrue(actions.contains("selection?.actionHost?.nodeType === Node.ELEMENT_NODE"));
+        assertTrue(actions.contains("const inline = Boolean(actionHost)"));
+        assertTrue(actions.contains("const panel = inline ? actionHost"));
+        assertTrue(actions.contains("panel.replaceChildren(body)"));
         assertTrue(actions.contains("panel.setAttribute('popover', 'auto')"));
         assertTrue(actions.contains("panel.hidePopover();"));
         assertTrue(actions.contains("openTunerRadioReferenceLookup(selectedHz)"));
@@ -126,10 +131,19 @@ class StatsWebFrequencyActionsUiContractTest
         assertFalse(source.contains("openRadioReferenceFrequencyQuery"));
         assertFalse(source.contains("function radioReferenceDetailContent"));
         assertFalse(source.contains("radioreference-frequency-detail-header"));
+        assertTrue(spectrumPage.contains("'spectrum-browse-control-rail ui-surface'"));
+        assertTrue(spectrumPage.contains("'Select a signal'"));
+        assertTrue(spectrumPage.contains("main.append(spectrum.element, frequencyRail)"));
+        assertTrue(spectrumPage.contains("onFrequencySelection: (selection) =>"));
+        assertTrue(spectrumPage.contains("actionHost: frequencyRail"));
+        assertTrue(spectrumPage.contains("header.append(findChannels)"));
+        assertFalse(spectrumPage.contains("Keep tuner here"));
         assertTrue(tuner.contains("function frequencySelectionAtPointer(event)"));
+        assertTrue(tuner.contains("typeof panelOptions.onFrequencySelection === 'function'"));
+        assertTrue(tuner.contains("if (frequencySelectionHandler) frequencySelectionHandler(selection)"));
         assertTrue(source.contains("Click a frequency to choose an action."));
         assertTrue(tuner.contains("rawFrequencyHz"));
-        assertTrue(tuner.contains("frequencyHz: snap?.frequencyHz ?? rawFrequencyHz"));
+        assertTrue(tuner.contains("frequencyHz: selectedFrequencyHz"));
         assertTrue(tuner.contains("anchorRect: { left: event.clientX"));
         assertTrue(tuner.contains("activeCarrier: carrier"));
         assertTrue(tuner.contains("canvas.addEventListener('click', onPlotClick)"));
@@ -152,6 +166,8 @@ class StatsWebFrequencyActionsUiContractTest
         assertTrue(css.contains(".tuner-frequency-popover"));
         assertTrue(css.contains(".read-only-modal.tuner-frequency-lookup-modal"));
         assertTrue(css.contains(".tuner-frequency-action-list"));
+        assertTrue(css.contains(".spectrum-browse-control-rail"));
+        assertTrue(css.contains(".spectrum-browse-main"));
         assertTrue(css.contains(".ui-button[aria-disabled=\"true\"]"));
         assertTrue(css.contains("color: var(--muted);"));
         assertTrue(css.contains(".radioreference-result-grid"));

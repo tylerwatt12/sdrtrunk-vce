@@ -536,10 +536,6 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
 .visual-scanner-wave i:nth-child(8n + 7) { height: 10px; }
 .visual-scanner-wave i:nth-child(8n) { height: 25px; }
 
-.visual-tuner-spectrum-example .tuner-spectrum-layout {
-  min-height: 730px;
-}
-
 .visual-spectrum-plot,
 .visual-waterfall {
   min-height: 0;
