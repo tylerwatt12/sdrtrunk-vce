@@ -74,9 +74,9 @@ class Format26To27DatabaseMigrationTest
                 statement.execute("PRAGMA foreign_keys=ON");
             }
 
-            assertEquals(4, report.steps().size());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 26, report.steps().size());
             assertEquals("format-26-to-27", report.steps().getFirst().id());
-            assertEquals("format-29-to-30", report.steps().getLast().id());
+            assertEquals("format-30-to-31", report.steps().getLast().id());
             assertEffect(report.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.TRANSFORM,
                 "ordinary administrator accounts", 1);
             Map<String,AccountSnapshot> after = accounts(statement);
@@ -86,7 +86,9 @@ class Format26To27DatabaseMigrationTest
             {
                 AccountSnapshot expected = entry.getValue();
                 AccountSnapshot actual = after.get(entry.getKey());
-                assertEquals(expected.withTier("admin".equals(entry.getKey()) ? "ADMIN" : "USER"), actual);
+                assertEquals(expected.withMigratedPreferences("admin".equals(entry.getKey()) ? "ADMIN" : "USER",
+                    actual.updatedAtMs()), actual);
+                assertTrue(actual.updatedAtMs() >= expected.updatedAtMs());
                 assertTrue(MessageDigest.isEqual(verifierDigestsBefore.get(entry.getKey()),
                     verifierDigestsAfter.get(entry.getKey())),
                     () -> "Password verifier changed for " + entry.getKey());
@@ -172,7 +174,7 @@ class Format26To27DatabaseMigrationTest
     @Test
     void currentFormatStartupDoesNotRewriteAccounts() throws Exception
     {
-        Path database = Format30TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
+        Path database = Format31TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
         Map<String,AccountSnapshot> accountsBefore;
         Map<String,byte[]> verifierDigestsBefore;
         long sequenceBefore;
@@ -284,11 +286,13 @@ class Format26To27DatabaseMigrationTest
                                    String preferencesJson, long preferencesRevision,
                                    long createdAtMs, long updatedAtMs)
     {
-        private AccountSnapshot withTier(String replacement)
+        private AccountSnapshot withMigratedPreferences(String replacement, long migratedUpdatedAtMs)
+            throws java.io.IOException
         {
             return new AccountSnapshot(id, username, replacement, primaryAdmin, credentialVersion,
                 passwordAlgorithm, passwordIterations, passwordDerivedKeyBits, passwordChangedAtMs, authRevision,
-                preferencesJson, preferencesRevision, createdAtMs, updatedAtMs);
+                Format23WebUserPreferencesCodec.migrateToFormat31(preferencesJson), preferencesRevision + 1,
+                createdAtMs, migratedUpdatedAtMs);
         }
     }
 }

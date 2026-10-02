@@ -75,7 +75,8 @@ class SqliteIdentityRepairTest
         CommandResult result = run(database);
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
-        assertTrue(result.output().contains("COMPLETED STEP: 30 -> 30 [repair-sqlite-identities]"),
+        assertTrue(result.output().contains("COMPLETED STEP: %d -> %d [repair-sqlite-identities]".formatted(
+                DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.CURRENT_VERSION)),
             result::output);
         assertTrue(result.output().contains("DEFAULT SQLite identity high-water marks: 1 row(s)"),
             result::output);

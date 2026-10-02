@@ -6,10 +6,16 @@
 package io.github.dsheirer.web.settings;
 
 import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.StreamReadFeature;
+import com.fasterxml.jackson.databind.DeserializationContext;
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonMappingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
+import com.fasterxml.jackson.databind.deser.std.StdDeserializer;
+import com.fasterxml.jackson.databind.module.SimpleModule;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
@@ -23,7 +29,9 @@ public final class WebUserPreferencesCodec
         .enable(DeserializationFeature.FAIL_ON_NULL_CREATOR_PROPERTIES)
         .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
         .disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT)
-        .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
+        .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
+        .registerModule(new SimpleModule().addDeserializer(WebUserPreferences.Appearance.class,
+            new AppearanceDeserializer()));
 
     private WebUserPreferencesCodec()
     {
@@ -71,5 +79,33 @@ public final class WebUserPreferencesCodec
             throw new IOException("Web user preferences exceed the storage bound");
         }
         return json;
+    }
+
+    /** Only the optional hue may be null; every appearance field must still be present and correctly typed. */
+    private static final class AppearanceDeserializer extends StdDeserializer<WebUserPreferences.Appearance>
+    {
+        private AppearanceDeserializer()
+        {
+            super(WebUserPreferences.Appearance.class);
+        }
+
+        @Override
+        public WebUserPreferences.Appearance deserialize(JsonParser parser, DeserializationContext context)
+            throws IOException
+        {
+            JsonNode appearance = context.readTree(parser);
+            if(!appearance.isObject() || appearance.size() != 2 || !appearance.has("theme") ||
+                !appearance.get("theme").isTextual() || !appearance.has("hue"))
+            {
+                throw JsonMappingException.from(parser, "appearance must contain exactly theme and hue");
+            }
+            JsonNode hue = appearance.get("hue");
+            if(!hue.isNull() && (!hue.isIntegralNumber() || !hue.canConvertToInt()))
+            {
+                throw JsonMappingException.from(parser, "appearance.hue must be null or an integer between 0 and 359");
+            }
+            return new WebUserPreferences.Appearance(appearance.get("theme").textValue(),
+                hue.isNull() ? null : hue.intValue());
+        }
     }
 }

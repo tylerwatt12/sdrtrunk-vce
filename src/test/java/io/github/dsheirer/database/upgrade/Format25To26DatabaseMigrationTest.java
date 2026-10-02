@@ -79,9 +79,9 @@ class Format25To26DatabaseMigrationTest
             }
             statement.execute("PRAGMA foreign_keys=ON");
 
-            assertEquals(5, report.steps().size());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 25, report.steps().size());
             assertEquals("format-25-to-26", report.steps().getFirst().id());
-            assertEquals("format-29-to-30", report.steps().getLast().id());
+            assertEquals("format-30-to-31", report.steps().getLast().id());
             assertEquals(expectedEffects, report.steps().getFirst().effects());
             assertEquals(eventsBefore, rows(statement, "SELECT * FROM receiver_activity_event ORDER BY id"));
             assertEquals(membersBefore, rows(statement,

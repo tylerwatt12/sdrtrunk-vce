@@ -36,7 +36,7 @@ import java.util.Map;
 public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
-    public static final int CURRENT_VERSION = 30;
+    public static final int CURRENT_VERSION = 31;
     static final String RETIRED_TRUNKED_IDENTITY_BOUNDARY_KEY = "trunked_identity_metrics_started_at_ms";
     static final List<String> RETIRED_SUBSYSTEM_VERSION_KEYS = List.of(
         "alias_schema_version", "configuration_schema_version", "settings_schema_version", "icon_schema_version",
@@ -90,6 +90,7 @@ public final class DatabaseFormatCatalog
     private static final String FORMAT_29_FINGERPRINT = FORMAT_28_FINGERPRINT;
     private static final String FORMAT_30_FINGERPRINT =
         "5693062af70c86ce2eb3bc79f4ec01a71f778c93c8fa7aca21563fdb04dfea9e";
+    private static final String FORMAT_31_FINGERPRINT = FORMAT_30_FINGERPRINT;
 
     private static final FormatDescriptor FORMAT_1 = descriptor(1, "alpha8-shared",
         "Shared Alpha 8, Alpha 9, and Alpha 10 database format", FORMAT_1_FINGERPRINT,
@@ -377,11 +378,22 @@ public final class DatabaseFormatCatalog
             "Keep clear and unfiltered Activity storage and indexes unchanged",
             "Repair only bounded current-component damage when format 29 is the selected source"));
 
+    private static final FormatDescriptor FORMAT_31 = new FormatDescriptor(31, "personal-theme-hue-preferences-v8",
+        "Per-user original palette or custom theme hue", FORMAT_31_FINGERPRINT, Map.of(),
+        List.of("main format 31"),
+        "src/test/java/io/github/dsheirer/database/upgrade/Format31TestDatabase.java", List.of(
+            "Preserve every usable account, credential, personal setting, table layout, and receiver setting",
+            "Add a null appearance hue so existing users begin with the original palette",
+            "Allow each user to save a custom integer hue from 0 through 359",
+            "Default only malformed or oversized per-user preference documents",
+            "Rebase an unusable preference revision without discarding usable personal settings",
+            "Refuse a usable document that cannot fit after adding the hue; preserve the source unchanged"));
+
     private static final List<FormatDescriptor> FORMATS =
         List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7, FORMAT_8, FORMAT_9,
             FORMAT_10, FORMAT_11, FORMAT_12, FORMAT_13, FORMAT_14, FORMAT_15, FORMAT_16, FORMAT_17, FORMAT_18,
             FORMAT_19, FORMAT_20, FORMAT_21, FORMAT_22, FORMAT_23, FORMAT_24, FORMAT_25, FORMAT_26, FORMAT_27,
-            FORMAT_28, FORMAT_29, FORMAT_30);
+            FORMAT_28, FORMAT_29, FORMAT_30, FORMAT_31);
 
     private static final Map<Integer,FormatDescriptor> BY_VERSION = FORMATS.stream().collect(
         java.util.stream.Collectors.toUnmodifiableMap(FormatDescriptor::version, descriptor -> descriptor));
@@ -562,7 +574,7 @@ public final class DatabaseFormatCatalog
     /** Current catalog descriptor. */
     public static FormatDescriptor current()
     {
-        return FORMAT_30;
+        return FORMAT_31;
     }
 
     /** Ordered manifest used by completeness tests and migration UX. */
@@ -850,6 +862,7 @@ public final class DatabaseFormatCatalog
             case 12, 13, 14 -> 5;
             case 15, 16, 17, 18, 19, 20, 21, 22 -> 6;
             case 23, 24, 25, 26, 27, 28, 29, 30 -> 7;
+            case 31 -> 8;
             default -> throw new IllegalArgumentException("No web preference version for database format " +
                 descriptor.version());
         };

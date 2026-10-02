@@ -65,7 +65,7 @@ final class CurrentDatabaseAdministrativeRepair
 
     static Inspection inspect(Connection connection, boolean legacySetup) throws SQLException
     {
-        WebInspection web = inspectWebState(connection);
+        WebInspection web = inspectWebState(connection, preferenceDocumentVersion(connection));
         CoreInspection core = inspectCoreRows(connection, web);
         boolean setupInvalid = invalidSetupProgress(connection, legacySetup);
         boolean spectrumInvalid = invalidSpectrumSettings(connection);
@@ -104,7 +104,7 @@ final class CurrentDatabaseAdministrativeRepair
         {
             SpectrumSnapSettings.write(connection, SpectrumSnapSettings.defaults());
         }
-        repairWebState(connection, before.web(), now);
+        repairWebState(connection, before.web(), now, preferenceDocumentVersion(connection));
         if(before.defaultedAdminSetupMarker() > 0)
         {
             writeMetadata(connection, INITIAL_ADMIN_SETUP_KEY,
@@ -200,6 +200,12 @@ final class CurrentDatabaseAdministrativeRepair
         {
             return !row.next() || !Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION).equals(row.getString(1));
         }
+    }
+
+    private static int preferenceDocumentVersion(Connection connection) throws SQLException
+    {
+        return DatabaseFormatCatalog.inspectForMigration(connection).version() <= 30 ? 7 :
+            WebUserPreferences.CURRENT_VERSION;
     }
 
     private static boolean invalidSpectrumSettings(Connection connection) throws SQLException
@@ -451,7 +457,8 @@ final class CurrentDatabaseAdministrativeRepair
         }
     }
 
-    private static WebInspection inspectWebState(Connection connection) throws SQLException
+    private static WebInspection inspectWebState(Connection connection, int preferenceDocumentVersion)
+        throws SQLException
     {
         List<Long> retainedUsers = new ArrayList<>();
         Map<Long,PreferenceRepair> preferenceRepairs = new LinkedHashMap<>();
@@ -521,7 +528,8 @@ final class CurrentDatabaseAdministrativeRepair
                     boolean invalidPreferenceDocument;
                     try
                     {
-                        Format5WebStateValidator.validateCurrentUserPreferenceDocument(rows);
+                        Format5WebStateValidator.validateUserPreferenceDocumentForRepair(rows,
+                            preferenceDocumentVersion);
                         invalidPreferenceDocument = false;
                     }
                     catch(SQLException ignored)
@@ -651,7 +659,8 @@ final class CurrentDatabaseAdministrativeRepair
             droppedPolicies, List.copyOf(retainedPolicyIds), Map.copyOf(policyRepairs), 0, usablePrimary);
     }
 
-    private static void repairWebState(Connection connection, WebInspection inspection, long now)
+    private static void repairWebState(Connection connection, WebInspection inspection, long now,
+                                       int preferenceDocumentVersion)
         throws SQLException
     {
         if(inspection.resetWebAccounts() > 0)
@@ -688,7 +697,8 @@ final class CurrentDatabaseAdministrativeRepair
         final String defaults;
         try
         {
-            defaults = WebUserPreferencesCodec.encode(WebUserPreferences.defaults());
+            defaults = preferenceDocumentVersion == 7 ? Format23WebUserPreferencesCodec.defaults() :
+                WebUserPreferencesCodec.encode(WebUserPreferences.defaults());
         }
         catch(IOException exception)
         {

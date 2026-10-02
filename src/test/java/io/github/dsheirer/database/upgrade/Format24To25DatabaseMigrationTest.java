@@ -67,10 +67,10 @@ class Format24To25DatabaseMigrationTest
 
             DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspect(connection));
-            assertEquals(6, preflight.steps().size());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 24, preflight.steps().size());
             assertEquals("format-24-to-25", preflight.steps().getFirst().id());
             assertEquals("format-25-to-26", preflight.steps().get(1).id());
-            assertEquals("format-29-to-30", preflight.steps().getLast().id());
+            assertEquals("format-30-to-31", preflight.steps().getLast().id());
             assertEffect(preflight.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.PRESERVE,
                 "saved channel configurations", DatabaseMigrationEffect.UNKNOWN_COUNT);
             assertEffect(preflight.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.DEFAULT,
@@ -78,10 +78,10 @@ class Format24To25DatabaseMigrationTest
 
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
 
-            assertEquals(6, report.steps().size());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 24, report.steps().size());
             assertEquals("format-24-to-25", report.steps().getFirst().id());
             assertEquals("format-25-to-26", report.steps().get(1).id());
-            assertEquals("format-29-to-30", report.steps().getLast().id());
+            assertEquals("format-30-to-31", report.steps().getLast().id());
             assertEquals(3, report.steps().get(1).effects().size());
             assertEquals(rowsBefore.get("configuration_channel"),
                 report.steps().getFirst().effects().getFirst().affectedRows());
@@ -99,7 +99,8 @@ class Format24To25DatabaseMigrationTest
                     '$.decodeConfiguration.ignoreEncryptedCalls')
                 FROM configuration_channel WHERE decoder_type='NXDN'
                 """));
-            assertEquals("30", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+            assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION),
+                metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
             assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
@@ -166,10 +167,10 @@ class Format24To25DatabaseMigrationTest
                 "unusable setup progress", 1);
             DatabaseMigrationChain.PreflightReport preflight =
                 DatabaseMigrationChain.validateSource(connection, source);
-            assertEquals(6, preflight.steps().size());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 24, preflight.steps().size());
             assertEquals("format-24-to-25", preflight.steps().getFirst().id());
             assertEquals("format-25-to-26", preflight.steps().get(1).id());
-            assertEquals("format-29-to-30", preflight.steps().getLast().id());
+            assertEquals("format-30-to-31", preflight.steps().getLast().id());
             assertEffect(preflight.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.RESET,
                 "unusable portable preference components", DatabaseMigrationEffect.UNKNOWN_COUNT);
             assertEffect(preflight.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.DEFAULT,

@@ -929,7 +929,7 @@ class ApplicationMigrationServiceTest
         assertTrue(result.importedPreviousProfile());
         assertTrue(result.completedWithRepairsOrSkippedItems());
         assertCurrentFormat(targetDatabase);
-        assertEquals("2", scalar(targetDatabase,
+        assertEquals("3", scalar(targetDatabase,
             "SELECT preferences_revision FROM web_user WHERE primary_admin=1"));
         assertEquals("1", scalar(targetDatabase, "SELECT COUNT(*) FROM web_user WHERE primary_admin=1"));
         assertArrayEquals(sourceHash, sha256(sourceDatabase));
@@ -1278,16 +1278,19 @@ class ApplicationMigrationServiceTest
         assertTrue(result.helperOutput().contains(
             "Safety backup and full-file integrity checks were skipped by operator choice"));
         assertFalse(result.helperOutput().contains("repair-portable-preferences"));
+        int stepCount = DatabaseFormatCatalog.CURRENT_VERSION - 24;
         assertTrue(progress.contains(
-            "Step 1 of 6 — Add opt-in encrypted traffic-channel suppression"));
+            "Step 1 of " + stepCount + " — Add opt-in encrypted traffic-channel suppression"));
         assertTrue(progress.contains(
-            "Step 2 of 6 — Retain exact P25 radio inhibit and uninhibit activity"));
+            "Step 2 of " + stepCount + " — Retain exact P25 radio inhibit and uninhibit activity"));
         assertTrue(progress.contains(
-            "Step 3 of 6 — Keep one administrator account"));
+            "Step 3 of " + stepCount + " — Keep one administrator account"));
         assertTrue(progress.contains(
-            "Step 4 of 6 — Add saved remote P25 source identity"));
-        assertTrue(progress.contains("Step 5 of 6 — Add recording-mode setup choice"));
-        assertTrue(progress.contains("Step 6 of 6 — Index encrypted Activity by owner and time"));
+            "Step 4 of " + stepCount + " — Add saved remote P25 source identity"));
+        assertTrue(progress.contains("Step 5 of " + stepCount + " — Add recording-mode setup choice"));
+        assertTrue(progress.contains("Step 6 of " + stepCount + " — Index encrypted Activity by owner and time"));
+        assertTrue(progress.contains("Step 7 of " + stepCount +
+            " — Add a personal theme hue with the original palette as default"));
         assertTrue(progress.contains("Updating database directly"));
         assertEquals("Database update committed", progress.getLast());
         assertFalse(Files.exists(database.getParent().resolve("backups")));
@@ -1317,13 +1320,16 @@ class ApplicationMigrationServiceTest
             SELECT hex(password_salt) || ':' || hex(password_hash)
             FROM web_user WHERE username='operator'
             """));
-        assertEquals(preferencesBefore, scalar(database,
+        assertEquals(Format23WebUserPreferencesCodec.migrateToFormat31(preferencesBefore), scalar(database,
             "SELECT preferences_json FROM web_user WHERE username='operator'"));
         assertCurrentFormat(database);
-        assertTrue(progress.contains("Step 1 of 4 — Keep one administrator account"));
-        assertTrue(progress.contains("Step 2 of 4 — Add saved remote P25 source identity"));
-        assertTrue(progress.contains("Step 3 of 4 — Add recording-mode setup choice"));
-        assertTrue(progress.contains("Step 4 of 4 — Index encrypted Activity by owner and time"));
+        int stepCount = DatabaseFormatCatalog.CURRENT_VERSION - 26;
+        assertTrue(progress.contains("Step 1 of " + stepCount + " — Keep one administrator account"));
+        assertTrue(progress.contains("Step 2 of " + stepCount + " — Add saved remote P25 source identity"));
+        assertTrue(progress.contains("Step 3 of " + stepCount + " — Add recording-mode setup choice"));
+        assertTrue(progress.contains("Step 4 of " + stepCount + " — Index encrypted Activity by owner and time"));
+        assertTrue(progress.contains("Step 5 of " + stepCount +
+            " — Add a personal theme hue with the original palette as default"));
         assertEquals("Database update committed", progress.getLast());
         assertFalse(Files.exists(database.getParent().resolve("backups")));
     }

@@ -18,13 +18,44 @@ import org.junit.jupiter.api.Test;
 class WebUserPreferencesCodecTest
 {
     private static final String DEFAULT_JSON = """
-        {"version":7,"appearance":{"theme":"light"},"page_titles":{"prepend_playing_call":false},"playback":{"volume":1.0,"selected_scan_list_ids":[],"target_grouping":true,"target_burst_limit":4},"scanner":{"detail_mode":"normal"},"presentation":{"show_encryption_details":true,"show_control_decode_quality":true,"show_voice_decode_quality":true,"decode_quality_display_mode":"percentage","live_detail_row_limit":200,"show_only_active_trunked_channels":true,"retain_last_call_on_idle_rows":false,"clear_voice_quality_when_idle":false},"tuner":{"floor_db":-140,"ceiling_db":0,"waterfall_speed":1.0,"snap_frequency":true,"smooth_fft":true,"highlight_waterfall_channels":false,"show_idle_channels":false,"profile":"balanced"},"health_alerts":{"disabled_codes":[]},"tables":{}}""";
+        {"version":8,"appearance":{"theme":"light","hue":null},"page_titles":{"prepend_playing_call":false},"playback":{"volume":1.0,"selected_scan_list_ids":[],"target_grouping":true,"target_burst_limit":4},"scanner":{"detail_mode":"normal"},"presentation":{"show_encryption_details":true,"show_control_decode_quality":true,"show_voice_decode_quality":true,"decode_quality_display_mode":"percentage","live_detail_row_limit":200,"show_only_active_trunked_channels":true,"retain_last_call_on_idle_rows":false,"clear_voice_quality_when_idle":false},"tuner":{"floor_db":-140,"ceiling_db":0,"waterfall_speed":1.0,"snap_frequency":true,"smooth_fft":true,"highlight_waterfall_channels":false,"show_idle_channels":false,"profile":"balanced"},"health_alerts":{"disabled_codes":[]},"tables":{}}""";
 
     @Test
-    void defaultsHaveTheExactVersionSevenSnakeCaseWireShape() throws Exception
+    void defaultsHaveTheExactVersionEightSnakeCaseWireShape() throws Exception
     {
         assertEquals(DEFAULT_JSON, WebUserPreferencesCodec.encode(WebUserPreferences.defaults()));
         assertEquals(WebUserPreferences.defaults(), WebUserPreferencesCodec.decode(DEFAULT_JSON));
+    }
+
+    @Test
+    void roundTripsTheOriginalPaletteAndBoundedCustomHueWithoutRelaxingTheDocument() throws Exception
+    {
+        assertEquals(null, WebUserPreferencesCodec.decode(DEFAULT_JSON).appearance().hue());
+        for(int hue: List.of(0, 215, 359))
+        {
+            String custom = DEFAULT_JSON.replace("\"hue\":null", "\"hue\":" + hue);
+            WebUserPreferences preferences = WebUserPreferencesCodec.decode(custom);
+            assertEquals(hue, preferences.appearance().hue());
+            assertEquals(preferences, WebUserPreferencesCodec.decode(custom.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            assertEquals(custom, WebUserPreferencesCodec.encode(preferences));
+        }
+        for(String invalid: List.of("-1", "360", "215.5", "\"215\"", "true", "[]", "{}", "2147483648"))
+        {
+            assertThrows(java.io.IOException.class, () -> WebUserPreferencesCodec.decode(
+                DEFAULT_JSON.replace("\"hue\":null", "\"hue\":" + invalid)));
+        }
+        assertThrows(java.io.IOException.class, () -> WebUserPreferencesCodec.decode(
+            DEFAULT_JSON.replace(",\"hue\":null", "")));
+        assertThrows(java.io.IOException.class, () -> WebUserPreferencesCodec.decode(
+            DEFAULT_JSON.replace("\"hue\":null", "\"hue\":null,\"hue\":215")));
+        assertThrows(java.io.IOException.class, () -> WebUserPreferencesCodec.decode(
+            DEFAULT_JSON.replace("\"hue\":null", "\"hue\":null,\"unknown\":true")));
+        assertThrows(java.io.IOException.class, () -> WebUserPreferencesCodec.decode(
+            DEFAULT_JSON.replace("\"theme\":\"light\"", "\"theme\":null")));
+        assertThrows(java.io.IOException.class, () -> WebUserPreferencesCodec.decode(
+            DEFAULT_JSON.replace("\"appearance\":{\"theme\":\"light\",\"hue\":null}", "\"appearance\":null")));
+        assertThrows(java.io.IOException.class, () -> WebUserPreferencesCodec.decode(
+            DEFAULT_JSON.replace("\"version\":8", "\"version\":7")));
     }
 
     @Test
@@ -114,8 +145,8 @@ class WebUserPreferencesCodecTest
     void rejectsUnknownDuplicateAndNonIntegerFields()
     {
         assertThrows(java.io.IOException.class,
-            () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace("\"version\":7",
-                "\"version\":7,\"unknown\":true")));
+            () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace("\"version\":8",
+                "\"version\":8,\"unknown\":true")));
         assertThrows(java.io.IOException.class,
             () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace("\"theme\":\"light\"",
                 "\"theme\":\"light\",\"theme\":\"dark\"")));
@@ -123,7 +154,7 @@ class WebUserPreferencesCodecTest
             () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace("\"live_detail_row_limit\":200",
                 "\"live_detail_row_limit\":200.5")));
         assertThrows(java.io.IOException.class,
-            () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace("\"version\":7", "\"version\":3")));
+            () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace("\"version\":8", "\"version\":3")));
         assertThrows(java.io.IOException.class,
             () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace(
                 ",\"target_grouping\":true", "")));

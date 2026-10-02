@@ -50,7 +50,7 @@ class Format29To30DatabaseMigrationTest
 
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
 
-            assertEquals(1, report.steps().size());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 29, report.steps().size());
             assertEquals("format-29-to-30", report.steps().getFirst().id());
             assertEquals(encryptedBefore, report.steps().getFirst().effects().getFirst().affectedRows());
             assertEquals(eventsBefore, scalarLong(statement, "SELECT count(*) FROM receiver_activity_event"));
@@ -58,7 +58,8 @@ class Format29To30DatabaseMigrationTest
                 scalarLong(statement, "SELECT count(*) FROM receiver_activity_event WHERE encrypted=1"));
             assertEquals(DatabaseFormatCatalog.current().fingerprint(),
                 SqliteSchemaValidator.fingerprint(connection));
-            assertEquals(30, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
+                DatabaseFormatCatalog.requireCurrent(connection).version());
             assertEquals("ok", scalarText(statement, "PRAGMA integrity_check"));
             assertFalse(statement.executeQuery("PRAGMA foreign_key_check").next());
 
@@ -140,7 +141,8 @@ class Format29To30DatabaseMigrationTest
                 SELECT json_extract(settings_json, '$.imported')
                 FROM application_settings WHERE key='setup_wizard'
                 """));
-            assertEquals(30, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
+                DatabaseFormatCatalog.requireCurrent(connection).version());
         }
     }
 
@@ -155,7 +157,8 @@ class Format29To30DatabaseMigrationTest
             connection.setAutoCommit(false);
             try
             {
-                assertEquals(30, DatabaseMigrationChain.migrate(connection).target().version());
+                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
+                    DatabaseMigrationChain.migrate(connection).target().version());
                 connection.rollback();
             }
             finally
@@ -165,7 +168,8 @@ class Format29To30DatabaseMigrationTest
             assertEquals(29, DatabaseFormatCatalog.inspect(connection).version());
             assertFalse(indexExists(statement, SYSTEM_INDEX));
             assertFalse(indexExists(statement, CHANNEL_INDEX));
-            assertEquals(30, DatabaseMigrationChain.migrate(connection).target().version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
+                DatabaseMigrationChain.migrate(connection).target().version());
         }
     }
 

@@ -83,11 +83,13 @@ class WebUserPreferencesHttpControllerTest
             assertFalse(initial.has("data"));
             assertEquals(1, initial.path("revision").longValue());
             assertEquals("light", initial.at("/preferences/appearance/theme").textValue());
+            assertTrue(initial.at("/preferences/appearance/hue").isNull());
             assertTrue(initial.at("/preferences/playback/selected_scan_list_ids").isArray());
 
             JsonNode replacement = initial.path("preferences").deepCopy();
             ((com.fasterxml.jackson.databind.node.ObjectNode)replacement.path("page_titles"))
                 .put("prepend_playing_call", true);
+            ((com.fasterxml.jackson.databind.node.ObjectNode)replacement.path("appearance")).put("hue", 215);
             String replacementJson = MAPPER.writeValueAsString(replacement);
 
             assertEquals(403, send(client, request(origin)
@@ -102,6 +104,7 @@ class WebUserPreferencesHttpControllerTest
             JsonNode updated = MAPPER.readTree(updatedResponse.body());
             assertEquals(2, updated.path("revision").longValue());
             assertTrue(updated.at("/preferences/page_titles/prepend_playing_call").booleanValue());
+            assertEquals(215, updated.at("/preferences/appearance/hue").intValue());
             assertEquals("\"2\"", updatedResponse.headers().firstValue("ETag").orElseThrow());
             assertEquals(1, accessService.primaryAdmin().orElseThrow().authRevision());
 
@@ -124,6 +127,16 @@ class WebUserPreferencesHttpControllerTest
                 .header("Cookie", login.cookie()).GET());
             assertEquals(200, stillSignedIn.statusCode());
             assertEquals(2, MAPPER.readTree(stillSignedIn.body()).path("revision").longValue());
+            assertEquals(215, MAPPER.readTree(stillSignedIn.body()).at("/preferences/appearance/hue").intValue());
+            assertEquals(215, new WebUserPreferencesService(database).get(
+                accessService.primaryAdmin().orElseThrow()).preferences().appearance().hue());
+
+            ((com.fasterxml.jackson.databind.node.ObjectNode)replacement.path("appearance")).putNull("hue");
+            HttpResponse<String> restored = send(client, mutation(origin, login).header("If-Match", "\"2\"")
+                .PUT(HttpRequest.BodyPublishers.ofString(MAPPER.writeValueAsString(replacement))));
+            assertEquals(200, restored.statusCode(), restored.body());
+            assertTrue(new WebUserPreferencesService(database).get(accessService.primaryAdmin().orElseThrow())
+                .preferences().appearance().hue() == null);
         }
         finally
         {

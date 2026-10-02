@@ -80,7 +80,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -348,6 +348,19 @@ queries keep their existing general-purpose indexes; format 30 deliberately does
 index populations. When format 29 is the directly selected source, the step first applies the bounded
 current-component repair policy; an intermediate format 29 does not repeat that repair.
 
+The format 30-to-31 step upgrades every exact version-7 per-user browser preference document to version 8. It adds
+an explicit nullable `appearance.hue`: null selects the original shared palette, while an integer from 0 through 359
+selects a custom brand hue. Existing light/dark selections, personal settings, table layouts, accounts, credentials,
+and receiver configuration are preserved, and each usable preference revision is incremented. Green success/status
+colors and categorical chart colors keep their existing meaning. Only a malformed or oversized preference document
+is replaced with bounded version-8 defaults; an unusable or exhausted revision is rebased while usable personal
+settings survive. When format 30 is the directly selected source, the step applies the bounded current-component
+repair policy; an intermediate format 30 does not repeat those
+repairs. A usable version-7 document that cannot fit the new field within the unchanged storage bound causes refusal,
+not a reset; the source remains unchanged. Format 31 shares the format-30 DDL fingerprint and uses the explicit
+preference generation to distinguish populated markerless profiles; an ambiguous markerless file requires its
+authoritative global format marker.
+
 ## Schema-Change Rule
 
 The optional Managed Recordings catalog is a separate SQLite file with its own adjacent format chain. Its format 2
@@ -358,7 +371,7 @@ counters, and adds no transcript rows. Catalog format 3 adds a constrained `tran
 transcript, marking calls with an existing transcript `complete` and other calls `pending`. Short calls stay pending;
 the background worker applies its configured minimum duration when selecting work. A failed call is retried only by
 an administrator action. Fresh format-3 catalogs use the same status default and index. The main application database
-is independently at format 30; transcript-catalog migrations do not change it. Recognized older catalogs are backed up
+is independently at format 31; transcript-catalog migrations do not change it. Recognized older catalogs are backed up
 and migrated on a staged copy at the pre-receiver setup boundary; normal catalog startup validates only.
 
 Every change to persisted DDL or persisted meaning must land with all of the following:

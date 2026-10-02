@@ -100,7 +100,7 @@ class Format14To15DatabaseMigrationTest
             {
                 DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
                 assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
-                assertEquals("format-29-to-30", report.steps().getLast().id());
+                assertEquals("format-30-to-31", report.steps().getLast().id());
                 connection.commit();
             }
             catch(Exception exception)
@@ -798,6 +798,8 @@ class Format14To15DatabaseMigrationTest
             DatabaseFormatCatalog.stampForMigration(connection, 29);
             new Format29To30DatabaseMigration().migrateAndReport(connection, false);
             DatabaseFormatCatalog.stampForMigration(connection, 30);
+            new Format30To31DatabaseMigration().migrateAndReport(connection, false);
+            DatabaseFormatCatalog.stampForMigration(connection, 31);
             connection.commit();
 
             assertTrue(effect(effects, DatabaseMigrationEffect.Kind.DEFAULT,
@@ -2563,9 +2565,10 @@ class Format14To15DatabaseMigrationTest
         {
             Preference prior = entry.getValue();
             Preference current = after.get(entry.getKey());
-            assertEquals(Format22WebUserPreferencesCodec.migrateToFormat23(
-                Format14WebUserPreferencesCodec.migrate(prior.json())), current.json());
-            assertEquals(prior.revision() + 2, current.revision());
+            assertEquals(Format23WebUserPreferencesCodec.migrateToFormat31(
+                Format22WebUserPreferencesCodec.migrateToFormat23(
+                    Format14WebUserPreferencesCodec.migrate(prior.json()))), current.json());
+            assertEquals(prior.revision() + 3, current.revision());
             assertTrue(current.updatedAtMs() >= prior.updatedAtMs());
         }
     }

@@ -44,7 +44,7 @@ class Format27To28DatabaseMigrationTest
 
             DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspect(connection));
-            assertEquals(3, preflight.steps().size());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 27, preflight.steps().size());
             assertEquals("format-27-to-28", preflight.steps().getFirst().id());
 
             new Format27To28DatabaseMigration().migrate(connection);

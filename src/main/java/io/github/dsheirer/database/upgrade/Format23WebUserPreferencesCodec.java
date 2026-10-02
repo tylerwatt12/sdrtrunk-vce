@@ -68,6 +68,27 @@ final class Format23WebUserPreferencesCodec
         Format22WebUserPreferencesCodec.validate(MAPPER.writeValueAsString(prior));
     }
 
+    /** Adds the explicit original-palette selection while retaining every existing version-7 preference. */
+    static String migrateToFormat31(String json) throws IOException
+    {
+        validate(json);
+        ObjectNode target = readObject(json);
+        target.put("version", 8);
+        ((ObjectNode)target.get("appearance")).putNull("hue");
+        String migrated = MAPPER.writeValueAsString(target);
+        Format31WebUserPreferencesCodec.validate(migrated);
+        return migrated;
+    }
+
+    static String defaults() throws IOException
+    {
+        //Freeze the version-7 defaults used by the current administrative repair through database format 30.
+        String defaults = """
+            {"version":7,"appearance":{"theme":"light"},"page_titles":{"prepend_playing_call":false},"playback":{"volume":1.0,"selected_scan_list_ids":[],"target_grouping":true,"target_burst_limit":4},"scanner":{"detail_mode":"normal"},"presentation":{"show_encryption_details":true,"show_control_decode_quality":true,"show_voice_decode_quality":true,"decode_quality_display_mode":"percentage","live_detail_row_limit":200,"show_only_active_trunked_channels":true,"retain_last_call_on_idle_rows":false,"clear_voice_quality_when_idle":false},"tuner":{"floor_db":-140,"ceiling_db":0,"waterfall_speed":1.0,"snap_frequency":true,"smooth_fft":true,"highlight_waterfall_channels":false,"show_idle_channels":false,"profile":"balanced"},"health_alerts":{"disabled_codes":[]},"tables":{}}""";
+        validate(defaults);
+        return defaults;
+    }
+
     private static void validateCollapsedGroups(ArrayNode groups) throws IOException
     {
         if(groups.size() > MAXIMUM_COLLAPSED_GROUPS_PER_TABLE)

@@ -88,10 +88,14 @@ class DatabaseFormatCatalogTest
             .anyMatch(policy -> policy.contains("stable sender and feed UUIDs")));
         assertTrue(DatabaseFormatCatalog.requireVersion(29).migrationPolicy().stream()
             .anyMatch(policy -> policy.contains("carry over the new Recordings step")));
-        assertTrue(DatabaseFormatCatalog.current().migrationPolicy().stream()
+        assertTrue(DatabaseFormatCatalog.requireVersion(30).migrationPolicy().stream()
             .anyMatch(policy -> policy.contains("encrypted-only saved-channel and radio-system time indexes")));
-        assertTrue(DatabaseFormatCatalog.current().migrationPolicy().stream()
+        assertTrue(DatabaseFormatCatalog.requireVersion(30).migrationPolicy().stream()
             .anyMatch(policy -> policy.contains("bounded current-component damage")));
+        assertTrue(DatabaseFormatCatalog.current().migrationPolicy().stream()
+            .anyMatch(policy -> policy.contains("null appearance hue")));
+        assertTrue(DatabaseFormatCatalog.current().migrationPolicy().stream()
+            .anyMatch(policy -> policy.contains("custom integer hue from 0 through 359")));
 
         assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 1, DatabaseMigrationChain.steps().size());
         for(int index = 0; index < DatabaseMigrationChain.steps().size(); index++)
@@ -221,7 +225,7 @@ class DatabaseFormatCatalogTest
     }
 
     @Test
-    void exactMarkerlessFormat30IsRecognizedPlannedAndSafelyAdopted() throws Exception
+    void exactMarkerlessFormat30IsRecognizedAndMigratedWithItsFrozenPreferences() throws Exception
     {
         Path database = Format30TestDatabase.create(mTemporaryFolder.resolve("markerless-format-30.sqlite"));
 
@@ -238,13 +242,61 @@ class DatabaseFormatCatalogTest
             DatabaseMigrationChain.PreflightReport plan =
                 DatabaseMigrationChain.validateSource(connection, migration);
             assertEquals(1, plan.steps().size());
+            assertEquals("format-30-to-31", plan.steps().getFirst().id());
+
+            DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
+            assertEquals(1, report.steps().size());
+            assertEquals("format-30-to-31", report.steps().getFirst().id());
+            assertTrue(report.target().markerPresent());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
+                DatabaseFormatCatalog.requireCurrent(connection).version());
+        }
+    }
+
+    @Test
+    void exactMarkerlessFormat31IsRecognizedPlannedAndSafelyAdopted() throws Exception
+    {
+        Path database = Format31TestDatabase.create(mTemporaryFolder.resolve("markerless-format-31.sqlite"));
+
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            assertEquals(1, statement.executeUpdate(
+                "DELETE FROM database_metadata WHERE key='database_format_version'"));
+            DatabaseFormatCatalog.DetectedFormat strict = DatabaseFormatCatalog.inspect(connection);
+            DatabaseFormatCatalog.DetectedFormat migration = DatabaseFormatCatalog.inspectForMigration(connection);
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, strict.version());
+            assertFalse(strict.markerPresent());
+            assertEquals(strict, migration);
+
+            DatabaseMigrationChain.PreflightReport plan =
+                DatabaseMigrationChain.validateSource(connection, migration);
+            assertEquals(1, plan.steps().size());
             assertEquals("adopt-global-format-marker", plan.steps().getFirst().id());
 
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
             assertEquals(1, report.steps().size());
             assertEquals("adopt-global-format-marker", report.steps().getFirst().id());
             assertTrue(report.target().markerPresent());
-            assertEquals(30, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
+                DatabaseFormatCatalog.requireCurrent(connection).version());
+        }
+    }
+
+    @Test
+    void markerlessFormat30And31WithoutPreferencesIsRefusedAsAmbiguous() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("markerless-current-without-preferences.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            assertEquals(1, statement.executeUpdate(
+                "DELETE FROM database_metadata WHERE key='database_format_version'"));
+            SQLException strict = assertThrows(SQLException.class, () -> DatabaseFormatCatalog.inspect(connection));
+            SQLException migration = assertThrows(SQLException.class,
+                () -> DatabaseFormatCatalog.inspectForMigration(connection));
+            assertTrue(strict.getMessage().contains("ambiguous across formats [30, 31]"), strict::getMessage);
+            assertTrue(migration.getMessage().contains("ambiguous across formats [30, 31]"), migration::getMessage);
         }
     }
 

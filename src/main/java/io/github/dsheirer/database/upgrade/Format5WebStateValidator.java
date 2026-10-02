@@ -114,7 +114,7 @@ public final class Format5WebStateValidator
     static void validatePreferenceDocuments(Connection connection, int preferenceDocumentVersion) throws SQLException
     {
         if(preferenceDocumentVersion < 1 ||
-            preferenceDocumentVersion > LAST_HISTORICAL_PREFERENCE_DOCUMENT_VERSION)
+            preferenceDocumentVersion > WebUserPreferences.CURRENT_VERSION)
         {
             throw invalid("unsupported historical preference-document version " + preferenceDocumentVersion);
         }
@@ -268,6 +268,13 @@ public final class Format5WebStateValidator
     static void validateCurrentUserPreferenceDocument(ResultSet resultSet) throws SQLException
     {
         validateUserPreferenceDocument(resultSet, WebUserPreferences.CURRENT_VERSION);
+    }
+
+    /** Keeps the repair boundary on its source generation until the adjacent preference migration runs. */
+    static void validateUserPreferenceDocumentForRepair(ResultSet resultSet, int preferenceDocumentVersion)
+        throws SQLException
+    {
+        validateUserPreferenceDocument(resultSet, preferenceDocumentVersion);
     }
 
     private static boolean validateUserAccount(ResultSet resultSet, boolean requireIncrementableRevision)

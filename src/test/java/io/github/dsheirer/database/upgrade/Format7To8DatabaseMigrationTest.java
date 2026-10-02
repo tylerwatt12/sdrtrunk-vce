@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.dsheirer.web.settings.WebUserPreferences;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -62,11 +63,11 @@ class Format7To8DatabaseMigrationTest
             assertEquals("format-7-to-8", report.steps().getFirst().id());
             assertEquals("3", scalar(connection, """
                 SELECT COUNT(*) FROM web_user
-                WHERE json_extract(preferences_json, '$.version')=7
+                WHERE json_extract(preferences_json, '$.version')=8
                   AND json_type(preferences_json, '$.health_alerts.disabled_codes')='array'
                   AND json_array_length(json_extract(preferences_json,
                       '$.health_alerts.disabled_codes'))=0
-                  AND preferences_revision=7
+                  AND preferences_revision=8
                 """));
             assertEquals(existingPreferencesBefore, existingPreferenceDigest(connection));
             assertEquals(securityBefore.replace(":operator:ADMIN:0:", ":operator:USER:0:"),
@@ -116,7 +117,7 @@ class Format7To8DatabaseMigrationTest
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
             assertEffect(report.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.DEFAULT,
                 "unusable per-user browser preferences", 1);
-            assertEquals("7", scalar(connection,
+            assertEquals(Integer.toString(WebUserPreferences.CURRENT_VERSION), scalar(connection,
                 "SELECT json_extract(preferences_json, '$.version') FROM web_user WHERE id=1"));
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
                 DatabaseFormatCatalog.requireCurrent(connection).version());
