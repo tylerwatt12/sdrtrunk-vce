@@ -24,6 +24,10 @@ import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
+import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
+import io.github.dsheirer.identifier.radio.RadioIdentifier;
+import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
+import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.protocol.Protocol;
@@ -117,6 +121,17 @@ public class P25TrafficChannelEventTracker
     {
         if(identifier != null && !getEvent().getIdentifierCollection().hasIdentifier(identifier))
         {
+            Identifier existing = getEvent().getIdentifierCollection().getIdentifier(
+                identifier.getIdentifierClass(), identifier.getForm(), identifier.getRole());
+
+            //An abbreviated grant must not erase the home identity learned from traffic signalling. Otherwise the
+            //next fully qualified observation could silently replace a known, conflicting home identity.
+            if(isFullyQualified(existing) && !isFullyQualified(identifier) &&
+                matchesCallIdentifier(existing, identifier))
+            {
+                return;
+            }
+
             MutableIdentifierCollection mic = new MutableIdentifierCollection(getEvent().getIdentifierCollection()
                     .getIdentifiers());
             mic.update(identifier);
@@ -156,7 +171,7 @@ public class P25TrafficChannelEventTracker
     {
         Identifier currentTO = getEvent().getIdentifierCollection().getToIdentifier();
         Identifier nextTO = toCompare.getToIdentifier();
-        return !isComplete() && currentTO != null && currentTO.equals(nextTO) && !isStale(timestamp);
+        return !isComplete() && matchesCallIdentifier(currentTO, nextTO) && !isStale(timestamp);
     }
 
     /**
@@ -166,7 +181,7 @@ public class P25TrafficChannelEventTracker
     {
         Identifier currentTO = getEvent().getIdentifierCollection().getToIdentifier();
         Identifier nextTO = toCompare.getToIdentifier();
-        return !isComplete() && currentTO != null && currentTO.equals(nextTO) &&
+        return !isComplete() && matchesCallIdentifier(currentTO, nextTO) &&
             !isStaleControlContinuation(timestamp);
     }
 
@@ -183,7 +198,7 @@ public class P25TrafficChannelEventTracker
         }
 
         Identifier fromCurrent = getEvent().getIdentifierCollection().getFromIdentifier();
-        return fromCurrent != null && !fromCurrent.equals(fromToCompare);
+        return fromCurrent != null && !matchesCallIdentifier(fromCurrent, fromToCompare);
     }
 
 
@@ -201,7 +216,7 @@ public class P25TrafficChannelEventTracker
             Identifier currentTO = getEvent().getIdentifierCollection().getToIdentifier();
             Identifier nextTO = toCompareIC.getToIdentifier();
 
-            if(currentTO != null && currentTO.equals(nextTO))
+            if(matchesCallIdentifier(currentTO, nextTO))
             {
                 Identifier existingFROM = getEvent().getIdentifierCollection().getFromIdentifier();
 
@@ -223,11 +238,66 @@ public class P25TrafficChannelEventTracker
                     return true;
                 }
 
-                return existingFROM.equals(nextFROM);
+                return matchesCallIdentifier(existingFROM, nextFROM);
             }
         }
 
         return false;
+    }
+
+    /**
+     * One tracked carrier/slot can alternate abbreviated local addresses and fully qualified traffic identities.
+     * Match those representations by their observed local address only when one home identity is unavailable. Two
+     * known home identities remain authoritative, and patch/non-P25 identifiers retain their existing equality.
+     */
+    private static boolean matchesCallIdentifier(Identifier first, Identifier second)
+    {
+        if(first == null || second == null)
+        {
+            return false;
+        }
+
+        if(first.equals(second))
+        {
+            return true;
+        }
+
+        if(first.getIdentifierClass() != second.getIdentifierClass() || first.getForm() != second.getForm() ||
+            first.getRole() != second.getRole() || first.getProtocol() != second.getProtocol() ||
+            first.getProtocol() != Protocol.APCO25 && first.getProtocol() != Protocol.APCO25_PHASE2)
+        {
+            return false;
+        }
+
+        if(first instanceof RadioIdentifier firstRadio && second instanceof RadioIdentifier secondRadio)
+        {
+            if((firstRadio instanceof FullyQualifiedRadioIdentifier) ==
+                (secondRadio instanceof FullyQualifiedRadioIdentifier))
+            {
+                return false;
+            }
+
+            return firstRadio.getValue() > 0 && firstRadio.getValue().equals(secondRadio.getValue());
+        }
+
+        if(first instanceof TalkgroupIdentifier firstGroup && second instanceof TalkgroupIdentifier secondGroup)
+        {
+            if((firstGroup instanceof FullyQualifiedTalkgroupIdentifier) ==
+                (secondGroup instanceof FullyQualifiedTalkgroupIdentifier))
+            {
+                return false;
+            }
+
+            return firstGroup.getValue() > 0 && firstGroup.getValue().equals(secondGroup.getValue());
+        }
+
+        return false;
+    }
+
+    private static boolean isFullyQualified(Identifier identifier)
+    {
+        return identifier instanceof FullyQualifiedRadioIdentifier ||
+            identifier instanceof FullyQualifiedTalkgroupIdentifier;
     }
 
     /**

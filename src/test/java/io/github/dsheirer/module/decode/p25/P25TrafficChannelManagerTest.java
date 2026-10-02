@@ -16,6 +16,7 @@ import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
 import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
@@ -31,6 +32,7 @@ import io.github.dsheirer.module.decode.p25.identifier.channel.StandardChannel;
 import io.github.dsheirer.module.decode.p25.identifier.encryption.APCO25EncryptionKey;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
@@ -586,6 +588,107 @@ class P25TrafficChannelManagerTest
         manager.processP1ControlAnnouncedTrafficUpdate(channel, null, updateIdentifiers,
             Opcode.OSP_GROUP_VOICE_CHANNEL_GRANT_UPDATE, 7_200L);
         assertNotSame(initial, trafficTrackers(manager).get(frequency));
+    }
+
+    @Test
+    void phaseOneGrantTrafficEnrichmentAndRepeatedGrantPublishOnlyOneCallStart() throws Exception
+    {
+        assertGrantTrafficEnrichmentKeepsOneCallStart(false);
+    }
+
+    @Test
+    void phaseTwoGrantTrafficEnrichmentAndRepeatedGrantPublishOnlyOneCallStart() throws Exception
+    {
+        assertGrantTrafficEnrichmentKeepsOneCallStart(true);
+    }
+
+    private static void assertGrantTrafficEnrichmentKeepsOneCallStart(boolean phaseTwo) throws Exception
+    {
+        Channel parent = new Channel("Control", Channel.ChannelType.STANDARD);
+        parent.setConfigurationId("00000000-0000-0000-0000-000000000402");
+        parent.setDecodeConfiguration(phaseTwo ? new DecodeConfigP25Phase2() : new DecodeConfigP25Phase1());
+        parent.setSourceConfiguration(new SourceConfigRemote());
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(parent);
+        P25FrequencyBand band = new P25FrequencyBand(0, 851_012_500L, -45_000_000L, 12_500L, 12_500,
+            phaseTwo ? 2 : 1);
+        manager.processFrequencyBand(band);
+        manager.processFrequencyBand(band);
+        APCO25Channel channel = APCO25Channel.create(0, phaseTwo ? 1 : 0);
+        channel.setFrequencyBand(band);
+        long frequency = channel.getDownlinkFrequency();
+        int timeslot = phaseTwo ? TimeslotMessage.TIMESLOT_2 : TimeslotMessage.TIMESLOT_1;
+        MutableIdentifierCollection abbreviated = identifiers(1201, APCO25RadioIdentifier.createFrom(1234567));
+        RadioIdentifier qualifiedRadio = APCO25FullyQualifiedRadioIdentifier.createFrom(
+            1234567, 0xABCDE, 0x123, 7654321);
+        Identifier<?> qualifiedGroup = APCO25FullyQualifiedTalkgroupIdentifier.createTo(
+            1201, 0xABCDE, 0x123, 2201);
+        MutableIdentifierCollection enriched = new MutableIdentifierCollection();
+        enriched.update(qualifiedGroup);
+        enriched.update(qualifiedRadio);
+        CallStartSubscriber subscriber = new CallStartSubscriber();
+        MyEventBus.getGlobalEventBus().register(subscriber);
+
+        try
+        {
+            if(phaseTwo)
+            {
+                manager.processP2ChannelGrant(channel, VoiceServiceOptions.createUnencrypted(), abbreviated,
+                    MacOpcode.PHASE1_40_GROUP_VOICE_CHANNEL_GRANT_IMPLICIT, 1_000L);
+            }
+            else
+            {
+                manager.processP1ControlDirectedChannelGrant(channel, VoiceServiceOptions.createUnencrypted(),
+                    abbreviated, Opcode.OSP_GROUP_VOICE_CHANNEL_GRANT, 1_000L);
+            }
+
+            P25TrafficChannelEventTracker initial = trafficTrackers(manager, timeslot).get(frequency);
+            assertNotNull(initial);
+            assertEquals(1, subscriber.events.size());
+
+            if(phaseTwo)
+            {
+                manager.processP2TrafficCurrentUser(frequency, timeslot, channel,
+                    VoiceServiceOptions.createUnencrypted(), MacOpcode.TDMA_21_GROUP_VOICE_CHANNEL_USER_EXTENDED,
+                    enriched, 1_037L, null);
+                manager.processP2ChannelGrant(channel, VoiceServiceOptions.createUnencrypted(), abbreviated,
+                    MacOpcode.PHASE1_40_GROUP_VOICE_CHANNEL_GRANT_IMPLICIT, 1_075L);
+            }
+            else
+            {
+                manager.processP1TrafficCurrentUser(frequency, channel, DecodeEventType.CALL_GROUP,
+                    VoiceServiceOptions.createUnencrypted(), enriched, 1_037L, null);
+                manager.processP1ControlDirectedChannelGrant(channel, VoiceServiceOptions.createUnencrypted(),
+                    abbreviated, Opcode.OSP_GROUP_VOICE_CHANNEL_GRANT, 1_075L);
+            }
+
+            assertSame(initial, trafficTrackers(manager, timeslot).get(frequency));
+            assertEquals(1, subscriber.events.size(), "Enrichment and the repeated grant must not announce another call");
+            assertSame(qualifiedRadio, initial.getEvent().getIdentifierCollection().getFromIdentifier());
+            assertSame(qualifiedGroup, initial.getEvent().getIdentifierCollection().getToIdentifier());
+
+            MutableIdentifierCollection conflicting = new MutableIdentifierCollection();
+            conflicting.update(qualifiedGroup);
+            conflicting.update(APCO25FullyQualifiedRadioIdentifier.createFrom(
+                1234567, 0xABCDE, 0x123, 7654322));
+
+            if(phaseTwo)
+            {
+                manager.processP2ChannelGrant(channel, VoiceServiceOptions.createUnencrypted(), conflicting,
+                    MacOpcode.PHASE1_40_GROUP_VOICE_CHANNEL_GRANT_IMPLICIT, 1_150L);
+            }
+            else
+            {
+                manager.processP1ControlDirectedChannelGrant(channel, VoiceServiceOptions.createUnencrypted(),
+                    conflicting, Opcode.OSP_GROUP_VOICE_CHANNEL_GRANT, 1_150L);
+            }
+
+            assertNotSame(initial, trafficTrackers(manager, timeslot).get(frequency));
+            assertEquals(2, subscriber.events.size(), "A conflicting known home radio remains a different call");
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(subscriber);
+        }
     }
 
     @SuppressWarnings("unchecked")
