@@ -1,9 +1,9 @@
 const { expect, test } = require('@playwright/test');
 
 async function openGallery(page, { theme = 'light', source = 'live', state = 'full',
-  panel = 'details', fixture = 'normal' } = {}) {
+  panel = 'details', fixture = 'normal', hidden = false } = {}) {
   await page.goto(`/design-system.html?${new URLSearchParams({ view: 'audio-dock', theme,
-    audioSource: source, audioState: state, audioPanel: panel, audioFixture: fixture })}`);
+    audioSource: source, audioState: state, audioPanel: panel, audioFixture: fixture, audioHidden: String(hidden) })}`);
   await expect(page.locator('.visual-audio-dock-example')).toHaveAttribute('data-ready', 'true');
   const dock = page.locator('#audio-dock');
   await expect(dock).toHaveAttribute('data-state', state);
@@ -15,6 +15,16 @@ async function openGallery(page, { theme = 'light', source = 'live', state = 'fu
 }
 
 for (const theme of ['light', 'dark']) {
+  test(`audio dock desktop restore button ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const dock = await openGallery(page, { theme, hidden: true });
+    await expect(dock.getByRole('button')).toHaveCount(1);
+    await expect(dock.getByRole('button', { name: 'Show audio player', exact: true })).toBeFocused();
+    await expect(page).toHaveScreenshot(`super-collapsed-${theme}-desktop.png`);
+    await dock.getByRole('button', { name: 'Show audio player', exact: true }).click();
+    await expect(dock).toHaveAttribute('data-state', 'full');
+    await expect(dock.getByRole('button', { name: 'Pause live audio', exact: true })).toBeVisible();
+  });
   for (const [device, viewport] of [['desktop', { width: 1280, height: 900 }],
     ['mobile', { width: 390, height: 844 }]]) {
     for (const source of ['live', 'recordings']) {

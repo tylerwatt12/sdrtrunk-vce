@@ -25,7 +25,7 @@ import { createRetainedStatisticsWorkspace } from './features/retained-statistic
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=11';
 import { createRecordingsFeature } from './features/recordings.js?v=16';
 import { openSpectrumSearchWizard } from './features/spectrum-search.js?v=2';
-import { createAudioDock } from './core/audio-dock.js?v=6';
+import { createAudioDock } from './core/audio-dock.js?v=7';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=5';
 

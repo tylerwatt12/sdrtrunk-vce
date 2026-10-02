@@ -34,6 +34,24 @@
   border-radius: var(--audio-radius);
   box-shadow: var(--audio-shadow);
 }
+.ui-audio-surface[data-super-collapsed="true"] {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+.ui-audio-dismiss {
+  margin-inline-start: var(--space-2);
+  color: var(--audio-muted);
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+.ui-audio-restore {
+  --icon-action-size: var(--audio-restore-size);
+  --icon-action-radius: 50%;
+  --icon-glyph-size: var(--audio-restore-glyph-size);
+  box-shadow: var(--audio-shadow);
+}
 .ui-audio-command {
   --icon-action-size: var(--audio-action-size);
   color: var(--audio-ink);

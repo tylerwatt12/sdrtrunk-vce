@@ -194,5 +194,6 @@ export async function mountAudioDockGallery(parameters) {
     key: size === 'collapsed' ? 'Home' : 'End', bubbles: true }));
   const panel = parameters.get('audioPanel');
   if (size === 'full' && panel) clickNamed(panel[0].toUpperCase() + panel.slice(1));
+  if (parameters.get('audioHidden') === 'true') clickNamed('Hide audio player');
   document.querySelector('.visual-audio-dock-example').dataset.ready = 'true';
 }

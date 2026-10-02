@@ -8,6 +8,9 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   dock.id = 'audio-dock';
   dock.setAttribute('aria-label', 'Audio player');
   let size = 'minimal';
+  // Desktop hiding is presentation only: retain the size, source and both engines.
+  let superCollapsed = false;
+  const mobileLayout = window.matchMedia('(max-width: 900px), (max-height: 500px) and (pointer: coarse)');
   let source = 'live';
   let panel = 'details';
   let liveState = {};
@@ -224,7 +227,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   });
   const compactSourceLayout = window.matchMedia('(max-width: 359px)');
   const updateSourceFocus = () => {
-    if (dock.hidden || size === 'collapsed') return;
+    if (dock.hidden || (superCollapsed && !mobileLayout.matches) || size === 'collapsed') return;
     if (compactSourceLayout.matches && sourceButtons.contains(focusedSourceControl)) {
       sourcePicker.focus({ preventScroll: true });
     } else if (!compactSourceLayout.matches && focusedSourceControl === sourcePicker) {
@@ -236,8 +239,41 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   count.classList.add('ui-audio-count');
   const headerStart = node('div', 'audio-dock-header-start');
   const headerEnd = node('div', 'audio-dock-header-end');
+  const setSuperCollapsed = (value) => {
+    if (mobileLayout.matches) return;
+    superCollapsed = value;
+    render();
+    (value ? restore : hide).focus({ preventScroll: true });
+  };
+  const hide = iconButton('icon-close', 'Hide audio player',
+    'ui-button ui-button-secondary ui-icon-button ui-icon-button-compact ui-audio-dismiss');
+  hide.title = 'Hide audio player. Audio keeps playing.';
+  hide.setAttribute('aria-controls', 'audio-dock-content');
+  hide.addEventListener('click', () => setSuperCollapsed(true));
+  const restore = iconButton('icon-plus', 'Show audio player',
+    'ui-button ui-button-primary ui-icon-button ui-audio-restore');
+  restore.setAttribute('aria-controls', 'audio-dock-content');
+  restore.setAttribute('aria-expanded', 'false');
+  restore.addEventListener('click', () => setSuperCollapsed(false));
+  let focusedPresentationControl = null;
+  [hide, restore].forEach((control) => {
+    control.addEventListener('focusin', () => { focusedPresentationControl = control; });
+    control.addEventListener('focusout', () => {
+      if (control.getClientRects().length) focusedPresentationControl = null;
+    });
+  });
+  const updatePresentationLayout = () => {
+    const returnFocus = dock.contains(document.activeElement) || Boolean(focusedPresentationControl || focusedSourceControl);
+    render();
+    if (!returnFocus || dock.hidden) return;
+    if (superCollapsed && !mobileLayout.matches) restore.focus({ preventScroll: true });
+    else if (focusedPresentationControl || !document.activeElement.getClientRects().length) {
+      handle.focus({ preventScroll: true });
+      focusedPresentationControl = null;
+    }
+  };
   headerStart.append(collapsedTitle, sourceButtons, sourcePicker);
-  headerEnd.append(collapsedMeta, count);
+  headerEnd.append(collapsedMeta, count, hide);
   header.append(headerStart, handle, headerEnd);
 
   const body = node('div', 'audio-dock-body');
@@ -321,7 +357,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     tabButtons[value] = button; tabs.append(button);
   });
   body.append(now, timing, transport, volumeRow, actions, tabs, panelHost);
-  dock.append(header, body);
+  dock.append(header, body, restore);
   document.querySelector('.app-shell').append(dock);
 
   const message = (text, error = false) => {
@@ -518,7 +554,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     listeningSection('Page title', titleField);
   }
   function updateProgress() {
-    if (dock.hidden || size === 'collapsed') return;
+    if (dock.hidden || (superCollapsed && !mobileLayout.matches) || size === 'collapsed') return;
     const snapshot = source === 'live' ? getLivePlayer()?.viewState() || liveState : recordings.viewState();
     const total = Math.max(0, Number(snapshot.duration) || 0);
     const position = Math.max(0, Number(snapshot.currentTime) || 0);
@@ -536,11 +572,18 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     }
     dock.hidden = document.body.dataset.view === 'scanner' || document.body.dataset.view === 'access-landing' ||
       (!permissions.live && !permissions.recordings);
+    const compact = superCollapsed && !mobileLayout.matches;
+    dock.dataset.superCollapsed = String(compact);
     dock.dataset.state = size; dock.dataset.source = source;
     document.body.classList.toggle('has-audio-dock', !dock.hidden);
+    header.hidden = compact;
+    restore.hidden = !compact;
+    hide.hidden = mobileLayout.matches;
+    if (dock.hidden) focusedPresentationControl = null;
     collapsedTitle.hidden = collapsedMeta.hidden = size !== 'collapsed';
-    sourceButtons.hidden = sourcePicker.hidden = count.hidden = body.hidden = size === 'collapsed';
-    if (dock.hidden || size === 'collapsed') focusedSourceControl = null;
+    sourceButtons.hidden = sourcePicker.hidden = count.hidden = size === 'collapsed';
+    body.hidden = compact || size === 'collapsed';
+    if (dock.hidden || compact || size === 'collapsed') focusedSourceControl = null;
     handle.setAttribute('aria-expanded', String(size !== 'collapsed'));
     const sizeDescription = { collapsed: 'Collapsed player', minimal: 'Minimal controls', full: 'Full controls' }[size];
     sizeHint.textContent = `${sizeDescription}. Drag up or down, or click to change player size.`;
@@ -600,7 +643,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       button.setAttribute('aria-selected', String(panel === value)); button.tabIndex = panel === value ? 0 : -1;
     });
     panelHost.setAttribute('aria-labelledby', tabButtons[panel].id);
-    if (size === 'full' && !dock.hidden) {
+    if (size === 'full' && !dock.hidden && !compact) {
       const panelState = panel === 'listening' ? [active.scanLists, active.avoids, active.targetGrouping,
         active.targetBurstLimit, active.maximumSelectedScanLists, active.scanListCatalogReady,
         active.scanListCatalogState, getTitlePreference()] : panel === 'queue' ? [active.current, active.queue,
@@ -653,6 +696,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     document.documentElement.style.setProperty('--audio-dock-height', `${height}px`);
   }
   const resizeObserver = new ResizeObserver(measure); resizeObserver.observe(dock);
+  mobileLayout.addEventListener('change', updatePresentationLayout);
   const routeObserver = new MutationObserver(() => { panelKey = ''; render(); });
   routeObserver.observe(document.body, { attributes: true, attributeFilter: ['data-view'] });
   const progressTimer = window.setInterval(() => { if (!document.hidden) updateProgress(); }, 250);
@@ -687,6 +731,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   synchronize();
   return { synchronize, destroy() {
     compactSourceLayout.removeEventListener('change', updateSourceFocus);
+    mobileLayout.removeEventListener('change', updatePresentationLayout);
     unsubscribeLive(); unsubscribeRecordings(); resizeObserver.disconnect(); routeObserver.disconnect();
     window.clearInterval(progressTimer); dock.remove(); document.body.classList.remove('has-audio-dock');
     document.documentElement.style.removeProperty('--audio-dock-height');

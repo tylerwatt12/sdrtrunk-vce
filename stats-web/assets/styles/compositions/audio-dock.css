@@ -13,6 +13,10 @@
   font-size: var(--font-size-body);
 }
 .audio-dock [hidden] { display: none; }
+.audio-dock[data-super-collapsed="true"] {
+  width: var(--audio-restore-size);
+  overflow: visible;
+}
 .audio-dock-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: var(--space-1); }
 .audio-dock-header {
   flex: 0 0 auto;
@@ -102,6 +106,6 @@
 }
 @media (max-height: 560px) {
   /* The entire expanded body scrolls on short screens, including transport. */
-  .audio-dock[data-state="full"] .audio-dock-body { display: block; }
+  .audio-dock[data-state="full"] .audio-dock-body:not([hidden]) { display: block; }
   .audio-dock[data-state="full"] .audio-dock-panel { max-height: none; overflow: visible; }
 }
