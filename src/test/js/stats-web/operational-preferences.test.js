@@ -86,7 +86,7 @@ async function main() {
   assert.deepEqual(plain(groups.map((group) => group.label)), ['Status & support',
     'Audio & recordings', 'Activity & storage', 'Receiver configuration', 'Web interface']);
   assert.deepEqual(plain(groups.map((group) => group.items.map((item) => item.id))), [
-    ['health', 'call-matching', 'support'], ['recordings', 'audio-quality', 'transcription'],
+    ['health', 'call-matching', 'application-log', 'support'], ['recordings', 'audio-quality', 'transcription'],
     ['activity', 'retained-statistics'], ['remote-links', 'protocol-p25'], ['display', 'users', 'access']
   ]);
   const html = fs.readFileSync(path.resolve(path.dirname(process.argv[2] ||

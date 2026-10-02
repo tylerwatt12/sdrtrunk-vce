@@ -265,6 +265,7 @@ test('resizing open P25 Events never replaces a different modal with unsaved cho
   await expect(settings).toBeVisible();
   expect(await choice.isChecked()).toBe(!initial);
   expect(confirmations).toEqual([]);
+  await expect(page.getByRole('alertdialog')).toHaveCount(0);
   await expect(page.getByRole('dialog', { name: 'Noteworthy P25 activity', exact: true })).toHaveCount(0);
 });
 

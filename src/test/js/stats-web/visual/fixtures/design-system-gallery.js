@@ -2,6 +2,51 @@ import * as tableDefaults from '/assets/core/table-defaults.js';
 import * as tableLayouts from '/assets/core/table-layout.js';
 import { createDualRange } from '/assets/core/dual-range.js';
 import { mountAudioDockGallery } from '/visual/audio-dock-gallery.js';
+import { createFormWorkflow } from '/assets/core/form-workflows.js';
+import { createBrowsingPager, createFilterDisclosure, pageRangeText, scanListAvailabilityPill } from '/assets/core/browsing-workflows.js';
+import { createGalleryModalFoundation } from '/visual/modal-foundation-gallery.js';
+
+async function initializeAliasFilterExamples() {
+  const forms = [...document.querySelectorAll('.visual-aliases-example .alias-editor-filter-toolbar, ' +
+    '.visual-scan-list-members-example .alias-editor-filter-toolbar')];
+  if (!forms.length) return;
+  const { openReadOnlyModal } = await createGalleryModalFoundation();
+  const node = (tag, className = '', text = null) => {
+    const element = document.createElement(tag);
+    element.className = className;
+    if (text !== null) element.textContent = String(text);
+    return element;
+  };
+  for (const form of forms) {
+    const panel = form.querySelector('.alias-filter-advanced');
+    const button = form.querySelector('.alias-filter-advanced-toggle');
+    const clear = node('button', 'ui-button ui-button-secondary', 'Clear filters');
+    clear.type = 'button';
+    form.querySelector('.alias-filter-primary').append(clear);
+    const inlineActions = form.querySelector('.alias-filter-actions');
+    inlineActions.classList.add('ui-action-row', 'ui-filter-inline-actions');
+    inlineActions.querySelector('button').type = 'submit';
+    const fields = [...panel.querySelectorAll('input,select')];
+    const defaults = fields.map(field => field.value);
+    const updateCount = () => {
+      const count = fields.filter((field, index) => field.value !== defaults[index]).length;
+      button.textContent = count ? `Filters (${count})` : 'Filters';
+      clear.hidden = count === 0;
+    };
+    fields.forEach(field => { field.addEventListener('input', updateCount); field.addEventListener('change', updateCount); });
+    clear.addEventListener('click', () => { form.reset(); updateCount(); });
+    form.addEventListener('submit', event => { event.preventDefault(); updateCount(); });
+    form.querySelector('.alias-filter-primary > .ui-button-primary').addEventListener('click', () => form.requestSubmit());
+    button.id = `${panel.id}-toggle`;
+    createFilterDisclosure({ node, openReadOnlyModal, form, panel, button, clearAction: clear,
+      id: panel.id, returnFocusSelector: `#${button.id}` });
+    button.disabled = false;
+    updateCount();
+    form.dataset.sharedFiltersReady = 'true';
+  }
+}
+
+void initializeAliasFilterExamples();
 
 document.querySelectorAll('.visual-duration-range').forEach((host) => {
   const node = (tag, className, text) => {
@@ -356,7 +401,7 @@ function initializeScanListCatalog() {
 
 const parameters = new URLSearchParams(window.location.search);
 const theme = parameters.get('theme') === 'dark' ? 'dark' : 'light';
-const view = ['control-states', 'mobile-table', 'gallery', 'app-chrome', 'audio-dock', 'access-landing', 'access-login-modal', 'modal', 'modal-long', 'alias-list-create-modal', 'activity-action-tooltip', 'activity-filters', 'health-alert-modal', 'focus', 'settings', 'health', 'status-primitives', 'p25', 'admin-access',
+const view = ['control-states', 'mobile-table', 'gallery', 'workflows', 'app-chrome', 'audio-dock', 'access-landing', 'access-login-modal', 'modal', 'modal-long', 'alias-list-create-modal', 'activity-action-tooltip', 'activity-filters', 'health-alert-modal', 'focus', 'settings', 'health', 'status-primitives', 'p25', 'admin-access',
   'admin-navigation', 'admin-receiver', 'admin-support', 'dashboard-health', 'dashboard-calls', 'dashboard-activity',
   'signal-quality-detail', 'radioreference-results',
   'radio-directory-coverage', 'radio-directory-panel', 'admin-scan-lists',
@@ -634,6 +679,7 @@ initializeReceiverHealth();
   const picker = workspace.querySelector('[data-visual-admin-picker]');
   const groups = [
     ['Status & support', [['health', 'Receiver status', 'health'], ['matching', 'Call matching', 'call-matching'],
+      ['application-log', 'Application log', 'activity'],
       ['support', 'Report a problem', 'bug']]],
     ['Audio & recordings', [['recording', 'Recording settings', 'recording-settings'],
       ['audio', 'Audio quality', 'audio-quality'], ['transcription', 'Transcription', 'transcription']]],
@@ -950,3 +996,49 @@ if(view === 'scanner') document.body.dataset.view = 'scanner';
 if(view === 'entity-details') document.body.dataset.view = 'group-identity';
 const label = document.getElementById('visual-theme-label');
 if(label) label.textContent = `${theme[0].toUpperCase()}${theme.slice(1)} theme`;
+
+if (view === 'workflows') {
+  const node = (tag, className, text) => {
+    const element = document.createElement(tag);
+    if (className) element.className = className;
+    if (text !== undefined) element.textContent = text;
+    return element;
+  };
+  const host = document.querySelector('.visual-workflow-editor');
+  const form = host.querySelector('form');
+  const input = form.elements.display_name;
+  const submit = form.querySelector('[type="submit"]');
+  const cancel = form.querySelector('[data-workflow-cancel]');
+  let saved = input.value;
+  let attempts = 0;
+  const workflow = createFormWorkflow({ form, submit,
+    feedback: form.querySelector('[data-workflow-feedback]'),
+    changed: () => input.value !== saved,
+    modal: { setDirty: (dirty) => { host.dataset.dirty = String(dirty); },
+      setBusy: (busy) => { cancel.disabled = busy; } }
+  });
+  cancel.addEventListener('click', () => {
+    input.value = saved;
+    workflow.refresh();
+    workflow.showFeedback('status', '');
+  });
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    workflow.save(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      attempts += 1;
+      if (attempts === 1) throw new Error('The changes could not be saved. Try again.');
+      saved = input.value;
+    });
+  });
+  const availability = document.querySelector('[data-workflow-availability]');
+  availability.append(scanListAvailabilityPill(node, { published: true }),
+    scanListAvailabilityPill(node, { published: false }));
+  let offset = 0;
+  const update = () => pager.update({ countText: pageRangeText({ offset, visible: 10, total: 30 }),
+    previous: { enabled: offset > 0, onClick: () => { offset -= 10; update(); } },
+    next: { enabled: offset < 20, onClick: () => { offset += 10; update(); } } });
+  const pager = createBrowsingPager({ node });
+  update();
+  document.querySelector('[data-workflow-pager]').append(pager);
+}

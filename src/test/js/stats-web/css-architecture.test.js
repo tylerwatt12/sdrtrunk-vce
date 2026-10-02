@@ -17,28 +17,30 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/components/audio-controls.css?v=5") layer(components);',
   '@import url("./styles/compositions/workspaces.css?v=21") layer(compositions);',
   '@import url("./styles/compositions/tables.css?v=12") layer(compositions);',
+  '@import url("./styles/compositions/browsing.css?v=1") layer(compositions);',
   '@import url("./styles/compositions/app-chrome.css?v=14") layer(compositions);',
-  '@import url("./styles/compositions/audio-dock.css?v=6") layer(compositions);',
+  '@import url("./styles/compositions/audio-dock.css?v=7") layer(compositions);',
   '@import url("./styles/compositions/charts.css?v=4") layer(compositions);',
-  '@import url("./styles/compositions/modals.css?v=7") layer(compositions);',
+  '@import url("./styles/compositions/modals.css?v=8") layer(compositions);',
   '@import url("./styles/compositions/settings.css?v=8") layer(compositions);',
   '@import url("./styles/features/access-landing.css?v=2") layer(features);',
   '@import url("./styles/features/about.css?v=1") layer(features);',
-  '@import url("./styles/features/channels.css?v=18") layer(features);',
+  '@import url("./styles/features/channels.css?v=19") layer(features);',
   '@import url("./styles/features/entity-details.css?v=12") layer(features);',
-  '@import url("./styles/features/live.css?v=17") layer(features);',
+  '@import url("./styles/features/live.css?v=18") layer(features);',
   '@import url("./styles/features/radio-directory.css?v=8") layer(features);',
-  '@import url("./styles/features/tuner-spectrum.css?v=14") layer(features);',
+  '@import url("./styles/features/tuner-spectrum.css?v=17") layer(features);',
   '@import url("./styles/features/tuners.css?v=11") layer(features);',
   '@import url("./styles/features/listen-map.css?v=3") layer(features);',
   '@import url("./styles/features/network-visualizer.css?v=11") layer(features);',
   '@import url("./styles/features/scanner.css?v=8") layer(features);',
-  '@import url("./styles/features/aliases.css?v=18") layer(features);',
+  '@import url("./styles/features/aliases.css?v=19") layer(features);',
   '@import url("./styles/features/scan-lists.css?v=3") layer(features);',
   '@import url("./styles/features/dashboard.css?v=4") layer(features);',
   '@import url("./styles/features/administration.css?v=9") layer(features);',
-  '@import url("./styles/features/retained-statistics.css?v=4") layer(features);',
+  '@import url("./styles/features/retained-statistics.css?v=5") layer(features);',
   '@import url("./styles/features/call-matching.css?v=4") layer(features);',
+  '@import url("./styles/features/application-log.css?v=1") layer(features);',
   '@import url("./styles/features/signal-quality.css?v=5") layer(features);',
   '@import url("./styles/features/radioreference.css?v=17") layer(features);',
   '@import url("./styles/features/streaming.css?v=5") layer(features);',
@@ -46,13 +48,35 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/p25-settings.css?v=4") layer(features);',
   '@import url("./styles/features/receiver-health.css?v=6") layer(features);',
   '@import url("./styles/features/activity.css?v=3") layer(features);',
-  '@import url("./styles/features/recordings.css?v=9") layer(features);',
+  '@import url("./styles/features/recordings.css?v=10") layer(features);',
   '@import url("./styles/utilities/reduced-motion.css?v=11") layer(utilities);',
 ];
 
 // Feature styles may shape shared primitives only where page-specific composition requires it.
 // This is a shrinking migration budget, not permission for new shared-component overrides.
 const FEATURE_SHARED_SELECTOR_BUDGET = 28;
+const FROZEN_FEATURE_SHARED_SELECTORS = JSON.parse(fs.readFileSync(
+  path.join(__dirname, 'feature-shared-selectors.json'), 'utf8'));
+
+function sharedRuleKey(file, rule, selector) {
+  return JSON.stringify([file, rule.atRules, selector]);
+}
+
+function declarations(body) {
+  return [...body.matchAll(/([\w-]+)\s*:\s*([^;]+)(?:;|$)/g)]
+    .map((match) => `${match[1]}: ${match[2].trim().replace(/\s+/g, ' ')}`);
+}
+
+function frozenSharedRuleViolation(file, rule, selector) {
+  const baseline = FROZEN_FEATURE_SHARED_SELECTORS.find((entry) =>
+    sharedRuleKey(entry.file, entry, entry.selector) === sharedRuleKey(file, rule, selector));
+  if (!baseline) return 'new feature selector targeting a shared component';
+  const permitted = declarations(baseline.declarations);
+  if (declarations(rule.body).some((declaration) => !permitted.includes(declaration))) {
+    return 'new or changed declaration targeting a shared component';
+  }
+  return null;
+}
 
 function locator(source) {
   const lineStarts = [0];
@@ -514,6 +538,12 @@ function validateModernDesignSystemBoundaries(stylesheets, entry) {
       for(const selector of splitSelectorList(rule.header)) {
         if(relative.startsWith('features/') && /\.ui-[a-z0-9_-]+/i.test(selector)) {
           featureSharedSelectors += 1;
+          const violation = frozenSharedRuleViolation(relative, rule, selector);
+          if (violation) {
+            const { line, column } = stylesheet.locate(rule.index);
+            violations.push(`${relative}:${line}:${column}: ${violation}: ${selector}. `
+              + 'Move reusable appearance into components or compositions.');
+          }
         }
         if(/#[a-z_][a-z0-9_-]*/i.test(selector)) {
           const { line, column } = stylesheet.locate(rule.index);
@@ -995,6 +1025,19 @@ function runFocusedContractTests() {
 }
 
 runFocusedContractTests();
+const frozenExample = FROZEN_FEATURE_SHARED_SELECTORS[0];
+assert.equal(frozenSharedRuleViolation(frozenExample.file,
+  { atRules: frozenExample.atRules, body: frozenExample.declarations }, frozenExample.selector), null);
+assert.equal(frozenSharedRuleViolation(frozenExample.file,
+  { atRules: frozenExample.atRules, body: '' }, frozenExample.selector), null,
+  'Removing a feature override must remain allowed');
+assert.match(frozenSharedRuleViolation(frozenExample.file,
+  { atRules: frozenExample.atRules, body: `${frozenExample.declarations}; color: var(--danger);` },
+  frozenExample.selector), /new or changed declaration/,
+  'A smaller override count must not allow a new appearance declaration');
+assert.match(frozenSharedRuleViolation(frozenExample.file,
+  { atRules: [], body: 'padding: var(--space-4);' }, '.new-feature .ui-button'), /new feature selector/,
+  'A smaller override count must not allow a new feature selector');
 validateEntryManifest(entryStylesheet);
 const stylesheets = readStylesheetGraph(entryStylesheet);
 validateModuleReachability(stylesheets, entryStylesheet);

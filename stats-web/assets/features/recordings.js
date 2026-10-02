@@ -175,7 +175,7 @@ function select(node, options, labelText) {
 export function createRecordingsFeature(deps) {
   const { node, requestJson, openReadOnlyModal, section, pageHeader, beginPage,
     captureRenderContext, renderIsCurrent, content, isPrimaryAdmin, canViewRadio,
-    entityRefHref, stopLiveAudio, href, anchor, uiToggleField, metrics } = deps;
+    entityRefHref, stopLiveAudio, href, anchor, uiToggleField, metrics, browsingWorkflows, modalFooter } = deps;
   const search = {
     q: '', transcript: '', from_ms: '', to_ms: '', system_key: '', site: '', talkgroup_id: '', radio_id: '',
     channel_id: '', min_duration_ms: '', max_duration_ms: '', frequency_hz: '',
@@ -675,7 +675,9 @@ export function createRecordingsFeature(deps) {
       id: `play-recording-${row.id}`, className: 'recordings-playback-modal'
     });
     const preferredIndex = ['once', 'continue', 'queue'].indexOf(clickMode);
-    (choices.children?.[preferredIndex] || choices.firstElementChild)?.focus();
+    const focusPreferred = () => (choices.children?.[preferredIndex] || choices.firstElementChild)?.focus();
+    if (modal?.ready) void modal.ready.then((ready) => { if (ready) focusPreferred(); });
+    else if (modal) focusPreferred();
   }
 
   function hexIdentity(identity, width) {
@@ -888,7 +890,7 @@ export function createRecordingsFeature(deps) {
     const body = node('div', 'recordings-detail');
     body.append(makeNotice('Loading call details…', 'loading'));
     const modal = openReadOnlyModal('Call details', body, { id: `recording-${row.id}`, className: 'recordings-detail-modal' });
-    if (!modal) return;
+    if (!modal || (modal.ready && !await modal.ready)) return;
     try {
       const detail = await requestJson(`${CALLS}/${encodeURIComponent(String(row.id))}`, { page: false });
       if (!modal.dialog.isConnected) return;
@@ -1069,8 +1071,14 @@ export function createRecordingsFeature(deps) {
     selectedFiltersHost.replaceChildren();
     if (searchHint) searchHint.hidden = Boolean(search.system_key);
     if (filterCountHost) {
-      filterCountHost.textContent = String(selectedSuggestions.size);
-      filterCountHost.hidden = selectedSuggestions.size === 0;
+      const groups = [['system_key'], ['site', 'rfss', 'site_id'],
+        ['talkgroup_id', 'talkgroup_min', 'talkgroup_max'], ['radio_id', 'radio_min', 'radio_max'],
+        ['channel_id'], ['transcript'], ['min_duration_ms', 'max_duration_ms'], ['frequency_hz'],
+        ['call_type'], ['voice_type'], ['protocol']];
+      const count = groups.filter((keys) => keys.some((key) => currentFilters[key])).length +
+        (search.range && search.range !== '24h' ? 1 : 0);
+      filterCountHost.textContent = String(count);
+      filterCountHost.hidden = count === 0;
     }
     for (const [key, suggestion] of selectedSuggestions) {
       if (!search[key] && !suggestion.appliedKeys?.some((applied) => search[applied])) continue;
@@ -1090,9 +1098,18 @@ export function createRecordingsFeature(deps) {
   function drawSelection() {
     if (!selectedHost) return;
     selectedHost.replaceChildren();
-    if (!selection.size || !isPrimaryAdmin()) return;
+    selectedHost.hidden = !selection.size || !isPrimaryAdmin();
+    if (selectedHost.hidden) return;
     selectedHost.append(node('strong', '', `${selection.size} selected`),
-      button(node, 'Review delete', () => confirmDelete(), 'ui-button ui-button-danger-quiet'));
+      button(node, 'Review delete', () => confirmDelete(), 'ui-button ui-button-danger-quiet'),
+      button(node, 'Clear selection', () => {
+        selection.clear();
+        resultHost.querySelectorAll('input.recordings-call-select').forEach((input) => {
+          input.checked = false;
+        });
+        drawSelection();
+        resultHost.querySelector('input.recordings-call-select')?.focus();
+      }, 'ui-button ui-button-secondary'));
   }
 
   function confirmDelete() {
@@ -1103,7 +1120,6 @@ export function createRecordingsFeature(deps) {
       'Their audio files and call entries will be removed.'));
     const status = node('div', 'recordings-form-status');
     status.setAttribute('role', 'status');
-    const actions = node('div', 'ui-action-row');
     const cancel = button(node, 'Cancel', () => modal.close());
     const remove = button(node, 'Delete recordings', async () => {
       remove.disabled = true;
@@ -1127,8 +1143,7 @@ export function createRecordingsFeature(deps) {
         status.replaceChildren(makeNotice(error.message || 'Calls could not be deleted.', 'error'));
       }
     }, 'ui-button ui-button-danger');
-    actions.append(cancel, remove);
-    body.append(status, actions);
+    body.append(status, modalFooter(cancel, remove));
     const modal = openReadOnlyModal('Delete recordings', body, { id: 'delete-recordings',
       className: 'recordings-detail-modal' });
   }
@@ -1152,18 +1167,16 @@ export function createRecordingsFeature(deps) {
       countHost.textContent = `${count.toLocaleString()} ${count === 1 ? 'call' : 'calls'}` +
         (resultTotal === null ? ' shown' : '') +
         (sharedDate ? ` · ${sharedDate}` : '') +
-        (showPager ? ` · page ${currentPage + 1}${nextCursor ? ' · more available' : ''}` : '');
+        (showPager && nextCursor ? ' · more available' : '');
     }
     if (pagerHost) {
       pagerHost.hidden = !showPager;
-      pagerHost.replaceChildren();
-      const previous = button(node, 'Previous', () => void loadPage(currentPage - 1));
-      previous.disabled = currentPage === 0;
-      const next = button(node, 'Next', () => void loadPage(currentPage + 1));
-      next.disabled = !nextCursor;
-      pagerHost.append(previous, node('span', '', `Page ${currentPage + 1}`), next);
+      pagerHost.update({ countText: `Page ${currentPage + 1}`,
+        previous: { enabled: currentPage > 0, onClick: () => void loadPage(currentPage - 1) },
+        next: { enabled: Boolean(nextCursor), onClick: () => void loadPage(currentPage + 1) } });
     }
     drawSelection();
+    drawSelectedFilters();
   }
 
   async function loadPage(page = 0) {
@@ -1316,7 +1329,10 @@ export function createRecordingsFeature(deps) {
     });
     input.addEventListener('keydown', (event) => {
       const rows = [...options.querySelectorAll('[role="option"]')];
-      if (event.key === 'Escape') { close(); return; }
+      if (event.key === 'Escape') {
+        if (!options.hidden) event.preventDefault();
+        close(); return;
+      }
       if (options.hidden || !rows.length) return;
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
@@ -1424,14 +1440,11 @@ export function createRecordingsFeature(deps) {
     const actions = node('div', 'recordings-search-actions');
     const submit = button(node, 'Search', null, 'ui-button ui-button-primary');
     submit.type = 'submit';
-    const filters = button(node, '', null);
-    filters.append(node('span', 'recordings-filter-label-desktop', 'More filters'),
-      node('span', 'recordings-filter-label-mobile', 'Filters'));
+    const filters = button(node, 'Filters', null);
+    filters.id = 'recordings-filters-toggle';
     filterCountHost = node('span', 'ui-pill ui-pill-compact recordings-filter-count');
     filterCountHost.hidden = true;
     filters.append(filterCountHost);
-    filters.setAttribute('aria-expanded', 'false');
-    filters.setAttribute('aria-controls', 'recordings-advanced-filters');
     advanced.id = 'recordings-advanced-filters';
     const clear = button(node, 'Clear filters', () => {
       Object.keys(search).forEach((key) => { search[key] = ''; });
@@ -1440,52 +1453,14 @@ export function createRecordingsFeature(deps) {
       pageHost.replaceChildren();
       renderSearchPage();
     }, 'ui-button ui-button-secondary recordings-clear-filters');
-    filters.addEventListener('click', () => {
-      if (!window.matchMedia('(max-width: 700px)').matches) {
-        advanced.hidden = !advanced.hidden;
-        filters.setAttribute('aria-expanded', String(!advanced.hidden));
-        return;
-      }
-      const sheet = node('div', 'recordings-filter-sheet');
-      const sheetFields = node('div', 'recordings-filter-sheet-fields');
-      sheetFields.append(rangeField, customDates, advancedFields);
-      const sheetActions = node('div', 'ui-action-row recordings-filter-sheet-actions');
-      const clearSheet = button(node, 'Clear filters', () => {
-        modal.close();
-        clear.click();
-      }, 'ui-button ui-button-secondary recordings-sheet-action');
-      const showCalls = button(node, 'Show calls', () => {
-        modal.close();
-        form.requestSubmit();
-      }, 'ui-button ui-button-primary recordings-sheet-action');
-      sheetActions.append(clearSheet, showCalls);
-      sheet.append(sheetFields, sheetActions);
-      const modal = openReadOnlyModal('Filters', sheet, {
-        id: 'recordings-filters', className: 'recordings-filter-modal',
-        onClose: () => {
-          primary.insertBefore(rangeField, queryField);
-          form.insertBefore(customDates, advanced);
-          advanced.append(advancedFields);
-          filters.setAttribute('aria-expanded', 'false');
-          filters.setAttribute('aria-controls', advanced.id);
-        }
-      });
-      if (modal) {
-        modal.dialog.id = 'recordings-filter-dialog';
-        filters.setAttribute('aria-controls', modal.dialog.id);
-        filters.setAttribute('aria-expanded', 'true');
-      }
-      else {
-        primary.insertBefore(rangeField, queryField);
-        form.insertBefore(customDates, advanced);
-        advanced.append(advancedFields);
-      }
-    });
     actions.append(submit, filters);
     primary.append(actions);
     advanced.append(clear);
     selectedFiltersHost = node('div', 'recordings-selected-filters');
     form.append(primary, selectedFiltersHost, customDates, advanced);
+    browsingWorkflows.createFilterDisclosure({ node, openReadOnlyModal, form, panel: advanced,
+      fields: [rangeField, customDates, advancedFields], button: filters, clearAction: clear,
+      returnFocusSelector: '#recordings-filters-toggle', id: 'recordings-filters' });
     drawSelectedFilters();
     form.addEventListener('submit', (event) => {
       event.preventDefault();
@@ -1605,13 +1580,14 @@ export function createRecordingsFeature(deps) {
     titleBar.append(titleActions);
     const body = node('div', 'recordings-results-body');
     sharedHost = node('div', 'recordings-shared');
-    selectedHost = node('div', 'recordings-selected');
+    selectedHost = node('div', 'recordings-selected ui-selection-bar');
+    selectedHost.hidden = true;
     countHost = node('div', 'recordings-result-count');
     resultStatus = node('div', 'recordings-result-status');
     resultStatus.setAttribute('role', 'status');
     resultHost = node('div', 'recordings-results');
-    pagerHost = node('nav', 'recordings-pager ui-pager');
-    pagerHost.setAttribute('aria-label', 'Call result pages');
+    pagerHost = browsingWorkflows.createBrowsingPager({ node, className: 'recordings-pager',
+      ariaLabel: 'Call result pages' });
     body.append(sharedHost, selectedHost, countHost, resultStatus, resultHost, pagerHost);
     resultSection.append(titleBar, body);
     browser.append(searchSection, resultSection);
@@ -1657,7 +1633,7 @@ export function createRecordingsFeature(deps) {
         cancel.disabled = false;
       }
     }, danger ? 'ui-button ui-button-danger' : 'ui-button ui-button-primary');
-    body.append(node('p', '', description), ...details, status, adminActions(cancel, confirm));
+    body.append(node('p', '', description), ...details, status, modalFooter(cancel, confirm));
     modal = openReadOnlyModal(title, body, { id: 'recordings-administration-action' });
   }
 

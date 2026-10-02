@@ -87,6 +87,8 @@ async function expectBlankFacts(page) {
 test('desktop page geometry stays unchanged in every audio dock size', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await openApp(page);
+  await expect(page.locator('.recordings-call')).toHaveCount(25);
+  await expect(page.locator('#content')).toHaveAttribute('aria-busy', 'false');
   const geometry = () => page.locator('.content').evaluate((content) => ({
     height: content.getBoundingClientRect().height,
     scrollHeight: content.scrollHeight,

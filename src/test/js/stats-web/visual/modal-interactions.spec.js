@@ -5,6 +5,8 @@ const { resolve } = require('node:path');
 const application = readFileSync(resolve(__dirname, '../../../../..', 'stats-web/assets/app.js'), 'utf8');
 const modalFoundation = application.slice(application.indexOf('function closeReadOnlyModal('),
   application.indexOf('function statsLoggingState('));
+const navigateSource = application.slice(application.indexOf('function navigateTo('),
+  application.indexOf('function currentHref('));
 const anchoredDropdown = application.slice(application.indexOf('function anchoredDropdownPlacement('),
   application.indexOf('function compareTableValues('));
 const activityCellActions = application.slice(application.indexOf('function activityCellNavigation('),
@@ -89,6 +91,76 @@ async function installStackHarness(page) {
     window.confirm = () => { window.parentConfirmCount += 1; return false; };
     document.body.append(opener);
   }, modalFoundation);
+}
+
+async function installDismissalHarness(page) {
+  await page.goto('/design-system.html?theme=light&view=gallery');
+  await page.evaluate(async ({ source, navigation }) => {
+    const routeFoundation = await import('/assets/core/routes.js');
+    document.body.replaceChildren();
+    window.history.replaceState({}, '', '/?view=channel-setup');
+    const node = (tag, className = '', text = null) => {
+      const element = document.createElement(tag);
+      element.className = className;
+      if (text !== null) element.textContent = String(text);
+      return element;
+    };
+    const iconButton = (_iconId, label, className) => {
+      const control = node('button', className);
+      control.type = 'button';
+      control.setAttribute('aria-label', label);
+      return control;
+    };
+    const state = { cleanups: 0, restorations: 0, loads: 0, actions: 0, renders: 0, parentCloses: 0 };
+    const shared = new Function('node', 'valueNode', 'iconButton', 'routeFoundation', 'render',
+      `let activeReadOnlyModal = null; let route = new URLSearchParams(location.search);
+       ${source}\n${navigation}
+       return { openReadOnlyModal, closeReadOnlyModal, confirmAction, navigateTo };`)(node,
+      value => value instanceof Node ? value : document.createTextNode(String(value)), iconButton,
+      routeFoundation, () => { state.renders += 1; });
+    const opener = node('button', 'ui-button', 'Edit draft');
+    opener.addEventListener('click', () => {
+      const form = node('form');
+      const draft = node('input', 'ui-input');
+      draft.setAttribute('aria-label', 'Draft name');
+      const navigate = node('button', 'ui-button', 'Open recordings');
+      const replace = node('button', 'ui-button', 'Open replacement');
+      const guarded = node('button', 'ui-button', 'Delete draft');
+      [navigate, replace, guarded].forEach(control => { control.type = 'button'; });
+      form.append(draft, navigate, replace, guarded);
+      const parent = shared.openReadOnlyModal('Draft editor', form, {
+        id: 'draft-editor', onClose: () => { state.parentCloses += 1; }
+      });
+      state.parent = parent;
+      draft.addEventListener('input', () => parent.setDirty(true));
+      navigate.addEventListener('click', () => shared.navigateTo('/?view=recordings&group=42'));
+      replace.addEventListener('click', () => {
+        const content = node('div');
+        const name = node('input', 'ui-input');
+        name.setAttribute('aria-label', 'Replacement name');
+        const save = node('button', 'ui-button', 'Save replacement');
+        content.append(name, save);
+        const candidate = shared.openReadOnlyModal('Replacement editor', content, {
+          id: 'replacement-editor', cleanup: () => { state.cleanups += 1; },
+          onClose: () => { state.restorations += 1; }
+        });
+        state.candidate = candidate;
+        save.addEventListener('click', () => { state.actions += 1; });
+        candidate.focus(name);
+        void candidate.ready.then((shown) => { if (shown) state.loads += 1; });
+      });
+      guarded.addEventListener('click', async () => {
+        if (await shared.confirmAction('Delete this draft?', {
+          title: 'Delete draft', confirmLabel: 'Delete draft'
+        })) state.actions += 1;
+      });
+    });
+    state.close = (force = false) => shared.closeReadOnlyModal(force);
+    window.dismissalTest = state;
+    window.confirm = () => { throw new Error('Native confirmation used'); };
+    document.body.append(opener);
+  }, { source: modalFoundation, navigation: navigateSource });
+  await page.getByRole('button', { name: 'Edit draft', exact: true }).click();
 }
 
 async function installSourceRadioActionHarness(page, theme) {
@@ -214,12 +286,90 @@ test('a child dialog preserves the parent draft, scroll, focus, and body lock', 
 
   await trigger.click();
   expect(await page.evaluate(() => window.closeAllTestModals())).toBe(false);
-  await expect(page.locator('.read-only-modal')).toHaveCount(2);
-  expect(await page.evaluate(() => window.parentConfirmCount)).toBe(1);
-  await page.evaluate(() => { window.confirm = () => true; window.closeAllTestModals(); });
+  const confirmation = page.getByRole('alertdialog', { name: 'Discard unsaved changes' });
+  await expect(page.locator('.read-only-modal')).toHaveCount(3);
+  await expect(confirmation.getByRole('button', { name: 'Keep editing' })).toBeFocused();
+  expect(await page.evaluate(() => window.parentConfirmCount)).toBe(0);
+  await confirmation.getByRole('button', { name: 'Keep editing' }).click();
+  await expect(confirmation).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: 'Create Alias List' })).toBeVisible();
+  expect(await page.evaluate(() => window.closeAllTestModals())).toBe(false);
+  await confirmation.getByRole('button', { name: 'Discard changes' }).click();
   await expect(page.locator('.read-only-modal')).toHaveCount(0);
   await expect(page.locator('body')).not.toHaveClass(/modal-open/);
   await expect(opener).toBeFocused();
+});
+
+test('dirty navigation resumes the requested route after one discard decision', async ({ page }) => {
+  await installDismissalHarness(page);
+  const draft = page.getByLabel('Draft name');
+  await draft.fill('Keep this until accepted');
+  await page.getByRole('button', { name: 'Open recordings' }).click();
+  const confirmation = page.getByRole('alertdialog', { name: 'Discard unsaved changes' });
+  await expect(confirmation.getByRole('button', { name: 'Keep editing' })).toBeFocused();
+  expect(new URL(page.url()).searchParams.get('view')).toBe('channel-setup');
+  await confirmation.getByRole('button', { name: 'Keep editing' }).click();
+  await expect(draft).toHaveValue('Keep this until accepted');
+  await expect(page.getByRole('button', { name: 'Open recordings' })).toBeFocused();
+  expect(await page.evaluate(() => window.dismissalTest.renders)).toBe(0);
+
+  await page.getByRole('button', { name: 'Open recordings' }).click();
+  await confirmation.getByRole('button', { name: 'Discard changes' }).click();
+  await expect(page.locator('.read-only-modal')).toHaveCount(0);
+  expect(new URL(page.url()).search).toBe('?view=recordings&group=42');
+  expect(await page.evaluate(() => ({ renders: window.dismissalTest.renders,
+    closed: window.dismissalTest.parentCloses }))).toEqual({ renders: 1, closed: 1 });
+});
+
+test('dirty replacement waits to mount, restores cancellation, and preserves installed handlers and focus', async ({ page }) => {
+  await installDismissalHarness(page);
+  await page.getByLabel('Draft name').fill('Unsaved draft');
+  const replace = page.getByRole('button', { name: 'Open replacement' });
+  await replace.click();
+  const confirmation = page.getByRole('alertdialog', { name: 'Discard unsaved changes' });
+  await expect(confirmation.getByRole('button', { name: 'Keep editing' })).toBeFocused();
+  expect(await page.evaluate(() => ({ connected: window.dismissalTest.candidate.dialog.isConnected,
+    loads: window.dismissalTest.loads }))).toEqual({ connected: false, loads: 0 });
+  await confirmation.getByRole('button', { name: 'Keep editing' }).click();
+  expect(await page.evaluate(() => window.dismissalTest.candidate.ready)).toBe(false);
+  expect(await page.evaluate(() => ({ cleanups: window.dismissalTest.cleanups,
+    restorations: window.dismissalTest.restorations }))).toEqual({ cleanups: 1, restorations: 1 });
+  await expect(page.getByLabel('Draft name')).toHaveValue('Unsaved draft');
+  await expect(replace).toBeFocused();
+
+  await replace.click();
+  await confirmation.getByRole('button', { name: 'Discard changes' }).click();
+  await expect(page.getByRole('dialog', { name: 'Replacement editor' })).toBeVisible();
+  await expect(page.getByLabel('Replacement name')).toBeFocused();
+  expect(await page.evaluate(() => window.dismissalTest.candidate.ready)).toBe(true);
+  expect(await page.evaluate(() => window.dismissalTest.loads)).toBe(1);
+  await page.getByRole('button', { name: 'Save replacement' }).click();
+  expect(await page.evaluate(() => window.dismissalTest.actions)).toBe(1);
+  expect(await page.evaluate(() => window.dismissalTest.close())).toBe(true);
+  expect(await page.evaluate(() => ({ cleanups: window.dismissalTest.cleanups,
+    restorations: window.dismissalTest.restorations, closed: window.dismissalTest.parentCloses })))
+    .toEqual({ cleanups: 2, restorations: 2, closed: 1 });
+});
+
+test('themed confirmation cancels with Escape and guards an action until acceptance', async ({ page }) => {
+  await installDismissalHarness(page);
+  const trigger = page.getByRole('button', { name: 'Delete draft', exact: true });
+  await trigger.click();
+  const confirmation = page.getByRole('alertdialog', { name: 'Delete draft' });
+  await expect(confirmation.getByRole('button', { name: 'Cancel' })).toBeFocused();
+  await expect(confirmation).toHaveAttribute('aria-describedby', /-message$/);
+  expect(await page.evaluate(() => window.dismissalTest.actions)).toBe(0);
+  await page.keyboard.press('Escape');
+  await expect(trigger).toBeFocused();
+  expect(await page.evaluate(() => window.dismissalTest.actions)).toBe(0);
+  await trigger.click();
+  await confirmation.getByRole('button', { name: 'Delete draft', exact: true }).click();
+  expect(await page.evaluate(() => window.dismissalTest.actions)).toBe(1);
+  await page.evaluate(() => window.dismissalTest.parent.setBusy(true));
+  expect(await page.evaluate(() => window.dismissalTest.close())).toBe(false);
+  await expect(page.getByRole('alertdialog')).toHaveCount(0);
+  await page.evaluate(() => { window.dismissalTest.parent.setBusy(false); });
+  expect(await page.evaluate(() => window.dismissalTest.close())).toBe(true);
 });
 
 for (const theme of ['light', 'dark']) {

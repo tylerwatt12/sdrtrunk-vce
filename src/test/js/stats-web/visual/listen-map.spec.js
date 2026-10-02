@@ -22,8 +22,9 @@ const snapshot = {
       position(41.5000, -81.6900, 1_700_000_000_000)] }]
 };
 
-async function openMap(page, allowed = true, mapSnapshot = snapshot) {
+async function openMap(page, allowed = true, mapSnapshot = snapshot, options = {}) {
   const tileRequests = [];
+  let initialSnapshotReturned = false;
   const icon = fs.readFileSync(path.resolve(__dirname,
     '../../../../../src/main/resources/images/fire_truck.png'));
   await page.route('https://tile.openstreetmap.org/**', async (route) => {
@@ -38,6 +39,11 @@ async function openMap(page, allowed = true, mapSnapshot = snapshot) {
     } else if (pathname === '/api/v1/me/preferences') {
       await route.fulfill({ json: { revision: 1, preferences: defaultPreferences } });
     } else if (pathname === '/api/v1/listen/map') {
+      if (!initialSnapshotReturned && options.waitForInitialTiles) {
+        // Hold the first locations response until the default geographic view has drawn.
+        await expect.poll(() => tileRequests.some(url => new URL(url).pathname.startsWith('/4/'))).toBe(true);
+      }
+      initialSnapshotReturned = true;
       const response = typeof mapSnapshot === 'function' ? mapSnapshot() : mapSnapshot;
       await route.fulfill({ json: { data: response } });
     } else if (pathname === '/api/v1/listen/map/icons/fire-truck') {
@@ -48,6 +54,23 @@ async function openMap(page, allowed = true, mapSnapshot = snapshot) {
   });
   await page.goto('/app.html?view=map');
   return tileRequests;
+}
+
+function expectBoundedInitialTileRequests(tileRequests) {
+  const requestsByZoom = new Map();
+  for (const url of tileRequests) {
+    const zoom = new URL(url).pathname.split('/')[1];
+    requestsByZoom.set(zoom, (requestsByZoom.get(zoom) || 0) + 1);
+  }
+  // Startup may draw the default view before the first location selects its zoom.
+  // Each view is bounded independently; identical redraws must reuse their tiles.
+  expect([...requestsByZoom.keys()].every(zoom => ['4', '12'].includes(zoom))).toBe(true);
+  expect(requestsByZoom.size).toBeLessThanOrEqual(2);
+  for (const [zoom, count] of requestsByZoom) {
+    expect(count, `Startup tile requests at zoom ${zoom}`).toBeLessThanOrEqual(30);
+  }
+  expect(tileRequests.length).toBeLessThanOrEqual(60);
+  return requestsByZoom;
 }
 
 async function markerCenterOffset(page, name) {
@@ -86,13 +109,37 @@ test('public listener sees geographic map, trail, standard icon, and selected de
   const tileImages = page.locator('.listen-map-tiles img');
   await expect(tileImages.first()).toHaveAttribute('referrerpolicy', 'origin');
   expect(await tileImages.count()).toBeLessThanOrEqual(30);
-  expect(tileRequests.length).toBeLessThanOrEqual(30);
+  expectBoundedInitialTileRequests(tileRequests);
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('.listen-map-layout')).toHaveCSS('grid-template-columns', /^\d+(?:\.\d+)?px$/);
   await expect(page.locator('.listen-map-list-item')).toBeVisible();
   await expect(page.getByLabel('Trail length')).toBeVisible();
   await expectFlatFacts(page.locator('.listen-map-facts > .ui-fact'), { padding: '5px 0px', radius: null });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+});
+
+test('delayed first locations keep both startup views bounded and unchanged refreshes reuse tiles', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const tileRequests = await openMap(page, true, snapshot, { waitForInitialTiles: true });
+  await expect(page.locator('.listen-map-marker img')).toHaveAttribute('src',
+    '/api/v1/listen/map/icons/fire-truck');
+  const tileImages = page.locator('.listen-map-tiles img');
+  await expect.poll(() => tileImages.evaluateAll(images =>
+    images.length > 0 && images.every(image => image.complete && image.naturalWidth > 0))).toBe(true);
+  expect(await tileImages.count()).toBeLessThanOrEqual(30);
+  await expect(tileImages.first()).toHaveAttribute('referrerpolicy', 'origin');
+  expect([...expectBoundedInitialTileRequests(tileRequests).keys()].sort()).toEqual(['12', '4']);
+  const initialRequests = tileRequests.length;
+  for (let index = 0; index < 2; index += 1) {
+    await Promise.all([
+      page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/listen/map'),
+      page.getByRole('button', { name: 'Refresh', exact: true }).click()
+    ]);
+    await page.evaluate(() => new Promise(resolve =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    expect(tileRequests.length, 'Unchanged location redraw must reuse existing tile images').toBe(initialRequests);
+    expect(await tileImages.count()).toBeLessThanOrEqual(30);
+  }
 });
 
 test('trail length defaults to three and offers the full one-to-ten range', async ({ page }) => {

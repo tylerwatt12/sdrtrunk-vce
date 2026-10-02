@@ -58,7 +58,7 @@ export function createAliasListPopupTrigger(dependencies, options) {
     cancel.type = 'button';
     const submit = node('button', 'ui-button ui-button-primary', submitLabel);
     submit.type = 'submit';
-    const actions = node('footer', 'ui-action-row');
+    const actions = node('footer', 'ui-modal-footer ui-action-row');
     actions.append(cancel, submit);
     form.append(nameField, context, detail, error, actions);
     const modal = openReadOnlyModal('Create Alias List', form, {

@@ -28,6 +28,7 @@ class StatsWebJavaScriptBehaviorTest
     private static final Path APP_STYLESHEET = Path.of("stats-web", "assets", "app.css");
     private static final Path CORE_MODULES = Path.of("stats-web", "assets", "core");
     private static final Path PAGE_LIFECYCLE = CORE_MODULES.resolve("page-lifecycle.js");
+    private static final Path APPLICATION_LOG = CORE_MODULES.resolve("application-log.js");
     private static final Path RADIORESOLVE_ANALYSIS = Path.of("stats-web", "assets", "features",
         "radioresolve-analysis.js");
     private static final Path LISTEN_MAP = Path.of("stats-web", "assets", "features", "listen-map.js");
@@ -37,6 +38,7 @@ class StatsWebJavaScriptBehaviorTest
     private static final int MAXIMUM_OUTPUT_LENGTH = 32_000;
     private static final List<Contract> CONTRACTS = List.of(
         contract("admin system status", "admin-system-status.test.js", APP_JAVASCRIPT),
+        contract("application log", "application-log.test.js", APPLICATION_LOG),
         contract("Activity filters", "activity-filters.test.js", APP_JAVASCRIPT),
         contract("Alias editor", "alias-editor.test.js", APP_JAVASCRIPT),
         contract("channel editor composition", "channel-editor.test.js", APP_JAVASCRIPT),

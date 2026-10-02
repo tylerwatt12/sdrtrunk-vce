@@ -145,10 +145,10 @@ test('desktop administration navigation includes every grouped page and its icon
   await openAdmin(page);
   const navigation = page.getByRole('navigation', { name: 'Administration sections' });
   const links = navigation.getByRole('link');
-  await expect(links).toHaveText(['Receiver status', 'Call matching', 'Report a problem',
+  await expect(links).toHaveText(['Receiver status', 'Call matching', 'Application log', 'Report a problem',
     'Recording settings', 'Audio quality', 'Transcription', 'Activity settings', 'Saved data cleanup',
     'Remote Links', 'P25 band plans', 'Display settings', 'Web accounts', 'Page access']);
-  await expect(links.locator('svg')).toHaveCount(13);
+  await expect(links.locator('svg')).toHaveCount(14);
   await expect(links.locator('svg:not([aria-hidden="true"])')).toHaveCount(0);
   for (const label of ['Status & support', 'Audio & recordings', 'Activity & storage',
     'Receiver configuration', 'Web interface']) {
@@ -314,9 +314,9 @@ test('receiver status preserves issue evidence, cleared history paging, and deta
   await expect(cleared).toHaveAttribute('aria-expanded', 'false');
   await cleared.click();
   const pager = page.getByRole('navigation', { name: 'Recently cleared issues' });
-  await expect(pager).toContainText('Cleared issues 1-5 of 7 · Page 1 of 2');
+  await expect(pager).toContainText('Cleared issues 1–5 of 7 · Page 1 of 2');
   await pager.getByRole('button', { name: 'Next', exact: true }).click();
-  await expect(pager).toContainText('Cleared issues 6-7 of 7 · Page 2 of 2');
+  await expect(pager).toContainText('Cleared issues 6–7 of 7 · Page 2 of 2');
   const resolved = page.locator('details.receiver-health-incident').first();
   await resolved.locator('summary').click();
   await expect(resolved).toContainText('What happened');
@@ -557,16 +557,14 @@ test('P25 editor keeps unsaved fields when discarding is declined', async ({ pag
   await page.getByRole('button', { name: 'Edit P25 override BEE00-49F', exact: true }).click();
   const editor = page.getByRole('dialog', { name: 'Edit P25 override · BEE00-49F', exact: true });
   await editor.getByLabel('Offset (MHz)', { exact: true }).first().fill('-30');
-  const decline = async (confirmation) => {
-    expect(confirmation.message()).toBe('Discard your unsaved changes?');
-    await confirmation.dismiss();
-  };
-  page.once('dialog', decline);
   await editor.getByRole('button', { name: 'Cancel', exact: true }).click();
+  const confirmation = page.getByRole('alertdialog', { name: 'Discard unsaved changes' });
+  await expect(confirmation).toContainText('Discard your unsaved changes?');
+  await confirmation.getByRole('button', { name: 'Keep editing' }).click();
   await expect(editor).toBeVisible();
   await expect(editor.getByLabel('Offset (MHz)', { exact: true }).first()).toHaveValue('-30');
-  page.once('dialog', (confirmation) => confirmation.accept());
   await page.keyboard.press('Escape');
+  await confirmation.getByRole('button', { name: 'Discard changes' }).click();
   await expect(editor).toBeHidden();
   await expect(page.getByRole('button', { name: 'Edit P25 override BEE00-49F', exact: true })).toBeFocused();
   await expect(page.locator('.p25-override-band-facts').first()).toContainText('-45.000000 MHz');

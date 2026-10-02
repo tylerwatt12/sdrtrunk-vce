@@ -80,7 +80,11 @@ for (const viewport of viewports) {
     async ({ page }) => {
       await page.setViewportSize(viewport);
       await openAudioApp(page, { admin: false, theme: viewport.width === 844 ? 'dark' : 'light' });
-      await page.locator('#navigation-toggle').click();
+      await expect(page.getByRole('heading', { name: 'Recordings', exact: true })).toBeVisible();
+      await expect(page.locator('#content')).toHaveAttribute('aria-busy', 'false');
+      const toggle = page.locator('#navigation-toggle');
+      await toggle.click();
+      await expect(toggle).toHaveAttribute('aria-expanded', 'true');
       const navigation = page.locator('#primary-navigation');
       await expect(navigation.getByRole('link', { name: 'Administration', exact: true })).toBeHidden();
       const settings = navigation.getByRole('link', { name: 'My Settings', exact: true });

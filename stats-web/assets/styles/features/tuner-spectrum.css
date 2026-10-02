@@ -5,8 +5,41 @@ body[data-view="tuner-spectrum"] {
 }
 
 .tuner-frequency-action-body {
+  min-width: 0;
   display: grid;
   gap: var(--space-2);
+}
+
+.tuner-frequency-action-heading {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.tuner-frequency-action-heading > div {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.tuner-frequency-action-kicker {
+  color: var(--muted);
+  font-size: var(--font-size-label);
+}
+
+.tuner-frequency-action-frequency {
+  min-width: 0;
+  font-size: var(--font-size-section-title);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.tuner-frequency-action-power {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .tuner-frequency-popover {
@@ -66,6 +99,28 @@ body[data-view="tuner-spectrum"] {
 
 .tuner-frequency-audio-options select {
   width: 125px;
+}
+
+.tuner-frequency-action-help {
+  color: var(--muted);
+  font-size: var(--font-size-meta);
+}
+
+.tuner-frequency-action-help > summary {
+  cursor: pointer;
+}
+
+.tuner-frequency-action-help > p,
+.tuner-frequency-action-tip {
+  margin: var(--space-2) 0 0;
+}
+
+.tuner-frequency-action-tip {
+  padding: var(--space-3);
+  color: var(--muted);
+  background: var(--surface-2);
+  border-radius: var(--radius-control);
+  font-size: var(--font-size-meta);
 }
 
 .tuner-frequency-results {
@@ -583,7 +638,8 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 }
 
 .tuner-spectrum-active-flags,
-.tuner-spectrum-cursor-guide {
+.tuner-spectrum-cursor-guide,
+.tuner-spectrum-selection-guide {
   position: absolute;
   inset: 0;
   pointer-events: none;
@@ -650,6 +706,14 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   z-index: 4;
   background: var(--spectrum-guide);
   box-shadow: var(--shadow-control);
+}
+
+.tuner-spectrum-selection-guide {
+  width: 2px;
+  right: auto;
+  z-index: 2;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--surface) 35%, transparent);
 }
 
 .tuner-spectrum-cursor-popup {
@@ -924,23 +988,173 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 }
 
 .spectrum-browse-toolbar {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
+  grid-template-columns: minmax(560px, 1fr) auto;
+  align-items: end;
+}
+
+.spectrum-browse-selection {
+  display: block;
+}
+
+.spectrum-browse-controls {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(190px, 260px) minmax(340px, 1fr);
+  align-items: end;
   gap: var(--space-3);
 }
 
+.spectrum-browse-toolbar-side {
+  min-width: 0;
+  display: grid;
+  justify-items: end;
+  gap: var(--space-2);
+}
+
+.spectrum-browse-state {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  color: var(--muted);
+  font-size: var(--font-size-meta);
+}
+
+.spectrum-browse-state .spectrum-browse-message {
+  padding: 0;
+}
+
 .spectrum-browse-tuner {
-  min-width: 180px;
-  flex: 1 1 220px;
+  min-width: 0;
 }
 
 .spectrum-browse-center {
-  flex: 0 1 300px;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(250px, 1fr) auto;
+  align-items: end;
+  gap: var(--space-2);
+  padding: 0;
+  border: 0;
 }
 
 .spectrum-browse-message {
-  flex: 1 1 240px;
+  min-width: 0;
+  max-width: 440px;
+}
+
+.spectrum-browse-main {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(250px, 282px);
+  align-items: stretch;
+  gap: var(--space-3);
+}
+
+.spectrum-browse-panel {
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: minmax(430px, 1fr) auto auto;
+}
+
+.spectrum-browse-control-rail {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.spectrum-browse-control-rail-empty {
+  min-height: 100%;
+  align-content: center;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+}
+
+.spectrum-browse-control-rail-empty svg {
+  width: 28px;
+  height: 28px;
+  color: var(--accent);
+}
+
+.spectrum-browse-control-rail-empty h2 {
+  font-size: var(--font-size-section-title);
+}
+
+.spectrum-browse-control-rail-empty p {
+  margin: 0;
+  font-size: var(--font-size-meta);
+}
+
+.spectrum-browse-control-rail .tuner-frequency-action-body {
+  gap: 0;
+}
+
+.spectrum-browse-control-rail .tuner-frequency-action-heading,
+.spectrum-browse-control-rail .tuner-frequency-action-summary,
+.spectrum-browse-control-rail .tuner-frequency-action-message,
+.spectrum-browse-control-rail .tuner-frequency-action-list,
+.spectrum-browse-control-rail .tuner-frequency-audio-options,
+.spectrum-browse-control-rail .tuner-frequency-action-help,
+.spectrum-browse-control-rail .tuner-frequency-action-tip {
+  margin: 0;
+  padding: var(--space-4);
+}
+
+.spectrum-browse-control-rail .tuner-frequency-action-summary {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  border-top: 1px solid var(--line);
+}
+
+.spectrum-browse-control-rail .tuner-frequency-action-summary dt,
+.spectrum-browse-control-rail .tuner-frequency-action-summary dd {
+  min-width: 0;
+}
+
+.spectrum-browse-control-rail .tuner-frequency-action-message {
+  border-top: 1px solid var(--line);
+  font-size: var(--font-size-meta);
+}
+
+.spectrum-browse-control-rail .tuner-frequency-action-list {
+  display: grid;
+  gap: var(--space-2);
+  border-top: 1px solid var(--line);
+}
+
+.spectrum-browse-control-rail .tuner-frequency-action {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.spectrum-browse-control-rail .tuner-frequency-action-primary {
+  justify-content: center;
+}
+
+.spectrum-browse-control-rail .tuner-frequency-audio-options:not([hidden]) {
+  display: grid;
+  align-items: end;
+  border-top: 1px solid var(--line);
+}
+
+.spectrum-browse-control-rail .tuner-frequency-audio-options label {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.spectrum-browse-control-rail .tuner-frequency-audio-options select {
+  width: 100%;
+}
+
+.spectrum-browse-control-rail .tuner-frequency-action-help {
+  border-top: 1px solid var(--line);
+}
+
+.spectrum-browse-control-rail .tuner-frequency-action-tip {
+  border-top: 1px solid var(--line);
+  border-radius: 0;
 }
 
 .read-only-modal.spectrum-discovery-modal {
@@ -1079,14 +1293,6 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   min-width: 0;
 }
 
-.spectrum-discovery-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-}
-
 .read-only-modal.spectrum-search-modal {
   width: min(var(--modal-size-large), 96vw);
 }
@@ -1099,6 +1305,82 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 
 .spectrum-search-form > p {
   margin: 0;
+}
+
+.spectrum-search-band-field {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.spectrum-search-band-field > legend {
+  padding: 0;
+}
+
+.spectrum-search-band-frame,
+.spectrum-search-band-trigger {
+  width: 100%;
+}
+
+.spectrum-search-band-trigger {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  padding-right: 44px;
+  overflow: hidden;
+  background-image: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.spectrum-search-band-trigger[aria-expanded="true"] {
+  border-color: var(--focus-ring);
+  box-shadow: var(--shadow-focus);
+}
+
+.spectrum-search-band-frame:has(.spectrum-search-band-trigger[aria-expanded="true"]) {
+  color: var(--accent);
+}
+
+.spectrum-search-band-frame:has(.spectrum-search-band-trigger:disabled) {
+  cursor: not-allowed;
+  opacity: .62;
+}
+
+.spectrum-search-band-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spectrum-search-band-popover {
+  width: min(360px, calc(100vw - 16px));
+  --ui-popover-max-height: min(350px, calc(100dvh - 16px));
+  --ui-popover-padding: var(--space-2);
+}
+
+.spectrum-search-band-popover:popover-open {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.spectrum-search-band-option {
+  --ui-choice-card-padding: var(--space-2) var(--space-3);
+  min-height: var(--control-height-comfortable);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.spectrum-search-band-option-copy {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-1);
 }
 
 .spectrum-search-results-toolbar {
@@ -1143,6 +1425,45 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   gap: var(--space-2);
 }
 
+@media (max-width: 1080px) {
+  .spectrum-browse-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .spectrum-browse-toolbar-side {
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .spectrum-browse-state {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 920px) {
+  body[data-view="tuner-spectrum"]:has(.spectrum-browse-workspace) {
+    height: auto;
+    overflow: auto;
+  }
+
+  .spectrum-browse-main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .spectrum-browse-panel {
+    min-height: 680px;
+  }
+
+  .spectrum-browse-control-rail {
+    min-height: 280px;
+  }
+
+  .spectrum-browse-panel .tuner-spectrum-plot {
+    touch-action: pan-y;
+  }
+}
+
 @media (max-width: 760px) {
   body[data-view="tuner-spectrum"]:has(.spectrum-browse-workspace) {
     height: auto;
@@ -1153,9 +1474,21 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
     grid-template-rows: auto auto;
   }
 
-  .spectrum-browse-tuner,
-  .spectrum-browse-center {
-    flex-basis: 100%;
+  .spectrum-browse-controls,
+  .spectrum-browse-toolbar-side {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .spectrum-browse-toolbar-side {
+    justify-items: stretch;
+  }
+
+  .spectrum-browse-state {
+    flex-wrap: wrap;
+  }
+
+  .spectrum-browse-toolbar .tuner-spectrum-toolbar-actions {
+    justify-content: flex-start;
   }
 
   .spectrum-discovery-modal .channel-editor-grid,
@@ -1169,6 +1502,18 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 }
 
 @media (max-width: 560px) {
+  .spectrum-browse-center {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .spectrum-browse-panel {
+    min-height: 760px;
+  }
+
+  .spectrum-browse-control-rail .tuner-frequency-action-summary {
+    grid-template-columns: max-content minmax(0, 1fr);
+  }
+
   .read-only-modal.spectrum-discovery-modal {
     width: 100vw;
   }

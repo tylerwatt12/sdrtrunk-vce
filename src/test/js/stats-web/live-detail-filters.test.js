@@ -24,6 +24,10 @@ class RuntimeNode {
   constructor(tag = 'div', className = '', text = '') {
     this.tag = tag;
     this.className = className;
+    this.classList = {
+      contains: (value) => this.className.split(/\s+/).includes(value),
+      add: (...values) => { this.className = [...new Set([...this.className.split(/\s+/), ...values])].filter(Boolean).join(' '); }
+    };
     this.children = [];
     this.attributes = new Map();
     this.listeners = new Map();
@@ -125,6 +129,7 @@ vm.runInContext([
   functionSource('function liveDetailFilterCatalog(value)'),
   'let liveDetailFilterSequence = 0;',
   functionSource('function liveDetailFilterModel(options = {})'),
+  functionSource('function aliasModalFooter(...controls)'),
   functionSource('function liveDetailFilterController(options)')
 ].join('\n'), context);
 
@@ -236,6 +241,8 @@ assert.equal(compactSummary.textContent, 'All Messages');
 trigger.dispatch('click');
 assert.equal(modalOpenCount, 1);
 const originalModalBody = lastModalBody;
+assert.equal(findAll(originalModalBody,
+  (candidate) => candidate.tag === 'footer' && candidate.classList.contains('ui-modal-footer')).length, 1);
 const originalLeafItems = findAll(originalModalBody,
   (candidate) => candidate.className.split(/\s+/).includes('leaf'));
 assert.equal(originalLeafItems.length, 2);

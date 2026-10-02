@@ -161,14 +161,6 @@
   display: none;
 }
 
-.retained-statistics-pager {
-  justify-content: flex-end;
-}
-
-.retained-statistics-pager > :first-child {
-  margin-right: auto;
-}
-
 .retained-statistics-review {
   display: grid;
   gap: var(--space-3);

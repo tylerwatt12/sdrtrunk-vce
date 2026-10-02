@@ -12,8 +12,8 @@ for (const theme of ['light', 'dark']) {
       const navigation = workspace.getByRole('navigation', { name: 'Administration sections' });
       const picker = navigation.getByLabel('Administration section', { exact: true });
       await expect(navigation.locator('.ui-settings-nav-group')).toHaveCount(5);
-      await expect(navigation.locator('.ui-settings-nav-link')).toHaveCount(13);
-      await expect(navigation.locator('.ui-settings-nav-link svg')).toHaveCount(13);
+      await expect(navigation.locator('.ui-settings-nav-link')).toHaveCount(14);
+      await expect(navigation.locator('.ui-settings-nav-link svg')).toHaveCount(14);
       await expect(navigation.locator('[aria-current="page"]')).toHaveText('Recording settings');
       if (device === 'desktop') {
         await expect(picker).toBeHidden();

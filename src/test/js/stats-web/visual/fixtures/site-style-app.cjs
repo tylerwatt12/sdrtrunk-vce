@@ -67,6 +67,21 @@ const health = { started_at_ms: now - 3600000, generated_at_ms: now,
   summary: { severity: 'healthy', active_count: 0, warning_count: 0, critical_count: 0 },
   active: [], resolved: [], measurements: [{ id: 'tuners', title: 'Tuners', rows: [
     { severity: 'healthy', scope: 'Airspy R2', label: 'Active channels', value: 1, unit: 'channels' } ] }] };
+const applicationLogEntries = [
+  ['INFO', 'County receiver started', ''],
+  ['WARN', 'County tuner temporarily unavailable', ''],
+  ['ERROR', 'Call upload failed', 'java.io.IOException: temporary network failure\n' +
+    '\tat receiver.upload(Upload.java:17)\nCaused by: Connection reset']
+].map(([level, message, details], index) => {
+  const time = new Date(now + index * 1_000).toISOString();
+  return { id: String(index + 1), time, level, source: 'io.github.dsheirer.receiver.Receiver',
+    message, details, text: `${time} ${level} Receiver - ${message}${details ? `\n${details}` : ''}` };
+});
+const applicationLog = { log: 'current', file_name: 'sdrtrunk_app.log', available: true,
+  entries: applicationLogEntries, updated_at: now + 2_000, max_entries: 500,
+  truncated: false, latest_id: '3', gap: false, change_reason: '' };
+const previousApplicationLog = { ...applicationLog, log: 'previous', file_name: null,
+  available: false, entries: [], latest_id: null };
 const liveSnapshot = { revision: 1, tables: [{ table_id: channelId, configuration_id: channelId,
   title: channelName, system_name: systemName, site_name: 'North', channel_running: true, rows: [
     { key: 'county-control', configuration_id: channelId, lcn: 1, frequency_hz: 851012500,
@@ -265,6 +280,8 @@ async function installSiteStyleApplication(page, theme = 'light') {
       summary_active: true, detailed_history_configured: true, detailed_history_active: true },
       database: { database_exists: true, database_bytes: 1048576, detailed_history_available: true, logger: [] } });
     if (p === '/api/v1/receiver-health') return respond(health);
+    if (p === '/api/v1/application-log') return respond(
+      url.searchParams.get('log') === 'previous' ? previousApplicationLog : applicationLog);
     if (p === '/api/v1/channel-catalog' || p === '/api/v1/admin/channels') return respond({ revision: 1, channels: [channel] });
     if (p === '/api/v1/admin/channels/options') return respond({ revision: 1, alias_lists: [list], tuners: [] });
     if (p === '/api/v1/admin/channels/protocols') return respond(require(path.join(root, 'src/main/resources/channel-protocols.json')));

@@ -6,7 +6,7 @@ const POLL_MS = 3000;
 // provide the visual language. This feature owns only Remote Links layout geometry.
 export function createRemoteLinksWorkspace(deps) {
   const { node, formField, uiSelectFrame, uiToggleField, uiStatus, iconGlyph,
-    openReadOnlyModal, requestJson, modalFooter, metrics, signal } = deps;
+    openReadOnlyModal, confirmAction, createFormWorkflow, requestJson, modalFooter, metrics, signal } = deps;
   const host = node('div', 'remote-links-page data-workspace');
   const summary = node('div', 'remote-links-summary');
   const message = node('div');
@@ -305,6 +305,9 @@ export function createRemoteLinksWorkspace(deps) {
       }
     });
     if (!modal) modalActive = false;
+    else if (modal.ready) void modal.ready.then((shown) => {
+      if (shown && modal.dialog.isConnected) modalActive = true;
+    });
     return modal;
   }
 
@@ -345,24 +348,24 @@ export function createRemoteLinksWorkspace(deps) {
     const modal = openFormModal(title, form, options);
     if (!modal) return null;
     cancel.addEventListener('click', modal.close);
-    form.addEventListener('input', () => modal.setDirty(true));
+    const workflow = createFormWorkflow({ form, submit: save, modal,
+      renderFeedback: (state, text) => {
+        localMessage.setAttribute('role', state === 'error' ? 'alert' : 'status');
+        localMessage.hidden = !text;
+        if (state === 'error') showError(localMessage, { message: text });
+        else localMessage.replaceChildren(...(text ? [notice(text)] : []));
+      } });
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
-      if (!form.reportValidity() || save.disabled) return;
-      modal.setBusy(true);
-      [...form.elements].forEach((control) => { control.disabled = true; });
-      localMessage.replaceChildren(notice('Saving…'));
-      try {
-        const result = await operation(form, modal);
-        if (result === false) return;
-        modal.setDirty(false);
-        modal.setBusy(false);
+      if (modal.state?.isBusy?.()) return;
+      await workflow.save(() => operation(form, modal), { onSuccess: async (result) => {
+        if (result === false) {
+          workflow.setReady(false);
+          modal.setDirty(true);
+          return;
+        }
         if (modal.close()) { if (result?.revision) present(result, true); else await refresh(true); }
-      } catch (error) {
-        showError(localMessage, error);
-        modal.setBusy(false);
-        [...form.elements].forEach((control) => { control.disabled = false; });
-      }
+      } });
     });
     return { form, modal, message: localMessage, save };
   }
@@ -489,15 +492,32 @@ export function createRemoteLinksWorkspace(deps) {
       default_alias_list_id: alias.value ? Number(alias.value) : null
     }), { danger: revoke, fieldLayout: 'single' });
     if (!editor) return;
+    let revoking = false;
     revoke.addEventListener('click', async () => {
-      if (!window.confirm(`Revoke ${sender.display_name || sender.sender_id}? Existing remote channels will stop receiving.`)) return;
+      if (revoking || editor.modal.state?.isBusy?.()) return;
+      revoking = true;
+      const disabled = [...editor.form.elements].map(control => [control, control.disabled]);
+      disabled.forEach(([control]) => { control.disabled = true; });
       editor.modal.setBusy(true);
       try {
+        if (!await confirmAction(`Revoke ${sender.display_name || sender.sender_id}? Existing remote channels will stop receiving.`, {
+          title: 'Revoke trusted sender', confirmLabel: 'Revoke sender'
+        }) || !editor.modal.dialog.isConnected) return;
         const result = await write(`/senders/${pathPart(sender.sender_id)}`, 'DELETE',
           { revision: snapshot.revision });
         editor.modal.setDirty(false); editor.modal.setBusy(false);
         if (editor.modal.close()) present(result, true);
-      } catch (error) { showError(editor.message, error); editor.modal.setBusy(false); }
+      } catch (error) {
+        if (editor.modal.dialog.isConnected) {
+          editor.message.hidden = false;
+          editor.message.setAttribute('role', 'alert');
+          showError(editor.message, error);
+        }
+      } finally {
+        revoking = false;
+        editor.modal.setBusy(false);
+        disabled.forEach(([control, wasDisabled]) => { control.disabled = wasDisabled; });
+      }
     });
   }
 

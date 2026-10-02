@@ -203,7 +203,7 @@ test('administration navigation becomes a complete compact picker on mobile', as
   await expect(select).toHaveValue('audio-quality');
   await expect(navigation.locator('.admin-settings-branch:visible')).toHaveCount(0);
   expect(await select.locator('option').evaluateAll((options) => options.map((option) => option.value)))
-    .toEqual(['health', 'call-matching', 'support', 'recordings', 'audio-quality', 'transcription',
+    .toEqual(['health', 'call-matching', 'application-log', 'support', 'recordings', 'audio-quality', 'transcription',
       'activity', 'retained-statistics', 'remote-links', 'protocol-p25', 'display', 'users', 'access']);
 
   await select.selectOption('support');

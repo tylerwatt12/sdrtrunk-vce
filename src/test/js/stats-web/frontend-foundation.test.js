@@ -168,6 +168,10 @@ async function main() {
     'routes', 'user-preferences', 'preference-schema', 'table-layout', 'table-defaults', 'page-title', 'entity-ref',
     '../web-call-player'
   ].map(loadModule));
+  const browsing = await loadModule('browsing-workflows');
+  assert.equal(browsing.scanListAvailabilityLabel({ published: false }), 'Hidden from listeners');
+  assert.equal(browsing.scanListAvailabilityLabel({ published: true }), 'Available to listeners');
+  assert.equal(browsing.scanListAvailabilityLabel({}), 'Available to listeners');
   const stableId = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/;
   assert.match(functionBinding(appSource, 'tabs'), /ui-page-nav ui-segmented/);
   assert.match(functionBinding(appSource, 'tabs'), /aria-current', 'page'/);
@@ -219,9 +223,12 @@ async function main() {
   assert.match(appCssSource, /\.ui-icon-button-compact \{[^}]*--icon-action-size: var\(--control-height-compact\)/s);
   assert.match(functionBinding(appSource, 'showUserPreferenceError'), /'Retry'/);
   assert.match(functionBinding(appSource, 'showUserPreferenceError'), /'Dismiss'/);
-  assert.match(appSource, /activeReadOnlyModal === modalState && closeReadOnlyModal\(false, true\)/);
+  assert.match(appSource, /activeReadOnlyModal === modalState && closeReadOnlyModal\(false, true,/);
   assert.match(appSource, /for \(let current = active; current; current = topOnly \? null : current\.parent\)/);
-  assert.match(appSource, /if \(!force && current\.isBusy\?\.\(\)\) return false/);
+  assert.match(appSource, /current\.isBusy\?\.\(\) \|\| current\.dismissalPending/);
+  assert.match(functionBinding(appSource, 'confirmAction'), /'alertdialog'/);
+  assert.match(functionBinding(appSource, 'confirmAction'), /'ui-modal-footer ui-action-row'/);
+  assert.doesNotMatch(appSource, /window\.confirm\(/);
   const updatePreferencesSource = functionBinding(appSource, 'updateUserPreferences');
   assert.match(updatePreferencesSource, /result\?\.state === 'stale'/);
   assert.match(updatePreferencesSource, /error\.code = 'preference_session_changed'/);
@@ -752,7 +759,7 @@ async function main() {
   assert.match(functionBinding(appSource, 'dashboardActivityMix'),
     /ui-button ui-button-secondary activity-series-button dashboard-activity-legend-button/);
   assert.match(functionBinding(appSource, 'dashboardActivityRadioPager'),
-    /pager ui-pager dashboard-activity-radio-pager[\s\S]+ui-button ui-button-secondary/);
+    /browsingWorkflows\.createBrowsingPager\([\s\S]+dashboard-activity-radio-pager/);
   const dashboardActivity = functionBinding(appSource, 'renderDashboardActivity');
   assert.match(dashboardActivity,
     /radioStatus\.textContent = '';\s*radioStatus\.hidden = true;[\s\S]+Loading \$\{actionLabel\.toLowerCase\(\)\} source radios…/,
@@ -765,9 +772,9 @@ async function main() {
   assert.match(tunerSpectrumPanel, /const optionToggle = \(checked, label, detail\)[\s\S]+uiToggle\(checked, label\)/);
   assert.match(tunerSpectrumPanel, /tuner-spectrum-options-header/);
   assert.match(tunerSpectrumPanel, /uiSelectFrame\(targetSelect\)/);
-  assert.match(functionBinding(appSource, 'renderActivity'), /node\('div', 'pager ui-pager'\)/);
+  assert.match(functionBinding(appSource, 'renderActivity'), /browsingWorkflows\.createBrowsingPager\(/);
   assert.match(functionBinding(appSource, 'receiverHealthResolvedPager'),
-    /pager ui-pager receiver-health-resolved-pager/);
+    /browsingWorkflows\.createBrowsingPager\([\s\S]+receiver-health-resolved-pager/);
   const coverageSource = functionBinding(appSource, 'renderAliasCoverageDirectory');
   const embeddedDirectoryPanel = functionBinding(appSource, 'radioDirectoryEmbeddedPanel');
   assert.match(functionBinding(appSource, 'radioDirectoryPerspectiveControl'),
@@ -975,8 +982,9 @@ async function main() {
   assert.match(scanListDetail, /ui-surface/);
   assert.match(scanListDetail, /node\('h2', 'scan-list-detail-title', name\)/);
   assert.match(scanListDetail, /scan-list-detail-badges/);
-  assert.match(scanListDetail, /'Hidden from listeners'/);
-  assert.match(scanListDetail, /'Available to listeners'/);
+  assert.match(scanListDetail, /browsingWorkflows\.scanListAvailabilityPill\(node, scanList\)/);
+  assert.doesNotMatch(scanListDetail, /uiPill\([^\n]+(?:Hidden from listeners|Published)/,
+    'Availability must use the shared neutral vocabulary rather than a health warning.');
   assert.match(scanListDetail, /adminScanListUnmatchedAliasLists/);
   assert.match(scanListActions, /anchor\('Manage aliases'/);
   assert.match(scanListActions, /scanListId: scanList\.id/);

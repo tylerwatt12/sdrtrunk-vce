@@ -7,7 +7,8 @@ const POLL_MS = 3000;
 // geometry lives in streaming.css; desktop/mobile and light/dark use shared tokens.
 export function createStreamingWorkspace(deps) {
   const { node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, table,
-    openReadOnlyModal, requestJson, modalFooter, metrics, formatNumber, href, signal } = deps;
+    openReadOnlyModal, confirmAction, requestJson, modalFooter, metrics, formatNumber, href,
+    browsingWorkflows, signal } = deps;
   const host = node('div', 'streaming-page data-workspace');
   const toolbar = node('div', 'streaming-toolbar streaming-page-toolbar ui-catalog-toolbar');
   const summary = node('div', 'streaming-summary');
@@ -134,7 +135,7 @@ export function createStreamingWorkspace(deps) {
       id: 'streaming-destination', className: 'streaming-editor-modal',
       cleanup: () => { alive = false; abort.abort(); clearTimeout(statusTimer); modalActive = false; void refresh(); }
     });
-    if (!modal) return;
+    if (!modal || (modal.ready && !await modal.ready)) return;
     modalActive = true;
     const requestOptions = { signal: abort.signal, page: false };
     const localMessage = node('div');
@@ -153,7 +154,10 @@ export function createStreamingWorkspace(deps) {
     const remove = button('Delete destination', () => void removeDestination());
     remove.classList.remove('ui-button-secondary');
     remove.classList.add('ui-button-danger');
-    const reload = button('Reload current values', () => { if (modal.close()) void openEditor(id, activeTab); });
+    const reload = button('Reload current values', () => {
+      const reopen = () => void openEditor(id, activeTab);
+      if (modal.close(reopen)) reopen();
+    });
     reload.hidden = true;
     const footer = modalFooter(test, remove, cancel, save);
     const providerControl = select([], '');
@@ -168,9 +172,18 @@ export function createStreamingWorkspace(deps) {
     const assignedOnly = select([['false', 'All aliases'], ['true', 'Assigned only']], 'false');
     const aliasRows = node('div');
     const aliasCount = node('span', 'muted');
-    const aliasPager = node('div', 'streaming-alias-pager pager ui-pager');
-    const previous = button('Previous', () => { aliasOffset = Math.max(0, aliasOffset - 50); void loadAliases(); });
-    const next = button('Next', () => { aliasOffset += 50; void loadAliases(); });
+    const aliasPager = browsingWorkflows.createBrowsingPager({ node,
+      className: 'streaming-alias-pager', ariaLabel: 'Alias pages' });
+    const drawAliasPager = (loading = false) => aliasPager.update({
+      countText: browsingWorkflows.pageRangeText({ offset: aliasOffset, visible: visibleAliases.length,
+        total: aliasTotal, label: 'Aliases', format: formatNumber }),
+      previous: { enabled: !loading && aliasOffset > 0, onClick: () => {
+        aliasOffset = Math.max(0, aliasOffset - 50); void loadAliases();
+      } },
+      next: { enabled: !loading && aliasOffset + 50 < aliasTotal, onClick: () => {
+        aliasOffset += 50; void loadAliases();
+      } }
+    });
     const aliasQuery = node('form', 'streaming-alias-filters ui-catalog-toolbar');
     const searchButton = button('Search'); searchButton.type = 'submit';
     searchButton.classList.add('streaming-alias-search');
@@ -211,7 +224,6 @@ export function createStreamingWorkspace(deps) {
       return checkbox;
     };
     aliasActions.append(aliasCount, aliasLayoutHost);
-    aliasPager.append(previous, next);
     const aliasTableRegion = node('div', 'streaming-alias-table-region');
     aliasTableRegion.append(aliasActions, aliasRows);
     aliasesPanel.append(aliasQuery, aliasTableRegion, aliasPager,
@@ -330,7 +342,8 @@ export function createStreamingWorkspace(deps) {
     async function loadAliases() {
       if (!id || !alive || busy) return;
       const sequence = ++aliasSequence;
-      searchButton.disabled = previous.disabled = next.disabled = true;
+      searchButton.disabled = true;
+      drawAliasPager(true);
       try {
         const query = new URLSearchParams({ q: aliasSearch.value, assigned: assignedOnly.value, offset: aliasOffset, limit: 50 });
         const result = await read(`/${id}/aliases?${query}`, requestOptions);
@@ -361,9 +374,9 @@ export function createStreamingWorkspace(deps) {
           tableClass: 'ui-mobile-cards ui-data-table-quiet', layoutMenuHost: aliasLayoutHost,
           controller: aliasTableController }));
         syncPageToggle();
-        aliasCount.textContent = result.total ? `${aliasOffset + 1}–${Math.min(aliasOffset + result.limit, result.total)} of ${formatNumber(result.total)}` : 'No aliases';
+        aliasCount.textContent = `${formatNumber(result.total)} ${result.total === 1 ? 'alias' : 'aliases'}`;
       } catch (error) { if (alive && error.name !== 'AbortError') { showError(localMessage, error); reload.hidden = error.code !== 'stale_revision'; } }
-      finally { if (alive && sequence === aliasSequence) { searchButton.disabled = false; previous.disabled = aliasOffset === 0; next.disabled = aliasOffset + 50 >= aliasTotal; } }
+      finally { if (alive && sequence === aliasSequence) { searchButton.disabled = false; drawAliasPager(); } }
     }
     function drawStatus(row) {
       if (!row) { statusPanel.replaceChildren(feedback('Destination no longer exists.', 'error')); return; }
@@ -423,7 +436,9 @@ export function createStreamingWorkspace(deps) {
             link.href = href('aliases', { list: list.id }); localMessage.append(link);
           }); return;
         }
-        if (!window.confirm(`Delete ${definition.settings.name}? This removes its saved connection settings.`)) return;
+        if (!await confirmAction(`Delete ${definition.settings.name}? This removes its saved connection settings.`, {
+          title: 'Delete streaming destination', confirmLabel: 'Delete destination'
+        }) || !alive) return;
         await write(`/${id}`, 'DELETE', { revision }, requestOptions);
         modal.setDirty(false); settingsDirty = assignmentDirty = false;
         modal.setBusy(false); modal.close();
@@ -452,7 +467,10 @@ export function createStreamingWorkspace(deps) {
       if (existing) drawStatus(existing.status);
       switchTab(initialTab);
     } catch (error) { if (alive && error.name !== 'AbortError') content.replaceChildren(feedback(error.message, 'error'),
-      button('Retry', () => { if (modal.close()) void openEditor(id, initialTab); })); }
+      button('Retry', () => {
+        const reopen = () => void openEditor(id, initialTab);
+        if (modal.close(reopen)) reopen();
+      })); }
   }
 
   async function findFeeds() {
@@ -463,7 +481,7 @@ export function createStreamingWorkspace(deps) {
       id: 'streaming-feeds', className: 'streaming-feeds-modal',
       cleanup: () => { alive = false; abort.abort(); modalActive = false; void refresh(); }
     });
-    if (!modal) return;
+    if (!modal || (modal.ready && !await modal.ready)) return;
     modalActive = true;
     async function loadFeeds() {
       body.replaceChildren(feedback('Loading available Broadcastify feeds…', 'loading'));

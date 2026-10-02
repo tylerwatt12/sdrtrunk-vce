@@ -10,21 +10,24 @@ export function openSpectrumSearchWizard(ui, context = {}) {
   const stage = node('div', 'spectrum-discovery-stage');
   const feedback = node('div', 'ui-feedback');
   feedback.setAttribute('role', 'status');
-  const actions = node('div', 'ui-action-row spectrum-discovery-actions');
+  const actions = node('footer', 'ui-modal-footer ui-action-row spectrum-discovery-actions');
   host.append(summary, steps, stage, actions);
   let catalog = null;
   let receiverId = '';
   let usedReceiverId = '';
-  let presetId = '';
+  let selectedBandIds = null;
+  const customRange = { minimum: '769', maximum: '775' };
   let lease = null;
   let job = null;
   let pollTimer = null;
   let renewalTimer = null;
   let closed = false;
   let busy = false;
+  let paused = false;
   let generation = 0;
   let firstCandidateId = null;
   let progressNodes = null;
+  let disposeBandPicker = () => {};
   const selected = new Set();
   const drafts = new Map();
   const groups = new Map();
@@ -34,14 +37,21 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     cleanup: () => {
       closed = true;
       generation += 1;
+      disposeBandPicker();
       abort.abort();
       window.removeEventListener('pagehide', abandon);
-      void releaseJob().finally(() => releaseLease()).finally(() => context.resume?.(usedReceiverId));
+      void releaseJob().finally(() => releaseLease()).finally(() => {
+        if (paused) return context.resume?.(usedReceiverId);
+      });
     }
   });
   if (!modal) return null;
   const current = () => !closed && !abort.signal.aborted;
-  const request = (url, options = {}) => requestJson(url, { page: false, signal: abort.signal, ...options });
+  const request = async (url, options = {}) => {
+    if (modal.ready && !await modal.ready || !current())
+      throw new DOMException('Dialog dismissed', 'AbortError');
+    return requestJson(url, { page: false, signal: abort.signal, ...options });
+  };
   const jobPath = () => `${path}/${encodeURIComponent(job.job_id)}`;
   const browsePath = (id) => `/api/v1/admin/tuners/${encodeURIComponent(id)}/browse`;
   const releaseLease = async () => {
@@ -93,9 +103,11 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     if (cause?.message) feedback.append(disclosure('Error details', node('p', 'muted', cause.message)));
   };
   const show = (next, index, title) => {
+    disposeBandPicker();
+    disposeBandPicker = () => {};
     progressNodes = null;
     steps.hidden = next === 'saved';
-    steps.replaceChildren(...['Band', 'Find channels', 'Review'].map((label, position) => {
+    steps.replaceChildren(...['Bands', 'Find channels', 'Review'].map((label, position) => {
       const step = node('li');
       step.append(uiPill(position < index ? '✓' : String(position + 1),
         position < index ? 'success' : position === index ? 'blue' : 'neutral'), node('span', '', label));
@@ -162,7 +174,8 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     show('band', 0, 'Choose where to look');
     const available = (catalog.tuners || []).filter((tuner) => tuner.eligible);
     if (!available.length) {
-      stage.append(node('div', 'ui-notice ui-notice-warning', 'An idle receiver is needed to search. Stop its channels or connect another receiver, then try again.'),
+      stage.append(node('div', 'ui-notice ui-notice-warning',
+        'Band search needs an idle receiver with Lock center off. Stop its channels, turn off Lock center, or connect another receiver, then try again.'),
         ...(catalog.tuners || []).map((tuner) => node('p', 'muted', `${tuner.name}: ${tuner.reason || 'Unavailable'}`)));
       button('Close', () => modal.close());
       button('Refresh receivers', () => void load(), true);
@@ -176,51 +189,162 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       label: `${tuner.name} · ${(tuner.usable_bandwidth_hz / 1_000_000).toFixed(2)} MHz window` })), receiverId);
     chooser.setAttribute('aria-label', 'Receiver');
     chooser.addEventListener('change', () => { receiverId = chooser.value; updateContext(); });
-    const presets = [...(catalog.presets || [])];
-    const publicSafety = ['700mhz', '800mhz'].map((id) => presets.find((preset) => preset.id === id));
-    if (publicSafety.every(Boolean)) presets.unshift({ id: 'public-safety', label: '700 and 800 MHz public safety',
-      ranges: publicSafety.flatMap((preset) => preset.ranges) });
-    if (!presetId) presetId = presets[0]?.id || 'custom';
-    const band = uiSelect([...presets.map((preset) => ({ value: preset.id, label: preset.label })),
-      { value: 'custom', label: 'Custom frequency range' }], presetId);
-    band.setAttribute('aria-label', 'Band');
+    const presets = catalog.presets || [];
+    if (selectedBandIds === null) {
+      const defaults = presets.filter((preset) => ['700mhz', '800mhz'].includes(preset.id)).map((preset) => preset.id);
+      selectedBandIds = new Set(defaults.length ? defaults : [presets[0]?.id || 'custom']);
+    }
+    const bands = node('fieldset', 'spectrum-search-band-field');
+    const bandLabel = node('legend', 'ui-field-label', 'Bands');
+    bandLabel.id = 'spectrum-search-band-label';
+    const bandTrigger = node('button', 'ui-select spectrum-search-band-trigger');
+    bandTrigger.type = 'button';
+    bandTrigger.id = 'spectrum-search-band-trigger';
+    bandTrigger.setAttribute('aria-labelledby', 'spectrum-search-band-label spectrum-search-band-summary');
+    bandTrigger.setAttribute('aria-haspopup', 'dialog');
+    bandTrigger.setAttribute('aria-controls', 'spectrum-search-band-options');
+    bandTrigger.setAttribute('aria-expanded', 'false');
+    bandTrigger.setAttribute('popovertarget', 'spectrum-search-band-options');
+    const bandSummary = node('span', 'spectrum-search-band-summary');
+    bandSummary.id = 'spectrum-search-band-summary';
+    bandTrigger.append(bandSummary);
+    const bandMenu = node('div', 'ui-popover spectrum-search-band-popover');
+    bandMenu.id = 'spectrum-search-band-options';
+    bandMenu.setAttribute('popover', 'auto');
+    bandMenu.setAttribute('role', 'dialog');
+    bandMenu.setAttribute('aria-labelledby', bandLabel.id);
+    bands.append(bandLabel, uiSelectFrame(bandTrigger, 'spectrum-search-band-frame'), bandMenu);
     const custom = node('div', 'channel-editor-grid');
     const minimum = node('input', 'ui-input');
     const maximum = node('input', 'ui-input');
     [minimum, maximum].forEach((input) => { input.type = 'number'; input.step = '0.000001'; });
-    minimum.value = '769';
-    maximum.value = '775';
+    minimum.value = customRange.minimum;
+    maximum.value = customRange.maximum;
+    minimum.addEventListener('input', () => { customRange.minimum = minimum.value; });
+    maximum.addEventListener('input', () => { customRange.maximum = maximum.value; });
     custom.append(formField('Start frequency (MHz)', minimum), formField('End frequency (MHz)', maximum));
     const description = node('p', 'ui-field-hint');
-    const updateBand = () => {
-      presetId = band.value;
-      custom.hidden = presetId !== 'custom';
+    let findSignals;
+    const selectedRanges = () => [
+      ...presets.filter((preset) => selectedBandIds.has(preset.id)).flatMap((preset) => preset.ranges),
+      ...(selectedBandIds.has('custom') ? [{ minimum_hz: Math.round(Number(minimum.value) * 1_000_000),
+        maximum_hz: Math.round(Number(maximum.value) * 1_000_000) }] : [])
+    ];
+    const selectedBandLabels = () => [...presets, { id: 'custom', label: 'Custom range' }]
+      .filter((preset) => selectedBandIds.has(preset.id))
+      .map((preset) => preset.label.split(' · ')[0]);
+    const updateBands = () => {
+      custom.hidden = !selectedBandIds.has('custom');
       minimum.required = maximum.required = !custom.hidden;
+      minimum.disabled = maximum.disabled = custom.hidden;
       const tuner = receiver();
       [minimum, maximum].forEach((input) => {
         input.min = String((tuner?.minimum_frequency_hz || 0) / 1_000_000);
         input.max = String((tuner?.maximum_frequency_hz || 0) / 1_000_000);
       });
-      const ranges = presets.find((preset) => preset.id === presetId)?.ranges;
-      description.textContent = ranges ? ranges.map((range) =>
-        `${channelMHz(range.minimum_hz)}–${channelMHz(range.maximum_hz)} MHz`).join(' · ') :
-        `Enter one range within this receiver’s coverage. Maximum search span: ${(catalog.bounds.maximum_total_hz / 1_000_000).toFixed(0)} MHz.`;
+      description.textContent = `Choose one or more bands. Maximum search span: ${(catalog.bounds.maximum_total_hz / 1_000_000).toFixed(0)} MHz.`;
+      const labels = selectedBandLabels();
+      bandSummary.textContent = labels.length <= 2 ? labels.join(', ') || 'Choose bands' :
+        `${labels.slice(0, 2).join(', ')} +${labels.length - 2}`;
+      bandTrigger.title = labels.join(', ');
+      if (findSignals) findSignals.disabled = !presets.some((preset) => selectedBandIds.has(preset.id)) && custom.hidden;
     };
-    band.addEventListener('change', updateBand);
-    chooser.addEventListener('change', updateBand);
-    updateBand();
-    form.append(formField('Receiver', uiSelectFrame(chooser)), formField('Band', uiSelectFrame(band)), custom, description,
-      node('div', 'ui-notice', 'The receiver will move through this band, then check promising signals. Results appear when both steps are complete. Other receivers keep running.'),
+    [...presets, { id: 'custom', label: 'Custom frequency range' }].forEach((preset) => {
+      const choice = node('label', 'ui-choice-card spectrum-search-band-option');
+      const check = node('input', 'ui-selection-check');
+      check.type = 'checkbox';
+      check.value = preset.id;
+      check.checked = selectedBandIds.has(preset.id);
+      check.addEventListener('change', () => {
+        if (check.checked) selectedBandIds.add(preset.id); else selectedBandIds.delete(preset.id);
+        updateBands();
+      });
+      const [label, detail] = preset.id === 'custom' ? ['Custom range', 'Enter a start and end frequency'] :
+        preset.label.split(' · ');
+      check.setAttribute('aria-label', preset.id === 'custom' ? label : preset.label);
+      const copy = node('span', 'spectrum-search-band-option-copy');
+      copy.append(node('strong', '', label));
+      if (detail) copy.append(node('small', 'ui-field-detail', detail));
+      choice.append(check, copy);
+      bandMenu.append(choice);
+    });
+    const positionBandMenu = () => {
+      if (!bandMenu.matches(':popover-open')) return;
+      const gutter = 8;
+      const gap = 6;
+      const anchor = bandTrigger.getBoundingClientRect();
+      bandMenu.style.minWidth = `${Math.round(anchor.width)}px`;
+      bandMenu.style.maxHeight = '';
+      const menu = bandMenu.getBoundingClientRect();
+      const availableBelow = Math.max(0, window.innerHeight - anchor.bottom - gap - gutter);
+      const availableAbove = Math.max(0, anchor.top - gap - gutter);
+      const openAbove = availableBelow < Math.min(menu.height, 160) && availableAbove > availableBelow;
+      const maxHeight = Math.min(350, openAbove ? availableAbove : availableBelow);
+      const top = openAbove ? Math.max(gutter, anchor.top - gap - Math.min(menu.height, maxHeight)) :
+        anchor.bottom + gap;
+      const left = Math.max(gutter, Math.min(anchor.left, window.innerWidth - menu.width - gutter));
+      bandMenu.style.left = `${Math.round(left)}px`;
+      bandMenu.style.top = `${Math.round(top)}px`;
+      bandMenu.style.maxHeight = `${Math.floor(maxHeight)}px`;
+    };
+    const bandEvents = new AbortController();
+    bandMenu.addEventListener('toggle', (event) => {
+      const open = event.newState === 'open';
+      bandTrigger.setAttribute('aria-expanded', String(open));
+      if (open) {
+        positionBandMenu();
+        window.requestAnimationFrame(() => {
+          if (!current() || !bandMenu.matches(':popover-open') ||
+            bandMenu.contains(document.activeElement)) return;
+          const choices = [...bandMenu.querySelectorAll('input:not(:disabled)')];
+          (choices.find((choice) => choice.checked) || choices[0])?.focus();
+        });
+      }
+    }, { signal: bandEvents.signal });
+    bandTrigger.addEventListener('blur', () => window.requestAnimationFrame(() => {
+      if (bandMenu.matches(':popover-open') && !bandMenu.contains(document.activeElement) &&
+        document.activeElement !== bandTrigger) bandMenu.hidePopover();
+    }), { signal: bandEvents.signal });
+    bandTrigger.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && bandMenu.matches(':popover-open')) {
+        event.stopPropagation();
+        bandMenu.hidePopover();
+        return;
+      }
+      if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
+      event.preventDefault();
+      if (!bandMenu.matches(':popover-open')) bandMenu.showPopover();
+      window.requestAnimationFrame(() => {
+        const choices = [...bandMenu.querySelectorAll('input:not(:disabled)')];
+        (event.key === 'ArrowUp' ? choices.at(-1) : choices[0])?.focus();
+      });
+    }, { signal: bandEvents.signal });
+    bandMenu.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') event.stopPropagation();
+    }, { signal: bandEvents.signal });
+    bandMenu.addEventListener('focusout', () => window.requestAnimationFrame(() => {
+      if (bandMenu.matches(':popover-open') && !bandMenu.contains(document.activeElement) &&
+        document.activeElement !== bandTrigger) bandMenu.hidePopover();
+    }), { signal: bandEvents.signal });
+    window.addEventListener('resize', positionBandMenu, { signal: bandEvents.signal });
+    window.addEventListener('scroll', positionBandMenu,
+      { signal: bandEvents.signal, capture: true, passive: true });
+    disposeBandPicker = () => {
+      bandEvents.abort();
+      if (bandMenu.matches(':popover-open')) bandMenu.hidePopover();
+    };
+    chooser.addEventListener('change', updateBands);
+    form.append(formField('Receiver', uiSelectFrame(chooser)), bands, custom, description,
+      node('div', 'ui-notice', 'The receiver will move through the selected bands, then check promising signals. Results appear when both steps are complete. Other receivers keep running.'),
       disclosure('What are P25 channels?', node('p', '', 'P25 radio systems use a steady control signal to coordinate a group of radio frequencies. This search finds and checks those control signals. Voice-only and other radio signals are not added.'),
-        node('p', '', 'A receiver sees a limited frequency window at once. Searching moves this window through the band you choose.')));
+        node('p', '', 'A receiver sees a limited frequency window at once. Searching moves this window through the bands you choose.')));
     form.addEventListener('submit', (event) => event.preventDefault());
     stage.append(form);
     updateContext();
     button('Cancel', () => modal.close());
-    button('Find signals', () => {
+    findSignals = button('Find signals', () => {
       if (!form.reportValidity()) return;
-      const ranges = presetId === 'custom' ? [{ minimum_hz: Math.round(Number(minimum.value) * 1_000_000),
-        maximum_hz: Math.round(Number(maximum.value) * 1_000_000) }] : presets.find((preset) => preset.id === presetId)?.ranges;
+      const ranges = selectedRanges();
       if (!ranges?.length || ranges.some((range) => range.minimum_hz >= range.maximum_hz) ||
         ranges.reduce((total, range) => total + range.maximum_hz - range.minimum_hz, 0) > catalog.bounds.maximum_total_hz) {
         error('Choose a valid band, or enter a smaller range with the end frequency above the start.');
@@ -232,6 +356,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       }
       void begin(ranges);
     }, true);
+    updateBands();
   };
   const begin = async (ranges) => {
     const operation = ++generation;
@@ -611,10 +736,17 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     button('Done', () => modal.close(), true);
   };
   const load = async () => {
+    if (modal.ready && !await modal.ready || !current()) return;
     show('loading', 0, 'Preparing the search…');
     setBusy(true);
     try {
       await context.pause?.();
+      paused = true;
+      if (!current()) {
+        paused = false;
+        await context.resume?.(usedReceiverId);
+        return;
+      }
       catalog = await request(`${path}/catalog`, { csrf: false });
       if (current()) showBand();
     } catch (cause) {

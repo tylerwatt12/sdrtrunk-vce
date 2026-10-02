@@ -204,7 +204,7 @@ test('bounded duplicate history keeps the selected sequence across refreshes', a
   await expect(table.locator('tbody tr')).toHaveCount(20);
   await expect(table.locator('tbody tr').first()).toHaveAttribute('data-id', '125');
   await expect(page.locator('.call-matching-history-pager'))
-    .toContainText('Matched calls 1-20 of 100 · Page 1 of 5');
+    .toContainText('Matched calls 1–20 of 100 · Page 1 of 5');
   await page.getByRole('button', { name: 'Compare duplicate call 125' }).click();
   await expect(page.locator('tbody tr[data-id="125"]')).toHaveClass(/selected/);
   current = snapshot([duplicate(126), duplicate(125)]);
@@ -245,7 +245,7 @@ test('confirmed duplicate history paginates and clamps after live history shrink
   await expect(rows).toHaveCount(20);
   await expect(rows.first()).toHaveAttribute('data-id', '45');
   await expect(rows.last()).toHaveAttribute('data-id', '26');
-  await expect(pager).toContainText('Matched calls 1-20 of 45 · Page 1 of 3');
+  await expect(pager).toContainText('Matched calls 1–20 of 45 · Page 1 of 3');
   await expect(previous).toBeDisabled();
   await expect(next).toBeEnabled();
 
@@ -253,7 +253,7 @@ test('confirmed duplicate history paginates and clamps after live history shrink
   await expect(rows).toHaveCount(20);
   await expect(rows.first()).toHaveAttribute('data-id', '25');
   await expect(rows.last()).toHaveAttribute('data-id', '6');
-  await expect(pager).toContainText('Matched calls 21-40 of 45 · Page 2 of 3');
+  await expect(pager).toContainText('Matched calls 21–40 of 45 · Page 2 of 3');
   await expect(previous).toBeEnabled();
   await expect(next).toBeEnabled();
 
@@ -261,11 +261,11 @@ test('confirmed duplicate history paginates and clamps after live history shrink
   await expect(rows).toHaveCount(5);
   await expect(rows.first()).toHaveAttribute('data-id', '5');
   await expect(rows.last()).toHaveAttribute('data-id', '1');
-  await expect(pager).toContainText('Matched calls 41-45 of 45 · Page 3 of 3');
+  await expect(pager).toContainText('Matched calls 41–45 of 45 · Page 3 of 3');
   await expect(next).toBeDisabled();
 
   current = snapshot([duplicate(46)]);
-  await expect(pager).toContainText('Matched calls 1-1 of 1 · Page 1 of 1', { timeout: 3500 });
+  await expect(pager).toContainText('Matched calls 1–1 of 1 · Page 1 of 1', { timeout: 3500 });
   await expect(rows).toHaveCount(1);
   await expect(rows.first()).toHaveAttribute('data-id', '46');
   await expect(previous).toBeDisabled();
@@ -364,7 +364,7 @@ for (const width of [1440, 390, 320]) {
   for (const layout of ['default', 'legacy', 'hidden-and-reordered']) {
     for (const longNames of [false, true]) {
       test(`twenty matched calls fit ${width}px with ${layout} fields and ${longNames ? 'long' : 'normal'} names`,
-        async ({ page }) => {
+        async ({ page }, testInfo) => {
           await page.setViewportSize({ width, height: width === 1440 ? 1000 : 844 });
           const records = Array.from({ length: 20 }, (_, index) => {
             const record = duplicate(71 - index);
@@ -393,7 +393,7 @@ for (const width of [1440, 390, 320]) {
           const rows = table.locator('tbody tr');
           const pager = page.getByRole('navigation', { name: 'Matched call pages' });
           await expect(rows).toHaveCount(20);
-          await expect(pager).toContainText('Matched calls 1-20 of 20 · Page 1 of 1');
+          await expect(pager).toContainText('Matched calls 1–20 of 20 · Page 1 of 1');
           await expect(rows.first().locator('td')).toHaveCount(saved?.hidden_columns.length ? 6 : 8);
           await expect(rows.first()).toContainText(records[0].call_identity.destination_alias);
           await expect(rows.first()).toContainText(records[0].legs[0].channel_name);
@@ -453,7 +453,7 @@ for (const width of [1440, 390, 320]) {
           if (layout !== 'hidden-and-reordered' &&
               ((width !== 320 && !longNames) || (width === 320 && longNames))) {
             await page.screenshot({
-              path: `build/playwright-results/call-matching-twenty-records-${layout}-${width}.png`, fullPage: true
+              path: testInfo.outputPath(`call-matching-twenty-records-${layout}-${width}.png`), fullPage: true
             });
           }
         });
@@ -549,7 +549,7 @@ test('paused history keeps paging, displayed fields, and copy comparison usable'
   current = snapshot([duplicate(100)]);
   await expect.poll(() => app.requests()).toBeGreaterThanOrEqual(before + 2);
   await pager.getByRole('button', { name: 'Next', exact: true }).click();
-  await expect(pager).toContainText('Matched calls 21-40 of 45 · Page 2 of 3');
+  await expect(pager).toContainText('Matched calls 21–40 of 45 · Page 2 of 3');
   await expect(table.locator('tbody tr').first()).toHaveAttribute('data-id', '25');
 
   await page.getByRole('button', { name: 'Displayed fields', exact: true }).click();
@@ -567,9 +567,9 @@ test('paused history keeps paging, displayed fields, and copy comparison usable'
   await expect(compare).toBeFocused();
   await expect(pager).toContainText('Page 2 of 3');
   await pager.getByRole('button', { name: 'Next', exact: true }).click();
-  await expect(pager).toContainText('Matched calls 41-45 of 45 · Page 3 of 3');
+  await expect(pager).toContainText('Matched calls 41–45 of 45 · Page 3 of 3');
   await page.getByRole('button', { name: 'Resume call matching monitor', exact: true }).click();
-  await expect(pager).toContainText('Matched calls 1-1 of 1 · Page 1 of 1');
+  await expect(pager).toContainText('Matched calls 1–1 of 1 · Page 1 of 1');
   await expect(table.locator('tbody tr').first()).toHaveAttribute('data-id', '100');
   await expect(table.locator('tbody td[data-column="radio"]')).toHaveCount(0);
 });
@@ -590,7 +590,7 @@ test('resuming a paused replacement receiver resets frozen paging and the select
   await expect(pager).toContainText('Page 2 of 3');
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Resume call matching monitor', exact: true }).click();
-  await expect(pager).toContainText('Matched calls 1-1 of 1 · Page 1 of 1');
+  await expect(pager).toContainText('Matched calls 1–1 of 1 · Page 1 of 1');
   await expect(page.locator('table[data-table-type="call-matching-duplicates"] tbody tr').first())
     .toHaveAttribute('data-id', '200');
   await expect(dialog).not.toBeVisible();
@@ -672,7 +672,7 @@ test('paused error recovery preserves the frozen view and navigation cancels fut
 });
 
 for (const theme of ['light', 'dark']) {
-  test(`pause and resume fit at 320px and retain keyboard focus in ${theme}`, async ({ page }) => {
+  test(`pause and resume fit at 320px and retain keyboard focus in ${theme}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 320, height: 844 });
     await page.emulateMedia({ colorScheme: theme });
     let current = snapshot([duplicate(71)]);
@@ -696,7 +696,7 @@ for (const theme of ['light', 'dark']) {
         document.documentElement.scrollWidth <= window.innerWidth + 1;
     });
     expect(fit).toBe(true);
-    await page.screenshot({ path: `build/playwright-results/call-matching-paused-320-${theme}.png`, fullPage: true });
+    await page.screenshot({ path: testInfo.outputPath(`call-matching-paused-320-${theme}.png`), fullPage: true });
     await resume.press('Space');
     const live = page.getByRole('button', { name: 'Pause call matching monitor', exact: true });
     await expect(live).toBeFocused();
@@ -720,23 +720,23 @@ for (const [name, viewport, theme] of [
   ['desktop-light', { width: 1440, height: 1000 }, 'light'],
   ['mobile-dark', { width: 390, height: 844 }, 'dark']
 ]) {
-  test(`call matching ${name} page and comparison render`, async ({ page }) => {
+  test(`call matching ${name} page and comparison render`, async ({ page }, testInfo) => {
     await page.setViewportSize(viewport);
     await page.emulateMedia({ colorScheme: theme });
     await openApp(page, { theme });
     await expect(page.locator('.call-matching-live-status')).toContainText('Live');
-    await page.screenshot({ path: `build/playwright-results/call-matching-${name}-page.png`, fullPage: true });
+    await page.screenshot({ path: testInfo.outputPath(`call-matching-${name}-page.png`), fullPage: true });
     await page.getByRole('button', { name: 'Pause call matching monitor', exact: true }).click();
     const resume = page.getByRole('button', { name: 'Resume call matching monitor', exact: true });
     await expect(resume).toHaveAttribute('aria-pressed', 'true');
-    await page.screenshot({ path: `build/playwright-results/call-matching-${name}-paused.png`, fullPage: true });
+    await page.screenshot({ path: testInfo.outputPath(`call-matching-${name}-paused.png`), fullPage: true });
     await resume.click();
     await page.getByRole('button', { name: 'Compare duplicate call 71' }).click();
     await expect(page.getByRole('dialog', { name: 'Duplicate call details' })).toBeVisible();
     if (viewport.width < 760) {
       await expect(page.locator('.call-matching-comparison-hint')).toBeVisible();
     }
-    await page.screenshot({ path: `build/playwright-results/call-matching-${name}-modal.png` });
+    await page.screenshot({ path: testInfo.outputPath(`call-matching-${name}-modal.png`) });
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
     expect(overflow).toBe(false);
   });

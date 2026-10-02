@@ -33,6 +33,7 @@ const routes = [
 ];
 const administration = [
   ['health', '.receiver-health-overview', 'Receiver status'],
+  ['application-log', '.application-log-workspace', 'County receiver started'],
   ['call-matching', '.call-matching-workspace', 'County Fire Dispatch'],
   ['support', '.support-report-form', 'Prepare support report'],
   ['recordings', '.recordings-admin', 'Managed'],
@@ -72,6 +73,11 @@ async function expectSuccessfulPage(page, fixture, name, selector, content) {
     await expect(liveTiming).toBeEnabled();
     await expect(liveTiming).toHaveValue('2000');
     await expect(page.locator('.receiver-settings-form .admin-form-message')).toHaveText('');
+  }
+  if (name === 'admin-application-log') {
+    await expect(page.locator('.application-log-entry')).toHaveCount(3);
+    await expect(page.locator('.application-log-state')).toHaveText('Live');
+    await expect(page.getByRole('button', { name: 'Copy shown', exact: true })).toBeEnabled();
   }
   const errors = page.locator('#content .ui-feedback-error:visible, #content > .error:visible, ' +
     '#content [role="alert"]:visible').filter({ hasText: /\S/ });
@@ -130,7 +136,7 @@ for (const [name, viewport] of [
   ['tablet', { width: 768, height: 1024 }],
   ['landscape', { width: 844, height: 390 }]
 ]) {
-  for (const id of ['dashboard', 'channel-setup', 'aliases', 'settings', 'admin-users']) {
+  for (const id of ['dashboard', 'channel-setup', 'aliases', 'settings', 'admin-users', 'admin-application-log']) {
     test(`actual responsive ${id} ${name}`, async ({ page }) => {
       const [, query, selector, content] = cases.find(([caseId]) => caseId === id);
       await page.setViewportSize(viewport);

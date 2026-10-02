@@ -536,10 +536,6 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
 .visual-scanner-wave i:nth-child(8n + 7) { height: 10px; }
 .visual-scanner-wave i:nth-child(8n) { height: 25px; }
 
-.visual-tuner-spectrum-example .tuner-spectrum-layout {
-  min-height: 730px;
-}
-
 .visual-spectrum-plot,
 .visual-waterfall {
   min-height: 0;
@@ -614,6 +610,7 @@ body:not([data-gallery-view="access-login-modal"]) .visual-access-login-modal-ex
 body:not([data-gallery-view="mobile-table"]) .visual-mobile-table-example,
 body:not([data-gallery-view="app-chrome"]) .visual-app-chrome-example,
 body:not([data-gallery-view="gallery"]) .design-system-gallery,
+body:not([data-gallery-view="workflows"]) .visual-workflows-example,
 body:not([data-gallery-view="modal"]):not([data-gallery-view="modal-long"]) .visual-modal-example,
 body:not([data-gallery-view="alias-list-create-modal"]) .visual-alias-list-create-modal-example,
 body:not([data-gallery-view="activity-action-tooltip"]) .visual-activity-action-tooltip-example,
@@ -759,4 +756,13 @@ body:not([data-gallery-view="control-states"]) .visual-control-states-example {
 }
 .visual-state-group > .ui-segmented {
   flex-wrap: wrap;
+}
+
+.visual-workflows-example {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.visual-workflows-example .settings-card {
+  margin: 0;
 }

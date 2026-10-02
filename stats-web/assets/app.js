@@ -7,6 +7,8 @@ import { Controller as PageTitleController } from './core/page-title.js?v=2';
 import { href as entityRefHref } from './core/entity-ref.js';
 import * as pageLifecycle from './core/page-lifecycle.js';
 import { installIconHints } from './core/icon-hints.js?v=3';
+import { createFormWorkflow } from './core/form-workflows.js?v=1';
+import * as browsingWorkflows from './core/browsing-workflows.js?v=1';
 import {
   receiverHealthAlertGroups,
   receiverHealthAlertIds,
@@ -18,14 +20,15 @@ import { buildRadioResolvePlannerUrl } from './features/radioresolve-analysis.js
 import {
   createAliasList,
   createAliasListPopupTrigger as buildAliasListPopupTrigger
-} from './features/alias-list-create.js?v=2';
-import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=21';
-import { createStreamingWorkspace } from './features/streaming.js?v=7';
-import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=6';
-import { createRemoteLinksWorkspace } from './features/remote-links.js?v=11';
-import { createRecordingsFeature } from './features/recordings.js?v=16';
-import { openSpectrumSearchWizard } from './features/spectrum-search.js?v=2';
+} from './features/alias-list-create.js?v=3';
+import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=22';
+import { createStreamingWorkspace } from './features/streaming.js?v=8';
+import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=7';
+import { createRemoteLinksWorkspace } from './features/remote-links.js?v=12';
+import { createRecordingsFeature } from './features/recordings.js?v=17';
+import { openSpectrumSearchWizard } from './features/spectrum-search.js?v=5';
 import { createAudioDock } from './core/audio-dock.js?v=7';
+import { createApplicationLogWorkspace } from './core/application-log.js?v=1';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=5';
 
@@ -974,8 +977,11 @@ function showLoginModal(returnFocusSelector = '#auth-action') {
     cleanup: () => stopVisual()
   });
   if (!modal) return;
-  stopVisual = mountAccessWireframe(canvas, { compact: true });
-  username.focus();
+  void modal.ready.then((shown) => {
+    if (!shown || !modal.dialog.isConnected) return;
+    stopVisual = mountAccessWireframe(canvas, { compact: true });
+    modal.focus?.(username);
+  });
 }
 
 async function signOut() {
@@ -1662,7 +1668,9 @@ function href(view, values = {}) {
 }
 
 function navigateTo(target, options = {}) {
-  if (!closeReadOnlyModal()) return false;
+  if (!closeReadOnlyModal(false, false, (closed) => {
+    if (closed) navigateTo(target, options);
+  })) return false;
   return routeFoundation.navigate(window, target, (nextRoute) => {
     route = nextRoute;
     void render();
@@ -2004,15 +2012,32 @@ function clearAliasEditorRoute() {
   if (changed) window.history.replaceState({}, '', currentHref());
 }
 
-function closeReadOnlyModal(force = false, topOnly = false) {
+function closeReadOnlyModal(force = false, topOnly = false, onResolved = null) {
   const active = activeReadOnlyModal;
   if (!active) return true;
   let root = active;
+  const scope = [];
   for (let current = active; current; current = topOnly ? null : current.parent) {
     root = current;
-    if (!force && current.isBusy?.()) return false;
-    if (!force && current.isDirty?.() && !window.confirm(current.discardMessage?.() ||
-      'Discard your unsaved changes?')) return false;
+    scope.push(current);
+    if (!force && (current.isBusy?.() || current.dismissalPending)) {
+      onResolved?.(false);
+      return false;
+    }
+  }
+  const dirty = !force && scope.find((current) => current.isDirty?.());
+  if (dirty) {
+    active.dismissalPending = true;
+    void confirmAction(dirty.discardMessage?.() || 'Discard your unsaved changes?', {
+      title: 'Discard unsaved changes', confirmLabel: 'Discard changes', cancelLabel: 'Keep editing'
+    }).then((accepted) => {
+      active.dismissalPending = false;
+      const current = activeReadOnlyModal === active && scope.every((modal) =>
+        modal.backdrop.isConnected && !modal.isBusy?.());
+      const closed = accepted && current && closeReadOnlyModal(true, topOnly);
+      onResolved?.(Boolean(closed));
+    });
+    return false;
   }
   for (let current = active; current; current = topOnly ? null : current.parent) {
     activeReadOnlyModal = current.parent;
@@ -2036,7 +2061,11 @@ function closeReadOnlyModal(force = false, topOnly = false) {
 function openReadOnlyModal(title, body, options = {}) {
   const returnFocusElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   const parent = options.stack === 'child' ? activeReadOnlyModal : null;
-  if (!parent && !closeReadOnlyModal()) return null;
+  if (!parent) {
+    for (let current = activeReadOnlyModal; current; current = current.parent) {
+      if (current.isBusy?.() || current.dismissalPending) return null;
+    }
+  }
   const backdrop = node('div', 'modal-backdrop');
   const dialog = node('section', 'read-only-modal');
   String(options.className || '').split(/\s+/).filter(Boolean)
@@ -2058,7 +2087,8 @@ function openReadOnlyModal(title, body, options = {}) {
   backdrop.append(dialog);
 
   let modalState = null;
-  const dismiss = () => activeReadOnlyModal === modalState && closeReadOnlyModal(false, true);
+  const dismiss = (onClosed = null) => activeReadOnlyModal === modalState && closeReadOnlyModal(false, true,
+    typeof onClosed === 'function' ? (closed) => { if (closed) onClosed(); } : null);
   const focusable = () => [...dialog.querySelectorAll(
     'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), ' +
     '[tabindex]:not([tabindex="-1"])')]
@@ -2109,26 +2139,49 @@ function openReadOnlyModal(title, body, options = {}) {
   });
   let dirty = false;
   let busy = false;
+  let cleaned = false;
+  let closed = false;
   let discardMessage = options.discardMessage || 'Discard your unsaved changes?';
   modalState = {
     backdrop, dialog, parent, keydown, returnFocusElement, returnFocusSelector: options.returnFocusSelector || null,
     isDirty: () => dirty,
     discardMessage: () => discardMessage,
     isBusy: () => busy,
-    cleanup: options.cleanup || null,
-    onClose: options.onClose || null
+    cleanup: () => {
+      if (cleaned) return;
+      cleaned = true;
+      options.cleanup?.();
+    },
+    onClose: () => {
+      if (closed) return;
+      closed = true;
+      options.onClose?.();
+    }
   };
-  if (parent) {
-    parent.backdrop.inert = true;
-    parent.dialog.setAttribute('aria-modal', 'false');
-  }
-  activeReadOnlyModal = modalState;
-  document.addEventListener('keydown', keydown);
-  document.body.classList.add('modal-open');
-  document.body.append(backdrop);
-  close.focus();
-  return {
+  let resolveReady;
+  const ready = new Promise((resolve) => { resolveReady = resolve; });
+  const present = () => {
+    if (parent) {
+      parent.backdrop.inert = true;
+      parent.dialog.setAttribute('aria-modal', 'false');
+    }
+    activeReadOnlyModal = modalState;
+    document.addEventListener('keydown', keydown);
+    document.body.classList.add('modal-open');
+    document.body.append(backdrop);
+    close.focus();
+    resolveReady(true);
+  };
+  const api = {
     dialog, content: contentNode, close: dismiss, state: modalState,
+    ready,
+    focus: (element) => {
+      const focus = () => {
+        if (activeReadOnlyModal === modalState) element?.focus({ preventScroll: true });
+      };
+      if (backdrop.isConnected) focus();
+      else void ready.then((shown) => { if (shown) focus(); });
+    },
     setTitle: (value) => {
       heading.textContent = String(value);
       close.setAttribute('aria-label', `Close ${value}`);
@@ -2144,6 +2197,51 @@ function openReadOnlyModal(title, body, options = {}) {
     },
     isDirty: () => dirty
   };
+  if (parent || closeReadOnlyModal(false, false, (closed) => {
+    if (closed) present();
+    else {
+      modalState.cleanup();
+      modalState.onClose();
+      resolveReady(false);
+    }
+  })) present();
+  return api;
+}
+
+// Confirmation uses the shared dialog stack, focus trap and footer. Resolve only
+// after the child closes so the guarded action resumes in its original context.
+function confirmAction(message, options = {}) {
+  return new Promise((resolve) => {
+    let accepted = false;
+    const body = node('div', 'ui-confirmation-content');
+    const detail = node('p', 'ui-confirmation-message', message);
+    const cancel = node('button', 'ui-button ui-button-secondary', options.cancelLabel || 'Cancel');
+    const proceed = node('button', options.tone === 'primary' ?
+      'ui-button ui-button-primary' : 'ui-button ui-button-danger', options.confirmLabel || 'Continue');
+    cancel.type = proceed.type = 'button';
+    const footer = node('footer', 'ui-modal-footer ui-action-row');
+    footer.append(cancel, proceed);
+    body.append(detail, footer);
+    const modal = openReadOnlyModal(options.title || 'Confirm action', body, {
+      id: 'confirmation', className: 'ui-confirmation-modal', stack: 'child',
+      returnFocusSelector: options.returnFocusSelector,
+      onClose: () => {
+        resolve(accepted);
+        window.requestAnimationFrame(() => {
+          const target = modal.state.returnFocusElement;
+          if (target?.isConnected && !target.disabled && activeReadOnlyModal === modal.state.parent)
+            target.focus({ preventScroll: true });
+        });
+      }
+    });
+    if (!modal) { resolve(false); return; }
+    modal.dialog.setAttribute('role', 'alertdialog');
+    detail.id = `${modal.dialog.getAttribute('aria-labelledby')}-message`;
+    modal.dialog.setAttribute('aria-describedby', detail.id);
+    cancel.addEventListener('click', modal.close);
+    proceed.addEventListener('click', () => { accepted = true; modal.close(); });
+    cancel.focus();
+  });
 }
 
 function statsLoggingState() {
@@ -3399,26 +3497,14 @@ function searchBar(placeholder = 'Search') {
 }
 
 function pager(page, position = 'bottom', itemLabel = 'Rows') {
-  const bar = node('nav', `pager ui-pager pager-${position}`);
-  bar.setAttribute('aria-label', `${position === 'top' ? 'Top' : 'Bottom'} table pagination`);
   const { offset, limit } = page;
-  const firstRow = offset + (page.rows.length ? 1 : 0);
-  const lastRow = offset + page.rows.length;
-  const totalCount = page.total_count;
-  const range = Number.isInteger(totalCount) ?
-    `${itemLabel} ${number(firstRow)}-${number(lastRow)} of ${number(totalCount)}` :
-    `${itemLabel} ${number(firstRow)}-${number(lastRow)}`;
-  bar.append(node('span', 'muted', range));
-  const disabled = (label) => {
-    const control = node('span', 'ui-button ui-button-secondary disabled', label);
-    control.setAttribute('aria-disabled', 'true');
-    return control;
-  };
-  bar.append(offset > 0 ? anchor('Previous', currentHref({ offset: Math.max(0, offset - limit) }),
-    'ui-button ui-button-secondary') : disabled('Previous'));
-  bar.append(page.has_more ? anchor('Next', currentHref({ offset: page.next_offset }),
-    'ui-button ui-button-secondary') : disabled('Next'));
-  return bar;
+  return browsingWorkflows.createBrowsingPager({ node, className: `pager-${position}`,
+    ariaLabel: `${position === 'top' ? 'Top' : 'Bottom'} table pagination`,
+    countText: browsingWorkflows.pageRangeText({ offset, visible: page.rows.length,
+      total: page.total_count, label: itemLabel, format: number }),
+    previous: { enabled: offset > 0, href: currentHref({ offset: Math.max(0, offset - limit) }) },
+    next: { enabled: page.has_more, href: currentHref({ offset: page.next_offset }) }
+  });
 }
 
 function pagedTableContent(page, columns, tableType, options = {}) {
@@ -4050,7 +4136,7 @@ function aliasEditorFilterToolbar(aliasPage, options = null) {
     selectFilter('Scan list', 'scanListId', [
       ...(scanListScope ? [] : [['', 'Any scan list']]),
       ...(options?.scan_lists || []).map((row) => [String(row.id),
-        `${row.name}${row.published === false ? ' · not published' : ''}`])]),
+        `${row.name}${row.published === false ? ` · ${browsingWorkflows.scanListAvailabilityLabel(row)}` : ''}`])]),
     selectFilter('Record', 'record', [['', 'Any'], ['enabled', 'Enabled'], ['disabled', 'Disabled']]),
     selectFilter('Stream', 'stream', [['', 'Any'], ['present', 'Configured'], ['none', 'None']]),
     selectFilter('Calls', 'use', [['', 'Any'], ['used', 'Has calls'],
@@ -4086,33 +4172,29 @@ function aliasEditorFilterToolbar(aliasPage, options = null) {
   const primary = node('div', 'alias-filter-primary');
   const searchButton = node('button', 'ui-button ui-button-primary', 'Search');
   const advancedButton = node('button', 'ui-button ui-button-secondary alias-filter-advanced-toggle');
-  advancedButton.type = 'button';
-  advancedButton.setAttribute('aria-controls', advancedFilters.id);
-  advancedButton.setAttribute('aria-expanded', String(activeAdvanced.length > 0));
-  advancedButton.append(node('span', '', 'Advanced filters'));
+  advancedButton.id = 'alias-editor-filters-toggle';
+  advancedButton.append(node('span', '', 'Filters'));
   if (activeAdvanced.length) advancedButton.append(uiPill(number(activeAdvanced.length), 'neutral'));
-  advancedFilters.hidden = activeAdvanced.length === 0;
-  advancedButton.addEventListener('click', () => {
-    advancedFilters.hidden = !advancedFilters.hidden;
-    advancedButton.setAttribute('aria-expanded', String(!advancedFilters.hidden));
-  });
   primary.append(search, searchButton, advancedButton);
-  if (aliasEditorHasActiveFilters(scanListScope)) {
-    primary.append(anchor('Clear all', href('aliases', {
+  const clearFilters = anchor('Clear filters', href('aliases', {
       list: route.get('list'), aliasTab: route.get('aliasTab') || 'configure',
       scanListId: scanListScope ? route.get('scanListId') : null
-    }), 'ui-button ui-button-secondary'));
-  }
+    }), 'ui-button ui-button-secondary');
+  clearFilters.hidden = !aliasEditorHasActiveFilters(scanListScope);
+  primary.append(clearFilters);
   form.append(primary);
   if (activeAdvanced.length) {
     form.append(node('p', 'alias-filter-active-summary ui-section-note',
       `${number(activeAdvanced.length)} advanced ${activeAdvanced.length === 1 ? 'filter' : 'filters'} active: ` +
       activeAdvanced.join(' · ')));
   }
-  const actions = node('div', 'alias-filter-actions');
+  const actions = node('div', 'alias-filter-actions ui-action-row ui-filter-inline-actions');
   actions.append(node('button', 'ui-button ui-button-primary', 'Apply filters'));
   advancedFilters.append(actions);
   form.append(advancedFilters);
+  browsingWorkflows.createFilterDisclosure({ node, openReadOnlyModal, form, panel: advancedFilters,
+    button: advancedButton, clearAction: clearFilters, initialExpanded: activeAdvanced.length > 0,
+    returnFocusSelector: '#alias-editor-filters-toggle', id: 'alias-editor-filters' });
   form.addEventListener('submit', () => {
     [[lastAfter, 'lastActivityAfter'], [lastBefore, 'lastActivityBefore']].forEach(([control, name]) => {
       if (!control.value) return;
@@ -4285,7 +4367,8 @@ function aliasScanListChoices(options, selectedValues = []) {
   scanLists.forEach((scanList) => {
     const id = Number(scanList?.id);
     if (!Number.isInteger(id) || id <= 0) return;
-    const detail = [scanList.description, scanList.published === false ? 'Not published to listeners' : null]
+    const detail = [scanList.description, scanList.published === false ?
+      browsingWorkflows.scanListAvailabilityLabel(scanList) : null]
       .filter(Boolean).join(' · ');
     const option = aliasAssignmentToggle(scanList.name || `Scan list ${id}`, selected.has(id),
       'scanListId', id, detail);
@@ -4372,7 +4455,10 @@ function aliasEditorFilterInput(name, value = '', type = 'text') {
 }
 
 function aliasModalFooter(...controls) {
-  const footer = node('footer', 'alias-modal-footer ui-action-row ui-modal-footer');
+  const footer = node('footer', 'alias-modal-footer ui-modal-footer ui-action-row');
+  controls.filter(Boolean).forEach((control) => {
+    if (control.classList?.contains('alias-modal-footer-spacer')) control.classList.add('ui-modal-footer-spacer');
+  });
   footer.append(...controls.filter(Boolean));
   return footer;
 }
@@ -4455,7 +4541,7 @@ async function openAliasConflictModal(aliasId, aliasName = '') {
     id: `alias-conflicts-${id}`, className: 'alias-editor-modal alias-conflict-modal',
     returnFocusSelector: `.alias-conflict-button[data-alias-id="${id}"]`
   });
-  if (!modal) return;
+  if (!modal || (modal.ready && !await modal.ready)) return;
   modal.setBusy(true);
   try {
     const response = await requestJson(`/api/v1/admin/aliases/${id}/conflicts`, { csrf: false });
@@ -4538,7 +4624,7 @@ function openAliasListCreateModal() {
       submit.disabled = false;
     }
   });
-  name.focus();
+  modal.focus?.(name);
 }
 
 async function openAliasListDeleteModal(selectedList) {
@@ -4547,7 +4633,7 @@ async function openAliasListDeleteModal(selectedList) {
   const modal = openReadOnlyModal(`Delete ${selectedList.name}`, loading, {
     id: `delete-alias-list-${id}`, className: 'alias-editor-modal alias-confirm-modal'
   });
-  if (!modal) return;
+  if (!modal || (modal.ready && !await modal.ready)) return;
   try {
     const impact = await requestJson(`/api/v1/admin/alias-lists/${id}/delete-impact`, { csrf: false });
     if (activeReadOnlyModal !== modal.state) return;
@@ -4880,11 +4966,11 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
   const modal = openReadOnlyModal(editing ? `Edit Alias ${identifierNumber(id)}` :
     (cloning ? 'Clone Alias' : 'Add Alias'), loading, {
       id: `${mode}-alias-${id || 'new'}`, className: 'alias-editor-modal alias-record-modal',
-      onClose: clearAliasEditorRoute,
+      onClose: () => { if (modal.dialog.isConnected) clearAliasEditorRoute(); },
       returnFocusSelector: prefill?.returnFocusSelector ||
         (id ? `.alias-detail-link[data-alias-id="${id}"]` : '.alias-add-button')
     });
-  if (!modal) return;
+  if (!modal || (modal.ready && !await modal.ready)) return;
   try {
     const recordResponse = editing || cloning ?
       await requestJson(`/api/v1/admin/aliases/${id}`, { csrf: false }) : null;
@@ -5067,19 +5153,25 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     const remove = editing ? node('button', 'ui-button ui-button-danger-quiet', 'Delete') : null;
     if (clone) {
       clone.type = 'button';
-      clone.addEventListener('click', () => {
-        if (modal.isDirty() && !window.confirm('Discard these edits and clone the saved alias?')) return;
+      clone.addEventListener('click', async () => {
+        if (modal.isDirty() && !await confirmAction('Discard these edits and clone the saved alias?', {
+          title: 'Clone saved alias', confirmLabel: 'Discard and clone', cancelLabel: 'Keep editing'
+        })) return;
+        if (!modal.dialog.isConnected) return;
         modal.setDirty(false);
-  closeReadOnlyModal(true);
+        closeReadOnlyModal(true);
         openAliasEditorModal('clone', id);
       });
     }
     if (remove) {
       remove.type = 'button';
-      remove.addEventListener('click', () => {
-        if (modal.isDirty() && !window.confirm('Discard these edits and delete the saved alias?')) return;
+      remove.addEventListener('click', async () => {
+        if (modal.isDirty() && !await confirmAction('Discard these edits and delete the saved alias?', {
+          title: 'Delete saved alias', confirmLabel: 'Discard and review deletion', cancelLabel: 'Keep editing'
+        })) return;
+        if (!modal.dialog.isConnected) return;
         modal.setDirty(false);
-  closeReadOnlyModal(true);
+        closeReadOnlyModal(true);
         openAliasDeleteModal(id, source.name, revision);
       });
     }
@@ -5144,7 +5236,7 @@ function openAliasDeleteModal(id, name, revision) {
   body.append(errorHost, aliasModalFooter(cancel, remove));
   const modal = openReadOnlyModal(`Delete ${name || 'Alias'}`, body, {
     id: `delete-alias-${id}`, className: 'alias-editor-modal alias-confirm-modal',
-    onClose: clearAliasEditorRoute
+    onClose: () => { if (modal.dialog.isConnected) clearAliasEditorRoute(); }
   });
   if (!modal) return;
   cancel.addEventListener('click', modal.close);
@@ -5386,7 +5478,7 @@ function openAliasBulkModal(kind) {
     const scanList = aliasSelect('scanListId', [{ value: '', label: 'Choose a scan list' },
       ...(options.scan_lists || []).map((row) => ({
         value: row.id,
-        label: `${row.name}${row.published === false ? ' · not published' : ''}`
+        label: `${row.name}${row.published === false ? ` · ${browsingWorkflows.scanListAvailabilityLabel(row)}` : ''}`
       }))], '');
     const operation = aliasBulkBinaryOperation('Membership change', 'Add selected aliases',
       'Remove selected aliases');
@@ -5566,7 +5658,7 @@ function openScanListMemberRemoveModal(scanList) {
       modal.setBusy(false);
     }
   });
-  remove.focus();
+  modal.focus?.(remove);
 }
 
 function fullScanListMembershipRequest(revision, operation, aliasListId = null) {
@@ -5639,8 +5731,7 @@ function openFullScanListMembershipModal(scanList, operation) {
       modal.setBusy(false);
     }
   });
-  if (adding) aliasList.focus();
-  else submit.focus();
+  modal.focus?.(adding ? aliasList : submit);
 }
 
 function observedGroupIdentityDiscoverySupported(selectedList) {
@@ -5922,7 +6013,8 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   filters.setAttribute('role', 'group');
   filters.setAttribute('aria-label', 'Filter reviewed aliases');
   const rowsHost = node('div');
-  const pagerHost = node('div', 'pager ui-pager');
+  const pagerHost = browsingWorkflows.createBrowsingPager({ node, ariaLabel: 'Import review pages' });
+  pagerHost.hidden = true;
   const confirm = node('input'); confirm.type = 'checkbox';
   const confirmLabel = aliasCheckOption(`Replace aliases in ${selectedList.name}, including the deletions shown above`, confirm);
   const reviewBack = node('button', 'ui-button ui-button-secondary', 'Back'); reviewBack.type = 'button';
@@ -5971,6 +6063,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   let selectedFileReady = false;
   let fileInspection = 0;
   let previewFilter = 'all';
+  let previewOffset = 0;
   const modal = openReadOnlyModal(`${importing ? 'Import aliases into' : 'Export aliases from'} ${selectedList.name}`, body, {
     id: `alias-transfer-${listId}`, className: 'alias-editor-modal alias-transfer-modal',
     cleanup: () => {
@@ -5996,7 +6089,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   const invalidate = () => {
     request = null; preview = null; apply.disabled = true; confirm.checked = false;
     destination.textContent = ''; summary.replaceChildren(); filters.replaceChildren();
-    rowsHost.replaceChildren(); pagerHost.replaceChildren(); previewFilter = 'all';
+    rowsHost.replaceChildren(); pagerHost.hidden = true; previewFilter = 'all'; previewOffset = 0;
     confirmLabel.hidden = mode.value !== 'REPLACE';
     const radioReference = format.value === 'RADIOREFERENCE';
     radioDefaults.hidden = !radioReference;
@@ -6005,6 +6098,14 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   };
   const updateApply = () => { apply.disabled = busy || !preview || preview.counts.error > 0 ||
     (request.mode === 'REPLACE' && preview.counts.deleted > 0 && !confirm.checked); };
+  const drawPreviewPager = () => pagerHost.update({
+    countText: browsingWorkflows.pageRangeText({ offset: previewOffset, visible: preview?.rows.length || 0,
+      total: preview?.total ?? null, label: 'Aliases', format: number }),
+    previous: { enabled: !busy && Boolean(preview) && previewOffset > 0,
+      onClick: () => loadPreview(Math.max(0, previewOffset - 100)) },
+    next: { enabled: !busy && Boolean(preview) && previewOffset + 100 < preview.total,
+      onClick: () => loadPreview(previewOffset + 100) }
+  });
   const setBusy = (value) => {
     busy = value; modal.setBusy(value);
     form.querySelectorAll('input,select,button').forEach((control) => { control.disabled = value; });
@@ -6013,7 +6114,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
     confirm.disabled = value;
     reviewBack.disabled = value;
     scans.sync(); streams.sync();
-    pagerHost.querySelectorAll('button').forEach((button) => { button.disabled = value; });
+    drawPreviewPager();
     sourceContinue.disabled = value || !selectedFileReady;
     updateApply();
   };
@@ -6192,14 +6293,9 @@ function openAliasTransferModal(selectedList, action = 'Import') {
           filters.append(button);
         });
       drawRows();
-      const first = response.total ? offset + 1 : 0;
-      pagerHost.replaceChildren(node('span', '', `${first}–${Math.min(offset + 100, response.total)} of ${response.total}`));
-      for (const [label, next] of [['Previous', offset - 100], ['Next', offset + 100]]) {
-        if(next >= 0 && next < response.total) {
-          const button = node('button', 'ui-button ui-button-secondary', label); button.type = 'button';
-          button.addEventListener('click', () => loadPreview(next)); pagerHost.append(button);
-        }
-      }
+      previewOffset = offset;
+      pagerHost.hidden = false;
+      drawPreviewPager();
       confirmLabel.hidden = request.mode !== 'REPLACE' || response.counts.deleted === 0;
       const changed = response.counts.added + response.counts.updated + response.counts.deleted;
       apply.textContent = changed ? `Import ${number(changed)} change${changed === 1 ? '' : 's'}` : 'Finish import';
@@ -6740,9 +6836,9 @@ async function renderScanListMembers(main, scanListCatalog, scanList, renderCont
   const summaryCopy = node('div', 'alias-list-summary-copy');
   const summaryMetrics = node('span', 'muted scan-list-member-summary-metrics');
   summaryCopy.append(...[
-    node('h2', '', scanList.name), badge('Scan List', 'state-current'),
-    scanList.default === true ? badge('Default', 'state-current') : null,
-    scanList.published === false ? badge('Not published', 'state-stale') : null,
+    node('h2', '', scanList.name), badge('Scan List'),
+    scanList.default === true ? badge('Default') : null,
+    browsingWorkflows.scanListAvailabilityPill(node, scanList),
     summaryMetrics
   ].filter(Boolean));
   const updateSummary = (value) => {
@@ -10447,6 +10543,8 @@ function openPlaybackScanListCoverage(player = webCallPlayer, preferredId = null
   }
 
   const load = async (scanList) => {
+    if (modal.ready && !await modal.ready) return;
+    if (!modal.dialog.isConnected) return;
     controller?.abort();
     controller = new AbortController();
     chooser.querySelectorAll('button').forEach((button) =>
@@ -11100,23 +11198,14 @@ function dashboardActivityRangeLabel(range) {
 }
 
 function dashboardActivityRadioPager(page, onOffset) {
-  const navigation = node('nav', 'pager ui-pager dashboard-activity-radio-pager');
-  navigation.setAttribute('aria-label', 'Source radio pagination');
+  const navigation = browsingWorkflows.createBrowsingPager({ node,
+    className: 'dashboard-activity-radio-pager', ariaLabel: 'Source radio pagination',
+    countText: browsingWorkflows.pageRangeText({ offset: page.offset, visible: page.rows.length,
+      total: page.total_count, label: 'Source radios', format: number }),
+    previous: { enabled: page.offset > 0, onClick: () => onOffset(Math.max(0, page.offset - page.limit)) },
+    next: { enabled: page.has_more, onClick: () => onOffset(page.next_offset) }
+  });
   navigation.tabIndex = -1;
-  const first = page.offset + (page.rows.length ? 1 : 0);
-  const last = page.offset + page.rows.length;
-  navigation.append(node('span', 'muted', page.rows.length ?
-    `Source radios ${number(first)}-${number(last)} of ${number(page.total_count)}` :
-    `Source radios 0 of ${number(page.total_count)}`));
-  const previous = node('button', 'ui-button ui-button-secondary', 'Previous');
-  previous.type = 'button';
-  previous.disabled = page.offset <= 0;
-  previous.addEventListener('click', () => onOffset(Math.max(0, page.offset - page.limit)));
-  const next = node('button', 'ui-button ui-button-secondary', 'Next');
-  next.type = 'button';
-  next.disabled = !page.has_more;
-  next.addEventListener('click', () => onOffset(page.next_offset));
-  navigation.append(previous, next);
   return navigation;
 }
 
@@ -11941,7 +12030,8 @@ function liveDetailFilterController(options) {
     settings.append(searchField);
     modalBody.append(settings);
 
-    const footer = node('div', 'live-filter-footer');
+    const footer = aliasModalFooter();
+    footer.classList.add('live-filter-footer');
     const reset = node('button', 'ui-button ui-button-secondary', 'Reset filters');
     const done = node('button', 'ui-button ui-button-primary', 'Done');
     reset.type = 'button';
@@ -12943,7 +13033,8 @@ function openSpectrumDiscoveryWizard(selection) {
   const stage = node('div', 'spectrum-discovery-stage');
   const message = node('div', 'ui-feedback');
   message.setAttribute('role', 'status');
-  const actions = node('div', 'ui-action-row spectrum-discovery-actions');
+  const actions = aliasModalFooter();
+  actions.classList.add('spectrum-discovery-actions');
   host.append(context, steps, stage, actions);
   let session = null;
   let protocols = null;
@@ -12982,6 +13073,7 @@ function openSpectrumDiscoveryWizard(selection) {
       }).catch(() => {});
     }
   };
+  const abandon = () => { abort.abort(); void cancelSession(); };
   const modal = openReadOnlyModal('Add a channel', host, {
     id: 'spectrum-discovery', className: 'channel-editor-modal spectrum-discovery-modal',
     cleanup: () => {
@@ -12993,12 +13085,13 @@ function openSpectrumDiscoveryWizard(selection) {
     }
   });
   if (!modal) return null;
-  const abandon = () => { abort.abort(); void cancelSession(); };
   window.addEventListener('pagehide', abandon);
   const current = () => !closed && !abort.signal.aborted && activeReadOnlyModal === modal.state;
-  const request = (url, options = {}) => requestJson(url, {
-    page: false, signal: abort.signal, ...options
-  });
+  const request = async (url, options = {}) => {
+    if (modal.ready && !await modal.ready) throw new DOMException('Dialog dismissed', 'AbortError');
+    if (!current()) throw new DOMException('Dialog dismissed', 'AbortError');
+    return requestJson(url, { page: false, signal: abort.signal, ...options });
+  };
   const showStep = (index, label) => {
     probeNodes = null;
     steps.hidden = index === 3;
@@ -13522,13 +13615,16 @@ function openSpectrumDiscoveryWizard(selection) {
   return modal;
 }
 
-function tunerFrequencyAction(label, icon, hint, disabled = false) {
+function tunerFrequencyAction(label, icon, hint, disabled = false, showLabel = false, primary = false,
+    visibleLabel = label) {
   const button = node(disabled ? 'span' : 'button',
-    'ui-button ui-button-secondary tuner-frequency-action ui-icon-button');
+    `ui-button ${primary ? 'ui-button-primary tuner-frequency-action-primary' : 'ui-button-secondary'} tuner-frequency-action${
+      showLabel ? ' tuner-frequency-action-labeled' : ' ui-icon-button'}`);
   if (!disabled) button.type = 'button';
   button.title = hint;
-  button.setAttribute('aria-label', label);
+  button.setAttribute('aria-label', showLabel ? visibleLabel : label);
   button.append(iconGlyph(icon));
+  if (showLabel) button.append(node('span', 'tuner-frequency-action-label', visibleLabel));
   if (disabled) {
     button.setAttribute('role', 'button');
     button.setAttribute('aria-disabled', 'true');
@@ -13554,6 +13650,8 @@ function openTunerRadioReferenceLookup(selectedHz) {
   });
   if (!modal) return null;
   void (async () => {
+    if (modal.ready && !await modal.ready) return;
+    if (detailController.signal.aborted || !modal.dialog.isConnected) return;
     try {
       const configuration = await requestJson('/api/v1/admin/radioreference', {
         csrf: false, page: false, signal: detailController.signal
@@ -13608,7 +13706,10 @@ function openTunerFrequencyActions(selection) {
   const selectedHz = Number(selection?.frequencyHz);
   const rawHz = Number(selection?.rawFrequencyHz);
   if (!Number.isFinite(selectedHz) || selectedHz <= 0) return null;
-  if (activeTunerFrequencyPopover?.matches(':popover-open')) {
+  const actionHost = selection?.actionHost?.nodeType === Node.ELEMENT_NODE ? selection.actionHost : null;
+  const inline = Boolean(actionHost);
+  if (inline) actionHost.tunerFrequencyActionCleanup?.();
+  else if (activeTunerFrequencyPopover?.matches(':popover-open')) {
     activeTunerFrequencyPopover.hidePopover();
   }
   const anchorRect = selection.anchorRect || {
@@ -13616,42 +13717,68 @@ function openTunerFrequencyActions(selection) {
     top: window.innerHeight / 2, bottom: window.innerHeight / 2
   };
   const body = node('div', 'tuner-frequency-action-body');
+  if (inline) {
+    const heading = node('div', 'tuner-frequency-action-heading');
+    const title = node('div');
+    title.append(node('span', 'tuner-frequency-action-kicker', 'Selected frequency'),
+      node('strong', 'tuner-frequency-action-frequency', `${(selectedHz / 1_000_000).toFixed(6)} MHz`));
+    heading.append(title);
+    const powerDb = Number(selection.powerDb);
+    if (Number.isFinite(powerDb)) heading.append(
+      node('span', 'tuner-frequency-action-power', `${powerDb.toFixed(1)} dB`));
+    body.append(heading);
+  }
   const summary = node('dl', 'tuner-frequency-action-summary');
-  [['Frequency', `${(selectedHz / 1_000_000).toFixed(6)} MHz`],
-    ['Pointer', `${((Number.isFinite(rawHz) ? rawHz : selectedHz) / 1_000_000).toFixed(6)} MHz`]]
+  const summaryRows = inline ? [
+    ['Pointer', `${((Number.isFinite(rawHz) ? rawHz : selectedHz) / 1_000_000).toFixed(6)} MHz`],
+    [selection.snap ? 'Snapped' : 'Selected', `${(selectedHz / 1_000_000).toFixed(6)} MHz`]
+  ] : [
+    ['Frequency', `${(selectedHz / 1_000_000).toFixed(6)} MHz`],
+    ['Pointer', `${((Number.isFinite(rawHz) ? rawHz : selectedHz) / 1_000_000).toFixed(6)} MHz`]
+  ];
+  summaryRows
     .forEach(([label, value]) => summary.append(node('dt', '', label), node('dd', '', value)));
 
   const actions = node('div', 'tuner-frequency-action-list');
   const radioReference = tunerFrequencyAction('RadioReference lookup', 'icon-radioreference',
-    'Look up this frequency in RadioReference');
+    'Look up this frequency in RadioReference', false, inline, false, 'Look up on RadioReference');
   const listen = tunerFrequencyAction('Listen to NBFM', 'icon-speaker', 'Listen to this frequency in NBFM',
-    !selection.targetId || !capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO));
-  const addSystem = tunerFrequencyAction('Add channel / system', 'icon-plus', 'Checking this frequency…');
+    !selection.targetId || !capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO), inline, false, 'Listen in NBFM');
+  const addSystem = tunerFrequencyAction('Add channel / system', 'icon-plus', 'Checking this frequency…',
+    false, inline, inline, 'Add channel or system');
   addSystem.disabled = true;
+  const actionController = new AbortController();
+  const message = node('div', 'tuner-frequency-action-message', inline ?
+    'Checking whether this frequency can be added…' : '');
+  message.setAttribute('role', 'status');
   if (selection.tunerId && capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_CHANNELS)) {
     const query = new URLSearchParams({ tuner_id: selection.tunerId,
       frequency_hz: String(Math.round(selectedHz)) });
     void requestJson(`/api/v1/admin/spectrum-discovery/eligibility?${query}`, {
-      csrf: false, page: false, signal: activeRenderController?.signal
+      csrf: false, page: false, signal: actionController.signal
     }).then((eligibility) => {
-      if (!panel.isConnected) return;
+      if (!body.isConnected || actionController.signal.aborted) return;
       addSystem.disabled = eligibility.eligible !== true;
       addSystem.title = addSystem.disabled ? eligibility.reason || 'This frequency is already configured.' :
         'Add a channel or P25 system from this signal';
-      if (addSystem.disabled) message.textContent = addSystem.title;
+      message.textContent = addSystem.disabled ? addSystem.title :
+        (inline ? 'No configured channel uses this frequency.' : '');
     }).catch((error) => {
-      if (!panel.isConnected) return;
-      addSystem.title = 'Could not check this frequency. Close and try again.';
+      if (!body.isConnected || actionController.signal.aborted) return;
+      addSystem.title = inline ? 'Could not check this frequency. Select the signal again to retry.' :
+        'Could not check this frequency. Close and try again.';
       message.textContent = error.message || addSystem.title;
     });
-  } else addSystem.title = 'Channel setup access is required.';
+  } else {
+    addSystem.title = 'Channel setup access is required.';
+    message.textContent = addSystem.title;
+  }
   addSystem.addEventListener('click', () => {
     if (addSystem.disabled) return;
-    panel.hidePopover();
+    stopListening();
+    if (!inline) panel.hidePopover();
     openSpectrumDiscoveryWizard(selection);
   });
-  const message = node('div', 'tuner-frequency-action-message');
-  message.setAttribute('role', 'status');
   const audioOptions = node('div', 'tuner-frequency-audio-options');
   audioOptions.hidden = true;
   const bandwidth = node('select', 'ui-select');
@@ -13665,6 +13792,7 @@ function openTunerFrequencyActions(selection) {
     });
   audioOptions.append(node('label', '', 'Bandwidth'), bandwidth);
   const player = diagnosticAudioPlayer();
+  const listenLabel = listen.querySelector('.tuner-frequency-action-label');
   let audioStream = null;
   let audioEpoch = 0;
   const stopListening = () => {
@@ -13674,7 +13802,8 @@ function openTunerFrequencyActions(selection) {
     player.stop();
     listen.classList.remove('active');
     listen.title = 'Listen to this frequency in NBFM';
-    listen.setAttribute('aria-label', 'Listen to NBFM');
+    listen.setAttribute('aria-label', inline ? 'Listen in NBFM' : 'Listen to NBFM');
+    if (listenLabel) listenLabel.textContent = 'Listen in NBFM';
   };
   const startListening = async () => {
     stopListening();
@@ -13699,6 +13828,7 @@ function openTunerFrequencyActions(selection) {
       listen.classList.add('active');
       listen.title = 'Stop listening';
       listen.setAttribute('aria-label', 'Stop listening');
+      if (listenLabel) listenLabel.textContent = 'Stop listening';
       message.textContent = 'Listening for NBFM audio…';
     } catch (error) {
       if (epoch === audioEpoch) {
@@ -13716,12 +13846,57 @@ function openTunerFrequencyActions(selection) {
   });
   bandwidth.addEventListener('change', () => { if (audioStream) void startListening(); });
   radioReference.addEventListener('click', () => {
-    panel.hidePopover();
+    stopListening();
+    if (!inline) panel.hidePopover();
     openTunerRadioReferenceLookup(selectedHz);
   });
   actions.append(radioReference, listen, addSystem);
-  body.append(summary, actions, audioOptions, message);
-  const panel = node('div', 'ui-popover tuner-frequency-popover');
+  body.append(summary, message, actions, audioOptions);
+  if (inline) {
+    const help = node('details', 'tuner-frequency-action-help');
+    help.append(node('summary', '', 'What can I do here?'), node('p', '',
+      'Listen briefly without saving, check RadioReference for a known use, or add a permanent channel.'));
+    const tip = node('p', 'tuner-frequency-action-tip',
+      'Click another signal to inspect it. At full width, drag to retune an idle receiver. Zoom in before dragging to pan.');
+    body.append(help, tip);
+  }
+  const panel = inline ? actionHost : node('div', 'ui-popover tuner-frequency-popover');
+  const renderSignal = activeRenderController?.signal;
+  let sizeObserver = null;
+  let cleaned = false;
+  const position = () => {
+    if (inline) return;
+    const placement = tunerFrequencyPopoverPlacement(anchorRect, panel.getBoundingClientRect());
+    panel.style.left = `${placement.left}px`;
+    panel.style.top = `${placement.top}px`;
+  };
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    stopListening();
+    actionController.abort();
+    sizeObserver?.disconnect();
+    renderSignal?.removeEventListener('abort', closeForRouteChange);
+    window.removeEventListener('resize', position);
+    window.removeEventListener('scroll', position, true);
+    if (inline) {
+      if (panel.tunerFrequencyActionCleanup === cleanup) delete panel.tunerFrequencyActionCleanup;
+      if (body.isConnected) body.remove();
+    } else {
+      if (activeTunerFrequencyPopover === panel) activeTunerFrequencyPopover = null;
+      panel.remove();
+    }
+  };
+  const closeForRouteChange = () => {
+    if (inline) cleanup();
+    else if (panel.matches(':popover-open')) panel.hidePopover();
+  };
+  renderSignal?.addEventListener('abort', closeForRouteChange, { once: true });
+  if (inline) {
+    panel.replaceChildren(body);
+    panel.tunerFrequencyActionCleanup = cleanup;
+    return { element: body, close: cleanup };
+  }
   panel.setAttribute('popover', 'auto');
   panel.setAttribute('role', 'dialog');
   panel.setAttribute('aria-label', 'Frequency actions');
@@ -13732,28 +13907,12 @@ function openTunerFrequencyActions(selection) {
   close.title = 'Close frequency actions';
   close.addEventListener('click', () => panel.hidePopover());
   panel.append(close, body);
-  const renderSignal = activeRenderController?.signal;
-  const position = () => {
-    const placement = tunerFrequencyPopoverPlacement(anchorRect, panel.getBoundingClientRect());
-    panel.style.left = `${placement.left}px`;
-    panel.style.top = `${placement.top}px`;
-  };
-  const sizeObserver = new ResizeObserver(position);
+  sizeObserver = new ResizeObserver(position);
   const onToggle = (event) => {
     if (event.newState === 'open') return;
-    stopListening();
-    sizeObserver.disconnect();
-    renderSignal?.removeEventListener('abort', closeForRouteChange);
-    window.removeEventListener('resize', position);
-    window.removeEventListener('scroll', position, true);
-    if (activeTunerFrequencyPopover === panel) activeTunerFrequencyPopover = null;
-    panel.remove();
-  };
-  const closeForRouteChange = () => {
-    if (panel.matches(':popover-open')) panel.hidePopover();
+    cleanup();
   };
   panel.addEventListener('toggle', onToggle);
-  renderSignal?.addEventListener('abort', closeForRouteChange, { once: true });
   document.body.append(panel);
   panel.showPopover();
   activeTunerFrequencyPopover = panel;
@@ -13975,6 +14134,8 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const viewportControls = !basicOperator || panelOptions.viewportControls === true;
   const profileSelection = !basicOperator || panelOptions.profileSelection === true;
   const frequencyActions = !basicOperator && panelOptions.frequencyActions !== false;
+  const frequencySelectionHandler = typeof panelOptions.onFrequencySelection === 'function' ?
+    panelOptions.onFrequencySelection : null;
   const plotInteractions = frequencyCursor || viewportControls || frequencyActions;
   let managedTargetId = typeof panelOptions.targetId === 'string' ? panelOptions.targetId : '';
   const managedSelection = panelOptions.managedSelection === true;
@@ -14202,11 +14363,13 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     }
     const guide = node('div', 'tuner-spectrum-cursor-guide');
     guide.hidden = true;
+    const selectionGuide = node('div', 'tuner-spectrum-selection-guide');
+    selectionGuide.hidden = true;
     const overlay = node('div', 'channel-diagnostic-overlay', 'Select a tuner');
-    if (frequencyCursor) host.append(canvas, guide, overlay);
+    if (frequencyCursor) host.append(canvas, selectionGuide, guide, overlay);
     else host.append(canvas, overlay);
     card.append(host);
-    return { card, host, canvas, guide, overlay };
+    return { card, host, canvas, guide, selectionGuide, overlay };
   };
   const spectrum = plot('Tuner frequency spectrum', 'tuner-spectrum-fft');
   const waterfall = plot(
@@ -14274,6 +14437,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const targetsById = new Map();
   let targetsRefreshPending = false;
   let activeFlagSignature = '';
+  let selectedFrequencyHz = null;
   let fftValues = new Float32Array(0);
   let smoothedFftValues = new Float32Array(0);
   let spectrumSmoothingKey = '';
@@ -14354,6 +14518,8 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
 
   const controller = {
     element: layout,
+    controls: { toolbar, selection: tunerSelection, status, actions: toolbarActions },
+    surfaces: { visualWindow, displayControls, readoutPanel },
     refreshTargets,
     selectTarget(targetId) {
       if (!managedSelection || disposed) return streamRelease;
@@ -15151,6 +15317,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     viewport = nextViewport;
     restoreWaterfallHistory();
     renderFrequencyBands();
+    renderSelectionGuides();
     setRefining(true);
     setReadouts(true);
     renderActiveChannels();
@@ -15194,13 +15361,15 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
       viewport.startHz + ratio * (viewport.endHz - viewport.startHz);
     if (!Number.isFinite(rawFrequencyHz)) return null;
     const snap = snapInput.checked ? tunerSnapFrequency(rawFrequencyHz, frequencyScopes) : null;
+    const selectedFrequencyHz = snap?.frequencyHz ?? rawFrequencyHz;
     const target = targetsById.get(selectedTargetId());
     return Object.freeze({
       ...panelOptions.selectionContext?.(),
       targetId: selectedTargetId(),
       targetLabel: String(target?.label || ''),
       rawFrequencyHz,
-      frequencyHz: snap?.frequencyHz ?? rawFrequencyHz,
+      frequencyHz: selectedFrequencyHz,
+      powerDb: activeCarrierPower({ frequencyHz: selectedFrequencyHz }),
       anchorRect: { left: event.clientX, right: event.clientX,
         top: event.clientY, bottom: event.clientY },
       snap,
@@ -15216,6 +15385,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
       targetLabel: String(target?.label || ''),
       rawFrequencyHz: carrier.frequencyHz,
       frequencyHz: carrier.frequencyHz,
+      powerDb: activeCarrierPower(carrier),
       snap: null,
       canvas: 'active-carrier',
       activeCarrier: carrier
@@ -15224,7 +15394,11 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
 
   function openFrequencyActionsAtPointer(event) {
     const selection = frequencySelectionAtPointer(event);
-    if (selection) openTunerFrequencyActions(selection);
+    if (!selection) return;
+    selectedFrequencyHz = selection.frequencyHz;
+    renderSelectionGuides();
+    if (frequencySelectionHandler) frequencySelectionHandler(selection);
+    else openTunerFrequencyActions(selection);
   }
 
   function waterfallHistoryRow(yRatio) {
@@ -15267,6 +15441,20 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     setWaterfallCursorGuide(ratio);
     spectrum.guide.hidden = false;
     waterfall.guide.hidden = false;
+  }
+
+  function renderSelectionGuides() {
+    if (!viewport || !Number.isFinite(selectedFrequencyHz) || selectedFrequencyHz < viewport.startHz ||
+        selectedFrequencyHz > viewport.endHz) {
+      spectrum.selectionGuide.hidden = true;
+      waterfall.selectionGuide.hidden = true;
+      return;
+    }
+    const ratio = (selectedFrequencyHz - viewport.startHz) / (viewport.endHz - viewport.startHz);
+    [spectrum.selectionGuide, waterfall.selectionGuide].forEach((guide) => {
+      guide.style.left = `${(ratio * 100).toFixed(3)}%`;
+      guide.hidden = false;
+    });
   }
 
   function waterfallRetuneLabel(retune) {
@@ -15732,9 +15920,15 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
         flag.addEventListener('pointerleave', () => hideActiveFlag(flag));
         flag.addEventListener('focus', () => showActiveFlag(carrier, flag));
         flag.addEventListener('blur', () => hideActiveFlag(flag));
-        flag.addEventListener('click', () => openTunerFrequencyActions({
-          ...frequencySelectionForCarrier(carrier), anchorRect: flag.getBoundingClientRect()
-        }));
+        flag.addEventListener('click', () => {
+          const selection = {
+            ...frequencySelectionForCarrier(carrier), anchorRect: flag.getBoundingClientRect()
+          };
+          selectedFrequencyHz = selection.frequencyHz;
+          renderSelectionGuides();
+          if (frequencySelectionHandler) frequencySelectionHandler(selection);
+          else openTunerFrequencyActions(selection);
+        });
       }
       return flag;
     });
@@ -15743,6 +15937,8 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   }
 
   function resetViewportForTarget() {
+    selectedFrequencyHz = null;
+    renderSelectionGuides();
     const target = targetsById.get(selectedTargetId());
     const center = Number(target?.center_frequency_hz ?? 0);
     const sampleRate = Number(target?.sample_rate_hz ?? 0);
@@ -17265,7 +17461,6 @@ async function renderTunerSpectrum() {
     return;
   }
   const workspace = node('div', 'spectrum-browse-workspace');
-  const toolbar = node('div', 'spectrum-browse-toolbar');
   const select = uiSelect([], '', false);
   select.setAttribute('aria-label', 'Tuner');
   select.disabled = true;
@@ -17277,6 +17472,19 @@ async function renderTunerSpectrum() {
   const retryBrowse = uiActionButton('Retry browsing', '', () => void chooseTuner(select.value),
     'ui-button ui-button-secondary');
   retryBrowse.hidden = true;
+  const frequencyRail = node('aside', 'spectrum-browse-control-rail ui-surface');
+  frequencyRail.setAttribute('aria-label', 'Selected frequency');
+  frequencyRail.setAttribute('aria-live', 'polite');
+  let frequencyActionController = null;
+  const resetFrequencyRail = () => {
+    frequencyActionController?.close?.();
+    frequencyActionController = null;
+    const empty = node('div', 'spectrum-browse-control-rail-empty ui-empty-state');
+    empty.append(iconGlyph('icon-spectrum'), node('h2', '', 'Select a signal'),
+      node('p', '', 'Click a signal in the spectrum or waterfall to see its frequency and available actions.'));
+    frequencyRail.replaceChildren(empty);
+  };
+  resetFrequencyRail();
   const findChannels = uiActionButton('Find P25 channels', 'icon-search', () => {
     const owner = {};
     openSpectrumSearchWizard({ node, openReadOnlyModal, requestJson, uiActionButton, uiSelect, uiSelectFrame, uiPill,
@@ -17290,6 +17498,7 @@ async function renderTunerSpectrum() {
         select.disabled = true;
         findChannels.disabled = true;
         retryBrowse.hidden = true;
+        resetFrequencyRail();
         await spectrum.selectTarget('');
         await releaseLease();
         if (!disposed) {
@@ -17308,7 +17517,6 @@ async function renderTunerSpectrum() {
   }, 'ui-button ui-button-primary');
   findChannels.hidden = !capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_CHANNELS);
   findChannels.disabled = true;
-  toolbar.append(selectField, centerHost, findChannels, message, retryBrowse);
   let tuners = [];
   let selectedTuner = null;
   let lease = null;
@@ -17320,8 +17528,11 @@ async function renderTunerSpectrum() {
   let disposed = false;
   let operation = 0;
   let tuning = false;
-  const tunerOptionLabel = (tuner) => `${tuner.name} · ${Number(tuner.channel_count || 0) ?
-    `${tuner.channel_count} active` : 'Idle'}`;
+  const tunerOptionLabel = (tuner) => {
+    const rate = tunerInventoryRate(tuner.sample_rate_hz ?? tuner.configured_sample_rate_hz);
+    return `${tuner.name} · ${Number(tuner.channel_count || 0) ?
+      `${tuner.channel_count} active` : 'Idle'}${rate === 'Unavailable' ? '' : ` · ${rate}`}`;
+  };
   const confirmSelectedTuner = (tuner) => {
     selectedTuner = tuner;
     tuners = tuners.map((candidate) => candidate.id === tuner.id ? tuner : candidate);
@@ -17397,7 +17608,7 @@ async function renderTunerSpectrum() {
       }
       message.textContent = setting.id === 'center_frequency_locked' && value === true ?
         'Center frequency locked. Unlock to tune; zoom to pan.' :
-        'Click a signal to add a channel. Drag the full view to tune; zoom to pan.';
+        'Click a signal to inspect it. Drag the full view to tune; zoom to pan.';
     } catch (error) {
       message.textContent = error.message || 'Could not save center frequency settings. Try again.';
       throw error;
@@ -17415,6 +17626,16 @@ async function renderTunerSpectrum() {
     selectedTuner.settings.find((candidate) => candidate.id === 'frequency_mhz'), frequencyHz / 1_000_000);
   const spectrum = tunerSpectrumPanel(snapPresetDocument, {
     managedSelection: true,
+    onFrequencySelection: (selection) => {
+      frequencyActionController?.close?.();
+      frequencyActionController = openTunerFrequencyActions({ ...selection, actionHost: frequencyRail });
+      if (window.matchMedia('(max-width: 920px)').matches) window.requestAnimationFrame(() => {
+        const bounds = frequencyRail.getBoundingClientRect();
+        if (bounds.top < 0 || bounds.bottom > window.innerHeight) {
+          frequencyRail.scrollIntoView({ block: 'start', behavior: 'auto' });
+        }
+      });
+    },
     canRetune: canTune,
     retune: (frequencyHz) => tune(frequencyHz).catch(() => {}),
     onRetunePreview: (deltaHz) => {
@@ -17470,6 +17691,7 @@ async function renderTunerSpectrum() {
   };
   const chooseTuner = async (id) => {
     const generation = ++operation;
+    resetFrequencyRail();
     retryBrowse.hidden = true;
     select.disabled = true;
     message.textContent = 'Preparing tuner…';
@@ -17493,9 +17715,9 @@ async function renderTunerSpectrum() {
       spectrum.refreshTargets();
       renderCenter();
       message.textContent = canTune() ?
-        'Click a signal to add a channel. Drag the full view to tune; zoom to pan.' :
+        'Click a signal to inspect it. Drag the full view to tune; zoom to pan.' :
         canEditCenter() ? 'Center frequency locked. Unlock to tune; zoom to pan.' :
-          'Monitoring active channels. Click a signal to add a channel within this receiver window.';
+          'Monitoring active channels. Click a signal to inspect it within this receiver window.';
       leaseTimer = window.setTimeout(() => void renewLease(), 10_000);
     } catch (error) {
       message.textContent = error.message || 'Could not browse this tuner. Retry or choose another tuner.';
@@ -17537,9 +17759,27 @@ async function renderTunerSpectrum() {
     } catch (error) { if (!disposed) message.textContent = error.message; }
   };
   select.addEventListener('change', () => void chooseTuner(select.value));
-  workspace.append(toolbar, spectrum.element);
-  if (!beginPage(renderContext, pageHeader('Tuner Spectrum',
-    'Browse signals and add channels from a selected frequency.'), workspace)) {
+  const browseControls = node('div', 'spectrum-browse-controls');
+  browseControls.append(selectField, centerHost);
+  const browseState = node('div', 'spectrum-browse-state');
+  browseState.append(spectrum.controls.status, message, retryBrowse);
+  const toolbarSide = node('div', 'spectrum-browse-toolbar-side');
+  toolbarSide.append(browseState, spectrum.controls.actions);
+  spectrum.controls.selection.classList.add('spectrum-browse-selection');
+  spectrum.controls.selection.replaceChildren(browseControls);
+  spectrum.controls.toolbar.classList.add('spectrum-browse-toolbar');
+  spectrum.controls.toolbar.setAttribute('aria-label', 'Spectrum receiver controls');
+  spectrum.controls.toolbar.replaceChildren(spectrum.controls.selection, toolbarSide);
+  spectrum.element.classList.add('spectrum-browse-panel');
+  spectrum.element.append(spectrum.surfaces.visualWindow, spectrum.surfaces.displayControls,
+    spectrum.surfaces.readoutPanel);
+  const main = node('div', 'spectrum-browse-main');
+  main.append(spectrum.element, frequencyRail);
+  workspace.append(spectrum.controls.toolbar, main);
+  const header = pageHeader('Tuner Spectrum',
+    'Browse live signals, find P25 channels, or inspect a frequency.');
+  header.append(findChannels);
+  if (!beginPage(renderContext, header, workspace)) {
     spectrum.close();
     return;
   }
@@ -17548,6 +17788,7 @@ async function renderTunerSpectrum() {
     disposed = true;
     operation += 1;
     centerControl?.close();
+    resetFrequencyRail();
     spectrum.close();
     void releaseLease();
     window.removeEventListener('pagehide', close);
@@ -19602,14 +19843,14 @@ function activityFilterToolbar(context, initialFilters) {
   moreTrigger.setAttribute('aria-controls', morePanelId);
   moreTrigger.setAttribute('aria-haspopup', 'dialog');
   moreTrigger.setAttribute('aria-expanded', 'false');
-  moreTrigger.append(iconGlyph('icon-filter'), node('span', '', 'More filters'));
+  moreTrigger.append(iconGlyph('icon-filter'), node('span', '', 'Filters'));
   const moreCount = activityMoreFilterCount(initialFilters, capabilities);
   if (moreCount) moreTrigger.append(uiPill(number(moreCount), 'neutral'));
   const morePanel = node('div', 'ui-popover activity-filter-more-panel');
   morePanel.id = morePanelId;
   morePanel.setAttribute('popover', 'auto');
   morePanel.setAttribute('role', 'dialog');
-  morePanel.setAttribute('aria-label', 'More activity filters');
+  morePanel.setAttribute('aria-label', 'Activity filters');
   const eventControls = [eventControl.field];
   if (encryptionControl) eventControls.push(encryptionControl.field);
   const scopeControls = [];
@@ -19640,7 +19881,7 @@ function activityFilterToolbar(context, initialFilters) {
   primary.append(moreTrigger, morePanel);
 
   const primaryActions = node('div', 'activity-filter-primary-actions');
-  const apply = node('button', 'ui-button ui-button-primary', 'Apply');
+  const apply = node('button', 'ui-button ui-button-primary', 'Apply filters');
   apply.type = 'submit';
   primaryActions.append(apply);
   primary.append(primaryActions);
@@ -19665,7 +19906,7 @@ function activityFilterToolbar(context, initialFilters) {
     chipsHost.append(chip);
   });
   if (chipDefinitions.length) {
-    const clear = node('button', 'link-button activity-filter-clear', 'Clear all');
+    const clear = node('button', 'link-button activity-filter-clear', 'Clear filters');
     clear.type = 'button';
     clear.addEventListener('click', () => {
       const overrides = Object.fromEntries(ACTIVITY_ROUTE_KEYS.map((key) => [key, null]));
@@ -20073,35 +20314,14 @@ async function renderActivity(scopeParameters, title = 'Activity') {
   const filterToolbar = activityFilterToolbar(activityContext, filters);
   block.insertBefore(filterToolbar, activityTable);
   if (historyNotice) block.insertBefore(historyNotice, filterToolbar);
-  const controls = node('div', 'pager ui-pager');
-  let newestControl = null;
-  let olderControl = null;
-  const pagerControl = (current, enabled, label, target) => {
-    if (enabled && current?.tagName === 'A') {
-      current.setAttribute('href', target);
-      return current;
-    }
-    if (!enabled && current?.tagName === 'SPAN' && current.classList.contains('disabled')) return current;
-    if (enabled) return anchor(label, target, 'ui-button ui-button-secondary');
-    const unavailable = node('span', 'ui-button ui-button-secondary disabled', label);
-    unavailable.setAttribute('aria-disabled', 'true');
-    return unavailable;
-  };
+  const controls = browsingWorkflows.createBrowsingPager({ node, ariaLabel: 'Activity pages' });
   const updatePager = (page) => {
-    const nextNewest = pagerControl(newestControl, Boolean(route.get('before_id')), 'Newest',
-      currentHref({ before_id: null }));
-    const nextOlder = pagerControl(olderControl, Boolean(page?.has_more), 'Older',
-      currentHref({ before_id: page?.next_before_id }));
-    if (nextNewest !== newestControl) {
-      if (newestControl) newestControl.replaceWith(nextNewest);
-      else controls.append(nextNewest);
-      newestControl = nextNewest;
-    }
-    if (nextOlder !== olderControl) {
-      if (olderControl) olderControl.replaceWith(nextOlder);
-      else controls.append(nextOlder);
-      olderControl = nextOlder;
-    }
+    controls.update({
+      previous: { label: 'Newest', enabled: Boolean(route.get('before_id')),
+        href: currentHref({ before_id: null }) },
+      next: { label: 'Older', enabled: Boolean(page?.has_more),
+        href: currentHref({ before_id: page?.next_before_id }) }
+    });
   };
   updatePager(data);
   block.append(controls);
@@ -21157,7 +21377,10 @@ async function renderModernChannelCatalog(renderContext) {
       uiActionButton(label, icon, async () => {
         const ids = [...selected];
         if (!ids.length) return;
-        if (confirmMessage && !window.confirm(confirmMessage.replace('{count}', String(ids.length)))) return;
+        if (confirmMessage && !await confirmAction(confirmMessage.replace('{count}', String(ids.length)), {
+          title: 'Delete selected channels', confirmLabel: `Delete ${ids.length} ${ids.length === 1 ? 'channel' : 'channels'}`
+        })) return;
+        if (!statusHost.isConnected) return;
         try {
           await channelAdminMutation('/api/v1/admin/channels/actions', {
             method: 'POST', body: { revision: state.revision, action: actionName, configuration_ids: ids }
@@ -21940,7 +22163,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
       '.channel-admin-toolbar .ui-button-primary',
     cleanup: () => squelchTuner?.close()
   });
-  if (!modal) return;
+  if (!modal || (modal.ready && !await modal.ready)) return;
   try {
     const [protocols, options, loadedEntry] = await Promise.all([
       requestJson('/api/v1/admin/channels/protocols', { csrf: false }),
@@ -21985,6 +22208,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
         const protocolSelect = uiSelect(profiles.map((candidate) =>
           ({ value: candidate.id, label: channelCreationProtocolLabel(candidate) })), profile.id);
         protocolSelect.addEventListener('change', async () => {
+          if (modal.state.isBusy()) return;
           const generation = ++templateGeneration;
           modal.setBusy(true);
           try {
@@ -22155,9 +22379,12 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
       save.type = 'submit';
       const startStop = editing ? uiActionButton(entry.processing_state === 'RUNNING' ? 'Stop' : 'Start',
         entry.processing_state === 'RUNNING' ? 'icon-stop' : 'icon-play', async () => {
-          if (modal.isDirty() || startStop.disabled) return;
-          startStop.disabled = true;
+          if (modal.isDirty() || startStop.disabled || modal.state.isBusy()) return;
+          const disabled = [...form.elements].filter(control => typeof control.disabled === 'boolean')
+            .map(control => [control, control.disabled]);
+          disabled.forEach(([control]) => { control.disabled = true; });
           modal.setBusy(true);
+          form.setAttribute('aria-busy', 'true');
           errors.replaceChildren();
           try {
             const action = entry.processing_state === 'RUNNING' ? 'STOP' : 'START';
@@ -22175,23 +22402,36 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
             draw();
           } catch (error) {
             errors.replaceChildren(node('div', 'ui-notice ui-notice-danger', error.message));
-            startStop.disabled = false;
-          } finally { modal.setBusy(false); }
+          } finally {
+            disabled.forEach(([control, wasDisabled]) => { control.disabled = wasDisabled; });
+            modal.setBusy(false);
+            form.removeAttribute('aria-busy');
+          }
         }, 'ui-button ui-button-secondary') : null;
       const sectionLayout = node('div', 'channel-editor-section-layout ui-editor-layout');
       const sectionStack = node('div', 'channel-editor-sections ui-editor-sections');
       sectionStack.append(...sectionNodes);
       sectionLayout.append(channelEditorSectionNavigation(panels, sectionPlan), sectionStack);
-      const footer = node('footer', 'channel-editor-footer ui-action-row ui-modal-footer');
-      footer.append(...[startStop, reset, node('span', 'channel-editor-footer-spacer'), cancel, save]
+      const footer = node('footer', 'channel-editor-footer ui-modal-footer ui-modal-footer-flush ui-action-row');
+      footer.append(...[startStop, reset, node('span', 'channel-editor-footer-spacer ui-modal-footer-spacer'), cancel, save]
         .filter(Boolean));
       form.append(sectionLayout, errors, footer);
+      const workflow = createFormWorkflow({ form, submit: save, modal,
+        renderFeedback: (state, message) => {
+          errors.setAttribute('role', state === 'error' ? 'alert' : 'status');
+          errors.setAttribute('aria-live', state === 'error' ? 'assertive' : 'polite');
+          if (state === 'error') return;
+          errors.replaceChildren(...(message ? [node('div',
+            `ui-feedback${state === 'loading' ? ' ui-feedback-loading' : ''}`, message)] : []));
+        } });
       form.addEventListener('input', () => {
+        if (modal.state.isBusy()) return;
         modal.setDirty(true);
         if (startStop) startStop.disabled = true;
         channelEditorDependencies(form);
       });
       form.addEventListener('change', () => {
+        if (modal.state.isBusy()) return;
         modal.setDirty(true);
         if (startStop) startStop.disabled = true;
         channelEditorDependencies(form);
@@ -22202,35 +22442,39 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
       }, true);
       form.addEventListener('submit', async (event) => {
         event.preventDefault();
-        if (!form.reportValidity()) return;
+        if (save.disabled || modal.state.isBusy()) return;
         errors.replaceChildren();
-        save.disabled = true;
-        try {
+        await workflow.save(async () => {
           const payload = channelEditorPayload(form, editorProfile, channel);
           if (editing && entry.processing_state === 'RUNNING') {
-            if (!window.confirm('Save these settings and restart the running channel?')) {
-              save.disabled = false;
-              return;
+            if (!await confirmAction('Save these settings and restart the running channel?', {
+              title: 'Restart running channel', confirmLabel: 'Save and restart', cancelLabel: 'Keep editing', tone: 'primary'
+            })) {
+              throw new DOMException('Restart cancelled', 'AbortError');
             }
           }
+          if (!modal.dialog.isConnected) throw new DOMException('Editor closed', 'AbortError');
           const result = await requestJson(editing ?
             `/api/v1/admin/channels/${encodeURIComponent(configurationId)}` : '/api/v1/admin/channels', {
             method: editing ? 'PUT' : 'POST', body: { revision, ...payload }, timeoutMs: 30_000
           });
           revision = Number(result.revision);
-          modal.setDirty(false);
-          await renderChannelSetup();
-          if (activeReadOnlyModal === modal.state) closeReadOnlyModal(true);
-        } catch (error) {
-          aliasMutationError(errors, error, () => {
-            modal.setDirty(false);
-            closeReadOnlyModal(true);
-            openChannelEditorModal(mode, configurationId);
-          });
-          errors.scrollIntoView({ block: 'nearest' });
-          errors.focus({ preventScroll: true });
-          save.disabled = false;
-        }
+        }, {
+          onSuccess: async () => {
+            await renderChannelSetup();
+            if (activeReadOnlyModal === modal.state) closeReadOnlyModal(true);
+          },
+          onError: (error) => {
+            if (error.name === 'AbortError') { errors.replaceChildren(); return; }
+            aliasMutationError(errors, error, () => {
+              modal.setDirty(false);
+              closeReadOnlyModal(true);
+              openChannelEditorModal(mode, configurationId);
+            });
+            errors.scrollIntoView({ block: 'nearest' });
+            errors.focus({ preventScroll: true });
+          }
+        });
       });
       host.replaceChildren(form);
       channelEditorDependencies(form);
@@ -22910,10 +23154,11 @@ function openManagedUserModal(account, statusHost, returnFocusSelector) {
   confirmation.required = true;
   const message = node('div', 'admin-form-message');
   message.setAttribute('role', 'alert');
-  const actions = node('div', 'admin-form-actions');
   const submit = node('button', 'ui-button ui-button-primary', creating ? 'Create account' : 'Change password');
   submit.type = 'submit';
-  actions.append(submit);
+  const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
+  cancel.type = 'button';
+  const actions = aliasModalFooter(cancel, submit);
   form.append(formField('Username', username,
       creating ? 'Use 1–64 characters. Start with a lowercase letter or number; use only lowercase letters, ' +
         'numbers, dots, underscores, or hyphens.' : ''),
@@ -22923,20 +23168,18 @@ function openManagedUserModal(account, statusHost, returnFocusSelector) {
   const modal = openReadOnlyModal(creating ? 'Create account' : `Change password · ${account.username}`, form, {
     id: creating ? 'create-user' : 'change-password', returnFocusSelector, className: 'admin-modal'
   });
+  if (!modal) return;
+  cancel.addEventListener('click', modal.close);
+  const workflow = createFormWorkflow({ form, submit, feedback: message, modal });
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (submit.disabled) return;
     const validation = validateManagedUserInput(username.value, password.value, confirmation.value, creating);
     if (validation) {
-      message.textContent = validation;
+      workflow.showFeedback('error', validation);
       return;
     }
-    submit.disabled = true;
-    username.disabled = true;
-    password.disabled = true;
-    confirmation.disabled = true;
-    message.textContent = creating ? 'Creating account…' : 'Changing password…';
-    try {
+    const saved = await workflow.save(async () => {
       if (creating) {
         await requestJson('/api/v1/admin/users', {
           method: 'POST', body: { username: normalizedManagedUsername(username.value), password: password.value }
@@ -22946,24 +23189,26 @@ function openManagedUserModal(account, statusHost, returnFocusSelector) {
           method: 'PUT', body: { password: password.value }
         });
       }
-      password.value = '';
-      confirmation.value = '';
-      modal.close();
-      adminStatusMessage(statusHost, creating ? 'Account created.' : `Password changed for ${account.username}.`);
-      if (!creating) await refreshAccessSession(false);
-      await render();
-    } catch (error) {
-      password.value = '';
-      confirmation.value = '';
-      message.textContent = error.message;
-      submit.disabled = false;
-      username.disabled = !creating;
-      password.disabled = false;
-      confirmation.disabled = false;
-      password.focus();
-    }
+    }, {
+      saving: creating ? 'Creating account…' : 'Changing password…',
+      onSuccess: async () => {
+        password.value = '';
+        confirmation.value = '';
+        modal.close();
+        adminStatusMessage(statusHost, creating ? 'Account created.' : `Password changed for ${account.username}.`);
+        if (!creating) await refreshAccessSession(false);
+        await render();
+        if (returnFocusSelector) document.querySelector(returnFocusSelector)?.focus({ preventScroll: true });
+      },
+      onError: (error) => {
+        password.value = '';
+        confirmation.value = '';
+        return { state: 'error', message: error.message };
+      }
+    });
+    if (!saved && password.isConnected) password.focus();
   });
-  (creating ? username : password).focus();
+  modal.focus?.(creating ? username : password);
 }
 
 function openDeleteUserModal(account, statusHost, returnFocusSelector) {
@@ -22971,30 +23216,39 @@ function openDeleteUserModal(account, statusHost, returnFocusSelector) {
   body.append(node('p', '', `Delete ${account.username}? They will be signed out immediately.`));
   const message = node('div', 'admin-form-message');
   message.setAttribute('role', 'alert');
-  const actions = node('div', 'admin-form-actions');
+  const actions = aliasModalFooter();
+  const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
+  cancel.type = 'button';
   const remove = node('button', 'ui-button ui-button-danger', 'Delete account');
   remove.type = 'button';
-  actions.append(remove);
+  actions.append(cancel, remove);
   body.append(message, actions);
   const modal = openReadOnlyModal(`Delete account · ${account.username}`, body, {
     id: 'delete-user', returnFocusSelector, className: 'admin-modal'
   });
+  if (!modal) return;
+  cancel.addEventListener('click', modal.close);
   remove.addEventListener('click', async () => {
     if (remove.disabled) return;
     remove.disabled = true;
+    cancel.disabled = true;
+    modal.setBusy(true);
     message.textContent = 'Deleting account…';
     try {
       await requestJson(adminUserEndpoint(account.username), { method: 'DELETE' });
+      modal.setBusy(false);
       modal.close();
       adminStatusMessage(statusHost, `${account.username} was deleted.`);
       await refreshAccessSession(false);
       await render();
     } catch (error) {
       remove.disabled = false;
+      cancel.disabled = false;
+      modal.setBusy(false);
       message.textContent = error.message;
     }
   });
-  remove.focus();
+  modal.focus?.(cancel);
 }
 
 function userActions(account, statusHost) {
@@ -23249,7 +23503,7 @@ function openScanListAdminModal(scanList, revision) {
   sortOrder.required = true;
   sortOrder.value = String(scanList?.sort_order ?? 0);
   const publishedField = uiToggleField('Available to listeners', scanList?.published !== false,
-    'Available to listeners', 'Unpublished lists remain configurable but cannot be selected in the listener.');
+    'Available to listeners', 'Hidden lists can still be edited.');
   const published = publishedField.querySelector('input');
   const defaultField = uiToggleField('Default scan list', scanList?.default === true, 'Default scan list',
     scanList?.default === true ? 'Choose another list as the default before changing or deleting this one.' :
@@ -23272,8 +23526,7 @@ function openScanListAdminModal(scanList, revision) {
   cancel.type = 'button';
   const submit = node('button', 'ui-button ui-button-primary', editing ? 'Save Scan List' : 'Create Scan List');
   submit.type = 'submit';
-  const actions = node('div', 'admin-form-actions');
-  actions.append(cancel, submit);
+  const actions = aliasModalFooter(cancel, submit);
   form.append(formField('Name', name, 'Shown to listeners; up to 100 characters.'),
     formField('Description', description, 'Optional context for listeners.'),
     formField('Display order', sortOrder, 'Lower numbers appear first.'),
@@ -23286,36 +23539,39 @@ function openScanListAdminModal(scanList, revision) {
   });
   if (!modal) return;
   cancel.addEventListener('click', modal.close);
-  form.addEventListener('input', () => modal.setDirty(true));
-  form.addEventListener('change', () => modal.setDirty(true));
+  const controls = { name, description, sortOrder, published, defaultScanList };
+  let original = JSON.stringify(scanListAdminPayload(controls));
+  const workflow = createFormWorkflow({ form, submit, feedback: message, modal,
+    changed: editing ? () => JSON.stringify(scanListAdminPayload(controls)) !== original : null });
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (!form.reportValidity() || submit.disabled) return;
-    submit.disabled = true;
-    message.textContent = editing ? 'Saving scan list…' : 'Creating scan list…';
-    try {
+    await workflow.save(async () => {
       const path = editing ? `/api/v1/admin/scan-lists/${scanList.id}` : '/api/v1/admin/scan-lists';
       const result = await requestJson(path, {
         method: editing ? 'PUT' : 'POST',
-        body: { revision, scan_list: scanListAdminPayload({
-          name, description, sortOrder, published, defaultScanList
-        }) }
+        body: { revision, scan_list: scanListAdminPayload(controls) }
       });
-      if (!editing) {
-        const createdId = Number(result?.scan_list_id ?? result?.scanListId);
-        if (Number.isInteger(createdId) && createdId > 0) selectedAdminScanListId = createdId;
-      }
-      modal.setDirty(false);
-      modal.close();
-      await refreshPlaybackScanLists(true);
-      await render();
-    } catch (error) {
-      message.textContent = error.status === 409 ?
-        `${error.message} Reload Scan Lists and try again.` : error.message;
-      submit.disabled = false;
-    }
+      original = JSON.stringify(scanListAdminPayload(controls));
+      return result;
+    }, {
+      saving: editing ? 'Saving scan list…' : 'Creating scan list…',
+      onSuccess: async (result) => {
+        if (!editing) {
+          const createdId = Number(result?.scan_list_id ?? result?.scanListId);
+          if (Number.isInteger(createdId) && createdId > 0) selectedAdminScanListId = createdId;
+        }
+        modal.setDirty(false);
+        modal.close();
+        await refreshPlaybackScanLists(true);
+        await render();
+        document.querySelector(editing ? `.admin-scan-list-edit[data-scan-list-id="${scanList.id}"]` :
+          '#admin-create-scan-list')?.focus({ preventScroll: true });
+      },
+      onError: (error) => ({ state: 'error', message: error.status === 409 ?
+        `${error.message} Reload Scan Lists and try again.` : error.message })
+    });
   });
-  name.focus();
+  modal.focus?.(name);
 }
 
 function openDeleteScanListAdminModal(scanList, revision) {
@@ -23333,7 +23589,7 @@ function openDeleteScanListAdminModal(scanList, revision) {
   cancel.type = 'button';
   const remove = node('button', 'ui-button ui-button-danger', 'Delete Scan List');
   remove.type = 'button';
-  const actions = node('div', 'admin-form-actions');
+  const actions = aliasModalFooter();
   actions.append(cancel, remove);
   body.append(message, actions);
   const modal = openReadOnlyModal(`Delete scan list · ${scanList.name}`, body, {
@@ -23345,6 +23601,8 @@ function openDeleteScanListAdminModal(scanList, revision) {
   remove.addEventListener('click', async () => {
     if (remove.disabled) return;
     remove.disabled = true;
+    cancel.disabled = true;
+    modal.setBusy(true);
     message.textContent = 'Deleting scan list…';
     try {
       await requestJson(`/api/v1/admin/scan-lists/${scanList.id}`, {
@@ -23352,6 +23610,7 @@ function openDeleteScanListAdminModal(scanList, revision) {
       });
       const deletedSelected = selectedAdminScanListId === Number(scanList.id);
       if (deletedSelected) selectedAdminScanListId = null;
+      modal.setBusy(false);
       modal.close();
       await refreshPlaybackScanLists(true);
       await render();
@@ -23360,9 +23619,11 @@ function openDeleteScanListAdminModal(scanList, revision) {
       message.textContent = error.status === 409 ?
         `${error.message} Reload Scan Lists and try again.` : error.message;
       remove.disabled = false;
+      cancel.disabled = false;
+      modal.setBusy(false);
     }
   });
-  remove.focus();
+  modal.focus?.(cancel);
 }
 
 function adminScanListActions(scanList, revision) {
@@ -23419,7 +23680,8 @@ function adminScanListSelector(scanList) {
   const main = node('span', 'scan-list-selector-main');
   main.append(node('strong', '', name));
   if (scanList.default === true) main.append(node('small', 'muted', 'Default'));
-  else if (scanList.published === false) main.append(node('small', 'muted', 'Hidden from listeners'));
+  else if (scanList.published === false) main.append(node('small', 'muted',
+    browsingWorkflows.scanListAvailabilityLabel(scanList)));
   const count = Number(scanList.alias_count || 0);
   selector.append(main, node('span', 'scan-list-selector-count muted',
     `${number(count)} ${count === 1 ? 'alias' : 'aliases'}`));
@@ -23438,9 +23700,8 @@ function adminScanListDetail(scanList, revision) {
     .replace(/[^a-z0-9_-]/gi, '-')}`;
   detail.setAttribute('aria-labelledby', title.id);
   const badges = badgeGroup([
-    scanList.default === true ? badge('Default', 'state-current') : null,
-    scanList.published === false ? badge('Hidden from listeners', 'state-stale') :
-      badge('Available to listeners')
+    scanList.default === true ? badge('Default') : null,
+    browsingWorkflows.scanListAvailabilityPill(node, scanList)
   ]);
   badges.classList.add('scan-list-detail-badges');
   heading.append(title, badges);
@@ -23752,12 +24013,14 @@ async function renderAdminRadioReferenceSettings() {
     forms.append(accountDetails, regionForm);
     settingsModal = openReadOnlyModal('RadioReference settings', forms, {
       id: 'radioreference-settings', className: 'radioreference-settings-modal',
-      returnFocusSelector: '.radioreference-settings-trigger'
+      returnFocusSelector: '.radioreference-settings-trigger',
+      onClose: () => { gate.append(accountForm); settingsModal = null; }
     });
+    if (!settingsModal) gate.append(accountForm);
   });
 
   const importWorkspace = createRadioReferenceImportWorkspace({
-    node, iconGlyph, metricCard, formField, uiSelectFrame, uiPill, uiSegmentedControl, table,
+    node, iconGlyph, metricCard, formField, uiSelectFrame, uiPill, uiSegmentedControl, table, browsingWorkflows,
     openReadOnlyModal, closeReadOnlyModal, requestJson, formatFrequency: frequency, formatNumber: number,
     href, anchor, modalFooter: aliasModalFooter, createAliasListPopupTrigger: aliasListPopupTrigger,
     directoryTimeoutMs: RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS,
@@ -23944,6 +24207,9 @@ async function renderAdminSpectrumSnapSettings(target = content) {
   target.append(panel);
 
   let confirmed = null;
+  const workflow = createFormWorkflow({ form, submit: save, feedback: message, ready: false,
+    changed: () => Boolean(confirmed) && country.value !== confirmed.countryCode });
+  workflow.showFeedback('loading', 'Loading spectrum country…');
   const apply = (documentValue) => {
     confirmed = documentValue;
     country.replaceChildren(...documentValue.countries.map((item) => {
@@ -23953,38 +24219,24 @@ async function renderAdminSpectrumSnapSettings(target = content) {
     }));
     country.value = documentValue.countryCode;
     country.disabled = false;
-    save.disabled = true;
   };
-  country.addEventListener('change', () => {
-    save.disabled = !confirmed || country.value === confirmed.countryCode;
-    message.textContent = save.disabled ? '' : 'Unsaved change';
-  });
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (!confirmed || !form.reportValidity() || save.disabled) return;
-    country.disabled = true;
-    save.disabled = true;
-    message.textContent = 'Saving country…';
-    try {
+    await workflow.save(async () => {
       apply(await requestSpectrumSnapPresetDocument('/api/v1/admin/spectrum-snap-presets', 'PUT',
         country.value, confirmed.revision));
-      message.textContent = 'Country saved.';
-    } catch (error) {
-      if (error.current) {
-        apply(error.current);
-        message.textContent = 'The spectrum country changed elsewhere. The saved value was loaded.';
-      } else {
-        message.textContent = error.message;
-      }
-      country.disabled = false;
-      save.disabled = !confirmed || country.value === confirmed.countryCode;
-    }
+    }, { saving: 'Saving country…', success: 'Country saved.', onError: (error) => {
+      if (!error.current) return { state: 'error', message: error.message };
+      apply(error.current);
+      return { state: 'warning', message: 'The spectrum country changed elsewhere. The saved value was loaded.' };
+    } });
   });
   try {
     apply(await requestSpectrumSnapPresetDocument('/api/v1/admin/spectrum-snap-presets'));
-    message.textContent = '';
+    workflow.setReady(true);
+    workflow.showFeedback('status', '');
   } catch (error) {
-    message.textContent = error.message;
+    workflow.showFeedback('error', error.message);
   }
 }
 
@@ -24060,44 +24312,37 @@ async function renderAdminReceiverBehaviorSettings(target = content) {
   target.append(panel);
 
   let confirmed = null;
+  const workflow = createFormWorkflow({ form, submit: save, feedback: message, ready: false,
+    changed: () => Boolean(confirmed) && Number(grantAge.value) !==
+      confirmed.settings.traffic_grant_age_out_milliseconds });
+  workflow.showFeedback('loading', 'Loading Live timing…');
   const apply = (envelope) => {
     confirmed = envelope;
     const value = envelope.settings;
     grantAge.value = String(value.traffic_grant_age_out_milliseconds);
   };
-  const disable = (value) => {
-    grantAge.disabled = value;
-    save.disabled = value;
-  };
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (!form.reportValidity() || save.disabled) return;
-    disable(true);
-    message.textContent = 'Saving Live timing…';
-    try {
+    await workflow.save(async () => {
       const next = await requestReceiverSettings('PUT', {
         traffic_grant_age_out_milliseconds: Number(grantAge.value)
       }, confirmed?.revision);
       apply(next);
-      message.textContent = 'Live timing saved.';
-    } catch (error) {
+    }, { saving: 'Saving Live timing…', success: 'Live timing saved.', onError: (error) => {
       if (error?.code === 'receiver_settings_conflict' && error.current) {
         apply(error.current);
-        message.textContent = 'Live timing changed elsewhere. The latest saved value was loaded.';
-      } else {
-        if (confirmed) apply(confirmed);
-        message.textContent = error.message;
+        return { state: 'warning', message: 'Live timing changed elsewhere. The latest saved value was loaded.' };
       }
-    } finally {
-      disable(false);
-    }
+      return { state: 'error', message: error.message };
+    } });
   });
   try {
     apply(await requestReceiverSettings());
-    disable(false);
-    message.textContent = '';
+    grantAge.disabled = false;
+    workflow.setReady(true);
+    workflow.showFeedback('status', '');
   } catch (error) {
-    message.textContent = error.message;
+    workflow.showFeedback('error', error.message);
   }
 }
 
@@ -24854,26 +25099,17 @@ function receiverHealthIncidentList(incidents, resolved = false) {
 }
 
 function receiverHealthResolvedPager(page, onPage) {
-  const navigation = node('nav', 'pager ui-pager receiver-health-resolved-pager');
-  navigation.setAttribute('aria-label', 'Recently cleared issues');
+  const navigation = browsingWorkflows.createBrowsingPager({ node,
+    className: 'receiver-health-resolved-pager', ariaLabel: 'Recently cleared issues',
+    countText: `${browsingWorkflows.pageRangeText({ offset: page.offset, visible: page.rows.length,
+      total: page.total_count, label: 'Cleared issues', format: number })} · ` +
+      `Page ${number(page.page + 1)} of ${number(page.page_count)}`,
+    previous: { enabled: page.page > 0, onClick: () => onPage(page.page - 1),
+      focusKey: 'resolved-previous' },
+    next: { enabled: page.has_more, onClick: () => onPage(page.page + 1), focusKey: 'resolved-next' }
+  });
   navigation.dataset.receiverHealthFocus = 'resolved-pager';
   navigation.tabIndex = -1;
-  const first = page.offset + 1;
-  const last = page.offset + page.rows.length;
-  navigation.append(node('span', 'muted',
-    `Cleared issues ${number(first)}-${number(last)} of ${number(page.total_count)} · ` +
-      `Page ${number(page.page + 1)} of ${number(page.page_count)}`));
-  const previous = node('button', 'ui-button ui-button-secondary', 'Previous');
-  previous.type = 'button';
-  previous.dataset.receiverHealthFocus = 'resolved-previous';
-  previous.disabled = page.page <= 0;
-  previous.addEventListener('click', () => onPage(page.page - 1));
-  const next = node('button', 'ui-button ui-button-secondary', 'Next');
-  next.type = 'button';
-  next.dataset.receiverHealthFocus = 'resolved-next';
-  next.disabled = !page.has_more;
-  next.addEventListener('click', () => onPage(page.page + 1));
-  navigation.append(previous, next);
   return navigation;
 }
 
@@ -25621,7 +25857,7 @@ function openResetUserPreferences(returnFocusSelector = null) {
   cancel.type = 'button';
   const reset = node('button', 'ui-button ui-button-danger', 'Reset All Personal Preferences');
   reset.type = 'button';
-  const actions = node('div', 'admin-form-actions');
+  const actions = aliasModalFooter();
   actions.append(cancel, reset);
   body.append(message, actions);
   const modal = openReadOnlyModal('Reset personal preferences', body, {
@@ -25704,8 +25940,8 @@ async function renderSettings() {
 async function renderStreaming() {
   const renderContext = captureRenderContext();
   const workspace = createStreamingWorkspace({
-    node, metricCard, metrics, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, table,
-    openReadOnlyModal, requestJson, modalFooter: aliasModalFooter, formatNumber: number, href,
+    node, metricCard, metrics, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, table, browsingWorkflows,
+    openReadOnlyModal, confirmAction, requestJson, modalFooter: aliasModalFooter, formatNumber: number, href,
     signal: renderContext.signal
   });
   const routingHost = node('div');
@@ -25720,12 +25956,21 @@ async function renderStreaming() {
 
 function renderAdminRemoteLinks(renderContext) {
   const workspace = createRemoteLinksWorkspace({
-    node, metrics, formField, uiSelectFrame, uiToggleField, uiStatus, iconGlyph,
-    openReadOnlyModal, requestJson, modalFooter: aliasModalFooter, signal: renderContext.signal
+    node, metrics, formField, uiSelectFrame, uiToggleField, uiStatus, iconGlyph, createFormWorkflow,
+    openReadOnlyModal, confirmAction, requestJson, modalFooter: aliasModalFooter, signal: renderContext.signal
   });
   const close = () => workspace.close();
   renderContext.signal.addEventListener('abort', close, { once: true });
   content.append(workspace.element);
+}
+
+function renderAdminApplicationLog(renderContext) {
+  const workspace = createApplicationLogWorkspace({
+    node, formField, uiSelectFrame, uiStatus, iconButton, setIconButton, uiActionButton,
+    api, signal: renderContext.signal
+  });
+  content.append(workspace.element);
+  pageConnections.add(workspace);
 }
 
 function renderListenMap() {
@@ -26203,6 +26448,8 @@ async function renderTuners() {
     if (!modal) return;
 
     async function loadRecordingFiles(rescan = false) {
+      if (modal.ready && !await modal.ready) return;
+      if (!modal.dialog.isConnected) return;
       const request = ++recordingRequest;
       rescanButton.disabled = true;
       catalogBody.replaceChildren(node('div', 'loading', 'Reading recording tuner files…'));
@@ -26261,7 +26508,7 @@ async function renderTuners() {
         cancel.addEventListener('click', modal.close);
         const add = node('button', 'ui-button ui-button-primary', 'Add recording tuner');
         add.type = 'submit';
-        const actions = node('div', 'admin-form-actions');
+        const actions = aliasModalFooter();
         actions.append(cancel, add);
         form.append(files, formField('Center frequency (MHz)', center), message, actions);
         form.addEventListener('submit', async (event) => {
@@ -26301,8 +26548,11 @@ async function renderTuners() {
         if (modal.dialog.isConnected && request === recordingRequest) rescanButton.disabled = false;
       }
     }
-    rescanButton.addEventListener('click', () => {
-      if (modal.isDirty() && !window.confirm('Discard changes and rescan recording files?')) return;
+    rescanButton.addEventListener('click', async () => {
+      if (modal.isDirty() && !await confirmAction('Discard changes and rescan recording files?', {
+        title: 'Rescan recording files', confirmLabel: 'Discard and rescan', cancelLabel: 'Keep editing'
+      })) return;
+      if (!modal.dialog.isConnected) return;
       modal.setDirty(false);
       void loadRecordingFiles(true);
     });
@@ -26555,7 +26805,7 @@ async function renderTuners() {
     body.append(node('p', 'ui-field-detail', 'Voice channels are temporary and are not resumed.'));
     const message = node('div', 'admin-form-message');
     message.setAttribute('role', 'alert');
-    const actions = node('div', 'admin-form-actions');
+    const actions = aliasModalFooter();
     const later = node('button', 'ui-button ui-button-secondary', 'Not now');
     later.type = 'button';
     const restore = node('button', 'ui-button ui-button-primary', 'Resume channels');
@@ -26588,7 +26838,7 @@ async function renderTuners() {
         modal.setBusy(false);
       });
     });
-    restore.focus();
+    modal.focus?.(restore);
   }
 
   function confirmGoLiveWithoutResuming(tuner) {
@@ -26598,7 +26848,7 @@ async function renderTuners() {
       'Those channels will stay stopped, and this tuner will no longer remember them for the Resume action.'));
     const message = node('div', 'admin-form-message');
     message.setAttribute('role', 'alert');
-    const actions = node('div', 'admin-form-actions');
+    const actions = aliasModalFooter();
     const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
     cancel.type = 'button';
     const confirm = node('button', 'ui-button ui-button-primary', 'Go live without resuming');
@@ -26625,7 +26875,7 @@ async function renderTuners() {
         modal.setBusy(false);
       });
     });
-    confirm.focus();
+    modal.focus?.(confirm);
   }
 
   function confirmStateChange(tuner, state, returnFocusSelector) {
@@ -26639,7 +26889,7 @@ async function renderTuners() {
       `${stoppedCopy}The tuner hardware will also stop.`));
     const message = node('div', 'admin-form-message');
     message.setAttribute('role', 'alert');
-    const actions = node('div', 'admin-form-actions');
+    const actions = aliasModalFooter();
     const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
     cancel.type = 'button';
     const confirm = node('button', state === 'disabled' ? 'ui-button ui-button-danger' : 'ui-button ui-button-primary',
@@ -26667,7 +26917,7 @@ async function renderTuners() {
         modal.setBusy(false);
       });
     });
-    confirm.focus();
+    modal.focus?.(confirm);
   }
 
   function confirmRemoveRecording(tuner) {
@@ -26675,7 +26925,7 @@ async function renderTuners() {
     body.append(node('p', '', `Remove the recording tuner for ${tuner.name}? The WAV file will stay on disk.`));
     const message = node('div', 'admin-form-message');
     message.setAttribute('role', 'alert');
-    const actions = node('div', 'admin-form-actions');
+    const actions = aliasModalFooter();
     const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
     cancel.type = 'button';
     const remove = node('button', 'ui-button ui-button-danger', 'Remove recording tuner');
@@ -26706,7 +26956,7 @@ async function renderTuners() {
           modal.setBusy(false);
         });
     });
-    remove.focus();
+    modal.focus?.(remove);
   }
 
   function renderSelection() {
@@ -27565,23 +27815,14 @@ function callMatchingHistoryPage(decisions, requestedPage) {
 }
 
 function callMatchingHistoryPager(page, onPage) {
-  const navigation = node('nav', 'pager ui-pager call-matching-history-pager');
-  navigation.setAttribute('aria-label', 'Matched call pages');
-  const first = page.rows.length ? page.offset + 1 : 0;
-  const last = page.offset + page.rows.length;
-  navigation.append(node('span', 'muted',
-    `Matched calls ${number(first)}-${number(last)} of ${number(page.total)} · ` +
-      `Page ${number(page.page + 1)} of ${number(page.pageCount)}`));
-  const previous = node('button', 'ui-button ui-button-secondary', 'Previous');
-  previous.type = 'button';
-  previous.disabled = page.page === 0;
-  previous.addEventListener('click', () => onPage(page.page - 1));
-  const next = node('button', 'ui-button ui-button-secondary', 'Next');
-  next.type = 'button';
-  next.disabled = page.page + 1 >= page.pageCount;
-  next.addEventListener('click', () => onPage(page.page + 1));
-  navigation.append(previous, next);
-  return navigation;
+  return browsingWorkflows.createBrowsingPager({ node,
+    className: 'call-matching-history-pager', ariaLabel: 'Matched call pages',
+    countText: `${browsingWorkflows.pageRangeText({ offset: page.offset, visible: page.rows.length,
+      total: page.total, label: 'Matched calls', format: number })} · ` +
+      `Page ${number(page.page + 1)} of ${number(page.pageCount)}`,
+    previous: { enabled: page.page > 0, onClick: () => onPage(page.page - 1) },
+    next: { enabled: page.page + 1 < page.pageCount, onClick: () => onPage(page.page + 1) }
+  });
 }
 
 function callMatchingComparison(decision) {
@@ -27928,6 +28169,8 @@ function adminSettingsGroups() {
         description: 'Check the receiver and issues that need attention.' },
       { id: 'call-matching', label: 'Call matching', icon: 'call-matching', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         description: 'Monitor how duplicate calls are matched.' },
+      { id: 'application-log', label: 'Application log', icon: 'activity', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+        description: 'View recent receiver messages and errors.' },
       { id: 'support', label: 'Report a problem', icon: 'bug', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         description: 'Create and submit a support report.' }
     ] },
@@ -28019,6 +28262,7 @@ async function renderAdmin() {
   pageTitleController.update({ pageTitle: current.label });
   if (active === 'health') await renderAdminHealth();
   else if (active === 'call-matching') await renderAdminCallMatching(renderContext);
+  else if (active === 'application-log') renderAdminApplicationLog(renderContext);
   else if (active === 'support') renderAdminSupportReport();
   else if (active === 'display') {
     const display = node('div', 'admin-display-settings');
@@ -28072,7 +28316,7 @@ async function renderAdmin() {
   else if (active === 'transcription') await recordingsFeature.renderAdminTranscription();
   else if (active === 'retained-statistics') {
     content.append(createRetainedStatisticsWorkspace({
-      node, metricCard, metrics, formField, uiSelectFrame, uiSegmentedControl, section, sectionActionHost,
+      node, metricCard, metrics, formField, uiSelectFrame, uiSegmentedControl, section, sectionActionHost, browsingWorkflows,
       table, openReadOnlyModal, modalFooter: aliasModalFooter, requestJson,
       formatNumber: number, formatDateTime: dateTime, renderItem: retainedStatisticsItem,
       renderSource: (row, label) => channelLink(row, label || row.label),
@@ -28317,7 +28561,8 @@ applicationRoutes = routeFoundation.createRegistry({
 }, routeDefinitionAllowed);
 
 const recordingsFeature = createRecordingsFeature({
-  node, requestJson, openReadOnlyModal, section, pageHeader, beginPage, uiToggleField, metrics,
+  node, requestJson, openReadOnlyModal, section, pageHeader, beginPage, uiToggleField, metrics, browsingWorkflows,
+  modalFooter: aliasModalFooter,
   captureRenderContext, renderIsCurrent, content, href, anchor, entityRefHref,
   canViewRadio: () => capabilityAllowed(ACCESS_CAPABILITIES.RADIO),
   isPrimaryAdmin: () => accessSession.primary === true &&
@@ -28349,7 +28594,7 @@ async function render() {
   audioDock.synchronize();
   const view = routeFoundation.requestedView(route);
   const entry = routeFoundation.resolve(applicationRoutes, route);
-  if (!closeReadOnlyModal()) return;
+  if (!closeReadOnlyModal(false, false, (closed) => { if (closed) void render(); })) return;
   restorePlaybackBarBeforeRender();
   const epoch = ++activeRenderEpoch;
   activeRenderController?.abort();
@@ -28434,7 +28679,8 @@ document.addEventListener('click', (event) => {
 window.addEventListener('popstate', () => {
   setNavigationOpen(false);
   const previous = `/?${route.toString()}`;
-  if (!closeReadOnlyModal()) {
+  const target = window.location.href;
+  if (!closeReadOnlyModal(false, false, (closed) => { if (closed) navigateTo(target); })) {
     window.history.pushState({}, '', previous);
     return;
   }

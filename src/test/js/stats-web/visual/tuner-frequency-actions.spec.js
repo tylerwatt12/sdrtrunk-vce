@@ -94,3 +94,19 @@ test('RadioReference opens its own dialog and edge clicks remain on screen', asy
   await expect(popover).toHaveCount(0);
   await expect(page.getByRole('dialog', { name: 'RadioReference lookup' })).toBeVisible();
 });
+
+test('inline frequency actions stop listening before opening another workflow', async ({ page }) => {
+  await installActions(page);
+  await page.evaluate(() => {
+    const host = document.createElement('aside');
+    host.className = 'spectrum-browse-control-rail';
+    document.body.append(host);
+    window.frequencyTest.open({ frequencyHz: 770306250, targetId: 'tuner-1', actionHost: host });
+  });
+  const rail = page.locator('.spectrum-browse-control-rail');
+  await rail.getByRole('button', { name: 'Listen in NBFM' }).click();
+  await expect(rail.getByRole('button', { name: 'Stop listening' })).toBeVisible();
+  await rail.getByRole('button', { name: 'Look up on RadioReference' }).click();
+  await expect(page.getByRole('dialog', { name: 'RadioReference lookup' })).toBeVisible();
+  expect(await page.evaluate(() => window.frequencyTest.streamCloses)).toBe(1);
+});

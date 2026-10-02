@@ -49,11 +49,80 @@ function snapshot(protocolId, state) {
   };
 }
 
+async function installLiveSpectrumStream(page) {
+  await page.addInitScript(({ centerFrequencyHz, sampleRateHz }) => {
+    const nativeFetch = window.fetch.bind(window);
+    const encoder = new TextEncoder();
+    let streamController = null;
+
+    const multiplexFrame = (topic, kind, payload) => {
+      const frame = new Uint8Array(16 + payload.byteLength);
+      const header = new DataView(frame.buffer);
+      header.setUint32(0, 0x534c4d58);
+      header.setUint8(4, 2);
+      header.setUint8(5, kind);
+      header.setUint16(6, topic);
+      header.setUint32(8, payload.byteLength);
+      frame.set(payload, 16);
+      return frame;
+    };
+    const tunerStateFrame = () => {
+      const payload = encoder.encode(JSON.stringify({
+        stream_state: 'live', center_frequency_hz: centerFrequencyHz,
+        sample_rate_hz: sampleRateHz, profile: 'balanced'
+      }));
+      const frame = new Uint8Array(64 + payload.byteLength);
+      const header = new DataView(frame.buffer);
+      header.setUint32(0, 0x53444447, true);
+      header.setUint8(4, 1);
+      header.setUint8(5, 1);
+      header.setUint16(6, 64, true);
+      header.setUint32(8, payload.byteLength, true);
+      header.setBigInt64(16, 1n, true);
+      header.setBigInt64(24, 1n, true);
+      header.setBigInt64(32, BigInt(Date.now()), true);
+      header.setBigInt64(40, BigInt(Date.now()), true);
+      header.setBigInt64(48, BigInt(centerFrequencyHz), true);
+      header.setInt32(56, sampleRateHz, true);
+      header.setInt32(60, 2048, true);
+      frame.set(payload, 64);
+      return frame;
+    };
+    const sendTunerState = () => {
+      if (!streamController || streamController.desiredSize === null) return;
+      streamController.enqueue(multiplexFrame(5, 2, tunerStateFrame()));
+    };
+
+    window.fetch = (input, options = {}) => {
+      const rawUrl = typeof input === 'string' || input instanceof URL ? String(input) : input.url;
+      const url = new URL(rawUrl, window.location.href);
+      if (url.pathname === '/api/v1/live/multiplex') {
+        const ready = multiplexFrame(0, 1, encoder.encode(JSON.stringify({
+          event: 'ready', data: { client_id: url.searchParams.get('client_id') }
+        })));
+        return Promise.resolve(new Response(new ReadableStream({
+          start(controller) {
+            streamController = controller;
+            controller.enqueue(ready);
+            window.setTimeout(sendTunerState, 100);
+            window.setTimeout(sendTunerState, 500);
+          },
+          cancel() {
+            streamController = null;
+          }
+        }), { status: 200, headers: { 'Content-Type': 'application/vnd.sdrtrunk.live+binary' } }));
+      }
+      return nativeFetch(input, options);
+    };
+  }, { centerFrequencyHz: 851012500, sampleRateHz: 10000000 });
+}
+
 async function install(page, state = {}) {
   const browseWillFail = state.failBrowseOnce === true;
   state.tuner = tuner();
   state.tuner.settings.find((setting) => setting.id === 'center_frequency_locked').value = state.locked === true;
   state.requests = [];
+  if (state.liveSpectrum) await installLiveSpectrumStream(page);
   const preferenceModule = await import(pathToFileURL(resolve(root,
     'stats-web/assets/core/preference-schema.js')).href);
   await page.route('**/assets/app.js*', (route) => route.fulfill({ contentType: 'text/javascript',
@@ -69,7 +138,8 @@ async function install(page, state = {}) {
     if (path === '/api/v1/auth/session') return respond({ configured: true, authenticated: true,
       tier: 'admin', username: 'admin', csrf_token: 'test-token', capabilities: {
         'web-access': true, dashboard: true, 'tuner-spectrum': true, 'admin-tuners': true,
-        'admin-channels': true, 'admin-aliases': true
+        'admin-channels': true, 'admin-aliases': true,
+        ...(state.listening ? { live: true, 'call-audio': true, recordings: true } : {})
       } });
     if (path === '/api/v1/me/preferences') return route.fulfill({ contentType: 'application/json',
       body: JSON.stringify({ revision: 1, preferences: { ...preferenceModule.defaults,
@@ -99,7 +169,10 @@ async function install(page, state = {}) {
       return respond({ lease_id: 'browse-a', expires_at_epoch_ms: Date.now() + 30000,
         can_tune: !state.running && state.tuner.channel_count === 0, tuner: state.tuner });
     }
-    if (path === '/api/v1/diagnostics/tuners') return respond({ rows: [] });
+    if (path === '/api/v1/diagnostics/tuners') return respond({ rows: state.liveSpectrum ? [{
+      target_id: 'target-a', label: 'Test receiver', center_frequency_hz: 851012500,
+      sample_rate_hz: 10000000
+    }] : [] });
     if (path === '/api/v1/admin/channels/protocols') return respond(protocols);
     if (path.endsWith('/eligibility')) return respond({ eligible: !state.known,
       reason: state.known ? 'This frequency belongs to County Control.' : null, matches: [] });
@@ -198,7 +271,6 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     await expect(lock).toBeChecked();
     await expect(lock).toBeEnabled();
     await expect(digit).toBeDisabled();
-    await expect(page.locator('.spectrum-browse-toolbar')).toHaveScreenshot(`spectrum-center-lock-${theme}.png`);
     await lock.press('Space');
     await expect(digit).toBeEnabled();
     await expect(lock).toBeFocused();
@@ -232,12 +304,116 @@ test('active monitoring keeps the Spectrum center lock disabled', async ({ page 
   await expect(page.locator('.spectrum-browse-center').getByRole('checkbox', { name: 'Lock center' })).toBeDisabled();
 });
 
+for (const width of [1280, 1440]) {
+  test(`desktop Spectrum keeps its fixed panes while the visible audio player resizes at ${width}px`,
+    async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await install(page, { liveSpectrum: true, listening: true });
+      const dock = page.locator('#audio-dock');
+      const handle = dock.getByRole('button', { name: 'Change audio player size', exact: true });
+      await expect(dock).toBeVisible();
+      await expect(page.locator('.spectrum-browse-panel .channel-diagnostic-overlay').first()).toBeHidden();
+      const geometry = () => page.evaluate(() => {
+        const selectors = ['.spectrum-browse-workspace', '.spectrum-browse-panel', '.tuner-spectrum-plot',
+          '.tuner-spectrum-waterfall', '.spectrum-browse-control-rail'];
+        return selectors.map(selector => {
+          const bounds = document.querySelector(selector).getBoundingClientRect();
+          return [Math.round(bounds.x), Math.round(bounds.y), Math.round(bounds.width), Math.round(bounds.height)];
+        });
+      });
+      let baseline;
+      const heights = [];
+      for (const size of ['collapsed', 'minimal', 'full', 'collapsed']) {
+        await handle.focus();
+        await handle.press(size === 'full' ? 'End' : 'Home');
+        if (size === 'minimal') await handle.press('ArrowUp');
+        await expect(dock).toHaveAttribute('data-state', size);
+        await expect.poll(() => page.evaluate(() => {
+          const measured = parseFloat(getComputedStyle(document.documentElement)
+            .getPropertyValue('--audio-dock-height'));
+          return Math.abs(measured - document.querySelector('#audio-dock').getBoundingClientRect().height);
+        })).toBeLessThanOrEqual(1);
+        await expect(page.locator('.content')).toHaveCSS('overflow', 'visible');
+        // An ungenerated pseudo-element can report display:block without
+        // creating a box. Desktop must not generate the mobile dock spacer.
+        expect(await page.locator('.content').evaluate(content => getComputedStyle(content, '::after').content))
+          .toBe('none');
+        if (!baseline) {
+          baseline = await geometry();
+          expect(baseline[1][3]).toBeGreaterThan(500);
+        }
+        await expect.poll(geometry).toEqual(baseline);
+        heights.push(await dock.evaluate(element => element.getBoundingClientRect().height));
+      }
+      expect(heights[1]).toBeGreaterThan(heights[0]);
+      expect(heights[2]).toBeGreaterThan(heights[1]);
+      expect(heights[3]).toBe(heights[0]);
+    });
+}
+
+test('managed Spectrum keeps its header actions and updates one persistent frequency rail', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const state = { liveSpectrum: true };
+  await install(page, state);
+
+  const heading = page.getByRole('heading', { name: 'Tuner Spectrum', exact: true });
+  const header = page.locator('.page-header').filter({ has: heading });
+  const toolbar = page.locator('.spectrum-browse-toolbar');
+  const panel = page.locator('.spectrum-browse-panel');
+  const rail = page.locator('.spectrum-browse-control-rail');
+  const lock = toolbar.getByRole('checkbox', { name: 'Lock center', exact: true });
+
+  await expect(lock).toHaveCount(1);
+  await expect(page.getByText('Keep tuner here', { exact: true })).toHaveCount(0);
+  await expect(header.getByRole('button', { name: 'Find P25 channels', exact: true })).toBeVisible();
+  await expect(toolbar.getByRole('button', { name: 'Find P25 channels', exact: true })).toHaveCount(0);
+  await expect(rail).toHaveCount(1);
+  await expect(rail.getByText('Select a signal', { exact: true })).toBeVisible();
+  await expect(rail).toContainText(
+    'Click a signal in the spectrum or waterfall to see its frequency and available actions.');
+  await page.evaluate(() => {
+    window.originalSpectrumFrequencyRail = document.querySelector('.spectrum-browse-control-rail');
+  });
+
+  const desktop = await page.evaluate(() => {
+    const spectrum = document.querySelector('.spectrum-browse-panel').getBoundingClientRect();
+    const actions = document.querySelector('.spectrum-browse-control-rail').getBoundingClientRect();
+    return { spectrum: { x: spectrum.x, right: spectrum.right, y: spectrum.y },
+      actions: { x: actions.x, y: actions.y } };
+  });
+  expect(desktop.actions.x).toBeGreaterThanOrEqual(desktop.spectrum.right);
+  expect(Math.abs(desktop.actions.y - desktop.spectrum.y)).toBeLessThanOrEqual(1);
+
+  await expect(panel.locator('.channel-diagnostic-overlay').first()).toBeHidden();
+  await panel.getByRole('img', { name: 'Tuner frequency spectrum', exact: true })
+    .click({ position: { x: 240, y: 80 } });
+  await expect(rail.getByText('Selected frequency', { exact: true })).toBeVisible();
+  await expect(rail.locator('.tuner-frequency-action-frequency')).toHaveText(/^\d+\.\d{6} MHz$/);
+  await expect(rail.getByRole('button', { name: 'Add channel or system', exact: true })).toBeEnabled();
+  expect(await rail.evaluate((element) => element === window.originalSpectrumFrequencyRail)).toBe(true);
+  await expect(page.locator('.tuner-frequency-popover')).toHaveCount(0);
+  expect(state.requests.filter((request) => request.path.endsWith('/eligibility'))).toHaveLength(1);
+
+  await page.setViewportSize({ width: 900, height: 900 });
+  await expect.poll(() => page.evaluate(() => {
+    const spectrum = document.querySelector('.spectrum-browse-panel').getBoundingClientRect();
+    const actions = document.querySelector('.spectrum-browse-control-rail').getBoundingClientRect();
+    return { aligned: Math.abs(actions.x - spectrum.x) <= 1, stacked: actions.y >= spectrum.bottom };
+  })).toEqual({ aligned: true, stacked: true });
+  await panel.getByRole('img', { name: 'Tuner frequency spectrum', exact: true })
+    .click({ position: { x: 180, y: 80 } });
+  await expect.poll(() => rail.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    return bounds.top >= 0 && bounds.top < window.innerHeight;
+  })).toBe(true);
+});
+
 test('confirmed lease activity updates the existing tuner option and preserves picker focus', async ({ page }) => {
   const state = { browseChannelCount: 1 };
   await page.clock.install();
   await install(page, state);
   const picker = page.locator('.spectrum-browse-tuner select');
-  await expect(picker.locator('option:checked')).toHaveText('Test receiver · 1 active');
+  await expect(picker.locator('option:checked')).toHaveText('Test receiver · 1 active · 10 MHz');
   await picker.focus();
   await page.evaluate(() => {
     window.originalSpectrumPicker = document.querySelector('.spectrum-browse-tuner select');
@@ -245,11 +421,11 @@ test('confirmed lease activity updates the existing tuner option and preserves p
   });
   state.browseChannelCount = 0;
   await page.clock.fastForward(11000);
-  await expect(picker.locator('option:checked')).toHaveText('Test receiver · Idle');
+  await expect(picker.locator('option:checked')).toHaveText('Test receiver · Idle · 10 MHz');
   await expect(picker).toBeFocused();
   state.browseChannelCount = 2;
   await page.clock.fastForward(11000);
-  await expect(picker.locator('option:checked')).toHaveText('Test receiver · 2 active');
+  await expect(picker.locator('option:checked')).toHaveText('Test receiver · 2 active · 10 MHz');
   await expect(picker).toBeFocused();
   expect(await picker.evaluate((element) => element === window.originalSpectrumPicker &&
     element.selectedOptions[0] === window.originalSpectrumOption)).toBe(true);

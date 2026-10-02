@@ -88,12 +88,12 @@
   :root:has(body.has-audio-dock) {
     scroll-padding-bottom: calc(var(--audio-dock-height, 0px) + var(--space-2));
   }
+  body.has-audio-dock[data-view="live"] .content::after { display: none; }
   body.has-audio-dock[data-view="live"] .content {
     padding-bottom: calc(var(--audio-dock-height, 0px) + var(--space-3));
     scroll-padding-top: var(--space-2);
     scroll-padding-bottom: calc(var(--audio-dock-height, 0px) + var(--space-2));
   }
-  body.has-audio-dock[data-view="live"] .content::after { display: none; }
   .audio-dock {
     right: 0;
     bottom: 0;
