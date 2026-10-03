@@ -7,6 +7,7 @@ package io.github.dsheirer.stats.health;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
@@ -508,6 +509,81 @@ class ReceiverHealthServiceTest
             service.sampleNow();
             assertEquals(2, rows(service.snapshot().get("active")).size());
             assertEquals(2, map(service.snapshot().get("summary")).get("active_count"));
+        }
+    }
+
+    @Test
+    void publishesFreshControlMeasurementsWithFriendlyNamesAndNativeSiteFacts()
+    {
+        AtomicLong clock = new AtomicLong(1_000L);
+        AtomicLong acknowledgedCalls = new AtomicLong(37L);
+        String configuration = "00000000-0000-0000-0000-000000000071";
+        String tableId = "channel:" + configuration;
+        long frequency = 851_012_500L;
+        ChannelActivitySnapshot control = controlTable(tableId, frequency, 2_000L, 2_000L, 10, 0);
+        ChannelActivitySnapshot named = new ChannelActivitySnapshot(tableId, "BEE00-49F", "GCRCN",
+            "Cleveland", "Cleveland Control", configuration, true, true, List.of(), control.rows(),
+            new ChannelActivitySnapshot.Site(0xBEE00, 0x49F, 1, 2, 0x49F));
+
+        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, clock::get))
+        {
+            service.setRadioResolveAcceptedCalls(acknowledgedCalls::get);
+            service.setChannelActivitySnapshotSupplier(() ->
+                new ChannelActivityModel.SnapshotSet(clock.get(), List.of(named)));
+            clock.set(2_000L);
+            service.sampleNow();
+
+            Map<String,Object> snapshot = service.snapshot();
+            assertEquals(2_000L, snapshot.get("generated_at_ms"));
+            assertEquals(37L, snapshot.get("radioresolve_accepted_calls"));
+            Map<String,Object> measurement = measurement(snapshot, "decoders", tableId);
+            assertEquals("GCRCN", measurement.get("system_name"));
+            assertEquals("Cleveland Control", measurement.get("channel_name"));
+            assertEquals(configuration, measurement.get("configuration_id"));
+            assertEquals(frequency, measurement.get("frequency_hz"));
+            assertEquals(0xBEE00, measurement.get("wacn"));
+            assertEquals(0x49F, measurement.get("system_id"));
+            assertEquals(1, measurement.get("rfss"));
+            assertEquals(2, measurement.get("site_id"));
+            assertEquals("healthy", map(snapshot.get("summary")).get("severity"));
+
+            clock.set(2_500L);
+            acknowledgedCalls.set(40L);
+            service.sampleNow();
+            assertEquals(2_500L, service.snapshot().get("generated_at_ms"),
+                "Control measurement metadata must not prevent later health snapshots from publishing");
+            assertEquals(40L, service.snapshot().get("radioresolve_accepted_calls"),
+                "The acknowledged upload counter must stay current while control channels are active");
+        }
+    }
+
+    @Test
+    void publishesControlMeasurementsBeforeOptionalNamesAndNativeIdentityAreKnown()
+    {
+        AtomicLong clock = new AtomicLong(1_000L);
+        ChannelActivitySnapshot control = controlTable("unnamed-control", 851_012_500L,
+            2_000L, 2_000L, 10, 0);
+        ChannelActivitySnapshot unnamed = new ChannelActivitySnapshot(control.tableId(), "Control channel",
+            null, null, null, null, true, true, List.of(), control.rows(),
+            new ChannelActivitySnapshot.Site(null, null, null, null, null));
+
+        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, clock::get))
+        {
+            service.setChannelActivitySnapshotSupplier(() ->
+                new ChannelActivityModel.SnapshotSet(clock.get(), List.of(unnamed)));
+            clock.set(2_000L);
+            service.sampleNow();
+
+            assertEquals(2_000L, service.snapshot().get("generated_at_ms"));
+            Map<String,Object> measurement = measurement(service.snapshot(), "decoders", "unnamed-control");
+            assertEquals("", measurement.get("system_name"));
+            assertEquals("", measurement.get("channel_name"));
+            assertEquals("", measurement.get("configuration_id"));
+            assertNull(measurement.get("wacn"));
+            assertNull(measurement.get("system_id"));
+            assertNull(measurement.get("rfss"));
+            assertNull(measurement.get("site_id"));
+            assertTrue(rows(service.snapshot().get("active")).isEmpty());
         }
     }
 

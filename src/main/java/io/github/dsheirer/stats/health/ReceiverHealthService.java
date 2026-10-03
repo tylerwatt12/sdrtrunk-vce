@@ -673,13 +673,13 @@ public final class ReceiverHealthService implements AutoCloseable
                     previous != null ? previous.lastValidDecodeMs : 0);
                 mControlContinuityByTable.put(table.tableId(), new ControlContinuity(lastValidDecodeMs,
                     channel.frequencyHz(), channel.decoder(), channel.signalDbfs()));
-                Map<String,Object> measurement = row(table.tableId(), label,
+                Map<String,Object> measurement = new LinkedHashMap<>(row(table.tableId(), label,
                     health != null ? round(health) : "Unavailable", "%",
                     health != null && health < 20 ? "warning" : "healthy", "Signal " + channel.signalDbfs() +
                         " dBFS · Valid frames " + channel.controlValidFrames() + " · Invalid frames " +
                         channel.controlInvalidFrames() + " · Corrected bits " + channel.controlCorrectedBits() +
                         " · Sync loss " + channel.controlSyncLossBits() + " bits · Dropped " +
-                        channel.controlDroppedBits() + " bits · Decoder " + channel.decoder());
+                        channel.controlDroppedBits() + " bits · Decoder " + channel.decoder()));
                 measurement.put("system_name", table.systemName());
                 measurement.put("channel_name", table.channelName());
                 measurement.put("configuration_id", table.configurationId());
