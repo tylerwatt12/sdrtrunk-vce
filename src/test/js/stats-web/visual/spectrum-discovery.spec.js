@@ -378,7 +378,7 @@ test('managed Spectrum keeps one aligned toolbar and updates one persistent freq
   await expect(rail).toContainText(
     'Click a signal in the spectrum or waterfall to see its frequency and available actions.');
   const toolbarRows = await toolbar.evaluate((element) => {
-    const centers = [...element.children].map((child) => {
+    const centers = [...element.children].filter((child) => !child.hidden).map((child) => {
       const bounds = child.getBoundingClientRect();
       return bounds.top + bounds.height / 2;
     });
@@ -417,7 +417,7 @@ test('managed Spectrum keeps one aligned toolbar and updates one persistent freq
     const spectrum = document.querySelector('.spectrum-browse-panel').getBoundingClientRect();
     const actions = document.querySelector('.spectrum-browse-control-rail').getBoundingClientRect();
     const toolbar = document.querySelector('.spectrum-browse-toolbar');
-    const centers = [...toolbar.children].map((child) => {
+    const centers = [...toolbar.children].filter((child) => !child.hidden).map((child) => {
       const bounds = child.getBoundingClientRect();
       return bounds.top + bounds.height / 2;
     });
@@ -442,6 +442,7 @@ test('bands, FFT, waterfall, legend, and measurements render as one continuous i
     const plot = fft.querySelector('.tuner-spectrum-plot');
     const bands = fft.querySelector('.tuner-spectrum-band-rail');
     const waterfall = visual.querySelector('.tuner-spectrum-waterfall');
+    const statusRail = instrument.querySelector('.spectrum-browse-status-rail');
     const legend = instrument.querySelector('.tuner-spectrum-display-controls');
     const measurements = instrument.querySelector('.tuner-spectrum-measurement-panel');
     const bounds = (element) => {
@@ -450,7 +451,7 @@ test('bands, FFT, waterfall, legend, and measurements render as one continuous i
     };
     return {
       instrument: bounds(instrument), visual: bounds(visual), fft: bounds(fft), plot: bounds(plot),
-      bands: bounds(bands), waterfall: bounds(waterfall), legend: bounds(legend),
+      bands: bounds(bands), waterfall: bounds(waterfall), statusRail: bounds(statusRail), legend: bounds(legend),
       measurements: bounds(measurements),
       legendClientWidth: legend.clientWidth, legendScrollWidth: legend.scrollWidth,
       instrumentBorder: getComputedStyle(instrument).borderTopWidth,
@@ -458,6 +459,7 @@ test('bands, FFT, waterfall, legend, and measurements render as one continuous i
       bandBorderTop: getComputedStyle(bands).borderTopWidth,
       bandBorderBottom: getComputedStyle(bands).borderBottomWidth,
       plotBorderBottom: getComputedStyle(plot).borderBottomWidth,
+      statusRailBorderTop: getComputedStyle(statusRail).borderTopWidth,
       legendBorderTop: getComputedStyle(legend).borderTopWidth,
       measurementBorderTop: getComputedStyle(measurements).borderTopWidth
     };
@@ -467,7 +469,7 @@ test('bands, FFT, waterfall, legend, and measurements render as one continuous i
   expect(Math.abs(geometry.fft.bottom - geometry.waterfall.top)).toBeLessThanOrEqual(0.5);
   expect(Math.abs(geometry.fft.left - geometry.waterfall.left)).toBeLessThanOrEqual(0.5);
   expect(Math.abs(geometry.fft.right - geometry.waterfall.right)).toBeLessThanOrEqual(0.5);
-  expect(Math.abs(geometry.visual.bottom - geometry.legend.top)).toBeLessThanOrEqual(0.5);
+  expect(Math.abs(geometry.visual.bottom - geometry.statusRail.top)).toBeLessThanOrEqual(0.5);
   expect(Math.abs(geometry.legend.top - geometry.measurements.top)).toBeLessThanOrEqual(0.5);
   expect(Math.abs(geometry.legend.right - geometry.measurements.left)).toBeLessThanOrEqual(0.5);
   expect(Math.abs(geometry.legend.bottom - geometry.measurements.bottom)).toBeLessThanOrEqual(0.5);
@@ -477,8 +479,9 @@ test('bands, FFT, waterfall, legend, and measurements render as one continuous i
   expect(geometry.bandBorderTop).toBe('0px');
   expect(geometry.bandBorderBottom).toBe('1px');
   expect(geometry.plotBorderBottom).toBe('1px');
-  expect(geometry.legendBorderTop).toBe('1px');
-  expect(geometry.measurementBorderTop).toBe('1px');
+  expect(geometry.statusRailBorderTop).toBe('1px');
+  expect(geometry.legendBorderTop).toBe('0px');
+  expect(geometry.measurementBorderTop).toBe('0px');
 
   const reset = page.getByRole('button', { name: 'Reset zoom', exact: true });
   const pause = page.getByRole('button', { name: 'Pause', exact: true });
@@ -505,6 +508,35 @@ test('bands, FFT, waterfall, legend, and measurements render as one continuous i
   await expect(resume).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.tuner-spectrum-readouts .channel-diagnostic-readout small'))
     .toHaveText(['Visible span', 'Zoom', 'Peak', 'Best SNR']);
+});
+
+test('Spectrum display options remain reachable from desktop and mobile controls', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await install(page, { liveSpectrum: true });
+  const options = page.locator('.tuner-spectrum-options');
+  const panel = page.locator('.tuner-spectrum-options-panel');
+  const desktopDisplay = page.getByRole('button', { name: 'Display options', exact: true });
+  await expect(desktopDisplay).toBeVisible();
+  await desktopDisplay.click();
+  await expect(options).toHaveAttribute('open', '');
+  await expect(desktopDisplay).toHaveAttribute('aria-expanded', 'true');
+  await expect(panel).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(options).not.toHaveAttribute('open', '');
+  await expect(desktopDisplay).toBeFocused();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const more = page.getByRole('button', { name: 'More spectrum actions', exact: true });
+  await expect(desktopDisplay).toBeHidden();
+  await expect(more).toBeVisible();
+  await more.click();
+  await expect(panel).toBeVisible();
+  await expect(panel.getByRole('button', { name: 'Reset view', exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(panel).toBeHidden();
+  await expect(more).toBeFocused();
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <=
+    document.documentElement.clientWidth)).toBe(true);
 });
 
 test('confirmed lease activity updates the existing tuner option and preserves picker focus', async ({ page }) => {

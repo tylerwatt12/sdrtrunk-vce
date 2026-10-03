@@ -262,6 +262,17 @@
   border-color: var(--primary-control-hover);
 }
 
+.ui-button-quiet {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.ui-button-quiet:hover:not(:disabled, [aria-disabled="true"]),
+.ui-button-quiet:focus-visible {
+  border-color: var(--line);
+}
+
 .ui-button-danger {
   color: var(--danger);
   border-color: color-mix(in srgb, var(--danger) 55%, var(--line));
@@ -512,6 +523,22 @@
   transform: translateX(18px);
 }
 
+.ui-toggle-compact .ui-toggle-track {
+  width: var(--toggle-track-width-compact);
+  height: var(--toggle-track-height-compact);
+}
+
+.ui-toggle-compact .ui-toggle-thumb {
+  width: var(--toggle-thumb-size-compact);
+  height: var(--toggle-thumb-size-compact);
+  top: 1px;
+  left: 1px;
+}
+
+.ui-toggle-compact input:checked + .ui-toggle-track .ui-toggle-thumb {
+  transform: translateX(calc(var(--toggle-track-width-compact) - var(--toggle-thumb-size-compact) - 2px));
+}
+
 .ui-toggle input:focus-visible + .ui-toggle-track {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
@@ -615,6 +642,26 @@
   color: var(--info);
   background: var(--info-soft);
   border-color: color-mix(in srgb, var(--info) 42%, var(--line));
+}
+
+.ui-pill.ui-pill-inline-dot {
+  position: relative;
+  gap: var(--space-2);
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  font-weight: var(--font-weight-normal);
+}
+
+.ui-pill-inline-dot::before {
+  content: '';
+  width: var(--status-dot-size);
+  height: var(--status-dot-size);
+  flex: 0 0 auto;
+  background: currentColor;
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 18%, transparent);
 }
 
 .ui-toolbar {

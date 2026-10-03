@@ -243,7 +243,12 @@
   --space-4: 16px;
   --space-5: 24px;
   --control-height-compact: 36px;
+  --control-height-spectrum: 38px;
   --control-height-comfortable: 40px;
+  --toggle-track-width-compact: 34px;
+  --toggle-track-height-compact: 20px;
+  --toggle-thumb-size-compact: 16px;
+  --status-dot-size: 7px;
   --icon-action-size: 40px;
   --icon-action-radius: var(--radius-control);
   --icon-glyph-size: 18px;

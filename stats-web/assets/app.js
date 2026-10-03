@@ -14192,6 +14192,8 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const plotInteractions = frequencyCursor || viewportControls || frequencyActions;
   let managedTargetId = typeof panelOptions.targetId === 'string' ? panelOptions.targetId : '';
   const managedSelection = panelOptions.managedSelection === true;
+  const statusClassName = typeof panelOptions.statusClassName === 'string' ?
+    panelOptions.statusClassName.trim() : '';
   const layout = node('div', `tuner-spectrum-layout${panelOptions.inlineDisplayOptions ?
     ' tuner-spectrum-layout-inline-options' : ''}${basicOperator ? ' tuner-spectrum-layout-basic' : ''}${
     frequencyCursor ? ' tuner-spectrum-layout-cursor' : ''}${
@@ -14207,6 +14209,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   targetLabel.append(uiSelectFrame(targetSelect));
   targetLabel.hidden = managedSelection;
   const status = badge('Loading', 'state-stale');
+  if (statusClassName) status.classList.add(...statusClassName.split(/\s+/).filter(Boolean));
   const toolbarActions = node('div', 'tuner-spectrum-toolbar-actions');
   const zoomIn = iconButton('icon-zoom-in', 'Zoom in', 'ui-button ui-button-secondary ui-icon-button');
   zoomIn.disabled = true;
@@ -14394,7 +14397,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     displayControls.append(node('span', 'tuner-spectrum-control-help',
       'Channel markers require Live access.'));
   }
-  const legendLabel = node('span', 'tuner-spectrum-legend-label', 'Activity markers');
+  const legendLabel = node('span', 'tuner-spectrum-legend-label', 'Activity');
   legendLabel.hidden = !liveActivityAllowed;
   displayControls.append(refiningBadge, legendLabel, flagLegend);
 
@@ -14578,7 +14581,10 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
 
   const controller = {
     element: layout,
-    controls: { toolbar, selection: tunerSelection, status, actions: toolbarActions },
+    controls: {
+      toolbar, selection: tunerSelection, status, actions: toolbarActions,
+      resetZoom, options, optionsSummary, optionsPanel
+    },
     surfaces: { visualWindow, displayControls, readoutPanel },
     refreshTargets,
     async setSuspended(suspended) {
@@ -14626,7 +14632,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
 
   const setStatus = (text, className = 'state-stale') => {
     if (status.textContent !== text) status.textContent = text;
-    const nextClassName = `badge ui-pill ${className}`;
+    const nextClassName = `badge ui-pill${statusClassName ? ` ${statusClassName}` : ''} ${className}`;
     if (status.className !== nextClassName) status.className = nextClassName;
   };
 
@@ -17548,7 +17554,12 @@ async function renderTunerSpectrum() {
   const selectField = formField('Tuner', uiSelectFrame(select));
   selectField.classList.add('spectrum-browse-tuner');
   selectField.querySelector('.ui-field-label')?.classList.add('spectrum-browse-field-label');
+  const receiverIcon = iconGlyph('icon-radio-tower');
+  receiverIcon.classList.add('spectrum-browse-receiver-icon');
+  selectField.querySelector('.ui-select-frame')?.prepend(receiverIcon);
   const centerHost = node('div', 'spectrum-browse-center tuners-readout');
+  const feedback = node('div', 'spectrum-browse-feedback');
+  feedback.hidden = true;
   const message = node('div', 'ui-feedback spectrum-browse-message');
   message.setAttribute('role', 'status');
   const routineBrowseMessages = new Set([
@@ -17559,12 +17570,15 @@ async function renderTunerSpectrum() {
   const setBrowseMessage = (value) => {
     const text = String(value || '');
     message.textContent = text;
-    message.classList.toggle('spectrum-browse-message-routine', routineBrowseMessages.has(text));
+    const routine = routineBrowseMessages.has(text);
+    message.classList.toggle('spectrum-browse-message-routine', routine);
+    feedback.hidden = !text || routine;
   };
   const retryBrowse = iconButton('icon-replay', 'Retry browsing',
     'ui-button ui-button-secondary ui-icon-button');
   retryBrowse.addEventListener('click', () => void chooseTuner(select.value));
   retryBrowse.hidden = true;
+  feedback.append(message, retryBrowse);
   const confirmTakeover = (tuner, purpose = 'browse') => {
     const channelCount = purpose === 'search' ? Math.max(0, Number(tuner?.channel_count) || 0) :
       allocationGroupChannelCount(tuner);
@@ -17660,7 +17674,7 @@ async function renderTunerSpectrum() {
     });
   }, 'ui-button ui-button-primary');
   findChannels.classList.add('ui-icon-button', 'spectrum-browse-find');
-  findChannels.replaceChildren(iconGlyph('icon-search'));
+  findChannels.replaceChildren(iconGlyph('icon-scan-search'));
   findChannels.setAttribute('aria-label', 'Find P25 channels');
   findChannels.title = 'Find P25 channels';
   findChannels.hidden = !capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_CHANNELS);
@@ -17677,8 +17691,8 @@ async function renderTunerSpectrum() {
   let operation = 0;
   let tuning = false;
   let leaseRetrying = false;
-  const takeControl = iconButton('icon-stop', 'Stop channels to tune',
-    'ui-button ui-button-secondary ui-icon-button spectrum-browse-takeover');
+  const takeControl = iconButton('icon-power', 'Stop channels to tune',
+    'ui-button ui-button-secondary ui-icon-button spectrum-browse-takeover spectrum-browse-takeover-warning');
   takeControl.addEventListener('click', () => void takeOverSelectedTuner());
   const resumeChannels = iconButton('icon-play', 'Resume channels',
     'ui-button ui-button-secondary ui-icon-button spectrum-browse-takeover');
@@ -17818,6 +17832,7 @@ async function renderTunerSpectrum() {
         copy.setAttribute('aria-hidden', 'true');
       }
       control.element.querySelector('.ui-toggle-state')?.classList.add('spectrum-browse-lock-state');
+      control.element.querySelector('.ui-toggle')?.classList.add('ui-toggle-compact');
       control.element.title = 'Lock center frequency';
       control.input.dataset.tunerSetting = lock.id;
       control.input.disabled = lease?.takeover === true || !canEditCenter() ||
@@ -17874,6 +17889,7 @@ async function renderTunerSpectrum() {
     selectedTuner.settings.find((candidate) => candidate.id === 'frequency_mhz'), frequencyHz / 1_000_000);
   const spectrum = tunerSpectrumPanel(snapPresetDocument, {
     managedSelection: true,
+    statusClassName: 'ui-pill-inline-dot spectrum-browse-status',
     onFrequencySelection: (selection) => {
       frequencyActionController?.close?.();
       frequencyActionController = openTunerFrequencyActions({ ...selection, actionHost: frequencyRail });
@@ -18040,24 +18056,79 @@ async function renderTunerSpectrum() {
   };
   select.addEventListener('change', () => void chooseTuner(select.value));
   const browseState = node('div', 'spectrum-browse-state');
-  browseState.append(spectrum.controls.status, message, retryBrowse);
+  browseState.append(spectrum.controls.status);
   const zoomActions = spectrum.controls.actions.querySelector('.tuner-spectrum-zoom-actions');
   zoomActions?.classList.remove('ui-control-group');
   spectrum.controls.actions.classList.add('spectrum-browse-actions');
   spectrum.controls.actions.prepend(findChannels, takeControl, resumeChannels);
+  spectrum.controls.actions.querySelectorAll('.ui-button-secondary').forEach((button) =>
+    button.classList.add('ui-button-quiet'));
+  const commandCluster = node('div', 'spectrum-browse-command-cluster');
+  commandCluster.append(browseState, spectrum.controls.actions);
+
+  const options = spectrum.controls.options;
+  const optionsSummary = spectrum.controls.optionsSummary;
+  const optionsPanel = spectrum.controls.optionsPanel;
+  const resetZoom = spectrum.controls.resetZoom;
+  optionsPanel.id = 'spectrum-browse-options-panel';
+  const displayOptionsIcon = iconGlyph('icon-playback-controls');
+  displayOptionsIcon.classList.add('spectrum-browse-options-display-icon');
+  const moreOptionsIcon = iconGlyph('icon-more');
+  moreOptionsIcon.classList.add('spectrum-browse-options-more-icon');
+  optionsSummary.replaceChildren(displayOptionsIcon, moreOptionsIcon);
+  optionsSummary.setAttribute('aria-controls', optionsPanel.id);
+  const mobileOptionsActions = node('div', 'spectrum-browse-mobile-options-actions');
+  const mobileReset = node('button', 'ui-button ui-button-secondary spectrum-browse-mobile-reset');
+  mobileReset.type = 'button';
+  mobileReset.append(iconGlyph('icon-replay'), node('span', '', 'Reset view'));
+  mobileReset.addEventListener('click', () => {
+    if (!resetZoom.disabled) resetZoom.click();
+    options.open = false;
+    optionsSummary.focus();
+  });
+  mobileOptionsActions.append(mobileReset);
+  optionsPanel.prepend(mobileOptionsActions);
+
+  let optionsTrigger = optionsSummary;
+  const compactOptions = window.matchMedia('(max-width: 760px)');
+  const syncOptionsLabel = () => {
+    const label = compactOptions.matches ? 'More spectrum actions' : 'Display options';
+    optionsSummary.setAttribute('aria-label', label);
+    optionsSummary.title = label;
+  };
+  const syncOptionsTriggers = () => {
+    const expanded = String(options.open);
+    optionsSummary.setAttribute('aria-expanded', expanded);
+  };
+  optionsSummary.addEventListener('click', () => { optionsTrigger = optionsSummary; });
+  options.addEventListener('toggle', syncOptionsTriggers);
+  compactOptions.addEventListener('change', syncOptionsLabel);
+  renderContext.signal.addEventListener('abort', () =>
+    compactOptions.removeEventListener('change', syncOptionsLabel), { once: true });
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || !options.open) return;
+    event.preventDefault();
+    options.open = false;
+    optionsTrigger.focus();
+  }, { signal: renderContext.signal });
+  syncOptionsLabel();
+  syncOptionsTriggers();
+
   spectrum.controls.toolbar.classList.add('spectrum-browse-toolbar');
   spectrum.controls.toolbar.setAttribute('aria-label', 'Spectrum receiver controls');
-  spectrum.controls.toolbar.replaceChildren(selectField, centerHost, browseState, spectrum.controls.actions);
+  spectrum.controls.toolbar.replaceChildren(selectField, centerHost, commandCluster, feedback);
   spectrum.element.classList.add('spectrum-browse-panel');
   const instrument = node('div', 'spectrum-browse-instrument');
-  instrument.append(spectrum.surfaces.visualWindow, spectrum.surfaces.displayControls,
-    spectrum.surfaces.readoutPanel);
+  const statusRail = node('div', 'spectrum-browse-status-rail');
+  statusRail.setAttribute('aria-label', 'Spectrum activity and measurements');
+  statusRail.append(spectrum.surfaces.displayControls, spectrum.surfaces.readoutPanel);
+  instrument.append(spectrum.surfaces.visualWindow, statusRail);
   spectrum.element.append(instrument);
   const main = node('div', 'spectrum-browse-main');
   main.append(spectrum.element, frequencyRail);
   workspace.append(spectrum.controls.toolbar, main);
   const header = pageHeader('Tuner Spectrum',
-    'Browse live signals, find P25 channels, or inspect a frequency.');
+    'Browse live signals and add channels.');
   if (!beginPage(renderContext, header, workspace)) {
     spectrum.close();
     return;

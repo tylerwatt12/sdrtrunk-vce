@@ -1009,24 +1009,30 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 }
 
 .spectrum-browse-toolbar {
-  --ui-control-height: var(--control-height-compact);
-  --icon-action-size: var(--control-height-compact);
-  grid-template-columns: minmax(160px, 280px) minmax(280px, 430px) max-content max-content;
+  --ui-control-height: var(--control-height-spectrum);
+  --icon-action-size: var(--control-height-spectrum);
+  grid-template-columns: minmax(160px, .8fr) minmax(320px, 1.55fr) max-content;
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2);
+  border-radius: var(--radius-card);
 }
 
-.spectrum-browse-state {
+.spectrum-browse-command-cluster {
   min-width: 0;
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  gap: var(--space-2);
-  overflow: hidden;
-  color: var(--muted);
-  font-size: var(--font-size-meta);
+  justify-content: flex-end;
+  gap: var(--space-1);
+  position: relative;
+}
+
+.spectrum-browse-state {
+  min-width: max-content;
+  display: flex;
+  align-items: center;
+  padding-inline: var(--space-1);
   white-space: nowrap;
 }
 
@@ -1034,12 +1040,22 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   flex: 0 0 auto;
 }
 
-.spectrum-browse-state .spectrum-browse-message {
+.spectrum-browse-feedback {
+  min-width: 0;
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.spectrum-browse-feedback[hidden] {
+  display: none;
+}
+
+.spectrum-browse-feedback .spectrum-browse-message {
   min-width: 0;
   flex: 1 1 auto;
-  padding: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .spectrum-browse-takeover {
@@ -1049,7 +1065,19 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 
 .spectrum-browse-tuner {
   min-width: 0;
+  position: relative;
   align-self: center;
+}
+
+.spectrum-browse-tuner select {
+  padding-left: calc(var(--icon-glyph-size) + var(--space-4) + var(--space-1));
+  font-weight: var(--font-weight-medium);
+}
+
+.spectrum-browse-tuner .spectrum-browse-receiver-icon {
+  right: auto;
+  left: var(--space-3);
+  color: var(--muted);
 }
 
 .spectrum-browse-field-label,
@@ -1067,17 +1095,19 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 .spectrum-browse-toolbar .spectrum-browse-center.tuners-readout {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(215px, 1fr) auto;
+  grid-template-columns: minmax(235px, 1fr) auto;
   align-items: center;
-  gap: var(--space-1);
-  padding: 0;
-  border: 0;
+  gap: var(--space-2);
+  padding: var(--space-1);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
 }
 
 .spectrum-browse-center .tuners-center-frequency,
 .spectrum-browse-center .tuners-center-control-row,
 .spectrum-browse-center .tuners-center-value {
-  height: var(--control-height-compact);
+  height: var(--control-height-spectrum);
 }
 
 .spectrum-browse-center .tuners-center-frequency {
@@ -1089,19 +1119,40 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 }
 
 .spectrum-browse-center .tuners-frequency-digit {
-  height: calc(var(--control-height-compact) - 2px);
+  width: 18px;
+  height: calc(var(--control-height-spectrum) - 2px);
+  font-size: var(--font-size-control);
+  font-weight: var(--font-weight-medium);
+}
+
+.spectrum-browse-center .tuners-frequency-decimal,
+.spectrum-browse-center .tuners-frequency-unit {
+  align-self: center;
+  padding-block: 0;
+  font-weight: var(--font-weight-medium);
+}
+
+.spectrum-browse-center .tuners-frequency-decimal {
+  padding-inline: 1px;
+  font-size: var(--font-size-control);
+}
+
+.spectrum-browse-center .tuners-frequency-unit {
+  margin-left: auto;
+  padding-left: var(--space-2);
+  font-size: var(--font-size-meta);
 }
 
 .spectrum-browse-center .tuners-center-lock-field {
-  height: var(--control-height-compact);
+  height: var(--control-height-spectrum);
   min-height: 0;
-  min-width: 74px;
+  min-width: 72px;
   flex: 0 0 auto;
   align-self: center;
   gap: var(--space-1);
-  padding: 0 var(--space-1);
-  background: var(--surface);
-  border: 1px solid var(--interactive-border);
+  padding: 0 var(--space-2);
+  background: transparent;
+  border: 1px solid transparent;
   border-radius: var(--radius-control);
 }
 
@@ -1130,6 +1181,8 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   display: flex;
   align-items: center;
   gap: var(--space-1);
+  padding-left: var(--space-2);
+  border-left: 1px solid var(--line);
 }
 
 .spectrum-browse-toolbar .spectrum-browse-actions .tuner-spectrum-zoom-actions > button {
@@ -1139,6 +1192,45 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 .spectrum-browse-message {
   min-width: 0;
   max-width: none;
+}
+
+.spectrum-browse-takeover-warning:not([hidden]) {
+  position: relative;
+}
+
+.spectrum-browse-takeover-warning:not([hidden])::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-1);
+  background: var(--warning);
+  border-radius: 50%;
+}
+
+.spectrum-browse-actions .tuner-spectrum-options-summary {
+  display: inline-grid;
+}
+
+.spectrum-browse-options-more-icon {
+  display: none;
+}
+
+.spectrum-browse-mobile-options-actions {
+  display: none;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.spectrum-browse-mobile-reset {
+  justify-content: flex-start;
+  gap: var(--space-2);
+}
+
+.spectrum-browse-mobile-reset svg {
+  width: var(--icon-glyph-size);
+  height: var(--icon-glyph-size);
 }
 
 .spectrum-browse-main {
@@ -1161,7 +1253,6 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-columns: 176px minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) auto;
   overflow: hidden;
   background: var(--surface);
@@ -1171,36 +1262,90 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 }
 
 .spectrum-browse-instrument > .tuner-spectrum-visual-window {
-  grid-column: 1 / -1;
   border: 0;
   border-radius: 0;
   box-shadow: none;
 }
 
-.spectrum-browse-instrument > .tuner-spectrum-display-controls {
+.spectrum-browse-status-rail {
   min-width: 0;
-  min-height: 32px;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  gap: var(--space-1);
-  padding: var(--space-2) var(--space-3);
-  background: var(--surface);
-  border-top: 1px solid var(--line);
-}
-
-.spectrum-browse-instrument .tuner-spectrum-flag-legend {
   display: grid;
-  grid-template-columns: repeat(2, max-content);
-  gap: var(--space-1) var(--space-2);
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: stretch;
+  background: color-mix(in srgb, var(--surface-2) 72%, var(--surface));
+  border-top: 1px solid var(--line);
 }
 
-.spectrum-browse-instrument > .tuner-spectrum-measurement-panel {
+.spectrum-browse-status-rail > .tuner-spectrum-display-controls {
+  min-width: 0;
+  min-height: 54px;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  background: transparent;
+  border-right: 1px solid var(--line);
+}
+
+.spectrum-browse-status-rail .tuner-spectrum-legend-label {
+  color: var(--ink);
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-control);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.spectrum-browse-status-rail .tuner-spectrum-flag-legend {
+  flex-wrap: nowrap;
+  gap: var(--space-2);
+}
+
+.spectrum-browse-status-rail .tuner-spectrum-flag-legend-item {
+  gap: 5px;
+  color: var(--muted);
+  font-size: var(--font-size-micro);
+}
+
+.spectrum-browse-status-rail .tuner-spectrum-flag-swatch {
+  width: 7px;
+  height: 7px;
   border: 0;
-  border-top: 1px solid var(--line);
-  border-left: 1px solid var(--line);
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.spectrum-browse-status-rail > .tuner-spectrum-measurement-panel {
+  min-height: 54px;
+  background: transparent;
+  border: 0;
   border-radius: 0;
   box-shadow: none;
+}
+
+.spectrum-browse-status-rail .tuner-spectrum-readouts .channel-diagnostic-readout {
+  display: grid;
+  align-content: center;
+  align-items: center;
+  gap: 2px;
+  padding: 7px var(--space-4);
+  border-right-color: color-mix(in srgb, var(--line) 72%, transparent);
+}
+
+.spectrum-browse-status-rail .tuner-spectrum-readouts .channel-diagnostic-readout small {
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-control);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.spectrum-browse-status-rail .tuner-spectrum-readouts .channel-diagnostic-readout strong {
+  color: var(--ink);
+  font-size: var(--font-size-label);
+  line-height: 1.1;
+}
+
+.spectrum-browse-status-rail .tuner-spectrum-more-measurements {
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-1);
 }
 
 .spectrum-browse-instrument .tuner-spectrum-more-readouts {
@@ -1210,7 +1355,9 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 
 @media (max-width: 1100px) {
   .spectrum-browse-toolbar {
-    grid-template-columns: minmax(150px, 210px) minmax(270px, 1fr) minmax(44px, auto) max-content;
+    --ui-control-height: var(--control-height-compact);
+    --icon-action-size: var(--control-height-compact);
+    grid-template-columns: minmax(140px, .8fr) minmax(270px, 1.45fr) max-content;
     justify-content: stretch;
   }
 
@@ -1218,19 +1365,16 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
     display: none;
   }
 
-  .spectrum-browse-instrument {
-    grid-template-columns: 150px minmax(0, 1fr);
+  .spectrum-browse-status-rail {
+    grid-template-columns: minmax(0, 1fr);
   }
 
-  .spectrum-browse-instrument .tuner-spectrum-readouts > span {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 2px;
-    padding: 6px var(--space-2);
-  }
-
-  .spectrum-browse-instrument .tuner-spectrum-readouts strong {
-    white-space: nowrap;
+  .spectrum-browse-status-rail > .tuner-spectrum-display-controls {
+    min-height: 38px;
+    justify-content: flex-start;
+    padding: var(--space-2) var(--space-3);
+    border-right: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
   }
 }
 
@@ -1671,32 +1815,6 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
     touch-action: pan-y;
   }
 
-  .spectrum-browse-toolbar {
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas:
-      "tuner tuner"
-      "center center"
-      "state actions";
-  }
-
-  .spectrum-browse-tuner {
-    grid-area: tuner;
-  }
-
-  .spectrum-browse-center {
-    grid-area: center;
-  }
-
-  .spectrum-browse-state {
-    grid-area: state;
-    justify-content: flex-start;
-    overflow: hidden;
-  }
-
-  .spectrum-browse-toolbar .spectrum-browse-actions {
-    grid-area: actions;
-    justify-content: flex-end;
-  }
 }
 
 @media (max-width: 760px) {
@@ -1709,17 +1827,73 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
     grid-template-rows: auto auto;
   }
 
-  .spectrum-browse-instrument {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr) auto auto;
+  .spectrum-browse-toolbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "receiver status"
+      "frequency lock"
+      "actions actions"
+      "feedback feedback";
+    justify-content: stretch;
   }
 
-  .spectrum-browse-instrument > .tuner-spectrum-visual-window {
-    grid-column: 1;
+  .spectrum-browse-tuner {
+    grid-area: receiver;
   }
 
-  .spectrum-browse-instrument > .tuner-spectrum-measurement-panel {
-    border-left: 0;
+  .spectrum-browse-toolbar .spectrum-browse-center.tuners-readout,
+  .spectrum-browse-command-cluster {
+    display: contents;
+  }
+
+  .spectrum-browse-center .tuners-center-frequency {
+    grid-area: frequency;
+  }
+
+  .spectrum-browse-center .tuners-center-lock-field {
+    grid-area: lock;
+    background: var(--surface-2);
+    border-color: var(--line);
+  }
+
+  .spectrum-browse-state {
+    grid-area: status;
+    justify-self: end;
+  }
+
+  .spectrum-browse-toolbar .spectrum-browse-actions {
+    width: 100%;
+    display: flex;
+    grid-area: actions;
+    justify-content: flex-start;
+  }
+
+  .spectrum-browse-feedback {
+    grid-area: feedback;
+  }
+
+  .spectrum-browse-toolbar .tuner-spectrum-zoom-actions > button:last-child {
+    display: none;
+  }
+
+  .spectrum-browse-options-display-icon {
+    display: none;
+  }
+
+  .spectrum-browse-options-more-icon {
+    display: block;
+  }
+
+  .spectrum-browse-mobile-options-actions {
+    display: flex;
+  }
+
+  .spectrum-browse-status-rail .tuner-spectrum-readouts .channel-diagnostic-readout {
+    padding: var(--space-2) var(--space-3);
+  }
+
+  .spectrum-browse-status-rail > .tuner-spectrum-measurement-panel {
+    min-height: 84px;
   }
 
   .spectrum-discovery-modal .channel-editor-grid,
@@ -1786,12 +1960,8 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 }
 
 @media (max-width: 380px) {
-  .spectrum-browse-toolbar {
-    grid-template-areas:
-      "tuner tuner"
-      "center center"
-      "state state"
-      "actions actions";
+  .spectrum-browse-status {
+    font-size: 0;
   }
 }
 

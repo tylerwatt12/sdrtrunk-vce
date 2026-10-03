@@ -997,6 +997,17 @@ if(view === 'live-notice') {
 }
 if(view === 'scanner') document.body.dataset.view = 'scanner';
 if(view === 'entity-details') document.body.dataset.view = 'group-identity';
+if(view === 'tuner-spectrum') {
+  const spectrumOptions = document.querySelector('.visual-tuner-spectrum-example .tuner-spectrum-options-summary');
+  const compactSpectrum = window.matchMedia('(max-width: 760px)');
+  const syncSpectrumOptionsLabel = () => {
+    const text = compactSpectrum.matches ? 'More spectrum actions' : 'Display options';
+    spectrumOptions?.setAttribute('aria-label', text);
+    if(spectrumOptions) spectrumOptions.title = text;
+  };
+  syncSpectrumOptionsLabel();
+  compactSpectrum.addEventListener('change', syncSpectrumOptionsLabel);
+}
 const label = document.getElementById('visual-theme-label');
 if(label) label.textContent = `${theme[0].toUpperCase()}${theme.slice(1)} theme`;
 

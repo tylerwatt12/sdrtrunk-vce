@@ -723,7 +723,7 @@ test('tuner-spectrum-dark-desktop', async ({ page }) => {
   await expect(example.getByRole('checkbox', { name: 'Lock center', exact: true })).toBeVisible();
   await expect(example.getByText('Lock center', { exact: true })).toHaveCount(0);
   await expect(example.locator('.tuners-center-lock-field')).toHaveAttribute('title', 'Lock center frequency');
-  await expect(example.locator('.spectrum-browse-message')).toHaveText('Drag to tune · Zoom to pan');
+  await expect(example.locator('.spectrum-browse-message')).toHaveCount(0);
   await expect(example.locator('.tuner-spectrum-readouts .channel-diagnostic-readout small'))
     .toHaveText(['Visible span', 'Zoom', 'Peak', 'Best SNR']);
   for (const label of ['Find P25 channels', 'Stop channels to tune', 'Reset zoom', 'Pause',
@@ -751,11 +751,12 @@ test('tuner-spectrum-dark-desktop', async ({ page }) => {
   expect(railBox.x).toBeGreaterThan(panelBox.x + panelBox.width);
   expect(Math.abs(railBox.y - panelBox.y)).toBeLessThanOrEqual(1);
   const waterfallBox = await example.locator('.tuner-spectrum-waterfall').boundingBox();
+  const statusRailBox = await example.locator('.spectrum-browse-status-rail').boundingBox();
   const legendBox = await example.locator('.tuner-spectrum-display-controls').boundingBox();
   const measurementsBox = await example.locator('.tuner-spectrum-measurement-panel').boundingBox();
   expect(waterfallBox).not.toBeNull();
   expect(legendBox).not.toBeNull();
-  expect(Math.abs(waterfallBox.y + waterfallBox.height - legendBox.y)).toBeLessThanOrEqual(1);
+  expect(Math.abs(waterfallBox.y + waterfallBox.height - statusRailBox.y)).toBeLessThanOrEqual(1);
   expect(Math.abs(legendBox.y - measurementsBox.y)).toBeLessThanOrEqual(1);
   expect(Math.abs(legendBox.x + legendBox.width - measurementsBox.x)).toBeLessThanOrEqual(1);
   expect(Math.abs(legendBox.y + legendBox.height -
@@ -772,13 +773,16 @@ test('tuner-spectrum-light-mobile', async ({ page }) => {
   await expect(example.locator(':scope > .page-header > .ui-button-primary')).toHaveCount(0);
   await expect(example.getByRole('checkbox', { name: 'Lock center', exact: true })).toBeVisible();
   const tunerBox = await example.locator('.spectrum-browse-tuner').boundingBox();
-  const centerBox = await example.locator('.spectrum-browse-center').boundingBox();
+  const frequencyBox = await example.locator('.tuners-center-frequency').boundingBox();
+  const lockBox = await example.locator('.tuners-center-lock-field').boundingBox();
   const stateBox = await example.locator('.spectrum-browse-state').boundingBox();
   const actionsBox = await example.locator('.spectrum-browse-actions').boundingBox();
-  expect(centerBox.y).toBeGreaterThanOrEqual(tunerBox.y + tunerBox.height);
-  expect(stateBox.y).toBeGreaterThanOrEqual(centerBox.y + centerBox.height);
   expect(Math.abs((stateBox.y + stateBox.height / 2) -
-    (actionsBox.y + actionsBox.height / 2))).toBeLessThanOrEqual(1);
+    (tunerBox.y + tunerBox.height / 2))).toBeLessThanOrEqual(1);
+  expect(frequencyBox.y).toBeGreaterThanOrEqual(tunerBox.y + tunerBox.height);
+  expect(Math.abs(frequencyBox.y - lockBox.y)).toBeLessThanOrEqual(1);
+  expect(Math.abs(frequencyBox.height - lockBox.height)).toBeLessThanOrEqual(1);
+  expect(actionsBox.y).toBeGreaterThanOrEqual(frequencyBox.y + frequencyBox.height);
   const panelBox = await example.locator('.spectrum-browse-panel').boundingBox();
   const railBox = await example.locator('.spectrum-browse-control-rail').boundingBox();
   expect(panelBox).not.toBeNull();
@@ -789,8 +793,9 @@ test('tuner-spectrum-light-mobile', async ({ page }) => {
   const legendBox = await example.locator('.tuner-spectrum-display-controls').boundingBox();
   const measurementsBox = await example.locator('.tuner-spectrum-measurement-panel').boundingBox();
   expect(measurementsBox.y).toBeGreaterThanOrEqual(legendBox.y + legendBox.height);
-  await expect(example.locator('.spectrum-browse-message')).toHaveText('Drag to tune · Zoom to pan');
-  await expect(example.locator('.spectrum-browse-message')).toBeHidden();
+  await expect(example.locator('.spectrum-browse-message')).toHaveCount(0);
+  await expect(example.getByRole('button', { name: 'More spectrum actions', exact: true })).toBeVisible();
+  await expect(example.getByRole('button', { name: 'Display options', exact: true })).toBeHidden();
   await expect(page.locator('body')).toHaveScreenshot('tuner-spectrum-light-mobile.png', { fullPage: true });
 });
 
@@ -809,19 +814,17 @@ test('tuner-spectrum-toolbar-stays-one-row-at-desktop-narrow-width', async ({ pa
   const legend = await page.locator('.visual-tuner-spectrum-example .tuner-spectrum-display-controls').boundingBox();
   const measurements = await page.locator(
     '.visual-tuner-spectrum-example .tuner-spectrum-measurement-panel').boundingBox();
-  expect(Math.abs(legend.y - measurements.y)).toBeLessThanOrEqual(1);
+  expect(measurements.y).toBeGreaterThanOrEqual(legend.y + legend.height);
 
   await page.setViewportSize({ width: 820, height: 750 });
   await page.goto('/design-system.html?theme=light&view=tuner-spectrum');
   const compact = page.locator('.visual-tuner-spectrum-example');
-  const tunerBox = await compact.locator('.spectrum-browse-tuner').boundingBox();
-  const centerBox = await compact.locator('.spectrum-browse-center').boundingBox();
-  const stateBox = await compact.locator('.spectrum-browse-state').boundingBox();
-  const actionsBox = await compact.locator('.spectrum-browse-actions').boundingBox();
-  expect(centerBox.y).toBeGreaterThanOrEqual(tunerBox.y + tunerBox.height);
-  expect(stateBox.y).toBeGreaterThanOrEqual(centerBox.y + centerBox.height);
-  expect(Math.abs((stateBox.y + stateBox.height / 2) -
-    (actionsBox.y + actionsBox.height / 2))).toBeLessThanOrEqual(1);
+  const compactRows = await compact.locator('.spectrum-browse-toolbar').evaluate((toolbar) =>
+    [...toolbar.children].map((child) => {
+      const bounds = child.getBoundingClientRect();
+      return bounds.top + bounds.height / 2;
+    }));
+  expect(Math.max(...compactRows) - Math.min(...compactRows)).toBeLessThanOrEqual(1);
   const compactFrequency = await compact.locator('.tuners-center-value').boundingBox();
   const compactLock = await compact.locator('.tuners-center-lock-field').boundingBox();
   expect(Math.abs(compactFrequency.y - compactLock.y)).toBeLessThanOrEqual(1);
@@ -833,12 +836,26 @@ test('tuner-spectrum-toolbar-stays-one-row-at-desktop-narrow-width', async ({ pa
   await page.setViewportSize({ width: 360, height: 750 });
   await page.goto('/design-system.html?theme=light&view=tuner-spectrum');
   const phone = page.locator('.visual-tuner-spectrum-example');
+  const phoneTuner = await phone.locator('.spectrum-browse-tuner').boundingBox();
+  const phoneFrequency = await phone.locator('.tuners-center-frequency').boundingBox();
+  const phoneLock = await phone.locator('.tuners-center-lock-field').boundingBox();
   const phoneState = await phone.locator('.spectrum-browse-state').boundingBox();
   const phoneActions = await phone.locator('.spectrum-browse-actions').boundingBox();
-  expect(phoneActions.y).toBeGreaterThanOrEqual(phoneState.y + phoneState.height);
+  expect(Math.abs((phoneState.y + phoneState.height / 2) -
+    (phoneTuner.y + phoneTuner.height / 2))).toBeLessThanOrEqual(1);
+  expect(phoneFrequency.y).toBeGreaterThanOrEqual(phoneTuner.y + phoneTuner.height);
+  expect(Math.abs(phoneFrequency.y - phoneLock.y)).toBeLessThanOrEqual(1);
+  expect(phoneActions.y).toBeGreaterThanOrEqual(phoneFrequency.y + phoneFrequency.height);
   await expect(phone.locator('.spectrum-browse-state > .badge')).toBeVisible();
+  await expect(phone.getByRole('button', { name: 'More spectrum actions', exact: true })).toBeVisible();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <=
     document.documentElement.clientWidth)).toBe(true);
+
+  await page.setViewportSize({ width: 320, height: 750 });
+  await page.goto('/design-system.html?theme=light&view=tuner-spectrum');
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <=
+    document.documentElement.clientWidth)).toBe(true);
+  await expect(page.getByRole('button', { name: 'More spectrum actions', exact: true })).toBeVisible();
 });
 
 for (const [name, theme, viewport] of [
