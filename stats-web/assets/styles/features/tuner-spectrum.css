@@ -1754,14 +1754,64 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 .spectrum-search-results-toolbar {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(220px, 1fr) auto;
   align-items: end;
   gap: var(--space-3);
+}
+
+.spectrum-search-results-heading {
+  min-width: max-content;
+  display: grid;
+  align-self: center;
+  gap: var(--space-1);
 }
 
 .spectrum-search-results-filter {
   min-width: 0;
   width: 100%;
+}
+
+.spectrum-search-system-list,
+.spectrum-search-review-systems {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.spectrum-search-system-group,
+.spectrum-search-review-system {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.spectrum-search-system-header {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.spectrum-search-system-identity,
+.spectrum-search-review-system-title {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.spectrum-search-group-table td:nth-child(3),
+.spectrum-search-group-table td:nth-child(4) {
+  white-space: nowrap;
+}
+
+.spectrum-search-channel-choice {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
 }
 
 .spectrum-search-results .identity-summary {
@@ -1782,15 +1832,77 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   margin: 0;
 }
 
-.spectrum-search-results th:first-child {
-  min-width: 4.5rem;
+.spectrum-search-health {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-1);
 }
 
-.spectrum-search-listen-option {
+.spectrum-search-review-form {
   min-width: 0;
-  display: flex;
+}
+
+.spectrum-search-review-system-header {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.spectrum-search-customize-action {
+  align-self: center;
+}
+
+.spectrum-search-review-channel-list {
+  min-width: 0;
+}
+
+.spectrum-search-review-channel {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(120px, .9fr) minmax(110px, .8fr) minmax(180px, 1.4fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--line);
+}
+
+.spectrum-search-review-channel:first-child {
+  border-top: 0;
+}
+
+.spectrum-search-review-channel > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.spectrum-search-review-channel > span::before {
+  content: attr(data-label);
+  display: block;
+  margin-bottom: var(--space-1);
+  color: var(--muted);
+  font-size: var(--font-size-micro);
+}
+
+.spectrum-search-review-customize {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-2);
+  border-top: 1px solid var(--line);
+}
+
+.spectrum-search-review-customize[hidden] {
+  display: none;
+}
+
+.spectrum-search-channel-fields {
+  align-items: end;
 }
 
 @media (max-width: 920px) {
@@ -1955,6 +2067,34 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   .spectrum-search-results-toolbar {
     grid-template-columns: minmax(0, 1fr);
     justify-items: start;
+  }
+
+  .spectrum-search-results-filter {
+    grid-row: 2;
+  }
+
+  .spectrum-search-review-channel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .spectrum-search-review-channel > :nth-child(3) {
+    grid-column: 1 / -1;
+  }
+
+  .spectrum-search-channel-choice {
+    position: relative;
+    display: block;
+    padding-right: calc(var(--control-height-compact) + var(--space-2));
+  }
+
+  .spectrum-search-group-table tbody td:first-child {
+    align-items: start;
+  }
+
+  .spectrum-search-channel-check {
+    position: absolute;
+    top: 0;
+    right: 0;
   }
 
 }

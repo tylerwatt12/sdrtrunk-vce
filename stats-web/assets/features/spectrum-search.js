@@ -15,7 +15,7 @@ export function spectrumSearchSystemName(candidate) {
 
 export function openSpectrumSearchWizard(ui, context = {}) {
   const { node, openReadOnlyModal, requestJson, uiActionButton, uiSelect, uiSelectFrame, uiPill,
-    formField, uiToggleField, anchor, href, entityRefHref, channelMHz, hex } = ui;
+    formField, anchor, href, entityRefHref, channelMHz, hex } = ui;
   const path = '/api/v1/admin/spectrum-search';
   const abort = new AbortController();
   const host = node('div', 'spectrum-discovery-workspace spectrum-search-workspace editor-workspace');
@@ -40,7 +40,6 @@ export function openSpectrumSearchWizard(ui, context = {}) {
   let busy = false;
   let paused = false;
   let generation = 0;
-  let firstCandidateId = null;
   let progressNodes = null;
   let disposeBandPicker = () => {};
   const preparedCatalogTuners = new Map();
@@ -190,7 +189,9 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     disposeBandPicker = () => {};
     progressNodes = null;
     steps.hidden = next === 'saved';
-    steps.replaceChildren(...['Bands', 'Find channels', 'Review'].map((label, position) => {
+    const labels = next === 'progress' ? ['Bands', 'Find channels', 'Review & add'] :
+      ['Bands', 'Select channels', 'Review & add'];
+    steps.replaceChildren(...labels.map((label, position) => {
       const step = node('li');
       step.append(uiPill(position < index ? '✓' : String(position + 1),
         position < index ? 'success' : position === index ? 'blue' : 'neutral'), node('span', '', label));
@@ -584,7 +585,6 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       selected.clear();
       drafts.clear();
       groups.clear();
-      firstCandidateId = null;
       modal.setDirty(false);
       scheduleRenewal();
       drawJob();
@@ -692,35 +692,66 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       button('Try another search', () => void restart(), true);
     }
   };
+  const groupFor = (candidate) => (job.alias_groups || []).find((group) =>
+    group.group_id === candidate.alias_group_id);
+  const groupedCandidates = (values) => {
+    const ordered = [];
+    const byKey = new Map();
+    values.forEach((candidate) => {
+      const identity = candidate.identity || {};
+      const key = candidate.alias_group_id ||
+        `identity:${identity.wacn ?? 'unknown'}:${identity.system ?? 'unknown'}`;
+      if (!byKey.has(key)) {
+        const entry = { key, aliasGroup: groupFor(candidate), candidates: [] };
+        byKey.set(key, entry);
+        ordered.push(entry);
+      }
+      byKey.get(key).candidates.push(candidate);
+    });
+    return ordered;
+  };
+  const siteLabel = (candidate) => candidate.site_name || (candidate.identity ?
+    `RFSS ${hex(candidate.identity.rfss, 2)} · Site ${hex(candidate.identity.site, 2)}` : 'Site unavailable');
+  const systemIdentityLabel = (entry) => {
+    const candidate = entry.candidates[0];
+    const identity = candidate?.identity || entry.aliasGroup;
+    if (!identity || identity.wacn == null || identity.system == null) return 'Identity unavailable';
+    const count = entry.candidates.length;
+    return `WACN ${hex(identity.wacn, 5)} · SysID ${hex(identity.system, 3)} · ${count} ${count === 1 ? 'site' : 'sites'}`;
+  };
   const showResults = () => {
-    show('results', 2, 'Choose channels to add');
-    stage.append(node('p', 'muted', `${candidates().length} P25 control channels found. Choose the channels you want to keep.`),
-      node('p', 'ui-field-hint', 'Reception is a snapshot from this search, not a live measurement.'));
+    const found = candidates().length;
+    show('results', 1, `${found} ${found === 1 ? 'channel' : 'channels'} found`);
     if (job.truncated_reason) stage.append(node('div', 'ui-notice ui-notice-warning',
       'This search reached its signal limit. Try a smaller range to check the remaining signals.'));
     const search = node('input', 'ui-input');
     search.type = 'search';
     search.setAttribute('aria-label', 'Search results');
-    search.placeholder = 'Search names, frequencies, or system and site IDs';
+    search.placeholder = 'Search channels, frequencies, or identities';
     const toolbar = node('div', 'spectrum-search-results-toolbar');
-    const count = node('span', 'muted');
+    const heading = node('div', 'spectrum-search-results-heading');
+    heading.append(node('strong', '', 'Grouped by P25 system'), node('span', 'muted'));
+    const count = heading.lastChild;
     const filter = formField('Search results', search);
     filter.classList.add('spectrum-search-results-filter');
-    toolbar.append(filter, count);
+    toolbar.append(heading, filter);
     const rows = [];
-    const table = node('table', 'ui-data-table ui-data-table-quiet ui-mobile-cards');
-    const head = node('tr');
-    ['Choose', 'Channel', 'System and site', 'Reception during search'].forEach((label) => {
-      const cell = node('th', '', label); cell.scope = 'col'; head.append(cell);
-    });
-    const thead = node('thead'); thead.append(head);
-    const body = node('tbody');
+    const sections = [];
     const review = button('Review selected', showReview, true);
-    button('Search another band', () => void restart());
-    actions.prepend(actions.lastChild);
+    const another = button('Search another band', () => void restart());
+    actions.prepend(another);
     const updateSelection = () => {
       count.textContent = `${selected.size} selected`;
       review.disabled = selected.size === 0;
+      review.textContent = selected.size ? `Review ${selected.size} ${selected.size === 1 ? 'channel' : 'channels'}` :
+        'Review selected';
+      sections.forEach(({ groupCheck, members }) => {
+        const available = members.filter(({ check }) => !check.disabled);
+        const chosen = available.filter(({ candidate }) => selected.has(candidate.candidate_id));
+        groupCheck.disabled = available.length === 0;
+        groupCheck.checked = available.length > 0 && chosen.length === available.length;
+        groupCheck.indeterminate = chosen.length > 0 && chosen.length < available.length;
+      });
     };
     const selectAll = button('Select all available', () => {
       rows.forEach(({ candidate, check }) => {
@@ -728,164 +759,213 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       });
       updateSelection();
     }, false, toolbar);
-    candidates().forEach((candidate) => {
-      const row = node('tr');
-      const cells = ['Choose', 'Channel', 'System and site', 'Reception during search'].map((label) => {
-        const cell = node('td'); cell.dataset.label = label; row.append(cell); return cell;
+    toolbar.append(selectAll);
+    const list = node('div', 'spectrum-search-system-list');
+    groupedCandidates(candidates()).forEach((entry) => {
+      const section = node('section', 'ui-surface spectrum-search-system-group');
+      const sectionHeader = node('header', 'spectrum-search-system-header');
+      const groupCheck = node('input', 'ui-selection-check');
+      groupCheck.type = 'checkbox';
+      groupCheck.setAttribute('aria-label', `Select all channels in ${systemLabel(entry.candidates[0])}`);
+      const identity = node('div', 'spectrum-search-system-identity');
+      identity.append(node('strong', '', systemLabel(entry.candidates[0])),
+        node('span', 'muted', systemIdentityLabel(entry)));
+      sectionHeader.append(groupCheck, identity);
+      if (entry.candidates.some((candidate) => candidate.identity)) sectionHeader.append(uiPill('Stable identity', 'success'));
+      const table = node('table', 'ui-data-table ui-data-table-quiet ui-mobile-cards spectrum-search-group-table');
+      const head = node('tr');
+      ['Channel', 'Site', 'Signal', 'Health'].forEach((label) => {
+        const cell = node('th', '', label); cell.scope = 'col'; head.append(cell);
       });
-      const check = node('input', 'ui-selection-check');
-      check.type = 'checkbox';
-      check.setAttribute('aria-label', `Select ${candidateName(candidate)}`);
-      check.disabled = candidate.selectable === false || Boolean(candidate.known_channel) || candidate.saved === true;
-      check.checked = selected.has(candidate.candidate_id);
-      check.addEventListener('change', () => {
-        if (check.checked) selected.add(candidate.candidate_id); else selected.delete(candidate.candidate_id);
+      const thead = node('thead'); thead.append(head);
+      const body = node('tbody');
+      const members = [];
+      entry.candidates.forEach((candidate) => {
+        const row = node('tr');
+        const cells = ['Channel', 'Site', 'Signal', 'Health'].map((label) => {
+          const cell = node('td'); cell.dataset.label = label; row.append(cell); return cell;
+        });
+        const check = node('input', 'ui-selection-check spectrum-search-channel-check');
+        check.type = 'checkbox';
+        check.setAttribute('aria-label', `Select ${candidateName(candidate)}`);
+        check.disabled = candidate.selectable === false || Boolean(candidate.known_channel) || candidate.saved === true;
+        check.checked = selected.has(candidate.candidate_id);
+        check.addEventListener('change', () => {
+          if (check.checked) selected.add(candidate.candidate_id); else selected.delete(candidate.candidate_id);
+          updateSelection();
+        });
+        const channel = node('div', 'identity-summary');
+        channel.append(node('strong', 'identity-summary-primary', `${channelMHz(candidate.frequency_hz)} MHz`),
+          node('span', 'muted', [candidateName(candidate), candidate.modulation].filter(Boolean).join(' · ')));
+        if (candidate.known_channel) {
+          const known = candidate.known_channel;
+          const link = entityRefHref(known.entity_ref) || (known.configuration_id ?
+            href('channel', { configuration_id: known.configuration_id }) : null);
+          channel.append(uiPill('Already added'), link ? anchor(known.name || 'Open channel', link) :
+            node('span', 'muted', known.name || 'Known channel'));
+        } else if (check.disabled) channel.append(node('span', 'muted', candidate.reason || 'Unavailable to add'));
+        const channelChoice = node('div', 'spectrum-search-channel-choice');
+        channelChoice.append(check, channel);
+        cells[0].append(channelChoice);
+        cells[1].append(node('span', '', siteLabel(candidate)));
+        const strength = Number.isFinite(Number(candidate.strength_dbfs)) && candidate.strength_dbfs != null ?
+          `${Number(candidate.strength_dbfs).toFixed(1)} dBFS` : '—';
+        cells[2].append(node('span', '', strength));
+        const health = candidate.health || {};
+        const healthCell = node('div', 'spectrum-search-health');
+        healthCell.append(node('strong', '', health.quality_pct == null ? '—' : `${Math.round(health.quality_pct)}%`),
+          disclosure('Signal details', factList([
+            ...identityFacts(candidate), ['Modulation', candidate.modulation],
+            ['Decoder quality', health.quality_pct == null ? null : `${Math.round(health.quality_pct)}%`],
+            ['Valid control messages', health.valid_control_messages],
+            ['Invalid control messages', health.invalid_control_messages],
+            ['Last checked', health.checked_at_ms ? new Date(health.checked_at_ms).toLocaleTimeString() : 'During this search']
+          ])));
+        cells[3].append(healthCell);
+        row.hidden = false;
+        const member = { candidate, row, check, text: [candidateName(candidate), systemLabel(candidate),
+          identityText(candidate), candidate.known_channel?.name, channelMHz(candidate.frequency_hz),
+          ...(groupFor(candidate)?.alias_lists || []).map((aliasList) => aliasList.name),
+          ...Object.values(candidate.identity || {})].filter((value) => value != null).join(' ').toLowerCase() };
+        members.push(member);
+        rows.push(member);
+        body.append(row);
+      });
+      groupCheck.addEventListener('change', () => {
+        members.forEach(({ candidate, check }) => {
+          if (check.disabled) return;
+          check.checked = groupCheck.checked;
+          if (groupCheck.checked) selected.add(candidate.candidate_id); else selected.delete(candidate.candidate_id);
+        });
         updateSelection();
       });
-      cells[0].append(check);
-      const name = node('div', 'identity-summary');
-      name.append(node('strong', 'identity-summary-primary', candidateName(candidate)),
-        node('span', 'muted', `${channelMHz(candidate.frequency_hz)} MHz`));
-      if (candidate.known_channel) {
-        const known = candidate.known_channel;
-        const link = entityRefHref(known.entity_ref) || (known.configuration_id ? href('channel', { configuration_id: known.configuration_id }) : null);
-        name.append(uiPill('Already added'), link ? anchor(known.name || 'Open channel', link) : node('span', 'muted', known.name || 'Known channel'));
-      } else if (check.disabled) name.append(node('span', 'muted', candidate.reason || 'Unavailable to add'));
-      cells[1].append(name);
-      const systemHref = entityRefHref(candidate.entity_ref);
-      const system = node('div', 'spectrum-search-cell');
-      system.append(systemHref ? anchor(systemLabel(candidate), systemHref) : node('strong', '', systemLabel(candidate)));
-      if (candidate.site_name) system.append(node('p', 'muted', candidate.site_name));
-      cells[2].append(system);
-      const health = candidate.health || {};
-      const strength = Number.isFinite(Number(candidate.strength_dbfs)) && candidate.strength_dbfs != null ?
-        `${Number(candidate.strength_dbfs).toFixed(1)} dBFS` : 'Signal level unavailable';
-      const reception = node('div', 'spectrum-search-cell');
-      reception.append(node('strong', '', strength), node('p', 'muted', health.quality_pct == null ?
-        'Reception details unavailable' : health.quality_pct >= 90 ? 'Clean reception' :
-          health.quality_pct >= 60 ? 'Some decoding errors' : 'Unreliable reception'),
-      disclosure('Signal details', factList([
-        ...identityFacts(candidate),
-        ['Modulation', candidate.modulation], ['Decoder quality', health.quality_pct == null ? null : `${Math.round(health.quality_pct)}%`],
-        ['Valid control messages', health.valid_control_messages],
-        ['Invalid control messages', health.invalid_control_messages],
-        ['Last checked', health.checked_at_ms ? new Date(health.checked_at_ms).toLocaleTimeString() : 'During this search']
-      ]), node('p', 'ui-field-hint', 'Decoder quality reflects reception errors; it is not a confidence score. dBFS is a relative receiver signal level. Values closer to zero mean a stronger signal. Receiver gain settings affect this reading.')));
-      cells[3].append(reception);
-      row.hidden = false;
-      rows.push({ candidate, row, check, text: [candidateName(candidate), systemLabel(candidate), identityText(candidate),
-        candidate.known_channel?.name, channelMHz(candidate.frequency_hz), ...(groupFor(candidate)?.alias_lists || []).map((list) => list.name),
-        ...Object.values(candidate.identity || {})].filter((value) => value != null).join(' ').toLowerCase() });
-      body.append(row);
+      table.append(thead, body);
+      section.append(sectionHeader, table);
+      sections.push({ section, groupCheck, members });
+      list.append(section);
     });
     search.addEventListener('input', () => {
       const query = search.value.trim().toLowerCase();
       rows.forEach(({ row, text }) => { row.hidden = !text.includes(query); });
+      sections.forEach(({ section, members }) => { section.hidden = members.every(({ row }) => row.hidden); });
     });
     selectAll.disabled = rows.every(({ check }) => check.disabled);
-    table.append(thead, body);
-    const wrap = node('div', 'ui-table-wrap spectrum-search-results'); wrap.append(table);
-    stage.append(toolbar, candidates().length ? wrap : node('div', 'ui-empty-state', 'No P25 control channels were identified. Try another band or a different receiver.'));
+    stage.append(toolbar, found ? list : node('div', 'ui-empty-state',
+      'No P25 control channels were identified. Try another band or a different receiver.'));
     updateSelection();
   };
-  const groupFor = (candidate) => (job.alias_groups || []).find((group) => group.group_id === candidate.alias_group_id);
   const showReview = () => {
     if (job.restart_required) { showSaved(); return; }
-    show('review', 2, 'Review your channels');
-    const form = node('form', 'spectrum-discovery-review');
+    const chosen = selectedCandidates();
+    show('review', 2, `Review ${chosen.length} ${chosen.length === 1 ? 'channel' : 'channels'}`);
+    const form = node('form', 'spectrum-discovery-review spectrum-search-review-form');
     form.addEventListener('submit', (event) => event.preventDefault());
-    const selectedGroups = (job.alias_groups || []).filter((group) => selectedCandidates().some((candidate) =>
-      !candidate.saved && !candidate.known_channel && candidate.alias_group_id === group.group_id));
-    selectedGroups.forEach((group) => {
-      const lists = group.alias_lists || [];
-      const draft = groups.get(group.group_id) || { alias_list_id: group.suggested_alias_list_id || (lists.length === 1 ? lists[0].id : lists.length ? '' : 0),
-        new_alias_list_name: group.default_new_alias_list_name || `P25 ${hex(group.wacn, 5)}-${hex(group.system, 3)}` };
-      if (lists.length === 1) draft.alias_list_id = lists[0].id;
-      else if (lists.length > 1 && !lists.some((list) => list.id === Number(draft.alias_list_id))) draft.alias_list_id = '';
-      groups.set(group.group_id, draft);
-      const section = node('section', 'ui-form-section spectrum-discovery-alias');
-      const candidate = selectedCandidates().find((value) => value.alias_group_id === group.group_id);
-      section.append(node('h4', '', systemLabel(candidate || { identity: group })),
-        disclosure('System identity', factList([
-          ['WACN', hex(group.wacn, 5)], ['System ID', hex(group.system, 3)]
-        ])));
-      if (lists.length === 1) section.append(node('strong', '', `Use ${lists[0].name}`),
-        node('p', 'muted', 'These channels belong to a system you already added. Its names and listening settings will be kept.'));
-      else if (lists.length > 1) {
-        const select = uiSelect(lists.map((list) => ({ value: list.id, label: list.name })), draft.alias_list_id, !draft.alias_list_id, 'Choose listening settings');
+    const systemList = node('div', 'spectrum-search-review-systems');
+
+    groupedCandidates(chosen).forEach((entry) => {
+      const group = entry.aliasGroup;
+      const lists = group?.alias_lists || [];
+      const draft = group ? groups.get(group.group_id) || {
+        alias_list_id: group.suggested_alias_list_id ||
+          (lists.length === 1 ? lists[0].id : lists.length ? '' : 0),
+        new_alias_list_name: group.default_new_alias_list_name ||
+          `P25 ${hex(group.wacn, 5)}-${hex(group.system, 3)}`
+      } : null;
+      if (draft) {
+        if (lists.length === 1) draft.alias_list_id = lists[0].id;
+        else if (lists.length > 1 && !lists.some((aliasList) => aliasList.id === Number(draft.alias_list_id)))
+          draft.alias_list_id = '';
+        groups.set(group.group_id, draft);
+      }
+      const requiresAliasChoice = Boolean(draft && lists.length > 1 && !draft.alias_list_id);
+      const section = node('section', 'ui-surface spectrum-search-review-system');
+      const sectionHeader = node('header', 'spectrum-search-review-system-header');
+      const title = node('div', 'spectrum-search-review-system-title');
+      const aliasSummary = node('span', 'muted');
+      const syncAliasSummary = () => {
+        const existing = lists.find((aliasList) => aliasList.id === Number(draft?.alias_list_id));
+        aliasSummary.textContent = existing ? `Alias List: ${existing.name} · Existing` : draft ?
+          `Alias List: ${draft.new_alias_list_name || 'Name required'} · New` : 'Alias List unavailable';
+      };
+      title.append(node('h4', '', systemLabel(entry.candidates[0])), aliasSummary);
+      const customizePanel = node('div', 'spectrum-search-review-customize');
+      customizePanel.hidden = !requiresAliasChoice;
+      const customize = uiActionButton(requiresAliasChoice ? 'Choose Alias List' : 'Customize', '', () => {
+        customizePanel.hidden = !customizePanel.hidden;
+        customize.setAttribute('aria-expanded', String(!customizePanel.hidden));
+        customize.textContent = customizePanel.hidden ? 'Customize' : 'Done';
+      }, 'ui-button ui-button-secondary spectrum-search-customize-action');
+      customize.setAttribute('aria-expanded', String(!customizePanel.hidden));
+      sectionHeader.append(title, customize);
+      const rows = node('div', 'spectrum-search-review-channel-list');
+      const channelFields = node('div', 'channel-editor-grid spectrum-search-channel-fields');
+      entry.candidates.forEach((candidate) => {
+        const channelDraft = drafts.get(candidate.candidate_id) || { name: candidateName(candidate) };
+        drafts.set(candidate.candidate_id, channelDraft);
+        const row = node('div', 'spectrum-search-review-channel');
+        const frequency = node('span'); frequency.dataset.label = 'Frequency';
+        frequency.append(node('strong', '', `${channelMHz(candidate.frequency_hz)} MHz`));
+        const site = node('span', '', siteLabel(candidate)); site.dataset.label = 'Site';
+        const name = node('span', '', channelDraft.name); name.dataset.label = 'Channel name';
+        row.append(frequency, site, name);
+        if (candidate.saved || candidate.known_channel) row.append(uiPill(candidate.saved ? 'Added' : 'Already added',
+          candidate.saved ? 'success' : 'neutral'));
+        else {
+          const input = node('input', 'ui-input'); input.type = 'text'; input.required = true; input.maxLength = 255;
+          input.value = channelDraft.name;
+          input.setAttribute('aria-label', `Channel name for ${channelMHz(candidate.frequency_hz)} MHz`);
+          input.addEventListener('input', () => {
+            channelDraft.name = input.value;
+            name.textContent = input.value;
+            modal.setDirty(true);
+          });
+          channelFields.append(formField(`Channel name · ${channelMHz(candidate.frequency_hz)} MHz`, input));
+        }
+        rows.append(row);
+      });
+      if (group) customizePanel.append(disclosure('System identity', factList([
+        ['WACN', hex(group.wacn, 5)], ['System ID', hex(group.system, 3)]
+      ])));
+      if (draft && lists.length > 1) {
+        const select = uiSelect(lists.map((aliasList) => ({ value: aliasList.id, label: aliasList.name })),
+          draft.alias_list_id, !draft.alias_list_id, 'Choose an Alias List');
         select.required = true;
-        select.setAttribute('aria-label', `Listening settings for ${hex(group.wacn, 5)}-${hex(group.system, 3)}`);
-        select.addEventListener('change', () => { draft.alias_list_id = Number(select.value); modal.setDirty(true); });
-        section.append(formField('Use existing listening settings', uiSelectFrame(select)));
-      } else {
+        select.setAttribute('aria-label', `Alias List for ${hex(group.wacn, 5)}-${hex(group.system, 3)}`);
+        select.addEventListener('change', () => {
+          draft.alias_list_id = Number(select.value);
+          modal.setDirty(true);
+          syncAliasSummary();
+        });
+        customizePanel.prepend(formField('Alias List', uiSelectFrame(select)));
+      } else if (draft && lists.length === 0) {
         const name = node('input', 'ui-input'); name.type = 'text'; name.required = true; name.maxLength = 25;
         name.value = draft.new_alias_list_name;
-        name.setAttribute('aria-label', `New settings name for ${hex(group.wacn, 5)}-${hex(group.system, 3)}`);
-        name.addEventListener('input', () => { draft.new_alias_list_name = name.value; modal.setDirty(true); });
-        section.append(formField('New settings name', name), node('p', 'muted', 'One Alias List will be shared by this system’s selected sites. New lists include listening through your Default scan list.'));
+        name.setAttribute('aria-label', `New Alias List name for ${hex(group.wacn, 5)}-${hex(group.system, 3)}`);
+        name.addEventListener('input', () => {
+          draft.new_alias_list_name = name.value;
+          modal.setDirty(true);
+          syncAliasSummary();
+        });
+        customizePanel.prepend(formField('Alias List name', name));
       }
-      form.append(section);
+      if (channelFields.childElementCount) customizePanel.append(channelFields);
+      syncAliasSummary();
+      section.append(sectionHeader, rows, customizePanel);
+      systemList.append(section);
     });
-    if (firstCandidateId === null || (firstCandidateId && !selected.has(firstCandidateId)))
-      firstCandidateId = selectedCandidates()[0]?.candidate_id || '';
-    const preview = node('p', 'ui-field-hint');
-    const canListenNow = !candidates().some((candidate) => candidate.running);
-    const updatePreview = () => {
-      const first = candidates().find((candidate) => candidate.candidate_id === firstCandidateId);
-      preview.textContent = !canListenNow ? 'Already added channels keep their saved settings. New channels will be available to start later.' :
-        first ? `Start with ${candidateName(first)}. Other selected channels will listen now only if they fit the same receiver window. All added channels remain available for later.` :
-        'Your channels will be saved without starting now. Start automatically still applies when VCE starts.';
-    };
-    selectedCandidates().forEach((candidate) => {
-      const draft = drafts.get(candidate.candidate_id) || { name: candidateName(candidate), auto_start: true };
-      drafts.set(candidate.candidate_id, draft);
-      const section = node('section', 'ui-form-section spectrum-discovery-review');
-      section.append(node('strong', '', `${channelMHz(candidate.frequency_hz)} MHz`),
-        node('p', 'muted', systemLabel(candidate)),
-        disclosure('System and site identity', factList(identityFacts(candidate))));
-      if (candidate.saved || candidate.known_channel) {
-        section.append(node('strong', '', candidateName(candidate)), uiPill(candidate.running ? 'Added and listening' :
-          candidate.saved ? 'Added, available later' : 'Already added', candidate.running ? 'success' : 'neutral'));
-        form.append(section);
-        return;
-      }
-      const name = node('input', 'ui-input'); name.type = 'text'; name.required = true; name.maxLength = 255;
-      name.value = draft.name;
-      name.setAttribute('aria-label', `Channel name for ${channelMHz(candidate.frequency_hz)} MHz`);
-      name.addEventListener('input', () => { draft.name = name.value; modal.setDirty(true); });
-      const startup = uiToggleField('Start automatically', draft.auto_start,
-        `Start automatically for ${channelMHz(candidate.frequency_hz)} MHz`, 'Start this channel when VCE starts.');
-      startup.querySelector('input').addEventListener('change', (event) => { draft.auto_start = event.target.checked; modal.setDirty(true); });
-      const first = node('label', 'spectrum-search-listen-option');
-      const radio = node('input', 'ui-choice-radio'); radio.type = 'radio'; radio.name = 'spectrum-search-first';
-      radio.checked = firstCandidateId === candidate.candidate_id;
-      radio.setAttribute('aria-label', `Listen first to ${candidateName(candidate)}`);
-      radio.addEventListener('change', () => { firstCandidateId = candidate.candidate_id; updatePreview(); });
-      first.append(radio, node('span', '', 'Listen to this channel first'));
-      section.append(formField('Channel name', name), startup);
-      if (canListenNow) section.append(first);
-      form.append(section);
-    });
-    const later = node('label', 'spectrum-search-listen-option');
-    const radio = node('input', 'ui-choice-radio'); radio.type = 'radio'; radio.name = 'spectrum-search-first';
-    radio.setAttribute('aria-label', 'Listen later'); radio.checked = !firstCandidateId;
-    radio.addEventListener('change', () => { firstCandidateId = ''; updatePreview(); });
-    later.append(radio, node('span', '', 'Add channels and listen later'));
-    if (canListenNow) form.append(later);
-    form.append(preview, disclosure('What will be saved?', node('p', '', 'Each P25 channel keeps its learned modulation, follows announced control frequencies, and uses the listening settings chosen above.'),
-      node('p', '', 'Startup is separate from listening now. Channels in different receiver windows can compete for a receiver when automatic startup is enabled.')));
-    updatePreview();
+
+    form.append(systemList);
     stage.append(form);
     button('Back', showResults);
-    button('Add selected channels', () => {
+    button(`Add ${chosen.length} ${chosen.length === 1 ? 'channel' : 'channels'}`, () => {
       if (!form.reportValidity()) return;
-      void save(selectedCandidates().map((candidate) => candidate.candidate_id), canListenNow);
+      void save(chosen.map((candidate) => candidate.candidate_id));
     }, true);
   };
   const payload = (ids) => ({ revision: job.revision,
     candidates: candidates().filter((candidate) => ids.includes(candidate.candidate_id) && !candidate.saved && !candidate.known_channel).map((candidate) => ({
       candidate_id: candidate.candidate_id, name: drafts.get(candidate.candidate_id)?.name.trim() || candidateName(candidate),
-      auto_start: drafts.get(candidate.candidate_id)?.auto_start !== false
+      auto_start: false
     })),
     alias_groups: (job.alias_groups || []).filter((group) => candidates().some((candidate) =>
       ids.includes(candidate.candidate_id) && candidate.alias_group_id === group.group_id)).map((group) => ({
@@ -945,7 +1025,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     if (!finished) return false;
     return finishReceiverUse();
   };
-  const save = async (ids, startNow = true) => {
+  const save = async (ids) => {
     if (job.restart_required) { showSaved(); return; }
     setBusy(true);
     let added = false;
@@ -954,12 +1034,6 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       if (plan.candidates.length) job = await request(`${jobPath()}/save`, { method: 'POST', body: plan, timeoutMs: 30000 });
       if (!current()) return;
       added = true;
-      const saved = selectedCandidates().filter((candidate) => candidate.saved);
-      if (!job.restart_required && startNow && firstCandidateId && saved.some((candidate) => candidate.candidate_id === firstCandidateId))
-        job = await request(`${jobPath()}/start`, { method: 'POST', body: {
-          candidate_ids: saved.map((candidate) => candidate.candidate_id), first_candidate_id: firstCandidateId
-        }, timeoutMs: 30000 });
-      if (!current()) return;
       modal.setDirty(false);
       showSaved();
       await finishReceiverIfComplete();
@@ -984,31 +1058,37 @@ export function openSpectrumSearchWizard(ui, context = {}) {
   };
   const showSaved = () => {
     show('saved', 2, 'Your channel results');
+    const results = selectedCandidates();
     if (job.restart_required) stage.append(node('div', 'ui-notice ui-notice-warning',
       `${candidates().some((candidate) => candidate.saved) ? 'Some channels were saved, but VCE could not load the changes.' :
         'VCE needs to restart before changes can be loaded.'} Restart VCE before opening these channels, adding more, or listening. Saved channels do not need to be added again.`));
-    selectedCandidates().forEach((candidate) => {
+    const complete = !job.restart_required && results.every((candidate) => candidate.saved || candidate.known_channel);
+    if (complete) {
+      const added = results.filter((candidate) => candidate.saved).length;
+      const existing = results.length - added;
+      const messages = [];
+      if (added) messages.push(`${added} ${added === 1 ? 'channel' : 'channels'} added.`);
+      if (existing) messages.push(`${existing} ${existing === 1 ? 'channel was' : 'channels were'} already in Channels.`);
+      stage.append(node('div', 'ui-notice ui-notice-success', messages.join(' ')));
+    }
+    else results.forEach((candidate) => {
       const row = node('section', 'ui-form-section spectrum-discovery-review');
       const known = !candidate.saved && candidate.known_channel;
-      const status = candidate.running ? 'Added and listening' : candidate.saved ? 'Added, available later' : known ? 'Already added' :
+      const status = candidate.saved ? 'Added' : known ? 'Already added' :
         job.ledger_unavailable ? 'Status unavailable' : job.restart_required ? 'Not added' : 'Could not add';
       row.append(node('strong', '', drafts.get(candidate.candidate_id)?.name || candidateName(candidate)),
         node('p', 'muted', `${systemLabel(candidate)} · ${channelMHz(candidate.frequency_hz)} MHz`),
-        uiPill(status, candidate.running ? 'success' : candidate.saved || known ? 'neutral' : 'warning'));
+        uiPill(status, candidate.saved ? 'success' : known ? 'neutral' : 'warning'));
       row.append(disclosure('System and site identity', factList(identityFacts(candidate))));
-      if (candidate.saved && candidate.auto_start != null) row.append(node('p', 'muted',
-        `Start automatically: ${candidate.auto_start ? 'On' : 'Off'}`));
-      const channelId = candidate.configuration_id || known?.configuration_id;
-      if (channelId && (!job.restart_required || known)) row.append(anchor(known?.name || 'Open channel',
-        href('channel', { configuration_id: channelId }), 'ui-button ui-button-secondary'));
       if (!candidate.saved && !known && !job.restart_required) {
         if (candidate.save_error) row.append(node('p', 'muted', candidate.save_error));
-        button('Retry', () => void save([candidate.candidate_id], false), true, row).setAttribute('aria-label', `Retry adding ${candidateName(candidate)}`);
+        button('Retry', () => void save([candidate.candidate_id]), true, row).setAttribute('aria-label', `Retry adding ${candidateName(candidate)}`);
         button('Review choices', showReview, false, row);
-      } else if (candidate.start_error) row.append(node('p', 'muted', candidate.start_error));
+      }
       stage.append(row);
     });
-    button('Done', () => modal.close(), true);
+    button('Done', () => modal.close());
+    actions.append(anchor('Open Channels', href('channel-setup'), 'ui-button ui-button-primary'));
   };
   const load = async () => {
     if (modal.ready && !await modal.ready || !current()) return;

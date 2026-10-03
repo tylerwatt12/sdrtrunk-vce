@@ -25,7 +25,7 @@
 @import url("./styles/features/entity-details.css?v=12") layer(features);
 @import url("./styles/features/live.css?v=18") layer(features);
 @import url("./styles/features/radio-directory.css?v=8") layer(features);
-@import url("./styles/features/tuner-spectrum.css?v=22") layer(features);
+@import url("./styles/features/tuner-spectrum.css?v=25") layer(features);
 @import url("./styles/features/tuners.css?v=11") layer(features);
 @import url("./styles/features/listen-map.css?v=4") layer(features);
 @import url("./styles/features/network-visualizer.css?v=11") layer(features);

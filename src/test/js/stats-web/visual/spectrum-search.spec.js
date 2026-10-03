@@ -172,14 +172,6 @@ async function install(page, state = {}) {
       if (state.restartRequired) return fail('Channel saved, restart required', 'channel_saved_restart_required');
       return respond(snapshot(state));
     }
-    if (path.endsWith('/start')) {
-      for (const id of body.candidate_ids) if (state.ledger[id]?.saved) {
-        state.ledger[id].running = id !== 'regional';
-        if (id === 'regional') state.ledger[id].start_error = 'Outside this receiver window. Available to start later.';
-      }
-      state.tuners.find((receiver) => receiver.id === 'idle-b').channel_count = 2;
-      return respond(snapshot(state));
-    }
     return respond({});
   });
   await page.goto('/app.html?view=tuner-spectrum');
@@ -198,7 +190,7 @@ async function install(page, state = {}) {
 async function complete(page) {
   await closeBands(page);
   await dialog(page).getByRole('button', { name: 'Find signals', exact: true }).click();
-  await expect(dialog(page).getByRole('heading', { name: 'Choose channels to add' })).toBeVisible();
+  await expect(dialog(page).getByRole('heading', { name: /channels? found$/ })).toBeVisible();
 }
 
 test('uses one widest idle receiver, supports multiple ranges, and releases browsing before starting search', async ({ page }) => {
@@ -243,8 +235,12 @@ test('uses one widest idle receiver, supports multiple ranges, and releases brow
   expect(release).toBeLessThan(state.requests.indexOf(create));
   await expect(dialog(page).getByRole('checkbox', { name: 'Select Saved East' })).toBeDisabled();
   await expect(dialog(page).getByRole('link', { name: 'Existing East Control' })).toHaveAttribute('href', /configuration_id=/);
-  await expect(dialog(page)).toContainText('WACN BEE00 · System 348 · RFSS 2 · Site 27');
-  await expect(dialog(page)).toContainText('snapshot from this search');
+  await expect(dialog(page).locator('.spectrum-search-group-table').first().locator('thead th'))
+    .toHaveText(['Channel', 'Site', 'Signal', 'Health']);
+  await expect(dialog(page).locator('.spectrum-search-group-table').first().locator('tbody tr').first().locator('td'))
+    .toHaveCount(4);
+  await expect(dialog(page)).toContainText('WACN BEE00 · SysID 348 · 3 sites');
+  await expect(dialog(page).getByText('Signal details', { exact: true })).toHaveCount(4);
   await dialog(page).getByLabel('Search results', { exact: true }).fill('Regional Services');
   await expect(dialog(page).locator('tbody tr:visible')).toHaveCount(1);
   await dialog(page).getByLabel('Search results', { exact: true }).fill('840');
@@ -293,7 +289,7 @@ test('preparing and starting with a borrowed receiver leaves one renewal timer',
   await page.getByRole('alertdialog', { name: 'Stop channels for this search?' })
     .getByRole('button', { name: 'Stop channels and search', exact: true }).click();
   await search.getByRole('button', { name: 'Find signals', exact: true }).click();
-  await expect(search.getByRole('heading', { name: 'Choose channels to add' })).toBeVisible();
+  await expect(search.getByRole('heading', { name: /channels? found$/ })).toBeVisible();
   const renewalCount = () => state.requests.filter((request) =>
     request.path === '/api/v1/admin/tuners/idle-a/browse' && request.method === 'POST' &&
     request.body.lease_id === 'lease-2').length;
@@ -462,7 +458,7 @@ test('hides partial results, retries polling and discards the job before rebindi
   await expect(dialog(page).getByRole('heading', { name: 'Check signals', exact: true })).toBeVisible();
   await expect(dialog(page).getByRole('checkbox')).toHaveCount(0);
   state.phase = 'complete';
-  await expect(dialog(page).getByRole('heading', { name: 'Choose channels to add' })).toBeVisible();
+  await expect(dialog(page).getByRole('heading', { name: /channels? found$/ })).toBeVisible();
   await dialog(page).getByRole('button', { name: 'Close Find P25 channels' }).click();
   await expect(dialog(page)).toHaveCount(0);
   await expect(page.locator('.spectrum-browse-tuner select')).toBeEnabled();
@@ -472,40 +468,41 @@ test('hides partial results, retries polling and discards the job before rebindi
   expect(browseDelete).toBeGreaterThan(jobDelete);
 });
 
-test('groups exact identities, separates startup from listening now, and retries only failed adds', async ({ page }) => {
+test('groups exact identities, saves channels stopped, and retries only failed adds', async ({ page }) => {
   const state = await install(page, { failCandidateOnce: 'regional' });
   await complete(page);
   await dialog(page).getByRole('button', { name: 'Select all available' }).click();
-  await dialog(page).getByRole('button', { name: 'Review selected' }).click();
-  await expect(dialog(page).getByText('Use County Dispatch', { exact: true })).toHaveCount(1);
-  await expect(dialog(page).getByLabel('New settings name for ABC00-234')).toHaveValue('Regional P25');
-  await dialog(page).getByRole('checkbox', { name: 'Start automatically for 773.83125 MHz' }).press('Space');
-  await expect(dialog(page).getByRole('checkbox', { name: 'Start automatically for 773.83125 MHz' })).not.toBeChecked();
-  await dialog(page).getByRole('button', { name: 'Add selected channels' }).click();
+  await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
+  await expect(dialog(page).getByText('Alias List: County Dispatch · Existing', { exact: true })).toHaveCount(1);
+  await dialog(page).getByRole('button', { name: 'Customize' }).nth(1).click();
+  await expect(dialog(page).getByLabel('New Alias List name for ABC00-234')).toHaveValue('Regional P25');
+  await expect(dialog(page).getByRole('checkbox', { name: /Listen now|Auto-start channels/ })).toHaveCount(0);
+  await expect(dialog(page).getByLabel('Start with')).toHaveCount(0);
+  await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
   await expect(dialog(page).getByRole('heading', { name: 'Your channel results' })).toBeVisible();
-  await expect(dialog(page).getByText('Added and listening', { exact: true })).toHaveCount(2);
+  await expect(dialog(page).getByText('Added', { exact: true })).toHaveCount(2);
   await expect(dialog(page).getByText('Could not add', { exact: true })).toHaveCount(1);
   const save = state.requests.find((request) => request.path.endsWith('/save'));
   expect(save.body.alias_groups).toEqual([{ group_id: 'county', alias_list_id: 21, new_alias_list_name: 'County P25' },
     { group_id: 'regional', alias_list_id: 0, new_alias_list_name: 'Regional P25' }]);
-  expect(save.body.candidates.find((candidate) => candidate.candidate_id === 'central').auto_start).toBe(false);
-  expect(state.requests.find((request) => request.path.endsWith('/start')).body).toEqual({ candidate_ids: ['north', 'central'], first_candidate_id: 'north' });
+  expect(save.body.candidates.every((candidate) => candidate.auto_start === false)).toBe(true);
+  expect(state.requests.some((request) => request.path.endsWith('/start'))).toBe(false);
   await dialog(page).getByRole('button', { name: 'Retry adding Regional South' }).click();
-  await expect(dialog(page).getByText('Added, available later', { exact: true })).toHaveCount(1);
+  await expect(dialog(page)).toContainText('3 channels added.');
   const saves = state.requests.filter((request) => request.path.endsWith('/save'));
   expect(saves).toHaveLength(2);
   expect(saves[1].body.candidates.map((candidate) => candidate.candidate_id)).toEqual(['regional']);
-  expect(state.requests.filter((request) => request.path.endsWith('/start'))).toHaveLength(1);
+  expect(state.requests.some((request) => request.path.endsWith('/start'))).toBe(false);
 });
 
-test('a duplicate created during review becomes a link rather than an endless add retry', async ({ page }) => {
+test('a duplicate created during review remains non-retryable and points to Channels', async ({ page }) => {
   const state = await install(page, { raceDuplicate: 'north' });
   await complete(page);
   await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).check();
-  await dialog(page).getByRole('button', { name: 'Review selected' }).click();
-  await dialog(page).getByRole('button', { name: 'Add selected channels' }).click();
-  await expect(dialog(page).getByText('Already added', { exact: true })).toBeVisible();
-  await expect(dialog(page).getByRole('link', { name: 'Concurrent saved control' })).toHaveAttribute('href', /configuration_id=/);
+  await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
+  await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
+  await expect(dialog(page)).toContainText('1 channel was already in Channels.');
+  await expect(dialog(page).getByRole('link', { name: 'Open Channels' })).toHaveAttribute('href', /view=channel-setup/);
   await expect(dialog(page).getByRole('button', { name: /Retry adding/ })).toHaveCount(0);
   expect(state.requests.some((request) => request.path.endsWith('/start'))).toBe(false);
 });
@@ -514,12 +511,13 @@ test('a committed channel with failed publication requires restart without anoth
   const state = await install(page, { publicationFailure: true });
   await complete(page);
   await dialog(page).getByRole('button', { name: 'Select all available' }).click();
-  await dialog(page).getByRole('button', { name: 'Review selected' }).click();
-  await dialog(page).getByRole('button', { name: 'Add selected channels' }).click();
+  await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
+  await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
   await expect(dialog(page)).toContainText('Restart VCE before opening these channels');
-  await expect(dialog(page).getByText('Added, available later', { exact: true })).toHaveCount(1);
+  await expect(dialog(page).getByText('Added', { exact: true })).toHaveCount(1);
   await expect(dialog(page).getByText('Not added', { exact: true })).toHaveCount(2);
-  await expect(dialog(page).getByRole('link', { name: 'Open channel' })).toHaveCount(0);
+  await expect(dialog(page).getByRole('link', { name: 'Open channel', exact: true })).toHaveCount(0);
+  await expect(dialog(page).getByRole('link', { name: 'Open Channels', exact: true })).toBeVisible();
   await expect(dialog(page).getByRole('button', { name: /Retry|Review choices|Add selected/ })).toHaveCount(0);
   expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(1);
   expect(state.requests.some((request) => request.path.endsWith('/start'))).toBe(false);
@@ -529,8 +527,8 @@ test('a definitive saved-restart error locks the flow even if ledger recovery fa
   const state = await install(page, { publicationFailure: true, failLedgerOnce: true });
   await complete(page);
   await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).check();
-  await dialog(page).getByRole('button', { name: 'Review selected' }).click();
-  await dialog(page).getByRole('button', { name: 'Add selected channels' }).click();
+  await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
+  await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
   await expect(dialog(page)).toContainText('Restart VCE before opening these channels');
   await expect(dialog(page).getByText('Status unavailable', { exact: true })).toHaveCount(1);
   await expect(dialog(page).getByRole('button', { name: /Retry|Review choices|Add selected/ })).toHaveCount(0);
@@ -550,39 +548,39 @@ test('search bounds and terminal failures explain the required action without op
   await expect(dialog(page)).toContainText('Nothing has been added');
 });
 
-test('failed-row review edits only unsaved channels and preserves successful listening', async ({ page }) => {
+test('failed-row review edits only unsaved channels', async ({ page }) => {
   const state = await install(page, { failCandidateOnce: 'regional' });
   await complete(page);
   await dialog(page).getByRole('button', { name: 'Select all available' }).click();
-  await dialog(page).getByRole('button', { name: 'Review selected' }).click();
-  await dialog(page).getByRole('button', { name: 'Add selected channels' }).click();
+  await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
+  await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
   await dialog(page).getByRole('button', { name: 'Review choices', exact: true }).click();
+  await expect(dialog(page).getByRole('radio')).toHaveCount(0);
+  await expect(dialog(page).getByText('Added', { exact: true })).toHaveCount(2);
+  await dialog(page).locator('.spectrum-search-review-system').filter({ hasText: 'Regional Services' })
+    .getByRole('button', { name: 'Customize' }).click();
   await expect(dialog(page).getByRole('textbox', { name: /Channel name for/ })).toHaveCount(1);
-  await expect(dialog(page).getByRole('radio', { name: /Listen first/ })).toHaveCount(0);
-  await expect(dialog(page).getByText('Added and listening', { exact: true })).toHaveCount(2);
   await dialog(page).getByLabel('Channel name for 860.0125 MHz').fill('My South Control');
-  await dialog(page).getByLabel('New settings name for ABC00-234').fill('Regional listening');
-  await dialog(page).getByRole('button', { name: 'Add selected channels' }).click();
-  await expect(dialog(page).getByText('Added and listening', { exact: true })).toHaveCount(2);
-  await expect(dialog(page).getByText('Added, available later', { exact: true })).toHaveCount(1);
+  await dialog(page).getByLabel('New Alias List name for ABC00-234').fill('Regional listening');
+  await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
+  await expect(dialog(page)).toContainText('3 channels added.');
   const saves = state.requests.filter((request) => request.path.endsWith('/save'));
-  expect(saves.at(-1).body.candidates).toEqual([{ candidate_id: 'regional', name: 'My South Control', auto_start: true }]);
-  expect(state.requests.filter((request) => request.path.endsWith('/start'))).toHaveLength(1);
+  expect(saves.at(-1).body.candidates).toEqual([{ candidate_id: 'regional', name: 'My South Control', auto_start: false }]);
+  expect(state.requests.some((request) => request.path.endsWith('/start'))).toBe(false);
 });
 
-test('listen later survives review navigation and never sends a start request', async ({ page }) => {
+test('review has no start controls and links to Channels after saving', async ({ page }) => {
   const state = await install(page);
   await complete(page);
   await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).check();
-  await dialog(page).getByRole('button', { name: 'Review selected' }).click();
-  await expect(dialog(page)).toContainText('Start this channel when VCE starts.');
-  await dialog(page).getByRole('radio', { name: 'Listen later', exact: true }).check();
-  await expect(dialog(page)).toContainText('Start automatically still applies when VCE starts.');
+  await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
+  await expect(dialog(page).getByRole('checkbox', { name: /Listen now|Auto-start channels/ })).toHaveCount(0);
+  await expect(dialog(page).getByLabel('Start with')).toHaveCount(0);
   await dialog(page).getByRole('button', { name: 'Back', exact: true }).click();
-  await dialog(page).getByRole('button', { name: 'Review selected' }).click();
-  await expect(dialog(page).getByRole('radio', { name: 'Listen later', exact: true })).toBeChecked();
-  await dialog(page).getByRole('button', { name: 'Add selected channels' }).click();
-  await expect(dialog(page)).toContainText('Added, available later');
+  await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
+  await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
+  await expect(dialog(page)).toContainText('1 channel added.');
+  await expect(dialog(page).getByRole('link', { name: 'Open Channels' })).toHaveAttribute('href', /view=channel-setup/);
   expect(state.requests.some((request) => request.path.endsWith('/start'))).toBe(false);
 });
 
@@ -590,17 +588,17 @@ test('requires a choice for ambiguous alias groups and preserves drafts after st
   const state = await install(page, { ambiguous: true, staleOnce: true });
   await complete(page);
   await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).check();
-  await dialog(page).getByRole('button', { name: 'Review selected' }).click();
-  await dialog(page).getByRole('button', { name: 'Add selected channels' }).click();
+  await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
+  await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
   expect(state.requests.some((request) => request.path.endsWith('/save'))).toBe(false);
-  await dialog(page).getByLabel('Listening settings for BEE00-348').selectOption('22');
+  await dialog(page).getByLabel('Alias List for BEE00-348').selectOption('22');
   await dialog(page).getByLabel('Channel name for 773.08125 MHz').fill('My North Control');
-  await dialog(page).getByRole('button', { name: 'Add selected channels' }).click();
+  await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
   await expect(dialog(page)).toContainText('Listening settings changed');
   await expect(dialog(page).getByLabel('Channel name for 773.08125 MHz')).toHaveValue('My North Control');
-  await expect(dialog(page).getByLabel('Listening settings for BEE00-348')).toHaveValue('22');
-  await dialog(page).getByRole('button', { name: 'Add selected channels' }).click();
-  await expect(dialog(page)).toContainText('Added and listening');
+  await expect(dialog(page).getByLabel('Alias List for BEE00-348')).toHaveValue('22');
+  await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
+  await expect(dialog(page)).toContainText('1 channel added.');
   expect(state.requests.filter((request) => request.path.endsWith('/save')).at(-1).body.revision).toBe(8);
 });
 
@@ -608,9 +606,9 @@ test('an expired search requires fresh evidence and does not save stale choices'
   const state = await install(page);
   await complete(page);
   await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).check();
-  await dialog(page).getByRole('button', { name: 'Review selected' }).click();
+  await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
   state.expired = true;
-  await dialog(page).getByRole('button', { name: 'Add selected channels' }).click();
+  await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
   await expect(dialog(page).getByRole('heading', { name: 'This search expired' })).toBeVisible();
   await dialog(page).getByRole('button', { name: 'Start a new search' }).click();
   await expect(dialog(page).getByRole('heading', { name: 'Choose where to look' })).toBeVisible();
@@ -621,13 +619,13 @@ test('renews the browse lease while a save is pending', async ({ page }) => {
   const state = await install(page, { delaySave: true });
   await complete(page);
   await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).check();
-  await dialog(page).getByRole('button', { name: 'Review selected' }).click();
-  await dialog(page).getByRole('button', { name: 'Add selected channels' }).click();
+  await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
+  await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
   await expect.poll(() => Boolean(state.releaseSave)).toBe(true);
   await page.clock.fastForward(11000);
   await expect.poll(() => state.requests.some((request) => request.path === '/api/v1/admin/tuners/idle-b/browse' && Boolean(request.body.lease_id))).toBe(true);
   state.releaseSave();
-  await expect(dialog(page)).toContainText('Added and listening');
+  await expect(dialog(page)).toContainText('1 channel added.');
 });
 
 test('a confirmed receiver lease conflict expires the search instead of retrying stale ownership', async ({ page }) => {
@@ -708,7 +706,7 @@ test('warns before stopping active channels and keeps the takeover lease for the
   await warning.getByRole('button', { name: 'Stop channels and search', exact: true }).click();
   await expect(dialog(page).getByLabel('Receiver', { exact: true })).toHaveValue('idle-a');
   await dialog(page).getByRole('button', { name: 'Find signals', exact: true }).click();
-  await expect(dialog(page).getByRole('heading', { name: 'Choose channels to add' })).toBeVisible();
+  await expect(dialog(page).getByRole('heading', { name: /channels? found$/ })).toBeVisible();
   const browsePosts = state.requests.filter((request) =>
     request.path === '/api/v1/admin/tuners/idle-a/browse' && request.method === 'POST');
   const takeoverIndex = browsePosts.findIndex((request) => request.body.takeover === true);
@@ -731,17 +729,16 @@ test('searching another band refreshes receiver availability after restoring a b
   expect(state.requests.filter((request) => request.path === `${searchPath}/catalog`).length).toBeGreaterThan(1);
 });
 
-test('listen later restores a borrowed tuner as soon as saving finishes', async ({ page }) => {
+test('saving restores a borrowed tuner as soon as it finishes', async ({ page }) => {
   const state = await install(page, { noIdle: true });
   await dialog(page).getByRole('button', { name: 'Stop channels and use' }).first().click();
   const warning = page.getByRole('alertdialog', { name: 'Stop channels for this search?' });
   await warning.getByRole('button', { name: 'Stop channels and search', exact: true }).click();
   await complete(page);
   await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).check();
-  await dialog(page).getByRole('button', { name: 'Review selected', exact: true }).click();
-  await dialog(page).getByRole('radio', { name: 'Listen later', exact: true }).check();
-  await dialog(page).getByRole('button', { name: 'Add selected channels', exact: true }).click();
-  await expect(dialog(page)).toContainText('Added, available later');
+  await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
+  await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
+  await expect(dialog(page)).toContainText('1 channel added.');
 
   const saveIndex = state.requests.findIndex((request) => request.path.endsWith('/save'));
   const releaseRequestIndex = () => state.requests.findIndex((request, index) => index > saveIndex &&
@@ -763,10 +760,9 @@ test('a release conflict keeps ownership until retry resumes the borrowed tuner'
     .getByRole('button', { name: 'Stop channels and search', exact: true }).click();
   await complete(page);
   await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).check();
-  await dialog(page).getByRole('button', { name: 'Review selected', exact: true }).click();
-  await dialog(page).getByRole('radio', { name: 'Listen later', exact: true }).check();
+  await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
   state.failNextBrowseDeleteConflict = true;
-  await dialog(page).getByRole('button', { name: 'Add selected channels', exact: true }).click();
+  await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
 
   await expect(dialog(page)).toContainText('This receiver could not resume its channels yet');
   const retry = dialog(page).getByRole('button', { name: 'Try resuming channels', exact: true });
@@ -902,7 +898,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
     await expect(dialog(page).getByRole('heading', { name: 'Check signals', exact: true })).toBeVisible();
     await expect(dialog(page)).toHaveScreenshot(`spectrum-search-checking-${theme}-${width}.png`);
     state.phase = 'complete';
-    await expect(dialog(page).getByRole('heading', { name: 'Choose channels to add' })).toBeVisible();
+    await expect(dialog(page).getByRole('heading', { name: /channels? found$/ })).toBeVisible();
     await expect(dialog(page)).toHaveScreenshot(`spectrum-search-results-${theme}-${width}.png`);
     const details = dialog(page).locator('tbody tr').first().getByText('Signal details', { exact: true });
     await details.click();
@@ -910,22 +906,20 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
     await expect(dialog(page)).toHaveScreenshot(`spectrum-search-signal-details-${theme}-${width}.png`);
     await details.click();
     await dialog(page).getByRole('button', { name: 'Select all available' }).click();
-    await dialog(page).getByRole('button', { name: 'Review selected' }).click();
+    await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
+    await expect(dialog(page).getByRole('checkbox', { name: /Listen now|Auto-start channels/ })).toHaveCount(0);
+    await expect(dialog(page).getByLabel('Start with')).toHaveCount(0);
     await expect(dialog(page)).toHaveScreenshot(`spectrum-search-review-${theme}-${width}.png`);
-    await dialog(page).getByRole('checkbox', { name: 'Start automatically for 773.08125 MHz' }).scrollIntoViewIfNeeded();
-    await expect(dialog(page)).toHaveScreenshot(`spectrum-search-review-listening-${theme}-${width}.png`);
-    await dialog(page).getByRole('radio', { name: 'Listen later', exact: true }).scrollIntoViewIfNeeded();
-    await expect(dialog(page)).toHaveScreenshot(`spectrum-search-review-later-${theme}-${width}.png`);
     const geometry = await dialog(page).evaluate((element) => ({ width: document.documentElement.scrollWidth,
       bottom: element.querySelector('.spectrum-discovery-actions').getBoundingClientRect().bottom,
       scroll: element.querySelector('.spectrum-discovery-stage').scrollHeight,
       client: element.querySelector('.spectrum-discovery-stage').clientHeight }));
     expect(geometry.width).toBeLessThanOrEqual(width);
     expect(geometry.bottom).toBeLessThanOrEqual(900);
-    expect(geometry.scroll).toBeGreaterThan(geometry.client);
-    await dialog(page).getByRole('button', { name: 'Add selected channels' }).focus();
-    await expect(dialog(page).getByRole('button', { name: 'Add selected channels' })).toBeFocused();
-    await dialog(page).getByRole('button', { name: 'Add selected channels' }).click();
+    expect(geometry.scroll).toBeGreaterThan(0);
+    await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).focus();
+    await expect(dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ })).toBeFocused();
+    await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
     await expect(dialog(page).getByRole('heading', { name: 'Your channel results' })).toBeVisible();
     await expect(dialog(page)).toHaveScreenshot(`spectrum-search-saved-${theme}-${width}.png`);
   });
@@ -934,15 +928,15 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
     const state = await install(page, { theme, ambiguous: true, publicationFailure: true });
     await complete(page);
     await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).check();
-    await dialog(page).getByRole('button', { name: 'Review selected' }).click();
-    const alias = dialog(page).getByLabel('Listening settings for BEE00-348');
-    await expect(alias.locator('option')).toHaveText(['Choose listening settings', 'County Dispatch', 'County Operations']);
+    await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
+    const alias = dialog(page).getByLabel('Alias List for BEE00-348');
+    await expect(alias.locator('option')).toHaveText(['Choose an Alias List', 'County Dispatch', 'County Operations']);
     await alias.click();
     await expect(dialog(page)).toHaveScreenshot(`spectrum-search-alias-control-${theme}-${width}.png`);
     await alias.press('Enter');
     await alias.selectOption('22');
     await expect(alias).toHaveValue('22');
-    await dialog(page).getByRole('button', { name: 'Add selected channels' }).click();
+    await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
     await expect(dialog(page)).toContainText('Restart VCE before opening these channels');
     await expect(dialog(page)).toHaveScreenshot(`spectrum-search-restart-${theme}-${width}.png`);
     expect(state.requests.some((request) => request.path.endsWith('/start'))).toBe(false);
