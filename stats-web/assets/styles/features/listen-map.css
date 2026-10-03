@@ -285,7 +285,6 @@
 
 .listen-map-history :is(th, td) {
   padding: 6px 5px;
-  white-space: nowrap;
 }
 
 .listen-map-history :is(th, td):first-child {

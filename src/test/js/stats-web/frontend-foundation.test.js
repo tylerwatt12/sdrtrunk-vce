@@ -1520,6 +1520,8 @@ async function main() {
   assert.equal(tableDefaults.width('live-channels', { id: 'decode-health' }, 'detailed'), 260);
   assert.equal(tableDefaults.width('live-channels', { id: 'decode-health' }), 105);
   assert.equal(tableDefaults.width('radioreference-sites', { id: 'site' }), 340);
+  assert.equal(tableDefaults.width('radio-system-channels', { id: 'control-frequency' }), 120);
+  assert.equal(tableDefaults.width('channel-neighbors', { id: 'control-frequency' }), 120);
   assert.deepEqual(tableDefaults.fittedWidths('radioreference-sites', [
     { id: 'site' }, { id: 'system' }, { id: 'frequencies' }
   ], [340, 200, 150], {}, 1700), [1350, 200, 150]);

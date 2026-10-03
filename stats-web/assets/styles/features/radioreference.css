@@ -986,7 +986,6 @@
     align-items: center;
     gap: var(--space-2);
     padding: 9px 11px;
-    overflow: visible;
     border: 0;
     border-bottom: 1px solid var(--line);
     white-space: normal;

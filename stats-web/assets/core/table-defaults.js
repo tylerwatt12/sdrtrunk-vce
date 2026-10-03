@@ -2,7 +2,7 @@
 // column order, show every column, and use the shared widths below.
 const COLUMN_WIDTHS = Object.freeze({
   action: 82, affiliation: 190, 'confirmed-channel': 220, alias: 170,
-  band: 54, calls: 66, 'control-frequency': 94, count: 94,
+  band: 54, calls: 66, 'control-frequency': 120, count: 94,
   decoder: 78, encrypted: 52, encryption: 92, signaling: 134,
   event: 115, 'first-seen': 166, frequency: 94, group: 135,
   'group-identity-description': 240, 'group-identity-id': 90,
@@ -90,7 +90,7 @@ const TABLE_DEFAULTS = Object.freeze({
     widths: { action: 160, observations: 110 }, grow: ['action']
   },
   'radio-system-channels': {
-    widths: { name: 180, details: 260, 'control-frequency': 100,
+    widths: { name: 180, details: 260, 'control-frequency': 120,
       channels: 56, neighbors: 56, 'last-seen': 174 },
     grow: ['name', 'details']
   },

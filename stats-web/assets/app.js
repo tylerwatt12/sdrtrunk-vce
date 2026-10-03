@@ -2,7 +2,7 @@ import * as routeFoundation from './core/routes.js?v=8';
 import * as preferenceSchema from './core/preference-schema.js?v=3';
 import { Controller as UserPreferenceController } from './core/user-preferences.js';
 import * as tableLayouts from './core/table-layout.js';
-import * as tableDefaults from './core/table-defaults.js?v=10';
+import * as tableDefaults from './core/table-defaults.js?v=11';
 import { Controller as PageTitleController } from './core/page-title.js?v=2';
 import { href as entityRefHref } from './core/entity-ref.js';
 import * as systemLabels from './core/system-labels.js?v=1';

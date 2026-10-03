@@ -365,6 +365,11 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
   padding: 28px 0 48px;
 }
 
+.visual-table-exact-time {
+  display: inline-block;
+  white-space: nowrap;
+}
+
 .visual-admin-navigation-example {
   width: min(1180px, calc(100% - 32px));
   margin: var(--space-3) auto var(--space-5);
