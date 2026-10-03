@@ -222,7 +222,7 @@ function sharedCursorHarness() {
     show: (ratio, canvas) => context.showCursor(ratio, canvas, 0.5) };
 }
 
-function embeddedSpectrumInteractionHarness() {
+function embeddedSpectrumInteractionHarness(wheelZoom = false) {
   const viewportUpdates = [];
   const cursorUpdates = [];
   const frequencyActions = [];
@@ -238,6 +238,7 @@ function embeddedSpectrumInteractionHarness() {
     viewportControls: true,
     frequencyActions: false,
     panelOptions: {},
+    wheelZoom,
     suppressClick: false,
     messageForRetune: () => {},
     fullViewport: { startHz: 100, endHz: 200 },
@@ -317,8 +318,12 @@ test('embedded spectrum keeps the shared cursor and zoom handlers without enabli
   assert.equal(h.cursorUpdates[0][0], 0.25);
 
   h.context.onPlotWheel(h.event({ clientX: 300 }));
-  assert.equal(h.viewportUpdates.length, 1, 'the mouse wheel requests a zoomed viewport');
-  assert.ok(h.viewportUpdates[0].endHz - h.viewportUpdates[0].startHz < 100);
+  assert.equal(h.viewportUpdates.length, 0, 'the embedded Tuners view ignores wheel zoom');
+
+  const spectrum = embeddedSpectrumInteractionHarness(true);
+  spectrum.context.onPlotWheel(spectrum.event({ clientX: 300 }));
+  assert.equal(spectrum.viewportUpdates.length, 1, 'the Spectrum page keeps wheel zoom');
+  assert.ok(spectrum.viewportUpdates[0].endHz - spectrum.viewportUpdates[0].startHz < 100);
 
   h.viewportUpdates.length = 0;
   h.context.onPlotKeyDown(h.event({ key: '+' }));

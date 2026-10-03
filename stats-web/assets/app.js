@@ -14185,6 +14185,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const basicOperator = panelOptions.basicOperator === true;
   const frequencyCursor = !basicOperator || panelOptions.frequencyCursor === true;
   const viewportControls = !basicOperator || panelOptions.viewportControls === true;
+  const wheelZoom = viewportControls && panelOptions.wheelZoom !== false;
   const profileSelection = !basicOperator || panelOptions.profileSelection === true;
   const frequencyActions = !basicOperator && panelOptions.frequencyActions !== false;
   const frequencySelectionHandler = typeof panelOptions.onFrequencySelection === 'function' ?
@@ -14402,7 +14403,8 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   displayControls.append(refiningBadge, legendLabel, flagLegend);
 
   const instructions = node('p', 'visually-hidden', basicOperator ?
-    'Move over the FFT or waterfall to read frequency. Use the mouse wheel or plus and minus keys to zoom. ' +
+    `Move over the FFT or waterfall to read frequency. Use ${wheelZoom ?
+      'the mouse wheel or plus and minus keys' : 'plus and minus keys'} to zoom. ` +
       'Drag or use the arrow keys to pan while zoomed. Press R to reset zoom.' :
     'Click a frequency for actions. Use the mouse wheel or plus and minus keys to zoom. ' +
       'Drag or use the arrow keys to pan. Press R to reset zoom.');
@@ -15647,7 +15649,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   }
 
   function onPlotWheel(event) {
-    if (!viewportControls || !canInteract()) return;
+    if (!wheelZoom || !canInteract()) return;
     event.preventDefault();
     const rect = event.currentTarget.getBoundingClientRect();
     const anchor = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
@@ -15744,7 +15746,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   }
 
   function addPlotInteractions(canvas) {
-    canvas.addEventListener('wheel', onPlotWheel, { passive: false });
+    if (wheelZoom) canvas.addEventListener('wheel', onPlotWheel, { passive: false });
     canvas.addEventListener('keydown', onPlotKeyDown);
     canvas.addEventListener('pointerenter', onPlotPointerMove);
     canvas.addEventListener('pointermove', onPlotPointerMove);
@@ -15757,7 +15759,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   }
 
   function removePlotInteractions(canvas) {
-    canvas.removeEventListener('wheel', onPlotWheel);
+    if (wheelZoom) canvas.removeEventListener('wheel', onPlotWheel);
     canvas.removeEventListener('keydown', onPlotKeyDown);
     canvas.removeEventListener('pointerenter', onPlotPointerMove);
     canvas.removeEventListener('pointermove', onPlotPointerMove);
@@ -27730,6 +27732,7 @@ async function renderTuners() {
       basicOperator: true,
       frequencyCursor: true,
       viewportControls: true,
+      wheelZoom: false,
       profileSelection: true,
       targetId: selectedTuner()?.spectrum_target_id || ''
     });
