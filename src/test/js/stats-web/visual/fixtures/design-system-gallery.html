@@ -1008,14 +1008,11 @@
   <main class="visual-feature-example visual-tuner-spectrum-example">
     <header class="page-header ui-page-header visual-feature-header">
       <div><h1 class="page-title">Tuner Spectrum</h1><p class="page-subtitle">Browse live signals, find P25 channels, or inspect a frequency.</p></div>
-      <button class="ui-button ui-button-primary" type="button"><svg aria-hidden="true"><use href="#visual-icon-search"></use></svg>Find P25 channels</button>
     </header>
     <div class="spectrum-browse-workspace">
       <div class="tuner-spectrum-toolbar spectrum-browse-toolbar ui-surface" aria-label="Spectrum receiver controls">
-        <div class="tuner-spectrum-selection spectrum-browse-selection">
-          <div class="spectrum-browse-controls">
-            <label class="ui-field spectrum-browse-tuner"><span class="ui-field-label spectrum-browse-field-label">Tuner</span><span class="ui-select-frame"><select class="ui-select" aria-label="Tuner"><option>Airspy R2 · Idle · 10 MHz</option></select><svg aria-hidden="true"><use href="#visual-icon-chevron"></use></svg></span></label>
-            <div class="spectrum-browse-center tuners-readout">
+        <label class="ui-field spectrum-browse-tuner"><span class="ui-field-label spectrum-browse-field-label">Tuner</span><span class="ui-select-frame"><select class="ui-select" aria-label="Tuner"><option>Airspy R2 · Idle · 10 MHz</option></select><svg aria-hidden="true"><use href="#visual-icon-chevron"></use></svg></span></label>
+        <div class="spectrum-browse-center tuners-readout">
               <div class="tuners-center-frequency" role="group" aria-label="Center frequency" aria-disabled="false" tabindex="0">
                 <span class="tuners-center-label tuners-readout-label">Center frequency</span>
                 <div class="tuners-center-control-row"><div class="tuners-center-value"><div class="tuners-frequency-digits">
@@ -1033,14 +1030,13 @@
                 </div></div></div>
                 <div class="tuners-setting-message" role="status"></div>
               </div>
-              <div class="ui-toggle-field tuners-center-lock-field" title="Lock center frequency"><span class="ui-toggle-copy spectrum-browse-lock-copy" aria-hidden="true"><svg><use href="#visual-icon-lock"></use></svg></span><label class="ui-toggle"><input type="checkbox" aria-label="Lock center"><span class="ui-toggle-track"><span class="ui-toggle-thumb"></span></span><span class="ui-toggle-state">Off</span></label></div>
-            </div>
-          </div>
+          <div class="ui-toggle-field tuners-center-lock-field" title="Lock center frequency"><span class="ui-toggle-copy spectrum-browse-lock-copy" aria-hidden="true"><svg><use href="#visual-icon-lock"></use></svg></span><label class="ui-toggle"><input type="checkbox" aria-label="Lock center"><span class="ui-toggle-track"><span class="ui-toggle-thumb"></span></span><span class="ui-toggle-state spectrum-browse-lock-state">Off</span></label></div>
         </div>
-        <div class="spectrum-browse-toolbar-side">
-          <div class="spectrum-browse-state"><span class="badge ui-pill state-live">Live</span><div class="ui-feedback spectrum-browse-message" role="status">Drag to tune · Zoom to pan</div></div>
-          <div class="tuner-spectrum-toolbar-actions">
-            <div class="tuner-spectrum-zoom-actions ui-control-group" role="group" aria-label="Spectrum zoom"><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Zoom out"><svg aria-hidden="true"><use href="#visual-icon-zoom-out"></use></svg></button><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Zoom in"><svg aria-hidden="true"><use href="#visual-icon-zoom-in"></use></svg></button><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Reset zoom" title="Reset zoom"><svg aria-hidden="true"><use href="#visual-icon-replay"></use></svg></button></div>
+        <div class="spectrum-browse-state"><span class="badge ui-pill state-live">Live</span><div class="ui-feedback spectrum-browse-message spectrum-browse-message-routine" role="status">Drag to tune · Zoom to pan</div></div>
+        <div class="tuner-spectrum-toolbar-actions spectrum-browse-actions">
+            <button class="ui-button ui-button-primary ui-icon-button spectrum-browse-find" type="button" aria-label="Find P25 channels" title="Find P25 channels"><svg aria-hidden="true"><use href="#visual-icon-search"></use></svg></button>
+            <button class="ui-button ui-button-secondary ui-icon-button spectrum-browse-takeover" type="button" aria-label="Stop channels to tune" title="Stop channels to tune"><svg aria-hidden="true"><use href="#visual-icon-stop"></use></svg></button>
+            <div class="tuner-spectrum-zoom-actions" role="group" aria-label="Spectrum zoom"><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Zoom out"><svg aria-hidden="true"><use href="#visual-icon-zoom-out"></use></svg></button><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Zoom in"><svg aria-hidden="true"><use href="#visual-icon-zoom-in"></use></svg></button><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Reset zoom" title="Reset zoom"><svg aria-hidden="true"><use href="#visual-icon-replay"></use></svg></button></div>
             <div class="tuner-spectrum-playback-actions" role="group" aria-label="Spectrum playback"><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Pause" title="Pause"><svg aria-hidden="true"><use href="#visual-icon-pause"></use></svg></button></div>
             <details class="tuner-spectrum-options">
               <summary class="ui-button ui-button-secondary ui-icon-button tuner-spectrum-options-summary" role="button" aria-label="Display options" title="Display options" aria-expanded="false"><svg aria-hidden="true"><use href="#visual-icon-controls"></use></svg></summary>
@@ -1052,7 +1048,6 @@
                 <fieldset class="tuner-spectrum-profile"><legend>Spectrum performance</legend><label class="tuner-spectrum-display-control ui-field"><span>Profile</span><span class="ui-select-frame"><select class="ui-select"><option>Balanced · 8,192 bins / 10 FPS</option></select><svg aria-hidden="true"><use href="#visual-icon-chevron"></use></svg></span></label><p class="tuner-spectrum-control-help">Higher-detail profiles use more CPU and may affect decoding on lower-end systems.</p></fieldset>
               </div>
             </details>
-          </div>
         </div>
       </div>
       <div class="spectrum-browse-main">

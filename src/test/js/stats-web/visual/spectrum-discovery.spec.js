@@ -353,7 +353,7 @@ for (const width of [1280, 1440]) {
     });
 }
 
-test('managed Spectrum keeps its header actions and updates one persistent frequency rail', async ({ page }) => {
+test('managed Spectrum keeps one aligned toolbar and updates one persistent frequency rail', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   const state = { liveSpectrum: true };
   await install(page, state);
@@ -370,21 +370,22 @@ test('managed Spectrum keeps its header actions and updates one persistent frequ
   await expect(toolbar.locator('.spectrum-browse-lock-copy')).toHaveCount(1);
   await expect(toolbar.locator('.tuners-center-lock-field')).toHaveAttribute('title', 'Lock center frequency');
   await expect(page.getByText('Keep tuner here', { exact: true })).toHaveCount(0);
-  await expect(header.getByRole('button', { name: 'Find P25 channels', exact: true })).toBeVisible();
-  await expect(toolbar.getByRole('button', { name: 'Find P25 channels', exact: true })).toHaveCount(0);
+  await expect(header.getByRole('button', { name: 'Find P25 channels', exact: true })).toHaveCount(0);
+  await expect(toolbar.getByRole('button', { name: 'Find P25 channels', exact: true })).toBeVisible();
   await expect(rail).toHaveCount(1);
   await expect(rail.getByText('Select a signal', { exact: true })).toBeVisible();
   await expect(toolbar.locator('.spectrum-browse-message')).toHaveText('Drag to tune · Zoom to pan');
   await expect(rail).toContainText(
     'Click a signal in the spectrum or waterfall to see its frequency and available actions.');
   const toolbarRows = await toolbar.evaluate((element) => {
-    const controls = element.querySelector('.spectrum-browse-controls').getBoundingClientRect();
-    const side = element.querySelector('.spectrum-browse-toolbar-side').getBoundingClientRect();
+    const centers = [...element.children].map((child) => {
+      const bounds = child.getBoundingClientRect();
+      return bounds.top + bounds.height / 2;
+    });
     const lockField = element.querySelector('.tuners-center-lock-field').getBoundingClientRect();
-    return { controlsCenter: controls.top + controls.height / 2,
-      sideCenter: side.top + side.height / 2, lockHeight: lockField.height };
+    return { centerSpread: Math.max(...centers) - Math.min(...centers), lockHeight: lockField.height };
   });
-  expect(Math.abs(toolbarRows.sideCenter - toolbarRows.controlsCenter)).toBeLessThanOrEqual(1);
+  expect(toolbarRows.centerSpread).toBeLessThanOrEqual(1);
   expect(toolbarRows.lockHeight).toBeLessThanOrEqual(40);
   await page.evaluate(() => {
     window.originalSpectrumFrequencyRail = document.querySelector('.spectrum-browse-control-rail');
@@ -415,11 +416,15 @@ test('managed Spectrum keeps its header actions and updates one persistent frequ
   await expect.poll(() => page.evaluate(() => {
     const spectrum = document.querySelector('.spectrum-browse-panel').getBoundingClientRect();
     const actions = document.querySelector('.spectrum-browse-control-rail').getBoundingClientRect();
-    const controls = document.querySelector('.spectrum-browse-controls').getBoundingClientRect();
-    const side = document.querySelector('.spectrum-browse-toolbar-side').getBoundingClientRect();
+    const toolbar = document.querySelector('.spectrum-browse-toolbar');
+    const centers = [...toolbar.children].map((child) => {
+      const bounds = child.getBoundingClientRect();
+      return bounds.top + bounds.height / 2;
+    });
     return { aligned: Math.abs(actions.x - spectrum.x) <= 1,
-      railStacked: actions.y >= spectrum.bottom, toolbarStacked: side.top >= controls.bottom };
-  })).toEqual({ aligned: true, railStacked: true, toolbarStacked: true });
+      railStacked: actions.y >= spectrum.bottom,
+      toolbarAligned: Math.max(...centers) - Math.min(...centers) <= 1 };
+  })).toEqual({ aligned: true, railStacked: true, toolbarAligned: true });
   await panel.getByRole('img', { name: 'Tuner frequency spectrum', exact: true })
     .click({ position: { x: 180, y: 80 } });
   await expect.poll(() => rail.evaluate((element) => {

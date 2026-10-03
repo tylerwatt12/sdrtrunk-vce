@@ -330,7 +330,8 @@ test('band picker remains bounded and keyboard accessible on a narrow screen', a
 
 test('search requires both tuner and channel administration access', async ({ page }) => {
   const state = await install(page, { adminChannels: false });
-  await expect(page.locator('.spectrum-browse-toolbar').getByText('Find P25 channels', { exact: true })).toBeHidden();
+  await expect(page.locator('.spectrum-browse-toolbar').getByRole('button',
+    { name: 'Find P25 channels', exact: true })).toHaveCount(0);
   expect(state.requests.some((request) => request.path.startsWith(searchPath))).toBe(false);
   const withoutTuners = await install(page, { adminTuners: false });
   await expect(page.getByRole('button', { name: 'Find P25 channels', exact: true })).toHaveCount(0);

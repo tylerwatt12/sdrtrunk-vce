@@ -717,24 +717,33 @@ test('tuner-spectrum-dark-desktop', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/design-system.html?theme=dark&view=tuner-spectrum');
   const example = page.locator('.visual-tuner-spectrum-example');
-  await expect(example.locator(':scope > .page-header > .ui-button-primary'))
-    .toHaveText(/Find P25 channels/);
-  await expect(example.locator('.spectrum-browse-toolbar .spectrum-browse-controls')).toBeVisible();
+  await expect(example.locator(':scope > .page-header > .ui-button-primary')).toHaveCount(0);
+  await expect(example.locator('.spectrum-browse-toolbar').getByRole('button',
+    { name: 'Find P25 channels', exact: true })).toBeVisible();
   await expect(example.getByRole('checkbox', { name: 'Lock center', exact: true })).toBeVisible();
   await expect(example.getByText('Lock center', { exact: true })).toHaveCount(0);
   await expect(example.locator('.tuners-center-lock-field')).toHaveAttribute('title', 'Lock center frequency');
   await expect(example.locator('.spectrum-browse-message')).toHaveText('Drag to tune · Zoom to pan');
   await expect(example.locator('.tuner-spectrum-readouts .channel-diagnostic-readout small'))
     .toHaveText(['Visible span', 'Zoom', 'Peak', 'Best SNR']);
-  for (const label of ['Reset zoom', 'Pause', 'Display options', 'More measurements']) {
+  for (const label of ['Find P25 channels', 'Stop channels to tune', 'Reset zoom', 'Pause',
+    'Display options', 'More measurements']) {
     const control = example.locator(`[aria-label="${label}"]`).first();
     await expect(control).toHaveClass(/ui-icon-button/);
     await expect(control).toHaveText('');
   }
-  const controlsBox = await example.locator('.spectrum-browse-controls').boundingBox();
-  const toolbarSideBox = await example.locator('.spectrum-browse-toolbar-side').boundingBox();
-  expect(Math.abs((controlsBox.y + controlsBox.height / 2) -
-    (toolbarSideBox.y + toolbarSideBox.height / 2))).toBeLessThanOrEqual(1);
+  const toolbarCenters = await example.locator('.spectrum-browse-toolbar').evaluate((toolbar) =>
+    [...toolbar.children].map((child) => {
+      const bounds = child.getBoundingClientRect();
+      return bounds.top + bounds.height / 2;
+    }));
+  expect(Math.max(...toolbarCenters) - Math.min(...toolbarCenters)).toBeLessThanOrEqual(1);
+  const frequencyBox = await example.locator('.tuners-center-value').boundingBox();
+  const lockBox = await example.locator('.tuners-center-lock-field').boundingBox();
+  expect(frequencyBox).not.toBeNull();
+  expect(lockBox).not.toBeNull();
+  expect(Math.abs(frequencyBox.y - lockBox.y)).toBeLessThanOrEqual(1);
+  expect(Math.abs(frequencyBox.height - lockBox.height)).toBeLessThanOrEqual(1);
   const panelBox = await example.locator('.spectrum-browse-panel').boundingBox();
   const railBox = await example.locator('.spectrum-browse-control-rail').boundingBox();
   expect(panelBox).not.toBeNull();
@@ -760,12 +769,16 @@ test('tuner-spectrum-light-mobile', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/design-system.html?theme=light&view=tuner-spectrum');
   const example = page.locator('.visual-tuner-spectrum-example');
-  await expect(example.locator(':scope > .page-header > .ui-button-primary'))
-    .toHaveText(/Find P25 channels/);
+  await expect(example.locator(':scope > .page-header > .ui-button-primary')).toHaveCount(0);
   await expect(example.getByRole('checkbox', { name: 'Lock center', exact: true })).toBeVisible();
-  const controlsBox = await example.locator('.spectrum-browse-controls').boundingBox();
-  const toolbarSideBox = await example.locator('.spectrum-browse-toolbar-side').boundingBox();
-  expect(toolbarSideBox.y).toBeGreaterThanOrEqual(controlsBox.y + controlsBox.height);
+  const tunerBox = await example.locator('.spectrum-browse-tuner').boundingBox();
+  const centerBox = await example.locator('.spectrum-browse-center').boundingBox();
+  const stateBox = await example.locator('.spectrum-browse-state').boundingBox();
+  const actionsBox = await example.locator('.spectrum-browse-actions').boundingBox();
+  expect(centerBox.y).toBeGreaterThanOrEqual(tunerBox.y + tunerBox.height);
+  expect(stateBox.y).toBeGreaterThanOrEqual(centerBox.y + centerBox.height);
+  expect(Math.abs((stateBox.y + stateBox.height / 2) -
+    (actionsBox.y + actionsBox.height / 2))).toBeLessThanOrEqual(1);
   const panelBox = await example.locator('.spectrum-browse-panel').boundingBox();
   const railBox = await example.locator('.spectrum-browse-control-rail').boundingBox();
   expect(panelBox).not.toBeNull();
@@ -777,9 +790,55 @@ test('tuner-spectrum-light-mobile', async ({ page }) => {
   const measurementsBox = await example.locator('.tuner-spectrum-measurement-panel').boundingBox();
   expect(measurementsBox.y).toBeGreaterThanOrEqual(legendBox.y + legendBox.height);
   await expect(example.locator('.spectrum-browse-message')).toHaveText('Drag to tune · Zoom to pan');
-  await expect.poll(() => example.locator('.spectrum-browse-message').evaluate((element) =>
-    getComputedStyle(element).whiteSpace === 'normal' && element.scrollWidth <= element.clientWidth)).toBe(true);
+  await expect(example.locator('.spectrum-browse-message')).toBeHidden();
   await expect(page.locator('body')).toHaveScreenshot('tuner-spectrum-light-mobile.png', { fullPage: true });
+});
+
+test('tuner-spectrum-toolbar-stays-one-row-at-desktop-narrow-width', async ({ page }) => {
+  await page.setViewportSize({ width: 943, height: 750 });
+  await page.goto('/design-system.html?theme=light&view=tuner-spectrum');
+  const toolbar = page.locator('.visual-tuner-spectrum-example .spectrum-browse-toolbar');
+  const boxes = await toolbar.evaluate((element) => [...element.children].map((child) => {
+    const bounds = child.getBoundingClientRect();
+    return { top: bounds.top, bottom: bounds.bottom, center: bounds.top + bounds.height / 2 };
+  }));
+  expect(Math.max(...boxes.map((box) => box.center)) -
+    Math.min(...boxes.map((box) => box.center))).toBeLessThanOrEqual(1);
+  expect(Math.max(...boxes.map((box) => box.bottom)) -
+    Math.min(...boxes.map((box) => box.top))).toBeLessThanOrEqual(48);
+  const legend = await page.locator('.visual-tuner-spectrum-example .tuner-spectrum-display-controls').boundingBox();
+  const measurements = await page.locator(
+    '.visual-tuner-spectrum-example .tuner-spectrum-measurement-panel').boundingBox();
+  expect(Math.abs(legend.y - measurements.y)).toBeLessThanOrEqual(1);
+
+  await page.setViewportSize({ width: 820, height: 750 });
+  await page.goto('/design-system.html?theme=light&view=tuner-spectrum');
+  const compact = page.locator('.visual-tuner-spectrum-example');
+  const tunerBox = await compact.locator('.spectrum-browse-tuner').boundingBox();
+  const centerBox = await compact.locator('.spectrum-browse-center').boundingBox();
+  const stateBox = await compact.locator('.spectrum-browse-state').boundingBox();
+  const actionsBox = await compact.locator('.spectrum-browse-actions').boundingBox();
+  expect(centerBox.y).toBeGreaterThanOrEqual(tunerBox.y + tunerBox.height);
+  expect(stateBox.y).toBeGreaterThanOrEqual(centerBox.y + centerBox.height);
+  expect(Math.abs((stateBox.y + stateBox.height / 2) -
+    (actionsBox.y + actionsBox.height / 2))).toBeLessThanOrEqual(1);
+  const compactFrequency = await compact.locator('.tuners-center-value').boundingBox();
+  const compactLock = await compact.locator('.tuners-center-lock-field').boundingBox();
+  expect(Math.abs(compactFrequency.y - compactLock.y)).toBeLessThanOrEqual(1);
+  expect(Math.abs(compactFrequency.height - compactLock.height)).toBeLessThanOrEqual(1);
+  await expect(compact.locator('.spectrum-browse-lock-copy')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <=
+    document.documentElement.clientWidth)).toBe(true);
+
+  await page.setViewportSize({ width: 360, height: 750 });
+  await page.goto('/design-system.html?theme=light&view=tuner-spectrum');
+  const phone = page.locator('.visual-tuner-spectrum-example');
+  const phoneState = await phone.locator('.spectrum-browse-state').boundingBox();
+  const phoneActions = await phone.locator('.spectrum-browse-actions').boundingBox();
+  expect(phoneActions.y).toBeGreaterThanOrEqual(phoneState.y + phoneState.height);
+  await expect(phone.locator('.spectrum-browse-state > .badge')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <=
+    document.documentElement.clientWidth)).toBe(true);
 });
 
 for (const [name, theme, viewport] of [
