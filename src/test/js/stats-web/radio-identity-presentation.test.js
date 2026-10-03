@@ -7,6 +7,10 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.resolve(process.argv[2] ||
   path.resolve(__dirname, '../../../../stats-web/assets/app.js')), 'utf8');
+const labelsSource = fs.readFileSync(path.resolve(__dirname,
+  '../../../../stats-web/assets/core/system-labels.js'), 'utf8');
+const systemLabels = vm.runInNewContext(labelsSource.replace(/^export .*;$/m, '') +
+  '\n({systemName, systemLabel, systemIdentity, rememberSystemNames});');
 
 function closingBrace(start) {
   let depth = 0;
@@ -51,6 +55,8 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('savedChannelScopeLabel')}
   ${functionSource('isSavedChannelRadioSystem')}
   ${functionSource('radioSystemLabel')}
+  ${functionSource('radioSystemPrimaryName')}
+  ${functionSource('radioSystemDisplayName')}
   ${functionSource('trunkedSiteLabel')}
   ${functionSource('dashboardChannelKind')}
   ${functionSource('dashboardChannelContext')}
@@ -70,7 +76,7 @@ const behavior = vm.runInNewContext(`(() => {
   return { radioSystemLabel, trunkedSiteLabel, dashboardChannelContext,
     channelDirectoryRfIdentity, channelLocationIdentity, dmrChannelDetailRows,
     scannerNetworkSiteIdentity, observedGroupIdentityKey };
-})()`);
+})()`, { systemLabels });
 
 const nativeDmr = Object.freeze({
   protocol: 'DMR', channel_kind: 'TRUNKED', radio_system_key: 'dmr:tier3:small:0',
@@ -88,15 +94,14 @@ assert.deepEqual(JSON.parse(JSON.stringify(behavior.dmrChannelDetailRows(nativeD
 ]);
 assert.equal(behavior.scannerNetworkSiteIdentity(nativeDmr), 'Network 0 · Site 12');
 
-// A channel-scoped fallback can still have friendly configured names and site observations. Neither is a native
-// system identity, so the dashboard must say that the scope is the saved channel.
+// A configured name is the primary label; the saved-channel scope remains the exact identity fallback.
 const fallbackDmr = Object.freeze({
   protocol: 'DMR', channel_kind: 'TRUNKED',
   radio_system_key: 'dmr:channel:00000000-0000-0000-0000-000000000012',
   system_name: 'Downtown', site_name: 'North', site_id: 7
 });
 assert.equal(behavior.radioSystemLabel(fallbackDmr), 'DMR saved channel scope');
-assert.equal(behavior.dashboardChannelContext(fallbackDmr), 'DMR saved channel scope · Site 7');
+assert.equal(behavior.dashboardChannelContext(fallbackDmr), 'Downtown · Site 7');
 assert.equal(behavior.trunkedSiteLabel({ ...fallbackDmr, system_name: '' }), 'DMR site 7');
 
 const conventionalDmr = {

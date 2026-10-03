@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 const { readStylesheetSource } = require('./stylesheet-source');
 const vm = require('node:vm');
 
@@ -144,8 +145,7 @@ function functionBinding(source, name) {
 }
 
 async function loadModule(name) {
-  const source = fs.readFileSync(path.join(core, `${name}.js`), 'utf8');
-  return import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+  return import(pathToFileURL(path.join(core, `${name}.js`)).href);
 }
 
 function response(status, body) {
@@ -169,6 +169,7 @@ async function main() {
     '../web-call-player'
   ].map(loadModule));
   const browsing = await loadModule('browsing-workflows');
+  const systemLabels = await loadModule('system-labels');
   assert.equal(browsing.scanListAvailabilityLabel({ published: false }), 'Hidden from listeners');
   assert.equal(browsing.scanListAvailabilityLabel({ published: true }), 'Available to listeners');
   assert.equal(browsing.scanListAvailabilityLabel({}), 'Available to listeners');
@@ -1078,6 +1079,7 @@ async function main() {
     `(function(row) ${functionBinding(appSource, 'dashboardChannelContext')})`, {
       dashboardChannelKind: (row) => String(row.channel_kind || '').toUpperCase(),
       isP25: (row) => row.protocol === 'P25', radioSystemLabel: (row) => row.system || '',
+      radioSystemDisplayName: (row) => row.system || '', radioSystemPrimaryName: (row) => row.system || '',
       protocolFamily: (row) => row.protocol, identifierNumber, hex
     });
   assert.equal(dashboardChannelContext({ protocol: 'P25', channel_kind: 'trunked', system: 'BEE00-941',
@@ -1191,7 +1193,8 @@ async function main() {
     `(function(row) ${functionBinding(appSource, 'radioSystemsDirectoryDetails')})`, {
       channelDirectoryDetails, isP25: (row) => row.protocol === 'P25', hex,
       trunkedVariant, identityDomainLabel, identifierNumber, semanticLabel,
-      isSavedChannelRadioSystem, protocolFamily: (row) => row.protocol, radioSystemAssignmentLabel
+      isSavedChannelRadioSystem, protocolFamily: (row) => row.protocol, radioSystemAssignmentLabel,
+      radioSystemPrimaryName: systemLabels.systemName
     });
   assert.equal(radioSystemsDirectoryDetails({ protocol: 'NXDN', variant: 'TYPE_C',
     address_domain: 'nxdn_type_c', network_id: 1, system_id: 2,

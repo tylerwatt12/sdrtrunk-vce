@@ -1,4 +1,5 @@
 import { createDualRange } from '../core/dual-range.js?v=1';
+import { systemLabel, systemName } from '../core/system-labels.js?v=1';
 
 const CALLS = '/api/v1/recordings/calls';
 const SUGGESTIONS = '/api/v1/recordings/suggestions';
@@ -40,7 +41,7 @@ function label(row) {
   if (['NBFM', 'AM'].includes(value(row, 'protocol'))) return channel || 'Recorded channel';
   return group || (groupId !== null ? `Talkgroup ${groupId}` :
     (destination !== null ? `Direct to ${destinationAlias || `Radio ${destination}`}` : channel)) ||
-    value(row, 'system_name', 'radio_system_name') || 'Recorded call';
+    systemName(row) || 'Recorded call';
 }
 
 function sourceLabel(row) {
@@ -270,7 +271,7 @@ export function createRecordingsFeature(deps) {
       search.system_key = String(suggestion.system_key);
       if (!sameSystem || !existingSystem || suggestion.system_name) {
         selectedSuggestions.set('system_key', {
-          kind: 'system', id: suggestion.system_key, label: suggestion.system_name || suggestion.system_key
+          kind: 'system', id: suggestion.system_key, label: systemLabel(suggestion)
         });
       }
     }
@@ -733,7 +734,7 @@ export function createRecordingsFeature(deps) {
       ['', [
         ['Target', target, 'target_entity_ref'], ['Source', source, 'source_entity_ref'],
         ['Latest OTA name', value(row, 'source_ota_alias', 'source_ota_ta', 'ota_alias', 'talker_alias'), 'source_entity_ref'],
-        ['Radio system', value(row, 'system_name', 'radio_system_name', 'system_key'), 'radio_system_entity_ref'],
+        ['Radio system', systemLabel(row), 'radio_system_entity_ref'],
         ['Saved channel', savedChannel, 'channel_entity_ref'],
         ['Winning site', winningSite(row), 'site_entity_ref'], ['Also received on', receivedSites(row)],
         ['Started', dateTime(millis(row))], ['Duration', duration(row)],
@@ -762,6 +763,9 @@ export function createRecordingsFeature(deps) {
       ['Protocol & signaling', [
         ['WACN', hexIdentity(value(row, 'wacn'), 5)],
         ['SysID', hexIdentity(value(row, 'system_id', 'sysid'), 3)],
+        ['Network ID', value(row, 'network_id', 'network')],
+        ['Model', value(row, 'model', 'network_model')],
+        ['Location category', value(row, 'location_category')],
         ['RFSS', value(row, 'rfss_id', 'rfss')], ['Site ID', value(row, 'site_id')],
         ['NAC', hexIdentity(value(row, 'nac'), 3)], ['Tone kind', value(row, 'tone_kind')],
         ['Tone', value(row, 'tone')], ['PL', value(row, 'pl')], ['DPL', value(row, 'dpl')]
@@ -773,9 +777,13 @@ export function createRecordingsFeature(deps) {
         ['System key', value(row, 'system_key')], ['Channel ID', value(row, 'channel_id'), 'channel_entity_ref'],
         ['Alias List ID', value(row, 'alias_list_id'), 'alias_list_entity_ref'],
         ['Raw target ID', value(row, 'target_id'), 'target_entity_ref'],
+        ['Source home system name', value(row, 'source_home_system_name') || systemName(row?.source_home_system),
+          row?.source_home_system?.entity_ref],
         ['Source home WACN', hexIdentity(value(row, 'source_home_wacn'), 5)],
         ['Source home system', hexIdentity(value(row, 'source_home_system_id'), 3)],
         ['Source home identity', value(row, 'source_home_id'), 'source_entity_ref'],
+        ['Target home system name', value(row, 'target_home_system_name') || systemName(row?.target_home_system),
+          row?.target_home_system?.entity_ref],
         ['Target home WACN', hexIdentity(value(row, 'target_home_wacn'), 5)],
         ['Target home system', hexIdentity(value(row, 'target_home_system_id'), 3)],
         ['Target home identity', value(row, 'target_home_id'), 'target_entity_ref']
@@ -786,6 +794,8 @@ export function createRecordingsFeature(deps) {
     if (sites.length) groups.push(['Received site identities', sites.flatMap((site, index) => {
       const prefix = index === 0 && row.audio_from ? 'Winning site' : `Received site ${index + (row.audio_from ? 0 : 1)}`;
       return [[`${prefix} name`, siteText(site), site.entity_ref],
+        [`${prefix} system name`, systemName(site) || systemName(site.system_identity),
+          site.radio_system_entity_ref || site.system_identity?.entity_ref],
         [`${prefix} WACN`, hexIdentity(value(site, 'wacn'), 5)],
         [`${prefix} SysID`, hexIdentity(value(site, 'system_id', 'sysid'), 3)],
         [`${prefix} RFSS`, value(site, 'rfss_id', 'rfss')], [`${prefix} ID`, value(site, 'site_id')]];
@@ -797,6 +807,8 @@ export function createRecordingsFeature(deps) {
       return [[`${prefix} kind`, prettify(value(member, 'kind'))],
         [`${prefix} ID`, value(member, 'id', 'talkgroup_id'), member.entity_ref],
         [`${prefix} alias`, value(member, 'alias', 'name'), member.entity_ref],
+        [`${prefix} home system name`, value(member, 'home_system_name') || systemName(member.home_system),
+          member.home_system?.entity_ref],
         [`${prefix} home WACN`, hexIdentity(value(member, 'home_wacn'), 5)],
         [`${prefix} home system`, hexIdentity(value(member, 'home_system_id'), 3)],
         [`${prefix} home identity`, value(member, 'home_identity_id'), member.entity_ref]];
@@ -920,7 +932,7 @@ export function createRecordingsFeature(deps) {
     const siteScope = system || value(row, 'channel_id');
     return [
       ['system', analog ? 'Channel collection' : 'Radio system',
-        value(row, 'system_name', 'radio_system_name', 'system_key'), row.radio_system_entity_ref,
+        systemLabel(row), row.radio_system_entity_ref,
         system],
       ['target', value(row, 'call_type') === 'PATCH' ? 'Patch' : 'Talkgroup',
         !analog && groupId !== null ? `${label(row)} · ${groupId}` : null, row.target_entity_ref,
@@ -1028,7 +1040,8 @@ export function createRecordingsFeature(deps) {
       const knownRefs = matches.map((match) => match[3]).filter(Boolean);
       if (knownRefs.some((candidate) => JSON.stringify(candidate) !== JSON.stringify(knownRefs[0]))) continue;
       // Navigation is optional; a missing link does not change a proven system or channel identity.
-      const named = matches.find((match) => match[2] && match[2] !== match[4]) ||
+      const named = matches.find((match, index) => match[2] && (key === 'system' ?
+        Boolean(systemName(currentResults[index])) : match[2] !== match[4])) ||
         matches.find((match) => match[2]);
       if (!named) continue;
       sharedDetails.set(key, [key, detail[1], named[2], ref || knownRefs[0], identity]);

@@ -8,7 +8,7 @@ import {
   buildP25Graph,
   groupedP25Events,
   mostActiveP25System
-} from './history.js?v=4';
+} from './history.js?v=5';
 import { createP25CameraCoordinator } from './camera.js?v=4';
 import { createP25Renderer } from './renderer.js?v=4';
 import {
@@ -307,6 +307,22 @@ function createP25Visualizer(dependencies = {}) {
     renderEvents();
   }
 
+  function renderScopeTitle(system, group = null) {
+    const label = system.name || system.identity || system.label;
+    const context = node('div', 'muted');
+    const destination = dependencies.systemHref?.(system);
+    const systemText = destination ? node('a', '', label) : node('span', '', label);
+    if (destination) systemText.href = destination;
+    if (group) {
+      context.append('System: ', systemText);
+      if (system.identity) context.append(` · ${system.identity}`);
+      scopeTitle.replaceChildren(node('strong', '', group.label), context);
+    } else {
+      scopeTitle.replaceChildren(systemText);
+      if (system.identity && system.identity !== label) scopeTitle.append(node('div', 'muted', system.identity));
+    }
+  }
+
   function enterSystem(systemKey, optionsValue = {}) {
     const system = state.systems.get(String(systemKey || ''));
     if (!system || !renderer) return false;
@@ -317,7 +333,7 @@ function createP25Visualizer(dependencies = {}) {
     selectedGroupKey = '';
     back.hidden = false;
     back.textContent = '← All systems';
-    scopeTitle.textContent = system.label;
+    renderScopeTitle(system);
     clearAutoFocus();
     camera.reset();
     lastCameraPhase = 'roam';
@@ -334,7 +350,7 @@ function createP25Visualizer(dependencies = {}) {
     selectedGroupKey = group.key;
     back.hidden = false;
     back.textContent = '← System';
-    scopeTitle.textContent = group.label;
+    renderScopeTitle(state.systems.get(group.systemKey), group);
     clearAutoFocus();
     camera.reset();
     lastCameraPhase = 'roam';

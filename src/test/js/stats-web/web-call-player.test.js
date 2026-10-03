@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 
 function wave(sampleRate = 8_000) {
   const data = new ArrayBuffer(44);
@@ -31,8 +32,7 @@ async function main() {
   const playerPath = path.resolve(process.argv[2] ||
     path.resolve(__dirname, '../../../../stats-web/assets/web-call-player.js'));
   const source = fs.readFileSync(playerPath, 'utf8');
-  const { WebCallPlayer } = await import(
-    `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+  const { WebCallPlayer } = await import(pathToFileURL(playerPath).href);
 
   let now = 0;
   let nextTimerId = 1;
@@ -313,10 +313,11 @@ async function main() {
       ...trunked, system: 'Display name can change', radio_system_key: 'p25:bee00:4a0',
       playback_target: { ...trunked.playback_target, radio_system_key: 'p25:bee00:4a0' }
     });
-    assert.equal(firstSystemScope, 'Display name can change · p25:bee00:49f');
-    assert.equal(secondSystemScope, 'Display name can change · p25:bee00:4a0');
-    assert.notEqual(firstSystemScope, secondSystemScope,
-      'Avoid List scope must disambiguate colliding labels and numeric IDs on different systems');
+    assert.equal(firstSystemScope, 'Display name can change');
+    assert.equal(secondSystemScope, 'Display name can change',
+      'Avoid scope displays friendly names while native playback target keys retain system ownership');
+    assert.equal(labels.avoidSystemScope({ ...trunked, system: '', system_name: '',
+      radio_system_key: 'p25:bee00:49f' }), 'BEE00-49F', 'Unnamed systems keep a native identity fallback');
     assert.equal(labels.avoidSystemScope({
       system: 'Conventional', playback_target: { kind: 'channel', radio_system_key: 'ignored' }
     }), '', 'Channel-scoped avoids must not invent a radio-system scope');
@@ -712,7 +713,9 @@ async function main() {
     assert.equal(selectionWhilePaused.paused, true);
     assert.equal(selectionWhilePaused.avoids.size, 1);
     assert.equal([...selectionWhilePaused.avoids.values()][0].system_scope,
-      'Display name can change · p25:bee00:49f');
+      'Display name can change');
+    assert.equal([...selectionWhilePaused.avoids.values()][0].radio_system_key, 'p25:bee00:49f',
+      'Avoid entries retain their exact system key for identity and removal');
     selectionWhilePaused.setScanListSelected('1', false);
     assert.equal(selectionWhilePaused.stopped, true, 'Removing the last list also stops a paused feed');
     assert.equal(selectionWhilePaused.paused, false);

@@ -1,5 +1,7 @@
 'use strict';
 
+import { systemLabel, systemName, systemIdentity } from '../core/system-labels.js?v=1';
+
 const TILE_SIZE = 256;
 const TILE_HOST = 'https://tile.openstreetmap.org';
 const MIN_ZOOM = 2;
@@ -67,9 +69,14 @@ function normalizeSnapshot(value) {
       .map((position) => ({ latitude: Number(position.latitude), longitude: Number(position.longitude),
         timestamp_ms: Number(position.timestamp_ms) || 0 })).reverse();
     if (!positions.length || typeof entity?.id !== 'string' || !entity.id) return [];
+    const servingSystem = entity.serving_system || entity.system_identity;
     return [{ id: entity.id, label: String(entity.label || entity.identifier || entity.id),
       identifier: String(entity.identifier || ''), alias_list: String(entity.alias_list || ''),
-      system: String(entity.system || ''),
+      system: systemLabel(servingSystem) || systemLabel(entity),
+      system_name: systemName(servingSystem) || systemName(entity),
+      serving_system: servingSystem && typeof servingSystem === 'object' ? servingSystem : null,
+      home_system_name: String(entity.home_system_name || systemName(entity.home_system)),
+      home_system: entity.home_system && typeof entity.home_system === 'object' ? entity.home_system : null,
       icon: ICON_SLUG.test(String(entity.icon || '')) ? entity.icon : 'no-icon',
       color: /^#[0-9a-fA-F]{6}$/.test(String(entity.color || '')) ? entity.color : null,
       heading: Number(entity.heading), speed_kph: Number(entity.speed_kph), positions }];
@@ -77,6 +84,24 @@ function normalizeSnapshot(value) {
   return { entities, generated_at_ms: Number(value.generated_at_ms) || 0,
     dropped_observations: Number(value.dropped_observations) || 0,
     evicted_entities: Number(value.evicted_entities) || 0 };
+}
+
+function mapSystemFacts(entity, radioSystemLink = (_reference, label) => label) {
+  const reference = (system) => system?.entity_ref || system?.radio_system_entity_ref;
+  const nativeIdentity = (system) => {
+    const key = system?.radio_system_key || system?.system_key || system?.key || '';
+    return /^(?:dmr|nxdn-[cd]):channel:/i.test(key) ? '' : systemIdentity(system);
+  };
+  const servingIdentity = entity.system_name ? nativeIdentity(entity.serving_system) : '';
+  const homeIdentity = entity.home_system_name ? nativeIdentity(entity.home_system) : '';
+  return [
+    ['System', radioSystemLink(reference(entity.serving_system), entity.system || '(no system name)')],
+    ...(servingIdentity ? [['Radio identity', servingIdentity]] : []),
+    ...(entity.home_system || entity.home_system_name ?
+      [['Home system', radioSystemLink(reference(entity.home_system),
+        entity.home_system_name || systemLabel(entity.home_system))]] : []),
+    ...(homeIdentity ? [['Home radio identity', homeIdentity]] : [])
+  ];
 }
 
 function positionSignature(position) {
@@ -128,7 +153,8 @@ function fitPoints(points, width, height) {
   return null;
 }
 
-function createListenMap({ node, iconGlyph, fetchSnapshot, iconUrl }) {
+function createListenMap({ node, iconGlyph, fetchSnapshot, iconUrl,
+  radioSystemLink = (_reference, label) => label }) {
   const root = node('div', 'listen-map-workspace data-workspace');
   const toolbar = node('div', 'listen-map-toolbar ui-toolbar');
   const status = node('span', 'listen-map-status', 'Loading locations…');
@@ -458,7 +484,7 @@ function createListenMap({ node, iconGlyph, fetchSnapshot, iconUrl }) {
       const latest = selected.positions.at(-1);
       const facts = node('dl', 'ui-facts listen-map-facts');
       for (const [label, value] of [
-        ['System', selected.system || '(no system name)'],
+        ...mapSystemFacts(selected, radioSystemLink),
         ['Identifier', selected.identifier || '—'],
         ['Alias list', selected.alias_list || '—'],
         ['Position', `${latest.latitude.toFixed(5)}, ${latest.longitude.toFixed(5)}`],
@@ -467,7 +493,9 @@ function createListenMap({ node, iconGlyph, fetchSnapshot, iconUrl }) {
         ['Last seen', latest.timestamp_ms > 0 ? new Date(latest.timestamp_ms).toLocaleString() : '—']
       ]) {
         const fact = node('div', 'ui-fact');
-        fact.append(node('dt', '', label), node('dd', '', value));
+        const description = node('dd');
+        description.append(value);
+        fact.append(node('dt', '', label), description);
         facts.append(fact);
       }
       const historyHeader = node('div', 'listen-map-history-heading');
@@ -658,4 +686,4 @@ function createListenMap({ node, iconGlyph, fetchSnapshot, iconUrl }) {
 }
 
 export { project, unproject, visibleTiles, normalizeSnapshot, fitPoints, wrappedOffset,
-  positionSignature, positionsAfterCutoff, createListenMap };
+  positionSignature, positionsAfterCutoff, mapSystemFacts, createListenMap };

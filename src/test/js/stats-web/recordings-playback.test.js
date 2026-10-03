@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 
 class AudioFixture {
   constructor() {
@@ -59,7 +60,9 @@ async function main() {
   const modulePath = path.resolve(process.argv[2] || path.resolve(__dirname,
     '../../../../stats-web/assets/features/recordings.js'));
   const source = fs.readFileSync(modulePath, 'utf8');
-  const executable = source.replace(/^import .*dual-range.*;\n/m, 'const createDualRange = () => {};\n');
+  const labelsUrl = pathToFileURL(path.resolve(path.dirname(modulePath), '../core/system-labels.js')).href;
+  const executable = source.replace(/^import .*dual-range.*;\n/m, 'const createDualRange = () => {};\n')
+    .replace(/from '\.\.\/core\/system-labels\.js\?v=\d+'/, `from '${labelsUrl}'`);
   const { createRecordingsFeature } = await import(`data:text/javascript;base64,${Buffer.from(executable).toString('base64')}`);
   const originalAudio = global.Audio;
   const audios = [];
@@ -288,19 +291,23 @@ async function main() {
     assert.deepEqual(cancelShared.viewState().queue, [], 'Permission reset must invalidate pending shared queue results');
 
     const richCall = { ...call(8), end_ms: 31_000, size_bytes: 88_000, timeslot: 1,
+      system_name: 'GCRCN', system_key: 'p25:bee00:49f',
+      source_home_system_name: 'Home Network', target_home_system_name: 'Home Network',
       source_home_wacn: 0xBEE00, source_home_system_id: 0x4A2, source_home_id: 1863924,
       target_home_wacn: 0xBEE00, target_home_system_id: 0x4A2, target_home_id: 1201,
       source_entity_ref: { key: 'source' }, target_entity_ref: { key: 'target' },
       channel_name: 'County North', channel_id: 'channel-7', channel_entity_ref: { key: 'channel' },
-      audio_from: { wacn: 0xBEE00, system_id: 0x4A2, rfss_id: 1, site_id: 3 },
+      audio_from: { system_name: 'Receiving Network', wacn: 0xBEE00, system_id: 0x4A2, rfss_id: 1, site_id: 3 },
       also_received_on: [{ wacn: 0xBEE00, system_id: 0x4A2, rfss_id: 1, site_id: 4 }],
-      patch_members: [{ kind: 'talkgroup', id: 1202, home_wacn: 0xBEE00,
+      patch_members: [{ kind: 'talkgroup', id: 1202, home_system_name: 'Member Home Network', home_wacn: 0xBEE00,
         home_system_id: 0x4A2, home_identity_id: 1202, entity_ref: { key: 'member' } }] };
     const details = node('div');
     sharing.renderDetails(details, richCall);
     const rendered = text(details);
     for (const field of ['Recording ID', 'Ended', 'File size', 'Timeslot', 'Source home WACN', 'Target home identity',
-      'Received site identities', 'Winning site WACN', 'Patch member identities', 'Member 1 home identity', 'BEE00']) {
+      'Received site identities', 'Winning site WACN', 'Patch member identities', 'Member 1 home identity', 'BEE00',
+      'GCRCN', 'Source home system name', 'Target home system name', 'Home Network',
+      'Winning site system name', 'Receiving Network', 'Member 1 home system name', 'Member Home Network']) {
       assert.ok(rendered.includes(field), `Recording detail must include ${field}`);
     }
     assert.ok(descendants(details).some((child) => child.attributes?.get('href') === '/entity/member'),

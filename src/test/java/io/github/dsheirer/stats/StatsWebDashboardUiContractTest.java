@@ -113,12 +113,12 @@ class StatsWebDashboardUiContractTest
         assertTrue(columns.contains("label: 'Last Seen'"));
         assertTrue(system.contains("row.name"));
         assertFalse(system.contains("row.resolved_channel_name"));
-        assertTrue(system.contains("row.radio_system_key || row.configuration_id"));
+        assertTrue(system.contains("radioSystemPrimaryName(row) || row.name || scopedSystem"));
         assertTrue(system.contains("entityReferenceAllowed(row.entity_ref)"));
         assertTrue(system.contains("entityTarget(row.entity_ref)"));
         assertFalse(system.contains("context_key"));
-        assertTrue(system.contains("dashboard-identity-primary"));
-        assertTrue(system.contains("dashboard-identity-context"));
+        assertTrue(system.contains("radioSystemDisplayName(row)"));
+        assertFalse(system.contains("dashboard-identity-context"));
         assertTrue(radio.contains("row.radio_entity_ref"));
         assertTrue(radio.contains("entityReferenceAllowed(reference)"));
         assertTrue(radio.contains("entityTarget(reference, { channel: 'radios' })"));
@@ -155,7 +155,7 @@ class StatsWebDashboardUiContractTest
         assertTrue(context.contains("`RFSS ${hex(row.rfss, 2)}`"));
         assertTrue(context.contains("`RAN ${identifierNumber(row.ran)}`"));
         assertTrue(context.contains("`NAC ${hex(row.nac, 3)}`"));
-        assertTrue(context.contains("values.push(radioSystemLabel(row))"));
+        assertTrue(context.contains("values.push(radioSystemDisplayName(row))"));
         assertTrue(context.contains("protocolFamily(row) === 'NXDN' && row.ran != null"));
 
         assertTrue(calls.contains("label: 'Conventional Channel'"));
@@ -269,7 +269,7 @@ class StatsWebDashboardUiContractTest
         assertTrue(context.contains("row.site_id"));
         assertTrue(context.contains("`Site ${isP25(row) ? hex(row.site_id, 2) : identifierNumber(row.site_id)}`"));
         assertFalse(context.contains("row.site_system_id"));
-        assertTrue(context.contains("values.push(radioSystemLabel(row))"));
+        assertTrue(context.contains("values.push(radioSystemDisplayName(row))"));
         assertTrue(context.contains("`NAC ${hex(row.nac, 3)}`"));
     }
 

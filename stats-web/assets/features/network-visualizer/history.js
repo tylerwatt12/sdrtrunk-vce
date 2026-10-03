@@ -1,5 +1,7 @@
 'use strict';
 
+import { systemName, systemIdentity } from '../../core/system-labels.js?v=1';
+
 const P25_HISTORY_ACTIONS = Object.freeze([
   'JOIN', 'LOGOUT', 'DENIAL', 'EMERGENCY', 'CHECK', 'PAGE', 'BUSY', 'QUEUED',
   'PATCH', 'PATCH_CREATE', 'PATCH_CANCEL'
@@ -89,7 +91,7 @@ function targetGroupKey(row, allowPatch = true) {
 }
 
 function systemLabel(row) {
-  const supplied = text(row?.system_name);
+  const supplied = systemName(row);
   const wacn = hex(row?.wacn, 5);
   const system = hex(row?.system_id, 3);
   const identity = wacn && system ? `${wacn}:${system}` : wacn || system;
@@ -211,12 +213,18 @@ function ensureSystem(state, row) {
   let system = state.systems.get(key);
   if (!system) {
     const position = systemPosition(state.systems.size);
-    system = { key, label: systemLabel(row), wacn: row.wacn ?? null, systemId: row.system_id ?? null,
+    system = { key, name: systemName(row), identity: systemIdentity(row), label: systemLabel(row),
+      entityRef: row.radio_system_entity_ref || null, wacn: row.wacn ?? null, systemId: row.system_id ?? null,
       ordinal: state.systems.size, x: position.x, y: position.y, z: position.z, radius: SYSTEM_RADIUS,
       score: 0, lastAtMs: 0, groupKeys: new Set(), radioKeys: new Set(), groupSlots: [], groupShell: -1 };
     state.systems.set(key, system);
-  } else if (!system.label || system.label.startsWith('P25 ')) {
-    system.label = systemLabel(row);
+  } else {
+    const name = systemName(row);
+    if (name) {
+      system.name = name;
+      system.label = systemLabel(row);
+    }
+    if (row.radio_system_entity_ref) system.entityRef = row.radio_system_entity_ref;
   }
   system.lastAtMs = Math.max(system.lastAtMs, finite(row.observed_at_ms));
   return system;

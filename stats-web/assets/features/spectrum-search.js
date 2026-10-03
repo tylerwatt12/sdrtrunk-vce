@@ -1,3 +1,18 @@
+import { systemName } from '../core/system-labels.js?v=1';
+
+export function spectrumSearchSystemName(candidate) {
+  const identity = candidate?.identity;
+  const wacn = Number(identity?.wacn);
+  const system = Number(identity?.system);
+  const validIdentity = identity?.wacn != null && identity?.system != null &&
+    Number.isInteger(wacn) && wacn >= 0 && wacn <= 0xfffff &&
+    Number.isInteger(system) && system >= 0 && system <= 0xfff;
+  return systemName(candidate?.system_identity || identity?.system_identity) ||
+    systemName({ ...candidate, protocol: 'P25',
+    radio_system_key: candidate?.radio_system_key || (validIdentity ?
+      `p25:${wacn.toString(16).padStart(5, '0')}:${system.toString(16).padStart(3, '0')}` : '') });
+}
+
 export function openSpectrumSearchWizard(ui, context = {}) {
   const { node, openReadOnlyModal, requestJson, uiActionButton, uiSelect, uiSelectFrame, uiPill,
     formField, uiToggleField, anchor, href, entityRefHref, channelMHz, hex } = ui;
@@ -198,8 +213,12 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     return identity ? `WACN ${hex(identity.wacn, 5)} · System ${hex(identity.system, 3)} · RFSS ${identity.rfss} · Site ${identity.site}` : 'Identity unavailable';
   };
   const candidateName = (candidate) => candidate.name || candidate.site_name || `${channelMHz(candidate.frequency_hz)} MHz`;
-  const systemLabel = (candidate) => candidate.system_name || candidate.alias_name ||
+  const systemLabel = (candidate) => spectrumSearchSystemName(candidate) ||
     (candidate.identity ? `P25 ${hex(candidate.identity.wacn, 5)}-${hex(candidate.identity.system, 3)}` : 'P25 system');
+  const identityFacts = (candidate) => candidate?.identity ? [
+    ['WACN', hex(candidate.identity.wacn, 5)], ['System ID', hex(candidate.identity.system, 3)],
+    ['RFSS', candidate.identity.rfss], ['Site ID', candidate.identity.site]
+  ] : [];
   const factList = (entries) => {
     const list = node('dl', 'ui-fact-list');
     entries.forEach(([label, value]) => list.append(node('dt', '', label), node('dd', '', String(value ?? '—'))));
@@ -735,8 +754,8 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       cells[1].append(name);
       const systemHref = entityRefHref(candidate.entity_ref);
       const system = node('div', 'spectrum-search-cell');
-      system.append(systemHref ? anchor(systemLabel(candidate), systemHref) : node('strong', '', systemLabel(candidate)),
-        node('p', 'muted', identityText(candidate)));
+      system.append(systemHref ? anchor(systemLabel(candidate), systemHref) : node('strong', '', systemLabel(candidate)));
+      if (candidate.site_name) system.append(node('p', 'muted', candidate.site_name));
       cells[2].append(system);
       const health = candidate.health || {};
       const strength = Number.isFinite(Number(candidate.strength_dbfs)) && candidate.strength_dbfs != null ?
@@ -746,6 +765,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
         'Reception details unavailable' : health.quality_pct >= 90 ? 'Clean reception' :
           health.quality_pct >= 60 ? 'Some decoding errors' : 'Unreliable reception'),
       disclosure('Signal details', factList([
+        ...identityFacts(candidate),
         ['Modulation', candidate.modulation], ['Decoder quality', health.quality_pct == null ? null : `${Math.round(health.quality_pct)}%`],
         ['Valid control messages', health.valid_control_messages],
         ['Invalid control messages', health.invalid_control_messages],
@@ -784,9 +804,11 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       else if (lists.length > 1 && !lists.some((list) => list.id === Number(draft.alias_list_id))) draft.alias_list_id = '';
       groups.set(group.group_id, draft);
       const section = node('section', 'ui-form-section spectrum-discovery-alias');
-      const systemName = selectedCandidates().find((candidate) => candidate.alias_group_id === group.group_id)?.system_name ||
-        lists[0]?.name || group.default_new_alias_list_name || 'P25 system';
-      section.append(node('h4', '', systemName), node('p', 'muted', `WACN ${hex(group.wacn, 5)} · System ${hex(group.system, 3)}`));
+      const candidate = selectedCandidates().find((value) => value.alias_group_id === group.group_id);
+      section.append(node('h4', '', systemLabel(candidate || { identity: group })),
+        disclosure('System identity', factList([
+          ['WACN', hex(group.wacn, 5)], ['System ID', hex(group.system, 3)]
+        ])));
       if (lists.length === 1) section.append(node('strong', '', `Use ${lists[0].name}`),
         node('p', 'muted', 'These channels belong to a system you already added. Its names and listening settings will be kept.'));
       else if (lists.length > 1) {
@@ -818,7 +840,9 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       const draft = drafts.get(candidate.candidate_id) || { name: candidateName(candidate), auto_start: true };
       drafts.set(candidate.candidate_id, draft);
       const section = node('section', 'ui-form-section spectrum-discovery-review');
-      section.append(node('strong', '', `${channelMHz(candidate.frequency_hz)} MHz`), node('p', 'muted', identityText(candidate)));
+      section.append(node('strong', '', `${channelMHz(candidate.frequency_hz)} MHz`),
+        node('p', 'muted', systemLabel(candidate)),
+        disclosure('System and site identity', factList(identityFacts(candidate))));
       if (candidate.saved || candidate.known_channel) {
         section.append(node('strong', '', candidateName(candidate)), uiPill(candidate.running ? 'Added and listening' :
           candidate.saved ? 'Added, available later' : 'Already added', candidate.running ? 'success' : 'neutral'));
@@ -969,8 +993,9 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       const status = candidate.running ? 'Added and listening' : candidate.saved ? 'Added, available later' : known ? 'Already added' :
         job.ledger_unavailable ? 'Status unavailable' : job.restart_required ? 'Not added' : 'Could not add';
       row.append(node('strong', '', drafts.get(candidate.candidate_id)?.name || candidateName(candidate)),
-        node('p', 'muted', `${channelMHz(candidate.frequency_hz)} MHz · ${identityText(candidate)}`),
+        node('p', 'muted', `${systemLabel(candidate)} · ${channelMHz(candidate.frequency_hz)} MHz`),
         uiPill(status, candidate.running ? 'success' : candidate.saved || known ? 'neutral' : 'warning'));
+      row.append(disclosure('System and site identity', factList(identityFacts(candidate))));
       if (candidate.saved && candidate.auto_start != null) row.append(node('p', 'muted',
         `Start automatically: ${candidate.auto_start ? 'On' : 'Off'}`));
       const channelId = candidate.configuration_id || known?.configuration_id;

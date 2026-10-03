@@ -1,3 +1,5 @@
+import { systemName, systemLabel, systemIdentity } from '../core/system-labels.js?v=1';
+
 const ROOT = '/api/v1/admin/retained-statistics';
 const PAGE_SIZE = 25;
 const CHOICE_SIZE = 50;
@@ -112,6 +114,32 @@ function canShowResults(sourceKind, source, type, site) {
     site?.configuration_id));
 }
 
+function retainedSystemIdentityFacts(row, source = null) {
+  const known = (value) => value != null && value !== '' && Number.isSafeInteger(Number(value)) && Number(value) >= 0;
+  const hex = (value, width) => known(value) ? Number(value).toString(16).toUpperCase().padStart(width, '0') : '';
+  const identities = [
+    ['', row.system_identity || source?.system_identity],
+    ['Home ', row.home_system || (known(row.home_wacn) && known(row.home_system_id) ? {
+      system_name: row.home_system_name, protocol: 'P25', wacn: row.home_wacn, system_id: row.home_system_id
+    } : null)],
+    ['Foreign ', row.foreign_system || (known(row.foreign_wacn) && known(row.foreign_system_id) ? {
+      system_name: row.foreign_system_name, protocol: 'P25', wacn: row.foreign_wacn, system_id: row.foreign_system_id
+    } : null)]
+  ];
+  return identities.flatMap(([prefix, identity]) => {
+    if (!identity) return [];
+    const p25 = String(identity.protocol || '').toUpperCase().startsWith('P25') || identity.wacn != null;
+    return [
+      [prefix ? `${prefix}system` : 'System', systemLabel(identity), ...(identity.entity_ref ? [identity] : [])],
+      [`${prefix}WACN`, hex(identity.wacn, 5)],
+      [`${prefix}${p25 ? 'SysID' : 'System ID'}`, p25 ? hex(identity.system_id, 3) : identity.system_id],
+      [`${prefix}Network ID`, identity.network_id],
+      [`${prefix}Model`, identity.model ?? identity.network_model],
+      [`${prefix}Location category`, identity.location_category]
+    ].filter(([, value]) => value !== null && value !== undefined && value !== '');
+  });
+}
+
 // Reuse map: the Administration settings shell owns navigation; shared ui-field,
 // ui-select, ui-segmented, ui-data-table, ui-pager, ui-metric, ui-feedback and modal controls
 // own appearance and interaction. This module adds only workspace geometry.
@@ -169,15 +197,15 @@ export function createRetainedStatisticsWorkspace(deps) {
     { csrf: false, signal: requestSignal });
   const mhz = (hz) => Number.isFinite(Number(hz)) && Number(hz) > 0 ?
     `${(Number(hz) / 1_000_000).toFixed(5)} MHz` : '';
-  const choiceName = (row) => [...new Set([row.label,
-    row.source_kind === 'saved_channel' ? row.radio_system_name : '',
+  const choiceName = (row) => [...new Set([row.source_kind === 'radio_system' ? systemLabel(row) || row.label : row.label,
+    row.source_kind === 'saved_channel' ? systemName(row) : '',
     row.source_kind === 'saved_channel' ? row.site_name : '', row.protocol,
     row.source_kind === 'saved_channel' ? mhz(row.primary_frequency_hz) : ''].filter(Boolean))]
     .join(' · ');
   const choiceLabel = (row, rows, key) => {
     const label = choiceName(row);
     return rows.some((other) => other[key] !== row[key] && choiceName(other) === choiceName(row)) ?
-      `${label} · ${row[key]}` : label;
+      `${label} · ${row.source_kind === 'radio_system' ? systemIdentity(row) || row[key] : row[key]}` : label;
   };
 
   const sourceMode = uiSegmentedControl([
@@ -273,6 +301,17 @@ export function createRetainedStatisticsWorkspace(deps) {
     resultTable, resultPager);
 
   const selectedSource = () => state.source;
+  function appendSystemIdentityFacts(host, row) {
+    const facts = retainedSystemIdentityFacts(row, selectedSource());
+    if (!facts.length) return;
+    const list = node('dl', 'ui-fact-list');
+    facts.forEach(([label, value, identity]) => {
+      const description = node('dd');
+      description.append(identity ? renderSource(identity, String(value)) : String(value));
+      list.append(node('dt', '', label), description);
+    });
+    host.append(list);
+  }
   const selectedSite = () => state.site;
   const busyWithJob = () => Boolean(state.job && ['queued', 'running', 'cancelling'].includes(state.job.state));
   const tableController = {};
@@ -744,6 +783,7 @@ export function createRetainedStatisticsWorkspace(deps) {
     const summary = node('div', 'ui-fact retained-statistics-review-target');
     summary.append(node('strong', '', row.label || 'Selected data'));
     if (row.detail) summary.append(node('small', 'muted', row.detail));
+    appendSystemIdentityFacts(summary, row);
     const scope = node('p', 'retained-statistics-impact',
       target.source_kind === 'alias_activity' ? 'Alias Activity' :
         `${selectedSource()?.label || 'Selected source'}${selectedSite() ?
@@ -940,6 +980,7 @@ export function createRetainedStatisticsWorkspace(deps) {
     const summary = node('div', 'ui-fact retained-statistics-review-target');
     summary.append(node('strong', '', row.label || 'Selected item'));
     if (row.detail) summary.append(node('small', 'muted', row.detail));
+    appendSystemIdentityFacts(summary, row);
     const impact = node('p', 'retained-statistics-impact');
     const reappearance = node('div', 'ui-notice ui-notice-warning',
       'Receiving continues; deleted rows may return. Alias Activity totals may remain.');
@@ -1288,4 +1329,4 @@ export function createRetainedStatisticsWorkspace(deps) {
   return host;
 }
 
-export { canShowResults, queryPath, targetForRemoval };
+export { canShowResults, queryPath, targetForRemoval, retainedSystemIdentityFacts };

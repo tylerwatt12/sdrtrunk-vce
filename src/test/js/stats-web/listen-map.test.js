@@ -3,13 +3,14 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 
 const modulePath = path.resolve(process.argv[2] ||
   path.resolve(__dirname, '../../../../stats-web/assets/features/listen-map.js'));
 
 async function main() {
   const source = fs.readFileSync(modulePath, 'utf8');
-  const map = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+  const map = await import(pathToFileURL(modulePath).href);
   const center = map.project(39.5, -98.35, 5);
   const inverse = map.unproject(center.x, center.y, 5);
   assert.ok(Math.abs(inverse.latitude - 39.5) < 0.000001);
@@ -34,7 +35,12 @@ async function main() {
       'Markers stay visible after panning across multiple wrapped worlds');
   }
   const snapshot = map.normalizeSnapshot({ entities: [
-    { id: 'radio-1', label: 'Engine 1', system: 'County P25', icon: 'fire-truck', color: '#123abc', positions: [
+    { id: 'radio-1', label: 'Engine 1', system: 'County P25', identifier: 'ISSI 778240.1183.1001',
+      serving_system: { key: 'p25:bee00:4a2', name: 'County P25', wacn: 0xBEE00, system_id: 0x4A2,
+        entity_ref: { kind: 'radio_system', key: 'p25:bee00:4a2' } },
+      home_system: { key: 'p25:bee00:49f', name: 'GCRCN', wacn: 0xBEE00, system_id: 0x49F,
+        entity_ref: { kind: 'radio_system', key: 'p25:bee00:49f' } },
+      icon: 'fire-truck', color: '#123abc', positions: [
       { latitude: 39.6, longitude: -98.34, timestamp_ms: 3 },
       { latitude: 200, longitude: -98.35, timestamp_ms: 2 },
       { latitude: 39.5, longitude: -98.35, timestamp_ms: 1 }
@@ -48,6 +54,19 @@ async function main() {
     'The moving marker and details use the newest receiver point');
   assert.equal(snapshot.entities[0].color, '#123abc');
   assert.equal(snapshot.entities[0].system, 'County P25');
+  assert.equal(snapshot.entities[0].serving_system.system_id, 0x4A2,
+    'The inspector retains the exact serving identity separately from the home identity');
+  assert.equal(snapshot.entities[0].serving_system.entity_ref.key, 'p25:bee00:4a2');
+  assert.equal(snapshot.entities[0].home_system_name, 'GCRCN', 'Home system names survive map normalization');
+  assert.equal(snapshot.entities[0].identifier, 'ISSI 778240.1183.1001', 'The qualified Identifier stays exact');
+  assert.equal(snapshot.entities[0].home_system.system_id, 0x49F);
+  assert.deepEqual(map.mapSystemFacts(snapshot.entities[0], (ref, name) => `${ref.key}: ${name}`), [
+    ['System', 'p25:bee00:4a2: County P25'], ['Radio identity', 'BEE00-4A2'],
+    ['Home system', 'p25:bee00:49f: GCRCN'], ['Home radio identity', 'BEE00-49F']
+  ], 'Map names link to their own serving/home systems and native identities remain distinct');
+  assert.deepEqual(map.mapSystemFacts({ system: 'Conventional', system_name: 'Conventional',
+    serving_system: { key: 'dmr:channel:channel-id', name: 'Conventional' } }),
+  [['System', 'Conventional']], 'A saved channel scope does not become a radio-frequency identity');
   assert.equal(snapshot.entities[1].icon, 'no-icon');
   const cutoff = map.positionSignature(snapshot.entities[0].positions[0]);
   assert.equal(map.positionsAfterCutoff(snapshot.entities[0].positions, cutoff).length, 1,

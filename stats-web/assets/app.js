@@ -5,6 +5,7 @@ import * as tableLayouts from './core/table-layout.js';
 import * as tableDefaults from './core/table-defaults.js?v=10';
 import { Controller as PageTitleController } from './core/page-title.js?v=2';
 import { href as entityRefHref } from './core/entity-ref.js';
+import * as systemLabels from './core/system-labels.js?v=1';
 import * as pageLifecycle from './core/page-lifecycle.js';
 import { installIconHints } from './core/icon-hints.js?v=3';
 import { createFormWorkflow } from './core/form-workflows.js?v=1';
@@ -16,7 +17,7 @@ import {
   isReceiverHealthAlertEnabled
 } from './core/receiver-health-alerts.js?v=3';
 import * as radioSystemsDirectory from './features/radio-systems-directory.js';
-import { createListenMap } from './features/listen-map.js?v=3';
+import { createListenMap } from './features/listen-map.js?v=4';
 import { buildRadioResolvePlannerUrl } from './features/radioresolve-analysis.js?v=2';
 import {
   createAliasList,
@@ -24,14 +25,14 @@ import {
 } from './features/alias-list-create.js?v=3';
 import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=22';
 import { createStreamingWorkspace } from './features/streaming.js?v=8';
-import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=7';
+import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=8';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=12';
-import { createRecordingsFeature } from './features/recordings.js?v=17';
-import { openSpectrumSearchWizard } from './features/spectrum-search.js?v=7';
-import { createAudioDock } from './core/audio-dock.js?v=7';
+import { createRecordingsFeature } from './features/recordings.js?v=18';
+import { openSpectrumSearchWizard } from './features/spectrum-search.js?v=8';
+import { createAudioDock } from './core/audio-dock.js?v=8';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=1';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
-import { WebCallPlayer } from './web-call-player.js?v=5';
+import { WebCallPlayer } from './web-call-player.js?v=6';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
@@ -1352,8 +1353,16 @@ function radioSystemOwnerLabel(row) {
   return isSavedChannelRadioSystem(row) ? 'Saved channel scope' : 'Radio System';
 }
 
+function radioSystemPrimaryName(row) {
+  return systemLabels.systemName(row);
+}
+
+function radioSystemDisplayName(row) {
+  return radioSystemPrimaryName(row) || radioSystemLabel(row) || systemLabels.systemIdentity(row);
+}
+
 function radioSystemValue(row) {
-  return radioSystemLabel(row);
+  return radioSystemDisplayName(row);
 }
 
 function radioSystemAliasLists(row) {
@@ -1367,27 +1376,26 @@ function radioSystemAliasLists(row) {
   return values;
 }
 
-function namedRadioSystemInfoValue(row, identity) {
-  const systemName = String(row?.system_name || '').trim();
-  if (!systemName || !identity) return systemName || identity;
-  const result = node('span', 'radio-system-info-value');
-  result.append(node('span', 'radio-system-info-name', systemName),
-    node('span', 'number-base-separator', '·'), identity);
-  return result;
-}
-
-function radioSystemInfoValue(row) {
-  if (!isP25(row)) return namedRadioSystemInfoValue(row, radioSystemValue(row));
+function radioSystemIdentityValue(row) {
+  if (!isP25(row)) return radioSystemLabel(row) || systemLabels.systemIdentity(row);
   const hexadecimal = radioSystemLabel(row);
   const wacn = row.wacn === null || row.wacn === undefined || row.wacn === '' ? '' : Number(row.wacn);
   const system = row.system_id === null || row.system_id === undefined || row.system_id === '' ? '' :
     Number(row.system_id);
-  if (!hexadecimal || wacn === '' || system === '') return namedRadioSystemInfoValue(row, hexadecimal);
+  if (!hexadecimal || wacn === '' || system === '') return hexadecimal || systemLabels.systemIdentity(row);
   const result = node('span', 'number-base-pair');
   result.append(labeledBaseValue(hexadecimal, 'HEX'),
     node('span', 'number-base-separator', '·'),
     labeledBaseValue(`${wacn}-${system}`, 'DEC'));
-  return namedRadioSystemInfoValue(row, result);
+  return result;
+}
+
+function radioSystemInfoValue(row) {
+  return radioSystemIdentityValue(row);
+}
+
+function radioSystemContextLink(row) {
+  return radioSystemLink(row.radio_system_entity_ref, radioSystemDisplayName(row));
 }
 
 function observedSiteLabel(row) {
@@ -3768,7 +3776,10 @@ function aliasEditorSourceBreakdownColumns() {
   return [
     { id: 'source', label: 'Source', className: 'alias-cell', render: (row) => {
       const value = node('div', 'alias-source-identity');
-      value.append(node('strong', '', availableValue(row.source_label)));
+      const label = radioSystemPrimaryName(row) || row.source_label || radioSystemDisplayName(row);
+      const primary = node('strong');
+      primary.append(radioSystemLink(row.radio_system_entity_ref, availableValue(label)));
+      value.append(primary);
       if (row.topology) value.append(node('span', 'muted', availableValue(row.topology)));
       return value;
     } },
@@ -6527,11 +6538,14 @@ function observedGroupIdentityValue(row) {
 
 function observedGroupIdentitySystem(row) {
   const wrapper = node('div', 'observed-group-identity-system');
-  const label = row.channel_names || row.system_name || row.radio_system_key || 'Unknown source';
+  const label = radioSystemPrimaryName(row) || row.channel_names ||
+    (row.radio_system_key ? radioSystemDisplayName(row) : 'Unknown source');
   const details = [protocolFamily(row), row.topology,
-    row.system_name && row.system_name !== label ? row.system_name : null]
+    row.channel_names && row.channel_names !== label ? row.channel_names : null]
     .filter(Boolean).join(' · ');
-  wrapper.append(node('strong', '', label));
+  const primary = node('strong');
+  primary.append(radioSystemLink(row.radio_system_entity_ref, label));
+  wrapper.append(primary);
   if (details) wrapper.append(node('small', '', details));
   return wrapper;
 }
@@ -6672,7 +6686,8 @@ function observedGroupIdentityDetail(row, selectedList) {
     [localP25 ? 'Local Talkgroup' : groupIdentityLabel(row, null, false),
       identityNumber(row, row.group_identity_id)],
     ['Protocol', protocolFamily(row) || row.protocol],
-    ['System', row.system_name || '—'],
+    ['System', radioSystemLink(row.radio_system_entity_ref, radioSystemPrimaryName(row) ||
+      (row.radio_system_key ? radioSystemDisplayName(row) : '—'))],
     ['Channel', row.channel_names || '—'],
     ['Topology', row.topology || '—'],
     ['WACN', row.wacn === null || row.wacn === undefined ? '—' : hexDecimalPair(row.wacn, 5)],
@@ -8680,8 +8695,9 @@ async function requestJson(path, options = {}) {
     error.path = path;
     throw error;
   }
-  if (Array.isArray(result.data)) return { rows: result.data, ...(result.meta || {}) };
-  return result.meta && typeof result.meta === 'object' ? { ...result.data, ...result.meta } : result.data;
+  const data = Array.isArray(result.data) ? { rows: result.data, ...(result.meta || {}) } :
+    result.meta && typeof result.meta === 'object' ? { ...result.data, ...result.meta } : result.data;
+  return systemLabels.rememberSystemNames(data);
 }
 
 function waitForRequestRetry(delayMilliseconds, signal) {
@@ -10386,9 +10402,10 @@ function renderScannerCall(host, state, channelMetadata) {
   const intro = node('div', 'scanner-call-intro');
   const copy = node('div');
   const analog = isAnalogChannel(channelMetadata || call);
+  const systemName = systemLabels.systemLabel(call);
   copy.append(node('span', 'scanner-call-kind', `${call.decoder || call.protocol || 'Call'}${call.encrypted ?
     ' · Encrypted' : ' · Voice'}`), node('strong', 'scanner-call-title', scannerTargetLabel(call, channelMetadata)),
-    node('span', 'scanner-call-subtitle', [call.system, call.site].filter(Boolean).join(' · ')));
+    node('span', 'scanner-call-subtitle', [systemName, call.site].filter(Boolean).join(' · ')));
   const instruments = node('div', 'scanner-call-instruments');
   instruments.append(scannerVoiceMeter(call));
   intro.append(copy, instruments);
@@ -10418,7 +10435,7 @@ function renderScannerCall(host, state, channelMetadata) {
     scannerField('Matched Scan Lists', scannerMatchedScanLists(call, state), 1),
     scannerField('Channel', call.channel, 1, open('channel')),
     scannerField('Frequency', scannerFrequency(call), 1, open('frequency')),
-    scannerField('System', call.system, 2, open('system')),
+    scannerField('System', systemName, 2, open('system')),
     scannerField('Site', call.site, 2, open('site')),
     scannerField('Network / Site', networkSiteIdentity, 2, open('site'), true),
     scannerField('NAC', nac, 2, open('identifier')),
@@ -10958,13 +10975,14 @@ function dashboardChannelContext(row) {
   const values = [];
   const trunked = dashboardChannelKind(row) === 'TRUNKED';
   if (trunked) {
-    values.push(radioSystemLabel(row));
+    values.push(radioSystemDisplayName(row));
     if (isP25(row) && row.rfss != null) values.push(`RFSS ${hex(row.rfss, 2)}`);
     if (row.site_id != null) {
       values.push(`Site ${isP25(row) ? hex(row.site_id, 2) : identifierNumber(row.site_id)}`);
     }
     if (protocolFamily(row) === 'NXDN' && row.ran != null) values.push(`RAN ${identifierNumber(row.ran)}`);
   }
+  if (!trunked && radioSystemPrimaryName(row)) values.push(radioSystemPrimaryName(row));
   if (isP25(row) && row.nac != null) values.push(`NAC ${hex(row.nac, 3)}`);
   return values.join(' · ');
 }
@@ -11155,20 +11173,11 @@ function dashboardActivityMix(response, selectedAction, onSelect) {
 }
 
 function dashboardActivitySystem(row) {
-  const scopedSystem = row.radio_system_key ? radioSystemLabel(row) : '';
-  const label = row.system_name || row.name || scopedSystem || row.source_label ||
+  const scopedSystem = row.radio_system_key ? radioSystemDisplayName(row) : '';
+  const label = radioSystemPrimaryName(row) || row.name || scopedSystem || row.source_label ||
     row.radio_system_key || '—';
-  const discriminator = String(row.radio_system_key || row.configuration_id || '').trim();
   const target = entityReferenceAllowed(row.entity_ref) ? entityTarget(row.entity_ref) : '';
-  const primary = target ? anchor(label, target) : node('span', '', label);
-  if (!discriminator || discriminator === label) return primary;
-  const summary = node('span', 'dashboard-identity');
-  const primaryLine = node('span', 'dashboard-identity-primary');
-  primaryLine.append(primary);
-  const context = node('small', 'dashboard-identity-context', discriminator);
-  context.title = discriminator;
-  summary.append(primaryLine, context);
-  return summary;
+  return target ? anchor(label, target) : node('span', '', label);
 }
 
 function dashboardActivityRadio(row) {
@@ -13022,8 +13031,16 @@ function spectrumDiscoverySettings(form, profile) {
   return settings;
 }
 
-function spectrumDiscoveryIdentity(identity) {
+function spectrumDiscoverySystemName(session, draft = null) {
+  if (draft) return String(draft.system || '').trim();
+  return radioSystemPrimaryName(session?.review?.identity?.system_identity) ||
+    radioSystemPrimaryName(session?.review?.system_identity) ||
+    String(session?.review?.template?.system || '').trim();
+}
+
+function spectrumDiscoveryIdentity(identity, systemName = '') {
   return identity ? [
+    ...(systemName ? [['System', systemName]] : []),
     ['WACN', hex(identity.wacn, 5)], ['System ID', hex(identity.system, 3)],
     ['RFSS', String(identity.rfss)], ['Site ID', String(identity.site)]
   ] : [];
@@ -13302,16 +13319,19 @@ function openSpectrumDiscoveryWizard(selection) {
       const status = node('div', 'ui-notice spectrum-discovery-status');
       const heading = node('strong', 'spectrum-discovery-status-heading');
       const copy = node('p');
+      const systemName = node('p', 'ui-record-title');
       const elapsed = node('p', 'muted');
       status.setAttribute('role', 'status');
-      status.append(heading, copy, elapsed);
+      status.append(heading, systemName, copy, elapsed);
       const technical = p25 ? technicalDetails() : null;
       probeNodes = { ...(technical?.nodes || {}), technical: technical?.details,
-        title, status, heading, copy, elapsed, phase: null };
+        title, status, heading, systemName, copy, elapsed, phase: null };
       stage.append(status);
       if (p25) stage.append(technical.details);
     }
     const nodes = probeNodes;
+    nodes.systemName.textContent = ready ? spectrumDiscoverySystemName(session, reviewDraft) : '';
+    nodes.systemName.hidden = !nodes.systemName.textContent;
     nodes.title.textContent = ready ? (p25 ? 'P25 details found' : `${protocolLabels[profile.id]} ready`) :
       identifying ? (p25 ? 'Checking this radio system…' : `Preparing ${protocolLabels[profile.id]}`) :
       p25 ? 'We couldn’t identify this signal' : `${protocolLabels[profile.id]} setup interrupted`;
@@ -13333,7 +13353,8 @@ function openSpectrumDiscoveryWizard(selection) {
           number(candidate.invalid_control_messages || 0), `${Math.round(Number(candidate.quality_pct) || 0)}%`];
         nodes[key].counts.forEach((cell, index) => { cell.textContent = counts[index]; });
       });
-      nodes.identity.replaceChildren(...(probe.identity ? [facts(spectrumDiscoveryIdentity(probe.identity))] : []));
+      nodes.identity.replaceChildren(...(probe.identity ? [facts(spectrumDiscoveryIdentity(probe.identity,
+        spectrumDiscoverySystemName(session, reviewDraft)))] : []));
     }
     if (nodes.phase !== phase) {
       const wasIdentifying = nodes.phase === 'identifying';
@@ -13474,7 +13495,10 @@ function openSpectrumDiscoveryWizard(selection) {
     const review = session.review;
     const template = review.template;
     const form = node('form', 'channel-editor-form spectrum-discovery-review');
-    const values = reviewDraft || { system: template.system || '', site: template.site || '', name: template.name || '' };
+    const values = reviewDraft || { system: spectrumDiscoverySystemName(session), site: template.site || '', name: template.name || '' };
+    const systemNameSummary = node('p', 'ui-record-title', spectrumDiscoverySystemName(session, reviewDraft));
+    systemNameSummary.hidden = !systemNameSummary.textContent;
+    stage.append(systemNameSummary);
     const fields = (profile.sections || []).flatMap((section) => section.fields || []);
     const controls = {};
     ['name', 'system', 'site'].forEach((key) => {
@@ -13549,8 +13573,14 @@ function openSpectrumDiscoveryWizard(selection) {
         ['Modulation', session.probe.selected_modulation]]), node('p', 'ui-field-hint',
         'The selected signal setting is saved for this channel. The app will also learn other control frequencies announced by this system.')));
     }
-    form.addEventListener('input', () => { modal.setDirty(true); reviewDraft = read(); });
-    form.addEventListener('change', () => { modal.setDirty(true); reviewDraft = read(); });
+    const updateReviewNames = () => {
+      modal.setDirty(true);
+      reviewDraft = read();
+      systemNameSummary.textContent = spectrumDiscoverySystemName(session, reviewDraft);
+      systemNameSummary.hidden = !systemNameSummary.textContent;
+    };
+    form.addEventListener('input', updateReviewNames);
+    form.addEventListener('change', updateReviewNames);
     form.addEventListener('submit', (event) => event.preventDefault());
     stage.append(form);
     const read = () => ({
@@ -13615,6 +13645,8 @@ function openSpectrumDiscoveryWizard(selection) {
     stage.append(status);
     const summary = facts([
       ['Channel', reviewDraft?.name || session.review?.template?.name || 'Saved channel'],
+      ...(spectrumDiscoverySystemName(session, reviewDraft) ?
+        [['System', spectrumDiscoverySystemName(session, reviewDraft)]] : []),
       ['Radio type', protocolLabels[profile.id]], ['Names and listening settings', savedAliasName || 'Saved settings'],
       ['Status', running ? 'Running' : 'Saved']
     ]);
@@ -17484,7 +17516,7 @@ function saveP25VisualizerEventSettings(value) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=30');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=31');
   const visualizerModule = await p25VisualizerModulePromise;
   if (!renderIsCurrent(renderContext)) return;
   const visualizer = visualizerModule.createP25Visualizer({
@@ -17499,6 +17531,8 @@ async function renderP25Visualizer() {
     loadEventSettings: loadP25VisualizerEventSettings,
     saveEventSettings: saveP25VisualizerEventSettings,
     requestActivity: (parameters, options) => api('/api/v1/activity', parameters, options),
+    systemHref: (system) => capabilityAllowed(ACCESS_CAPABILITIES.RADIO) && system?.key ?
+      href('radio-system', { radio_system_key: system.key, tab: 'info' }) : '',
     historyStatus: statsLoggingState(),
     signal: renderContext.signal
   });
@@ -18159,6 +18193,10 @@ function radioSystemAssignmentLabel(row) {
 function radioSystemsDirectoryDetails(row) {
   if (row.directory_type === 'channel') return channelDirectoryDetails(row);
   const assignment = radioSystemAssignmentLabel(row);
+  if (radioSystemPrimaryName(row)) {
+    return [assignment, isSavedChannelRadioSystem(row) ? 'Scoped to this saved channel' : '']
+      .filter(Boolean).join(' · ');
+  }
   if (isP25(row)) {
     return [
       assignment,
@@ -18200,7 +18238,8 @@ async function renderRadioSystem() {
     route.set('tab', tab);
     window.history.replaceState({}, '', currentHref());
   }
-  const pageContext = [system.channel_names, radioSystemsDirectoryDetails(system)].filter(Boolean).join(' · ');
+  const channels = sameSiteText(system.channel_names, radioSystemPrimaryName(system)) ? '' : system.channel_names;
+  const pageContext = [channels, radioSystemsDirectoryDetails(system)].filter(Boolean).join(' · ');
   if (!beginPage(renderContext,
     pageHeader(radioSystemValue(system), pageContext),
     radioSystemTabs(system, tab))) return;
@@ -18325,7 +18364,7 @@ async function renderGroupIdentity() {
   const kindLabel = kind === 'patch_group' ? 'Patch Group' : 'Talkgroup';
   const title = aliasLabel(groupIdentity) || `${kindLabel} ${formattedId}`;
   if (!beginPage(renderContext,
-    pageHeader(title, fragment(radioSystemValue(groupIdentity), ` · ${kindLabel} ${formattedId}`)),
+    pageHeader(title, fragment(radioSystemContextLink(groupIdentity), ` · ${kindLabel} ${formattedId}`)),
     entityTabs('group-identity', groupIdentity, identityKey, tab, false))) return;
 
   if (tab === 'radios') {
@@ -18426,7 +18465,7 @@ async function renderRadio() {
   const formattedId = identityNumber(radio, radio.native_id);
   const title = aliasLabel(radio) || radio.last_talker_alias || `Radio ${formattedId}`;
   if (!beginPage(renderContext,
-    pageHeader(title, fragment(radioSystemValue(radio), ` · Radio ${formattedId}`)),
+    pageHeader(title, fragment(radioSystemContextLink(radio), ` · Radio ${formattedId}`)),
     entityTabs('radio', radio, identityKey, tab, true))) return;
 
   if (tab === 'groups') {
@@ -18522,6 +18561,44 @@ function channelLocationIdentity(channel) {
     channel.rfss == null ? '' : `RFSS ${hex(channel.rfss, 2)}`,
     channel.site_id == null ? '' : `Site ${hex(channel.site_id, 2)}`
   ].filter(Boolean).join(' · ');
+}
+
+function channelSiteIdentity(channel) {
+  const values = [];
+  if (isP25(channel) && channel.rfss != null) values.push(`RFSS ${hex(channel.rfss, 2)}`);
+  if (channel.site_id != null) values.push(`Site ${isP25(channel) ? hex(channel.site_id, 2) : identifierNumber(channel.site_id)}`);
+  if (protocolFamily(channel) === 'NXDN') {
+    if (channel.site_network_id != null) values.push(`Integrator ${identifierNumber(channel.site_network_id)}`);
+    if (channel.ran != null) values.push(`RAN ${identifierNumber(channel.ran)}`);
+  }
+  return values.join(' · ');
+}
+
+function relatedRadioSystem(row, protocolName = 'P25') {
+  const system = row.neighbor_system || row.foreign_system || {};
+  const separate = Boolean(row.neighbor_system || row.foreign_system || row.foreign_wacn != null ||
+    row.neighbor_radio_system_key || row.foreign_radio_system_key);
+  return {
+    ...row, ...system, protocol: system.protocol || row.protocol || protocolName,
+    wacn: system.wacn ?? row.foreign_wacn ?? row.wacn,
+    system_id: system.system_id ?? row.foreign_system_id ?? row.system_id,
+    system: separate ? undefined : row.system,
+    system_names: system.system_names || (separate ? [] : row.system_names),
+    radio_system_name: separate ? '' : row.radio_system_name,
+    system_name: system.name || system.system_name || row.neighbor_system_name || row.foreign_system_name ||
+      (separate ? '' : row.system_name),
+    radio_system_key: system.key || system.radio_system_key || row.neighbor_radio_system_key ||
+      row.foreign_radio_system_key || (separate ? '' : row.radio_system_key),
+    radio_system_entity_ref: system.entity_ref || system.radio_system_entity_ref ||
+      row.neighbor_system_entity_ref || row.neighbor_radio_system_entity_ref ||
+      row.foreign_system_entity_ref || row.foreign_radio_system_entity_ref ||
+      (separate ? null : row.radio_system_entity_ref)
+  };
+}
+
+function relatedRadioSystemLink(row, protocolName = 'P25') {
+  const system = relatedRadioSystem(row, protocolName);
+  return radioSystemContextLink(system);
 }
 
 function p25DecoderMode(value) {
@@ -18695,10 +18772,8 @@ function p25ChannelNeighborColumns() {
     { id: 'neighbor-name', label: 'Name / Site', fullLabel: 'Monitored Name and Site',
       render: neighborSiteLink,
       sortValue: (row) => neighborSiteDisplayParts(row).primary },
-    { id: 'wacn', label: 'WACN', render: (row) => hex(row.wacn, 5),
-      sortValue: (row) => Number(row.wacn || 0) },
-    { id: 'system', label: 'Sys', fullLabel: 'System', render: (row) => hex(row.system_id, 3),
-      sortValue: (row) => Number(row.system_id || 0) },
+    { id: 'system', label: 'System', render: (row) => relatedRadioSystemLink(row),
+      sortValue: (row) => radioSystemDisplayName(relatedRadioSystem(row)) },
     { id: 'rfss', label: 'RFSS', render: (row) => hex(row.rfss, 2),
       sortValue: (row) => Number(row.rfss || 0) },
     { id: 'site', label: 'Site', render: (row) => hex(neighborSiteId(row), 2),
@@ -18727,19 +18802,11 @@ function trunkedChannelNeighborColumns(channel) {
       protocol: channel.protocol,
       variant: row.variant
     }) },
-    { id: 'model-category', label: 'Model / Category', render: (row) => identityDomainLabel({
-      protocol: channel.protocol,
-      address_domain: row.address_domain,
-      model: row.model,
-      location_category: row.location_category
-    }) },
     { id: 'neighbor-name', label: 'Name / Site', fullLabel: 'Monitored Name and Site',
       render: neighborSiteLink,
       sortValue: (row) => neighborSiteDisplayParts(row).primary },
-    { id: 'network', label: 'Network', key: 'network_id', className: 'numeric',
-      render: (row) => identifierNumber(row.network_id) },
-    { id: 'system', label: 'System', key: 'system_id', className: 'numeric',
-      render: (row) => identifierNumber(row.system_id) },
+    { id: 'system', label: 'System', render: (row) => relatedRadioSystemLink(row, channel.protocol),
+      sortValue: (row) => radioSystemDisplayName(relatedRadioSystem(row, channel.protocol)) },
     { id: 'site', label: 'Site', key: 'site_id', className: 'numeric',
       render: (row) => identifierNumber(neighborSiteId(row)) },
     { id: 'channel', label: 'Channel', key: 'channel_number', className: 'numeric',
@@ -18855,8 +18922,8 @@ function renderTrunkedChannelBandPlans(channel, data) {
     'No home-system band plan recorded', { type: overrideActive ? 'channel-frequency-bands-override' :
       'channel-frequency-bands', tableClass: 'ui-data-table-calm' }, null, bandSource),
   data.foreign_bands?.length ? tableSection('ISSI Advertised Band Plans', data.foreign_bands, [
-    { id: 'wacn', label: 'WACN', render: (row) => hex(row.foreign_wacn, 5), sortValue: (row) => Number(row.foreign_wacn || 0) },
-    { id: 'system', label: 'Sys', fullLabel: 'Foreign System', render: (row) => hex(row.foreign_system_id, 3), sortValue: (row) => Number(row.foreign_system_id || 0) },
+    { id: 'system', label: 'System', fullLabel: 'Foreign System', render: (row) => relatedRadioSystemLink(row),
+      sortValue: (row) => radioSystemDisplayName(relatedRadioSystem(row)) },
     { id: 'band', label: 'Band', key: 'band', className: 'numeric' },
     { id: 'mode', label: 'Mode', render: (row) => semanticLabel(row.access_mode) },
     { id: 'base', label: 'Base', fullLabel: 'Base MHz', render: (row) => frequency(row.base_hz), className: 'numeric', sortValue: (row) => Number(row.base_hz || 0) },
@@ -18883,9 +18950,11 @@ async function renderTrunkedChannel(channel, configurationId, renderContext) {
   const tab = tabItems.some((item) => item.id === normalizedTab) ? normalizedTab : 'info';
   const display = channelDisplayParts(channel);
   const siteVariant = trunkedVariant({ variant: channel.site_variant });
-  const subtitle = [display.secondary, protocolFamily(channel), trunkedVariant(channel) || siteVariant,
-    channelLocationIdentity(channel)]
-    .filter(Boolean).join(' · ');
+  const location = radioSystemPrimaryName(channel) ? channelSiteIdentity(channel) : channelLocationIdentity(channel);
+  const context = [display.secondary, protocolFamily(channel), trunkedVariant(channel) || siteVariant,
+    location].filter(Boolean).join(' · ');
+  const subtitle = radioSystemPrimaryName(channel) ?
+    fragment(radioSystemContextLink(channel), context ? ` · ${context}` : '') : context;
   if (!beginPage(renderContext, pageHeader(channelValue(channel), subtitle), trunkedChannelTabs(channel, tab))) return;
 
   if (tab === 'quality') {
@@ -21322,7 +21391,7 @@ function radioDirectorySystemCard(row) {
   const header = node('header', 'radio-directory-system-header');
   const identity = node('div', 'radio-directory-system-identity');
   const heading = node('h3');
-  heading.append(radioSystemLink(row.entity_ref, row.system_name || radioSystemLabel(row) || 'Trunked system'));
+  heading.append(radioSystemLink(row.entity_ref, radioSystemDisplayName(row) || 'Trunked system'));
   identity.append(heading, radioDirectorySystemMetadata(row));
   const headingGroup = node('div', 'radio-directory-system-heading');
   headingGroup.append(uiIconTile('icon-trunked'), identity);
@@ -22545,6 +22614,10 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
       const identity = node('div');
       identity.append(node('strong', '', channel.name || 'New channel'),
         node('span', '', `${profile.label} · ${semanticLabel(profile.channel_kind || 'Dynamic')}`));
+      const systemName = node('span', '', String(channel.system || '').trim());
+      systemName.hidden = !systemName.textContent;
+      identity.append(systemName);
+      const learnedSystemNames = [];
       hero.append(iconGlyph('icon-conventional'), identity);
       if (editing) hero.append(uiPill(entry.processing_state === 'RUNNING' ? 'Running' : 'Stopped',
         entry.processing_state === 'RUNNING' ? 'success' : 'neutral',
@@ -22687,6 +22760,12 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
             wrapper.append(anchor('Manage P25 band plan profiles', href('admin', { tab: 'protocol-p25' }),
               'channel-field-action'));
           }
+          if (field.path === 'observed.p25_site_identity') {
+            const learnedSystemName = node('strong', '', String(channel.system || '').trim());
+            learnedSystemName.hidden = !learnedSystemName.textContent;
+            wrapper.prepend(learnedSystemName);
+            learnedSystemNames.push(learnedSystemName);
+          }
           if (field.visible_when) {
             wrapper.dataset.visiblePath = field.visible_when.path;
             wrapper.dataset.visibleEquals = JSON.stringify(field.visible_when.equals);
@@ -22778,6 +22857,11 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
         } });
       form.addEventListener('input', () => {
         if (modal.state.isBusy()) return;
+        const name = String(form.querySelector('[data-channel-path="system"]')?.value || '').trim();
+        for (const label of [systemName, ...learnedSystemNames]) {
+          label.textContent = name;
+          label.hidden = !name;
+        }
         modal.setDirty(true);
         if (startStop) startStop.disabled = true;
         channelEditorDependencies(form);
@@ -22909,7 +22993,7 @@ function aliasCoverageAliasesColumns() {
 
 function aliasCoverageOwnerCell(row) {
   const owner = node('span', 'identity-summary');
-  const systemLabel = row.system_name || row.radio_system_key;
+  const systemLabel = radioSystemDisplayName(row);
   const channelLabel = row.channel_names || row.configuration_id;
   if (systemLabel) {
     const target = entityRefHref(row.radio_system_entity_ref);
@@ -23009,7 +23093,7 @@ function aliasCoverageScope(overview) {
     const channel = node('strong', '');
     channel.append(channelTarget ? anchor(channelLabel, channelTarget) : channelLabel);
     const context = node('span', 'muted');
-    const systemLabel = row.system_name || row.radio_system_key;
+    const systemLabel = radioSystemDisplayName(row);
     if (systemLabel) context.append(systemTarget ? anchor(systemLabel, systemTarget) : systemLabel);
     if (row.site_name && row.site_name !== channelLabel) context.append(` · ${row.site_name}`);
     item.append(channel, context);
@@ -23356,7 +23440,7 @@ async function renderConventionalChannel(data, channel, configurationId, renderC
   const tab = tabItems.some((item) => item.id === requestedTab) ? requestedTab : tabItems[0].id;
   if (!beginPage(renderContext,
     pageHeader(channel.name || 'Channel',
-      `${protocolFamily(channel)} · Conventional`),
+      [radioSystemPrimaryName(channel), protocolFamily(channel), 'Conventional'].filter(Boolean).join(' · ')),
     tabs(tabItems, tab))) return;
 
   if (tab === 'activity') {
@@ -23375,6 +23459,7 @@ async function renderConventionalChannel(data, channel, configurationId, renderC
   } else {
     content.append(section('Channel Info', keyValues([
       ['Name', channel.name],
+      ['System', radioSystemPrimaryName(channel)],
       ['Protocol', protocolFamily(channel)], ['Decoder', decoderDisplay(channel.decoder)],
       ['Alias List', aliasListLink(channel.alias_list_name, channel.alias_list_id)],
       ['Frequency', frequency(channel.primary_frequency_hz)],
@@ -25022,11 +25107,36 @@ function p25OverrideBandRow(band = null) {
   return row;
 }
 
-function p25OverrideProfileCard(profile = null) {
+function p25OverrideIdentityRow(profile, knownSystems = []) {
+  const wacn = profile?.wacn;
+  const system = profile?.system;
+  const known = knownSystems.find((row) => row.wacn === wacn && (row.system ?? row.system_id) === system);
+  return { protocol: 'P25', wacn, system_id: system,
+    radio_system_key: Number.isInteger(wacn) && wacn >= 0 && wacn <= 0xfffff &&
+      Number.isInteger(system) && system >= 0 && system <= 0xfff ?
+      `p25:${wacn.toString(16).padStart(5, '0')}:${system.toString(16).padStart(3, '0')}` : '',
+    system_name: known?.system_name || profile?.system_name || '',
+    radio_system_entity_ref: known?.radio_system_entity_ref || profile?.radio_system_entity_ref };
+}
+
+function p25OverrideDisplayName(profile, knownSystems = []) {
+  return radioSystemDisplayName(p25OverrideIdentityRow(profile, knownSystems));
+}
+
+function p25OverrideProfileCard(profile = null, knownSystems = []) {
   const card = node('div', 'p25-override-profile');
   const body = node('div', 'p25-override-editor-body');
   const systemTitle = node('h3', 'ui-record-card-title', 'System and site');
   const identity = node('div', 'p25-override-identity');
+  const systemName = node('p', 'ui-record-title');
+  const updateSystemName = (value) => {
+    const row = p25OverrideIdentityRow(value, knownSystems);
+    systemName.replaceChildren();
+    const name = radioSystemPrimaryName(row);
+    if (name) systemName.append(radioSystemLink(row.radio_system_entity_ref, name));
+    systemName.hidden = !name;
+  };
+  updateSystemName(profile);
   const hex = (value, width) => Number.isInteger(value) ? value.toString(16).toUpperCase().padStart(width, '0') : '';
   identity.append(
     p25OverrideInput('WACN (hex)', 'wacn', hex(profile?.wacn, 5),
@@ -25038,6 +25148,12 @@ function p25OverrideProfileCard(profile = null) {
     p25OverrideInput('Site ID (hex, optional)', 'site', hex(profile?.site, 2),
       { pattern: '[0-9A-Fa-f]{1,2}', placeholder: '01' })
   );
+  identity.addEventListener('input', () => {
+    const wacn = identity.querySelector('[data-p25-override-field="wacn"]').value.trim();
+    const system = identity.querySelector('[data-p25-override-field="system"]').value.trim();
+    updateSystemName(/^[0-9a-f]{1,5}$/i.test(wacn) && /^[0-9a-f]{1,3}$/i.test(system) ?
+      { wacn: parseInt(wacn, 16), system: parseInt(system, 16) } : null);
+  });
   const bands = node('div', 'p25-override-bands');
   (profile?.bands || [null]).forEach((band) => bands.append(p25OverrideBandRow(band)));
   const addBand = node('button', 'ui-button ui-button-secondary', 'Add band');
@@ -25045,7 +25161,7 @@ function p25OverrideProfileCard(profile = null) {
   addBand.addEventListener('click', () => bands.append(p25OverrideBandRow()));
   const actions = node('div', 'ui-action-row p25-override-profile-actions');
   actions.append(addBand);
-  body.append(systemTitle, identity,
+  body.append(systemTitle, systemName, identity,
     node('p', 'ui-field-detail', 'Enter both RFSS and Site ID, or leave both blank.'),
     node('h3', 'ui-record-card-title p25-override-bands-title', 'Replacement bands'), bands, actions);
   card.append(body);
@@ -25083,7 +25199,8 @@ async function requestP25BandplanOverrides(method = 'GET', profiles = null) {
   const options = { method, headers };
   if (method === 'PUT') {
     headers['Content-Type'] = 'application/json';
-    options.body = JSON.stringify({ profiles });
+    options.body = JSON.stringify({ profiles: profiles.map(({ wacn, system, rfss, site, bands }) =>
+      ({ wacn, system, rfss, site, bands })) });
   }
   const response = await jsonDocumentFetch('/api/v1/admin/p25-bandplan-overrides', options);
   let documentValue = null;
@@ -25122,16 +25239,17 @@ async function renderAdminP25BandplanOverrides() {
   const titleActions = sectionActionHost(add);
   content.append(section('P25 band plan overrides', body, titleActions));
   let profiles = [];
+  let knownSystems = [];
   let saving = false;
   const hex = (value, width) => Number.isInteger(value) ? value.toString(16).toUpperCase().padStart(width, '0') : '—';
-  const identity = (profile) => `${hex(profile.wacn, 5)}-${hex(profile.system, 3)}`;
+  const displayName = (profile) => p25OverrideDisplayName(profile, knownSystems);
   const draftChanged = () => { message.textContent = 'Unsaved changes'; };
 
   const editProfile = (index = null) => {
     const existing = index === null ? null : profiles[index];
     const form = node('form', 'admin-form p25-overrides-form');
     const editorList = node('div', 'p25-override-profile-list');
-    const card = p25OverrideProfileCard(existing);
+    const card = p25OverrideProfileCard(existing, knownSystems);
     editorList.append(card);
     const status = node('div', 'admin-form-message');
     status.setAttribute('role', 'status');
@@ -25142,7 +25260,7 @@ async function renderAdminP25BandplanOverrides() {
     const apply = node('button', 'ui-button ui-button-primary', existing ? 'Apply changes' : 'Add override');
     apply.type = 'submit';
     form.append(editorList, status, aliasModalFooter(cancel, apply));
-    modal = openReadOnlyModal(existing ? `Edit P25 override · ${identity(existing)}` : 'Add P25 override', form,
+    modal = openReadOnlyModal(existing ? `Edit P25 override · ${displayName(existing)}` : 'Add P25 override', form,
       { id: 'p25-override-editor', className: 'p25-override-editor-modal',
         returnFocusSelector: index === null ? '#admin-add-p25-override' : `#p25-override-edit-${index}` });
     form.addEventListener('input', () => modal.setDirty(true));
@@ -25170,7 +25288,10 @@ async function renderAdminP25BandplanOverrides() {
   const deleteProfile = (index) => {
     const profile = profiles[index];
     const scene = node('div');
-    scene.append(node('p', '', `Delete the P25 override for ${identity(profile)}?`),
+    scene.append(node('p', '', `Delete the P25 override for ${displayName(profile)}?`),
+      keyValues([['WACN', hex(profile.wacn, 5)], ['System ID', hex(profile.system, 3)],
+        ['RFSS', profile.rfss === null ? 'All' : hex(profile.rfss, 2)],
+        ['Site ID', profile.site === null ? 'All' : hex(profile.site, 2)]]),
       node('p', 'muted', 'The removal remains a draft until you save overrides.'));
     let modal;
     const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
@@ -25198,7 +25319,9 @@ async function renderAdminP25BandplanOverrides() {
       const record = node('article', 'ui-record-section p25-override-record');
       const header = node('div', 'ui-record-card-header p25-override-profile-header');
       const label = node('div', 'ui-record-card-copy');
-      const title = node('h3', 'ui-record-card-title', identity(profile));
+      const title = node('h3', 'ui-record-card-title');
+      const system = p25OverrideIdentityRow(profile, knownSystems);
+      title.append(radioSystemLink(system.radio_system_entity_ref, displayName(profile)));
       title.id = `p25-override-title-${index}`;
       record.setAttribute('aria-labelledby', title.id);
       const siteOverride = profile.rfss !== null && profile.site !== null;
@@ -25212,10 +25335,10 @@ async function renderAdminP25BandplanOverrides() {
       edit.prepend(iconGlyph('icon-edit'));
       edit.type = 'button';
       edit.id = `p25-override-edit-${index}`;
-      edit.setAttribute('aria-label', `Edit P25 override ${identity(profile)}`);
+      edit.setAttribute('aria-label', `Edit P25 override ${displayName(profile)}`);
       edit.disabled = saving;
       edit.addEventListener('click', () => editProfile(index));
-      const remove = iconButton('icon-trash', `Delete P25 override ${identity(profile)}`,
+      const remove = iconButton('icon-trash', `Delete P25 override ${displayName(profile)}`,
         'ui-button ui-button-danger-quiet ui-icon-button');
       remove.disabled = saving;
       remove.addEventListener('click', () => deleteProfile(index));
@@ -25263,6 +25386,7 @@ async function renderAdminP25BandplanOverrides() {
     try {
       const documentValue = await requestP25BandplanOverrides('PUT', profiles);
       profiles = documentValue.profiles;
+      knownSystems = documentValue.known_systems || knownSystems;
       message.textContent = 'Overrides saved.';
     } catch (error) {
       message.textContent = error.message;
@@ -25277,6 +25401,7 @@ async function renderAdminP25BandplanOverrides() {
     const documentValue = await requestP25BandplanOverrides();
     if (!renderIsCurrent(renderContext)) return;
     profiles = documentValue.profiles;
+    knownSystems = documentValue.known_systems || [];
     draw();
     message.textContent = '';
     add.disabled = false;
@@ -25325,6 +25450,13 @@ function receiverHealthStatus(value) {
     severity === 'critical' ? 'danger' : severity === 'warning' ? 'warning' : 'success');
 }
 
+function receiverHealthScope(row) {
+  const name = radioSystemPrimaryName(row);
+  const channel = receiverHealthText(row?.channel_name, '');
+  return receiverHealthText(row?.display_scope, '') || (name ?
+    [...new Set([name, channel].filter(Boolean))].join(' · ') : receiverHealthText(row?.scope, 'Receiver'));
+}
+
 function receiverHealthIncident(incident, resolved = false, expanded = false, onToggle = null) {
   const severity = receiverHealthSeverity(incident.severity);
   const card = node(resolved ? 'details' : 'article',
@@ -25332,9 +25464,10 @@ function receiverHealthIncident(incident, resolved = false, expanded = false, on
   const heading = node(resolved ? 'summary' : 'div',
     `${resolved ? 'ui-section-summary' : 'ui-record-card-header'} receiver-health-incident-heading`);
   const identity = node('div', 'ui-record-card-copy receiver-health-incident-identity');
+  const scope = node('p', 'muted receiver-health-incident-scope');
+  scope.append(radioSystemLink(incident.radio_system_entity_ref, receiverHealthScope(incident)));
   identity.append(node('h3', 'ui-record-card-title', receiverHealthText(incident.title, 'Receiver issue')),
-    node('p', 'muted receiver-health-incident-scope',
-    receiverHealthText(incident.scope, 'Receiver')));
+    scope);
   if (resolved) {
     const resolvedSummary = node('p', 'muted receiver-health-incident-resolved-summary');
     resolvedSummary.append('Cleared ', receiverHealthTime(incident.resolved_at_ms));
@@ -25347,6 +25480,9 @@ function receiverHealthIncident(incident, resolved = false, expanded = false, on
     ['Started', receiverHealthTime(incident.opened_at_ms)],
     ['Last detected', receiverHealthTime(incident.last_seen_ms)]
   ];
+  if (receiverHealthScope(incident) !== receiverHealthText(incident.scope, 'Receiver')) {
+    entries.push(['Radio identity', receiverHealthText(incident.scope)]);
+  }
   if (resolved) entries.push(['Cleared', receiverHealthTime(incident.resolved_at_ms)]);
   entries.forEach(([label, value]) => {
     facts.append(node('dt', '', label));
@@ -25604,8 +25740,10 @@ function receiverHealthMeasurementRow(row) {
   item.setAttribute('role', 'listitem');
   const heading = node('div', 'ui-record-card-header receiver-health-measurement-heading');
   const identity = node('div', 'ui-record-card-copy');
-  const scope = node('p', 'muted receiver-health-measurement-scope', receiverHealthText(row.scope, 'Receiver'));
-  const label = node('div', 'ui-record-title receiver-health-measurement-label', receiverHealthText(row.label));
+  const scope = node('p', 'muted receiver-health-measurement-scope');
+  scope.append(radioSystemLink(row.radio_system_entity_ref, receiverHealthScope(row)));
+  const label = node('div', 'ui-record-title receiver-health-measurement-label',
+    receiverHealthText(row.display_label || row.label));
   identity.append(scope, label);
   const reading = node('div', 'receiver-health-measurement-value');
   reading.append(node('strong', '', receiverHealthText(row.value)));
@@ -25615,6 +25753,12 @@ function receiverHealthMeasurementRow(row) {
   item.append(heading);
   const detail = receiverHealthText(row.detail, '');
   if (detail) item.append(node('div', 'ui-record-card-body muted receiver-health-measurement-detail', detail));
+  if (row.display_label && row.display_label !== row.label) {
+    const technical = node('details', 'ui-section-disclosure ui-section-disclosure-flat');
+    technical.append(node('summary', 'ui-section-summary', 'Radio identity'),
+      keyValues([['Receiver', receiverHealthText(row.scope)], ['Identity', receiverHealthText(row.label)]]));
+    item.append(technical);
+  }
   return item;
 }
 
@@ -26469,7 +26613,7 @@ function renderAdminApplicationLog(renderContext) {
 function renderListenMap() {
   const renderContext = captureRenderContext();
   const map = createListenMap({
-    node, iconGlyph,
+    node, iconGlyph, radioSystemLink,
     fetchSnapshot: () => api('/api/v1/listen/map', {}, { signal: renderContext.signal }),
     iconUrl: mapIconUrl
   });
@@ -28195,6 +28339,8 @@ function callMatchingIdentity(alias, value, fallback) {
 
 function callMatchingCopySite(leg) {
   const name = String(leg?.channel_name || '').trim();
+  const system = radioSystemPrimaryName(leg);
+  if (system) return [...new Set([system, name].filter(Boolean))].join(' · ');
   const site = [leg?.rfss !== null && leg?.rfss !== undefined ? `RFSS ${leg.rfss}` : '',
     leg?.site !== null && leg?.site !== undefined ? `Site ${leg.site}` : ''].filter(Boolean).join(' · ');
   return [name, site].filter(Boolean).join(' · ') || String(leg?.decoder || 'Unknown site');
@@ -28203,16 +28349,39 @@ function callMatchingCopySite(leg) {
 function callMatchingCopySummary(leg) {
   if (!leg) return 'Unavailable';
   const name = String(leg.channel_name || '').trim();
+  const system = radioSystemPrimaryName(leg);
+  if (system) return identitySummaryValue(system, name,
+    entityRefHref(leg.radio_system_entity_ref));
   const site = [leg.rfss !== null && leg.rfss !== undefined ? `RFSS ${leg.rfss}` : '',
     leg.site !== null && leg.site !== undefined ? `Site ${leg.site}` : ''].filter(Boolean).join(' · ');
   return identitySummaryValue(name || site || String(leg.decoder || 'Unknown site'), name ? site : '');
 }
 
+function callMatchingSourceValue(identity) {
+  if (identity?.source_radio_id != null) return identifierNumber(identity.source_radio_id);
+  const value = String(identity?.source_value || '').trim();
+  const qualified = /^v1-r-[0-9a-f]{5}-[0-9a-f]{3}-(\d+)$/i.exec(value);
+  return qualified ? identifierNumber(Number(qualified[1])) : value;
+}
+
+function callMatchingIdentitySystem(identity, destination = true) {
+  if (!destination && identity?.home_system) return identity.home_system;
+  const qualifiedSource = !destination && /^v1-r-([0-9a-f]{5})-([0-9a-f]{3})-\d+$/i.exec(
+    String(identity?.source_value || ''));
+  if (qualifiedSource) return { system_name: identity.home_system_name,
+    radio_system_key: identity.home_radio_system_key ||
+      `p25:${qualifiedSource[1].toLowerCase()}:${qualifiedSource[2].toLowerCase()}`,
+    radio_system_entity_ref: identity.home_radio_system_entity_ref };
+  return { ...identity, system_id: identity.system_id ?? identity.system };
+}
+
 function callMatchingIdentitySummary(identity, destination = true) {
   const alias = destination ? identity.destination_alias : identity.source_alias;
-  const identifier = destination ? identity.destination_value : identity.source_value;
+  const identifier = destination ? identity.destination_value : callMatchingSourceValue(identity);
+  const system = callMatchingIdentitySystem(identity, destination);
+  const context = [alias ? identifier : '', radioSystemPrimaryName(system)].filter(Boolean).join(' · ');
   return identitySummaryValue(callMatchingIdentity(alias, identifier,
-    destination ? 'Unknown destination' : 'Unknown radio'), identifier || '');
+    destination ? 'Unknown destination' : 'Unknown radio'), context);
 }
 
 function callMatchingWinner(decision) {
@@ -28327,13 +28496,21 @@ function callMatchingComparison(decision) {
   const body = node('div', 'call-matching-comparison');
   const intro = node('div', 'call-matching-comparison-intro');
   intro.append(callMatchingIdentitySummary(identity),
-    node('span', 'muted', `Radio ${callMatchingIdentity(identity.source_alias, identity.source_value, 'unknown')}` +
-      `${identity.source_alias && identity.source_value ? ` (${identity.source_value})` : ''} · ` +
-      `${callMatchingDuration(Number(identity.end_timestamp || 0) - Number(identity.start_timestamp || 0))} · ` +
-      `${copies.length} receiver copies`));
+    callMatchingIdentitySummary(identity, false),
+    node('span', 'muted', `${callMatchingDuration(Number(identity.end_timestamp || 0) -
+      Number(identity.start_timestamp || 0))} · ${copies.length} receiver copies`));
   body.append(intro);
 
   const summary = keyValues([
+    ['System', radioSystemLink(identity.radio_system_entity_ref,
+      radioSystemDisplayName(callMatchingIdentitySystem(identity)))],
+    ['Radio home system', radioSystemLink(callMatchingIdentitySystem(identity, false).radio_system_entity_ref,
+      radioSystemDisplayName(callMatchingIdentitySystem(identity, false)))],
+    ['Radio identity', identity.source_value || '—'],
+    ['WACN', identity.wacn == null ? '—' : hexDecimalPair(identity.wacn, 5)],
+    ['System ID', identity.system == null ? '—' : hexDecimalPair(identity.system, 3)],
+    ['Home WACN', identity.source_home_wacn == null ? '—' : hexDecimalPair(identity.source_home_wacn, 5)],
+    ['Home System ID', identity.source_home_system_id == null ? '—' : hexDecimalPair(identity.source_home_system_id, 3)],
     ['Why matched', callMatchingProof(decision)],
     ['Why this copy was selected', callMatchingCriterion(decision.winner?.criterion)],
     ['Selected site', winner ? callMatchingCopySite(winner) : 'Unavailable'],
@@ -28371,6 +28548,12 @@ function callMatchingComparison(decision) {
   const tbody = node('tbody');
   const measurement = (value, detail) => identitySummaryValue(value, detail);
   const rows = [
+    ['System', (copy) => radioSystemLink(copy.radio_system_entity_ref,
+      radioSystemDisplayName(callMatchingIdentitySystem(copy)))],
+    ['WACN', (copy) => copy.wacn == null ? '—' : hexDecimalPair(copy.wacn, 5)],
+    ['System ID', (copy) => copy.system == null ? '—' : hexDecimalPair(copy.system, 3)],
+    ['RFSS / Site', (copy) => [copy.rfss == null ? '' : `RFSS ${hex(copy.rfss, 2)}`,
+      copy.site == null ? '' : `Site ${hex(copy.site, 2)}`].filter(Boolean).join(' · ') || '—'],
     ['Configuration', (copy) => Number(copy.configuration_ref) > 0 ?
       `Configuration ${callMatchingCount(copy.configuration_ref)}` : 'Unknown'],
     ['Carrier frequency', (copy) => Number(copy.frequency_hz) > 0 ?

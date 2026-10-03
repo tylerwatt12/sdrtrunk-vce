@@ -1,3 +1,5 @@
+import { systemLabel } from './system-labels.js?v=1';
+
 /* Reuse map: global workspace composition; ui-button/ui-icon-button, ui-segmented, ui-select,
  * ui-range, ui-feedback, ui-fact-list and ui-section-disclosure. Existing scanner
  * and recording-choice modal retain their lifecycle. One live engine and one
@@ -78,7 +80,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     const value = call?.started_at_ms ?? call?.start_ms;
     return Number.isFinite(Number(value)) && Number(value) > 0 ? new Date(Number(value)).toLocaleString() : '';
   };
-  const subtitle = (call) => [sourceSummary(call), call?.system || call?.system_name, call?.channel || call?.channel_name]
+  const subtitle = (call) => [sourceSummary(call), systemLabel(call), call?.channel || call?.channel_name]
     .filter(Boolean).join(' · ');
   const queueCount = () => source === 'live' ? Number(liveState.queuedCount) || 0 : recordingState.queue?.length || 0;
   const isAllowed = () => Boolean(access()[source]);
@@ -406,7 +408,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     panelHost.append(factList([
       ['Target', title(call), call.target_entity_ref], ['Target ID', call.target_id, call.target_entity_ref],
       ['Source', sourceName(call), call.source_entity_ref], ['Source ID', call.source_id, call.source_entity_ref],
-      ['System', call.system, call.radio_system_entity_ref], ['Channel', call.channel, call.entity_ref],
+      ['System', systemLabel(call), call.radio_system_entity_ref], ['Channel', call.channel, call.entity_ref],
       ['Started', date(call)], ['Duration', call.duration_ms !== undefined ? `${Number(call.duration_ms) / 1000} sec` : null],
       ['Scan lists', (liveState.scanLists || []).filter((item) => (call._matchedScanListIds || call.scan_list_ids || [])
         .map(String).includes(String(item.id))).map((item) => item.name).join(', ')]
@@ -421,6 +423,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       ['Protocol', call.protocol], ['Decoder', call.decoder], ['Modulation', call.modulation],
       ['Frequency', Number(call.frequency_hz) > 0 ? `${(Number(call.frequency_hz) / 1e6).toFixed(5)} MHz` : null],
       ['Site', call.site], ['Network ID', call.network_id ?? call.network], ['Site identity', call.site_identity],
+      ['Model', call.model ?? call.network_model], ['Location category', call.location_category],
       ['WACN', call.wacn], ['SysID', call.system_id], ['RFSS', call.rfss_id], ['Site ID', call.site_id], ['RAN', call.ran],
       ['NAC', call.nac], ['LCN', call.logical_channel_number ?? call.lcn], ['Timeslot', call.timeslot],
       ['Encrypted', typeof call.encrypted === 'boolean' ? call.encrypted ? 'Yes' : 'No' : null]
@@ -525,7 +528,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     avoids.forEach((item) => {
       const row = node('div', 'audio-dock-queue-row');
       const copy = node('div', 'audio-dock-copy');
-      copy.append(node('strong', '', item.label || item.key), node('span', 'muted', item.system_scope || item.system || item.systemName || 'All systems'));
+      copy.append(node('strong', '', item.label || item.key), node('span', 'muted',
+        systemLabel(item) || item.system_scope || item.systemName || 'All systems'));
       row.append(copy, command(`Remove ${item.label || item.key} from avoid list`, 'close', () => getLivePlayer()?.removeAvoid(item.key)));
       avoidList.append(row);
     });

@@ -65,6 +65,10 @@ async function main() {
   assert.equal(seed.ignored, 3, 'ordinary calls and non-P25/non-trunked rows should be ignored');
   assert.deepEqual(seed.focusCandidates, [], 'seed history must never request camera attention');
   assert.equal(state.systems.size, 1);
+  assert.equal(state.systems.get(SYSTEM_A).name, 'Metro P25', 'The scope title has a friendly system name');
+  assert.equal(state.systems.get(SYSTEM_A).identity, 'BEE00-123', 'The native system facts remain separate');
+  assert.equal(state.systems.get(SYSTEM_A).label, 'Metro P25 · BEE00:123',
+    'Graph context retains both the friendly name and exact P25 identity');
   assert.equal(state.radios.size, 1, 'a changed affiliation must move one stable radio node');
   assert.equal(state.groups.size, 2);
   assert.equal(history.groupedP25Events(state).length, 1);

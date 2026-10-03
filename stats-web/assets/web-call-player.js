@@ -1,3 +1,5 @@
+import { systemLabel, systemName } from './core/system-labels.js?v=1';
+
 export class WebCallPlayer {
   static MAXIMUM_SEEN_CALL_IDS = 2048;
   static IDLE_CALL_DISPLAY_MS = 5000;
@@ -751,11 +753,14 @@ export class WebCallPlayer {
   avoidCurrent() {
     if (!this.current || !this.currentBuffer || this.replayingLast) return;
     const target = this.current._playbackTargetKey;
+    const systemScope = this.avoidSystemScope(this.current);
     this.avoids.delete(target);
     this.avoids.set(target, {
       key: target,
       label: this.targetLabel(this.current),
-      system_scope: this.avoidSystemScope(this.current)
+      system_scope: systemScope,
+      radio_system_key: systemScope ? this.current.playback_target?.radio_system_key || this.current.radio_system_key : '',
+      system_name: systemScope ? systemName(this.current) : ''
     });
     while (this.avoids.size > WebCallPlayer.MAXIMUM_AVOIDS) {
       this.avoids.delete(this.avoids.keys().next().value);
@@ -1176,9 +1181,8 @@ export class WebCallPlayer {
   avoidSystemScope(call) {
     const kind = String(call?.playback_target?.kind || '').trim().toLowerCase();
     if (!['talkgroup', 'patch_group', 'radio'].includes(kind)) return '';
-    const label = String(call?.system || '').trim();
     const key = String(call?.playback_target?.radio_system_key || call?.radio_system_key || '').trim();
-    return label && key && label !== key ? `${label} · ${key}` : label || key;
+    return systemLabel({ ...call, radio_system_key: key });
   }
 
   currentTargetLabel() {
@@ -1197,7 +1201,8 @@ export class WebCallPlayer {
 
   callDetails(call) {
     const details = [];
-    if (call.system) details.push(String(call.system));
+    const system = systemLabel(call);
+    if (system) details.push(system);
     if (call.channel) details.push(String(call.channel));
     const frequency = Number(call.frequency_hz);
     if (Number.isFinite(frequency) && frequency > 0) details.push(`${(frequency / 1000000).toFixed(5)} MHz`);
