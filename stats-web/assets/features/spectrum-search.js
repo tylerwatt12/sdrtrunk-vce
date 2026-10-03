@@ -299,10 +299,15 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     entries.forEach(([label, value]) => list.append(node('dt', '', label), node('dd', '', String(value ?? '—'))));
     return list;
   };
+  const receiverFrequency = (tuner) => {
+    const frequency = Number(tuner.center_frequency_hz);
+    return Number.isFinite(frequency) && frequency > 0 ?
+      `${(frequency / 1_000_000).toFixed(6)} MHz center` : 'Center frequency unavailable';
+  };
   const updateContext = () => {
     const tuner = receiver();
     summary.replaceChildren(node('strong', '', tuner?.name || 'Choose an idle receiver'),
-      node('p', 'muted', tuner ? `${tuner.source_type === 'recording' ? 'WAV recording · ' : ''}Sees about ${(Number(tuner.usable_bandwidth_hz) / 1_000_000).toFixed(2)} MHz at once` :
+      node('p', 'muted', tuner ? `${tuner.source_type === 'recording' ? 'WAV recording · ' : ''}${receiverFrequency(tuner)} · Sees about ${(Number(tuner.usable_bandwidth_hz) / 1_000_000).toFixed(2)} MHz at once` :
         'Find P25, DMR, and NXDN trunked systems.'));
   };
   const receiverPreparationState = (tuner) => {
@@ -358,6 +363,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     const reason = needsStop ? 'VCE restarts the channels it stopped; calls in progress will end' :
       locked ? 'Center lock returns after the search' : reasonText || 'Not available for searching';
     const details = node('p', 'muted spectrum-search-receiver-detail', [
+      receiverFrequency(tuner),
       Number(tuner.usable_bandwidth_hz) > 0 ?
         `${(Number(tuner.usable_bandwidth_hz) / 1_000_000).toFixed(2)} MHz scan width` : '',
       reason
@@ -452,7 +458,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     if (!available.some((tuner) => tuner.id === receiverId)) receiverId = available[0].id;
     const form = node('form', 'spectrum-search-form');
     const chooser = uiSelect(available.map((tuner) => ({ value: tuner.id,
-      label: `${tuner.name} · ${(tuner.usable_bandwidth_hz / 1_000_000).toFixed(2)} MHz window` })), receiverId);
+      label: `${tuner.name} · ${receiverFrequency(tuner)} · ${(tuner.usable_bandwidth_hz / 1_000_000).toFixed(2)} MHz window` })), receiverId);
     chooser.setAttribute('aria-label', 'Receiver');
     chooser.addEventListener('change', () => { receiverId = chooser.value; updateContext(); });
     const presets = catalog.presets || [];
