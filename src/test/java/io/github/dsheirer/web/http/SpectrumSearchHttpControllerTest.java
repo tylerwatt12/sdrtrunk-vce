@@ -92,6 +92,22 @@ class SpectrumSearchHttpControllerTest
     }
 
     @Test
+    void optionalRadioReferenceScopeIsStrictAndCannotSupplyDirectoryEvidence() throws Exception
+    {
+        try(Fixture fixture = new Fixture())
+        {
+            for(String scope: new String[]{"0", "-1", "1.5", "\"39\"", "true", "2147483648", "{}"})
+                assertEquals(400, fixture.send(PATH, "POST", OPEN.substring(0, OPEN.length()-1) +
+                    ",\"radioreference_state_id\":" + scope + "}").statusCode());
+            for(String scope: new String[]{"null", "39"})
+                assertEquals(503, fixture.send(PATH, "POST", OPEN.substring(0, OPEN.length()-1) +
+                    ",\"radioreference_state_id\":" + scope + "}").statusCode());
+            assertEquals(400, fixture.send(PATH, "POST", OPEN.substring(0, OPEN.length()-1) +
+                ",\"radio_reference\":{\"state\":\"matched\"}}").statusCode());
+        }
+    }
+
+    @Test
     void startRejectsMissingUnboundedOrNonTextResultIds() throws Exception
     {
         try(Fixture fixture = new Fixture())

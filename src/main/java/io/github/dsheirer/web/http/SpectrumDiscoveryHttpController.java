@@ -54,10 +54,11 @@ public final class SpectrumDiscoveryHttpController
             {
                 if(!method(exchange, "POST")) return;
                 JsonNode body = WebHttpSupport.readJsonObject(exchange,
-                    Set.of("tuner_id", "frequency_hz", "protocol_id", "browse_lease_id"));
+                    Set.of("tuner_id", "frequency_hz", "protocol_id", "browse_lease_id", "radioreference_state_id"));
                 sendData(exchange, 201, mService.open(
                     WebHttpSupport.requiredText(body, "tuner_id", 80), integer(body, "frequency_hz", true),
-                    WebHttpSupport.requiredText(body, "protocol_id", 32), text(body, "browse_lease_id", 80)));
+                    WebHttpSupport.requiredText(body, "protocol_id", 32), text(body, "browse_lease_id", 80),
+                    optionalState(body)));
                 return;
             }
             if(!path.startsWith(PATH + "/")) { WebHttpSupport.notFound(exchange); return; }
@@ -80,7 +81,7 @@ public final class SpectrumDiscoveryHttpController
             {
                 if(!method(exchange, "POST")) return;
                 JsonNode body = WebHttpSupport.readJsonObject(exchange, Set.of("system", "site", "name",
-                    "alias_list_id", "new_alias_list_name", "settings", "revision", "browse_lease_id"));
+                    "alias_list_id", "new_alias_list_name", "settings", "revision", "browse_lease_id", "frequency_map"));
                 Map<String,Object> settings = new LinkedHashMap<>();
                 JsonNode raw = body.get("settings");
                 if(raw != null)
@@ -105,7 +106,8 @@ public final class SpectrumDiscoveryHttpController
                 sendData(exchange, 200, mService.save(id, new SpectrumDiscoveryService.SaveRequest(
                     text(body, "system", 256), text(body, "site", 256),
                     WebHttpSupport.requiredText(body, "name", 256), integer(body, "alias_list_id", false),
-                    text(body, "new_alias_list_name", 25), settings, integer(body, "revision", false))));
+                    text(body, "new_alias_list_name", 25), settings, integer(body, "revision", false),
+                    DiscoveryRequestSupport.frequencyMap(body))));
                 return;
             }
             if(parts.length == 2 && "start".equals(parts[1]))
@@ -180,6 +182,15 @@ public final class SpectrumDiscoveryHttpController
             value.longValue() < (positive ? 1 : 0) || value.longValue() > (1L << 53) - 1)
             throw new IllegalArgumentException(field + " is invalid");
         return value.longValue();
+    }
+
+    private static Integer optionalState(JsonNode body)
+    {
+        JsonNode value = body.get("radioreference_state_id");
+        if(value == null || value.isNull()) return null;
+        if(!value.isIntegralNumber() || !value.canConvertToInt() || value.intValue() <= 0)
+            throw new IllegalArgumentException("radioreference_state_id is invalid");
+        return value.intValue();
     }
 
     private static long positive(String value)

@@ -170,8 +170,25 @@ public interface RadioReferenceGateway extends AutoCloseable
     }
 
     record TrunkedSystemDetails(int id, String name, String city, String type, String flavor, String voice,
-                                String wacn, String systemId)
+                                String wacn, String systemId, List<RadioNetworkIdentity> radioNetworks)
     {
+        public TrunkedSystemDetails
+        {
+            radioNetworks = immutable(radioNetworks);
+        }
+
+        public TrunkedSystemDetails(int id, String name, String city, String type, String flavor, String voice,
+                                    String wacn, String systemId)
+        {
+            this(id, name, city, type, flavor, voice, wacn, systemId,
+                List.of(new RadioNetworkIdentity(wacn, systemId)));
+        }
+    }
+
+    /** All on-air networks belonging to an RR catalog system, including multi-network P25 systems. */
+    record RadioNetworkIdentity(String wacn, String systemId, String model)
+    {
+        public RadioNetworkIdentity(String wacn, String systemId) { this(wacn, systemId, ""); }
     }
 
     record TrunkedSiteDetails(int id, int systemId, int number, String name, int countyId, int zoneNumber,

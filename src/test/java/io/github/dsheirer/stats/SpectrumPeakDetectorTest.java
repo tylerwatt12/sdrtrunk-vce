@@ -57,6 +57,22 @@ class SpectrumPeakDetectorTest
         assertTrue(quiet.peaks().isEmpty());
     }
 
+    @Test void fixedRecordingWindowRetainsCenteredCarrierButStillRejectsSpursAndEdges()
+    {
+        SpectrumPeakDetector detector = new SpectrumPeakDetector(CENTER, RATE, 1_800_000, 0, false);
+        for(int frame = 0; frame < 10; frame++)
+        {
+            float[] bins = noise();
+            signal(bins, CENTER, -35);
+            signal(bins, CENTER + 899_000, -20);
+            bins[3100] = -10;
+            detector.receive(bins);
+        }
+        assertEquals(1, detector.peaks().size());
+        assertTrue(Math.abs(detector.peaks().getFirst().frequencyHz() - CENTER) <= 1_250);
+        assertEquals(10, detector.peaks().getFirst().observations());
+    }
+
     @Test void readsExistingBoundedDiagnosticFramesAndRejectsOtherTuningWindows()
     {
         SpectrumPeakDetector detector = detector();

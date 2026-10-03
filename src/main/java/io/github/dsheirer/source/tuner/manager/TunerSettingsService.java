@@ -425,8 +425,7 @@ public final class TunerSettingsService implements AutoCloseable
                 owner.expiresAt = mClock.getAsLong() + BROWSE_LIFETIME_MS;
                 return CompletableFuture.completedFuture(owner.lease());
             }
-            if(tuner.getTunerClass() == TunerClass.RECORDING_TUNER ||
-                tuner.getTunerStatus() == TunerStatus.ERROR || tuner.getTunerStatus() == TunerStatus.REMOVED)
+            if(tuner.getTunerStatus() == TunerStatus.ERROR || tuner.getTunerStatus() == TunerStatus.REMOVED)
                 throw new SettingUnavailableException("Selected tuner is unavailable for live Spectrum");
             List<DiscoveredTuner> group = lifecycleGroup(tuner);
             if(group.stream().anyMatch(mBrowseOwners::containsKey))
@@ -480,7 +479,7 @@ public final class TunerSettingsService implements AutoCloseable
                             }
                         }
                     }
-                    BrowseSession session = new BrowseSession(tuner, group, previous, idle || takeover,
+                    BrowseSession session = new BrowseSession(tuner, group, previous, tuner.getTunerClass() != TunerClass.RECORDING_TUNER && (idle || takeover),
                         takeover, stopped, centerLocks);
                     synchronized(mLifecycleLock)
                     {
@@ -871,10 +870,11 @@ public final class TunerSettingsService implements AutoCloseable
     {
         synchronized(mLifecycleLock)
         {
-            if(!verifyBrowse(tuner, leaseId) || !mBrowseOwners.get(tuner).canTune ||
+            boolean recording = tuner.hasTuner() && tuner.getTunerClass() == TunerClass.RECORDING_TUNER;
+            if(!verifyBrowse(tuner, leaseId) || !recording && !mBrowseOwners.get(tuner).canTune ||
                 !lifecycleGroup(tuner).stream().allMatch(TunerSettingsService::isIdle))
                 throw new SettingUnavailableException("Choose an idle receiver for the search");
-            if(tuner.getTuner().getTunerController().isCenterFrequencyLocked())
+            if(!recording && tuner.getTuner().getTunerController().isCenterFrequencyLocked())
                 throw new SettingUnavailableException("Unlock the receiver's center frequency before searching");
             ProbeHold hold = holdForProbe(tuner);
             hold.searchLeaseId = leaseId;
@@ -1043,6 +1043,11 @@ public final class TunerSettingsService implements AutoCloseable
                 if(searchLeaseId == null || !valid() || owner == null || !owner.id.equals(searchLeaseId) ||
                     !owner.ownsModes() || !restoring && !verifyBrowse(tuner, searchLeaseId))
                     throw new SettingUnavailableException("The search receiver changed; begin again");
+                if(tuner.getTunerClass() == TunerClass.RECORDING_TUNER)
+                {
+                    if(frequencyHz != center) throw new SettingUnavailableException("Recording tuners have a fixed capture window");
+                    return;
+                }
                 List<DiscoveredTuner> locked = lockAllocationGroup(group);
                 TunerController controller = runtime.getTunerController();
                 try

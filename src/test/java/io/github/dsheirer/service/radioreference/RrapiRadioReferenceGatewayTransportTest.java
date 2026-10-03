@@ -225,7 +225,11 @@ class RrapiRadioReferenceGatewayTransportTest
         system.setCounties(List.of());
         system.setStates(List.of());
         system.setRectangles(List.of());
-        system.setRadioNetworks(List.of(network));
+        io.github.dsheirer.rrapi.type.RadioNetwork secondNetwork = new io.github.dsheirer.rrapi.type.RadioNetwork();
+        secondNetwork.setWacn("BEE01");
+        secondNetwork.setSystemId("123");
+        secondNetwork.setModel("Global");
+        system.setRadioNetworks(List.of(network, secondNetwork));
         system.setBandplans(List.of());
         GetSystemInformationResponse systemResponse = new GetSystemInformationResponse();
         systemResponse.setSystemInformation(system);
@@ -353,6 +357,8 @@ class RrapiRadioReferenceGatewayTransportTest
             assertEquals("Phase II", details.flavor());
             assertEquals("BEE00", details.wacn());
             assertEquals("49F", details.systemId());
+            assertEquals(List.of(new RadioReferenceGateway.RadioNetworkIdentity("BEE00", "49F"),
+                new RadioReferenceGateway.RadioNetworkIdentity("BEE01", "123", "Global")), details.radioNetworks());
 
             RadioReferenceGateway.TrunkedSiteDetails mappedSite = gateway.trunkedSiteDetails(6643).getFirst();
             assertEquals("491", mappedSite.nac());

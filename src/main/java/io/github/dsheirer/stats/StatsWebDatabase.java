@@ -14,6 +14,8 @@ package io.github.dsheirer.stats;
 import static io.github.dsheirer.stats.StatsSqlRows.queryRows;
 
 import io.github.dsheirer.module.decode.p25.reference.Vendor;
+import io.github.dsheirer.channel.ChannelAdministrationService.RetainedDiscoveryIdentity;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
@@ -59,6 +61,73 @@ class StatsWebDatabase
     private static final long HOUR_MILLISECONDS = 3_600_000L;
     private static final long DAY_MILLISECONDS = 24L * HOUR_MILLISECONDS;
     private static final int MAX_ACTIVITY_ACTION_FILTERS = 23;
+
+    /** Reuses existing native site history for restart-safe discovery. No new persisted semantics are introduced. */
+    List<RetainedDiscoveryIdentity> retainedDiscoveryIdentities(TrunkedDiscoveryEvidence evidence)
+    {
+        if(evidence == null || !evidence.verified() || evidence.identity().radioSystemKey() == null ||
+            !Set.of("dmr", "nxdn").contains(evidence.protocolId())) return List.of();
+        try
+        {
+            return readSnapshot(connection -> {
+                List<Map<String,Object>> rows = queryRows(connection, """
+                    SELECT config.configuration_id, site.protocol_code, site.variant_code,
+                        system.system_key, system.dmr_model_code, system.dmr_network_id,
+                        system.nxdn_location_category_code, system.nxdn_system_id,
+                        site.observed_model_code, site.observed_network_id, site.observed_location_category_code,
+                        site.observed_system_id, site.observed_site_id, site.observed_ran,
+                        site.color_code_ts1, site.color_code_ts2, site.current_control_hz, site.primary_frequency_hz,
+                        site.first_seen_ms, site.last_seen_ms, site.observation_count
+                    FROM radio_system system
+                    JOIN receiver_channel channel ON channel.radio_system_id=system.id
+                    JOIN configuration_channel config ON config.configuration_id=channel.configuration_id
+                    JOIN trunked_site_snapshot site ON site.channel_id=channel.id
+                    WHERE system.system_key=? AND system.configuration_id IS NULL AND config.channel_kind='TRUNKED'
+                        AND site.protocol_code=system.protocol_code AND site.variant_code=1
+                        AND site.observed_site_id IS NOT NULL AND site.observation_count>=3
+                        AND site.last_seen_ms-site.first_seen_ms>=2000
+                        AND ((site.protocol_code=3 AND config.decoder_type='DMR'
+                            AND site.observed_model_code=system.dmr_model_code
+                            AND site.observed_network_id=system.dmr_network_id)
+                          OR (site.protocol_code=4 AND config.decoder_type='NXDN' AND config.address_domain_code=1
+                            AND site.observed_location_category_code=system.nxdn_location_category_code
+                            AND site.observed_system_id=system.nxdn_system_id))
+                    ORDER BY config.configuration_id LIMIT 257
+                    """, evidence.identity().radioSystemKey());
+                if(rows.size() > 256) return List.of();
+                List<RetainedDiscoveryIdentity> result = new ArrayList<>();
+                for(Map<String,Object> row: rows)
+                {
+                    boolean dmr = number(row.get("protocol_code")) == 3;
+                    String model = dmr ? switch(integer(row.get("observed_model_code"))) {
+                        case 1 -> "TINY"; case 2 -> "SMALL"; case 3 -> "LARGE"; case 4 -> "HUGE"; default -> null;
+                    } : null;
+                    String category = !dmr ? switch(integer(row.get("observed_location_category_code"))) {
+                        case 1 -> "GLOBAL"; case 2 -> "REGIONAL"; case 3 -> "LOCAL"; default -> null;
+                    } : null;
+                    Integer network = dmr ? integer(row.get("observed_network_id")) : null;
+                    Integer system = dmr ? network : integer(row.get("observed_system_id"));
+                    String key = dmr ? RadioSystemKey.dmrTier3(model, network) : RadioSystemKey.nxdnTypeC(category, system);
+                    if(key == null || !key.equals(row.get("system_key"))) continue;
+                    Integer site = integer(row.get("observed_site_id"));
+                    Integer color1 = integer(row.get("color_code_ts1")), color2 = integer(row.get("color_code_ts2"));
+                    //A contradictory two-slot color code cannot identify one serving carrier safely.
+                    if(color1 != null && color2 != null && !color1.equals(color2)) continue;
+                    var identity = new TrunkedDiscoveryEvidence.Identity(null, key, key + ":site:" + site,
+                        network, system, site, model, category, null, integer(row.get("observed_ran")),
+                        color1 != null ? color1 : color2);
+                    result.add(new RetainedDiscoveryIdentity((String)row.get("configuration_id"), dmr ? "dmr" : "nxdn",
+                        dmr ? "TIER_III" : "TYPE_C", identity, positiveOrZero(row.get("current_control_hz")),
+                        positiveOrZero(row.get("primary_frequency_hz")), number(row.get("first_seen_ms")),
+                        number(row.get("last_seen_ms")), number(row.get("observation_count"))));
+                }
+                return List.copyOf(result);
+            });
+        }
+        catch(StatsApiException unavailable) { return List.of(); }
+    }
+
+    private static long positiveOrZero(Object value) { return value instanceof Number number ? Math.max(0, number.longValue()) : 0; }
 
     /** Optional names are projected on the HTTP/request worker, never on decoder or audio ingress callbacks. */
     Object enrichSystemNames(Object value)

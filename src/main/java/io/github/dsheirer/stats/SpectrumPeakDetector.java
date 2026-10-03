@@ -17,15 +17,23 @@ public final class SpectrumPeakDetector
     private final long mRate;
     private final long mHalfUsable;
     private final long mExclusion;
+    private final boolean mSuppressCenterNoise;
     private final List<Track> mTracks = new ArrayList<>();
     private int mFrames;
 
     SpectrumPeakDetector(long center, long rate, long usableBandwidth, long exclusion)
     {
+        this(center, rate, usableBandwidth, exclusion, true);
+    }
+
+    /** Recording windows cannot move away from a centered carrier, and have no hardware DC exclusion. */
+    SpectrumPeakDetector(long center, long rate, long usableBandwidth, long exclusion, boolean suppressCenterNoise)
+    {
         mCenter = center;
         mRate = rate;
         mHalfUsable = usableBandwidth / 2;
         mExclusion = Math.max(exclusion, 12_500);
+        mSuppressCenterNoise = suppressCenterNoise;
     }
 
     void receive(DiagnosticStreamFrame frame)
@@ -74,7 +82,7 @@ public final class SpectrumPeakDetector
             }
             long frequency = Math.round(weighted / weight / 1_250) * 1_250;
             long offset = Math.abs(frequency - mCenter);
-            if(offset + 6_250 > mHalfUsable || offset - 6_250 < mExclusion) continue;
+            if(offset + 6_250 > mHalfUsable || mSuppressCenterNoise && offset - 6_250 < mExclusion) continue;
             peaks.add(new Peak(frequency, strongest, strongest - noise, 1));
         }
         peaks.sort(Comparator.comparingDouble(Peak::powerDbfs).reversed());

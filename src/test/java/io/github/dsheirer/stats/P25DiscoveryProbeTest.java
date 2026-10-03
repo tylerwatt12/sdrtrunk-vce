@@ -19,6 +19,7 @@ import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.message.SyncLossMessage;
 import io.github.dsheirer.module.decode.p25.phase1.Modulation;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DataUnitID;
+import io.github.dsheirer.module.decode.p25.phase1.message.P25FrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.Opcode;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.TSBKMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.AdjacentStatusBroadcast;
@@ -70,6 +71,42 @@ class P25DiscoveryProbeTest
         evidence.receive(site(SYSTEM, NAC, 2, 7, 3000));
         assertTrue(evidence.metrics().confirmed());
         assertEquals(new P25DiscoveryProbe.Identity(WACN, SYSTEM, 2, 7, NAC), evidence.metrics().identity());
+    }
+
+    @Test
+    void exposesOnlyRepeatedResolvedServingCarrierAndClearsItWhenDescriptorChanges()
+    {
+        P25DiscoveryProbe.ModeEvidence evidence = new P25DiscoveryProbe.ModeEvidence(Modulation.C4FM);
+        for(int x = 1; x <= 3; x++)
+        {
+            evidence.receive(network(WACN, SYSTEM, NAC, x * 1000));
+            RFSSStatusBroadcast serving = site(SYSTEM, NAC, 2, 7, x * 1000);
+            serving.getChannel().setFrequencyBand(new P25FrequencyBand(0, FREQUENCY, -30_000_000, 6250, 12500, 1));
+            evidence.receive(serving);
+        }
+        for(int x = 0; x < 20; x++) evidence.receive(other(4000 + x));
+        assertTrue(evidence.metrics().confirmed());
+        assertEquals(FREQUENCY, evidence.metrics().servingControlFrequencyHz());
+
+        RFSSStatusBroadcast changedCarrier = site(SYSTEM, NAC, 2, 7, 5000);
+        changedCarrier.getChannel().setFrequencyBand(
+            new P25FrequencyBand(0, FREQUENCY + 12500, -30_000_000, 6250, 12500, 1));
+        evidence.receive(changedCarrier);
+        assertTrue(evidence.metrics().confirmed());
+        assertNull(evidence.metrics().servingControlFrequencyHz(), "A single new carrier is insufficient for an exact match");
+        evidence.receive(site(SYSTEM, NAC, 2, 7, 6000));
+        assertNull(evidence.metrics().servingControlFrequencyHz(), "Unresolved serving descriptors clear old carrier evidence");
+        evidence.reset();
+        assertNull(evidence.metrics().servingControlFrequencyHz());
+    }
+
+    @Test
+    void unresolvedServingCarrierDoesNotPreventIdentityConfirmation()
+    {
+        P25DiscoveryProbe.ModeEvidence evidence = new P25DiscoveryProbe.ModeEvidence(Modulation.CQPSK);
+        confirm(evidence, 1000);
+        assertTrue(evidence.metrics().confirmed());
+        assertNull(evidence.metrics().servingControlFrequencyHz());
     }
 
     @Test
@@ -238,6 +275,83 @@ class P25DiscoveryProbeTest
             session.close();
             assertEquals(1, source.closed.get());
         }
+    }
+
+    @Test
+    void completesStrongIdentityAtTwoSecondsBetweenPublicationTicks() throws Exception
+    {
+        FakeSource source = new FakeSource();
+        AtomicLong clock = new AtomicLong(1000);
+        AtomicInteger c4fmBatches = new AtomicInteger();
+        try(P25DiscoveryProbe probe = new P25DiscoveryProbe((target, frequency) -> source,
+            (modulation, rate, messages) -> decoder(samples -> {
+                if(modulation == Modulation.C4FM && c4fmBatches.incrementAndGet() == 1)
+                {
+                    for(int x = 1; x <= 3; x++)
+                    {
+                        messages.receive(network(WACN, SYSTEM, NAC, x * 1000));
+                        messages.receive(site(SYSTEM, NAC, 2, 7, x * 1000));
+                    }
+                    for(int x = 0; x < 20; x++) messages.receive(other(4000 + x));
+                }
+            }), clock::get))
+        {
+            P25DiscoveryProbe.Session session = probe.open("target", FREQUENCY);
+            clock.set(2999);
+            source.emit(samples(2999));
+            await(() -> session.status().elapsedMs() == 1999 && session.status().c4fm().confirmed());
+            assertEquals("running", session.status().state());
+            clock.set(3000);
+            source.emit(samples(3000));
+            await(() -> session.status().state().equals("ready"));
+            assertEquals(2000, session.status().elapsedMs());
+            assertEquals("C4FM", session.status().selectedModulation());
+            assertEquals(new P25DiscoveryProbe.Identity(WACN, SYSTEM, 2, 7, NAC), session.status().identity());
+        }
+    }
+
+    @Test
+    void fastCompletionStillComparesBothDecodersBeforePublishing() throws Exception
+    {
+        FakeSource source = new FakeSource();
+        AtomicLong clock = new AtomicLong(1000);
+        try(P25DiscoveryProbe probe = new P25DiscoveryProbe((target, frequency) -> source,
+            (modulation, rate, messages) -> decoder(samples -> {
+                for(int x = 1; x <= 3; x++)
+                {
+                    messages.receive(network(WACN, SYSTEM, NAC, x * 1000));
+                    messages.receive(site(SYSTEM, NAC, 2, modulation == Modulation.C4FM ? 7 : 8, x * 1000));
+                }
+                for(int x = 0; x < 20; x++) messages.receive(other(4000 + x));
+            }), clock::get))
+        {
+            P25DiscoveryProbe.Session session = probe.open("target", FREQUENCY);
+            clock.set(3000);
+            source.emit(samples(3000));
+            await(() -> session.status().elapsedMs() == 2000 && session.status().cqpsk().confirmed());
+            assertEquals("running", session.status().state());
+            assertNull(session.status().selectedModulation());
+            clock.set(1000 + P25DiscoveryProbe.TIMEOUT_MILLISECONDS);
+            await(() -> session.status().state().equals("inconclusive"));
+            assertNull(session.status().identity());
+        }
+    }
+
+    @Test
+    void cachesWorkerMetricsOnlyUntilNewEvidenceOrReset()
+    {
+        P25DiscoveryProbe.ModeEvidence evidence = new P25DiscoveryProbe.ModeEvidence(Modulation.C4FM);
+        P25DiscoveryProbe.ModeMetrics initial = evidence.metrics();
+        assertSame(initial, evidence.metrics());
+        confirm(evidence, 1000);
+        P25DiscoveryProbe.ModeMetrics confirmed = evidence.metrics();
+        assertTrue(confirmed.confirmed());
+        assertSame(confirmed, evidence.metrics());
+        assertEquals(0, initial.validControlMessages());
+        evidence.reset();
+        assertFalse(evidence.metrics().confirmed());
+        assertEquals(0, evidence.metrics().validControlMessages());
+        assertTrue(confirmed.confirmed(), "Published evidence snapshots must remain immutable");
     }
 
     @Test

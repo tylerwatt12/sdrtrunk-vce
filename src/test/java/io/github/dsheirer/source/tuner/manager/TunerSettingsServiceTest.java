@@ -90,6 +90,29 @@ class TunerSettingsServiceTest
     }
 
     @Test
+    void recordingSearchLeaseKeepsFixedCenterAndNeverOffersRetuning() throws Exception
+    {
+        TrackingAirspyController controller = new TrackingAirspyController();
+        FakeDiscoveredTuner tuner = runningTuner(controller,new CountingChannelManager());
+        tuner.testTunerClass = TunerClass.RECORDING_TUNER;
+        AtomicInteger saves = new AtomicInteger();
+        try(TunerSettingsService service = service(tuner,saves))
+        {
+            long center = controller.getFrequency();
+            var lease = service.browse(tuner,null).get(2,TimeUnit.SECONDS);
+            assertFalse(lease.canTune());
+            try(var hold = service.holdForSearch(tuner,lease.leaseId()))
+            {
+                hold.tune(center); assertTrue(hold.valid());
+                assertThrows(TunerSettingsService.SettingUnavailableException.class,() -> hold.tune(center+25_000));
+                assertEquals(center,controller.getFrequency()); assertEquals(0,saves.get());
+            }
+            service.releaseBrowse(tuner,lease.leaseId(),false).get(2,TimeUnit.SECONDS);
+            assertFalse(tuner.isDiscoveryHeld()); assertEquals(center,controller.getFrequency());
+        }
+    }
+
+    @Test
     void searchRejectsOccupiedAndLockedReceivers() throws Exception
     {
         TrackingAirspyController controller = new TrackingAirspyController();
@@ -1616,7 +1639,8 @@ class TunerSettingsServiceTest
             mRestartChannels = channels;
         }
 
-        @Override public TunerClass getTunerClass() { return TunerClass.TEST_TUNER; }
+        private TunerClass testTunerClass = TunerClass.TEST_TUNER;
+        @Override public TunerClass getTunerClass() { return testTunerClass; }
         @Override public String getId() { return "settings-test"; }
 
         @Override

@@ -32,6 +32,9 @@ public final class SpectrumDiscoveryService implements AutoCloseable
     private final TunerSettingsService mSettings;
     private final StatsWebDatabase mDatabase;
     private final P25DiscoveryProbe mProbe;
+    private final DigitalTrunkedDiscoveryProbe mDigitalProbe;
+    private volatile io.github.dsheirer.service.radioreference.RadioReferenceDiscoveryResolver mDirectory;
+    private final java.util.concurrent.ExecutorService mDirectoryWorker = SpectrumSearchService.directoryWorker("click-discovery-directory");
     private final ScheduledFuture<?> mExpiry;
     private Wizard mWizard;
 
@@ -44,8 +47,11 @@ public final class SpectrumDiscoveryService implements AutoCloseable
         mSettings = settings;
         mDatabase = database;
         mProbe = new P25DiscoveryProbe(diagnostics, settings);
+        mDigitalProbe = new DigitalTrunkedDiscoveryProbe(diagnostics, settings);
         mExpiry = ThreadPool.SCHEDULED.scheduleWithFixedDelay(this::expire, 5, 5, TimeUnit.SECONDS);
     }
+
+    public void setRadioReferenceResolver(io.github.dsheirer.service.radioreference.RadioReferenceDiscoveryResolver resolver) { mDirectory = resolver; }
 
     public synchronized Eligibility eligibility(String tunerId, long frequencyHz)
     {
@@ -64,11 +70,14 @@ public final class SpectrumDiscoveryService implements AutoCloseable
     }
 
     public synchronized Snapshot open(String tunerId, long frequencyHz, String protocolId, String browseLeaseId)
+    { return open(tunerId,frequencyHz,protocolId,browseLeaseId,null); }
+
+    public synchronized Snapshot open(String tunerId,long frequencyHz,String protocolId,String browseLeaseId,Integer stateId)
     {
         expire();
         if(mWizard != null) throw new IllegalStateException("Another channel discovery is already in progress");
-        if(!Set.of("p25-phase1", "am", "nbfm").contains(protocolId))
-            throw new IllegalArgumentException("Choose P25 Phase 1, AM, or NBFM");
+        if(!Set.of("p25-phase1", "dmr", "nxdn", "am", "nbfm").contains(protocolId))
+            throw new IllegalArgumentException("Choose P25 Phase 1, DMR, NXDN, AM, or NBFM");
         Eligibility eligible = eligibility(tunerId, frequencyHz);
         if(!eligible.eligible()) throw new IllegalStateException(eligible.reason());
         DiscoveredTuner discovered = requireTuner(tunerId);
@@ -77,9 +86,11 @@ public final class SpectrumDiscoveryService implements AutoCloseable
         Tuner tuner = discovered.getTuner();
         String targetId = mDiagnostics.targetIdFor(tuner);
         Wizard wizard = new Wizard(tunerId, targetId, frequencyHz, protocolId, browseLeaseId, tuner);
+        wizard.stateId = stateId;
         try
         {
             if("p25-phase1".equals(protocolId)) wizard.probe = mProbe.open(targetId, frequencyHz);
+            else if(Set.of("dmr","nxdn").contains(protocolId)) wizard.digitalProbe = mDigitalProbe.open(targetId,frequencyHz,protocolId);
             else wizard.hold = mSettings.holdForProbe(tuner);
             mWizard = wizard;
             return snapshot(wizard);
@@ -110,27 +121,34 @@ public final class SpectrumDiscoveryService implements AutoCloseable
         ChannelDefinition template = review.template();
         Map<String,Object> settings = new LinkedHashMap<>(request.settings() != null ? request.settings() : Map.of());
         P25SiteIdentity identity = siteIdentity(current.probe());
-        if(identity != null)
-        {
-            settings.put("modulation", current.probe().selectedModulation());
-            settings.put("learn_announced_control_channels", true);
-        }
+        TrunkedDiscoveryEvidence saveEvidence = wizard.evidence != null ?
+            wizard.evidence.withManualFrequencyMap(request.frequencyMap()) : null;
+        if(saveEvidence == null && !request.frequencyMap().isEmpty())
+            throw new IllegalArgumentException("This protocol does not use a channel map");
+        if(saveEvidence != null) settings.putAll(saveEvidence.settings());
+        ChannelDefinition.Source source = template.source();
+        long savedFrequency = saveEvidence != null && saveEvidence.servingFrequencyHz() != null ?
+            saveEvidence.servingFrequencyHz() : wizard.frequencyHz;
+        if(savedFrequency != wizard.frequencyHz)
+            source = new ChannelDefinition.Source(List.of(savedFrequency), null, null, savedFrequency,
+                source.preferredTuner(), source.rotationDelayMs(), source.sourceType(), source.senderId(), source.feedId());
         ChannelDefinition definition = new ChannelDefinition(null, wizard.protocolId, request.system(),
-            request.site(), request.name(), null, request.aliasListId(), template.source(), settings,
-            List.of(), List.of(), List.of(), List.of(), ChannelDefinition.Observed.EMPTY);
+            request.site(), request.name(), null, request.aliasListId(), source, settings,
+            saveEvidence != null ? saveEvidence.frequencyMap() : List.of(), List.of(), List.of(), List.of(), ChannelDefinition.Observed.EMPTY);
         ChannelProtocolRegistry registry = new ChannelProtocolRegistry();
         AliasListDefinition validationList = new AliasListDefinition("Discovery", registry.require(wizard.protocolId).aliasFamily());
         validationList.setId(definition.aliasListId() > 0 ? definition.aliasListId() : 1);
         ChannelDefinition validation = new ChannelDefinition(null, definition.protocolId(), definition.system(),
             definition.site(), definition.name(), null, validationList.getId(), definition.source(), definition.settings(),
-            List.of(), List.of(), List.of(), List.of(), ChannelDefinition.Observed.EMPTY);
+            definition.frequencyMap(), List.of(), List.of(), List.of(), ChannelDefinition.Observed.EMPTY);
         int bandwidth = new ChannelDefinitionCodec(registry).toChannel(validation, validationList, null)
             .getDecodeConfiguration().getChannelSpecification().getBandwidth();
-        if(!FrequencyListenService.withinCurrentWindow(wizard.frequencyHz, wizard.centerHz, bandwidth,
+        if(!FrequencyListenService.withinCurrentWindow(savedFrequency, wizard.centerHz, bandwidth,
             wizard.tuner.getTunerController().getUsableBandwidth() / 2L,
             wizard.tuner.getTunerController().getMiddleUnusableHalfBandwidth()))
             throw new IllegalArgumentException("The selected bandwidth extends outside the usable receiver window");
-        wizard.saved = mChannels.createDiscovered(definition, identity, request.newAliasListName(), request.revision());
+        wizard.saved = saveEvidence != null ? mChannels.createTrunkedDiscovered(definition,saveEvidence,request.newAliasListName(),request.revision(),true) :
+            mChannels.createDiscovered(definition, identity, request.newAliasListName(), request.revision());
         wizard.close();
         return startSaved(wizard);
     }
@@ -206,23 +224,50 @@ public final class SpectrumDiscoveryService implements AutoCloseable
     private Snapshot snapshot(Wizard wizard)
     {
         P25DiscoveryProbe.Status probe = wizard.probe != null ? wizard.probe.status() : null;
+        var digital = wizard.digitalProbe != null ? wizard.digitalProbe.status() : null;
         String state = wizard.saved != null ? wizard.running ? "running" : "saved" :
-            probe != null ? "running".equals(probe.state()) ? "identifying" : probe.state() : "ready";
-        String reason = probe != null ? probe.reason() : null;
+            probe != null ? "running".equals(probe.state()) ? "identifying" : probe.state() :
+            digital != null ? "running".equals(digital.state()) ? "identifying" : digital.state() : "ready";
+        String reason = probe != null ? probe.reason() : digital != null ? digital.reason() : null;
+        if("ready".equals(state) && wizard.evidence == null)
+        {
+            wizard.evidence = probe != null ? TrunkedDiscoveryEvidence.p25(probe,System.currentTimeMillis()) : digital != null ? digital.evidence() : null;
+            if(wizard.evidence != null) resolveDirectory(wizard);
+        }
         if(wizard.saved == null && (!wizard.current() || wizard.hold != null && !wizard.hold.valid() ||
-            wizard.probe != null && "ready".equals(state) && !wizard.probe.valid()))
+            wizard.probe != null && "ready".equals(state) && !wizard.probe.valid() ||
+            wizard.digitalProbe != null && "ready".equals(state) && !wizard.digitalProbe.valid()))
         {
             state = "failed";
             reason = "The tuner changed; identify this frequency again";
             wizard.close();
         }
         ChannelAdministrationService.DiscoveryReview review = "ready".equals(state) ?
+            wizard.evidence != null ? mChannels.discoveryTrunkedReview(wizard.protocolId,wizard.frequencyHz,wizard.tuner.getPreferredName(),wizard.evidence) :
             mChannels.discoveryReview(wizard.protocolId, wizard.frequencyHz, wizard.tuner.getPreferredName(),
                 siteIdentity(probe), probe != null ? probe.selectedModulation() : null) : null;
+        if(review != null && wizard.directory.match() != null)
+        {
+            var template = review.template(); var match = wizard.directory.match();
+            template = new ChannelDefinition(null,template.protocolId(),match.systemName(),match.siteName(),match.siteName(),null,template.aliasListId(),template.source(),template.settings(),template.frequencyMap(),template.eventLogs(),template.recorders(),template.auxiliaryDecoders(),template.observed());
+            review = new ChannelAdministrationService.DiscoveryReview(review.revision(),template,review.aliasLists(),review.suggestedAliasListId(),review.defaultNewAliasListName());
+        }
         return new Snapshot(wizard.id, state, reason, wizard.protocolId, wizard.tunerId, wizard.targetId,
             wizard.frequencyHz, wizard.expiresAt, probe, review, wizard.saved != null ?
                 new Saved(wizard.saved.configurationId(), wizard.saved.aliasListId(), wizard.running,
-                    wizard.startError) : null);
+                    wizard.startError) : null, digital, wizard.evidence, wizard.directory);
+    }
+
+    private void resolveDirectory(Wizard wizard)
+    {
+        var resolver = mDirectory;
+        if(resolver == null) return;
+        wizard.directory = io.github.dsheirer.service.radioreference.RadioReferenceDiscoveryResolver.Result.pending();
+        try { mDirectoryWorker.execute(() -> {
+            synchronized(SpectrumDiscoveryService.this) { if(mWizard != wizard || wizard.closed) return; }
+            var result = resolver.resolve(wizard.stateId,SpectrumSearchService.directoryIdentity(wizard.evidence,wizard.frequencyHz));
+            synchronized(SpectrumDiscoveryService.this) { if(mWizard == wizard && !wizard.closed) { wizard.directory = result; wizard.evidence = DiscoveryDirectoryEnrichment.merge(wizard.evidence,result); } }
+        }); } catch(java.util.concurrent.RejectedExecutionException exception) { wizard.directory = io.github.dsheirer.service.radioreference.RadioReferenceDiscoveryResolver.Result.manual("unavailable","RadioReference is busy. Review the on-air identity."); }
     }
 
     private static P25SiteIdentity siteIdentity(P25DiscoveryProbe.Status probe)
@@ -261,6 +306,8 @@ public final class SpectrumDiscoveryService implements AutoCloseable
         mExpiry.cancel(false);
         closeActiveSession();
         mProbe.close();
+        mDigitalProbe.close();
+        mDirectoryWorker.shutdownNow();
     }
 
     public synchronized void closeActiveSession()
@@ -283,6 +330,11 @@ public final class SpectrumDiscoveryService implements AutoCloseable
         long expiresAt = System.currentTimeMillis() + IDLE_EXPIRY_MS;
         String browseLeaseId;
         P25DiscoveryProbe.Session probe;
+        DigitalTrunkedDiscoveryProbe.Session digitalProbe;
+        TrunkedDiscoveryEvidence evidence;
+        Integer stateId;
+        boolean closed;
+        io.github.dsheirer.service.radioreference.RadioReferenceDiscoveryResolver.Result directory = io.github.dsheirer.service.radioreference.RadioReferenceDiscoveryResolver.Result.manual();
         TunerSettingsService.ProbeHold hold;
         ChannelAdministrationService.DiscoveryCreated saved;
         boolean running;
@@ -301,16 +353,26 @@ public final class SpectrumDiscoveryService implements AutoCloseable
         }
         @Override public void close()
         {
+            closed = true;
             if(probe != null) probe.close();
+            if(digitalProbe != null) digitalProbe.close();
             if(hold != null) { hold.close(); hold = null; }
         }
     }
 
     public record Eligibility(boolean eligible, String reason, List<Object> matches) {}
     public record SaveRequest(String system, String site, String name, long aliasListId,
-                              String newAliasListName, Map<String,Object> settings, long revision) {}
+                              String newAliasListName, Map<String,Object> settings, long revision,
+                              List<ChannelDefinition.FrequencyMapEntry> frequencyMap)
+    {
+        public SaveRequest { frequencyMap = List.copyOf(frequencyMap != null ? frequencyMap : List.of()); }
+        public SaveRequest(String system, String site, String name, long aliasListId,
+                           String newAliasListName, Map<String,Object> settings, long revision)
+        { this(system, site, name, aliasListId, newAliasListName, settings, revision, List.of()); }
+    }
     public record Saved(String configurationId, long aliasListId, boolean running, String startError) {}
     public record Snapshot(String sessionId, String state, String reason, String protocolId, String tunerId,
                            String targetId, long frequencyHz, long expiresAtMs, P25DiscoveryProbe.Status probe,
-                           ChannelAdministrationService.DiscoveryReview review, Saved saved) {}
+                           ChannelAdministrationService.DiscoveryReview review, Saved saved, DigitalTrunkedDiscoveryProbe.Status digitalProbe,
+                           TrunkedDiscoveryEvidence trunkedEvidence, io.github.dsheirer.service.radioreference.RadioReferenceDiscoveryResolver.Result radioReference) {}
 }

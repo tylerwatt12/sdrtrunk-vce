@@ -51,6 +51,7 @@ import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListModel;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService;
+import io.github.dsheirer.service.radioreference.RadioReferenceDiscoveryResolver;
 import io.github.dsheirer.service.radioreference.RadioReferenceImportService;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.manager.TunerSettingsService;
@@ -398,6 +399,12 @@ public class StatsWebServerService implements AutoCloseable
         mSpectrumSearchService = mTunerAdministrationService != null && mChannelAdministrationService != null ?
             new SpectrumSearchService(mChannelAdministrationService, mTunerAdministrationService,
                 mTunerDiagnosticService, mTunerSettingsService, mDatabase) : null;
+        RadioReferenceDiscoveryResolver discoveryDirectory =
+            new RadioReferenceDiscoveryResolver(mRadioReferenceDirectoryService);
+        if(mSpectrumDiscoveryService != null) mSpectrumDiscoveryService.setRadioReferenceResolver(discoveryDirectory);
+        if(mSpectrumSearchService != null) mSpectrumSearchService.setRadioReferenceResolver(discoveryDirectory);
+        if(mChannelAdministrationService != null)
+            mChannelAdministrationService.setRetainedDiscoveryIdentityProvider(mDatabase::retainedDiscoveryIdentities);
         mLiveService = new StatsLiveService(channelProcessingManager, mEntityCatalog,
             remoteLinkAdministrationService);
         mWebAccessDatabasePath = SdrTrunkDatabasePath.getDatabasePath(mUserPreferences);

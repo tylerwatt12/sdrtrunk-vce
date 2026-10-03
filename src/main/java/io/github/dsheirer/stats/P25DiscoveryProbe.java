@@ -46,8 +46,10 @@ import org.slf4j.LoggerFactory;
 public final class P25DiscoveryProbe implements AutoCloseable
 {
     static final long TIMEOUT_MILLISECONDS = 30_000;
-    static final long MINIMUM_OBSERVATION_MILLISECONDS = 5_000;
     static final long MINIMUM_IDENTITY_SPAN_MILLISECONDS = 2_000;
+    //The required three fresh broadcasts must already span two seconds. Strong signals do not need another
+    //three seconds of idle dwell after proving the same serving identity in both decoder comparisons.
+    static final long MINIMUM_OBSERVATION_MILLISECONDS = MINIMUM_IDENTITY_SPAN_MILLISECONDS;
     static final int MINIMUM_IDENTITY_OBSERVATIONS = 3;
     static final int MINIMUM_CONTROL_MESSAGES = 20;
     static final double MINIMUM_QUALITY_PERCENT = 60;
@@ -271,8 +273,16 @@ public final class P25DiscoveryProbe implements AutoCloseable
 
     public record ModeMetrics(long validMessages, long validControlMessages, long invalidControlMessages,
                               long correctedBits, long syncLossBits, int networkObservations, int siteObservations,
-                              double qualityPct, boolean confirmed, Identity identity, String reason)
+                              double qualityPct, boolean confirmed, Identity identity, String reason,
+                              Long servingControlFrequencyHz)
     {
+        public ModeMetrics(long validMessages, long validControlMessages, long invalidControlMessages,
+                           long correctedBits, long syncLossBits, int networkObservations, int siteObservations,
+                           double qualityPct, boolean confirmed, Identity identity, String reason)
+        {
+            this(validMessages, validControlMessages, invalidControlMessages, correctedBits, syncLossBits,
+                networkObservations, siteObservations, qualityPct, confirmed, identity, reason, null);
+        }
     }
 
     /** Envelope variation is receiver-side evidence, not a physical modulation classification. */
@@ -326,10 +336,19 @@ public final class P25DiscoveryProbe implements AutoCloseable
         /** Called only by the channel-source producer. Never decodes, projects, copies, or waits. */
         void offer(ComplexSamples samples)
         {
-            if(!mClosed.get() && "running".equals(mStatus.get().state()) && samples != null &&
-                !mSamples.offer(samples, mDroppedBuffers.get()))
+            if(mClosed.get() || !"running".equals(mStatus.get().state()) || samples == null)
+            {
+                return;
+            }
+            if(!mSamples.offer(samples, mDroppedBuffers.get()))
             {
                 mDroppedBuffers.incrementAndGet();
+            }
+            else
+            {
+                //A nonblocking wake-up avoids adding the idle poll interval to every newly received batch.
+                //The producer still offers references only; all decoding/projection stays on the worker.
+                LockSupport.unpark(mWorker);
             }
         }
 
@@ -407,6 +426,14 @@ public final class P25DiscoveryProbe implements AutoCloseable
                         if(mSource.droppedSampleBatches() > 0)
                         {
                             finish("failed", "The receiver dropped sample batches. Retry discovery.", null);
+                            break;
+                        }
+                        //Both modes have now consumed the same contiguous batch. Publish a strong result at this
+                        //boundary instead of waiting for the next UI-status tick; ambiguous and weak evidence
+                        //continues through the existing conservative timeout.
+                        if(complete(Math.max(0, mClock.getAsLong() - mStartedAt), false,
+                            sampleGeneration == mDroppedBuffers.get()))
+                        {
                             break;
                         }
                     }
@@ -592,6 +619,11 @@ public final class P25DiscoveryProbe implements AutoCloseable
         private long mLastNetworkTimestamp;
         private long mFirstSiteTimestamp;
         private long mLastSiteTimestamp;
+        private ModeMetrics mMetrics;
+        private Long mServingControlFrequency;
+        private int mControlFrequencyObservations;
+        private long mFirstControlFrequencyTimestamp;
+        private long mLastControlFrequencyTimestamp;
 
         ModeEvidence(Modulation modulation)
         {
@@ -604,6 +636,7 @@ public final class P25DiscoveryProbe implements AutoCloseable
             {
                 return;
             }
+            mMetrics = null;
             if(message instanceof SyncLossMessage loss)
             {
                 mSyncLossBits += Math.max(0, loss.getBitsProcessed());
@@ -688,12 +721,47 @@ public final class P25DiscoveryProbe implements AutoCloseable
                     mSiteObservations++;
                     mFirstSiteTimestamp = mFirstSiteTimestamp == 0 ? timestamp : mFirstSiteTimestamp;
                     mLastSiteTimestamp = timestamp;
+                    observeServingFrequency(observation, timestamp);
                 }
+            }
+        }
+
+        private void observeServingFrequency(P25NetworkConfigurationSnapshot observation, long timestamp)
+        {
+            //The decoder message processor has already validated and confirmed frequency bands before applying
+            //them to this fresh serving RFSS descriptor. Neighbors, secondary controls and unresolved channels
+            //cannot become exact-carrier evidence for directory matching.
+            Long frequency = null;
+            for(var channel: observation.channels())
+            {
+                if("primary_control".equals(channel.role()) && channel.downlink() != null)
+                {
+                    if(frequency != null && !frequency.equals(channel.downlink()))
+                    {
+                        frequency = null;
+                        break;
+                    }
+                    frequency = channel.downlink();
+                }
+            }
+            if(frequency == null || !Objects.equals(mServingControlFrequency, frequency))
+            {
+                mServingControlFrequency = frequency;
+                mControlFrequencyObservations = 0;
+                mFirstControlFrequencyTimestamp = mLastControlFrequencyTimestamp = 0;
+            }
+            if(frequency != null && timestamp > mLastControlFrequencyTimestamp)
+            {
+                mControlFrequencyObservations++;
+                mFirstControlFrequencyTimestamp = mFirstControlFrequencyTimestamp == 0 ? timestamp :
+                    mFirstControlFrequencyTimestamp;
+                mLastControlFrequencyTimestamp = timestamp;
             }
         }
 
         void reset()
         {
+            mMetrics = null;
             clearIdentity();
             mMonitor.reset();
             mValidMessages = mValidControl = mInvalidControl = mCorrectedBits = mSyncLossBits = 0;
@@ -705,10 +773,17 @@ public final class P25DiscoveryProbe implements AutoCloseable
             mSite = null;
             mNetworkObservations = mSiteObservations = 0;
             mFirstNetworkTimestamp = mLastNetworkTimestamp = mFirstSiteTimestamp = mLastSiteTimestamp = 0;
+            mServingControlFrequency = null;
+            mControlFrequencyObservations = 0;
+            mFirstControlFrequencyTimestamp = mLastControlFrequencyTimestamp = 0;
         }
 
         ModeMetrics metrics()
         {
+            if(mMetrics != null)
+            {
+                return mMetrics;
+            }
             P25SiteIdentity site = P25SiteIdentity.from(mNetwork, mSite);
             Identity identity = site != null && mNetwork.nac() != null ?
                 new Identity(site.wacn(), site.system(), site.rfss(), site.site(), mNetwork.nac()) : null;
@@ -723,8 +798,12 @@ public final class P25DiscoveryProbe implements AutoCloseable
             String reason = confirmed ? "Control channel and serving site confirmed." :
                 !repeated ? "Waiting for repeated current system and site broadcasts." :
                     "Waiting for reliable control-channel decoding.";
-            return new ModeMetrics(mValidMessages, mValidControl, mInvalidControl, mCorrectedBits, mSyncLossBits,
-                mNetworkObservations, mSiteObservations, quality, confirmed, identity, reason);
+            Long trustedFrequency = confirmed && mControlFrequencyObservations >= MINIMUM_IDENTITY_OBSERVATIONS &&
+                mLastControlFrequencyTimestamp - mFirstControlFrequencyTimestamp >= MINIMUM_IDENTITY_SPAN_MILLISECONDS ?
+                mServingControlFrequency : null;
+            mMetrics = new ModeMetrics(mValidMessages, mValidControl, mInvalidControl, mCorrectedBits, mSyncLossBits,
+                mNetworkObservations, mSiteObservations, quality, confirmed, identity, reason, trustedFrequency);
+            return mMetrics;
         }
     }
 

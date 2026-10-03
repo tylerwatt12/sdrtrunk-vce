@@ -12,7 +12,7 @@ import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** Owns one idle receiver, the existing bounded FFT worker, and sequential short P25 checks. */
+/** Owns one idle receiver, the existing bounded FFT worker, and temporary protocol checks. */
 public final class SpectrumSearchHardware
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(SpectrumSearchHardware.class);
@@ -50,6 +50,8 @@ public final class SpectrumSearchHardware
         void tune(long frequencyHz);
         List<SpectrumPeakDetector.Peak> observe(long dwellMillis, BooleanSupplier cancelled) throws InterruptedException;
         P25DiscoveryProbe.Session probe(long frequencyHz);
+        default DigitalTrunkedDiscoveryProbe.Session digitalProbe(long frequencyHz) { return null; }
+        default boolean fixedWindow() { return false; }
         boolean valid();
         <T> T handoff(long centerHz, Supplier<T> start);
         @Override void close();
@@ -79,6 +81,8 @@ public final class SpectrumSearchHardware
         private final String target;
         private final TunerSettingsService.ProbeHold hold;
         private final P25DiscoveryProbe probes;
+        private final DigitalTrunkedDiscoveryProbe digitalProbes;
+        private DigitalTrunkedDiscoveryProbe.Session activeDigital;
         private TunerDiagnosticService.Session spectrum;
         private P25DiscoveryProbe.Session activeProbe;
         private long freshAfter;
@@ -92,6 +96,7 @@ public final class SpectrumSearchHardware
             runtime = selected.getTuner();
             target = mDiagnostics.targetIdFor(runtime);
             probes = new P25DiscoveryProbe(mDiagnostics, hold);
+            digitalProbes = new DigitalTrunkedDiscoveryProbe(mDiagnostics, hold);
             freshAfter = System.currentTimeMillis() + 250;
         }
 
@@ -100,8 +105,9 @@ public final class SpectrumSearchHardware
         public long usableBandwidthHz() { return runtime.getTunerController().getUsableBandwidth(); }
         public long sampleRateHz() { return Math.round(runtime.getTunerController().getSampleRate()); }
         public long middleUnusableHalfBandwidthHz() { return runtime.getTunerController().getMiddleUnusableHalfBandwidth(); }
-        public long minimumFrequencyHz() { return runtime.getTunerController().getMinimumFrequency(); }
-        public long maximumFrequencyHz() { return runtime.getTunerController().getMaximumFrequency(); }
+        public boolean fixedWindow() { return runtime.getTunerClass() == io.github.dsheirer.source.tuner.TunerClass.RECORDING_TUNER; }
+        public long minimumFrequencyHz() { return fixedWindow() ? centerFrequencyHz()-usableBandwidthHz()/2 : runtime.getTunerController().getMinimumFrequency(); }
+        public long maximumFrequencyHz() { return fixedWindow() ? centerFrequencyHz()+usableBandwidthHz()/2 : runtime.getTunerController().getMaximumFrequency(); }
         public long centerFrequencyHz() { return runtime.getTunerController().getFrequency(); }
         public boolean valid() { return !closed && hold.valid() && mSettings.verifyBrowse(selected, browseId); }
 
@@ -109,6 +115,12 @@ public final class SpectrumSearchHardware
         {
             if(!valid()) throw new IllegalStateException("The search receiver changed; begin again");
             if(activeProbe != null) { activeProbe.close(); activeProbe = null; }
+            if(activeDigital != null) { activeDigital.close(); activeDigital = null; }
+            if(fixedWindow())
+            {
+                if(frequencyHz != centerFrequencyHz()) throw new IllegalArgumentException("Recording tuners have a fixed capture window");
+                return;
+            }
             hold.tune(frequencyHz);
             freshAfter = System.currentTimeMillis() + 250;
         }
@@ -137,7 +149,7 @@ public final class SpectrumSearchHardware
             openSpectrum();
             long center = centerFrequencyHz();
             SpectrumPeakDetector detector = new SpectrumPeakDetector(center, sampleRateHz(), usableBandwidthHz(),
-                middleUnusableHalfBandwidthHz());
+                middleUnusableHalfBandwidthHz(), !fixedWindow());
             long deadline = System.nanoTime() + Duration.ofMillis(dwellMillis).toNanos();
             while(System.nanoTime() < deadline && !cancelled.getAsBoolean())
             {
@@ -159,10 +171,20 @@ public final class SpectrumSearchHardware
             return activeProbe;
         }
 
+        public DigitalTrunkedDiscoveryProbe.Session digitalProbe(long frequencyHz)
+        {
+            if(!valid()) throw new IllegalStateException("The search receiver changed; begin again");
+            if(spectrum != null) { spectrum.close(); spectrum = null; }
+            if(activeDigital != null) activeDigital.close();
+            activeDigital = digitalProbes.open(target,frequencyHz,"auto");
+            return activeDigital;
+        }
+
         public <T> T handoff(long centerHz, Supplier<T> start)
         {
             if(!valid()) throw new IllegalStateException("The search receiver changed; channels are saved for later");
             probes.close();
+            digitalProbes.close();
             if(spectrum != null) { spectrum.close(); spectrum = null; }
             tune(centerHz);
             hold.close();
@@ -176,8 +198,9 @@ public final class SpectrumSearchHardware
             try
             {
                 probes.close();
+                digitalProbes.close();
                 if(spectrum != null) { spectrum.close(); spectrum = null; }
-                if(hold.valid() && runtime.getChannelSourceManager().getTunerChannelCount() == 0)
+                if(!fixedWindow() && hold.valid() && runtime.getChannelSourceManager().getTunerChannelCount() == 0)
                     hold.restoreSearchCenter();
             }
             finally { closed = true; hold.close(); }

@@ -53,7 +53,7 @@ public final class SpectrumSearchHttpController
             {
                 if(!method(exchange, "POST")) return;
                 JsonNode body = WebHttpSupport.readJsonObject(exchange,
-                    Set.of("tuner_id", "browse_lease_id", "ranges", "dwell_ms"));
+                    Set.of("tuner_id", "browse_lease_id", "ranges", "dwell_ms", "radioreference_state_id"));
                 List<SpectrumSearchService.Range> ranges = new ArrayList<>();
                 for(JsonNode range: array(body, "ranges", 8))
                 {
@@ -66,7 +66,8 @@ public final class SpectrumSearchHttpController
                 if(dwell < 750 || dwell > 5000) throw new IllegalArgumentException("Choose a dwell between 750 and 5000 ms");
                 sendData(exchange, 201, mService.open(
                     WebHttpSupport.requiredText(body, "tuner_id", 80),
-                    WebHttpSupport.requiredText(body, "browse_lease_id", 80), ranges, dwell));
+                    WebHttpSupport.requiredText(body, "browse_lease_id", 80), ranges, dwell,
+                    optionalState(body)));
                 return;
             }
             if(!path.startsWith(PATH + "/")) { WebHttpSupport.notFound(exchange); return; }
@@ -91,12 +92,12 @@ public final class SpectrumSearchHttpController
                 List<SpectrumSearchService.SaveCandidate> candidates = new ArrayList<>();
                 for(JsonNode candidate: array(body, "candidates", 32))
                 {
-                    fields(candidate, Set.of("candidate_id", "name", "auto_start"));
+                    fields(candidate, Set.of("candidate_id", "name", "auto_start", "frequency_map"));
                     if(!candidate.has("auto_start") || !candidate.get("auto_start").isBoolean())
                         throw new IllegalArgumentException("Choose whether each channel should start automatically");
                     candidates.add(new SpectrumSearchService.SaveCandidate(
                         WebHttpSupport.requiredText(candidate, "candidate_id", 80), text(candidate, "name", 256),
-                        candidate.get("auto_start").booleanValue()));
+                        candidate.get("auto_start").booleanValue(), DiscoveryRequestSupport.frequencyMap(candidate)));
                 }
                 List<SpectrumSearchService.AliasChoice> groups = new ArrayList<>();
                 JsonNode rawGroups = body.get("alias_groups");
@@ -200,5 +201,14 @@ public final class SpectrumSearchHttpController
             value.longValue() < (positive ? 1 : 0) || value.longValue() > (1L << 53) - 1)
             throw new IllegalArgumentException(field + " is invalid");
         return value.longValue();
+    }
+
+    private static Integer optionalState(JsonNode body)
+    {
+        JsonNode value = body.get("radioreference_state_id");
+        if(value == null || value.isNull()) return null;
+        if(!value.isIntegralNumber() || !value.canConvertToInt() || value.intValue() <= 0)
+            throw new IllegalArgumentException("radioreference_state_id is invalid");
+        return value.intValue();
     }
 }

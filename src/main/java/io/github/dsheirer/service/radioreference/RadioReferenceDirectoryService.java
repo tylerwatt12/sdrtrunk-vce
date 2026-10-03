@@ -40,6 +40,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.function.Predicate;
 
 /**
  * Bounded session and directory service for RadioReference.
@@ -54,6 +55,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     public static final int MAXIMUM_RESULT_LIMIT = 500;
     public static final int MAXIMUM_QUERY_LENGTH = 128;
     private static final int MAXIMUM_REMOTE_ITEMS_SCANNED = 10_000;
+    private static final int MAXIMUM_DISCOVERY_SYSTEMS = 8;
     private static final int DEFAULT_REMOTE_CONCURRENCY = 1;
     private static final int DEFAULT_WAITING_REQUESTS = 8;
     private static final Duration DEFAULT_REQUEST_DEADLINE = Duration.ofSeconds(10);
@@ -544,6 +546,103 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         }
 
         return page(matches, offset, limit);
+    }
+
+    /**
+     * Loads exact-frequency trunked candidates for identity verification. The entire search and all detail requests
+     * share the existing bounded detail deadline. Candidate and channel bounds prevent discovery from walking a
+     * whole state catalog; no partial result is eligible for automatic matching.
+     */
+    public List<DiscoverySystem> discoverySystems(int stateId, long frequencyHz)
+        throws RadioReferenceDirectoryException
+    {
+        return discoverySystems(stateId, frequencyHz, system -> true);
+    }
+
+    /** Rejects incompatible system identities before requesting their potentially large site catalogs. */
+    public List<DiscoverySystem> discoverySystems(int stateId, long frequencyHz,
+        Predicate<RadioReferenceGateway.TrunkedSystemDetails> identityFilter)
+        throws RadioReferenceDirectoryException
+    {
+        return discoverySystems(stateId, frequencyHz, identityFilter, DEFAULT_DETAIL_REQUEST_DEADLINE);
+    }
+
+    List<DiscoverySystem> discoverySystems(int stateId, long frequencyHz,
+        Predicate<RadioReferenceGateway.TrunkedSystemDetails> identityFilter, Duration deadline)
+        throws RadioReferenceDirectoryException
+    {
+        validateId(stateId);
+        Objects.requireNonNull(identityFilter);
+        long deadlineNanos = Math.min(positiveNanos(deadline, "deadline"), DEFAULT_DETAIL_REQUEST_DEADLINE.toNanos());
+        if(frequencyHz <= 0 || frequencyHz > 100_000_000_000L)
+        {
+            throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.INVALID_REQUEST);
+        }
+        return invokePremium(gateway -> {
+            List<RadioReferenceGateway.FrequencyResult> frequencies =
+                gateway.searchStateFrequencies(stateId, frequencyHz / 1_000_000.0);
+            if(frequencies != null && frequencies.size() > MAXIMUM_REMOTE_ITEMS_SCANNED)
+            {
+                throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.RESULT_SET_TOO_LARGE);
+            }
+            Set<Integer> systemIds = new LinkedHashSet<>();
+            if(frequencies != null)
+            {
+                for(RadioReferenceGateway.FrequencyResult frequency: frequencies)
+                {
+                    if(frequency != null && frequency.systemId() > 0 && Double.isFinite(frequency.downlinkMHz()) &&
+                        Math.round(frequency.downlinkMHz() * 1_000_000.0) == frequencyHz)
+                    {
+                        systemIds.add(frequency.systemId());
+                    }
+                }
+            }
+            if(systemIds.size() > MAXIMUM_DISCOVERY_SYSTEMS)
+            {
+                throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.RESULT_SET_TOO_LARGE);
+            }
+            List<DiscoverySystem> systems = new ArrayList<>();
+            long detailItems = 0;
+            for(int systemId: systemIds)
+            {
+                if(Thread.currentThread().isInterrupted())
+                {
+                    throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INTERRUPTED);
+                }
+                RadioReferenceGateway.TrunkedSystemDetails system = gateway.trunkedSystemDetails(systemId);
+                if(system == null || system.id() != systemId)
+                {
+                    throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
+                }
+                if(!identityFilter.test(system)) continue;
+                List<RadioReferenceGateway.TrunkedSiteDetails> sites = gateway.trunkedSiteDetails(systemId);
+                if(sites != null && sites.size() > MAXIMUM_REMOTE_ITEMS_SCANNED)
+                {
+                    throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.RESULT_SET_TOO_LARGE);
+                }
+                List<RadioReferenceGateway.TrunkedSiteDetails> verified = new ArrayList<>();
+                if(sites != null)
+                {
+                    for(RadioReferenceGateway.TrunkedSiteDetails site: sites)
+                    {
+                        if(site != null)
+                        {
+                            detailItems += 1L + site.channels().size();
+                            if(detailItems > MAXIMUM_REMOTE_ITEMS_SCANNED)
+                            {
+                                throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.RESULT_SET_TOO_LARGE);
+                            }
+                            if(site.systemId() == systemId)
+                            {
+                                verified.add(site);
+                            }
+                        }
+                    }
+                }
+                systems.add(new DiscoverySystem(system, verified));
+            }
+            return List.copyOf(systems);
+        }, deadlineNanos);
     }
 
     /**
@@ -1948,6 +2047,16 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
 
     public record DirectoryOption(int id, String name, String abbreviation)
     {
+    }
+
+    public record DiscoverySystem(RadioReferenceGateway.TrunkedSystemDetails system,
+                                  List<RadioReferenceGateway.TrunkedSiteDetails> sites)
+    {
+        public DiscoverySystem
+        {
+            system = Objects.requireNonNull(system);
+            sites = List.copyOf(sites);
+        }
     }
 
     public record BoundedPage<T>(List<T> items, int offset, Integer nextOffset, int totalItems)

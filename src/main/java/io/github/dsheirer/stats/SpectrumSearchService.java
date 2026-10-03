@@ -22,6 +22,8 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutorService;
+import io.github.dsheirer.service.radioreference.RadioReferenceDiscoveryResolver;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -29,7 +31,7 @@ import java.util.function.BooleanSupplier;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 
-/** One bounded, temporary P25 search. All tuning, FFT observation, probing and saves run off receiver callbacks. */
+/** One bounded, temporary trunked-system search. All tuning, FFT observation, probing and saves run off receiver callbacks. */
 public final class SpectrumSearchService implements AutoCloseable
 {
     static final int MAX_WINDOWS = 128;
@@ -42,6 +44,10 @@ public final class SpectrumSearchService implements AutoCloseable
     private final Channels mChannels;
     private final HardwareFactory mHardware;
     private final ProbeCheck mCheck;
+    private boolean mAllProtocols;
+    private TrunkedProbeCheck mTrunkedCheck;
+    private volatile RadioReferenceDiscoveryResolver mDirectory;
+    private final ExecutorService mDirectoryWorker = directoryWorker("discovery-directory");
     private final LongSupplier mClock;
     private final Supplier<Catalog> mCatalog;
     private final ScheduledExecutorService mExpiry;
@@ -65,6 +71,15 @@ public final class SpectrumSearchService implements AutoCloseable
                     .map(row -> new KnownChannel((String)row.get("configuration_id"),
                         row.get("name") instanceof String name ? name : "Saved channel")).findFirst().orElse(null);
             }
+            public KnownChannel knownTrunked(TrunkedDiscoveryEvidence evidence)
+            {
+                var match = channels.discoveryTrunkedSiteMatch(evidence);
+                return match != null ? new KnownChannel(match.configurationId(), match.name()) : null;
+            }
+            public ChannelAdministrationService.DiscoveryReview reviewTrunked(long frequency, String preferred, TrunkedDiscoveryEvidence evidence)
+            { return channels.discoveryTrunkedReview(evidence.protocolId(), frequency, preferred, evidence); }
+            public ChannelAdministrationService.DiscoveryCreated createTrunked(ChannelDefinition definition, TrunkedDiscoveryEvidence evidence, String aliasName, long revision, boolean autoStart)
+            { return channels.createTrunkedDiscovered(definition, evidence, aliasName, revision, autoStart); }
             public KnownChannel knownSite(P25SiteIdentity identity)
             {
                 var match = channels.discoverySiteMatch(identity);
@@ -93,6 +108,7 @@ public final class SpectrumSearchService implements AutoCloseable
             }
         }, new SpectrumSearchHardware(tuners, diagnostics, settings)::open, SpectrumSearchService::check,
             System::currentTimeMillis, () -> catalog(tuners));
+        mAllProtocols = true;
     }
 
     SpectrumSearchService(Channels channels, HardwareFactory hardware, ProbeCheck check,
@@ -111,13 +127,24 @@ public final class SpectrumSearchService implements AutoCloseable
         mExpiry.scheduleWithFixedDelay(this::expire, 5, 5, TimeUnit.SECONDS);
     }
 
+    SpectrumSearchService(Channels channels,HardwareFactory hardware,TrunkedProbeCheck check,
+        LongSupplier clock,Supplier<Catalog> catalog,boolean multiProtocol)
+    {
+        this(channels,hardware,(lease,frequency,cancelled) -> null,clock,catalog);
+        mAllProtocols = multiProtocol; mTrunkedCheck = Objects.requireNonNull(check);
+    }
+
     public Catalog catalog() { return mCatalog.get(); }
+    public void setRadioReferenceResolver(RadioReferenceDiscoveryResolver resolver) { mDirectory = resolver; }
 
     public Snapshot open(String tunerId, String browseLeaseId, List<Range> ranges, long dwellMs)
+    { return open(tunerId,browseLeaseId,ranges,dwellMs,null); }
+
+    public Snapshot open(String tunerId,String browseLeaseId,List<Range> ranges,long dwellMs,Integer stateId)
     {
         validateRanges(ranges);
         if(tunerId == null || tunerId.isBlank() || browseLeaseId == null || browseLeaseId.isBlank())
-            throw new IllegalArgumentException("Choose an idle receiver and begin Spectrum browsing");
+            throw new IllegalArgumentException("Choose an idle receiver and begin a new trunked system search");
         if(dwellMs < 750 || dwellMs > 5000) throw new IllegalArgumentException("Choose a dwell between 750 and 5000 ms");
         synchronized(mLock)
         {
@@ -128,8 +155,11 @@ public final class SpectrumSearchService implements AutoCloseable
             try
             {
                 Job job = new Job(tunerId, lease, List.copyOf(ranges), dwellMs, mClock.getAsLong());
-                job.windows = windows(ranges, lease.usableBandwidthHz(), lease.minimumFrequencyHz(),
+                job.stateId = stateId;
+                job.windows = lease.fixedWindow() ? List.of(lease.centerFrequencyHz()) : windows(ranges, lease.usableBandwidthHz(), lease.minimumFrequencyHz(),
                     lease.maximumFrequencyHz());
+                if(lease.fixedWindow() && ranges.stream().anyMatch(range -> range.minimumHz() < lease.centerFrequencyHz() - lease.usableBandwidthHz()/2 || range.maximumHz() > lease.centerFrequencyHz() + lease.usableBandwidthHz()/2))
+                    throw new IllegalArgumentException("Recording searches must stay inside the capture window");
                 job.revision = mChannels.revision();
                 job.worker = new Thread(() -> scan(job), "spectrum-search");
                 job.worker.setDaemon(true);
@@ -192,27 +222,32 @@ public final class SpectrumSearchService implements AutoCloseable
                 }
             persistent.sort(Comparator.comparingDouble(SpectrumPeakDetector.Peak::powerDbfs).reversed());
             synchronized(mLock) { job.phase = "checking"; job.totalSignals = persistent.size(); }
-            Set<P25SiteIdentity> sites = new LinkedHashSet<>();
+            Set<String> sites = new LinkedHashSet<>();
             for(var peak: persistent)
             {
                 requireScanning(job);
                 long frequency = peak.frequencyHz();
                 job.lease.tune(probeCenter(frequency, job.lease));
                 synchronized(mLock) { job.currentFrequency = frequency; }
-                P25DiscoveryProbe.Status evidence = mCheck.check(job.lease, frequency, job.cancelled::get);
+                ProbeResult result;
+                if(mTrunkedCheck != null) result = new ProbeResult(mTrunkedCheck.check(job.lease,frequency,job.cancelled::get),null);
+                else if(mAllProtocols) result = checkTrunked(job.lease,frequency,job.cancelled::get);
+                else
+                {
+                    var p25 = mCheck.check(job.lease,frequency,job.cancelled::get);
+                    result = new ProbeResult(TrunkedDiscoveryEvidence.p25(p25,mClock.getAsLong()),p25 != null && p25.signal() != null ? p25.signal().meanPowerDbfs() : null);
+                }
+                TrunkedDiscoveryEvidence evidence = result.evidence();
                 requireScanning(job);
-                P25SiteIdentity identity = verifiedIdentity(evidence);
                 synchronized(mLock) { job.checkedSignals++; }
-                if(identity == null || !sites.add(identity)) continue;
-                var mode = "C4FM".equals(evidence.selectedModulation()) ? evidence.c4fm() : evidence.cqpsk();
-                double strength = evidence.signal() != null && evidence.signal().meanPowerDbfs() != null ?
-                    evidence.signal().meanPowerDbfs() : peak.powerDbfs();
-                Row row = new Row(frequency, strength, identity, evidence.selectedModulation(),
-                    new Health(mode.qualityPct(), mode.validMessages(), mode.validControlMessages(),
-                        mode.invalidControlMessages(), mClock.getAsLong()));
-                row.known = mChannels.knownSite(identity);
+                if(evidence == null || !evidence.verified() || !sites.add(evidence.identity().siteKey())) continue;
+                Row row = new Row(evidence.servingFrequencyHz() != null ? evidence.servingFrequencyHz() : frequency, result.strengthDbfs() != null ? result.strengthDbfs() : peak.powerDbfs(), evidence,
+                    new Health(evidence.qualityPct(), evidence.validMessages(), evidence.validControlMessages(),
+                        evidence.invalidControlMessages(), mClock.getAsLong()));
+                row.known = mChannels.knownTrunked(evidence);
                 if(row.known == null) row.known = mChannels.known(frequency);
                 synchronized(mLock) { job.rows.put(row.id, row); }
+                resolveDirectory(job,row);
             }
             refreshGroups(job);
             synchronized(mLock)
@@ -270,11 +305,11 @@ public final class SpectrumSearchService implements AutoCloseable
                 {
                     if(mClock.getAsLong() - row.health.checkedAtMs() > RESULT_AGE_MS)
                         throw new IllegalStateException("This result is too old. Run the search again");
-                    row.known = mChannels.knownSite(row.identity);
+                    row.known = mChannels.knownTrunked(row.evidence);
                     if(row.known == null) row.known = mChannels.known(row.frequency);
                     if(row.known != null)
                         throw new IllegalStateException("This frequency already belongs to a saved channel");
-                    var review = mChannels.review(row.frequency, preferred(job), row.identity, row.modulation);
+                    var review = mChannels.reviewTrunked(row.frequency, preferred(job), row.evidence);
                     AliasChoice choice = choices.get(row.groupId());
                     long aliasId = job.aliasIds.getOrDefault(row.groupId(), choice != null ? choice.aliasListId() :
                         review.suggestedAliasListId() != null ? review.suggestedAliasListId() : 0L);
@@ -283,10 +318,11 @@ public final class SpectrumSearchService implements AutoCloseable
                     String aliasName = choice != null && choice.newAliasListName() != null ? choice.newAliasListName() :
                         review.defaultNewAliasListName();
                     var template = review.template();
-                    ChannelDefinition definition = new ChannelDefinition(null, "p25-phase1", template.system(),
-                        template.site(), name, null, aliasId, template.source(), template.settings(),
-                        List.of(), List.of(), List.of(), List.of(), ChannelDefinition.Observed.EMPTY);
-                    row.saved = mChannels.create(definition, row.identity, aliasName, revision, edit.autoStart());
+                    TrunkedDiscoveryEvidence saveEvidence = row.evidence.withManualFrequencyMap(edit.frequencyMap());
+                    ChannelDefinition definition = new ChannelDefinition(null, row.evidence.protocolId(), row.systemName(),
+                        row.siteName(), name, null, aliasId, template.source(), template.settings(),
+                        saveEvidence.frequencyMap(), List.of(), List.of(), List.of(), ChannelDefinition.Observed.EMPTY);
+                    row.saved = mChannels.createTrunked(definition, saveEvidence, aliasName, revision, edit.autoStart());
                     row.savedName = name;
                     row.autoStart = edit.autoStart();
                     job.aliasIds.put(row.groupId(), row.saved.aliasListId());
@@ -389,13 +425,12 @@ public final class SpectrumSearchService implements AutoCloseable
         Map<String,AliasGroup> groups = new LinkedHashMap<>();
         for(Row row: job.rows.values())
         {
-            var review = mChannels.review(row.frequency, preferred(job), row.identity, row.modulation);
-            row.friendlySystem = review.template().system();
-            row.friendlySite = review.template().site();
+            var review = mChannels.reviewTrunked(row.frequency, preferred(job), row.evidence);
+            if(row.directory.match() == null) { row.friendlySystem = review.template().system(); row.friendlySite = review.template().site(); }
             if(groups.containsKey(row.groupId())) continue;
-            groups.put(row.groupId(), new AliasGroup(row.groupId(), row.identity.wacn(), row.identity.system(),
+            groups.put(row.groupId(), new AliasGroup(row.groupId(), row.identity != null ? row.identity.wacn() : 0, row.identity != null ? row.identity.system() : 0,
                 review.aliasLists(), job.aliasIds.getOrDefault(row.groupId(), review.suggestedAliasListId()),
-                review.defaultNewAliasListName()));
+                review.defaultNewAliasListName(), row.evidence.protocolId(), row.systemName()));
         }
         synchronized(mLock) { job.groups = groups; }
     }
@@ -418,7 +453,7 @@ public final class SpectrumSearchService implements AutoCloseable
     {
         synchronized(mLock) { mClosed = true; }
         try { closeActiveSession(); }
-        finally { mExpiry.shutdownNow(); }
+        finally { mExpiry.shutdownNow(); mDirectoryWorker.shutdownNow(); }
     }
     private void expire()
     {
@@ -524,7 +559,7 @@ public final class SpectrumSearchService implements AutoCloseable
             row.savedName != null ? row.savedName : row.name(), row.systemName(), row.siteName(), row.groupId(),
             row.known, row.known == null && row.saved == null, row.saved != null,
             row.saved != null ? row.saved.configurationId() : null, row.saved != null ? row.saved.aliasListId() : null,
-            row.autoStart, row.running, row.saveError, row.startError)).toList() : List.of();
+            row.autoStart, row.running, row.saveError, row.startError, row.evidence.protocolId(), row.evidence.variant(), row.evidence, row.directory)).toList() : List.of();
         return new Snapshot(job.id, job.tunerId, job.lease.targetId(), job.phase, job.reason, job.truncatedReason, job.restartRequired, job.revision,
             job.expiresAt, new Progress(job.completedWindows, job.windows.size() * 2, job.currentFrequency,
                 job.checkedSignals, job.totalSignals), rows, complete ? List.copyOf(job.groups.values()) : List.of());
@@ -550,6 +585,12 @@ public final class SpectrumSearchService implements AutoCloseable
     }
     static long probeCenter(long frequency, SpectrumSearchHardware.Lease lease)
     {
+        if(lease.fixedWindow())
+        {
+            if(!FrequencyListenService.withinCurrentWindow(frequency, lease.centerFrequencyHz(),12500,lease.usableBandwidthHz()/2,lease.middleUnusableHalfBandwidthHz()))
+                throw new IllegalArgumentException("This frequency is outside the recording capture window");
+            return lease.centerFrequencyHz();
+        }
         long offset = Math.max(lease.middleUnusableHalfBandwidthHz() + 25000, Math.min(100000, lease.usableBandwidthHz() / 4));
         long center = frequency + offset;
         if(center > lease.maximumFrequencyHz()) center = frequency - offset;
@@ -605,6 +646,59 @@ public final class SpectrumSearchService implements AutoCloseable
             throw new InterruptedException();
         }
     }
+    private void resolveDirectory(Job job,Row row)
+    {
+        RadioReferenceDiscoveryResolver resolver = mDirectory;
+        if(resolver == null) return;
+        row.directory = RadioReferenceDiscoveryResolver.Result.pending();
+        try { mDirectoryWorker.execute(() -> {
+            synchronized(mLock) { if(job.cancelled.get() || mJob != job) return; }
+            var result = resolver.resolve(job.stateId, directoryIdentity(row.evidence,row.frequency));
+            synchronized(mLock)
+            {
+                if(job.cancelled.get() || mJob != job) return;
+                row.directory = result;
+                row.evidence = DiscoveryDirectoryEnrichment.merge(row.evidence,result);
+                if(result.match() != null)
+                {
+                    row.friendlySystem = result.match().systemName(); row.friendlySite = result.match().siteName();
+                    refreshGroups(job);
+                }
+            }
+        }); } catch(java.util.concurrent.RejectedExecutionException exception) { row.directory = RadioReferenceDiscoveryResolver.Result.manual("unavailable","RadioReference is busy. Review the on-air identity."); }
+    }
+    static ExecutorService directoryWorker(String name)
+    {
+        return new java.util.concurrent.ThreadPoolExecutor(1,1,0,TimeUnit.MILLISECONDS,new java.util.concurrent.ArrayBlockingQueue<>(MAX_CANDIDATES),task -> { var thread = new Thread(task,name); thread.setDaemon(true); return thread; },new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
+    }
+    static RadioReferenceDiscoveryResolver.Identity directoryIdentity(TrunkedDiscoveryEvidence evidence,long frequency)
+    {
+        var id = evidence.identity(); var p25 = id.p25();
+        return new RadioReferenceDiscoveryResolver.Identity(evidence.protocolId(),evidence.variant(),evidence.servingFrequencyHz() != null ? evidence.servingFrequencyHz() : frequency,
+            p25 != null ? p25.wacn() : null, p25 != null ? p25.system() : id.system(),
+            p25 != null ? p25.rfss() : null,id.site(),id.colorCode(),id.ran(),"dmr".equals(evidence.protocolId()) ? id.model() : "nxdn".equals(evidence.protocolId()) ? id.category() : null);
+    }
+    private record ProbeResult(TrunkedDiscoveryEvidence evidence,Double strengthDbfs) { }
+    private static ProbeResult checkTrunked(SpectrumSearchHardware.Lease lease, long frequency,
+        BooleanSupplier cancelled) throws InterruptedException
+    {
+        try(var p25 = lease.probe(frequency); var digital = lease.digitalProbe(frequency))
+        {
+            while(!cancelled.getAsBoolean())
+            {
+                var p25Status = p25.status();
+                var p25Evidence = TrunkedDiscoveryEvidence.p25(p25Status, System.currentTimeMillis());
+                var digitalStatus = digital != null ? digital.status() : null;
+                var digitalEvidence = digitalStatus != null && "ready".equals(digitalStatus.state()) ? digitalStatus.evidence() : null;
+                if(p25Evidence != null && digitalEvidence != null) return new ProbeResult(null,null);
+                if(p25Evidence != null) return new ProbeResult(p25Evidence,p25Status.signal() != null ? p25Status.signal().meanPowerDbfs() : null);
+                if(digitalEvidence != null) return new ProbeResult(digitalEvidence,null);
+                if(!"running".equals(p25Status.state()) && (digitalStatus == null || !"running".equals(digitalStatus.state()))) return new ProbeResult(null,null);
+                Thread.sleep(25);
+            }
+            throw new InterruptedException();
+        }
+    }
     private static List<Row> selected(Job job, List<String> ids)
     {
         if(ids == null || ids.isEmpty() || ids.size() > MAX_CANDIDATES || new LinkedHashSet<>(ids).size() != ids.size())
@@ -641,20 +735,23 @@ public final class SpectrumSearchService implements AutoCloseable
             int channelCount = group.stream().mapToInt(TunerAdministrationService.Item::channelCount).sum();
             boolean groupTransition = group.stream().anyMatch(other -> other.transition() != null);
             boolean groupBusy = channelCount > 0 || groupTransition;
-            boolean locked = configuration != null && configuration.isCenterFrequencyLocked();
-            boolean supported = found != null && configuration != null && found.getTunerClass() != TunerClass.RECORDING_TUNER &&
+            boolean recording = found != null && found.getTunerClass() == TunerClass.RECORDING_TUNER;
+            boolean locked = !recording && configuration != null && configuration.isCenterFrequencyLocked();
+            boolean supported = found != null && configuration != null &&
                 (found.getTunerStatus() == TunerStatus.ENABLED || found.getTunerStatus() == TunerStatus.DISABLED) &&
                 bandwidth >= 100000 && maximum > minimum;
             boolean eligible = supported && item.channelCount() == 0 && item.transition() == null && !groupBusy && !locked &&
-                (runtime == null || !runtime.getTunerController().isLockedSampleRate());
+                (runtime == null || recording || !runtime.getTunerController().isLockedSampleRate());
             boolean takeoverAllowed = supported && !groupTransition;
             String reason = eligible ? null : channelCount > 0 ?
                 channelCount + " active channel" + (channelCount == 1 ? "" : "s") + " will stop" :
                 locked ? "Center frequency is locked" : groupTransition ? "Receiver settings are changing" :
                     "Choose an available receiver";
+            Long center = item.frequencyHz() != null ? item.frequencyHz() : item.configuredFrequencyHz();
+            if(recording && center != null) { minimum = Math.max(1, center-bandwidth/2); maximum = center+bandwidth/2; }
             targets.add(new SearchTuner(item.id(), item.name(), eligible, takeoverAllowed, reason, channelCount,
                 locked, item.operatorState(), bandwidth, minimum, maximum,
-                item.frequencyHz() != null ? item.frequencyHz() : item.configuredFrequencyHz()));
+                center, recording ? "recording" : "receiver", recording));
         }
         String suggested = targets.stream().filter(SearchTuner::eligible)
             .max(Comparator.comparingLong(SearchTuner::usableBandwidthHz)).map(SearchTuner::id).orElse(null);
@@ -667,6 +764,7 @@ public final class SpectrumSearchService implements AutoCloseable
     }
 
     interface HardwareFactory { SpectrumSearchHardware.Lease open(String tunerId, String browseLeaseId); }
+    interface TrunkedProbeCheck { TrunkedDiscoveryEvidence check(SpectrumSearchHardware.Lease lease,long frequency,BooleanSupplier cancelled) throws InterruptedException; }
     interface ProbeCheck { P25DiscoveryProbe.Status check(SpectrumSearchHardware.Lease lease, long frequency,
                                                          BooleanSupplier cancelled) throws InterruptedException; }
     interface Channels
@@ -674,6 +772,11 @@ public final class SpectrumSearchService implements AutoCloseable
         long revision();
         KnownChannel known(long frequency);
         default KnownChannel knownSite(P25SiteIdentity identity) { return null; }
+        default KnownChannel knownTrunked(TrunkedDiscoveryEvidence evidence) { return evidence.identity().p25() != null ? knownSite(evidence.identity().p25()) : null; }
+        default ChannelAdministrationService.DiscoveryReview reviewTrunked(long frequency, String preferred, TrunkedDiscoveryEvidence evidence)
+        { return review(frequency, preferred, evidence.identity().p25(), (String)evidence.settings().get("modulation")); }
+        default ChannelAdministrationService.DiscoveryCreated createTrunked(ChannelDefinition definition, TrunkedDiscoveryEvidence evidence, String aliasName,long revision,boolean autoStart)
+        { return create(definition,evidence.identity().p25(),aliasName,revision,autoStart); }
         ChannelAdministrationService.DiscoveryReview review(long frequency, String preferred, P25SiteIdentity identity, String modulation);
         ChannelAdministrationService.DiscoveryCreated create(ChannelDefinition definition, P25SiteIdentity identity,
             String aliasName, long revision, boolean autoStart);
@@ -682,6 +785,7 @@ public final class SpectrumSearchService implements AutoCloseable
     private static final class Job
     {
         final String id = UUID.randomUUID().toString();
+        Integer stateId;
         final String tunerId;
         final SpectrumSearchHardware.Lease lease;
         final List<Range> ranges;
@@ -723,13 +827,13 @@ public final class SpectrumSearchService implements AutoCloseable
         volatile String savedName, saveError, startError, friendlySystem, friendlySite;
         volatile boolean running;
         volatile Boolean autoStart;
-        Row(long frequency, double strength, P25SiteIdentity identity, String modulation, Health health)
-        { this.frequency = frequency; this.strength = strength; this.identity = identity; this.modulation = modulation; this.health = health; }
-        String groupId() { return String.format(Locale.ROOT, "p25-%05X-%03X", identity.wacn(), identity.system()); }
-        String systemName() { return friendlySystem != null && !friendlySystem.isBlank() ? friendlySystem :
-            String.format(Locale.ROOT, "P25 %05X-%03X", identity.wacn(), identity.system()); }
-        String siteName() { return friendlySite != null && !friendlySite.isBlank() ? friendlySite :
-            "RFSS " + identity.rfss() + " · Site " + identity.site(); }
+        volatile RadioReferenceDiscoveryResolver.Result directory = RadioReferenceDiscoveryResolver.Result.manual();
+        volatile TrunkedDiscoveryEvidence evidence;
+        Row(long frequency, double strength, TrunkedDiscoveryEvidence evidence, Health health)
+        { this.frequency = frequency; this.strength = strength; this.evidence = evidence; this.identity = evidence.identity().p25(); this.modulation = (String)evidence.settings().get("modulation"); this.health = health; }
+        String groupId() { return evidence.groupId(); }
+        String systemName() { return friendlySystem != null && !friendlySystem.isBlank() ? friendlySystem : evidence.systemName(); }
+        String siteName() { return friendlySite != null && !friendlySite.isBlank() ? friendlySite : evidence.siteName(); }
         String name() { return systemName() + " · " + siteName(); }
     }
     private static final class SearchLimitException extends RuntimeException
@@ -742,7 +846,11 @@ public final class SpectrumSearchService implements AutoCloseable
     public record SearchTuner(String id, String name, boolean eligible, boolean takeoverAllowed, String reason,
                               int channelCount, boolean centerFrequencyLocked, String operatorState,
                               long usableBandwidthHz, long minimumFrequencyHz, long maximumFrequencyHz,
-                              Long centerFrequencyHz) { }
+                              Long centerFrequencyHz, String sourceType, boolean fixedWindow)
+    {
+        public SearchTuner(String id,String name,boolean eligible,boolean takeoverAllowed,String reason,int channelCount,boolean centerFrequencyLocked,String operatorState,long usableBandwidthHz,long minimumFrequencyHz,long maximumFrequencyHz,Long centerFrequencyHz)
+        { this(id,name,eligible,takeoverAllowed,reason,channelCount,centerFrequencyLocked,operatorState,usableBandwidthHz,minimumFrequencyHz,maximumFrequencyHz,centerFrequencyHz,"receiver",false); }
+    }
     public record Preset(String id, String label, List<Range> ranges) { }
     public record Catalog(List<SearchTuner> tuners, String suggestedTunerId, List<Preset> presets, Bounds bounds) { }
     public record Health(double qualityPct, long validMessages, long validControlMessages,
@@ -751,14 +859,19 @@ public final class SpectrumSearchService implements AutoCloseable
     public record Candidate(String candidateId, long frequencyHz, P25SiteIdentity identity, String modulation,
                             double strengthDbfs, Health health, String name, String systemName, String siteName,
                             String aliasGroupId, KnownChannel knownChannel, boolean selectable, boolean saved,
-                            String configurationId, Long aliasListId, Boolean autoStart, boolean running, String saveError, String startError) { }
+                            String configurationId, Long aliasListId, Boolean autoStart, boolean running, String saveError, String startError,
+                            String protocolId, String variant, TrunkedDiscoveryEvidence trunkedEvidence, RadioReferenceDiscoveryResolver.Result radioReference) { }
     public record AliasGroup(String groupId, int wacn, int system,
                              List<ChannelAdministrationService.DiscoveryAliasList> aliasLists,
-                             Long suggestedAliasListId, String defaultNewAliasListName) { }
+                             Long suggestedAliasListId, String defaultNewAliasListName, String protocolId, String systemName) { }
     public record Progress(int completed, int total, Long currentFrequencyHz, int checked, int totalSignals) { }
     public record Snapshot(String jobId, String tunerId, String targetId, String phase, String reason, String truncatedReason, boolean restartRequired, long revision,
                            long expiresAtMs, Progress progress, List<Candidate> candidates, List<AliasGroup> aliasGroups) { }
-    public record SaveCandidate(String candidateId, String name, boolean autoStart) { }
+    public record SaveCandidate(String candidateId, String name, boolean autoStart, List<ChannelDefinition.FrequencyMapEntry> frequencyMap)
+    {
+        public SaveCandidate { frequencyMap = List.copyOf(frequencyMap != null ? frequencyMap : List.of()); }
+        public SaveCandidate(String candidateId,String name,boolean autoStart) { this(candidateId,name,autoStart,List.of()); }
+    }
     public record AliasChoice(String groupId, long aliasListId, String newAliasListName) { }
     public record SaveRequest(long revision, List<SaveCandidate> candidates, List<AliasChoice> aliasGroups) { }
 }

@@ -84,6 +84,23 @@ class SpectrumDiscoveryHttpControllerTest
     }
 
     @Test
+    void optionalRadioReferenceScopeIsStrictForEveryDiscoveryProtocol() throws Exception
+    {
+        try(Fixture fixture = new Fixture())
+        {
+            for(String scope: new String[]{"0", "-1", "1.5", "\"39\"", "true", "2147483648", "[]"})
+                assertEquals(400, fixture.send(PATH, "POST", OPEN.substring(0, OPEN.length()-1) +
+                    ",\"radioreference_state_id\":" + scope + "}").statusCode());
+            for(String protocol: new String[]{"p25-phase1", "dmr", "nxdn", "am", "nbfm"})
+                for(String scope: new String[]{"null", "39"})
+                    assertEquals(503, fixture.send(PATH, "POST", OPEN.replace("p25-phase1", protocol)
+                        .replace("}", ",\"radioreference_state_id\":" + scope + "}")).statusCode());
+            assertEquals(400, fixture.send(PATH, "POST", OPEN.substring(0, OPEN.length()-1) +
+                ",\"trunked_evidence\":{\"verified\":true}}").statusCode());
+        }
+    }
+
+    @Test
     void rejectsMalformedSaveSettingsAndRevisionBeforeMutation() throws Exception
     {
         try(Fixture fixture = new Fixture())

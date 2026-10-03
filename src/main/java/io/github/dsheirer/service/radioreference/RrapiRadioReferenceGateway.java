@@ -419,17 +419,27 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
                 .getVoices());
             String wacn = "";
             String nativeSystemId = "";
+            List<RadioNetworkIdentity> networks = new ArrayList<>();
 
-            if(info.getRadioNetworks() != null && !info.getRadioNetworks().isEmpty() &&
-                info.getRadioNetworks().getFirst() != null)
+            if(info.getRadioNetworks() != null)
             {
-                io.github.dsheirer.rrapi.type.RadioNetwork network = info.getRadioNetworks().getFirst();
-                wacn = text(network.getWacn());
-                nativeSystemId = text(network.getSystemId());
+                for(io.github.dsheirer.rrapi.type.RadioNetwork network: info.getRadioNetworks())
+                {
+                    if(network != null)
+                    {
+                        networks.add(new RadioNetworkIdentity(text(network.getWacn()), text(network.getSystemId()),
+                            text(network.getModel())));
+                    }
+                }
+                if(!networks.isEmpty())
+                {
+                    wacn = networks.getFirst().wacn();
+                    nativeSystemId = networks.getFirst().systemId();
+                }
             }
 
             return new TrunkedSystemDetails(systemId, text(info.getName()), text(info.getCity()), type, flavor,
-                voice, wacn, nativeSystemId);
+                voice, wacn, nativeSystemId, networks);
         }
         catch(RuntimeException exception)
         {
