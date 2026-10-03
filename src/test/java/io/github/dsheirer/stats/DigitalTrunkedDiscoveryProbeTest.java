@@ -413,6 +413,58 @@ class DigitalTrunkedDiscoveryProbeTest
         assertNxdnModeAmbiguity(true, "disagree");
     }
 
+    @Test void duplicateTypeCFramesInTypeDDecoderDoNotCreatePhysicalRateAmbiguity() throws Exception
+    {
+        assertCanonicalNxdnSubtype(false);
+    }
+
+    @Test void duplicateTypeDFramesInTypeCDecoderKeepConservativeTypeDProof() throws Exception
+    {
+        assertCanonicalNxdnSubtype(true);
+    }
+
+    @Test void nxdnSubtypeAliasesDoNotCountControlOrServingIdentityInWrongMode()
+    {
+        var typeDMode = new DigitalTrunkedDiscoveryProbe.ModeEvidence("TYPE_D", FREQUENCY);
+        confirm(typeDMode, time -> typeC(341, 837, 12, time, LICH.RCCH_OUTBOUND_SINGLE_CAC_NORMAL));
+        assertEquals(20, typeDMode.metrics().validMessages(), "Nominal decoding telemetry remains visible");
+        assertEquals(0, typeDMode.metrics().validControlMessages());
+        assertEquals(0, typeDMode.metrics().identityObservations());
+        assertNull(typeDMode.confirmed(5_000));
+        for(String mode: List.of("M4800", "M9600"))
+        {
+            var typeCMode = new DigitalTrunkedDiscoveryProbe.ModeEvidence(mode, FREQUENCY);
+            confirm(typeCMode, time -> typeD(7, time));
+            assertEquals(20, typeCMode.metrics().validMessages());
+            assertEquals(0, typeCMode.metrics().validControlMessages());
+            assertEquals(0, typeCMode.metrics().identityObservations());
+            assertNull(typeCMode.confirmed(5_000));
+        }
+    }
+
+    @Test void invalidOppositeNxdnSubtypeControlsStillRejectPoorQuality()
+    {
+        for(String mode: List.of("M4800", "M9600", "TYPE_D"))
+        {
+            boolean typeD = "TYPE_D".equals(mode);
+            var evidence = new DigitalTrunkedDiscoveryProbe.ModeEvidence(mode, FREQUENCY);
+            confirm(evidence, time -> typeD ? typeD(7, time) :
+                typeC(341, 837, 12, time, LICH.RCCH_OUTBOUND_SINGLE_CAC_NORMAL));
+            assertNotNull(evidence.confirmed(5_000));
+            for(int index = 0; index < 30; index++)
+            {
+                var invalid = typeD ? typeC(341, 837, 12, 4_000 + index, LICH.RCCH_OUTBOUND_SINGLE_CAC_NORMAL) : typeD(7, 4_000 + index);
+                invalid.setValid(false);
+                evidence.receive(invalid);
+            }
+            assertEquals(20, evidence.metrics().validControlMessages());
+            assertEquals(30, evidence.metrics().invalidControlMessages(), "An invalid subtype cannot justify removing control errors");
+            assertEquals(40.0, evidence.metrics().qualityPct());
+            assertEquals(3, evidence.metrics().identityObservations(), "Invalid controls must not alter trusted identity");
+            assertNull(evidence.confirmed(6_000), "Prior 60% quality threshold must still reject damaged signals");
+        }
+    }
+
     @Test void readyProofLosingItsSourceReservationReleasesHoldAndAllowsRetry() throws Exception
     {
         var first = new FakeSource();
@@ -459,6 +511,33 @@ class DigitalTrunkedDiscoveryProbeTest
             assertNull(session.status().evidence());
             assertEquals(2, session.status().modes().stream().filter(mode -> mode.validControlMessages() >= 20).count());
             await(() -> source.closed.get() == 1);
+        }
+    }
+
+    private static void assertCanonicalNxdnSubtype(boolean typeD) throws Exception
+    {
+        var source = new FakeSource();
+        var clock = new AtomicLong(1_000);
+        try(var probe = new DigitalTrunkedDiscoveryProbe((target, frequency) -> source,
+            (mode, rate, messages) -> decoder(samples -> {
+                if("M4800".equals(mode) || "TYPE_D".equals(mode))
+                    sendConfirmed(messages, time -> typeD ? typeD(7, time) :
+                        typeC(341, 837, 12, time, LICH.RCCH_OUTBOUND_SINGLE_CAC_NORMAL));
+            }), clock::get))
+        {
+            var session = probe.open("recording", FREQUENCY, "nxdn");
+            clock.set(5_000);
+            source.emit(samples(1_000));
+            await(() -> "ready".equals(session.status().state()));
+            var proof = session.status().evidence();
+            assertNotNull(proof);
+            assertEquals(typeD ? "TYPE_D" : "TYPE_C", proof.variant());
+            assertEquals(typeD ? "TYPE_D" : "M4800", proof.settings().get("transmission_mode"));
+            assertEquals(1, session.status().modes().stream().filter(mode -> mode.validControlMessages() >= 20).count());
+            if(typeD) assertNull(proof.identity().radioSystemKey(), "Type-D SiteID remains frequency-scoped");
+            else assertEquals("nxdn-c:global:341", proof.identity().radioSystemKey());
+            session.close();
+            assertEquals(1, source.closed.get());
         }
     }
 

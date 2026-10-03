@@ -215,8 +215,12 @@ class TrunkedDiscoveryChannelPersistenceTest
 
         @Override public void close()
         {
-            try { manager.flushConfiguration(); }
-            finally { MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager()); }
+            try { manager.getChannelProcessingManager().close(); }
+            finally
+            {
+                try { manager.flushConfiguration(); }
+                finally { MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager()); }
+            }
         }
     }
 }

@@ -296,6 +296,11 @@ public final class DigitalTrunkedDiscoveryProbe implements AutoCloseable
             }
             else if(message instanceof NXDNLayer3Message value)
             {
+                //The 2400-symbol Type-C and Type-D decoders can both frame a Type-C broadcast. Use the
+                //validated received message subtype to choose its canonical mode before trusting site evidence.
+                //M4800 versus M9600 still represents a physical rate choice and retains the ambiguity guard.
+                //An invalid message cannot establish its subtype: keep counting it in the quality denominator.
+                if(value.isValid() && "TYPE_D".equals(mode) != value.isTypeD()) return;
                 boolean controlCarrier = value.getLICH() != null && (value.getLICH().getRFChannel() == io.github.dsheirer.module.decode.nxdn.layer2.RFChannel.RCCH || value.getLICH().getRFChannel() == io.github.dsheirer.module.decode.nxdn.layer2.RFChannel.RTCHC || value.isTypeD());
                 boolean serving = controlCarrier && (value instanceof SiteInformation || value instanceof ServiceInformation || value instanceof ControlChannelInformation || value instanceof SiteID);
                 boolean controlMessage = serving || value.getMessageType().name().startsWith("CONTROL_OUT_") || value.isTypeD();

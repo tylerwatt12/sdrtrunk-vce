@@ -135,7 +135,8 @@ public class SLCAssembler
             CorrectedBinaryMessage corrected = mBPTC.extract(interleaved);
             //Note: slco is timeslot-agnostic, so we use timeslot 0 every time
             ShortLCMessage slco = LCMessageFactory.createShort(corrected, timestamp, 0);
-            slco.setValid(corrected.getCorrectedBitCount() >= 0);
+            //Both the Short LC CRC and the BPTC correction must succeed.
+            slco.setValid(slco.isValid() && corrected.getCorrectedBitCount() >= 0);
             return slco;
         }
 
