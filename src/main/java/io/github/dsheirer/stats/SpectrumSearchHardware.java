@@ -49,6 +49,7 @@ public final class SpectrumSearchHardware
         long centerFrequencyHz();
         void tune(long frequencyHz);
         List<SpectrumPeakDetector.Peak> observe(long dwellMillis, BooleanSupplier cancelled) throws InterruptedException;
+        default ObservationStats lastObservation() { return null; }
         P25DiscoveryProbe.Session probe(long frequencyHz);
         default DigitalTrunkedDiscoveryProbe.Session digitalProbe(long frequencyHz) { return null; }
         default boolean fixedWindow() { return false; }
@@ -56,6 +57,11 @@ public final class SpectrumSearchHardware
         <T> T handoff(long centerHz, Supplier<T> start);
         @Override void close();
     }
+
+    /** Immutable worker diagnostics for local validation; no receiving callback or public web payload uses it. */
+    public record ObservationStats(long centerFrequencyHz, long requestedDwellMillis, long spectrumOpenNanos,
+                                   long elapsedNanos, long firstAcceptedFftNanos, int acceptedFrames,
+                                   int maximumFutureFrames, boolean cadenceKnown, boolean finishedEarly) { }
 
     /** Expected search-worker observation failure with safe operator-facing copy. */
     public static final class ObservationException extends IllegalStateException
@@ -87,6 +93,7 @@ public final class SpectrumSearchHardware
         private P25DiscoveryProbe.Session activeProbe;
         private long freshAfter;
         private boolean closed;
+        private volatile ObservationStats lastObservation;
 
         ReceiverLease(DiscoveredTuner selected, String browseId, TunerSettingsService.ProbeHold hold)
         {
@@ -146,21 +153,28 @@ public final class SpectrumSearchHardware
 
         public List<SpectrumPeakDetector.Peak> observe(long dwellMillis, BooleanSupplier cancelled) throws InterruptedException
         {
+            lastObservation = null;
+            long opening = System.nanoTime();
             openSpectrum();
+            long openNanos = System.nanoTime() - opening;
             long center = centerFrequencyHz();
             SpectrumPeakDetector detector = new SpectrumPeakDetector(center, sampleRateHz(), usableBandwidthHz(),
                 middleUnusableHalfBandwidthHz(), !fixedWindow());
-            long deadline = System.nanoTime() + Duration.ofMillis(dwellMillis).toNanos();
-            while(System.nanoTime() < deadline && !cancelled.getAsBoolean())
-            {
-                if(!valid()) throw new ObservationException("The search receiver changed. Choose an idle receiver and retry.");
-                DiagnosticStreamFrame frame = spectrum.poll(Duration.ofMillis(100));
-                if(frame != null && frame.observedAtEpochMs() >= freshAfter) detector.receive(frame);
-                if(spectrum.isClosed()) throw new ObservationException("The receiver stopped providing spectrum data. Check its connection and retry.");
-            }
-            if(!cancelled.getAsBoolean()) requireFreshFrames(dwellMillis, detector.frames());
-            return detector.peaks();
+            SpectrumWindowObservation.Result result = SpectrumWindowObservation.collect(detector,
+                new SpectrumWindowObservation.FrameSource()
+                {
+                    public DiagnosticStreamFrame poll(Duration timeout) throws InterruptedException { return spectrum.poll(timeout); }
+                    public boolean valid() { return ReceiverLease.this.valid(); }
+                    public boolean isClosed() { return spectrum.isClosed(); }
+                    public long minimumPublicationIntervalNanos() { return spectrum.minimumFftPublicationIntervalNanos(); }
+                }, dwellMillis, freshAfter, cancelled, System::nanoTime);
+            lastObservation = new ObservationStats(center, dwellMillis, openNanos, result.elapsedNanos(),
+                result.firstAcceptedFftNanos(), result.acceptedFrames(), result.maximumFutureFrames(),
+                result.cadenceKnown(), result.finishedEarly());
+            return result.peaks();
         }
+
+        public ObservationStats lastObservation() { return lastObservation; }
 
         public P25DiscoveryProbe.Session probe(long frequencyHz)
         {

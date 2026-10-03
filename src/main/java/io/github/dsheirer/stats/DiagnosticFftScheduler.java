@@ -84,7 +84,7 @@ final class DiagnosticFftScheduler implements AutoCloseable
             };
             ScheduledFuture<?> future = mExecutor.scheduleWithFixedDelay(guarded, 0, delayNanos,
                 TimeUnit.NANOSECONDS);
-            return new Task(this, future);
+            return new Task(this, future, delayNanos);
         }
         catch(RuntimeException exception)
         {
@@ -125,12 +125,20 @@ final class DiagnosticFftScheduler implements AutoCloseable
     {
         private final DiagnosticFftScheduler mOwner;
         private final ScheduledFuture<?> mFuture;
+        private final long mMinimumIntervalNanos;
         private final AtomicBoolean mClosed = new AtomicBoolean();
 
-        private Task(DiagnosticFftScheduler owner, ScheduledFuture<?> future)
+        private Task(DiagnosticFftScheduler owner, ScheduledFuture<?> future, long minimumIntervalNanos)
         {
             mOwner = owner;
             mFuture = future;
+            mMinimumIntervalNanos = minimumIntervalNanos;
+        }
+
+        /** The owned serial executor waits this long after a calculation before starting its next invocation. */
+        long minimumIntervalNanos()
+        {
+            return mClosed.get() ? 0 : mMinimumIntervalNanos;
         }
 
         @Override

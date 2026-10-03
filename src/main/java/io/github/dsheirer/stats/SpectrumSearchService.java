@@ -198,6 +198,12 @@ public final class SpectrumSearchService implements AutoCloseable
                 for(long center: job.windows)
                 {
                     requireScanning(job);
+                    // Persistence requires a first-pass match, so an empty complete first pass cannot yield candidates.
+                    if(pass == 1 && first.isEmpty())
+                    {
+                        synchronized(mLock) { job.completedWindows++; }
+                        continue;
+                    }
                     job.lease.tune(center);
                     synchronized(mLock) { job.currentFrequency = center; }
                     for(var peak: job.lease.observe(job.dwellMs, job.cancelled::get))

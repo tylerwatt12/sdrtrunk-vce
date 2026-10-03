@@ -9,6 +9,31 @@ class SpectrumPeakDetectorTest
     private static final long CENTER = 851_000_000;
     private static final long RATE = 2_000_000;
 
+    @Test void impossibilityBoundIncludesUnseenTracksAndExactPersistenceThresholds()
+    {
+        for(int total = 0; total <= 30; total++)
+        {
+            for(int count = 0; count <= total; count++)
+            {
+                SpectrumPeakDetector detector = detector();
+                for(int index = 0; index < total; index++)
+                {
+                    float[] bins = noise();
+                    if(index < count) signal(bins, CENTER + 300_000, -35);
+                    detector.receive(bins);
+                }
+                for(int future = 0; future <= 40; future++)
+                {
+                    boolean possible = count + future >= 6 && 4L * (count + future) >= 3L * (total + future);
+                    assertEquals(total >= 6 && !possible, detector.cannotBecomePersistent(future),
+                        "frames=" + total + " count=" + count + " future=" + future);
+                }
+                assertFalse(detector.cannotBecomePersistent(-1));
+                assertFalse(detector.cannotBecomePersistent(Integer.MAX_VALUE));
+            }
+        }
+    }
+
     @Test void steadyPeakSurvivesSmallDriftButIntermittentVoiceDoesNot()
     {
         SpectrumPeakDetector detector = detector();
