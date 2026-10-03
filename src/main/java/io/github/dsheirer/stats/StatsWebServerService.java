@@ -919,11 +919,13 @@ public class StatsWebServerService implements AutoCloseable
                 WebCapability.ADMIN_CHANNELS, channelController::handle));
             if(mSpectrumDiscoveryService != null)
                 server.createContext(SpectrumDiscoveryHttpController.PATH, mWebRequestSecurity.protectApi(
-                    WebCapability.ADMIN_CHANNELS, new SpectrumDiscoveryHttpController(mSpectrumDiscoveryService)::handle));
+                    WebCapability.ADMIN_CHANNELS, new SpectrumDiscoveryHttpController(mSpectrumDiscoveryService,
+                        mDatabase::enrichSystemNames)::handle));
             if(mSpectrumSearchService != null)
                 server.createContext(SpectrumSearchHttpController.PATH, mWebRequestSecurity.protectApi(
                     WebCapability.ADMIN_CHANNELS, mWebRequestSecurity.protect(WebCapability.ADMIN_TUNERS,
-                        new SpectrumSearchHttpController(mSpectrumSearchService)::handle)));
+                        new SpectrumSearchHttpController(mSpectrumSearchService,
+                            mDatabase::enrichSystemNames)::handle)));
         }
 
         RadioReferenceHttpController radioReferenceController = new RadioReferenceHttpController(
@@ -950,7 +952,8 @@ public class StatsWebServerService implements AutoCloseable
             WebCapability.ADMIN_SETTINGS, spectrumSnapController::handleAdmin));
 
         P25BandplanOverrideHttpController bandplanOverrideController =
-            new P25BandplanOverrideHttpController(mUserPreferences.getP25BandplanOverrideRegistry());
+            new P25BandplanOverrideHttpController(mUserPreferences.getP25BandplanOverrideRegistry(),
+                mDatabase::namedP25Overrides);
         server.createContext(P25BandplanOverrideHttpController.PATH, mWebRequestSecurity.protectApi(
             WebCapability.ADMIN_SETTINGS, bandplanOverrideController::handle));
 
@@ -970,11 +973,12 @@ public class StatsWebServerService implements AutoCloseable
             WebCapability.USER_SETTINGS, userPreferencesController::handle));
 
         CallMatchingHttpController callMatchingController = new CallMatchingHttpController(
-            () -> mLogicalCallDiagnosticService, () -> mAudioCallCoordinator);
+            () -> mLogicalCallDiagnosticService, () -> mAudioCallCoordinator, mDatabase::enrichSystemNames);
         server.createContext(CallMatchingHttpController.PATH, mWebRequestSecurity.protectApi(
             WebCapability.ADMIN_SETTINGS, callMatchingController::handle));
 
-        MapSnapshotHttpController mapController = new MapSnapshotHttpController(() -> mMapSnapshotService);
+        MapSnapshotHttpController mapController = new MapSnapshotHttpController(() -> mMapSnapshotService,
+            mDatabase::enrichSystemNames);
         server.createContext(MapSnapshotHttpController.PATH, mWebRequestSecurity.protectApi(
             WebCapability.WEB_AUDIO_LISTEN, mapController::handle));
 
@@ -2170,7 +2174,7 @@ public class StatsWebServerService implements AutoCloseable
         {
             StatsWebCallService.FeedResult result = mWebCallService.feed(request.scanListIds(), request.cursor(),
                 StatsWebCallService.FEED_WAIT_MILLISECONDS, TimeUnit.MILLISECONDS, feedGeneration);
-            ApiHttpResponse.sendData(exchange, 200, callFeedResponse(result));
+            ApiHttpResponse.sendData(exchange, 200, mDatabase.enrichSystemNames(callFeedResponse(result)));
         }
         catch(InterruptedException exception)
         {

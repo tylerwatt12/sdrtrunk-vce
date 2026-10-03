@@ -65,7 +65,13 @@ final class StatsApiV1Payload
 
     static JsonNode present(Object value)
     {
-        return transform(OBJECT_MAPPER.valueToTree(value), StatsApiProtocol.UNKNOWN);
+        return transform(source(value), StatsApiProtocol.UNKNOWN);
+    }
+
+    /** Preserves producer field casing before optional read-side enrichment. */
+    static JsonNode source(Object value)
+    {
+        return OBJECT_MAPPER.valueToTree(value);
     }
 
     private static JsonNode transform(JsonNode value, StatsApiProtocol inheritedProtocol)

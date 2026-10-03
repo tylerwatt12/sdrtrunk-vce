@@ -59,6 +59,35 @@ class StatsWebDatabase
     private static final long HOUR_MILLISECONDS = 3_600_000L;
     private static final long DAY_MILLISECONDS = 24L * HOUR_MILLISECONDS;
     private static final int MAX_ACTIVITY_ACTION_FILTERS = 23;
+
+    /** Optional names are projected on the HTTP/request worker, never on decoder or audio ingress callbacks. */
+    Object enrichSystemNames(Object value)
+    {
+        try
+        {
+            return readSnapshot(connection -> new StatsSystemNameResolver(connection).enrich(value));
+        }
+        catch(StatsApiException unavailable)
+        {
+            //Health, Map, recordings and cached calls remain usable while the statistics database is unavailable.
+            return value;
+        }
+    }
+
+    Object namedP25Overrides(Object profiles)
+    {
+        try
+        {
+            return readSnapshot(connection -> {
+                StatsSystemNameResolver names = new StatsSystemNameResolver(connection);
+                return names.enrich(Map.of("profiles", profiles, "known_systems", names.knownP25Systems()));
+            });
+        }
+        catch(StatsApiException unavailable)
+        {
+            return Map.of("profiles", profiles, "known_systems", List.of());
+        }
+    }
     private static final int MAX_GLOBAL_FORWARD_ACTIVITY_LIMIT = 5_000;
     private static final long CURRENT_STATE_WINDOW_MILLISECONDS = 6L * HOUR_MILLISECONDS;
     private static final long QUALITY_BUCKET_MILLISECONDS = 10_000L;
@@ -192,7 +221,7 @@ class StatsWebDatabase
                 system.system_key AS radio_system_key, system.p25_wacn AS wacn,
                 CASE system.protocol_code WHEN 1 THEN system.p25_system_id
                     WHEN 4 THEN system.nxdn_system_id END AS system_id,
-                NULL AS rfss, NULL AS system_name,
+                NULL AS rfss, %s AS system_name,
                 system.dmr_network_id AS network_id, NULL AS site_id, NULL AS ran, NULL AS variant_code,
                 system.dmr_model_code, system.nxdn_location_category_code,
                 CASE WHEN system.dmr_model_code IS NOT NULL THEN 'TIER_III'
@@ -266,7 +295,8 @@ class StatsWebDatabase
         ORDER BY logical_call_count DESC, last_active_ms DESC, protocol_code, channel_kind,
             identity_kind_code, native_id
         LIMIT ?
-        """.formatted(IDENTITY_KEY_SQL.formatted("summary"));
+        """.formatted(StatsSystemNameResolver.configuredNameSql("system"),
+            IDENTITY_KEY_SQL.formatted("summary"));
     private static final List<ActivityAction> DASHBOARD_ACTIVITY_ACTIONS = List.of(
         new ActivityAction("ACKNOWLEDGE", 1, "acknowledge_count"),
         new ActivityAction("ACTIVE", 2, "active_count"),
@@ -1300,7 +1330,7 @@ class StatsWebDatabase
                        but no single channel owns its system-wide identity facts. */
                     SELECT system.id AS radio_system_id,
                         NULL AS channel_id, NULL AS configuration_id,
-                        NULL AS system_name, NULL AS channel_names, NULL AS frequency_hz
+                        %s AS system_name, NULL AS channel_names, NULL AS frequency_hz
                     FROM configuration_channel config INDEXED BY idx_configuration_channel_alias_list
                     JOIN receiver_channel channel ON channel.configuration_id = config.configuration_id
                     JOIN radio_system system ON system.id = channel.radio_system_id
@@ -1479,7 +1509,7 @@ class StatsWebDatabase
                       AND config.channel_kind = 'CONVENTIONAL' AND config.decoder_type = 'DMR'
                 ) SELECT observed.*, count(*) OVER () AS result_total_count
                 FROM observed WHERE 1 = 1
-                """.formatted(protocolCode, protocolCode, IDENTITY_KEY_SQL.formatted("identity"),
+                """.formatted(StatsSystemNameResolver.configuredNameSql("system"), protocolCode, protocolCode, IDENTITY_KEY_SQL.formatted("identity"),
                     IDENTITY_KEY_SQL.formatted("identity"), protocolCode, protocolCode,
                     protocolCode, protocolCode, decoderPredicate, protocolCode));
             List<Object> parameters = new ArrayList<>(List.of(
@@ -2643,6 +2673,7 @@ class StatsWebDatabase
                 enrichRadioSystemGroupIdentities(connection, rows, "native_id", "alias_");
             }
             Map<String,Object> row = rows.getFirst();
+            row.put("system_name", radioSystem.get("system_name"));
 
             row.put("capabilities", groupIdentityCapabilities((int)number(row.get("protocol_code")),
                 (int)number(row.get("group_identity_kind_code"))));
@@ -2845,6 +2876,7 @@ class StatsWebDatabase
                 enrichRadioSystemRadios(connection, rows, "native_id", "alias_");
             }
             Map<String,Object> row = rows.getFirst();
+            row.put("system_name", radioSystem.get("system_name"));
 
             row.put("capabilities", radioSystemCapabilities((int)number(row.get("protocol_code"))));
             WebEntityRef.put(row, identityReference(row, IDENTITY_KIND_RADIO,
@@ -5722,13 +5754,7 @@ class StatsWebDatabase
                 system.dmr_model_code, system.nxdn_location_category_code,
                 CASE WHEN system.dmr_model_code IS NOT NULL THEN 'TIER_III'
                     WHEN system.nxdn_location_category_code IS NOT NULL THEN 'TYPE_C' END AS variant,
-                (SELECT CASE WHEN count(DISTINCT lower(trim(config.system_name))) = 1
-                    THEN min(trim(config.system_name)) END
-                    FROM configuration_channel config
-                    LEFT JOIN receiver_channel channel ON channel.configuration_id = config.configuration_id
-                    WHERE (channel.radio_system_id = system.id OR
-                           config.configuration_id = system.configuration_id)
-                      AND config.system_name IS NOT NULL AND trim(config.system_name) <> '') AS system_name,
+                %s AS system_name,
                 system.first_seen_ms, system.last_seen_ms,
                 CASE WHEN EXISTS (
                     SELECT 1 FROM receiver_channel channel WHERE channel.radio_system_id = system.id
@@ -5773,7 +5799,7 @@ class StatsWebDatabase
                                  config.configuration_id = system.configuration_id) > 8
                     THEN 1 ELSE 0 END AS channel_names_truncated
             FROM radio_system system
-            """;
+            """.formatted(StatsSystemNameResolver.configuredNameSql("system"));
     }
 
     private static Map<String,Object> requireRadioSystem(Connection connection, String systemKey) throws SQLException

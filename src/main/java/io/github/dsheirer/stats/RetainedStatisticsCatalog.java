@@ -51,11 +51,8 @@ final class RetainedStatisticsCatalog
         "coalesce(CAST(config.primary_frequency_hz AS TEXT),'') || ' ' || " +
         "coalesce(printf('%.6f',config.primary_frequency_hz/1000000.0),'') || ' ' || " +
         "config.configuration_id) LIKE ? ESCAPE '\\'";
-    private static final String SYSTEM_LABEL = "coalesce((SELECT nullif(trim(config.system_name), '') " +
-        "FROM receiver_channel channel JOIN configuration_channel config " +
-        "ON config.configuration_id=channel.configuration_id WHERE channel.radio_system_id=system.id " +
-        "AND nullif(trim(config.system_name), '') IS NOT NULL " +
-        "ORDER BY channel.last_seen_ms DESC LIMIT 1), system.system_key)";
+    private static final String SYSTEM_LABEL = "coalesce(" +
+        StatsSystemNameResolver.configuredNameSql("system") + ", system.system_key)";
     private static final String SITE_SELECT = """
         SELECT config.configuration_id,
                CASE WHEN config.channel_kind='TRUNKED' AND p25.channel_id IS NULL
@@ -515,11 +512,16 @@ final class RetainedStatisticsCatalog
                 "printf('%.6f',coalesce(current.base_hz,summary.base_hz)/1000000.0) " +
                 "LIKE ? ESCAPE '\\'" + (foreign ?
                 " OR printf('%05X',keys.foreign_wacn) LIKE ? ESCAPE '\\' " +
-                    "OR CAST(keys.foreign_system_id AS TEXT) LIKE ? ESCAPE '\\'" : "") + ")";
+                    "OR CAST(keys.foreign_system_id AS TEXT) LIKE ? ESCAPE '\\' " +
+                    "OR EXISTS (SELECT 1 FROM radio_system foreign_system WHERE foreign_system.system_key=" +
+                    "printf('p25:%05x:%03x',keys.foreign_wacn,keys.foreign_system_id) AND lower(coalesce(" +
+                    StatsSystemNameResolver.configuredNameSql("foreign_system") +
+                    ",'')) LIKE ? ESCAPE '\\')" : "") + ")";
             parameters.add(like(search));
             parameters.add(like(search));
             if(foreign)
             {
+                parameters.add(like(search));
                 parameters.add(like(search));
                 parameters.add(like(search));
             }
@@ -1367,6 +1369,16 @@ final class RetainedStatisticsCatalog
                 }
                 connection.setAutoCommit(false);
                 T result = query.run(connection);
+                if(result instanceof Page page)
+                {
+                    StatsSystemNameResolver names = new StatsSystemNameResolver(connection);
+                    List<Map<String,Object>> rows = new ArrayList<>();
+                    for(Map<String,Object> row: page.rows()) rows.add(names.enrichMap(row));
+                    @SuppressWarnings("unchecked")
+                    T named = (T)new Page(rows, page.limit(), page.offset(), page.hasMore(), page.nextOffset(),
+                        page.totalCount());
+                    result = named;
+                }
                 connection.rollback();
                 return result;
             }

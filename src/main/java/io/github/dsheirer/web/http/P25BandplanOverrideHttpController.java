@@ -25,6 +25,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -42,10 +43,18 @@ public final class P25BandplanOverrideHttpController
         .disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT)
         .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
     private final P25BandplanOverrideRegistry mRegistry;
+    private final Function<List<P25BandplanOverrideProfile>,Object> mPresenter;
 
     public P25BandplanOverrideHttpController(P25BandplanOverrideRegistry registry)
     {
+        this(registry, Document::new);
+    }
+
+    public P25BandplanOverrideHttpController(P25BandplanOverrideRegistry registry,
+                                           Function<List<P25BandplanOverrideProfile>,Object> presenter)
+    {
         mRegistry = Objects.requireNonNull(registry, "P25 bandplan override registry cannot be null");
+        mPresenter = Objects.requireNonNull(presenter);
     }
 
     public void handle(HttpExchange exchange) throws IOException
@@ -69,14 +78,14 @@ public final class P25BandplanOverrideHttpController
             {
                 case "GET" -> {
                     requireEmptyBody(exchange);
-                    ApiHttpResponse.sendDocument(exchange, 200, new Document(mRegistry.getProfiles()));
+                    ApiHttpResponse.sendDocument(exchange, 200, mPresenter.apply(mRegistry.getProfiles()));
                 }
                 case "PUT" -> {
                     Document document = read(exchange);
                     try
                     {
                         mRegistry.setProfiles(document.profiles());
-                        ApiHttpResponse.sendDocument(exchange, 200, new Document(mRegistry.getProfiles()));
+                        ApiHttpResponse.sendDocument(exchange, 200, mPresenter.apply(mRegistry.getProfiles()));
                     }
                     catch(IOException | SQLException exception)
                     {

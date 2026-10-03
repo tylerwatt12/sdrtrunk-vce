@@ -72,6 +72,7 @@ final class ManagedRecordingLabels
             Map<String,String> talkerAliases = new HashMap<>();
             Map<String,SystemScope> systems = new HashMap<>();
             Map<String,Boolean> knownIdentities = new HashMap<>();
+            StatsSystemNameResolver systemNames = new StatsSystemNameResolver(connection);
             for(Map<String,Object> call: result)
             {
                 String channelId = string(call.get("channel_id"));
@@ -80,7 +81,9 @@ final class ManagedRecordingLabels
                 if(channel != null)
                 {
                     put(call, "channel_name", channel.name());
-                    put(call, "system_name", channel.systemName());
+                    String eventSystem = string(call.get("system_key"));
+                    if(eventSystem == null || eventSystem.equals(channel.systemKey()))
+                        put(call, "system_name", channel.systemName());
                     put(call, "site_name", channel.siteName());
                     try
                     {
@@ -174,12 +177,32 @@ final class ManagedRecordingLabels
                     put(call, "source_ota_alias", ota);
                 }
             }
+            for(int index = 0; index < result.size(); index++)
+            {
+                result.set(index, systemNames.enrichMap(result.get(index)));
+            }
         }
         catch(SQLException ignored)
         {
             //Current names are optional. Catalog data remains usable when the main database is busy or replaced.
         }
         return result;
+    }
+
+    List<Map<String,Object>> enrichSystemNames(List<Map<String,Object>> values)
+    {
+        if(values.isEmpty() || !Files.isRegularFile(mDatabasePath)) return values;
+        try(Connection connection = open())
+        {
+            StatsSystemNameResolver names = new StatsSystemNameResolver(connection);
+            List<Map<String,Object>> result = new ArrayList<>(values.size());
+            for(Map<String,Object> value: values) result.add(names.enrichMap(value));
+            return result;
+        }
+        catch(SQLException ignored)
+        {
+            return values;
+        }
     }
 
     private static void decoratePatchMembers(Connection connection, Map<String,Object> call, SystemScope system,
@@ -381,13 +404,7 @@ final class ManagedRecordingLabels
             {
                 try(PreparedStatement statement = connection.prepareStatement(scope + """
                     SELECT system.system_key,
-                        coalesce(nullif(config.system_name, ''), (
-                            SELECT nullif(saved.system_name, '')
-                            FROM receiver_channel receiver
-                            JOIN configuration_channel saved ON saved.configuration_id=receiver.configuration_id
-                            WHERE receiver.radio_system_id=system.id AND saved.system_name IS NOT NULL
-                            ORDER BY saved.configuration_id LIMIT 1
-                        ), system.system_key) label
+                        coalesce(%s, system.system_key) label
                     FROM radio_system system
                     LEFT JOIN configuration_channel config ON config.configuration_id = system.configuration_id
                     WHERE (lower(system.system_key) LIKE ? ESCAPE '\\'
@@ -400,7 +417,7 @@ final class ManagedRecordingLabels
                        ))
                       AND %s
                     ORDER BY label LIMIT ?
-                    """.formatted(recordedOnly ? "EXISTS(SELECT 1 FROM (" +
+                    """.formatted(StatsSystemNameResolver.configuredNameSql("system"), recordedOnly ? "EXISTS(SELECT 1 FROM (" +
                         recordingCallCandidates("system.system_key", "system.p25_wacn", "system.p25_system_id") +
                         "))" : "1")))
                 {
@@ -881,15 +898,19 @@ final class ManagedRecordingLabels
     private static ChannelLabels channel(Connection connection, String id)
     {
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT name, system_name, site_name, alias_list_id
-            FROM configuration_channel WHERE configuration_id=?
+            SELECT config.name, config.system_name, config.site_name, config.alias_list_id,
+                system.system_key
+            FROM configuration_channel config
+            LEFT JOIN receiver_channel channel ON channel.configuration_id=config.configuration_id
+            LEFT JOIN radio_system system ON system.id=channel.radio_system_id
+            WHERE config.configuration_id=?
             """))
         {
             statement.setString(1, id);
             try(ResultSet rows = statement.executeQuery())
             {
                 return rows.next() ? new ChannelLabels(rows.getString(1), rows.getString(2), rows.getString(3),
-                    rows.getInt(4)) : null;
+                    rows.getInt(4), rows.getString(5)) : null;
             }
         }
         catch(SQLException ignored)
@@ -993,7 +1014,8 @@ final class ManagedRecordingLabels
         return value instanceof Number number ? number.intValue() : null;
     }
 
-    private record ChannelLabels(String name, String systemName, String siteName, Integer aliasListId) {}
+    private record ChannelLabels(String name, String systemName, String siteName, Integer aliasListId,
+                                 String systemKey) {}
     private record AliasLabels(String name, String description, String group) {}
     private record SystemScope(String key, int protocolCode, Integer p25Wacn, Integer p25SystemId,
                                WebEntityRef.KeyRef reference) {}

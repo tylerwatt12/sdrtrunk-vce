@@ -405,12 +405,14 @@ final class StatsApiV1Controller
 
             if(result instanceof JsonBody body)
             {
-                ApiHttpResponse.sendDataWithMeta(exchange, 200, StatsApiV1Payload.present(body.data()),
+                ApiHttpResponse.sendDataWithMeta(exchange, 200,
+                    StatsApiV1Payload.present(mDatabase.enrichSystemNames(StatsApiV1Payload.source(body.data()))),
                     StatsApiV1Payload.present(body.meta()));
             }
             else
             {
-                ApiHttpResponse.sendData(exchange, 200, StatsApiV1Payload.present(result));
+                ApiHttpResponse.sendData(exchange, 200,
+                    StatsApiV1Payload.present(mDatabase.enrichSystemNames(StatsApiV1Payload.source(result))));
             }
         }
         catch(StatsApiException exception)

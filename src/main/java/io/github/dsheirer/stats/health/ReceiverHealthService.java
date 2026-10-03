@@ -673,12 +673,25 @@ public final class ReceiverHealthService implements AutoCloseable
                     previous != null ? previous.lastValidDecodeMs : 0);
                 mControlContinuityByTable.put(table.tableId(), new ControlContinuity(lastValidDecodeMs,
                     channel.frequencyHz(), channel.decoder(), channel.signalDbfs()));
-                rows.add(row(table.tableId(), label, health != null ? round(health) : "Unavailable", "%",
+                Map<String,Object> measurement = row(table.tableId(), label,
+                    health != null ? round(health) : "Unavailable", "%",
                     health != null && health < 20 ? "warning" : "healthy", "Signal " + channel.signalDbfs() +
                         " dBFS · Valid frames " + channel.controlValidFrames() + " · Invalid frames " +
                         channel.controlInvalidFrames() + " · Corrected bits " + channel.controlCorrectedBits() +
                         " · Sync loss " + channel.controlSyncLossBits() + " bits · Dropped " +
-                        channel.controlDroppedBits() + " bits · Decoder " + channel.decoder()));
+                        channel.controlDroppedBits() + " bits · Decoder " + channel.decoder());
+                measurement.put("system_name", table.systemName());
+                measurement.put("channel_name", table.channelName());
+                measurement.put("configuration_id", table.configurationId());
+                measurement.put("frequency_hz", channel.frequencyHz());
+                if(table.site() != null)
+                {
+                    measurement.put("wacn", table.site().wacn());
+                    measurement.put("system_id", table.site().systemId());
+                    measurement.put("rfss", table.site().rfss());
+                    measurement.put("site_id", table.site().siteId());
+                }
+                rows.add(measurement);
             }
 
             ControlContinuity continuity = mControlContinuityByTable.get(table.tableId());

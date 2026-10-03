@@ -98,6 +98,11 @@ class ManagedRecordingLabelsTest
         assertEquals(1399, range.get("max_id"));
         assertTrue(labels.matchingIdentityIds("Tac Range", 200).contains(1350));
         assertEquals("Metro System", labels.suggestions("Metro", "system", 20).getFirst().get("label"));
+        Map<String,Object> missingOrigin = labels.decorate(List.of(Map.of("system_key", "p25:00001:001",
+            "source_home_wacn", 1, "source_home_system_id", 1))).getFirst();
+        assertEquals("Metro System", missingOrigin.get("system_name"));
+        assertEquals("Metro System", missingOrigin.get("source_home_system_name"));
+        assertEquals("p25:00001:001", ((Map<?,?>)missingOrigin.get("source_home_system")).get("key"));
     }
 
     @Test
@@ -110,12 +115,14 @@ class ManagedRecordingLabelsTest
             statement.execute("CREATE TABLE configuration_channel(configuration_id TEXT PRIMARY KEY,name TEXT," +
                 "system_name TEXT,site_name TEXT,alias_list_id INTEGER)");
             statement.execute("CREATE TABLE radio_system(id INTEGER PRIMARY KEY,system_key TEXT," +
-                "protocol_code INTEGER,p25_wacn INTEGER,p25_system_id INTEGER)");
+                "protocol_code INTEGER,p25_wacn INTEGER,p25_system_id INTEGER,configuration_id TEXT)");
+            statement.execute("CREATE TABLE receiver_channel(configuration_id TEXT,radio_system_id INTEGER)");
             statement.execute("CREATE TABLE radio_system_identity_summary(radio_system_id INTEGER," +
                 "identity_kind_code INTEGER,home_wacn INTEGER,home_system_id INTEGER,identity_id INTEGER)");
             statement.execute("INSERT INTO configuration_channel VALUES('" + CHANNEL_ID +
                 "','Dispatch','Metro','North',NULL)");
-            statement.execute("INSERT INTO radio_system VALUES(1,'p25:00001:001',1,1,1)");
+            statement.execute("INSERT INTO radio_system VALUES(1,'p25:00001:001',1,1,1,NULL)");
+            statement.execute("INSERT INTO receiver_channel VALUES('" + CHANNEL_ID + "',1)");
             statement.execute("INSERT INTO radio_system_identity_summary VALUES(1,2,2,2,900)");
             statement.execute("INSERT INTO radio_system_identity_summary VALUES(1,3,1,1,1201)");
             statement.execute("INSERT INTO radio_system_identity_summary VALUES(1,1,3,3,1301)");

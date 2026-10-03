@@ -112,6 +112,7 @@ class StatsWebDatabaseTest
         assertEquals(1, systems.size());
         Map<String,Object> listed = systems.getFirst();
         assertEquals(RADIO_SYSTEM_KEY, listed.get("radio_system_key"));
+        assertEquals("Shared P25", listed.get("system_name"));
         assertEquals(2, number(listed.get("channels")));
         assertEquals(2, number(listed.get("alias_list_count")));
         assertEquals(List.of("County A", "County B"), aliasListNames(listed));
@@ -379,14 +380,21 @@ class StatsWebDatabaseTest
             "dmr:tier3:small:42", request("/"))).getFirst());
         assertDmrNativeIdentity(map(mDatabase.radioSystemGroupIdentity(
             "dmr:tier3:small:42", dmrGroupKey), "group_identity"));
+        assertEquals("Shared DMR", map(mDatabase.radioSystemGroupIdentity(
+            "dmr:tier3:small:42", dmrGroupKey), "group_identity").get("system_name"));
         assertDmrNativeIdentity(map(mDatabase.radio(
             "dmr:tier3:small:42", dmrRadioKey), "radio"));
+        assertEquals("Shared DMR", map(mDatabase.radio(
+            "dmr:tier3:small:42", dmrRadioKey), "radio").get("system_name"));
         assertDmrNativeIdentity(rows(mDatabase.radioSystemRelationships(
             "dmr:tier3:small:42", request("/?group_identity_key=" + dmrGroupKey))).getFirst());
         List<Map<String,Object>> observedDmr = rows(mDatabase.observedGroupIdentities(81, request("/")));
         assertEquals(1, observedDmr.size(),
             "Two channels using the list must not duplicate one native system identity");
         assertDmrNativeIdentity(observedDmr.getFirst());
+        assertEquals("Shared DMR", observedDmr.getFirst().get("system_name"));
+        assertEquals(1, number(mDatabase.observedGroupIdentities(81,
+            request("/?search=Shared%20DMR")).get("total_count")));
         assertNull(observedDmr.getFirst().get("channel_id"));
         assertNull(observedDmr.getFirst().get("configuration_id"));
         assertDmrNativeIdentity(map(mDatabase.radioSystemGroupIdentity("dmr:tier3:small:42",
@@ -416,6 +424,7 @@ class StatsWebDatabaseTest
         assertEquals(1, observedNxdn.size(),
             "Two channels using the list must not duplicate one native system identity");
         assertNxdnNativeIdentity(observedNxdn.getFirst());
+        assertEquals("Shared NXDN", observedNxdn.getFirst().get("system_name"));
         assertNull(observedNxdn.getFirst().get("channel_id"));
         assertNull(observedNxdn.getFirst().get("configuration_id"));
 
@@ -556,8 +565,10 @@ class StatsWebDatabaseTest
         Map<String,Object> conventionalSource = rowWith(rowsFrom(dashboard, "top_sources"),
             "configuration_id", DMR_CHANNEL);
         assertEquals("Shared Dispatch", trunkedDestination.get("alias_name"));
+        assertEquals("Shared DMR", trunkedDestination.get("system_name"));
         assertEquals("DMR Dispatch", conventionalDestination.get("alias_name"));
         assertEquals("Shared Unit", trunkedSource.get("alias_name"));
+        assertEquals("Shared DMR", trunkedSource.get("system_name"));
         assertEquals("Conventional Unit", conventionalSource.get("alias_name"));
 
         Map<String,Object> identities = mDatabase.identityDirectory(request("/?range=24h&limit=500"));
@@ -859,6 +870,7 @@ class StatsWebDatabaseTest
 
         String identityKey = p25IdentityKey(RadioSystemIdentityKey.KIND_RADIO, 202);
         Map<String,Object> radio = map(mDatabase.radio(RADIO_SYSTEM_KEY, identityKey), "radio");
+        assertEquals("Shared P25", radio.get("system_name"));
         assertFalse(radio.containsKey("last_group_identity_id"));
         assertEquals(Map.of("kind", "radio", "radio_system_key", RADIO_SYSTEM_KEY,
             "identity_key", identityKey),

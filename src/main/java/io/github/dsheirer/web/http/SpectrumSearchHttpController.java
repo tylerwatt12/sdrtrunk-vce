@@ -12,14 +12,28 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.Objects;
+import java.util.function.Function;
 
 /** Bounded request adapter. RF evidence and saved-result identities remain owned by the search service. */
 public final class SpectrumSearchHttpController
 {
     public static final String PATH = "/api/v1/admin/spectrum-search";
     private final SpectrumSearchService mService;
+    private final Function<Object,Object> mPresenter;
 
-    public SpectrumSearchHttpController(SpectrumSearchService service) { mService = service; }
+    public SpectrumSearchHttpController(SpectrumSearchService service) { this(service, Function.identity()); }
+
+    public SpectrumSearchHttpController(SpectrumSearchService service, Function<Object,Object> presenter)
+    {
+        mService = service;
+        mPresenter = Objects.requireNonNull(presenter);
+    }
+
+    private void sendData(HttpExchange exchange, int status, Object data) throws IOException
+    {
+        ApiHttpResponse.sendData(exchange, status, mPresenter.apply(data));
+    }
 
     public void handle(HttpExchange exchange) throws IOException
     {
@@ -32,7 +46,7 @@ public final class SpectrumSearchHttpController
             {
                 if(!method(exchange, "GET")) return;
                 noBody(exchange);
-                ApiHttpResponse.sendData(exchange, 200, mService.catalog());
+                sendData(exchange, 200, mService.catalog());
                 return;
             }
             if(PATH.equals(path))
@@ -50,7 +64,7 @@ public final class SpectrumSearchHttpController
                 SpectrumSearchService.validateRanges(ranges);
                 long dwell = body.has("dwell_ms") ? integer(body, "dwell_ms", true) : 1500;
                 if(dwell < 750 || dwell > 5000) throw new IllegalArgumentException("Choose a dwell between 750 and 5000 ms");
-                ApiHttpResponse.sendData(exchange, 201, mService.open(
+                sendData(exchange, 201, mService.open(
                     WebHttpSupport.requiredText(body, "tuner_id", 80),
                     WebHttpSupport.requiredText(body, "browse_lease_id", 80), ranges, dwell));
                 return;
@@ -61,11 +75,11 @@ public final class SpectrumSearchHttpController
             if(parts.length == 1)
             {
                 noBody(exchange);
-                if("GET".equals(exchange.getRequestMethod())) ApiHttpResponse.sendData(exchange, 200, mService.status(id));
+                if("GET".equals(exchange.getRequestMethod())) sendData(exchange, 200, mService.status(id));
                 else if("DELETE".equals(exchange.getRequestMethod()))
                 {
                     mService.cancel(id);
-                    ApiHttpResponse.sendData(exchange, 200, Map.of("closed", true));
+                    sendData(exchange, 200, Map.of("closed", true));
                 }
                 else WebHttpSupport.methodNotAllowed(exchange, "GET, DELETE");
                 return;
@@ -94,7 +108,7 @@ public final class SpectrumSearchHttpController
                     groups.add(new SpectrumSearchService.AliasChoice(WebHttpSupport.requiredText(group, "group_id", 80),
                         integer(group, "alias_list_id", false), text(group, "new_alias_list_name", 25)));
                 }
-                ApiHttpResponse.sendData(exchange, 200, mService.save(id,
+                sendData(exchange, 200, mService.save(id,
                     new SpectrumSearchService.SaveRequest(integer(body, "revision", false), candidates, groups)));
                 return;
             }
@@ -109,7 +123,7 @@ public final class SpectrumSearchHttpController
                         throw new IllegalArgumentException("candidate_ids is invalid");
                     ids.add(candidate.textValue());
                 }
-                ApiHttpResponse.sendData(exchange, 200, mService.start(id, ids, text(body, "first_candidate_id", 80)));
+                sendData(exchange, 200, mService.start(id, ids, text(body, "first_candidate_id", 80)));
                 return;
             }
             WebHttpSupport.notFound(exchange);

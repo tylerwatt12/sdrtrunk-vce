@@ -610,7 +610,7 @@ final class ManagedRecordingsHttpController
                 }
             }
             ApiHttpResponse.sendData(exchange, 200,
-                suggestions.size() > limit ? suggestions.subList(0, limit) : suggestions);
+                mLabels.enrichSystemNames(suggestions.size() > limit ? suggestions.subList(0, limit) : suggestions));
         }
         finally
         {

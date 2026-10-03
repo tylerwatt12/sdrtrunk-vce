@@ -103,7 +103,8 @@ public final class MapSnapshotService implements Listener<IDecodeEvent>, AutoClo
         }
 
         Identifier system = identifiers.getIdentifier(IdentifierClass.CONFIGURATION, Form.SYSTEM, Role.ANY);
-        Ingress observation = new Ingress(from, system, identifiers.getAliasListConfiguration(),
+        Identifier configuration = identifiers.getIdentifier(IdentifierClass.CONFIGURATION, Form.UNIQUE_ID, Role.ANY);
+        Ingress observation = new Ingress(from, system, configuration, identifiers.getAliasListConfiguration(),
             location.getLatitude(), location.getLongitude(), plottable.getTimeStart(), plottable.getHeading(),
             plottable.getSpeed());
         if(mIngress.offer(observation))
@@ -232,6 +233,8 @@ public final class MapSnapshotService implements Listener<IDecodeEvent>, AutoClo
         entity.label = display != null && display.label() != null && !display.label().isBlank() ?
             boundedText(display.label()) : identifier;
         entity.system = system;
+        entity.configurationId = ingress.configuration() != null ?
+            boundedText(ingress.configuration().toString()) : null;
         entity.icon = display != null ? StandardMapIconCatalog.forSlug(display.icon()) :
             StandardMapIconCatalog.NO_ICON;
         if(entity.icon == null)
@@ -265,7 +268,7 @@ public final class MapSnapshotService implements Listener<IDecodeEvent>, AutoClo
         {
             entities.add(new Entity(mutable.key, mutable.label, mutable.identifier, mutable.system, mutable.aliasList,
                 mutable.icon.slug(), mutable.color, mutable.heading, mutable.speedKph,
-                List.copyOf(mutable.positions)));
+                List.copyOf(mutable.positions), mutable.configurationId));
         }
         java.util.Collections.reverse(entities);
         mSnapshot = new Snapshot(System.currentTimeMillis(), mEvictedEntities, List.copyOf(entities));
@@ -319,7 +322,8 @@ public final class MapSnapshotService implements Listener<IDecodeEvent>, AutoClo
     {
     }
 
-    private record Ingress(Identifier from, Identifier system, AliasListConfigurationIdentifier aliasList,
+    private record Ingress(Identifier from, Identifier system, Identifier configuration,
+                           AliasListConfigurationIdentifier aliasList,
                            double latitude, double longitude, long timestampMs, double heading, double speedKph)
     {
     }
@@ -332,6 +336,7 @@ public final class MapSnapshotService implements Listener<IDecodeEvent>, AutoClo
         private final Deque<Position> positions = new ArrayDeque<>();
         private String label;
         private String system = "";
+        private String configurationId;
         private StandardMapIconCatalog icon = StandardMapIconCatalog.NO_ICON;
         private String color = "#0000ff";
         private double heading;
@@ -350,7 +355,8 @@ public final class MapSnapshotService implements Listener<IDecodeEvent>, AutoClo
     }
 
     public record Entity(String id, String label, String identifier, String system, String aliasList, String icon,
-                         String color, double heading, double speedKph, List<Position> positions)
+                         String color, double heading, double speedKph, List<Position> positions,
+                         String configurationId)
     {
     }
 

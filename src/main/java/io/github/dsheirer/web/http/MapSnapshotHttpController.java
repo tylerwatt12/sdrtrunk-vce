@@ -14,6 +14,7 @@ import java.io.OutputStream;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Supplier;
+import java.util.function.Function;
 
 /** Read-only, stateless map snapshot and allowlisted bundled-icon delivery for Listen viewers. */
 public final class MapSnapshotHttpController
@@ -23,10 +24,17 @@ public final class MapSnapshotHttpController
     public static final String ICON_PATH = ICON_CATALOG_PATH + "/";
     private static final int MAXIMUM_ICON_BYTES = 128 * 1024;
     private final Supplier<MapSnapshotService> mService;
+    private final Function<Object,Object> mPresenter;
 
     public MapSnapshotHttpController(Supplier<MapSnapshotService> service)
     {
+        this(service, Function.identity());
+    }
+
+    public MapSnapshotHttpController(Supplier<MapSnapshotService> service, Function<Object,Object> presenter)
+    {
         mService = Objects.requireNonNull(service);
+        mPresenter = Objects.requireNonNull(presenter);
     }
 
     public void handle(HttpExchange exchange) throws IOException
@@ -77,9 +85,9 @@ public final class MapSnapshotHttpController
         }
 
         MapSnapshotService.Snapshot snapshot = service.snapshot();
-        ApiHttpResponse.sendData(exchange, 200, new Document(snapshot.generatedAtMs(),
+        ApiHttpResponse.sendData(exchange, 200, mPresenter.apply(new Document(snapshot.generatedAtMs(),
             service.droppedObservations(), service.invalidObservations(), service.projectionFailures(),
-            snapshot.evictedEntities(), snapshot.entities()));
+            snapshot.evictedEntities(), snapshot.entities())));
     }
 
     private static void sendIcon(HttpExchange exchange, String slug) throws IOException

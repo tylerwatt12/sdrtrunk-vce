@@ -32,6 +32,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Supplier;
+import java.util.function.Function;
 
 /**
  * Read-only administrator view of bounded, already-published logical-call diagnostics. Projection and JSON writing
@@ -52,12 +53,20 @@ public final class CallMatchingHttpController
     private static final String HIDDEN_ENDPOINT = "[endpoint hidden]";
     private final Supplier<LogicalCallDiagnosticService> mService;
     private final Supplier<AudioCallCoordinator> mCoordinator;
+    private final Function<Object,Object> mPresenter;
 
     public CallMatchingHttpController(Supplier<LogicalCallDiagnosticService> service,
                                       Supplier<AudioCallCoordinator> coordinator)
     {
+        this(service, coordinator, Function.identity());
+    }
+
+    public CallMatchingHttpController(Supplier<LogicalCallDiagnosticService> service,
+                                      Supplier<AudioCallCoordinator> coordinator, Function<Object,Object> presenter)
+    {
         mService = Objects.requireNonNull(service, "Diagnostic service source cannot be null");
         mCoordinator = Objects.requireNonNull(coordinator, "Coordinator source cannot be null");
+        mPresenter = Objects.requireNonNull(presenter);
     }
 
     public void handle(HttpExchange exchange) throws IOException
@@ -104,7 +113,8 @@ public final class CallMatchingHttpController
         }
 
         ApiHttpResponse.sendData(exchange, 200,
-            document(history, resolver, queue, service.retentionCapacity(), System.currentTimeMillis()));
+            mPresenter.apply(document(history, resolver, queue, service.retentionCapacity(),
+                System.currentTimeMillis())));
     }
 
     private static void unavailable(HttpExchange exchange) throws IOException

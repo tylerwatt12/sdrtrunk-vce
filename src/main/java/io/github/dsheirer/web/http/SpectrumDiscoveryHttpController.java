@@ -11,14 +11,28 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.Objects;
+import java.util.function.Function;
 
 /** Strict administrator adapter for the temporary spectrum channel wizard. */
 public final class SpectrumDiscoveryHttpController
 {
     public static final String PATH = "/api/v1/admin/spectrum-discovery";
     private final SpectrumDiscoveryService mService;
+    private final Function<Object,Object> mPresenter;
 
-    public SpectrumDiscoveryHttpController(SpectrumDiscoveryService service) { mService = service; }
+    public SpectrumDiscoveryHttpController(SpectrumDiscoveryService service) { this(service, Function.identity()); }
+
+    public SpectrumDiscoveryHttpController(SpectrumDiscoveryService service, Function<Object,Object> presenter)
+    {
+        mService = service;
+        mPresenter = Objects.requireNonNull(presenter);
+    }
+
+    private void sendData(HttpExchange exchange, int status, Object data) throws IOException
+    {
+        ApiHttpResponse.sendData(exchange, status, mPresenter.apply(data));
+    }
 
     public void handle(HttpExchange exchange) throws IOException
     {
@@ -31,7 +45,7 @@ public final class SpectrumDiscoveryHttpController
                 if(!method(exchange, "GET")) return;
                 requireNoBody(exchange);
                 Map<String,String> query = query(exchange);
-                ApiHttpResponse.sendData(exchange, 200, mService.eligibility(query.get("tuner_id"),
+                sendData(exchange, 200, mService.eligibility(query.get("tuner_id"),
                     positive(query.get("frequency_hz"))));
                 return;
             }
@@ -41,7 +55,7 @@ public final class SpectrumDiscoveryHttpController
                 if(!method(exchange, "POST")) return;
                 JsonNode body = WebHttpSupport.readJsonObject(exchange,
                     Set.of("tuner_id", "frequency_hz", "protocol_id", "browse_lease_id"));
-                ApiHttpResponse.sendData(exchange, 201, mService.open(
+                sendData(exchange, 201, mService.open(
                     WebHttpSupport.requiredText(body, "tuner_id", 80), integer(body, "frequency_hz", true),
                     WebHttpSupport.requiredText(body, "protocol_id", 32), text(body, "browse_lease_id", 80)));
                 return;
@@ -53,11 +67,11 @@ public final class SpectrumDiscoveryHttpController
             {
                 requireNoBody(exchange);
                 if("GET".equals(exchange.getRequestMethod()))
-                    ApiHttpResponse.sendData(exchange, 200, mService.status(id));
+                    sendData(exchange, 200, mService.status(id));
                 else if("DELETE".equals(exchange.getRequestMethod()))
                 {
                     mService.cancel(id);
-                    ApiHttpResponse.sendData(exchange, 200, Map.of("closed", true));
+                    sendData(exchange, 200, Map.of("closed", true));
                 }
                 else WebHttpSupport.methodNotAllowed(exchange, "GET, DELETE");
                 return;
@@ -88,7 +102,7 @@ public final class SpectrumDiscoveryHttpController
                         settings.put(entry.getKey(), scalar);
                     }
                 }
-                ApiHttpResponse.sendData(exchange, 200, mService.save(id, new SpectrumDiscoveryService.SaveRequest(
+                sendData(exchange, 200, mService.save(id, new SpectrumDiscoveryService.SaveRequest(
                     text(body, "system", 256), text(body, "site", 256),
                     WebHttpSupport.requiredText(body, "name", 256), integer(body, "alias_list_id", false),
                     text(body, "new_alias_list_name", 25), settings, integer(body, "revision", false))));
@@ -98,7 +112,7 @@ public final class SpectrumDiscoveryHttpController
             {
                 if(!method(exchange, "POST")) return;
                 requireNoBody(exchange);
-                ApiHttpResponse.sendData(exchange, 200, mService.start(id));
+                sendData(exchange, 200, mService.start(id));
                 return;
             }
             WebHttpSupport.notFound(exchange);

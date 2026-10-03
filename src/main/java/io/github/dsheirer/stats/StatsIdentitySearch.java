@@ -39,6 +39,14 @@ final class StatsIdentitySearch
             .append("(summary.identity_id & 2047)) LIKE ? ESCAPE '\\')");
         parameters.add(pattern);
         parameters.add(pattern);
+        sql.append(" OR lower(coalesce(").append(StatsSystemNameResolver.configuredNameSql("system"))
+            .append(",'')) LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM radio_system home_system ")
+            .append("WHERE home_system.system_key=printf('p25:%05x:%03x', ")
+            .append("summary.home_wacn,summary.home_system_id) AND lower(coalesce(")
+            .append(StatsSystemNameResolver.configuredNameSql("home_system"))
+            .append(",'')) LIKE ? ESCAPE '\\')");
+        parameters.add(pattern);
+        parameters.add(pattern);
         if(includeTalkerAlias)
         {
             sql.append(" OR lower(coalesce(summary.last_talker_alias,'')) LIKE ? ESCAPE '\\'");
