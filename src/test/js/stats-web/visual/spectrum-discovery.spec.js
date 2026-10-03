@@ -42,7 +42,8 @@ function snapshot(protocolId, state) {
         ...state.cqpskMetrics },
       elapsed_ms: 1500, timeout_ms: 15000,
       selected_modulation: state.phase === 'identifying' ? null : 'CQPSK',
-      identity: state.phase === 'identifying' ? null : { wacn: 0xb0001, system: 0x123, rfss: 1, site: 2 }
+      identity: state.phase === 'identifying' ? null : { wacn: 0xb0001, system: 0x123, rfss: 1, site: 2 },
+      ...state.probeOverride
     } : null,
     review: state.saved || (state.phase && state.phase !== 'ready') ? null : {
       revision: state.revision || 7, template: { protocol_id: protocolId, name: state.templateName || (isP25 ? 'Control' : analogName),
@@ -184,6 +185,19 @@ async function install(page, state = {}) {
       sample_rate_hz: 10000000
     }] : [] });
     if (path === '/api/v1/admin/channels/protocols') return respond(protocols);
+    if (state.manualSetup && path === '/api/v1/admin/channels/options') return respond({
+      revision: 7, tuners: ['Test receiver'], alias_lists: [{ id: 21, name: 'Default P25', family: 'P25' }]
+    });
+    if (state.manualSetup && path === '/api/v1/admin/channels/protocols/p25-phase1/template') {
+      const profile = protocols.profiles.find((candidate) => candidate.id === 'p25-phase1');
+      const settings = Object.fromEntries(profile.sections.flatMap((section) => section.fields)
+        .filter((field) => field.path.startsWith('settings.') && Object.hasOwn(field, 'default'))
+        .map((field) => [field.path.substring(9), field.default]));
+      return respond({ protocol_id: 'p25-phase1', name: 'P25 Channel', alias_list_id: 21,
+        source: { frequencies_hz: [], rotation_delay_ms: 500 }, settings, observed: {},
+        event_logs: [], recorders: [], auxiliary_decoders: [] });
+    }
+    if (state.manualSetup && path === '/api/v1/admin/channels') return respond({ revision: 8, channels: [] });
     if (path.endsWith('/eligibility')) return respond({ eligible: !state.known,
       reason: state.known ? 'This frequency belongs to County Control.' : null,
       matches: state.known ? [{ configuration_id: 'channel-a', name: 'County Control',
@@ -194,7 +208,18 @@ async function install(page, state = {}) {
       return respond(snapshot(state.protocolId, state));
     }
     if (path === '/api/v1/admin/spectrum-discovery/discovery-a') {
-      if (request.method() === 'DELETE') return respond(null, 204);
+      if (request.method() === 'DELETE') {
+        if (state.deferDeleteOnce) {
+          state.deferDeleteOnce = false;
+          await new Promise((release) => { state.releaseDelete = release; });
+        }
+        if (state.failDeleteOnce) {
+          state.failDeleteOnce = false;
+          return route.fulfill({ status: 503, contentType: 'application/json',
+            body: JSON.stringify({ error: { code: 'unavailable', message: 'Could not stop the signal check.' } }) });
+        }
+        return respond(null, 204);
+      }
       if (state.expiredStatus) return route.fulfill({ status: 409, contentType: 'application/json',
         body: JSON.stringify({ error: { code: 'discovery_conflict', message: 'Channel discovery expired; begin again' } }) });
       if (state.failProbeStatusOnce) {
@@ -752,7 +777,7 @@ test('P25 polling retains Cancel focus and cancellation releases the probe', asy
   await disclose(page, 'Signal details');
   const table = wizard(page).getByRole('table');
   await expect(table.getByRole('columnheader')).toHaveText([
-    'Setting', 'Valid', 'Control', 'Rejected', 'Valid %'
+    'Setting', 'Valid', 'Control', 'Rejected', 'Decode score'
   ]);
   await expect(table.locator('tbody tr').nth(0).getByRole('cell')).toHaveText(['18', '12', '4', '81%']);
   await expect(table.locator('tbody tr').nth(1).getByRole('cell')).toHaveText(['52', '41', '1', '99%']);
@@ -785,6 +810,7 @@ test('retrying inconclusive P25 identification restores Cancel while scanning an
   await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeVisible();
   await expect(dialog.getByRole('button', { name: 'Try again', exact: true })).toHaveCount(0);
   await expect(dialog.getByRole('button', { name: 'Choose another radio type', exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: 'Set up manually', exact: true })).toHaveCount(0);
   await expect(dialog.getByRole('heading', { name: 'Checking this radio system…', exact: true })).toBeVisible();
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
   await expect(dialog).toHaveCount(0);
@@ -792,6 +818,95 @@ test('retrying inconclusive P25 identification restores Cancel while scanning an
     request.method === 'DELETE').length).toBe(2);
   expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(0);
 });
+
+test('weak P25 with incomplete identity hands off to manual setup without claiming discovery proof', async ({ page }) => {
+  const state = { phase: 'inconclusive', manualSetup: true, probeOverride: {
+    c4fm: { valid_messages: 38, valid_control_messages: 38, invalid_control_messages: 169, quality_pct: 3 },
+    cqpsk: { valid_messages: 0, valid_control_messages: 0, invalid_control_messages: 0, quality_pct: 0 },
+    identity: null, selected_modulation: null
+  } };
+  await install(page, state);
+  await page.evaluate(() => window.discoveryApi.openSpectrumDiscoveryWizard({
+    tunerId: 'idle-a', tunerName: 'Test receiver', frequencyHz: 774706250,
+    setProbeActive: (active) => window.discoveryProbeStates.push(active)
+  }));
+  await wizard(page).getByRole('button', { name: 'Check signal', exact: true }).click();
+  await expect(wizard(page).getByRole('button', { name: 'Set up manually', exact: true })).toBeVisible();
+  await wizard(page).getByRole('button', { name: 'Set up manually', exact: true }).click();
+  const editor = page.locator('.channel-editor-modal').filter({ has: page.getByRole('heading', { name: 'Create Channel', exact: true }) });
+  await expect(editor).toBeVisible();
+  await expect(wizard(page)).toHaveCount(0);
+  await expect(editor.getByRole('combobox', { name: /^Protocol / })).toHaveValue('p25-phase1');
+  await expect(editor.locator('[data-channel-path="source.frequencies_hz"] input')).toHaveValue('774.70625');
+  await expect(editor.getByRole('combobox', { name: 'Preferred Tuner', exact: true })).toHaveValue('Test receiver');
+  await expect(editor.getByRole('combobox', { name: 'Modulation', exact: true })).toHaveValue('C4FM');
+  await expect(editor.getByLabel('System', { exact: true })).toHaveValue('');
+  await expect(editor.getByLabel('Site', { exact: true })).toHaveValue('');
+  await expect(editor.getByText('ABCDE', { exact: true })).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => window.discoveryProbeStates)).toEqual([true, false]);
+  expect(state.requests.filter((request) => request.method === 'DELETE' && request.path.endsWith('/discovery-a'))).toHaveLength(1);
+  expect(state.requests.filter((request) => request.path.endsWith('/save') || request.path.endsWith('/start'))).toHaveLength(0);
+  await editor.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(editor).toHaveCount(0);
+  expect(state.requests.filter((request) => request.path === '/api/v1/admin/channels' && request.method === 'POST')).toHaveLength(0);
+});
+
+test('manual P25 setup waits for cancellation and preserves the wizard when cancellation fails', async ({ page }) => {
+  const state = { phase: 'inconclusive', manualSetup: true, deferDeleteOnce: true, failDeleteOnce: true };
+  await install(page, state);
+  await begin(page);
+  const manual = wizard(page).getByRole('button', { name: 'Set up manually', exact: true });
+  await manual.click();
+  await expect.poll(() => typeof state.releaseDelete).toBe('function');
+  await expect(manual).toBeDisabled();
+  await expect(page.getByRole('heading', { name: 'Create Channel', exact: true })).toHaveCount(0);
+  state.releaseDelete();
+  await expect(wizard(page).getByText('This signal check could not be stopped yet. Try again before setting up manually.')).toBeVisible();
+  await expect(manual).toBeEnabled();
+  await expect(page.getByRole('heading', { name: 'Create Channel', exact: true })).toHaveCount(0);
+  await manual.click();
+  await expect(page.getByRole('heading', { name: 'Create Channel', exact: true })).toBeVisible();
+  await expect(wizard(page)).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => window.discoveryProbeStates)).toEqual([true, false]);
+  expect(state.requests.filter((request) => request.path.endsWith('/save') || request.path.endsWith('/start'))).toHaveLength(0);
+});
+
+test('manual weak P25 setup saves through the normal channel editor without verified identity or autostart', async ({ page }) => {
+  const state = { phase: 'inconclusive', manualSetup: true, probeOverride: {
+    c4fm: { valid_control_messages: 38, quality_pct: 3 }, cqpsk: { valid_control_messages: 0, quality_pct: 0 },
+    identity: null, selected_modulation: null
+  } };
+  await install(page, state);
+  await begin(page);
+  await wizard(page).getByRole('button', { name: 'Set up manually', exact: true }).click();
+  const editor = page.locator('.channel-editor-modal').filter({ has: page.getByRole('heading', { name: 'Create Channel', exact: true }) });
+  await editor.getByLabel('Name', { exact: true }).fill('Weak Control');
+  await editor.getByRole('button', { name: 'Create channel', exact: true }).click();
+  await expect.poll(() => state.requests.filter((request) => request.path === '/api/v1/admin/channels' &&
+    request.method === 'POST').length).toBe(1);
+  const saved = state.requests.find((request) => request.path === '/api/v1/admin/channels' && request.method === 'POST').body;
+  expect(saved.protocol_id).toBe('p25-phase1');
+  expect(saved.name).toBe('Weak Control');
+  expect(saved.source.frequencies_hz).toEqual([851012500]);
+  expect(saved.source.preferred_tuner).toBe('Test receiver');
+  expect(saved.settings.modulation).toBe('C4FM');
+  expect(saved.observed?.p25_site_identity).toBeUndefined();
+  expect(saved.auto_start_order).toBeUndefined();
+  expect(state.requests.filter((request) => request.path.endsWith('/save') || request.path.endsWith('/start') ||
+    request.path.endsWith('/actions') && request.body.action === 'START')).toHaveLength(0);
+});
+
+for (const protocolId of ['dmr', 'nxdn']) {
+  test(`inconclusive ${protocolId.toUpperCase()} does not offer the P25 manual handoff`, async ({ page }) => {
+    const state = { phase: 'inconclusive' };
+    await install(page, state);
+    await begin(page, protocolId);
+    await expect(wizard(page).getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
+    await expect(wizard(page).getByRole('button', { name: 'Set up manually', exact: true })).toHaveCount(0);
+    await expect(wizard(page).getByText('Decode score', { exact: true })).toHaveCount(0);
+    await expect(wizard(page).getByText(/A low score can still confirm/)).toHaveCount(0);
+  });
+}
 
 test('recovering P25 probe status restores the scanning footer', async ({ page }) => {
   const state = { phase: 'identifying', failProbeStatusOnce: true };
@@ -1108,6 +1223,36 @@ for (const [protocolId, theme, width] of [['am', 'light', 1280], ['nbfm', 'dark'
     expect(save.alias_list_id).toBe(0);
     expect(save.new_alias_list_name).toBe(protocolId === 'am' ? 'AM channel' : 'FM channel');
   });
+}
+
+for (const theme of ['light', 'dark']) {
+  for (const width of [1280, 390]) {
+    test(`weak P25 manual choice fits ${theme} at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.emulateMedia({ colorScheme: theme });
+      const state = { theme, phase: 'inconclusive', probeOverride: {
+        c4fm: { valid_messages: 38, valid_control_messages: 38, invalid_control_messages: 169, quality_pct: 3 },
+        cqpsk: { valid_messages: 0, valid_control_messages: 0, invalid_control_messages: 0, quality_pct: 0 },
+        identity: null, selected_modulation: null
+      } };
+      await install(page, state);
+      await begin(page);
+      await disclose(page, 'Signal details');
+      const dialog = wizard(page);
+      await expect(dialog.getByRole('button', { name: 'Set up manually', exact: true })).toBeVisible();
+      await expect(dialog.getByRole('columnheader', { name: 'Decode score', exact: true })).toBeVisible();
+      const fits = await dialog.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.left >= 0 && rect.right <= innerWidth && element.scrollWidth <= element.clientWidth + 1 &&
+          [...element.querySelectorAll('.ui-modal-footer button')].every((button) => {
+            const bounds = button.getBoundingClientRect();
+            return bounds.left >= rect.left && bounds.right <= rect.right;
+          });
+      });
+      expect(fits).toBe(true);
+      await dialog.screenshot({ path: test.info().outputPath(`weak-p25-${theme}-${width}.png`) });
+    });
+  }
 }
 
 for (const protocolId of ['am', 'nbfm']) {

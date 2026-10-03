@@ -43,6 +43,8 @@ vm.runInContext(`
   ${functionSource('function channelCreationProtocolLabel(profile)')}
   ${functionSource('function channelDefaultAliasListName(aliasFamily)')}
   ${functionSource('function channelCreationDefaults(channel, profile, options)')}
+  ${functionSource('function channelCreationPrefill(channel, profile, initialChannel)')}
+  ${functionSource('function spectrumDiscoveryManualChannel(selection, probe = {})')}
   ${functionSource('function setUiToggle(input, checked)')}
   const CHANNEL_ENCRYPTED_SKIP_PATH = 'settings.ignore_encrypted_calls';
   ${functionSource('function channelEncryptedCallSkipLocked(field, protocolCatalog)')}
@@ -80,6 +82,33 @@ const unchangedDefaults = JSON.parse(vm.runInContext(`JSON.stringify(channelCrea
 ))`, context));
 assert.equal(unchangedDefaults.alias_list_id, 10,
   'The template choice should remain when the selected protocol has no Default alias list');
+
+const manualDraft = JSON.parse(vm.runInContext(`JSON.stringify(spectrumDiscoveryManualChannel(
+  { frequencyHz: 774706250, tunerName: 'Receiver A', tunerId: 'private-id' },
+  { c4fm: { valid_control_messages: 38, quality_pct: 3 },
+    cqpsk: { valid_control_messages: 0, quality_pct: 0 },
+    identity: { wacn: 123, system: 456, site: 7 } }
+))`, context));
+assert.deepEqual(manualDraft, { protocol_id: 'p25-phase1', source: {
+  frequencies_hz: [774706250], preferred_frequency_hz: 774706250, preferred_tuner: 'Receiver A'
+}, settings: { modulation: 'C4FM' } },
+'Manual setup carries frequency and winning modulation without inventing verified identity');
+assert.deepEqual(JSON.parse(vm.runInContext(`JSON.stringify(spectrumDiscoveryManualChannel(
+  { frequencyHz: 774706250 }, { c4fm: { valid_control_messages: 38, quality_pct: 3 },
+    cqpsk: { valid_control_messages: 38, quality_pct: 3 } }
+).settings)`, context)), {}, 'An exact tie leaves modulation for manual selection');
+const prefilled = JSON.parse(vm.runInContext(`JSON.stringify(channelCreationPrefill(
+  { protocol_id: 'p25-phase1', name: 'Template', alias_list_id: 11, observed: {},
+    source: { rotation_delay_ms: 500 }, settings: { traffic_channel_pool_size: 20, modulation: 'CQPSK' } },
+  { id: 'p25-phase1' },
+  { protocol_id: 'p25-phase1', observed: { p25_site_identity: 'unverified' }, system: 'Unverified system',
+    source: { frequencies_hz: [774706250] }, settings: { modulation: 'C4FM' } }
+))`, context));
+assert.deepEqual(prefilled.source, { rotation_delay_ms: 500, frequencies_hz: [774706250] });
+assert.deepEqual(prefilled.settings, { traffic_channel_pool_size: 20, modulation: 'C4FM' });
+assert.equal(prefilled.alias_list_id, 11);
+assert.deepEqual(prefilled.observed, {});
+assert.equal(prefilled.system, undefined);
 
 assert.equal(vm.runInContext(`channelEncryptedCallSkipLocked(
   { path: 'settings.ignore_encrypted_calls' }, { voice_decryption_module_loaded: true })`, context), true);

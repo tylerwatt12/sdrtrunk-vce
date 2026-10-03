@@ -13047,6 +13047,19 @@ function spectrumDiscoveryIdentity(identity, systemName = '') {
   ] : [];
 }
 
+function spectrumDiscoveryManualChannel(selection, probe = {}) {
+  const first = probe.c4fm || {};
+  const second = probe.cqpsk || {};
+  const firstScore = Number(first.quality_pct) || 0;
+  const secondScore = Number(second.quality_pct) || 0;
+  const modulation = firstScore > secondScore && Number(first.valid_control_messages) > 0 ? 'C4FM' :
+    secondScore > firstScore && Number(second.valid_control_messages) > 0 ? 'CQPSK' : null;
+  return { protocol_id: 'p25-phase1', source: {
+    frequencies_hz: [selection.frequencyHz], preferred_frequency_hz: selection.frequencyHz,
+    preferred_tuner: selection.tunerName || null
+  }, settings: modulation ? { modulation } : {} };
+}
+
 function openSpectrumDiscoveryWizard(selection) {
   selection = { ...selection, frequencyHz: Math.round(Number(selection.frequencyHz)) };
   const abort = new AbortController();
@@ -13078,6 +13091,7 @@ function openSpectrumDiscoveryWizard(selection) {
   const editedReviewFields = new Set();
   let savedAliasName = '';
   let restartRequired = false;
+  let manualProbeReleased = false;
   let probeNodes = null;
   const path = '/api/v1/admin/spectrum-discovery';
   const directory = createDiscoveryRadioReferenceContext({ node, uiSelect, uiSelectFrame, formField, anchor, href },
@@ -13138,7 +13152,7 @@ function openSpectrumDiscoveryWizard(selection) {
       }
       await releaseDelay(Math.min(1000, Math.max(0, deadline - Date.now())));
     }
-    await selection.setProbeActive?.(false);
+    if (!manualProbeReleased) await selection.setProbeActive?.(false);
   };
   const abandon = () => { abort.abort(); void cancelSession(true, { bestEffort: true }); };
   const modal = openReadOnlyModal('Add a channel', host, {
@@ -13259,6 +13273,32 @@ function openSpectrumDiscoveryWizard(selection) {
       }
     }
   };
+  const setupManually = async () => {
+    const initialChannel = spectrumDiscoveryManualChannel(selection, session?.probe);
+    busy(true);
+    const cancelled = cancelSession();
+    const generation = operation;
+    try {
+      await cancelled;
+      if (!current() || generation !== operation) return;
+      await selection.setProbeActive?.(false);
+      manualProbeReleased = true;
+      if (!current() || generation !== operation) return;
+      busy(false);
+      let opened = false;
+      const openEditor = () => {
+        if (opened) return;
+        opened = true;
+        void openChannelEditorModal('create', null, { initialChannel });
+      };
+      if (modal.close(openEditor)) openEditor();
+    } catch (error) {
+      if (current() && generation === operation) {
+        showError(error, 'This signal check could not be stopped yet. Try again before setting up manually.');
+        busy(false);
+      }
+    }
+  };
   const showProtocol = () => {
     showStep(0, 'What kind of signal is this?');
     const group = node('fieldset', 'spectrum-discovery-protocols');
@@ -13341,7 +13381,7 @@ function openSpectrumDiscoveryWizard(selection) {
     const table = node('table', 'ui-data-table ui-data-table-quiet spectrum-discovery-probe-table');
     const head = node('thead');
     const row = node('tr');
-    ['Setting', 'Valid', 'Control', 'Rejected', 'Valid %'].forEach((label) => {
+    ['Setting', 'Valid', 'Control', 'Rejected', 'Decode score'].forEach((label) => {
       const cell = node('th', '', label);
       cell.scope = 'col';
       row.append(cell);
@@ -13364,7 +13404,9 @@ function openSpectrumDiscoveryWizard(selection) {
     table.append(head, body);
     const wrap = node('div', 'ui-table-wrap');
     wrap.append(table);
-    const details = disclosure('Signal details', identity, wrap);
+    const details = disclosure('Signal details', identity, wrap, node('p', 'muted',
+      'Decode score compares valid control messages, rejected messages, lost synchronization and corrected bits. ' +
+      'A low score can still confirm a system when its identity repeats consistently.'));
     details.classList.add('spectrum-discovery-technical');
     return { details, nodes };
   };
@@ -13409,6 +13451,7 @@ function openSpectrumDiscoveryWizard(selection) {
     nodes.copy.textContent = ready ? (digital ? 'The system, site, and signal setting stayed consistent.' :
       'The listening settings are ready.') : identifying ? (digital ?
       'Waiting for matching system and site details.' : 'Preparing the settings needed to listen.') :
+      p25 ? 'The system and site could not be confirmed. Try again, or set up the channel manually.' :
       digital ? 'We couldn’t get enough matching information. Try again, or choose another radio type.' :
         'Your receiver is no longer ready for setup. Try again, or choose another radio type.';
     nodes.elapsed.hidden = !identifying;
@@ -13435,6 +13478,7 @@ function openSpectrumDiscoveryWizard(selection) {
         button('Review channel', showReview, true);
       } else {
         button('Choose another radio type', () => void chooseAnother());
+        if (p25) button('Set up manually', () => void setupManually());
         button('Try again', () => void beginSession(profile.id), true);
       }
     }
@@ -21970,6 +22014,12 @@ function channelCreationDefaults(channel, profile, options) {
   return defaultAliasList ? { ...channel, alias_list_id: defaultAliasList.id } : channel;
 }
 
+function channelCreationPrefill(channel, profile, initialChannel) {
+  if (initialChannel?.protocol_id !== profile.id) return channel;
+  return { ...channel, source: { ...channel.source, ...initialChannel.source },
+    settings: { ...channel.settings, ...initialChannel.settings } };
+}
+
 function channelFieldOptions(field, profile, options) {
   if (Array.isArray(field.options)) return field.options;
   if (field.path === 'alias_list_id') return (options.alias_lists || [])
@@ -22655,10 +22705,13 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
     let entry = loadedEntry;
     const profiles = protocols.profiles || [];
     let revision = Number(entry?.revision ?? options.revision ?? 0);
-    let profile = profiles.find((candidate) => candidate.id === entry?.channel?.protocol_id) || profiles[0];
+    const initialChannel = !editing ? prefetched?.initialChannel : null;
+    let profile = profiles.find((candidate) => candidate.id ===
+      (entry?.channel?.protocol_id || initialChannel?.protocol_id)) || profiles[0];
     let channel = entry?.channel || await requestJson(
       `/api/v1/admin/channels/protocols/${encodeURIComponent(profile.id)}/template`, { csrf: false });
     if (!editing) channel = channelCreationDefaults(channel, profile, options);
+    if (!editing) channel = channelCreationPrefill(channel, profile, initialChannel);
     let baselineChannel = structuredClone(channel);
     let templateGeneration = 0;
     const host = node('div');
