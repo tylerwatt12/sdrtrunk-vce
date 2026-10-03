@@ -136,7 +136,8 @@ class StatsWebFrequencyActionsUiContractTest
         assertTrue(spectrumPage.contains("main.append(spectrum.element, frequencyRail)"));
         assertTrue(spectrumPage.contains("onFrequencySelection: (selection) =>"));
         assertTrue(spectrumPage.contains("actionHost: frequencyRail"));
-        assertTrue(spectrumPage.contains("header.append(findChannels)"));
+        assertFalse(spectrumPage.contains("openSpectrumSearchWizard"));
+        assertFalse(spectrumPage.contains("findChannels"));
         assertFalse(spectrumPage.contains("Keep tuner here"));
         assertTrue(tuner.contains("function frequencySelectionAtPointer(event)"));
         assertTrue(tuner.contains("typeof panelOptions.onFrequencySelection === 'function'"));
@@ -154,6 +155,26 @@ class StatsWebFrequencyActionsUiContractTest
         assertFalse(pointerCancel.contains("openFrequencyActionsAtPointer"));
         assertFalse(tuner.contains("updateCursor(ratio).then"));
         assertFalse(tuner.contains("acceptTunerFrame(frame).then"));
+    }
+
+    @Test
+    void channelSetupOwnsTrunkedSearchWithItsOwnReceiverLease() throws Exception
+    {
+        String source = Files.readString(APP_JAVASCRIPT);
+        String channels = block(source, "async function renderModernChannelCatalog(renderContext)");
+        String search = Files.readString(Path.of("stats-web", "assets", "features", "spectrum-search.js"));
+
+        assertTrue(channels.contains("capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_TUNERS)"));
+        assertTrue(channels.contains("uiActionButton('Find Trunked Systems'"));
+        assertTrue(channels.contains("openSpectrumSearchWizard"));
+        assertTrue(channels.contains("prepareReceiver: async (tuner)"));
+        assertTrue(channels.contains("'Stop channels for this search?'"));
+        assertTrue(search.contains("const browsePath = (id) => `/api/v1/admin/tuners/${encodeURIComponent(id)}/browse`"));
+        assertTrue(search.contains("browse_lease_id: lease.lease_id"));
+        assertTrue(search.contains("radioreference_state_id: directory.stateId()"));
+        assertTrue(search.contains("if (jobReleased) await releaseLease({ bestEffort: true })"));
+        assertFalse(channels.contains("searchOwner"));
+        assertFalse(channels.contains("searchActive"));
     }
 
     @Test

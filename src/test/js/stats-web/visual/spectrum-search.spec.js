@@ -1,9 +1,11 @@
 const { expect, test } = require('@playwright/test');
 const { resolve } = require('node:path');
+const { readFileSync } = require('node:fs');
 const { pathToFileURL } = require('node:url');
 const root = resolve(__dirname, '../../../../..');
 const searchPath = '/api/v1/admin/spectrum-search';
 const configurationId = '7f408d02-7c20-44b2-97ce-f6202b24b0f7';
+const protocols = require(resolve(root, 'src/main/resources/channel-protocols.json'));
 const dialog = (page) => page.locator('.spectrum-search-modal');
 const bandLabels = ['VHF high · 138–174 MHz', 'UHF · 406–470 MHz', '700 MHz · 769–775 MHz',
   '800 MHz · 851–869 MHz', 'Custom range'];
@@ -52,8 +54,8 @@ function snapshot(state) {
   return { job_id: 'search-a', phase: state.phase || 'complete', revision: state.revision || 7,
     reason: state.reason || null,
     expires_at_ms: 1790880600000, restart_required: Boolean(state.restartRequired), truncated_reason: state.truncated ? 'Candidate limit reached' : null,
-    progress: { completed: 2, total: 4, current_frequency_hz: 773000000, checked: 1, total_signals: 4 }, candidates: state.empty ? [] : candidates,
-    alias_groups: [{ group_id: 'county', wacn: 0xbee00, system: 0x348,
+    progress: { completed: 2, total: 4, current_frequency_hz: 773000000, checked: 1, total_signals: 4 }, candidates: state.empty ? [] : state.customCandidates || candidates,
+    alias_groups: state.customAliasGroups || [{ group_id: 'county', wacn: 0xbee00, system: 0x348,
       alias_lists: state.ambiguous ? [{ id: 21, name: 'County Dispatch' }, { id: 22, name: 'County Operations' }] :
         [{ id: 21, name: 'County Dispatch' }], suggested_alias_list_id: null, default_new_alias_list_name: 'County P25' },
     { group_id: 'regional', wacn: 0xabc00, system: 0x234, alias_lists: [], suggested_alias_list_id: null,
@@ -63,11 +65,16 @@ function snapshot(state) {
 async function install(page, state = {}) {
   state.requests = [];
   state.ledger = {};
-  state.tuners = [tuner('idle-a', 2200000), tuner('idle-b', 9000000)];
+  state.tuners = state.recording ? [{ ...tuner('capture-a', 2000000), name: 'Trunked capture',
+    tuner_class: 'RECORDING', source_type: 'recording', fixed_window: true, center_frequency_hz: 451000000, frequency_hz: undefined,
+    minimum_frequency_hz: 450000000, maximum_frequency_hz: 452000000 }] :
+    [tuner('idle-a', 2200000), tuner('idle-b', 9000000)];
   if (state.busyWide) state.tuners[1] = { ...state.tuners[1], operator_state: 'live', channel_count: 2 };
   let leaseSequence = 0;
   const takeoverLeases = new Set();
   const preferenceModule = await import(pathToFileURL(resolve(root, 'stats-web/assets/core/preference-schema.js')).href);
+  await page.route('**/assets/app.js*', (route) => route.fulfill({ contentType: 'text/javascript',
+    body: `${readFileSync(resolve(root, 'stats-web/assets/app.js'), 'utf8')}\nexport { closeReadOnlyModal };` }));
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
@@ -83,6 +90,12 @@ async function install(page, state = {}) {
       revision: 1, preferences: { ...preferenceModule.defaults, appearance: { hue: null, theme: state.theme || 'light' } } }) });
     if (path === '/api/v1/spectrum-snap-presets') return route.fulfill({ contentType: 'application/json', body: JSON.stringify({
       revision: 1, country_code: 'US', country_label: 'United States', countries: [{ code: 'US', label: 'United States' }], scopes: [] }) });
+    if (path === '/api/v1/admin/radioreference') return state.directoryOffline ?
+      fail('Directory unavailable', 'unavailable', 503) : respond(state.directoryConfiguration || {});
+    if (path === '/api/v1/admin/radioreference/states') return respond({ items: [{ id: 39, name: 'Ohio' }, { id: 42, name: 'Pennsylvania' }] });
+    if (path === '/api/v1/admin/channels') return respond({ revision: 1, channels: [] });
+    if (path === '/api/v1/admin/channels/protocols') return respond(protocols);
+    if (path === '/api/v1/admin/channels/options') return respond({ alias_lists: [] });
     if (path === '/api/v1/admin/tuners') return respond({ tuners: state.tuners });
     if (path.endsWith('/browse')) {
       if (request.method() === 'DELETE') {
@@ -136,6 +149,7 @@ async function install(page, state = {}) {
         return fail('Search could not start', 'spectrum_search_failed', 503);
       }
       if (state.invalidRequest) return fail(state.invalidRequest, 'invalid_request', 400);
+      if (state.delayCreate) await new Promise((resolve) => { state.releaseCreate = resolve; });
       return respond(snapshot(state));
     }
     if (path === `${searchPath}/search-a`) {
@@ -174,13 +188,13 @@ async function install(page, state = {}) {
     }
     return respond({});
   });
-  await page.goto('/app.html?view=tuner-spectrum');
+  await page.goto('/app.html?view=channel-setup');
   if (state.adminTuners === false || state.adminChannels === false) {
-    await expect(page.getByRole('heading', { name: state.adminTuners === false ? 'Access denied' : 'Tuner Spectrum', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: state.adminChannels === false ? 'Access denied' : 'Channels', exact: true })).toBeVisible();
     return state;
   }
-  await expect(page.getByRole('button', { name: 'Find P25 channels', exact: true })).toBeEnabled();
-  await page.getByRole('button', { name: 'Find P25 channels', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Find Trunked Systems', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Find Trunked Systems', exact: true }).click();
   await expect(dialog(page).getByRole('heading', {
     name: state.noIdle || state.lockedOnly || state.noCatalogTuners ? 'Choose a receiver' : 'Choose where to look'
   })).toBeVisible();
@@ -193,10 +207,10 @@ async function complete(page) {
   await expect(dialog(page).getByRole('heading', { name: /channels? found$/ })).toBeVisible();
 }
 
-test('uses one widest idle receiver, supports multiple ranges, and releases browsing before starting search', async ({ page }) => {
+test('uses one widest idle receiver and acquires its own browse session when searching', async ({ page }) => {
   const state = await install(page);
   await expect(dialog(page).getByLabel('Receiver', { exact: true })).toHaveValue('idle-b');
-  await expect(page.locator('.spectrum-browse-tuner select')).toBeDisabled();
+  expect(state.requests.some((request) => request.path.endsWith('/browse'))).toBe(false);
   await expect(bandsTrigger(page)).toHaveAccessibleName('Bands 700 MHz, 800 MHz');
   await expect(bandsMenu(page)).toBeHidden();
   const modalBefore = await dialog(page).boundingBox();
@@ -224,15 +238,17 @@ test('uses one widest idle receiver, supports multiple ranges, and releases brow
   await expect(dialog(page).getByLabel('Start frequency (MHz)')).not.toHaveAttribute('required', '');
   await expect(dialog(page).getByLabel('End frequency (MHz)')).not.toHaveAttribute('required', '');
   await expect(dialog(page).locator('.spectrum-search-form > .ui-notice'))
-    .toHaveText('The receiver scans each band, then checks promising signals.');
+    .toHaveText('Checks promising signals for consistent trunked system and site identity.');
   await expect(dialog(page).getByText('What are P25 channels?', { exact: true })).toHaveCount(0);
   await expect(dialog(page).getByText('Use another receiver', { exact: true })).toHaveCount(0);
   await complete(page);
   const create = state.requests.find((request) => request.path === searchPath && request.method === 'POST');
-  expect(create.body).toEqual({ tuner_id: 'idle-b', browse_lease_id: 'lease-2', ranges: [
+  expect(create.body).toEqual({ tuner_id: 'idle-b', browse_lease_id: 'lease-1', radioreference_state_id: null, ranges: [
     { minimum_hz: 769000000, maximum_hz: 775000000 }, { minimum_hz: 851000000, maximum_hz: 869000000 }] });
-  const release = state.requests.findIndex((request) => request.path === '/api/v1/admin/tuners/idle-a/browse' && request.method === 'DELETE');
-  expect(release).toBeLessThan(state.requests.indexOf(create));
+  const acquired = state.requests.findIndex((request) => request.path === '/api/v1/admin/tuners/idle-b/browse' && request.method === 'POST');
+  expect(acquired).toBeGreaterThan(-1);
+  expect(acquired).toBeLessThan(state.requests.indexOf(create));
+  expect(state.requests.some((request) => request.path === '/api/v1/admin/tuners/idle-a/browse')).toBe(false);
   await expect(dialog(page).getByRole('checkbox', { name: 'Select Saved East' })).toBeDisabled();
   await expect(dialog(page).getByRole('link', { name: 'Existing East Control' })).toHaveAttribute('href', /configuration_id=/);
   await expect(dialog(page).locator('.spectrum-search-group-table').first().locator('thead th'))
@@ -278,7 +294,7 @@ test('failed search creation restores a borrowed receiver and refreshes its cata
   await expect(search.getByRole('button', { name: 'Stop channels and use' })).toHaveCount(2);
   expect(state.requests.filter((request) => request.path === `${searchPath}/catalog`)).toHaveLength(catalogsBefore + 1);
   expect(state.requests.some((request) => request.path === '/api/v1/admin/tuners/idle-a/browse' &&
-    request.method === 'DELETE' && request.body.lease_id === 'lease-2')).toBe(true);
+    request.method === 'DELETE' && request.body.lease_id === 'lease-1')).toBe(true);
 });
 
 test('preparing and starting with a borrowed receiver leaves one renewal timer', async ({ page }) => {
@@ -292,7 +308,7 @@ test('preparing and starting with a borrowed receiver leaves one renewal timer',
   await expect(search.getByRole('heading', { name: /channels? found$/ })).toBeVisible();
   const renewalCount = () => state.requests.filter((request) =>
     request.path === '/api/v1/admin/tuners/idle-a/browse' && request.method === 'POST' &&
-    request.body.lease_id === 'lease-2').length;
+    request.body.lease_id === 'lease-1').length;
   const before = renewalCount();
 
   await page.clock.fastForward(10_100);
@@ -326,11 +342,11 @@ test('band picker remains bounded and keyboard accessible on a narrow screen', a
 
 test('search requires both tuner and channel administration access', async ({ page }) => {
   const state = await install(page, { adminChannels: false });
-  await expect(page.locator('.spectrum-browse-toolbar').getByRole('button',
-    { name: 'Find P25 channels', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button',
+    { name: 'Find Trunked Systems', exact: true })).toHaveCount(0);
   expect(state.requests.some((request) => request.path.startsWith(searchPath))).toBe(false);
   const withoutTuners = await install(page, { adminTuners: false });
-  await expect(page.getByRole('button', { name: 'Find P25 channels', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Find Trunked Systems', exact: true })).toHaveCount(0);
   expect(withoutTuners.requests.some((request) => request.path.startsWith(searchPath))).toBe(false);
 });
 
@@ -447,7 +463,7 @@ test('keyboard band choices combine presets with a custom range and preserve the
   await expect(maximum).toHaveValue('484');
 });
 
-test('hides partial results, retries polling and discards the job before rebinding Spectrum', async ({ page }) => {
+test('hides partial results, retries polling and discards the job before releasing its receiver', async ({ page }) => {
   const state = await install(page, { phase: 'scanning', failPollOnce: true });
   await dialog(page).getByRole('button', { name: 'Find signals', exact: true }).click();
   await expect(dialog(page).getByRole('heading', { name: 'Find signals', exact: true })).toBeVisible();
@@ -459,9 +475,10 @@ test('hides partial results, retries polling and discards the job before rebindi
   await expect(dialog(page).getByRole('checkbox')).toHaveCount(0);
   state.phase = 'complete';
   await expect(dialog(page).getByRole('heading', { name: /channels? found$/ })).toBeVisible();
-  await dialog(page).getByRole('button', { name: 'Close Find P25 channels' }).click();
+  await dialog(page).getByRole('button', { name: 'Close Find Trunked Systems' }).click();
   await expect(dialog(page)).toHaveCount(0);
-  await expect(page.locator('.spectrum-browse-tuner select')).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Find Trunked Systems', exact: true })).toBeEnabled();
+  await expect.poll(() => state.requests.some((request) => request.path === '/api/v1/admin/tuners/idle-b/browse' && request.method === 'DELETE')).toBe(true);
   const jobDelete = state.requests.findIndex((request) => request.path === `${searchPath}/search-a` && request.method === 'DELETE');
   const browseDelete = state.requests.findIndex((request, index) => index > jobDelete && request.path === '/api/v1/admin/tuners/idle-b/browse' && request.method === 'DELETE');
   expect(jobDelete).toBeGreaterThan(-1);
@@ -636,10 +653,10 @@ test('a confirmed receiver lease conflict expires the search instead of retrying
   await page.clock.fastForward(11000);
   await expect(dialog(page).getByRole('heading', { name: 'This search expired' })).toBeVisible();
   const renewals = state.requests.filter((request) =>
-    request.path === '/api/v1/admin/tuners/idle-b/browse' && request.body.lease_id === 'lease-2').length;
+    request.path === '/api/v1/admin/tuners/idle-b/browse' && request.body.lease_id === 'lease-1').length;
   await page.clock.fastForward(20000);
   expect(state.requests.filter((request) =>
-    request.path === '/api/v1/admin/tuners/idle-b/browse' && request.body.lease_id === 'lease-2')).toHaveLength(renewals);
+    request.path === '/api/v1/admin/tuners/idle-b/browse' && request.body.lease_id === 'lease-1')).toHaveLength(renewals);
 });
 
 test('no idle receiver, failed search and empty results provide an actionable next step', async ({ page }) => {
@@ -673,7 +690,7 @@ test('no idle receiver, failed search and empty results provide an actionable ne
   state.phase = 'complete';
   state.empty = true;
   await complete(page);
-  await expect(dialog(page)).toContainText('No P25 control channels were identified');
+  await expect(dialog(page)).toContainText('No trunked control channels were identified');
   await expect(dialog(page).getByRole('button', { name: 'Review selected' })).toBeDisabled();
 });
 
@@ -711,7 +728,7 @@ test('warns before stopping active channels and keeps the takeover lease for the
     request.path === '/api/v1/admin/tuners/idle-a/browse' && request.method === 'POST');
   const takeoverIndex = browsePosts.findIndex((request) => request.body.takeover === true);
   expect(takeoverIndex).toBeGreaterThanOrEqual(0);
-  expect(browsePosts[takeoverIndex + 1].body).toEqual({ lease_id: 'lease-2' });
+  expect(browsePosts[takeoverIndex + 1].body).toEqual({ lease_id: 'lease-1' });
 });
 
 test('searching another band refreshes receiver availability after restoring a borrowed tuner', async ({ page }) => {
@@ -743,14 +760,14 @@ test('saving restores a borrowed tuner as soon as it finishes', async ({ page })
   const saveIndex = state.requests.findIndex((request) => request.path.endsWith('/save'));
   const releaseRequestIndex = () => state.requests.findIndex((request, index) => index > saveIndex &&
     request.path === '/api/v1/admin/tuners/idle-a/browse' && request.method === 'DELETE' &&
-    request.body.lease_id === 'lease-2');
+    request.body.lease_id === 'lease-1');
   await expect.poll(releaseRequestIndex).toBeGreaterThan(saveIndex);
   const releaseIndex = releaseRequestIndex();
   const resumeRequestIndex = () => state.requests.findIndex((request, index) => index > releaseIndex &&
     request.path === '/api/v1/admin/tuners/idle-a/browse' && request.method === 'POST' &&
     Object.keys(request.body).length === 0);
   expect(releaseIndex).toBeGreaterThan(saveIndex);
-  await expect.poll(resumeRequestIndex).toBeGreaterThan(releaseIndex);
+  expect(resumeRequestIndex()).toBe(-1);
 });
 
 test('a release conflict keeps ownership until retry resumes the borrowed tuner', async ({ page }) => {
@@ -768,7 +785,7 @@ test('a release conflict keeps ownership until retry resumes the borrowed tuner'
   const retry = dialog(page).getByRole('button', { name: 'Try resuming channels', exact: true });
   await expect(retry).toBeVisible();
   const failedRelease = state.requests.findIndex((request) => request.path === '/api/v1/admin/tuners/idle-a/browse' &&
-    request.method === 'DELETE' && request.body.lease_id === 'lease-2');
+    request.method === 'DELETE' && request.body.lease_id === 'lease-1');
   expect(failedRelease).toBeGreaterThanOrEqual(0);
   expect(state.requests.slice(failedRelease + 1).some((request) =>
     request.path === '/api/v1/admin/tuners/idle-a/browse' && request.method === 'POST' &&
@@ -778,12 +795,12 @@ test('a release conflict keeps ownership until retry resumes the borrowed tuner'
   await expect(retry).toHaveCount(0);
   const successfulRelease = state.requests.findIndex((request, index) => index > failedRelease &&
     request.path === '/api/v1/admin/tuners/idle-a/browse' && request.method === 'DELETE' &&
-    request.body.lease_id === 'lease-2');
+    request.body.lease_id === 'lease-1');
   const resume = state.requests.findIndex((request, index) => index > successfulRelease &&
     request.path === '/api/v1/admin/tuners/idle-a/browse' && request.method === 'POST' &&
     Object.keys(request.body).length === 0);
   expect(successfulRelease).toBeGreaterThan(failedRelease);
-  expect(resume).toBeGreaterThan(successfulRelease);
+  expect(resume).toBe(-1);
 });
 
 test('failed restart release retains the lease and retries before refreshing receivers', async ({ page }) => {
@@ -793,7 +810,7 @@ test('failed restart release retains the lease and retries before refreshing rec
   const catalogsBefore = state.requests.filter((request) => request.path === `${searchPath}/catalog`).length;
 
   await dialog(page).getByRole('button', { name: 'Search another band', exact: true }).click();
-  await expect(dialog(page)).toContainText('This receiver could not return to Spectrum yet');
+  await expect(dialog(page)).toContainText('This receiver could not be released yet');
   await expect(dialog(page).getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
   expect(state.requests.filter((request) => request.path === `${searchPath}/catalog`)).toHaveLength(catalogsBefore);
 
@@ -803,7 +820,7 @@ test('failed restart release retains the lease and retries before refreshing rec
   await expect(dialog(page).getByRole('button', { name: 'Find signals', exact: true })).toBeEnabled();
   const browseDeletes = state.requests.filter((request) =>
     request.path === '/api/v1/admin/tuners/idle-b/browse' && request.method === 'DELETE' &&
-    request.body.lease_id === 'lease-2');
+    request.body.lease_id === 'lease-1');
   expect(browseDeletes).toHaveLength(2);
 });
 
@@ -832,7 +849,7 @@ test('failed search cleanup retains the job id and retries before releasing the 
     request.method === 'DELETE').length).toBe(receiverDeletesBefore + 1);
 });
 
-test('closing after a transient job release failure keeps Spectrum paused until retry succeeds', async ({ page }) => {
+test('closing after a transient job release failure retains its receiver until retry succeeds', async ({ page }) => {
   await page.clock.install();
   const state = await install(page, { phase: 'scanning' });
   await dialog(page).getByRole('button', { name: 'Find signals', exact: true }).click();
@@ -857,12 +874,154 @@ test('closing after a transient job release failure keeps Spectrum paused until 
   await page.clock.fastForward(1100);
   await expect.poll(() => jobDeletes().length).toBe(2);
   await expect.poll(() => leaseDeletes().length).toBe(1);
-  await expect.poll(() => resumedBrowses().length).toBe(1);
+  expect(resumedBrowses()).toHaveLength(0);
   const secondJobDelete = state.requests.lastIndexOf(jobDeletes()[1]);
   const leaseDelete = state.requests.lastIndexOf(leaseDeletes()[0]);
-  const resumedBrowse = state.requests.lastIndexOf(resumedBrowses()[0]);
   expect(leaseDelete).toBeGreaterThan(secondJobDelete);
-  expect(resumedBrowse).toBeGreaterThan(leaseDelete);
+});
+
+test('recording tuners check only their fixed WAV window with directory state preserved', async ({ page }) => {
+  const state = await install(page, { recording: true, directoryConfiguration: {
+    account: { state: 'VALID_PREMIUM' }, country_id: 1, state_id: 39 } });
+  await dialog(page).getByText('RadioReference names (optional)', { exact: true }).click();
+  await expect(dialog(page).getByLabel('RadioReference state or province')).toHaveValue('39');
+  await expect(bandsTrigger(page)).toBeHidden();
+  await expect(dialog(page)).toContainText('WAV recording');
+  await expect(dialog(page)).toContainText('450 to 452 MHz');
+  await dialog(page).getByLabel('RadioReference state or province').selectOption('42');
+  await complete(page);
+  const create = state.requests.find((request) => request.path === searchPath && request.method === 'POST');
+  expect(create.body).toEqual({ tuner_id: 'capture-a', browse_lease_id: 'lease-1',
+    radioreference_state_id: 42, ranges: [{ minimum_hz: 450000000, maximum_hz: 452000000 }] });
+});
+
+test('directory network failure leaves local signal discovery available', async ({ page }) => {
+  const state = await install(page, { directoryOffline: true });
+  await dialog(page).getByText('RadioReference names (optional)', { exact: true }).click();
+  await expect(dialog(page)).toContainText('Directory names are unavailable. Signal discovery can continue.');
+  await complete(page);
+  expect(state.requests.find((request) => request.path === searchPath && request.method === 'POST')
+    .body.radioreference_state_id).toBe(null);
+  await expect(dialog(page)).toContainText('County Public Safety');
+});
+
+test('mixed DMR and NXDN sites retain protocol identities and only verified RR names', async ({ page }) => {
+  await install(page, { customCandidates: [
+    { candidate_id: 'dmr', frequency_hz: 451000000, protocol_id: 'dmr', variant: 'Tier III',
+      system_name: 'County Transit', site_name: 'North', selectable: true,
+      trunked_evidence: { identity: { radio_system_key: 'dmr:tier3:small:12', network: 12, site: 3,
+        model: 'small', color_code: 4 } }, radio_reference: { state: 'matched', match: {
+        system_name: 'County Transit', site_name: 'North', url: 'https://www.radioreference.com/db/sid/123',
+        channels: [{ frequency_hz: 451000000, logical_channel_number: 1, primary_control: true }] } } },
+    { candidate_id: 'nxdn', frequency_hz: 452000000, protocol_id: 'nxdn', variant: 'Type-C', selectable: true,
+      trunked_evidence: { identity: { radio_system_key: 'nxdn-c:local:12', system: 12, site: 3, ran: 9 } },
+      radio_reference: { state: 'ambiguous', match: { system_name: 'Wrong system' } } }
+  ] });
+  await complete(page);
+  await expect(dialog(page).locator('.spectrum-search-system-group')).toHaveCount(2);
+  await expect(dialog(page)).toContainText('DMR Tier III');
+  await expect(dialog(page)).toContainText('NXDN Type-C');
+  await expect(dialog(page).getByText('Wrong system', { exact: true })).toHaveCount(0);
+  await dialog(page).getByText('RadioReference', { exact: true }).first().click();
+  await expect(dialog(page).getByRole('link', { name: 'County Transit', exact: true })).toHaveAttribute('href',
+    'https://www.radioreference.com/db/sid/123');
+  await expect(dialog(page)).toContainText('451 MHz · Primary control');
+  await dialog(page).getByText('RadioReference', { exact: true }).nth(1).click();
+  await expect(dialog(page)).toContainText('No directory names were applied');
+});
+
+test('navigation dismisses a running search and releases its job before its independent receiver', async ({ page }) => {
+  const state = await install(page, { phase: 'scanning' });
+  await dialog(page).getByRole('button', { name: 'Find signals', exact: true }).click();
+  await expect(dialog(page).getByRole('heading', { name: 'Find signals', exact: true })).toBeVisible();
+  await page.locator('a[data-view="tuners"]').evaluate((link) => link.click());
+  await expect(dialog(page)).toHaveCount(0);
+  await expect.poll(() => state.requests.some((request) => request.path.endsWith('/browse') &&
+    request.method === 'DELETE')).toBe(true);
+  const jobDelete = state.requests.findIndex((request) => request.path === `${searchPath}/search-a` && request.method === 'DELETE');
+  const leaseDelete = state.requests.findIndex((request) => request.path.endsWith('/browse') && request.method === 'DELETE');
+  expect(jobDelete).toBeGreaterThan(-1);
+  expect(leaseDelete).toBeGreaterThan(jobDelete);
+});
+
+test('forced dismissal during search creation releases the returned job before its receiver', async ({ page }) => {
+  const state = await install(page, { phase: 'scanning', delayCreate: true });
+  await dialog(page).getByRole('button', { name: 'Find signals', exact: true }).click();
+  await expect.poll(() => typeof state.releaseCreate).toBe('function');
+  await page.evaluate(async () => {
+    const api = await import(document.querySelector('script[type="module"][src*="/assets/app.js"]').src);
+    api.closeReadOnlyModal(true);
+  });
+  await expect(dialog(page)).toHaveCount(0);
+  expect(state.requests.some((request) => request.path.endsWith('/browse') && request.method === 'DELETE')).toBe(false);
+  state.releaseCreate();
+  await expect.poll(() => state.requests.some((request) => request.path.endsWith('/browse') &&
+    request.method === 'DELETE')).toBe(true);
+  const jobDelete = state.requests.findIndex((request) => request.path === `${searchPath}/search-a` && request.method === 'DELETE');
+  const leaseDelete = state.requests.findIndex((request) => request.path.endsWith('/browse') && request.method === 'DELETE');
+  expect(jobDelete).toBeGreaterThan(-1);
+  expect(leaseDelete).toBeGreaterThan(jobDelete);
+});
+
+test('delayed wide-directory names update review without replacing edited channel names', async ({ page }) => {
+  const state = await install(page, { customCandidates: [{ candidate_id: 'digital', frequency_hz: 451000000,
+    protocol_id: 'dmr', name: 'Decoded control', system_name: 'Decoded network', alias_group_id: 'digital',
+    radio_reference: { state: 'pending' }, trunked_evidence: { identity: {
+      radio_system_key: 'dmr:tier3:small:12', network: 12, site: 3 }, frequency_map: [] } }],
+    customAliasGroups: [{ group_id: 'digital', protocol_id: 'dmr', alias_lists: [], default_new_alias_list_name: 'Decoded' }] });
+  await complete(page);
+  await dialog(page).getByRole('button', { name: 'Select all available' }).click();
+  await dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true }).click();
+  await dialog(page).getByRole('button', { name: 'Customize', exact: true }).click();
+  await dialog(page).getByLabel('Channel name for 451 MHz', { exact: true }).fill('My control');
+  state.customCandidates[0] = { ...state.customCandidates[0], name: 'Directory North', system_name: 'Transit authority',
+    site_name: 'North', radio_reference: { state: 'matched', match: { system_name: 'Transit authority', site_name: 'North',
+      channels: [{ logical_channel_number: 3, frequency_hz: 451500000 }] } }, trunked_evidence: {
+      ...state.customCandidates[0].trunked_evidence, frequency_map: [{ number: 3, downlink_hz: 451500000 }] } };
+  await expect(dialog(page).getByRole('heading', { name: 'Transit authority', exact: true })).toBeVisible();
+  await expect(dialog(page).getByLabel('Channel name for 451 MHz', { exact: true })).toHaveValue('My control');
+  await expect(dialog(page).locator('.channel-map-row input').nth(0)).toHaveValue('3');
+  await dialog(page).getByText('RadioReference', { exact: true }).click();
+  await expect(dialog(page)).toContainText('451.5 MHz');
+});
+
+test('wide DMR review submits the explicit channel map through the shared editor', async ({ page }) => {
+  const state = await install(page, { customCandidates: [{ candidate_id: 'digital', frequency_hz: 451000000,
+    protocol_id: 'dmr', variant: 'Tier III', system_name: 'Transit', name: 'North', alias_group_id: 'digital',
+    trunked_evidence: { identity: { radio_system_key: 'dmr:tier3:small:12', network: 12, site: 3 },
+      frequency_map: [{ number: 1, downlink_hz: 451000000, uplink_hz: 0 }] } }],
+    customAliasGroups: [{ group_id: 'digital', protocol_id: 'dmr', system_name: 'Transit',
+      alias_lists: [], default_new_alias_list_name: 'Transit' }] });
+  await complete(page);
+  await dialog(page).getByRole('button', { name: 'Select all available' }).click();
+  await dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true }).click();
+  await dialog(page).getByRole('button', { name: 'Customize', exact: true }).click();
+  await expect(dialog(page)).toContainText('Unmapped channels can be followed only when the system broadcasts their frequencies.');
+  await expect(dialog(page).locator('.channel-map-row')).toHaveCount(1);
+  const mapFits = await dialog(page).locator('.spectrum-search-review-customize').evaluate((element) =>
+    element.scrollWidth <= element.clientWidth + 1);
+  expect(mapFits).toBe(true);
+  const boundedReview = await dialog(page).evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    const fields = [...element.querySelectorAll('.spectrum-search-channel-fields .ui-field-label, .channel-map-row')];
+    return { modalFits: element.scrollWidth <= element.clientWidth + 1,
+      fieldsInside: fields.every((field) => {
+        const rect = field.getBoundingClientRect();
+        return rect.left >= bounds.left && rect.right <= bounds.right;
+      }) };
+  });
+  expect(boundedReview).toEqual({ modalFits: true, fieldsInside: true });
+  await dialog(page).getByText('Unmapped channels can be followed only when the system broadcasts their frequencies.',
+    { exact: false }).scrollIntoViewIfNeeded();
+  await expect(dialog(page)).toHaveScreenshot('spectrum-search-dmr-map-light-1280.png');
+  await dialog(page).getByRole('button', { name: 'Add mapping', exact: true }).click();
+  const added = dialog(page).locator('.channel-map-row').nth(1);
+  await added.locator('input').nth(0).fill('2');
+  await added.locator('input').nth(1).fill('451.25');
+  await dialog(page).getByRole('button', { name: 'Add 1 channel', exact: true }).click();
+  const saved = state.requests.find((request) => request.path.endsWith('/save'));
+  expect(saved.body.candidates[0].frequency_map).toEqual([
+    { number: 1, downlink_hz: 451000000, uplink_hz: 0 }, { number: 2, downlink_hz: 451250000, uplink_hz: 0 } ]);
 });
 
 for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {

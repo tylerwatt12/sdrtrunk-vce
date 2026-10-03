@@ -719,14 +719,14 @@ test('tuner-spectrum-dark-desktop', async ({ page }) => {
   const example = page.locator('.visual-tuner-spectrum-example');
   await expect(example.locator(':scope > .page-header > .ui-button-primary')).toHaveCount(0);
   await expect(example.locator('.spectrum-browse-toolbar').getByRole('button',
-    { name: 'Find P25 channels', exact: true })).toBeVisible();
+    { name: 'Find Trunked Systems', exact: true })).toHaveCount(0);
   await expect(example.getByRole('checkbox', { name: 'Lock center', exact: true })).toBeVisible();
   await expect(example.getByText('Lock center', { exact: true })).toHaveCount(0);
   await expect(example.locator('.tuners-center-lock-field')).toHaveAttribute('title', 'Lock center frequency');
   await expect(example.locator('.spectrum-browse-message')).toHaveCount(0);
   await expect(example.locator('.tuner-spectrum-readouts .channel-diagnostic-readout small'))
     .toHaveText(['Visible span', 'Zoom', 'Peak', 'Best SNR']);
-  for (const label of ['Find P25 channels', 'Stop channels to tune', 'Reset zoom', 'Pause',
+  for (const label of ['Stop channels to tune', 'Reset zoom', 'Pause',
     'Display options', 'More measurements']) {
     const control = example.locator(`[aria-label="${label}"]`).first();
     await expect(control).toHaveClass(/ui-icon-button/);

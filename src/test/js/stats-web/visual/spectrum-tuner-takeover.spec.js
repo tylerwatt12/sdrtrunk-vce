@@ -98,6 +98,9 @@ async function install(page, options = {}) {
     if (path === '/api/v1/spectrum-snap-presets') return route.fulfill({ contentType: 'application/json',
       body: JSON.stringify({ revision: 1, country_code: 'US', country_label: 'United States',
         countries: [{ code: 'US', label: 'United States' }], scopes: [] }) });
+    if (path === '/api/v1/admin/channels') return respond({ revision: 1, channels: [] });
+    if (path === '/api/v1/admin/channels/protocols') return respond({ profiles: [] });
+    if (path === '/api/v1/admin/channels/options') return respond({ alias_lists: [] });
     if (path === '/api/v1/admin/tuners') return respond({ tuners: inventory });
     if (path === browsePath) {
       if (method === 'DELETE') return respond(null, 204);
@@ -206,9 +209,10 @@ test('an idle member can stop channels using its paired receiver', async ({ page
   await expect(page.locator('.spectrum-browse-tuner option').first()).toContainText('2 active in pair');
 });
 
-test('Find P25 confirms a blocked receiver, reuses its prepared lease, and releases it on close', async ({ page }) => {
+test('Find Trunked Systems confirms a blocked receiver, reuses its prepared lease, and releases it on close', async ({ page }) => {
   const state = await install(page);
-  await page.getByRole('button', { name: 'Find P25 channels', exact: true }).click();
+  await page.goto('/app.html?view=channel-setup');
+  await page.getByRole('button', { name: 'Find Trunked Systems', exact: true }).click();
   const dialog = searchDialog(page);
   await expect(dialog.getByRole('heading', { name: 'Choose a receiver', exact: true })).toBeVisible();
 
@@ -232,15 +236,16 @@ test('Find P25 confirms a blocked receiver, reuses its prepared lease, and relea
   expect(createIndex).toBeGreaterThan(reuseIndex);
   expect(state.requests[createIndex].body.browse_lease_id).toBe('takeover-1');
 
-  await dialog.getByRole('button', { name: 'Close Find P25 channels', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Close Find Trunked Systems', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect.poll(() => state.requests.some((request) => request.path === browsePath &&
     request.method === 'DELETE' && request.body.lease_id === 'takeover-1')).toBe(true);
 });
 
-test('canceling Find P25 after preparing a receiver releases its takeover lease', async ({ page }) => {
+test('canceling Find Trunked Systems after preparing a receiver releases its takeover lease', async ({ page }) => {
   const state = await install(page);
-  await page.getByRole('button', { name: 'Find P25 channels', exact: true }).click();
+  await page.goto('/app.html?view=channel-setup');
+  await page.getByRole('button', { name: 'Find Trunked Systems', exact: true }).click();
   const dialog = searchDialog(page);
   await expect(dialog.getByRole('button', { name: 'Stop channels and use: Dispatch receiver', exact: true })).toBeVisible();
   await dialog.getByRole('button', { name: 'Stop channels and use: Dispatch receiver', exact: true }).click();

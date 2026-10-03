@@ -20,14 +20,22 @@ function tuner() {
 function snapshot(protocolId, state) {
   const profile = protocols.profiles.find((candidate) => candidate.id === protocolId);
   const isP25 = protocolId === 'p25-phase1';
-  const analogName = protocolId === 'am' ? 'AM channel' : 'FM channel';
+  const digital = ['dmr', 'nxdn'].includes(protocolId);
+  const analogName = digital ? `${protocolId.toUpperCase()} control` : protocolId === 'am' ? 'AM channel' : 'FM channel';
   const settings = Object.fromEntries(profile.sections.flatMap((section) => section.fields)
     .filter((field) => field.path.startsWith('settings.') && Object.hasOwn(field, 'default'))
     .map((field) => [field.path.substring(9), field.default]));
+  if (digital) settings.channel_mode = 'TRUNKED';
   return { session_id: 'discovery-a', state: state.saved ? state.running ? 'running' : 'saved' : state.phase || 'ready', reason: state.reason || null,
     protocol_id: protocolId,
     tuner_id: 'idle-a', target_id: 'target-a', frequency_hz: state.frequencyHz || 851012500,
     expires_at_ms: Date.now() + 30000,
+    radio_reference: state.directoryResult,
+    digital_probe: digital ? { state: state.phase || 'ready', elapsed_ms: 1200, timeout_ms: 10000 } : null,
+    trunked_evidence: digital ? { variant: protocolId === 'dmr' ? 'Tier III' : 'Type-C', identity: {
+      radio_system_key: protocolId === 'dmr' ? 'dmr:tier3:small:12' : 'nxdn-c:local:12',
+      network: protocolId === 'dmr' ? 12 : null, system: protocolId === 'nxdn' ? 12 : null, site: 3, ran: 9 },
+      frequency_map: [{ number: 1, downlink_hz: 851012500 }] } : null,
     probe: isP25 ? {
       c4fm: { valid_messages: 18, valid_control_messages: 12, invalid_control_messages: 4, quality_pct: 81.2 },
       cqpsk: { valid_messages: 52, valid_control_messages: 41, invalid_control_messages: 1, quality_pct: 99.1,
@@ -37,8 +45,10 @@ function snapshot(protocolId, state) {
       identity: state.phase === 'identifying' ? null : { wacn: 0xb0001, system: 0x123, rfss: 1, site: 2 }
     } : null,
     review: state.saved || (state.phase && state.phase !== 'ready') ? null : {
-      revision: state.revision || 7, template: { protocol_id: protocolId, name: isP25 ? 'Control' : analogName,
-        system: isP25 ? 'P25 B0001-123' : '', site: isP25 ? 'RFSS 1 Site 2' : '', settings },
+      revision: state.revision || 7, template: { protocol_id: protocolId, name: state.templateName || (isP25 ? 'Control' : analogName),
+        system: state.templateSystem || (isP25 ? 'P25 B0001-123' : digital ? 'County Transit' : ''),
+        site: isP25 ? 'RFSS 1 Site 2' : digital ? 'North' : '', settings,
+        frequency_map: digital ? state.frequencyMap || [{ number: 1, downlink_hz: 851012500 }] : [] },
       alias_lists: state.ambiguous ? [{ id: 21, name: 'North aliases', matched: true },
         { id: 22, name: 'South aliases', matched: true }] :
         (state.singleMatch ? [{ id: 21, name: 'County aliases', matched: true }] : []),
@@ -243,17 +253,17 @@ async function install(page, state = {}) {
 }
 
 const wizard = (page) => page.locator('.spectrum-discovery-modal');
-const radioTypes = { 'p25-phase1': 'P25 radio system', am: 'AM radio', nbfm: 'FM two-way radio' };
+const radioTypes = { 'p25-phase1': 'P25 radio system', dmr: 'DMR trunked system', nxdn: 'NXDN trunked system', am: 'AM radio', nbfm: 'FM two-way radio' };
 
 async function begin(page, protocolId = 'p25-phase1') {
   await page.evaluate(() => window.openDiscovery());
   await wizard(page).getByRole('radio', { name: radioTypes[protocolId], exact: true }).check();
-  await wizard(page).getByRole('button', { name: protocolId === 'p25-phase1' ? 'Check signal' : 'Continue',
+  await wizard(page).getByRole('button', { name: ['p25-phase1', 'dmr', 'nxdn'].includes(protocolId) ? 'Check signal' : 'Continue',
     exact: true }).click();
 }
 
 async function review(page, protocolId = 'p25-phase1') {
-  await wizard(page).getByRole('button', { name: protocolId === 'p25-phase1' ? 'Review channel' : 'Continue',
+  await wizard(page).getByRole('button', { name: ['p25-phase1', 'dmr', 'nxdn'].includes(protocolId) ? 'Review channel' : 'Continue',
     exact: true }).click();
   await expect(wizard(page).getByRole('heading', { name: 'Name your channel', exact: true })).toBeVisible();
 }
@@ -261,6 +271,76 @@ async function review(page, protocolId = 'p25-phase1') {
 async function disclose(page, label) {
   const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   await wizard(page).locator('summary').filter({ hasText: new RegExp(`^${escaped}$`) }).click();
+}
+
+test('delayed click-directory matching refreshes untouched fields while preserving edited names and maps', async ({ page }) => {
+  const state = { directoryResult: { state: 'pending' }, templateName: 'Decoded control', templateSystem: 'Decoded network' };
+  await install(page, state);
+  await begin(page, 'dmr');
+  await review(page, 'dmr');
+  await wizard(page).getByLabel('Channel name', { exact: true }).fill('My control');
+  await wizard(page).getByLabel('New settings name', { exact: true }).fill('My listening');
+  await wizard(page).getByRole('button', { name: 'Add mapping', exact: true }).click();
+  const manual = wizard(page).locator('.channel-map-row').nth(1);
+  await manual.locator('input').nth(0).fill('2');
+  await manual.locator('input').nth(1).fill('851.25');
+  state.templateName = 'Directory North';
+  state.templateSystem = 'Transit authority';
+  state.frequencyMap = [{ number: 1, downlink_hz: 851012500 }, { number: 3, downlink_hz: 851500000 }];
+  state.directoryResult = { state: 'matched', match: { system_name: 'Transit authority', site_name: 'North',
+    channels: [{ logical_channel_number: 3, frequency_hz: 851500000 }] } };
+  await expect(wizard(page).getByLabel('System', { exact: true })).toHaveValue('Transit authority');
+  await expect(wizard(page).getByLabel('Channel name', { exact: true })).toHaveValue('My control');
+  await expect(wizard(page).getByLabel('New settings name', { exact: true })).toHaveValue('My listening');
+  await expect(manual.locator('input').nth(0)).toHaveValue('2');
+  await expect(manual.locator('input').nth(1)).toHaveValue('851.25');
+  await disclose(page, 'RadioReference');
+  await expect(wizard(page)).toContainText('851.5 MHz');
+  await wizard(page).getByRole('button', { name: 'Add and start listening', exact: true }).click();
+  const saved = state.requests.find((request) => request.path.endsWith('/save'));
+  expect(saved.body.name).toBe('My control');
+  expect(saved.body.new_alias_list_name).toBe('My listening');
+  expect(saved.body.frequency_map).toHaveLength(2);
+});
+
+for (const protocolId of ['dmr', 'nxdn']) {
+  test(`click spectrum checks ${protocolId.toUpperCase()} identity and reviews detected trunked channels`, async ({ page }) => {
+    const theme = protocolId === 'dmr' ? 'light' : 'dark';
+    await page.setViewportSize({ width: protocolId === 'dmr' ? 1280 : 390, height: 900 });
+    const state = { theme, phase: 'identifying', directoryResult: { state: 'unavailable' } };
+    await install(page, state);
+    await begin(page, protocolId);
+    await expect(wizard(page).getByRole('heading', { name: 'Checking this radio system…', exact: true })).toBeVisible();
+    await expect(wizard(page).getByRole('button', { name: 'Review channel', exact: true })).toHaveCount(0);
+    state.phase = 'ready';
+    state.directoryResult = { state: 'matched', match: { system_name: 'County Transit', site_name: 'North',
+      channels: [{ frequency_hz: 851012500, logical_channel_number: 1, primary_control: true }] } };
+    await expect(wizard(page).getByRole('button', { name: 'Review channel', exact: true })).toBeVisible();
+    await review(page, protocolId);
+    await expect(wizard(page)).toContainText('Unmapped channels can be followed only when the system broadcasts their frequencies.');
+    await expect(wizard(page)).toContainText('851.0125 MHz');
+    await disclose(page, 'RadioReference');
+    await expect(wizard(page)).toContainText('County Transit · North');
+    await expect(wizard(page)).toContainText('Primary control');
+    await wizard(page).getByText('Unmapped channels can be followed only when the system broadcasts their frequencies.',
+      { exact: false }).scrollIntoViewIfNeeded();
+    const boundedMap = await wizard(page).evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      return element.scrollWidth <= element.clientWidth + 1 &&
+        [...element.querySelectorAll('.channel-map-row')].every((row) => {
+          const rect = row.getBoundingClientRect();
+          return rect.left >= bounds.left && rect.right <= bounds.right;
+        });
+    });
+    expect(boundedMap).toBe(true);
+    await expect(wizard(page)).toHaveScreenshot(`spectrum-discovery-${protocolId}-${theme}.png`);
+    await wizard(page).getByRole('button', { name: 'Add and start listening', exact: true }).click();
+    const saved = state.requests.find((request) => request.path.endsWith('/save'));
+    expect(saved.body.settings.channel_mode).toBe('TRUNKED');
+    expect(saved.body.frequency_map).toEqual([{ number: 1, downlink_hz: 851012500, uplink_hz: 0 }]);
+    expect(state.requests.find((request) => request.path === '/api/v1/admin/spectrum-discovery' &&
+      request.method === 'POST').body.protocol_id).toBe(protocolId);
+  });
 }
 
 for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
@@ -371,7 +451,7 @@ test('managed Spectrum keeps one aligned toolbar and updates one persistent freq
   await expect(toolbar.locator('.tuners-center-lock-field')).toHaveAttribute('title', 'Lock center frequency');
   await expect(page.getByText('Keep tuner here', { exact: true })).toHaveCount(0);
   await expect(header.getByRole('button', { name: 'Find P25 channels', exact: true })).toHaveCount(0);
-  await expect(toolbar.getByRole('button', { name: 'Find P25 channels', exact: true })).toBeVisible();
+  await expect(toolbar.getByRole('button', { name: 'Find Trunked Systems', exact: true })).toHaveCount(0);
   await expect(rail).toHaveCount(1);
   await expect(rail.getByText('Select a signal', { exact: true })).toBeVisible();
   await expect(toolbar.locator('.spectrum-browse-message')).toHaveText('Drag to tune · Zoom to pan');
@@ -616,7 +696,7 @@ test('the default P25 path uses plain language and waits for explicit review', a
   const dialog = wizard(page);
   await expect(dialog.getByRole('heading', { name: 'Add a channel', exact: true })).toBeVisible();
   const types = dialog.getByRole('group', { name: 'Radio type', exact: true });
-  await expect(types.getByRole('radio')).toHaveCount(3);
+  await expect(types.getByRole('radio')).toHaveCount(5);
   await expect(types.getByRole('radio', { name: 'P25 radio system', exact: true })).toBeChecked();
   await expect(dialog.getByText('Help me choose', { exact: true })).toHaveCount(0);
   expect(await dialog.innerText()).not.toMatch(/C4FM|CQPSK|WACN|RFSS|SysID|NAC|Alias List/);

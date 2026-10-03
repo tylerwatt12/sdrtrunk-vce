@@ -321,7 +321,7 @@ test('Resume locks receiver choices until release and reacquisition finish', asy
   await page.getByRole('button', { name: 'Resume channels', exact: true }).click();
   await expect.poll(() => typeof state.releaseDelete).toBe('function');
   await expect(page.getByLabel('Tuner', { exact: true })).toBeDisabled();
-  await expect(page.getByRole('button', { name: 'Find P25 channels', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Find Trunked Systems', exact: true })).toHaveCount(0);
 
   state.releaseDelete();
   await expect(page.getByRole('button', { name: 'Stop channels to tune', exact: true })).toBeVisible();
@@ -450,26 +450,10 @@ test('confirmed renewal ownership conflict clears the expired takeover', async (
   await expect(page.getByRole('button', { name: 'Retry browsing', exact: true })).toBeVisible();
 });
 
-test('Find P25 reuses an existing takeover without resuming and stopping channels again', async ({ page }) => {
+test('Spectrum retains click discovery without exposing the band scanner', async ({ page }) => {
   const state = await install(page);
   await takeControl(page);
-  const requestStart = state.requests.length;
-
-  await page.getByRole('button', { name: 'Find P25 channels', exact: true }).click();
-  const search = page.locator('.spectrum-search-modal');
-  await expect(search.getByRole('heading', { name: 'Choose where to look' })).toBeVisible();
-  await expect(search.getByLabel('Receiver', { exact: true })).toHaveValue('active-a');
-  await search.getByRole('button', { name: 'Find signals', exact: true }).click();
-  await expect(search.getByRole('heading', { name: 'Choose channels to add' })).toBeVisible();
-
-  const requests = state.requests.slice(requestStart);
-  expect(requests.some((request) => request.path === browsePath('active-a') &&
-    request.method === 'DELETE' && request.body.lease_id === 'takeover-1')).toBe(false);
-  expect(requests.some((request) => request.path === browsePath('active-a') &&
-    request.method === 'POST' && request.body.takeover === true)).toBe(false);
-  expect(requests.some((request) => request.path === browsePath('active-a') &&
-    request.method === 'POST' && request.body.lease_id === 'takeover-1')).toBe(true);
-  const create = requests.find((request) => request.path === '/api/v1/admin/spectrum-search' &&
-    request.method === 'POST');
-  expect(create.body.browse_lease_id).toBe('takeover-1');
+  await expect(page.getByRole('button', { name: 'Find Trunked Systems', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Resume channels', exact: true })).toBeVisible();
+  expect(state.requests.some((request) => request.path.startsWith('/api/v1/admin/spectrum-search'))).toBe(false);
 });

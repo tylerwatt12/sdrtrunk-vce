@@ -44,7 +44,8 @@ class StatsWebPageLifecycleUiContractTest
         String render = function(source, "async function render()");
         String beginPage = function(source, "function beginPage(renderContext, ...children)");
 
-        assertOrdered(render, "if (!closeReadOnlyModal()) return;", "const epoch = ++activeRenderEpoch;");
+        assertOrdered(render, "if (!closeReadOnlyModal(false, false, (closed) => { if (closed) void render(); })) return;",
+            "const epoch = ++activeRenderEpoch;");
         assertOrdered(render, "content.replaceChildren(loading);", "await entry.handler();");
         assertEquals(2, render.split("content\\.replaceChildren\\(\\);", -1).length - 1,
             "Only the two sign-in landing branches may clear the root loader without a replacement.");
@@ -62,7 +63,7 @@ class StatsWebPageLifecycleUiContractTest
         assertTrue(system.contains("createAsyncSection('Groups'"));
         assertTrue(system.contains("createAsyncSection(title"));
         assertTrue(system.contains("createAsyncSection('Talker Alias Summary'"));
-        assertOrdered(system, "content.append(searchBar('Search group ID'), directory.element);",
+        assertOrdered(system, "content.append(searchBar('Search talkgroups by name or ID'), directory.element);",
             "await directory.load(");
         assertTrue(system.contains("loadingMessage: 'Loading groups…'"));
         assertTrue(system.contains("loadingMessage: 'Loading radios…'"));
