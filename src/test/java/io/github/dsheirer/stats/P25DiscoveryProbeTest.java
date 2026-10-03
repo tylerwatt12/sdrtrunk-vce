@@ -197,7 +197,7 @@ class P25DiscoveryProbeTest
     }
 
     @Test
-    void refusesNearTiesAndConflictingConfirmedSites()
+    void choosesTheHigherScoreWithoutAMinimumMarginButRefusesExactTiesAndConflictingSites()
     {
         P25DiscoveryProbe.ModeEvidence first = new P25DiscoveryProbe.ModeEvidence(Modulation.C4FM);
         P25DiscoveryProbe.ModeEvidence second = new P25DiscoveryProbe.ModeEvidence(Modulation.CQPSK);
@@ -205,7 +205,8 @@ class P25DiscoveryProbeTest
         confirm(second, 1000);
         assertNull(P25DiscoveryProbe.select(first.metrics(), second.metrics()));
         second.receive(new SyncLossMessage(5000, 50, Protocol.APCO25));
-        assertNull(P25DiscoveryProbe.select(first.metrics(), second.metrics()));
+        assertTrue(first.metrics().qualityPct() - second.metrics().qualityPct() < 5);
+        assertEquals(Modulation.C4FM, P25DiscoveryProbe.select(first.metrics(), second.metrics()));
         second.reset();
         for(int x = 1; x <= 3; x++)
         {
@@ -215,6 +216,64 @@ class P25DiscoveryProbeTest
         for(int x = 0; x < 20; x++) second.receive(other(5000 + x));
         assertTrue(second.metrics().confirmed());
         assertNull(P25DiscoveryProbe.select(first.metrics(), second.metrics()));
+    }
+
+    @Test
+    void weakSignalWithThirtyEightValidControlsWinsAndRemainsEligibleToSave() throws Exception
+    {
+        FakeSource source = new FakeSource();
+        AtomicLong clock = new AtomicLong(1000);
+        try(P25DiscoveryProbe probe = new P25DiscoveryProbe((target, frequency) -> source,
+            (modulation, rate, messages) -> decoder(samples -> {
+                if(modulation == Modulation.C4FM)
+                {
+                    for(int x = 1; x <= 3; x++)
+                    {
+                        messages.receive(network(WACN, SYSTEM, NAC, x * 1000));
+                        messages.receive(site(SYSTEM, NAC, 2, 7, x * 1000));
+                    }
+                    for(int x = 0; x < 32; x++) messages.receive(other(4000 + x));
+                    for(int x = 0; x < 169; x++)
+                    {
+                        UnknownOSPMessage rejected = other(5000 + x);
+                        rejected.setValid(false);
+                        messages.receive(rejected);
+                    }
+                    messages.receive(new SyncLossMessage(6000, 196 * 1050, Protocol.APCO25));
+                }
+            }), clock::get))
+        {
+            P25DiscoveryProbe.Session session = probe.open("target", FREQUENCY);
+            clock.set(3000);
+            source.emit(samples(3000));
+            await(() -> session.status().state().equals("ready"));
+            var status = session.status();
+            assertEquals(38, status.c4fm().validControlMessages());
+            assertEquals(169, status.c4fm().invalidControlMessages());
+            assertEquals(3, Math.round(status.c4fm().qualityPct()));
+            assertEquals(0, status.cqpsk().validControlMessages());
+            assertEquals("C4FM", status.selectedModulation());
+            assertEquals(new P25DiscoveryProbe.Identity(WACN, SYSTEM, 2, 7, NAC), status.identity());
+            var proof = TrunkedDiscoveryEvidence.p25(status, 7000);
+            assertNotNull(proof);
+            assertTrue(proof.verified(), "The shared save path must not reapply a signal-quality threshold");
+            assertEquals("C4FM", proof.settings().get("modulation"));
+            assertEquals(0, source.closed.get(), "Review retains the tuner hold until save or cancellation");
+        }
+    }
+
+    @Test
+    void manyWeakValidControlsWithoutRepeatedServingIdentityCannotBecomeDiscoveryProof()
+    {
+        P25DiscoveryProbe.ModeEvidence evidence = new P25DiscoveryProbe.ModeEvidence(Modulation.C4FM);
+        evidence.receive(network(WACN, SYSTEM, NAC, 1000));
+        evidence.receive(site(SYSTEM, NAC, 2, 7, 1000));
+        for(int x = 0; x < 36; x++) evidence.receive(other(2000 + x));
+        evidence.receive(new SyncLossMessage(3000, 196 * 1200, Protocol.APCO25));
+        assertEquals(38, evidence.metrics().validControlMessages());
+        assertFalse(evidence.metrics().confirmed());
+        assertNull(P25DiscoveryProbe.select(evidence.metrics(),
+            new P25DiscoveryProbe.ModeEvidence(Modulation.CQPSK).metrics()));
     }
 
     @Test

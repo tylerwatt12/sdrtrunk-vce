@@ -52,8 +52,6 @@ public final class P25DiscoveryProbe implements AutoCloseable
     static final long MINIMUM_OBSERVATION_MILLISECONDS = MINIMUM_IDENTITY_SPAN_MILLISECONDS;
     static final int MINIMUM_IDENTITY_OBSERVATIONS = 3;
     static final int MINIMUM_CONTROL_MESSAGES = 20;
-    static final double MINIMUM_QUALITY_PERCENT = 60;
-    static final double MINIMUM_QUALITY_SEPARATION = 5;
     static final int SAMPLE_QUEUE_CAPACITY = 8;
     private static final long STATUS_INTERVAL_MILLISECONDS = 250;
     private static final Logger LOGGER = LoggerFactory.getLogger(P25DiscoveryProbe.class);
@@ -429,8 +427,8 @@ public final class P25DiscoveryProbe implements AutoCloseable
                             break;
                         }
                         //Both modes have now consumed the same contiguous batch. Publish a strong result at this
-                        //boundary instead of waiting for the next UI-status tick; ambiguous and weak evidence
-                        //continues through the existing conservative timeout.
+                        //boundary instead of waiting for the next UI-status tick. A weak signal can prove its
+                        //identity; ambiguous modulation or incomplete identity continues through the timeout.
                         if(complete(Math.max(0, mClock.getAsLong() - mStartedAt), false,
                             sampleGeneration == mDroppedBuffers.get()))
                         {
@@ -587,13 +585,13 @@ public final class P25DiscoveryProbe implements AutoCloseable
         }
     }
 
-    /** A clear quality separation is required; neither decoder order nor a metadata guess resolves a tie. */
+    /** Choose the better decoder after identity proof; a low score or small lead does not invalidate that proof. */
     static Modulation select(ModeMetrics c4fm, ModeMetrics cqpsk)
     {
         if(c4fm.confirmed() && cqpsk.confirmed())
         {
             if(!Objects.equals(c4fm.identity(), cqpsk.identity()) ||
-                Math.abs(c4fm.qualityPct() - cqpsk.qualityPct()) < MINIMUM_QUALITY_SEPARATION)
+                Double.compare(c4fm.qualityPct(), cqpsk.qualityPct()) == 0)
             {
                 return null;
             }
@@ -794,7 +792,9 @@ public final class P25DiscoveryProbe implements AutoCloseable
                 mSiteObservations >= MINIMUM_IDENTITY_OBSERVATIONS &&
                 mLastNetworkTimestamp - mFirstNetworkTimestamp >= MINIMUM_IDENTITY_SPAN_MILLISECONDS &&
                 mLastSiteTimestamp - mFirstSiteTimestamp >= MINIMUM_IDENTITY_SPAN_MILLISECONDS;
-            boolean confirmed = repeated && mValidControl >= MINIMUM_CONTROL_MESSAGES && quality >= MINIMUM_QUALITY_PERCENT;
+            //CRC-valid, fresh repeated serving broadcasts establish identity. Sync loss, failed frames and
+            //corrections rank the competing decoders, but cannot veto a weak signal's established identity.
+            boolean confirmed = repeated && mValidControl >= MINIMUM_CONTROL_MESSAGES;
             String reason = confirmed ? "Control channel and serving site confirmed." :
                 !repeated ? "Waiting for repeated current system and site broadcasts." :
                     "Waiting for reliable control-channel decoding.";

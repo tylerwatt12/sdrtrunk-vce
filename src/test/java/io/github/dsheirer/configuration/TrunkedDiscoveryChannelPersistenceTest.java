@@ -15,6 +15,8 @@ import io.github.dsheirer.database.configuration.ConfigurationRepository;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.stats.TrunkedDiscoveryEvidence;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
@@ -26,6 +28,37 @@ import org.junit.jupiter.api.io.TempDir;
 class TrunkedDiscoveryChannelPersistenceTest
 {
     @TempDir Path root;
+
+    @Test
+    void savesWeakVerifiedP25WithoutReintroducingAScoreGateOrAcceptingAModulationOverride() throws Exception
+    {
+        try(Fixture fixture = new Fixture(root))
+        {
+            var nativeSite = new P25SiteIdentity(0xABCDE, 0x123, 2, 7);
+            String key = RadioSystemKey.p25(nativeSite);
+            var identity = new TrunkedDiscoveryEvidence.Identity(nativeSite, key, key + ":2:7",
+                null, nativeSite.system(), nativeSite.site(), null, null, null, null, null);
+            var proof = new TrunkedDiscoveryEvidence("p25-phase1", "P25_PHASE_1", identity,
+                Map.of("modulation", "C4FM", "learn_announced_control_channels", true), List.of(),
+                3, 38, 38, 169, 7000, "Repeated identity on a weak signal");
+            var review = fixture.channels.discoveryTrunkedReview("p25-phase1", 774_706_250, "Recording", proof);
+            var browserSettings = new LinkedHashMap<>(review.template().settings());
+            browserSettings.put("modulation", "CQPSK");
+            var saved = fixture.channels.createTrunkedDiscovered(edited(review.template(), browserSettings, List.of()),
+                proof, "Weak P25", review.revision(), false);
+            var entry = fixture.channels.get(saved.configurationId());
+            assertEquals("C4FM", entry.channel().settings().get("modulation"));
+            assertNull(entry.autoStartOrder());
+            assertEquals(nativeSite.wacn(), entry.channel().observed().p25SiteIdentity().get("wacn"));
+            assertEquals(nativeSite.system(), entry.channel().observed().p25SiteIdentity().get("system"));
+            assertEquals(nativeSite.rfss(), entry.channel().observed().p25SiteIdentity().get("rfss"));
+            assertEquals(nativeSite.site(), entry.channel().observed().p25SiteIdentity().get("site"));
+            var disk = new ConfigurationRepository(fixture.database).load();
+            assertEquals(1, disk.channels().size());
+            assertFalse(disk.channels().getFirst().isAutoStart());
+            assertEquals(saved.configurationId(), fixture.channels.discoveryTrunkedSiteMatch(proof).configurationId());
+        }
+    }
 
     @Test
     void savesVerifiedDmrAndNxdnSettingsAndMapsWithoutAcceptingBrowserMapOrModeOverrides() throws Exception

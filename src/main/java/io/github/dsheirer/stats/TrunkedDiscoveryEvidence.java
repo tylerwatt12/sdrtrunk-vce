@@ -30,7 +30,8 @@ public record TrunkedDiscoveryEvidence(String protocolId, String variant, Identi
     {
         return protocolId != null && variant != null && identity != null && validIdentity() && identity.siteKey() != null && !identity.siteKey().isBlank() &&
             List.of("p25-phase1", "dmr", "nxdn").contains(protocolId) &&
-            validControlMessages >= 20 && qualityPct >= 60 && qualityPct <= 100;
+            validControlMessages >= 20 && Double.isFinite(qualityPct) && qualityPct <= 100 &&
+            qualityPct >= ("p25-phase1".equals(protocolId) ? 0 : 60);
     }
 
     private boolean validIdentity()
