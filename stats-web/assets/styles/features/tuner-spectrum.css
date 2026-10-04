@@ -1095,7 +1095,7 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 .spectrum-browse-toolbar .spectrum-browse-center.tuners-readout {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(235px, 1fr) auto;
+  grid-template-columns: minmax(235px, 1fr);
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-1);
@@ -1141,33 +1141,6 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   margin-left: auto;
   padding-left: var(--space-2);
   font-size: var(--font-size-meta);
-}
-
-.spectrum-browse-center .tuners-center-lock-field {
-  height: var(--control-height-spectrum);
-  min-height: 0;
-  min-width: 72px;
-  flex: 0 0 auto;
-  align-self: center;
-  gap: var(--space-1);
-  padding: 0 var(--space-2);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius-control);
-}
-
-.spectrum-browse-lock-state {
-  display: none;
-}
-
-.spectrum-browse-lock-copy {
-  display: inline-flex;
-  color: var(--muted);
-}
-
-.spectrum-browse-lock-copy svg {
-  width: var(--icon-glyph-size);
-  height: var(--icon-glyph-size);
 }
 
 .spectrum-browse-toolbar .spectrum-browse-actions {
@@ -1943,7 +1916,7 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas:
       "receiver status"
-      "frequency lock"
+      "frequency frequency"
       "actions actions"
       "feedback feedback";
     justify-content: stretch;
@@ -1960,12 +1933,6 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 
   .spectrum-browse-center .tuners-center-frequency {
     grid-area: frequency;
-  }
-
-  .spectrum-browse-center .tuners-center-lock-field {
-    grid-area: lock;
-    background: var(--surface-2);
-    border-color: var(--line);
   }
 
   .spectrum-browse-state {
@@ -2102,15 +2069,5 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 @media (max-width: 380px) {
   .spectrum-browse-status {
     font-size: 0;
-  }
-}
-
-@media (max-width: 340px) {
-  .spectrum-browse-lock-copy {
-    display: none;
-  }
-
-  .spectrum-browse-center .tuners-center-lock-field {
-    min-width: 50px;
   }
 }

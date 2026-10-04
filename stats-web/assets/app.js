@@ -17809,8 +17809,7 @@ async function renderTunerSpectrum() {
   message.setAttribute('role', 'status');
   const routineBrowseMessages = new Set([
     'Monitoring active channels', 'Monitoring recording playback', 'Drag to tune · Zoom to pan',
-    'Unlock center to tune', 'Tuning enabled',
-    'Center frequency locked. Unlock to tune; zoom to pan.',
+    'Unlock center in Tuners to tune', 'Tuning enabled',
     'Click a signal to inspect it. Drag the full view to tune; zoom to pan.'
   ]);
   const setBrowseMessage = (value) => {
@@ -17931,7 +17930,7 @@ async function renderTunerSpectrum() {
       `${stoppedCount} channel${stoppedCount === 1 ? '' : 's'} stopped · Resume when finished` :
       'Tuning enabled') : tunerIsRecording(browse?.tuner) ? 'Monitoring recording playback' :
         canTune() ? 'Drag to tune · Zoom to pan' :
-        canEditCenter() ? 'Unlock center to tune' : 'Monitoring active channels';
+        canEditCenter() ? 'Unlock center in Tuners to tune' : 'Monitoring active channels';
   };
   const leasePath = (id) => `/api/v1/admin/tuners/${encodeURIComponent(id)}/browse`;
   const leaseOwnershipLost = (error) => [404, 409, 410].includes(Number(error?.status)) ||
@@ -18009,36 +18008,13 @@ async function renderTunerSpectrum() {
       { enabled: false, reason: tuning ? 'Saving center frequency settings' :
         probeActive ? 'Finish or close channel discovery to tune' :
         'Active channels keep the center frequency fixed' };
+    if (usability.reason === 'Unlock center to tune') usability.reason = 'Turn off Lock center on Tuners to tune.';
     centerControl = tunerCenterFrequencyControl(selectedTuner, setting, usability, {
       save: async (_tuner, _setting, value) => tune(Math.round(value * 1_000_000))
     });
     centerHost.replaceChildren(centerControl);
     centerHost.inert = liveTune?.busy === true;
     if (liveTune?.busy && liveTune.frequencyHz) centerControl.previewFrequency(liveTune.frequencyHz / 1_000_000);
-    const lock = selectedTuner.settings?.find((candidate) => candidate.id === 'center_frequency_locked');
-    if (lock) {
-      const control = tunerSettingInput(lock);
-      control.element.classList.add('tuners-center-lock-field');
-      const copy = control.element.querySelector('.ui-toggle-copy');
-      if (copy) {
-        copy.classList.add('spectrum-browse-lock-copy');
-        copy.replaceChildren(iconGlyph('icon-lock'));
-        copy.setAttribute('aria-hidden', 'true');
-      }
-      control.element.querySelector('.ui-toggle-state')?.classList.add('spectrum-browse-lock-state');
-      control.element.querySelector('.ui-toggle')?.classList.add('ui-toggle-compact');
-      control.element.title = 'Lock center frequency';
-      control.input.dataset.tunerSetting = lock.id;
-      control.input.disabled = lease?.takeover === true || !canEditCenter() ||
-        !tunerSettingUsability(lock, selectedTuner, selectedTuner.settings).enabled;
-      if (lease?.takeover === true) {
-        control.element.title = 'Lock center returns to its previous setting when this Spectrum session ends';
-      }
-      control.input.addEventListener('change', () => {
-        void saveCenterSetting(lock, control.read(control.input)).catch(() => {});
-      });
-      centerHost.append(control.element);
-    }
   };
   const saveCenterSetting = async (setting, value, { live = false } = {}) => {
     if (!canEditCenter() || (!live && liveTune?.busy) || (setting.id === 'frequency_mhz' && !canTune())) {
@@ -18077,9 +18053,7 @@ async function renderTunerSpectrum() {
         spectrum.selectTarget(selectedTuner.spectrum_target_id || '');
         spectrum.refreshTargets();
       }
-      setBrowseMessage(setting.id === 'center_frequency_locked' && value === true ?
-        'Center frequency locked. Unlock to tune; zoom to pan.' :
-        'Click a signal to inspect it. Drag the full view to tune; zoom to pan.');
+      setBrowseMessage('Click a signal to inspect it. Drag the full view to tune; zoom to pan.');
     } catch (error) {
       if (current() && !live) setBrowseMessage(error.message || 'Could not save center frequency settings. Try again.');
       throw error;

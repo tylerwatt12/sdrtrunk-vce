@@ -161,9 +161,6 @@ async function install(page, state = {}) {
     if (path === '/api/v1/admin/tuners') return respond({ tuners: [state.tuner] });
     if (path.startsWith('/api/v1/admin/tuners/idle-a/settings/')) {
       const setting = state.tuner.settings.find((candidate) => candidate.id === path.split('/').at(-1));
-      if (state.rejectLock && setting.id === 'center_frequency_locked') return route.fulfill({
-        status: 409, contentType: 'application/json',
-        body: JSON.stringify({ error: { code: 'busy', message: 'Could not change center lock.' } }) });
       setting.value = body.value;
       if (setting.id === 'frequency_mhz') state.tuner.frequency_hz = Math.round(body.value * 1_000_000);
       return respond({});
@@ -368,47 +365,71 @@ for (const protocolId of ['dmr', 'nxdn']) {
   });
 }
 
-for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
-  test(`Spectrum center lock unlocks tuning with its lease in ${theme} at ${width}px`, async ({ page }) => {
-    const state = { locked: true, theme };
+for (const [theme, width] of [
+  ['light', 1280], ['light', 390], ['light', 320], ['dark', 1280], ['dark', 390], ['dark', 320]
+]) {
+  test(`Spectrum respects a saved center lock in ${theme} at ${width}px`, async ({ page }) => {
+    const state = { locked: true, theme, liveSpectrum: true };
     await page.setViewportSize({ width, height: 900 });
     await install(page, state);
-    const lock = page.locator('.spectrum-browse-center').getByRole('checkbox', { name: 'Lock center' });
+    const center = page.locator('.spectrum-browse-center .tuners-center-frequency');
     const digit = page.getByRole('button', { name: 'Decrease 100 MHz place', includeHidden: true });
-    await expect(lock).toBeChecked();
-    await expect(lock).toBeEnabled();
+    await expect(page.locator('.spectrum-browse-toolbar').getByRole('checkbox', { name: 'Lock center' }))
+      .toHaveCount(0);
+    await expect(center).toHaveAttribute('aria-disabled', 'true');
     await expect(digit).toBeDisabled();
-    await lock.press('Space');
+    await center.focus();
+    await center.locator('.tuners-frequency-digit').first().hover();
+    await page.keyboard.type('075');
+    await page.keyboard.press('Enter');
+    await expect(center).toContainText('0851.01250MHz');
+    const plot = page.locator('.spectrum-browse-panel .tuner-spectrum-canvas').first();
+    await expect(page.locator('.spectrum-browse-panel .channel-diagnostic-overlay').first()).toBeHidden();
+    const bounds = await plot.boundingBox();
+    await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(bounds.x + bounds.width / 2 + 30, bounds.y + bounds.height / 2, { steps: 3 });
+    await page.mouse.up();
+    await expect(center).toContainText('0851.01250MHz');
+    expect(state.requests.filter((request) => request.path.includes('/settings/'))).toEqual([]);
+    expect(state.tuner.settings.find((setting) => setting.id === 'center_frequency_locked').value).toBe(true);
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <=
+      document.documentElement.clientWidth)).toBe(true);
+  });
+
+  test(`Spectrum tunes an unlocked receiver with its lease in ${theme} at ${width}px`, async ({ page }) => {
+    const state = { theme };
+    await page.setViewportSize({ width, height: 900 });
+    await install(page, state);
+    const center = page.locator('.spectrum-browse-center .tuners-center-frequency');
+    const digit = page.getByRole('button', { name: 'Decrease 100 MHz place', includeHidden: true });
+    await expect(page.locator('.spectrum-browse-toolbar').getByRole('checkbox', { name: 'Lock center' }))
+      .toHaveCount(0);
+    await expect(center).toHaveAttribute('aria-disabled', 'false');
     await expect(digit).toBeEnabled();
-    await expect(lock).toBeFocused();
-    expect(state.requests.find((request) => request.path.endsWith('/settings/center_frequency_locked')).body)
-      .toEqual({ value: false, lease_id: 'browse-a' });
     await digit.click();
     await expect(page.locator('.spectrum-browse-center')).toContainText('0751.01250MHz');
     expect(state.requests.find((request) => request.path.endsWith('/settings/frequency_mhz')).body)
       .toEqual({ value: 751.0125, lease_id: 'browse-a' });
-    await lock.press('Space');
-    await expect(digit).toBeDisabled();
+    expect(state.requests.filter((request) => request.path.endsWith('/settings/center_frequency_locked')))
+      .toEqual([]);
+    expect(state.tuner.settings.find((setting) => setting.id === 'center_frequency_locked').value).toBe(false);
+    await expect(center).toHaveAttribute('aria-disabled', 'false');
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <=
+      document.documentElement.clientWidth)).toBe(true);
   });
 }
 
-test('a rejected Spectrum center lock restores the confirmed switch and allows retry', async ({ page }) => {
-  const state = { locked: true, rejectLock: true };
+test('active monitoring keeps Spectrum center tuning disabled without changing its saved lock', async ({ page }) => {
+  const state = { locked: false, running: true, browseChannelCount: 1 };
   await install(page, state);
-  const lock = page.locator('.spectrum-browse-center').getByRole('checkbox', { name: 'Lock center' });
-  await lock.press('Space');
-  await expect(lock).toBeChecked();
-  await expect(lock).toBeEnabled();
-  await expect(page.locator('.spectrum-browse-message')).toContainText('Could not change center lock.');
-  state.rejectLock = false;
-  await lock.press('Space');
-  await expect(lock).not.toBeChecked();
-  await expect(page.getByRole('button', { name: 'Decrease 100 MHz place', includeHidden: true })).toBeEnabled();
-});
-
-test('active monitoring keeps the Spectrum center lock disabled', async ({ page }) => {
-  await install(page, { locked: true, running: true });
-  await expect(page.locator('.spectrum-browse-center').getByRole('checkbox', { name: 'Lock center' })).toBeDisabled();
+  await expect(page.locator('.spectrum-browse-toolbar').getByRole('checkbox', { name: 'Lock center' }))
+    .toHaveCount(0);
+  await expect(page.locator('.spectrum-browse-center .tuners-center-frequency'))
+    .toHaveAttribute('aria-disabled', 'true');
+  await expect(page.getByRole('button', { name: 'Decrease 100 MHz place', includeHidden: true })).toBeDisabled();
+  expect(state.requests.filter((request) => request.path.includes('/settings/'))).toEqual([]);
+  expect(state.tuner.settings.find((setting) => setting.id === 'center_frequency_locked').value).toBe(false);
 });
 
 for (const width of [1280, 1440]) {
@@ -468,12 +489,9 @@ test('managed Spectrum keeps one aligned toolbar and updates one persistent freq
   const toolbar = page.locator('.spectrum-browse-toolbar');
   const panel = page.locator('.spectrum-browse-panel');
   const rail = page.locator('.spectrum-browse-control-rail');
-  const lock = toolbar.getByRole('checkbox', { name: 'Lock center', exact: true });
-
-  await expect(lock).toHaveCount(1);
+  await expect(toolbar.getByRole('checkbox', { name: 'Lock center', exact: true })).toHaveCount(0);
   await expect(toolbar.locator('.spectrum-browse-field-label')).toHaveText('Tuner');
-  await expect(toolbar.locator('.spectrum-browse-lock-copy')).toHaveCount(1);
-  await expect(toolbar.locator('.tuners-center-lock-field')).toHaveAttribute('title', 'Lock center frequency');
+  await expect(toolbar.locator('.tuners-center-lock-field')).toHaveCount(0);
   await expect(page.getByText('Keep tuner here', { exact: true })).toHaveCount(0);
   await expect(header.getByRole('button', { name: 'Find P25 channels', exact: true })).toHaveCount(0);
   await expect(toolbar.getByRole('button', { name: 'Find Trunked Systems', exact: true })).toHaveCount(0);
@@ -487,11 +505,9 @@ test('managed Spectrum keeps one aligned toolbar and updates one persistent freq
       const bounds = child.getBoundingClientRect();
       return bounds.top + bounds.height / 2;
     });
-    const lockField = element.querySelector('.tuners-center-lock-field').getBoundingClientRect();
-    return { centerSpread: Math.max(...centers) - Math.min(...centers), lockHeight: lockField.height };
+    return { centerSpread: Math.max(...centers) - Math.min(...centers) };
   });
   expect(toolbarRows.centerSpread).toBeLessThanOrEqual(1);
-  expect(toolbarRows.lockHeight).toBeLessThanOrEqual(40);
   await page.evaluate(() => {
     window.originalSpectrumFrequencyRail = document.querySelector('.spectrum-browse-control-rail');
   });
