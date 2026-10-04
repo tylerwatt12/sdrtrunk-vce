@@ -1814,7 +1814,13 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("if (tags.has('CURRENT_CONTROL')) return 'CONTROL'"));
         assertTrue(tuner.contains("if (status === 'IDLE') return includeIdle ? 'IDLE' : null"));
         assertTrue(tuner.contains("function updateSpectrumActivityTable(table)"));
-        assertTrue(tuner.contains(".filter((row) => tunerActivityStatus(row, true))"));
+        String spectrumActivityTable = function(tuner, "function updateSpectrumActivityTable(table)")
+            .replaceAll("\\s+", " ");
+        assertTrue(spectrumActivityTable.contains("if (table?.remote_origin?.remote === true) { " +
+            "activeChannelTables.delete(id); return; }"));
+        assertTrue(spectrumActivityTable.contains(".filter((row) => " +
+            "row?.remote_origin?.remote !== true && tunerActivityStatus(row, true))"));
+        assertTrue(spectrumActivityTable.contains("if (rows.length) activeChannelTables.set(id, { ...table, rows })"));
         assertTrue(tuner.contains("else activeChannelTables.delete(id)"));
         assertTrue(tuner.contains("row.channel_name || row.tableChannelName"));
         assertTrue(tuner.contains("decoderLabel(row.decoder)"));
