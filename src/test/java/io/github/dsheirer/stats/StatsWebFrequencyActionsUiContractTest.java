@@ -172,7 +172,19 @@ class StatsWebFrequencyActionsUiContractTest
         assertTrue(search.contains("const browsePath = (id) => `/api/v1/admin/tuners/${encodeURIComponent(id)}/browse`"));
         assertTrue(search.contains("browse_lease_id: lease.lease_id"));
         assertTrue(search.contains("radioreference_state_id: directory.stateId()"));
-        assertTrue(search.contains("if (jobReleased) await releaseLease({ bestEffort: true })"));
+        String close = block(search, "const releaseForClose = async () =>");
+        String afterJobRelease = block(close, "if (jobReleased)").replaceAll("\\s+", " ");
+        assertTrue(close.contains("const jobReleased = await releaseJob({ bestEffort: true })"));
+        String primaryLeaseRelease = "await releaseLease({ bestEffort: true })";
+        String lateLeaseRelease = "for (const { acquired, id } of [...lateLeases.values()]) " +
+            "await releaseLateLease(acquired, id)";
+        assertTrue(afterJobRelease.contains(primaryLeaseRelease));
+        assertTrue(afterJobRelease.contains(lateLeaseRelease));
+        assertTrue(afterJobRelease.indexOf(primaryLeaseRelease) < afterJobRelease.indexOf(lateLeaseRelease));
+        String finish = block(search, "const finishReceiverUse = () =>");
+        int closeJob = finish.indexOf("await releaseJob({ preserveResults: true })");
+        int closeLease = finish.indexOf("await releaseLease()");
+        assertTrue(closeJob >= 0 && closeLease > closeJob);
         assertFalse(channels.contains("searchOwner"));
         assertFalse(channels.contains("searchActive"));
     }
