@@ -359,6 +359,86 @@ class SpectrumSearchServiceTest
     }
 
     @Test
+    void selected700And800BandsHaveOrderedCompleteWindowsAndRespectConfiguredLimits()
+    {
+        var band700 = new SpectrumSearchService.Range(769_000_000, 775_000_000);
+        var band800 = new SpectrumSearchService.Range(851_000_000, 869_000_000);
+        var ranges = List.of(band700, band800);
+        SpectrumSearchService.validateRanges(ranges);
+        var expected = List.of(771_250_000L, 774_850_000L, 778_450_000L,
+            853_250_000L, 856_850_000L, 860_450_000L, 864_050_000L, 867_650_000L,
+            871_250_000L, 874_850_000L);
+        var centers = SpectrumSearchService.windows(ranges, 9_000_000, 24_000_000, 1_800_000_000);
+        assertEquals(expected, centers);
+        assertTrue(centers.stream().allMatch(center -> center >= 24_000_000 && center <= 1_800_000_000));
+        for(var range: ranges)
+        {
+            for(long frequency = range.minimumHz(); frequency <= range.maximumHz(); frequency += 12500)
+            {
+                final long signal = frequency;
+                assertTrue(centers.stream().anyMatch(center -> FrequencyListenService.withinCurrentWindow(signal,
+                    center, 12500, 4_500_000, 25000)), "Uncovered selected-band signal: " + signal);
+            }
+        }
+        var reversed = new ArrayList<>(expected.subList(3, expected.size()));
+        reversed.addAll(expected.subList(0, 3));
+        assertEquals(reversed, SpectrumSearchService.windows(List.of(band800, band700), 9_000_000,
+            24_000_000, 1_800_000_000));
+
+        // The 9 MHz passband does not expand the receiver's configured tuning limits.
+        var limited700 = SpectrumSearchService.windows(List.of(band700), 9_000_000, 767_600_000, 777_600_000);
+        assertEquals(List.of(771_250_000L, 774_850_000L, 775_350_000L), limited700);
+        assertThrows(IllegalArgumentException.class, () -> SpectrumSearchService.windows(List.of(band800),
+            9_000_000, 767_600_000, 777_600_000));
+        assertThrows(IllegalArgumentException.class, () -> SpectrumSearchService.windows(ranges,
+            9_000_000, 767_600_000, 777_600_000));
+    }
+
+    @Test
+    void selected700And800BandsTuneEveryWindowInBothPassesBeforeCheckingSignals() throws Exception
+    {
+        long signal800 = 852_400_000;
+        var ranges = List.of(new SpectrumSearchService.Range(769_000_000, 775_000_000),
+            new SpectrumSearchService.Range(851_000_000, 869_000_000));
+        var onePass = List.of(771_250_000L, 774_850_000L, 778_450_000L,
+            853_250_000L, 856_850_000L, 860_450_000L, 864_050_000L, 867_650_000L,
+            871_250_000L, 874_850_000L);
+        var twoPasses = new ArrayList<>(onePass);
+        twoPasses.addAll(onePass);
+        try(Fixture fixture = new Fixture(A, signal800))
+        {
+            fixture.lease.usableBandwidth = 9_000_000;
+            fixture.lease.sampleRate = 10_000_000;
+            fixture.lease.minimum = 24_000_000;
+            fixture.lease.maximum = 1_800_000_000;
+            CountDownLatch checking = new CountDownLatch(1), release = new CountDownLatch(1);
+            fixture.check = (lease, frequency, cancelled) -> {
+                checking.countDown();
+                release.await();
+                return evidence(frequency, frequency == A ? 1 : 2, "C4FM", true);
+            };
+            var opened = fixture.open(ranges);
+            try
+            {
+                assertTrue(checking.await(2, TimeUnit.SECONDS));
+                var checkingSnapshot = fixture.service.status(opened.jobId());
+                assertEquals("checking", checkingSnapshot.phase());
+                assertEquals(20, checkingSnapshot.progress().total());
+                assertEquals(20, checkingSnapshot.progress().completed());
+                assertEquals(20, fixture.lease.observations);
+                assertEquals(twoPasses, fixture.lease.centers.subList(0, 20));
+                assertTrue(checkingSnapshot.candidates().isEmpty());
+            }
+            finally { release.countDown(); }
+            var completed = fixture.complete(opened.jobId());
+            assertEquals(2, completed.progress().checked());
+            assertEquals(List.of(A, signal800), completed.candidates().stream()
+                .map(SpectrumSearchService.Candidate::frequencyHz).sorted().toList());
+            assertTrue(fixture.channels.definitions.isEmpty());
+        }
+    }
+
+    @Test
     void shippedUhfPresetFitsACommonRtlReceiverUsableBandwidth()
     {
         var uhf = List.of(new SpectrumSearchService.Range(406_000_000, 470_000_000));
@@ -440,11 +520,13 @@ class SpectrumSearchServiceTest
         SpectrumSearchService service;
         Fixture(long... frequencies) { lease = new FakeLease(frequencies); }
         SpectrumSearchService.Snapshot open()
+        { return open(RANGES); }
+        SpectrumSearchService.Snapshot open(List<SpectrumSearchService.Range> ranges)
         {
             if(service == null) service = new SpectrumSearchService(channels, (tuner, browse) -> lease,
                 (lease, frequency, cancelled) -> check.check(lease, frequency, cancelled), clock::get,
                 () -> new SpectrumSearchService.Catalog(List.of(), null, List.of(), null));
-            return service.open("test-receiver", "test-browse", RANGES, 750);
+            return service.open("test-receiver", "test-browse", ranges, 750);
         }
         SpectrumSearchService.Snapshot complete(String id) throws Exception
         {
@@ -473,15 +555,16 @@ class SpectrumSearchServiceTest
         CountDownLatch closeEntered, closeRelease;
         volatile boolean valid = true;
         long center = 773_000_000, transientFrequency;
+        long usableBandwidth = 4_000_000, sampleRate = 5_000_000, minimum = 20_000_000, maximum = 1_000_000_000;
         int observations;
         FakeLease(long... frequencies) { this.frequencies = frequencies; }
         public Tuner tuner() { return null; }
         public String targetId() { return "test-target"; }
-        public long usableBandwidthHz() { return 4_000_000; }
-        public long sampleRateHz() { return 5_000_000; }
+        public long usableBandwidthHz() { return usableBandwidth; }
+        public long sampleRateHz() { return sampleRate; }
         public long middleUnusableHalfBandwidthHz() { return 12500; }
-        public long minimumFrequencyHz() { return 20_000_000; }
-        public long maximumFrequencyHz() { return 1_000_000_000; }
+        public long minimumFrequencyHz() { return minimum; }
+        public long maximumFrequencyHz() { return maximum; }
         public long centerFrequencyHz() { return center; }
         public void tune(long frequency) { assertTrue(valid); center = frequency; centers.add(frequency); }
         public List<SpectrumPeakDetector.Peak> observe(long dwell, BooleanSupplier cancelled) throws InterruptedException
