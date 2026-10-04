@@ -272,7 +272,7 @@ test('uses only eligible receivers when a wider receiver is busy', async ({ page
   const search = dialog(page);
   const receiver = search.getByLabel('Receiver', { exact: true });
   await expect(receiver).toHaveValue('idle-a');
-  await expect(receiver.locator('option')).toHaveText(['Small receiver · 773.081250 MHz center · 2.20 MHz window']);
+  await expect(receiver.locator('option')).toHaveText(['Small receiver · 773.081250 MHz @ 2.20 MHz']);
   await expect(search.getByText('Use another receiver', { exact: true })).toHaveCount(0);
   await expect(search.getByRole('button', { name: 'Stop channels and use: Wide receiver', exact: true }))
     .toHaveCount(0);
@@ -283,37 +283,52 @@ test('uses only eligible receivers when a wider receiver is busy', async ({ page
     request.method === 'POST' && request.body.takeover === true)).toBe(false);
 });
 
-test('receiver picker and summary show each reported current center without acquiring a receiver', async ({ page }) => {
+test('receiver picker and summary show compact live frequency and width without acquiring a receiver', async ({ page }) => {
   const state = await install(page, { centerFrequencies: [773081250, 852400000] });
   const search = dialog(page);
   const receiver = search.getByLabel('Receiver', { exact: true });
   await expect(receiver.locator('option')).toHaveText([
-    'Small receiver · 773.081250 MHz center · 2.20 MHz window',
-    'Wide receiver · 852.400000 MHz center · 9.00 MHz window'
+    'Small receiver · 773.081250 MHz @ 2.20 MHz',
+    'Wide receiver · 852.400000 MHz @ 9.00 MHz'
   ]);
-  await expect(search.locator('.spectrum-discovery-context')).toContainText('852.400000 MHz center');
+  await expect(search.locator('.spectrum-discovery-context')).toContainText('852.400000 MHz @ 9.00 MHz');
   await receiver.selectOption('idle-a');
-  await expect(search.locator('.spectrum-discovery-context')).toContainText('773.081250 MHz center');
+  await expect(search.locator('.spectrum-discovery-context')).toContainText('773.081250 MHz @ 2.20 MHz');
   expect(state.requests.some((request) => request.method !== 'GET')).toBe(false);
   await search.getByRole('button', { name: 'Cancel', exact: true }).click();
   await expect(search).toHaveCount(0);
   expect(state.requests.some((request) => request.path.endsWith('/browse'))).toBe(false);
 });
 
-test('refreshing in-use receivers updates centers and reports unavailable frequency without saved defaults', async ({ page }) => {
+test('refreshing in-use receivers updates compact frequency and width without saved defaults', async ({ page }) => {
   const state = await install(page, { noIdle: true, centerFrequencies: [773081250, 852400000] });
   const cards = dialog(page).locator('.spectrum-search-receiver-card');
-  await expect(cards.first()).toContainText('773.081250 MHz center · 2.20 MHz scan width');
-  await expect(cards.last()).toContainText('852.400000 MHz center · 9.00 MHz scan width');
+  await expect(cards.first()).toContainText('773.081250 MHz @ 2.20 MHz');
+  await expect(cards.last()).toContainText('852.400000 MHz @ 9.00 MHz');
+  await expect(cards.locator('.spectrum-search-receiver-detail')).toHaveText([
+    '773.081250 MHz @ 2.20 MHz', '852.400000 MHz @ 9.00 MHz'
+  ]);
+  await expect(dialog(page).locator('.spectrum-search-unavailable-intro'))
+    .toContainText('Calls in progress will end and will not resume');
   state.tuners[0].center_frequency_hz = 856162500;
+  state.tuners[0].usable_bandwidth_hz = 2350000;
   for (const unavailable of [null, 0, 'not-a-frequency']) {
     state.tuners[1].center_frequency_hz = unavailable;
     await dialog(page).getByRole('button', { name: 'Refresh receivers', exact: true }).click();
-    await expect(cards.first()).toContainText('856.162500 MHz center');
-    await expect(cards.last()).toContainText('Center frequency unavailable · 9.00 MHz scan width');
+    await expect(cards.first()).toContainText('856.162500 MHz @ 2.35 MHz');
+    await expect(cards.last()).toContainText('Frequency unavailable @ 9.00 MHz');
     await expect(cards.last()).not.toContainText('773.081250 MHz');
   }
   expect(state.requests.filter((request) => request.path === `${searchPath}/catalog`)).toHaveLength(4);
+  state.noIdle = false;
+  await dialog(page).getByRole('button', { name: 'Refresh receivers', exact: true }).click();
+  const receiver = dialog(page).getByLabel('Receiver', { exact: true });
+  await expect(receiver.locator('option')).toHaveText([
+    'Small receiver · 856.162500 MHz @ 2.35 MHz', 'Wide receiver · Frequency unavailable @ 9.00 MHz'
+  ]);
+  await receiver.selectOption('idle-a');
+  await expect(dialog(page).locator('.spectrum-discovery-context > .muted'))
+    .toHaveText('856.162500 MHz @ 2.35 MHz');
   expect(state.requests.some((request) => request.method !== 'GET')).toBe(false);
 });
 
@@ -926,8 +941,8 @@ test('recording tuners check only their fixed WAV window with directory state pr
   await expect(bandsTrigger(page)).toBeHidden();
   await expect(dialog(page)).toContainText('WAV recording');
   await expect(dialog(page).getByLabel('Receiver', { exact: true }).locator('option'))
-    .toHaveText(['Trunked capture · 451.000000 MHz center · 2.00 MHz window']);
-  await expect(dialog(page).locator('.spectrum-discovery-context')).toContainText('451.000000 MHz center');
+    .toHaveText(['Trunked capture · 451.000000 MHz @ 2.00 MHz']);
+  await expect(dialog(page).locator('.spectrum-discovery-context')).toContainText('451.000000 MHz @ 2.00 MHz');
   await expect(dialog(page).locator('.spectrum-discovery-context')).not.toContainText('773.081250 MHz');
   await expect(dialog(page)).toContainText('450 to 452 MHz');
   await dialog(page).getByLabel('RadioReference state or province').selectOption('42');
@@ -1081,8 +1096,8 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
     const state = await install(page, { theme, phase: 'scanning', truncated: true });
     await expect(dialog(page)).toHaveScreenshot(`spectrum-search-band-${theme}-${width}.png`);
     const receiver = dialog(page).getByLabel('Receiver', { exact: true });
-    await expect(receiver.locator('option')).toHaveText(['Small receiver · 773.081250 MHz center · 2.20 MHz window',
-      'Wide receiver · 773.081250 MHz center · 9.00 MHz window']);
+    await expect(receiver.locator('option')).toHaveText(['Small receiver · 773.081250 MHz @ 2.20 MHz',
+      'Wide receiver · 773.081250 MHz @ 9.00 MHz']);
     await receiver.click();
     await expect(dialog(page)).toHaveScreenshot(`spectrum-search-receiver-control-${theme}-${width}.png`);
     await receiver.press('Enter');
