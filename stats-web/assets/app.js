@@ -14695,6 +14695,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const activeChannelTables = new Map();
   const targetsById = new Map();
   let targetsRefreshPending = false;
+  let targetsRefreshRequested = false;
   let activeFlagSignature = '';
   let selectedFrequencyHz = null;
   let fftValues = new Float32Array(0);
@@ -14795,14 +14796,20 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     selectTarget(targetId) {
       if (!managedSelection || disposed) return streamRelease;
       managedTargetId = String(targetId || '');
-      if (targetSelect.value === managedTargetId) return streamRelease;
+      if (targetSelect.value === managedTargetId) {
+        if (!managedTargetId) {
+          resetPlots(managedEmptyState().message);
+          setStatus(managedEmptyState().status);
+        }
+        return streamRelease;
+      }
       targetSelect.value = targetsById.has(managedTargetId) ? managedTargetId : '';
       pause.disabled = !targetSelect.value;
       closeStreams();
       closeActiveChannels();
       resetViewportForTarget();
-      resetPlots(managedTargetId ? 'Waiting for tuner data…' : 'No live samples—the tuner is idle.');
-      if (!targetSelect.value) setStatus('Idle');
+      resetPlots(managedTargetId ? 'Waiting for tuner data…' : managedEmptyState().message);
+      if (!targetSelect.value) setStatus(managedEmptyState().status);
       sync();
       if (managedTargetId && !targetsById.has(managedTargetId)) refreshTargets();
       return streamRelease;
@@ -15271,6 +15278,9 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   }
 
   const selectedTargetId = () => targetSelect.value;
+  const managedEmptyState = () => panelOptions.emptyState?.() || {
+    status: 'Idle', message: 'No live samples—the tuner is idle.'
+  };
   const shouldRun = () => !disposed && !paused && !externallySuspended && pageFocused && !pageSuspended &&
     !document.hidden && selectedTargetId();
 
@@ -15537,7 +15547,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
       else if (externallySuspended) setStatus('In use');
       else if (pageSuspended || document.hidden) setStatus('Hidden');
       else if (!pageFocused) setStatus('Unfocused');
-      else if (managedSelection && !selectedTargetId()) setStatus('Idle');
+      else if (managedSelection && !selectedTargetId()) setStatus(managedEmptyState().status);
       else setStatus('Waiting');
       return released;
     }
@@ -16425,7 +16435,8 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   renderFrequencyBands();
 
   function refreshTargets() {
-    if (disposed || targetsRefreshPending) return;
+    if (disposed) return;
+    if (targetsRefreshPending) { targetsRefreshRequested = true; return; }
     targetsRefreshPending = true;
     api('/api/v1/diagnostics/tuners').then((response) => {
     if (disposed) return;
@@ -16438,8 +16449,8 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
       targetSelect.append(unavailable);
       targetSelect.disabled = true;
       pause.disabled = true;
-      setStatus(managedSelection ? 'Idle' : 'Unavailable');
-      resetPlots(managedSelection ? 'No live samples—the tuner is idle.' :
+      setStatus(managedSelection ? managedEmptyState().status : 'Unavailable');
+      resetPlots(managedSelection ? managedEmptyState().message :
         'No enabled tuner supports spectrum diagnostics.');
       return;
     }
@@ -16455,8 +16466,8 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     targetSelect.disabled = managedSelection;
     pause.disabled = !targetSelect.value;
     resetViewportForTarget();
-    resetPlots(targetSelect.value ? 'Waiting for tuner data…' : 'No live samples—the tuner is idle.');
-    if (!targetSelect.value) setStatus('Idle');
+    resetPlots(targetSelect.value ? 'Waiting for tuner data…' : managedEmptyState().message);
+    if (!targetSelect.value) setStatus(managedEmptyState().status);
     sync();
     }).catch((error) => {
     if (disposed) return;
@@ -16467,7 +16478,13 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     pause.disabled = true;
     setStatus('Unavailable');
     resetPlots(error.message || 'Could not load tuner diagnostics.');
-    }).finally(() => { targetsRefreshPending = false; });
+    }).finally(() => {
+      targetsRefreshPending = false;
+      if (targetsRefreshRequested) {
+        targetsRefreshRequested = false;
+        if (!disposed) refreshTargets();
+      }
+    });
   }
   refreshTargets();
   return controller;
@@ -17791,7 +17808,8 @@ async function renderTunerSpectrum() {
   const message = node('div', 'ui-feedback spectrum-browse-message');
   message.setAttribute('role', 'status');
   const routineBrowseMessages = new Set([
-    'Monitoring active channels', 'Drag to tune · Zoom to pan', 'Unlock center to tune', 'Tuning enabled',
+    'Monitoring active channels', 'Monitoring recording playback', 'Drag to tune · Zoom to pan',
+    'Unlock center to tune', 'Tuning enabled',
     'Center frequency locked. Unlock to tune; zoom to pan.',
     'Click a signal to inspect it. Drag the full view to tune; zoom to pan.'
   ]);
@@ -17878,7 +17896,10 @@ async function renderTunerSpectrum() {
       allocationGroupKey(lease.tuner) === allocationGroupKey(tuner);
     const ownChannels = takeoverGroup ? 0 : Math.max(0, Number(tuner.channel_count) || 0);
     const groupChannels = allocationGroupChannelCount(tuner);
-    const activity = ownChannels ? `${ownChannels} active` : groupChannels ? `${groupChannels} active in pair` : 'Idle';
+    const playback = tunerIsRecording(tuner) ? tuner.recording_playback?.state : null;
+    const activity = ownChannels ? `${ownChannels} active` : groupChannels ? `${groupChannels} active in pair` :
+      playback === 'playing' ? 'Playing' : playback === 'waiting' ? 'Waiting' :
+        playback === 'stopped' ? 'Stopped' : 'Idle';
     return `${tuner.name} · ${activity}${rate === 'Unavailable' ? '' : ` · ${rate}`}`;
   };
   const refreshTunerOptionLabels = () => {
@@ -17908,7 +17929,8 @@ async function renderTunerSpectrum() {
     const stoppedCount = Array.isArray(browse?.stopped_channels) ? browse.stopped_channels.length : 0;
     return browse?.takeover ? (stoppedCount ?
       `${stoppedCount} channel${stoppedCount === 1 ? '' : 's'} stopped · Resume when finished` :
-      'Tuning enabled') : canTune() ? 'Drag to tune · Zoom to pan' :
+      'Tuning enabled') : tunerIsRecording(browse?.tuner) ? 'Monitoring recording playback' :
+        canTune() ? 'Drag to tune · Zoom to pan' :
         canEditCenter() ? 'Unlock center to tune' : 'Monitoring active channels';
   };
   const leasePath = (id) => `/api/v1/admin/tuners/${encodeURIComponent(id)}/browse`;
@@ -17917,7 +17939,8 @@ async function renderTunerSpectrum() {
   const syncTakeoverActions = () => {
     const takeover = lease?.takeover === true;
     const active = allocationGroupChannelCount(selectedInventoryTuner());
-    takeControl.hidden = takeover || lease?.can_tune === true || active === 0;
+    takeControl.hidden = tunerIsRecording(selectedInventoryTuner()) || takeover ||
+      lease?.can_tune === true || active === 0;
     resumeChannels.hidden = !takeover;
     takeControl.disabled = resumeChannels.disabled = probeActive || tuning || liveTune?.busy === true;
   };
@@ -17975,9 +17998,14 @@ async function renderTunerSpectrum() {
   };
   const renderCenter = () => {
     centerControl?.close();
-    const setting = selectedTuner?.settings?.find((candidate) => candidate.id === 'frequency_mhz');
-    if (!setting) { centerHost.replaceChildren(); return; }
-    const usability = canEditCenter() ? tunerSettingUsability(setting, selectedTuner, selectedTuner.settings) :
+    const recording = tunerIsRecording(selectedTuner);
+    const recordingFrequency = Number(selectedTuner?.frequency_hz ?? selectedTuner?.configured_frequency_hz);
+    const setting = selectedTuner?.settings?.find((candidate) => candidate.id === 'frequency_mhz') ||
+      (recording && recordingFrequency > 0 ? { id: 'frequency_mhz', value: recordingFrequency / 1_000_000 } : null);
+    if (!setting) { centerHost.replaceChildren(); centerHost.hidden = recording; return; }
+    centerHost.hidden = false;
+    const usability = recording ? { enabled: false, reason: 'Recording frequency is fixed by the capture.' } :
+      canEditCenter() ? tunerSettingUsability(setting, selectedTuner, selectedTuner.settings) :
       { enabled: false, reason: tuning ? 'Saving center frequency settings' :
         probeActive ? 'Finish or close channel discovery to tune' :
         'Active channels keep the center frequency fixed' };
@@ -17987,7 +18015,7 @@ async function renderTunerSpectrum() {
     centerHost.replaceChildren(centerControl);
     centerHost.inert = liveTune?.busy === true;
     if (liveTune?.busy && liveTune.frequencyHz) centerControl.previewFrequency(liveTune.frequencyHz / 1_000_000);
-    const lock = selectedTuner.settings.find((candidate) => candidate.id === 'center_frequency_locked');
+    const lock = selectedTuner.settings?.find((candidate) => candidate.id === 'center_frequency_locked');
     if (lock) {
       const control = tunerSettingInput(lock);
       control.element.classList.add('tuners-center-lock-field');
@@ -18111,6 +18139,13 @@ async function renderTunerSpectrum() {
   });
   const spectrum = tunerSpectrumPanel(snapPresetDocument, {
     managedSelection: true,
+    emptyState: () => {
+      if (!tunerIsRecording(selectedTuner)) return null;
+      const state = selectedTuner?.recording_playback?.state;
+      return state === 'stopped' ? { status: 'Stopped', message: 'Recording playback is stopped.' } :
+        { status: 'Waiting', message: state === 'waiting' ?
+          'Recording playback has no recent samples.' : 'Waiting for recording samples.' };
+    },
     statusClassName: 'ui-pill-inline-dot spectrum-browse-status',
     onFrequencySelection: (selection) => {
       frequencyActionController?.close?.();
@@ -18179,16 +18214,25 @@ async function renderTunerSpectrum() {
       const centerChanged = !tuneChanged && centerSettingsSignature(lease) !== centerSettingsSignature(renewed);
       const frequencyChanged = !tuneChanged &&
         Number(selectedTuner?.frequency_hz) !== Number(renewed.tuner?.frequency_hz);
+      const targetChanged = !tuneChanged &&
+        selectedTuner?.spectrum_target_id !== renewed.tuner?.spectrum_target_id;
+      const emptyPlaybackChanged = !tuneChanged && !renewed.tuner?.spectrum_target_id &&
+        tunerIsRecording(renewed.tuner) &&
+        selectedTuner?.recording_playback?.state !== renewed.tuner?.recording_playback?.state;
       lease = renewed;
       if (tuneChanged) lease = { ...renewed, tuner: selectedTuner };
       else {
         confirmSelectedTuner(renewed.tuner);
+        if (targetChanged || emptyPlaybackChanged) {
+          spectrum.selectTarget(selectedTuner?.spectrum_target_id || '');
+          spectrum.refreshTargets();
+        }
         if (frequencyChanged) {
           retuneCancelled = false;
           liveTune.reset();
         }
       }
-      if (centerChanged) renderCenter();
+      if (centerChanged || frequencyChanged) renderCenter();
       if (leaseRetrying) {
         leaseRetrying = false;
         setBrowseMessage(browseMessage(renewed));
@@ -18289,7 +18333,6 @@ async function renderTunerSpectrum() {
       const inventory = await requestJson('/api/v1/admin/tuners', { csrf: false });
       if (disposed) return;
       tuners = tunerInventoryRows(inventory).filter((tuner) =>
-        String(tuner.tuner_class).toUpperCase() !== 'RECORDING' &&
         !['ERROR', 'REMOVED', 'UNSUPPORTED'].includes(String(tuner.status).toUpperCase()));
       const selectedId = selectedTuner?.id;
       select.replaceChildren(...tuners.map((tuner) => {
@@ -18303,6 +18346,7 @@ async function renderTunerSpectrum() {
         selectedTuner = tuners.find((tuner) => tuner.id === selectedId) || selectedTuner;
         select.value = selectedId || '';
         renderCenter();
+        spectrum.selectTarget(selectedTuner?.spectrum_target_id || '');
         spectrum.refreshTargets();
         return;
       }
@@ -26887,6 +26931,10 @@ function tunerInventoryRows(response) {
 function tunerInventoryFrequency(value) {
   const hz = Number(value);
   return Number.isFinite(hz) && hz > 0 ? `${frequency(hz)} MHz` : 'Unavailable';
+}
+
+function tunerIsRecording(tuner) {
+  return ['RECORDING', 'RECORDING_TUNER'].includes(String(tuner?.tuner_class).toUpperCase());
 }
 
 function tunerInventoryRate(value) {
