@@ -30,6 +30,7 @@ import { createRemoteLinksWorkspace } from './features/remote-links.js?v=12';
 import { createRecordingsFeature } from './features/recordings.js?v=18';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft } from './features/spectrum-search.js?v=15';
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult } from './features/discovery-radioreference.js?v=1';
+import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createAudioDock } from './core/audio-dock.js?v=8';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=1';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
@@ -15327,6 +15328,21 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     const unavailable = streamState === 'unavailable' || streamState === 'closed';
     const center = stateNumber(tunerState, 'center_frequency_hz');
     const sampleRate = stateNumber(tunerState, 'sample_rate_hz');
+    const requestedCenter = panelOptions.retunePending?.() ? panelOptions.retuneFrequencyHz?.() : null;
+    if (unavailable && (drag || panelOptions.retunePending?.())) {
+      const dragRetune = drag?.retune;
+      cancelDrag();
+      if (!dragRetune && panelOptions.retunePending?.()) panelOptions.cancelRetune?.();
+    }
+    if (requestedCenter > 0 && center > 0 && Math.abs(center - requestedCenter) > 10) {
+      if (!live) {
+        setRefining(false);
+        setOverlay(tunerState?.reason || tunerState?.message || 'Waiting for tuner samples…');
+        setStatus(unavailable ? 'Unavailable' : 'Waiting', 'state-stale');
+        setReadouts(true);
+      }
+      return;
+    }
     if (center > 0 && sampleRate > 0) {
       const nextFull = { startHz: center - sampleRate / 2, endHz: center + sampleRate / 2 };
       const previousFull = fullViewport;
@@ -15409,7 +15425,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
 
   function acceptTunerFrame(frame) {
     if (frame.type !== DIAGNOSTIC_FRAME_TYPES.TUNER_FFT ||
-        drag?.moved ||
+        (drag?.moved && !drag.retune) ||
         awaitingViewportState ||
         (generation === frame.generation && sequence !== null && frame.sequence <= sequence)) return;
     const values = diagnosticFloatPayload(frame);
@@ -15512,6 +15528,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
 
   function sync() {
     if (!shouldRun()) {
+      if (drag) cancelDrag();
       const released = closeStreams();
       closeActiveChannels();
       if (disposed) return released;
@@ -15830,11 +15847,12 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     cursorPopup.hidden = true;
   }
 
-  function cancelDrag(releaseCapture = true) {
+  function cancelDrag(releaseCapture = true, keepRetune = false) {
     const current = drag;
     drag = null;
     if (!current) return;
     current.canvas.classList.remove('dragging');
+    if (current.retune && !keepRetune) panelOptions.cancelRetune?.();
     messageForRetune(0);
     if (releaseCapture && current.canvas.hasPointerCapture(current.pointerId)) {
       try { current.canvas.releasePointerCapture(current.pointerId); } catch (error) { /* Already released. */ }
@@ -15851,7 +15869,12 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
 
   function onPlotKeyDown(event) {
     if (!viewportControls || !canInteract()) return;
-    if (event.key === '+' || event.key === '=') {
+    if (event.key === 'Escape' && drag) {
+      event.preventDefault();
+      const panMoved = drag.moved && !drag.retune;
+      cancelDrag();
+      if (panMoved) queueViewportUpdate();
+    } else if (event.key === '+' || event.key === '=') {
       event.preventDefault();
       zoomAt(0.5, 1 / TUNER_SPECTRUM_ZOOM_FACTOR);
     } else if (event.key === '-' || event.key === '_') {
@@ -15881,11 +15904,12 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     if (!deltaPixels) return;
     if (!drag.moved) {
       drag.moved = true;
-      //Keep the server session/producer attached and freeze only local frame application until pointer release.
+      // Keep the producer attached. Zoomed panning freezes the old image; live retuning accepts fresh samples.
     }
     if (drag.retune) {
-      drag.deltaHz -= deltaPixels / rect.width * (viewport.endHz - viewport.startHz);
+      drag.deltaHz -= deltaPixels / rect.width * drag.spanHz;
       messageForRetune(drag.deltaHz);
+      panelOptions.retune?.(Math.round(drag.centerHz + drag.deltaHz));
     } else panBy(-deltaPixels / rect.width * (viewport.endHz - viewport.startHz), 'none');
   }
 
@@ -15898,24 +15922,26 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     event.currentTarget.setPointerCapture(event.pointerId);
     event.currentTarget.classList.add('dragging');
     drag = { pointerId: event.pointerId, lastX: event.clientX, canvas: event.currentTarget,
-      moved: false, retune, deltaHz: 0 };
+      moved: false, retune, deltaHz: 0, spanHz: viewport.endHz - viewport.startHz,
+      centerHz: panelOptions.retuneFrequencyHz?.() || (fullViewport.startHz + fullViewport.endHz) / 2 };
   }
 
   function onPlotPointerUp(event) {
     if (!drag || drag.pointerId !== event.pointerId) return;
-    const { moved, retune, deltaHz } = drag;
+    if (event.clientX !== drag.lastX) onPlotPointerMove(event);
+    const { moved, retune, deltaHz, centerHz } = drag;
     suppressClick = true;
-    cancelDrag();
+    cancelDrag(true, true);
     if (moved && retune) {
       messageForRetune(0);
-      void panelOptions.retune?.(Math.round((fullViewport.startHz + fullViewport.endHz) / 2 + deltaHz));
+      panelOptions.retune?.(Math.round(centerHz + deltaHz), { final: true });
     } else if (moved) queueViewportUpdate();
     else if (frequencyActions) openFrequencyActionsAtPointer(event);
   }
 
   function onPlotPointerCancel(event) {
     if (!drag || drag.pointerId !== event.pointerId) return;
-    const moved = drag.moved;
+    const moved = drag.moved && !drag.retune;
     cancelDrag();
     if (moved) queueViewportUpdate();
   }
@@ -15933,7 +15959,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
 
   function onPlotLostCapture(event) {
     if (!drag || drag.pointerId !== event.pointerId) return;
-    const moved = drag.moved;
+    const moved = drag.moved && !drag.retune;
     cancelDrag(false);
     if (moved) queueViewportUpdate();
   }
@@ -17818,11 +17844,16 @@ async function renderTunerSpectrum() {
   let selectedTuner = null;
   let lease = null;
   let leaseTimer = null;
+  let leaseRenewal = null;
+  let leaseRenewalRequested = false;
   let probeActive = false;
   let centerControl = null;
   let disposed = false;
   let operation = 0;
   let tuning = false;
+  let manualTuneOperation = null;
+  let liveTune = null;
+  let retuneCancelled = false;
   let leaseRetrying = false;
   const takeControl = iconButton('icon-power', 'Stop channels to tune',
     'ui-button ui-button-secondary ui-icon-button spectrum-browse-takeover spectrum-browse-takeover-warning');
@@ -17888,10 +17919,12 @@ async function renderTunerSpectrum() {
     const active = allocationGroupChannelCount(selectedInventoryTuner());
     takeControl.hidden = takeover || lease?.can_tune === true || active === 0;
     resumeChannels.hidden = !takeover;
-    takeControl.disabled = resumeChannels.disabled = probeActive || tuning;
+    takeControl.disabled = resumeChannels.disabled = probeActive || tuning || liveTune?.busy === true;
   };
   const releaseLease = async (suppressFailure = true) => {
     window.clearTimeout(leaseTimer);
+    leaseTimer = null;
+    leaseRenewalRequested = false;
     leaseRetrying = false;
     const previous = lease;
     if (!previous?.lease_id) {
@@ -17952,6 +17985,8 @@ async function renderTunerSpectrum() {
       save: async (_tuner, _setting, value) => tune(Math.round(value * 1_000_000))
     });
     centerHost.replaceChildren(centerControl);
+    centerHost.inert = liveTune?.busy === true;
+    if (liveTune?.busy && liveTune.frequencyHz) centerControl.previewFrequency(liveTune.frequencyHz / 1_000_000);
     const lock = selectedTuner.settings.find((candidate) => candidate.id === 'center_frequency_locked');
     if (lock) {
       const control = tunerSettingInput(lock);
@@ -17977,21 +18012,37 @@ async function renderTunerSpectrum() {
       centerHost.append(control.element);
     }
   };
-  const saveCenterSetting = async (setting, value) => {
-    if (!canEditCenter() || (setting.id === 'frequency_mhz' && !canTune())) return;
+  const saveCenterSetting = async (setting, value, { live = false } = {}) => {
+    if (!canEditCenter() || (!live && liveTune?.busy) || (setting.id === 'frequency_mhz' && !canTune())) {
+      if (live) throw new Error('This receiver is no longer available to tune. Retry when it is ready.');
+      return;
+    }
+    const currentTuner = selectedTuner;
+    const currentLease = lease;
+    const generation = operation;
+    const current = () => !disposed && generation === operation && lease?.lease_id === currentLease.lease_id;
     const restoreFocus = document.activeElement?.dataset.tunerSetting === setting.id;
-    tuning = true;
-    select.disabled = true;
-    syncTakeoverActions();
-    renderCenter();
+    const saveOperation = live ? null : {};
+    if (!live) {
+      manualTuneOperation = saveOperation;
+      tuning = true;
+      retuneCancelled = false;
+      liveTune.reset();
+      select.disabled = true;
+      syncTakeoverActions();
+      renderCenter();
+    }
     try {
-      await requestJson(`/api/v1/admin/tuners/${encodeURIComponent(selectedTuner.id)}/settings/${setting.id}`, {
-        method: 'PUT', body: { value, lease_id: lease.lease_id }, page: false
+      await requestJson(`/api/v1/admin/tuners/${encodeURIComponent(currentTuner.id)}/settings/${setting.id}`, {
+        method: 'PUT', body: { value, lease_id: currentLease.lease_id }, page: false
       });
-      const renewed = await requestJson(leasePath(selectedTuner.id), {
-        method: 'POST', body: { lease_id: lease.lease_id }, page: false
+      if (!current()) return null;
+      const renewed = await requestJson(leasePath(currentTuner.id), {
+        method: 'POST', body: { lease_id: currentLease.lease_id }, page: false
       });
-      if (disposed) return;
+      if (!current()) return null;
+      if (live) return renewed;
+      liveTune.reset();
       lease = renewed;
       confirmSelectedTuner(renewed.tuner);
       if (setting.id === 'frequency_mhz') {
@@ -18002,20 +18053,62 @@ async function renderTunerSpectrum() {
         'Center frequency locked. Unlock to tune; zoom to pan.' :
         'Click a signal to inspect it. Drag the full view to tune; zoom to pan.');
     } catch (error) {
-      setBrowseMessage(error.message || 'Could not save center frequency settings. Try again.');
+      if (current() && !live) setBrowseMessage(error.message || 'Could not save center frequency settings. Try again.');
       throw error;
     } finally {
-      tuning = false;
-      if (!disposed) {
-        select.disabled = probeActive;
-        syncTakeoverActions();
-        renderCenter();
-        if (restoreFocus) centerHost.querySelector(`[data-tuner-setting="${setting.id}"]`)?.focus();
+      if (!live && manualTuneOperation === saveOperation) {
+        manualTuneOperation = null;
+        tuning = false;
+        if (current()) {
+          select.disabled = probeActive;
+          syncTakeoverActions();
+          renderCenter();
+          if (restoreFocus) centerHost.querySelector(`[data-tuner-setting="${setting.id}"]`)?.focus();
+        }
       }
     }
   };
   const tune = (frequencyHz) => saveCenterSetting(
     selectedTuner.settings.find((candidate) => candidate.id === 'frequency_mhz'), frequencyHz / 1_000_000);
+  liveTune = createSpectrumLiveTune({
+    apply: (frequencyHz) => saveCenterSetting(
+      selectedTuner.settings.find((candidate) => candidate.id === 'frequency_mhz'), frequencyHz / 1_000_000,
+      { live: true }),
+    preview: (frequencyHz) => {
+      if (disposed) return;
+      centerControl?.previewFrequency(frequencyHz / 1_000_000);
+      centerHost.inert = true;
+      takeControl.disabled = resumeChannels.disabled = true;
+      setBrowseMessage(`Tuning to ${channelMHz(frequencyHz)} MHz`);
+    },
+    applied: (renewed) => {
+      if (disposed || !renewed || lease?.lease_id !== renewed.lease_id) return;
+      lease = renewed;
+      confirmSelectedTuner(renewed.tuner);
+      setBrowseMessage(browseMessage(renewed));
+    },
+    failed: (error) => {
+      if (disposed) return;
+      liveTune.reset();
+      setBrowseMessage(error.message || 'Could not tune this receiver. Drag again to retry.');
+      if (leaseOwnershipLost(error)) {
+        lease = null;
+        spectrum.selectTarget('');
+        retryBrowse.hidden = false;
+      }
+    },
+    idle: () => {
+      if (disposed) return;
+      centerHost.inert = false;
+      renderCenter();
+      syncTakeoverActions();
+      if (retuneCancelled) {
+        retuneCancelled = false;
+        setBrowseMessage(browseMessage(lease));
+        void renewLease();
+      }
+    }
+  });
   const spectrum = tunerSpectrumPanel(snapPresetDocument, {
     managedSelection: true,
     statusClassName: 'ui-pill-inline-dot spectrum-browse-status',
@@ -18030,14 +18123,21 @@ async function renderTunerSpectrum() {
       });
     },
     canRetune: canTune,
-    retune: (frequencyHz) => tune(frequencyHz).catch(() => {}),
-    onRetunePreview: (deltaHz) => {
-      if (deltaHz && selectedTuner) setBrowseMessage(
-        `Release to tune to ${channelMHz(Number(selectedTuner.frequency_hz) + deltaHz)} MHz`);
+    retune: (frequencyHz, options) => {
+      const setting = selectedTuner?.settings?.find((candidate) => candidate.id === 'frequency_mhz');
+      const minimum = Number(setting?.minimum) * 1_000_000;
+      const maximum = Number(setting?.maximum) * 1_000_000;
+      const bounded = Math.min(Number.isFinite(maximum) ? maximum : Infinity,
+        Math.max(Number.isFinite(minimum) ? minimum : 1, frequencyHz));
+      liveTune.request(Math.round(bounded / 10) * 10, options);
     },
+    retuneFrequencyHz: () => liveTune.frequencyHz || Number(selectedTuner?.frequency_hz),
+    retunePending: () => liveTune.busy,
+    cancelRetune: () => { retuneCancelled = true; liveTune.cancel(); },
     selectionContext: () => ({
       tunerId: selectedTuner?.id || '', tunerName: selectedTuner?.name || '', browseLeaseId: lease?.lease_id || '',
       setProbeActive: async (active) => {
+        if (active) liveTune.reset();
         probeActive = active;
         select.disabled = active;
         syncTakeoverActions();
@@ -18061,16 +18161,33 @@ async function renderTunerSpectrum() {
     })
   });
   const renewLease = async () => {
+    window.clearTimeout(leaseTimer);
+    leaseTimer = null;
     if (disposed || !lease) return;
+    if (leaseRenewal?.leaseId === lease.lease_id) { leaseRenewalRequested = true; return; }
+    const renewal = { leaseId: lease.lease_id };
+    leaseRenewal = renewal;
+    leaseRenewalRequested = false;
     const existing = lease;
+    const tuneRevision = liveTune.revision;
     try {
       const renewed = await requestJson(leasePath(existing.tuner.id), {
         method: 'POST', body: { lease_id: existing.lease_id }, page: false
       });
       if (disposed || lease?.lease_id !== existing.lease_id) return;
-      const centerChanged = centerSettingsSignature(lease) !== centerSettingsSignature(renewed);
+      const tuneChanged = tuning || liveTune.busy || tuneRevision !== liveTune.revision;
+      const centerChanged = !tuneChanged && centerSettingsSignature(lease) !== centerSettingsSignature(renewed);
+      const frequencyChanged = !tuneChanged &&
+        Number(selectedTuner?.frequency_hz) !== Number(renewed.tuner?.frequency_hz);
       lease = renewed;
-      confirmSelectedTuner(renewed.tuner);
+      if (tuneChanged) lease = { ...renewed, tuner: selectedTuner };
+      else {
+        confirmSelectedTuner(renewed.tuner);
+        if (frequencyChanged) {
+          retuneCancelled = false;
+          liveTune.reset();
+        }
+      }
       if (centerChanged) renderCenter();
       if (leaseRetrying) {
         leaseRetrying = false;
@@ -18080,6 +18197,7 @@ async function renderTunerSpectrum() {
     } catch (error) {
       if (disposed || lease?.lease_id !== existing.lease_id) return;
       if (leaseOwnershipLost(error)) {
+        liveTune.reset();
         lease = null;
         leaseRetrying = false;
         spectrum.selectTarget('');
@@ -18095,13 +18213,27 @@ async function renderTunerSpectrum() {
         'Connection interrupted. Spectrum will retry this receiver automatically.');
       retryBrowse.hidden = true;
       syncTakeoverActions();
-      leaseTimer = window.setTimeout(() => void renewLease(), 10_000);
-      return;
+    } finally {
+      if (leaseRenewal === renewal) {
+        leaseRenewal = null;
+        const requested = leaseRenewalRequested;
+        leaseRenewalRequested = false;
+        if (!disposed && lease) {
+          if (requested) void renewLease();
+          else if (lease.lease_id === existing.lease_id) {
+            window.clearTimeout(leaseTimer);
+            leaseTimer = window.setTimeout(() => void renewLease(), 10_000);
+          }
+        }
+      }
     }
-    leaseTimer = window.setTimeout(() => void renewLease(), 10_000);
   };
   const chooseTuner = async (id, takeover = false) => {
     const generation = ++operation;
+    manualTuneOperation = null;
+    tuning = false;
+    retuneCancelled = false;
+    liveTune.reset();
     resetFrequencyRail();
     retryBrowse.hidden = true;
     select.disabled = true;
@@ -18262,6 +18394,7 @@ async function renderTunerSpectrum() {
     if (disposed) return;
     disposed = true;
     operation += 1;
+    liveTune.close();
     centerControl?.close();
     resetFrequencyRail();
     spectrum.close();
@@ -27097,6 +27230,14 @@ function tunerCenterFrequencyControl(tuner, setting, usability, callbacks = {}) 
   wrapper.append(label, controlRow);
   wrapper.append(message);
   wrapper.close = detachKeydown;
+  wrapper.previewFrequency = (megahertz) => {
+    if (!Number.isFinite(megahertz)) return;
+    value = megahertz;
+    const characters = tunerCenterFrequencyText(value).replace('.', '');
+    digits.querySelectorAll('.tuners-frequency-digit > span').forEach((digit, index) => {
+      digit.textContent = characters[index];
+    });
+  };
   draw();
   return wrapper;
 }
