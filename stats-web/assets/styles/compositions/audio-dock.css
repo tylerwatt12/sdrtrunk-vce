@@ -13,8 +13,9 @@
   font-size: var(--font-size-body);
 }
 .audio-dock [hidden] { display: none; }
+.audio-dock-presentation { display: contents; }
 .audio-dock[data-super-collapsed="true"] {
-  width: var(--audio-restore-size);
+  width: max-content;
   overflow: visible;
 }
 .audio-dock-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: var(--space-1); }

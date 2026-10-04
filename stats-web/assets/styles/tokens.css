@@ -18,8 +18,6 @@
   --audio-grip-width: 28px;
   --audio-action-size: 42px;
   --audio-play-size: 48px;
-  --audio-restore-size: 56px;
-  --audio-restore-glyph-size: 24px;
   --audio-source-height: 36px;
   --audio-source-font-size: var(--font-size-secondary);
   --audio-source-padding-x: 8px;
@@ -235,6 +233,7 @@
   --primary-control-ink: #ffffff;
   --control-thumb: #ffffff;
   --radius-control: 8px;
+  --radius-pill: 999px;
   --radius-card: 12px;
   --radius-modal: 12px;
   --space-1: 4px;

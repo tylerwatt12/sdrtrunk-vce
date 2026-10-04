@@ -42,12 +42,49 @@ async function navigate(page, view) {
   await expect(page).toHaveURL(new RegExp(`view=${view}`));
 }
 
+async function expectPlayerPill(control, expanded) {
+  await expect(control).toHaveText('Player');
+  await expect(control).toHaveAttribute('aria-expanded', String(expanded));
+  await expect(control).toHaveAttribute('aria-controls', 'audio-dock-presentation');
+  await expect(control.locator('svg')).toHaveAttribute('aria-hidden', 'true');
+  await expect(control.locator('use')).toHaveAttribute('href', '#icon-chevron-down');
+  expect(await control.locator('use').evaluate((icon) => Boolean(document.getElementById(icon.getAttribute('href').slice(1)))))
+    .toBe(true);
+  expect(await control.evaluate((element) => ({ tag: element.tagName, type: element.type })))
+    .toEqual({ tag: 'BUTTON', type: 'button' });
+  // The shared chevron path points down; the collapsed pill rotates it up.
+  expect(await control.locator('svg').evaluate((icon) => getComputedStyle(icon).transform))
+    .toBe(expanded ? 'none' : 'matrix(-1, 0, 0, -1, 0, 0)');
+}
+
+async function expectExpandedPlayerPill(page) {
+  await expect(hide(page)).toBeVisible();
+  await expectPlayerPill(hide(page), true);
+  await expect(page.locator('#audio-dock-presentation')).toHaveJSProperty('hidden', false);
+  const placement = await hide(page).evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    const hit = document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+    const siblings = [...element.closest('.audio-dock-header').querySelectorAll('button, input, select')]
+      .filter((control) => control !== element && control.getClientRects().length);
+    const overlaps = siblings.filter((control) => {
+      const other = control.getBoundingClientRect();
+      return Math.min(bounds.right, other.right) - Math.max(bounds.left, other.left) > 1 &&
+        Math.min(bounds.bottom, other.bottom) - Math.max(bounds.top, other.top) > 1;
+    }).map((control) => control.getAttribute('aria-label') || control.textContent.trim());
+    return { reachable: Boolean(hit && element.contains(hit)), overlaps,
+      withinViewport: bounds.x >= 0 && bounds.right <= innerWidth && bounds.y >= 0 && bounds.bottom <= innerHeight };
+  });
+  expect(placement).toEqual({ reachable: true, overlaps: [], withinViewport: true });
+}
+
 async function expectSuperCollapsed(page) {
   await expect(dock(page)).toBeVisible();
   await expect(dock(page)).toHaveAttribute('data-super-collapsed', 'true');
   await expect(dock(page).locator('.audio-dock-header')).toBeHidden();
   await expect(dock(page).locator('#audio-dock-content')).toBeHidden();
   await expect(restore(page)).toBeVisible();
+  await expectPlayerPill(restore(page), false);
+  await expect(page.locator('#audio-dock-presentation')).toHaveJSProperty('hidden', true);
   await expect(hide(page)).toBeHidden();
   await expect(dock(page).getByRole('button')).toHaveCount(1);
   const geometry = await restore(page).evaluate((element) => {
@@ -61,15 +98,16 @@ async function expectSuperCollapsed(page) {
   });
   expect(geometry.width).toBeGreaterThanOrEqual(44);
   expect(geometry.height).toBeGreaterThanOrEqual(44);
-  expect(Math.abs(geometry.width - geometry.height)).toBeLessThanOrEqual(1);
+  expect(geometry.width).toBeGreaterThan(geometry.height);
   // The computed radius can be a percentage or a resolved pixel radius.
-  expect(geometry.radius).toBeGreaterThanOrEqual(geometry.width / 2 - 1);
+  expect(geometry.radius).toBeGreaterThanOrEqual(geometry.height / 2 - 1);
   expect(geometry.right).toBeGreaterThanOrEqual(8);
   expect(geometry.right).toBeLessThanOrEqual(24);
   expect(geometry.bottom).toBeGreaterThanOrEqual(8);
   expect(geometry.bottom).toBeLessThanOrEqual(24);
   expect(geometry.reachable).toBe(true);
-  expect(geometry.icon === '#icon-plus' || geometry.text === '+').toBe(true);
+  expect(geometry.text).toBe('Player');
+  expect(geometry.icon).toBe('#icon-chevron-down');
   // Resolve the semantic primary color through a temporary CSS color parser rather
   // than assuming that computed rgb() serializes like the hex token.
   const primaryColor = await page.evaluate(() => {
@@ -88,15 +126,16 @@ async function expectSuperCollapsed(page) {
 
 for (const theme of ['light', 'dark']) {
   for (const value of ['collapsed', 'minimal', 'full']) {
-    test(`desktop ${value} player hides to a themed circle and restores its state in ${theme}`, async ({ page }) => {
+    test(`desktop ${value} Player pill toggles presentation and preserves state in ${theme}`, async ({ page }) => {
       await page.setViewportSize({ width: 1280, height: 900 });
-      await openApp(page, { theme });
+      const state = await openApp(page, { theme });
       await size(page, 'full');
       await selectDockSource(dock(page), 'recordings');
       await dock(page).getByRole('tab', { name: 'Queue', exact: true }).click();
       await size(page, value);
-      await expect(hide(page)).toBeVisible();
+      await expectExpandedPlayerPill(page);
       const transport = await page.evaluate(() => [...window.audioTest.recordings]);
+      const writes = [...state.preferenceWrites];
       await hide(page).focus();
       await hide(page).press('Enter');
       await expectSuperCollapsed(page);
@@ -108,7 +147,22 @@ for (const theme of ['light', 'dark']) {
       await expect(dock(page)).toHaveAttribute('data-state', value);
       await expect(dock(page)).toHaveAttribute('data-source', 'recordings');
       await expect(hide(page)).toBeFocused();
+      await expectExpandedPlayerPill(page);
       expect(await page.evaluate(() => window.audioTest.recordings)).toEqual(transport);
+      // Both native activation keys keep the remembered size and source through
+      // repeated presentation changes without invoking audio or preferences.
+      for (const key of ['Enter', 'Space']) {
+        await hide(page).press(key);
+        await expectSuperCollapsed(page);
+        await expect(restore(page)).toBeFocused();
+        await restore(page).press(key);
+        await expectExpandedPlayerPill(page);
+        await expect(hide(page)).toBeFocused();
+        await expect(dock(page)).toHaveAttribute('data-state', value);
+        await expect(dock(page)).toHaveAttribute('data-source', 'recordings');
+      }
+      expect(await page.evaluate(() => window.audioTest.recordings)).toEqual(transport);
+      expect(state.preferenceWrites).toEqual(writes);
       if (value !== 'full') await size(page, 'full');
       await expect(dock(page).getByRole('tab', { name: 'Queue', exact: true })).toHaveAttribute('aria-selected', 'true');
     });
@@ -258,9 +312,9 @@ test('super collapse keeps desktop page geometry unchanged and remains hidden th
   await expect(dock(page)).toHaveAttribute('data-state', 'full');
 });
 
-test('hidden desktop choice is suspended on mobile and retained when returning to desktop', async ({ page }) => {
+for (const theme of ['light', 'dark']) test(`hidden desktop choice is suspended on mobile and retained when returning to desktop in ${theme}`, async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
-  await openApp(page);
+  await openApp(page, { theme });
   await size(page, 'minimal');
   await hide(page).click();
   await expectSuperCollapsed(page);
@@ -271,6 +325,8 @@ test('hidden desktop choice is suspended on mobile and retained when returning t
     await expect(restore(page)).toBeHidden();
     await expect(dock(page)).toHaveAttribute('data-state', 'minimal');
     await expect(handle(page)).toBeFocused();
+    await expect(page.locator('#audio-dock-presentation')).toHaveJSProperty('hidden', false);
+    expect(await dock(page).evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
   }
   const sourcePicker = dock(page).getByRole('combobox', { name: 'Audio source', exact: true });
   await sourcePicker.focus();
@@ -280,6 +336,7 @@ test('hidden desktop choice is suspended on mobile and retained when returning t
   await expect(restore(page)).toBeFocused();
   await restore(page).click();
   await expect(dock(page)).toHaveAttribute('data-state', 'minimal');
+  await expectExpandedPlayerPill(page);
 });
 
 test('short desktop full player hides every control and restores in its original size', async ({ page }) => {

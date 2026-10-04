@@ -39,17 +39,17 @@
   border: 0;
   box-shadow: none;
 }
-.ui-audio-dismiss {
-  margin-inline-start: var(--space-2);
-  color: var(--audio-muted);
-  background: transparent;
-  border-color: transparent;
-  box-shadow: none;
+.ui-audio-visibility {
+  --ui-control-height: var(--audio-handle-height);
+  --ui-control-radius: var(--radius-pill);
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
+.ui-audio-visibility[aria-expanded="false"] svg {
+  transform: rotate(180deg);
+}
+.ui-audio-dismiss { margin-inline-start: var(--space-2); }
 .ui-audio-restore {
-  --icon-action-size: var(--audio-restore-size);
-  --icon-action-radius: 50%;
-  --icon-glyph-size: var(--audio-restore-glyph-size);
   box-shadow: var(--audio-shadow);
 }
 .ui-audio-command {

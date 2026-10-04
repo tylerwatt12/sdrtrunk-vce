@@ -1,6 +1,6 @@
 import { systemLabel } from './system-labels.js?v=1';
 
-/* Reuse map: global workspace composition; ui-button/ui-icon-button, ui-segmented, ui-select,
+/* Reuse map: global workspace composition; ui-button/ui-audio-visibility/ui-icon-button, ui-segmented, ui-select,
  * ui-range, ui-feedback, ui-fact-list and ui-section-disclosure. Existing scanner
  * and recording-choice modal retain their lifecycle. One live engine and one
  * recording adapter; the dock owns presentation only, in light/dark and all sizes. */
@@ -9,6 +9,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const dock = node('section', 'audio-dock ui-audio-surface');
   dock.id = 'audio-dock';
   dock.setAttribute('aria-label', 'Audio player');
+  const presentation = node('div', 'audio-dock-presentation');
+  presentation.id = 'audio-dock-presentation';
   let size = 'minimal';
   // Desktop hiding is presentation only: retain the size, source and both engines.
   let superCollapsed = false;
@@ -247,15 +249,16 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     render();
     (value ? restore : hide).focus({ preventScroll: true });
   };
-  const hide = iconButton('icon-close', 'Hide audio player',
-    'ui-button ui-button-secondary ui-icon-button ui-icon-button-compact ui-audio-dismiss');
+  const hide = iconButton('icon-chevron-down', 'Hide audio player',
+    'ui-button ui-button-secondary ui-audio-visibility ui-audio-dismiss');
+  hide.prepend(node('span', '', 'Player'));
   hide.title = 'Hide audio player. Audio keeps playing.';
-  hide.setAttribute('aria-controls', 'audio-dock-content');
+  hide.setAttribute('aria-controls', presentation.id);
   hide.addEventListener('click', () => setSuperCollapsed(true));
-  const restore = iconButton('icon-plus', 'Show audio player',
-    'ui-button ui-button-primary ui-icon-button ui-audio-restore');
-  restore.setAttribute('aria-controls', 'audio-dock-content');
-  restore.setAttribute('aria-expanded', 'false');
+  const restore = iconButton('icon-chevron-down', 'Show audio player',
+    'ui-button ui-button-primary ui-audio-visibility ui-audio-restore');
+  restore.prepend(node('span', '', 'Player'));
+  restore.setAttribute('aria-controls', presentation.id);
   restore.addEventListener('click', () => setSuperCollapsed(false));
   let focusedPresentationControl = null;
   [hide, restore].forEach((control) => {
@@ -359,7 +362,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     tabButtons[value] = button; tabs.append(button);
   });
   body.append(now, timing, transport, volumeRow, actions, tabs, panelHost);
-  dock.append(header, body, restore);
+  presentation.append(header, body);
+  dock.append(presentation, restore);
   document.querySelector('.app-shell').append(dock);
 
   const message = (text, error = false) => {
@@ -580,9 +584,10 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     dock.dataset.superCollapsed = String(compact);
     dock.dataset.state = size; dock.dataset.source = source;
     document.body.classList.toggle('has-audio-dock', !dock.hidden);
-    header.hidden = compact;
+    presentation.hidden = compact;
     restore.hidden = !compact;
     hide.hidden = mobileLayout.matches;
+    [hide, restore].forEach((button) => button.setAttribute('aria-expanded', String(!compact)));
     if (dock.hidden) focusedPresentationControl = null;
     collapsedTitle.hidden = collapsedMeta.hidden = size !== 'collapsed';
     sourceButtons.hidden = sourcePicker.hidden = count.hidden = size === 'collapsed';

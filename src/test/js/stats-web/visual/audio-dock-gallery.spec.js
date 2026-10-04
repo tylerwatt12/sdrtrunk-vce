@@ -15,14 +15,21 @@ async function openGallery(page, { theme = 'light', source = 'live', state = 'fu
 }
 
 for (const theme of ['light', 'dark']) {
-  test(`audio dock desktop restore button ${theme}`, async ({ page }) => {
+  test(`audio dock desktop Player pill ${theme}`, async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     const dock = await openGallery(page, { theme, hidden: true });
     await expect(dock.getByRole('button')).toHaveCount(1);
-    await expect(dock.getByRole('button', { name: 'Show audio player', exact: true })).toBeFocused();
+    const show = dock.getByRole('button', { name: 'Show audio player', exact: true });
+    await expect(show).toBeFocused();
+    await expect(show).toHaveText('Player');
+    await expect(show).toHaveAttribute('aria-expanded', 'false');
+    await expect(show).toHaveAttribute('aria-controls', 'audio-dock-presentation');
+    await expect(show.locator('use')).toHaveAttribute('href', '#icon-chevron-down');
     await expect(page).toHaveScreenshot(`super-collapsed-${theme}-desktop.png`);
-    await dock.getByRole('button', { name: 'Show audio player', exact: true }).click();
+    await show.press('Space');
     await expect(dock).toHaveAttribute('data-state', 'full');
+    await expect(dock.getByRole('button', { name: 'Hide audio player', exact: true })).toHaveText('Player');
+    await expect(dock.getByRole('button', { name: 'Hide audio player', exact: true })).toHaveAttribute('aria-expanded', 'true');
     await expect(dock.getByRole('button', { name: 'Pause live audio', exact: true })).toBeVisible();
   });
   for (const [device, viewport] of [['desktop', { width: 1280, height: 900 }],
@@ -55,6 +62,15 @@ for (const theme of ['light', 'dark']) {
             await expect(dock.locator('.audio-dock-title')).toHaveText('Fire Dispatch');
             await expect(dock.getByRole('button', { name: 'Change audio player size' }))
               .toHaveAttribute('aria-expanded', 'true');
+          }
+          if (device === 'desktop') {
+            const pill = dock.getByRole('button', { name: 'Hide audio player', exact: true });
+            await expect(pill).toHaveText('Player');
+            await expect(pill).toHaveAttribute('aria-expanded', 'true');
+            await expect(pill.locator('use')).toHaveAttribute('href', '#icon-chevron-down');
+          } else {
+            await expect(dock.getByRole('button', { name: 'Hide audio player', exact: true })).toBeHidden();
+            await expect(dock.getByRole('button', { name: 'Show audio player', exact: true })).toBeHidden();
           }
           await expect(dock).toHaveScreenshot(`${source}-${state}-${theme}-${device}.png`);
         });
