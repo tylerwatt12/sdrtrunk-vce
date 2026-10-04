@@ -330,6 +330,77 @@ class SpectrumSearchServiceTest
     }
 
     @Test
+    void failedCancellationCleanupCanRetryTheSameJobWithoutLosingSavedChannels() throws Exception
+    {
+        try(Fixture fixture = new Fixture(A))
+        {
+            var completed = fixture.complete(fixture.open().jobId());
+            fixture.lease.scanWorker.join(2000);
+            assertFalse(fixture.lease.scanWorker.isAlive());
+            var request = saveRequest(completed, Map.of());
+            var saved = fixture.service.save(completed.jobId(), request);
+            fixture.lease.closeFailures.set(1);
+            try
+            {
+                assertThrows(IllegalStateException.class, () -> fixture.service.cancel(saved.jobId()));
+                assertEquals(1, fixture.lease.closed.get());
+                assertTrue(fixture.lease.valid());
+                assertThrows(SpectrumSearchService.SearchExpiredException.class,
+                    () -> fixture.service.cancel("another-search"));
+                assertEquals(1, fixture.lease.closed.get(), "A foreign ID must not retry another job's cleanup");
+                assertThrows(SpectrumSearchService.SearchExpiredException.class,
+                    () -> fixture.service.status(saved.jobId()));
+                assertThrows(SpectrumSearchService.SearchExpiredException.class,
+                    () -> fixture.service.save(saved.jobId(), request));
+                assertThrows(SpectrumSearchService.SearchExpiredException.class,
+                    () -> fixture.service.start(saved.jobId(),
+                        List.of(saved.candidates().getFirst().candidateId()), null));
+
+                assertDoesNotThrow(() -> fixture.service.cancel(saved.jobId()));
+                assertEquals(2, fixture.lease.closed.get());
+                assertFalse(fixture.lease.valid());
+                assertEquals(1, fixture.channels.definitions.size());
+                assertEquals(1, fixture.channels.createdAliases);
+                assertTrue(fixture.channels.starts.isEmpty());
+            }
+            finally
+            {
+                fixture.lease.closeFailures.set(0);
+                if(fixture.lease.valid()) fixture.lease.close();
+            }
+        }
+    }
+
+    @Test
+    void failedListenerShutdownCleanupRetriesTheReceiverLease() throws Exception
+    {
+        try(Fixture fixture = new Fixture(A))
+        {
+            fixture.complete(fixture.open().jobId());
+            fixture.lease.scanWorker.join(2000);
+            assertFalse(fixture.lease.scanWorker.isAlive());
+            fixture.lease.closeFailures.set(1);
+            try
+            {
+                assertThrows(IllegalStateException.class, fixture.service::closeActiveSession);
+                assertEquals(1, fixture.lease.closed.get());
+                assertTrue(fixture.lease.valid());
+
+                assertDoesNotThrow(fixture.service::closeActiveSession);
+                assertEquals(2, fixture.lease.closed.get());
+                assertFalse(fixture.lease.valid());
+                assertTrue(fixture.channels.definitions.isEmpty());
+                assertTrue(fixture.channels.starts.isEmpty());
+            }
+            finally
+            {
+                fixture.lease.closeFailures.set(0);
+                if(fixture.lease.valid()) fixture.lease.close();
+            }
+        }
+    }
+
+    @Test
     void boundedWindowsCoverCenterNotchAndDoNotSilentlyTruncateRequestedBands()
     {
         var ranges = List.of(new SpectrumSearchService.Range(138_000_000, 174_000_000));
@@ -549,7 +620,9 @@ class SpectrumSearchServiceTest
         final long[] frequencies;
         final List<Long> centers = new ArrayList<>();
         final AtomicInteger closed = new AtomicInteger(), handoffs = new AtomicInteger();
+        final AtomicInteger closeFailures = new AtomicInteger();
         final CountDownLatch observing = new CountDownLatch(1);
+        volatile Thread scanWorker;
         volatile CountDownLatch blockObserve;
         RuntimeException observationFailure;
         CountDownLatch closeEntered, closeRelease;
@@ -569,6 +642,7 @@ class SpectrumSearchServiceTest
         public void tune(long frequency) { assertTrue(valid); center = frequency; centers.add(frequency); }
         public List<SpectrumPeakDetector.Peak> observe(long dwell, BooleanSupplier cancelled) throws InterruptedException
         {
+            scanWorker = Thread.currentThread();
             observing.countDown();
             if(blockObserve != null) blockObserve.await();
             if(observationFailure != null) throw observationFailure;
@@ -588,6 +662,8 @@ class SpectrumSearchServiceTest
         public void close()
         {
             closed.incrementAndGet();
+            if(closeFailures.getAndUpdate(remaining -> Math.max(0, remaining - 1)) > 0)
+                throw new IllegalStateException("Temporary receiver cleanup failure");
             if(closeEntered != null)
             {
                 closeEntered.countDown();

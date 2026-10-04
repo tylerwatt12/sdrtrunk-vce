@@ -444,7 +444,14 @@ public final class SpectrumSearchService implements AutoCloseable
     public void cancel(String id)
     {
         Job job;
-        synchronized(mLock) { job = requireJob(id); cancelLocked(job); }
+        synchronized(mLock)
+        {
+            expireLocked();
+            if(mClosed || mJob == null || !mJob.id.equals(id)) throw new SearchExpiredException();
+            // A cancelled job retains its receiver until cleanup succeeds; a retry must finish that same job.
+            job = mJob;
+            cancelLocked(job);
+        }
         quiesce(job);
         synchronized(mLock) { if(mJob == job) mJob = null; }
     }
@@ -552,8 +559,8 @@ public final class SpectrumSearchService implements AutoCloseable
         synchronized(job.cleanupLock)
         {
             if(job.leaseReleased) return;
-            try { job.lease.close(); }
-            finally { job.leaseReleased = true; }
+            job.lease.close();
+            job.leaseReleased = true;
         }
     }
     private Snapshot snapshot(Job job)
