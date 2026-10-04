@@ -190,6 +190,23 @@ class ComplexWaveSourcePlaybackLifecycleTest
     }
 
     @Test
+    void eofLoopReadsItsFirstBufferImmediatelyWithoutAnExtraScheduledInterval() throws Exception
+    {
+        try(ComplexWaveSource source = new ComplexWaveSource(wave().toFile()))
+        {
+            AtomicInteger buffers = new AtomicInteger();
+            source.setListener(buffer -> buffers.incrementAndGet());
+            source.open();
+            ComplexWaveSource.ReplayController replay = source.new ReplayController(65_536);
+            replay.run();
+            assertEquals(1, buffers.get());
+            replay.run(); // EOF must reopen and immediately deliver the next loop's first real buffer.
+            assertEquals(2, buffers.get());
+            assertNull(replay(source), "EOF looping must not create a replacement scheduled task");
+        }
+    }
+
+    @Test
     void aRetiredProducerEnteringReadAfterRestartCannotConsumeTheReplacementStream() throws Exception
     {
         CountDownLatch admitted = new CountDownLatch(1);

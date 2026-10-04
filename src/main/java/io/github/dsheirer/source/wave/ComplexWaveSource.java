@@ -446,13 +446,9 @@ public class ComplexWaveSource extends Source implements IControllableFileSource
         public void run()
         {
             if(mGeneration != mReplayGeneration.get()) return;
-            mIntervals++;
-            int framesToRead = (int) FastMath.floor((mIntervals * mFramesPerInterval) - mFramesRead);
-
             try
             {
-                readNext(framesToRead, true, mGeneration);
-                mFramesRead += framesToRead;
+                readBuffer();
             }
             catch(IOException ioe)
             {
@@ -476,8 +472,31 @@ public class ComplexWaveSource extends Source implements IControllableFileSource
                     if(replay != null) replay.cancel(false);
                 }
                 finally { mPlaybackLifecycleLock.unlock(); }
-                if(opened && mGeneration == mReplayGeneration.get()) broadcast(0);
+                if(opened && mGeneration == mReplayGeneration.get())
+                {
+                    broadcast(0);
+                    if(mGeneration == mReplayGeneration.get())
+                    {
+                        // The former reset/start loop scheduled its first buffer immediately. Preserve that timing
+                        // without creating another producer or holding the lifecycle lock during a sample callback.
+                        try { readBuffer(); }
+                        catch(IOException ignored)
+                        {
+                            // An empty file supplies no samples. Retry at the next ordinary tick, never recursively.
+                            mFramesRead = 0;
+                            mIntervals = 0;
+                        }
+                    }
+                }
             }
+        }
+
+        private void readBuffer() throws IOException
+        {
+            mIntervals++;
+            int framesToRead = (int) FastMath.floor((mIntervals * mFramesPerInterval) - mFramesRead);
+            readNext(framesToRead, true, mGeneration);
+            mFramesRead += framesToRead;
         }
     }
 }
