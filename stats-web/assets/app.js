@@ -16005,8 +16005,13 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   function updateSpectrumActivityTable(table) {
     const id = String(table?.table_id || '');
     if (!id) return;
-    // Retain idle rows so the local display switch takes effect without reconnecting the feed.
-    const rows = (Array.isArray(table?.rows) ? table.rows : []).filter((row) => tunerActivityStatus(row, true));
+    if (table?.remote_origin?.remote === true) {
+      activeChannelTables.delete(id);
+      return;
+    }
+    // Local receiver plots retain local idle rows for immediate display toggles.
+    const rows = (Array.isArray(table?.rows) ? table.rows : []).filter((row) =>
+      row?.remote_origin?.remote !== true && tunerActivityStatus(row, true));
     if (rows.length) activeChannelTables.set(id, { ...table, rows });
     else activeChannelTables.delete(id);
   }

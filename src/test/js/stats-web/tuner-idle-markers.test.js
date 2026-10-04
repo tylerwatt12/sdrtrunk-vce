@@ -434,6 +434,70 @@ test('active calls take precedence over idle metadata in either arrival order', 
   }
 });
 
+test('local Spectrum excludes remote tables and mixed remote rows before grouping carriers', () => {
+  const h = harness();
+  h.context.connectActiveChannels();
+  h.subscriber().snapshot({ tables: [
+    { ...table([row('CALL', 150_250_000, { channel_name: 'Remote site call' })]),
+      table_id: 'remote-site', remote_origin: { remote: true } },
+    { ...table([
+      row('CALL', 150_250_000, { channel_name: 'Remote mixed call', remote_origin: { remote: true } }),
+      row('CALL', 150_250_000, { channel_name: 'Local call', remote_origin: { remote: false } }),
+      row('IDLE', 150_500_000, { channel_name: 'Remote control', tags: ['CURRENT_CONTROL'],
+        remote_origin: { remote: true } }),
+      row('IDLE', 150_750_000, { channel_name: 'Local control', tags: ['CURRENT_CONTROL'] })
+    ]), table_id: 'conventional' }
+  ] });
+  assert.equal(h.context.activeChannelTables.has('remote-site'), false);
+  const carriers = h.context.activeCarriers();
+  assert.deepEqual(statuses(carriers), ['CALL', 'CONTROL']);
+  assert.deepEqual(Array.from(carriers, (carrier) => Array.from(carrier.rows, (value) => value.channel_name)),
+    [['Local call'], ['Local control']], 'SNR and hover sources contain only local channel identities');
+  assert.equal(h.context.spectrumActiveFlags.children.length, 2);
+  const flag = h.context.spectrumActiveFlags.children[0];
+  assert.match(flag.attributes['aria-label'], /Local call/);
+  assert.doesNotMatch(flag.attributes['aria-label'], /Remote/);
+  flag.dispatch('pointerenter');
+  const details = h.context.cursorChannel.children.map((field) => field.textContent).join(' ');
+  assert.match(details, /Local call/);
+  assert.doesNotMatch(details, /Remote/);
+});
+
+test('idle display toggles never restore remote channels', () => {
+  const h = harness();
+  h.context.connectActiveChannels();
+  h.subscriber().snapshot({ tables: [table([
+    row('IDLE', 150_250_000, { channel_name: 'Remote idle', remote_origin: { remote: true } }),
+    row('IDLE', 150_500_000, { channel_name: 'Local idle' })
+  ])] });
+  assert.equal(h.context.spectrumActiveFlags.children.length, 0);
+  for (const enabled of [true, false, true]) {
+    h.toggle(h.controls.idleChannelsInput, enabled);
+    assert.equal(h.context.spectrumActiveFlags.children.length, enabled ? 1 : 0);
+    assert.equal(h.context.activeChannelTables.get('test').rows.length, 1);
+  }
+  assert.match(h.context.spectrumActiveFlags.children[0].attributes['aria-label'], /Local idle/);
+});
+
+test('incremental remote ownership removes cached local markers and hover details', () => {
+  for (const remoteTable of [true, false]) {
+    const h = harness();
+    h.context.connectActiveChannels();
+    h.subscriber().snapshot({ tables: [table([row('CALL', undefined, { channel_name: 'Local call' })])] });
+    h.context.spectrumActiveFlags.children[0].dispatch('pointerenter');
+    assert.equal(h.context.cursorPopup.hidden, false);
+    const updated = table([row('CALL', undefined, { channel_name: 'Remote replacement',
+      ...(remoteTable ? {} : { remote_origin: { remote: true } }) })]);
+    if (remoteTable) updated.remote_origin = { remote: true };
+    h.subscriber().activityTable({ table: updated });
+    assert.equal(h.context.activeChannelTables.has('test'), false);
+    assert.equal(h.context.spectrumActiveFlags.children.length, 0);
+    assert.equal(h.context.cursorPopup.hidden, true);
+    h.subscriber().activityTable({ table: table([row('CALL', undefined, { channel_name: 'Local return' })]) });
+    assert.equal(h.context.spectrumActiveFlags.children.length, 1, 'a later local update remains visible');
+  }
+});
+
 test('idle buttons use the same accessible hover details and clear on active transition', () => {
   const h = harness();
   h.context.connectActiveChannels();
