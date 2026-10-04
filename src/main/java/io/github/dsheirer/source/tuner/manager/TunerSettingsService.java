@@ -427,6 +427,9 @@ public final class TunerSettingsService implements AutoCloseable
             }
             if(tuner.getTunerStatus() == TunerStatus.ERROR || tuner.getTunerStatus() == TunerStatus.REMOVED)
                 throw new SettingUnavailableException("Selected tuner is unavailable for live Spectrum");
+            boolean recording = tuner.getTunerClass() == TunerClass.RECORDING_TUNER;
+            if(recording && takeover)
+                throw new SettingUnavailableException("Recording playback has a fixed capture window; tuning takeover is unavailable");
             List<DiscoveredTuner> group = lifecycleGroup(tuner);
             if(group.stream().anyMatch(mBrowseOwners::containsKey))
                 throw new SettingUnavailableException("Another Spectrum session is using this tuner");
@@ -441,6 +444,18 @@ public final class TunerSettingsService implements AutoCloseable
                 Map<DiscoveredTuner,CenterLockState> centerLocks = new HashMap<>();
                 try
                 {
+                    if(recording)
+                    {
+                        // Observing a WAV must not start a stopped producer, stop its channels, or change its mode.
+                        BrowseSession session = new BrowseSession(tuner, group, Map.of(), false,
+                            false, Map.of(), Map.of());
+                        synchronized(mLifecycleLock)
+                        {
+                            ensureOpen();
+                            group.forEach(member -> mBrowseOwners.put(member, session));
+                        }
+                        return session.lease();
+                    }
                     boolean idle = group.stream().allMatch(TunerSettingsService::isIdle);
                     if(!idle && !takeover && (!tuner.isAvailable() || !tuner.hasTuner() || isIdle(tuner)))
                         throw new SettingUnavailableException("Channels are using this tuner's paired hardware");

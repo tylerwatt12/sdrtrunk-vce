@@ -33,6 +33,8 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
 import org.apache.commons.math3.util.FastMath;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -52,10 +54,13 @@ public class ComplexWaveSource extends Source implements IControllableFileSource
     private long mFrameCounter = 0;
     private long mFrequency = 0;
     private Listener<INativeBuffer> mListener;
-    private AudioInputStream mInputStream;
+    private volatile AudioInputStream mInputStream;
     private File mFile;
     private boolean mAutoReplay;
-    private ScheduledFuture<?> mReplayController;
+    private volatile ScheduledFuture<?> mReplayController;
+    private final ReentrantLock mPlaybackLifecycleLock = new ReentrantLock();
+    private final AtomicLong mReplayGeneration = new AtomicLong();
+    private long mPendingReplayGeneration;
 
     /**
      * Constructs an instance with optional auto-replay at near real time.
@@ -128,37 +133,66 @@ public class ComplexWaveSource extends Source implements IControllableFileSource
      */
     public AudioFormat getAudioFormat()
     {
-        if(mInputStream == null)
+        AudioInputStream stream = mInputStream;
+        if(stream == null)
         {
             throw new IllegalStateException("Source not opened or started");
         }
 
-        return mInputStream.getFormat();
+        return stream.getFormat();
     }
 
     @Override
     public void start()
     {
-        if(mInputStream == null)
+        boolean opened = false;
+        long generation;
+        mPlaybackLifecycleLock.lock();
+        try
         {
+            if(mPendingReplayGeneration != 0 || mReplayController != null && !mReplayController.isDone())
+            {
+                return;
+            }
+            if(mInputStream == null)
+            {
+                try
+                {
+                    opened = openInputStream();
+                }
+                catch(Exception e)
+                {
+                    mLog.error("Error", e);
+                    return;
+                }
+            }
+            generation = mReplayGeneration.incrementAndGet();
+            mPendingReplayGeneration = generation;
+        }
+        finally { mPlaybackLifecycleLock.unlock(); }
+        try
+        {
+            if(opened) broadcast(0);
+        }
+        finally
+        {
+            mPlaybackLifecycleLock.lock();
             try
             {
-                open();
+                if(mPendingReplayGeneration == generation)
+                {
+                    mPendingReplayGeneration = 0;
+                    if(mAutoReplay && mReplayGeneration.get() == generation && mInputStream != null)
+                    {
+                        double buffersPerSecond = getSampleRate() / mBufferSampleCount;
+                        long intervalMilliseconds = (long)(1000.0 / buffersPerSecond);
+                        Runnable r = new ReplayController(mBufferSampleCount, generation);
+                        mReplayController = ThreadPool.SCHEDULED.scheduleAtFixedRate(r, 0, intervalMilliseconds,
+                            TimeUnit.MILLISECONDS);
+                    }
+                }
             }
-            catch(Exception e)
-            {
-                mLog.error("Error", e);
-            }
-        }
-
-        if(mAutoReplay)
-        {
-            double sampleRate = getSampleRate();
-
-            double buffersPerSecond = (sampleRate / mBufferSampleCount);
-            long intervalMilliseconds = (long)(1000.0 / buffersPerSecond);
-            Runnable r = new ReplayController(mBufferSampleCount);
-            mReplayController = ThreadPool.SCHEDULED.scheduleAtFixedRate(r, 0, intervalMilliseconds, TimeUnit.MILLISECONDS);
+            finally { mPlaybackLifecycleLock.unlock(); }
         }
     }
 
@@ -167,11 +201,6 @@ public class ComplexWaveSource extends Source implements IControllableFileSource
     {
         try
         {
-            if(mReplayController != null)
-            {
-                mReplayController.cancel(true);
-            }
-
             close();
         }
         catch(IOException e)
@@ -189,9 +218,10 @@ public class ComplexWaveSource extends Source implements IControllableFileSource
     @Override
     public double getSampleRate()
     {
-        if(mInputStream != null)
+        AudioInputStream stream = mInputStream;
+        if(stream != null)
         {
-            return mInputStream.getFormat().getSampleRate();
+            return stream.getFormat().getSampleRate();
         }
 
         return 0;
@@ -219,17 +249,38 @@ public class ComplexWaveSource extends Source implements IControllableFileSource
      */
     public void close() throws IOException
     {
-        if(mInputStream != null)
+        // Invalidate an outstanding read before waiting for an operator/EOF lifecycle operation.
+        mReplayGeneration.incrementAndGet();
+        mPlaybackLifecycleLock.lock();
+        try
         {
-            mInputStream.close();
-            mInputStream = null;
+            // A start already holding the lock may have scheduled after the first invalidation above.
+            mReplayGeneration.incrementAndGet();
+            mPendingReplayGeneration = 0;
+            ScheduledFuture<?> replay = mReplayController;
+            mReplayController = null;
+            if(replay != null) replay.cancel(true);
+            closeInputStream();
         }
+        finally { mPlaybackLifecycleLock.unlock(); }
+    }
+
+    private void closeInputStream() throws IOException
+    {
+        AudioInputStream stream = mInputStream;
+        mInputStream = null;
+        if(stream != null) stream.close();
     }
 
     /**
      * Opens the source file for reading
      */
     public void open() throws IOException, UnsupportedAudioFileException
+    {
+        if(openInputStream()) broadcast(0);
+    }
+
+    private boolean openInputStream() throws IOException, UnsupportedAudioFileException
     {
         if(mInputStream == null)
         {
@@ -247,9 +298,9 @@ public class ComplexWaveSource extends Source implements IControllableFileSource
                         mInputStream.getFormat().getSampleSizeInBits() + "-bit samples");
             }
 
-            /* Broadcast that we're at frame location 0 */
-            broadcast(0);
+            return true;
         }
+        return false;
     }
 
     /**
@@ -266,12 +317,22 @@ public class ComplexWaveSource extends Source implements IControllableFileSource
      */
     public void next(int frames, boolean broadcast) throws IOException
     {
-        if(mInputStream != null)
+        readNext(frames, broadcast, mReplayGeneration.get());
+    }
+
+    /** Scheduled reads retain their producer's generation, including if restart occurs before this method begins. */
+    protected void readNext(int frames, boolean broadcast, long generation) throws IOException
+    {
+        AudioInputStream stream = mInputStream;
+        if(generation != mReplayGeneration.get()) return;
+        if(stream != null)
         {
             byte[] buffer = new byte[mBytesPerFrame * frames];
 
         	/* Fill the buffer with samples from the file */
-            int samplesRead = mInputStream.read(buffer);
+            int samplesRead = stream.read(buffer);
+
+            if(generation != mReplayGeneration.get() || stream != mInputStream) return;
 
             if(samplesRead < 0)
             {
@@ -282,7 +343,7 @@ public class ComplexWaveSource extends Source implements IControllableFileSource
 
             broadcast(mFrameCounter);
 
-            if(broadcast && mListener != null)
+            if(broadcast && mListener != null && generation == mReplayGeneration.get() && stream == mInputStream)
             {
                 if(samplesRead < buffer.length)
                 {
@@ -291,7 +352,7 @@ public class ComplexWaveSource extends Source implements IControllableFileSource
 
                 float[] samples = ConversionUtils.convertFromSigned16BitSamples(buffer);
                 mListener.receive(new FloatNativeBuffer(samples, System.currentTimeMillis(),
-                        mInputStream.getFormat().getSampleRate() / 1000.0f));
+                        stream.getFormat().getSampleRate() / 1000.0f));
             }
         }
     }
@@ -368,27 +429,54 @@ public class ComplexWaveSource extends Source implements IControllableFileSource
         private double mFramesPerInterval;
         private int mFramesRead;
         private int mIntervals;
+        private final long mGeneration;
 
         public ReplayController(double framesPerInterval)
         {
+            this(framesPerInterval, mReplayGeneration.get());
+        }
+
+        private ReplayController(double framesPerInterval, long generation)
+        {
             mFramesPerInterval = framesPerInterval;
+            mGeneration = generation;
         }
 
         @Override
         public void run()
         {
+            if(mGeneration != mReplayGeneration.get()) return;
             mIntervals++;
             int framesToRead = (int) FastMath.floor((mIntervals * mFramesPerInterval) - mFramesRead);
 
             try
             {
-                next(framesToRead, true);
+                readNext(framesToRead, true, mGeneration);
                 mFramesRead += framesToRead;
             }
             catch(IOException ioe)
             {
-                mLog.debug("End of Recording - looping [" + ioe.getLocalizedMessage() + "]");
-                reset();
+                // Keep one scheduled producer for an EOF loop. Never wait for a UI lifecycle operation, and never
+                // let an outstanding canceled read create a replacement producer after stop/close.
+                if(!mPlaybackLifecycleLock.tryLock()) return;
+                boolean opened = false;
+                try
+                {
+                    if(mGeneration != mReplayGeneration.get()) return;
+                    closeInputStream();
+                    mFrameCounter = 0;
+                    mFramesRead = 0;
+                    mIntervals = 0;
+                    opened = openInputStream();
+                }
+                catch(IOException | UnsupportedAudioFileException exception)
+                {
+                    ScheduledFuture<?> replay = mReplayController;
+                    mReplayController = null;
+                    if(replay != null) replay.cancel(false);
+                }
+                finally { mPlaybackLifecycleLock.unlock(); }
+                if(opened && mGeneration == mReplayGeneration.get()) broadcast(0);
             }
         }
     }

@@ -25,6 +25,7 @@ import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.TunerClass;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
+import io.github.dsheirer.source.tuner.recording.RecordingTunerController;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.locks.ReentrantLock;
@@ -175,6 +176,26 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
     {
         return isAvailable() && (mOperatorState == OperatorState.LIVE ||
             (mOperatorState == OperatorState.SETUP && mRestoreAllocationThread == Thread.currentThread()));
+    }
+
+    /**
+     * Read-only diagnostics may observe a running recording even without channels: its WAV producer is already
+     * active. Physical tuners still require active channels or an explicit Setup hold.
+     */
+    public boolean isAvailableForDiagnostics()
+    {
+        if(!isAvailable() || !hasTuner())
+        {
+            return false;
+        }
+        Tuner tuner = getTuner();
+        if(tuner == null || tuner.getTunerController() == null)
+        {
+            return false;
+        }
+        return tuner.getTunerController() instanceof RecordingTunerController recording ?
+            recording.isPlaybackRunning() : getOperatorState() == OperatorState.SETUP ||
+            tuner.getChannelSourceManager() != null && tuner.getChannelSourceManager().getTunerChannelCount() > 0;
     }
 
     /** Starts hardware without making it available to ordinary channel allocation. */

@@ -27,6 +27,7 @@ import io.github.dsheirer.source.tuner.manager.ChannelSourceManager;
 import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.source.tuner.manager.PolyphaseChannelSourceManager;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
+import io.github.dsheirer.source.tuner.recording.RecordingTunerController;
 import io.github.dsheirer.spectrum.NativeBufferManager;
 import io.github.dsheirer.util.concurrent.BoundedSpscReferenceQueue;
 import java.io.IOException;
@@ -424,8 +425,7 @@ public final class TunerDiagnosticService implements AutoCloseable
                     available.add(new AvailableTarget(tuner, candidate.getTunerClass(), tunerType,
                         tuner.getPreferredName(), tuner.getUniqueID(), controller,
                         channelManager::getTunerChannelCount,
-                        () -> candidate.getOperatorState() == DiscoveredTuner.OperatorState.SETUP ||
-                            channelManager.getTunerChannelCount() > 0, queueControl));
+                        candidate::isAvailableForDiagnostics, queueControl));
                 }
             }
             catch(RuntimeException exception)
@@ -548,6 +548,7 @@ public final class TunerDiagnosticService implements AutoCloseable
         private final AtomicLong mObservedCenterFrequencyHz = new AtomicLong();
         private final AtomicLong mObservedSampleRateHz = new AtomicLong();
         private final AtomicLong mDroppedIngressBuffers = new AtomicLong();
+        private final AtomicLong mLastRecordingSampleAtNanos = new AtomicLong();
         private final FrameProcessor mProcessor;
         private volatile Target mMetadata;
         private final AtomicReference<AnalysisSelection> mAnalysis;
@@ -623,6 +624,17 @@ public final class TunerDiagnosticService implements AutoCloseable
         {
             checkAvailable(this, true);
             String terminalState = mTerminalState;
+            if(terminalState == null && mTarget.controller() instanceof RecordingTunerController recording)
+            {
+                RecordingTunerController.PlaybackStatus playback = recording.getPlaybackStatus();
+                long lastSample = mLastRecordingSampleAtNanos.get();
+                if(!"playing".equals(playback.state()) || lastSample == 0 ||
+                    System.nanoTime() - lastSample > playback.staleAfterMilliseconds() * 1_000_000L)
+                {
+                    return state("waiting", lastSample == 0 ? "Waiting for recording samples." :
+                        "Recording playback has no recent samples.");
+                }
+            }
             return state(terminalState != null ? terminalState : "live",
                 terminalState != null ? mTerminalReason : "");
         }
@@ -833,6 +845,10 @@ public final class TunerDiagnosticService implements AutoCloseable
 
             try
             {
+                if(mTarget.controller() instanceof RecordingTunerController)
+                {
+                    mLastRecordingSampleAtNanos.lazySet(System.nanoTime());
+                }
                 long ingressConfiguration = mProcessor.configuration();
                 mProcessor.receive(buffer, System.currentTimeMillis(), ingressConfiguration);
             }
@@ -897,7 +913,15 @@ public final class TunerDiagnosticService implements AutoCloseable
             SpectrumProfile profile = selection.profile();
             AnalysisPlan plan = analysisPlan(metadata.centerFrequencyHz(), metadata.sampleRateHz(), viewport,
                 profile);
-            ReceiverQueueSnapshot receiver = mTarget.receiverQueueControl().status();
+            ReceiverQueueSnapshot receiver = ReceiverQueueSnapshot.UNSUPPORTED;
+            if(!mSessionClosed.get())
+            {
+                try { receiver = mTarget.receiverQueueControl().status(); }
+                catch(RuntimeException ignored)
+                {
+                    // A stopped/hot-unplugged channel manager may be disposed between the availability and queue reads.
+                }
+            }
             Long requestedStart = viewport != null ? viewport.startFrequencyHz() : null;
             Long requestedEnd = viewport != null ? viewport.endFrequencyHz() : null;
             long revision = Math.max(mViewportStateRevision, mMetadataStateRevision);

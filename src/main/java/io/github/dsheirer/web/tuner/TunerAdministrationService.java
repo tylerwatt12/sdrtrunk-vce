@@ -15,6 +15,7 @@ import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.manager.TunerSettingCatalog;
 import io.github.dsheirer.source.tuner.manager.TunerSettingsService;
 import io.github.dsheirer.source.tuner.manager.TunerStatus;
+import io.github.dsheirer.source.tuner.recording.RecordingTunerController;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner1;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner2;
 import io.github.dsheirer.stats.TunerDiagnosticService;
@@ -153,8 +154,11 @@ public final class TunerAdministrationService
         int measuredHz = available ? tuner.getTunerController().getMeasuredFrequencyError() : 0;
         MeasuredError measuredError = measuredHz != 0 && frequency != null && frequency > 0 ?
             new MeasuredError(measuredHz, measuredHz / (frequency / 1_000_000.0)) : null;
-        boolean diagnosticAvailable = available &&
-            (discovered.getOperatorState() == DiscoveredTuner.OperatorState.SETUP || channelCount > 0);
+        boolean diagnosticAvailable = discovered.isAvailableForDiagnostics();
+        RecordingTunerController.PlaybackStatus recordingPlayback = tuner != null &&
+            tuner.getTunerController() instanceof RecordingTunerController recording ?
+            recording.getPlaybackStatus() : tunerType == TunerType.RECORDING ?
+            new RecordingTunerController.PlaybackStatus("stopped", 0, 0, 1_500) : null;
         String spectrumTargetId = diagnosticAvailable ? mSpectrumTargetId.apply(tuner) : null;
         String plannerModel = TunerSettingCatalog.plannerModel(tunerType);
         Planner planner = plannerModel != null && sampleRate != null && sampleRate > 0 ?
@@ -186,7 +190,7 @@ public final class TunerAdministrationService
             mSettings != null ? mSettings.transition(discovered) : null,
             mSettings != null ? mSettings.stoppedChannels(discovered) : List.of(),
             mSettings != null ? mSettings.restoreResult(discovered) : null,
-            discovered.hasErrorMessage() ? "Tuner error" : null);
+            discovered.hasErrorMessage() ? "Tuner error" : null, recordingPlayback);
     }
 
     private static String displayName(DiscoveredTuner discovered, Tuner tuner)
@@ -259,5 +263,6 @@ public final class TunerAdministrationService
                        String spectrumTargetId, boolean spectrumAvailable, Planner planner, Object settings,
                        String maintenanceError, String operatorState, String transition,
                        List<TunerSettingsService.ChannelInfo> stoppedChannels,
-                       TunerSettingsService.RestoreResult restoreResult, String errorMessage) { }
+                       TunerSettingsService.RestoreResult restoreResult, String errorMessage,
+                       RecordingTunerController.PlaybackStatus recordingPlayback) { }
 }

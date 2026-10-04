@@ -56,6 +56,61 @@ import org.junit.jupiter.api.Test;
 class TunerSettingsServiceTest
 {
     @Test
+    void spectrumObservesStoppedRecordingWithoutStartingItOrChangingItsMode() throws Exception
+    {
+        FakeDiscoveredTuner tuner = new FakeDiscoveredTuner(true);
+        tuner.testTunerClass = TunerClass.RECORDING_TUNER;
+        AtomicInteger saves = new AtomicInteger();
+        try(TunerSettingsService service = service(tuner, saves))
+        {
+            var lease = service.browse(tuner, null).get(2, TimeUnit.SECONDS);
+            assertFalse(lease.canTune());
+            assertFalse(lease.takeover());
+            assertEquals(List.of(), lease.stoppedChannels());
+            assertEquals(DiscoveredTuner.OperatorState.DISABLED, tuner.getOperatorState());
+            assertFalse(tuner.hasTuner());
+            assertEquals(0, tuner.mStartCalls.get());
+            assertTrue(service.verifyBrowse(tuner, lease.leaseId()));
+            service.browse(tuner, lease.leaseId()).get(2, TimeUnit.SECONDS);
+            service.releaseBrowse(tuner, lease.leaseId(), true).get(2, TimeUnit.SECONDS);
+            assertEquals(DiscoveredTuner.OperatorState.DISABLED, tuner.getOperatorState());
+            assertEquals(0, tuner.mStartCalls.get());
+            assertEquals(0, saves.get());
+            assertThrows(TunerSettingsService.SettingUnavailableException.class,
+                () -> service.browse(tuner, null, true));
+        }
+    }
+
+    @Test
+    void recordingBrowsePreservesActiveChannelsAndTheExistingOperatorMode() throws Exception
+    {
+        CountingChannelManager channels = new CountingChannelManager();
+        channels.mCount.set(3);
+        FakeDiscoveredTuner tuner = runningTuner(new TrackingAirspyController(), channels);
+        tuner.testTunerClass = TunerClass.RECORDING_TUNER;
+        AtomicInteger saves = new AtomicInteger();
+        try(TunerSettingsService service = service(tuner, saves))
+        {
+            for(boolean setup: List.of(false, true))
+            {
+                if(setup) assertTrue(tuner.holdForSetup());
+                var previous = tuner.getOperatorState();
+                Tuner runtime = tuner.getTuner();
+                var lease = service.browse(tuner, null).get(2, TimeUnit.SECONDS);
+                assertFalse(lease.canTune());
+                assertFalse(lease.takeover());
+                assertEquals(3, channels.getTunerChannelCount());
+                assertEquals(previous, tuner.getOperatorState());
+                service.releaseBrowse(tuner, lease.leaseId(), false).get(2, TimeUnit.SECONDS);
+                assertEquals(previous, tuner.getOperatorState());
+                assertEquals(runtime, tuner.getTuner());
+                assertEquals(3, channels.getTunerChannelCount());
+            }
+            assertEquals(0, saves.get());
+        }
+    }
+
+    @Test
     void searchTuningReservesIdleHardwareAndDoesNotSaveHops() throws Exception
     {
         TrackingAirspyController controller = new TrackingAirspyController();

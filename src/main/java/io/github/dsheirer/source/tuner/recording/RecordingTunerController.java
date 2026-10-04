@@ -26,6 +26,7 @@ import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.wave.ComplexWaveSource;
 import java.io.File;
 import java.io.IOException;
+import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -40,7 +41,11 @@ public class RecordingTunerController extends TunerController
 
     public static final int DC_NOISE_BANDWIDTH = 0;
     public static final double USABLE_BANDWIDTH_PERCENTAGE = 1.00;
-    private ComplexWaveSource mComplexWaveSource;
+    private volatile ComplexWaveSource mComplexWaveSource;
+    private volatile boolean mPlaybackRunning;
+    private volatile long mLastSampleAtEpochMs;
+    private volatile long mLastSampleAtNanos;
+    private final AtomicLong mSampleBufferCount = new AtomicLong();
     private String mPath;
     private long mCenterFrequency;
 
@@ -81,31 +86,38 @@ public class RecordingTunerController extends TunerController
                 return;
             }
 
-            mComplexWaveSource.setListener(complexSamples -> broadcast(complexSamples));
+            ComplexWaveSource source = mComplexWaveSource;
+            source.setListener(buffer ->
+            {
+                // A stopped or replaced WAV source must not publish a late buffer into its former tuner.
+                if(mPlaybackRunning && mComplexWaveSource == source)
+                {
+                    mLastSampleAtNanos = System.nanoTime();
+                    mLastSampleAtEpochMs = System.currentTimeMillis();
+                    mSampleBufferCount.incrementAndGet();
+                    broadcast(buffer);
+                }
+            });
 
             try
             {
-                mComplexWaveSource.open();
-                mComplexWaveSource.start();
+                source.open();
+                // Publish valid tuner metadata before the first scheduled WAV buffer can reach any consumer.
+                mFrequencyController.setFrequency(mCenterFrequency);
+                mFrequencyController.setSampleRate((int)source.getSampleRate());
+                mFrequencyController.broadcast(SourceEvent.recordingFileLoaded());
+                mLastSampleAtEpochMs = 0;
+                mLastSampleAtNanos = 0;
+                mSampleBufferCount.set(0);
+                mPlaybackRunning = true;
+                source.start();
                 mLog.info("Tuner Recording Loaded: " + mPath);
             }
-            catch(IOException | UnsupportedAudioFileException e)
+            catch(IOException | UnsupportedAudioFileException | SourceException e)
             {
+                stop();
                 mLog.error("Error starting recording file [" + mPath + "]", e);
                 setErrorMessage(e.getMessage() + " File:" + mPath);
-                return;
-            }
-
-            try
-            {
-                mFrequencyController.setFrequency(mCenterFrequency);
-                mFrequencyController.setSampleRate((int)mComplexWaveSource.getSampleRate());
-                mFrequencyController.broadcast(SourceEvent.recordingFileLoaded());
-            }
-            catch(SourceException e)
-            {
-                mLog.error("Error configuring frequency/sample rate for recording [" + mPath + "]", e);
-                setErrorMessage(e.getMessage());
             }
         }
     }
@@ -113,21 +125,41 @@ public class RecordingTunerController extends TunerController
     @Override
     public void stop()
     {
-        if(mComplexWaveSource != null)
+        mPlaybackRunning = false;
+        ComplexWaveSource source = mComplexWaveSource;
+        mComplexWaveSource = null;
+        if(source != null)
         {
             try
             {
-                mComplexWaveSource.stop();
-                mComplexWaveSource.close();
+                source.stop();
+                source.close();
             }
             catch(IOException ioe)
             {
                 mLog.error("Ignoring - error stopping baseband recording playback - " + ioe.getLocalizedMessage());
             }
-
-            mComplexWaveSource = null;
         }
     }
+
+    /** True while ordinary WAV playback is enabled, including the brief automatic EOF/replay transition. */
+    public boolean isPlaybackRunning()
+    {
+        return mPlaybackRunning && mComplexWaveSource != null;
+    }
+
+    /** Read-only source health. No sample listener or diagnostic worker is created by this query. */
+    public PlaybackStatus getPlaybackStatus()
+    {
+        long staleAfterMilliseconds = Math.max(1_500L, 3L * Math.max(1L, getBufferDuration()));
+        long lastSampleNanos = mLastSampleAtNanos;
+        String state = !isPlaybackRunning() ? "stopped" : lastSampleNanos != 0 &&
+            System.nanoTime() - lastSampleNanos <= staleAfterMilliseconds * 1_000_000L ? "playing" : "waiting";
+        return new PlaybackStatus(state, mLastSampleAtEpochMs, mSampleBufferCount.get(), staleAfterMilliseconds);
+    }
+
+    public record PlaybackStatus(String state, long lastSampleAtEpochMs, long sampleBufferCount,
+                                 long staleAfterMilliseconds) { }
 
     @Override
     public TunerType getTunerType()
@@ -138,9 +170,10 @@ public class RecordingTunerController extends TunerController
     @Override
     public int getBufferSampleCount()
     {
-        if(mComplexWaveSource != null)
+        ComplexWaveSource source = mComplexWaveSource;
+        if(source != null)
         {
-            return mComplexWaveSource.getBufferSampleCount();
+            return source.getBufferSampleCount();
         }
 
         return 0;
@@ -179,11 +212,7 @@ public class RecordingTunerController extends TunerController
     @Override
     public double getCurrentSampleRate()
     {
-        if(mComplexWaveSource != null)
-        {
-            return mComplexWaveSource.getSampleRate();
-        }
-
-        return 0d;
+        // EOF looping briefly closes the file stream; the recording's validated rate remains unchanged.
+        return isPlaybackRunning() ? getSampleRate() : 0d;
     }
 }
