@@ -54,7 +54,8 @@ function snapshot(state) {
   return { job_id: 'search-a', phase: state.phase || 'complete', revision: state.revision || 7,
     reason: state.reason || null,
     expires_at_ms: 1790880600000, restart_required: Boolean(state.restartRequired), truncated_reason: state.truncated ? 'Candidate limit reached' : null,
-    progress: { completed: 2, total: 4, current_frequency_hz: 773000000, checked: 1, total_signals: 4 }, candidates: state.empty ? [] : state.customCandidates || candidates,
+    progress: { completed: 2, total: 4, current_frequency_hz: 773000000, checked: 1, total_signals: 4,
+      ...(state.progress || {}) }, candidates: state.empty ? [] : state.customCandidates || candidates,
     alias_groups: state.customAliasGroups || [{ group_id: 'county', wacn: 0xbee00, system: 0x348,
       alias_lists: state.ambiguous ? [{ id: 21, name: 'County Dispatch' }, { id: 22, name: 'County Operations' }] :
         [{ id: 21, name: 'County Dispatch' }], suggested_alias_list_id: null, default_new_alias_list_name: 'County P25' },
@@ -72,6 +73,10 @@ async function install(page, state = {}) {
     [tuner('idle-a', 2200000), tuner('idle-b', 9000000)];
   if (state.centerFrequencies) state.tuners.forEach((receiver, index) => {
     receiver.center_frequency_hz = state.centerFrequencies[index];
+  });
+  if (state.tuningLimits) state.tuners.forEach((receiver, index) => {
+    const limits = state.tuningLimits[index];
+    if (limits) Object.assign(receiver, { minimum_frequency_hz: limits[0], maximum_frequency_hz: limits[1] });
   });
   if (state.busyWide) state.tuners[1] = { ...state.tuners[1], operator_state: 'live', channel_count: 2 };
   let leaseSequence = 0;
@@ -100,7 +105,19 @@ async function install(page, state = {}) {
     if (path === '/api/v1/admin/channels') return respond({ revision: 1, channels: [] });
     if (path === '/api/v1/admin/channels/protocols') return respond(protocols);
     if (path === '/api/v1/admin/channels/options') return respond({ alias_lists: [] });
-    if (path === '/api/v1/admin/tuners') return respond({ tuners: state.tuners });
+    if (path === '/api/v1/admin/tuners') {
+      const inventory = { tuners: state.tuners.map((receiver) => ({ ...receiver,
+        frequency_hz: receiver.center_frequency_hz, ...(state.inventoryMeasurements?.[receiver.id] || {}) })) };
+      if (state.delayNextInventory) {
+        state.delayNextInventory = false;
+        await new Promise((resolve) => { state.releaseInventory = resolve; });
+      }
+      if (state.failNextInventory) {
+        state.failNextInventory = false;
+        return fail('Receiver measurements are unavailable', 'tuner_read_failed', 503);
+      }
+      return respond(inventory);
+    }
     if (path.endsWith('/browse')) {
       if (request.method() === 'DELETE') {
         if (state.failNextBrowseDeleteConflict) {
@@ -122,7 +139,13 @@ async function install(page, state = {}) {
       const leaseId = body.lease_id || `lease-${++leaseSequence}`;
       if (body.takeover === true) takeoverLeases.add(leaseId);
       const takeover = takeoverLeases.has(leaseId);
-      const leasedReceiver = takeover ? { ...receiver, operator_state: 'setup', channel_count: 0 } : receiver;
+      const leasedReceiver = { ...receiver, frequency_hz: receiver.center_frequency_hz,
+        ...(takeover ? { operator_state: 'setup', channel_count: 0 } : {}),
+        ...(state.browseMeasurements?.[id] || {}) };
+      if (body.lease_id && state.delayNextBrowseRenew) {
+        state.delayNextBrowseRenew = false;
+        await new Promise((resolve) => { state.releaseBrowseRenew = resolve; });
+      }
       return respond({ lease_id: leaseId, tuner: leasedReceiver, takeover,
         stopped_channels: takeover ? [{ configuration_id: 'channel-a' }] : [],
         expires_at_epoch_ms: Date.now() + 30000, can_tune: takeover || !receiver.channel_count });
@@ -241,8 +264,8 @@ test('uses one widest idle receiver and acquires its own browse session when sea
   await expect(dialog(page).getByLabel('End frequency (MHz)')).toBeHidden();
   await expect(dialog(page).getByLabel('Start frequency (MHz)')).not.toHaveAttribute('required', '');
   await expect(dialog(page).getByLabel('End frequency (MHz)')).not.toHaveAttribute('required', '');
-  await expect(dialog(page).locator('.spectrum-search-form > .ui-notice'))
-    .toHaveText('Checks promising signals for consistent trunked system and site identity.');
+  await expect(dialog(page).locator('.spectrum-search-form > .ui-notice:not([hidden])'))
+    .toHaveText('The receiver scans each band, then checks promising signals.');
   await expect(dialog(page).getByText('What are P25 channels?', { exact: true })).toHaveCount(0);
   await expect(dialog(page).getByText('Use another receiver', { exact: true })).toHaveCount(0);
   await complete(page);
@@ -282,6 +305,90 @@ test('uses only eligible receivers when a wider receiver is busy', async ({ page
   expect(state.requests.some((request) => request.path === '/api/v1/admin/tuners/idle-b/browse' &&
     request.method === 'POST' && request.body.takeover === true)).toBe(false);
 });
+
+test('configured tuning limits identify invalid selected bands before acquiring or posting a search', async ({ page }) => {
+  const state = await install(page, { tuningLimits: [null, [767600000, 777600000]] });
+  const search = dialog(page);
+  const find = search.getByRole('button', { name: 'Find signals', exact: true });
+  await expect(search).toContainText('Configured tuning limits: 767.600000–777.600000 MHz');
+  await expect(search).toContainText('Outside these limits: 800 MHz · 851–869 MHz.');
+  await expect(search).not.toContainText('This receiver does not cover');
+  await expect(find).toBeDisabled();
+  expect(state.requests.some((request) => request.method !== 'GET')).toBe(false);
+  await find.evaluate((element) => { element.disabled = false; element.click(); });
+  await expect(find).toBeDisabled();
+  expect(state.requests.some((request) => request.method !== 'GET')).toBe(false);
+  await expect(search.getByRole('link', { name: 'Manage receivers', exact: true }))
+    .toHaveAttribute('href', /view=tuners/);
+  await search.getByLabel('Receiver', { exact: true }).selectOption('idle-a');
+  await expect(find).toBeEnabled();
+  await expect(search.getByText('Configured tuning limits:', { exact: false })).toHaveCount(0);
+  await complete(page);
+  const create = state.requests.find((request) => request.path === searchPath && request.method === 'POST');
+  expect(create.body.ranges).toEqual([
+    { minimum_hz: 769000000, maximum_hz: 775000000 }, { minimum_hz: 851000000, maximum_hz: 869000000 }
+  ]);
+});
+
+test('configured tuning-limit validation follows custom edits and band changes', async ({ page }) => {
+  const state = await install(page, { tuningLimits: [null, [767600000, 777600000]] });
+  const find = dialog(page).getByRole('button', { name: 'Find signals', exact: true });
+  await openBands(page);
+  await bandCheckbox(page, bandLabels[3]).uncheck();
+  await closeBands(page);
+  await expect(find).toBeEnabled();
+  await openBands(page);
+  await bandCheckbox(page, bandLabels[2]).uncheck();
+  await bandCheckbox(page, bandLabels[4]).check();
+  await closeBands(page);
+  const minimum = dialog(page).getByLabel('Start frequency (MHz)');
+  const maximum = dialog(page).getByLabel('End frequency (MHz)');
+  await minimum.fill('800');
+  await maximum.fill('810');
+  await expect(dialog(page)).toContainText('Outside these limits: Custom range · 800.000000–810.000000 MHz.');
+  await expect(find).toBeDisabled();
+  await minimum.fill('769');
+  await maximum.fill('775');
+  await expect(find).toBeEnabled();
+  await maximum.fill('');
+  await find.click();
+  expect(state.requests.some((request) => request.method !== 'GET')).toBe(false);
+  await maximum.fill('775');
+  await complete(page);
+  expect(state.requests.find((request) => request.path === searchPath && request.method === 'POST').body.ranges)
+    .toEqual([{ minimum_hz: 769000000, maximum_hz: 775000000 }]);
+});
+
+test('configured-limit Manage receivers navigation releases a borrowed tuner', async ({ page }) => {
+  const state = await install(page, { noIdle: true, tuningLimits: [[767600000, 777600000], null] });
+  await dialog(page).getByRole('button', { name: 'Stop channels and use: Small receiver', exact: true }).click();
+  await page.getByRole('alertdialog', { name: 'Stop channels for this search?' })
+    .getByRole('button', { name: 'Stop channels and search', exact: true }).click();
+  await expect(dialog(page).getByRole('button', { name: 'Find signals', exact: true })).toBeDisabled();
+  await dialog(page).getByRole('link', { name: 'Manage receivers', exact: true }).click();
+  await expect(dialog(page)).toHaveCount(0);
+  await expect(page).toHaveURL(/view=tuners/);
+  await expect.poll(() => state.requests.filter((request) => request.path === '/api/v1/admin/tuners/idle-a/browse' &&
+    request.method === 'DELETE').length).toBe(1);
+  expect(state.requests.some((request) => request.path === searchPath && request.method === 'POST')).toBe(false);
+});
+
+for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
+  test(`configured tuning limits notice remains readable in ${theme} at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const state = await install(page, { theme, tuningLimits: [null, [767600000, 777600000]] });
+    const search = dialog(page);
+    await expect(search).toContainText('Configured tuning limits: 767.600000–777.600000 MHz');
+    await expect(search).toContainText('Outside these limits: 800 MHz · 851–869 MHz.');
+    await expect(search.getByRole('button', { name: 'Find signals', exact: true })).toBeDisabled();
+    await expect(search.getByRole('link', { name: 'Manage receivers', exact: true })).toBeVisible();
+    expect(await search.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    expect(state.requests.some((request) => request.method !== 'GET')).toBe(false);
+    const screenshot = test.info().outputPath(`configured-limits-${theme}-${width}.png`);
+    await search.screenshot({ path: screenshot });
+    await test.info().attach('Configured tuning limits', { path: screenshot, contentType: 'image/png' });
+  });
+}
 
 test('receiver picker and summary show compact live frequency and width without acquiring a receiver', async ({ page }) => {
   const state = await install(page, { centerFrequencies: [773081250, 852400000] });
@@ -330,6 +437,123 @@ test('refreshing in-use receivers updates compact frequency and width without sa
   await expect(dialog(page).locator('.spectrum-discovery-context > .muted'))
     .toHaveText('856.162500 MHz @ 2.35 MHz');
   expect(state.requests.some((request) => request.method !== 'GET')).toBe(false);
+});
+
+test('active scan summary follows owned window centers and actual checking measurements', async ({ page }) => {
+  await page.clock.install();
+  const state = await install(page, { phase: 'scanning', progress: { current_frequency_hz: 771819575 } });
+  const summary = () => dialog(page).locator('.spectrum-discovery-context > .muted');
+  await dialog(page).getByRole('button', { name: 'Find signals', exact: true }).click();
+  await expect(summary()).toHaveText('771.819575 MHz @ 9.00 MHz');
+  state.progress.current_frequency_hz = 853819575;
+  await page.clock.fastForward(800);
+  await expect(summary()).toHaveText('853.819575 MHz @ 9.00 MHz');
+  state.progress.current_frequency_hz = 0;
+  await page.clock.fastForward(800);
+  await expect(summary()).toHaveText('853.819575 MHz @ 9.00 MHz');
+
+  state.phase = 'checking';
+  state.progress.current_frequency_hz = 852300000;
+  state.inventoryMeasurements = { 'idle-b': { frequency_hz: 852200000, usable_bandwidth_hz: 8000000 } };
+  await page.clock.fastForward(800);
+  await expect(summary()).toHaveText('852.200000 MHz @ 8.00 MHz');
+  const reads = () => state.requests.filter((request) => request.path === '/api/v1/admin/tuners').length;
+  const firstReads = reads();
+  await page.clock.fastForward(1600);
+  expect(reads()).toBe(firstReads);
+  state.progress.current_frequency_hz = 853700000;
+  state.inventoryMeasurements['idle-b'] = { frequency_hz: 853819575, usable_bandwidth_hz: 9000000 };
+  await page.clock.fastForward(800);
+  await expect(summary()).toHaveText('853.819575 MHz @ 9.00 MHz');
+  expect(reads()).toBe(firstReads + 1);
+
+  state.browseMeasurements = { 'idle-b': { frequency_hz: 854819575, usable_bandwidth_hz: 2350000 } };
+  await page.clock.fastForward(10100);
+  await expect(summary()).toHaveText('854.819575 MHz @ 2.35 MHz');
+  expect(reads()).toBe(firstReads + 1);
+  await dialog(page).getByRole('button', { name: 'Stop search', exact: true }).click();
+  await expect(dialog(page)).toHaveCount(0);
+});
+
+test('checking summary retains last observed center on read failure and ignores late candidate replies', async ({ page }) => {
+  await page.clock.install();
+  const state = await install(page, { phase: 'scanning', progress: { current_frequency_hz: 853819575 } });
+  const summary = () => dialog(page).locator('.spectrum-discovery-context > .muted');
+  await dialog(page).getByRole('button', { name: 'Find signals', exact: true }).click();
+  await expect(summary()).toHaveText('853.819575 MHz @ 9.00 MHz');
+  state.phase = 'checking';
+  state.progress.current_frequency_hz = 852300000;
+  state.failNextInventory = true;
+  await page.clock.fastForward(800);
+  await expect.poll(() => state.requests.filter((request) => request.path === '/api/v1/admin/tuners').length).toBe(1);
+  await expect(summary()).toHaveText('853.819575 MHz @ 9.00 MHz');
+  state.progress.current_frequency_hz = 853700000;
+  state.inventoryMeasurements = { 'idle-b': { frequency_hz: 853800000 } };
+  state.delayNextInventory = true;
+  await page.clock.fastForward(800);
+  await expect.poll(() => Boolean(state.releaseInventory)).toBe(true);
+  state.progress.current_frequency_hz = 854700000;
+  state.inventoryMeasurements['idle-b'] = { frequency_hz: 854819575, usable_bandwidth_hz: 8000000 };
+  await page.clock.fastForward(800);
+  await expect(summary()).toHaveText('854.819575 MHz @ 8.00 MHz');
+  state.releaseInventory();
+  await page.clock.fastForward(800);
+  await expect(summary()).toHaveText('854.819575 MHz @ 8.00 MHz');
+  state.progress.current_frequency_hz = 855700000;
+  state.inventoryMeasurements['idle-b'] = { frequency_hz: 855819575 };
+  state.delayNextInventory = true;
+  state.releaseInventory = null;
+  await page.clock.fastForward(800);
+  await expect.poll(() => Boolean(state.releaseInventory)).toBe(true);
+  await dialog(page).getByRole('button', { name: 'Stop search', exact: true }).click();
+  await expect(dialog(page)).toHaveCount(0);
+  state.releaseInventory();
+  await page.clock.fastForward(800);
+  await expect(dialog(page)).toHaveCount(0);
+});
+
+test('late receiver renewal cannot replace the next search receiver summary', async ({ page }) => {
+  await page.clock.install();
+  const state = await install(page, { phase: 'checking', progress: { current_frequency_hz: 852300000 },
+    inventoryMeasurements: { 'idle-b': { frequency_hz: 852200000 } } });
+  const summary = () => dialog(page).locator('.spectrum-discovery-context > .muted');
+  await dialog(page).getByRole('button', { name: 'Find signals', exact: true }).click();
+  await expect(summary()).toHaveText('852.200000 MHz @ 9.00 MHz');
+  state.delayNextBrowseRenew = true;
+  state.browseMeasurements = { 'idle-b': { frequency_hz: 856819575, usable_bandwidth_hz: 8000000 } };
+  await page.clock.fastForward(10100);
+  await expect.poll(() => Boolean(state.releaseBrowseRenew)).toBe(true);
+  state.phase = 'failed';
+  await page.clock.fastForward(800);
+  await expect(dialog(page).getByRole('heading', { name: 'Search stopped', exact: true })).toBeVisible();
+  await dialog(page).getByRole('button', { name: 'Try another search', exact: true }).click();
+  await dialog(page).getByLabel('Receiver', { exact: true }).selectOption('idle-a');
+  await expect(summary()).toHaveText('773.081250 MHz @ 2.20 MHz');
+  state.releaseBrowseRenew();
+  await page.clock.fastForward(800);
+  await expect(summary()).toHaveText('773.081250 MHz @ 2.20 MHz');
+  state.phase = 'scanning';
+  state.progress.current_frequency_hz = 770000000;
+  await dialog(page).getByRole('button', { name: 'Find signals', exact: true }).click();
+  await expect(summary()).toHaveText('770.000000 MHz @ 2.20 MHz');
+});
+
+test('borrowed receiver context and picker follow actual renewal frequency and width before scanning', async ({ page }) => {
+  await page.clock.install();
+  const state = await install(page, { noIdle: true,
+    browseMeasurements: { 'idle-b': { frequency_hz: 852400000, usable_bandwidth_hz: 8000000 } } });
+  await dialog(page).getByRole('button', { name: 'Stop channels and use: Wide receiver', exact: true }).click();
+  await page.getByRole('alertdialog', { name: 'Stop channels for this search?' })
+    .getByRole('button', { name: 'Stop channels and search', exact: true }).click();
+  const summary = dialog(page).locator('.spectrum-discovery-context > .muted');
+  const receiver = dialog(page).getByLabel('Receiver', { exact: true });
+  await expect(summary).toHaveText('852.400000 MHz @ 8.00 MHz');
+  await expect(receiver.locator('option')).toHaveText(['Wide receiver · 852.400000 MHz @ 8.00 MHz']);
+  state.browseMeasurements['idle-b'] = { frequency_hz: 853819575, usable_bandwidth_hz: 9000000 };
+  await page.clock.fastForward(10100);
+  await expect(summary).toHaveText('853.819575 MHz @ 9.00 MHz');
+  await expect(receiver.locator('option')).toHaveText(['Wide receiver · 853.819575 MHz @ 9.00 MHz']);
+  expect(state.requests.some((request) => request.path === searchPath && request.method === 'POST')).toBe(false);
 });
 
 test('failed search creation restores a borrowed receiver and refreshes its catalog row', async ({ page }) => {
@@ -614,7 +838,7 @@ test('search bounds and terminal failures explain the required action without op
   state.phase = 'failed';
   state.reason = 'This search reached its time limit. Choose a smaller range.';
   await dialog(page).getByRole('button', { name: 'Find signals', exact: true }).click();
-  await expect(dialog(page).locator('.ui-notice')).toHaveText(state.reason);
+  await expect(dialog(page).locator('.spectrum-discovery-stage > .ui-notice')).toHaveText(state.reason);
   await expect(dialog(page)).toContainText('Nothing has been added');
 });
 

@@ -77,9 +77,12 @@ export function openSpectrumSearchWizard(ui, context = {}) {
   let generation = 0;
   let progressNodes = null;
   let currentStep = '';
+  let receiverChooser = null;
   let reviewBindings = [];
   let resultQuery = '';
   let disposeBandPicker = () => {};
+  let refreshedCheckingRun = null;
+  let receiverMeasurementRevision = 0;
   const preparedCatalogTuners = new Map();
   const selected = new Set();
   const drafts = new Map();
@@ -222,6 +225,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     disposeBandPicker = () => {};
     progressNodes = null;
     currentStep = next;
+    receiverChooser = null;
     reviewBindings = [];
     steps.hidden = next === 'saved';
     const labels = next === 'progress' ? ['Bands', 'Find channels', 'Review & add'] :
@@ -308,11 +312,55 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       `${(width / 1_000_000).toFixed(2)} MHz` : 'Width unavailable';
     return `${frequencyText} @ ${widthText}`;
   };
+  const updateReceiverMeasurements = (tuner, id) => {
+    if (!tuner || tuner.id !== id) return;
+    const measurements = {};
+    if (Object.hasOwn(tuner, 'frequency_hz')) measurements.center_frequency_hz = tuner.frequency_hz;
+    else if (Object.hasOwn(tuner, 'center_frequency_hz')) measurements.center_frequency_hz = tuner.center_frequency_hz;
+    if (Object.hasOwn(tuner, 'usable_bandwidth_hz')) measurements.usable_bandwidth_hz = tuner.usable_bandwidth_hz;
+    catalog.tuners = (catalog.tuners || []).map((candidate) => {
+      if (candidate.id !== id) return candidate;
+      if (Object.entries(measurements).some(([key, value]) => !Object.is(candidate[key], value)))
+        receiverMeasurementRevision += 1;
+      return { ...candidate, ...measurements };
+    });
+  };
   const updateContext = () => {
-    const tuner = receiver();
+    let tuner = receiver();
+    const currentCenter = Number(job?.progress?.current_frequency_hz);
+    if (tuner && job?.phase === 'scanning' && lease?.lease_id && receiverId === usedReceiverId &&
+        Number.isFinite(currentCenter) && currentCenter > 0)
+      tuner = { ...tuner, center_frequency_hz: currentCenter };
+    receiverChooser?.querySelectorAll('option').forEach((option) => {
+      const listed = catalog.tuners.find((candidate) => candidate.id === option.value);
+      if (listed) option.textContent = `${listed.name} · ${receiverSummary(listed)}`;
+    });
     summary.replaceChildren(node('strong', '', tuner?.name || 'Choose an idle receiver'),
       node('p', 'muted', tuner ? `${tuner.source_type === 'recording' ? 'WAV recording · ' : ''}${receiverSummary(tuner)}` :
         'Find P25, DMR, and NXDN trunked systems.'));
+  };
+  const refreshCheckingMeasurements = async () => {
+    const operation = generation;
+    const previousLeaseId = lease?.lease_id;
+    const id = usedReceiverId;
+    const jobId = job?.job_id;
+    const candidateFrequency = Number(job?.progress?.current_frequency_hz);
+    const previousMeasurements = receiverMeasurementRevision;
+    const run = `${operation}:${jobId}:${candidateFrequency}`;
+    if (!current() || !previousLeaseId || receiverId !== id || job?.phase !== 'checking' ||
+        !Number.isFinite(candidateFrequency) || candidateFrequency <= 0 || refreshedCheckingRun === run) return;
+    refreshedCheckingRun = run;
+    try {
+      const inventory = await request('/api/v1/admin/tuners', { csrf: false });
+      if (!current() || operation !== generation || lease?.lease_id !== previousLeaseId ||
+          usedReceiverId !== id || receiverId !== id || job?.job_id !== jobId || job.phase !== 'checking' ||
+          Number(job.progress?.current_frequency_hz) !== candidateFrequency ||
+          receiverMeasurementRevision !== previousMeasurements) return;
+      updateReceiverMeasurements((inventory.tuners || []).find((tuner) => tuner.id === id), id);
+      updateContext();
+    } catch (_) {
+      // The last observed receiver center remains useful if this optional read fails.
+    }
   };
   const receiverPreparationState = (tuner) => {
     const channelCount = Math.max(0, Number(tuner.channel_count || 0));
@@ -348,6 +396,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
         channel_count: 0, center_frequency_locked: false };
       catalog.tuners = (catalog.tuners || []).map((candidate) =>
         candidate.id === tuner.id ? prepared : candidate);
+      updateReceiverMeasurements(acquired.tuner, tuner.id);
       scheduleRenewal();
       showBand();
     } catch (cause) {
@@ -388,14 +437,17 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     if (!current() || (!lease && !job)) return;
     clearRenewal();
     const previous = lease;
+    const id = usedReceiverId;
     const operation = generation;
     try {
       if (previous) {
-        const renewed = await request(browsePath(usedReceiverId), {
+        const renewed = await request(browsePath(id), {
           method: 'POST', body: { lease_id: previous.lease_id }
         });
-        if (!current() || lease?.lease_id !== previous.lease_id || operation !== generation) return;
+        if (!current() || lease?.lease_id !== previous.lease_id || operation !== generation || usedReceiverId !== id) return;
         lease = renewed;
+        updateReceiverMeasurements(renewed.tuner, id);
+        updateContext();
       }
       if (!busy && job && !['scanning', 'checking'].includes(job.phase)) {
         const updated = await request(jobPath(), { csrf: false });
@@ -457,6 +509,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     const form = node('form', 'spectrum-search-form');
     const chooser = uiSelect(available.map((tuner) => ({ value: tuner.id,
       label: `${tuner.name} · ${receiverSummary(tuner)}` })), receiverId);
+    receiverChooser = chooser;
     chooser.setAttribute('aria-label', 'Receiver');
     chooser.addEventListener('change', () => { receiverId = chooser.value; updateContext(); });
     const presets = catalog.presets || [];
@@ -490,10 +543,13 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     [minimum, maximum].forEach((input) => { input.type = 'number'; input.step = '0.000001'; });
     minimum.value = customRange.minimum;
     maximum.value = customRange.maximum;
-    minimum.addEventListener('input', () => { customRange.minimum = minimum.value; });
-    maximum.addEventListener('input', () => { customRange.maximum = maximum.value; });
+    minimum.addEventListener('input', () => { customRange.minimum = minimum.value; updateBands(); });
+    maximum.addEventListener('input', () => { customRange.maximum = maximum.value; updateBands(); });
     custom.append(formField('Start frequency (MHz)', minimum), formField('End frequency (MHz)', maximum));
     const description = node('p', 'ui-field-hint');
+    const coverageNotice = node('div', 'ui-notice ui-notice-warning');
+    coverageNotice.setAttribute('role', 'status');
+    coverageNotice.hidden = true;
     let findSignals;
     const selectedRanges = () => recordingWindow() ? [recordingWindow()] : [
       ...presets.filter((preset) => selectedBandIds.has(preset.id)).flatMap((preset) => preset.ranges),
@@ -503,6 +559,23 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     const selectedBandLabels = () => [...presets, { id: 'custom', label: 'Custom range' }]
       .filter((preset) => selectedBandIds.has(preset.id))
       .map((preset) => preset.label.split(' · ')[0]);
+    const configuredRangeFailures = () => {
+      const tuner = receiver();
+      const outside = (range) => Number.isFinite(range.minimum_hz) && Number.isFinite(range.maximum_hz) &&
+        range.minimum_hz > 0 && range.maximum_hz > range.minimum_hz &&
+        (range.minimum_hz < Number(tuner?.minimum_frequency_hz) ||
+          range.maximum_hz > Number(tuner?.maximum_frequency_hz));
+      if (recordingWindow()) return [];
+      const invalid = presets.filter((preset) => selectedBandIds.has(preset.id) && preset.ranges.some(outside))
+        .map((preset) => preset.label);
+      if (selectedBandIds.has('custom') && minimum.value && maximum.value) {
+        const range = { minimum_hz: Math.round(Number(minimum.value) * 1_000_000),
+          maximum_hz: Math.round(Number(maximum.value) * 1_000_000) };
+        if (outside(range)) invalid.push(`Custom range · ${(range.minimum_hz / 1_000_000).toFixed(6)}–${
+          (range.maximum_hz / 1_000_000).toFixed(6)} MHz`);
+      }
+      return invalid;
+    };
     const updateBands = () => {
       const fixed = recordingWindow();
       bands.hidden = Boolean(fixed);
@@ -519,7 +592,19 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       bandSummary.textContent = labels.length <= 2 ? labels.join(', ') || 'Choose bands' :
         `${labels.slice(0, 2).join(', ')} +${labels.length - 2}`;
       bandTrigger.title = labels.join(', ');
-      if (findSignals) findSignals.disabled = !fixed && !presets.some((preset) => selectedBandIds.has(preset.id)) && custom.hidden;
+      const invalid = configuredRangeFailures();
+      coverageNotice.hidden = !invalid.length;
+      coverageNotice.replaceChildren();
+      if (invalid.length) {
+        coverageNotice.append(node('strong', '', `Configured tuning limits: ${
+          (Number(tuner.minimum_frequency_hz) / 1_000_000).toFixed(6)}–${
+          (Number(tuner.maximum_frequency_hz) / 1_000_000).toFixed(6)} MHz`),
+        node('p', '', `Outside these limits: ${invalid.join('; ')}.`),
+        node('p', '', 'Choose another receiver or adjust its configured tuning limits.'));
+        coverageNotice.append(anchor('Manage receivers', href('tuners')));
+      }
+      if (findSignals) findSignals.disabled = Boolean(invalid.length) ||
+        (!fixed && !presets.some((preset) => selectedBandIds.has(preset.id)) && custom.hidden);
     };
     [...presets, { id: 'custom', label: 'Custom frequency range' }].forEach((preset) => {
       const choice = node('label', 'ui-choice-card spectrum-search-band-option');
@@ -606,8 +691,8 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       if (bandMenu.matches(':popover-open')) bandMenu.hidePopover();
     };
     chooser.addEventListener('change', updateBands);
-    form.append(formField('Receiver', uiSelectFrame(chooser)), bands, custom, description,
-      node('div', 'ui-notice', 'Checks promising signals for consistent trunked system and site identity.'), directory.element);
+    form.append(formField('Receiver', uiSelectFrame(chooser)), bands, custom, description, coverageNotice,
+      node('div', 'ui-notice', 'The receiver scans each band, then checks promising signals.'), directory.element);
     void directory.load();
     form.addEventListener('submit', (event) => event.preventDefault());
     stage.append(form);
@@ -621,8 +706,8 @@ export function openSpectrumSearchWizard(ui, context = {}) {
         error('Choose a valid band, or enter a smaller range with the end frequency above the start.');
         return;
       }
-      if (ranges.some((range) => range.minimum_hz < receiver().minimum_frequency_hz || range.maximum_hz > receiver().maximum_frequency_hz)) {
-        error('This receiver does not cover the selected band. Choose another receiver or a range within its coverage.');
+      if (configuredRangeFailures().length) {
+        updateBands();
         return;
       }
       void begin(ranges);
@@ -657,6 +742,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
         return;
       }
       lease = acquired;
+      updateReceiverMeasurements(acquired.tuner, receiverId);
       const created = await request(path, { method: 'POST', body: {
         tuner_id: receiverId, browse_lease_id: lease.lease_id, ranges,
         radioreference_state_id: directory.stateId()
@@ -738,8 +824,14 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     progressNodes.title.textContent = checking ? 'Check signals' : 'Find signals';
     progressNodes.heading.textContent = checking ? 'Reading trunked control signals' : 'Looking for signal peaks';
     progressNodes.copy.textContent = checking ? 'We’re checking the system, site, and signal settings for each candidate.' :
-      'The receiver is moving through your selected band.';
+      'The receiver is moving through your selected bands.';
     const progress = job.progress || {};
+    const currentCenter = Number(progress.current_frequency_hz);
+    if (!checking && lease?.lease_id && receiverId === usedReceiverId &&
+        Number.isFinite(currentCenter) && currentCenter > 0)
+      updateReceiverMeasurements({ id: usedReceiverId, frequency_hz: currentCenter }, usedReceiverId);
+    updateContext();
+    if (checking) void refreshCheckingMeasurements();
     progressNodes.count.textContent = checking ? `${progress.checked || 0} of ${progress.total_signals || 0} signals checked` :
       `${progress.completed || 0} of ${progress.total || 0} receiver windows searched${progress.current_frequency_hz ?
         ` · ${channelMHz(progress.current_frequency_hz)} MHz` : ''}`;
