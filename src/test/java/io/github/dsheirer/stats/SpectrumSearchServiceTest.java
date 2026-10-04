@@ -17,6 +17,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
+import java.util.function.IntConsumer;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 
@@ -25,6 +26,150 @@ class SpectrumSearchServiceTest
 {
     private static final long A = 770_100_000, B = 770_400_000, FAR = 774_100_000;
     private static final List<SpectrumSearchService.Range> RANGES = List.of(new SpectrumSearchService.Range(769_000_000, 775_000_000));
+
+    @Test
+    void completeEmptyFirstPassSkipsOnlySecondAcquisitionAndCompletesProgress() throws Exception
+    {
+        try(Fixture fixture = new Fixture())
+        {
+            fixture.dwellMs = 3000;
+            AtomicInteger checks = new AtomicInteger();
+            fixture.check = (lease, frequency, cancelled) -> { checks.incrementAndGet(); return null; };
+            var onePass = SpectrumSearchService.windows(RANGES, fixture.lease.usableBandwidthHz(),
+                fixture.lease.minimumFrequencyHz(), fixture.lease.maximumFrequencyHz());
+            var completed = fixture.complete(fixture.open().jobId());
+
+            assertEquals("complete", completed.phase());
+            assertEquals(onePass.size() * 2, completed.progress().total());
+            assertEquals(completed.progress().total(), completed.progress().completed());
+            assertEquals(onePass, fixture.lease.centers);
+            assertEquals(onePass.size(), fixture.lease.observations);
+            assertEquals(java.util.Collections.nCopies(onePass.size(), 3000L), fixture.lease.dwells);
+            assertEquals(0, checks.get());
+            assertTrue(completed.candidates().isEmpty());
+            assertTrue(completed.aliasGroups().isEmpty());
+            assertTrue(fixture.lease.valid(), "Completed review still owns its receiver until cleanup");
+            assertTrue(fixture.channels.definitions.isEmpty());
+            assertTrue(fixture.channels.starts.isEmpty());
+        }
+    }
+
+    @Test
+    void nonemptyFirstPassKeepsBothFullDwellsAndChecksOnlyThePassIntersection() throws Exception
+    {
+        try(Fixture fixture = new Fixture(A, B, FAR))
+        {
+            fixture.dwellMs = 3000;
+            fixture.lease.transientFrequency = B;
+            fixture.lease.secondPassOnlyFrequency = FAR;
+            List<Long> checked = new ArrayList<>();
+            fixture.check = (lease, frequency, cancelled) -> {
+                checked.add(frequency);
+                return evidence(frequency, 1, "C4FM", true);
+            };
+            var onePass = SpectrumSearchService.windows(RANGES, fixture.lease.usableBandwidthHz(),
+                fixture.lease.minimumFrequencyHz(), fixture.lease.maximumFrequencyHz());
+            List<Long> bothPasses = new ArrayList<>(onePass);
+            bothPasses.addAll(onePass);
+            var completed = fixture.complete(fixture.open().jobId());
+
+            assertEquals(bothPasses.size(), fixture.lease.observations);
+            assertEquals(bothPasses, fixture.lease.centers.subList(0, bothPasses.size()));
+            assertEquals(java.util.Collections.nCopies(bothPasses.size(), 3000L), fixture.lease.dwells);
+            assertEquals(List.of(A), checked);
+            assertEquals(List.of(A), completed.candidates().stream()
+                .map(SpectrumSearchService.Candidate::frequencyHz).toList());
+            assertEquals(completed.progress().total(), completed.progress().completed());
+            assertEquals(1, completed.progress().checked());
+            assertTrue(fixture.channels.definitions.isEmpty());
+        }
+    }
+
+    @Test
+    void cancellationSignalAfterEmptyFirstPassPreventsLogicalSecondPassCompletion() throws Exception
+    {
+        try(Fixture fixture = new Fixture())
+        {
+            var onePass = SpectrumSearchService.windows(RANGES, fixture.lease.usableBandwidthHz(),
+                fixture.lease.minimumFrequencyHz(), fixture.lease.maximumFrequencyHz());
+            fixture.lease.observationFinished = count -> {
+                if(count == onePass.size()) Thread.currentThread().interrupt();
+            };
+            var opened = fixture.open();
+            assertTrue(fixture.lease.observing.await(2, TimeUnit.SECONDS));
+            fixture.lease.scanWorker.join(2000);
+            assertFalse(fixture.lease.scanWorker.isAlive());
+            var cancelled = fixture.service.status(opened.jobId());
+
+            assertEquals("cancelled", cancelled.phase());
+            assertEquals(onePass.size(), cancelled.progress().completed());
+            assertEquals(onePass.size() * 2, cancelled.progress().total());
+            assertEquals(onePass.size(), fixture.lease.observations);
+            assertEquals(onePass, fixture.lease.centers);
+            assertTrue(cancelled.candidates().isEmpty());
+            assertEquals(1, fixture.lease.closed.get());
+            assertFalse(fixture.lease.valid());
+            assertTrue(fixture.channels.definitions.isEmpty());
+        }
+    }
+
+    @Test
+    void lostReceiverAfterEmptyFirstPassPreventsLogicalSecondPassCompletion() throws Exception
+    {
+        try(Fixture fixture = new Fixture())
+        {
+            var onePass = SpectrumSearchService.windows(RANGES, fixture.lease.usableBandwidthHz(),
+                fixture.lease.minimumFrequencyHz(), fixture.lease.maximumFrequencyHz());
+            fixture.lease.observationFinished = count -> {
+                if(count == onePass.size()) fixture.lease.valid = false;
+            };
+            var opened = fixture.open();
+            assertTrue(fixture.lease.observing.await(2, TimeUnit.SECONDS));
+            fixture.lease.scanWorker.join(2000);
+            assertFalse(fixture.lease.scanWorker.isAlive());
+            var failed = fixture.service.status(opened.jobId());
+
+            assertEquals("failed", failed.phase());
+            assertEquals(onePass.size(), failed.progress().completed());
+            assertEquals(onePass.size() * 2, failed.progress().total());
+            assertEquals(onePass.size(), fixture.lease.observations);
+            assertEquals(onePass, fixture.lease.centers);
+            assertTrue(failed.candidates().isEmpty());
+            assertEquals(1, fixture.lease.closed.get());
+            assertFalse(fixture.lease.valid());
+            assertTrue(fixture.channels.definitions.isEmpty());
+        }
+    }
+
+    @Test
+    void failedAcquisitionAfterEmptyWindowsDoesNotBecomeACompleteEmptySweep() throws Exception
+    {
+        try(Fixture fixture = new Fixture())
+        {
+            var onePass = SpectrumSearchService.windows(RANGES, fixture.lease.usableBandwidthHz(),
+                fixture.lease.minimumFrequencyHz(), fixture.lease.maximumFrequencyHz());
+            String reason = "The receiver did not provide enough new spectrum data. Retry the search or choose another receiver.";
+            fixture.lease.observationFailure = new SpectrumSearchHardware.ObservationException(reason);
+            fixture.lease.observationFailureAt = onePass.size();
+            var opened = fixture.open();
+            assertTrue(fixture.lease.observing.await(2, TimeUnit.SECONDS));
+            fixture.lease.scanWorker.join(2000);
+            assertFalse(fixture.lease.scanWorker.isAlive());
+            var failed = fixture.service.status(opened.jobId());
+
+            assertEquals("failed", failed.phase());
+            assertEquals(reason, failed.reason());
+            assertEquals(onePass.size() - 1, failed.progress().completed());
+            assertEquals(onePass.size() * 2, failed.progress().total());
+            assertEquals(onePass.size() - 1, fixture.lease.observations);
+            assertEquals(onePass.size(), fixture.lease.dwells.size());
+            assertEquals(onePass, fixture.lease.centers);
+            assertTrue(failed.candidates().isEmpty());
+            assertEquals(1, fixture.lease.closed.get());
+            assertFalse(fixture.lease.valid());
+            assertTrue(fixture.channels.definitions.isEmpty());
+        }
+    }
 
     @Test
     void completesBothSweepsAndAllChecksBeforePublishingConfirmedRows() throws Exception
@@ -589,6 +734,7 @@ class SpectrumSearchServiceTest
         SpectrumSearchService.ProbeCheck check = (lease, frequency, cancelled) -> evidence(frequency,
             frequency == A ? 1 : frequency == B ? 2 : 3, "C4FM", true);
         SpectrumSearchService service;
+        long dwellMs = 750;
         Fixture(long... frequencies) { lease = new FakeLease(frequencies); }
         SpectrumSearchService.Snapshot open()
         { return open(RANGES); }
@@ -597,7 +743,7 @@ class SpectrumSearchServiceTest
             if(service == null) service = new SpectrumSearchService(channels, (tuner, browse) -> lease,
                 (lease, frequency, cancelled) -> check.check(lease, frequency, cancelled), clock::get,
                 () -> new SpectrumSearchService.Catalog(List.of(), null, List.of(), null));
-            return service.open("test-receiver", "test-browse", ranges, 750);
+            return service.open("test-receiver", "test-browse", ranges, dwellMs);
         }
         SpectrumSearchService.Snapshot complete(String id) throws Exception
         {
@@ -619,15 +765,18 @@ class SpectrumSearchServiceTest
     {
         final long[] frequencies;
         final List<Long> centers = new ArrayList<>();
+        final List<Long> dwells = new ArrayList<>();
         final AtomicInteger closed = new AtomicInteger(), handoffs = new AtomicInteger();
         final AtomicInteger closeFailures = new AtomicInteger();
         final CountDownLatch observing = new CountDownLatch(1);
         volatile Thread scanWorker;
         volatile CountDownLatch blockObserve;
         RuntimeException observationFailure;
+        int observationFailureAt;
+        IntConsumer observationFinished = count -> {};
         CountDownLatch closeEntered, closeRelease;
         volatile boolean valid = true;
-        long center = 773_000_000, transientFrequency;
+        long center = 773_000_000, transientFrequency, secondPassOnlyFrequency;
         long usableBandwidth = 4_000_000, sampleRate = 5_000_000, minimum = 20_000_000, maximum = 1_000_000_000;
         int observations;
         FakeLease(long... frequencies) { this.frequencies = frequencies; }
@@ -644,15 +793,19 @@ class SpectrumSearchServiceTest
         {
             scanWorker = Thread.currentThread();
             observing.countDown();
+            dwells.add(dwell);
             if(blockObserve != null) blockObserve.await();
-            if(observationFailure != null) throw observationFailure;
+            if(observationFailure != null && (observationFailureAt == 0 || observations + 1 == observationFailureAt))
+                throw observationFailure;
             observations++;
             // Each pass has five windows for this fixture range/bandwidth.
             List<SpectrumPeakDetector.Peak> result = new ArrayList<>();
             for(long frequency: frequencies)
                 if(FrequencyListenService.withinCurrentWindow(frequency, center, 12500, usableBandwidthHz()/2, 12500) &&
-                    (frequency != transientFrequency || observations <= 5))
+                    (frequency != transientFrequency || observations <= 5) &&
+                    (frequency != secondPassOnlyFrequency || observations > 5))
                     result.add(new SpectrumPeakDetector.Peak(frequency, -35 - (frequency - A) / 1000000.0, 15, 10));
+            observationFinished.accept(observations);
             return result;
         }
         public P25DiscoveryProbe.Session probe(long frequency) { throw new UnsupportedOperationException(); }

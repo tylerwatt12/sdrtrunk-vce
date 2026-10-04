@@ -109,23 +109,6 @@ public final class SpectrumPeakDetector
 
     int frames() { return mFrames; }
 
-    /**
-     * Reject only when no existing or not-yet-seen track can qualify, even if it appears in every remaining
-     * observation. Each track can gain at most one count per accepted frame. The best possible persistence
-     * ratio is therefore (count + future)/(frames + future), including an unseen track with count zero.
-     */
-    boolean cannotBecomePersistent(int maximumFutureFrames)
-    {
-        if(mFrames < MIN_FRAMES || maximumFutureFrames < 0 || canQualify(0, maximumFutureFrames)) return false;
-        return mTracks.stream().noneMatch(track -> canQualify(track.count, maximumFutureFrames));
-    }
-
-    private boolean canQualify(int count, int future)
-    {
-        long possible = (long)count + future;
-        return possible >= MIN_FRAMES && 4 * possible >= 3 * ((long)mFrames + future);
-    }
-
     List<Peak> peaks()
     {
         if(mFrames < MIN_FRAMES) return List.of();

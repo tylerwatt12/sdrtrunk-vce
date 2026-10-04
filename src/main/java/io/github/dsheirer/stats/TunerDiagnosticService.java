@@ -752,12 +752,6 @@ public final class TunerDiagnosticService implements AutoCloseable
             return mSessionClosed.get();
         }
 
-        /** Zero means that this producer has no guaranteed publication cadence. */
-        long minimumFftPublicationIntervalNanos()
-        {
-            return isClosed() ? 0 : mProcessor.minimumPublicationIntervalNanos();
-        }
-
         private boolean markClosed()
         {
             return markTerminal("closed", "Tuner diagnostic session is closed.");
@@ -1051,13 +1045,6 @@ public final class TunerDiagnosticService implements AutoCloseable
             mRequested = new AtomicReference<>(new ProcessorConfiguration(1, centerFrequencyHz, sampleRateHz,
                 viewport, profile, plan));
             mTask = scheduler.scheduleWithFixedDelay(this::calculate, MAXIMUM_PROFILE_FRAMES_PER_SECOND);
-        }
-
-        @Override
-        public long minimumPublicationIntervalNanos()
-        {
-            // calculate() publishes at most one frame. The scheduler owns its serial fixed-delay executor.
-            return mTask.minimumIntervalNanos();
         }
 
         @Override
@@ -1452,12 +1439,6 @@ public final class TunerDiagnosticService implements AutoCloseable
 
     interface FrameProcessor extends AutoCloseable
     {
-        /**
-         * Minimum interval between publications, guaranteed by the producer's scheduling mechanism.
-         * Injected processors are unbounded unless they explicitly implement this contract.
-         */
-        default long minimumPublicationIntervalNanos() { return 0; }
-
         void receive(INativeBuffer buffer, long observedAtEpochMs, long ingressConfiguration);
 
         long configuration();
