@@ -25752,6 +25752,13 @@ function receiverHealthScope(row) {
     [...new Set([name, channel].filter(Boolean))].join(' · ') : receiverHealthText(row?.scope, 'Receiver'));
 }
 
+function receiverHealthScopeLink(row) {
+  const label = receiverHealthScope(row);
+  const configurationId = receiverHealthText(row?.configuration_id, '');
+  return configurationId && viewAllowed('channel-setup') ?
+    anchor(label, href('channel-setup', { channel: configurationId })) : label;
+}
+
 function receiverHealthIncident(incident, resolved = false, expanded = false, onToggle = null) {
   const severity = receiverHealthSeverity(incident.severity);
   const card = node(resolved ? 'details' : 'article',
@@ -25760,7 +25767,7 @@ function receiverHealthIncident(incident, resolved = false, expanded = false, on
     `${resolved ? 'ui-section-summary' : 'ui-record-card-header'} receiver-health-incident-heading`);
   const identity = node('div', 'ui-record-card-copy receiver-health-incident-identity');
   const scope = node('p', 'muted receiver-health-incident-scope');
-  scope.append(radioSystemLink(incident.radio_system_entity_ref, receiverHealthScope(incident)));
+  scope.append(receiverHealthScopeLink(incident));
   identity.append(node('h3', 'ui-record-card-title', receiverHealthText(incident.title, 'Receiver issue')),
     scope);
   if (resolved) {
@@ -26036,7 +26043,7 @@ function receiverHealthMeasurementRow(row) {
   const heading = node('div', 'ui-record-card-header receiver-health-measurement-heading');
   const identity = node('div', 'ui-record-card-copy');
   const scope = node('p', 'muted receiver-health-measurement-scope');
-  scope.append(radioSystemLink(row.radio_system_entity_ref, receiverHealthScope(row)));
+  scope.append(receiverHealthScopeLink(row));
   const label = node('div', 'ui-record-title receiver-health-measurement-label',
     receiverHealthText(row.display_label || row.label));
   identity.append(scope, label);
