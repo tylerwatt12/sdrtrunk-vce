@@ -66,6 +66,7 @@ function snapshot(state) {
 async function install(page, state = {}) {
   state.requests = [];
   state.ledger = {};
+  state.identificationActive = false;
   state.tuners = state.recording ? [{ ...tuner('capture-a', 2000000), name: 'Trunked capture',
     tuner_class: 'RECORDING', source_type: 'recording', fixed_window: true, center_frequency_hz: 451000000, frequency_hz: undefined,
     configured_frequency_hz: 773081250,
@@ -120,6 +121,22 @@ async function install(page, state = {}) {
     }
     if (path.endsWith('/browse')) {
       if (request.method() === 'DELETE') {
+        if (state.requireJobRelease && state.identificationActive)
+          return fail('Stop signal identification before releasing this tuner', 'tuner_browse_unavailable', 409);
+        if (state.delayNextBrowseDelete) {
+          state.delayNextBrowseDelete = false;
+          await new Promise((resolve) => { state.releaseBrowseDelete = resolve; });
+        }
+        if (state.failBrowseDeleteCount > 0) {
+          state.failBrowseDeleteCount -= 1;
+          return fail('Receiver restoration still needs to finish', 'tuner_browse_unavailable', 409);
+        }
+        if (state.failBrowseDeleteAfterResume) {
+          state.failBrowseDeleteAfterResume = false;
+          state.receiverResumed = true;
+          return fail('Resume reply was interrupted', 'tuner_browse_failed', 503);
+        }
+        if (state.receiverResumed) return fail('Receiver lease already ended', 'tuner_browse_expired', 410);
         if (state.failNextBrowseDeleteConflict) {
           state.failNextBrowseDeleteConflict = false;
           return fail('Signal identification still holds this receiver', 'tuner_browse_unavailable', 409);
@@ -142,10 +159,16 @@ async function install(page, state = {}) {
       const leasedReceiver = { ...receiver, frequency_hz: receiver.center_frequency_hz,
         ...(takeover ? { operator_state: 'setup', channel_count: 0 } : {}),
         ...(state.browseMeasurements?.[id] || {}) };
+      if (!body.lease_id && state.delayNextBrowseAcquire) {
+        state.delayNextBrowseAcquire = false;
+        await new Promise((resolve) => { state.releaseBrowseAcquire = resolve; });
+      }
       if (body.lease_id && state.delayNextBrowseRenew) {
         state.delayNextBrowseRenew = false;
         await new Promise((resolve) => { state.releaseBrowseRenew = resolve; });
       }
+      if (body.lease_id && state.failBrowseRenewAfterDelay)
+        return fail('Receiver lease already ended', 'tuner_browse_expired', 410);
       return respond({ lease_id: leaseId, tuner: leasedReceiver, takeover,
         stopped_channels: takeover ? [{ configuration_id: 'channel-a' }] : [],
         expires_at_epoch_ms: Date.now() + 30000, can_tune: takeover || !receiver.channel_count });
@@ -177,6 +200,7 @@ async function install(page, state = {}) {
       }
       if (state.invalidRequest) return fail(state.invalidRequest, 'invalid_request', 400);
       if (state.delayCreate) await new Promise((resolve) => { state.releaseCreate = resolve; });
+      state.identificationActive = true;
       return respond(snapshot(state));
     }
     if (path === `${searchPath}/search-a`) {
@@ -185,12 +209,23 @@ async function install(page, state = {}) {
           state.failNextJobDelete = false;
           return fail('Search release failed', 'spectrum_search_failed', 503);
         }
+        if (state.delayNextJobDelete) {
+          state.delayNextJobDelete = false;
+          await new Promise((resolve) => { state.releaseJobDelete = resolve; });
+        }
+        state.identificationActive = false;
         return respond(null, 204);
       }
+      const result = snapshot(state);
+      if (state.delayNextJobStatus) {
+        state.delayNextJobStatus = false;
+        await new Promise((resolve) => { state.releaseJobStatus = resolve; });
+      }
+      if (state.failJobStatusAfterDelay) return fail('Search was already released', 'search_expired', 410);
       if (state.expired) return fail('Search expired', 'search_expired', 410);
       if (state.restartRequired && state.failLedgerOnce) { state.failLedgerOnce = false; return fail('Connection interrupted'); }
       if (state.failPollOnce) { state.failPollOnce = false; return fail('Connection interrupted'); }
-      return respond(snapshot(state));
+      return respond(result);
     }
     if (path.endsWith('/save')) {
       if (state.expired) return fail('Search expired', 'search_expired', 410);
@@ -233,6 +268,279 @@ async function complete(page) {
   await dialog(page).getByRole('button', { name: 'Find signals', exact: true }).click();
   await expect(dialog(page).getByRole('heading', { name: /channels? found$/ })).toBeVisible();
 }
+
+async function borrowedReview(page, options = {}) {
+  const state = await install(page, { noIdle: true, requireJobRelease: true, ...options });
+  await dialog(page).getByRole('button', { name: 'Stop channels and use: Small receiver', exact: true }).click();
+  await page.getByRole('alertdialog', { name: 'Stop channels for this search?' })
+    .getByRole('button', { name: 'Stop channels and search', exact: true }).click();
+  await complete(page);
+  await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).check();
+  if (options.twoSelected) await dialog(page).getByRole('checkbox', { name: 'Select County Central', exact: true }).check();
+  await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
+  return state;
+}
+
+const savedSearchRequests = (state) => ({
+  saves: state.requests.filter((request) => request.path.endsWith('/save')),
+  jobDeletes: state.requests.filter((request) => request.path === `${searchPath}/search-a` && request.method === 'DELETE'),
+  browseDeletes: state.requests.filter((request) => request.path.endsWith('/browse') && request.method === 'DELETE')
+});
+
+test('saved search closes identification before resuming and retains its committed results', async ({ page }) => {
+  await page.clock.install();
+  const state = await borrowedReview(page);
+  await dialog(page).getByRole('button', { name: 'Add 1 channel', exact: true }).click();
+  await expect(dialog(page)).toContainText('1 channel added.');
+  await expect.poll(() => savedSearchRequests(state).browseDeletes.length).toBe(1);
+  const { saves, jobDeletes, browseDeletes } = savedSearchRequests(state);
+  expect(saves).toHaveLength(1);
+  expect(jobDeletes).toHaveLength(1);
+  expect(state.requests.indexOf(jobDeletes[0])).toBeGreaterThan(state.requests.indexOf(saves[0]));
+  expect(state.requests.indexOf(browseDeletes[0])).toBeGreaterThan(state.requests.indexOf(jobDeletes[0]));
+  await expect(dialog(page)).not.toContainText('could not resume');
+  await expect(dialog(page)).not.toContainText('Stop signal identification');
+  await expect(dialog(page).getByRole('button', { name: 'Done', exact: true })).toBeEnabled();
+  const readsAfterCleanup = state.requests.length;
+  await page.clock.fastForward(22000);
+  expect(state.requests.length).toBe(readsAfterCleanup);
+  await expect(dialog(page)).toContainText('1 channel added.');
+  await dialog(page).getByRole('button', { name: 'Done', exact: true }).click();
+  await expect(dialog(page)).toHaveCount(0);
+  expect(savedSearchRequests(state).saves).toHaveLength(1);
+  expect(savedSearchRequests(state).jobDeletes).toHaveLength(1);
+  expect(savedSearchRequests(state).browseDeletes).toHaveLength(1);
+});
+
+test('saved search cleanup failure retries identification before any receiver release', async ({ page }) => {
+  const state = await borrowedReview(page);
+  state.failNextJobDelete = true;
+  await dialog(page).getByRole('button', { name: 'Add 1 channel', exact: true }).click();
+  await expect(dialog(page)).toContainText('This receiver could not resume its channels yet');
+  expect(savedSearchRequests(state).browseDeletes).toHaveLength(0);
+  await dialog(page).getByRole('button', { name: 'Try resuming channels', exact: true }).click();
+  await expect(dialog(page).getByRole('button', { name: 'Try resuming channels', exact: true })).toHaveCount(0);
+  await expect(dialog(page)).not.toContainText('could not resume');
+  await expect(dialog(page)).toContainText('1 channel added.');
+  expect(savedSearchRequests(state).saves).toHaveLength(1);
+  expect(savedSearchRequests(state).jobDeletes).toHaveLength(2);
+  expect(savedSearchRequests(state).browseDeletes).toHaveLength(1);
+});
+
+test('saved search repeated resume retries do not create or release identification again', async ({ page }) => {
+  const state = await borrowedReview(page, { failBrowseDeleteCount: 2 });
+  await dialog(page).getByRole('button', { name: 'Add 1 channel', exact: true }).click();
+  const retry = dialog(page).getByRole('button', { name: 'Try resuming channels', exact: true });
+  await expect(retry).toBeEnabled();
+  await retry.evaluate((element) => { element.click(); element.click(); });
+  await expect.poll(() => savedSearchRequests(state).browseDeletes.length).toBe(2);
+  await expect(retry).toBeEnabled();
+  await retry.click();
+  await expect(retry).toHaveCount(0);
+  await expect(dialog(page)).not.toContainText('could not resume');
+  expect(savedSearchRequests(state).saves).toHaveLength(1);
+  expect(savedSearchRequests(state).jobDeletes).toHaveLength(1);
+  expect(savedSearchRequests(state).browseDeletes).toHaveLength(3);
+});
+
+test('partially saved search keeps identification until remaining selected rows are committed', async ({ page }) => {
+  const state = await borrowedReview(page, { twoSelected: true, failCandidateOnce: 'central' });
+  await dialog(page).getByRole('button', { name: 'Add 2 channels', exact: true }).click();
+  const retry = dialog(page).getByRole('button', { name: 'Retry adding County Central', exact: true });
+  await expect(retry).toBeEnabled();
+  expect(savedSearchRequests(state).jobDeletes).toHaveLength(0);
+  expect(savedSearchRequests(state).browseDeletes).toHaveLength(0);
+  await retry.click();
+  await expect(dialog(page)).toContainText('2 channels added.');
+  await expect.poll(() => savedSearchRequests(state).browseDeletes.length).toBe(1);
+  const { saves, jobDeletes } = savedSearchRequests(state);
+  expect(saves).toHaveLength(2);
+  expect(saves[0].body.candidates.map((candidate) => candidate.candidate_id)).toEqual(['north', 'central']);
+  expect(saves[1].body.candidates.map((candidate) => candidate.candidate_id)).toEqual(['central']);
+  expect(jobDeletes).toHaveLength(1);
+});
+
+test('saved search handles an already resumed receiver reply without adding the channel again', async ({ page }) => {
+  const state = await borrowedReview(page, { failBrowseDeleteAfterResume: true });
+  await dialog(page).getByRole('button', { name: 'Add 1 channel', exact: true }).click();
+  await expect(dialog(page)).toContainText('This receiver could not resume its channels yet');
+  expect(state.receiverResumed).toBe(true);
+  await dialog(page).getByRole('button', { name: 'Try resuming channels', exact: true }).click();
+  await expect(dialog(page)).not.toContainText('could not resume');
+  await expect(dialog(page)).toContainText('1 channel added.');
+  expect(savedSearchRequests(state).saves).toHaveLength(1);
+  expect(savedSearchRequests(state).jobDeletes).toHaveLength(1);
+  expect(savedSearchRequests(state).browseDeletes).toHaveLength(2);
+});
+
+test('saved search ignores a late receiver renewal error after successful resume', async ({ page }) => {
+  await page.clock.install();
+  const state = await borrowedReview(page);
+  state.delayNextBrowseRenew = true;
+  state.failBrowseRenewAfterDelay = true;
+  await page.clock.fastForward(10100);
+  await expect.poll(() => Boolean(state.releaseBrowseRenew)).toBe(true);
+  await dialog(page).getByRole('button', { name: 'Add 1 channel', exact: true }).click();
+  await expect.poll(() => savedSearchRequests(state).browseDeletes.length).toBe(1);
+  state.releaseBrowseRenew();
+  await page.clock.fastForward(1000);
+  await expect(dialog(page)).toContainText('1 channel added.');
+  await expect(dialog(page)).not.toContainText('expired');
+  await expect(dialog(page)).not.toContainText('could not resume');
+  expect(savedSearchRequests(state).saves).toHaveLength(1);
+});
+
+for (const failure of [false, true]) {
+  test(`saved search ignores a late status ${failure ? 'error' : 'snapshot'} after releasing identification`, async ({ page }) => {
+    await page.clock.install();
+    const state = await borrowedReview(page);
+    state.delayNextJobStatus = true;
+    state.failJobStatusAfterDelay = failure;
+    await page.clock.fastForward(10100);
+    await expect.poll(() => Boolean(state.releaseJobStatus)).toBe(true);
+    await dialog(page).getByRole('button', { name: 'Add 1 channel', exact: true }).click();
+    await expect.poll(() => savedSearchRequests(state).browseDeletes.length).toBe(1);
+    state.releaseJobStatus();
+    await page.clock.fastForward(1000);
+    await expect(dialog(page)).toContainText('1 channel added.');
+    await expect(dialog(page)).not.toContainText('expired');
+    await expect(dialog(page)).not.toContainText('could not resume');
+    expect(savedSearchRequests(state).saves).toHaveLength(1);
+  });
+}
+
+test('saved search forced dismissal during a pending save waits for commit and identification cleanup before resume', async ({ page }) => {
+  const state = await borrowedReview(page, { delaySave: true, delayNextJobDelete: true });
+  await dialog(page).getByRole('button', { name: 'Add 1 channel', exact: true }).click();
+  await expect.poll(() => Boolean(state.releaseSave)).toBe(true);
+  await expect(dialog(page).getByRole('button', { name: 'Close Find Trunked Systems', exact: true })).toBeDisabled();
+  await page.evaluate(async () => {
+    const api = await import(document.querySelector('script[type="module"][src*="/assets/app.js"]').src);
+    api.closeReadOnlyModal(true);
+  });
+  await expect(dialog(page)).toHaveCount(0);
+  expect(savedSearchRequests(state).jobDeletes).toHaveLength(0);
+  expect(savedSearchRequests(state).browseDeletes).toHaveLength(0);
+  state.releaseSave();
+  await expect.poll(() => Boolean(state.releaseJobDelete)).toBe(true);
+  expect(savedSearchRequests(state).browseDeletes).toHaveLength(0);
+  state.releaseJobDelete();
+  await expect.poll(() => savedSearchRequests(state).browseDeletes.length).toBe(1);
+  expect(savedSearchRequests(state).saves).toHaveLength(1);
+  expect(state.ledger.north.saved).toBe(true);
+  expect(savedSearchRequests(state).jobDeletes).toHaveLength(1);
+});
+
+test('saved search defers navigation while identification cleanup is pending and releases each resource once', async ({ page }) => {
+  const state = await borrowedReview(page, { delayNextJobDelete: true });
+  await dialog(page).getByRole('button', { name: 'Add 1 channel', exact: true }).click();
+  await expect(dialog(page)).toContainText('1 channel added.');
+  await expect.poll(() => Boolean(state.releaseJobDelete)).toBe(true);
+  await expect(dialog(page).getByRole('button', { name: 'Done', exact: true })).toBeDisabled();
+  await dialog(page).getByRole('link', { name: 'Open Channels', exact: true }).click();
+  await expect(dialog(page)).toHaveCount(1);
+  expect(savedSearchRequests(state).browseDeletes).toHaveLength(0);
+  state.releaseJobDelete();
+  await expect.poll(() => savedSearchRequests(state).browseDeletes.length).toBe(1);
+  await expect(dialog(page).getByRole('button', { name: 'Done', exact: true })).toBeEnabled();
+  await dialog(page).getByRole('link', { name: 'Open Channels', exact: true }).click();
+  await expect(dialog(page)).toHaveCount(0);
+  expect(savedSearchRequests(state).saves).toHaveLength(1);
+  expect(savedSearchRequests(state).jobDeletes).toHaveLength(1);
+});
+
+test('pagehide retries failed search cleanup before releasing its borrowed receiver', async ({ page }) => {
+  await page.clock.install();
+  const state = await borrowedReview(page);
+  state.failNextJobDelete = true;
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide')));
+  await expect.poll(() => savedSearchRequests(state).jobDeletes.length).toBe(1);
+  expect(savedSearchRequests(state).browseDeletes).toHaveLength(0);
+  await page.clock.fastForward(1100);
+  await expect.poll(() => savedSearchRequests(state).jobDeletes.length).toBe(2);
+  await expect.poll(() => savedSearchRequests(state).browseDeletes.length).toBe(1);
+  expect(savedSearchRequests(state).saves).toHaveLength(0);
+  const { jobDeletes, browseDeletes } = savedSearchRequests(state);
+  expect(state.requests.indexOf(browseDeletes[0])).toBeGreaterThan(state.requests.indexOf(jobDeletes[1]));
+});
+
+test('pagehide waits for a pending channel commit before ordered identification and receiver release', async ({ page }) => {
+  const state = await borrowedReview(page, { delaySave: true });
+  await dialog(page).getByRole('button', { name: 'Add 1 channel', exact: true }).click();
+  await expect.poll(() => Boolean(state.releaseSave)).toBe(true);
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide')));
+  expect(savedSearchRequests(state).jobDeletes).toHaveLength(0);
+  expect(savedSearchRequests(state).browseDeletes).toHaveLength(0);
+  state.releaseSave();
+  await expect.poll(() => savedSearchRequests(state).browseDeletes.length).toBe(1);
+  expect(savedSearchRequests(state).jobDeletes).toHaveLength(1);
+  expect(savedSearchRequests(state).saves).toHaveLength(1);
+  expect(state.ledger.north.saved).toBe(true);
+});
+
+test('forced dismissal waits for a late receiver acquisition and retries its exact failed release', async ({ page }) => {
+  const state = await install(page, { delayNextBrowseAcquire: true, delayNextBrowseDelete: true,
+    failNextBrowseDelete: true });
+  await dialog(page).getByRole('button', { name: 'Find signals', exact: true }).click();
+  await expect.poll(() => Boolean(state.releaseBrowseAcquire)).toBe(true);
+  await expect(dialog(page).getByRole('button', { name: 'Close Find Trunked Systems', exact: true })).toBeDisabled();
+  await page.evaluate(async () => {
+    const api = await import(document.querySelector('script[type="module"][src*="/assets/app.js"]').src);
+    api.closeReadOnlyModal(true);
+  });
+  await expect(dialog(page)).toHaveCount(0);
+  expect(savedSearchRequests(state).browseDeletes).toHaveLength(0);
+  state.releaseBrowseAcquire();
+  await expect.poll(() => Boolean(state.releaseBrowseDelete)).toBe(true);
+  expect(savedSearchRequests(state).browseDeletes).toHaveLength(1);
+  expect(state.requests.filter((request) => request.path === searchPath && request.method === 'POST')).toHaveLength(0);
+  state.releaseBrowseDelete();
+  await expect.poll(() => savedSearchRequests(state).browseDeletes.length).toBe(2);
+  expect(savedSearchRequests(state).browseDeletes.map((request) => ({ path: request.path, body: request.body })))
+    .toEqual(Array(2).fill({ path: '/api/v1/admin/tuners/idle-b/browse', body: { lease_id: 'lease-1' } }));
+});
+
+test('pagehide waits for late takeover preparation and retries only its owned receiver lease', async ({ page }) => {
+  const state = await install(page, { noIdle: true, delayNextBrowseAcquire: true, delayNextBrowseDelete: true,
+    failNextBrowseDelete: true });
+  await dialog(page).getByRole('button', { name: 'Stop channels and use: Small receiver', exact: true }).click();
+  await page.getByRole('alertdialog', { name: 'Stop channels for this search?' })
+    .getByRole('button', { name: 'Stop channels and search', exact: true }).click();
+  await expect.poll(() => Boolean(state.releaseBrowseAcquire)).toBe(true);
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide')));
+  expect(savedSearchRequests(state).browseDeletes).toHaveLength(0);
+  state.releaseBrowseAcquire();
+  await expect.poll(() => Boolean(state.releaseBrowseDelete)).toBe(true);
+  expect(savedSearchRequests(state).browseDeletes).toHaveLength(1);
+  state.releaseBrowseDelete();
+  await expect.poll(() => savedSearchRequests(state).browseDeletes.length).toBe(2);
+  expect(savedSearchRequests(state).browseDeletes.map((request) => ({ path: request.path, body: request.body })))
+    .toEqual(Array(2).fill({ path: '/api/v1/admin/tuners/idle-a/browse', body: { lease_id: 'lease-1' } }));
+  expect(state.requests.filter((request) => request.path === searchPath && request.method === 'POST')).toHaveLength(0);
+});
+
+test('a late dismissed acquisition cannot release a newer search receiver lease', async ({ page }) => {
+  const state = await install(page, { delayNextBrowseAcquire: true });
+  await dialog(page).getByRole('button', { name: 'Find signals', exact: true }).click();
+  await expect.poll(() => Boolean(state.releaseBrowseAcquire)).toBe(true);
+  await page.evaluate(async () => {
+    const api = await import(document.querySelector('script[type="module"][src*="/assets/app.js"]').src);
+    api.closeReadOnlyModal(true);
+  });
+  await page.getByRole('button', { name: 'Find Trunked Systems', exact: true }).click();
+  await expect(dialog(page).getByLabel('Receiver', { exact: true })).toBeVisible();
+  await dialog(page).getByLabel('Receiver', { exact: true }).selectOption('idle-a');
+  await complete(page);
+  state.releaseBrowseAcquire();
+  await expect.poll(() => savedSearchRequests(state).browseDeletes.length).toBe(1);
+  expect(savedSearchRequests(state).browseDeletes[0]).toEqual({ path: '/api/v1/admin/tuners/idle-b/browse',
+    method: 'DELETE', body: { lease_id: 'lease-1' } });
+  expect(savedSearchRequests(state).jobDeletes).toHaveLength(0);
+  const created = state.requests.find((request) => request.path === searchPath && request.method === 'POST');
+  expect(created.body.tuner_id).toBe('idle-a');
+  expect(created.body.browse_lease_id).toBe('lease-2');
+  await expect(dialog(page).getByRole('heading', { name: /channels? found$/ })).toBeVisible();
+});
 
 test('uses one widest idle receiver and acquires its own browse session when searching', async ({ page }) => {
   const state = await install(page);

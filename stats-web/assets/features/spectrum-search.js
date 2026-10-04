@@ -63,6 +63,12 @@ export function openSpectrumSearchWizard(ui, context = {}) {
   const customRange = { minimum: '769', maximum: '775' };
   let lease = null;
   let job = null;
+  let releasedJobId = null;
+  let retiringJobId = null;
+  let jobReleaseInFlight = null;
+  const leaseReleasesInFlight = new Map();
+  const lateLeases = new Map();
+  let receiverFinishPromise = null;
   let pollTimer = null;
   let renewalTimer = null;
   let closed = false;
@@ -107,6 +113,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     return requestJson(url, { page: false, signal: options.method ? null : abort.signal, ...options });
   };
   const jobPath = () => `${path}/${encodeURIComponent(job.job_id)}`;
+  const liveJob = () => Boolean(job?.job_id && job.job_id !== releasedJobId && job.job_id !== retiringJobId);
   const browsePath = (id) => `/api/v1/admin/tuners/${encodeURIComponent(id)}/browse`;
   const leaseNoLongerExists = (cause) => [404, 410].includes(Number(cause?.status)) ||
     ['tuner_not_found', 'tuner_browse_expired'].includes(String(cause?.code || ''));
@@ -120,49 +127,80 @@ export function openSpectrumSearchWizard(ui, context = {}) {
   };
   const scheduleRenewal = () => {
     clearRenewal();
-    if (current() && (lease || job)) renewalTimer = window.setTimeout(() => void renew(), 10000);
+    if (current() && (lease || liveJob())) renewalTimer = window.setTimeout(() => void renew(), 10000);
+  };
+  const leaseKey = (value, id) => `${id}:${value.lease_id}`;
+  const endOwnedLease = async (previous, id) => {
+    const key = leaseKey(previous, id);
+    const pending = leaseReleasesInFlight.get(key) || requestJson(browsePath(id), {
+        method: 'DELETE', body: { lease_id: previous.lease_id }, page: false, keepalive: true,
+        timeoutMs: 3000
+      });
+    leaseReleasesInFlight.set(key, pending);
+    try { await pending; }
+    catch (cause) { if (!leaseNoLongerExists(cause)) throw cause; }
+    finally { if (leaseReleasesInFlight.get(key) === pending) leaseReleasesInFlight.delete(key); }
   };
   const releaseLease = async ({ bestEffort = false } = {}) => {
     clearRenewal();
     const previous = lease;
     if (!previous?.lease_id) return true;
     try {
-      await requestJson(browsePath(previous.tuner?.id || usedReceiverId), {
-        method: 'DELETE', body: { lease_id: previous.lease_id }, page: false, keepalive: true,
-        timeoutMs: 3000
-      });
+      await endOwnedLease(previous, previous.tuner?.id || usedReceiverId);
       if (lease?.lease_id === previous.lease_id) lease = null;
       return true;
     } catch (cause) {
-      if (leaseNoLongerExists(cause)) {
-        if (lease?.lease_id === previous.lease_id) lease = null;
-        return true;
-      }
       if (bestEffort) return false;
       if (current() && lease?.lease_id === previous.lease_id) scheduleRenewal();
       throw cause;
     }
   };
-  const releaseJob = async ({ bestEffort = false } = {}) => {
+  const releaseLateLease = async (acquired, id) => {
+    if (lease?.lease_id === acquired.lease_id && usedReceiverId === id) {
+      if (!current()) await releaseLease({ bestEffort: true });
+      return;
+    }
+    const key = leaseKey(acquired, id);
+    lateLeases.set(key, { acquired, id });
+    try {
+      await endOwnedLease(acquired, id);
+      lateLeases.delete(key);
+    } catch (_) {
+      // Keep this exact lease for the ordered close cleanup to retry.
+    }
+  };
+  const releaseJob = async ({ bestEffort = false, preserveResults = false } = {}) => {
     window.clearTimeout(pollTimer);
     pollTimer = null;
     const previous = job;
     if (!previous?.job_id) return true;
-    try {
-      await requestJson(`${path}/${encodeURIComponent(previous.job_id)}`, {
+    const retainOrClear = () => {
+      if (job?.job_id !== previous.job_id) return;
+      if (preserveResults) releasedJobId = previous.job_id;
+      else { job = null; releasedJobId = null; retiringJobId = null; }
+    };
+    if (previous.job_id === releasedJobId) { retainOrClear(); return true; }
+    retiringJobId = previous.job_id;
+    const pending = jobReleaseInFlight?.id === previous.job_id ? jobReleaseInFlight.promise :
+      requestJson(`${path}/${encodeURIComponent(previous.job_id)}`, {
         method: 'DELETE', page: false, keepalive: true, timeoutMs: 3000
       });
-      if (job?.job_id === previous.job_id) job = null;
+    jobReleaseInFlight = { id: previous.job_id, promise: pending };
+    try {
+      await pending;
+      retainOrClear();
       scheduleRenewal();
       return true;
     } catch (cause) {
       if (jobNoLongerExists(cause)) {
-        if (job?.job_id === previous.job_id) job = null;
+        retainOrClear();
         scheduleRenewal();
         return true;
       }
       if (bestEffort) return false;
       throw cause;
+    } finally {
+      if (jobReleaseInFlight?.promise === pending) jobReleaseInFlight = null;
     }
   };
   const releaseDelay = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
@@ -170,15 +208,21 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     clearRenewal();
     await Promise.allSettled([...pendingReceiverUses]);
     const expiresAt = Math.max(Number(job?.expires_at_ms) || 0,
-      Number(lease?.expires_at_epoch_ms || lease?.expires_at_ms) || 0);
+      Number(lease?.expires_at_epoch_ms || lease?.expires_at_ms) || 0,
+      ...[...lateLeases.values()].map(({ acquired }) =>
+        Number(acquired.expires_at_epoch_ms || acquired.expires_at_ms) || 0));
     const deadline = Math.max(Date.now() + 10_000, expiresAt) + 500;
-    while (job?.job_id || lease?.lease_id) {
+    while (job?.job_id || lease?.lease_id || lateLeases.size) {
       const jobReleased = await releaseJob({ bestEffort: true });
-      if (jobReleased) await releaseLease({ bestEffort: true });
-      if (!job?.job_id && !lease?.lease_id) break;
+      if (jobReleased) {
+        await releaseLease({ bestEffort: true });
+        for (const { acquired, id } of [...lateLeases.values()]) await releaseLateLease(acquired, id);
+      }
+      if (!job?.job_id && !lease?.lease_id && !lateLeases.size) break;
       if (Date.now() >= deadline) {
         job = null;
         lease = null;
+        lateLeases.clear();
         break;
       }
       await releaseDelay(Math.min(1000, Math.max(0, deadline - Date.now())));
@@ -186,7 +230,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
   };
   const abandon = () => {
     abort.abort();
-    void releaseJob({ bestEffort: true }).finally(() => releaseLease({ bestEffort: true }));
+    void releaseForClose();
   };
   window.addEventListener('pagehide', abandon);
   const button = (label, action, primary = false, host = actions) => {
@@ -199,7 +243,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     modal.setBusy(value);
     stage.setAttribute('aria-busy', String(value));
     if (value) host.querySelectorAll('input,select,button').forEach((control) => {
-      disabled.set(control, control.disabled);
+      if (!disabled.has(control)) disabled.set(control, control.disabled);
       control.disabled = true;
     });
     else {
@@ -259,7 +303,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
   const selectedCandidates = () => candidates().filter((candidate) => selected.has(candidate.candidate_id));
   const pendingDirectory = () => candidates().some((candidate) => candidate.radio_reference?.state === 'pending');
   const scheduleDirectoryPoll = () => {
-    if (current() && job?.phase === 'complete' && pendingDirectory()) {
+    if (current() && liveJob() && job.phase === 'complete' && pendingDirectory()) {
       window.clearTimeout(pollTimer);
       pollTimer = window.setTimeout(() => void poll(), 750);
     }
@@ -376,16 +420,15 @@ export function openSpectrumSearchWizard(ui, context = {}) {
   const prepareReceiver = (state) => trackReceiverUse(() => prepareReceiverUse(state));
   const prepareReceiverUse = async ({ tuner }) => {
     if (busy) return;
+    const operation = generation;
     setBusy(true);
     clearFeedback();
     feedback.hidden = true;
     try {
       const acquired = await context.prepareReceiver(tuner);
       if (!acquired) return;
-      if (!current()) {
-        void requestJson(browsePath(tuner.id), {
-          method: 'DELETE', body: { lease_id: acquired.lease_id }, page: false, keepalive: true
-        }).catch(() => {});
+      if (!current() || operation !== generation) {
+        await releaseLateLease(acquired, tuner.id);
         return;
       }
       if (!preparedCatalogTuners.has(tuner.id)) preparedCatalogTuners.set(tuner.id, tuner);
@@ -434,9 +477,10 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     return list;
   };
   const renew = async () => {
-    if (!current() || (!lease && !job)) return;
+    if (!current() || (!lease && !liveJob())) return;
     clearRenewal();
     const previous = lease;
+    const previousJobId = liveJob() ? job.job_id : null;
     const id = usedReceiverId;
     const operation = generation;
     try {
@@ -444,19 +488,25 @@ export function openSpectrumSearchWizard(ui, context = {}) {
         const renewed = await request(browsePath(id), {
           method: 'POST', body: { lease_id: previous.lease_id }
         });
-        if (!current() || lease?.lease_id !== previous.lease_id || operation !== generation || usedReceiverId !== id) return;
+        if (!current() || lease?.lease_id !== previous.lease_id || operation !== generation || usedReceiverId !== id ||
+            (previousJobId && (!liveJob() || job.job_id !== previousJobId))) return;
         lease = renewed;
         updateReceiverMeasurements(renewed.tuner, id);
         updateContext();
       }
-      if (!busy && job && !['scanning', 'checking'].includes(job.phase)) {
+      if (!busy && liveJob() && !['scanning', 'checking'].includes(job.phase)) {
+        const observed = job;
         const updated = await request(jobPath(), { csrf: false });
-        if (current() && !busy && operation === generation && job?.job_id === updated.job_id) {
+        if (current() && !busy && operation === generation && liveJob() && job === observed &&
+            job.job_id === updated.job_id) {
           job = updated;
           if (updated.phase !== 'complete' || updated.restart_required) drawJob();
         }
       }
     } catch (cause) {
+      if (!current() || operation !== generation || usedReceiverId !== id ||
+          (previous && lease?.lease_id !== previous.lease_id) ||
+          (previousJobId && (!liveJob() || job.job_id !== previousJobId))) return;
       if (current() && !busy) {
         if (previous && leaseRenewalLostOwnership(cause)) {
           if (lease?.lease_id === previous.lease_id) lease = null;
@@ -467,7 +517,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
         else error('We couldn’t refresh this search. Check your connection before continuing.', cause);
       }
     }
-    if (current() && operation === generation && (lease || job)) scheduleRenewal();
+    if (current() && operation === generation && (lease || liveJob())) scheduleRenewal();
   };
   const showBand = () => {
     const available = (catalog.tuners || []).filter((tuner) => tuner.eligible);
@@ -734,25 +784,30 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       const reusingPreparedReceiver = Boolean(lease?.lease_id && usedReceiverId === receiverId);
       if (!reusingPreparedReceiver) await releaseLease();
       if (!current() || operation !== generation) return;
-      usedReceiverId = receiverId;
-      const acquired = await request(browsePath(receiverId), { method: 'POST',
+      const id = receiverId;
+      usedReceiverId = id;
+      const acquired = await request(browsePath(id), { method: 'POST',
         body: reusingPreparedReceiver ? { lease_id: lease.lease_id } : {} });
       if (!current() || operation !== generation) {
-        void requestJson(browsePath(receiverId), { method: 'DELETE', body: { lease_id: acquired.lease_id }, page: false });
+        await releaseLateLease(acquired, id);
         return;
       }
       lease = acquired;
-      updateReceiverMeasurements(acquired.tuner, receiverId);
+      updateReceiverMeasurements(acquired.tuner, id);
       const created = await request(path, { method: 'POST', body: {
-        tuner_id: receiverId, browse_lease_id: lease.lease_id, ranges,
+        tuner_id: id, browse_lease_id: lease.lease_id, ranges,
         radioreference_state_id: directory.stateId()
       }, timeoutMs: 30000 });
       if (!current() || operation !== generation) {
         job = created;
+        releasedJobId = null;
+        retiringJobId = null;
         await releaseJob({ bestEffort: true });
         return;
       }
       job = created;
+      releasedJobId = null;
+      retiringJobId = null;
       selected.clear();
       drafts.clear();
       groups.clear();
@@ -838,13 +893,14 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     pollTimer = window.setTimeout(() => void poll(), 750);
   };
   const poll = async () => {
-    if (!current() || !job) return;
+    if (!current() || !liveJob()) return;
     const operation = generation;
+    const observed = job;
     const directoryRefresh = job.phase === 'complete';
     if (directoryRefresh && busy) { scheduleDirectoryPoll(); return; }
     try {
       const updated = await request(jobPath(), { csrf: false });
-      if (!current() || operation !== generation) return;
+      if (!current() || operation !== generation || !liveJob() || job !== observed || busy) return;
       job = updated;
       clearFeedback();
       if (directoryRefresh && updated.phase === 'complete' && currentStep === 'review') {
@@ -853,7 +909,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       } else if (directoryRefresh && updated.phase === 'complete' && pendingDirectory()) scheduleDirectoryPoll();
       else drawJob();
     } catch (cause) {
-      if (!current() || operation !== generation) return;
+      if (!current() || operation !== generation || !liveJob() || job !== observed || busy) return;
       if (isExpired(cause)) { showExpired(); return; }
       if (directoryRefresh) {
         error('Directory names could not be refreshed. You can continue with the on-air details.', cause);
@@ -1220,18 +1276,27 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     const retry = button(takeover ? 'Try resuming channels' : 'Try releasing receiver',
       () => void retryReceiverRelease(), true);
     retry.dataset.retryReceiverRelease = 'true';
+    if (busy) setBusy(true);
   };
-  const finishReceiverUse = async () => {
-    try {
-      await releaseLease();
-      actions.querySelector('[data-retry-receiver-release]')?.remove();
-      clearFeedback();
-      if (current() && job) scheduleRenewal();
-      return true;
-    } catch (cause) {
-      if (current()) surfaceReceiverReleaseFailure(cause);
-      return false;
-    }
+  const finishReceiverUse = () => {
+    if (receiverFinishPromise) return receiverFinishPromise;
+    const pending = trackReceiverUse(async () => {
+      try {
+        await releaseJob({ preserveResults: true });
+        await releaseLease();
+        if (current()) {
+          actions.querySelector('[data-retry-receiver-release]')?.remove();
+          clearFeedback();
+        }
+        return true;
+      } catch (cause) {
+        if (current()) surfaceReceiverReleaseFailure(cause);
+        return false;
+      }
+    });
+    receiverFinishPromise = pending;
+    void pending.finally(() => { if (receiverFinishPromise === pending) receiverFinishPromise = null; });
+    return pending;
   };
   const retryReceiverRelease = async () => {
     if (busy) return;
@@ -1260,7 +1325,8 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     if (!finished) return false;
     return finishReceiverUse();
   };
-  const save = async (ids) => {
+  const save = (ids) => trackReceiverUse(() => saveChannels(ids));
+  const saveChannels = async (ids) => {
     if (job.restart_required) { showSaved(); return; }
     setBusy(true);
     let added = false;
@@ -1324,6 +1390,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     });
     button('Done', () => modal.close());
     actions.append(anchor('Open Channels', href('channel-setup'), 'ui-button ui-button-primary'));
+    if (busy) setBusy(true);
   };
   const load = async () => {
     if (modal.ready && !await modal.ready || !current()) return;
