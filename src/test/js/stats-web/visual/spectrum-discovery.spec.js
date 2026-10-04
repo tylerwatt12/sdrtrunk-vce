@@ -871,30 +871,54 @@ test('manual P25 setup waits for cancellation and preserves the wizard when canc
   expect(state.requests.filter((request) => request.path.endsWith('/save') || request.path.endsWith('/start'))).toHaveLength(0);
 });
 
-test('manual weak P25 setup saves through the normal channel editor without verified identity or autostart', async ({ page }) => {
-  const state = { phase: 'inconclusive', manualSetup: true, probeOverride: {
-    c4fm: { valid_control_messages: 38, quality_pct: 3 }, cqpsk: { valid_control_messages: 0, quality_pct: 0 },
-    identity: null, selected_modulation: null
-  } };
-  await install(page, state);
-  await begin(page);
-  await wizard(page).getByRole('button', { name: 'Set up manually', exact: true }).click();
-  const editor = page.locator('.channel-editor-modal').filter({ has: page.getByRole('heading', { name: 'Create Channel', exact: true }) });
-  await editor.getByLabel('Name', { exact: true }).fill('Weak Control');
-  await editor.getByRole('button', { name: 'Create channel', exact: true }).click();
-  await expect.poll(() => state.requests.filter((request) => request.path === '/api/v1/admin/channels' &&
-    request.method === 'POST').length).toBe(1);
-  const saved = state.requests.find((request) => request.path === '/api/v1/admin/channels' && request.method === 'POST').body;
-  expect(saved.protocol_id).toBe('p25-phase1');
-  expect(saved.name).toBe('Weak Control');
-  expect(saved.source.frequencies_hz).toEqual([851012500]);
-  expect(saved.source.preferred_tuner).toBe('Test receiver');
-  expect(saved.settings.modulation).toBe('C4FM');
-  expect(saved.observed?.p25_site_identity).toBeUndefined();
-  expect(saved.auto_start_order).toBeUndefined();
-  expect(state.requests.filter((request) => request.path.endsWith('/save') || request.path.endsWith('/start') ||
-    request.path.endsWith('/actions') && request.body.action === 'START')).toHaveLength(0);
-});
+for (const signal of [
+  { name: '38 controls and 3% score', controls: 38, rejected: 169, score: 3, phase: 'inconclusive', modulation: 'C4FM' },
+  { name: 'one control and 3% score', controls: 1, rejected: 169, score: 3, phase: 'inconclusive', modulation: 'C4FM' },
+  { name: 'one C4FM control and zero score', controls: 1, rejected: 169, score: 0, phase: 'inconclusive', modulation: 'C4FM' },
+  { name: 'one CQPSK control and zero score', controls: 1, rejected: 169, score: 0, phase: 'inconclusive', modulation: 'CQPSK' },
+  { name: 'zero decode evidence', controls: 0, rejected: 0, score: 0, phase: 'failed' }
+]) {
+  test(`manual weak P25 setup saves ${signal.name} without verified identity or autostart`, async ({ page }) => {
+    const state = { phase: signal.phase, manualSetup: true, probeOverride: {
+      c4fm: { valid_messages: signal.modulation === 'C4FM' ? signal.controls : 0,
+        valid_control_messages: signal.modulation === 'C4FM' ? signal.controls : 0,
+        invalid_control_messages: signal.modulation === 'C4FM' ? signal.rejected : 0,
+        quality_pct: signal.modulation === 'C4FM' ? signal.score : 0 },
+      cqpsk: { valid_messages: signal.modulation === 'CQPSK' ? signal.controls : 0,
+        valid_control_messages: signal.modulation === 'CQPSK' ? signal.controls : 0,
+        invalid_control_messages: signal.modulation === 'CQPSK' ? signal.rejected : 0,
+        quality_pct: signal.modulation === 'CQPSK' ? signal.score : 0 },
+      identity: null, selected_modulation: null
+    } };
+    await install(page, state);
+    await page.evaluate(() => window.discoveryApi.openSpectrumDiscoveryWizard({
+      tunerId: 'idle-a', tunerName: 'Test receiver', frequencyHz: 774706250,
+      setProbeActive: (active) => window.discoveryProbeStates.push(active)
+    }));
+    await wizard(page).getByRole('button', { name: 'Check signal', exact: true }).click();
+    await wizard(page).getByRole('button', { name: 'Set up manually', exact: true }).click();
+    const editor = page.locator('.channel-editor-modal').filter({ has: page.getByRole('heading', { name: 'Create Channel', exact: true }) });
+    const modulation = editor.getByRole('combobox', { name: 'Modulation', exact: true });
+    await expect(modulation).toHaveValue(signal.modulation || 'CQPSK');
+    if (!signal.modulation) await modulation.selectOption('C4FM');
+    await editor.getByLabel('Name', { exact: true }).fill('Weak Control');
+    await editor.getByRole('button', { name: 'Create channel', exact: true }).click();
+    await expect.poll(() => state.requests.filter((request) => request.path === '/api/v1/admin/channels' &&
+      request.method === 'POST').length).toBe(1);
+    const saved = state.requests.find((request) => request.path === '/api/v1/admin/channels' && request.method === 'POST').body;
+    expect(saved.protocol_id).toBe('p25-phase1');
+    expect(saved.name).toBe('Weak Control');
+    expect(saved.source.frequencies_hz).toEqual([774706250]);
+    expect(saved.source.preferred_tuner).toBe('Test receiver');
+    expect(saved.settings.modulation).toBe(signal.modulation || 'C4FM');
+    expect(saved.observed?.p25_site_identity).toBeUndefined();
+    expect(saved.auto_start_order).toBeUndefined();
+    await expect.poll(() => page.evaluate(() => window.discoveryProbeStates)).toEqual([true, false]);
+    expect(state.requests.filter((request) => request.method === 'DELETE' && request.path.endsWith('/discovery-a'))).toHaveLength(1);
+    expect(state.requests.filter((request) => request.path.endsWith('/save') || request.path.endsWith('/start') ||
+      request.path.endsWith('/actions') && request.body.action === 'START')).toHaveLength(0);
+  });
+}
 
 for (const protocolId of ['dmr', 'nxdn']) {
   test(`inconclusive ${protocolId.toUpperCase()} does not offer the P25 manual handoff`, async ({ page }) => {

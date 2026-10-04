@@ -93,6 +93,16 @@ assert.deepEqual(manualDraft, { protocol_id: 'p25-phase1', source: {
   frequencies_hz: [774706250], preferred_frequency_hz: 774706250, preferred_tuner: 'Receiver A'
 }, settings: { modulation: 'C4FM' } },
 'Manual setup carries frequency and winning modulation without inventing verified identity');
+for (const [winner, other] of [['cqpsk', 'c4fm'], ['c4fm', 'cqpsk']]) {
+  const zeroScoreWinner = JSON.parse(vm.runInContext(`JSON.stringify(spectrumDiscoveryManualChannel(
+    { frequencyHz: 774706250 }, ${JSON.stringify({
+      [winner]: { valid_control_messages: 1, quality_pct: 0 },
+      [other]: { valid_control_messages: 0, quality_pct: 0 }
+    })}
+  ).settings)`, context));
+  assert.deepEqual(zeroScoreWinner, { modulation: winner.toUpperCase() },
+    'A sole decoder with valid control evidence wins even at zero score');
+}
 assert.deepEqual(JSON.parse(vm.runInContext(`JSON.stringify(spectrumDiscoveryManualChannel(
   { frequencyHz: 774706250 }, { c4fm: { valid_control_messages: 38, quality_pct: 3 },
     cqpsk: { valid_control_messages: 38, quality_pct: 3 } }

@@ -13052,8 +13052,10 @@ function spectrumDiscoveryManualChannel(selection, probe = {}) {
   const second = probe.cqpsk || {};
   const firstScore = Number(first.quality_pct) || 0;
   const secondScore = Number(second.quality_pct) || 0;
-  const modulation = firstScore > secondScore && Number(first.valid_control_messages) > 0 ? 'C4FM' :
-    secondScore > firstScore && Number(second.valid_control_messages) > 0 ? 'CQPSK' : null;
+  const firstHasControls = Number(first.valid_control_messages) > 0;
+  const secondHasControls = Number(second.valid_control_messages) > 0;
+  const modulation = firstHasControls && (!secondHasControls || firstScore > secondScore) ? 'C4FM' :
+    secondHasControls && (!firstHasControls || secondScore > firstScore) ? 'CQPSK' : null;
   return { protocol_id: 'p25-phase1', source: {
     frequencies_hz: [selection.frequencyHz], preferred_frequency_hz: selection.frequencyHz,
     preferred_tuner: selection.tunerName || null
