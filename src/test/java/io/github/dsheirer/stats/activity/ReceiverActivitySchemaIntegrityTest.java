@@ -261,8 +261,8 @@ class ReceiverActivitySchemaIntegrityTest
                 """);
             execute(connection, """
                 INSERT INTO activity_event_identity_member(
-                    event_id, radio_system_id, identity_summary_id, identity_kind_code, observed_local_id)
-                VALUES (1, 10, 101, 1, 1001)
+                    event_id, radio_system_id, identity_summary_id, identity_kind_code, observed_local_id, channel_id)
+                VALUES (1, 10, 101, 1, 1001, 1)
                 """);
             execute(connection, """
                 INSERT INTO trunked_logical_call_identity_bucket(
@@ -315,13 +315,13 @@ class ReceiverActivitySchemaIntegrityTest
                 """));
             assertThrows(SQLException.class, () -> execute(connection, """
                 INSERT INTO activity_event_identity_member(
-                    event_id, radio_system_id, identity_summary_id, identity_kind_code)
-                VALUES (1, 10, 102, 1)
+                    event_id, radio_system_id, identity_summary_id, identity_kind_code, channel_id)
+                VALUES (1, 10, 102, 1, 1)
                 """));
             assertThrows(SQLException.class, () -> execute(connection, """
                 INSERT INTO activity_event_identity_member(
-                    event_id, radio_system_id, identity_summary_id, identity_kind_code)
-                VALUES (1, 10, 102, 2)
+                    event_id, radio_system_id, identity_summary_id, identity_kind_code, channel_id)
+                VALUES (1, 10, 102, 2, 1)
                 """));
             assertThrows(SQLException.class, () -> execute(connection, """
                 INSERT INTO trunked_logical_call_identity_bucket(

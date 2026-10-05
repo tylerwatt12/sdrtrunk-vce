@@ -119,7 +119,7 @@ class ApplicationDatabaseMigratorInPlaceTest
     @Test
     void defaultsMissingRequiredSettingOnOlderAndCurrentSources() throws Exception
     {
-        for(int version: List.of(30,31))
+        for(int version: List.of(30, DatabaseFormatCatalog.CURRENT_VERSION))
         {
             Path database = mTemporaryFolder.resolve("missing-setting-" + version + ".sqlite");
             Class.forName("io.github.dsheirer.database.upgrade.Format" + version + "TestDatabase")
@@ -138,7 +138,7 @@ class ApplicationDatabaseMigratorInPlaceTest
     @Test
     void healthyCurrentDatabaseSkipsBackupAndDoesNotChangeItsBytes() throws Exception
     {
-        Path database = Format34TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
+        Path database = Format38TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
         byte[] before = Files.readAllBytes(database);
         var result = ApplicationDatabaseMigrator.migrateInPlace(database, ignored -> { },
             () -> fail("A healthy current database must not be backed up"));

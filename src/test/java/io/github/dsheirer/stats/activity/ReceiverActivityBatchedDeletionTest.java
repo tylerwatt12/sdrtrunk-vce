@@ -90,7 +90,7 @@ class ReceiverActivityBatchedDeletionTest
             execute(connection, "INSERT INTO radio_system_identity_summary" +
                 "(id,radio_system_id,identity_kind_code,identity_id,first_seen_ms,last_seen_ms) VALUES(2,1,1,45,1000,1000)");
             execute(connection, "INSERT INTO activity_event_identity_member(event_id,radio_system_id,identity_summary_id," +
-                "identity_kind_code) VALUES(1,1,2,1)");
+                "identity_kind_code,channel_id) VALUES(1,1,2,1,1)");
             ScopedData target = new ScopedData("radio_system", SYSTEM, null, null, "radios", "v1-r-x-x-321", List.of("summary"));
             StatsDatabaseMaintenanceRequest request = StatsDatabaseMaintenanceRequest.delete(target);
             assertNull(ReceiverActivityMaintenance.deleteRetainedStatsPass(connection, null, request, 0));
@@ -227,8 +227,8 @@ class ReceiverActivityBatchedDeletionTest
                 "VALUES(1,1,1,1000,4,851000000),(2,1,1,2000,4,852000000)");
             execute(connection, "INSERT INTO radio_system_identity_summary" +
                 "(id,radio_system_id,identity_kind_code,identity_id,first_seen_ms,last_seen_ms) VALUES(2,1,1,45,1000,1000)");
-            execute(connection, "INSERT INTO activity_event_identity_member(event_id,radio_system_id,identity_summary_id,identity_kind_code) " +
-                "VALUES(1,1,2,1),(2,1,2,1)");
+            execute(connection, "INSERT INTO activity_event_identity_member(event_id,radio_system_id,identity_summary_id,identity_kind_code,channel_id) " +
+                "VALUES(1,1,2,1,1),(2,1,2,1,1)");
             ScopedData events = new ScopedData("radio_system", SYSTEM, CHANNEL, SITE,
                 "detailed_events", null, List.of("events"), 1000L, 2000L, 851000000L);
             assertEquals(2, ReceiverActivityMaintenance.preview(connection, events).rowsTotal());

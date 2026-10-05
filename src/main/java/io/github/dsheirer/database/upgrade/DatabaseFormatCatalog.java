@@ -36,7 +36,7 @@ import java.util.Map;
 public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
-    public static final int CURRENT_VERSION = 34;
+    public static final int CURRENT_VERSION = 38;
     static final String RETIRED_TRUNKED_IDENTITY_BOUNDARY_KEY = "trunked_identity_metrics_started_at_ms";
     static final List<String> RETIRED_SUBSYSTEM_VERSION_KEYS = List.of(
         "alias_schema_version", "configuration_schema_version", "settings_schema_version", "icon_schema_version",
@@ -93,6 +93,10 @@ public final class DatabaseFormatCatalog
     private static final String FORMAT_31_FINGERPRINT = FORMAT_30_FINGERPRINT;
     private static final String FORMAT_32_FINGERPRINT = "3a0bca87ac6492884053fe9d7102a72162f52449b96b54d1e653aa03d173879a";
     private static final String FORMAT_33_FINGERPRINT = "67288fe27e7cbdfeb576a9c9dd2b9dc6986931ecfaf16f71e6ce52e296d5fcb2";
+    private static final String FORMAT_35_FINGERPRINT = "8eb528aead7c9b9f052dad03c8e0157ecf1e14055b2ec7fdc4f15c65d982cbce";
+    private static final String FORMAT_36_FINGERPRINT = "017064542dbb5cfab978e1928679e5666fa0c22583970033c01f5b0f322a2be1";
+    private static final String FORMAT_37_FINGERPRINT = "82dc5ddb416a5c87b409544d1979fe2b9a3a2fde1a48418981376b2200067915";
+    private static final String FORMAT_38_FINGERPRINT = "461892f31065847bb4c8469a377806a79d4dd5070a2bff907c3f40d3ebabe1b6";
 
     private static final FormatDescriptor FORMAT_1 = descriptor(1, "alpha8-shared",
         "Shared Alpha 8, Alpha 9, and Alpha 10 database format", FORMAT_1_FINGERPRINT,
@@ -417,11 +421,47 @@ public final class DatabaseFormatCatalog
             "Apply corrected identity types, late conventional attribution, and fresh site-fact semantics to new observations",
             "Keep database-generated references at their full SQLite width and classify future statistics drops"));
 
+    private static final FormatDescriptor FORMAT_35 = new FormatDescriptor(35, "covering-activity-lookups-v1",
+        "Covering identity-evidence and saved-channel activity indexes", FORMAT_35_FINGERPRINT, Map.of(),
+        List.of("main format 35"),
+        "src/test/java/io/github/dsheirer/database/upgrade/Format35TestDatabase.java", List.of(
+            "Preserve every retained receiver activity event, event ID, and identity relationship unchanged",
+            "Replace four existing lookup indexes with covering equivalents in the same ordering",
+            "Add one narrow event/channel index without changing retained rows or foreign-key parent keys",
+            "Keep every administrator-owned configuration, credential, and personal setting unchanged"));
+
+    private static final FormatDescriptor FORMAT_36 = new FormatDescriptor(36, "covered-local-alias-evidence-v1",
+        "Stored member observation channels and local-address evidence indexes", FORMAT_36_FINGERPRINT, Map.of(),
+        List.of("main format 36"),
+        "src/test/java/io/github/dsheirer/database/upgrade/Format36TestDatabase.java", List.of(
+            "Preserve every retained event, member relationship, identity, and administrator-owned setting",
+            "Copy each member's immutable observation channel from its existing parent event",
+            "Enforce the event/channel relationship with a unique parent index and composite foreign key",
+            "Add member channel/address and positive P25 local-address covers while preserving Activity order"));
+
+    private static final FormatDescriptor FORMAT_37 = new FormatDescriptor(37, "positive-local-address-evidence-v1",
+        "Positive retained source and target local-address covering indexes", FORMAT_37_FINGERPRINT, Map.of(),
+        List.of("main format 37"),
+        "src/test/java/io/github/dsheirer/database/upgrade/Format37TestDatabase.java", List.of(
+            "Preserve every retained Activity row, member channel, identity relationship, and allocator unchanged",
+            "Add two sparse covering source and target local-address indexes for identity name search",
+            "Keep existing time ordering, Working-ID evidence, ownership, and retention behavior unchanged",
+            "Preserve every administrator-owned configuration, credential, and personal setting unchanged"));
+
+    private static final FormatDescriptor FORMAT_38 = new FormatDescriptor(38, "filtered-activity-lookup-v1",
+        "Target event-type and channel frequency Activity covering indexes", FORMAT_38_FINGERPRINT, Map.of(),
+        List.of("main format 38"),
+        "src/test/java/io/github/dsheirer/database/upgrade/Format38TestDatabase.java", List.of(
+            "Add two sparse Activity indexes for target event-type and channel frequency lookups",
+            "Preserve every existing schema definition, retained row, relationship, and allocator unchanged",
+            "Keep existing Activity time/ID ordering, ownership, and bounded retention behavior unchanged",
+            "Preserve every administrator-owned configuration, credential, and personal setting unchanged"));
+
     private static final List<FormatDescriptor> FORMATS =
         List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7, FORMAT_8, FORMAT_9,
             FORMAT_10, FORMAT_11, FORMAT_12, FORMAT_13, FORMAT_14, FORMAT_15, FORMAT_16, FORMAT_17, FORMAT_18,
             FORMAT_19, FORMAT_20, FORMAT_21, FORMAT_22, FORMAT_23, FORMAT_24, FORMAT_25, FORMAT_26, FORMAT_27,
-            FORMAT_28, FORMAT_29, FORMAT_30, FORMAT_31, FORMAT_32, FORMAT_33, FORMAT_34);
+            FORMAT_28, FORMAT_29, FORMAT_30, FORMAT_31, FORMAT_32, FORMAT_33, FORMAT_34, FORMAT_35, FORMAT_36, FORMAT_37, FORMAT_38);
 
     private static final Map<Integer,FormatDescriptor> BY_VERSION = FORMATS.stream().collect(
         java.util.stream.Collectors.toUnmodifiableMap(FormatDescriptor::version, descriptor -> descriptor));
@@ -603,7 +643,7 @@ public final class DatabaseFormatCatalog
     /** Current catalog descriptor. */
     public static FormatDescriptor current()
     {
-        return FORMAT_34;
+        return FORMAT_38;
     }
 
     /** Ordered manifest used by completeness tests and migration UX. */
@@ -893,7 +933,7 @@ public final class DatabaseFormatCatalog
             case 12, 13, 14 -> 5;
             case 15, 16, 17, 18, 19, 20, 21, 22 -> 6;
             case 23, 24, 25, 26, 27, 28, 29, 30 -> 7;
-            case 31, 32, 33, 34 -> 8;
+            case 31, 32, 33, 34, 35, 36, 37, 38 -> 8;
             default -> throw new IllegalArgumentException("No web preference version for database format " +
                 descriptor.version());
         };

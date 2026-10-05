@@ -62,7 +62,7 @@ class Format23To24DatabaseMigrationTest
 
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 23, report.steps().size());
             assertEquals("format-23-to-24", report.steps().getFirst().id());
-            assertEquals("format-33-to-34", report.steps().getLast().id());
+            assertEquals("format-37-to-38", report.steps().getLast().id());
             assertEquals(activityBefore.size(), report.steps().getFirst().effects().getFirst().affectedRows());
             assertEquals(rowsBefore, tableRowCounts(statement));
             assertEquals(activityBefore, activityRows(statement));
@@ -71,6 +71,13 @@ class Format23To24DatabaseMigrationTest
             addedObjects.removeAll(objectsBefore);
             Set<String> expectedObjects = new TreeSet<>(FILTER_INDEXES);
             expectedObjects.add("idx_receiver_activity_event_source_working_evidence");
+            expectedObjects.add("idx_receiver_activity_event_id_channel");
+            expectedObjects.add("idx_activity_event_member_identity_channel_local");
+            expectedObjects.add("idx_p25_site_call_identity_identity_address");
+            expectedObjects.add("idx_receiver_activity_event_source_identity_address");
+            expectedObjects.add("idx_receiver_activity_event_target_identity_address");
+            expectedObjects.add("idx_receiver_activity_event_target_event_type_time");
+            expectedObjects.add("idx_receiver_activity_event_channel_frequency_time");
             expectedObjects.addAll(Set.of("p25_subscriber_identity", "alias_p25_subscriber_identity",
                 "p25_wuid_assignment_observation_summary", "idx_alias_p25_subscriber_identity",
                 "idx_radio_system_identity_p25_subscriber", "idx_p25_wuid_assignment_observation_system_time",
@@ -148,7 +155,8 @@ class Format23To24DatabaseMigrationTest
                 "WHERE radio_system_id IS NOT NULL",
             indexSql(statement, "idx_receiver_activity_event_system_action_time"));
         assertEquals("CREATE INDEX idx_receiver_activity_event_channel_action_time " +
-                "ON receiver_activity_event(channel_id, action_code, observed_at_ms DESC, id DESC)",
+                "ON receiver_activity_event(channel_id, action_code, observed_at_ms DESC, id DESC, " +
+                "radio_system_id, source_identity_summary_id, source_observed_local_id)",
             indexSql(statement, "idx_receiver_activity_event_channel_action_time"));
         assertEquals("CREATE INDEX idx_receiver_activity_event_system_event_type_time " +
                 "ON receiver_activity_event(radio_system_id, event_type_code, observed_at_ms DESC, id DESC) " +

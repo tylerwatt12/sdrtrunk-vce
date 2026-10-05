@@ -33,6 +33,7 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -511,14 +512,15 @@ class StatsWebDatabaseTest
                          (8102, 81, 2, 202, 1000, %1$d, 4)
                 """.formatted(now));
             statement.executeUpdate("""
-                INSERT INTO alias (id, alias_list_id, name, matcher_type, protocol, value)
-                VALUES (8111, 81, 'Shared Dispatch', 'TALKGROUP', 'DMR', 101),
-                       (8112, 81, 'Shared Unit', 'RADIO_ID', 'DMR', 202),
-                       (8113, 81, 'Silent Dispatch', 'TALKGROUP', 'DMR', 303),
-                       (8211, 82, 'Shared Dispatch', 'TALKGROUP', 'DMR', 101),
-                       (8212, 82, 'Shared Unit', 'RADIO_ID', 'DMR', 202),
-                       (7402, 74, 'Conventional Unit', 'RADIO_ID', 'DMR', 303)
+                INSERT INTO alias (id, alias_list_id, name, description, matcher_type, protocol, value)
+                VALUES (8111, 81, 'Shared Dispatch', 'Trunked group details', 'TALKGROUP', 'DMR', 101),
+                       (8112, 81, 'Shared Unit', 'Trunked radio details', 'RADIO_ID', 'DMR', 202),
+                       (8113, 81, 'Silent Dispatch', NULL, 'TALKGROUP', 'DMR', 303),
+                       (8211, 82, 'Shared Dispatch', 'Trunked group details', 'TALKGROUP', 'DMR', 101),
+                       (8212, 82, 'Shared Unit', 'Trunked radio details', 'RADIO_ID', 'DMR', 202),
+                       (7402, 74, 'Conventional Unit', 'Conventional radio details', 'RADIO_ID', 'DMR', 303)
                 """);
+            statement.executeUpdate("UPDATE alias SET description='Conventional group details' WHERE id=7401");
             statement.executeUpdate("""
                 INSERT INTO alias_activity_summary (
                     alias_id, alias_list_id, protocol_code, metrics_state,
@@ -585,6 +587,50 @@ class StatsWebDatabaseTest
             .filter(row -> number(row.get("identity_kind_code")) == 2)
             .findFirst().orElseThrow().get("alias_name"));
 
+        Map<String,Object> firstIdentityPage = mDatabase.identityDirectory(request("/?range=24h&limit=2"));
+        Map<String,Object> laterIdentityPage = mDatabase.identityDirectory(
+            request("/?range=24h&limit=2&offset=2"));
+        for(Map<String,Object> identityPage: List.of(firstIdentityPage, laterIdentityPage))
+        {
+            assertEquals("24h", identityPage.get("range"));
+            assertEquals(2, number(identityPage.get("limit")));
+            assertEquals(4, number(identityPage.get("total_count")));
+            assertFalse((Boolean)identityPage.get("candidate_limit_reached"));
+            assertEquals(2, rows(identityPage).size());
+        }
+        assertEquals(0, number(firstIdentityPage.get("offset")));
+        assertTrue((Boolean)firstIdentityPage.get("has_more"));
+        assertEquals(2, number(firstIdentityPage.get("next_offset")));
+        assertEquals(2, number(laterIdentityPage.get("offset")));
+        assertFalse((Boolean)laterIdentityPage.get("has_more"));
+        assertNull(laterIdentityPage.get("next_offset"));
+
+        List<Map<String,Object>> pagedIdentities = new ArrayList<>(rows(firstIdentityPage));
+        pagedIdentities.addAll(rows(laterIdentityPage));
+        assertEquals(List.of(101L, 202L, 7L, 303L), pagedIdentities.stream()
+            .map(row -> number(row.get("native_id"))).toList());
+        assertEquals(List.of(4L, 4L, 3L, 3L), pagedIdentities.stream()
+            .map(row -> number(row.get("logical_call_count"))).toList());
+        assertEquals(List.of("Shared Dispatch", "Shared Unit", "DMR Dispatch", "Conventional Unit"),
+            pagedIdentities.stream().map(row -> row.get("alias_name")).toList());
+        assertEquals(List.of("Trunked group details", "Trunked radio details",
+                "Conventional group details", "Conventional radio details"),
+            pagedIdentities.stream().map(row -> row.get("alias_description")).toList());
+        assertEquals(List.of(1L, 2L, 1L, 2L), pagedIdentities.stream()
+            .map(row -> number(row.get("identity_role_code"))).toList());
+        assertEquals(List.of("Destination", "Source", "Destination", "Source"),
+            pagedIdentities.stream().map(row -> row.get("identity_role")).toList());
+        assertEquals(List.of(
+                Map.of("kind", "talkgroup", "radio_system_key", "dmr:tier3:small:42",
+                    "identity_key", "v1-g-x-x-101"),
+                Map.of("kind", "radio", "radio_system_key", "dmr:tier3:small:42",
+                    "identity_key", "v1-r-x-x-202"),
+                Map.of("kind", "channel", "key", DMR_CHANNEL),
+                Map.of("kind", "channel", "key", DMR_CHANNEL)),
+            pagedIdentities.stream().map(row -> map(row, "entity_ref")).toList());
+        assertEquals("groups", pagedIdentities.get(2).get("entity_tab"));
+        assertEquals("radios", pagedIdentities.get(3).get("entity_tab"));
+
         Map<String,Object> publicLists = mDatabase.publicIdentityLists(request("/?limit=100"));
         assertEquals("DMR North", rows(publicLists).stream()
             .filter(row -> number(row.get("alias_list_id")) == 81).findFirst().orElseThrow().get("name"));
@@ -622,6 +668,99 @@ class StatsWebDatabaseTest
             "configuration_id", DMR_CHANNEL);
         assertEquals("Shared Unit", trunkedActivity.get("alias_name"));
         assertEquals("Conventional Unit", conventionalActivity.get("alias_name"));
+    }
+
+    @Test
+    void dashboardActivityRanksBothChannelKindsWithExactCountsAndStablePaging() throws Exception
+    {
+        long now = System.currentTimeMillis();
+        long hour = Math.floorDiv(now, 3_600_000L) * 3_600_000L;
+        long older = hour - 3 * 86_400_000L;
+        long expired = hour - 8 * 86_400_000L;
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_event(channel_id, radio_system_id, observed_at_ms, action_code,
+                    source_observed_local_id, source_identity_summary_id) VALUES
+                (71,71,%1$d,20,202,7102), (72,71,%1$d,20,202,7102),
+                (71,71,%2$d+100,20,202,7102), (71,71,%1$d,20,NULL,NULL),
+                (73,NULL,%1$d,20,202,NULL), (74,NULL,%1$d,20,202,NULL),
+                (74,NULL,%1$d-500,20,303,NULL), (74,NULL,%2$d+100,20,0,NULL),
+                (71,71,%3$d+100,20,202,7102), (71,71,%1$d,13,202,7102)
+                """.formatted(now, older, expired));
+            statement.executeUpdate("""
+                INSERT INTO trunked_signaling_activity_bucket(channel_id, radio_system_id, bucket_start_ms,
+                    register_count, join_count) VALUES
+                (71,71,%1$d,2,1), (72,71,%1$d,1,0), (71,71,%2$d,1,0), (71,71,%3$d,1,0)
+                """.formatted(hour, older, expired));
+            statement.executeUpdate("""
+                INSERT INTO conventional_activity_bucket(channel_id, frequency_hz, timeslot, bucket_start_ms,
+                    register_count) VALUES (73,0,-1,%1$d,1), (74,0,-1,%1$d,2), (74,0,-1,%2$d,1)
+                """.formatted(hour, older));
+        }
+        Map<String,Object> page = mDatabase.dashboardActivityRadios(request("/?range=7d&action=REGISTER&limit=2"));
+        assertEquals(4, number(page.get("total_count")));
+        assertEquals(8, number(page.get("retained_observation_count")));
+        assertEquals(6, number(page.get("identified_observation_count")));
+        assertTrue((Boolean)page.get("has_more"));
+        List<Map<String,Object>> first = rows(page);
+        assertEquals(RADIO_SYSTEM_KEY, first.getFirst().get("radio_system_key"));
+        assertEquals(3, number(first.getFirst().get("observation_count")));
+        assertEquals(ANALOG_CHANNEL, first.get(1).get("configuration_id"));
+        Map<String,Object> next = mDatabase.dashboardActivityRadios(
+            request("/?range=7d&action=REGISTER&limit=2&offset=2"));
+        assertEquals(4, number(next.get("total_count")));
+        assertFalse((Boolean)next.get("has_more"));
+        assertTrue(rows(next).stream().allMatch(row -> DMR_CHANNEL.equals(row.get("configuration_id"))));
+        Map<String,Object> recent = mDatabase.dashboardActivityRadios(
+            request("/?range=24h&action=REGISTER&limit=100"));
+        assertEquals(6, number(recent.get("retained_observation_count")));
+        assertEquals(5, number(recent.get("identified_observation_count")));
+    }
+
+    @Test
+    void radioAliasSortUsesExactAndRangeIndexesWithoutChangingConsensusOrPaging() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary(id, radio_system_id, identity_kind_code,
+                    identity_id, first_seen_ms, last_seen_ms) VALUES
+                (7105,71,2,303,1000,4000), (7106,71,2,404,1000,4000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,value,min_value,max_value) VALUES
+                (7102,71,'Middle Unit','RADIO_ID','APCO25',202,NULL,NULL),
+                (7202,72,'Middle Unit','RADIO_ID','APCO25_PHASE2',202,NULL,NULL),
+                (7103,71,'Alpha Range','RADIO_ID_RANGE','APCO25',NULL,300,350),
+                (7203,72,'Alpha Range','RADIO_ID_RANGE','APCO25_PHASE2',NULL,300,350),
+                (7104,71,'Conflict A','RADIO_ID','APCO25',404,NULL,NULL),
+                (7204,72,'Conflict B','RADIO_ID','APCO25',404,NULL,NULL)
+                """);
+            var expression = StatsWebDatabase.class.getDeclaredMethod("radioSystemAliasSortExpression",
+                String.class, String.class, String.class);
+            expression.setAccessible(true);
+            String sql = "EXPLAIN QUERY PLAN SELECT summary.id FROM radio_system_identity_summary summary " +
+                "JOIN radio_system system ON system.id=summary.radio_system_id WHERE system.id=71 ORDER BY " +
+                expression.invoke(null, "alias_radio", "summary.identity_id", "name");
+            StringBuilder plan = new StringBuilder();
+            try(ResultSet result = statement.executeQuery(sql))
+            {
+                while(result.next()) plan.append(result.getString("detail")).append('\n');
+            }
+            assertTrue(plan.toString().contains("idx_alias_radio_value (protocol=? AND value=?)"), plan.toString());
+            assertTrue(plan.toString().contains("idx_alias_radio_range"), plan.toString());
+        }
+        Map<String,Object> first = mDatabase.radioSystemRadios(RADIO_SYSTEM_KEY,
+            request("/?sort=alias&direction=asc&limit=2"));
+        assertEquals(List.of(404L,303L), rows(first).stream().map(row -> number(row.get("native_id"))).toList());
+        assertTrue((Boolean)first.get("has_more"));
+        Map<String,Object> last = mDatabase.radioSystemRadios(RADIO_SYSTEM_KEY,
+            request("/?sort=alias&direction=asc&limit=2&offset=2"));
+        assertEquals(List.of(202L), rows(last).stream().map(row -> number(row.get("native_id"))).toList());
+        assertFalse((Boolean)last.get("has_more"));
     }
 
     @Test
@@ -2079,11 +2218,13 @@ class StatsWebDatabaseTest
                     detail.contains("idx_alias_talkgroup_value (protocol=? AND value=?")),
                 () -> "Expected exact configured-talkgroup lookup, plan was: " + groupPlan);
             assertTrue(groupPlan.stream().anyMatch(detail ->
-                    detail.contains("SEARCH definition USING INDEX idx_alias_talkgroup_range")),
+                    detail.contains("SEARCH definition") &&
+                        detail.contains("INDEX idx_alias_talkgroup_range (protocol=? AND min_value<?")),
                 () -> "Expected range configured-talkgroup lookup, plan was: " + groupPlan);
             assertTrue(groupPlan.stream().anyMatch(detail -> detail.contains(
-                    "idx_receiver_activity_event_source_time (source_identity_summary_id=?")),
-                () -> "Expected identity-keyed legacy activity fallback, plan was: " + groupPlan);
+                    "idx_receiver_activity_event_source_identity_address (source_identity_summary_id=? AND " +
+                        "source_observed_local_id>?)")),
+                () -> "Expected covered identity/address activity fallback, plan was: " + groupPlan);
             assertTrue(groupPlan.stream().noneMatch(detail -> detail.contains("SCAN evidence") ||
                     detail.contains("SCAN receiver_activity_event")),
                 () -> "Identity alias search must not scan retained evidence: " + groupPlan);
@@ -2094,11 +2235,13 @@ class StatsWebDatabaseTest
                     detail.contains("idx_alias_radio_value (protocol=? AND value=?")),
                 () -> "Expected exact configured-radio lookup, plan was: " + radioPlan);
             assertTrue(radioPlan.stream().anyMatch(detail ->
-                    detail.contains("SEARCH definition USING INDEX idx_alias_radio_range")),
+                    detail.contains("SEARCH definition") &&
+                        detail.contains("INDEX idx_alias_radio_range (protocol=? AND min_value<?")),
                 () -> "Expected range configured-radio lookup, plan was: " + radioPlan);
             assertTrue(radioPlan.stream().anyMatch(detail -> detail.contains(
-                    "idx_receiver_activity_event_target_time (target_identity_summary_id=?")),
-                () -> "Expected identity-keyed legacy activity fallback, plan was: " + radioPlan);
+                    "idx_receiver_activity_event_target_identity_address (target_identity_summary_id=? AND " +
+                        "target_observed_local_id>?)")),
+                () -> "Expected covered identity/address activity fallback, plan was: " + radioPlan);
             assertTrue(radioPlan.stream().noneMatch(detail -> detail.contains("SCAN evidence") ||
                     detail.contains("SCAN receiver_activity_event")),
                 () -> "Radio alias search must not scan retained evidence: " + radioPlan);
@@ -2730,6 +2873,11 @@ class StatsWebDatabaseTest
             List<String> aliasPlan = explain(connection, observedQuery[0].sql(),
                 observedQuery[0].parameters().toArray());
             assertTrue(aliasPlan.stream().anyMatch(detail ->
+                    detail.contains("SEARCH calls") &&
+                        detail.contains("idx_p25_site_call_identity_channel_time") &&
+                        detail.contains("channel_id=?")),
+                () -> "Expected discovery to seek selected-channel call buckets, plan was: " + aliasPlan);
+            assertTrue(aliasPlan.stream().anyMatch(detail ->
                     detail.contains("SEARCH identity USING INTEGER PRIMARY KEY") ||
                         detail.contains("SEARCH identity USING INDEX idx_radio_system_identity")),
                 () -> "Expected indexed radio-system identity lookup, plan was: " + aliasPlan);
@@ -2769,8 +2917,8 @@ class StatsWebDatabaseTest
                 """);
             statement.executeUpdate("""
                 INSERT INTO activity_event_identity_member(
-                    event_id, radio_system_id, identity_summary_id, identity_kind_code, observed_local_id)
-                SELECT max(id), 71, 7101, 1, 101 FROM receiver_activity_event
+                    event_id, radio_system_id, identity_summary_id, identity_kind_code, observed_local_id, channel_id)
+                SELECT max(id), 71, 7101, 1, 101, 71 FROM receiver_activity_event
                 """);
             statement.executeUpdate("ANALYZE");
 
@@ -3060,8 +3208,8 @@ class StatsWebDatabaseTest
                 """);
             statement.executeUpdate("""
                 INSERT INTO activity_event_identity_member (
-                    event_id, radio_system_id, identity_summary_id, identity_kind_code, observed_local_id)
-                SELECT id, 71, 7101, 1, 101
+                    event_id, radio_system_id, identity_summary_id, identity_kind_code, observed_local_id, channel_id)
+                SELECT id, 71, 7101, 1, 101, channel_id
                 FROM receiver_activity_event
                 WHERE observed_at_ms IN (10000, 11000)
                 """);

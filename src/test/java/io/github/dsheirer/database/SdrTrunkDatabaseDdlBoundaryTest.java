@@ -35,6 +35,8 @@ class SdrTrunkDatabaseDdlBoundaryTest
     private static final Pattern SCHEMA_DDL_CALL = Pattern.compile(
         "\\b(?:(?:SdrTrunkDatabaseSchema|DmrActivitySchema|TrunkedSiteSchema|" +
             "EncryptionKeyVaultSchema|TrunkedIdentitySchema|ReceiverActivitySchema)\\.create\\w*|" +
+            "ReceiverActivitySchema\\.(?:rebuildCoveringActivityIndexes|rebuildHistoricalMemberEvidenceIndexes|" +
+                "rebuildStoredMemberChannelEvidence)|" +
             "Format(?:2|4|5)SchemaSql\\.create\\w*|ManagedRecordingSchema\\.ddlForFormat)\\s*\\(");
     private static final Pattern FRESH_SCHEMA_CALL = Pattern.compile(
         "\\bSdrTrunkDatabaseStartup(?:::|\\.)(?:createGlobalDatabase|createVaultDatabase)\\b");
@@ -85,6 +87,10 @@ class SdrTrunkDatabaseDdlBoundaryTest
         "java/io/github/dsheirer/database/upgrade/Format31To32DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format32To33DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format33To34DatabaseMigration.java",
+        "java/io/github/dsheirer/database/upgrade/Format34To35DatabaseMigration.java",
+        "java/io/github/dsheirer/database/upgrade/Format35To36DatabaseMigration.java",
+        "java/io/github/dsheirer/database/upgrade/Format36To37DatabaseMigration.java",
+        "java/io/github/dsheirer/database/upgrade/Format37To38DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/ManagedRecordingCatalogMigrator.java");
     private static final Set<String> FRESH_DATABASE_CALLERS = Set.of(
         "java/io/github/dsheirer/database/SdrTrunkDatabaseBootstrap.java",

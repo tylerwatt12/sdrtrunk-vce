@@ -70,7 +70,7 @@ class Format24To25DatabaseMigrationTest
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 24, preflight.steps().size());
             assertEquals("format-24-to-25", preflight.steps().getFirst().id());
             assertEquals("format-25-to-26", preflight.steps().get(1).id());
-            assertEquals("format-33-to-34", preflight.steps().getLast().id());
+            assertEquals("format-37-to-38", preflight.steps().getLast().id());
             assertEffect(preflight.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.PRESERVE,
                 "saved channel configurations", DatabaseMigrationEffect.UNKNOWN_COUNT);
             assertEffect(preflight.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.DEFAULT,
@@ -81,7 +81,7 @@ class Format24To25DatabaseMigrationTest
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 24, report.steps().size());
             assertEquals("format-24-to-25", report.steps().getFirst().id());
             assertEquals("format-25-to-26", report.steps().get(1).id());
-            assertEquals("format-33-to-34", report.steps().getLast().id());
+            assertEquals("format-37-to-38", report.steps().getLast().id());
             assertEquals(3, report.steps().get(1).effects().size());
             assertEquals(rowsBefore.get("configuration_channel"),
                 report.steps().getFirst().effects().getFirst().affectedRows());
@@ -170,7 +170,7 @@ class Format24To25DatabaseMigrationTest
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 24, preflight.steps().size());
             assertEquals("format-24-to-25", preflight.steps().getFirst().id());
             assertEquals("format-25-to-26", preflight.steps().get(1).id());
-            assertEquals("format-33-to-34", preflight.steps().getLast().id());
+            assertEquals("format-37-to-38", preflight.steps().getLast().id());
             assertEffect(preflight.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.RESET,
                 "unusable portable preference components", DatabaseMigrationEffect.UNKNOWN_COUNT);
             assertEffect(preflight.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.DEFAULT,

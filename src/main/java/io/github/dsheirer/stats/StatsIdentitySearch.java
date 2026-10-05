@@ -39,11 +39,12 @@ final class StatsIdentitySearch
             .append("(summary.identity_id & 2047)) LIKE ? ESCAPE '\\')");
         parameters.add(pattern);
         parameters.add(pattern);
-        sql.append(" OR lower(coalesce(").append(StatsSystemNameResolver.configuredNameSql("system"))
-            .append(",'')) LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM radio_system home_system ")
-            .append("WHERE home_system.system_key=printf('p25:%05x:%03x', ")
-            .append("summary.home_wacn,summary.home_system_id) AND lower(coalesce(")
-            .append(StatsSystemNameResolver.configuredNameSql("home_system"))
+        sql.append(" OR system.id IN (SELECT named_system.id FROM radio_system named_system WHERE ")
+            .append("lower(coalesce(").append(StatsSystemNameResolver.configuredNameSql("named_system"))
+            .append(",'')) LIKE ? ESCAPE '\\') OR printf('p25:%05x:%03x', ")
+            .append("summary.home_wacn,summary.home_system_id) IN (SELECT named_system.system_key ")
+            .append("FROM radio_system named_system WHERE lower(coalesce(")
+            .append(StatsSystemNameResolver.configuredNameSql("named_system"))
             .append(",'')) LIKE ? ESCAPE '\\')");
         parameters.add(pattern);
         parameters.add(pattern);
@@ -52,6 +53,15 @@ final class StatsIdentitySearch
             sql.append(" OR lower(coalesce(summary.last_talker_alias,'')) LIKE ? ESCAPE '\\'");
             parameters.add(pattern);
         }
+        // Alias text is independent of the retained identity being tested. Resolve it once and avoid
+        // reading any historical address evidence when no configured Alias can match the search.
+        sql.append(" OR EXISTS (WITH identity_search_aliases AS MATERIALIZED (")
+            .append("SELECT definition.id,definition.matcher_type FROM alias definition WHERE definition.matcher_type IN ('")
+            .append(aliasMatcher).append("','").append(aliasMatcher).append("_RANGE'")
+            .append("RADIO_ID".equals(aliasMatcher) ? ",'P25_SUBSCRIBER_IDENTITY') AND " : ") AND ")
+            .append(aliasTextSearch())
+            .append(") SELECT 1 WHERE EXISTS (SELECT 1 FROM identity_search_aliases) AND (0");
+        addTextParameters(parameters, pattern);
         if("RADIO_ID".equals(aliasMatcher))
         {
             sql.append(" OR EXISTS (SELECT 1 FROM alias_p25_subscriber_identity canonical_match ")
@@ -62,12 +72,11 @@ final class StatsIdentitySearch
                 .append("assigned_config.configuration_id=assigned_channel.configuration_id ")
                 .append("WHERE assigned_channel.radio_system_id=system.id ")
                 .append("AND assigned_config.alias_list_id=definition.alias_list_id) AND ")
-                .append(aliasTextSearch()).append(')');
-            addTextParameters(parameters, pattern);
+                .append(matchedAlias()).append(')');
         }
-        appendAliasSearch(sql, parameters, pattern, aliasMatcher, false);
-        appendAliasSearch(sql, parameters, pattern, aliasMatcher, true);
-        sql.append(')');
+        appendAliasSearch(sql, aliasMatcher, false);
+        appendAliasSearch(sql, aliasMatcher, true);
+        sql.append(")))");
     }
 
     /** Matches friendly labels in SQL before the subscriber page is ordered or limited. */
@@ -141,8 +150,7 @@ final class StatsIdentitySearch
         parameters.add(pattern);
     }
 
-    private static void appendAliasSearch(StringBuilder sql, List<Object> parameters, String pattern,
-                                          String aliasMatcher, boolean ranged)
+    private static void appendAliasSearch(StringBuilder sql, String aliasMatcher, boolean ranged)
     {
         String matcher = ranged ? aliasMatcher + "_RANGE" : aliasMatcher;
         String index = switch(matcher)
@@ -154,6 +162,9 @@ final class StatsIdentitySearch
             default -> throw new IllegalArgumentException("Unsupported radio-system Alias matcher");
         };
         int kind = "RADIO_ID".equals(aliasMatcher) ? 2 : 1;
+        // A matching label for another matcher cannot use this branch's address evidence.
+        sql.append(" OR (EXISTS (SELECT 1 FROM identity_search_aliases named WHERE ")
+            .append("named.matcher_type='").append(matcher).append("') AND (0");
         String assigned = "(EXISTS (SELECT 1 FROM receiver_channel assigned_channel " +
             "JOIN configuration_channel assigned_config ON " +
             "assigned_config.configuration_id=assigned_channel.configuration_id " +
@@ -168,49 +179,53 @@ final class StatsIdentitySearch
             .append("WHEN 1 THEN 'APCO25' WHEN 3 THEN 'DMR' WHEN 4 THEN 'NXDN' END, ")
             .append("CASE WHEN system.protocol_code=1 THEN 'APCO25_PHASE2' END) AND ")
             .append(aliasMatch("summary.identity_id", ranged)).append(" AND ").append(assigned)
-            .append(" AND ").append(aliasTextSearch())
+            .append(" AND ").append(matchedAlias())
             .append(" AND (system.protocol_code<>1 OR NOT (")
             .append(p25ProjectedEvidencePresent(kind)).append(")))");
-        addTextParameters(parameters, pattern);
         for(LocalEvidenceSource source: compactSources(kind))
         {
-            appendLocalAliasSearch(sql, parameters, pattern, matcher, index, source, ranged, null);
+            appendLocalAliasSearch(sql, matcher, source, ranged, null);
         }
         for(LocalEvidenceSource source: detailSources())
         {
-            appendLocalAliasSearch(sql, parameters, pattern, matcher, index, source, ranged,
+            appendLocalAliasSearch(sql, matcher, source, ranged,
                 p25RawCompactEvidencePresent(kind));
         }
+        sql.append("))");
     }
 
-    private static void appendLocalAliasSearch(StringBuilder sql, List<Object> parameters, String pattern,
-                                               String matcher, String index, LocalEvidenceSource source,
+    private static void appendLocalAliasSearch(StringBuilder sql, String matcher, LocalEvidenceSource source,
                                                boolean ranged, String requiredAbsent)
     {
-        sql.append(" OR (system.protocol_code=1 AND EXISTS (SELECT 1 FROM ")
-            .append(source.from()).append(" JOIN receiver_channel observed_channel ON ")
-            .append("observed_channel.id=").append(source.channelId())
-            .append(" JOIN configuration_channel observed_config ON ")
-            .append("observed_config.configuration_id=observed_channel.configuration_id WHERE ")
-            .append(source.summaryId()).append("=summary.id AND ")
-            .append(source.observedId()).append(">0 AND ")
-            .append("observed_channel.radio_system_id=system.id AND ")
-            .append("observed_config.alias_list_id IS NOT NULL");
-        if(source.systemId() != null)
-        {
-            sql.append(" AND ").append(source.systemId()).append("=system.id");
-        }
+        sql.append(" OR (system.protocol_code=1");
         if(requiredAbsent != null)
         {
             sql.append(" AND NOT (").append(requiredAbsent).append(')');
         }
-        sql.append(" AND EXISTS (SELECT 1 FROM alias definition INDEXED BY ").append(index)
-            .append(" WHERE definition.matcher_type='").append(matcher).append("' ")
+        sql.append(" AND EXISTS (SELECT 1 FROM identity_search_aliases named ")
+            .append("CROSS JOIN alias definition ON definition.id=named.id CROSS JOIN ")
+            .append(source.from()).append(" CROSS JOIN receiver_channel observed_channel ON ")
+            .append("observed_channel.id=").append(source.channelId())
+            .append(" CROSS JOIN configuration_channel observed_config ON ")
+            .append("observed_config.configuration_id=observed_channel.configuration_id WHERE ")
+            .append("named.matcher_type='").append(matcher).append("' ")
             .append("AND definition.protocol IN ('APCO25','APCO25_PHASE2') AND ")
-            .append("definition.alias_list_id=observed_config.alias_list_id AND ")
+            .append(source.summaryId()).append("=summary.id AND ")
+            .append(source.observedId()).append(">0 AND ")
             .append(aliasMatch(source.observedId(), ranged)).append(" AND ")
-            .append(aliasTextSearch()).append(")))");
-        addTextParameters(parameters, pattern);
+            .append("observed_channel.radio_system_id=system.id AND ")
+            .append("observed_config.alias_list_id IS NOT NULL AND ")
+            .append("observed_config.alias_list_id=definition.alias_list_id");
+        if(source.systemId() != null)
+        {
+            sql.append(" AND ").append(source.systemId()).append("=system.id");
+        }
+        sql.append("))");
+    }
+
+    private static String matchedAlias()
+    {
+        return "definition.id IN (SELECT id FROM identity_search_aliases)";
     }
 
     private static String aliasTextSearch()
@@ -259,12 +274,11 @@ final class StatsIdentitySearch
     {
         List<LocalEvidenceSource> sources = new ArrayList<>();
         sources.add(new LocalEvidenceSource("p25_site_call_identity_bucket evidence " +
-            "INDEXED BY idx_p25_site_call_identity_identity", "evidence.identity_summary_id",
+            "INDEXED BY idx_p25_site_call_identity_identity_address", "evidence.identity_summary_id",
             "evidence.channel_id", "evidence.observed_local_id", null));
         sources.add(new LocalEvidenceSource("activity_event_identity_member evidence " +
-            "INDEXED BY idx_activity_event_member_identity_event " +
-            "JOIN receiver_activity_event event ON event.id=evidence.event_id",
-            "evidence.identity_summary_id", "event.channel_id", "evidence.observed_local_id", null));
+            "INDEXED BY idx_activity_event_member_identity_channel_local",
+            "evidence.identity_summary_id", "evidence.channel_id", "evidence.observed_local_id", null));
         if(kind == 2)
         {
             sources.add(new LocalEvidenceSource("trunked_radio_channel_presence evidence",
@@ -287,17 +301,17 @@ final class StatsIdentitySearch
     private static List<LocalEvidenceSource> detailSources()
     {
         return List.of(new LocalEvidenceSource("receiver_activity_event evidence " +
-            "INDEXED BY idx_receiver_activity_event_source_time", "evidence.source_identity_summary_id",
+            "INDEXED BY idx_receiver_activity_event_source_identity_address", "evidence.source_identity_summary_id",
             "evidence.channel_id", "evidence.source_observed_local_id", null),
             new LocalEvidenceSource("receiver_activity_event evidence " +
-                "INDEXED BY idx_receiver_activity_event_target_time", "evidence.target_identity_summary_id",
+                "INDEXED BY idx_receiver_activity_event_target_identity_address", "evidence.target_identity_summary_id",
                 "evidence.channel_id", "evidence.target_observed_local_id", null));
     }
 
     private static String localEvidenceExists(LocalEvidenceSource source)
     {
-        return "EXISTS (SELECT 1 FROM " + source.from() + " JOIN receiver_channel observed_channel ON " +
-            "observed_channel.id=" + source.channelId() + " JOIN configuration_channel observed_config ON " +
+        return "EXISTS (SELECT 1 FROM " + source.from() + " CROSS JOIN receiver_channel observed_channel ON " +
+            "observed_channel.id=" + source.channelId() + " CROSS JOIN configuration_channel observed_config ON " +
             "observed_config.configuration_id=observed_channel.configuration_id WHERE " +
             source.summaryId() + "=summary.id AND " + source.observedId() + ">0 AND " +
             "observed_channel.radio_system_id=system.id AND " +

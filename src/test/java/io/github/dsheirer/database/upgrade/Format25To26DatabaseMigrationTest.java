@@ -49,7 +49,7 @@ class Format25To26DatabaseMigrationTest
             List<List<Object>> eventsBefore = rows(statement,
                 "SELECT * FROM receiver_activity_event ORDER BY id");
             List<List<Object>> membersBefore = rows(statement,
-                "SELECT * FROM activity_event_identity_member ORDER BY event_id, identity_summary_id");
+                "SELECT event_id,radio_system_id,identity_summary_id,identity_kind_code,observed_local_id FROM activity_event_identity_member ORDER BY event_id, identity_summary_id");
             List<List<Object>> summariesBefore = rows(statement, """
                 SELECT * FROM conventional_activity_summary
                 ORDER BY channel_id, frequency_hz, timeslot
@@ -81,11 +81,11 @@ class Format25To26DatabaseMigrationTest
 
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 25, report.steps().size());
             assertEquals("format-25-to-26", report.steps().getFirst().id());
-            assertEquals("format-33-to-34", report.steps().getLast().id());
+            assertEquals("format-37-to-38", report.steps().getLast().id());
             assertEquals(expectedEffects, report.steps().getFirst().effects());
             assertEquals(eventsBefore, rows(statement, "SELECT * FROM receiver_activity_event ORDER BY id"));
             assertEquals(membersBefore, rows(statement,
-                "SELECT * FROM activity_event_identity_member ORDER BY event_id, identity_summary_id"));
+                "SELECT event_id,radio_system_id,identity_summary_id,identity_kind_code,observed_local_id FROM activity_event_identity_member ORDER BY event_id, identity_summary_id"));
             assertEquals(summariesBefore, rows(statement, """
                 SELECT * FROM conventional_activity_summary
                 ORDER BY channel_id, frequency_hz, timeslot
@@ -255,7 +255,7 @@ class Format25To26DatabaseMigrationTest
             List<List<Object>> retainedEvents = rows(statement,
                 "SELECT * FROM receiver_activity_event WHERE channel_id=9505");
             List<List<Object>> retainedMembers = rows(statement,
-                "SELECT * FROM activity_event_identity_member WHERE event_id=9601");
+                "SELECT event_id,radio_system_id,identity_summary_id,identity_kind_code,observed_local_id FROM activity_event_identity_member WHERE event_id=9601");
             List<List<Object>> retainedSummaries = rows(statement,
                 "SELECT * FROM conventional_activity_summary WHERE channel_id=9505");
             assertEquals(1, statement.executeUpdate("""
@@ -283,7 +283,7 @@ class Format25To26DatabaseMigrationTest
             assertEquals(retainedEvents, rows(statement,
                 "SELECT * FROM receiver_activity_event WHERE channel_id=9505"));
             assertEquals(retainedMembers, rows(statement,
-                "SELECT * FROM activity_event_identity_member WHERE event_id=9601"));
+                "SELECT event_id,radio_system_id,identity_summary_id,identity_kind_code,observed_local_id FROM activity_event_identity_member WHERE event_id=9601"));
             assertEquals(retainedSummaries, rows(statement,
                 "SELECT * FROM conventional_activity_summary WHERE channel_id=9505"));
             assertFalse(statement.executeQuery("PRAGMA foreign_key_check").next());

@@ -282,7 +282,10 @@ class StatsWebDatabase
             lower(coalesce(name, configuration_id))
         """;
     static final String DASHBOARD_IDENTITY_ACTIVITY_SQL = """
-        WITH identity_activity AS (
+        WITH configured_system_names AS MATERIALIZED (
+            SELECT system.id AS radio_system_id, %s AS system_name
+            FROM radio_system system
+        ), identity_activity AS (
             SELECT NULL AS channel_id, NULL AS configuration_id,
                 system.protocol_code,
                 CASE system.protocol_code WHEN 1 THEN 'P25' WHEN 3 THEN 'DMR'
@@ -293,7 +296,7 @@ class StatsWebDatabase
                 system.system_key AS radio_system_key, system.p25_wacn AS wacn,
                 CASE system.protocol_code WHEN 1 THEN system.p25_system_id
                     WHEN 4 THEN system.nxdn_system_id END AS system_id,
-                NULL AS rfss, %s AS system_name,
+                NULL AS rfss, cached_name.system_name AS system_name,
                 system.dmr_network_id AS network_id, NULL AS site_id, NULL AS ran, NULL AS variant_code,
                 system.dmr_model_code, system.nxdn_location_category_code,
                 CASE WHEN system.dmr_model_code IS NOT NULL THEN 'TIER_III'
@@ -319,6 +322,7 @@ class StatsWebDatabase
             FROM trunked_logical_call_identity_bucket bucket
                 INDEXED BY idx_trunked_logical_identity_dashboard_time
             JOIN radio_system system ON system.id = bucket.radio_system_id
+            JOIN configured_system_names cached_name ON cached_name.radio_system_id = system.id
             JOIN radio_system_identity_summary summary
               ON summary.radio_system_id = bucket.radio_system_id
              AND summary.id = bucket.identity_summary_id
@@ -1530,11 +1534,12 @@ class StatsWebDatabase
                               AND definition.value = calls.observed_local_id
                               AND definition.protocol IN ('APCO25', 'APCO25_PHASE2')) AS has_exact_definition
                     FROM configuration_channel config INDEXED BY idx_configuration_channel_alias_list
-                    JOIN receiver_channel channel ON channel.configuration_id = config.configuration_id
-                    JOIN radio_system system ON system.id = channel.radio_system_id
-                    JOIN p25_site_call_identity_bucket calls ON calls.channel_id = channel.id
+                    CROSS JOIN receiver_channel channel ON channel.configuration_id = config.configuration_id
+                    CROSS JOIN radio_system system ON system.id = channel.radio_system_id
+                    CROSS JOIN p25_site_call_identity_bucket calls
+                        INDEXED BY idx_p25_site_call_identity_channel_time ON calls.channel_id = channel.id
                       AND calls.radio_system_id = system.id AND calls.identity_role_code = 1
-                    JOIN radio_system_identity_summary identity ON identity.id = calls.identity_summary_id
+                    CROSS JOIN radio_system_identity_summary identity ON identity.id = calls.identity_summary_id
                       AND identity.radio_system_id = calls.radio_system_id
                     WHERE config.alias_list_id = ? AND system.protocol_code = 1
                       AND identity.identity_kind_code IN (1, 3)
@@ -2038,9 +2043,9 @@ class StatsWebDatabase
         return readSnapshot(connection -> {
             long now = System.currentTimeMillis();
             long from = now - range.milliseconds();
-            List<Map<String,Object>> destinations = topCallIdentities(connection, IDENTITY_ROLE_DESTINATION,
+            List<Map<String,Object>> destinations = callIdentityRows(connection, IDENTITY_ROLE_DESTINATION,
                 from, now, IDENTITY_DIRECTORY_CANDIDATE_LIMIT);
-            List<Map<String,Object>> sources = topCallIdentities(connection, IDENTITY_ROLE_SOURCE,
+            List<Map<String,Object>> sources = callIdentityRows(connection, IDENTITY_ROLE_SOURCE,
                 from, now, IDENTITY_DIRECTORY_CANDIDATE_LIMIT);
             List<Map<String,Object>> rows = new ArrayList<>();
 
@@ -2069,6 +2074,14 @@ class StatsWebDatabase
             int fromIndex = Math.min(offset, rows.size());
             int toIndex = Math.min(rows.size(), fromIndex + limit + 1);
             Map<String,Object> response = page(new ArrayList<>(rows.subList(fromIndex, toIndex)), limit, offset);
+            @SuppressWarnings("unchecked")
+            List<Map<String,Object>> visible = (List<Map<String,Object>>)response.get("rows");
+            enrichCallIdentities(connection, visible.stream()
+                .filter(row -> number(row.get("identity_kind_code")) != IDENTITY_KIND_RADIO).toList(),
+                IDENTITY_ROLE_DESTINATION);
+            enrichCallIdentities(connection, visible.stream()
+                .filter(row -> number(row.get("identity_kind_code")) == IDENTITY_KIND_RADIO).toList(),
+                IDENTITY_ROLE_SOURCE);
             response.put("total_count", rows.size());
             response.put("range", range.label());
             response.put("candidate_limit_reached", destinations.size() >= IDENTITY_DIRECTORY_CANDIDATE_LIMIT ||
@@ -4833,7 +4846,7 @@ class StatsWebDatabase
                     MAX(event.observed_at_ms) AS last_seen_ms
                 FROM action_slices AS slice
                 CROSS JOIN receiver_activity_event AS event
-                    INDEXED BY idx_receiver_activity_event_channel_time
+                    INDEXED BY idx_receiver_activity_event_channel_action_time
                 JOIN receiver_channel channel ON channel.id = event.channel_id
                 JOIN configuration_channel config ON config.configuration_id = channel.configuration_id
                 WHERE event.channel_id = slice.channel_id
@@ -4851,7 +4864,7 @@ class StatsWebDatabase
                     COUNT(*) AS observation_count, MAX(event.observed_at_ms) AS last_seen_ms
                 FROM action_slices AS slice
                 CROSS JOIN receiver_activity_event AS event
-                    INDEXED BY idx_receiver_activity_event_channel_time
+                    INDEXED BY idx_receiver_activity_event_channel_action_time
                 JOIN receiver_channel channel ON channel.id = event.channel_id
                 JOIN configuration_channel config ON config.configuration_id = channel.configuration_id
                 WHERE event.channel_id = slice.channel_id
@@ -6051,6 +6064,7 @@ class StatsWebDatabase
                     SUM(CASE WHEN bucket.identity_role_code = 1
                         THEN bucket.observed_call_count ELSE 0 END) AS target_logical_call_count
                 FROM p25_site_call_identity_bucket bucket
+                    INDEXED BY idx_p25_site_call_identity_channel_time
                 JOIN radio_system_identity_summary summary
                   ON summary.id = bucket.identity_summary_id
                  AND summary.radio_system_id = bucket.radio_system_id
@@ -6991,14 +7005,29 @@ class StatsWebDatabase
                                                        long fromTimestamp, long toTimestamp, int limit)
         throws SQLException
     {
+        List<Map<String,Object>> rows = callIdentityRows(connection, identityRole, fromTimestamp, toTimestamp, limit);
+        enrichCallIdentities(connection, rows, identityRole);
+        return rows;
+    }
+
+    /** Numeric candidate ranking is independent of Alias presentation, which callers can defer until paging. */
+    private static List<Map<String,Object>> callIdentityRows(Connection connection, int identityRole,
+                                                            long fromTimestamp, long toTimestamp, int limit)
+        throws SQLException
+    {
         if(identityRole != IDENTITY_ROLE_DESTINATION && identityRole != IDENTITY_ROLE_SOURCE)
         {
             throw new IllegalArgumentException("Unsupported call identity role");
         }
 
-        List<Map<String,Object>> rows = queryRows(connection, DASHBOARD_IDENTITY_ACTIVITY_SQL,
+        return queryRows(connection, DASHBOARD_IDENTITY_ACTIVITY_SQL,
             fromTimestamp, toTimestamp, identityRole,
             fromTimestamp, toTimestamp, identityRole, limit);
+    }
+
+    private void enrichCallIdentities(Connection connection, List<Map<String,Object>> rows, int identityRole)
+        throws SQLException
+    {
         List<Map<String,Object>> trunkedTalkgroups = new ArrayList<>();
         List<Map<String,Object>> trunkedRadios = new ArrayList<>();
         List<Map<String,Object>> p25ConventionalTalkgroups = new ArrayList<>();
@@ -7089,8 +7118,6 @@ class StatsWebDatabase
                 row.put("entity_tab", identityKind == IDENTITY_KIND_RADIO ? "radios" : "groups");
             }
         }
-
-        return rows;
     }
 
     /**
@@ -8054,30 +8081,34 @@ class StatsWebDatabase
             throw new IllegalArgumentException("Unsupported radio-system alias sort expression");
         }
 
+        String matcher = "alias_radio".equals(identifierTable) ? "RADIO_ID" : "TALKGROUP";
+        String index = "alias_radio".equals(identifierTable) ? "radio" : "talkgroup";
         String protocol =
             "CASE system.protocol_code WHEN 1 THEN 'APCO25' WHEN 3 THEN 'DMR' WHEN 4 THEN 'NXDN' END";
+        String assigned = """
+            (EXISTS (SELECT 1 FROM receiver_channel channel
+                JOIN configuration_channel config ON config.configuration_id = channel.configuration_id
+                WHERE channel.radio_system_id = system.id AND config.alias_list_id = alias.alias_list_id)
+             OR EXISTS (SELECT 1 FROM configuration_channel config
+                WHERE config.configuration_id = system.configuration_id
+                  AND config.alias_list_id = alias.alias_list_id))
+            """.strip();
+        // Separate exact and range lookups so each branch can seek its existing partial matcher index.
         return """
-            (SELECT CASE WHEN count(DISTINCT lower(alias.%s)) = 1 THEN min(lower(alias.%s)) END
-             FROM %s identifier
-             JOIN alias ON alias.id = identifier.alias_id
-             WHERE (identifier.protocol = %s OR
-                    (system.protocol_code = 1 AND identifier.protocol = 'APCO25_PHASE2'))
-               AND ((identifier.ranged <> 0 AND %s BETWEEN identifier.min_value AND identifier.max_value)
-                 OR (identifier.ranged = 0 AND identifier.value = %s))
-               AND (EXISTS (
-                       SELECT 1
-                       FROM receiver_channel channel
-                       JOIN configuration_channel config
-                         ON config.configuration_id = channel.configuration_id
-                       WHERE channel.radio_system_id = system.id
-                         AND config.alias_list_id = identifier.alias_list_id)
-                    OR EXISTS (
-                       SELECT 1
-                       FROM configuration_channel config
-                       WHERE config.configuration_id = system.configuration_id
-                         AND config.alias_list_id = identifier.alias_list_id)))
-            """.formatted(aliasColumn, aliasColumn, identifierTable, protocol, identifierColumn,
-            identifierColumn).strip();
+            (SELECT CASE WHEN count(DISTINCT label) = 1 THEN min(label) END FROM (
+                SELECT lower(alias.%1$s) AS label
+                FROM alias INDEXED BY idx_alias_%2$s_value
+                WHERE alias.matcher_type = '%3$s'
+                  AND alias.protocol IN (%4$s, CASE WHEN system.protocol_code = 1 THEN 'APCO25_PHASE2' END)
+                  AND alias.value = %5$s AND %6$s
+                UNION ALL
+                SELECT lower(alias.%1$s) AS label
+                FROM alias INDEXED BY idx_alias_%2$s_range
+                WHERE alias.matcher_type = '%3$s_RANGE'
+                  AND alias.protocol IN (%4$s, CASE WHEN system.protocol_code = 1 THEN 'APCO25_PHASE2' END)
+                  AND %5$s BETWEEN alias.min_value AND alias.max_value AND %6$s
+            ))
+            """.formatted(aliasColumn, index, matcher, protocol, identifierColumn, assigned).strip();
     }
 
     private static String order(StatsRequest request, Map<String,String> columns, String defaultSort)

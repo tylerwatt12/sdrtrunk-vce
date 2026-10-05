@@ -126,9 +126,55 @@ public class ReceiverActivitySchema
 
     public static void create(Connection connection) throws SQLException
     {
+        createFormat37(connection);
+        createRemainingQueryLookupIndexes(connection);
+    }
+
+    /** Creates the exact historical format-37 activity schema without later lookup indexes. */
+    public static void createFormat37(Connection connection) throws SQLException
+    {
         create(connection, MAXIMUM_OBSERVED_SITE, true, true, EVENT_TYPES, true);
         createEncryptedActivityFilterIndexes(connection);
         createSourceWorkingEvidenceIndex(connection);
+        createIdentityLocalAddressEvidenceIndexes(connection);
+    }
+
+    /** Adds bounded lookup covers only for fresh current creation and the format-37-to-38 migration. */
+    public static void createRemainingQueryLookupIndexes(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_target_event_type_time
+                ON receiver_activity_event(target_identity_summary_id, event_type_code,
+                    observed_at_ms DESC, id DESC, radio_system_id, action_code)
+                WHERE target_identity_summary_id IS NOT NULL
+                """);
+            statement.executeUpdate("""
+                CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_channel_frequency_time
+                ON receiver_activity_event(channel_id, frequency_hz, observed_at_ms DESC, id DESC,
+                    lcn_band, lcn_number, timeslot, radio_system_id, action_code)
+                WHERE frequency_hz IS NOT NULL
+                """);
+        }
+    }
+
+    /** Adds positive local-address covers only to fresh current databases and the adjacent format-36-to-37 step. */
+    public static void createIdentityLocalAddressEvidenceIndexes(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_source_identity_address
+                ON receiver_activity_event(source_identity_summary_id, source_observed_local_id, channel_id)
+                WHERE source_identity_summary_id IS NOT NULL AND source_observed_local_id > 0
+                """);
+            statement.executeUpdate("""
+                CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_target_identity_address
+                ON receiver_activity_event(target_identity_summary_id, target_observed_local_id, channel_id)
+                WHERE target_identity_summary_id IS NOT NULL AND target_observed_local_id > 0
+                """);
+        }
     }
 
     /** Indexes only qualified source Working-ID evidence without expanding the general event indexes. */
@@ -201,7 +247,7 @@ public class ReceiverActivitySchema
         {
             statement.executeUpdate(receiverChannelSql());
             statement.executeUpdate(receiverActivityEventSql(maximumObservedSite, eventTypes, canonicalP25Subscribers));
-            statement.executeUpdate(createActivityEventIdentityMemberSql());
+            statement.executeUpdate(createActivityEventIdentityMemberSql(canonicalP25Subscribers));
             createTrunkedCallTables(statement, canonicalP25Subscribers);
             if(canonicalP25Subscribers) RadioSystemSchema.create(statement);
             else RadioSystemSchema.createFormat31(statement);
@@ -280,16 +326,40 @@ public class ReceiverActivitySchema
         validateIndexColumns(connection, "idx_p25_site_call_identity_channel_time",
             List.of("channel_id", "bucket_start_ms", "radio_system_id", "identity_role_code",
                 "identity_summary_id"));
+        validateIndexColumns(connection, "idx_activity_event_member_identity_event",
+            List.of("identity_summary_id", "event_id", "observed_local_id"));
+        validateIndexColumns(connection, "idx_activity_event_member_identity_channel_local",
+            List.of("identity_summary_id", "channel_id", "observed_local_id"));
+        validateIndexColumns(connection, "idx_p25_site_call_identity_identity_address",
+            List.of("identity_summary_id", "observed_local_id", "channel_id"));
+        validateIndexColumns(connection, "idx_receiver_activity_event_id_channel", List.of("id", "channel_id"));
+        validateIndexColumns(connection, "idx_receiver_activity_event_source_identity_address",
+            List.of("source_identity_summary_id", "source_observed_local_id", "channel_id"));
+        validateIndexColumns(connection, "idx_receiver_activity_event_target_identity_address",
+            List.of("target_identity_summary_id", "target_observed_local_id", "channel_id"));
+        validateIndexColumns(connection, "idx_receiver_activity_event_target_event_type_time",
+            List.of("target_identity_summary_id", "event_type_code", "observed_at_ms", "id",
+                "radio_system_id", "action_code"));
+        validateIndexColumns(connection, "idx_receiver_activity_event_channel_frequency_time",
+            List.of("channel_id", "frequency_hz", "observed_at_ms", "id", "lcn_band", "lcn_number",
+                "timeslot", "radio_system_id", "action_code"));
         validateIndexColumns(connection, "idx_receiver_activity_event_retention",
             List.of("observed_at_ms", "id"));
         validateIndexColumns(connection, "idx_receiver_activity_event_system_time",
             List.of("radio_system_id", "observed_at_ms", "id"));
+        validateIndexColumns(connection, "idx_receiver_activity_event_source_time",
+            List.of("source_identity_summary_id", "observed_at_ms", "id", "channel_id",
+                "source_observed_local_id", "source_observed_working_id"));
+        validateIndexColumns(connection, "idx_receiver_activity_event_target_time",
+            List.of("target_identity_summary_id", "observed_at_ms", "id", "channel_id",
+                "target_observed_local_id", "target_observed_working_id", "target_kind_code"));
         validateIndexColumns(connection, "idx_receiver_activity_event_source_working_evidence",
             List.of("source_identity_summary_id", "channel_id", "source_observed_working_id"));
         validateIndexColumns(connection, "idx_receiver_activity_event_system_action_time",
             List.of("radio_system_id", "action_code", "observed_at_ms", "id"));
         validateIndexColumns(connection, "idx_receiver_activity_event_channel_action_time",
-            List.of("channel_id", "action_code", "observed_at_ms", "id"));
+            List.of("channel_id", "action_code", "observed_at_ms", "id", "radio_system_id",
+                "source_identity_summary_id", "source_observed_local_id"));
         validateIndexColumns(connection, "idx_receiver_activity_event_system_event_type_time",
             List.of("radio_system_id", "event_type_code", "observed_at_ms", "id"));
         validateIndexColumns(connection, "idx_receiver_activity_event_channel_event_type_time",
@@ -1409,7 +1479,7 @@ public class ReceiverActivitySchema
             }
         }
 
-        insertActivityEventIdentityMembers(connection, activityId, radioSystem, destinations,
+        insertActivityEventIdentityMembers(connection, activityId, channelId, radioSystem, destinations,
             target != null ? target.summaryId() : null);
     }
 
@@ -2470,6 +2540,12 @@ public class ReceiverActivitySchema
      */
     private static String createActivityEventIdentityMemberSql()
     {
+        return createActivityEventIdentityMemberSql(true);
+    }
+
+    /** Historical creators retain the exact pre-format-36 member table. */
+    private static String createActivityEventIdentityMemberSql(boolean storedChannel)
+    {
         return """
             CREATE TABLE IF NOT EXISTS activity_event_identity_member (
                 event_id INTEGER NOT NULL
@@ -2481,15 +2557,18 @@ public class ReceiverActivitySchema
                 identity_kind_code INTEGER NOT NULL DEFAULT 1
                     CHECK(typeof(identity_kind_code) = 'integer' AND identity_kind_code = 1),
                 observed_local_id INTEGER CHECK(observed_local_id IS NULL OR
-                    (typeof(observed_local_id) = 'integer' AND observed_local_id BETWEEN 0 AND 65534)),
+                    (typeof(observed_local_id) = 'integer' AND observed_local_id BETWEEN 0 AND 65534)),%s
                 PRIMARY KEY(event_id, identity_summary_id),
                 FOREIGN KEY(event_id, radio_system_id)
-                    REFERENCES receiver_activity_event(id, radio_system_id) ON DELETE CASCADE,
+                    REFERENCES receiver_activity_event(id, radio_system_id) ON DELETE CASCADE,%s
                 FOREIGN KEY(identity_summary_id, radio_system_id, identity_kind_code)
                     REFERENCES radio_system_identity_summary(
                         id, radio_system_id, identity_kind_code) ON DELETE CASCADE
             ) WITHOUT ROWID
-            """;
+            """.formatted(storedChannel ? "\n                channel_id INTEGER NOT NULL\n" +
+                "                    CHECK(typeof(channel_id) = 'integer' AND channel_id > 0)," : "",
+                storedChannel ? "\n                FOREIGN KEY(event_id, channel_id)\n" +
+                    "                    REFERENCES receiver_activity_event(id, channel_id) ON DELETE CASCADE," : "");
     }
 
     private static String createConventionalCallIdentityBucketSql()
@@ -2943,18 +3022,34 @@ public class ReceiverActivitySchema
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_retention ON receiver_activity_event(observed_at_ms, id)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_system_time ON receiver_activity_event(radio_system_id, observed_at_ms, id)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_channel_time ON receiver_activity_event(channel_id, observed_at_ms)");
-        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_target_time ON receiver_activity_event(target_identity_summary_id, observed_at_ms) WHERE target_identity_summary_id IS NOT NULL");
-        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_source_time ON receiver_activity_event(source_identity_summary_id, observed_at_ms) WHERE source_identity_summary_id IS NOT NULL");
+        if(canonicalP25Subscribers)
+        {
+            createCoveringIdentityEvidenceIndexes(statement);
+        }
+        else
+        {
+            //Historical table rebuilds keep their exact source/target lookup definitions.
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_target_time ON receiver_activity_event(target_identity_summary_id, observed_at_ms) WHERE target_identity_summary_id IS NOT NULL");
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_source_time ON receiver_activity_event(source_identity_summary_id, observed_at_ms) WHERE source_identity_summary_id IS NOT NULL");
+        }
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_frequency_time ON receiver_activity_event(frequency_hz, observed_at_ms) WHERE frequency_hz IS NOT NULL");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_encryption ON receiver_activity_event(encryption_algorithm_id, encryption_key_id, observed_at_ms) WHERE encrypted = 1");
         if(includeActivityFilterIndexes)
         {
-            createActivityFilterIndexes(statement);
+            createActivityFilterIndexes(statement, canonicalP25Subscribers);
         }
-        statement.executeUpdate("""
-            CREATE INDEX IF NOT EXISTS idx_activity_event_member_identity_event
-            ON activity_event_identity_member(identity_summary_id, event_id)
-            """);
+        if(canonicalP25Subscribers)
+        {
+            createStoredMemberEvidenceIndexes(statement);
+            createP25IdentityAddressIndex(statement);
+        }
+        else
+        {
+            statement.executeUpdate("""
+                CREATE INDEX IF NOT EXISTS idx_activity_event_member_identity_event
+                ON activity_event_identity_member(identity_summary_id, event_id)
+                """);
+        }
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_trunked_signaling_activity_time ON trunked_signaling_activity_bucket(bucket_start_ms, radio_system_id, channel_id)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_trunked_signaling_activity_system ON trunked_signaling_activity_bucket(radio_system_id, channel_id, bucket_start_ms)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_trunked_logical_call_bucket_time ON trunked_logical_call_bucket(bucket_start_ms, radio_system_id)");
@@ -3065,15 +3160,18 @@ public class ReceiverActivitySchema
 
     private static void createActivityFilterIndexes(Statement statement) throws SQLException
     {
+        createActivityFilterIndexes(statement, false);
+    }
+
+    private static void createActivityFilterIndexes(Statement statement, boolean coveringChannelAction)
+        throws SQLException
+    {
         statement.executeUpdate("""
             CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_system_action_time
             ON receiver_activity_event(radio_system_id, action_code, observed_at_ms DESC, id DESC)
             WHERE radio_system_id IS NOT NULL
             """);
-        statement.executeUpdate("""
-            CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_channel_action_time
-            ON receiver_activity_event(channel_id, action_code, observed_at_ms DESC, id DESC)
-            """);
+        createChannelActionTimeIndex(statement, coveringChannelAction);
         statement.executeUpdate("""
             CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_system_event_type_time
             ON receiver_activity_event(radio_system_id, event_type_code, observed_at_ms DESC, id DESC)
@@ -3096,6 +3194,132 @@ public class ReceiverActivitySchema
             """);
     }
 
+    /** Replaces only three reproducible indexes in the adjacent format-34-to-35 migration. */
+    public static void rebuildCoveringActivityIndexes(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DROP INDEX idx_receiver_activity_event_source_time");
+            statement.executeUpdate("DROP INDEX idx_receiver_activity_event_target_time");
+            statement.executeUpdate("DROP INDEX idx_receiver_activity_event_channel_action_time");
+            createCoveringIdentityEvidenceIndexes(statement);
+            createChannelActionTimeIndex(statement, true);
+        }
+    }
+
+    /** Replaces one member lookup and adds one narrow event projection in the format-34-to-35 migrator. */
+    public static void rebuildHistoricalMemberEvidenceIndexes(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DROP INDEX idx_activity_event_member_identity_event");
+            createHistoricalMemberEvidenceIndexes(statement);
+        }
+    }
+
+    private static void createHistoricalMemberEvidenceIndexes(Statement statement) throws SQLException
+    {
+        statement.executeUpdate("""
+            CREATE INDEX IF NOT EXISTS idx_activity_event_member_identity_event
+            ON activity_event_identity_member(identity_summary_id, event_id, observed_local_id)
+            """);
+        statement.executeUpdate("""
+            CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_id_channel
+            ON receiver_activity_event(id, channel_id)
+            """);
+    }
+
+    /** Copies the immutable observation channel into members for the adjacent format-35-to-36 migration. */
+    public static void rebuildStoredMemberChannelEvidence(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DROP INDEX idx_receiver_activity_event_id_channel");
+            createUniqueEventChannelIndex(statement);
+            statement.executeUpdate("DROP INDEX idx_activity_event_member_identity_event");
+            statement.executeUpdate("ALTER TABLE activity_event_identity_member " +
+                "RENAME TO activity_event_identity_member_format35");
+            statement.executeUpdate(createActivityEventIdentityMemberSql());
+            statement.executeUpdate("""
+                INSERT INTO activity_event_identity_member(
+                    event_id, radio_system_id, identity_summary_id, identity_kind_code, observed_local_id, channel_id)
+                SELECT member.event_id, member.radio_system_id, member.identity_summary_id,
+                    member.identity_kind_code, member.observed_local_id, event.channel_id
+                FROM activity_event_identity_member_format35 member
+                CROSS JOIN receiver_activity_event event INDEXED BY idx_receiver_activity_event_id_channel
+                  ON event.id = member.event_id
+                """);
+            statement.executeUpdate("DROP TABLE activity_event_identity_member_format35");
+            createStoredMemberEvidenceIndexes(statement);
+            createP25IdentityAddressIndex(statement);
+        }
+    }
+
+    private static void createStoredMemberEvidenceIndexes(Statement statement) throws SQLException
+    {
+        statement.executeUpdate("""
+            CREATE INDEX IF NOT EXISTS idx_activity_event_member_identity_event
+            ON activity_event_identity_member(identity_summary_id, event_id, observed_local_id)
+            """);
+        statement.executeUpdate("""
+            CREATE INDEX IF NOT EXISTS idx_activity_event_member_identity_channel_local
+            ON activity_event_identity_member(identity_summary_id, channel_id, observed_local_id)
+            """);
+        createUniqueEventChannelIndex(statement);
+    }
+
+    private static void createUniqueEventChannelIndex(Statement statement) throws SQLException
+    {
+        statement.executeUpdate("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_receiver_activity_event_id_channel
+            ON receiver_activity_event(id, channel_id)
+            """);
+    }
+
+    private static void createP25IdentityAddressIndex(Statement statement) throws SQLException
+    {
+        statement.executeUpdate("""
+            CREATE INDEX IF NOT EXISTS idx_p25_site_call_identity_identity_address
+            ON p25_site_call_identity_bucket(identity_summary_id, observed_local_id, channel_id)
+            WHERE observed_local_id > 0
+            """);
+    }
+
+    private static void createCoveringIdentityEvidenceIndexes(Statement statement) throws SQLException
+    {
+        statement.executeUpdate("""
+            CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_source_time
+            ON receiver_activity_event(source_identity_summary_id, observed_at_ms, id, channel_id,
+                source_observed_local_id, source_observed_working_id)
+            WHERE source_identity_summary_id IS NOT NULL
+            """);
+        statement.executeUpdate("""
+            CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_target_time
+            ON receiver_activity_event(target_identity_summary_id, observed_at_ms, id, channel_id,
+                target_observed_local_id, target_observed_working_id, target_kind_code)
+            WHERE target_identity_summary_id IS NOT NULL
+            """);
+    }
+
+    private static void createChannelActionTimeIndex(Statement statement, boolean covering) throws SQLException
+    {
+        if(covering)
+        {
+            statement.executeUpdate("""
+                CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_channel_action_time
+                ON receiver_activity_event(channel_id, action_code, observed_at_ms DESC, id DESC,
+                    radio_system_id, source_identity_summary_id, source_observed_local_id)
+                """);
+        }
+        else
+        {
+            statement.executeUpdate("""
+                CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_channel_action_time
+                ON receiver_activity_event(channel_id, action_code, observed_at_ms DESC, id DESC)
+                """);
+        }
+    }
+
     private static final List<SqliteSchemaValidator.Table> TABLES = java.util.stream.Stream.concat(List.of(
         table("receiver_channel", "id", "configuration_id", "first_seen_ms",
             "last_seen_ms", "radio_system_id", "radio_system_assigned_at_ms"),
@@ -3106,7 +3330,7 @@ public class ReceiverActivitySchema
             "observed_nac", "observed_rfss", "observed_site", "source_observed_working_id",
             "target_observed_working_id"),
         table("activity_event_identity_member", "event_id", "radio_system_id", "identity_summary_id",
-            "identity_kind_code", "observed_local_id"),
+            "identity_kind_code", "observed_local_id", "channel_id"),
         table("p25_learned_site", "learned_site_id", "radio_system_id", "rfss", "site", "first_seen_ms",
             "last_seen_ms"),
         table("trunked_logical_call_bucket", "radio_system_id", "bucket_start_ms", "logical_call_count",
@@ -3191,6 +3415,11 @@ public class ReceiverActivitySchema
         "idx_receiver_activity_event_system_encrypted_time",
         "idx_receiver_activity_event_channel_encrypted_time",
         "idx_activity_event_member_identity_event",
+        "idx_activity_event_member_identity_channel_local",
+        "idx_p25_site_call_identity_identity_address",
+        "idx_receiver_activity_event_id_channel",
+        "idx_receiver_activity_event_source_identity_address",
+        "idx_receiver_activity_event_target_identity_address",
         "idx_trunked_signaling_activity_time",
         "idx_trunked_signaling_activity_system",
         "idx_trunked_logical_call_bucket_time",
@@ -3248,6 +3477,8 @@ public class ReceiverActivitySchema
             "radio_system_identity_summary", List.of("id", "radio_system_id", "identity_kind_code"), "CASCADE"),
         foreignKey("activity_event_identity_member", List.of("event_id", "radio_system_id"),
             "receiver_activity_event", List.of("id", "radio_system_id"), "CASCADE"),
+        foreignKey("activity_event_identity_member", List.of("event_id", "channel_id"),
+            "receiver_activity_event", List.of("id", "channel_id"), "CASCADE"),
         foreignKey("activity_event_identity_member",
             List.of("identity_summary_id", "radio_system_id", "identity_kind_code"),
             "radio_system_identity_summary", List.of("id", "radio_system_id", "identity_kind_code"), "CASCADE"),
@@ -3537,12 +3768,12 @@ public class ReceiverActivitySchema
             throw new SQLException("SQLite did not return an activity row identifier");
         }
 
-        insertActivityEventIdentityMembers(connection, activityId, radioSystem, destinations,
+        insertActivityEventIdentityMembers(connection, activityId, channelId, radioSystem, destinations,
             targetIdentity != null ? targetIdentity.summaryId() : null);
         return activityId;
     }
 
-    private static void insertActivityEventIdentityMembers(Connection connection, long activityId,
+    private static void insertActivityEventIdentityMembers(Connection connection, long activityId, long channelId,
                                                             RadioSystemSchema.RadioSystem radioSystem,
                                                             List<RadioSystemSchema.IdentityReference> destinations,
                                                             Long targetIdentityId)
@@ -3564,8 +3795,8 @@ public class ReceiverActivitySchema
 
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT OR IGNORE INTO activity_event_identity_member(
-                event_id, radio_system_id, identity_summary_id, identity_kind_code, observed_local_id)
-            VALUES (?, ?, ?, ?, ?)
+                event_id, radio_system_id, identity_summary_id, identity_kind_code, observed_local_id, channel_id)
+            VALUES (?, ?, ?, ?, ?, ?)
             """))
         {
             for(RadioSystemSchema.IdentityReference member: members)
@@ -3575,6 +3806,7 @@ public class ReceiverActivitySchema
                 statement.setLong(3, member.summaryId());
                 statement.setInt(4, IDENTITY_KIND_TALKGROUP);
                 setInteger(statement, 5, member.observedLocalId());
+                statement.setLong(6, channelId);
                 statement.addBatch();
             }
 

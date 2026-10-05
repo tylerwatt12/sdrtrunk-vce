@@ -80,7 +80,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -389,6 +389,61 @@ Historical conventional attribution and site reception times cannot be reconstru
 aggregates, so this migration neither fabricates corrections nor resets those rows. Historical site counts retain
 their earlier snapshot-update meaning. Future drop causes are classified; old cumulative drops remain unclassified.
 
+The format 34-to-35 step preserves every row, rebuilds four existing Activity lookup indexes as covering indexes,
+and adds one narrow event/channel index. Source and target identity/time lookups retain their partial predicates and
+place an explicit event ID immediately after observation time, preserving the previous implicit-row-ID tie order.
+Saved-channel/action/time retains descending observation time and event ID. The identity-member lookup retains its
+identity/event prefix and adds the observed address. The new event/channel index supplies the saved channel without
+fetching each wide event-table row during historical member Alias evidence. The unique event/system parent key and
+all foreign keys remain unchanged. The separate sparse source Working-ID evidence index also remains unchanged.
+This adds no retained events, member relationships, summaries, or configuration fields. Preflight and completion
+report exactly four rebuilt indexes and one added index, with no reset or drop of data; every administrator setting,
+credential, personal preference, event ID, identity relationship, and allocator high-water mark is preserved. All
+indexes follow existing event retention and deletion. Their larger entries and the narrow event projection add
+storage and background write cost, as documented in the SQLite Activity Database Guidelines. Only the bundled
+Application Migrator may change them; historical format creators keep their frozen definitions and normal startup
+remains validation-only.
+
+The format 35-to-36 step copies each identity member's immutable observation channel from its exact parent event,
+without adding or dropping any event or membership. The existing member key and owner/kind foreign keys remain;
+a new `(event_id, channel_id)` foreign key uses the existing event/channel index promoted to a unique parent key.
+The current writers already know that channel and store it without an additional lookup. Preflight refuses members
+with a missing or mismatched parent owner. The backfill preserves every old field and key, verifies the member
+count, and final validation checks retained relationships.
+The Activity identity/event index remains unchanged so patch-member paging retains event-ID order.
+
+Two additional covering indexes serve separate queries: member `(identity_summary_id, channel_id,
+observed_local_id)` skips duplicate channel/address evidence without parent-event joins; positive compact-call
+`(identity_summary_id, observed_local_id, channel_id)` supports exact/range address seeks during configured-name
+search. The member lookup keeps an explicit DISTINCT subquery before the outer UNION, preserving SQLite's indexed
+duplicate skipping. Both indexes follow the existing retention and cascade paths and create no additional history.
+All administrator settings, credentials, personal preferences and allocator high-water marks are preserved.
+The added storage and background write cost are measured separately in the SQLite Activity Database Guidelines.
+Format 35 remains a frozen supported source; only the bundled adjacent Application Migrator applies format 36,
+and normal startup still refuses older formats without changing them.
+
+The format 36-to-37 step adds two partial source/target local-address covering indexes. Each leads with the
+identity summary and positive observed local address, then the saved channel. This lets scoped configured-name
+search seek exact addresses or inclusive ranges and skips null, zero and unattributed evidence. Existing time/ID
+indexes, table definitions, retained rows, relationships, settings, credentials, preferences and allocators remain
+unchanged. The adjacent migration reports exactly two added indexes, retains frozen format 36 as a supported
+source, and applies only through the bundled Application Migrator. The indexes follow existing event retention;
+their measured storage and write costs are documented in the SQLite Activity Database Guidelines.
+
+The format 37-to-38 step adds exactly two partial Activity lookup indexes while retaining every existing index
+and table definition. The target/event-type/time cover seeks one target identity and event type in newest time/ID
+order; the saved-channel/frequency/time cover seeks one channel and frequency while covering optional LCN,
+timeslot, system and action filters. They serve existing detailed Activity rows without changing query predicates,
+collection, cursor ordering or retention. Each index has at most one entry per qualifying retained event: a known
+target identity for the first, and a known frequency for the second. Existing retention, explicit clears and event
+deletion remove entries automatically.
+
+The adjacent migration preserves all retained rows, IDs, relationships, allocator high-water marks, settings,
+credentials and personal preferences, and reports two added indexes with no rebuild, reset or drop. Formats 35,
+36 and 37 keep their frozen DDL and remain supported sources. Only fresh current creation and the bundled
+Application Migrator apply the new definitions; normal startup remains validation-only. The separate bounded
+storage and background write measurements are documented in the SQLite Activity Database Guidelines.
+
 ## Schema-Change Rule
 
 The optional Managed Recordings catalog is a separate SQLite file with its own adjacent format chain. Its format 2
@@ -399,7 +454,7 @@ counters, and adds no transcript rows. Catalog format 3 adds a constrained `tran
 transcript, marking calls with an existing transcript `complete` and other calls `pending`. Short calls stay pending;
 the background worker applies its configured minimum duration when selecting work. A failed call is retried only by
 an administrator action. Fresh format-3 catalogs use the same status default and index. The main application database
-is independently at format 34; transcript-catalog migrations do not change it. Recognized older catalogs are backed up
+is independently at format 38; transcript-catalog migrations do not change it. Recognized older catalogs are backed up
 and updated in one transaction at the pre-receiver setup boundary, with an optional SQLite-aware recovery snapshot
 before changes. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with
 Managed Recordings unavailable, so optional catalog trouble does not prevent ordinary receiving.

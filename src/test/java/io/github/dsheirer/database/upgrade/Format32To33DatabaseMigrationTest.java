@@ -112,8 +112,22 @@ class Format32To33DatabaseMigrationTest
         {
             while(rows.next()) plan.add(rows.getString("detail"));
         }
-        assertTrue(plan.stream().anyMatch(row -> row.contains("COVERING INDEX " + INDEX)), plan::toString);
+        //Format 35 also covers this projection with the general source/time index. SQLite may prefer either
+        //identity equality seek on this small fixture; the sparse index still has its own exact DDL contract.
+        assertTrue(plan.stream().anyMatch(row -> row.contains("SEARCH receiver_activity_event") &&
+            row.contains("COVERING INDEX ") && row.contains("source_identity_summary_id=?") &&
+            (row.contains("COVERING INDEX " + INDEX + " ") ||
+                row.contains("COVERING INDEX idx_receiver_activity_event_source_time "))), plan::toString);
         assertFalse(plan.stream().anyMatch(row -> row.contains("SCAN receiver_activity_event")), plan::toString);
+        List<String> sparsePlan = new ArrayList<>();
+        try(ResultSet rows = statement.executeQuery("EXPLAIN QUERY PLAN " + query.replace(
+            "FROM receiver_activity_event ", "FROM receiver_activity_event INDEXED BY " + INDEX + " ")))
+        {
+            while(rows.next()) sparsePlan.add(rows.getString("detail"));
+        }
+        assertTrue(sparsePlan.stream().anyMatch(row -> row.contains("SEARCH receiver_activity_event") &&
+            row.contains("COVERING INDEX " + INDEX + " ") && row.contains("source_identity_summary_id=?")),
+            sparsePlan::toString);
         try(ResultSet rows = statement.executeQuery(query))
         {
             assertTrue(rows.next());

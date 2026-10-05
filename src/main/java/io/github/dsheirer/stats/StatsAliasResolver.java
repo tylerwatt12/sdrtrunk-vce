@@ -1203,7 +1203,11 @@ class StatsAliasResolver
         return Map.copyOf(result);
     }
 
-    /** Exact bounded query used by the groups/radios page and query-plan regression coverage. */
+    /**
+     * Exact bounded query used by the groups/radios page and query-plan regression coverage. Keep requested IDs
+     * ahead of summary/current-state lookups so SQLite seeks existing owner-first keys instead of scanning global
+     * subscriber rows or constructing identity-only indexes.
+     */
     static String p25LocalEvidenceSql(int requestedCount)
     {
         return p25LocalEvidenceSql(requestedCount, true);
@@ -1231,20 +1235,17 @@ class StatsAliasResolver
                                       AND summary.p25_subscriber_identity_id IS NOT NULL
                                THEN bucket.observed_working_id ELSE bucket.observed_local_id END > 0
                     UNION
-                    SELECT member.identity_summary_id, event.channel_id, member.observed_local_id
-                    FROM requested
-                    JOIN activity_event_identity_member member
-                      ON member.identity_summary_id = requested.identity_summary_id
-                    JOIN receiver_activity_event event ON event.id = member.event_id
-                    WHERE member.observed_local_id > 0
+                    %s
                     UNION
                     SELECT presence.radio_identity_id, presence.channel_id,
                         CASE WHEN summary.p25_subscriber_identity_id IS NOT NULL
                              THEN presence.observed_working_id ELSE presence.observed_local_id END
                     FROM requested
-                    JOIN trunked_radio_channel_presence presence
-                      ON presence.radio_identity_id = requested.identity_summary_id
-                    JOIN radio_system_identity_summary summary ON summary.id = presence.radio_identity_id
+                    CROSS JOIN radio_system_identity_summary summary
+                      ON summary.id = requested.identity_summary_id
+                    CROSS JOIN trunked_radio_channel_presence presence
+                      ON presence.radio_system_id = summary.radio_system_id
+                     AND presence.radio_identity_id = requested.identity_summary_id
                     WHERE CASE WHEN summary.p25_subscriber_identity_id IS NOT NULL
                                THEN presence.observed_working_id ELSE presence.observed_local_id END > 0
                     UNION
@@ -1253,9 +1254,11 @@ class StatsAliasResolver
                              THEN affiliation.radio_observed_working_id
                              ELSE affiliation.radio_observed_local_id END
                     FROM requested
-                    JOIN trunked_radio_affiliation affiliation
-                      ON affiliation.radio_identity_id = requested.identity_summary_id
-                    JOIN radio_system_identity_summary summary ON summary.id = affiliation.radio_identity_id
+                    CROSS JOIN radio_system_identity_summary summary
+                      ON summary.id = requested.identity_summary_id
+                    CROSS JOIN trunked_radio_affiliation affiliation
+                      ON affiliation.radio_system_id = summary.radio_system_id
+                     AND affiliation.radio_identity_id = requested.identity_summary_id
                     WHERE CASE WHEN summary.p25_subscriber_identity_id IS NOT NULL
                                THEN affiliation.radio_observed_working_id
                                ELSE affiliation.radio_observed_local_id END > 0
@@ -1263,8 +1266,12 @@ class StatsAliasResolver
                     SELECT affiliation.talkgroup_identity_id, affiliation.channel_id,
                         affiliation.talkgroup_observed_local_id
                     FROM requested
-                    JOIN trunked_radio_affiliation affiliation
-                      ON affiliation.talkgroup_identity_id = requested.identity_summary_id
+                    CROSS JOIN radio_system_identity_summary summary
+                      ON summary.id = requested.identity_summary_id
+                    CROSS JOIN trunked_radio_affiliation affiliation
+                        INDEXED BY idx_trunked_radio_affiliation_talkgroup
+                      ON affiliation.radio_system_id = summary.radio_system_id
+                     AND affiliation.talkgroup_identity_id = requested.identity_summary_id
                     WHERE affiliation.talkgroup_observed_local_id > 0
                 ), detail_fallback(identity_summary_id) AS (
                     SELECT requested.identity_summary_id
@@ -1303,8 +1310,37 @@ class StatsAliasResolver
                   AND local_evidence.observed_local_id > 0
                 ORDER BY local_evidence.identity_summary_id, config.alias_list_id,
                     local_evidence.observed_local_id
-                """.formatted(valuesPlaceholders(requestedCount), p25SourceEvidenceSql(bounded));
+                """.formatted(valuesPlaceholders(requestedCount),
+                    p25MemberEvidenceSql(bounded),
+                    p25SourceEvidenceSql(bounded));
         return bounded ? sql + " LIMIT ?" : sql;
+    }
+
+    /** The channel/address cover skips repeated member observations without fetching their parent events. */
+    private static String p25MemberEvidenceSql(boolean currentIndex)
+    {
+        if(currentIndex)
+        {
+            return """
+                SELECT identity_summary_id, channel_id, observed_local_id FROM (
+                    SELECT DISTINCT member.identity_summary_id, member.channel_id, member.observed_local_id
+                    FROM activity_event_identity_member member
+                        INDEXED BY idx_activity_event_member_identity_channel_local
+                    WHERE member.identity_summary_id IN (SELECT identity_summary_id FROM requested)
+                      AND member.observed_local_id > 0
+                )
+                """;
+        }
+        // Earlier migration steps resolve aliases before the member channel projection exists.
+        return """
+            SELECT member.identity_summary_id, event.channel_id, member.observed_local_id
+            FROM requested
+            CROSS JOIN activity_event_identity_member member
+                INDEXED BY idx_activity_event_member_identity_event
+              ON member.identity_summary_id = requested.identity_summary_id
+            CROSS JOIN receiver_activity_event event ON event.id = member.event_id
+            WHERE member.observed_local_id > 0
+            """;
     }
 
     /** Earlier migration steps resolve consensus before the current Working-ID evidence index exists. */
@@ -1326,18 +1362,21 @@ class StatsAliasResolver
                 """;
         }
 
+        // A stale/sparse canonical-index estimate can beat the ID seek even with the requested join order.
+        // NOT INDEXED still permits the integer primary key and avoids a global subscriber-range walk per ID.
         return """
             SELECT event.source_identity_summary_id, event.channel_id, event.source_observed_local_id
             FROM detail_fallback
-            JOIN radio_system_identity_summary summary ON summary.id = detail_fallback.identity_summary_id
+            CROSS JOIN radio_system_identity_summary summary ON summary.id = detail_fallback.identity_summary_id
             CROSS JOIN receiver_activity_event event
-                INDEXED BY idx_receiver_activity_event_source_time
+                INDEXED BY idx_receiver_activity_event_source_identity_address
               ON event.source_identity_summary_id = detail_fallback.identity_summary_id
             WHERE summary.p25_subscriber_identity_id IS NULL AND event.source_observed_local_id > 0
             UNION
             SELECT event.source_identity_summary_id, event.channel_id, event.source_observed_working_id
             FROM detail_fallback
-            JOIN radio_system_identity_summary summary ON summary.id = detail_fallback.identity_summary_id
+            CROSS JOIN radio_system_identity_summary summary NOT INDEXED
+              ON summary.id = detail_fallback.identity_summary_id
             CROSS JOIN receiver_activity_event event
                 INDEXED BY idx_receiver_activity_event_source_working_evidence
               ON event.source_identity_summary_id = detail_fallback.identity_summary_id

@@ -924,7 +924,8 @@ class StatsAliasResolverTest
             String plan = queryPlan(connection, StatsAliasResolver.p25LocalEvidenceSql(2),
                 7001L, 7002L, StatsAliasResolver.MAX_RULE_LOOKUP_PAIRS + 1);
             assertTrue(plan.contains("idx_p25_site_call_identity_identity"), plan);
-            assertTrue(plan.contains("idx_receiver_activity_event_source_time"), plan);
+            assertTrue(plan.contains("USING COVERING INDEX idx_receiver_activity_event_source_identity_address " +
+                "(source_identity_summary_id=? AND source_observed_local_id>?)"), plan);
             assertTrue(plan.contains("idx_receiver_activity_event_target_time"), plan);
             assertFalse(plan.contains("SCAN event"), plan);
 
@@ -1021,7 +1022,8 @@ class StatsAliasResolverTest
                 StatsAliasResolver.MAX_RULE_LOOKUP_PAIRS + 1);
             assertTrue(plan.contains("USING COVERING INDEX idx_receiver_activity_event_source_working_evidence " +
                 "(source_identity_summary_id=?)"), plan);
-            assertTrue(plan.contains("idx_receiver_activity_event_source_time"), plan);
+            assertTrue(plan.contains("USING COVERING INDEX idx_receiver_activity_event_source_identity_address " +
+                "(source_identity_summary_id=? AND source_observed_local_id>?)"), plan);
             assertTrue(plan.contains("idx_receiver_activity_event_target_time"), plan);
             assertFalse(plan.contains("SCAN event"), plan);
 
@@ -1076,6 +1078,8 @@ class StatsAliasResolverTest
                 "Canonical lookup revisited retained local-only events; progress callbacks=" + progressCalls);
 
             statement.executeUpdate("DROP INDEX idx_receiver_activity_event_source_working_evidence");
+            statement.executeUpdate("DROP INDEX idx_receiver_activity_event_id_channel");
+            statement.executeUpdate("DROP INDEX idx_activity_event_member_identity_channel_local");
             new StatsAliasResolver().resolveEvidenceAliasesForMigration(connection, rows(canonical, ordinary));
             assertEquals(2L, canonical.get("resolved_alias_id"));
             assertEquals(3L, ordinary.get("resolved_alias_id"),

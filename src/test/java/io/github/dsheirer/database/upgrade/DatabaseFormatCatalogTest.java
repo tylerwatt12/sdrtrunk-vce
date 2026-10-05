@@ -289,6 +289,98 @@ class DatabaseFormatCatalogTest
     }
 
     @Test
+    void exactMarkerlessFormat35IsRecognizedPlannedAndSafelyMigrated() throws Exception
+    {
+        Path database = Format35TestDatabase.create(mTemporaryFolder.resolve("markerless-format-35.sqlite"));
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            assertEquals(1, statement.executeUpdate(
+                "DELETE FROM database_metadata WHERE key='database_format_version'"));
+            DatabaseFormatCatalog.DetectedFormat strict = DatabaseFormatCatalog.inspect(connection);
+            DatabaseFormatCatalog.DetectedFormat migration = DatabaseFormatCatalog.inspectForMigration(connection);
+            assertEquals(35, strict.version());
+            assertFalse(strict.markerPresent());
+            assertEquals(strict, migration);
+            DatabaseMigrationChain.PreflightReport plan = DatabaseMigrationChain.validateSource(connection, migration);
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 35, plan.steps().size());
+            assertEquals("format-35-to-36", plan.steps().getFirst().id());
+            DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 35, report.steps().size());
+            assertEquals("format-37-to-38", report.steps().getLast().id());
+            assertTrue(report.target().markerPresent());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
+        }
+    }
+
+    @Test
+    void exactMarkerlessFormat36IsRecognizedAndSafelyMigrated() throws Exception
+    {
+        Path database = Format36TestDatabase.create(mTemporaryFolder.resolve("markerless-format-36.sqlite"));
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            String fingerprint = SqliteSchemaValidator.fingerprint(connection);
+            assertEquals(1, statement.executeUpdate(
+                "DELETE FROM database_metadata WHERE key='database_format_version'"));
+            DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspect(connection);
+            assertEquals(36, detected.version());
+            assertFalse(detected.markerPresent());
+            DatabaseMigrationChain.PreflightReport plan = DatabaseMigrationChain.validateSource(connection, detected);
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 36, plan.steps().size());
+            assertEquals("format-36-to-37", plan.steps().getFirst().id());
+            DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 36, report.steps().size());
+            assertEquals("format-36-to-37", report.steps().getFirst().id());
+            assertEquals(DatabaseFormatCatalog.requireVersion(36).fingerprint(), fingerprint);
+            assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+            assertTrue(DatabaseFormatCatalog.requireCurrent(connection).markerPresent());
+        }
+    }
+
+    @Test
+    void exactMarkerlessFormat37IsRecognizedAndSafelyMigrated() throws Exception
+    {
+        Path database = Format37TestDatabase.create(mTemporaryFolder.resolve("markerless-format-37.sqlite"));
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            String fingerprint = SqliteSchemaValidator.fingerprint(connection);
+            assertEquals(1, statement.executeUpdate(
+                "DELETE FROM database_metadata WHERE key='database_format_version'"));
+            DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspect(connection);
+            assertEquals(37, detected.version());
+            assertFalse(detected.markerPresent());
+            DatabaseMigrationChain.PreflightReport plan = DatabaseMigrationChain.validateSource(connection, detected);
+            assertEquals(1, plan.steps().size());
+            assertEquals("format-37-to-38", plan.steps().getFirst().id());
+            DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
+            assertEquals(1, report.steps().size());
+            assertEquals("format-37-to-38", report.steps().getFirst().id());
+            assertEquals(DatabaseFormatCatalog.requireVersion(37).fingerprint(), fingerprint);
+            assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+            assertTrue(DatabaseFormatCatalog.requireCurrent(connection).markerPresent());
+        }
+    }
+
+    @Test
+    void exactMarkerlessCurrentFormatIsAdoptedWithoutChangingItsSchema() throws Exception
+    {
+        Path database = Format38TestDatabase.create(mTemporaryFolder.resolve("markerless-current.sqlite"));
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            String fingerprint = SqliteSchemaValidator.fingerprint(connection);
+            assertEquals(1, statement.executeUpdate(
+                "DELETE FROM database_metadata WHERE key='database_format_version'"));
+            DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspect(connection);
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, detected.version());
+            assertFalse(detected.markerPresent());
+            DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
+            assertEquals(1, report.steps().size());
+            assertEquals("adopt-global-format-marker", report.steps().getFirst().id());
+            assertEquals(fingerprint, SqliteSchemaValidator.fingerprint(connection));
+            assertTrue(DatabaseFormatCatalog.requireCurrent(connection).markerPresent());
+        }
+    }
+
+    @Test
     void markerlessFormat30And31WithoutPreferencesIsRefusedAsAmbiguous() throws Exception
     {
         Path database = mTemporaryFolder.resolve("markerless-current-without-preferences.sqlite");

@@ -160,8 +160,280 @@ An isolated 293,531-event projection contained 315 qualifying source events; the
 ratio projects approximately 326 MiB. Integer widths, page occupancy, and WAL costs vary, so neither the sample's
 sparsity nor the estimate is a storage cap. The same 100-identity evidence query returned identical aliases and took
 approximately 10 ms rather than 28 ms with the index and split. These are warm projection timings, not production
-page timings. Widening both existing source/target indexes achieved similar query time but added roughly 6 MiB in
-the projection; a second working-evidence target index had no measured benefit and is omitted.
+page timings. For that sparse canonical-source query, widening both existing source/target indexes achieved similar
+query time but added roughly 6 MiB in the projection and was omitted from format 33. A second sparse working-evidence
+target index had no measured benefit and remains omitted. Format 35 addresses the separate broad local/target
+evidence and exact Activity ranking paths described below.
+
+### Covering Activity lookup replacements
+
+Format 35 replaces four existing Activity indexes rather than retaining duplicate narrow and covering copies, and
+adds one narrow event/channel projection for historical member evidence:
+
+```sql
+CREATE INDEX idx_receiver_activity_event_source_time
+ON receiver_activity_event(source_identity_summary_id, observed_at_ms, id, channel_id,
+    source_observed_local_id, source_observed_working_id)
+WHERE source_identity_summary_id IS NOT NULL;
+
+CREATE INDEX idx_receiver_activity_event_target_time
+ON receiver_activity_event(target_identity_summary_id, observed_at_ms, id, channel_id,
+    target_observed_local_id, target_observed_working_id, target_kind_code)
+WHERE target_identity_summary_id IS NOT NULL;
+
+CREATE INDEX idx_receiver_activity_event_channel_action_time
+ON receiver_activity_event(channel_id, action_code, observed_at_ms DESC, id DESC,
+    radio_system_id, source_identity_summary_id, source_observed_local_id);
+
+CREATE INDEX idx_activity_event_member_identity_event
+ON activity_event_identity_member(identity_summary_id, event_id, observed_local_id);
+
+CREATE INDEX idx_receiver_activity_event_id_channel
+ON receiver_activity_event(id, channel_id);
+```
+
+The identity/time indexes serve historical Alias evidence when an identity has no usable compact call, affiliation,
+presence, or member evidence. Friendly-name search must consider every matching identity before sorting and paging;
+a compact lifetime total cannot supply the saved channel and observed address that select the correct Alias List.
+Including target kind covers the exact local-versus-Working-ID address expression without changing its meaning.
+The explicit ID before added payload columns preserves newest-first time/ID order, including equal-time pagination.
+Representative plans report `SEARCH event USING COVERING INDEX idx_receiver_activity_event_source_time
+(source_identity_summary_id=?)` and the corresponding target index. Ordered Activity probes use these seeks without
+a temporary sorting B-tree. The format-33 sparse positive-Working-ID source index remains unchanged because it avoids
+examining local-only events for qualified canonical subscribers.
+
+The saved-channel/action index serves the existing exact Dashboard Activity radio ranking. That view is an explicit
+exception to the aggregate-only dashboard rule: its chosen action/hour projection needs exact source identity and
+local-address counts, including conventional channel ownership, that the existing signaling buckets do not store.
+It uses bounded channel/action/time seeks instead of scanning unrelated event history, and its representative plan
+reports `SEARCH event USING COVERING INDEX idx_receiver_activity_event_channel_action_time
+(channel_id=? AND action_code=? AND observed_at_ms>? AND observed_at_ms<?)`. The replacement introduces no new
+history dependency, event collection, summary, or receiver callback. Other Dashboard totals and charts retain their
+summary and bucket paths.
+
+An isolated 300,000-event integer-only projection returned identical results for seven evidence, ranking, and
+Activity-order probes. Five warm-run medians reduced correlated unmatched source evidence from 606 ms to 35 ms,
+target local/Working-ID CASE evidence from 21 ms to 1.2 ms, and an action-slice radio grouping from 24 ms to 6.4 ms.
+These are SQL projection timings, not full production-page results. The source and target ordered probes retained
+their time/ID seek without a temporary sort. Placing payload columns before the implicit ID instead would require a
+temporary tree for the last ordering term, which is why format 35 makes the ID explicit.
+
+All three indexes contain at most one entry per qualifying retained detailed event; the source and target indexes
+still exclude events without that identity role. New entries per hour equal qualifying accepted detailed events per
+hour, and maximum 365-day retention projects at most 8,760 × R entries per index for R accepted events per hour.
+The synthetic replacements grew from 14.2 MB to 20.5 MB, adding 6.3 MB across the three indexes, approximately 21 bytes
+per event at that sample's role distribution. Additional sampled cost was about 10 bytes per source entry, 11 per
+target entry, and 7 per channel/action entry. An all-roles-present planning estimate is roughly 28 additional bytes
+per event, or 234 MiB at 1,000 events per hour for 365 days. Integer widths and page occupancy vary; these are estimates,
+not storage caps. No descriptive text is duplicated. Existing retention, explicit clears, and event deletion maintain
+all entries through the background writer's transactions.
+
+In the same synthetic projection, three committed 10,000-event WAL insertion samples increased median transaction
+time from 49 ms to 61 ms and generated WAL from 8.7 MB to 10.8 MB. Those samples contain only these replacements and
+the sparse Working-ID index, so their roughly 26% time and 25% WAL increases cannot predict the complete receiver
+writer's cost. The measured read benefit justifies replacing the existing indexes for these demonstrated paths;
+receiver queues and checkpoints still require operational verification. Fresh schema creation uses the covering DDL,
+the adjacent 34-to-35 Application Migrator rebuilds these three indexes and the member index below, adds one narrow
+event/channel index, and reports four rebuilt plus one added index. Prior formats keep exact frozen definitions.
+No runtime startup repair or migration is added.
+
+Historical member evidence retrieves the address recorded for each identity-member relationship and the saved
+channel that chooses its Alias List. It contributes alongside compact call, affiliation, and presence evidence;
+only identities lacking all usable compact evidence reach the detailed source/target fallback. The existing member identity/event index finds the right member rows but does not
+cover their address. Its replacement appends the address after both primary-key columns, preserving ordering and
+identity uniqueness. The narrow event-ID/channel index is an explicit exception to the duplicate-leading-key rule:
+the integer event primary key locates a row but requires a wide event-table page fetch to obtain its saved channel.
+This secondary index supplies that projection directly. It does not replace the unique `(id, radio_system_id)` key
+used by member foreign keys. Queries select the demonstrated covering event path explicitly; merely creating the
+index did not reliably make SQLite choose it.
+
+A separate SQLite 3.51.0 projection used 1,000,000 wide events, 771,824 total member rows, and 101 requested group
+identities containing 471,824 members across four channels. The largest requested group contained 181,599 members.
+The complete distinct evidence lookup returned the same 1,212 identity/channel/address triples. Three warm-run
+medians improved from 964 ms to 452 ms with both covering seeks, about 2.1 times faster. Plans report
+`SEARCH member USING COVERING INDEX idx_activity_event_member_identity_event (identity_summary_id=?)` followed by
+`SEARCH event USING COVERING INDEX idx_receiver_activity_event_id_channel (id=?)`. The distinct projection still
+requires its temporary deduplication tree. These are complete SQL evidence projections with explicit hints,
+not production page timings; both variants passed quick and foreign-key checks.
+
+The member replacement added 2,105,344 bytes across 771,824 members, about 2.7 additional bytes per member in that
+sample. The new event/channel index occupied 13,885,440 bytes, about 14 bytes per event. Each has at most one entry
+per existing corresponding row. New entries per hour equal accepted retained events or accepted member rows; the
+existing patch-member limit is 64 talkgroups per event. At maximum 365-day retention and R accepted events per hour,
+the event projection has at most 8,760 × R entries and the member index at most 64 × 8,760 × R entries. These bounds
+retain no extra events or memberships. Integer widths and page occupancy affect actual bytes. Existing retention,
+explicit clears, and event deletion through the unchanged foreign keys remove both indexes' entries automatically.
+
+Three committed insertion samples in that projection each added 10,000 events and 7,715 members. Median transaction
+time increased from 35 ms to 46 ms, about 33%, and median WAL from 4.19 MB to 4.86 MB, about 16%. These samples isolate
+the member/event indexes and parent keys; they do not contain the full receiver index set, writer queue or checkpoint
+schedule. Their storage and write cost is the measured tradeoff for eliminating the demonstrated wide-row fetches,
+and cannot be added to the percentages from the separate three-index projection above to predict production cost.
+
+### Covering channel-local evidence (format 36)
+
+Format 35's covered member/event join still revisits one event-index leaf for each retained member. Sorting those
+lookups and increasing a connection's page cache did not remove the demonstrated large-request cost. Format 36
+stores the existing parent observation channel on each member and retains the format-35 identity/event cover for
+Activity paging. An additional cover groups historical channel/address evidence:
+
+```sql
+CREATE UNIQUE INDEX idx_receiver_activity_event_id_channel
+ON receiver_activity_event(id, channel_id);
+
+CREATE INDEX idx_activity_event_member_identity_channel_local
+ON activity_event_identity_member(identity_summary_id, channel_id, observed_local_id);
+
+CREATE INDEX idx_p25_site_call_identity_identity_address
+ON p25_site_call_identity_bucket(identity_summary_id, observed_local_id, channel_id)
+WHERE observed_local_id > 0;
+```
+
+The event/channel definition replaces the prior non-unique index rather than adding another event index.
+Member `channel_id` is a positive, non-null integer copied from the exact parent. The composite foreign key
+`(event_id, channel_id)` enforces that relationship alongside the existing event/owner and identity/owner/kind keys.
+Neither runtime attribution path changes an event's observation channel. Both member insertion paths already
+have that channel, so they add no lookup or work on the real-time decode path. Saved-channel reassignment does
+not change retained ownership; no new foreign key binds the member to the channel's current system generation.
+
+For bounded Alias evidence, `identity_summary_id IN (SELECT ... FROM requested)` and a nested `SELECT DISTINCT`
+use the grouped member cover before the outer UNION. The DISTINCT subquery is necessary: placing DISTINCT on
+the UNION arm alone let SQLite remove it and scan repeated evidence. The new address cover instead serves exact
+identity/address equality and inclusive range bounds, with named Alias candidates compared before channel/list
+lookups. Search still matches the complete scoped set before ordering and paging, and the old compact-before-detail,
+canonical/local-address and assigned-list ownership rules remain unchanged.
+
+A fresh SQLite 3.51.0 integer projection compared the final two-member-index design with format 35 on 1,000,000
+wide events and 771,824 member rows. The 101 requested identities contained 471,824 members. The covered parent
+join took 451.39 ms warm; nested DISTINCT inside UNION took 1.034 ms and returned the same 1,212 triples, using
+52 rather than thousands of progress callbacks. Original member fields, committed-insert survivors and bounded
+retention survivors matched exactly, foreign-key checks passed, wrong channels were rejected, and parent deletion
+cascaded. These are isolated synthetic measurements, not complete production page timings.
+
+The stored channel added 2,215,936 bytes to that member table; the new grouped cover used 12,050,432 bytes.
+The existing member/event index sizes were unchanged. Each new member-index entry corresponds to an existing
+member, and each positive call-address entry to an existing compact-call bucket. They retain no additional rows
+and are removed by the same bounded retention and explicit-clear operations. Integer width and page occupancy
+affect real storage; the existing limit of 64 patch members per event still bounds membership growth.
+
+Three committed synthetic insertion samples each added 10,000 events and 7,715 members. The final two-member-index
+and composite-FK design changed median time from 43.19 to 161.72 ms and WAL from 5.27 to 15.87 MB. A bounded
+1,000-event/1,000-member retention pass changed 12.82 to 21.65 ms and WAL 2.10 to 4.97 MB. These fixtures exclude
+the new compact-call address index, the rest of the receiver index set, background queues and checkpoint scheduling;
+the percentages cannot be added to the earlier format-35 measurements or treated as a production writer forecast.
+A separate 440,000-bucket negative-address fixture returned identical matches and changed the original name filter
+from 156.8 to 5.51 ms with the address cover; exact/range plans used identity and address bounds. Full copied-data
+route measurements and receiver continuity checks remain required operational evidence.
+
+### Positive detailed address covers (format 37)
+
+With format 36's compact bucket and member covers, configured-name search still spent substantial time proving
+that detailed source/target addresses did not match. Format 37 adds two partial indexes with a different second
+key from Activity's time order:
+
+```sql
+CREATE INDEX idx_receiver_activity_event_source_identity_address
+ON receiver_activity_event(source_identity_summary_id, source_observed_local_id, channel_id)
+WHERE source_identity_summary_id IS NOT NULL AND source_observed_local_id > 0;
+
+CREATE INDEX idx_receiver_activity_event_target_identity_address
+ON receiver_activity_event(target_identity_summary_id, target_observed_local_id, channel_id)
+WHERE target_identity_summary_id IS NOT NULL AND target_observed_local_id > 0;
+```
+
+Every search using these covers includes identity equality and a positive observed address. Exact name candidates
+seek address equality; range candidates seek inclusive address bounds. Namespace/compact-suppression checks keep
+their original Boolean rules and saved-channel/list ownership. Activity paging keeps its existing time/ID indexes;
+canonical Working-ID Alias evidence keeps its separate sparse cover. No runtime write path changes.
+
+The current Alias resolver also uses the source address cover for ordinary local-address fallback. Its positive
+address predicate makes the partial index eligible and all three selected event columns are covered. Historical
+migration consensus keeps the old source/time path, and canonical Working-ID or mixed target evidence retains
+its existing index so a positive Working ID with a null local address remains usable.
+
+A 440,000-event negative-address fixture using the format-35 time covers changed 38.9 ms / 6.24 million VM steps
+to 7.04 ms / 80,000 VM steps with the new address covers. Exact/range plans and 174 ordered comparisons against
+the original predicate passed. These isolate predicate work rather than measuring complete page latency.
+
+A separate bounded fresh projection used the exact event table and all 17 existing explicit event indexes, with
+20%, 60% and 100% assigned-positive observations plus null, zero and unattributed positives. Three committed
+10,000-row insertion samples had baseline/new median times of 168.18/175.40, 185.68/184.58 and 185.25/199.93 ms.
+Bounded 1,000-row deletion medians were 15.75/26.78, 20.59/18.95 and 23.21/46.73 ms. Single late-attribution samples
+were noisy and do not establish a steady-state cost. Original row digests matched after every insert, attribution
+and deletion. The new indexes held 14,800/40,400/66,000 qualifying entries and occupied 0.266/0.715/1.152 MiB,
+about 18.31–18.82 bytes per entry. Integer width and page occupancy affect real storage.
+
+Each event can contribute at most one source and one target entry; null/zero addresses and missing identity owners
+contribute none. At maximum 365-day retention and R retained events per hour, each index has at most 8,760 × R
+entries. Existing retention and explicit clears remove them automatically. The fixture excludes parent foreign-key
+lookups, member/summary writes and checkpoint time and ran while other tests were active; these figures are
+synthetic event costs and cannot predict receiver latency or be added to earlier migration percentages. The
+Application Migrator adds exactly these two indexes, preserving frozen format-36 DDL and all retained contents.
+
+### Target-type and channel-frequency Activity covers (format 38)
+
+Two existing Activity filters could still traverse a busy identity or channel before finding the requested events.
+A secondary target identity plus event type needs that exact combination; an action-first index cannot provide its
+seek when the action predicate only excludes grants. A saved channel plus frequency needs the frequency seek before
+applying optional LCN and timeslot predicates. Hourly counters cannot return these individual event IDs and cursor
+positions. Format 38 adds two covers for the existing detailed Activity rows:
+
+```sql
+CREATE INDEX idx_receiver_activity_event_target_event_type_time
+ON receiver_activity_event(target_identity_summary_id, event_type_code,
+    observed_at_ms DESC, id DESC, radio_system_id, action_code)
+WHERE target_identity_summary_id IS NOT NULL;
+
+CREATE INDEX idx_receiver_activity_event_channel_frequency_time
+ON receiver_activity_event(channel_id, frequency_hz, observed_at_ms DESC, id DESC,
+    lcn_band, lcn_number, timeslot, radio_system_id, action_code)
+WHERE frequency_hz IS NOT NULL;
+```
+
+The first plan seeks `(target_identity_summary_id=? AND event_type_code=?)`; the second seeks
+`(channel_id=? AND frequency_hz=?)`. Both are covering candidate lookups, and their explicit descending time/ID
+prefix preserves equal-time ordering before the payload columns. The target cover supplies the residual system and
+non-grant predicates. The channel cover supplies LCN, timeslot, system and action predicates without fetching each
+event. SQLite chooses the demonstrated indexes with unchanged candidate SQL; no additional selection heuristic or
+population probe is introduced. Existing role/time, system/type, channel/time, frequency/time, encrypted and other
+indexes remain intact for their own filter and ordering paths, including forward polling.
+
+A fresh SQLite 3.51.0 target projection kept the exact event table and all 19 existing explicit event indexes. It
+started with 101,000 events, including a busy target with 80,000 observations mostly of other types, rare target event
+types, the same types on unrelated targets, timestamp ties and 1,000 unattributed positive observations. Three-sample
+medians for the matching target/type query changed from 24.99 to 0.044 ms, a backward cursor from 31.52 to 0.046 ms,
+and an empty subtype from 20.11 to 0.015 ms. Matching query work fell from approximately 561,000 to 1,000–2,000 VM
+operations with 1,000-operation sampling. Ordered candidate rows matched exactly. These measure candidate selection rather than full page latency.
+
+That target fixture committed three additional 10,000-event batches, attributed 1,000 pending rows, then deleted
+three batches of 1,000 events. Complete ordered event-row digests matched after every operation. Baseline/new median
+insertion time was 754.54/830.44 ms and deletion time was 311.57/492.84 ms; one late-attribution batch measured
+71.79/87.22 ms. The additional index occupied 5.742 MiB for 128,000 qualifying entries, approximately 47 bytes per
+entry or 44.9 MiB per million entries at those integer widths and page occupancy. Parent foreign-key lookups and
+other receiver writes were excluded, and checkpoints ran outside timed commits. Concurrent test work and cache
+pressure limit interpretation of the three-sample timing differences.
+
+A separate channel/frequency projection started with 40,000 events, including 12,000 observations on one channel
+with only 120 known frequencies. Five-sample medians for an empty channel/frequency lookup changed from 1.469 to
+0.016 ms, a matching lookup from 1.321 to 0.038 ms, and a missing LCN from 1.269 to 0.007 ms. Ordered rows matched
+for all four queries, including another channel. Three committed 1,000-event insertion samples had baseline/new
+medians of 9.97/11.07 ms, and row digests matched after inserts and a bounded 1,000-event deletion. The new index
+occupied 1,990,656 bytes for 31,120 qualifying entries, approximately 64 bytes per entry or 61 MiB per million at
+that distribution. This fixture used the exact event table and old indexes while excluding parent foreign-key
+lookups and other receiver writes; its committed-write timing used SQLite's default checkpoint settings.
+
+Each cover has at most one entry per qualifying retained event. The target predicate includes all target-linked
+events, including rows with an unknown event type or a zero local address; it is not limited to rare event types.
+The frequency predicate excludes unknown frequencies while retaining events whose LCN or timeslot is unknown.
+Accepted detailed events and later attribution maintain these entries through the background writer. For R accepted
+events per hour, maximum 365-day retention bounds each index at 8,760 × R entries. Existing retention, explicit
+statistics clears and event deletion remove entries automatically. No descriptive text or additional event history
+is stored, and no runtime write path changes.
+
+These independent projections measure added event-index cost, not the complete receiver writer or checkpoint
+schedule. Their timings and storage estimates cannot be added to earlier migration percentages or treated as fixed
+byte caps. The Application Migrator adds exactly these two indexes; every prior table/index definition, retained row,
+relationship and allocator is preserved. Formats 35, 36 and 37 remain frozen, and startup does not migrate them.
 
 ### Receiver status alert history
 

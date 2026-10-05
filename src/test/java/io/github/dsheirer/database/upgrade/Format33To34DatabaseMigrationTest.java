@@ -49,11 +49,11 @@ class Format33To34DatabaseMigrationTest
             assertEquals(before, rows(connection));
             var report = DatabaseMigrationChain.migrate(connection);
             connection.commit();
-            assertEquals(1, report.steps().size());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 33, report.steps().size());
             assertEquals("format-33-to-34", report.steps().getFirst().id());
-            assertEquals(34, report.target().version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
             assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
-            assertEquals(before, rows(connection), "Only the authoritative format marker changes");
+            assertEquals(before, rows(connection), "Every original field and allocator survives the adjacent chain");
             try(ResultSet result = statement.executeQuery("PRAGMA quick_check"))
             {
                 org.junit.jupiter.api.Assertions.assertTrue(result.next());
@@ -116,6 +116,12 @@ class Format33To34DatabaseMigrationTest
         for(String table: tables)
         {
             String sql = "SELECT * FROM \"" + table.replace("\"", "\"\"") + "\"";
+            if("activity_event_identity_member".equals(table))
+            {
+                // Later format 36 adds a derived channel; its migration tests validate that backfill separately.
+                sql = "SELECT event_id,radio_system_id,identity_summary_id,identity_kind_code,observed_local_id " +
+                    "FROM activity_event_identity_member";
+            }
             if("database_metadata".equals(table)) sql += " WHERE key<>'database_format_version'";
             try(Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery(sql))
             {
