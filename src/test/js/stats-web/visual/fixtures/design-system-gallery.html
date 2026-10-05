@@ -35,6 +35,8 @@
       <path d="M12 3 2.5 20h19zM12 9v4M12 17h.01"></path>
     </symbol>
     <symbol id="visual-icon-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></symbol>
+    <symbol id="visual-icon-chevron-left" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"></path></symbol>
+    <symbol id="visual-icon-chevron-right" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"></path></symbol>
     <symbol id="visual-icon-controls" viewBox="0 0 24 24"><path d="M4 6h5M15 6h5M12 3v6M4 12h9M19 12h1M16 9v6M4 18h2M12 18h8M9 15v6"></path></symbol>
     <symbol id="visual-icon-setup" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></symbol>
     <symbol id="visual-icon-filter" viewBox="0 0 24 24"><path d="M3 5h18l-7 8v5l-4 2v-7Z"></path></symbol>
@@ -1626,6 +1628,21 @@
       <label class="ui-field"><span class="ui-field-label">Notes</span><textarea class="ui-textarea" rows="2">Regional dispatch and response operations</textarea></label>
     </div></section>
     <section class="ui-section data-workspace"><header class="ui-section-title">Compact workspace</header><div class="visual-state-grid"><button class="ui-button" data-state="compact-action">Compact action</button><input class="ui-input" data-state="compact-input" aria-label="Compact field" value="County Dispatch"><select class="ui-select" data-state="compact-select" aria-label="Compact choice"><option>County Dispatch</option></select></div></section>
+  </main>
+  <main class="visual-table-overflow-example data-workspace">
+    <header class="ui-page-header"><div><h1 class="page-title">Table scrolling</h1><p class="page-subtitle">Arrows and edge shadows appear when more columns are available.</p></div></header>
+    <section class="ui-section" data-example-position="middle">
+      <header class="ui-section-title"><h2>Activity</h2><div class="ui-section-actions"><button class="ui-button ui-button-secondary ui-icon-button ui-icon-button-compact" type="button" aria-label="Choose table columns" title="Choose table columns"><svg aria-hidden="true"><use href="#visual-icon-columns"></use></svg></button></div></header>
+      <div class="ui-table-wrap"><table class="ui-data-table ui-data-table-quiet" data-example-width="1800"><thead><tr><th>Time</th><th>Event</th><th>Source</th><th>Destination</th><th>Channel</th><th>Details</th></tr></thead><tbody><tr><td>12:00:00 PM</td><td>Group call</td><td>Engine 4 Portable</td><td>County Fire Dispatch</td><td>North County Regional Emergency Services Simulcast</td><td>851.01250 MHz · LCN 0-1234 · Slot 2</td></tr><tr><td>11:59:42 AM</td><td>Registration</td><td>Regional Incident Command</td><td>County Public Safety</td><td>North County Regional Emergency Services Simulcast</td><td>851.01250 MHz · Control channel</td></tr></tbody></table></div>
+    </section>
+    <section class="ui-section">
+      <header class="ui-section-title"><h2>Summary</h2><div class="ui-section-actions"></div></header>
+      <div class="ui-table-wrap"><table class="ui-data-table ui-data-table-quiet"><thead><tr><th>Protocol</th><th>Calls</th></tr></thead><tbody><tr><td>P25</td><td>1,487</td></tr></tbody></table></div>
+    </section>
+    <section class="ui-section">
+      <header class="ui-section-title"><h2>Channels</h2><div class="ui-section-actions"></div></header>
+      <div class="ui-table-wrap"><table class="ui-data-table ui-data-table-quiet ui-mobile-cards" data-mobile-cards="true" data-example-width="1600"><thead><tr><th>Name</th><th>System</th><th>Frequency</th><th>Status</th></tr></thead><tbody><tr><td data-label="Name">North County Simulcast</td><td data-label="System">County Public Safety and Regional Services</td><td data-label="Frequency">851.01250 MHz</td><td data-label="Status"><span class="ui-pill ui-pill-success">Running</span></td></tr></tbody></table></div>
+    </section>
   </main>
   <script type="module" src="/visual/design-system-gallery.js"></script>
   <script type="module">import { installIconHints } from '/assets/core/icon-hints.js'; installIconHints();</script>

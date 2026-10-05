@@ -1,6 +1,7 @@
 import { applyThemeHue } from '/assets/core/theme.js?v=1';
 import * as tableDefaults from '/assets/core/table-defaults.js';
 import * as tableLayouts from '/assets/core/table-layout.js';
+import { createTableOverflow } from '/assets/core/table-overflow.js?v=1';
 import { createDualRange } from '/assets/core/dual-range.js';
 import { mountAudioDockGallery } from '/visual/audio-dock-gallery.js';
 import { createFormWorkflow } from '/assets/core/form-workflows.js';
@@ -402,7 +403,7 @@ function initializeScanListCatalog() {
 
 const parameters = new URLSearchParams(window.location.search);
 const theme = parameters.get('theme') === 'dark' ? 'dark' : 'light';
-const view = ['control-states', 'mobile-table', 'gallery', 'workflows', 'section-body', 'app-chrome', 'audio-dock', 'access-landing', 'access-login-modal', 'modal', 'modal-long', 'alias-list-create-modal', 'activity-action-tooltip', 'activity-filters', 'health-alert-modal', 'focus', 'settings', 'health', 'status-primitives', 'p25', 'admin-access',
+const view = ['control-states', 'table-overflow', 'mobile-table', 'gallery', 'workflows', 'section-body', 'app-chrome', 'audio-dock', 'access-landing', 'access-login-modal', 'modal', 'modal-long', 'alias-list-create-modal', 'activity-action-tooltip', 'activity-filters', 'health-alert-modal', 'focus', 'settings', 'health', 'status-primitives', 'p25', 'admin-access',
   'admin-navigation', 'admin-receiver', 'admin-support', 'dashboard-health', 'dashboard-calls', 'dashboard-activity',
   'signal-quality-detail', 'radioreference-results',
   'radio-directory-coverage', 'radio-directory-panel', 'admin-scan-lists',
@@ -414,6 +415,47 @@ document.documentElement.dataset.theme = theme;
 const requestedHue = parameters.get('hue');
 applyThemeHue(requestedHue === null ? null : Number(requestedHue));
 document.body.dataset.galleryView = view;
+
+if (view === 'table-overflow') {
+  const iconButton = (iconId, text, className) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = className;
+    button.setAttribute('aria-label', text);
+    button.title = text;
+    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    icon.setAttribute('aria-hidden', 'true');
+    const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+    use.setAttribute('href', `#visual-${iconId}`);
+    icon.append(use);
+    button.append(icon);
+    return button;
+  };
+  for (const section of document.querySelectorAll('.visual-table-overflow-example .ui-section')) {
+    const table = section.querySelector('table');
+    if (table.dataset.exampleWidth) {
+      const width = Number(table.dataset.exampleWidth);
+      const phone = window.matchMedia('(max-width: 760px)');
+      const setWidth = () => {
+        const cards = table.dataset.mobileCards === 'true' && phone.matches;
+        table.style.width = cards ? '' : `${width}px`;
+        table.style.minWidth = cards ? '' : `${width}px`;
+        table.style.setProperty('--table-content-min-width', cards ? '0px' : `${width}px`);
+      };
+      setWidth();
+      phone.addEventListener('change', setWidth);
+    }
+    const controller = createTableOverflow({ wrapper: table.parentElement, table,
+      actionsHost: section.querySelector('.ui-section-actions'), iconButton,
+      label: section.querySelector('h2').textContent });
+    if (section.dataset.examplePosition === 'middle') {
+      requestAnimationFrame(() => {
+        table.parentElement.scrollLeft = (table.parentElement.scrollWidth - table.parentElement.clientWidth) / 2;
+        controller.refresh();
+      });
+    }
+  }
+}
 
 document.querySelectorAll('[data-visual-disclosure]').forEach((toggle) => {
   const panel = document.getElementById(toggle.getAttribute('aria-controls'));

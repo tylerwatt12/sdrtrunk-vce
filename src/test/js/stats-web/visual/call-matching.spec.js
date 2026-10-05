@@ -558,7 +558,18 @@ test('comparison keeps every receiver copy and trusts the selected copy index', 
   await expect(dialog).toContainText('Not measured');
   await expect(dialog).toContainText('Receiver input loss');
   await expect(dialog).toContainText('Audio truncated');
-  await expect(dialog.locator('.call-matching-comparison-table tbody tr')).toHaveCount(12);
+  const matrix = dialog.locator('.call-matching-comparison-table');
+  for (const metric of ['Carrier frequency', 'Time overlap', 'Usable frames', 'FEC errors', 'Timing']) {
+    await expect(matrix.getByRole('rowheader', { name: metric, exact: true })).toBeVisible();
+  }
+  expect(await matrix.locator('tbody tr').evaluateAll((rows) =>
+    rows.every((row) => row.children.length === 4))).toBe(true);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const scrolling = dialog.locator('.ui-table-overflow-controls');
+  await expect(scrolling).toBeVisible();
+  await expect(scrolling.getByRole('button', { name: 'Scroll table left' })).toBeDisabled();
+  await scrolling.getByRole('button', { name: 'Scroll table right' }).click();
+  await expect.poll(() => matrix.locator('..').evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
 });
 
 test('transient polling failure retains the latest call list and health', async ({ page }) => {

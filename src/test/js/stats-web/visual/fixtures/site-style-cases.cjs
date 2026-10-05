@@ -10,7 +10,7 @@ const galleryViews = [
   'radio-directory-panel', 'admin-scan-lists', 'scanner', 'tuner-spectrum', 'tuners', 'aliases',
   'alias-modal', 'alias-export', 'scan-list-members', 'channels', 'radio-directory', 'entity-details',
   'live-notice', 'live-filter', 'tuner-frequency-popover', 'spectrum-discovery', 'spectrum-search',
-  'control-states'
+  'control-states', 'table-overflow'
 ];
 const gallerySelector = (view) => ({
   gallery: '.design-system-gallery', 'modal-long': '.visual-modal-example',

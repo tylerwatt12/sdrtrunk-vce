@@ -3,6 +3,7 @@ import * as preferenceSchema from './core/preference-schema.js?v=3';
 import { Controller as UserPreferenceController } from './core/user-preferences.js';
 import * as tableLayouts from './core/table-layout.js';
 import * as tableDefaults from './core/table-defaults.js?v=15';
+import { createTableOverflow } from './core/table-overflow.js?v=1';
 import { Controller as PageTitleController } from './core/page-title.js?v=2';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
 import * as systemLabels from './core/system-labels.js?v=1';
@@ -18,7 +19,7 @@ import {
   isReceiverHealthAlertEnabled
 } from './core/receiver-health-alerts.js?v=3';
 import * as radioSystemsDirectory from './features/radio-systems-directory.js';
-import { createListenMap } from './features/listen-map.js?v=4';
+import { createListenMap } from './features/listen-map.js?v=5';
 import { buildRadioResolvePlannerUrl } from './features/radioresolve-analysis.js?v=2';
 import {
   createAliasList,
@@ -29,7 +30,7 @@ import { createStreamingWorkspace } from './features/streaming.js?v=8';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=8';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=12';
 import { createRecordingsFeature } from './features/recordings.js?v=19';
-import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft } from './features/spectrum-search.js?v=16';
+import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft } from './features/spectrum-search.js?v=17';
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult } from './features/discovery-radioreference.js?v=1';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createAudioDock } from './core/audio-dock.js?v=10';
@@ -2969,7 +2970,11 @@ function addColumnResizers(element, columns, columnElements, headers, tableType,
 
 function cleanupTableLayoutMenu(controller) {
   controller?.layoutMenuCleanup?.();
-  if (controller) controller.layoutMenuCleanup = null;
+  controller?.overflowControls?.destroy();
+  if (controller) {
+    controller.layoutMenuCleanup = null;
+    controller.overflowControls = null;
+  }
 }
 
 function table(rows, columns, emptyText = 'No rows', options = {}) {
@@ -2980,6 +2985,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
   const tableController = options.controller || {};
   cleanupTableLayoutMenu(tableController);
   tableController.widthObserver?.disconnect();
+  const previousScrollLeft = options.wrapper?.scrollLeft || 0;
   const declaredColumns = columns.slice();
   tableLayouts.registerSchema(tableSchemaRegistry, tableType, declaredColumns);
   const tableDefaultLayout = tableDefaults.layout(tableType, declaredColumns);
@@ -3405,8 +3411,13 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
       layout, tableType, options.widthVariant);
   };
   applyWidths();
+  wrapper.scrollLeft = previousScrollLeft;
   window.requestAnimationFrame(() => {
-    if (wrapper.isConnected) applyWidths();
+    if (wrapper.isConnected && element.parentElement === wrapper) {
+      applyWidths();
+      wrapper.scrollLeft = previousScrollLeft;
+      tableController.overflowControls?.refresh();
+    }
   });
   if (!options.recordList && tableDefaults.fit(tableType) && typeof ResizeObserver !== 'undefined') {
     tableController.widthObserver = new ResizeObserver(applyWidths);
@@ -3419,6 +3430,12 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     () => rebuildTable(null), applyWidths);
   updateSortIndicators();
   renderBody();
+  tableController.overflowControls = createTableOverflow({
+    wrapper, table: element, actionsHost: options.layoutMenuHost, iconButton,
+    signal: activeRenderController?.signal,
+    label: options.overflowLabel || options.layoutMenuHost.closest('section')?.querySelector('h2, h3')?.textContent ||
+      'Table'
+  });
   Object.assign(tableController, {
     addRow(data, { prepend = true, limit = null } = {}) {
       if (prepend) dataRows.unshift(data);
@@ -3490,7 +3507,8 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
 function tableSection(title, rows, columns, emptyText = 'No rows', options = {}, trailing = null,
   action = null) {
   const actions = sectionActionHost(action);
-  const child = fragment(table(rows, columns, emptyText, { ...options, layoutMenuHost: actions }), trailing);
+  const child = fragment(table(rows, columns, emptyText, { ...options, layoutMenuHost: actions,
+    overflowLabel: options.overflowLabel || (typeof title === 'string' ? title : title?.textContent) }), trailing);
   return section(title, child, actions);
 }
 
@@ -3631,7 +3649,8 @@ function pagedTableContent(page, columns, tableType, options = {}) {
 
 function pagedSection(title, page, columns, searchPlaceholder, tableType, action = null, options = {}) {
   const actions = sectionActionHost(action);
-  const tableOptions = { ...(options.tableOptions || {}), layoutMenuHost: actions };
+  const tableOptions = { overflowLabel: typeof title === 'string' ? title : title?.textContent,
+    ...(options.tableOptions || {}), layoutMenuHost: actions };
   return fragment(searchPlaceholder ? searchBar(searchPlaceholder) : null,
     section(title, pagedTableContent(page, columns, tableType, { ...options, tableOptions }), actions));
 }
@@ -13315,6 +13334,7 @@ function openSpectrumDiscoveryWizard(selection) {
   let restartRequired = false;
   let manualProbeReleased = false;
   let probeNodes = null;
+  let probeOverflow = null;
   const path = '/api/v1/admin/spectrum-discovery';
   const directory = createDiscoveryRadioReferenceContext({ node, uiSelect, uiSelectFrame, formField, anchor, href },
     (url, options) => request(url, options));
@@ -13434,6 +13454,8 @@ function openSpectrumDiscoveryWizard(selection) {
     }
   };
   const showStep = (index, label) => {
+    probeOverflow?.destroy();
+    probeOverflow = null;
     activeStep = index;
     reviewBinding = null;
     probeNodes = null;
@@ -13626,7 +13648,10 @@ function openSpectrumDiscoveryWizard(selection) {
     table.append(head, body);
     const wrap = node('div', 'ui-table-wrap');
     wrap.append(table);
-    const details = disclosure('Signal details', identity, wrap, node('p', 'muted',
+    const tableActions = node('div', 'ui-table-actions');
+    probeOverflow = createTableOverflow({ wrapper: wrap, table, actionsHost: tableActions,
+      iconButton, signal: abort.signal, label: 'Signal details' });
+    const details = disclosure('Signal details', identity, tableActions, wrap, node('p', 'muted',
       'Decode score compares valid control messages, rejected messages, lost synchronization and corrected bits. ' +
       'A low score can still confirm a system when its identity repeats consistently.'));
     details.classList.add('spectrum-discovery-technical');
@@ -22626,7 +22651,7 @@ async function renderModernChannelCatalog(renderContext) {
     toolbar.append(uiActionButton('New channel', 'icon-plus', () =>
       openChannelEditorModal('create', null, { protocols, options }), 'ui-button ui-button-primary'));
     if (capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_TUNERS)) toolbar.append(uiActionButton('Find Trunked Systems',
-      'icon-scan-search', () => openSpectrumSearchWizard({ node, openReadOnlyModal, requestJson, uiActionButton,
+      'icon-scan-search', () => openSpectrumSearchWizard({ node, openReadOnlyModal, requestJson, uiActionButton, iconButton,
         uiSelect, uiSelectFrame, uiPill, formField, anchor, href, entityRefHref, channelMHz, hex,
         channelEditorControl, channelEditorFieldValue, protocols }, {
         prepareReceiver: async (tuner) => {
@@ -27632,7 +27657,7 @@ function renderAdminApplicationLog(renderContext) {
 function renderListenMap() {
   const renderContext = captureRenderContext();
   const map = createListenMap({
-    node, iconGlyph, radioSystemLink,
+    node, iconGlyph, iconButton, radioSystemLink,
     fetchSnapshot: () => api('/api/v1/listen/map', {}, { signal: renderContext.signal }),
     iconUrl: mapIconUrl
   });
@@ -29519,7 +29544,7 @@ function callMatchingHistoryPager(page, onPage) {
   });
 }
 
-function callMatchingComparison(decision) {
+function callMatchingComparison(decision, signal) {
   const identity = decision.call_identity || {};
   const winner = callMatchingWinner(decision);
   const copies = callMatchingCopies(decision);
@@ -29552,8 +29577,12 @@ function callMatchingComparison(decision) {
   ]);
   summary.classList.add('ui-admin-facts', 'call-matching-comparison-summary');
   body.append(summary);
-  const heading = node('div', 'ui-heading-group');
-  heading.append(node('h3', '', 'Copy comparison'));
+  const heading = node('header', 'ui-table-titlebar');
+  const headingText = node('div', 'ui-heading-group');
+  headingText.append(node('h3', '', 'Copy comparison'));
+  heading.append(headingText);
+  const tableActions = node('div', 'ui-table-actions');
+  heading.append(tableActions);
   body.append(heading);
   if (!copies.length) {
     body.append(node('div', 'empty', 'No comparison details are available for this call.'));
@@ -29629,9 +29658,10 @@ function callMatchingComparison(decision) {
   });
   matrix.append(thead, tbody);
   wrap.append(matrix);
+  createTableOverflow({ wrapper: wrap, table: matrix, actionsHost: tableActions,
+    iconButton, signal, label: 'Copy comparison' });
   body.append(wrap, node('p', 'muted call-matching-comparison-hint',
-    'Matching configuration numbers mean the same saved channel. Time overlap measures call timing. ' +
-    'Swipe left or right to compare every receiver copy.'));
+    'Matching configuration numbers mean the same saved channel. Time overlap measures call timing.'));
   return body;
 }
 
@@ -29699,11 +29729,14 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
         tableWrap.querySelectorAll('tbody tr.selected').forEach((candidate) =>
           candidate.classList.remove('selected'));
         button.closest('tr')?.classList.add('selected');
-        selectedModal = openReadOnlyModal('Matched call details', callMatchingComparison(row), {
+        const comparisonAbort = new AbortController();
+        selectedModal = openReadOnlyModal('Matched call details', callMatchingComparison(row, comparisonAbort.signal), {
           id: 'call-matching-details', className: 'call-matching-modal',
           returnFocusSelector: `.call-matching-compare[data-decision-sequence="${row.decision_sequence}"]`,
+          cleanup: () => comparisonAbort.abort(),
           onClose: () => { selectedModal = null; }
         });
+        if (!selectedModal) comparisonAbort.abort();
       });
       return button;
     } }

@@ -8,6 +8,55 @@
   overflow-y: hidden;
 }
 
+.ui-table-overflow:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.ui-table-overflow-controls {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* A zero-height sticky layer follows both scroll axes without moving the table. */
+.ui-table-overflow-cues {
+  position: sticky;
+  top: 0;
+  left: 0;
+  z-index: 4;
+  flex: 0 0 0;
+  width: 100%;
+  height: 0;
+  min-height: 0;
+  max-height: 0;
+  pointer-events: none;
+}
+
+.ui-table-overflow-edge {
+  position: absolute;
+  top: 0;
+  width: var(--table-overflow-cue-width);
+  pointer-events: none;
+}
+
+.ui-table-overflow-edge-left {
+  left: 0;
+  background: linear-gradient(to right, var(--table-overflow-cue-ink), transparent);
+}
+
+.ui-table-overflow-edge-right {
+  right: 0;
+  background: linear-gradient(to left, var(--table-overflow-cue-ink), transparent);
+}
+
+.ui-table-overflow-controls[hidden],
+.ui-table-overflow-cues[hidden],
+.ui-table-overflow-edge[hidden] {
+  display: none;
+}
+
 .ui-table-titlebar {
   min-height: var(--control-height-compact);
   display: flex;

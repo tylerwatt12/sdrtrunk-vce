@@ -70,6 +70,8 @@
   --table-rule: #d7dde2;
   --table-column-rule: #dde2e6;
   --table-hover: #f2f7f8;
+  --table-overflow-cue-width: var(--space-3);
+  --table-overflow-cue-ink: color-mix(in srgb, var(--ink) 20%, transparent);
   --chart-grid: #d7dde2;
   --chart-decode: #3d64b1;
   --chart-call: #0b7168;

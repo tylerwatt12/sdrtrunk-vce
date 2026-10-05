@@ -2,6 +2,19 @@ body {
   min-width: 320px;
 }
 
+.visual-table-overflow-example {
+  width: min(1180px, calc(100% - (2 * var(--space-4))));
+  margin: var(--space-4) auto;
+}
+
+body:not([data-gallery-view="table-overflow"]) .visual-table-overflow-example {
+  display: none;
+}
+
+.visual-table-overflow-example .ui-section {
+  margin-top: var(--space-4);
+}
+
 .visual-activity-filters-example {
   width: calc(100% - (2 * var(--space-4)));
   margin: var(--space-4) auto;

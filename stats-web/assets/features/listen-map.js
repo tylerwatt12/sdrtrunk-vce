@@ -1,6 +1,7 @@
 'use strict';
 
 import { systemLabel, systemName, systemIdentity } from '../core/system-labels.js?v=1';
+import { createTableOverflow } from '../core/table-overflow.js?v=1';
 
 const TILE_SIZE = 256;
 const TILE_HOST = 'https://tile.openstreetmap.org';
@@ -153,7 +154,7 @@ function fitPoints(points, width, height) {
   return null;
 }
 
-function createListenMap({ node, iconGlyph, fetchSnapshot, iconUrl,
+function createListenMap({ node, iconGlyph, iconButton, fetchSnapshot, iconUrl,
   radioSystemLink = (_reference, label) => label }) {
   const root = node('div', 'listen-map-workspace data-workspace');
   const toolbar = node('div', 'listen-map-toolbar ui-toolbar');
@@ -272,6 +273,7 @@ function createListenMap({ node, iconGlyph, fetchSnapshot, iconUrl,
   let inFlight = false;
   let frame = 0;
   let drag = null;
+  let historyOverflow = null;
   const tileNodes = new Map();
   const deletedCutoffs = new Map();
   const historyCutoffs = new Map();
@@ -411,8 +413,9 @@ function createListenMap({ node, iconGlyph, fetchSnapshot, iconUrl,
     followStatus.textContent = followed ? `Following: ${followed.label}` : '';
   }
 
-  function historyTable(entity) {
+  function historyTable(entity, actionsHost) {
     const wrapper = node('div', 'ui-table-wrap listen-map-history-wrap');
+    wrapper.dataset.entityId = entity.id;
     const table = node('table', 'ui-data-table ui-data-table-quiet listen-map-history');
     const head = node('thead');
     const headingRow = node('tr');
@@ -443,6 +446,8 @@ function createListenMap({ node, iconGlyph, fetchSnapshot, iconUrl,
     }
     table.append(head, body);
     wrapper.append(table);
+    historyOverflow = createTableOverflow({ wrapper, table, actionsHost, iconButton,
+      label: 'Position history' });
     return wrapper;
   }
 
@@ -453,6 +458,8 @@ function createListenMap({ node, iconGlyph, fetchSnapshot, iconUrl,
     const focusedId = list.contains(document.activeElement) ? document.activeElement.dataset.entityId : null;
     const focusedHistorySignature = details.contains(document.activeElement) ?
       document.activeElement.closest('.listen-map-history-item')?.dataset.positionSignature : null;
+    const focusedHistoryScroll = [...details.querySelectorAll('.ui-table-overflow-controls button')]
+      .indexOf(document.activeElement);
     const scrollTop = list.scrollTop;
     list.replaceChildren();
     if (!entities.length) list.append(node('div', 'empty', 'No mapped locations yet.'));
@@ -478,6 +485,11 @@ function createListenMap({ node, iconGlyph, fetchSnapshot, iconUrl,
     if (focusedId) [...list.querySelectorAll('button')]
       .find((button) => button.dataset.entityId === focusedId)?.focus({ preventScroll: true });
 
+    const previousHistory = details.querySelector('.listen-map-history-wrap');
+    const historyPosition = previousHistory ? { entityId: previousHistory.dataset.entityId,
+      left: previousHistory.scrollLeft, top: previousHistory.scrollTop } : null;
+    historyOverflow?.destroy();
+    historyOverflow = null;
     details.replaceChildren();
     const selected = entities.find((entity) => entity.id === selectedId);
     if (selected) {
@@ -499,8 +511,22 @@ function createListenMap({ node, iconGlyph, fetchSnapshot, iconUrl,
         facts.append(fact);
       }
       const historyHeader = node('div', 'listen-map-history-heading');
-      historyHeader.append(node('h4', '', 'History'), node('span', '', String(selected.positions.length)));
-      details.append(node('h3', '', selected.label), facts, historyHeader, historyTable(selected));
+      const historyActions = node('div', 'ui-section-actions');
+      historyActions.append(node('span', '', String(selected.positions.length)));
+      historyHeader.append(node('h4', '', 'History'), historyActions);
+      const history = historyTable(selected, historyActions);
+      details.append(node('h3', '', selected.label), facts, historyHeader, history);
+      if (historyPosition?.entityId === selected.id) {
+        history.scrollLeft = historyPosition.left;
+        history.scrollTop = historyPosition.top;
+      }
+      historyOverflow.refresh();
+      if (historyPosition?.entityId === selected.id && focusedHistoryScroll >= 0) {
+        const scrollButtons = [...historyActions.querySelectorAll('.ui-table-overflow-controls button')];
+        const focusTarget = !scrollButtons[focusedHistoryScroll]?.disabled ? scrollButtons[focusedHistoryScroll] :
+          scrollButtons.find((button) => !button.disabled) || (history.tabIndex === 0 ? history : null);
+        focusTarget?.focus({ preventScroll: true });
+      }
     }
     if (focusedHistorySignature) {
       [...details.querySelectorAll('.listen-map-history-item')]
@@ -676,6 +702,8 @@ function createListenMap({ node, iconGlyph, fetchSnapshot, iconUrl,
 
   return { element: root, close() {
     closed = true;
+    historyOverflow?.destroy();
+    historyOverflow = null;
     window.clearInterval(timer);
     if (frame) window.cancelAnimationFrame(frame);
     resize?.disconnect();

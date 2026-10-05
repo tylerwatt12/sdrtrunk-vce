@@ -1,4 +1,5 @@
 import { systemName, systemIdentity } from '../core/system-labels.js?v=1';
+import { createTableOverflow } from '../core/table-overflow.js?v=1';
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult } from './discovery-radioreference.js?v=1';
 
 export function spectrumSearchSystemName(candidate) {
@@ -43,7 +44,7 @@ export function spectrumSearchGroupKey(candidate) {
 }
 
 export function openSpectrumSearchWizard(ui, context = {}) {
-  const { node, openReadOnlyModal, requestJson, uiActionButton, uiSelect, uiSelectFrame, uiPill,
+  const { node, openReadOnlyModal, requestJson, uiActionButton, iconButton, uiSelect, uiSelectFrame, uiPill,
     formField, anchor, href, entityRefHref, channelMHz, hex, channelEditorControl, channelEditorFieldValue, protocols } = ui;
   const path = '/api/v1/admin/spectrum-search';
   const abort = new AbortController();
@@ -87,6 +88,11 @@ export function openSpectrumSearchWizard(ui, context = {}) {
   let reviewBindings = [];
   let resultQuery = '';
   let disposeBandPicker = () => {};
+  const resultOverflows = new Set();
+  const disposeResultOverflows = () => {
+    resultOverflows.forEach((overflow) => overflow.destroy());
+    resultOverflows.clear();
+  };
   let refreshedCheckingRun = null;
   let receiverMeasurementRevision = 0;
   const preparedCatalogTuners = new Map();
@@ -100,6 +106,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       closed = true;
       generation += 1;
       disposeBandPicker();
+      disposeResultOverflows();
       abort.abort();
       window.removeEventListener('pagehide', abandon);
       void releaseForClose();
@@ -267,6 +274,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
   const show = (next, index, title) => {
     disposeBandPicker();
     disposeBandPicker = () => {};
+    disposeResultOverflows();
     progressNodes = null;
     currentStep = next;
     receiverChooser = null;
@@ -1020,8 +1028,10 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       const identity = node('div', 'spectrum-search-system-identity');
       identity.append(node('strong', '', systemLabel(entry.candidates[0])),
         node('span', 'muted', systemIdentityLabel(entry)));
-      sectionHeader.append(groupCheck, identity);
-      if (entry.candidates.some((candidate) => candidate.identity || candidate.trunked_evidence?.identity?.radio_system_key)) sectionHeader.append(uiPill('Stable identity', 'success'));
+      const tableActions = node('div', 'ui-section-actions');
+      if (entry.candidates.some((candidate) => candidate.identity || candidate.trunked_evidence?.identity?.radio_system_key)) tableActions.append(uiPill('Stable identity', 'success'));
+      sectionHeader.append(groupCheck, identity, tableActions);
+      const wrapper = node('div', 'ui-table-wrap');
       const table = node('table', 'ui-data-table ui-data-table-quiet ui-mobile-cards spectrum-search-group-table');
       const head = node('tr');
       ['Channel', 'Site', 'Signal', 'Health'].forEach((label) => {
@@ -1092,7 +1102,11 @@ export function openSpectrumSearchWizard(ui, context = {}) {
         updateSelection();
       });
       table.append(thead, body);
-      section.append(sectionHeader, table);
+      wrapper.append(table);
+      section.append(sectionHeader, wrapper);
+      const overflow = createTableOverflow({ wrapper, table, actionsHost: tableActions, iconButton,
+        signal: abort.signal, label: `${systemLabel(entry.candidates[0])} search results` });
+      resultOverflows.add(overflow);
       sections.push({ section, groupCheck, members });
       list.append(section);
     });
@@ -1101,10 +1115,12 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       const query = search.value.trim().toLowerCase();
       rows.forEach(({ row, text }) => { row.hidden = !text.includes(query); });
       sections.forEach(({ section, members }) => { section.hidden = members.every(({ row }) => row.hidden); });
+      resultOverflows.forEach((overflow) => overflow.refresh());
     });
     selectAll.disabled = rows.every(({ check }) => check.disabled);
     stage.append(toolbar, found ? list : node('div', 'ui-empty-state',
       'No trunked control channels were identified. Try another band or a different receiver.'));
+    resultOverflows.forEach((overflow) => overflow.refresh());
     search.dispatchEvent(new Event('input'));
     updateSelection();
     scheduleDirectoryPoll();
