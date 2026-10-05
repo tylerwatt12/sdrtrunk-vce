@@ -23,6 +23,7 @@ import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -504,6 +505,57 @@ class ReceiverActivityWriterTest
             assertTrue(scalar(connection,
                 "SELECT count(*) FROM receiver_activity_event WHERE observed_at_ms < 10000") > 0,
                 "startup must not drain a large expired backlog before serving the live queue");
+        }
+    }
+
+    @Test
+    void deferredStartupOptimizationStillWritesObservationsAndDoesNotRetryEveryBatch() throws Exception
+    {
+        Path database = createDatabase(mTemporaryFolder.resolve("startup-optimization.sqlite"));
+        insertConfiguredChannel(database);
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA foreign_keys=ON");
+            statement.executeUpdate("""
+                INSERT INTO receiver_channel(id, configuration_id, first_seen_ms, last_seen_ms)
+                VALUES (1, '%s', 1, 1)
+                """.formatted(CONFIGURATION_ID));
+            statement.executeUpdate("""
+                WITH RECURSIVE n(value) AS (VALUES(1) UNION ALL SELECT value+1 FROM n WHERE value<5000)
+                INSERT INTO receiver_activity_event(channel_id, observed_at_ms, action_code)
+                SELECT 1, %d+value, 4 FROM n
+                """.formatted(System.currentTimeMillis()));
+        }
+
+        AtomicInteger clockReads = new AtomicInteger();
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 64, 1, 0, 25, 5000,
+            ReceiverActivityMaintenanceTest.expiredClock(clockReads));
+        try
+        {
+            writer.start();
+            for(int index = 0; index < 50; index++)
+            {
+                assertTrue(writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT,
+                    System.currentTimeMillis() + index)));
+            }
+            awaitWritten(writer, 50, 30);
+            assertTrue(clockReads.get() > 1, "startup optimization must actually reach its deadline callback");
+            int attemptedClockReads = clockReads.get();
+            assertTrue(writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, System.currentTimeMillis())));
+            awaitWritten(writer, 51);
+            assertEquals(attemptedClockReads, clockReads.get(), "deferred optimization must yield until its next schedule");
+            assertEquals(ReceiverActivityStatus.State.RUNNING, writer.getStatus().state());
+            assertEquals(0, writer.getDroppedRecords());
+            assertNull(writer.getStatus().lastError());
+        }
+        finally
+        {
+            writer.close();
+        }
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertEquals(5_051, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
         }
     }
 

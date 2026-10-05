@@ -24,13 +24,18 @@ import java.sql.Statement;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.function.LongSupplier;
 import org.apache.commons.io.FileUtils;
+import org.sqlite.ProgressHandler;
 
 /**
  * SQLite maintenance actions for the sdrtrunk-vce stats database.
  */
 public final class ReceiverActivityMaintenance
 {
+    static final long AUTOMATIC_OPTIMIZE_NANOSECONDS = TimeUnit.MILLISECONDS.toNanos(250);
+    private static final int SQLITE_PROGRESS_STEPS = 1_000;
+
     private ReceiverActivityMaintenance()
     {
     }
@@ -329,6 +334,25 @@ public final class ReceiverActivityMaintenance
         return retention;
     }
 
+    /** Automatic housekeeping yields to observations; administrator-requested maintenance keeps its full behavior. */
+    static AutomaticResult runAutomaticMaintenancePass(Connection connection, int retentionDays,
+                                                       LongSupplier nanoTime) throws SQLException
+    {
+        RetentionResult retention = cleanupRetentionPass(connection, retentionDays);
+        boolean optimized = checkpointAutomatically(connection) && optimizeAutomatically(connection, nanoTime);
+        if(optimized)
+        {
+            updateStatus(connection, "last_maintenance_ms");
+            ReceiverActivitySchema.updateStatus(connection, "last_maintenance_deleted_rows",
+                Integer.toString(retention.deletedRows()));
+        }
+        return new AutomaticResult(retention.deletedRows(), retention.moreWorkLikely(), !optimized);
+    }
+
+    record AutomaticResult(int deletedRows, boolean moreWorkLikely, boolean optimizationDeferred)
+    {
+    }
+
     static RetentionResult cleanupRetentionPass(Connection connection, int retentionDays) throws SQLException
     {
         long cutoff = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(Math.max(1, retentionDays));
@@ -416,6 +440,66 @@ public final class ReceiverActivityMaintenance
         {
             statement.execute("PRAGMA optimize");
         }
+    }
+
+    /** Interrupt only optional optimization, never an observation transaction on this long-lived connection. */
+    static boolean optimizeAutomatically(Connection connection, LongSupplier nanoTime) throws SQLException
+    {
+        if(!connection.getAutoCommit())
+        {
+            throw new SQLException("Automatic statistics optimization requires an idle database writer connection");
+        }
+        long startedAt = nanoTime.getAsLong();
+        boolean[] deadlineReached = {false};
+        ProgressHandler.setHandler(connection, SQLITE_PROGRESS_STEPS, new ProgressHandler()
+        {
+            @Override
+            protected int progress()
+            {
+                deadlineReached[0] = nanoTime.getAsLong() - startedAt >= AUTOMATIC_OPTIMIZE_NANOSECONDS;
+                return deadlineReached[0] ? 1 : 0;
+            }
+        });
+        try
+        {
+            optimize(connection);
+            return true;
+        }
+        catch(SQLException failure)
+        {
+            if((deadlineReached[0] && (failure.getErrorCode() & 0xFF) == 9) || isBusy(failure))
+            {
+                return false;
+            }
+            throw failure;
+        }
+        finally
+        {
+            ProgressHandler.clearHandler(connection);
+        }
+    }
+
+    private static boolean checkpointAutomatically(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            //PASSIVE never waits for live readers or writers and leaves any remaining WAL frames for a later pass.
+            statement.execute("PRAGMA wal_checkpoint(PASSIVE)");
+            return true;
+        }
+        catch(SQLException failure)
+        {
+            if(isBusy(failure))
+            {
+                return false;
+            }
+            throw failure;
+        }
+    }
+
+    private static boolean isBusy(SQLException failure)
+    {
+        return (failure.getErrorCode() & 0xFF) == 5; //SQLITE_BUSY, including extended busy codes.
     }
 
     private static void checkpoint(Connection connection) throws SQLException

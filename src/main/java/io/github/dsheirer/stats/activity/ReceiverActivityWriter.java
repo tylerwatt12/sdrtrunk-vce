@@ -71,6 +71,7 @@ class ReceiverActivityWriter implements AutoCloseable
     private final long mBatchCollectionMilliseconds;
     private final int mDatabaseBusyTimeoutMilliseconds;
     private final long mGracefulDrainMilliseconds;
+    private final LongSupplier mMaintenanceNanoTime;
     private final ConcurrentLinkedQueue<MaintenanceCommand> mMaintenanceQueue = new ConcurrentLinkedQueue<>();
     /* Owned exclusively by the background writer; receiver producers never inspect cleanup plans. */
     private final Deque<StatsDatabaseMaintenanceRequest> mDeletionJobs = new ArrayDeque<>();
@@ -131,12 +132,21 @@ class ReceiverActivityWriter implements AutoCloseable
                          int batchSize, long batchCollectionMilliseconds, int databaseBusyTimeoutMilliseconds,
                          long gracefulDrainMilliseconds)
     {
+        this(databasePath, retentionDays, detailedEventHistoryEnabled, queueCapacity, batchSize,
+            batchCollectionMilliseconds, databaseBusyTimeoutMilliseconds, gracefulDrainMilliseconds, System::nanoTime);
+    }
+
+    ReceiverActivityWriter(Path databasePath, int retentionDays, boolean detailedEventHistoryEnabled, int queueCapacity,
+                         int batchSize, long batchCollectionMilliseconds, int databaseBusyTimeoutMilliseconds,
+                         long gracefulDrainMilliseconds, LongSupplier maintenanceNanoTime)
+    {
         mDatabasePath = databasePath;
         mQueue = new ArrayBlockingQueue<>(Math.max(1, queueCapacity));
         mBatchSize = Math.max(1, batchSize);
         mBatchCollectionMilliseconds = Math.max(0, batchCollectionMilliseconds);
         mDatabaseBusyTimeoutMilliseconds = Math.max(1, databaseBusyTimeoutMilliseconds);
         mGracefulDrainMilliseconds = Math.max(0, gracefulDrainMilliseconds);
+        mMaintenanceNanoTime = java.util.Objects.requireNonNull(maintenanceNanoTime);
         setRetentionDays(retentionDays);
         setDetailedEventHistoryEnabled(detailedEventHistoryEnabled);
     }
@@ -996,14 +1006,20 @@ class ReceiverActivityWriter implements AutoCloseable
         {
             try
             {
-                ReceiverActivityMaintenance.RetentionResult result =
-                    ReceiverActivityMaintenance.runLightMaintenancePass(connection, mRetentionDays);
+                ReceiverActivityMaintenance.AutomaticResult result =
+                    ReceiverActivityMaintenance.runAutomaticMaintenancePass(connection, mRetentionDays,
+                        mMaintenanceNanoTime);
                 if(result.moreWorkLikely())
                 {
                     mRetentionCleanupRequested.set(true);
                 }
                 mLastRetentionCleanup = System.currentTimeMillis();
+                //An optional optimization timeout is an attempted daily pass, not a reason to retry every batch.
                 mLastMaintenance = System.currentTimeMillis();
+                if(result.optimizationDeferred())
+                {
+                    mLog.debug("Automatic statistics optimization deferred to keep observations moving");
+                }
                 return;
             }
             catch(SQLException e)
