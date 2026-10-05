@@ -28,7 +28,7 @@ import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.IServiceOptionsProvider;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
-import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DataUnitID;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBandReceiver;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.OSPMessage;
@@ -107,7 +107,9 @@ public class TelephoneInterconnectVoiceChannelGrantUpdate extends OSPMessage imp
     {
         if(mAnyAddress == null)
         {
-            mAnyAddress = APCO25Talkgroup.create(getMessage().getInt(ANY_ADDRESS));
+            //TIA-102.AABC-B 4.2.9.1 identifies a subscriber endpoint, whether the call is SU- or PSTN-initiated.
+            //Preserve its existing TO placement for call tracking; that placement does not establish caller direction.
+            mAnyAddress = APCO25RadioIdentifier.createTo(getMessage().getInt(ANY_ADDRESS));
         }
 
         return mAnyAddress;

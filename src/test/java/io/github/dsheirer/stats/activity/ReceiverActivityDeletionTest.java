@@ -90,7 +90,7 @@ class ReceiverActivityDeletionTest
                 VALUES (1,'1-10',851012500,1000,1000)
                 """);
 
-            String selectedKey = RetainedSiteKey.p25(1, 2, 1, 1, 1000);
+            String selectedKey = RetainedSiteKey.p25(1, 2, 1, 1L, 1000);
             execute(connection, """
                 UPDATE receiver_channel SET radio_system_id=2,radio_system_assigned_at_ms=2000,
                     last_seen_ms=2000 WHERE id=1

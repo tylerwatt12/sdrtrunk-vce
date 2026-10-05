@@ -472,7 +472,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
 
     private void observeNetworkConfiguration(P25NetworkConfigurationSnapshot observation, long timestamp)
     {
-        mNetworkConfigurationStabilizer.observe(observation, timestamp);
+        mNetworkConfigurationStabilizer.observe(observation, timestamp, mSourceFrequency);
 
         if(isTrunkedControlChannel() && observation != null)
         {

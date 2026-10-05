@@ -24,7 +24,10 @@ import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
-import java.util.Calendar;
+import java.time.DateTimeException;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.Collections;
 import java.util.Date;
 import java.util.List;
@@ -97,23 +100,34 @@ public class SynchronizationBroadcast extends MacStructure
      */
     public long getSystemTime()
     {
-        Calendar cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
-        cal.clear();
-        cal.set(Calendar.YEAR, getYear());
-        cal.set(Calendar.MONTH, getMonth() - 1);
-        cal.set(Calendar.DAY_OF_MONTH, getDay());
-        cal.set(Calendar.HOUR_OF_DAY, getHours());
-        cal.set(Calendar.MINUTE, getMinutes());
-        cal.set(Calendar.MILLISECOND, getMilliSeconds());
-        return cal.getTimeInMillis();
+        if(!hasValidDate())
+        {
+            throw new IllegalStateException("Invalid synchronization broadcast clock");
+        }
+
+        return LocalDateTime.of(getYear(), getMonth(), getDay(), getHours(), getMinutes())
+            .toInstant(ZoneOffset.UTC).toEpochMilli() + getMilliSeconds();
     }
 
     /**
-     * Indicates if the month and day fields are within their defined ranges.
+     * Indicates if the complete broadcast clock contains a real calendar date and valid timing fields.
      */
     public boolean hasValidDate()
     {
-        return getMonth() >= 1 && getMonth() <= 12 && getDay() >= 1 && getDay() <= 31;
+        if(getHours() > 23 || getMinutes() > 59 || !hasValidMicroSlots())
+        {
+            return false;
+        }
+
+        try
+        {
+            LocalDate.of(getYear(), getMonth(), getDay());
+            return true;
+        }
+        catch(DateTimeException exception)
+        {
+            return false;
+        }
     }
 
     /**
@@ -245,6 +259,12 @@ public class SynchronizationBroadcast extends MacStructure
     public int getMilliSeconds()
     {
         return (int)(getMicroSlots() * 7.5);
+    }
+
+    /** Whether the counter fits the protocol's 0 through 7999 micro-slot range. */
+    public boolean hasValidMicroSlots()
+    {
+        return getMicroSlots() <= 7999;
     }
 
     /**

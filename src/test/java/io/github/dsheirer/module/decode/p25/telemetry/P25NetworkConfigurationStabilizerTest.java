@@ -196,7 +196,7 @@ public class P25NetworkConfigurationStabilizerTest
     {
         P25NetworkConfigurationStabilizer stabilizer = seededStabilizer();
 
-        stabilizer.observe(snapshot(primary(856162500L)), 70000L);
+        stabilizer.observe(snapshot(primary(856162500L)), 70000L, 856162500L);
 
         P25NetworkConfigurationSnapshot.Channel current = getChannel(stabilizer.getSnapshot(), "primary_control");
         assertNotNull(current);
@@ -204,6 +204,38 @@ public class P25NetworkConfigurationStabilizerTest
         assertEquals(1, stabilizer.getSnapshot().channels().stream()
             .filter(channel -> "primary_control".equals(channel.role()))
             .count());
+    }
+
+    @Test
+    public void contradictoryPrimaryRequiresFreshCorroborationWhileBackupKeepsReceiving()
+    {
+        P25NetworkConfigurationStabilizer stabilizer = seededStabilizer();
+        P25NetworkConfigurationSnapshot.Channel suspect = new P25NetworkConfigurationSnapshot.Channel(
+            "primary_control", "1-3802", 785768750L, 815768750L, false, 1);
+        stabilizer.observe(snapshot(suspect), 70_000L, 856137500L);
+        assertFalse(hasChannel(stabilizer.getSnapshot(), "primary_control", 785768750L));
+        assertTrue(hasChannel(stabilizer.getSnapshot(), "primary_control", 856137500L));
+
+        //A cached export retains its RF timestamp and cannot count as subsequent RF confirmations.
+        stabilizer.observe(snapshot(suspect.withObservedAt(70_000L)), 100_000L, 856137500L);
+        stabilizer.observe(snapshot(suspect.withObservedAt(70_000L)), 130_000L, 856137500L);
+        assertFalse(hasChannel(stabilizer.getSnapshot(), "primary_control", 785768750L));
+
+        //A legitimately advertised new primary can mature while we continue receiving on a backup.
+        stabilizer.observe(snapshot(suspect), 100_000L, 856137500L);
+        stabilizer.observe(snapshot(suspect), 130_000L, 856137500L);
+        assertTrue(hasChannel(stabilizer.getSnapshot(), "primary_control", 785768750L));
+    }
+
+    @Test
+    public void tunedStartupAndRotationDoNotWaitForCorroboration()
+    {
+        P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
+        stabilizer.observe(snapshot(primary(771831250L)), 1_000L, 771831250L);
+        assertTrue(hasChannel(stabilizer.getSnapshot(), "primary_control", 771831250L));
+        stabilizer.reset();
+        stabilizer.observe(snapshot(primary(771506250L)), 2_000L, 771506250L);
+        assertTrue(hasChannel(stabilizer.getSnapshot(), "primary_control", 771506250L));
     }
 
     @Test
@@ -419,6 +451,37 @@ public class P25NetworkConfigurationStabilizerTest
         assertEquals(72_000L, stable.talkerAliases().getFirst().observedAtMs(),
             "OTA aliases retain the time that exact alias was last decoded");
         assertEquals(80_000L, stable.channels().getFirst().observedAtMs());
+    }
+
+    @Test
+    public void cachedInputFactTimestampsCannotSatisfyGuardedConfirmation()
+    {
+        P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
+        P25NetworkConfigurationSnapshot.NeighborSite neighbor = neighbor(855237500L).withObservedAt(1_000L);
+        P25NetworkConfigurationSnapshot.FrequencyBand band = new P25NetworkConfigurationSnapshot.FrequencyBand(
+            0, false, 851006250L, 12500, 6250L, -45000000L, 1).withObservedAt(1_000L);
+        P25NetworkConfigurationSnapshot.ForeignSystemBand foreign =
+            new P25NetworkConfigurationSnapshot.ForeignSystemBand(0xBEE00, 0x9EF, 4, 1,
+                935012500L, 12500L, -39000000L).withObservedAt(1_000L);
+        P25NetworkConfigurationSnapshot cached = new P25NetworkConfigurationSnapshot("P25_PHASE_1", null,
+            null, List.of(), List.of(neighbor), List.of(band), List.of(), List.of(), null, List.of(foreign));
+
+        stabilizer.observe(cached, 1_000L);
+        stabilizer.observe(cached, 31_000L);
+        stabilizer.observe(cached, 61_000L);
+        assertTrue(stabilizer.getSnapshot().neighborSites().isEmpty());
+        assertTrue(stabilizer.getSnapshot().frequencyBands().isEmpty());
+        assertTrue(stabilizer.getSnapshot().foreignSystemBands().isEmpty());
+
+        for(long timestamp: List.of(31_000L, 61_000L))
+        {
+            stabilizer.observe(new P25NetworkConfigurationSnapshot("P25_PHASE_1", null, null, List.of(),
+                List.of(neighbor.withObservedAt(timestamp)), List.of(band.withObservedAt(timestamp)),
+                List.of(), List.of(), null, List.of(foreign.withObservedAt(timestamp))), timestamp);
+        }
+        assertEquals(61_000L, stabilizer.getSnapshot().neighborSites().getFirst().observedAtMs());
+        assertEquals(61_000L, stabilizer.getSnapshot().frequencyBands().getFirst().observedAtMs());
+        assertEquals(61_000L, stabilizer.getSnapshot().foreignSystemBands().getFirst().observedAtMs());
     }
 
     @Test

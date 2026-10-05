@@ -1258,6 +1258,14 @@ public class StatsWebServerService implements AutoCloseable
         response.put("last_successful_write_ms", current.lastSuccessfulWriteMs());
         response.put("records_written", current.recordsWritten());
         response.put("records_dropped", current.recordsDropped());
+        var drops = current.dropDiagnostics();
+        response.put("drop_causes", Map.of("writer_queue_overflow", drops.writerQueueOverflow(),
+            "constraint_rejection", drops.constraintRejection(),
+            "observation_queue_overflow", drops.observationQueueOverflow(), "unclassified", drops.unclassified()));
+        response.put("writer_dropped_record_categories", drops.writerRecordCategories());
+        response.put("last_drop_ms", Map.of("writer_queue_overflow", drops.lastWriterQueueOverflowMs(),
+            "constraint_rejection", drops.lastConstraintRejectionMs(),
+            "observation_queue_overflow", drops.lastObservationQueueOverflowMs()));
         response.put("last_error", current.lastError() == null || current.lastError().isBlank() ? "" :
             "Statistics logging failed; check the application log.");
         return response;

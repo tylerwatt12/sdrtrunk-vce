@@ -28,12 +28,12 @@ public final class RetainedSiteKey
     }
 
     /** Stable saved-channel owner when a trunked channel has no current site snapshot. */
-    public static String snapshotless(long channelId, Integer radioSystemId, long channelFirstSeenMs)
+    public static String snapshotless(long channelId, Long radioSystemId, long channelFirstSeenMs)
     {
         return "trunked-unsited" + owner(channelId, radioSystemId, channelFirstSeenMs);
     }
 
-    public static String p25(Integer rfss, Integer site, long channelId, Integer radioSystemId,
+    public static String p25(Integer rfss, Integer site, long channelId, Long radioSystemId,
                              long snapshotFirstSeenMs)
     {
         return "p25:" + value(rfss) + ':' + value(site) + owner(channelId, radioSystemId,
@@ -42,7 +42,7 @@ public final class RetainedSiteKey
 
     public static String trunked(int protocolCode, int variantCode, int locationCategoryCode,
                                  Integer networkId, Integer systemId, Integer siteId, Integer ran,
-                                 Integer modelCode, long channelId, Integer radioSystemId,
+                                 Integer modelCode, long channelId, Long radioSystemId,
                                  long snapshotFirstSeenMs)
     {
         if(protocolCode != 3 && protocolCode != 4)
@@ -55,9 +55,9 @@ public final class RetainedSiteKey
             value(modelCode) + owner(channelId, radioSystemId, snapshotFirstSeenMs);
     }
 
-    private static String owner(long channelId, Integer radioSystemId, long snapshotFirstSeenMs)
+    private static String owner(long channelId, Long radioSystemId, long snapshotFirstSeenMs)
     {
-        return ":" + channelId + ':' + value(radioSystemId) + ':' + snapshotFirstSeenMs;
+        return ":" + channelId + ':' + (radioSystemId == null ? "x" : radioSystemId) + ':' + snapshotFirstSeenMs;
     }
 
     private static String value(Integer number)

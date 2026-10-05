@@ -126,7 +126,7 @@ final class ReceiverActivityDeletion
         try(PreparedStatement statement = connection.prepareStatement("SELECT system.system_key FROM radio_system system " +
             "JOIN receiver_channel channel ON channel.radio_system_id=system.id WHERE channel.id=?"))
         {
-            statement.setInt(1, channel.id());
+            statement.setLong(1, channel.id());
             try(ResultSet rows = statement.executeQuery()) { if(rows.next()) systemKey = rows.getString(1); }
         }
         if(systemKey == null) return null;
@@ -156,7 +156,7 @@ final class ReceiverActivityDeletion
             try(PreparedStatement statement = connection.prepareStatement("SELECT count(*) FROM (SELECT 1 FROM " + table +
                 " WHERE channel_id=? LIMIT ?)"))
             {
-                statement.setInt(1, channel.id());
+                statement.setLong(1, channel.id());
                 statement.setLong(2, 100_001 - total);
                 try(ResultSet rows = statement.executeQuery()) { if(rows.next()) total += rows.getLong(1); }
             }
@@ -166,7 +166,7 @@ final class ReceiverActivityDeletion
             "activity_event_identity_member member JOIN receiver_activity_event event ON event.id=member.event_id " +
             "WHERE event.channel_id=? LIMIT ?)"))
         {
-            statement.setInt(1, channel.id());
+            statement.setLong(1, channel.id());
             statement.setLong(2, 100_001 - total);
             try(ResultSet rows = statement.executeQuery()) { if(rows.next()) total += rows.getLong(1); }
         }
@@ -208,7 +208,7 @@ final class ReceiverActivityDeletion
                 WHERE summary.channel_id = ? AND coalesce(current.downlink_hz, summary.downlink_hz) = ?
                 """))
             {
-                statement.setInt(1, channel.id());
+                statement.setLong(1, channel.id());
                 statement.setLong(2, target.frequencyHz());
                 try(ResultSet rows = statement.executeQuery())
                 {
@@ -272,24 +272,24 @@ final class ReceiverActivityDeletion
     private static Result deleteIdentity(Connection connection, Identity target) throws SQLException
     {
         ParsedIdentity parsed = parseIdentity(target);
-        int systemId = systemId(connection, target.radioSystemKey());
+        long systemId = systemId(connection, target.radioSystemKey());
         if(systemId == 0) return Result.missing();
 
-        int summaryId = 0;
+        long summaryId = 0;
         try(PreparedStatement statement = connection.prepareStatement("""
             SELECT id FROM radio_system_identity_summary
             WHERE radio_system_id = ? AND identity_kind_code = ? AND home_wacn = ?
               AND home_system_id = ? AND identity_id = ?
             """))
         {
-            statement.setInt(1, systemId);
+            statement.setLong(1, systemId);
             statement.setInt(2, parsed.kindCode());
             statement.setInt(3, parsed.homeWacn());
             statement.setInt(4, parsed.homeSystemId());
             statement.setInt(5, parsed.identityId());
             try(ResultSet rows = statement.executeQuery())
             {
-                if(rows.next()) summaryId = rows.getInt(1);
+                if(rows.next()) summaryId = rows.getLong(1);
             }
         }
 
@@ -368,20 +368,20 @@ final class ReceiverActivityDeletion
 
     private static Result deleteLearnedSite(Connection connection, LearnedSite target) throws SQLException
     {
-        int radioSystemId = systemId(connection, target.radioSystemKey());
+        long radioSystemId = systemId(connection, target.radioSystemKey());
         if(radioSystemId == 0) return Result.missing();
-        int siteId = 0;
+        long siteId = 0;
         try(PreparedStatement statement = connection.prepareStatement("""
             SELECT learned_site_id FROM p25_learned_site
             WHERE radio_system_id = ? AND rfss = ? AND site = ?
             """))
         {
-            statement.setInt(1, radioSystemId);
+            statement.setLong(1, radioSystemId);
             statement.setInt(2, target.rfss());
             statement.setInt(3, target.site());
             try(ResultSet rows = statement.executeQuery())
             {
-                if(rows.next()) siteId = rows.getInt(1);
+                if(rows.next()) siteId = rows.getLong(1);
             }
         }
         if(siteId == 0) return Result.missing();
@@ -397,7 +397,7 @@ final class ReceiverActivityDeletion
                 WHERE receiver.radio_system_id = ? AND snapshot.rfss = ? AND snapshot.site = ?
                 """))
             {
-                statement.setInt(1, radioSystemId);
+                statement.setLong(1, radioSystemId);
                 statement.setInt(2, target.rfss());
                 statement.setInt(3, target.site());
                 try(ResultSet rows = statement.executeQuery())
@@ -448,7 +448,7 @@ final class ReceiverActivityDeletion
 
     private static Result deleteSystem(Connection connection, System target) throws SQLException
     {
-        int radioSystemId = systemId(connection, target.radioSystemKey());
+        long radioSystemId = systemId(connection, target.radioSystemKey());
         if(radioSystemId == 0) return Result.missing();
         int deleted = 0;
 
@@ -464,19 +464,19 @@ final class ReceiverActivityDeletion
         {
             // ON DELETE SET NULL detaches the system, but not its assignment timestamp.
             // Capture the bounded saved-channel IDs and clear their timestamps after the parent delete.
-            List<Integer> channels = new ArrayList<>();
+            List<Long> channels = new ArrayList<>();
             try(PreparedStatement statement = connection.prepareStatement(
                 "SELECT id FROM receiver_channel WHERE radio_system_id = ?"))
             {
-                statement.setInt(1, radioSystemId);
+                statement.setLong(1, radioSystemId);
                 try(ResultSet rows = statement.executeQuery())
                 {
-                    while(rows.next()) channels.add(rows.getInt(1));
+                    while(rows.next()) channels.add(rows.getLong(1));
                 }
             }
             deleted = execute(connection, "DELETE FROM radio_system WHERE id = ? AND system_key = ?",
                 radioSystemId, target.radioSystemKey());
-            for(Integer channelId: channels)
+            for(Long channelId: channels)
             {
                 execute(connection, """
                     UPDATE receiver_channel SET radio_system_assigned_at_ms = NULL
@@ -515,8 +515,8 @@ final class ReceiverActivityDeletion
             {
                 if(!rows.next()) return null;
                 String kind = rows.getString("channel_kind");
-                int channelId = rows.getInt("id");
-                Integer radioSystemId = nullableInt(rows, "radio_system_id");
+                long channelId = rows.getLong("id");
+                Long radioSystemId = nullableLong(rows, "radio_system_id");
                 String siteKey = null;
                 if("CONVENTIONAL".equals(kind))
                 {
@@ -551,19 +551,25 @@ final class ReceiverActivityDeletion
         return rows.wasNull() ? null : value;
     }
 
-    static int systemId(Connection connection, String systemKey) throws SQLException
+    private static Long nullableLong(ResultSet rows, String column) throws SQLException
+    {
+        long value = rows.getLong(column);
+        return rows.wasNull() ? null : value;
+    }
+
+    static long systemId(Connection connection, String systemKey) throws SQLException
     {
         return scalar(connection, "SELECT id FROM radio_system WHERE system_key = ?", systemKey);
     }
 
-    private static int scalar(Connection connection, String sql, Object... values) throws SQLException
+    private static long scalar(Connection connection, String sql, Object... values) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement(sql))
         {
             bind(statement, values);
             try(ResultSet rows = statement.executeQuery())
             {
-                return rows.next() ? rows.getInt(1) : 0;
+                return rows.next() ? rows.getLong(1) : 0;
             }
         }
     }
@@ -586,7 +592,7 @@ final class ReceiverActivityDeletion
     {
     }
 
-    record SavedChannel(int id, String kind, String decoder, String siteKey)
+    record SavedChannel(long id, String kind, String decoder, String siteKey)
     {
     }
 }

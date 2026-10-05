@@ -167,6 +167,34 @@ final class AliasActivityProjection
         apply(connection, deltas, output.callStartEpochMilliseconds(), protocol);
     }
 
+    /** Adds only identity roles that were absent when this conventional call was first counted. */
+    static void recordConventionalCallAttribution(Connection connection,
+        ReceiverActivityRecords.ActivityEvent activity, boolean sourceBecameKnown, boolean targetBecameKnown,
+        List<Integer> newPatchMembers, boolean encrypted, boolean sourceWasKnown) throws SQLException
+    {
+        int protocol = protocolCode(activity.protocol());
+        Resolver resolver = new Resolver(connection, protocol, activity.observedAtEpochMilliseconds());
+        Map<Long,Delta> deltas = new LinkedHashMap<>();
+        Delta call = Delta.call(encrypted, false, false);
+        if(targetBecameKnown && !(sourceWasKnown && sameCanonicalRadioIdentity(activity, protocol)))
+        {
+            addResolved(deltas, resolver.resolve(activity.configurationId(),
+                "RADIO".equals(activity.targetKind()) ? RADIO : TALKGROUP, positive(activity.targetId()),
+                activity.p25TargetIdentity(), activity.targetObservedWorkingId()), call);
+        }
+        for(Integer member: newPatchMembers)
+        {
+            addResolved(deltas, resolver.resolve(activity.configurationId(), TALKGROUP, positive(member)), call);
+        }
+        if(sourceBecameKnown && !sameCanonicalRadioIdentity(activity, protocol))
+        {
+            addResolved(deltas, resolver.resolve(activity.configurationId(), RADIO,
+                positive(activity.sourceRadioId()), activity.p25SourceIdentity(), activity.sourceObservedWorkingId()),
+                call);
+        }
+        apply(connection, deltas, activity.observedAtEpochMilliseconds(), protocol);
+    }
+
     private static boolean sameConventionalRadioIdentity(ReceiverActivityRecords.ConventionalCallOutput output)
     {
         if(!"RADIO".equals(output.targetKind()))

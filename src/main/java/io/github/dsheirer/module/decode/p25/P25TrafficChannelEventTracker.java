@@ -31,7 +31,11 @@ import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
+import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.protocol.Protocol;
+import java.util.List;
+import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -51,6 +55,9 @@ public class P25TrafficChannelEventTracker
     private long mLastObservationTimestamp;
     private boolean mStarted = false;
     private boolean mComplete = false;
+    private P25CallStartEvent mConventionalCallStart;
+    private List<Identifier> mConventionalActivityIdentifiers;
+    private boolean mConventionalCompletionPublished;
 
     /**
      * Constructs an instance
@@ -75,6 +82,56 @@ public class P25TrafficChannelEventTracker
     public String getRadioSystemKey()
     {
         return mRadioSystemKey;
+    }
+
+    /** Captured once before the conventional tracker is published to asynchronous observers. */
+    void setConventionalCallStart(P25CallStartEvent callStart)
+    {
+        mConventionalCallStart = callStart;
+        mConventionalActivityIdentifiers = callStart.identifiers();
+    }
+
+    /** No database state or acknowledgement is consulted on the decoding thread. */
+    P25ConventionalCallUpdateEvent conventionalCallUpdate()
+    {
+        if(mConventionalCallStart == null ||
+            (sameConventionalIdentifiers() &&
+                (!isComplete() || mConventionalCompletionPublished)))
+        {
+            return null;
+        }
+
+        P25CallStartEvent snapshot = mConventionalCallStart.withIdentifiers(getEvent());
+        mConventionalActivityIdentifiers = snapshot.identifiers();
+        mConventionalCompletionPublished |= isComplete();
+        return new P25ConventionalCallUpdateEvent(snapshot, isComplete());
+    }
+
+    private boolean sameConventionalIdentifiers()
+    {
+        int capturedIndex = 0;
+        for(Identifier identifier: getEvent().getIdentifierCollection().getIdentifiers())
+        {
+            if(identifier instanceof APCO25Channel)
+            {
+                continue;
+            }
+            if(capturedIndex >= mConventionalActivityIdentifiers.size()) return false;
+            Identifier captured = mConventionalActivityIdentifiers.get(capturedIndex++);
+            if(!Objects.equals(identifier, captured)) return false;
+            //PatchGroup equality compares its primary ID; mutable membership also belongs to the captured facts.
+            if(identifier instanceof APCO25PatchGroup current && captured instanceof APCO25PatchGroup previous &&
+                current.getValue() != null && previous.getValue() != null &&
+                (current.getValue().getVersion() != previous.getValue().getVersion() ||
+                    !current.getValue().getPatchedTalkgroupIdentifiers().equals(
+                        previous.getValue().getPatchedTalkgroupIdentifiers()) ||
+                    !current.getValue().getPatchedRadioIdentifiers().equals(
+                        previous.getValue().getPatchedRadioIdentifiers())))
+            {
+                return false;
+            }
+        }
+        return capturedIndex == mConventionalActivityIdentifiers.size();
     }
 
     /**

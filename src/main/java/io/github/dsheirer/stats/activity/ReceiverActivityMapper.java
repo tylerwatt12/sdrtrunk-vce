@@ -43,6 +43,7 @@ import io.github.dsheirer.module.decode.p25.P25EncryptionConfirmationTracker;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25AffiliationSemantics;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
+import io.github.dsheirer.module.decode.p25.P25ConventionalCallUpdateEvent;
 import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
 import io.github.dsheirer.module.decode.p25.P25SignalingEvent;
 import io.github.dsheirer.module.decode.p25.P25RadioPresence;
@@ -236,6 +237,23 @@ class ReceiverActivityMapper
             p25TargetIdentity(targetIdentifier, true), p25Identity(sourceIdentifier, true),
             facts.p25PatchMemberIdentities(), callStart.radioSystemKey(),
             p25WorkingAddress(sourceIdentifier), p25WorkingAddress(targetIdentifier));
+    }
+
+    ReceiverActivityRecord mapCallStart(P25CallStartEvent callStart)
+    {
+        ReceiverActivityRecords.ActivityEvent activity = map(callStart);
+        return activity != null && activity.receiverKind() == ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_P25 &&
+            callStart.callToken() != null ? new ReceiverActivityRecords.ConventionalCallObservation(
+                callStart.callToken(), activity, true, false) : activity;
+    }
+
+    ReceiverActivityRecords.ConventionalCallObservation map(P25ConventionalCallUpdateEvent update)
+    {
+        P25CallStartEvent call = update != null ? update.call() : null;
+        ReceiverActivityRecords.ActivityEvent activity = map(call);
+        return activity != null && activity.receiverKind() == ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_P25 &&
+            call.callToken() != null ? new ReceiverActivityRecords.ConventionalCallObservation(call.callToken(),
+                activity, false, update.complete()) : null;
     }
 
     ReceiverActivityRecords.ActivityEvent map(P25GrantObservationEvent observation)

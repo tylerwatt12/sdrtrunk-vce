@@ -1417,25 +1417,30 @@ final class RetainedStatisticsCatalog
         if(numberOrZero(row.get("p25_snapshot")) != 0)
         {
             return RetainedSiteKey.p25(integer(row.get("rfss")), integer(row.get("site")),
-                number(row.get("channel_id")), integer(row.get("radio_system_id")),
+                number(row.get("channel_id")), nullableNumber(row.get("radio_system_id")),
                 number(row.get("p25_first_seen_ms")));
         }
         if(row.get("trunked_first_seen_ms") == null)
         {
             return RetainedSiteKey.snapshotless(number(row.get("channel_id")),
-                integer(row.get("radio_system_id")), number(row.get("channel_first_seen_ms")));
+                nullableNumber(row.get("radio_system_id")), number(row.get("channel_first_seen_ms")));
         }
         return RetainedSiteKey.trunked((int)number(row.get("protocol_code")),
             (int)number(row.get("variant_code")), (int)number(row.get("observed_location_category_code")),
             integer(row.get("observed_network_id")), integer(row.get("observed_system_id")),
             integer(row.get("observed_site_id")), integer(row.get("observed_ran")),
             integer(row.get("observed_model_code")), number(row.get("channel_id")),
-            integer(row.get("radio_system_id")), number(row.get("trunked_first_seen_ms")));
+            nullableNumber(row.get("radio_system_id")), number(row.get("trunked_first_seen_ms")));
     }
 
     private static Integer integer(Object value)
     {
         return value instanceof Number number ? number.intValue() : null;
+    }
+
+    private static Long nullableNumber(Object value)
+    {
+        return value instanceof Number number ? number.longValue() : null;
     }
 
     private static long numberOrZero(Object value)

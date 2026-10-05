@@ -120,7 +120,11 @@ class ReceiverActivityWriterTest
         assertEquals(2, writer.getWrittenRecords());
         assertEquals(1, writer.getDroppedRecords());
         assertEquals(ReceiverActivityStatus.State.RUNNING, writer.getStatus().state());
-        assertTrue(writer.getStatus().lastError().contains("ActivityEvent"));
+        assertNull(writer.getStatus().lastError());
+        assertEquals(1, writer.getStatus().dropDiagnostics().constraintRejection());
+        assertEquals(1, writer.getStatus().dropDiagnostics().writerRecordCategories().get("signaling"));
+        assertEquals(0, writer.getStatus().dropDiagnostics().writerQueueOverflow());
+        assertTrue(writer.getStatus().dropDiagnostics().lastConstraintRejectionMs() > 0);
         writer.close();
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
@@ -134,7 +138,17 @@ class ReceiverActivityWriterTest
                 "SELECT grant_count + denial_count FROM trunked_radio_group_summary"));
             assertEquals(1, scalar(connection,
                 "SELECT value FROM statistics_status WHERE key='records_dropped'"));
+            assertEquals(1, scalar(connection,
+                "SELECT value FROM statistics_status WHERE key='constraint_rejection_drops'"));
         }
+        ReceiverActivityWriter restarted = new ReceiverActivityWriter(database, 30, true);
+        restarted.start();
+        restarted.enqueue(activity(ReceiverActivityRecords.Action.DENIAL, 1_700_000_000_213L));
+        awaitWritten(restarted, 3);
+        assertEquals(1, restarted.getStatus().dropDiagnostics().constraintRejection());
+        assertEquals(1, restarted.getStatus().dropDiagnostics().writerRecordCategories().get("signaling"));
+        assertNull(restarted.getStatus().lastError());
+        restarted.close();
     }
 
     @Test
@@ -360,6 +374,72 @@ class ReceiverActivityWriterTest
     }
 
     @Test
+    void restoresObservationOverflowAcrossWriterRestartWithoutCountingTheSameIngressDropsTwice() throws Exception
+    {
+        Path database = createDatabase(mTemporaryFolder.resolve("observer-drops.sqlite"));
+        insertConfiguredChannel(database);
+        java.util.concurrent.atomic.AtomicLong drops = new java.util.concurrent.atomic.AtomicLong();
+        java.util.concurrent.atomic.AtomicLong lastDrop = new java.util.concurrent.atomic.AtomicLong();
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, false);
+        writer.setObservationDropProviders(drops::get, lastDrop::get);
+        writer.start();
+        drops.set(3);
+        lastDrop.set(System.currentTimeMillis());
+        writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, System.currentTimeMillis()));
+        awaitWritten(writer, 1);
+        writer.close();
+        assertEquals(3, writer.getStatus().recordsDropped());
+        assertEquals(3, writer.getStatus().dropDiagnostics().observationQueueOverflow());
+
+        ReceiverActivityWriter restarted = new ReceiverActivityWriter(database, 30, false);
+        restarted.setObservationDropProviders(drops::get, lastDrop::get);
+        restarted.start();
+        drops.incrementAndGet();
+        lastDrop.incrementAndGet();
+        restarted.enqueue(activity(ReceiverActivityRecords.Action.GRANT, System.currentTimeMillis()));
+        awaitWritten(restarted, 2);
+        restarted.close();
+        assertEquals(4, restarted.getStatus().recordsDropped());
+        assertEquals(4, restarted.getStatus().dropDiagnostics().observationQueueOverflow());
+        assertEquals(lastDrop.get(), restarted.getStatus().dropDiagnostics().lastObservationQueueOverflowMs());
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertEquals(4, scalar(connection,
+                "SELECT value FROM statistics_status WHERE key='observation_queue_overflow_drops'"));
+        }
+        ReceiverActivityWriter newProcess = new ReceiverActivityWriter(database, 30, false);
+        newProcess.start();
+        newProcess.enqueue(activity(ReceiverActivityRecords.Action.GRANT, System.currentTimeMillis()));
+        awaitWritten(newProcess, 3);
+        newProcess.close();
+        assertEquals(4, newProcess.getStatus().dropDiagnostics().observationQueueOverflow());
+    }
+
+    @Test
+    void restoresLegacyDropsWithoutInventingTheirCauseOrCategory() throws Exception
+    {
+        Path database = createDatabase(mTemporaryFolder.resolve("legacy-drops.sqlite"));
+        insertConfiguredChannel(database);
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO statistics_status(key,value,updated_at_ms) VALUES('records_dropped','42300',1000) " +
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value");
+        }
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, false);
+        writer.start();
+        writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, System.currentTimeMillis()));
+        awaitWritten(writer, 1);
+        assertEquals(42300, writer.getDroppedRecords());
+        assertEquals(42300, writer.getStatus().dropDiagnostics().unclassified());
+        assertEquals(42300, writer.getStatus().dropDiagnostics().writerRecordCategories().get("unclassified"));
+        assertEquals(0, writer.getStatus().dropDiagnostics().constraintRejection());
+        assertEquals(0, writer.getStatus().dropDiagnostics().writerQueueOverflow());
+        assertNull(writer.getStatus().lastError());
+        writer.close();
+    }
+
+    @Test
     void boundedQueueDropsObserverRecordsInsteadOfBlockingTheProducer() throws Exception
     {
         Path database = createDatabase(mTemporaryFolder.resolve("overflow.sqlite"));
@@ -376,6 +456,11 @@ class ReceiverActivityWriterTest
         writer.close();
 
         assertTrue(writer.getDroppedRecords() > 0);
+        assertEquals(writer.getDroppedRecords(), writer.getStatus().dropDiagnostics().writerQueueOverflow());
+        assertEquals(writer.getDroppedRecords(),
+            writer.getStatus().dropDiagnostics().writerRecordCategories().get("signaling"));
+        assertEquals(0, writer.getStatus().dropDiagnostics().constraintRejection());
+        assertTrue(writer.getStatus().dropDiagnostics().lastWriterQueueOverflowMs() > 0);
         assertTrue(elapsed < TimeUnit.SECONDS.toNanos(2), "producer handoff must remain nonblocking");
     }
 

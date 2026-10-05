@@ -264,8 +264,25 @@ public record P25NetworkConfigurationSnapshot(String decoder, Network network, C
 
     /** Site-local patch telemetry. These numbers are observations, not canonical cross-system identities. */
     public record PatchGroup(Integer localPatchGroupId, Integer version, List<Integer> localTalkgroupIds,
-                             List<Integer> localRadioIds)
+                             List<Integer> localRadioIds, Long observedAtMs)
     {
+        public PatchGroup(Integer localPatchGroupId, Integer version, List<Integer> localTalkgroupIds,
+                          List<Integer> localRadioIds)
+        {
+            this(localPatchGroupId, version, localTalkgroupIds, localRadioIds, null);
+        }
+
+        public PatchGroup withObservedAt(long timestamp)
+        {
+            return new PatchGroup(localPatchGroupId, version, localTalkgroupIds, localRadioIds, timestamp);
+        }
+
+        public PatchGroup withoutObservedAt()
+        {
+            return observedAtMs == null ? this :
+                new PatchGroup(localPatchGroupId, version, localTalkgroupIds, localRadioIds, null);
+        }
+
         public PatchGroup
         {
             localTalkgroupIds = localTalkgroupIds == null ? List.of() : List.copyOf(localTalkgroupIds);

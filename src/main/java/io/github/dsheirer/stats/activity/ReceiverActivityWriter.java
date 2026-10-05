@@ -35,6 +35,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicLongArray;
+import java.util.function.LongSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -78,10 +80,26 @@ class ReceiverActivityWriter implements AutoCloseable
     private final AtomicBoolean mRetentionCleanupRequested = new AtomicBoolean();
     private final AtomicLong mEnqueueSequence = new AtomicLong();
     private final AtomicLong mDroppedRecords = new AtomicLong();
+    private final AtomicLong mQueueOverflowDrops = new AtomicLong();
+    private final AtomicLong mConstraintDrops = new AtomicLong();
+    private final AtomicLongArray mDroppedCategories = new AtomicLongArray(DropCategory.values().length);
+    private final AtomicLong mLastQueueOverflowMs = new AtomicLong();
+    private final AtomicLong mLastConstraintDropMs = new AtomicLong();
+    private final AtomicLong mRestoredObservationDrops = new AtomicLong();
+    private final AtomicLong mRestoredObservationDropMs = new AtomicLong();
+    private LongSupplier mObservationDropCount = () -> 0;
+    private LongSupplier mObservationDropTime = () -> 0;
+    private long mObservationDropBaseline;
+    private long mPersistedObservationDrops;
+    private long mPersistedObservationDropMs;
     private final AtomicLong mWrittenRecords = new AtomicLong();
     private final AtomicLong mLastSuccessfulWriteMs = new AtomicLong();
     /* Writer-thread-owned evidence that the matching logical-call counters committed successfully. */
     private final Map<LogicalCallId,Long> mResolvedLogicalCalls = new LinkedHashMap<>(1024, 0.75f, true);
+    /* This bounded receipt cache is writer-owned. No producer treats a queue offer as committed call credit. */
+    private final Map<String,ConventionalCallState> mConventionalCalls = new LinkedHashMap<>(256, 0.75f, true);
+    private long mConventionalCallRecoveryFloor = System.currentTimeMillis();
+    private long mConventionalCollectionEpoch;
     private volatile ExecutorService mExecutorService;
     private volatile long mShutdownDrainDeadlineNanos = Long.MIN_VALUE;
     private volatile int mRetentionDays;
@@ -170,12 +188,15 @@ class ReceiverActivityWriter implements AutoCloseable
 
             if(!mQueue.offer(queuedRecord))
             {
-                mQueue.poll();
-                mDroppedRecords.incrementAndGet();
+                QueuedRecord discarded = mQueue.poll();
+                if(discarded != null)
+                {
+                    recordQueueOverflow(discarded.record());
+                }
 
                 if(!mQueue.offer(queuedRecord))
                 {
-                    mDroppedRecords.incrementAndGet();
+                    recordQueueOverflow(record);
                     return false;
                 }
             }
@@ -246,10 +267,91 @@ class ReceiverActivityWriter implements AutoCloseable
         return mQueue.size();
     }
 
+    /** The providers read ingress atomics only; all persistence stays on this background writer. */
+    void setObservationDropProviders(LongSupplier count, LongSupplier lastTime)
+    {
+        if(mRunning.get())
+        {
+            throw new IllegalStateException("Drop providers must be attached before writer startup");
+        }
+        mObservationDropCount = java.util.Objects.requireNonNull(count);
+        mObservationDropTime = java.util.Objects.requireNonNull(lastTime);
+        mObservationDropBaseline = count.getAsLong();
+    }
+
+    private long observationDrops()
+    {
+        return mRestoredObservationDrops.get() + Math.max(0, mObservationDropCount.getAsLong() - mObservationDropBaseline);
+    }
+
+    private long lastObservationDropMs()
+    {
+        return Math.max(mRestoredObservationDropMs.get(),
+            mObservationDropCount.getAsLong() > mObservationDropBaseline ? mObservationDropTime.getAsLong() : 0);
+    }
+
+    private void recordQueueOverflow(ReceiverActivityRecord record)
+    {
+        mDroppedRecords.incrementAndGet();
+        mQueueOverflowDrops.incrementAndGet();
+        mDroppedCategories.incrementAndGet(DropCategory.of(record).ordinal());
+        mLastQueueOverflowMs.set(System.currentTimeMillis());
+    }
+
+    private StatisticsDropDiagnostics dropDiagnostics()
+    {
+        long overflow = mQueueOverflowDrops.get();
+        long rejected = mConstraintDrops.get();
+        return new StatisticsDropDiagnostics(overflow, rejected, observationDrops(),
+            Math.max(0, mDroppedRecords.get() - overflow - rejected),
+            mLastQueueOverflowMs.get(), mLastConstraintDropMs.get(), lastObservationDropMs(), droppedCategoryCounts());
+    }
+
+    private Map<String,Long> droppedCategoryCounts()
+    {
+        Map<String,Long> counts = new LinkedHashMap<>();
+        long classified = 0;
+        for(DropCategory category: DropCategory.values())
+        {
+            long count = mDroppedCategories.get(category.ordinal());
+            counts.put(category.key, count);
+            classified += count;
+        }
+        counts.put("unclassified", Math.max(0, mDroppedRecords.get() - classified));
+        return counts;
+    }
+
+    private enum DropCategory
+    {
+        SIGNALING("signaling"), CALLS("calls"), CALL_OUTPUTS("call_outputs"),
+        SITE_METADATA("site_metadata"), QUALITY("quality"), OTHER("other");
+
+        private final String key;
+        DropCategory(String key) { this.key = key; }
+
+        static DropCategory of(ReceiverActivityRecord record)
+        {
+            if(record instanceof ReceiverActivityRecords.ConventionalCallOutput ||
+                record instanceof ReceiverActivityRecords.LogicalCallOutput) return CALL_OUTPUTS;
+            if(record instanceof ReceiverActivityRecords.ConventionalCallObservation ||
+                record instanceof ReceiverActivityRecords.ResolvedLogicalCall ||
+                record instanceof ReceiverActivityRecords.TrunkedCallAttribution ||
+                record instanceof ReceiverActivityRecords.DmrConventionalCall ||
+                record instanceof ReceiverActivityRecords.NxdnConventionalCall) return CALLS;
+            if(record instanceof ReceiverActivityRecords.ControlChannelQuality) return QUALITY;
+            if(record instanceof ReceiverActivityRecords.SiteSnapshot ||
+                record instanceof ReceiverActivityRecords.TrunkedSiteSnapshot ||
+                record instanceof ReceiverActivityRecords.ChannelFact) return SITE_METADATA;
+            if(record instanceof ReceiverActivityRecords.ActivityEvent activity)
+                return activity.action() == ReceiverActivityRecords.Action.CALL ? CALLS : SIGNALING;
+            return OTHER;
+        }
+    }
+
     WriterStatus getStatus()
     {
         return new WriterStatus(mState, mDetailedEventHistoryEnabled, mLastSuccessfulWriteMs.get(),
-            mWrittenRecords.get(), mDroppedRecords.get(), mLastError);
+            mWrittenRecords.get(), mDroppedRecords.get() + observationDrops(), mLastError, dropDiagnostics());
     }
 
     @Override
@@ -451,6 +553,7 @@ class ReceiverActivityWriter implements AutoCloseable
                     batch.clear();
                 }
 
+                persistObservationDropsIfChanged(connection);
                 processDeletionPass(connection);
                 runScheduledMaintenance(connection);
             }
@@ -459,6 +562,7 @@ class ReceiverActivityWriter implements AutoCloseable
             {
                 writeBatchWithRetry(connection, batch);
             }
+            persistDropDiagnosticsWithRetry(connection);
         }
         catch(InterruptedException e)
         {
@@ -626,6 +730,8 @@ class ReceiverActivityWriter implements AutoCloseable
                 else if(request.operation() == ReceiverActivityMaintenance.Operation.RESET_STATS)
                 {
                     mResolvedLogicalCalls.clear();
+                    mConventionalCalls.clear();
+                    mConventionalCallRecoveryFloor = System.currentTimeMillis();
                 }
 
                 return result;
@@ -690,10 +796,80 @@ class ReceiverActivityWriter implements AutoCloseable
         }
     }
 
+    private void persistObservationDropsIfChanged(Connection connection) throws SQLException, InterruptedException
+    {
+        long count = observationDrops();
+        long lastDrop = lastObservationDropMs();
+        if(count != mPersistedObservationDrops || lastDrop != mPersistedObservationDropMs)
+        {
+            persistDropDiagnosticsWithRetry(connection);
+            mPersistedObservationDrops = count;
+            mPersistedObservationDropMs = lastDrop;
+        }
+    }
+
+    /** Status-only writes obey the same busy retry and shutdown bound as observation transactions. */
+    private void persistDropDiagnosticsWithRetry(Connection connection) throws SQLException, InterruptedException
+    {
+        while(true)
+        {
+            boolean previousAutoCommit = connection.getAutoCommit();
+            try
+            {
+                connection.setAutoCommit(false);
+                persistDropDiagnostics(connection);
+                connection.commit();
+                return;
+            }
+            catch(SQLException exception)
+            {
+                connection.rollback();
+                if(!isDatabaseBusy(exception) || !pauseBeforeDatabaseBusyRetry())
+                {
+                    throw exception;
+                }
+            }
+            finally
+            {
+                connection.setAutoCommit(previousAutoCommit);
+            }
+        }
+    }
+
+    private void persistDropDiagnostics(Connection connection) throws SQLException
+    {
+        ReceiverActivitySchema.updateStatus(connection, "writer_queue_overflow_drops", Long.toString(mQueueOverflowDrops.get()));
+        ReceiverActivitySchema.updateStatus(connection, "constraint_rejection_drops", Long.toString(mConstraintDrops.get()));
+        ReceiverActivitySchema.updateStatus(connection, "last_writer_queue_overflow_ms", Long.toString(mLastQueueOverflowMs.get()));
+        ReceiverActivitySchema.updateStatus(connection, "last_constraint_rejection_ms", Long.toString(mLastConstraintDropMs.get()));
+        ReceiverActivitySchema.updateStatus(connection, "observation_queue_overflow_drops", Long.toString(observationDrops()));
+        ReceiverActivitySchema.updateStatus(connection, "last_observation_queue_overflow_ms", Long.toString(lastObservationDropMs()));
+        for(DropCategory category: DropCategory.values())
+        {
+            ReceiverActivitySchema.updateStatus(connection, "dropped_category_" + category.key,
+                Long.toString(mDroppedCategories.get(category.ordinal())));
+        }
+    }
+
     private void restoreStatus(Connection connection) throws SQLException
     {
+        mRestoredObservationDrops.set(ReceiverActivitySchema.readStatusLong(connection, "observation_queue_overflow_drops"));
+        mRestoredObservationDropMs.set(ReceiverActivitySchema.readStatusLong(connection, "last_observation_queue_overflow_ms"));
+        mPersistedObservationDrops = mRestoredObservationDrops.get();
+        mPersistedObservationDropMs = mRestoredObservationDropMs.get();
         mWrittenRecords.set(ReceiverActivitySchema.readStatusLong(connection, "records_written"));
         mDroppedRecords.addAndGet(ReceiverActivitySchema.readStatusLong(connection, "records_dropped"));
+        mQueueOverflowDrops.addAndGet(ReceiverActivitySchema.readStatusLong(connection, "writer_queue_overflow_drops"));
+        mConstraintDrops.addAndGet(ReceiverActivitySchema.readStatusLong(connection, "constraint_rejection_drops"));
+        mLastQueueOverflowMs.accumulateAndGet(
+            ReceiverActivitySchema.readStatusLong(connection, "last_writer_queue_overflow_ms"), Math::max);
+        mLastConstraintDropMs.accumulateAndGet(
+            ReceiverActivitySchema.readStatusLong(connection, "last_constraint_rejection_ms"), Math::max);
+        for(DropCategory category: DropCategory.values())
+        {
+            mDroppedCategories.addAndGet(category.ordinal(),
+                ReceiverActivitySchema.readStatusLong(connection, "dropped_category_" + category.key));
+        }
         long lastSuccessfulWriteMs = ReceiverActivitySchema.readStatusLong(connection, "last_successful_write_ms");
         mLastSuccessfulWriteMs.updateAndGet(current -> Math.max(current, lastSuccessfulWriteMs));
     }
@@ -736,11 +912,14 @@ class ReceiverActivityWriter implements AutoCloseable
         {
             ReceiverActivityRecord rejected = batch.getFirst();
             long droppedRecords = mDroppedRecords.incrementAndGet();
+            mConstraintDrops.incrementAndGet();
+            mDroppedCategories.incrementAndGet(DropCategory.of(rejected).ordinal());
+            mLastConstraintDropMs.set(System.currentTimeMillis());
             String warning = "Discarded invalid statistics record [" + diagnosticSummary(rejected) + "]: " +
                 batchFailure.getMessage();
-            mLastError = warning.substring(0, Math.min(500, warning.length()));
             mLog.warn(warning);
             ReceiverActivitySchema.updateStatus(connection, "records_dropped", Long.toString(droppedRecords));
+            persistDropDiagnostics(connection);
             return;
         }
 
@@ -877,8 +1056,13 @@ class ReceiverActivityWriter implements AutoCloseable
         {
             int writtenRecords = 0;
             Set<LogicalCallId> acceptedLogicalCalls = new LinkedHashSet<>();
+            Map<String,ConventionalCallState> acceptedConventionalCalls = new LinkedHashMap<>();
+            long conventionalEpoch = mConventionalCollectionEpoch;
+            boolean retireConventionalReceipts = false;
             List<ReceiverActivityRecords.ActivityEvent> activityEvents = new ArrayList<>();
             pruneResolvedLogicalCalls(System.currentTimeMillis());
+            pruneConventionalCalls(System.currentTimeMillis());
+            long conventionalRecoveryFloor = mConventionalCallRecoveryFloor;
 
             for(ReceiverActivityRecord record: batch)
             {
@@ -911,6 +1095,35 @@ class ReceiverActivityWriter implements AutoCloseable
                 {
                     ReceiverActivitySchema.insertControlChannelQuality(connection, quality);
                     writtenRecords++;
+                }
+                else if(record instanceof ReceiverActivityRecords.ConventionalCallObservation observation)
+                {
+                    if(observation.collectionEpoch() < conventionalEpoch)
+                    {
+                        continue;
+                    }
+                    if(observation.collectionEpoch() > conventionalEpoch)
+                    {
+                        conventionalEpoch = observation.collectionEpoch();
+                        conventionalRecoveryFloor = observation.collectionStartedAtEpochMilliseconds() > 0 ?
+                            Math.max(observation.collectionStartedAtEpochMilliseconds(),
+                                System.currentTimeMillis() - RESOLVED_CALL_RETENTION_MILLISECONDS) :
+                            conventionalRecoveryFloor;
+                        acceptedConventionalCalls.clear();
+                        retireConventionalReceipts = true;
+                    }
+                    ConventionalCallState state = acceptedConventionalCalls.get(observation.callToken());
+                    if(state == null && !retireConventionalReceipts)
+                    {
+                        state = mConventionalCalls.get(observation.callToken());
+                    }
+                    ConventionalCallState updated = applyConventionalCall(connection, observation, state,
+                        conventionalRecoveryFloor);
+                    if(updated != null)
+                    {
+                        acceptedConventionalCalls.put(observation.callToken(), updated);
+                        writtenRecords++;
+                    }
                 }
                 else if(record instanceof ReceiverActivityRecords.ConventionalCallOutput callOutput)
                 {
@@ -979,13 +1192,22 @@ class ReceiverActivityWriter implements AutoCloseable
             long successfulWrite = System.currentTimeMillis();
             ReceiverActivitySchema.updateStatus(connection, "records_written", Long.toString(writtenTotal));
             ReceiverActivitySchema.updateStatus(connection, "records_dropped", Long.toString(mDroppedRecords.get()));
+            persistDropDiagnostics(connection);
             ReceiverActivitySchema.updateStatus(connection, "last_successful_write_ms",
                 Long.toString(successfulWrite));
 
             connection.commit();
             rememberResolvedLogicalCalls(acceptedLogicalCalls, successfulWrite);
+            if(retireConventionalReceipts)
+            {
+                mConventionalCalls.clear();
+                mConventionalCollectionEpoch = conventionalEpoch;
+                mConventionalCallRecoveryFloor = conventionalRecoveryFloor;
+            }
+            rememberConventionalCalls(acceptedConventionalCalls, successfulWrite);
             mWrittenRecords.addAndGet(writtenRecords);
             mLastSuccessfulWriteMs.set(successfulWrite);
+            mLastError = null;
         }
         catch(SQLException e)
         {
@@ -1027,6 +1249,65 @@ class ReceiverActivityWriter implements AutoCloseable
     {
         return logicalCallId != null && (acceptedLogicalCalls.contains(logicalCallId) ||
             mResolvedLogicalCalls.get(logicalCallId) != null);
+    }
+
+    private ConventionalCallState applyConventionalCall(Connection connection,
+        ReceiverActivityRecords.ConventionalCallObservation observation, ConventionalCallState previous,
+        long recoveryFloor)
+        throws SQLException
+    {
+        ReceiverActivityRecords.ActivityEvent activity = observation.activity();
+        if(observation.collectionStartedAtEpochMilliseconds() > 0 &&
+            activity.observedAtEpochMilliseconds() < observation.collectionStartedAtEpochMilliseconds())
+        {
+            return null;
+        }
+        if(previous == null)
+        {
+            //A late full snapshot can repair a dropped start only within this collection's bounded receipt window.
+            //An active call from before a restart, resume or stats reset is never invented as a new call.
+            if(!observation.initial() && activity.observedAtEpochMilliseconds() < recoveryFloor)
+            {
+                return null;
+            }
+            ReceiverActivitySchema.ConventionalCallCredit credit = ReceiverActivitySchema.recordConventionalCall(
+                connection, activity, mDetailedEventHistoryEnabled);
+            return credit != null ? new ConventionalCallState(activity, credit, 0) : null;
+        }
+        ReceiverActivitySchema.ConventionalCallCredit credit = ReceiverActivitySchema.enrichConventionalCall(
+            connection, previous.original(), activity, previous.credit());
+        return credit != null ? new ConventionalCallState(previous.original(), credit, 0) : null;
+    }
+
+    private void rememberConventionalCalls(Map<String,ConventionalCallState> accepted, long committedAt)
+    {
+        accepted.forEach((token, state) -> mConventionalCalls.put(token,
+            new ConventionalCallState(state.original(), state.credit(), committedAt)));
+        pruneConventionalCalls(committedAt);
+    }
+
+    private void pruneConventionalCalls(long now)
+    {
+        mConventionalCallRecoveryFloor = Math.max(mConventionalCallRecoveryFloor,
+            now - RESOLVED_CALL_RETENTION_MILLISECONDS);
+        var iterator = mConventionalCalls.entrySet().iterator();
+        while(iterator.hasNext())
+        {
+            ConventionalCallState state = iterator.next().getValue();
+            if(state.committedAt() < now - RESOLVED_CALL_RETENTION_MILLISECONDS ||
+                mConventionalCalls.size() > MAXIMUM_RESOLVED_CALLS)
+            {
+                //Once receipts are evicted, old repeated completions cannot recover and recount the same call.
+                mConventionalCallRecoveryFloor = Math.max(mConventionalCallRecoveryFloor,
+                    state.original().observedAtEpochMilliseconds() + 1);
+                iterator.remove();
+            }
+        }
+    }
+
+    private record ConventionalCallState(ReceiverActivityRecords.ActivityEvent original,
+                                         ReceiverActivitySchema.ConventionalCallCredit credit, long committedAt)
+    {
     }
 
     private void rememberResolvedLogicalCalls(Set<LogicalCallId> logicalCallIds, long observedAt)
@@ -1121,7 +1402,8 @@ class ReceiverActivityWriter implements AutoCloseable
     }
 
     record WriterStatus(ReceiverActivityStatus.State state, boolean detailedHistoryEnabled,
-                        long lastSuccessfulWriteMs, long recordsWritten, long recordsDropped, String lastError)
+                        long lastSuccessfulWriteMs, long recordsWritten, long recordsDropped, String lastError,
+                        StatisticsDropDiagnostics dropDiagnostics)
     {
     }
 

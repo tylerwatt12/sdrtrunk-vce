@@ -17,8 +17,19 @@ package io.github.dsheirer.stats.activity;
 public record ReceiverActivityStatus(boolean summaryConfigured, boolean detailedHistoryConfigured,
                                    boolean summaryActive, boolean detailedHistoryActive, int retentionDays,
                                    State state, String databasePath, long lastSuccessfulWriteMs,
-                                   long recordsWritten, long recordsDropped, String lastError)
+                                   long recordsWritten, long recordsDropped, String lastError,
+                                   StatisticsDropDiagnostics dropDiagnostics)
 {
+    public ReceiverActivityStatus(boolean summaryConfigured, boolean detailedHistoryConfigured,
+                                  boolean summaryActive, boolean detailedHistoryActive, int retentionDays,
+                                  State state, String databasePath, long lastSuccessfulWriteMs,
+                                  long recordsWritten, long recordsDropped, String lastError)
+    {
+        this(summaryConfigured, detailedHistoryConfigured, summaryActive, detailedHistoryActive, retentionDays,
+            state, databasePath, lastSuccessfulWriteMs, recordsWritten, recordsDropped, lastError,
+            new StatisticsDropDiagnostics(0, 0, 0, recordsDropped, 0, 0, 0));
+    }
+
     public enum State
     {
         DISABLED,

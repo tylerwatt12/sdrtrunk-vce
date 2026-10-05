@@ -45,6 +45,27 @@ class P25P1SynchronizationBroadcastTest
         assertEquals(95, monitor.getSnapshot().siteStatus().microSlots());
     }
 
+    @Test
+    void rejectsImpossibleCalendarAndTimingFieldsWithoutCalendarNormalization()
+    {
+        CorrectedBinaryMessage message = synchronizationBroadcast(2, 28, 7999).getMessage();
+        message.setInt(31, IntField.range(51, 55));
+        assertFalse((new SynchronizationBroadcast(P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1, message, 0x659, 1_000L)).hasValidDate());
+        message.setInt(29, IntField.range(51, 55));
+        assertFalse((new SynchronizationBroadcast(P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1, message, 0x659, 1_000L)).hasValidDate());
+        message.setInt(24, IntField.range(40, 46));
+        assertTrue((new SynchronizationBroadcast(P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1, message, 0x659, 1_000L)).hasValidDate());
+        message.setInt(31, IntField.range(56, 60));
+        assertFalse((new SynchronizationBroadcast(P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1, message, 0x659, 1_000L)).hasValidDate());
+        message.setInt(23, IntField.range(56, 60));
+        message.setInt(63, IntField.range(61, 66));
+        assertFalse((new SynchronizationBroadcast(P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1, message, 0x659, 1_000L)).hasValidDate());
+        message.setInt(59, IntField.range(61, 66));
+        message.setInt(8000, IntField.range(67, 79));
+        assertFalse((new SynchronizationBroadcast(P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1, message, 0x659, 1_000L)).hasValidDate());
+        assertFalse((new SynchronizationBroadcast(P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1, message, 0x659, 1_000L)).hasValidMicroSlots());
+    }
+
     private static SynchronizationBroadcast synchronizationBroadcast(int month, int day, int microSlots)
     {
         CorrectedBinaryMessage message = new CorrectedBinaryMessage(96);

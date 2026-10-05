@@ -356,7 +356,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
 
     private void observeNetworkConfiguration(P25NetworkConfigurationSnapshot observation, long timestamp)
     {
-        mNetworkConfigurationStabilizer.observe(observation, timestamp);
+        mNetworkConfigurationStabilizer.observe(observation, timestamp, mSourceFrequency);
 
         if(mChannel.isStandardChannel() && observation != null)
         {

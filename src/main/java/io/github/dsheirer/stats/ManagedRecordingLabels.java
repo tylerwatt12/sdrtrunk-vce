@@ -95,8 +95,8 @@ final class ManagedRecordingLabels
                     }
                 }
 
-                Integer aliasListId = channel != null && channel.aliasListId() != null ? channel.aliasListId() :
-                    integer(call.get("alias_list_id"));
+                Long aliasListId = channel != null && channel.aliasListId() != null ? channel.aliasListId() :
+                    nullableNumber(call.get("alias_list_id"));
                 String protocol = string(call.get("protocol"));
                 Integer targetId = integer(call.get("talkgroup_id"));
                 Integer sourceId = integer(call.get("source_id"));
@@ -910,7 +910,7 @@ final class ManagedRecordingLabels
             try(ResultSet rows = statement.executeQuery())
             {
                 return rows.next() ? new ChannelLabels(rows.getString(1), rows.getString(2), rows.getString(3),
-                    rows.getInt(4), rows.getString(5)) : null;
+                    rows.getObject(4) != null ? rows.getLong(4) : null, rows.getString(5)) : null;
             }
         }
         catch(SQLException ignored)
@@ -919,7 +919,7 @@ final class ManagedRecordingLabels
         }
     }
 
-    private static AliasLabels alias(Connection connection, int listId, String callProtocol, int id, boolean radio)
+    private static AliasLabels alias(Connection connection, long listId, String callProtocol, int id, boolean radio)
     {
         String protocol = switch(callProtocol != null ? callProtocol.toUpperCase(Locale.ROOT) : "")
         {
@@ -947,7 +947,7 @@ final class ManagedRecordingLabels
             LIMIT 1
             """))
         {
-            statement.setInt(1, listId);
+            statement.setLong(1, listId);
             statement.setString(2, protocol);
             statement.setString(3, "APCO25".equals(protocol) ? "APCO25_PHASE2" : protocol);
             statement.setString(4, exact);
@@ -1014,7 +1014,12 @@ final class ManagedRecordingLabels
         return value instanceof Number number ? number.intValue() : null;
     }
 
-    private record ChannelLabels(String name, String systemName, String siteName, Integer aliasListId,
+    private static Long nullableNumber(Object value)
+    {
+        return value instanceof Number number ? number.longValue() : null;
+    }
+
+    private record ChannelLabels(String name, String systemName, String siteName, Long aliasListId,
                                  String systemKey) {}
     private record AliasLabels(String name, String description, String group) {}
     private record SystemScope(String key, int protocolCode, Integer p25Wacn, Integer p25SystemId,

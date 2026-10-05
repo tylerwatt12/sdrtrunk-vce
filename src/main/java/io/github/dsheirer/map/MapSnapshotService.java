@@ -16,6 +16,7 @@ import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.configuration.AliasListConfigurationIdentifier;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.event.PlottableDecodeEvent;
+import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.util.concurrent.BoundedMpscReferenceQueue;
 import java.util.ArrayDeque;
@@ -235,6 +236,10 @@ public final class MapSnapshotService implements Listener<IDecodeEvent>, AutoClo
         entity.system = system;
         entity.configurationId = ingress.configuration() != null ?
             boundedText(ingress.configuration().toString()) : null;
+        P25SubscriberIdentity subscriber = P25SubscriberIdentity.from(ingress.from());
+        entity.homeWacn = subscriber != null ? subscriber.homeWacn() : null;
+        entity.homeSystemId = subscriber != null ? subscriber.homeSystemId() : null;
+        entity.radioId = subscriber != null ? subscriber.subscriberId() : null;
         entity.icon = display != null ? StandardMapIconCatalog.forSlug(display.icon()) :
             StandardMapIconCatalog.NO_ICON;
         if(entity.icon == null)
@@ -268,7 +273,8 @@ public final class MapSnapshotService implements Listener<IDecodeEvent>, AutoClo
         {
             entities.add(new Entity(mutable.key, mutable.label, mutable.identifier, mutable.system, mutable.aliasList,
                 mutable.icon.slug(), mutable.color, mutable.heading, mutable.speedKph,
-                List.copyOf(mutable.positions), mutable.configurationId));
+                List.copyOf(mutable.positions), mutable.configurationId,
+                mutable.homeWacn, mutable.homeSystemId, mutable.radioId));
         }
         java.util.Collections.reverse(entities);
         mSnapshot = new Snapshot(System.currentTimeMillis(), mEvictedEntities, List.copyOf(entities));
@@ -337,6 +343,9 @@ public final class MapSnapshotService implements Listener<IDecodeEvent>, AutoClo
         private String label;
         private String system = "";
         private String configurationId;
+        private Integer homeWacn;
+        private Integer homeSystemId;
+        private Integer radioId;
         private StandardMapIconCatalog icon = StandardMapIconCatalog.NO_ICON;
         private String color = "#0000ff";
         private double heading;
@@ -356,8 +365,15 @@ public final class MapSnapshotService implements Listener<IDecodeEvent>, AutoClo
 
     public record Entity(String id, String label, String identifier, String system, String aliasList, String icon,
                          String color, double heading, double speedKph, List<Position> positions,
-                         String configurationId)
+                         String configurationId, Integer homeWacn, Integer homeSystemId, Integer radioId)
     {
+        public Entity(String id, String label, String identifier, String system, String aliasList, String icon,
+                      String color, double heading, double speedKph, List<Position> positions,
+                      String configurationId)
+        {
+            this(id, label, identifier, system, aliasList, icon, color, heading, speedKph, positions,
+                configurationId, null, null, null);
+        }
     }
 
     public record Snapshot(long generatedAtMs, long evictedEntities, List<Entity> entities)

@@ -46,7 +46,11 @@ class StatsWebPageLifecycleUiContractTest
 
         assertOrdered(render, "if (!closeReadOnlyModal(false, false, (closed) => { if (closed) void render(); })) return;",
             "const epoch = ++activeRenderEpoch;");
-        assertOrdered(render, "content.replaceChildren(loading);", "await entry.handler();");
+        assertOrdered(render, "loading.setAttribute('role', 'status');",
+            "content.replaceChildren(...[pendingTitle ? pageHeader(pendingTitle) : null, loading].filter(Boolean));");
+        assertOrdered(render,
+            "content.replaceChildren(...[pendingTitle ? pageHeader(pendingTitle) : null, loading].filter(Boolean));",
+            "await entry.handler();");
         assertEquals(2, render.split("content\\.replaceChildren\\(\\);", -1).length - 1,
             "Only the two sign-in landing branches may clear the root loader without a replacement.");
         assertOrdered(render, "if (synchronizeAccessLanding()) {", "content.replaceChildren();");

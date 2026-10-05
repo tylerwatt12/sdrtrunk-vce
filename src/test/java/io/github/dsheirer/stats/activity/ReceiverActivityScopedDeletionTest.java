@@ -45,7 +45,7 @@ class ReceiverActivityScopedDeletionTest
                     (channel_id,band,base_hz,first_seen_ms,last_seen_ms)
                 VALUES (1,0,851000000,1000,1000),(1,1,762000000,1000,1000)
                 """);
-            String siteKey = RetainedSiteKey.p25(1, 2, 1, 1, 1000);
+            String siteKey = RetainedSiteKey.p25(1, 2, 1, 1L, 1000);
             ScopedData current = new ScopedData("radio_system", SYSTEM, CHANNEL, siteKey,
                 "band_plans", "0", List.of("current"));
             ReceiverActivityMaintenance.Preview preview = ReceiverActivityMaintenance.preview(connection, current);
@@ -137,11 +137,11 @@ class ReceiverActivityScopedDeletionTest
                 VALUES (1,0,851000000,1000),(2,0,762000000,1000)
                 """);
             ScopedData stale = new ScopedData("radio_system", SYSTEM, CHANNEL,
-                RetainedSiteKey.p25(1, 3, 1, 1, 1000), "band_plans", "0", List.of("current"));
+                RetainedSiteKey.p25(1, 3, 1, 1L, 1000), "band_plans", "0", List.of("current"));
             assertEquals(ReceiverActivityMaintenance.DeletionOutcome.STALE_SITE,
                 ReceiverActivityMaintenance.preview(connection, stale).outcome());
             ScopedData wrongSystem = new ScopedData("radio_system", SYSTEM, OTHER_CHANNEL,
-                RetainedSiteKey.p25(1, 3, 2, 2, 1000), "band_plans", "0", List.of("current"));
+                RetainedSiteKey.p25(1, 3, 2, 2L, 1000), "band_plans", "0", List.of("current"));
             assertEquals(ReceiverActivityMaintenance.DeletionOutcome.NOT_FOUND,
                 ReceiverActivityMaintenance.preview(connection, wrongSystem).outcome());
             assertEquals(2, count(connection, "p25_site_frequency_band"));
@@ -159,12 +159,12 @@ class ReceiverActivityScopedDeletionTest
                     (channel_id,radio_system_id,observed_at_ms,action_code)
                 VALUES (1,1,1000,12)
                 """);
-            String original = RetainedSiteKey.p25(1, 2, 1, 1, 1000);
+            String original = RetainedSiteKey.p25(1, 2, 1, 1L, 1000);
             ScopedData state = new ScopedData("radio_system", SYSTEM, CHANNEL, original,
                 "site_state", null, List.of("current"));
             assertEquals(1, ReceiverActivityDeletion.delete(connection, state).rowsDeleted());
             assertEquals(1, count(connection, "receiver_activity_event"));
-            String fallback = RetainedSiteKey.snapshotless(1, 1, 1000);
+            String fallback = RetainedSiteKey.snapshotless(1, 1L, 1000);
             assertEquals(fallback, ReceiverActivityDeletion.savedChannel(connection, CHANNEL).siteKey());
             assertEquals(ReceiverActivityMaintenance.DeletionOutcome.STALE_SITE,
                 ReceiverActivityMaintenance.preview(connection,
@@ -197,7 +197,7 @@ class ReceiverActivityScopedDeletionTest
                     (channel_id,radio_system_id,bucket_start_ms,grant_count)
                 VALUES (1,1,0,1),(1,2,0,1)
                 """);
-            String siteKey = RetainedSiteKey.p25(1, 2, 1, 1, 1000);
+            String siteKey = RetainedSiteKey.p25(1, 2, 1, 1L, 1000);
             ScopedData history = new ScopedData("radio_system", SYSTEM, CHANNEL, siteKey,
                 "hourly_history", null, List.of("buckets"));
             assertEquals(1, ReceiverActivityDeletion.delete(connection, history).rowsDeleted());
@@ -284,7 +284,7 @@ class ReceiverActivityScopedDeletionTest
                 VALUES (1,1,1000,4,851000000),(1,1,1001,4,852000000),(1,1,1002,12,NULL)
                 """);
             ScopedData target = new ScopedData("radio_system", SYSTEM, CHANNEL,
-                RetainedSiteKey.p25(1, 2, 1, 1, 1000), "frequencies", "851000000", List.of("events"));
+                RetainedSiteKey.p25(1, 2, 1, 1L, 1000), "frequencies", "851000000", List.of("events"));
             assertEquals(1, ReceiverActivityMaintenance.preview(connection, target).rowsTotal());
             assertEquals(1, ReceiverActivityDeletion.delete(connection, target).rowsDeleted());
             assertEquals(2, count(connection, "receiver_activity_event"));
@@ -371,7 +371,7 @@ class ReceiverActivityScopedDeletionTest
                 VALUES (1,'1-10','Summary tag',1000,1000)
                 """);
             ScopedData target = new ScopedData("radio_system", SYSTEM, CHANNEL,
-                RetainedSiteKey.p25(1, 2, 1, 1, 1000), "frequencies", "851000000", List.of("summary"));
+                RetainedSiteKey.p25(1, 2, 1, 1L, 1000), "frequencies", "851000000", List.of("summary"));
             assertEquals(2, ReceiverActivityMaintenance.preview(connection, target).rowsTotal());
             assertEquals(2, ReceiverActivityDeletion.delete(connection, target).rowsDeleted());
             assertEquals(0, count(connection, "p25_site_channel_summary"));
@@ -379,7 +379,7 @@ class ReceiverActivityScopedDeletionTest
             assertEquals(1, count(connection, "p25_site_channel"));
             assertEquals(1, count(connection, "p25_site_channel_tag"));
             ScopedData current = new ScopedData("radio_system", SYSTEM, CHANNEL,
-                RetainedSiteKey.p25(1, 2, 1, 1, 1000), "frequencies", "851000000", List.of("current"));
+                RetainedSiteKey.p25(1, 2, 1, 1L, 1000), "frequencies", "851000000", List.of("current"));
             assertEquals(2, ReceiverActivityDeletion.delete(connection, current).rowsDeleted());
             assertEquals(0, count(connection, "p25_site_channel_tag"));
         }
@@ -444,7 +444,7 @@ class ReceiverActivityScopedDeletionTest
         {
             p25Site(connection);
             ScopedData target = new ScopedData("radio_system", SYSTEM, CHANNEL,
-                RetainedSiteKey.p25(1, 2, 1, 1, 1000), "band_plans", null, List.of("events"));
+                RetainedSiteKey.p25(1, 2, 1, 1L, 1000), "band_plans", null, List.of("events"));
             assertThrows(IllegalArgumentException.class,
                 () -> ReceiverActivityMaintenance.preview(connection, target));
             assertEquals(1, count(connection, "p25_site_snapshot"));
@@ -464,7 +464,7 @@ class ReceiverActivityScopedDeletionTest
                 VALUES (1,0,851000000,1000,1000),(2,1,762000000,1000,1000)
                 """);
             ScopedData site = new ScopedData("radio_system", SYSTEM, CHANNEL,
-                RetainedSiteKey.p25(1, 2, 1, 1, 1000), "all", null,
+                RetainedSiteKey.p25(1, 2, 1, 1L, 1000), "all", null,
                 List.of("current", "summary", "buckets", "events"));
             assertTrue(ReceiverActivityDeletion.delete(connection, site).found());
             assertEquals(1, count(connection, "receiver_channel WHERE id=2"));

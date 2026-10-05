@@ -168,7 +168,13 @@ public class P25NetworkConfigurationStabilizer
      * @param observation freshly decoded facts.
      * @param timestamp observation timestamp.
      */
-    public synchronized void observe(P25NetworkConfigurationSnapshot observation, long timestamp)
+    public void observe(P25NetworkConfigurationSnapshot observation, long timestamp)
+    {
+        observe(observation, timestamp, 0);
+    }
+
+    /** Fresh decoder-message evidence with the actual tuned source, never a decoded frequency label. */
+    public synchronized void observe(P25NetworkConfigurationSnapshot observation, long timestamp, long sourceFrequency)
     {
         beginMutation();
 
@@ -200,19 +206,21 @@ public class P25NetworkConfigurationStabilizer
 
             for(P25NetworkConfigurationSnapshot.Channel channel: list(observation.channels()))
             {
-                observeChannel(channel, timestamp);
+                observeChannel(channel, timestamp, sourceFrequency);
             }
 
             for(P25NetworkConfigurationSnapshot.NeighborSite neighborSite: list(observation.neighborSites()))
             {
                 P25NetworkConfigurationSnapshot.NeighborSite fact = neighborSite.withoutObservedAt();
-                observeGuarded(mNeighborSites, neighborSiteKey(fact), fact, timestamp);
+                observeGuarded(mNeighborSites, neighborSiteKey(fact), fact,
+                    neighborSite.observedAtMs() != null ? neighborSite.observedAtMs() : timestamp);
             }
 
             for(P25NetworkConfigurationSnapshot.FrequencyBand frequencyBand: list(observation.frequencyBands()))
             {
                 P25NetworkConfigurationSnapshot.FrequencyBand fact = frequencyBand.withoutObservedAt();
-                observeGuarded(mFrequencyBands, frequencyBandKey(fact), fact, timestamp);
+                observeGuarded(mFrequencyBands, frequencyBandKey(fact), fact,
+                    frequencyBand.observedAtMs() != null ? frequencyBand.observedAtMs() : timestamp);
             }
 
             for(P25NetworkConfigurationSnapshot.ForeignSystemBand foreignSystemBand:
@@ -220,7 +228,7 @@ public class P25NetworkConfigurationStabilizer
             {
                 P25NetworkConfigurationSnapshot.ForeignSystemBand fact = foreignSystemBand.withoutObservedAt();
                 observeGuarded(mForeignSystemBands, foreignSystemBandKey(fact), fact,
-                    timestamp);
+                    foreignSystemBand.observedAtMs() != null ? foreignSystemBand.observedAtMs() : timestamp);
             }
 
             observePatchGroupsValue(observation.patchGroups(), timestamp);
@@ -482,7 +490,8 @@ public class P25NetworkConfigurationStabilizer
             stableValues(mNeighborSites, P25NetworkConfigurationSnapshot.NeighborSite::withObservedAt);
         List<P25NetworkConfigurationSnapshot.FrequencyBand> frequencyBands =
             stableValues(mFrequencyBands, P25NetworkConfigurationSnapshot.FrequencyBand::withObservedAt);
-        List<P25NetworkConfigurationSnapshot.PatchGroup> patchGroups = stableValues(mPatchGroups);
+        List<P25NetworkConfigurationSnapshot.PatchGroup> patchGroups =
+            stableValues(mPatchGroups, P25NetworkConfigurationSnapshot.PatchGroup::withObservedAt);
 
         //Test seam deliberately sits between the patch list and completeness watermark so a concurrent mutation
         //proves that an inconsistent authoritative active-patch snapshot is rejected by the epoch check.
@@ -560,12 +569,22 @@ public class P25NetworkConfigurationStabilizer
     {
         for(P25NetworkConfigurationSnapshot.PatchGroup patchGroup: list(patchGroups))
         {
-            observeDynamic(mPatchGroups, patchGroupKey(patchGroup), patchGroup, timestamp);
+            if(patchGroup != null)
+            {
+                observeDynamic(mPatchGroups, patchGroupKey(patchGroup), patchGroup.withoutObservedAt(),
+                    patchGroup.observedAtMs() != null ? patchGroup.observedAtMs() : timestamp);
+            }
         }
     }
 
-    private void observeChannel(P25NetworkConfigurationSnapshot.Channel channel, long timestamp)
+    private void observeChannel(P25NetworkConfigurationSnapshot.Channel channel, long timestamp, long sourceFrequency)
     {
+        //An exported cached snapshot carries its original RF timestamp. Replaying it must never become
+        //another confirmation merely because the surrounding snapshot is newer.
+        if(channel != null && channel.observedAtMs() != null)
+        {
+            timestamp = channel.observedAtMs();
+        }
         if(channel != null)
         {
             channel = channel.withoutObservedAt();
@@ -581,7 +600,11 @@ public class P25NetworkConfigurationStabilizer
         StableFactTracker<P25NetworkConfigurationSnapshot.Channel,P25NetworkConfigurationSnapshot.Channel> tracker =
             mChannels.computeIfAbsent(key, ignored -> tracker());
 
-        if(isCurrentControlChannel(channel))
+        boolean tunedControl = isCurrentControlChannel(channel) && channel.downlink() != null &&
+            sourceFrequency > 0 && channel.downlink() == sourceFrequency;
+        boolean initialUnboundDiscovery = sourceFrequency <= 0 && isCurrentControlChannel(channel) &&
+            stableControlFrequencyCount() == 0 && isDiscoveryMode(timestamp);
+        if(tunedControl || initialUnboundDiscovery)
         {
             tracker.observeAuthoritative(channel, timestamp, this::allowChannelPromotion);
         }
@@ -593,6 +616,10 @@ public class P25NetworkConfigurationStabilizer
 
     private void observeTalkerAlias(P25NetworkConfigurationSnapshot.TalkerAlias talkerAlias, long timestamp)
     {
+        if(talkerAlias != null && talkerAlias.observedAtMs() != null)
+        {
+            timestamp = talkerAlias.observedAtMs();
+        }
         if(talkerAlias != null)
         {
             talkerAlias = talkerAlias.withoutObservedAt();

@@ -92,6 +92,37 @@ final class ReceiverActivityRecords
         STREAMED
     }
 
+    /** Full same-call facts. Only the writer decides which call and identity credits have committed. */
+    record ConventionalCallObservation(String callToken, ActivityEvent activity, boolean initial, boolean complete,
+                                       long collectionEpoch, long collectionStartedAtEpochMilliseconds)
+        implements ReceiverActivityRecord
+    {
+        ConventionalCallObservation(String callToken, ActivityEvent activity, boolean initial, boolean complete)
+        {
+            this(callToken, activity, initial, complete, 0, 0);
+        }
+
+        ConventionalCallObservation inCollection(long epoch, long startedAt)
+        {
+            return new ConventionalCallObservation(callToken, activity, initial, complete, epoch, startedAt);
+        }
+
+        ConventionalCallObservation
+        {
+            if(callToken == null || callToken.isBlank() || activity == null ||
+                activity.receiverKind() != ReceiverKind.CONVENTIONAL_P25 || !activity.countedCall())
+            {
+                throw new IllegalArgumentException("Conventional observation requires a P25 call token and facts");
+            }
+        }
+
+        @Override
+        public long observedAtEpochMilliseconds()
+        {
+            return activity.observedAtEpochMilliseconds();
+        }
+    }
+
     /**
      * One physical P25 receiver leg's site-local identity evidence. The system call is counted once, while this
      * bounded provenance record keeps each observed local alias attached to the saved channel that heard it.
@@ -474,6 +505,18 @@ final class ReceiverActivityRecords
             radioSystemKey = validateRadioSystemKey(protocol, identityDomain, configurationId, radioSystemKey);
             sourceObservedWorkingId = explicitWorkingId(sourceObservedWorkingId);
             targetObservedWorkingId = explicitWorkingId(targetObservedWorkingId);
+        }
+
+        /** Keeps observation metadata while projecting only identities accepted for this same call. */
+        ActivityEvent withConventionalIdentities(Integer source, String target, String kind, List<Integer> members,
+            P25Identity sourceIdentity, P25Identity targetIdentity, Integer sourceWorkingId, Integer targetWorkingId)
+        {
+            return new ActivityEvent(observedAtEpochMilliseconds, configurationId, receiverKind, protocol, action,
+                eventType, source != null ? Integer.toString(source) : null, target, kind, members, frequencyHertz,
+                lcn, timeslot, encrypted, encryptionAlgorithmId, encryptionKeyId, wacn, systemId, nac, rfss, site,
+                talkerAlias, countedCall, dedupeKey, radioPresenceUpdate, identityDomain, targetIdentity,
+                sourceIdentity, p25PatchMemberIdentities, radioSystemKey, sourceWorkingId, targetWorkingId,
+                p25WuidObservation);
         }
 
     }
