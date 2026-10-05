@@ -29,7 +29,7 @@ import java.util.TreeMap;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-class Format35To36DatabaseMigrationTest
+class Format36To37DatabaseMigrationTest
 {
     private static final String INDEX = "idx_trunked_logical_identity_identity";
     @TempDir Path mTemporaryFolder;
@@ -37,12 +37,12 @@ class Format35To36DatabaseMigrationTest
     @Test
     void preservesEveryPopulatedTableAcrossRollbackAndRetryToExactCurrentFormat() throws Exception
     {
-        Path source = Format35TestDatabase.create(mTemporaryFolder.resolve("source.sqlite"));
+        Path source = Format36TestDatabase.create(mTemporaryFolder.resolve("source.sqlite"));
         Map<String, TableSnapshot> before;
         try(Connection connection = open(source); Statement statement = connection.createStatement())
         {
             populateLogicalIdentityBuckets(statement);
-            assertEquals(35, DatabaseFormatCatalog.inspect(connection).version());
+            assertEquals(36, DatabaseFormatCatalog.inspect(connection).version());
             before = snapshots(connection);
             assertTrue(before.get("configuration_channel").rows() > 0);
             assertTrue(before.get("application_settings").rows() > 0);
@@ -56,20 +56,20 @@ class Format35To36DatabaseMigrationTest
             connection.setAutoCommit(false);
             DatabaseMigrationChain.migrate(connection);
             connection.rollback();
-            assertEquals(35, DatabaseFormatCatalog.inspect(connection).version());
-            assertEquals(DatabaseFormatCatalog.requireVersion(35).fingerprint(),
+            assertEquals(36, DatabaseFormatCatalog.inspect(connection).version());
+            assertEquals(DatabaseFormatCatalog.requireVersion(36).fingerprint(),
                 SqliteSchemaValidator.fingerprint(connection));
             assertEquals(before, snapshots(connection), "A failed attempt leaves every source row unchanged");
 
             var report = DatabaseMigrationChain.migrate(connection);
             connection.commit();
             assertEquals(1, report.steps().size());
-            assertEquals("format-35-to-36", report.steps().getFirst().id());
+            assertEquals("format-36-to-37", report.steps().getFirst().id());
             assertEquals(1, report.steps().getFirst().effects().size());
             assertEquals(DatabaseMigrationEffect.Kind.TRANSFORM,
                 report.steps().getFirst().effects().getFirst().kind());
             assertEquals(1, report.steps().getFirst().effects().getFirst().affectedRows());
-            assertEquals(36, report.target().version());
+            assertEquals(37, report.target().version());
             assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
             assertEquals(before, snapshots(connection),
                 "The index migration preserves all history, settings, credentials, and personal preferences");
@@ -86,30 +86,30 @@ class Format35To36DatabaseMigrationTest
     @Test
     void refusesMismatchedSourceWithoutMutatingRowsOrSchema() throws Exception
     {
-        Path source = Format34TestDatabase.create(mTemporaryFolder.resolve("wrong-source.sqlite"));
+        Path source = Format35TestDatabase.create(mTemporaryFolder.resolve("wrong-source.sqlite"));
         try(Connection connection = open(source))
         {
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);
             Map<String, TableSnapshot> before = snapshots(connection);
-            assertThrows(SQLException.class, () -> new Format35To36DatabaseMigration().migrate(connection));
-            assertEquals(34, DatabaseFormatCatalog.inspect(connection).version());
+            assertThrows(SQLException.class, () -> new Format36To37DatabaseMigration().migrate(connection));
+            assertEquals(35, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(fingerprint, SqliteSchemaValidator.fingerprint(connection));
             assertEquals(before, snapshots(connection));
         }
     }
 
     @Test
-    void refusesFormat35WithConflictingIndexDefinitionWithoutMutation() throws Exception
+    void refusesFormat36WithConflictingIndexDefinitionWithoutMutation() throws Exception
     {
-        Path source = Format35TestDatabase.create(mTemporaryFolder.resolve("mixed-source.sqlite"));
+        Path source = Format36TestDatabase.create(mTemporaryFolder.resolve("mixed-source.sqlite"));
         try(Connection connection = open(source); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("CREATE INDEX " + INDEX +
                 " ON trunked_logical_call_identity_bucket(radio_system_id,identity_summary_id)");
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);
             Map<String, TableSnapshot> before = snapshots(connection);
-            assertThrows(SQLException.class, () -> new Format35To36DatabaseMigration().migrate(connection));
-            assertEquals("35", scalar(statement,
+            assertThrows(SQLException.class, () -> new Format36To37DatabaseMigration().migrate(connection));
+            assertEquals("36", scalar(statement,
                 "SELECT value FROM database_metadata WHERE key='database_format_version'"));
             assertEquals(fingerprint, SqliteSchemaValidator.fingerprint(connection));
             assertEquals(before, snapshots(connection));

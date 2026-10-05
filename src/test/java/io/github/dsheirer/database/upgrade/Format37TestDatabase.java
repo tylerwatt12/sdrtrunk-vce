@@ -6,21 +6,21 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 
-/** Exact populated format-36 fixture produced only by the adjacent format-35 migration. */
-public final class Format36TestDatabase
+/** Exact populated format-37 fixture produced only by the adjacent format-36 migration. */
+public final class Format37TestDatabase
 {
-    private Format36TestDatabase() {}
+    private Format37TestDatabase() {}
 
     public static Path create(Path database) throws Exception
     {
-        Format35TestDatabase.create(database);
+        Format36TestDatabase.create(database);
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
             connection.setAutoCommit(false);
             try
             {
-                new Format35To36DatabaseMigration().migrate(connection);
-                DatabaseFormatCatalog.stamp(connection, 36);
+                new Format36To37DatabaseMigration().migrate(connection);
+                DatabaseFormatCatalog.stamp(connection, 37);
                 connection.commit();
             }
             catch(Exception exception)
@@ -32,11 +32,11 @@ public final class Format36TestDatabase
             {
                 connection.setAutoCommit(true);
             }
-            if(DatabaseFormatCatalog.inspect(connection).version() != 36 ||
-                !DatabaseFormatCatalog.requireVersion(36).fingerprint().equals(
+            if(DatabaseFormatCatalog.inspect(connection).version() != 37 ||
+                !DatabaseFormatCatalog.requireVersion(37).fingerprint().equals(
                     SqliteSchemaValidator.fingerprint(connection)))
             {
-                throw new IllegalStateException("Global format 36 fixture signature mismatch");
+                throw new IllegalStateException("Global format 37 fixture signature mismatch");
             }
         }
         return database;

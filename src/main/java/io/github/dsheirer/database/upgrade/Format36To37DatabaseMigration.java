@@ -7,12 +7,12 @@ import java.sql.SQLException;
 import java.util.List;
 
 /** Adds one identity-first retention lookup index without changing retained activity. */
-final class Format35To36DatabaseMigration implements DatabaseMigrationStep
+final class Format36To37DatabaseMigration implements DatabaseMigrationStep
 {
-    @Override public String id() { return "format-35-to-36"; }
+    @Override public String id() { return "format-36-to-37"; }
     @Override public String description() { return "Speed up receiver identity cleanup"; }
-    @Override public int sourceVersion() { return 35; }
-    @Override public int targetVersion() { return 36; }
+    @Override public int sourceVersion() { return 36; }
+    @Override public int targetVersion() { return 37; }
 
     @Override
     public List<DatabaseMigrationEffect> declaredEffects()
@@ -36,9 +36,9 @@ final class Format35To36DatabaseMigration implements DatabaseMigrationStep
 
     private static void requireSource(Connection connection) throws SQLException
     {
-        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 35)
+        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 36)
         {
-            throw new SQLException("Expected format 35");
+            throw new SQLException("Expected format 36");
         }
     }
 
