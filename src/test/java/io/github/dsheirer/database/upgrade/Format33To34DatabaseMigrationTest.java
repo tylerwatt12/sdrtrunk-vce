@@ -95,7 +95,7 @@ class Format33To34DatabaseMigrationTest
                 SQLException strict = assertThrows(SQLException.class, () -> DatabaseFormatCatalog.inspect(connection));
                 SQLException repair = assertThrows(SQLException.class,
                     () -> DatabaseFormatCatalog.inspectForMigration(connection));
-                assertTrue(strict.getMessage().contains("ambiguous across formats [33, 34, 35]"));
+                assertTrue(strict.getMessage().contains("ambiguous across formats [33, 34, 35, 36]"));
                 assertTrue(repair.getMessage().contains("authoritative database_format_version marker is required"));
                 assertEquals(before, rows(connection));
             }

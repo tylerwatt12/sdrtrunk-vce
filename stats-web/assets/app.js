@@ -1,5 +1,5 @@
 import * as routeFoundation from './core/routes.js?v=8';
-import * as preferenceSchema from './core/preference-schema.js?v=4';
+import * as preferenceSchema from './core/preference-schema.js?v=5';
 import { formatSourceName } from './core/source-names.js?v=1';
 import { Controller as UserPreferenceController } from './core/user-preferences.js';
 import * as tableLayouts from './core/table-layout.js';
@@ -17386,6 +17386,29 @@ function liveRowIsActive(row) {
   return Number.isSafeInteger(order) && order > 0;
 }
 
+function liveChannelSortMethod(presentation) {
+  return ['lcn', 'order_appeared', 'frequency'].includes(presentation.live_channel_sort) ?
+    presentation.live_channel_sort : (presentation.show_only_active_trunked_channels ? 'order_appeared' : 'lcn');
+}
+
+function liveCompareChannelRows(left, right, sort) {
+  if (sort === 'order_appeared') {
+    const leftOrder = liveRowIsActive(left) ? Number(left.activation_order) : Infinity;
+    const rightOrder = liveRowIsActive(right) ? Number(right.activation_order) : Infinity;
+    if (leftOrder !== rightOrder) return leftOrder < rightOrder ? -1 : 1;
+  }
+  if (sort !== 'frequency') {
+    const leftLcn = String(left.lcn ?? '').trim();
+    const rightLcn = String(right.lcn ?? '').trim();
+    if (Boolean(leftLcn) !== Boolean(rightLcn)) return leftLcn ? -1 : 1;
+    const lcnOrder = leftLcn.localeCompare(rightLcn, undefined, { numeric: true });
+    if (lcnOrder) return lcnOrder;
+  }
+  return Number(left.frequency_hz || 0) - Number(right.frequency_hz || 0) ||
+    Number(left.timeslot || 0) - Number(right.timeslot || 0) ||
+    String(left.key || '').localeCompare(String(right.key || ''), undefined, { numeric: true });
+}
+
 function livePresentedRow(row, presentation) {
   if (String(row?.status || '').toUpperCase() !== 'IDLE' ||
       (presentation.retain_last_call_on_idle_rows && !presentation.clear_voice_quality_when_idle)) return row;
@@ -17402,12 +17425,11 @@ function livePresentedRow(row, presentation) {
 function livePresentedTableRows(tableValue, presentation) {
   const rows = Array.isArray(tableValue?.rows) ? tableValue.rows : [];
   const tableId = String(tableValue?.table_id || '');
-  if (!presentation.show_only_active_trunked_channels || tableId === 'conventional') {
-    return rows.map((row) => livePresentedRow(row, presentation));
-  }
-  return rows.filter(liveRowIsActive).sort((left, right) => {
-    return Number(left.activation_order) - Number(right.activation_order);
-  }).map((row) => livePresentedRow(row, presentation));
+  const displayed = presentation.show_only_active_trunked_channels && tableId !== 'conventional' ?
+    rows.filter(liveRowIsActive) : [...rows];
+  const sort = liveChannelSortMethod(presentation);
+  return displayed.sort((left, right) => liveCompareChannelRows(left, right, sort))
+    .map((row) => livePresentedRow(row, presentation));
 }
 
 function liveChannelsSection(onSelectionChange) {
@@ -17586,7 +17608,7 @@ function liveChannelsSection(onSelectionChange) {
   const liveTable = table([], columns, presentation.show_only_active_trunked_channels ?
     'No active channels observed' : 'No channels observed', {
     type: 'live-channels', widthVariant: decodeDisplay.mode, rowKey: (row) => row.key,
-    sortable: true,
+    sortable: false,
     rowClass: activityRowClass,
     onRowClick: (row) => {
       const value = tables.get(activeTableId);
@@ -17758,8 +17780,6 @@ function liveChannelsSection(onSelectionChange) {
     activeTableId = tableId;
     liveChannelActivityActiveTableId = tableId;
     storeLiveUiState({ active_channel_table_id: tableId });
-    const activeFilter = presentation.show_only_active_trunked_channels && tableId !== 'conventional';
-    liveTable.tableController.setSortable(!activeFilter);
     const displayed = { ...value, rows: livePresentedTableRows(value, presentation) };
     liveTable.tableController.replaceRows(displayed.rows);
     const currentControl = displayed.control_active ? liveCurrentControlRow(displayed) : null;
@@ -27080,6 +27100,8 @@ function userPreferenceSummaryCards(preferences) {
     ])),
     settingsCard('Live presentation', 'Changed from the presentation icon on the Live page.', settingsSummary([
       ['Show only active trunked channels', settingsEnabled(preferences.presentation.show_only_active_trunked_channels)],
+      ['Sort calls by', ({ lcn: 'LCN', order_appeared: 'Order appeared', frequency: 'Frequency' })[
+        liveChannelSortMethod(preferences.presentation)]],
       ['Retain the last call on idle rows', settingsEnabled(preferences.presentation.retain_last_call_on_idle_rows)],
       ['Clear voice quality on idle rows', settingsEnabled(preferences.presentation.clear_voice_quality_when_idle)],
       ['Show encryption algorithm and key ID', settingsEnabled(preferences.presentation.show_encryption_details)],
@@ -27421,6 +27443,12 @@ function openLivePresentationSettings(returnFocusSelector = null) {
   const activeOnly = preferenceCheckbox('show-only-active-trunked', 'Show only active trunked channels',
     current.show_only_active_trunked_channels,
     'Hide inactive trunked rows. Conventional channels are always shown.');
+  const callSort = preferenceSelect('live-channel-sort', [
+    ['lcn', 'LCN'], ['order_appeared', 'Order appeared'], ['frequency', 'Frequency']
+  ], liveChannelSortMethod(current));
+  activeOnly.input.addEventListener('change', () => {
+    callSort.value = activeOnly.input.checked ? 'order_appeared' : 'lcn';
+  });
   const retainLastCall = preferenceCheckbox('retain-last-call-on-idle', 'Retain the last call on idle rows',
     current.retain_last_call_on_idle_rows,
     'Keep the last source, target, alias, talker, encryption algorithm, and key ID visible after a row becomes idle.');
@@ -27441,6 +27469,7 @@ function openLivePresentationSettings(returnFocusSelector = null) {
     setUiToggle(controlQuality.input, presentation.show_control_decode_quality);
     setUiToggle(voiceQuality.input, presentation.show_voice_decode_quality);
     setUiToggle(activeOnly.input, presentation.show_only_active_trunked_channels);
+    callSort.value = liveChannelSortMethod(presentation);
     setUiToggle(retainLastCall.input, presentation.retain_last_call_on_idle_rows);
     setUiToggle(clearIdleQuality.input, presentation.clear_voice_quality_when_idle);
     qualityMode.value = presentation.decode_quality_display_mode;
@@ -27458,7 +27487,9 @@ function openLivePresentationSettings(returnFocusSelector = null) {
   footer.append(message, actions);
   const presentationCard = settingsCard('Live details',
     'Choose how decoded activity is shown on the Live page.',
-    activeOnly.control, retainLastCall.control, clearIdleQuality.control,
+    activeOnly.control, formField('Sort calls by', callSort,
+      'Active-only view defaults to Order appeared; showing idle rows defaults to LCN.'),
+    retainLastCall.control, clearIdleQuality.control,
     encryption.control, controlQuality.control, voiceQuality.control, fields);
   form.append(node('p', 'live-presentation-intro',
     'These choices affect only this signed-in user.'),
@@ -27478,11 +27509,12 @@ function openLivePresentationSettings(returnFocusSelector = null) {
       decode_quality_display_mode: qualityMode.value,
       live_detail_row_limit: Number(rowLimit.value),
       show_only_active_trunked_channels: activeOnly.input.checked,
+      live_channel_sort: callSort.value,
       retain_last_call_on_idle_rows: retainLastCall.input.checked,
       clear_voice_quality_when_idle: clearIdleQuality.input.checked
     };
     const controls = [activeOnly.input, retainLastCall.input, clearIdleQuality.input, encryption.input,
-      controlQuality.input, voiceQuality.input, qualityMode, rowLimit, save];
+      controlQuality.input, voiceQuality.input, callSort, qualityMode, rowLimit, save];
     controls.forEach((control) => { control.disabled = true; });
     save.disabled = true;
     modal.setBusy(true);

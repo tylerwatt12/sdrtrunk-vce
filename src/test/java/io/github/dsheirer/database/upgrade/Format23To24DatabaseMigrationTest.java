@@ -62,7 +62,7 @@ class Format23To24DatabaseMigrationTest
 
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 23, report.steps().size());
             assertEquals("format-23-to-24", report.steps().getFirst().id());
-            assertEquals("format-35-to-36", report.steps().getLast().id());
+            assertEquals("format-36-to-37", report.steps().getLast().id());
             assertEquals(activityBefore.size(), report.steps().getFirst().effects().getFirst().affectedRows());
             assertEquals(rowsBefore, tableRowCounts(statement));
             assertEquals(activityBefore, activityRows(statement));

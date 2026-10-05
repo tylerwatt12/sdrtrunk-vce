@@ -33,7 +33,7 @@ class Format16To17DatabaseMigrationTest
             long aliasesBefore = scalar(statement, "SELECT count(*) FROM alias");
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
-            assertEquals("format-35-to-36", report.steps().getLast().id());
+            assertEquals("format-36-to-37", report.steps().getLast().id());
             assertEquals(aliasesBefore, scalar(statement, "SELECT count(*) FROM alias"));
             assertEquals(DatabaseFormatCatalog.current().fingerprint(),
                 SqliteSchemaValidator.fingerprint(connection));

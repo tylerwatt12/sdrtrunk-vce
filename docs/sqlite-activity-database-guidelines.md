@@ -165,7 +165,7 @@ the projection; a second working-evidence target index had no measured benefit a
 
 ### Identity retention lookup
 
-Format 36 adds `idx_trunked_logical_identity_identity(identity_summary_id, radio_system_id, identity_kind_code)`
+Format 37 adds `idx_trunked_logical_identity_identity(identity_summary_id, radio_system_id, identity_kind_code)`
 to the existing logical-call identity bucket table. Both the retention descendant probe and SQLite's exact
 identity foreign-key check use an identity-first `SEARCH` through this index. The migration analyzes this table
 once so the planner can compare populated index selectivity for the implicit foreign-key lookup after upgrade. The existing system/time primary key
