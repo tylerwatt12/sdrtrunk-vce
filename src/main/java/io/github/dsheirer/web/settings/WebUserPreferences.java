@@ -21,7 +21,7 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
                                  Scanner scanner, Presentation presentation, Tuner tuner,
                                  HealthAlerts healthAlerts, Map<String,TableLayout> tables)
 {
-    public static final int CURRENT_VERSION = 8;
+    public static final int CURRENT_VERSION = 9;
     public static final int MINIMUM_APPEARANCE_HUE = 0;
     public static final int MAXIMUM_APPEARANCE_HUE = 359;
     public static final int MAXIMUM_JSON_BYTES = 131_072;
@@ -80,7 +80,7 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
         return new WebUserPreferences(CURRENT_VERSION, new Appearance("light", null), new PageTitles(false),
             new Playback(1.0, List.of(), true, DEFAULT_TARGET_BURST_LIMIT), new Scanner("normal"),
             new Presentation(showEncryptionDetails, showControlDecodeQuality, showVoiceDecodeQuality,
-                decodeQualityDisplayMode, liveDetailRowLimit, true, false, false),
+                decodeQualityDisplayMode, liveDetailRowLimit, true, false, false, "talker_alias"),
             new Tuner(-140, 0, 1, true, true, false, false, "balanced"), new HealthAlerts(List.of()), Map.of());
     }
 
@@ -150,12 +150,15 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
     public record Presentation(boolean showEncryptionDetails, boolean showControlDecodeQuality,
                                boolean showVoiceDecodeQuality, String decodeQualityDisplayMode,
                                int liveDetailRowLimit, boolean showOnlyActiveTrunkedChannels,
-                               boolean retainLastCallOnIdleRows, boolean clearVoiceQualityWhenIdle)
+                               boolean retainLastCallOnIdleRows, boolean clearVoiceQualityWhenIdle,
+                               String sourceNameDisplay)
     {
         public Presentation
         {
             decodeQualityDisplayMode = requireOneOf(decodeQualityDisplayMode,
                 "presentation.decode_quality_display_mode", Set.of("percentage", "detailed"));
+            sourceNameDisplay = requireOneOf(sourceNameDisplay, "presentation.source_name_display",
+                Set.of("talker_alias", "source_alias", "both"));
 
             if(liveDetailRowLimit < MINIMUM_LIVE_DETAIL_ROW_LIMIT ||
                 liveDetailRowLimit > MAXIMUM_LIVE_DETAIL_ROW_LIMIT)

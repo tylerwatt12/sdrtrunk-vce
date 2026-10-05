@@ -427,6 +427,10 @@ public final class Format5WebStateValidator
             {
                 Format23WebUserPreferencesCodec.validate(preferencesJson);
             }
+            else if(preferenceDocumentVersion == 8)
+            {
+                Format31WebUserPreferencesCodec.validate(preferencesJson);
+            }
             else
             {
                 throw new IOException("Unsupported web preference document version " +

@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.SqliteSchemaValidator;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -43,16 +42,17 @@ class Format33To34DatabaseMigrationTest
         {
             assertThrows(SQLException.class, () -> DatabaseFormatCatalog.requireCurrent(connection));
             connection.setAutoCommit(false);
-            DatabaseMigrationChain.migrate(connection);
+            new Format33To34DatabaseMigration().migrate(connection);
+            DatabaseFormatCatalog.stamp(connection, 34);
             connection.rollback();
             assertEquals(33, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(before, rows(connection));
-            var report = DatabaseMigrationChain.migrate(connection);
+            var effects = new Format33To34DatabaseMigration().migrateAndReport(connection);
+            DatabaseFormatCatalog.stamp(connection, 34);
             connection.commit();
-            assertEquals(1, report.steps().size());
-            assertEquals("format-33-to-34", report.steps().getFirst().id());
-            assertEquals(34, report.target().version());
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+            assertEquals(1, effects.size());
+            assertEquals(34, DatabaseFormatCatalog.inspect(connection).version());
+            assertEquals(DatabaseFormatCatalog.requireVersion(34).fingerprint(), SqliteSchemaValidator.fingerprint(connection));
             assertEquals(before, rows(connection), "Only the authoritative format marker changes");
             try(ResultSet result = statement.executeQuery("PRAGMA quick_check"))
             {
@@ -60,9 +60,7 @@ class Format33To34DatabaseMigrationTest
                 assertEquals("ok", result.getString(1));
             }
             assertFalse(statement.executeQuery("PRAGMA foreign_key_check").next());
-            assertEquals(0, DatabaseMigrationChain.migrate(connection).steps().size(), "Current retry is a no-op");
         }
-        SdrTrunkDatabaseStartup.validateGlobalDatabase(candidate);
         assertArrayEquals(sourceBytes, Files.readAllBytes(source), "The selected source stays untouched");
     }
 
@@ -97,7 +95,7 @@ class Format33To34DatabaseMigrationTest
                 SQLException strict = assertThrows(SQLException.class, () -> DatabaseFormatCatalog.inspect(connection));
                 SQLException repair = assertThrows(SQLException.class,
                     () -> DatabaseFormatCatalog.inspectForMigration(connection));
-                assertTrue(strict.getMessage().contains("ambiguous across formats [33, 34]"));
+                assertTrue(strict.getMessage().contains("ambiguous across formats [33, 34, 35]"));
                 assertTrue(repair.getMessage().contains("authoritative database_format_version marker is required"));
                 assertEquals(before, rows(connection));
             }

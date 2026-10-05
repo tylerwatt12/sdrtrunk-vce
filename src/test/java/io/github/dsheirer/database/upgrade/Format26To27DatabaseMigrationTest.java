@@ -76,7 +76,7 @@ class Format26To27DatabaseMigrationTest
 
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 26, report.steps().size());
             assertEquals("format-26-to-27", report.steps().getFirst().id());
-            assertEquals("format-33-to-34", report.steps().getLast().id());
+            assertEquals("format-34-to-35", report.steps().getLast().id());
             assertEffect(report.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.TRANSFORM,
                 "ordinary administrator accounts", 1);
             Map<String,AccountSnapshot> after = accounts(statement);
@@ -174,7 +174,7 @@ class Format26To27DatabaseMigrationTest
     @Test
     void currentFormatStartupDoesNotRewriteAccounts() throws Exception
     {
-        Path database = Format34TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
+        Path database = Format35TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
         Map<String,AccountSnapshot> accountsBefore;
         Map<String,byte[]> verifierDigestsBefore;
         long sequenceBefore;
@@ -291,7 +291,8 @@ class Format26To27DatabaseMigrationTest
         {
             return new AccountSnapshot(id, username, replacement, primaryAdmin, credentialVersion,
                 passwordAlgorithm, passwordIterations, passwordDerivedKeyBits, passwordChangedAtMs, authRevision,
-                Format23WebUserPreferencesCodec.migrateToFormat31(preferencesJson), preferencesRevision + 1,
+                Format35WebUserPreferencesCodec.migrateFromFormat34(
+                    Format23WebUserPreferencesCodec.migrateToFormat31(preferencesJson)), preferencesRevision + 2,
                 createdAtMs, migratedUpdatedAtMs);
         }
     }

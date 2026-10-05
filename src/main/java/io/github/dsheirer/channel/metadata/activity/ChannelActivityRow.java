@@ -363,7 +363,7 @@ public class ChannelActivityRow
             return configured;
         }
 
-        return configured != null ? configured + " · TA: " + talker : "TA: " + talker;
+        return configured != null ? configured + " · " + talker : talker;
     }
 
     private static String clean(String value)

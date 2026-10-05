@@ -204,8 +204,8 @@ final class CurrentDatabaseAdministrativeRepair
 
     private static int preferenceDocumentVersion(Connection connection) throws SQLException
     {
-        return DatabaseFormatCatalog.inspectForMigration(connection).version() <= 30 ? 7 :
-            WebUserPreferences.CURRENT_VERSION;
+        int databaseVersion = DatabaseFormatCatalog.inspectForMigration(connection).version();
+        return databaseVersion <= 30 ? 7 : databaseVersion <= 34 ? 8 : WebUserPreferences.CURRENT_VERSION;
     }
 
     private static boolean invalidSpectrumSettings(Connection connection) throws SQLException
@@ -697,8 +697,12 @@ final class CurrentDatabaseAdministrativeRepair
         final String defaults;
         try
         {
-            defaults = preferenceDocumentVersion == 7 ? Format23WebUserPreferencesCodec.defaults() :
-                WebUserPreferencesCodec.encode(WebUserPreferences.defaults());
+            defaults = switch(preferenceDocumentVersion)
+            {
+                case 7 -> Format23WebUserPreferencesCodec.defaults();
+                case 8 -> Format31WebUserPreferencesCodec.defaults();
+                default -> WebUserPreferencesCodec.encode(WebUserPreferences.defaults());
+            };
         }
         catch(IOException exception)
         {

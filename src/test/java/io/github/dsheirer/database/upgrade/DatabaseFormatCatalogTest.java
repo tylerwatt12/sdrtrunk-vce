@@ -273,7 +273,7 @@ class DatabaseFormatCatalogTest
     }
 
     @Test
-    void markerlessFormat33And34RequiresAuthoritativeMarker() throws Exception
+    void markerlessFormat33Through35RequiresAuthoritativeMarker() throws Exception
     {
         Path database = Format33TestDatabase.create(mTemporaryFolder.resolve("markerless-format-33.sqlite"));
         try(Connection connection = open(database); Statement statement = connection.createStatement())
@@ -283,8 +283,8 @@ class DatabaseFormatCatalogTest
             SQLException strict = assertThrows(SQLException.class, () -> DatabaseFormatCatalog.inspect(connection));
             SQLException migration = assertThrows(SQLException.class,
                 () -> DatabaseFormatCatalog.inspectForMigration(connection));
-            assertTrue(strict.getMessage().contains("ambiguous across formats [33, 34]"), strict::getMessage);
-            assertTrue(migration.getMessage().contains("ambiguous across formats [33, 34]"), migration::getMessage);
+            assertTrue(strict.getMessage().contains("ambiguous across formats [33, 34, 35]"), strict::getMessage);
+            assertTrue(migration.getMessage().contains("ambiguous across formats [33, 34, 35]"), migration::getMessage);
         }
     }
 

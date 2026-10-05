@@ -90,6 +90,8 @@ class WebUserPreferencesHttpControllerTest
             ((com.fasterxml.jackson.databind.node.ObjectNode)replacement.path("page_titles"))
                 .put("prepend_playing_call", true);
             ((com.fasterxml.jackson.databind.node.ObjectNode)replacement.path("appearance")).put("hue", 215);
+            ((com.fasterxml.jackson.databind.node.ObjectNode)replacement.path("presentation"))
+                .put("source_name_display", "both");
             String replacementJson = MAPPER.writeValueAsString(replacement);
 
             assertEquals(403, send(client, request(origin)
@@ -105,6 +107,7 @@ class WebUserPreferencesHttpControllerTest
             assertEquals(2, updated.path("revision").longValue());
             assertTrue(updated.at("/preferences/page_titles/prepend_playing_call").booleanValue());
             assertEquals(215, updated.at("/preferences/appearance/hue").intValue());
+            assertEquals("both", updated.at("/preferences/presentation/source_name_display").textValue());
             assertEquals("\"2\"", updatedResponse.headers().firstValue("ETag").orElseThrow());
             assertEquals(1, accessService.primaryAdmin().orElseThrow().authRevision());
 
@@ -130,6 +133,8 @@ class WebUserPreferencesHttpControllerTest
             assertEquals(215, MAPPER.readTree(stillSignedIn.body()).at("/preferences/appearance/hue").intValue());
             assertEquals(215, new WebUserPreferencesService(database).get(
                 accessService.primaryAdmin().orElseThrow()).preferences().appearance().hue());
+            assertEquals("both", new WebUserPreferencesService(database).get(
+                accessService.primaryAdmin().orElseThrow()).preferences().presentation().sourceNameDisplay());
 
             ((com.fasterxml.jackson.databind.node.ObjectNode)replacement.path("appearance")).putNull("hue");
             HttpResponse<String> restored = send(client, mutation(origin, login).header("If-Match", "\"2\"")

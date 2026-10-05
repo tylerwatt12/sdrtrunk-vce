@@ -73,7 +73,7 @@ class Format17To18DatabaseMigrationTest
             }
 
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
-            assertEquals("format-33-to-34", report.steps().getLast().id());
+            assertEquals("format-34-to-35", report.steps().getLast().id());
             assertEquals(1, number(statement,
                 "SELECT count(*) FROM receiver_activity_event WHERE id=600 AND observed_site=255"));
             statement.executeUpdate("""

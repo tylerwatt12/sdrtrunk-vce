@@ -138,7 +138,7 @@ class ApplicationDatabaseMigratorInPlaceTest
     @Test
     void healthyCurrentDatabaseSkipsBackupAndDoesNotChangeItsBytes() throws Exception
     {
-        Path database = Format34TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
+        Path database = Format35TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
         byte[] before = Files.readAllBytes(database);
         var result = ApplicationDatabaseMigrator.migrateInPlace(database, ignored -> { },
             () -> fail("A healthy current database must not be backed up"));

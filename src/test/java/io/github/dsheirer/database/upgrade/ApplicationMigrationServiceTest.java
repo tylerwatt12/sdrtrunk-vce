@@ -1316,7 +1316,8 @@ class ApplicationMigrationServiceTest
             SELECT hex(password_salt) || ':' || hex(password_hash)
             FROM web_user WHERE username='operator'
             """));
-        assertEquals(Format23WebUserPreferencesCodec.migrateToFormat31(preferencesBefore), scalar(database,
+        assertEquals(Format35WebUserPreferencesCodec.migrateFromFormat34(
+            Format23WebUserPreferencesCodec.migrateToFormat31(preferencesBefore)), scalar(database,
             "SELECT preferences_json FROM web_user WHERE username='operator'"));
         assertCurrentFormat(database);
         int stepCount = DatabaseFormatCatalog.CURRENT_VERSION - 26;

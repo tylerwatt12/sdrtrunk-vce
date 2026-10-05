@@ -27,14 +27,34 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-class Format30To31DatabaseMigrationTest
+class Format34To35DatabaseMigrationTest
 {
     @TempDir Path mTemporaryFolder;
 
     @Test
-    void preservesAllExistingPreferencesAndCredentialsWhileSelectingTheOriginalPalette() throws Exception
+    void rejectsAnEarlierSourceAndLeavesACurrentDatabaseUnchanged() throws Exception
     {
-        Path database = Format30TestDatabase.create(mTemporaryFolder.resolve("format-30.sqlite"));
+        Path earlier = Format33TestDatabase.create(mTemporaryFolder.resolve("wrong-source.sqlite"));
+        try(Connection connection = open(earlier); Statement statement = connection.createStatement())
+        {
+            Map<Long,Preference> before = preferences(statement);
+            assertThrows(SQLException.class, () -> new Format34To35DatabaseMigration().migrate(connection));
+            assertEquals(33, DatabaseFormatCatalog.inspect(connection).version());
+            assertEquals(before, preferences(statement));
+        }
+        Path current = Format35TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
+        byte[] before = Files.readAllBytes(current);
+        try(Connection connection = open(current))
+        {
+            assertTrue(DatabaseMigrationChain.migrate(connection).steps().isEmpty());
+        }
+        assertTrue(MessageDigest.isEqual(before, Files.readAllBytes(current)), "Current retry changed the database");
+    }
+
+    @Test
+    void preservesAllExistingPreferencesAndCredentialsWhilePreferringTalkerAlias() throws Exception
+    {
+        Path database = Format34TestDatabase.create(mTemporaryFolder.resolve("format-34.sqlite"));
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -48,8 +68,8 @@ class Format30To31DatabaseMigrationTest
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);
 
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 30, report.steps().size());
-            assertEquals("format-30-to-31", report.steps().getFirst().id());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 34, report.steps().size());
+            assertEquals("format-34-to-35", report.steps().getFirst().id());
             assertEquals(before.size(), report.steps().getFirst().effects().getFirst().affectedRows());
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
             assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
@@ -59,10 +79,10 @@ class Format30To31DatabaseMigrationTest
             {
                 Preference prior = entry.getValue();
                 Preference current = after.get(entry.getKey());
-                assertEquals(migrateToCurrent(prior.json()), current.json());
-                assertEquals(prior.revision() + 2, current.revision());
+                assertEquals(Format35WebUserPreferencesCodec.migrateFromFormat34(prior.json()), current.json());
+                assertEquals(prior.revision() + 1, current.revision());
                 assertTrue(current.updatedAtMs() >= prior.updatedAtMs());
-                assertTrue(WebUserPreferencesCodec.decode(current.json()).appearance().hue() == null);
+                assertTrue("talker_alias".equals(WebUserPreferencesCodec.decode(current.json()).presentation().sourceNameDisplay()));
                 assertTrue(MessageDigest.isEqual(credentials.get(entry.getKey()),
                     credentialDigests(statement).get(entry.getKey())), "Account or credential changed");
             }
@@ -79,7 +99,7 @@ class Format30To31DatabaseMigrationTest
             "preferences_revision=9223372036854775805",
             "preferences_revision=9223372036854775806"))
         {
-            Path database = Format30TestDatabase.create(mTemporaryFolder.resolve(
+            Path database = Format34TestDatabase.create(mTemporaryFolder.resolve(
                 "damaged-" + Math.abs(change.hashCode()) + ".sqlite"));
             try(Connection connection = open(database); Statement statement = connection.createStatement())
             {
@@ -91,8 +111,8 @@ class Format30To31DatabaseMigrationTest
                 assertTrue(report.steps().getFirst().effects().stream().anyMatch(effect ->
                     effect.kind() == DatabaseMigrationEffect.Kind.DEFAULT && effect.affectedRows() == 1));
                 assertEquals(change.startsWith("preferences_json=") ? Format35WebUserPreferencesCodec.defaults() :
-                    migrateToCurrent(selected), preferences(statement).get(3L).json());
-                assertEquals(migrateToCurrent(sibling),
+                    Format35WebUserPreferencesCodec.migrateFromFormat34(selected), preferences(statement).get(3L).json());
+                assertEquals(Format35WebUserPreferencesCodec.migrateFromFormat34(sibling),
                     preferences(statement).get(2L).json());
                 for(Map.Entry<Long,byte[]> credential: credentials.entrySet())
                 {
@@ -107,7 +127,7 @@ class Format30To31DatabaseMigrationTest
     @Test
     void rollbackLeavesTheSourceUnchangedAndIndependentCopiesMigrateIdentically() throws Exception
     {
-        Path source = Format30TestDatabase.create(mTemporaryFolder.resolve("source.sqlite"));
+        Path source = Format34TestDatabase.create(mTemporaryFolder.resolve("source.sqlite"));
         Map<Long,Preference> before;
         try(Connection connection = open(source); Statement statement = connection.createStatement())
         {
@@ -122,7 +142,7 @@ class Format30To31DatabaseMigrationTest
             {
                 connection.setAutoCommit(true);
             }
-            assertEquals(30, DatabaseFormatCatalog.inspect(connection).version());
+            assertEquals(34, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(before, preferences(statement));
         }
         byte[] unchangedSource = Files.readAllBytes(source);
@@ -135,9 +155,9 @@ class Format30To31DatabaseMigrationTest
                 for(Map.Entry<Long,Preference> entry: before.entrySet())
                 {
                     Preference current = preferences(statement).get(entry.getKey());
-                    assertEquals(migrateToCurrent(entry.getValue().json()),
+                    assertEquals(Format35WebUserPreferencesCodec.migrateFromFormat34(entry.getValue().json()),
                         current.json());
-                    assertEquals(entry.getValue().revision() + 2, current.revision());
+                    assertEquals(entry.getValue().revision() + 1, current.revision());
                 }
                 assertEquals(DatabaseFormatCatalog.current().fingerprint(),
                     SqliteSchemaValidator.fingerprint(connection));
@@ -147,35 +167,37 @@ class Format30To31DatabaseMigrationTest
     }
 
     @Test
-    void frozenVersionEightValidatorAcceptsNullAndBoundedHueOnly() throws Exception
+    void frozenVersionNineValidatorAcceptsOnlyTheThreeDisplayChoices() throws Exception
     {
-        String defaults = Format31WebUserPreferencesCodec.defaults();
-        Format31WebUserPreferencesCodec.validate(defaults);
-        for(int hue: List.of(0, 215, 359))
+        String defaults = Format35WebUserPreferencesCodec.defaults();
+        for(String mode: List.of("talker_alias", "source_alias", "both"))
         {
-            Format31WebUserPreferencesCodec.validate(defaults.replace("\"hue\":null", "\"hue\":" + hue));
+            Format35WebUserPreferencesCodec.validate(defaults.replace(
+                "\"source_name_display\":\"talker_alias\"", "\"source_name_display\":\"" + mode + "\""));
         }
-        for(String invalid: List.of("-1", "360", "215.5", "\"215\"", "true", "[]", "2147483648"))
+        for(String invalid: List.of("\"unknown\"", "null", "true", "[]", "{}", "1"))
         {
-            assertThrows(IOException.class, () -> Format31WebUserPreferencesCodec.validate(
-                defaults.replace("\"hue\":null", "\"hue\":" + invalid)));
+            assertThrows(IOException.class, () -> Format35WebUserPreferencesCodec.validate(defaults.replace(
+                "\"source_name_display\":\"talker_alias\"", "\"source_name_display\":" + invalid)));
         }
-        assertThrows(IOException.class, () -> Format31WebUserPreferencesCodec.validate(
-            defaults.replace(",\"hue\":null", "")));
-        assertThrows(IOException.class, () -> Format31WebUserPreferencesCodec.validate(
-            defaults.replace("\"hue\":null", "\"hue\":null,\"hue\":215")));
-        assertThrows(IOException.class, () -> Format31WebUserPreferencesCodec.validate(
-            defaults.replace("\"hue\":null", "\"hue\":null,\"unknown\":true")));
+        assertThrows(IOException.class, () -> Format35WebUserPreferencesCodec.validate(
+            defaults.replace(",\"source_name_display\":\"talker_alias\"", "")));
+        assertThrows(IOException.class, () -> Format35WebUserPreferencesCodec.validate(defaults.replace(
+            "\"source_name_display\":\"talker_alias\"", "\"source_name_display\":\"talker_alias\",\"source_name_display\":\"both\"")));
+        assertThrows(IOException.class, () -> Format35WebUserPreferencesCodec.validate(defaults.replace(
+            "\"source_name_display\":\"talker_alias\"", "\"source_name_display\":\"talker_alias\",\"unknown\":true")));
+        Format31WebUserPreferencesCodec.validate(Format31WebUserPreferencesCodec.defaults());
+        assertThrows(IOException.class, () -> WebUserPreferencesCodec.decode(Format31WebUserPreferencesCodec.defaults()));
     }
 
     @Test
-    void resetsOneCachedLayoutOnlyWhenTheAddedHueExceedsTheUnchangedBound() throws Exception
+    void resetsOneCachedLayoutOnlyWhenTheAddedChoiceExceedsTheUnchangedBound() throws Exception
     {
-        Path database = Format30TestDatabase.create(mTemporaryFolder.resolve("full-preferences.sqlite"));
-        String source = fullVersionSevenDocument();
-        Format23WebUserPreferencesCodec.validate(source);
+        Path database = Format34TestDatabase.create(mTemporaryFolder.resolve("full-preferences.sqlite"));
+        String source = fullVersionEightDocument();
+        Format31WebUserPreferencesCodec.validate(source);
         assertTrue(source.length() <= WebUserPreferences.MAXIMUM_JSON_BYTES);
-        assertTrue(source.length() + 11 > WebUserPreferences.MAXIMUM_JSON_BYTES);
+        assertTrue(source.length() + 35 > WebUserPreferences.MAXIMUM_JSON_BYTES);
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             try(var update = connection.prepareStatement("UPDATE web_user SET preferences_json=? WHERE id=3"))
@@ -193,7 +215,6 @@ class Format30To31DatabaseMigrationTest
             ObjectMapper mapper = new ObjectMapper();
             ObjectNode expected = (ObjectNode)mapper.readTree(source);
             expected.put("version", 9);
-            ((ObjectNode)expected.get("appearance")).putNull("hue");
             ((ObjectNode)expected.get("presentation")).put("source_name_display", "talker_alias");
             ObjectNode tables = (ObjectNode)expected.get("tables");
             String last = null;
@@ -203,7 +224,7 @@ class Format30To31DatabaseMigrationTest
             assertTrue(preferences(statement).get(3L).json().length() <= WebUserPreferences.MAXIMUM_JSON_BYTES);
             for(Map.Entry<Long,Preference> entry: before.entrySet())
             {
-                if(entry.getKey() != 3L) assertEquals(migrateToCurrent(
+                if(entry.getKey() != 3L) assertEquals(Format35WebUserPreferencesCodec.migrateFromFormat34(
                     entry.getValue().json()), preferences(statement).get(entry.getKey()).json());
                 assertTrue(MessageDigest.isEqual(credentials.get(entry.getKey()),
                     credentialDigests(statement).get(entry.getKey())), "Account or credential changed");
@@ -213,10 +234,10 @@ class Format30To31DatabaseMigrationTest
         }
     }
 
-    private static String fullVersionSevenDocument() throws Exception
+    private static String fullVersionEightDocument() throws Exception
     {
         ObjectMapper mapper = new ObjectMapper();
-        ObjectNode document = (ObjectNode)mapper.readTree(Format23WebUserPreferencesCodec.defaults());
+        ObjectNode document = (ObjectNode)mapper.readTree(Format31WebUserPreferencesCodec.defaults());
         ObjectNode tables = (ObjectNode)document.get("tables");
         ArrayNode schema = null;
         ArrayNode order = null;
@@ -246,12 +267,6 @@ class Format30To31DatabaseMigrationTest
             order.set(order.size() - 1, mapper.getNodeFactory().textNode(shortened));
         }
         return document.toString();
-    }
-
-    private static String migrateToCurrent(String json) throws IOException
-    {
-        return Format35WebUserPreferencesCodec.migrateFromFormat34(
-            Format23WebUserPreferencesCodec.migrateToFormat31(json));
     }
 
     private static Connection open(Path database) throws Exception
