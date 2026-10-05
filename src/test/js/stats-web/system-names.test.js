@@ -79,13 +79,16 @@ const context = {
   section: (_title, value) => value, metrics: () => null,
   keyValues: (values) => { facts.push(...values); return null; }, dateTime: () => '',
   signalingMetrics: () => null, signalingActionRows: () => [], activityMetricGuide: () => null,
-  fragment: (...values) => values, radioSystemCapability: () => false,
+  fragment: (...values) => { const value = node('fragment'); value.append(...values); return value; },
+  valueNode: (value) => value, radioSystemCapability: () => false,
+  ACCESS_CAPABILITIES: { RADIO: 'radio' }, capabilityAllowed: () => true, entityRefHref: () => '',
   labeledBaseValue: (value, base) => `${value} ${base}`
 };
 const names = ['protocol', 'protocolFamily', 'isP25', 'identifierNumber', 'hex', 'semanticLabel',
   'savedChannelScopeLabel', 'isSavedChannelRadioSystem', 'radioSystemOwnerLabel', 'radioSystemLabel',
   'radioSystemPrimaryName', 'radioSystemDisplayName', 'radioSystemValue', 'radioSystemAliasLists',
-  'radioSystemIdentityValue', 'radioSystemInfoValue', 'sameSiteText', 'radioSystemsDirectoryDetails',
+  'radioSystemIdentityValue', 'radioSystemInfoValue', 'radioSystemInfoFact', 'radioSystemLink',
+  'sameSiteText', 'radioSystemsDirectoryDetails',
   'entityPageTitle', 'renderRadioSystem'];
 vm.createContext(context);
 vm.runInContext(names.map(declaration).join('\n'), context);
@@ -105,6 +108,6 @@ assert.equal(unknownForeign.radio_system_entity_ref, null, 'Unknown foreign syst
   await context.renderRadioSystem();
   assert.equal(headers[1].title, `System: ${marcs.system_name}`);
   const identity = facts.find(([label]) => label === 'Radio System')[1].textContent;
-  assert.equal(identity, 'BEE00-348 HEX·781824-840 DEC');
-  assert.ok(!identity.includes(marcs.system_name), 'Info fact does not repeat the friendly heading');
+  assert.equal(identity, `${marcs.system_name}BEE00-348 HEX·781824-840 DEC`,
+    'System Info makes the friendly name primary and retains the native identity as context');
 })().catch((error) => { console.error(error); process.exitCode = 1; });

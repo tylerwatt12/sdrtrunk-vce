@@ -1403,6 +1403,18 @@ function radioSystemInfoValue(row) {
   return radioSystemIdentityValue(row);
 }
 
+function radioSystemInfoFact(row, includeIdentity = true) {
+  const name = radioSystemPrimaryName(row);
+  const conventional = String(row?.channel_kind || '').toUpperCase() === 'CONVENTIONAL';
+  const identity = conventional || isSavedChannelRadioSystem(row) ? '' : systemLabels.systemIdentity(row);
+  const primary = radioSystemLink(row.radio_system_entity_ref,
+    name || (identity ? radioSystemInfoValue(row) : 'No system name configured'));
+  if (!name || !identity || !includeIdentity) return primary;
+  const context = node('small', 'identity-summary-context');
+  context.append(valueNode(radioSystemInfoValue(row)));
+  return fragment(primary, context);
+}
+
 function radioSystemContextLink(row) {
   return radioSystemLink(row.radio_system_entity_ref, radioSystemDisplayName(row));
 }
@@ -19148,7 +19160,7 @@ async function renderRadioSystem() {
     const infoColumn = node('div', 'entity-info-column system-info-column');
     const assignment = radioSystemAssignmentLabel(system);
     const systemInfo = [
-      [radioSystemOwnerLabel(system), radioSystemInfoValue(system)]
+      [radioSystemOwnerLabel(system), radioSystemInfoFact(system)]
     ];
     if (assignment) systemInfo.push(['Assignment', assignment]);
     systemInfo.push(
@@ -19255,8 +19267,7 @@ async function renderGroupIdentity() {
   } else {
     const infoColumn = node('div', 'entity-info-column');
     const blocks = [section('Identity', keyValues([
-      [radioSystemOwnerLabel(groupIdentity), radioSystemLink(groupIdentity.radio_system_entity_ref,
-        radioSystemInfoValue(groupIdentity))],
+      [radioSystemOwnerLabel(groupIdentity), radioSystemInfoFact(groupIdentity)],
       [kind === 'patch_group' ? 'Patch Group ID' : 'Talkgroup ID', formattedId],
       ['Alias', aliasLabel(groupIdentity)],
       ['Description', groupIdentity.alias_description],
@@ -19440,16 +19451,10 @@ async function renderRadio() {
     } });
   } else {
     const infoColumn = node('div', 'entity-info-column entity-info-standalone');
-    let systemFact = radioSystemLink(radio.radio_system_entity_ref, radioSystemInfoValue(radio));
-    if (radioSystemPrimaryName(radio)) {
-      const identityContext = node('small', 'identity-summary-context');
-      identityContext.append(valueNode(radioSystemInfoValue(radio)));
-      systemFact = fragment(radioSystemContextLink(radio), identityContext);
-    }
     const identifierFact = node('span', '', formattedId);
     if (permanentIdentity) identifierFact.title = canonicalSubscriberText(permanentIdentity);
     const identityValues = [
-      [radioSystemOwnerLabel(radio), systemFact],
+      [radioSystemOwnerLabel(radio), radioSystemInfoFact(radio)],
       ['Radio ID', identifierFact],
       ['Alias', aliasLabel(radio)]
     ];
@@ -19839,7 +19844,7 @@ async function renderTrunkedChannelInfo(channel, renderContext) {
 
   const infoColumn = node('div', 'entity-info-column');
   infoColumn.append(section('Channel Info', keyValues([
-    [radioSystemOwnerLabel(channel), radioSystemLink(channel.radio_system_entity_ref, radioSystemInfoValue(channel))],
+    [radioSystemOwnerLabel(channel), radioSystemInfoFact(channel, false)],
     ['Site', siteNameValue(channel)], ['Name', nameValue(channel)],
     ['Configuration ID', channel.configuration_id],
     ['Alias List', aliasListLink(channel.alias_list_name, channel.alias_list_id)],
@@ -24464,7 +24469,7 @@ async function renderConventionalChannel(data, channel, configurationId, renderC
   } else {
     content.append(section('Channel Info', keyValues([
       ['Name', channel.name],
-      ['System', radioSystemPrimaryName(channel)],
+      ['System', radioSystemInfoFact(channel, false)],
       ['Protocol', protocolFamily(channel)], ['Decoder', decoderDisplay(channel.decoder)],
       ['Alias List', aliasListLink(channel.alias_list_name, channel.alias_list_id)],
       ['Frequency', frequency(channel.primary_frequency_hz)],
