@@ -32,6 +32,7 @@ class StatsWebJavaScriptBehaviorTest
     private static final Path RADIORESOLVE_ANALYSIS = Path.of("stats-web", "assets", "features",
         "radioresolve-analysis.js");
     private static final Path LISTEN_MAP = Path.of("stats-web", "assets", "features", "listen-map.js");
+    private static final Path RECORDINGS = Path.of("stats-web", "assets", "features", "recordings.js");
     private static final Path NETWORK_VISUALIZER = Path.of("stats-web", "assets", "features", "network-visualizer");
     private static final Path WEB_CALL_PLAYER = Path.of("stats-web", "assets", "web-call-player.js");
     private static final String NODE = System.getenv().getOrDefault("NODE_BINARY", "node");
@@ -46,6 +47,10 @@ class StatsWebJavaScriptBehaviorTest
         contract("health alert settings", "health-alert-settings.test.js", APP_JAVASCRIPT),
         contract("Live detail filters", "live-detail-filters.test.js", APP_JAVASCRIPT),
         contract("Live presentation", "live-presentation.test.js", APP_JAVASCRIPT),
+        contract("source names", "source-names.test.js", CORE_MODULES.resolve("source-names.js")),
+        contract("source name preference", "source-name-preference.test.js", APP_JAVASCRIPT),
+        contract("public Alias navigation", "public-alias-navigation.test.js", APP_JAVASCRIPT),
+        contract("recordings playback", "recordings-playback.test.js", RECORDINGS),
         contract("Listen map", "listen-map.test.js", LISTEN_MAP),
         contract("P25 Visualizer history", "p25-visualizer-history.test.js", NETWORK_VISUALIZER),
         contract("P25 Visualizer camera", "p25-visualizer-camera.test.js", NETWORK_VISUALIZER),

@@ -7,6 +7,8 @@ const vm = require('node:vm');
 const root = path.resolve(__dirname, '../../../..');
 const source = fs.readFileSync(path.join(root, 'stats-web/assets/app.js'), 'utf8');
 const routesSource = fs.readFileSync(path.join(root, 'stats-web/assets/core/routes.js'), 'utf8');
+const sourceNamesSource = fs.readFileSync(path.join(root, 'stats-web/assets/core/source-names.js'), 'utf8');
+const { formatSourceName } = vm.runInNewContext(sourceNamesSource.replace(/^export /gm, '') + '\n({formatSourceName});');
 const routes = vm.runInNewContext(routesSource.replace(/^export .*;$/m, '') + '\n({definitions, requestedView});',
   { URLSearchParams });
 
@@ -39,6 +41,7 @@ const route = new URLSearchParams('view=dashboard');
 let admin = false, modal;
 const node = (...args) => new Element(...args);
 const context = {
+  formatSourceName, sourceNameDisplayMode: () => 'talker_alias',
   route, routeFoundation: routes, applicationRoutes: Object.fromEntries(routes.definitions.map(value => [value.id, value])),
   aliasAdminAllowed: () => admin,
   node, anchor: (label, href, className) => Object.assign(node('a', className, label), { href }),
@@ -51,7 +54,7 @@ const context = {
   openReadOnlyModal: (title, body) => { modal = { title, body }; }
 };
 const behavior = vm.runInNewContext(['aliasListLink', 'liveAliasReferences', 'liveIdentityActionLink',
-  'liveAliasValue', 'liveIdentifierAliasValue'].map(declaration).join('\n') +
+  'liveSourceName', 'liveAliasValue', 'liveIdentifierAliasValue'].map(declaration).join('\n') +
   '\n({aliasListLink,liveAliasValue,liveIdentifierAliasValue});', context);
 const elements = value => value instanceof Element ? [value, ...value.children.flatMap(elements)] : [];
 

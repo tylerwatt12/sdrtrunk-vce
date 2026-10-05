@@ -41,6 +41,7 @@ function constantSource(name, ending) {
 }
 
 const behavior = vm.runInNewContext(`(() => {
+  function sourceNameDisplayMode() { return 'talker_alias'; }
   ${constantSource('LIVE_IDLE_CALL_FIELDS', '];')}
   ${constantSource('LIVE_VOICE_QUALITY_FIELDS', '];')}
   ${functionSource('liveRowIsActive')}

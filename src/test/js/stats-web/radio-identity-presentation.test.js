@@ -15,6 +15,9 @@ const radioLabelsSource = fs.readFileSync(path.resolve(__dirname,
   '../../../../stats-web/assets/core/radio-labels.js'), 'utf8');
 const radioLabels = vm.runInNewContext(radioLabelsSource.replace(/^export .*;$/m, '') +
   '\n({formatP25RadioIdentifier, p25ServingSystemKey});');
+const sourceNamesSource = fs.readFileSync(path.resolve(__dirname,
+  '../../../../stats-web/assets/core/source-names.js'), 'utf8');
+const sourceNames = vm.runInNewContext(sourceNamesSource.replace(/^export /m, '') + '\n({formatSourceName});');
 
 function closingBrace(start) {
   let depth = 0;
@@ -51,6 +54,7 @@ function functionSource(name) {
 const behavior = vm.runInNewContext(`(() => {
   function aliasAdminAllowed() { return true; }
   function aliasLabel(row) { return row.alias_name || ''; }
+  function activeUserPreferences() { return { presentation: { source_name_display: 'talker_alias' } }; }
   function capabilityAllowed() { return true; }
   const ACCESS_CAPABILITIES = { RADIO: 'radio' };
   function entityRefHref(reference) { return reference?.href || ''; }
@@ -116,6 +120,9 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('activityIdentitySuggestion')}
   ${functionSource('activityIdentityInitialSelection')}
   ${functionSource('liveIdentityType')}
+  ${functionSource('sourceNameDisplayMode')}
+  ${functionSource('liveAliasReferences')}
+  ${functionSource('liveSourceName')}
   ${functionSource('liveIdentityLabel')}
   ${functionSource('liveIdentityActionTitle')}
   ${functionSource('p25IdentityEvidenceLabel')}
@@ -125,7 +132,7 @@ const behavior = vm.runInNewContext(`(() => {
     scannerNetworkSiteIdentity, observedGroupIdentityKey, radioIdentifierText, liveIdentityActionTitle,
     activityIdentifier, activitySourceAlias, activitySourceTalkerAlias, activityTargetAlias,
     activityIdentitySuggestion, activityIdentityInitialSelection, liveIdentityFacts };
-})()`, { URLSearchParams, systemLabels, ...radioLabels });
+})()`, { URLSearchParams, systemLabels, ...radioLabels, ...sourceNames });
 
 assert.equal(behavior.radioIdentifierText({
   protocol: 'P25', canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 9_601_699 },
@@ -199,10 +206,11 @@ assert.equal(behavior.liveIdentityActionTitle({
 
 const dockSource = fs.readFileSync(path.resolve(__dirname,
   '../../../../stats-web/assets/core/audio-dock.js'), 'utf8');
+let sourceMode = 'talker_alias';
 const dock = vm.runInNewContext(`(() => {
   ${dockSource.slice(dockSource.indexOf('  const identityType ='), dockSource.indexOf('  const time ='))}
-  return { title, sourceSummary, sourceId, targetId };
-})()`, { radioIdentifier: behavior.radioIdentifierText });
+  return { title, sourceName, sourceSummary, sourceId, targetId };
+})()`, { radioIdentifier: behavior.radioIdentifierText, ...sourceNames, getSourceNameDisplay: () => sourceMode });
 const dockCall = {
   protocol: 'P25', source_id: 130_001, source_form: 'RADIO', source_alias: 'Engine 42',
   source_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 9_601_699 },
@@ -211,6 +219,17 @@ const dockCall = {
   target_observed_working_id: 130_002
 };
 assert.equal(dock.sourceSummary(dockCall), 'Engine 42 · Radio BEE00.348.9601699 (Working ID 130001)');
+const namedDockCall = { ...dockCall, talker_alias: 'ENG 42' };
+assert.equal(dock.sourceName(namedDockCall), 'ENG 42');
+assert.equal(dock.sourceSummary(namedDockCall), 'ENG 42 · Radio BEE00.348.9601699 (Working ID 130001)',
+  'The audio dock prefers the talker alias while retaining the full radio identity');
+sourceMode = 'source_alias';
+assert.equal(dock.sourceName(namedDockCall), 'Engine 42');
+sourceMode = 'both';
+assert.equal(dock.sourceName(namedDockCall), 'Engine 42 · ENG 42');
+assert.equal(dock.sourceSummary(namedDockCall), 'Engine 42 · ENG 42 · Radio BEE00.348.9601699 (Working ID 130001)');
+assert.equal(dock.sourceName({ ...namedDockCall, talker_alias: 'engine 42' }), 'Engine 42');
+sourceMode = 'talker_alias';
 assert.equal(dock.sourceId(dockCall), 'BEE00.348.9601699 (Working ID 130001)');
 assert.equal(dock.targetId(dockCall), '92498.926.16777212 (Working ID 130002)');
 assert.equal(dock.title(dockCall), 'Radio 92498.926.16777212 (Working ID 130002)');
@@ -219,6 +238,8 @@ assert.equal(dock.title({ destination_radio_id: 501 }), 'Radio 501');
 assert.equal(dock.sourceSummary({}), '', 'Missing source facts remain empty in the audio player.');
 assert.match(dockSource, /\['Target ID', targetId\(call\),/);
 assert.match(dockSource, /\['Source ID', sourceId\(call\),/);
+assert.match(dockSource, /JSON\.stringify\(\[source, panel, getSourceNameDisplay\(\),/,
+  'Changing the source name preference must invalidate an open audio detail or queue panel');
 assert.equal(behavior.activityIdentifier({
   protocol: 'P25', source_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 16_777_212 },
   source_observed_working_id: 130_001

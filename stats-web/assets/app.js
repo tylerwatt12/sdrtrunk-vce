@@ -1,5 +1,6 @@
 import * as routeFoundation from './core/routes.js?v=8';
-import * as preferenceSchema from './core/preference-schema.js?v=3';
+import * as preferenceSchema from './core/preference-schema.js?v=4';
+import { formatSourceName } from './core/source-names.js?v=1';
 import { Controller as UserPreferenceController } from './core/user-preferences.js';
 import * as tableLayouts from './core/table-layout.js';
 import * as tableDefaults from './core/table-defaults.js?v=15';
@@ -29,14 +30,14 @@ import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from
 import { createStreamingWorkspace } from './features/streaming.js?v=8';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=9';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=12';
-import { createRecordingsFeature } from './features/recordings.js?v=19';
+import { createRecordingsFeature } from './features/recordings.js?v=20';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft } from './features/spectrum-search.js?v=17';
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult } from './features/discovery-radioreference.js?v=1';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
-import { createAudioDock } from './core/audio-dock.js?v=10';
+import { createAudioDock } from './core/audio-dock.js?v=11';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=1';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
-import { WebCallPlayer } from './web-call-player.js?v=9';
+import { WebCallPlayer } from './web-call-player.js?v=10';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
@@ -120,6 +121,8 @@ const RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS = 15_000;
 const CHANNEL_CONFIGURATION_RETRY_DELAYS_MILLISECONDS = Object.freeze([150, 250, 400, 650, 1_000, 1_500, 2_000]);
 const ANONYMOUS_TABLE_LAYOUTS_STORAGE_KEY = 'sdrtrunk-vce-anonymous-table-layouts';
 let anonymousUserPreferences = preferenceSchema.validate(JSON.parse(JSON.stringify(preferenceSchema.defaults)));
+let sourceNamePresentationRenderer = null;
+let appliedSourceNameDisplay = preferenceSchema.defaults.presentation.source_name_display;
 function upgradeAnonymousTableLayouts(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
   return Object.fromEntries(Object.entries(value).map(([id, layout]) => [id,
@@ -419,6 +422,10 @@ function activeUserPreferences() {
   return snapshot.loaded ? snapshot.preferences : anonymousUserPreferences;
 }
 
+function sourceNameDisplayMode() {
+  return activeUserPreferences().presentation.source_name_display;
+}
+
 function applyUserPreferenceSnapshot(snapshot) {
   if (snapshot.loaded || snapshot.identity === null) clearUserPreferenceError();
   const preferences = snapshot.loaded ? snapshot.preferences : anonymousUserPreferences;
@@ -429,6 +436,11 @@ function applyUserPreferenceSnapshot(snapshot) {
   if (player && typeof player.applyPreferences === 'function') player.applyPreferences(preferences.playback, { identity: snapshot.identity });
   if (typeof scannerDetailMode !== 'undefined') {
     setScannerDetailMode(pendingScannerDetailMode || preferences.scanner.detail_mode);
+  }
+  if (appliedSourceNameDisplay !== preferences.presentation.source_name_display) {
+    appliedSourceNameDisplay = preferences.presentation.source_name_display;
+    sourceNamePresentationRenderer?.();
+    audioDock.synchronize();
   }
   receiverHealthController.updateIndicator();
   receiverHealthController.updatePage();
@@ -10322,7 +10334,7 @@ function synchronizePlaybackAccess(accessChanged = false) {
       scanListSummary: 'playback-scan-list-summary',
       scanListOptions: 'playback-scan-list-options',
       scanListStatus: 'playback-scan-list-status'
-    });
+    }, { getSourceNameDisplay: sourceNameDisplayMode });
     webCallPlayer.setPreferenceWriter((playback) => {
       return updateUserPreferences((preferences) => { preferences.playback = playback; });
     });
@@ -10452,10 +10464,7 @@ function identifierTypeLabel(form) {
 }
 
 function scannerSourceAlias(call) {
-  const alias = String(call?.source_alias || '').trim();
-  const talker = String(call?.talker_alias || '').trim();
-  if (alias && talker && alias.toLowerCase() !== talker.toLowerCase()) return `${alias} · TA: ${talker}`;
-  return alias || talker || '';
+  return formatSourceName(call?.source_alias, call?.talker_alias, sourceNameDisplayMode());
 }
 
 function scannerMatchedScanLists(call, state) {
@@ -10595,7 +10604,8 @@ function scannerCallQuality(call) {
 function scannerCallRenderKey(call, state, site) {
   if (!call) return `idle:${scannerDetailMode}:${state.stopped ? 'stopped' : state.paused ? 'paused' : 'listening'}`;
   return JSON.stringify([
-    scannerDetailMode, call.call_id || '', call.started_at_ms || '',
+    scannerDetailMode, sourceNameDisplayMode(), scannerSourceAlias(call),
+    call.call_id || '', call.started_at_ms || '',
     call.source_id || '', call.source_canonical_identity || '', call.source_observed_working_id || '',
     call.target_id || '', call.target_canonical_identity || '', call.target_observed_working_id || '',
     scannerMatchedScanLists(call, state), site?.p25_decoder_mode || '',
@@ -17213,11 +17223,19 @@ function liveIdentifierAliasValue(row, kind) {
   return liveIdentityActionLink(row, kind, text);
 }
 
+function liveSourceName(row) {
+  const references = liveAliasReferences(row, 'source');
+  const aliases = references.length ? references.map((reference) => reference.name) : row?.source_alias;
+  return formatSourceName(aliases, row?.talker_alias, sourceNameDisplayMode());
+}
+
 function liveAliasValue(row, kind) {
+  if (kind === 'source') {
+    const label = liveSourceName(row);
+    return label ? liveIdentityActionLink(row, kind, label) : '';
+  }
   const references = liveAliasReferences(row, kind);
-  const fallback = kind === 'source' ?
-    (row?.source_alias_display || row?.source_alias || (row?.talker_alias ? `TA: ${row.talker_alias}` : '')) :
-    (row?.target_alias || '');
+  const fallback = row?.target_alias || '';
   if (!references.length) return fallback ?
     liveIdentityActionLink(row, kind, fallback) : fallback;
   const result = node('span', 'live-alias-values');
@@ -17226,11 +17244,6 @@ function liveAliasValue(row, kind) {
     const label = String(reference.name || '').trim() || 'Unnamed alias';
     result.append(liveIdentityActionLink(row, kind, label));
   });
-  if (kind === 'source' && row?.talker_alias) {
-    const talker = String(row.talker_alias).trim();
-    const configured = new Set(references.map((reference) => String(reference.name || '').trim().toLowerCase()));
-    if (talker && !configured.has(talker.toLowerCase())) result.append(document.createTextNode(` · TA: ${talker}`));
-  }
   return result;
 }
 
@@ -17361,6 +17374,7 @@ function liveIdentityRenderKey(row, kind) {
     row?.[`${kind}_alias_description`], row?.[`${kind}_alias_display`],
     row?.[`${kind}_aliases`], row?.[`${kind}_entity_ref`], row?.[`${kind}_matcher`],
     kind === 'source' ? row?.talker_alias : null, row?.alias_list_id, row?.protocol,
+    kind === 'source' ? sourceNameDisplayMode() : null,
     row?.[`${kind}_canonical_identity`], row?.[`${kind}_working_subscriber_id`],
     row?.[`${kind}_observed_working_id`], row?.[`${kind}_identity_source`],
     row?.decoder, row?.tags, row?.entity_ref, row?.channel_kind, row?.channel_name
@@ -17532,7 +17546,7 @@ function liveChannelsSection(onSelectionChange) {
       } },
     { id: 'source-alias', label: 'Source', fullLabel: 'Source Alias',
       render: (row) => liveAliasValue(row, 'source'), title: (row) => row.source_alias_description || '',
-      sortValue: (row) => row.source_alias_display || row.source_alias || row.talker_alias || '',
+      sortValue: liveSourceName,
       reconcileKey: (row) => liveIdentityRenderKey(row, 'source') },
     { id: 'source', label: 'Src ID', fullLabel: 'Source ID',
       render: (row) => liveIdentifierAliasValue(row, 'source'), sortValue: (row) => Number(row.source_id || 0),
@@ -17775,6 +17789,14 @@ function liveChannelsSection(onSelectionChange) {
     liveTable.tableController.reconcileRows(displayed.rows);
     updateSelectedView(value);
   };
+  const refreshSourceNames = () => {
+    const value = tables.get(activeTableId);
+    if (value) updateVisibleRows(value);
+  };
+  sourceNamePresentationRenderer = refreshSourceNames;
+  pageConnections.add({ close: () => {
+    if (sourceNamePresentationRenderer === refreshSourceNames) sourceNamePresentationRenderer = null;
+  } });
 
   const upsertTable = (value) => {
     if (!value?.table_id) return;
@@ -27001,6 +27023,10 @@ function settingsEnabled(value) {
   return value === true ? 'On' : 'Off';
 }
 
+function sourceNameDisplayLabel(mode) {
+  return ({ talker_alias: 'Talker Alias preferred', source_alias: 'Source Alias preferred', both: 'Both' })[mode];
+}
+
 function selectedScanListSummary(ids) {
   if (!ids.length) return 'None';
   const names = new Map((webCallPlayer?.viewState()?.scanLists || [])
@@ -27048,6 +27074,9 @@ function userPreferenceSummaryCards(preferences) {
       ['Group calls by target', settingsEnabled(preferences.playback.target_grouping)],
       ['Calls per target', number(preferences.playback.target_burst_limit)],
       ['Detail level', semanticLabel(preferences.scanner.detail_mode)]
+    ])),
+    settingsCard('Source names', 'Changed here in My Settings.', settingsSummary([
+      ['Source name display', sourceNameDisplayLabel(preferences.presentation.source_name_display)]
     ])),
     settingsCard('Live presentation', 'Changed from the presentation icon on the Live page.', settingsSummary([
       ['Show only active trunked channels', settingsEnabled(preferences.presentation.show_only_active_trunked_channels)],
@@ -27212,6 +27241,87 @@ async function openAppearanceSettings(returnFocusSelector = null) {
   }
   appearanceHuePreview = preview;
   modal.focus(hue);
+}
+
+// Reuse map: shared settings summary, select, form feedback and modal footer
+// provide the same source-name choice on phones and desktops in both themes.
+async function openSourceNameSettings(returnFocusSelector = null) {
+  const snapshot = userPreferenceController.snapshot();
+  if (!snapshot.loaded) return;
+  const identity = snapshot.identity;
+  let savedMode = snapshot.preferences.presentation.source_name_display;
+  let sessionChanged = false;
+  const form = node('form', 'admin-form');
+  const select = preferenceSelect('source-name-display', [
+    ['talker_alias', 'Talker Alias preferred'], ['source_alias', 'Source Alias preferred'], ['both', 'Both']
+  ], savedMode);
+  select.setAttribute('aria-label', 'Source name display');
+  const feedback = node('div', 'admin-form-message');
+  const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
+  cancel.type = 'button';
+  const save = node('button', 'ui-button ui-button-primary', 'Save source names');
+  save.type = 'submit';
+  form.append(formField('Source name display', select,
+    'Use the other name when the preferred name is unavailable. Both shows each distinct name once.'),
+  feedback, aliasModalFooter(cancel, save));
+  const modal = openReadOnlyModal('Source names', form, {
+    id: 'source-name-settings', className: 'admin-modal', returnFocusSelector
+  });
+  if (!modal) return;
+  const workflow = createFormWorkflow({ form, submit: save, feedback, modal,
+    changed: () => !sessionChanged && select.value !== savedMode });
+  const loadSavedMode = () => {
+    savedMode = userPreferenceController.snapshot().preferences.presentation.source_name_display;
+    select.value = savedMode;
+    workflow.refresh();
+  };
+  const refreshSettings = () => {
+    void render().then(() => document.querySelector(returnFocusSelector || '#source-name-settings')
+      ?.focus({ preventScroll: true }));
+  };
+  cancel.addEventListener('click', modal.close);
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const selectedMode = select.value;
+    await workflow.save(async () => {
+      if (userPreferenceController.snapshot().identity !== identity) {
+        const error = new Error('The signed-in account changed. Reopen Source names for this account.');
+        error.code = 'preference_session_changed';
+        throw error;
+      }
+      await updateUserPreferences((preferences) => {
+        preferences.presentation.source_name_display = selectedMode;
+      }, false);
+      loadSavedMode();
+    }, {
+      saving: 'Saving source names…',
+      onSuccess: () => {
+        modal.setDirty(false);
+        if (modal.close(refreshSettings)) refreshSettings();
+      },
+      onError: (error) => {
+        if (error?.code === 'preference_session_changed') {
+          sessionChanged = true;
+          workflow.setReady(false);
+          modal.setDirty(false);
+          return { state: 'warning', message: 'The signed-in account changed. Reopen Source names for this account.' };
+        }
+        if (error?.code === 'preference_conflict' && !error.reloadError) {
+          loadSavedMode();
+          return { state: 'warning', message: 'Source names changed in another session. The saved choice was loaded.' };
+        }
+        return { state: 'error', message: error?.code === 'preference_conflict' ?
+          'Source names changed in another session, but the saved choice could not be loaded. Try saving again or reload the page.' :
+          'Source names could not be saved. Your choice is still here. Try saving again.' };
+      }
+    });
+  });
+  if (!await modal.ready) return;
+  if (userPreferenceController.snapshot().identity !== identity) {
+    modal.close();
+    return;
+  }
+  modal.focus(select);
 }
 
 function openStatusIconSettings(returnFocusSelector = null) {
@@ -27379,7 +27489,7 @@ function openLivePresentationSettings(returnFocusSelector = null) {
     message.textContent = 'Saving Live presentation…';
     try {
       await updateUserPreferences((preferences) => {
-        preferences.presentation = submitted;
+        preferences.presentation = { ...preferences.presentation, ...submitted };
       }, false);
       modal.setDirty(false);
       modal.setBusy(false);
@@ -27609,9 +27719,13 @@ async function renderSettings() {
   statusIcon.type = 'button';
   statusIcon.id = 'status-icon-settings';
   statusIcon.addEventListener('click', () => openStatusIconSettings('#status-icon-settings'));
+  const sourceNames = node('button', 'ui-button ui-button-secondary', 'Change Source Names');
+  sourceNames.type = 'button';
+  sourceNames.id = 'source-name-settings';
+  sourceNames.addEventListener('click', () => { void openSourceNameSettings('#source-name-settings'); });
   const footer = node('div', 'settings-summary-footer');
   const actions = node('div', 'admin-form-actions');
-  actions.append(appearance, statusIcon, reset);
+  actions.append(appearance, sourceNames, statusIcon, reset);
   footer.append(node('p', '', 'Reset affects only this account’s personal choices.'), actions);
   overview.append(userPreferenceSummaryCards(current), footer);
   content.append(section('Personal preferences', overview));
@@ -30315,6 +30429,7 @@ const recordingsFeature = createRecordingsFeature({
   modalFooter: aliasModalFooter,
   captureRenderContext, renderIsCurrent, content, href, anchor, entityRefHref,
   canViewRadio: () => capabilityAllowed(ACCESS_CAPABILITIES.RADIO),
+  getSourceNameDisplay: sourceNameDisplayMode,
   isPrimaryAdmin: () => accessSession.primary === true &&
     capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_RECORDINGS),
   stopLiveAudio: async () => {
@@ -30332,6 +30447,7 @@ const audioDock = createAudioDock({
     recordings: capabilityAllowed(ACCESS_CAPABILITIES.RECORDINGS) }),
   entityRefHref, href, radioIdentifier: radioIdentifierText,
   canViewRadio: () => capabilityAllowed(ACCESS_CAPABILITIES.RADIO),
+  getSourceNameDisplay: sourceNameDisplayMode,
   getTitlePreference: () => activeUserPreferences().page_titles.prepend_playing_call,
   setTitlePreference: (value) => settleUserPreferenceMutation((preferences) => {
     preferences.page_titles.prepend_playing_call = value;
