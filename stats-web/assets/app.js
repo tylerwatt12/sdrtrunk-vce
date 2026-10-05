@@ -2,7 +2,7 @@ import * as routeFoundation from './core/routes.js?v=8';
 import * as preferenceSchema from './core/preference-schema.js?v=3';
 import { Controller as UserPreferenceController } from './core/user-preferences.js';
 import * as tableLayouts from './core/table-layout.js';
-import * as tableDefaults from './core/table-defaults.js?v=13';
+import * as tableDefaults from './core/table-defaults.js?v=14';
 import { Controller as PageTitleController } from './core/page-title.js?v=2';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
 import * as systemLabels from './core/system-labels.js?v=1';
@@ -1884,7 +1884,8 @@ function aliasListLink(name, id) {
   const aliasListId = Number(id);
   const validId = Number.isInteger(aliasListId) && aliasListId > 0;
   if (!configuredLabel) return '';
-  if (!validId || !aliasAdminAllowed()) return configuredLabel;
+  const configurationPage = applicationRoutes?.[routeFoundation.requestedView(route)]?.access?.startsWith('admin');
+  if (!validId || !aliasAdminAllowed() || !configurationPage) return configuredLabel;
   return anchor(configuredLabel, href('aliases', { list: aliasListId }));
 }
 
@@ -17032,24 +17033,6 @@ function liveAliasReferences(row, kind) {
     Number.isInteger(Number(value?.alias_list_id)) && Number(value.alias_list_id) > 0);
 }
 
-function liveExistingAliasHref(reference) {
-  return reference && aliasAdminAllowed() ? href('aliases', {
-    list: Number(reference.alias_list_id), aliasTab: 'configure', alias: Number(reference.alias_id)
-  }) : '';
-}
-
-function liveAliasProtocol(row, kind) {
-  const value = String(row?.protocol || row?.[`${kind}_matcher`]?.protocol || '').trim().toLowerCase();
-  return ['am', 'p25', 'dmr', 'nxdn', 'nbfm', 'fleetsync', 'mdc1200'].includes(value) ? value : '';
-}
-
-function liveAliasP25Variant(row, kind) {
-  const explicit = String(row?.protocol_variant || row?.[`${kind}_matcher`]?.variant || '').trim().toLowerCase();
-  if (['phase_1', 'phase_2'].includes(explicit)) return explicit;
-  const decoder = String(row?.decoder || '').trim().toUpperCase().replace(/[^A-Z0-9]+/g, '');
-  return decoder.includes('PHASE2') || decoder === 'P252' ? 'phase_2' : 'phase_1';
-}
-
 function liveIdentityType(row, kind) {
   const matcherType = String(row?.[`${kind}_matcher`]?.type || '').trim().toLowerCase();
   if (['talkgroup', 'patch_group', 'radio'].includes(matcherType)) return matcherType;
@@ -17137,13 +17120,13 @@ function liveIdentityFacts(row, kind) {
   return keyValues(values);
 }
 
-function liveIdentityActionLink(row, kind, label, aliasTarget, aliasMode = 'edit') {
+function liveIdentityActionLink(row, kind, label) {
   const info = liveIdentityInfo(row, kind);
   const infoTarget = info?.target || '';
-  if (!aliasTarget && !infoTarget) return label;
-  const trigger = anchor(label, infoTarget || aliasTarget, 'live-alias-link');
   const identityFacts = liveIdentityFacts(row, kind);
-  if ((!aliasTarget || !infoTarget) && !identityFacts) return trigger;
+  if (!infoTarget && !identityFacts) return label;
+  const trigger = anchor(label, infoTarget || '#', 'live-alias-link');
+  if (!identityFacts) return trigger;
   const id = `live-identity-action-${++liveIdentityActionSequence}`;
   trigger.id = id;
   trigger.setAttribute('aria-haspopup', 'dialog');
@@ -17151,16 +17134,10 @@ function liveIdentityActionLink(row, kind, label, aliasTarget, aliasMode = 'edit
   trigger.addEventListener('click', (event) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
-    const identityLabel = liveIdentityLabel(row, kind);
     const modalBody = node('div', 'tuner-frequency-action-body');
-    modalBody.append(node('p', 'tuner-frequency-action-intro', `Choose an action for this ${identityLabel}.`));
     const facts = liveIdentityFacts(row, kind);
     if (facts) modalBody.append(facts);
     const actions = node('div', 'tuner-frequency-action-list');
-    const manage = anchor('', aliasTarget, 'ui-button ui-button-secondary tuner-frequency-action');
-    manage.append(node('strong', '', aliasMode === 'create' ? 'Create alias' : 'Edit alias'),
-      node('small', '', `${aliasMode === 'create' ? 'Create' : 'Open'} this ${identityLabel}'s configured alias.`));
-    if (aliasTarget) actions.append(manage);
     if (infoTarget) {
       const infoLink = anchor('', infoTarget, 'ui-button ui-button-secondary tuner-frequency-action');
       infoLink.append(node('strong', '', info.title), node('small', '', info.description));
@@ -17174,37 +17151,6 @@ function liveIdentityActionLink(row, kind, label, aliasTarget, aliasMode = 'edit
   return trigger;
 }
 
-function liveAliasDraftHref(row, kind) {
-  const aliasListId = Number(row?.alias_list_id);
-  const type = liveIdentityType(row, kind);
-  const protocol = liveAliasProtocol(row, kind);
-  const value = Number(row?.[`${kind}_id`] ?? row?.[`${kind}_matcher`]?.value);
-  if (!aliasAdminAllowed() || !Number.isInteger(aliasListId) || aliasListId <= 0 ||
-      !['talkgroup', 'radio'].includes(type) ||
-      !['am', 'p25', 'dmr', 'nxdn', 'nbfm', 'fleetsync', 'mdc1200'].includes(protocol) ||
-      !Number.isSafeInteger(value) || value < 0) return '';
-  const canonical = type === 'radio' ? p25CanonicalSubscriber(row, kind) : null;
-  if (canonical) {
-    const workingAddress = workingSubscriberId(row, kind);
-    const suggestedName = kind === 'source' && String(row?.talker_alias || '').trim() ?
-      String(row.talker_alias).trim() : `Radio ${canonicalSubscriberText(canonical)}`;
-    return href('aliases', {
-      aliasTab: 'configure', createAlias: 1, createListId: aliasListId,
-      createType: 'p25_subscriber_identity', createHomeWacn: hex(canonical.wacn, 5),
-      createHomeSystemId: hex(canonical.system_id, 3), createSubscriberId: canonical.subscriber_id,
-      createWorkingAddress: workingAddress, createName: suggestedName
-    });
-  }
-  if (specialIdentifierLabel(row, value, type)) return '';
-  const variant = protocol === 'p25' ? liveAliasP25Variant(row, kind) : '';
-  const suggestedName = kind === 'source' && String(row?.talker_alias || '').trim() ?
-    String(row.talker_alias).trim() : `${type === 'radio' ? 'Radio' : 'Talkgroup'} ${value}`;
-  return href('aliases', {
-    aliasTab: 'configure', createAlias: 1, createListId: aliasListId, createType: type,
-    createProtocol: protocol, createVariant: variant, createValue: value, createName: suggestedName
-  });
-}
-
 function liveIdentifierAliasValue(row, kind) {
   const value = row?.[`${kind}_id`];
   const radio = kind === 'source' || String(row?.[`${kind}_form`] || '').toUpperCase() === 'RADIO' ||
@@ -17212,9 +17158,7 @@ function liveIdentifierAliasValue(row, kind) {
   const text = value === null || value === undefined ? '' :
     (radio ? radioIdentifierText(row, value, kind) : String(value));
   if (!text) return '';
-  const reference = liveAliasReferences(row, kind)[0];
-  const target = liveExistingAliasHref(reference) || liveAliasDraftHref(row, kind);
-  return liveIdentityActionLink(row, kind, text, target, reference ? 'edit' : 'create');
+  return liveIdentityActionLink(row, kind, text);
 }
 
 function liveAliasValue(row, kind) {
@@ -17223,13 +17167,12 @@ function liveAliasValue(row, kind) {
     (row?.source_alias_display || row?.source_alias || (row?.talker_alias ? `TA: ${row.talker_alias}` : '')) :
     (row?.target_alias || '');
   if (!references.length) return fallback ?
-    liveIdentityActionLink(row, kind, fallback, liveAliasDraftHref(row, kind), 'create') : fallback;
+    liveIdentityActionLink(row, kind, fallback) : fallback;
   const result = node('span', 'live-alias-values');
   references.forEach((reference, index) => {
     if (index) result.append(document.createTextNode(', '));
     const label = String(reference.name || '').trim() || 'Unnamed alias';
-    const target = liveExistingAliasHref(reference);
-    result.append(liveIdentityActionLink(row, kind, label, target));
+    result.append(liveIdentityActionLink(row, kind, label));
   });
   if (kind === 'source' && row?.talker_alias) {
     const talker = String(row.talker_alias).trim();
@@ -18857,21 +18800,6 @@ function issiHomeSystemCell(row) {
   return identitySummaryValue(label || 'Unknown home system', label === identity ? '' : identity, target);
 }
 
-function issiAliasAction(row) {
-  if (!aliasAdminAllowed()) return '';
-  const canonical = row.canonical_identity;
-  if (!canonical || !(Number(row.alias_list_id) > 0)) return '';
-  const permanent = String(row.alias_matcher_type || '').toLowerCase() === 'p25_subscriber_identity';
-  const edit = permanent && Number(row.alias_id) > 0;
-  const target = edit ? liveExistingAliasHref(row) : liveAliasDraftHref({
-    ...row, protocol: 'p25', source_form: 'RADIO', source_id: canonical.subscriber_id,
-    source_canonical_identity: canonical, source_observed_working_id: row.observed_working_id,
-    talker_alias: row.last_talker_alias
-  }, 'source');
-  return target ? anchor(edit ? 'Edit permanent Alias' : 'Add permanent Alias', target,
-    'ui-button ui-button-secondary') : '';
-}
-
 function issiCurrentAssignmentColumns() {
   return [
     { id: 'radio', label: 'Radio', render: issiSubscriberCell, sort: 'canonical_identity' },
@@ -18883,8 +18811,7 @@ function issiCurrentAssignmentColumns() {
     { id: 'expires', label: 'Lease Ends', render: (row) => row.expires_at_ms == null ?
       'No expiry advertised' : dateTime(row.expires_at_ms), sort: 'expires_at' },
     { id: 'evidence', label: 'Evidence', render: (row) => semanticLabel(row.evidence), sort: 'evidence' },
-    { id: 'observed-on', label: 'Observed On', render: issiObservedOnCell },
-    { id: 'alias-action', label: 'Alias', render: issiAliasAction }
+    { id: 'observed-on', label: 'Observed On', render: issiObservedOnCell }
   ];
 }
 
@@ -18893,7 +18820,11 @@ function issiRecentChangeColumns() {
     { id: 'changed', label: 'Changed', render: (row) => dateTime(row.changed_at_ms), sort: 'changed_at' },
     { id: 'radio', label: 'Radio', render: issiSubscriberCell, sort: 'canonical_identity' },
     { id: 'home-system', label: 'Home System', render: issiHomeSystemCell },
-    { id: 'change', label: 'Change', render: (row) => semanticLabel(row.change), sort: 'change' },
+    { id: 'change', label: 'Change', render: (row) =>
+      String(row.change || '').toLowerCase() === 'needs_confirmation' ?
+        (String(row.change_reason || '').toLowerCase() === 'observation_gap' ? 'Observation gap' : 'Assignments cleared') :
+        semanticLabel(row.change),
+      sort: 'change' },
     { id: 'working-id', label: 'Working ID', render: (row) => identifierNumber(row.observed_working_id),
       className: 'numeric', sort: 'working_id' },
     { id: 'previous-working-id', label: 'Previous Working ID',
@@ -18903,27 +18834,36 @@ function issiRecentChangeColumns() {
 }
 
 function issiStateLabel(state) {
-  if (state?.snapshot_stale === true) return 'Snapshot needs refresh';
+  if (state?.snapshot_stale === true) return 'Snapshot out of date';
   return ({ current: 'Confirmed mappings', learning: 'Learning assignments',
-    needs_confirmation: 'Mappings need confirmation', stopped: 'No current observation' })[state?.state] ||
+    needs_confirmation: 'Relearning assignments', stopped: 'No current observation' })[state?.state] ||
     'Assignment state unavailable';
 }
 
-function issiEmptyMessage(state) {
+function issiEmptyMessage(state, meaningfulOnly = false) {
   if (state?.snapshot_stale === true) return 'Current assignments cannot be confirmed while the receiver snapshot is out of date.';
   if (state?.state === 'stopped') return 'No current observation for this system; waiting for assignment evidence.';
-  if (state?.state === 'needs_confirmation') return 'Waiting for fresh confirmation after an observation gap.';
+  if (state?.state === 'needs_confirmation') return 'Waiting for fresh assignment evidence after earlier mappings were cleared.';
+  if (meaningfulOnly && state?.state === 'current') {
+    if (Number(state.current_assignment_count) > 0 && Number(state.meaningful_assignment_count) === 0) {
+      return 'Only ordinary local IDs have been confirmed; no foreign or remapped assignments are currently known.';
+    }
+    return Number(state.meaningful_assignment_count) > 0 ?
+      'No foreign or remapped assignments match these filters.' :
+      'No foreign or remapped assignments have been confirmed for this system.';
+  }
   return 'Waiting for registration evidence; an empty list does not mean no radios are registered.';
 }
 
 function issiStateContent(state) {
-  const assignmentCounts = [['Confirmed Assignments', state?.current_assignment_count]];
-  if (Number(state?.retained_assignment_count) > 0) {
-    assignmentCounts.push(['Last Snapshot Assignments', state.retained_assignment_count]);
+  const assignmentCounts = [['ISSI Mappings', state?.meaningful_assignment_count]];
+  if (Number(state?.retained_meaningful_assignment_count) > 0) {
+    assignmentCounts.push(['Last Snapshot ISSI Mappings', state.retained_meaningful_assignment_count]);
   }
   assignmentCounts.push(['Observation Channels', state?.observed_channel_count]);
   return fragment(node('p', 'ui-section-note',
-    'Current assignments are the receiver’s confirmed knowledge, not a list of radios online. ' +
+    'ISSI mappings show a foreign home system or a Working ID different from the permanent subscriber ID. ' +
+    'These are the receiver’s confirmed knowledge, not a list of radios online. ' +
     'Observed On identifies the source of the evidence, not the radio’s location.'),
   state?.snapshot_stale === true ? node('p', 'ui-notice ui-notice-warning',
     'This snapshot is out of date. Retained rows are available for inspection and are not current confirmed assignments.') : null,
@@ -19005,6 +18945,7 @@ async function renderRadioSystemIssi(system, renderContext) {
     content.append(section('Current Receiver Knowledge', stateHost));
     if (active === 'recent-changes') content.append(node('p', 'ui-section-note',
       'Recent Changes is a bounded list for this app session; older changes can drop from the list. ' +
+      'Unchanged confirmations and ordinary local IDs are omitted. ' +
       'A cleared or expired mapping describes receiver knowledge; ' +
       'it does not establish whether the radio is online. Receiver or system observation gaps affect all mappings ' +
       'in that scope and remain visible when filters are applied.'));
@@ -19033,7 +18974,7 @@ async function renderRadioSystemIssi(system, renderContext) {
   content.append(issiFilterToolbar(channels.rows, live, active !== 'foreign-systems',
     active === 'subscribers' ? 'Last observed source' : 'Evidence heard on'), feedback, directory.element);
   const parameters = pageParameters({ configuration_id: active === 'foreign-systems' ? null : route.get('configuration_id'),
-    ...(live ? { roaming_only: route.get('roaming_only') === 'true' ? true : null } : {}) });
+    ...(live ? { meaningful_only: true, roaming_only: route.get('roaming_only') === 'true' ? true : null } : {}) });
   let state = null;
   let loading = false;
   let pagerHost = null;
@@ -19052,8 +18993,8 @@ async function renderRadioSystemIssi(system, renderContext) {
   const present = ({ page, currentState }) => {
     state = currentState;
     if (live) stateHost.replaceChildren(issiStateContent(state));
-    const empty = active === 'current-assignments' ? issiEmptyMessage(state) :
-      active === 'recent-changes' ? 'No assignment changes observed in this app session.' : 'No saved observations match these filters.';
+    const empty = active === 'current-assignments' ? issiEmptyMessage(state, true) :
+      active === 'recent-changes' ? 'No matching ISSI assignment changes in this app session.' : 'No saved observations match these filters.';
     displayedRowsKey = JSON.stringify(page.rows);
     displayedEmptyText = empty;
     const result = table(page.rows, columns(), empty, { type: tableType, mobileCards: true,
@@ -19075,7 +19016,7 @@ async function renderRadioSystemIssi(system, renderContext) {
         state = result.currentState;
         if (live) stateHost.replaceChildren(issiStateContent(state));
         if (active === 'current-assignments' && result.page.rows.length === 0 &&
-            displayedEmptyText !== issiEmptyMessage(state)) {
+            displayedEmptyText !== issiEmptyMessage(state, true)) {
           directory.host.replaceChildren(present(result));
         } else {
           const rowsKey = JSON.stringify(result.page.rows);
@@ -19092,7 +19033,9 @@ async function renderRadioSystemIssi(system, renderContext) {
       if (pageLifecycle.requiresPageHandling(error)) throw error;
       if (live && state) {
         state = { ...state, snapshot_stale: true, current_assignment_count: 0,
-          retained_assignment_count: state.retained_assignment_count || state.current_assignment_count || 0 };
+          retained_assignment_count: state.retained_assignment_count || state.current_assignment_count || 0,
+          meaningful_assignment_count: 0,
+          retained_meaningful_assignment_count: state.retained_meaningful_assignment_count || state.meaningful_assignment_count || 0 };
         stateHost.replaceChildren(issiStateContent(state));
       }
       feedback.textContent = 'Refresh failed. The last displayed snapshot was retained; use Refresh to try again.';
@@ -19337,6 +19280,15 @@ async function renderGroupIdentity() {
   }
 }
 
+function issiAssignmentIsOrdinaryLocal(row, servingKey) {
+  const serving = /^p25:([0-9a-f]{1,5}):([0-9a-f]{1,3})$/i.exec(String(servingKey || ''));
+  const canonical = row ? p25CanonicalSubscriber({ ...row, protocol: 'p25' }) : null;
+  const working = row?.observed_working_id;
+  return Boolean(serving && canonical && working !== null && working !== undefined && working !== '' &&
+    Number(working) === canonical.subscriber_id && parseInt(serving[1], 16) === canonical.wacn &&
+    parseInt(serving[2], 16) === canonical.system_id);
+}
+
 function radioCurrentAssignmentSection(radio, renderContext) {
   const canonical = p25CanonicalSubscriber(radio);
   const directory = createAsyncSection('Current Working Assignment', {
@@ -19347,10 +19299,11 @@ function radioCurrentAssignmentSection(radio, renderContext) {
   const tuple = { home_wacn: canonical.wacn, home_system_id: canonical.system_id,
     subscriber_id: canonical.subscriber_id, limit: 20, offset: 0 };
   const workspace = { radio_system_key: radio.radio_system_key, tab: 'issi' };
-  const links = () => {
+  const links = (row, ordinaryLocal) => {
     const actions = node('div', 'ui-action-row');
-    actions.append(anchor('Current Assignments', href('radio-system', {
-      ...workspace, issi_view: 'current-assignments', q: canonicalSubscriberText(canonical)
+    const filtered = Boolean(row && !ordinaryLocal);
+    actions.append(anchor(filtered ? 'Current Assignments' : 'ISSI Mappings', href('radio-system', {
+      ...workspace, issi_view: 'current-assignments', q: filtered ? canonicalSubscriberText(canonical) : null
     }), 'ui-button ui-button-secondary'), anchor('Assignment History', href('radio-system', {
       ...workspace, issi_view: 'subscribers', q: canonicalSubscriberText(canonical)
     }), 'ui-button ui-button-secondary'));
@@ -19365,6 +19318,7 @@ function radioCurrentAssignmentSection(radio, renderContext) {
   const present = ({ page, state }) => {
     displayedModel = { page, state };
     const row = page.rows[0];
+    const ordinaryLocal = issiAssignmentIsOrdinaryLocal(row, radio.radio_system_key);
     const values = [
       ['Receiver knowledge', issiStateLabel(state)],
       ['Snapshot Updated', state?.snapshot_at_ms ? dateTime(state.snapshot_at_ms) : 'Unavailable']
@@ -19372,7 +19326,7 @@ function radioCurrentAssignmentSection(radio, renderContext) {
     if (row) values.push(
       ['Home System', issiHomeSystemCell(row)],
       [state?.snapshot_stale === true ? 'Last Reported Working ID' : 'Working ID',
-        identifierNumber(row.observed_working_id)],
+        ordinaryLocal ? 'Same as permanent radio ID' : identifierNumber(row.observed_working_id)],
       ['Last Confirmed', dateTime(row.confirmed_at_ms)],
       ['Evidence', semanticLabel(row.evidence)],
       ['Observed On', issiObservedOnCell(row)],
@@ -19383,11 +19337,11 @@ function radioCurrentAssignmentSection(radio, renderContext) {
       'This assignment is receiver knowledge for this serving system, not an online status. ' +
       'Observed On identifies where the evidence was heard, not the radio’s location.'),
     state?.snapshot_stale === true ? node('p', 'ui-notice ui-notice-warning',
-      'This snapshot is out of date. The displayed assignment is retained for inspection and needs fresh confirmation.') : null,
-    keyValues(values), !row ? node('p', 'ui-section-note', issiEmptyMessage(state)) : issiAliasAction(row),
+      'This snapshot is out of date. The displayed assignment is retained for inspection; its current use is not confirmed.') : null,
+    keyValues(values), !row ? node('p', 'ui-section-note', issiEmptyMessage(state)) : null,
     node('p', 'ui-section-note',
       'History keeps past observations. Current assignments are relearned after every app start.'),
-    links());
+    links(row, ordinaryLocal));
   };
   let loading = false;
   let displayed = false;
@@ -24217,13 +24171,6 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
     rangeSelect.addEventListener('change', () => navigateCoverage(currentHref({ range: rangeSelect.value, offset: null })));
     rangeControl.append(uiSelectFrame(rangeSelect));
     toolbar.append(rangeControl);
-    if (aliasAdminAllowed()) {
-      const manage = anchor('Manage aliases', href('aliases', { list: selectedListId }),
-        'ui-button ui-button-secondary alias-coverage-manage');
-      manage.prepend(iconGlyph('icon-edit'));
-      toolbar.append(manage);
-    }
-
     const totals = overview.totals || {};
     const summary = aliasCoverageSummaryCards(totals, unassigned);
 

@@ -99,16 +99,13 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('activitySourceAlias')}
   ${functionSource('activitySourceTalkerAlias')}
   ${functionSource('activityTargetAlias')}
-  ${functionSource('liveAliasProtocol')}
-  ${functionSource('liveAliasP25Variant')}
   ${functionSource('liveIdentityType')}
   ${functionSource('liveIdentityLabel')}
   ${functionSource('liveIdentityActionTitle')}
-  ${functionSource('liveAliasDraftHref')}
   return { radioSystemLabel, trunkedSiteLabel, dashboardChannelContext,
     channelDirectoryRfIdentity, channelLocationIdentity, dmrChannelDetailRows,
     scannerNetworkSiteIdentity, observedGroupIdentityKey, radioIdentifierText, liveIdentityActionTitle,
-    liveAliasDraftHref, activityIdentifier, activitySourceAlias, activitySourceTalkerAlias, activityTargetAlias };
+    activityIdentifier, activitySourceAlias, activitySourceTalkerAlias, activityTargetAlias };
 })()`, { URLSearchParams, systemLabels });
 
 assert.equal(behavior.radioIdentifierText({
@@ -222,42 +219,6 @@ assert.equal(behavior.activityTargetAlias(activityMaximum).label, 'Command');
 assert.equal(behavior.activitySourceAlias({ ...activityMaximum, source_canonical_identity: null }), 'Engine 42');
 assert.equal(behavior.activityTargetAlias({ ...activityMaximum, target_canonical_identity: null }), 'Command',
   'A canonical source does not turn an unrelated bare special target into a subscriber.');
-
-const aliasRoute = (row, kind = 'source') =>
-  new URL(behavior.liveAliasDraftHref(row, kind), 'http://receiver.invalid').searchParams;
-const equalWorkingRoute = aliasRoute({
-  protocol: 'p25', decoder: 'P25_PHASE1', alias_list_id: 41, source_form: 'RADIO', source_id: 501,
-  source_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 501 },
-  source_observed_working_id: 501
-});
-assert.equal(equalWorkingRoute.get('createType'), 'p25_subscriber_identity');
-assert.equal(equalWorkingRoute.get('createHomeWacn'), 'BEE00');
-assert.equal(equalWorkingRoute.get('createHomeSystemId'), '348');
-assert.equal(equalWorkingRoute.get('createSubscriberId'), '501');
-assert.equal(equalWorkingRoute.get('createWorkingAddress'), '501',
-  'An explicit equal-valued WUID must remain separate route context.');
-assert.equal(equalWorkingRoute.has('createValue'), false,
-  'A canonical subscriber route must never degrade to a local radio matcher.');
-assert.equal(equalWorkingRoute.has('createProtocol'), false);
-
-const identityOnlyRoute = aliasRoute({
-  protocol: 'p25', decoder: 'P25_PHASE2', alias_list_id: 41, target_form: 'RADIO', target_id: 9_601_699,
-  target_canonical_identity: { wacn: 0x92498, system_id: 0x926, subscriber_id: 9_601_699 }
-}, 'target');
-assert.equal(identityOnlyRoute.get('createType'), 'p25_subscriber_identity');
-assert.equal(identityOnlyRoute.has('createWorkingAddress'), false,
-  'Identity-only evidence must not invent an equal working address.');
-
-const ordinaryRoute = aliasRoute({
-  protocol: 'p25', decoder: 'P25_PHASE2', alias_list_id: 41, source_form: 'RADIO', source_id: 1201,
-  home_wacn: 0xBEE00, home_system_id: 0x348
-});
-assert.equal(ordinaryRoute.get('createType'), 'radio');
-assert.equal(ordinaryRoute.get('createProtocol'), 'p25');
-assert.equal(ordinaryRoute.get('createVariant'), 'phase_2');
-assert.equal(ordinaryRoute.get('createValue'), '1201');
-assert.equal(ordinaryRoute.has('createHomeWacn'), false,
-  'Ambient system fields must not promote an ordinary local radio to a canonical subscriber.');
 
 const nativeDmr = Object.freeze({
   protocol: 'DMR', channel_kind: 'TRUNKED', radio_system_key: 'dmr:tier3:small:0',

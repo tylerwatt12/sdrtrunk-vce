@@ -45,7 +45,8 @@ async function main() {
   const content = new Element('main');
   let current = true, failure = false;
   let state = { state: 'current', snapshot_at_ms: 100, last_confirmation_ms: 50,
-    receiver_started_at_ms: 10, current_assignment_count: 1, observed_channel_count: 1 };
+    receiver_started_at_ms: 10, current_assignment_count: 5, meaningful_assignment_count: 1,
+    observed_channel_count: 1 };
   let rows = [{ canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 501 },
     observed_working_id: 130001, confirmed_at_ms: 50, expires_at_ms: null, evidence: 'registration' }];
   const page = () => ({ rows: rows.slice(), limit: 100, offset: 0, total_count: rows.length,
@@ -93,7 +94,8 @@ async function main() {
       sections.push(result); return result;
     },
     anchor: (label, href, className) => { const element = node('a', className, label); element.href = href; return element; },
-    href: (view, values) => `${view}?${new URLSearchParams(values)}`,
+    href: (view, values) => `${view}?${new URLSearchParams(Object.entries(values)
+      .filter(([, value]) => value !== null && value !== undefined && value !== ''))}`,
     p25CanonicalSubscriber: row => row.canonical_identity,
     canonicalSubscriberText: row => `${row.wacn}.${row.system_id}.${row.subscriber_id}`,
     identifierNumber: value => value == null ? '' : String(value),
@@ -108,28 +110,34 @@ async function main() {
     systemLabels: { systemName: () => '' },
     hex: (value, width) => Number(value).toString(16).toUpperCase().padStart(width, '0'),
     issiSubscriberColumns: () => [], issiForeignSystemColumns: () => [], issiBandColumns: () => [],
-    issiAliasAction: () => '',
     render: async () => {}
   };
   const behavior = vm.runInNewContext([
     'issiStateLabel', 'issiEmptyMessage', 'issiStateContent', 'issiSectionTabs',
     'issiCurrentAssignmentColumns', 'issiRecentChangeColumns', 'renderRadioSystemIssi',
-    'radioCurrentAssignmentSection', 'p25IdentityEvidenceLabel', 'liveIdentityRenderKey',
+    'issiAssignmentIsOrdinaryLocal', 'radioCurrentAssignmentSection', 'p25IdentityEvidenceLabel', 'liveIdentityRenderKey',
     'issiSubscriberCell', 'issiHomeSystemCell', 'issiHomeSystemText'
   ].map(declaration).join('\n') + '\n({renderRadioSystemIssi,radioCurrentAssignmentSection,' +
-    'issiStateLabel,p25IdentityEvidenceLabel,liveIdentityRenderKey,issiSubscriberCell,issiHomeSystemCell});', context);
+    'issiStateLabel,issiEmptyMessage,issiAssignmentIsOrdinaryLocal,p25IdentityEvidenceLabel,' +
+    'liveIdentityRenderKey,issiSubscriberCell,issiHomeSystemCell});', context);
   await behavior.renderRadioSystemIssi({ radio_system_key: 'p25:BEE00:348' }, { signal: {} });
   assert.equal(content.children[0].active, 'current-assignments', 'System ISSI must start with current receiver knowledge.');
   assert.equal(intervals.length, 1);
   const request = calls.find(call => call.url.endsWith('/current-assignments'));
   assert.equal(request.parameters.configuration_id, 'site-7', 'Evidence channel filter must be sent unchanged.');
+  assert.equal(request.parameters.meaningful_only, true, 'System ISSI must omit unchanged ordinary local mappings.');
   assert.equal(renderedTables[0].options.serverSort, true);
   assert.equal(renderedTables[0].options.defaultSort, 'confirmed_at');
   assert.equal(renderedTables[0].data[0].observed_working_id, 130001);
+  assert.equal(renderedTables[0].columns.some(column => column.id === 'alias-action'), false,
+    'Public Current Assignments must not render administrator editing actions.');
   assert.equal(calls.length, 2, 'Current Assignments must request channels and one coherent rows/status page.');
   const initialSnapshotFacts = content.children[1].children[0].children[0].children[1].values;
   assert.equal(initialSnapshotFacts.find(([label]) => label === 'Snapshot Updated')[1], 'time:100',
     'Receiver status must come from the same response as the displayed assignment rows.');
+  const initialCounts = content.children[1].children[0].children[0].children.at(-1).values;
+  assert.equal(initialCounts.find(([label]) => label === 'ISSI Mappings')[1], 1,
+    'The ISSI summary must count useful mappings rather than every ordinary local registration.');
 
   state = { ...state, snapshot_at_ms: 200 };
   await intervals[0]();
@@ -148,13 +156,17 @@ async function main() {
   assert.match(content.children[3].textContent, /Refresh failed/);
   const staleContent = content.children[1].children[0].children[0];
   const staleCounts = staleContent.children.at(-1).values;
-  assert.equal(staleCounts.find(([label]) => label === 'Confirmed Assignments')[1], 0,
+  assert.equal(staleCounts.find(([label]) => label === 'ISSI Mappings')[1], 0,
     'A failed refresh must not label retained rows as currently confirmed.');
-  assert.equal(staleCounts.find(([label]) => label === 'Last Snapshot Assignments')[1], 1);
+  assert.equal(staleCounts.find(([label]) => label === 'Last Snapshot ISSI Mappings')[1], 1);
   failure = false; rows = [];
   await intervals[0]();
   assert.equal(renderedTables[0].data.length, 0, 'Cleared receiver assignments must clear the current rows.');
   assert.equal(content.children[3].textContent, '');
+  state = { ...state, meaningful_assignment_count: 0 };
+  await intervals[0]();
+  assert.match(renderedTables.at(-1).empty, /Only ordinary local IDs have been confirmed/,
+    'Known local-only evidence must not be presented as still waiting to learn assignments.');
   current = false;
   const beforeNavigation = calls.length;
   await intervals[0]();
@@ -162,7 +174,7 @@ async function main() {
 
   current = true;
   const canonical = { wacn: 0x92498, system_id: 0x926, subscriber_id: 34006 };
-  state = { ...state, snapshot_at_ms: 300 };
+  state = { ...state, snapshot_at_ms: 300, meaningful_assignment_count: 1 };
   rows = [{ canonical_identity: canonical, observed_working_id: 901,
     confirmed_at_ms: 280, expires_at_ms: null, evidence: 'registration' }];
   const beforeDetail = calls.length;
@@ -176,6 +188,8 @@ async function main() {
   assert.equal(detailRequest.parameters.home_system_id, canonical.system_id);
   assert.equal(detailRequest.parameters.subscriber_id, canonical.subscriber_id,
     'Radio detail must match the complete permanent identity, including a foreign home system.');
+  assert.equal(detailRequest.parameters.meaningful_only, undefined,
+    'Radio Info must retain confirmed ordinary local assignments.');
   const detail = sections.at(-1);
   const detailFacts = detail.host.children[0].children[1].values;
   assert.equal(detailFacts.find(([label]) => label === 'Snapshot Updated')[1], 'time:300');
@@ -184,6 +198,27 @@ async function main() {
   await intervals[1]();
   assert.equal(detail.host.children[0].children.at(-1).children.length, 2,
     'Current/history drilldowns must remain available after a refresh.');
+  rows = [{ ...rows[0], canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 34006 },
+    observed_working_id: 34006 }];
+  behavior.radioCurrentAssignmentSection({ radio_system_key: 'p25:BEE00:348',
+    canonical_identity: rows[0].canonical_identity }, { signal: {} });
+  await timeouts.at(-1)();
+  await new Promise(resolve => setImmediate(resolve));
+  const localDetail = sections.at(-1);
+  const localFacts = localDetail.host.children[0].children[1].values;
+  assert.equal(localFacts.find(([label]) => label === 'Working ID')[1], 'Same as permanent radio ID');
+  const localLink = localDetail.host.children[0].children.at(-1).children[0];
+  assert.equal(localLink.textContent, 'ISSI Mappings');
+  assert.equal(new URL(localLink.href, 'http://fixture.invalid').searchParams.has('q'), false,
+    'Ordinary local assignments must link to the ISSI workspace without a filter that excludes themselves.');
+  rows = [{ ...rows[0], canonical_identity: canonical }];
+  await intervals[1]();
+  assert.equal(detail.host.children[0].children[1].values.find(([label]) => label === 'Working ID')[1], '34006',
+    'Foreign subscribers with an equal numeric Working ID are still useful ISSI mappings.');
+  const foreignLink = detail.host.children[0].children.at(-1).children[0];
+  assert.equal(foreignLink.textContent, 'Current Assignments');
+  assert.equal(new URL(foreignLink.href, 'http://fixture.invalid').searchParams.get('q'),
+    `${canonical.wacn}.${canonical.system_id}.${canonical.subscriber_id}`);
   route.set('issi_view', 'recent-changes');
   state = { ...state, snapshot_at_ms: 400 };
   const beforeChanges = calls.length;
@@ -191,10 +226,21 @@ async function main() {
   await behavior.renderRadioSystemIssi({ radio_system_key: 'p25:BEE00:348' }, { signal: {} });
   assert.equal(calls.length, beforeChanges + 2, 'Recent Changes must request channels and one coherent rows/status page.');
   assert.equal(calls.at(-1).url, '/api/v1/radio-systems/p25:BEE00:348/issi/recent-changes');
+  assert.equal(calls.at(-1).parameters.meaningful_only, true);
   const changesFacts = content.children[beforeChangesContent + 1].children[0].children[0].children[1].values;
   assert.equal(changesFacts.find(([label]) => label === 'Snapshot Updated')[1], 'time:400',
     'Recent Changes must use the receiver status captured with its change rows.');
-  assert.equal(behavior.issiStateLabel({ state: 'current', snapshot_stale: true }), 'Snapshot needs refresh');
+  assert.equal(behavior.issiStateLabel({ state: 'current', snapshot_stale: true }), 'Snapshot out of date');
+  assert.equal(behavior.issiStateLabel({ state: 'needs_confirmation' }), 'Relearning assignments');
+  const changeColumn = renderedTables.at(-1).columns.find(column => column.id === 'change');
+  assert.equal(changeColumn.render({ change: 'needs_confirmation', change_reason: 'observation_gap',
+    invalidation_scope: 'receiver' }), 'Observation gap');
+  for (const reason of ['reset', 'contention', 'saturation']) {
+    assert.equal(changeColumn.render({ change: 'needs_confirmation', change_reason: reason,
+      invalidation_scope: 'receiver' }), 'Assignments cleared');
+  }
+  assert.equal(behavior.issiAssignmentIsOrdinaryLocal({ canonical_identity: canonical, observed_working_id: 34006 },
+    'p25:bee00:348'), false, 'Matching numbers on a foreign home system do not make a mapping ordinary local.');
   assert.match(behavior.p25IdentityEvidenceLabel({ source_identity_source: 'registration_mapping' }, 'source'), /confirmed working assignment/);
   assert.match(behavior.p25IdentityEvidenceLabel({ source_identity_source: 'working_id' }, 'source'), /not confirmed/);
   assert.notEqual(behavior.liveIdentityRenderKey({ source_id: 501, source_identity_source: 'working_id' }, 'source'),

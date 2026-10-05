@@ -19,7 +19,7 @@ const COLUMN_WIDTHS = Object.freeze({
 const TABLE_DEFAULTS = Object.freeze({
   'issi-current-assignments': {
     widths: { radio: 220, 'home-system': 230, 'working-id': 120, confirmed: 180,
-      expires: 185, evidence: 130, 'observed-on': 260, 'alias-action': 190 },
+      expires: 185, evidence: 130, 'observed-on': 260 },
     grow: ['radio', 'home-system', 'observed-on']
   },
   'issi-recent-changes': {

@@ -1259,13 +1259,13 @@ class StatsWebInteractionUiContractTest
     }
 
     @Test
-    void liveRowsLinkToAliasAndReceiverEditorsAndDismissOnlyStoppedChannels() throws Exception
+    void liveRowsExposeReadOnlyIdentityInfoAndDismissOnlyStoppedChannels() throws Exception
     {
         String source = source();
         String css = StatsWebStylesheetTestSupport.readAll();
-        String existingAlias = function(source, "function liveExistingAliasHref(reference)");
-        String draftAlias = function(source, "function liveAliasDraftHref(row, kind)");
         String identityInfo = function(source, "function liveIdentityInfo(row, kind)");
+        String identityFacts = function(source, "function liveIdentityFacts(row, kind)");
+        String identityAction = function(source, "function liveIdentityActionLink(row, kind, label)");
         String routedPrefill = function(source, "function routedAliasPrefill(selectedList, options)");
         String aliasEditor = function(source, "async function openAliasEditorModal(mode = 'create', id = null, prefill = null)");
         String scannerNavigate = function(source, "function scannerNavigate(call, channel, destination)");
@@ -1278,24 +1278,18 @@ class StatsWebInteractionUiContractTest
         String rowRenderer = function(source,
             "function renderTableRow(data, columns, rowKey, rowClass, onRowClick)");
 
-        assertTrue(existingAlias.contains("list: Number(reference.alias_list_id)"));
-        assertTrue(existingAlias.contains("alias: Number(reference.alias_id)"));
-        assertTrue(draftAlias.contains("createAlias: 1"));
-        assertTrue(draftAlias.contains("createListId: aliasListId"));
-        assertTrue(draftAlias.contains("Number(row?.alias_list_id)"));
-        assertFalse(draftAlias.contains("alias_list_name"));
-        assertTrue(draftAlias.contains("createType: type"));
-        assertTrue(draftAlias.contains("createProtocol: protocol"));
-        assertTrue(draftAlias.contains("createValue: value"));
-        assertTrue(draftAlias.contains("createType: 'p25_subscriber_identity'"));
-        assertTrue(draftAlias.contains("createHomeWacn: hex(canonical.wacn, 5)"));
-        assertTrue(draftAlias.contains("createHomeSystemId: hex(canonical.system_id, 3)"));
-        assertTrue(draftAlias.contains("createSubscriberId: canonical.subscriber_id"));
-        assertTrue(draftAlias.contains("createWorkingAddress: workingAddress"));
-        assertTrue(draftAlias.contains("p25CanonicalSubscriber(row, kind)"));
         assertTrue(identityInfo.contains("entityRefHref(row?.[`${kind}_entity_ref`])"));
         assertTrue(identityInfo.contains("{ channel: kind === 'source' ? 'radios' : 'groups' }"));
         assertTrue(identityInfo.contains("`Open channel ${collection}`"));
+        assertTrue(identityFacts.contains("['Serving System', radioSystemContextLink(row)]"));
+        assertTrue(identityFacts.contains("['Home System', homeName"));
+        assertTrue(identityFacts.contains("['Permanent Identity', canonical"));
+        assertTrue(identityFacts.contains("['Working ID', workingSubscriberId(row, kind)"));
+        assertTrue(identityFacts.contains("['Identity Evidence', p25IdentityEvidenceLabel(row, kind)]"));
+        assertTrue(identityAction.contains("const facts = liveIdentityFacts(row, kind)"));
+        assertTrue(identityAction.contains("info.title"));
+        assertTrue(identityAction.contains("info.description"));
+        assertTrue(identityAction.contains("openReadOnlyModal(liveIdentityActionTitle(row, kind, label)"));
         assertTrue(scannerNavigate.contains("dashboardChannelKind(channel) === 'CONVENTIONAL'"));
         assertTrue(scannerNavigate.contains("{ channel: 'groups' }"));
         assertTrue(scannerNavigate.contains("{ channel: 'radios' }"));
@@ -1335,6 +1329,56 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains(".channels-live-tab.stopped .channels-tab-quality"));
         assertTrue(css.contains(".live-selected-view-actions"));
         assertFalse(css.contains(".channels-tab-select.quality-link:hover"));
+    }
+
+    @Test
+    void publicIssiRadioAndLiveIdentityPresentersKeepAliasAdministrationInConfigure() throws Exception
+    {
+        String source = source();
+        List<String> presenters = List.of(
+            "function liveIdentityActionLink(row, kind, label)",
+            "function liveIdentifierAliasValue(row, kind)",
+            "function liveAliasValue(row, kind)",
+            "function issiSubscriberCell(row)",
+            "function issiCurrentAssignmentColumns()",
+            "function issiRecentChangeColumns()",
+            "async function renderRadioSystemIssi(system, renderContext)",
+            "function radioCurrentAssignmentSection(radio, renderContext)",
+            "async function renderRadio()");
+        List<String> administrativeActions = List.of("aliasAdminAllowed(", "liveExistingAliasHref(",
+            "liveAliasDraftHref(", "issiAliasAction(", "openAliasEditorModal(", "href('aliases'",
+            "createAlias:", "aliasTab: 'configure'", "Create alias", "Edit alias", "Add Alias", "Edit Alias");
+
+        for(String signature: presenters)
+        {
+            String presenter = function(source, signature);
+            for(String action: administrativeActions)
+            {
+                assertFalse(presenter.contains(action), () -> signature + " exposes " + action);
+            }
+        }
+
+        String system = function(source, "async function renderRadioSystemIssi(system, renderContext)");
+        String assignment = function(source, "function radioCurrentAssignmentSection(radio, renderContext)");
+        String assignmentLinks = function(assignment, "const links = (row, ordinaryLocal) =>");
+        String subscriber = function(source, "function issiSubscriberCell(row)");
+        String identifier = function(source, "function liveIdentifierAliasValue(row, kind)");
+        String alias = function(source, "function liveAliasValue(row, kind)");
+        String radio = function(source, "async function renderRadio()");
+        assertTrue(system.contains("...(live ? { meaningful_only: true,"));
+        assertTrue(system.contains("issiCurrentAssignmentColumns"));
+        assertTrue(subscriber.contains("entityRefHref(row.entity_ref)"));
+        assertTrue(subscriber.contains("identitySummaryValue(label, label === canonical ? '' : canonical, target)"));
+        assertTrue(identifier.contains("liveIdentityActionLink(row, kind, text)"));
+        assertTrue(alias.contains("liveIdentityActionLink(row, kind, label)"));
+        assertTrue(assignment.contains("issiAssignmentIsOrdinaryLocal(row, radio.radio_system_key)"));
+        assertTrue(assignment.contains("links(row, ordinaryLocal)"));
+        assertTrue(assignmentLinks.contains("const filtered = Boolean(row && !ordinaryLocal)"));
+        assertTrue(assignmentLinks.contains("anchor(filtered ? 'Current Assignments' : 'ISSI Mappings', href('radio-system'"));
+        assertTrue(assignmentLinks.contains("issi_view: 'current-assignments', q: filtered ? canonicalSubscriberText(canonical) : null"));
+        assertTrue(assignmentLinks.contains("anchor('Assignment History', href('radio-system'"));
+        assertTrue(radio.contains("['Alias', aliasLabel(radio)]"));
+        assertTrue(radio.contains("radioCurrentAssignmentSection(radio, renderContext)"));
     }
 
     @Test
