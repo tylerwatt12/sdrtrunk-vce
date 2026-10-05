@@ -8,6 +8,7 @@ import io.github.dsheirer.alias.id.dcs.Dcs;
 import io.github.dsheirer.alias.id.esn.Esn;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioRange;
+import io.github.dsheirer.alias.id.radio.P25Subscriber;
 import io.github.dsheirer.alias.id.status.UnitStatusID;
 import io.github.dsheirer.alias.id.status.UserStatusID;
 import io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup;
@@ -40,7 +41,11 @@ public final class AliasTransferCsv
     public static final int MAX_BYTES = 128 * 1024 * 1024;
     public static final List<String> HEADERS = List.of("format_version", "alias_list", "name", "description", "group",
         "color", "icon", "matcher_type", "protocol", "value", "minimum", "maximum", "text", "tones",
+        "home_wacn", "home_system_id", "subscriber_id",
         "record_enabled", "scan_lists", "streaming_destinations", "stream_as_talkgroup");
+    public static final List<String> VERSION_2_HEADERS = List.of("format_version", "alias_list", "name",
+        "description", "group", "color", "icon", "matcher_type", "protocol", "value", "minimum", "maximum",
+        "text", "tones", "record_enabled", "scan_lists", "streaming_destinations", "stream_as_talkgroup");
     public static final List<String> VERSION_1_HEADERS = List.of("format_version", "name", "description", "group",
         "color", "icon", "matcher_type", "protocol", "value", "minimum", "maximum", "text", "tones",
         "record_enabled", "scan_lists", "streaming_destinations", "stream_as_talkgroup");
@@ -67,7 +72,8 @@ public final class AliasTransferCsv
         {
             List<String> expected = format == Format.VCE ? HEADERS : RR_HEADERS;
             boolean version1 = format == Format.VCE && parser.getHeaderNames().equals(VERSION_1_HEADERS);
-            if(!parser.getHeaderNames().equals(expected) && !version1)
+            boolean version2 = format == Format.VCE && parser.getHeaderNames().equals(VERSION_2_HEADERS);
+            if(!parser.getHeaderNames().equals(expected) && !version1 && !version2)
                 throw new IllegalArgumentException("Expected exact CSV header: " + String.join(",", expected));
             for(CSVRecord row: parser)
             {
@@ -94,7 +100,7 @@ public final class AliasTransferCsv
                     }
                     else
                     {
-                        String requiredVersion = version1 ? "1" : "2";
+                        String requiredVersion = version1 ? "1" : version2 ? "2" : "3";
                         if(!row.get("format_version").equals(requiredVersion))
                             throw new IllegalArgumentException("Unsupported format_version");
                         String sourceAliasList = version1 ? null : optional(unescape(row.get("alias_list")));
@@ -107,9 +113,11 @@ public final class AliasTransferCsv
                         alias.setColor(Integer.parseInt(row.get("color")));
                         alias.setMatchIdentifier(matcher(row));
                         Map<String,String> canonical = fields(alias, sourceAliasList, List.of(), List.of());
-                        for(String column: List.of("matcher_type", "protocol", "value", "minimum", "maximum", "text", "tones"))
+                        for(String column: List.of("matcher_type", "protocol", "value", "minimum", "maximum", "text",
+                            "tones", "home_wacn", "home_system_id", "subscriber_id"))
                         {
-                            String submitted = column.equals("text") ? unescape(row.get(column)) : row.get(column);
+                            String submitted = !row.isMapped(column) ? "" :
+                                column.equals("text") ? unescape(row.get(column)) : row.get(column);
                             if(!canonical.get(column).equals(submitted))
                                 throw new IllegalArgumentException("Noncanonical or inapplicable matcher field: " + column);
                         }
@@ -182,6 +190,8 @@ public final class AliasTransferCsv
         Protocol protocol = row.get("protocol").isEmpty() ? null : Protocol.valueOf(row.get("protocol"));
         return switch(row.get("matcher_type"))
         {
+            case "P25_SUBSCRIBER_IDENTITY" -> new P25Subscriber(hexInteger(row, "home_wacn", 5),
+                hexInteger(row, "home_system_id", 3), integer(row, "subscriber_id"));
             case "TALKGROUP" -> new Talkgroup(protocol, integer(row, "value"));
             case "TALKGROUP_RANGE" -> new TalkgroupRange(protocol, integer(row, "minimum"), integer(row, "maximum"));
             case "RADIO_ID" -> new Radio(protocol, integer(row, "value"));
@@ -213,7 +223,7 @@ public final class AliasTransferCsv
     {
         Map<String,String> row = new LinkedHashMap<>();
         HEADERS.forEach(header -> row.put(header, ""));
-        row.put("format_version", "2");
+        row.put("format_version", "3");
         row.put("alias_list", text(aliasList));
         row.put("name", text(alias.getName()));
         row.put("description", text(alias.getDescription()));
@@ -229,6 +239,11 @@ public final class AliasTransferCsv
         row.put("matcher_type", id.getType().name());
         switch(id)
         {
+            case P25Subscriber value -> {
+                row.put("home_wacn", String.format(Locale.ROOT, "%05X", value.getHomeWacn()));
+                row.put("home_system_id", String.format(Locale.ROOT, "%03X", value.getHomeSystemId()));
+                row.put("subscriber_id", Integer.toString(value.getSubscriberId()));
+            }
             case TalkgroupRange value -> { row.put("protocol", value.getProtocol().name()); row.put("minimum", "" + value.getMinTalkgroup()); row.put("maximum", "" + value.getMaxTalkgroup()); }
             case Talkgroup value -> { row.put("protocol", value.getProtocol().name()); row.put("value", "" + value.getValue()); }
             case RadioRange value -> { row.put("protocol", value.getProtocol().name()); row.put("minimum", "" + value.getMinRadio()); row.put("maximum", "" + value.getMaxRadio()); }
@@ -247,7 +262,8 @@ public final class AliasTransferCsv
     static List<String> identity(Alias alias)
     {
         Map<String,String> fields = fields(alias, "", List.of(), List.of());
-        return List.of("matcher_type", "protocol", "value", "minimum", "maximum", "text", "tones").stream()
+        return List.of("matcher_type", "protocol", "value", "minimum", "maximum", "text", "tones", "home_wacn",
+                "home_system_id", "subscriber_id").stream()
             .map(fields::get).toList();
     }
 
@@ -282,6 +298,7 @@ public final class AliasTransferCsv
         private static final Set<String> ESCAPED_TEXT_COLUMNS =
             Set.of("alias_list", "name", "description", "group", "icon", "text");
         private final CSVPrinter mPrinter;
+        private final String[] mValues = new String[HEADERS.size()];
         private long mRowCount;
 
         private StreamingWriter(Writer writer) throws java.io.IOException
@@ -294,8 +311,15 @@ public final class AliasTransferCsv
         public void write(Map<String,String> row) throws java.io.IOException
         {
             Objects.requireNonNull(row, "CSV row cannot be null");
-            mPrinter.printRecord(HEADERS.stream().map(header -> ESCAPED_TEXT_COLUMNS.contains(header) ?
-                escape(row.get(header)) : text(row.get(header))).toList());
+
+            for(int index = 0; index < HEADERS.size(); index++)
+            {
+                String header = HEADERS.get(index);
+                mValues[index] = ESCAPED_TEXT_COLUMNS.contains(header) ? escape(row.get(header)) :
+                    text(row.get(header));
+            }
+
+            mPrinter.printRecord((Object[])mValues);
             mRowCount++;
         }
 
@@ -317,6 +341,16 @@ public final class AliasTransferCsv
     }
 
     private static int integer(CSVRecord row, String field) { return Integer.parseInt(row.get(field)); }
+    private static int hexInteger(CSVRecord row, String field, int width)
+    {
+        String value = row.get(field);
+        if(value.length() != width || !value.matches("[0-9A-F]{" + width + "}"))
+        {
+            throw new IllegalArgumentException(field + " must be " + width +
+                " uppercase hexadecimal digits");
+        }
+        return Integer.parseInt(value, 16);
+    }
     private static boolean bool(String value)
     {
         if(!value.equals("true") && !value.equals("false")) throw new IllegalArgumentException("record_enabled must be true or false");

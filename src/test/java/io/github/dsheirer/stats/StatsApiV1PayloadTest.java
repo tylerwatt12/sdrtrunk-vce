@@ -23,7 +23,12 @@ class StatsApiV1PayloadTest
     private static final Set<String> INTERNAL_FIELDS = Set.of(
         "radio_system_id", "channel_id", "identity_summary_id", "radio_identity_summary_id",
         "group_identity_summary_id", "affiliated_talkgroup_identity_summary_id",
-        "source_identity_summary_id", "target_identity_summary_id",
+        "p25_subscriber_identity_id", "source_p25_subscriber_identity_id",
+        "target_p25_subscriber_identity_id", "source_identity_summary_id", "target_identity_summary_id",
+        "canonical_wacn", "canonical_system_id", "canonical_subscriber_id",
+        "source_canonical_wacn", "source_canonical_system_id", "source_canonical_subscriber_id",
+        "target_canonical_wacn", "target_canonical_system_id", "target_canonical_subscriber_id",
+        "radio_canonical_wacn", "radio_canonical_system_id", "radio_canonical_subscriber_id",
         "representative_channel_id", "fallback_channel_id", "identity_id", "system_key",
         "protocol_code", "variant_code", "site_variant_code",
         "address_domain_code", "location_category_code", "site_location_category_code",
@@ -126,6 +131,57 @@ class StatsApiV1PayloadTest
         assertEquals("v1-r-bee00-348-205", relationship.path("identity_key").textValue());
         assertEquals(205, relationship.path("native_id").intValue());
         assertNoInternalFields(relationship);
+    }
+
+    @Test
+    void exposesOnlyExplicitCanonicalP25SubscriberFields()
+    {
+        JsonNode canonical = StatsApiV1Payload.present(Map.ofEntries(
+            Map.entry("protocol_code", 1), Map.entry("identity_kind_code", 2),
+            Map.entry("native_id", 130001), Map.entry("home_wacn", 0xBEE00),
+            Map.entry("home_system_id", 0x49F), Map.entry("p25_subscriber_identity_id", 91),
+            Map.entry("canonical_wacn", 0x92498), Map.entry("canonical_system_id", 0x926),
+            Map.entry("canonical_subscriber_id", 34006)));
+
+        assertEquals(0x92498, canonical.at("/canonical_identity/wacn").intValue());
+        assertEquals(0x926, canonical.at("/canonical_identity/system_id").intValue());
+        assertEquals(34006, canonical.at("/canonical_identity/subscriber_id").intValue());
+        assertFalse(canonical.has("p25_subscriber_identity_id"));
+        assertFalse(canonical.has("canonical_wacn"));
+        assertFalse(canonical.has("canonical_system_id"));
+        assertFalse(canonical.has("canonical_subscriber_id"));
+
+        JsonNode legacy = StatsApiV1Payload.present(Map.of(
+            "protocol_code", 1, "identity_kind_code", 2, "native_id", 130001,
+            "home_wacn", 0xBEE00, "home_system_id", 0x49F));
+        assertFalse(legacy.has("canonical_identity"),
+            "A legacy serving tuple plus WUID must not fabricate a permanent subscriber identity");
+    }
+
+    @Test
+    void exposesCanonicalActivityParticipantsAndRejectsReservedSubscriberValues()
+    {
+        JsonNode activity = StatsApiV1Payload.present(Map.ofEntries(
+            Map.entry("protocol_code", 1), Map.entry("source_identity_kind_code", 2),
+            Map.entry("target_kind_code", 2), Map.entry("source_p25_subscriber_identity_id", 91),
+            Map.entry("target_p25_subscriber_identity_id", 92),
+            Map.entry("source_canonical_wacn", 0xBEE00),
+            Map.entry("source_canonical_system_id", 0x348),
+            Map.entry("source_canonical_subscriber_id", 9_601_699),
+            Map.entry("target_canonical_wacn", 0xBEE00),
+            Map.entry("target_canonical_system_id", 0x348),
+            Map.entry("target_canonical_subscriber_id", 0xFFFFFD)));
+
+        assertEquals(9_601_699, activity.at("/source_canonical_identity/subscriber_id").intValue());
+        assertFalse(activity.has("target_canonical_identity"));
+        assertNoInternalFields(activity);
+
+        JsonNode maximum = StatsApiV1Payload.present(Map.ofEntries(
+            Map.entry("protocol_code", 1), Map.entry("identity_kind_code", 2),
+            Map.entry("canonical_wacn", 0xFFFFF), Map.entry("canonical_system_id", 0xFFF),
+            Map.entry("canonical_subscriber_id", 0xFFFFFC)));
+        assertEquals(0xFFFFFC, maximum.at("/canonical_identity/subscriber_id").intValue());
+        assertNoInternalFields(maximum);
     }
 
     @Test
@@ -346,6 +402,11 @@ class StatsApiV1PayloadTest
         assertEquals("radio_range", alias.path("matcher_type").textValue());
         assertEquals("phase_2", alias.path("protocol_variant").textValue());
 
+        JsonNode canonicalAlias = StatsApiV1Payload.present(Map.of(
+            "alias_id", 2, "alias_list_id", 2, "family", "P25",
+            "matcher_type", "P25_SUBSCRIBER_IDENTITY"));
+        assertEquals("p25_subscriber_identity", canonicalAlias.path("matcher_type").textValue());
+
         JsonNode frequency = StatsApiV1Payload.present(Map.of("protocol_code", 1,
             "channel_type_code", 5, "role_flags", 1 | 4 | 8 | 32, "tdma", 1));
         assertEquals(List.of("current_control", "traffic"),
@@ -359,6 +420,7 @@ class StatsApiV1PayloadTest
             OBJECT_MAPPER.convertValue(neighbor.get("statuses"), List.class));
         assertEquals("issi", neighbor.path("entry_type").textValue());
         assertNoInternalFields(alias);
+        assertNoInternalFields(canonicalAlias);
         assertNoInternalFields(frequency);
         assertNoInternalFields(neighbor);
     }

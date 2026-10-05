@@ -82,9 +82,11 @@ public final class TrunkedIdentityEligibility
         if((protocol == Protocol.APCO25 || protocol == Protocol.APCO25_PHASE2) &&
             primary instanceof FullyQualifiedRadioIdentifier radio && radio.getProtocol() == Protocol.APCO25)
         {
+            Integer workingAddress = radio.getWorkingAddress();
             return validP25Home(radio.getWacn(), radio.getSystem()) &&
                 isEligible(protocol, identityDomain, form, radio.getRadio()) &&
-                isObservedLocalEligible(protocol, identityDomain, form, observedLocalId, true);
+                (!radio.hasExplicitWorkingAddress() || workingAddress != null &&
+                    isObservedLocalEligible(protocol, identityDomain, form, workingAddress, true));
         }
 
         if((protocol == Protocol.APCO25 || protocol == Protocol.APCO25_PHASE2) &&
@@ -119,7 +121,7 @@ public final class TrunkedIdentityEligibility
         return switch(form)
         {
             case TALKGROUP, PATCH_GROUP -> identifier <= RadioSystemIdentityKey.MAX_P25_GROUP_ID;
-            case RADIO -> identifier <= RadioSystemIdentityKey.MAX_P25_WORKING_UNIT_ID;
+            case RADIO -> identifier >= 1 && identifier <= RadioSystemIdentityKey.MAX_P25_WORKING_UNIT_ID;
             default -> false;
         };
     }

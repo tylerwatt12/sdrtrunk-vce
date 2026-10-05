@@ -18,6 +18,7 @@ import io.github.dsheirer.alias.id.esn.Esn;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioFormat;
 import io.github.dsheirer.alias.id.radio.RadioRange;
+import io.github.dsheirer.alias.id.radio.P25Subscriber;
 import io.github.dsheirer.alias.id.status.UnitStatusID;
 import io.github.dsheirer.alias.id.status.UserStatusID;
 import io.github.dsheirer.alias.id.talkgroup.P25FullyQualifiedTalkgroup;
@@ -137,6 +138,8 @@ public final class AliasMatchRegistry
         List<AliasMatchDescriptor> descriptors = new ArrayList<>();
 
         addProtocolMatchers(descriptors, AliasListFamily.P25, Protocol.APCO25, "P25");
+        descriptors.add(descriptor("P25 Subscriber Identity", AliasIDType.P25_SUBSCRIBER_IDENTITY,
+            Set.of(AliasListFamily.P25), _ -> new P25Subscriber(0, 0, 1), P25Subscriber.class::isInstance));
         addProtocolMatchers(descriptors, AliasListFamily.DMR, Protocol.DMR, "DMR");
         addProtocolMatchers(descriptors, AliasListFamily.NXDN, Protocol.NXDN, "NXDN");
         addTalkgroupMatchers(descriptors, AliasListFamily.NBFM, Protocol.AM, "AM");

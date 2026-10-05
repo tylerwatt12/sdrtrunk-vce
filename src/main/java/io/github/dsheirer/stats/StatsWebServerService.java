@@ -182,6 +182,7 @@ public class StatsWebServerService implements AutoCloseable
     private final StatsWebDatabase mDatabase;
     private final WebEntityNavigationCatalog mEntityCatalog;
     private final StatsLiveService mLiveService;
+    private final StatsP25AssignmentService mP25AssignmentService;
     private final DecodeEventViewService mDecodeEventViewService;
     private final DecodeMessageViewService mDecodeMessageViewService;
     private final DiagnosticFftScheduler mDiagnosticFftScheduler;
@@ -407,6 +408,7 @@ public class StatsWebServerService implements AutoCloseable
             mChannelAdministrationService.setRetainedDiscoveryIdentityProvider(mDatabase::retainedDiscoveryIdentities);
         mLiveService = new StatsLiveService(channelProcessingManager, mEntityCatalog,
             remoteLinkAdministrationService);
+        mP25AssignmentService = new StatsP25AssignmentService(userPreferences.getP25WuidAssignmentRegistry(), mDatabase);
         mWebAccessDatabasePath = SdrTrunkDatabasePath.getDatabasePath(mUserPreferences);
         mSpectrumSnapSettingsService = new SpectrumSnapSettingsService(mWebAccessDatabasePath);
         mWebReceiverSettingsService = new WebReceiverSettingsService(mUserPreferences.getNowPlayingPreference());
@@ -1013,7 +1015,7 @@ public class StatsWebServerService implements AutoCloseable
         }
 
         new StatsApiV1Controller(mDatabase, this::status, mWebRequestSecurity, mTunerDiagnosticService,
-            mReceiverHealthService::snapshot)
+            mReceiverHealthService::snapshot, mP25AssignmentService)
             .register(server);
         RetainedStatisticsAdminHttpController retainedStatistics = new RetainedStatisticsAdminHttpController(
             new RetainedStatisticsCatalog(SdrTrunkDatabasePath.getDatabasePath(mUserPreferences)),
@@ -1066,6 +1068,7 @@ public class StatsWebServerService implements AutoCloseable
             try
             {
                 mLiveService.start();
+                mP25AssignmentService.start();
                 mWebCallService.start();
             }
             catch(RuntimeException exception)
@@ -1118,6 +1121,7 @@ public class StatsWebServerService implements AutoCloseable
         }
 
         mLiveService.stop();
+        mP25AssignmentService.stop();
         mWebCallService.stop();
         mRuntimeServicesStarted = false;
 
@@ -2550,6 +2554,7 @@ public class StatsWebServerService implements AutoCloseable
         }
 
         mLiveService.close();
+        mP25AssignmentService.close();
         mDecodeEventHub.close();
         if(mDecodeMessageViewService != null)
         {

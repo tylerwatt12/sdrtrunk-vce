@@ -12,6 +12,7 @@ package io.github.dsheirer.audio.broadcast.radioresolve;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.gson.JsonObject;
@@ -346,6 +347,48 @@ class RadioResolveCallEnvelopeTest
     }
 
     @Test
+    void canonicalSourceObservationRetainsOnlyAnExplicitWorkingAddress()
+    {
+        Identifier<?> identityOnly = APCO25FullyQualifiedRadioIdentifier.createFrom(900_001,
+            RadioResolveTestFixtures.WACN, RadioResolveTestFixtures.SYSTEM, 900_001);
+        RadioResolveCallEnvelope.Party withoutWorking = RadioResolveCallEnvelope.create(
+            recordingWithSource(identityOnly, true), RadioResolveTestFixtures.SUBMISSION_ID)
+            .envelope().reception().source();
+        assertEquals(900_001L, withoutWorking.canonicalId());
+        assertNull(withoutWorking.localId());
+
+        Identifier<?> equalWorking = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(900_001,
+            RadioResolveTestFixtures.WACN, RadioResolveTestFixtures.SYSTEM, 900_001);
+        RadioResolveCallEnvelope.Party withWorking = RadioResolveCallEnvelope.create(
+            recordingWithSource(equalWorking, true), RadioResolveTestFixtures.SUBMISSION_ID)
+            .envelope().reception().source();
+        assertEquals(900_001L, withWorking.canonicalId());
+        assertEquals(900_001L, withWorking.localId());
+    }
+
+    @Test
+    void directCanonicalSourceFallbackRetainsOnlyAnExplicitWorkingAddress()
+    {
+        Identifier<?> identityOnly = APCO25FullyQualifiedRadioIdentifier.createFrom(900_001,
+            RadioResolveTestFixtures.WACN, RadioResolveTestFixtures.SYSTEM, 900_001);
+        assertNull(RadioResolveCallEnvelope.create(recordingWithSource(identityOnly, false),
+            RadioResolveTestFixtures.SUBMISSION_ID).envelope().reception().source().localId());
+
+        Identifier<?> distinctWorking = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(700_001,
+            RadioResolveTestFixtures.WACN, RadioResolveTestFixtures.SYSTEM, 900_001);
+        RadioResolveCallEnvelope.Party distinct = RadioResolveCallEnvelope.create(
+            recordingWithSource(distinctWorking, false), RadioResolveTestFixtures.SUBMISSION_ID)
+            .envelope().reception().source();
+        assertEquals(700_001L, distinct.localId());
+        assertEquals(900_001L, distinct.canonicalId());
+
+        Identifier<?> equalWorking = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(900_001,
+            RadioResolveTestFixtures.WACN, RadioResolveTestFixtures.SYSTEM, 900_001);
+        assertEquals(900_001L, RadioResolveCallEnvelope.create(recordingWithSource(equalWorking, false),
+            RadioResolveTestFixtures.SUBMISSION_ID).envelope().reception().source().localId());
+    }
+
+    @Test
     void unavailableQualityMeasurementsAreOmittedInsteadOfSerializedAsZeros()
     {
         JsonObject root = RadioResolveJson.GSON.toJsonTree(
@@ -553,6 +596,36 @@ class RadioResolveCallEnvelopeTest
         return new AudioRecording(base.getPath(), base.getBroadcastChannels(), base.getIdentifierCollection(),
             base.getStartTime(), base.getRecordingLength(), base.getDeliveryEvidence(),
             new CompletedCallBroadcastMetadata(metadata.snapshot(), summaries));
+    }
+
+    private static AudioRecording recordingWithSource(Identifier<?> source, boolean retainSummaryObservation)
+    {
+        AudioRecording base = RadioResolveTestFixtures.recording(Path.of("call.mp3"));
+        CompletedCallBroadcastMetadata metadata = base.getCompletedCallMetadata();
+        AudioCallSnapshot prior = metadata.snapshot();
+        Identifier<?> destination = prior.identifierCollection().getToIdentifier();
+        IdentifierCollection identifiers = new IdentifierCollection(List.of(destination, source,
+            FrequencyConfigurationIdentifier.create(RadioResolveTestFixtures.FREQUENCY)));
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(prior.callId(), prior.linkedCallId(), prior.aliasList(),
+            identifiers, prior.broadcastChannels(), prior.startTimestamp(), prior.lastActivityTimestamp(),
+            prior.burstCount(), prior.burstGeneration(), prior.lastBurstStartTimestamp(), prior.lastBurstEndTimestamp(),
+            prior.burstActive(), prior.complete(), prior.encryptionState(), prior.recordAudio(),
+            prior.recordingMetadata(), prior.voiceCallQuality(), prior.callLegId(), prior.callLegSource(),
+            prior.callEncryptionEvidence());
+        List<CallLegSummary> summaries = metadata.callLegSummaries().stream().map(summary ->
+            retainSummaryObservation ? new CallLegSummary(summary.callLegId(), summary.source(),
+                summary.startTimestamp(), summary.endTimestamp(), summary.voiceCallQuality(),
+                summary.retainedAudioSampleCount(), summary.ingressLoss(), summary.audioTruncated(), summary.winner(),
+                summary.callEncryptionEvidence(), source, destination, summary.voiceFrameFingerprints(),
+                summary.frequencyHz(), summary.timeslot()) :
+                new CallLegSummary(summary.callLegId(), summary.source(), summary.startTimestamp(),
+                    summary.endTimestamp(), summary.voiceCallQuality(), summary.retainedAudioSampleCount(),
+                    summary.ingressLoss(), summary.audioTruncated(), summary.winner(), summary.callEncryptionEvidence(),
+                    null, summary.p25DestinationIdentity(), summary.p25PatchMemberIdentities(),
+                    summary.voiceFrameFingerprints(), summary.frequencyHz(), summary.timeslot())).toList();
+        return new AudioRecording(base.getPath(), base.getBroadcastChannels(), identifiers, base.getStartTime(),
+            base.getRecordingLength(), base.getDeliveryEvidence(),
+            new CompletedCallBroadcastMetadata(snapshot, summaries));
     }
 
     private void assertFixture(String resource, RadioResolveCallEnvelope envelope) throws Exception

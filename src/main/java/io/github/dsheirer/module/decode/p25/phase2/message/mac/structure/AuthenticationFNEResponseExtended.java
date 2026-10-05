@@ -83,7 +83,8 @@ public class AuthenticationFNEResponseExtended extends MacStructure
             int wacn = getInt(TARGET_SUID_WACN);
             int system = getInt(TARGET_SUID_SYSTEM);
             int id = getInt(TARGET_SUID_ID);
-            mTargetAddress = APCO25FullyQualifiedRadioIdentifier.createTo(address, wacn, system, id);
+            mTargetAddress = APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(address, wacn, system,
+                id);
         }
 
         return mTargetAddress;

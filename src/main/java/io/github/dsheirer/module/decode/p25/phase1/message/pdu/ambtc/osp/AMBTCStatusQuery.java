@@ -76,7 +76,8 @@ public class AMBTCStatusQuery extends AMBTCMessage
             int wacn = getDataBlock(1).getMessage().getInt(BLOCK_1_TARGET_WACN);
             int system = getDataBlock(1).getMessage().getInt(BLOCK_1_TARGET_SYSTEM);
             int id = getDataBlock(1).getMessage().getInt(BLOCK_1_TARGET_ID);
-            mTargetAddress = APCO25FullyQualifiedRadioIdentifier.createTo(localAddress, wacn, system, id);
+            mTargetAddress = APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(localAddress, wacn,
+                system, id);
         }
 
         return mTargetAddress;
@@ -92,7 +93,8 @@ public class AMBTCStatusQuery extends AMBTCMessage
             wacn += getDataBlock(0).getMessage().getInt(BLOCK_0_SOURCE_WACN);
             int system = getDataBlock(0).getMessage().getInt(BLOCK_0_SOURCE_SYSTEM);
             int id = getDataBlock(0).getMessage().getInt(BLOCK_0_SOURCE_ID);
-            mSourceAddress = APCO25FullyQualifiedRadioIdentifier.createFrom(localAddress, wacn, system, id);
+            mSourceAddress = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(localAddress, wacn,
+                system, id);
         }
 
         return mSourceAddress;

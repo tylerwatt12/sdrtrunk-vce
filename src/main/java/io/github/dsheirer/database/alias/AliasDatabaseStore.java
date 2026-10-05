@@ -24,6 +24,7 @@ import io.github.dsheirer.alias.id.dcs.Dcs;
 import io.github.dsheirer.alias.id.esn.Esn;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioRange;
+import io.github.dsheirer.alias.id.radio.P25Subscriber;
 import io.github.dsheirer.alias.id.status.UnitStatusID;
 import io.github.dsheirer.alias.id.status.UserStatusID;
 import io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup;
@@ -144,11 +145,17 @@ public class AliasDatabaseStore
     private static Map<Long,MatcherSignature> loadAliasMatcherSignatures(Connection connection) throws SQLException
     {
         Map<Long,MatcherSignature> signatures = new HashMap<>();
-        try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT id, matcher_type, protocol, value, min_value, max_value, text_value, numeric_value, tone_sequence
+        boolean canonicalP25Aliases = supportsP25SubscriberAliases(connection);
+        String sql = """
+            SELECT alias.id, alias.matcher_type, alias.protocol, alias.value, alias.min_value, alias.max_value,
+                  alias.text_value, alias.numeric_value, alias.tone_sequence, %s
             FROM alias
-            ORDER BY id
-            """); ResultSet resultSet = statement.executeQuery())
+            %s
+            ORDER BY alias.id
+            """.formatted(p25SubscriberProjection(canonicalP25Aliases),
+            p25SubscriberJoins(canonicalP25Aliases));
+        try(PreparedStatement statement = connection.prepareStatement(sql);
+            ResultSet resultSet = statement.executeQuery())
         {
             while(resultSet.next())
             {
@@ -173,15 +180,20 @@ public class AliasDatabaseStore
         List<SummarySeed> seeds = new ArrayList<>();
         List<SummarySeed> resets = new ArrayList<>();
         List<SummarySeed> metadataChanges = new ArrayList<>();
-        try(PreparedStatement statement = connection.prepareStatement("""
+        boolean canonicalP25Aliases = supportsP25SubscriberAliases(connection);
+        String sql = """
             SELECT alias.id, alias.alias_list_id, alias.matcher_type, alias.protocol, alias.value,
-                alias.min_value, alias.max_value, alias.text_value, alias.numeric_value, alias.tone_sequence,
+                alias.min_value, alias.max_value, alias.text_value, alias.numeric_value, alias.tone_sequence, %s,
                 summary.alias_id AS summary_alias_id, summary.alias_list_id AS summary_alias_list_id,
                 summary.protocol_code AS summary_protocol_code
             FROM alias
+            %s
             LEFT JOIN alias_activity_summary summary ON summary.alias_id = alias.id
             ORDER BY alias.id
-            """); ResultSet resultSet = statement.executeQuery())
+            """.formatted(p25SubscriberProjection(canonicalP25Aliases),
+            p25SubscriberJoins(canonicalP25Aliases));
+        try(PreparedStatement statement = connection.prepareStatement(sql);
+            ResultSet resultSet = statement.executeQuery())
         {
             while(resultSet.next())
             {
@@ -288,7 +300,8 @@ public class AliasDatabaseStore
             protocolFamilyCode(resultSet.getString("protocol")), getInteger(resultSet, "value"),
             getInteger(resultSet, "min_value"), getInteger(resultSet, "max_value"),
             resultSet.getString("text_value"), getInteger(resultSet, "numeric_value"),
-            resultSet.getString("tone_sequence"));
+            resultSet.getString("tone_sequence"), getInteger(resultSet, "p25_home_wacn"),
+            getInteger(resultSet, "p25_home_system_id"), getInteger(resultSet, "p25_subscriber_id"));
     }
 
     private static int protocolFamilyCode(String protocol)
@@ -309,11 +322,13 @@ public class AliasDatabaseStore
     }
 
     private record MatcherSignature(String matcherType, int protocolCode, Integer value, Integer minimum,
-                                    Integer maximum, String textValue, Integer numericValue, String toneSequence)
+                                    Integer maximum, String textValue, Integer numericValue, String toneSequence,
+                                    Integer p25HomeWacn, Integer p25HomeSystemId, Integer p25SubscriberId)
     {
         private int activityProtocolCode()
         {
-            return protocolCode > 0 && ("TALKGROUP".equals(matcherType) ||
+            return "P25_SUBSCRIBER_IDENTITY".equals(matcherType) ? 1 : protocolCode > 0 &&
+                ("TALKGROUP".equals(matcherType) ||
                 "TALKGROUP_RANGE".equals(matcherType) || "RADIO_ID".equals(matcherType) ||
                 "RADIO_ID_RANGE".equals(matcherType)) ? protocolCode : 0;
         }
@@ -440,16 +455,20 @@ public class AliasDatabaseStore
         }
 
         Map<Long,Alias> aliases = new LinkedHashMap<>();
-        try(PreparedStatement statement = connection.prepareStatement("""
+        boolean canonicalP25Aliases = supportsP25SubscriberAliases(connection);
+        String sql = """
             SELECT alias.id, alias.alias_list_id, alias.name, alias.description,
                    alias.group_name, alias.color, alias.icon_name, alias.stream_as_talkgroup,
                    alias.record_enabled,
                    alias.matcher_type, alias.protocol, alias.value,
                    alias.min_value, alias.max_value, alias.text_value,
-                   alias.numeric_value, alias.tone_sequence
+                   alias.numeric_value, alias.tone_sequence, %s
             FROM alias
+            %s
             ORDER BY alias.id
-            """);
+            """.formatted(p25SubscriberProjection(canonicalP25Aliases),
+            p25SubscriberJoins(canonicalP25Aliases));
+        try(PreparedStatement statement = connection.prepareStatement(sql);
             ResultSet resultSet = statement.executeQuery())
         {
             while(resultSet.next())
@@ -512,6 +531,41 @@ public class AliasDatabaseStore
         List<Alias> loaded = new ArrayList<>(aliases.values());
         validateSnapshot(loaded, definitions != null ? definitions : List.of());
         return loaded;
+    }
+
+    /** Historical migration stages do not contain the format-21 canonical Alias association yet. */
+    private static boolean supportsP25SubscriberAliases(Connection connection) throws SQLException
+    {
+        try(PreparedStatement statement = connection.prepareStatement("""
+            SELECT count(*)
+            FROM sqlite_schema
+            WHERE type='table' AND name IN ('alias_p25_subscriber_identity', 'p25_subscriber_identity')
+            """); ResultSet resultSet = statement.executeQuery())
+        {
+            return resultSet.next() && resultSet.getInt(1) == 2;
+        }
+    }
+
+    private static String p25SubscriberProjection(boolean supported)
+    {
+        return supported ? """
+            subscriber.home_wacn AS p25_home_wacn,
+            subscriber.home_system_id AS p25_home_system_id,
+            subscriber.subscriber_id AS p25_subscriber_id
+            """.strip() : """
+            NULL AS p25_home_wacn,
+            NULL AS p25_home_system_id,
+            NULL AS p25_subscriber_id
+            """.strip();
+    }
+
+    private static String p25SubscriberJoins(boolean supported)
+    {
+        return supported ? """
+            LEFT JOIN alias_p25_subscriber_identity subscriber_alias ON subscriber_alias.alias_id=alias.id
+            LEFT JOIN p25_subscriber_identity subscriber
+              ON subscriber.id=subscriber_alias.p25_subscriber_identity_id
+            """.strip() : "";
     }
 
     private void validateSnapshot(List<Alias> aliases, List<AliasListDefinition> definitions) throws SQLException
@@ -920,6 +974,9 @@ public class AliasDatabaseStore
 
         switch(matcher.getType())
         {
+            case P25_SUBSCRIBER_IDENTITY -> {
+                //The identity is normalized through alias_p25_subscriber_identity after the owning row is inserted.
+            }
             case TALKGROUP -> {
                 Talkgroup talkgroup = (Talkgroup)matcher;
                 protocol = protocol(talkgroup.getProtocol());
@@ -973,11 +1030,20 @@ public class AliasDatabaseStore
         Integer numericValue = getInteger(resultSet, "numeric_value");
         String textValue = resultSet.getString("text_value");
         String toneSequence = resultSet.getString("tone_sequence");
+        Integer p25HomeWacn = getInteger(resultSet, "p25_home_wacn");
+        Integer p25HomeSystemId = getInteger(resultSet, "p25_home_system_id");
+        Integer p25SubscriberId = getInteger(resultSet, "p25_subscriber_id");
 
         AliasIDType type = requireEnum(AliasIDType.class, storedType, "alias.matcher_type");
 
         AliasID matcher = switch(type)
         {
+            case P25_SUBSCRIBER_IDENTITY -> {
+                requireNullPayload(type, protocol, value, minimum, maximum, textValue, numericValue, toneSequence);
+                yield new P25Subscriber(requireInteger(p25HomeWacn, "p25_subscriber_identity.home_wacn", type),
+                    requireInteger(p25HomeSystemId, "p25_subscriber_identity.home_system_id", type),
+                    requireInteger(p25SubscriberId, "p25_subscriber_identity.subscriber_id", type));
+            }
             case TALKGROUP -> {
                 requireNullPayload(type, minimum, maximum, textValue, numericValue, toneSequence);
                 yield new Talkgroup(protocol, requireInteger(value, "alias.value", type));
@@ -1027,11 +1093,31 @@ public class AliasDatabaseStore
             default -> throw new SQLException("Unsupported stored alias matcher type [" + type + "]");
         };
 
+        if(type != AliasIDType.P25_SUBSCRIBER_IDENTITY &&
+            (p25HomeWacn != null || p25HomeSystemId != null || p25SubscriberId != null))
+        {
+            throw new SQLException("Alias matcher [" + type + "] has an unexpected P25 subscriber association");
+        }
+
         return matcher;
     }
 
     private void insertAliasChildren(Connection connection, long aliasId, Alias alias) throws SQLException
     {
+        if(alias.getMatchIdentifier() instanceof P25Subscriber subscriber)
+        {
+            long subscriberIdentityId = requireP25SubscriberIdentityId(connection, subscriber);
+            try(PreparedStatement statement = connection.prepareStatement("""
+                INSERT INTO alias_p25_subscriber_identity(alias_id, p25_subscriber_identity_id)
+                VALUES (?, ?)
+                """))
+            {
+                statement.setLong(1, aliasId);
+                statement.setLong(2, subscriberIdentityId);
+                statement.executeUpdate();
+            }
+        }
+
         for(BroadcastChannel broadcastChannel: alias.getBroadcastChannels())
         {
             if(!broadcastChannel.isValid())
@@ -1048,6 +1134,46 @@ public class AliasDatabaseStore
                 statement.executeUpdate();
             }
         }
+    }
+
+    private static long requireP25SubscriberIdentityId(Connection connection, P25Subscriber subscriber)
+        throws SQLException
+    {
+        if(subscriber == null || !subscriber.isValid())
+        {
+            throw new SQLException("P25 subscriber alias requires a valid canonical identity");
+        }
+
+        try(PreparedStatement insert = connection.prepareStatement("""
+            INSERT INTO p25_subscriber_identity(home_wacn, home_system_id, subscriber_id)
+            VALUES (?, ?, ?)
+            ON CONFLICT(home_wacn, home_system_id, subscriber_id) DO NOTHING
+            """))
+        {
+            insert.setInt(1, subscriber.getHomeWacn());
+            insert.setInt(2, subscriber.getHomeSystemId());
+            insert.setInt(3, subscriber.getSubscriberId());
+            insert.executeUpdate();
+        }
+
+        try(PreparedStatement select = connection.prepareStatement("""
+            SELECT id FROM p25_subscriber_identity
+            WHERE home_wacn=? AND home_system_id=? AND subscriber_id=?
+            """))
+        {
+            select.setInt(1, subscriber.getHomeWacn());
+            select.setInt(2, subscriber.getHomeSystemId());
+            select.setInt(3, subscriber.getSubscriberId());
+            try(ResultSet resultSet = select.executeQuery())
+            {
+                if(resultSet.next())
+                {
+                    return resultSet.getLong(1);
+                }
+            }
+        }
+
+        throw new SQLException("Unable to resolve the canonical P25 subscriber identity");
     }
 
     private Map<Long,List<BroadcastChannel>> loadBroadcastChannels(Connection connection, Set<Long> aliasIds)

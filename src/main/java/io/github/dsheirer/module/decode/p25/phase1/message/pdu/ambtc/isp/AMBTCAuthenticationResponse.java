@@ -26,6 +26,7 @@ import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.PDUSequence;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.AMBTCMessage;
@@ -116,7 +117,9 @@ public class AMBTCAuthenticationResponse extends AMBTCMessage
     {
         if(mSourceId == null && hasDataBlock(0))
         {
-            mSourceId = APCO25RadioIdentifier.createFrom(getDataBlock(0).getMessage().getInt(BLOCK_0_SOURCE_ID));
+            int subscriberId = getDataBlock(0).getMessage().getInt(BLOCK_0_SOURCE_ID);
+            mSourceId = APCO25FullyQualifiedRadioIdentifier.createFrom(subscriberId, getWacnValue(),
+                getSystemValue(), subscriberId);
         }
 
         return mSourceId;
@@ -145,14 +148,6 @@ public class AMBTCAuthenticationResponse extends AMBTCMessage
             {
                 mIdentifiers.add(getTargetAddress());
             }
-            if(getWacn() != null)
-            {
-                mIdentifiers.add(getWacn());
-            }
-            if(getSystem() != null)
-            {
-                mIdentifiers.add(getSystem());
-            }
             if(getSourceId() != null)
             {
                 mIdentifiers.add(getSourceId());
@@ -160,5 +155,16 @@ public class AMBTCAuthenticationResponse extends AMBTCMessage
         }
 
         return mIdentifiers;
+    }
+
+    private int getWacnValue()
+    {
+        int value = getHeader().getMessage().getInt(HEADER_WACN);
+        return (value << 4) + getDataBlock(0).getMessage().getInt(BLOCK_0_WACN);
+    }
+
+    private int getSystemValue()
+    {
+        return getDataBlock(0).getMessage().getInt(BLOCK_0_SYSTEM);
     }
 }

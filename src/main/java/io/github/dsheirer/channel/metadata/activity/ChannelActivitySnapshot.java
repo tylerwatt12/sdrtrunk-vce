@@ -13,6 +13,7 @@ import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
+import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
@@ -258,18 +259,28 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
             String variant = primary.getProtocol() == Protocol.APCO25_PHASE2 ? "phase_2" :
                 primary.getProtocol() == Protocol.APCO25 ? "phase_1" : null;
             String identityKey = null;
-            if(primary instanceof FullyQualifiedRadioIdentifier radio)
+            ResolvedRadioIdentity resolvedRadio = ResolvedRadioIdentity.from(primary);
+            Integer workingAddress = resolvedRadio != null && resolvedRadio.subscriber() != null ?
+                resolvedRadio.observedWorkingId() : null;
+            try
             {
-                identityKey = RadioSystemIdentityKey.format(RadioSystemIdentityKey.KIND_RADIO, radio.getWacn(),
-                    radio.getSystem(), radio.getRadio());
+                if(primary instanceof FullyQualifiedRadioIdentifier radio)
+                {
+                    identityKey = RadioSystemIdentityKey.format(RadioSystemIdentityKey.KIND_RADIO, radio.getWacn(),
+                        radio.getSystem(), radio.getRadio());
+                }
+                else if(primary instanceof FullyQualifiedTalkgroupIdentifier talkgroup)
+                {
+                    identityKey = RadioSystemIdentityKey.format(patchGroup ? RadioSystemIdentityKey.KIND_PATCH_GROUP :
+                            RadioSystemIdentityKey.KIND_TALKGROUP,
+                        talkgroup.getWacn(), talkgroup.getSystem(), talkgroup.getTalkgroup());
+                }
             }
-            else if(primary instanceof FullyQualifiedTalkgroupIdentifier talkgroup)
+            catch(IllegalArgumentException ignored)
             {
-                identityKey = RadioSystemIdentityKey.format(patchGroup ? RadioSystemIdentityKey.KIND_PATCH_GROUP :
-                        RadioSystemIdentityKey.KIND_TALKGROUP,
-                    talkgroup.getWacn(), talkgroup.getSystem(), talkgroup.getTalkgroup());
+                //Reserved or infrastructure addresses remain visible as local values without a canonical link.
             }
-            return new MatcherReference(type, protocol, variant, value.intValue(), identityKey);
+            return new MatcherReference(type, protocol, variant, value.intValue(), identityKey, workingAddress, resolvedRadio);
         }
 
         private static List<AliasReference> aliasReferences(List<Alias> aliases)
@@ -355,11 +366,23 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
         }
     }
 
-    public record MatcherReference(String type, String protocol, String variant, int value, String identityKey)
+    public record MatcherReference(String type, String protocol, String variant, int value, String identityKey,
+                                   Integer workingAddress, ResolvedRadioIdentity radioIdentity)
     {
+        public MatcherReference(String type, String protocol, String variant, int value, String identityKey,
+                                Integer workingAddress)
+        {
+            this(type, protocol, variant, value, identityKey, workingAddress, null);
+        }
+
         public MatcherReference(String type, String protocol, String variant, int value)
         {
-            this(type, protocol, variant, value, null);
+            this(type, protocol, variant, value, null, null);
+        }
+
+        public MatcherReference(String type, String protocol, String variant, int value, String identityKey)
+        {
+            this(type, protocol, variant, value, identityKey, null);
         }
     }
 }

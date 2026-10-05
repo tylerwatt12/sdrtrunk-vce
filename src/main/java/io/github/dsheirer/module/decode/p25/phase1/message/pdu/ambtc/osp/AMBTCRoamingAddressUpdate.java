@@ -55,12 +55,12 @@ public class AMBTCRoamingAddressUpdate extends AMBTCMessage
     private static final int[] BLOCK_1_WACN_E = {24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41,
             42, 43};
     private static final int[] BLOCK_1_SYSTEM_E = {44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55};
-    private static final int[] BLOCK_2_WACN_F = {56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73,
+    private static final int[] BLOCK_1_WACN_F = {56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73,
             74, 75};
-    private static final int[] BLOCK_2_SYSTEM_F = {76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87};
-    private static final int[] BLOCK_2_WACN_G = {88, 89, 90, 91, 92, 93, 94, 95};
-    private static final int[] BLOCK_3_WACN_G = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
-    private static final int[] BLOCK_3_SYSTEM_G = {12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23};
+    private static final int[] BLOCK_1_SYSTEM_F = {76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87};
+    private static final int[] BLOCK_1_WACN_G = {88, 89, 90, 91, 92, 93, 94, 95};
+    private static final int[] BLOCK_2_WACN_G = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+    private static final int[] BLOCK_2_SYSTEM_G = {12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23};
 
     //Source ID is in the same location in Blocks 1, 2, and 3
     private static final int[] SOURCE_ID = {24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42,
@@ -184,9 +184,7 @@ public class AMBTCRoamingAddressUpdate extends AMBTCMessage
     {
         if(mRoamingAddressB == null && hasDataBlock(0))
         {
-            //TODO: investigate header-vs-block source for roaming address B and later; these reads use block-relative
-            // field maps against the header message, which may be a longstanding parser bug.
-            int wacn = getHeader().getMessage().getInt(BLOCK_0_WACN_B);
+            int wacn = getDataBlock(0).getMessage().getInt(BLOCK_0_WACN_B);
             int system = getDataBlock(0).getMessage().getInt(BLOCK_0_SYSTEM_B);
             int id = getAddress();
             mRoamingAddressB = APCO25FullyQualifiedRadioIdentifier.createFrom(id, wacn, system, id);
@@ -199,7 +197,7 @@ public class AMBTCRoamingAddressUpdate extends AMBTCMessage
     {
         if(mRoamingAddressC == null && hasDataBlock(0))
         {
-            int wacn = getHeader().getMessage().getInt(BLOCK_0_WACN_C);
+            int wacn = getDataBlock(0).getMessage().getInt(BLOCK_0_WACN_C);
             int system = getDataBlock(0).getMessage().getInt(BLOCK_0_SYSTEM_C);
             int id = getAddress();
             mRoamingAddressC = APCO25FullyQualifiedRadioIdentifier.createFrom(id, wacn, system, id);
@@ -224,10 +222,10 @@ public class AMBTCRoamingAddressUpdate extends AMBTCMessage
 
     public APCO25FullyQualifiedRadioIdentifier getRoamingAddressE()
     {
-        if(mRoamingAddressE == null && hasDataBlock(1))
+        if(mRoamingAddressE == null && hasDataBlock(2))
         {
-            int wacn = getHeader().getMessage().getInt(BLOCK_1_WACN_E);
-            int system = getDataBlock(0).getMessage().getInt(BLOCK_1_SYSTEM_E);
+            int wacn = getDataBlock(1).getMessage().getInt(BLOCK_1_WACN_E);
+            int system = getDataBlock(1).getMessage().getInt(BLOCK_1_SYSTEM_E);
             int id = getAddress();
             mRoamingAddressE = APCO25FullyQualifiedRadioIdentifier.createFrom(id, wacn, system, id);
         }
@@ -239,8 +237,8 @@ public class AMBTCRoamingAddressUpdate extends AMBTCMessage
     {
         if(mRoamingAddressF == null && hasDataBlock(2))
         {
-            int wacn = getHeader().getMessage().getInt(BLOCK_2_WACN_F);
-            int system = getDataBlock(0).getMessage().getInt(BLOCK_2_SYSTEM_F);
+            int wacn = getDataBlock(1).getMessage().getInt(BLOCK_1_WACN_F);
+            int system = getDataBlock(1).getMessage().getInt(BLOCK_1_SYSTEM_F);
             int id = getAddress();
             mRoamingAddressF = APCO25FullyQualifiedRadioIdentifier.createFrom(id, wacn, system, id);
         }
@@ -250,11 +248,11 @@ public class AMBTCRoamingAddressUpdate extends AMBTCMessage
 
     public APCO25FullyQualifiedRadioIdentifier getRoamingAddressG()
     {
-        if(mRoamingAddressG == null && hasDataBlock(2) && hasDataBlock(3))
+        if(mRoamingAddressG == null && hasDataBlock(2))
         {
-            int wacn = getDataBlock(0).getMessage().getInt(BLOCK_2_WACN_G) << 12;
-            wacn += getDataBlock(1).getMessage().getInt(BLOCK_3_WACN_G);
-            int system = getDataBlock(1).getMessage().getInt(BLOCK_3_SYSTEM_G);
+            int wacn = getDataBlock(1).getMessage().getInt(BLOCK_1_WACN_G) << 12;
+            wacn += getDataBlock(2).getMessage().getInt(BLOCK_2_WACN_G);
+            int system = getDataBlock(2).getMessage().getInt(BLOCK_2_SYSTEM_G);
             int id = getAddress();
             mRoamingAddressG = APCO25FullyQualifiedRadioIdentifier.createFrom(id, wacn, system, id);
         }

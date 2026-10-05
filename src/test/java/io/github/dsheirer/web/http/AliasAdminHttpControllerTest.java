@@ -378,8 +378,61 @@ class AliasAdminHttpControllerTest
             assertEquals("p25", matcher(p25Options, "talkgroup_range").get("protocol").textValue());
             assertEquals("phase_1", matcher(p25Options, "talkgroup_range").get("variant").textValue());
             assertEquals("p25", matcher(p25Options, "radio_range").get("protocol").textValue());
+            JsonNode canonicalSubscriber = matcher(p25Options, "p25_subscriber_identity");
+            assertEquals(List.of("home_wacn", "home_system_id", "subscriber_id"),
+                OBJECT_MAPPER.convertValue(canonicalSubscriber.get("fields"),
+                    OBJECT_MAPPER.getTypeFactory().constructCollectionType(List.class, String.class)));
+            assertEquals(0, canonicalSubscriber.get("home_wacn_minimum").intValue());
+            assertEquals(0xFFFFF, canonicalSubscriber.get("home_wacn_maximum").intValue());
+            assertEquals(0, canonicalSubscriber.get("home_system_id_minimum").intValue());
+            assertEquals(0xFFF, canonicalSubscriber.get("home_system_id_maximum").intValue());
+            assertEquals(1, canonicalSubscriber.get("subscriber_id_minimum").intValue());
+            assertEquals(0xFFFFFC, canonicalSubscriber.get("subscriber_id_maximum").intValue());
             assertTrue(java.util.stream.StreamSupport.stream(p25Options.get("matchers").spliterator(), false)
                 .noneMatch(node -> "p25_fully_qualified_talkgroup".equals(node.get("type").textValue())));
+
+            Map<String,Object> maximumCanonicalAlias = new java.util.LinkedHashMap<>(
+                alias(aliasListId, "Maximum canonical subscriber", false));
+            maximumCanonicalAlias.put("matcher", Map.of("type", "p25_subscriber_identity",
+                "home_wacn", 0xFFFFF, "home_system_id", 0xFFF, "subscriber_id", 0xFFFFFC));
+            JsonNode maximumCanonicalCreated = json(send(client, jsonRequest(origin,
+                AliasAdminHttpController.ALIASES_PATH).POST(HttpRequest.BodyPublishers.ofString(
+                OBJECT_MAPPER.writeValueAsString(Map.of("revision", revision,
+                    "alias", maximumCanonicalAlias))))));
+            long maximumCanonicalAliasId = maximumCanonicalCreated.at("/alias_ids/0").longValue();
+            revision = maximumCanonicalCreated.get("revision").longValue();
+            JsonNode maximumCanonical = json(send(client, request(origin,
+                AliasAdminHttpController.ALIASES_PATH + "/" + maximumCanonicalAliasId).GET()));
+            assertEquals(0xFFFFFC, maximumCanonical.at("/alias/matcher/subscriber_id").intValue());
+
+            Map<String,Object> updatedCanonicalAlias = new java.util.LinkedHashMap<>(
+                alias(aliasListId, "Updated canonical subscriber", false));
+            updatedCanonicalAlias.put("matcher", Map.of("type", "p25_subscriber_identity",
+                "home_wacn", 0xBEE00, "home_system_id", 0x348, "subscriber_id", 10_000_000));
+            JsonNode maximumCanonicalUpdated = json(send(client, jsonRequest(origin,
+                AliasAdminHttpController.ALIASES_PATH + "/" + maximumCanonicalAliasId)
+                .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(
+                    Map.of("revision", revision, "alias", updatedCanonicalAlias))))));
+            revision = maximumCanonicalUpdated.get("revision").longValue();
+            JsonNode updatedCanonical = json(send(client, request(origin,
+                AliasAdminHttpController.ALIASES_PATH + "/" + maximumCanonicalAliasId).GET()));
+            assertEquals(0xBEE00, updatedCanonical.at("/alias/matcher/home_wacn").intValue());
+            assertEquals(0x348, updatedCanonical.at("/alias/matcher/home_system_id").intValue());
+            assertEquals(10_000_000, updatedCanonical.at("/alias/matcher/subscriber_id").intValue());
+
+            JsonNode maximumCanonicalDeleted = json(send(client, jsonRequest(origin,
+                AliasAdminHttpController.ALIASES_PATH + "/" + maximumCanonicalAliasId)
+                .method("DELETE", HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(
+                    Map.of("revision", revision))))));
+            revision = maximumCanonicalDeleted.get("revision").longValue();
+
+            Map<String,Object> reservedCanonicalAlias = new java.util.LinkedHashMap<>(
+                alias(aliasListId, "Reserved canonical subscriber", false));
+            reservedCanonicalAlias.put("matcher", Map.of("type", "p25_subscriber_identity",
+                "home_wacn", 0xBEE00, "home_system_id", 0x348, "subscriber_id", 0xFFFFFD));
+            assertEquals(400, send(client, jsonRequest(origin, AliasAdminHttpController.ALIASES_PATH)
+                .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(
+                    Map.of("revision", revision, "alias", reservedCanonicalAlias))))).statusCode());
 
             for(Map<String,Object> matcher: java.util.List.<Map<String,Object>>of(
                 Map.of("type", "talkgroup_range", "protocol", "p25", "variant", "phase_1",

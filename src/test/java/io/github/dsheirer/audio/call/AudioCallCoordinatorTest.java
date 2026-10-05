@@ -206,7 +206,8 @@ class AudioCallCoordinatorTest
                 2_080, 5_080, DAMAGED_QUALITY, true, Set.of());
             IdentifierCollection exactIdentifiers = new IdentifierCollection(List.of(
                 APCO25FullyQualifiedTalkgroupIdentifier.createTo(talkgroup, wacn, system, talkgroup),
-                APCO25FullyQualifiedRadioIdentifier.createFrom(localRadio, wacn, system, homeRadio)));
+                APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
+                    localRadio, wacn, system, homeRadio)));
 
             emitLeg(coordinator, good, fingerprints(35));
             emitLeg(coordinator, damaged, fingerprints(35), exactIdentifiers);
@@ -228,10 +229,12 @@ class AudioCallCoordinatorTest
             assertEquals(wacn, source.getWacn());
             assertEquals(system, source.getSystem());
             assertEquals(homeRadio, source.getRadio());
+            assertEquals(localRadio, source.getWorkingAddress());
             assertEquals("v1-g-abcde-123-9101",
                 call.snapshot().recordingMetadata().destinationIdentity());
             assertEquals(Integer.toString(localRadio), call.snapshot().recordingMetadata().sourceValue(),
                 "Winner-owned display metadata keeps the winner site's observed local address");
+            assertEquals(localRadio, call.snapshot().recordingMetadata().sourceObservedWorkingId());
         }
         finally
         {
@@ -268,6 +271,147 @@ class AudioCallCoordinatorTest
 
             await(() -> resolved.size() == 2);
             assertTrue(resolved.stream().allMatch(call -> call.receiverLegCount() == 1));
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
+    void identityOnlyCanonicalSourceDoesNotMatchAnOrdinaryLocalRadio() throws Exception
+    {
+        AliasList aliasList = aliasList(723);
+        List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = coordinator(resolved, null, null, null);
+        int wacn = 0xABCDE;
+        int system = 0x125;
+        int talkgroup = 9_103;
+        int sharedNumber = 7_779;
+
+        try
+        {
+            Leg first = leg(16, aliasList, wacn, system, 26, 207, talkgroup, sharedNumber,
+                2_000, 5_000, GOOD_QUALITY, true, Set.of());
+            Leg second = leg(17, aliasList, wacn, system, 27, 208, talkgroup, sharedNumber,
+                2_050, 5_050, GOOD_QUALITY, true, Set.of());
+            IdentifierCollection canonical = new IdentifierCollection(List.of(
+                APCO25Talkgroup.create(talkgroup),
+                APCO25FullyQualifiedRadioIdentifier.createFrom(sharedNumber, wacn, system, sharedNumber)));
+            IdentifierCollection ordinary = new IdentifierCollection(List.of(
+                APCO25Talkgroup.create(talkgroup), APCO25RadioIdentifier.createFrom(sharedNumber)));
+
+            emitLeg(coordinator, first, fingerprints(36), canonical);
+            emitLeg(coordinator, second, fingerprints(36), ordinary);
+
+            await(() -> resolved.size() == 2);
+            assertTrue(resolved.stream().allMatch(call -> call.receiverLegCount() == 1));
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
+    void equalExplicitWorkingAddressMatchesAnOrdinaryLocalRadio() throws Exception
+    {
+        AliasList aliasList = aliasList(724);
+        List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = coordinator(resolved, null, null, null);
+        int wacn = 0xABCDE;
+        int system = 0x126;
+        int talkgroup = 9_104;
+        int sharedNumber = 7_780;
+
+        try
+        {
+            Leg first = leg(18, aliasList, wacn, system, 28, 209, talkgroup, sharedNumber,
+                2_000, 5_000, GOOD_QUALITY, true, Set.of());
+            Leg second = leg(19, aliasList, wacn, system, 29, 210, talkgroup, sharedNumber,
+                2_050, 5_050, GOOD_QUALITY, true, Set.of());
+            IdentifierCollection canonical = new IdentifierCollection(List.of(
+                APCO25Talkgroup.create(talkgroup), APCO25FullyQualifiedRadioIdentifier
+                    .createFromWithWorkingAddress(sharedNumber, wacn, system, sharedNumber)));
+            IdentifierCollection ordinary = new IdentifierCollection(List.of(
+                APCO25Talkgroup.create(talkgroup), APCO25RadioIdentifier.createFrom(sharedNumber)));
+
+            emitLeg(coordinator, first, fingerprints(36), canonical);
+            emitLeg(coordinator, second, fingerprints(36), ordinary);
+
+            await(() -> resolved.size() == 1);
+            assertEquals(2, resolved.getFirst().receiverLegCount());
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
+    void sameCanonicalSourceMatchesAcrossDifferentExplicitWorkingAddresses() throws Exception
+    {
+        AliasList aliasList = aliasList(725);
+        List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = coordinator(resolved, null, null, null);
+        int wacn = 0xABCDE;
+        int system = 0x127;
+        int talkgroup = 9_105;
+        int homeRadio = 100_003;
+
+        try
+        {
+            Leg first = leg(20, aliasList, wacn, system, 30, 211, talkgroup, 501,
+                2_000, 5_000, GOOD_QUALITY, true, Set.of());
+            Leg second = leg(21, aliasList, wacn, system, 31, 212, talkgroup, 777,
+                2_050, 5_050, GOOD_QUALITY, true, Set.of());
+            IdentifierCollection firstIdentifiers = new IdentifierCollection(List.of(
+                APCO25Talkgroup.create(talkgroup), APCO25FullyQualifiedRadioIdentifier
+                    .createFromWithWorkingAddress(501, wacn, system, homeRadio)));
+            IdentifierCollection secondIdentifiers = new IdentifierCollection(List.of(
+                APCO25Talkgroup.create(talkgroup), APCO25FullyQualifiedRadioIdentifier
+                    .createFromWithWorkingAddress(777, wacn, system, homeRadio)));
+
+            emitLeg(coordinator, first, fingerprints(37), firstIdentifiers);
+            emitLeg(coordinator, second, fingerprints(37), secondIdentifiers);
+
+            await(() -> resolved.size() == 1);
+            assertEquals(2, resolved.getFirst().receiverLegCount());
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
+    void sameCanonicalPrivateDestinationMatchesAcrossDifferentExplicitWorkingAddresses() throws Exception
+    {
+        AliasList aliasList = aliasList(726);
+        List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = coordinator(resolved, null, null, null);
+        int wacn = 0xABCDE;
+        int system = 0x128;
+        int homeRadio = 100_004;
+
+        try
+        {
+            Leg first = leg(22, aliasList, wacn, system, 32, 213, 9_106, 9_001,
+                2_000, 5_000, GOOD_QUALITY, true, Set.of());
+            Leg second = leg(23, aliasList, wacn, system, 33, 214, 9_106, 9_001,
+                2_050, 5_050, GOOD_QUALITY, true, Set.of());
+            IdentifierCollection firstIdentifiers = new IdentifierCollection(List.of(
+                APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(501, wacn, system, homeRadio),
+                APCO25RadioIdentifier.createFrom(9_001)));
+            IdentifierCollection secondIdentifiers = new IdentifierCollection(List.of(
+                APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(777, wacn, system, homeRadio),
+                APCO25RadioIdentifier.createFrom(9_001)));
+
+            emitLeg(coordinator, first, fingerprints(38), firstIdentifiers);
+            emitLeg(coordinator, second, fingerprints(38), secondIdentifiers);
+
+            await(() -> resolved.size() == 1);
+            assertEquals(2, resolved.getFirst().receiverLegCount());
         }
         finally
         {
@@ -639,7 +783,7 @@ class AudioCallCoordinatorTest
     }
 
     @Test
-    void p25SpecialRangeRadiosCannotSupplyDuplicateSourceFallback() throws Exception
+    void p25ReservedRangeRadiosCannotSupplyDuplicateSourceFallback() throws Exception
     {
         AliasList aliasList = aliasList(850);
         List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
@@ -647,9 +791,9 @@ class AudioCallCoordinatorTest
 
         try
         {
-            emitLeg(coordinator, leg(530, aliasList, 0xE, 14, 140, 141, 10_350, 10_000_000,
+            emitLeg(coordinator, leg(530, aliasList, 0xE, 14, 140, 141, 10_350, 0xFFFFFD,
                 1_000, 10_000, GOOD_QUALITY, true, Set.of()), List.of());
-            emitLeg(coordinator, leg(531, aliasList, 0xE, 14, 141, 142, 10_350, 10_000_000,
+            emitLeg(coordinator, leg(531, aliasList, 0xE, 14, 141, 142, 10_350, 0xFFFFFD,
                 7_000, 7_901, DAMAGED_QUALITY, true, Set.of()), List.of());
             await(() -> resolved.size() == 2);
 
@@ -659,10 +803,10 @@ class AudioCallCoordinatorTest
                 26_000, 26_901, DAMAGED_QUALITY, true, Set.of());
             IdentifierCollection firstIdentifiers = new IdentifierCollection(List.of(
                 APCO25Talkgroup.create(10_351),
-                APCO25FullyQualifiedRadioIdentifier.createFrom(123, 0xABCDE, 0x321, 10_000_000)));
+                APCO25FullyQualifiedRadioIdentifier.createFrom(123, 0xABCDE, 0x321, 0xFFFFFD)));
             IdentifierCollection secondIdentifiers = new IdentifierCollection(List.of(
                 APCO25Talkgroup.create(10_351),
-                APCO25FullyQualifiedRadioIdentifier.createFrom(123, 0xABCDE, 0x321, 10_000_000)));
+                APCO25FullyQualifiedRadioIdentifier.createFrom(123, 0xABCDE, 0x321, 0xFFFFFD)));
             emitLeg(coordinator, first, List.of(), firstIdentifiers);
             emitLeg(coordinator, second, List.of(), secondIdentifiers);
             await(() -> resolved.size() == 4);

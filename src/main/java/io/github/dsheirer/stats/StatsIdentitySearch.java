@@ -52,9 +52,93 @@ final class StatsIdentitySearch
             sql.append(" OR lower(coalesce(summary.last_talker_alias,'')) LIKE ? ESCAPE '\\'");
             parameters.add(pattern);
         }
+        if("RADIO_ID".equals(aliasMatcher))
+        {
+            sql.append(" OR EXISTS (SELECT 1 FROM alias_p25_subscriber_identity canonical_match ")
+                .append("JOIN alias definition ON definition.id=canonical_match.alias_id ")
+                .append("WHERE canonical_match.p25_subscriber_identity_id=summary.p25_subscriber_identity_id ")
+                .append("AND EXISTS (SELECT 1 FROM receiver_channel assigned_channel ")
+                .append("JOIN configuration_channel assigned_config ON ")
+                .append("assigned_config.configuration_id=assigned_channel.configuration_id ")
+                .append("WHERE assigned_channel.radio_system_id=system.id ")
+                .append("AND assigned_config.alias_list_id=definition.alias_list_id) AND ")
+                .append(aliasTextSearch()).append(')');
+            addTextParameters(parameters, pattern);
+        }
         appendAliasSearch(sql, parameters, pattern, aliasMatcher, false);
         appendAliasSearch(sql, parameters, pattern, aliasMatcher, true);
         sql.append(')');
+    }
+
+    /** Matches friendly labels in SQL before the subscriber page is ordered or limited. */
+    static void appendIssiSubscriber(StringBuilder sql, List<Object> parameters, String search)
+    {
+        if(search == null) return;
+        String pattern = like(search);
+        sql.append(" AND (lower(printf('%05x.%03x.%d', canonical_wacn,canonical_system_id,")
+            .append("canonical_subscriber_id)||' '||canonical_wacn||' '||canonical_system_id||' '||")
+            .append("canonical_subscriber_id||' '||coalesce(last_observed_working_id,'')||' '||")
+            .append("coalesce(observation_name,'')||' '||coalesce(observation_site_name,'')) LIKE ? ESCAPE '\\'");
+        parameters.add(pattern);
+        appendP25SystemName(sql, parameters, pattern, "canonical_wacn", "canonical_system_id");
+        String scope = "(definition.alias_list_id=subscriber_rows.observation_alias_list_id OR " +
+            "(subscriber_rows.observation_alias_list_id IS NULL AND EXISTS (" +
+            "SELECT 1 FROM receiver_channel assigned_channel JOIN configuration_channel assigned_config " +
+            "ON assigned_config.configuration_id=assigned_channel.configuration_id " +
+            "WHERE assigned_channel.radio_system_id=subscriber_rows.radio_system_id " +
+            "AND assigned_config.alias_list_id=definition.alias_list_id)))";
+        String canonical = "SELECT 1 FROM alias_p25_subscriber_identity matched " +
+            "JOIN alias definition ON definition.id=matched.alias_id " +
+            "WHERE matched.p25_subscriber_identity_id=subscriber_rows.p25_subscriber_identity_id AND " + scope;
+        sql.append(" OR EXISTS (").append(canonical).append(" AND ").append(aliasTextSearch()).append(')');
+        addTextParameters(parameters, pattern);
+        sql.append(" OR (subscriber_rows.observation_alias_list_id IS NOT NULL ")
+            .append("AND subscriber_rows.last_observed_working_id>0 AND NOT EXISTS (")
+            .append(canonical).append(") AND EXISTS (SELECT 1 FROM alias definition ")
+            .append("WHERE definition.alias_list_id=subscriber_rows.observation_alias_list_id ")
+            .append("AND definition.protocol IN ('APCO25','APCO25_PHASE2') AND (")
+            .append("(definition.matcher_type='RADIO_ID' AND definition.value=last_observed_working_id) OR ")
+            .append("(definition.matcher_type='RADIO_ID_RANGE' AND last_observed_working_id ")
+            .append("BETWEEN definition.min_value AND definition.max_value)) AND ")
+            .append(aliasTextSearch()).append(")))");
+        addTextParameters(parameters, pattern);
+    }
+
+    static void appendIssiForeignSystem(StringBuilder sql, List<Object> parameters, String search)
+    {
+        if(search == null) return;
+        String pattern = like(search);
+        sql.append(" AND (lower(printf('%05x.%03x',foreign_systems.home_wacn,")
+            .append("foreign_systems.home_system_id)||' '||foreign_systems.home_wacn||' '||")
+            .append("foreign_systems.home_system_id) LIKE ? ESCAPE '\\'");
+        parameters.add(pattern);
+        appendP25SystemName(sql, parameters, pattern, "foreign_systems.home_wacn",
+            "foreign_systems.home_system_id");
+        sql.append(')');
+    }
+
+    static void appendIssiBand(StringBuilder sql, List<Object> parameters, String search)
+    {
+        if(search == null) return;
+        String pattern = like(search);
+        sql.append(" AND (lower(printf('%05x.%03x',summary.foreign_wacn,summary.foreign_system_id)||' '||")
+            .append("summary.foreign_wacn||' '||summary.foreign_system_id||' '||summary.band||' '||")
+            .append("summary.base_hz||' '||coalesce(config.name,'')||' '||coalesce(config.site_name,'')||' '||")
+            .append("coalesce(config.system_name,'')) LIKE ? ESCAPE '\\'");
+        parameters.add(pattern);
+        appendP25SystemName(sql, parameters, pattern, "summary.foreign_wacn", "summary.foreign_system_id");
+        sql.append(')');
+    }
+
+    private static void appendP25SystemName(StringBuilder sql, List<Object> parameters, String pattern,
+        String wacn, String systemId)
+    {
+        sql.append(" OR EXISTS (SELECT 1 FROM radio_system home_system WHERE ")
+            .append("home_system.system_key=printf('p25:%05x:%03x',").append(wacn).append(',')
+            .append(systemId).append(") AND lower(coalesce(")
+            .append(StatsSystemNameResolver.configuredNameSql("home_system"))
+            .append(",'')) LIKE ? ESCAPE '\\')");
+        parameters.add(pattern);
     }
 
     private static void appendAliasSearch(StringBuilder sql, List<Object> parameters, String pattern,

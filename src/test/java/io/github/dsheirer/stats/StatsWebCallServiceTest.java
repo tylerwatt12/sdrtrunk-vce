@@ -102,6 +102,9 @@ class StatsWebCallServiceTest
             assertEquals("TALKGROUP", metadata.get("target_form"));
             assertEquals("9001", metadata.get("source_id"));
             assertEquals("RADIO", metadata.get("source_form"));
+            assertFalse(metadata.containsKey("source_canonical_identity"));
+            assertFalse(metadata.containsKey("source_observed_working_id"),
+                "an ordinary local P25 radio is not proven to use a roaming Working ID");
             assertEquals("CAR 9001", metadata.get("talker_alias"));
             assertEquals("APCO25", metadata.get("protocol"));
             assertEquals("p25:bee00:4a7", metadata.get("radio_system_key"));
@@ -126,6 +129,28 @@ class StatsWebCallServiceTest
             assertEquals("RIFF", new String(cached.wave(), 0, 4, StandardCharsets.US_ASCII));
             assertEquals("WAVE", new String(cached.wave(), 8, 4, StandardCharsets.US_ASCII));
             assertEquals(44 + 800 * Short.BYTES, cached.wave().length);
+        }
+    }
+
+    @Test
+    void publishesCanonicalP25SourceAndDestinationSeparatelyFromWorkingIds() throws Exception
+    {
+        try(StatsWebCallService service = started(new StatsWebCallService());
+            FeedClient client = listen(service, Set.of()))
+        {
+            service.receive(canonicalRadioCall());
+            Map<String,Object> metadata = client.awaitCall();
+            assertNotNull(metadata);
+            assertEquals(Map.of("wacn", 0xBEE00, "system_id", 0x348,
+                "subscriber_id", 9_601_699), metadata.get("source_canonical_identity"));
+            assertEquals(130_001, metadata.get("source_observed_working_id"));
+            assertEquals(Map.of("wacn", 0x92498, "system_id", 0x926,
+                "subscriber_id", 34_006), metadata.get("target_canonical_identity"));
+            assertEquals(130_002, metadata.get("target_observed_working_id"));
+            assertEquals("130001", metadata.get("source_id"));
+            assertEquals("130002", metadata.get("target_id"));
+            assertEquals("92498.926.34006 (Working ID 130002)",
+                ((Map<?,?>)metadata.get("playback_target")).get("label"));
         }
     }
 
@@ -635,7 +660,7 @@ class StatsWebCallServiceTest
             assertEquals(Map.of("kind", "radio_system", "key", "p25:bee00:4a7"),
                 metadata.get("radio_system_entity_ref"));
             assertEquals(Map.of("kind", "radio", "radio_system_key", "p25:bee00:4a7",
-                "identity_key", "v1-r-bee00-4a7-9001"),
+                "identity_key", "v1-r-x-x-9001"),
                 metadata.get("source_entity_ref"));
             assertEquals(Map.of("kind", "talkgroup", "radio_system_key", "p25:bee00:4a7",
                 "identity_key", "v1-g-bee00-4a7-4400"),
@@ -966,6 +991,22 @@ class StatsWebCallServiceTest
         IdentifierCollection collection = new IdentifierCollection(identifiers);
         return withIdentifiers(template, collection,
             AudioCallRecordingMetadata.captureAtSnapshot(null, collection));
+    }
+
+    private static CompletedAudioCall canonicalRadioCall()
+    {
+        CompletedAudioCall template = call();
+        List<Identifier> identifiers = new ArrayList<>(template.snapshot().identifierCollection().getIdentifiers());
+        identifiers.removeIf(identifier -> identifier.getIdentifierClass() ==
+            io.github.dsheirer.identifier.IdentifierClass.USER &&
+            (identifier.getForm() == io.github.dsheirer.identifier.Form.RADIO ||
+                identifier.getForm() == io.github.dsheirer.identifier.Form.TALKGROUP));
+        identifiers.add(APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
+            130_001, 0xBEE00, 0x348, 9_601_699));
+        identifiers.add(APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(
+            130_002, 0x92498, 0x926, 34_006));
+        IdentifierCollection collection = new IdentifierCollection(identifiers);
+        return withIdentifiers(template, collection, AudioCallRecordingMetadata.captureAtSnapshot(null, collection));
     }
 
     private static CompletedAudioCall callWithFailingIdentifiers()

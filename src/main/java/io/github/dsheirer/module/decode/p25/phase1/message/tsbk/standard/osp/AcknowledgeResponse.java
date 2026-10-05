@@ -24,6 +24,7 @@ import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DataUnitID;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.OSPMessage;
@@ -102,7 +103,7 @@ public class AcknowledgeResponse extends OSPMessage
         {
             if(mWACN == null)
             {
-                mWACN = APCO25Wacn.create(getMessage().getInt(WACN));
+                mWACN = APCO25Wacn.create(getWacnValue());
             }
 
             return mWACN;
@@ -122,13 +123,23 @@ public class AcknowledgeResponse extends OSPMessage
         {
             if(mSystemId == null)
             {
-                mSystemId = APCO25System.create(getMessage().getInt(SYSTEM));
+                mSystemId = APCO25System.create(getSystemValue());
             }
 
             return mSystemId;
         }
 
         return null;
+    }
+
+    public int getWacnValue()
+    {
+        return getMessage().getInt(WACN);
+    }
+
+    public int getSystemValue()
+    {
+        return getMessage().getInt(SYSTEM);
     }
 
     /**
@@ -143,7 +154,16 @@ public class AcknowledgeResponse extends OSPMessage
     {
         if(mTargetAddress == null)
         {
-            mTargetAddress = APCO25RadioIdentifier.createTo(getMessage().getInt(TARGET_ADDRESS));
+            int subscriberId = getMessage().getInt(TARGET_ADDRESS);
+            if(hasWACN())
+            {
+                mTargetAddress = APCO25FullyQualifiedRadioIdentifier.createTo(subscriberId, getWacnValue(),
+                    getSystemValue(), subscriberId);
+            }
+            else
+            {
+                mTargetAddress = APCO25RadioIdentifier.createTo(subscriberId);
+            }
         }
 
         return mTargetAddress;
@@ -181,14 +201,6 @@ public class AcknowledgeResponse extends OSPMessage
                 mIdentifiers.add(getSourceAddress());
             }
 
-            if(hasWACN())
-            {
-                mIdentifiers.add(getWACN());
-            }
-            if(hasSystem())
-            {
-                mIdentifiers.add(getSystemId());
-            }
         }
 
         return mIdentifiers;

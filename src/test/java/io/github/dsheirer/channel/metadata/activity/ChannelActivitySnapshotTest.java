@@ -6,6 +6,7 @@
 package io.github.dsheirer.channel.metadata.activity;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.Alias;
@@ -13,6 +14,7 @@ import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
@@ -103,7 +105,9 @@ class ChannelActivitySnapshotTest
         assertEquals("p25", navigation.protocol());
         assertEquals(new ChannelActivitySnapshot.AliasReference(301L, 41L, "Car 12"),
             navigation.sourceAliases().getFirst());
-        assertEquals(new ChannelActivitySnapshot.MatcherReference("radio", "p25", "phase_1", 1201),
+        assertEquals(new ChannelActivitySnapshot.MatcherReference("radio", "p25", "phase_1", 1201, null, null,
+            new io.github.dsheirer.identifier.radio.ResolvedRadioIdentity(io.github.dsheirer.protocol.Protocol.APCO25,
+                1201, null, io.github.dsheirer.identifier.radio.ResolvedRadioIdentity.Evidence.UNRESOLVED)),
             navigation.sourceMatcher());
         assertEquals(new ChannelActivitySnapshot.AliasReference(302L, 41L, "Dispatch"),
             navigation.targetAliases().getFirst());
@@ -128,6 +132,47 @@ class ChannelActivitySnapshotTest
             table.getLatestSnapshot().rows().getFirst().navigation().targetMatcher();
         assertEquals(new ChannelActivitySnapshot.MatcherReference("patch_group", "p25", "phase_1", 4400,
             "v1-p-bee00-49f-4400"), target);
+    }
+
+    @Test
+    void keepsReservedFullyQualifiedP25RadioVisibleWithoutCanonicalNavigation()
+    {
+        Channel channel = new Channel("Dispatch", Channel.ChannelType.STANDARD);
+        ChannelActivityTableState table = new ChannelActivityTableState("Site", channel, null);
+        ChannelActivityRow row = table.getOrCreate("traffic", channel,
+            ChannelActivityRow.Role.TRAFFIC, 851_262_500L, null);
+        row.setSource(APCO25FullyQualifiedRadioIdentifier.createFrom(501, 0xBEE00, 0x49F, 0xFFFFFD));
+        table.refresh(row);
+
+        ChannelActivitySnapshot.MatcherReference source =
+            table.getLatestSnapshot().rows().getFirst().navigation().sourceMatcher();
+        assertEquals(new ChannelActivitySnapshot.MatcherReference("radio", "p25", "phase_1", 501), source);
+    }
+
+    @Test
+    void carriesOnlyExplicitWorkingAddressProvenanceIntoLiveNavigation()
+    {
+        Channel channel = new Channel("Dispatch", Channel.ChannelType.STANDARD);
+        ChannelActivityTableState table = new ChannelActivityTableState("Site", channel, null);
+        ChannelActivityRow identityOnly = table.getOrCreate("identity-only", channel,
+            ChannelActivityRow.Role.TRAFFIC, 851_262_500L, null);
+        identityOnly.setSource(APCO25FullyQualifiedRadioIdentifier.createFrom(
+            2_115_288, 0xBEE00, 0x348, 2_115_288));
+        ChannelActivityRow explicit = table.getOrCreate("explicit", channel,
+            ChannelActivityRow.Role.TRAFFIC, 851_512_500L, null);
+        explicit.setSource(APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
+            2_115_288, 0xBEE00, 0x348, 2_115_288));
+        table.refresh(List.of(identityOnly, explicit));
+
+        ChannelActivitySnapshot.MatcherReference identityOnlyMatcher = table.getLatestSnapshot().rows().stream()
+            .filter(row -> "identity-only".equals(row.key())).findFirst().orElseThrow().navigation().sourceMatcher();
+        ChannelActivitySnapshot.MatcherReference explicitMatcher = table.getLatestSnapshot().rows().stream()
+            .filter(row -> "explicit".equals(row.key())).findFirst().orElseThrow().navigation().sourceMatcher();
+
+        assertEquals("v1-r-bee00-348-2115288", identityOnlyMatcher.identityKey());
+        assertNull(identityOnlyMatcher.workingAddress());
+        assertEquals("v1-r-bee00-348-2115288", explicitMatcher.identityKey());
+        assertEquals(2_115_288, explicitMatcher.workingAddress());
     }
 
     @Test

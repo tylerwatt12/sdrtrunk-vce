@@ -55,9 +55,9 @@ class AliasListMutationTest
         assertSame(radioAlias, only(aliasList.getAliases(APCO25RadioIdentifier.createFrom(400))));
         assertSame(radioRangeAlias, only(aliasList.getAliases(APCO25RadioIdentifier.createFrom(550))));
         assertSame(radioAlias, only(aliasList.getAliases(
-            APCO25FullyQualifiedRadioIdentifier.createFrom(400, 4, 5, 600))));
+            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(400, 4, 5, 600))));
         assertSame(radioRangeAlias, only(aliasList.getAliases(
-            APCO25FullyQualifiedRadioIdentifier.createFrom(550, 4, 5, 600))));
+            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(550, 4, 5, 600))));
 
         talkgroup.setValue(101);
         talkgroupRange.setMinTalkgroup(300);
@@ -71,17 +71,17 @@ class AliasListMutationTest
         assertTrue(aliasList.getAliases(APCO25RadioIdentifier.createFrom(400)).isEmpty());
         assertTrue(aliasList.getAliases(APCO25RadioIdentifier.createFrom(550)).isEmpty());
         assertTrue(aliasList.getAliases(
-            APCO25FullyQualifiedRadioIdentifier.createFrom(400, 4, 5, 600)).isEmpty());
+            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(400, 4, 5, 600)).isEmpty());
         assertTrue(aliasList.getAliases(
-            APCO25FullyQualifiedRadioIdentifier.createFrom(550, 4, 5, 600)).isEmpty());
+            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(550, 4, 5, 600)).isEmpty());
         assertSame(exactAlias, only(aliasList.getAliases(APCO25Talkgroup.create(101))));
         assertSame(rangeAlias, only(aliasList.getAliases(APCO25Talkgroup.create(350))));
         assertSame(radioAlias, only(aliasList.getAliases(APCO25RadioIdentifier.createFrom(401))));
         assertSame(radioRangeAlias, only(aliasList.getAliases(APCO25RadioIdentifier.createFrom(650))));
         assertSame(radioAlias, only(aliasList.getAliases(
-            APCO25FullyQualifiedRadioIdentifier.createFrom(401, 10, 11, 1200))));
+            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(401, 10, 11, 1200))));
         assertSame(radioRangeAlias, only(aliasList.getAliases(
-            APCO25FullyQualifiedRadioIdentifier.createFrom(650, 10, 11, 1200))));
+            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(650, 10, 11, 1200))));
     }
 
     @Test

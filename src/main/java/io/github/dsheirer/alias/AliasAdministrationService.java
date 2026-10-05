@@ -16,6 +16,7 @@ import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.dcs.Dcs;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioRange;
+import io.github.dsheirer.alias.id.radio.P25Subscriber;
 import io.github.dsheirer.alias.id.status.UnitStatusID;
 import io.github.dsheirer.alias.id.status.UserStatusID;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
@@ -1621,6 +1622,8 @@ public final class AliasAdministrationService
 
         return switch(first.getType())
         {
+            case P25_SUBSCRIBER_IDENTITY -> first instanceof P25Subscriber firstSubscriber &&
+                second instanceof P25Subscriber secondSubscriber && firstSubscriber.matches(secondSubscriber);
             case TALKGROUP -> first instanceof Talkgroup firstTalkgroup && second instanceof Talkgroup secondTalkgroup &&
                 lookupProtocol(firstTalkgroup.getProtocol()) == lookupProtocol(secondTalkgroup.getProtocol()) &&
                 firstTalkgroup.getValue() == secondTalkgroup.getValue();

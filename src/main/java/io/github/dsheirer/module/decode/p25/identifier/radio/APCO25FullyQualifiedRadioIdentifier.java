@@ -21,6 +21,7 @@ package io.github.dsheirer.module.decode.p25.identifier.radio;
 
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
+import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
 import io.github.dsheirer.protocol.Protocol;
 
 /**
@@ -41,23 +42,16 @@ public class APCO25FullyQualifiedRadioIdentifier extends FullyQualifiedRadioIden
         super(localAddress, wacn, system, id, role);
     }
 
+    private APCO25FullyQualifiedRadioIdentifier(int workingAddress, int wacn, int system, int id, Role role,
+                                                boolean explicitWorkingAddress)
+    {
+        super(workingAddress, wacn, system, id, role, explicitWorkingAddress);
+    }
+
     @Override
     public Protocol getProtocol()
     {
         return Protocol.APCO25;
-    }
-
-    @Override
-    public String toString()
-    {
-        if(isAliased())
-        {
-            return "ROAM " + super.toString();
-        }
-        else
-        {
-            return "ISSI " + super.toString();
-        }
     }
 
     /**
@@ -75,6 +69,16 @@ public class APCO25FullyQualifiedRadioIdentifier extends FullyQualifiedRadioIden
     }
 
     /**
+     * Creates a fully qualified FROM radio when the message explicitly carries both a working address and canonical
+     * home subscriber identity.
+     */
+    public static APCO25FullyQualifiedRadioIdentifier createFromWithWorkingAddress(int workingAddress, int wacn,
+                                                                                   int system, int id)
+    {
+        return createWithWorkingAddress(workingAddress, wacn, system, id, Role.FROM);
+    }
+
+    /**
      * Creates a fully qualified radio and assigns the TO role.
      * @param localAddress radio identifier.  This can be the same as the radio ID when the fully qualified radio
      * is not being aliased on a local radio system.
@@ -87,4 +91,37 @@ public class APCO25FullyQualifiedRadioIdentifier extends FullyQualifiedRadioIden
     {
         return new APCO25FullyQualifiedRadioIdentifier(localAddress, wacn, system, id, Role.TO);
     }
+
+    /**
+     * Creates a fully qualified TO radio when the message explicitly carries both a working address and canonical
+     * home subscriber identity.
+     */
+    public static APCO25FullyQualifiedRadioIdentifier createToWithWorkingAddress(int workingAddress, int wacn,
+                                                                                 int system, int id)
+    {
+        return createWithWorkingAddress(workingAddress, wacn, system, id, Role.TO);
+    }
+
+    /**
+     * Creates a fully qualified radio with its original role when enriching a protocol observation from an explicit,
+     * confirmed working-address assignment.
+     */
+    public static APCO25FullyQualifiedRadioIdentifier createWithWorkingAddress(int workingAddress, int wacn,
+                                                                               int system, int id, Role role)
+    {
+        return new APCO25FullyQualifiedRadioIdentifier(workingAddress, wacn, system, id, role, true);
+    }
+    private APCO25FullyQualifiedRadioIdentifier(int workingAddress, int wacn, int system, int id, Role role,
+                                                ResolvedRadioIdentity.Evidence evidence)
+    {
+        super(workingAddress, wacn, system, id, role, true, evidence);
+    }
+
+    public static APCO25FullyQualifiedRadioIdentifier createWithWorkingAddress(int workingAddress, int wacn,
+                                                                               int system, int id, Role role,
+                                                                               ResolvedRadioIdentity.Evidence evidence)
+    {
+        return new APCO25FullyQualifiedRadioIdentifier(workingAddress, wacn, system, id, role, evidence);
+    }
+
 }

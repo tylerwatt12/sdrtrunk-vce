@@ -24,6 +24,7 @@ import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.reference.ExtendedFunction;
 import java.util.ArrayList;
@@ -37,12 +38,14 @@ public class ExtendedFunctionCommandExtendedLCCH extends MacStructure
     private static final IntField FUNCTION = IntField.length16(OCTET_3_BIT_16);
     private static final IntField ARGUMENTS = IntField.length24(OCTET_5_BIT_32);
     private static final IntField TARGET_ADDRESS = IntField.length24(OCTET_8_BIT_56);
-    private static final IntField SOURCE_WACN = IntField.length20(OCTET_11_BIT_80);
-    private static final IntField SOURCE_SYSTEM = IntField.length12(OCTET_13_BIT_96 + 4);
+    private static final IntField SOURCE_SUID_WACN = IntField.length20(OCTET_11_BIT_80);
+    private static final IntField SOURCE_SUID_SYSTEM = IntField.length12(OCTET_13_BIT_96 + 4);
+    private static final IntField SOURCE_SUID_ID = IntField.length24(OCTET_15_BIT_112);
 
     private ExtendedFunction mExtendedFunction;
     private String mArguments;
     private Identifier mTargetAddress;
+    private Identifier mSourceSuid;
     private Identifier mSourceWacn;
     private Identifier mSourceSystem;
     private List<Identifier> mIdentifiers;
@@ -65,9 +68,8 @@ public class ExtendedFunctionCommandExtendedLCCH extends MacStructure
     {
         StringBuilder sb = new StringBuilder();
         sb.append(getOpcode());
+        sb.append(" FM:").append(getSourceSuid());
         sb.append(" TO:").append(getTargetAddress());
-        sb.append(" WACN:").append(getSourceWacn());
-        sb.append(" SYSTEM:").append(getSourceSystem());
         sb.append(" FUNCTION:").append(getExtendedFunction());
         sb.append(" ARGUMENTS:").append(getArguments());
         return sb.toString();
@@ -106,21 +108,41 @@ public class ExtendedFunctionCommandExtendedLCCH extends MacStructure
         return mTargetAddress;
     }
 
+    public Identifier getSourceSuid()
+    {
+        if(mSourceSuid == null)
+        {
+            int wacn = getInt(SOURCE_SUID_WACN);
+            int system = getInt(SOURCE_SUID_SYSTEM);
+            int id = getInt(SOURCE_SUID_ID);
+            //The extended format carries a complete Source SUID but no separate working address.
+            mSourceSuid = APCO25FullyQualifiedRadioIdentifier.createFrom(id, wacn, system, id);
+        }
+
+        return mSourceSuid;
+    }
+
+    /**
+     * Source WACN retained as a compatibility accessor.  The identifier list publishes the complete Source SUID.
+     */
     public Identifier getSourceWacn()
     {
         if(mSourceWacn == null)
         {
-            mSourceWacn = APCO25Wacn.create(getInt(SOURCE_WACN));
+            mSourceWacn = APCO25Wacn.create(getInt(SOURCE_SUID_WACN));
         }
 
         return mSourceWacn;
     }
 
+    /**
+     * Source System ID retained as a compatibility accessor.  The identifier list publishes the complete Source SUID.
+     */
     public Identifier getSourceSystem()
     {
         if(mSourceSystem == null)
         {
-            mSourceSystem = APCO25System.create(getInt(SOURCE_SYSTEM));
+            mSourceSystem = APCO25System.create(getInt(SOURCE_SUID_SYSTEM));
         }
 
         return mSourceSystem;
@@ -133,8 +155,7 @@ public class ExtendedFunctionCommandExtendedLCCH extends MacStructure
         {
             mIdentifiers = new ArrayList<>();
             mIdentifiers.add(getTargetAddress());
-            mIdentifiers.add(getSourceWacn());
-            mIdentifiers.add(getSourceSystem());
+            mIdentifiers.add(getSourceSuid());
         }
 
         return mIdentifiers;

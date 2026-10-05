@@ -114,6 +114,79 @@ class StatsLiveServiceBoundsTest
     }
 
     @Test
+    void projectsExplicitP25SubscriberIdentitySeparatelyFromObservedWorkingIds()
+    {
+        TestChannelActivitySource source = new TestChannelActivitySource();
+        StatsLiveService service = StatsLiveService.fromActivitySource(source, null);
+        ChannelActivitySnapshot.Navigation canonicalNavigation = new ChannelActivitySnapshot.Navigation(
+            null, 41L, "County", "p25", List.of(),
+            new ChannelActivitySnapshot.MatcherReference("radio", "p25", "phase_1", 130_001,
+                "v1-r-bee00-348-9601699", 130_001,
+                new io.github.dsheirer.identifier.radio.ResolvedRadioIdentity(
+                    io.github.dsheirer.protocol.Protocol.APCO25, 130_001,
+                    new io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity(0xBEE00, 0x348, 9_601_699),
+                    io.github.dsheirer.identifier.radio.ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT)),
+            List.of(), new ChannelActivitySnapshot.MatcherReference("radio", "p25", "phase_1", 130_002,
+                "v1-r-abcde-123-1234567", 130_002));
+        ChannelActivitySnapshot.Navigation localNavigation = new ChannelActivitySnapshot.Navigation(
+            null, 41L, "County", "p25", List.of(),
+            new ChannelActivitySnapshot.MatcherReference("radio", "p25", "phase_1", 1201),
+            List.of(), new ChannelActivitySnapshot.MatcherReference("talkgroup", "p25", "phase_1", 4400,
+                "v1-g-bee00-348-4400"));
+        ChannelActivitySnapshot.Navigation nativeNavigation = new ChannelActivitySnapshot.Navigation(
+            null, 41L, "County", "p25", List.of(),
+            new ChannelActivitySnapshot.MatcherReference("radio", "p25", "phase_1", 501,
+                "v1-r-bee00-348-501", 501), List.of(), null);
+        ChannelActivitySnapshot.Navigation identityOnlyNavigation = new ChannelActivitySnapshot.Navigation(
+            null, 41L, "County", "p25", List.of(),
+            new ChannelActivitySnapshot.MatcherReference("radio", "p25", "phase_1", 502,
+                "v1-r-bee00-348-502", null,
+                new io.github.dsheirer.identifier.radio.ResolvedRadioIdentity(
+                    io.github.dsheirer.protocol.Protocol.APCO25, null,
+                    new io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity(0xBEE00, 0x348, 502),
+                    io.github.dsheirer.identifier.radio.ResolvedRadioIdentity.Evidence.DIRECT)), List.of(), null);
+
+        try
+        {
+            source.publish(activity("identity", List.of(
+                activityRow("canonical", canonicalNavigation), activityRow("local", localNavigation),
+                activityRow("native", nativeNavigation), activityRow("identity-only", identityOnlyNavigation))));
+            List<Map<String,Object>> projected = rows(tables(service).getFirst());
+            Map<String,Object> canonical = projected.getFirst();
+            assertEquals(Map.of("wacn", 0xBEE00, "system_id", 0x348, "subscriber_id", 9_601_699),
+                canonical.get("source_canonical_identity"));
+            assertEquals(130_001, canonical.get("source_observed_working_id"));
+            assertEquals("registration_mapping", canonical.get("source_identity_source"));
+            assertEquals(Map.of("wacn", 0xABCDE, "system_id", 0x123, "subscriber_id", 1_234_567),
+                canonical.get("target_canonical_identity"));
+            assertEquals(130_002, canonical.get("target_observed_working_id"));
+
+            Map<String,Object> local = projected.get(1);
+            assertFalse(local.containsKey("source_canonical_identity"));
+            assertFalse(local.containsKey("source_observed_working_id"));
+            assertFalse(local.containsKey("target_canonical_identity"),
+                "a fully-qualified talkgroup key must never be presented as a subscriber");
+
+            Map<String,Object> nativeIdentity = projected.get(2);
+            assertEquals(Map.of("wacn", 0xBEE00, "system_id", 0x348, "subscriber_id", 501),
+                nativeIdentity.get("source_canonical_identity"));
+            assertEquals(501, nativeIdentity.get("source_observed_working_id"),
+                "an explicit local field remains a separate WUID fact even when its number is equal");
+
+            Map<String,Object> identityOnly = projected.get(3);
+            assertEquals(Map.of("wacn", 0xBEE00, "system_id", 0x348, "subscriber_id", 502),
+                identityOnly.get("source_canonical_identity"));
+            assertFalse(identityOnly.containsKey("source_observed_working_id"),
+                "a canonical identity alone must not infer an equal working assignment");
+            assertEquals("explicit_identity", identityOnly.get("source_identity_source"));
+        }
+        finally
+        {
+            service.close();
+        }
+    }
+
+    @Test
     void capsTheAuthoritativeSnapshotWithoutBrowserOwnedCache() throws Exception
     {
         TestChannelActivitySource source = new TestChannelActivitySource();
@@ -229,7 +302,7 @@ class StatsLiveServiceBoundsTest
                 "nac", 0x293), table.get("site"));
             assertEquals(Map.of("kind", "channel", "key", configurationId), projected.get("entity_ref"));
             assertEquals(Map.of("kind", "radio", "radio_system_key", "p25:bee00:49f",
-                "identity_key", "v1-r-bee00-49f-1201"),
+                "identity_key", "v1-r-x-x-1201"),
                 projected.get("source_entity_ref"));
             assertEquals(Map.of("kind", "patch_group", "radio_system_key", "p25:bee00:49f",
                 "identity_key", "v1-p-bee00-49f-4400"),

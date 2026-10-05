@@ -135,7 +135,7 @@ public abstract class ExtendedSourceLinkControlWord extends LinkControlWord impl
             int wacn = getSourceIDExtension().getWACN();
             int system = getSourceIDExtension().getSystem();
             int id = getSourceIDExtension().getId();
-            mSourceAddress = APCO25FullyQualifiedRadioIdentifier.createFrom(radio, wacn, system, id);
+            mSourceAddress = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(radio, wacn, system, id);
         }
 
         return mSourceAddress;

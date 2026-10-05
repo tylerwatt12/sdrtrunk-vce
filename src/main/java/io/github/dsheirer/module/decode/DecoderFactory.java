@@ -243,7 +243,8 @@ public class DecoderFactory
         if(channel.getChannelType() == ChannelType.STANDARD)
         {
             p25TrafficChannelManager = new P25TrafficChannelManager(channel,
-                userPreferences.getP25BandplanOverrideRegistry(), voiceDecryptionModuleLoaded(userPreferences));
+                userPreferences.getP25BandplanOverrideRegistry(), userPreferences.getP25WuidAssignmentRegistry(),
+                voiceDecryptionModuleLoaded(userPreferences));
         }
         else if(trafficChannelManager instanceof P25TrafficChannelManager p25)
         {
@@ -252,7 +253,8 @@ public class DecoderFactory
         else
         {
             p25TrafficChannelManager = new P25TrafficChannelManager(channel,
-                userPreferences.getP25BandplanOverrideRegistry(), voiceDecryptionModuleLoaded(userPreferences));
+                userPreferences.getP25BandplanOverrideRegistry(), userPreferences.getP25WuidAssignmentRegistry(),
+                voiceDecryptionModuleLoaded(userPreferences));
         }
 
         p25TrafficChannelManager.setChannelActivityModel(channelActivityModel);
@@ -338,7 +340,8 @@ public class DecoderFactory
         if(channel.getChannelType() == ChannelType.STANDARD)
         {
             P25TrafficChannelManager primaryTCM = new P25TrafficChannelManager(channel,
-                userPreferences.getP25BandplanOverrideRegistry(), voiceDecryptionModuleLoaded(userPreferences));
+                userPreferences.getP25BandplanOverrideRegistry(), userPreferences.getP25WuidAssignmentRegistry(),
+                voiceDecryptionModuleLoaded(userPreferences));
             primaryTCM.setChannelActivityModel(channelActivityModel);
             modules.add(primaryTCM);
             modules.add(new P25P1DecoderState(channel, primaryTCM));

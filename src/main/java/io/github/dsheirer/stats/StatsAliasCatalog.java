@@ -14,6 +14,7 @@ package io.github.dsheirer.stats;
 import static io.github.dsheirer.stats.StatsSqlRows.queryRows;
 
 import io.github.dsheirer.alias.AliasAdministrationService;
+import io.github.dsheirer.identifier.radio.P25SubscriberIdentityFormatter;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -59,6 +60,7 @@ final class StatsAliasCatalog
         "p25", "P25", "dmr", "DMR", "nxdn", "NXDN", "nbfm", "NBFM");
     private static final Map<String,String> MATCHERS = Map.ofEntries(
         Map.entry("talkgroup", "TALKGROUP"), Map.entry("talkgroup_range", "TALKGROUP_RANGE"),
+        Map.entry("p25_subscriber_identity", "P25_SUBSCRIBER_IDENTITY"),
         Map.entry("radio", "RADIO_ID"), Map.entry("radio_range", "RADIO_ID_RANGE"),
         Map.entry("user_status", "STATUS"), Map.entry("unit_status", "UNIT_STATUS"),
         Map.entry("tone_sequence", "TONES"), Map.entry("dcs", "DCS"), Map.entry("esn", "ESN"));
@@ -68,6 +70,9 @@ final class StatsAliasCatalog
     private static final Set<String> USE_STATES = Set.of("used", "unused");
     private static final String IDENTIFIER_SORT_SQL = """
         CASE
+            WHEN alias.matcher_type = 'P25_SUBSCRIBER_IDENTITY'
+                THEN printf('%05X.%03X.%020d', subscriber.home_wacn,
+                    subscriber.home_system_id, subscriber.subscriber_id)
             WHEN alias.matcher_type IN ('TALKGROUP_RANGE', 'RADIO_ID_RANGE')
                 THEN printf('%020d–%020d', alias.min_value, alias.max_value)
             WHEN alias.value IS NOT NULL THEN printf('%020d', alias.value)
@@ -133,6 +138,7 @@ final class StatsAliasCatalog
         "summary.continue_count + summary.unknown_count";
     private static final String ALIAS_PROTOCOL_CODE_SQL = """
         CASE
+            WHEN alias.matcher_type = 'P25_SUBSCRIBER_IDENTITY' THEN 1
             WHEN alias.protocol IN ('APCO25', 'APCO25_PHASE2') THEN 1
             WHEN alias.protocol = 'DMR' THEN 3
             WHEN alias.protocol = 'NXDN' THEN 4
@@ -140,7 +146,8 @@ final class StatsAliasCatalog
         END
         """.strip();
     private static final String SUPPORTED_ALIAS_SQL = "(" + ALIAS_PROTOCOL_CODE_SQL +
-        " > 0 AND alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE', 'RADIO_ID', 'RADIO_ID_RANGE'))";
+        " > 0 AND alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE', 'P25_SUBSCRIBER_IDENTITY', " +
+        "'RADIO_ID', 'RADIO_ID_RANGE'))";
 
     private final StatsAliasResolver mResolver;
 
@@ -502,15 +509,21 @@ final class StatsAliasCatalog
                 alias.icon_name, alias.stream_as_talkgroup, alias.record_enabled, alias.matcher_type,
                 CASE
                     WHEN alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE') THEN 'talkgroup'
-                    WHEN alias.matcher_type IN ('RADIO_ID', 'RADIO_ID_RANGE') THEN 'radio'
+                    WHEN alias.matcher_type IN ('P25_SUBSCRIBER_IDENTITY', 'RADIO_ID', 'RADIO_ID_RANGE')
+                        THEN 'radio'
                     ELSE 'other'
                 END AS identity_type,
                 alias.protocol, alias.value, alias.min_value, alias.max_value,
                 alias.text_value, alias.numeric_value, alias.tone_sequence,
+                subscriber.id AS p25_subscriber_identity_id, subscriber.home_wacn,
+                subscriber.home_system_id, subscriber.subscriber_id,
                 CASE WHEN alias.matcher_type IN ('TALKGROUP_RANGE', 'RADIO_ID_RANGE') THEN 1 ELSE 0 END AS ranged,
                 CASE WHEN alias.matcher_type NOT IN ('TALKGROUP_RANGE', 'RADIO_ID_RANGE') THEN 1 ELSE 0 END AS exact
             FROM alias
             JOIN alias_list ON alias_list.id = alias.alias_list_id
+            LEFT JOIN alias_p25_subscriber_identity subscriber_alias ON subscriber_alias.alias_id = alias.id
+            LEFT JOIN p25_subscriber_identity subscriber
+              ON subscriber.id = subscriber_alias.p25_subscriber_identity_id
             WHERE 1=1
             """);
         List<Object> parameters = new ArrayList<>();
@@ -667,11 +680,14 @@ final class StatsAliasCatalog
                     alias.icon_name, alias.stream_as_talkgroup, alias.record_enabled, alias.matcher_type,
                     CASE
                         WHEN alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE') THEN 'talkgroup'
-                        WHEN alias.matcher_type IN ('RADIO_ID', 'RADIO_ID_RANGE') THEN 'radio'
+                        WHEN alias.matcher_type IN ('P25_SUBSCRIBER_IDENTITY', 'RADIO_ID', 'RADIO_ID_RANGE')
+                            THEN 'radio'
                         ELSE 'other'
                     END AS identity_type,
                     alias.protocol, alias.value, alias.min_value, alias.max_value,
                     alias.text_value, alias.numeric_value, alias.tone_sequence,
+                    subscriber.id AS p25_subscriber_identity_id, subscriber.home_wacn,
+                    subscriber.home_system_id, subscriber.subscriber_id,
                     CASE WHEN alias.matcher_type IN ('TALKGROUP_RANGE', 'RADIO_ID_RANGE') THEN 1 ELSE 0 END AS ranged,
                     CASE WHEN alias.matcher_type NOT IN ('TALKGROUP_RANGE', 'RADIO_ID_RANGE') THEN 1 ELSE 0 END AS exact,
                     %s AS _identifier_sort,
@@ -731,6 +747,10 @@ final class StatsAliasCatalog
                     summary.first_evidence_ms, summary.last_evidence_ms%s
                 FROM %s
                 JOIN alias_list ON alias_list.id = alias.alias_list_id
+                LEFT JOIN alias_p25_subscriber_identity subscriber_alias
+                  ON subscriber_alias.alias_id = alias.id
+                LEFT JOIN p25_subscriber_identity subscriber
+                  ON subscriber.id = subscriber_alias.p25_subscriber_identity_id
                 LEFT JOIN current_coverage coverage
                   ON coverage.alias_list_id = alias.alias_list_id
                  AND coverage.protocol_code = %s
@@ -893,6 +913,8 @@ final class StatsAliasCatalog
      */
     private static void prepareExportRows(Connection connection, List<Map<String,Object>> rows) throws SQLException
     {
+        attachP25SubscriberIdentitiesForExport(connection, rows);
+
         for(Map<String,Object> row: rows)
         {
             normalizeConfigurationRow(row);
@@ -900,6 +922,47 @@ final class StatsAliasCatalog
 
         attachBroadcastChannelsForExport(connection, rows);
         attachScanListsForExport(connection, rows);
+    }
+
+    /** Avoids subscriber-table probes for the overwhelmingly common export batches containing no canonical alias. */
+    private static void attachP25SubscriberIdentitiesForExport(Connection connection,
+                                                                List<Map<String,Object>> aliases)
+        throws SQLException
+    {
+        List<Long> aliasIds = aliases.stream()
+            .filter(row -> "P25_SUBSCRIBER_IDENTITY".equals(text(row.get("matcher_type"))))
+            .map(row -> nullableNumber(row.get("alias_id")))
+            .filter(java.util.Objects::nonNull).distinct().toList();
+
+        if(aliasIds.isEmpty())
+        {
+            return;
+        }
+
+        Map<Long,Map<String,Object>> subscribers = new HashMap<>();
+        for(Map<String,Object> subscriber: queryRows(connection, """
+            SELECT subscriber_alias.alias_id, subscriber.id AS p25_subscriber_identity_id,
+                subscriber.home_wacn, subscriber.home_system_id, subscriber.subscriber_id
+            FROM alias_p25_subscriber_identity subscriber_alias
+            JOIN p25_subscriber_identity subscriber
+              ON subscriber.id = subscriber_alias.p25_subscriber_identity_id
+            WHERE subscriber_alias.alias_id IN (%s)
+            """.formatted(placeholders(aliasIds.size())), aliasIds.toArray()))
+        {
+            subscribers.put(number(subscriber.get("alias_id")), subscriber);
+        }
+
+        for(Map<String,Object> alias: aliases)
+        {
+            Map<String,Object> subscriber = subscribers.get(nullableNumber(alias.get("alias_id")));
+            if(subscriber != null)
+            {
+                alias.put("p25_subscriber_identity_id", subscriber.get("p25_subscriber_identity_id"));
+                alias.put("home_wacn", subscriber.get("home_wacn"));
+                alias.put("home_system_id", subscriber.get("home_system_id"));
+                alias.put("subscriber_id", subscriber.get("subscriber_id"));
+            }
+        }
     }
 
     private static void attachBroadcastChannelsForExport(Connection connection, List<Map<String,Object>> aliases)
@@ -1220,9 +1283,10 @@ final class StatsAliasCatalog
             sql.append(switch(identityType)
             {
                 case "talkgroup" -> " AND alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE')";
-                case "radio" -> " AND alias.matcher_type IN ('RADIO_ID', 'RADIO_ID_RANGE')";
+                case "radio" -> " AND alias.matcher_type IN ('P25_SUBSCRIBER_IDENTITY', 'RADIO_ID', " +
+                    "'RADIO_ID_RANGE')";
                 default -> " AND alias.matcher_type NOT IN ('TALKGROUP', 'TALKGROUP_RANGE', " +
-                    "'RADIO_ID', 'RADIO_ID_RANGE')";
+                    "'P25_SUBSCRIBER_IDENTITY', 'RADIO_ID', 'RADIO_ID_RANGE')";
             });
         }
 
@@ -1330,10 +1394,12 @@ final class StatsAliasCatalog
                    OR CAST(coalesce(alias.value, alias.min_value, alias.numeric_value) AS TEXT) LIKE ?
                    OR CAST(alias.max_value AS TEXT) LIKE ?
                    OR lower(coalesce(alias.text_value, '')) LIKE ?
-                   OR lower(coalesce(alias.tone_sequence, '')) LIKE ?)
+                   OR lower(coalesce(alias.tone_sequence, '')) LIKE ?
+                   OR lower(printf('%05X.%03X.%d', subscriber.home_wacn,
+                        subscriber.home_system_id, subscriber.subscriber_id)) LIKE ?)
                 """);
             String like = "%" + search.toLowerCase(Locale.ROOT) + "%";
-            for(int x = 0; x < 10; x++)
+            for(int x = 0; x < 11; x++)
             {
                 parameters.add(like);
             }
@@ -1395,7 +1461,18 @@ final class StatsAliasCatalog
         String sql;
         List<Object> parameters = new ArrayList<>();
 
-        if(("TALKGROUP".equals(matcher) || "RADIO_ID".equals(matcher)) && alias.get("value") != null)
+        if("P25_SUBSCRIBER_IDENTITY".equals(matcher) && alias.get("p25_subscriber_identity_id") != null)
+        {
+            sql = "SELECT 1 FROM alias other " +
+                "JOIN alias_p25_subscriber_identity subscriber_alias ON subscriber_alias.alias_id=other.id " +
+                "WHERE other.alias_list_id=? AND other.matcher_type='P25_SUBSCRIBER_IDENTITY' " +
+                "AND subscriber_alias.p25_subscriber_identity_id=? AND other.id<>? LIMIT 1";
+            parameters.add(aliasListId);
+            parameters.add(alias.get("p25_subscriber_identity_id"));
+            parameters.add(aliasId);
+            return exists(connection, sql, parameters);
+        }
+        else if(("TALKGROUP".equals(matcher) || "RADIO_ID".equals(matcher)) && alias.get("value") != null)
         {
             String index = "TALKGROUP".equals(matcher) ? "idx_alias_talkgroup_value" :
                 "idx_alias_radio_value";
@@ -1820,7 +1897,7 @@ final class StatsAliasCatalog
 
     private static boolean isEligible(Map<String,Object> alias, CoverageSource source)
     {
-        int protocol = protocolCode(text(alias.get("protocol")));
+        int protocol = aliasProtocolCode(alias);
 
         if(protocol != source.protocolCode)
         {
@@ -1853,6 +1930,7 @@ final class StatsAliasCatalog
         }
 
         long updatedAt = Math.max(1L, System.currentTimeMillis());
+        boolean canonicalP25Identity = hasP25SubscriberIdentityReference(connection);
         String insertSql = """
             INSERT INTO alias_activity_summary(
                 alias_id, alias_list_id, protocol_code, metrics_state,
@@ -1868,7 +1946,8 @@ final class StatsAliasCatalog
         {
             for(long aliasListId: aliasListIds)
             {
-                AliasActivitySnapshot snapshot = buildActivitySnapshot(connection, aliasListId);
+                AliasActivitySnapshot snapshot = buildActivitySnapshot(connection, aliasListId,
+                    canonicalP25Identity);
                 for(Map.Entry<Long,AliasActivityMetric> entry: snapshot.metrics.entrySet())
                 {
                     AliasActivityMetric metric = entry.getValue();
@@ -1903,7 +1982,22 @@ final class StatsAliasCatalog
         }
     }
 
-    private AliasActivitySnapshot buildActivitySnapshot(Connection connection, long aliasListId) throws SQLException
+    /** Format-19/20 migration rebuilds run before the canonical subscriber foreign key exists. */
+    private static boolean hasP25SubscriberIdentityReference(Connection connection) throws SQLException
+    {
+        try(PreparedStatement statement = connection.prepareStatement("""
+            SELECT 1
+            FROM pragma_table_info('radio_system_identity_summary')
+            WHERE name='p25_subscriber_identity_id'
+            LIMIT 1
+            """); ResultSet resultSet = statement.executeQuery())
+        {
+            return resultSet.next();
+        }
+    }
+
+    private AliasActivitySnapshot buildActivitySnapshot(Connection connection, long aliasListId,
+                                                         boolean canonicalP25Identity) throws SQLException
     {
         Map<Long,Integer> aliasProtocols = new LinkedHashMap<>();
         Set<Integer> protocols = new LinkedHashSet<>();
@@ -1922,10 +2016,11 @@ final class StatsAliasCatalog
                 while(resultSet.next())
                 {
                     String matcher = resultSet.getString("matcher_type");
-                    int protocol = protocolCode(resultSet.getString("protocol"));
+                    int protocol = "P25_SUBSCRIBER_IDENTITY".equals(matcher) ? 1 :
+                        protocolCode(resultSet.getString("protocol"));
                     boolean supported = protocol > 0 && ("TALKGROUP".equals(matcher) ||
-                        "TALKGROUP_RANGE".equals(matcher) || "RADIO_ID".equals(matcher) ||
-                        "RADIO_ID_RANGE".equals(matcher));
+                        "TALKGROUP_RANGE".equals(matcher) || "P25_SUBSCRIBER_IDENTITY".equals(matcher) ||
+                        "RADIO_ID".equals(matcher) || "RADIO_ID_RANGE".equals(matcher));
                     aliasProtocols.put(resultSet.getLong("id"), supported ? protocol : 0);
                     if(supported)
                     {
@@ -1952,7 +2047,8 @@ final class StatsAliasCatalog
             Map<Long,List<CoverageSource>> systemSources = sourceProjections(sources, true);
             Map<Long,List<CoverageSource>> channelSources = sourceProjections(sources, false);
             int[] evidenceRows = {0};
-            applySnapshotTrunkedEvidence(connection, metrics, systemSources, evidenceRows);
+            applySnapshotTrunkedEvidence(connection, metrics, systemSources, evidenceRows,
+                canonicalP25Identity);
             applySnapshotConventionalEvidence(connection, metrics, channelSources, evidenceRows);
         }
 
@@ -1976,7 +2072,8 @@ final class StatsAliasCatalog
     }
 
     private void applySnapshotTrunkedEvidence(Connection connection, Map<Long,AliasActivityMetric> metrics,
-                                               Map<Long,List<CoverageSource>> sources, int[] evidenceRows)
+                                               Map<Long,List<CoverageSource>> sources, int[] evidenceRows,
+                                               boolean canonicalP25Identity)
         throws SQLException
     {
         if(sources.isEmpty())
@@ -1993,18 +2090,21 @@ final class StatsAliasCatalog
             {
                 page.put(entry.getKey(), entry.getValue());
             }
-            applySnapshotTrunkedEvidencePage(connection, metrics, page, evidenceRows);
+            applySnapshotTrunkedEvidencePage(connection, metrics, page, evidenceRows,
+                canonicalP25Identity);
         }
     }
 
     private void applySnapshotTrunkedEvidencePage(Connection connection, Map<Long,AliasActivityMetric> metrics,
-                                                   Map<Long,List<CoverageSource>> sources, int[] evidenceRows)
+                                                   Map<Long,List<CoverageSource>> sources, int[] evidenceRows,
+                                                   boolean canonicalP25Identity)
         throws SQLException
     {
 
         String sql = """
             SELECT summary.id AS identity_summary_id, summary.radio_system_id, summary.identity_kind_code,
                 summary.identity_id, summary.identity_id AS canonical_identity_id,
+                %s AS p25_subscriber_identity_id,
                 summary.home_wacn, summary.home_system_id,
                 summary.first_seen_ms, summary.last_seen_ms, summary.logical_call_count,
                 summary.recorded_output_count AS recorded_logical_call_count,
@@ -2027,7 +2127,8 @@ final class StatsAliasCatalog
               AND summary.identity_kind_code IN (1, 2, 3)
             ORDER BY summary.radio_system_id, summary.identity_kind_code, summary.identity_id,
                 summary.home_wacn, summary.home_system_id
-            """.formatted(OTHER_SIGNALING_SQL, SIGNALING_SQL, placeholders(sources.size()));
+            """.formatted(canonicalP25Identity ? "summary.p25_subscriber_identity_id" : "NULL",
+            OTHER_SIGNALING_SQL, SIGNALING_SQL, placeholders(sources.size()));
         processSnapshotEvidence(connection, sql, new ArrayList<>(sources.keySet()), sources, "radio_system_id",
             metrics, evidenceRows);
     }
@@ -2169,6 +2270,7 @@ final class StatsAliasCatalog
             SELECT summary.radio_system_id, summary.identity_kind_code,
                 summary.identity_id AS identity_id,
                 summary.identity_id AS canonical_identity_id,
+                summary.p25_subscriber_identity_id,
                 summary.home_wacn, summary.home_system_id,
                 summary.first_seen_ms, summary.last_seen_ms, summary.logical_call_count,
                 summary.recorded_output_count AS recorded_logical_call_count,
@@ -2192,7 +2294,7 @@ final class StatsAliasCatalog
             """.formatted(OTHER_SIGNALING_SQL, SIGNALING_SQL, placeholders(radioSystemIds.size())));
         parameters.addAll(radioSystemIds);
         targets.appendPredicate(sql, "summary.radio_system_id", "summary.identity_kind_code",
-            "summary.identity_id");
+            "summary.identity_id", "summary.p25_subscriber_identity_id");
         sql.append("""
             ORDER BY 1, 2, 3, 5, 6
             LIMIT ?
@@ -2271,7 +2373,7 @@ final class StatsAliasCatalog
               AND
             """.formatted(placeholders(channelIds.size())));
         parameters.addAll(channelIds);
-        targets.appendPredicate(sql, "bucket.channel_id", "bucket.identity_kind_code", "bucket.identity_id");
+        targets.appendPredicate(sql, "bucket.channel_id", "bucket.identity_kind_code", "bucket.identity_id", null);
         sql.append("""
             GROUP BY bucket.channel_id, bucket.identity_kind_code, bucket.identity_id, config.decoder_type
             ORDER BY bucket.channel_id, bucket.identity_kind_code, bucket.identity_id
@@ -2308,7 +2410,8 @@ final class StatsAliasCatalog
                 sum(CASE WHEN relationship.join_count > 0 THEN 1 ELSE 0 END) AS join_relationship_count,
                 source.protocol_code, source.system_key AS radio_system_key,
                 source.p25_wacn AS wacn, source.p25_system_id AS system_id,
-                identity.identity_id AS canonical_identity_id, identity.home_wacn, identity.home_system_id
+                identity.identity_id AS canonical_identity_id, identity.home_wacn, identity.home_system_id,
+                identity.p25_subscriber_identity_id
             FROM trunked_radio_group_summary relationship
             JOIN radio_system source ON source.id = relationship.radio_system_id
             JOIN radio_system_identity_summary identity
@@ -2319,10 +2422,10 @@ final class StatsAliasCatalog
             """.formatted(placeholders(radioSystemIds.size())));
         parameters.addAll(radioSystemIds);
         targets.appendPredicate(sql, "relationship.radio_system_id", "2",
-            "identity.identity_id");
+            "identity.identity_id", "identity.p25_subscriber_identity_id");
         sql.append("""
             GROUP BY relationship.radio_system_id, identity.id, identity.identity_id,
-                identity.home_wacn, identity.home_system_id,
+                identity.home_wacn, identity.home_system_id, identity.p25_subscriber_identity_id,
                 source.protocol_code, source.system_key, source.p25_wacn, source.p25_system_id
 
             UNION ALL
@@ -2335,7 +2438,8 @@ final class StatsAliasCatalog
                 sum(CASE WHEN relationship.join_count > 0 THEN 1 ELSE 0 END) AS join_relationship_count,
                 source.protocol_code, source.system_key AS radio_system_key,
                 source.p25_wacn AS wacn, source.p25_system_id AS system_id,
-                target.identity_id AS canonical_identity_id, target.home_wacn, target.home_system_id
+                target.identity_id AS canonical_identity_id, target.home_wacn, target.home_system_id,
+                target.p25_subscriber_identity_id
             FROM trunked_radio_group_summary relationship
             JOIN radio_system source ON source.id = relationship.radio_system_id
             JOIN radio_system_identity_summary target
@@ -2346,10 +2450,10 @@ final class StatsAliasCatalog
             """.formatted(placeholders(radioSystemIds.size())));
         parameters.addAll(radioSystemIds);
         targets.appendPredicate(sql, "relationship.radio_system_id", "relationship.group_kind_code",
-            "target.identity_id");
+            "target.identity_id", "target.p25_subscriber_identity_id");
         sql.append("""
             GROUP BY relationship.radio_system_id, relationship.group_kind_code, target.id, target.identity_id,
-                target.home_wacn, target.home_system_id,
+                target.home_wacn, target.home_system_id, target.p25_subscriber_identity_id,
                 source.protocol_code, source.system_key, source.p25_wacn, source.p25_system_id
             ORDER BY 1, 2, 3
             LIMIT ?
@@ -2406,7 +2510,8 @@ final class StatsAliasCatalog
                 count(*) AS current_affiliation_count, source.protocol_code,
                 source.system_key AS radio_system_key,
                 source.p25_wacn AS wacn, source.p25_system_id AS system_id,
-                identity.identity_id AS canonical_identity_id, identity.home_wacn, identity.home_system_id
+                identity.identity_id AS canonical_identity_id, identity.home_wacn, identity.home_system_id,
+                identity.p25_subscriber_identity_id
             FROM radio_system source
             JOIN trunked_radio_affiliation affiliation ON affiliation.radio_system_id = source.id
             JOIN radio_system_identity_summary identity
@@ -2417,10 +2522,12 @@ final class StatsAliasCatalog
             """.formatted(placeholders(p25Systems.size())));
         parameters.addAll(p25Systems);
         targets.appendPredicate(sql, "source.id", "2",
-            "coalesce(affiliation.radio_observed_local_id, identity.identity_id)");
+            "coalesce(affiliation.radio_observed_local_id, identity.identity_id)",
+            "identity.p25_subscriber_identity_id");
         sql.append("""
             GROUP BY source.id, identity.id, identity.identity_id,
-                identity.home_wacn, identity.home_system_id, affiliation.radio_observed_local_id,
+                identity.home_wacn, identity.home_system_id, identity.p25_subscriber_identity_id,
+                affiliation.radio_observed_local_id,
                 source.protocol_code, source.system_key, source.p25_wacn, source.p25_system_id
 
             UNION ALL
@@ -2431,7 +2538,8 @@ final class StatsAliasCatalog
                 count(*) AS current_affiliation_count, source.protocol_code,
                 source.system_key AS radio_system_key,
                 source.p25_wacn AS wacn, source.p25_system_id AS system_id,
-                target.identity_id AS canonical_identity_id, target.home_wacn, target.home_system_id
+                target.identity_id AS canonical_identity_id, target.home_wacn, target.home_system_id,
+                target.p25_subscriber_identity_id
             FROM radio_system source
             JOIN trunked_radio_affiliation affiliation ON affiliation.radio_system_id = source.id
             LEFT JOIN radio_system_identity_summary target
@@ -2442,10 +2550,12 @@ final class StatsAliasCatalog
             """.formatted(placeholders(p25Systems.size())));
         parameters.addAll(p25Systems);
         targets.appendPredicate(sql, "source.id", "1",
-            "coalesce(affiliation.talkgroup_observed_local_id, target.identity_id)");
+            "coalesce(affiliation.talkgroup_observed_local_id, target.identity_id)",
+            "target.p25_subscriber_identity_id");
         sql.append("""
             GROUP BY source.id, target.id, target.identity_id,
-                target.home_wacn, target.home_system_id, affiliation.talkgroup_observed_local_id,
+                target.home_wacn, target.home_system_id, target.p25_subscriber_identity_id,
+                affiliation.talkgroup_observed_local_id,
                 source.protocol_code, source.system_key, source.p25_wacn, source.p25_system_id
             ORDER BY 1, 2, 3
             LIMIT ?
@@ -2546,7 +2656,13 @@ final class StatsAliasCatalog
     private static boolean isSupportedIdentity(Map<String,Object> alias)
     {
         String type = text(alias.get("identity_type"));
-        return ("talkgroup".equals(type) || "radio".equals(type)) && protocolCode(text(alias.get("protocol"))) > 0;
+        return ("talkgroup".equals(type) || "radio".equals(type)) && aliasProtocolCode(alias) > 0;
+    }
+
+    private static int aliasProtocolCode(Map<String,Object> alias)
+    {
+        return "P25_SUBSCRIBER_IDENTITY".equals(text(alias.get("matcher_type"))) ? 1 :
+            protocolCode(text(alias.get("protocol")));
     }
 
     private static int protocolCode(String protocol)
@@ -2652,6 +2768,7 @@ final class StatsAliasCatalog
         {
             case "TALKGROUP" -> "Talkgroup";
             case "TALKGROUP_RANGE" -> "Talkgroup range";
+            case "P25_SUBSCRIBER_IDENTITY" -> "P25 subscriber identity";
             case "RADIO_ID" -> "Radio ID";
             case "RADIO_ID_RANGE" -> "Radio ID range";
             case "UNIT_STATUS" -> "Unit status";
@@ -2663,6 +2780,26 @@ final class StatsAliasCatalog
     private static String identifierDisplay(Map<String,Object> row)
     {
         String matcher = text(row.get("matcher_type"));
+
+        if("P25_SUBSCRIBER_IDENTITY".equals(matcher))
+        {
+            Long homeWacn = nullableNumber(row.get("home_wacn"));
+            Long homeSystemId = nullableNumber(row.get("home_system_id"));
+            Long subscriberId = nullableNumber(row.get("subscriber_id"));
+            if(homeWacn != null && homeSystemId != null && subscriberId != null)
+            {
+                try
+                {
+                    return P25SubscriberIdentityFormatter.format(Math.toIntExact(homeWacn),
+                        Math.toIntExact(homeSystemId), Math.toIntExact(subscriberId));
+                }
+                catch(IllegalArgumentException | ArithmeticException ignored)
+                {
+                    return "";
+                }
+            }
+            return "";
+        }
 
         if("TALKGROUP_RANGE".equals(matcher) || "RADIO_ID_RANGE".equals(matcher))
         {
@@ -2943,7 +3080,7 @@ final class StatsAliasCatalog
                     continue;
                 }
 
-                int protocol = protocolCode(text(alias.get("protocol")));
+                int protocol = aliasProtocolCode(alias);
                 long aliasListId = number(alias.get("alias_list_id"));
 
                 if(aliasListId > 0)
@@ -3010,7 +3147,7 @@ final class StatsAliasCatalog
                     continue;
                 }
 
-                int protocol = protocolCode(text(alias.get("protocol")));
+                int protocol = aliasProtocolCode(alias);
                 Set<Long> protocolLists = aliasListIds.computeIfAbsent(protocol,
                     ignored -> new LinkedHashSet<>());
 
@@ -3084,6 +3221,8 @@ final class StatsAliasCatalog
 
     private record SqlSourceTarget(long radioSystemId, int identityKindCode, long minimum, long maximum) {}
 
+    private record SqlP25SubscriberTarget(long radioSystemId, long p25SubscriberIdentityId) {}
+
     /**
      * Correlates each selected alias range to only the receiver sources where that alias is eligible.  Evidence SQL
      * consumes this bounded relation as a VALUES CTE, avoiding the protocol-wide list/range cross product that could
@@ -3092,29 +3231,35 @@ final class StatsAliasCatalog
     private static final class SourceIdentityTargets
     {
         private static final String CTE_NAME = "requested_identity";
+        private static final String P25_SUBSCRIBER_CTE_NAME = "requested_p25_subscriber";
         private final Map<SourceTargetKey,List<IdentityRange>> mRanges;
+        private final Map<SourceTargetKey,Set<Long>> mP25SubscriberIdentities;
 
-        private SourceIdentityTargets(Map<SourceTargetKey,List<IdentityRange>> ranges)
+        private SourceIdentityTargets(Map<SourceTargetKey,List<IdentityRange>> ranges,
+                                      Map<SourceTargetKey,Set<Long>> p25SubscriberIdentities)
         {
             mRanges = ranges;
+            mP25SubscriberIdentities = p25SubscriberIdentities;
         }
 
         private static SourceIdentityTargets from(List<Map<String,Object>> aliases,
                                                   Map<Long,Map<String,CoverageSource>> coverage)
         {
             Map<SourceTargetKey,List<IdentityRange>> ranges = new LinkedHashMap<>();
+            Map<SourceTargetKey,Set<Long>> p25Subscribers = new LinkedHashMap<>();
 
             for(Map<String,Object> alias: aliases)
             {
-                IdentityRange range = identityRange(alias);
-
-                if(range == null || !isSupportedIdentity(alias))
+                if(!isSupportedIdentity(alias))
                 {
                     continue;
                 }
 
                 long aliasId = number(alias.get("alias_id"));
                 int kind = identityKindCode(alias);
+                Long p25SubscriberIdentityId = "P25_SUBSCRIBER_IDENTITY".equals(
+                    text(alias.get("matcher_type"))) ? nullableNumber(alias.get("p25_subscriber_identity_id")) : null;
+                IdentityRange range = identityRange(alias);
 
                 for(CoverageSource source: coverage.getOrDefault(aliasId, Map.of()).values())
                 {
@@ -3122,7 +3267,16 @@ final class StatsAliasCatalog
                         nullableNumber(alias.get("alias_list_id"));
                     SourceTargetKey key = new SourceTargetKey(source.trunked, source.numericId,
                         projectionAliasListId, kind);
-                    ranges.computeIfAbsent(key, ignored -> new ArrayList<>()).add(range);
+                    if(p25SubscriberIdentityId != null && p25SubscriberIdentityId > 0 && source.trunked &&
+                        source.protocolCode == 1)
+                    {
+                        p25Subscribers.computeIfAbsent(key, ignored -> new LinkedHashSet<>())
+                            .add(p25SubscriberIdentityId);
+                    }
+                    else if(range != null)
+                    {
+                        ranges.computeIfAbsent(key, ignored -> new ArrayList<>()).add(range);
+                    }
                 }
             }
 
@@ -3143,7 +3297,17 @@ final class StatsAliasCatalog
                 merged.put(entry.getKey(), result);
             }
 
-            return new SourceIdentityTargets(Map.copyOf(merged));
+            int canonicalCount = p25Subscribers.values().stream().mapToInt(Set::size).sum();
+            if(rangeCount + canonicalCount > MAX_SOURCE_TARGET_RANGES)
+            {
+                throw new StatsApiException(413,
+                    "Alias evidence exceeds the bounded source and identity-target limit");
+            }
+
+            Map<SourceTargetKey,Set<Long>> immutableP25Subscribers = new LinkedHashMap<>();
+            p25Subscribers.forEach((key, value) -> immutableP25Subscribers.put(key, Set.copyOf(value)));
+
+            return new SourceIdentityTargets(Map.copyOf(merged), Map.copyOf(immutableP25Subscribers));
         }
 
         private void appendCte(StringBuilder sql, List<Object> parameters, boolean trunked)
@@ -3184,16 +3348,59 @@ final class StatsAliasCatalog
             }
 
             sql.append(") ");
+            Set<SqlP25SubscriberTarget> p25Subscribers = new LinkedHashSet<>();
+            if(trunked)
+            {
+                for(Map.Entry<SourceTargetKey,Set<Long>> entry: mP25SubscriberIdentities.entrySet())
+                {
+                    if(entry.getKey().trunked())
+                    {
+                        for(Long p25SubscriberIdentityId: entry.getValue())
+                        {
+                            p25Subscribers.add(new SqlP25SubscriberTarget(entry.getKey().radioSystemId(),
+                                p25SubscriberIdentityId));
+                        }
+                    }
+                }
+            }
+
+            sql.append(", ").append(P25_SUBSCRIBER_CTE_NAME)
+                .append("(radio_system_id, p25_subscriber_identity_id) AS (");
+            if(p25Subscribers.isEmpty())
+            {
+                sql.append("SELECT NULL, NULL WHERE 0");
+            }
+            else
+            {
+                sql.append("VALUES ").append(String.join(",",
+                    java.util.Collections.nCopies(p25Subscribers.size(), "(?,?)")));
+                for(SqlP25SubscriberTarget target: p25Subscribers)
+                {
+                    parameters.add(target.radioSystemId());
+                    parameters.add(target.p25SubscriberIdentityId());
+                }
+            }
+            sql.append(") ");
         }
 
         private void appendPredicate(StringBuilder sql, String ownerColumn, String kindExpression,
-                                     String identityExpression)
+                                     String identityExpression, String p25SubscriberIdentityExpression)
         {
-            sql.append("EXISTS (SELECT 1 FROM ").append(CTE_NAME).append(" target WHERE target.radio_system_id = ")
+            sql.append("(EXISTS (SELECT 1 FROM ").append(CTE_NAME)
+                .append(" target WHERE target.radio_system_id = ")
                 .append(ownerColumn).append(" AND (target.identity_kind_code = ").append(kindExpression)
                 .append(" OR (target.identity_kind_code = 1 AND ").append(kindExpression)
                 .append(" = 3)) AND ").append(identityExpression)
-                .append(" BETWEEN target.minimum AND target.maximum) ");
+                .append(" BETWEEN target.minimum AND target.maximum)");
+            if(p25SubscriberIdentityExpression != null)
+            {
+                sql.append(" OR (").append(p25SubscriberIdentityExpression).append(" IS NOT NULL AND EXISTS ")
+                    .append("(SELECT 1 FROM ").append(P25_SUBSCRIBER_CTE_NAME)
+                    .append(" subscriber_target WHERE subscriber_target.radio_system_id = ")
+                    .append(ownerColumn).append(" AND subscriber_target.p25_subscriber_identity_id = ")
+                    .append(p25SubscriberIdentityExpression).append("))");
+            }
+            sql.append(") ");
         }
 
         private boolean matches(Map<String,Object> row, CoverageSource source)
@@ -3203,8 +3410,15 @@ final class StatsAliasCatalog
             long identity = number(row.get("identity_id"));
             Long projectionAliasListId = source.trunked && source.protocolCode == 1 ? null :
                 source.canonicalAliasListId;
-            List<IdentityRange> ranges = mRanges.getOrDefault(new SourceTargetKey(source.trunked,
-                source.numericId, projectionAliasListId, kind), List.of());
+            SourceTargetKey key = new SourceTargetKey(source.trunked, source.numericId,
+                projectionAliasListId, kind);
+            Long p25SubscriberIdentityId = nullableNumber(row.get("p25_subscriber_identity_id"));
+            if(p25SubscriberIdentityId != null && source.trunked && source.protocolCode == 1 &&
+                mP25SubscriberIdentities.getOrDefault(key, Set.of()).contains(p25SubscriberIdentityId))
+            {
+                return true;
+            }
+            List<IdentityRange> ranges = mRanges.getOrDefault(key, List.of());
             return ranges.stream().anyMatch(range -> identity >= range.minimum() && identity <= range.maximum());
         }
     }

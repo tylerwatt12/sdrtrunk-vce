@@ -34,7 +34,7 @@ public final class Format31TestDatabase
             }
             if(!DatabaseFormatCatalog.requireVersion(31).fingerprint().equals(
                 SqliteSchemaValidator.fingerprint(connection)) ||
-                DatabaseFormatCatalog.requireCurrent(connection).version() != 31)
+                DatabaseFormatCatalog.inspect(connection).version() != 31)
             {
                 throw new IllegalStateException("Global format 31 fixture signature mismatch");
             }

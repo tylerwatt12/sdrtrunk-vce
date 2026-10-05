@@ -77,7 +77,8 @@ public class UnitRegistrationResponseExtended extends MacStructure
             int wacn = getInt(SOURCE_SUID_WACN);
             int system = getInt(SOURCE_SUID_SYSTEM);
             int id = getInt(SOURCE_SUID_ID);
-            mTargetAddress = APCO25FullyQualifiedRadioIdentifier.createTo(address, wacn, system, id);
+            mTargetAddress = APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(address, wacn, system,
+                id);
         }
 
         return mTargetAddress;

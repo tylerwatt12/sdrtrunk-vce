@@ -200,7 +200,7 @@ public class MutableIdentifierCollection extends IdentifierCollection implements
             if(existing != null)
             {
                 //Always replace a radio identifier with a fully qualified variant of itself
-                if(!existing.equals(identifier) ||
+                if(shouldReplace(existing, identifier) ||
                         (existing instanceof RadioIdentifier &&
                         !(existing instanceof FullyQualifiedRadioIdentifier) &&
                         identifier instanceof FullyQualifiedRadioIdentifier &&
@@ -232,7 +232,7 @@ public class MutableIdentifierCollection extends IdentifierCollection implements
 
             if(existing != null)
             {
-                if(!existing.equals(identifier))
+                if(shouldReplace(existing, identifier))
                 {
                     silentRemove(existing);
                     silentAdd(identifier);
@@ -243,6 +243,29 @@ public class MutableIdentifierCollection extends IdentifierCollection implements
                 silentAdd(identifier);
             }
         }
+    }
+
+    /**
+     * Preserves canonical fully-qualified radio equality while allowing a newly observed explicit working address to
+     * enrich or replace the collection's current observation.  An identity-only identifier does not erase a confirmed
+     * working address because its missing field means "not carried by this message", not "assignment removed".
+     */
+    private static boolean shouldReplace(Identifier existing, Identifier candidate)
+    {
+        if(!existing.equals(candidate))
+        {
+            return true;
+        }
+
+        if(existing instanceof FullyQualifiedRadioIdentifier existingRadio &&
+            candidate instanceof FullyQualifiedRadioIdentifier candidateRadio)
+        {
+            Integer candidateWorkingAddress = candidateRadio.getWorkingAddress();
+            return candidateWorkingAddress != null &&
+                !candidateWorkingAddress.equals(existingRadio.getWorkingAddress());
+        }
+
+        return false;
     }
 
     /**

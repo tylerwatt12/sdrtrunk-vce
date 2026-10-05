@@ -142,6 +142,19 @@ final class ReceiverActivityRetention
             )
             """));
 
+        tasks.add(sql("P25 WUID assignment observations", false, """
+            DELETE FROM p25_wuid_assignment_observation_summary
+            WHERE (radio_system_id, working_id, p25_subscriber_identity_id) IN (
+                SELECT observation.radio_system_id, observation.working_id,
+                    observation.p25_subscriber_identity_id
+                FROM p25_wuid_assignment_observation_summary observation
+                    INDEXED BY idx_p25_wuid_assignment_observation_retention
+                WHERE observation.last_observed_ms < ?
+                ORDER BY observation.last_observed_ms, observation.radio_system_id,
+                    observation.working_id, observation.p25_subscriber_identity_id
+                LIMIT ?
+            )
+            """));
         tasks.add(tuple("radio affiliations", false, "trunked_radio_affiliation",
             "idx_trunked_radio_affiliation_retention", "confirmed_at_ms",
             "radio_system_id, radio_identity_id"));
@@ -185,7 +198,25 @@ final class ReceiverActivityRetention
                   AND NOT EXISTS (SELECT 1 FROM activity_event_identity_member child
                       WHERE child.radio_system_id = identity.radio_system_id
                         AND child.identity_summary_id = identity.id)
+                  AND NOT EXISTS (SELECT 1 FROM p25_wuid_assignment_observation_summary assignment
+                      WHERE assignment.radio_system_id = identity.radio_system_id
+                        AND assignment.p25_subscriber_identity_id = identity.p25_subscriber_identity_id)
                 ORDER BY identity.last_seen_ms, identity.radio_system_id, identity.id
+                LIMIT ?
+            )
+            """));
+        tasks.add(sqlWithoutCutoff("unused canonical P25 subscribers", """
+            DELETE FROM p25_subscriber_identity
+            WHERE id IN (
+                SELECT subscriber.id
+                FROM p25_subscriber_identity subscriber
+                WHERE NOT EXISTS (SELECT 1 FROM radio_system_identity_summary identity
+                    WHERE identity.p25_subscriber_identity_id=subscriber.id)
+                  AND NOT EXISTS (SELECT 1 FROM p25_wuid_assignment_observation_summary history
+                    WHERE history.p25_subscriber_identity_id=subscriber.id)
+                  AND NOT EXISTS (SELECT 1 FROM alias_p25_subscriber_identity alias_identity
+                    WHERE alias_identity.p25_subscriber_identity_id=subscriber.id)
+                ORDER BY subscriber.id
                 LIMIT ?
             )
             """));
@@ -230,6 +261,8 @@ final class ReceiverActivityRetention
                   AND NOT EXISTS (SELECT 1 FROM trunked_radio_affiliation WHERE radio_system_id = system.id)
                   AND NOT EXISTS (SELECT 1 FROM trunked_radio_channel_presence WHERE radio_system_id = system.id)
                   AND NOT EXISTS (SELECT 1 FROM trunked_radio_channel_presence_clear WHERE radio_system_id = system.id)
+                  AND NOT EXISTS (SELECT 1 FROM p25_wuid_assignment_observation_summary
+                      WHERE radio_system_id = system.id)
                   AND NOT EXISTS (SELECT 1 FROM trunked_logical_call_bucket WHERE radio_system_id = system.id)
                   AND NOT EXISTS (SELECT 1 FROM trunked_logical_call_identity_bucket WHERE radio_system_id = system.id)
                   AND NOT EXISTS (SELECT 1 FROM receiver_activity_event WHERE radio_system_id = system.id)

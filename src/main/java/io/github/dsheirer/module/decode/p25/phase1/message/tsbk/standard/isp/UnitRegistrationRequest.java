@@ -27,7 +27,7 @@ import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
-import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DataUnitID;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.ISPMessage;
 import io.github.dsheirer.module.decode.p25.reference.Capability;
@@ -95,7 +95,7 @@ public class UnitRegistrationRequest extends ISPMessage
     {
         if(mWACN == null)
         {
-            mWACN = APCO25Wacn.create(getMessage().getInt(WACN));
+            mWACN = APCO25Wacn.create(getWacnValue());
         }
 
         return mWACN;
@@ -105,17 +105,29 @@ public class UnitRegistrationRequest extends ISPMessage
     {
         if(mSystem == null)
         {
-            mSystem = APCO25System.create(getMessage().getInt(SYSTEM));
+            mSystem = APCO25System.create(getSystemValue());
         }
 
         return mSystem;
+    }
+
+    public int getWacnValue()
+    {
+        return getMessage().getInt(WACN);
+    }
+
+    public int getSystemValue()
+    {
+        return getMessage().getInt(SYSTEM);
     }
 
     public Identifier getSourceAddress()
     {
         if(mSourceAddress == null)
         {
-            mSourceAddress = APCO25RadioIdentifier.createFrom(getMessage().getInt(SOURCE_ID));
+            int subscriberId = getMessage().getInt(SOURCE_ID);
+            mSourceAddress = APCO25FullyQualifiedRadioIdentifier.createFrom(subscriberId, getWacnValue(),
+                getSystemValue(), subscriberId);
         }
 
         return mSourceAddress;
@@ -127,8 +139,6 @@ public class UnitRegistrationRequest extends ISPMessage
         if(mIdentifiers == null)
         {
             mIdentifiers = new ArrayList<>();
-            mIdentifiers.add(getWACN());
-            mIdentifiers.add(getSystem());
             mIdentifiers.add(getSourceAddress());
         }
 

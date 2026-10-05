@@ -34,7 +34,9 @@ import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentif
 import io.github.dsheirer.identifier.configuration.SiteConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier;
 import io.github.dsheirer.identifier.decoder.DecoderLogicalChannelNameIdentifier;
+import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.application.ApplicationInfo;
+import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.Charset;
@@ -96,7 +98,7 @@ public class AudioMetadataUtils
             if(to != null)
             {
                 sb = new StringBuilder();
-                sb.append(to.toString().replace("ISSI ", ""));
+                sb.append(formatRadioIdentity(to));
 
                 List<Alias> toAliases = aliasList.getAliases(to);
 
@@ -112,7 +114,7 @@ public class AudioMetadataUtils
             if(from != null)
             {
                 sb = new StringBuilder();
-                sb.append(from.toString().replace("ISSI ", "").replace("ROAM ", ""));
+                sb.append(formatRadioIdentity(from));
 
                 List<Alias> fromAliases = aliasList.getAliases(from);
 
@@ -176,6 +178,29 @@ public class AudioMetadataUtils
         audioMetadata.put(AudioMetadata.COMMENTS, comments.toString());
 
         return audioMetadata;
+    }
+
+    /**
+     * Formats a fully qualified P25 subscriber as its canonical identity.  A temporary working ID is useful
+     * observation context, but is not the subscriber identity and is therefore labeled separately.
+     */
+    private static String formatRadioIdentity(Identifier identifier)
+    {
+        if(identifier instanceof FullyQualifiedRadioIdentifier fullyQualified)
+        {
+            String canonical = fullyQualified.getFullyQualifiedRadioAddress();
+            Integer workingAddress = fullyQualified.getWorkingAddress();
+
+            if(workingAddress != null && workingAddress > 0 &&
+                workingAddress <= RadioSystemIdentityKey.MAX_P25_WORKING_UNIT_ID)
+            {
+                return canonical + " (Working ID " + workingAddress + ")";
+            }
+
+            return canonical;
+        }
+
+        return identifier.toString();
     }
 
 

@@ -167,6 +167,40 @@ class AliasTransferExportTest
     }
 
     @Test
+    void preservesCanonicalP25SubscriberHexFieldsAcrossRoundTrip() throws Exception
+    {
+        Map<String,Object> source = row(42);
+        source.put("matcher_type", "P25_SUBSCRIBER_IDENTITY");
+        source.put("protocol", null);
+        source.put("value", null);
+        source.put("home_wacn", 0xBEE00L);
+        source.put("home_system_id", 0x348L);
+        source.put("subscriber_id", 9_601_699L);
+        AliasTransferExport.Prepared export = AliasTransferExport.prepare(mTemporaryFolder, 17, false,
+            consumer -> consumer.accept(List.of(source)));
+
+        try
+        {
+            Map<String,String> exported = AliasTransferExport.configurationRow(source);
+            assertEquals("BEE00", exported.get("home_wacn"));
+            assertEquals("348", exported.get("home_system_id"));
+            assertEquals("9601699", exported.get("subscriber_id"));
+
+            var inputs = AliasTransferCsv.read(Files.newBufferedReader(export.path(), StandardCharsets.UTF_8),
+                AliasTransferCsv.Format.VCE,
+                new io.github.dsheirer.alias.AliasListDefinition("Destination",
+                    io.github.dsheirer.alias.AliasListFamily.P25));
+            var input = inputs.getFirst();
+            assertEquals(exported, AliasTransferCsv.fields(input.alias(), input.sourceAliasList(),
+                input.scanLists(), input.streams()));
+        }
+        finally
+        {
+            export.close();
+        }
+    }
+
+    @Test
     void duplicateMatchersArePreservedAndSourceFailuresLeaveNoPartialDownload() throws Exception
     {
         AliasTransferExport.Prepared duplicate = AliasTransferExport.prepare(mTemporaryFolder, 17, false,

@@ -80,10 +80,11 @@ class P25AffiliationSemanticsTest
     void rejectsReservedOrdinaryIdentifiers()
     {
         P25AffiliationEvent invalidRadio = new P25AffiliationEvent(DecodeEventType.RESPONSE, 1_000L,
-            P25AffiliationEvent.Outcome.ACCEPTED, APCO25RadioIdentifier.createFrom(0),
+            P25AffiliationEvent.Outcome.ACCEPTED, null, APCO25RadioIdentifier.createFrom(0),
             APCO25Talkgroup.create(101));
         P25AffiliationEvent invalidGroup = new P25AffiliationEvent(DecodeEventType.RESPONSE, 1_000L,
-            P25AffiliationEvent.Outcome.ACCEPTED, APCO25RadioIdentifier.createFrom(1_201),
+            P25AffiliationEvent.Outcome.ACCEPTED,
+            P25RadioPresence.from(APCO25RadioIdentifier.createFrom(1_201), 1_201), APCO25RadioIdentifier.createFrom(1_201),
             APCO25Talkgroup.create(0));
 
         assertEquals(P25AffiliationSemantics.Kind.IGNORED,
@@ -97,6 +98,7 @@ class P25AffiliationSemanticsTest
     {
         P25AffiliationEvent event = new P25AffiliationEvent(DecodeEventType.RESPONSE, 1_000L,
             P25AffiliationEvent.Outcome.ACCEPTED,
+            P25RadioPresence.from(APCO25FullyQualifiedRadioIdentifier.createFrom(0, 0xABCDE, 0x123, 1_201), null),
             APCO25FullyQualifiedRadioIdentifier.createFrom(0, 0xABCDE, 0x123, 1_201),
             APCO25FullyQualifiedTalkgroupIdentifier.createTo(0, 0xABCDE, 0x123, 101));
 
@@ -114,7 +116,8 @@ class P25AffiliationSemanticsTest
     private static P25AffiliationEvent event(DecodeEventType eventType, P25AffiliationEvent.Outcome outcome,
                                              boolean withGroup)
     {
-        return new P25AffiliationEvent(eventType, 1_000L, outcome, APCO25RadioIdentifier.createFrom(1_201),
+        return new P25AffiliationEvent(eventType, 1_000L, outcome,
+            P25RadioPresence.from(APCO25RadioIdentifier.createFrom(1_201), 1_201), APCO25RadioIdentifier.createFrom(1_201),
             withGroup ? APCO25Talkgroup.create(101) : null);
     }
 }

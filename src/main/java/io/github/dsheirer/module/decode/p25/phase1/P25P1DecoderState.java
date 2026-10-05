@@ -41,6 +41,7 @@ import io.github.dsheirer.identifier.decoder.DecoderLogicalChannelNameIdentifier
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupManager;
 import io.github.dsheirer.identifier.patch.PatchGroupPreLoadDataContent;
+import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.message.TimeslotMessage;
@@ -62,7 +63,9 @@ import io.github.dsheirer.module.decode.p25.P25DecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25FrequencyBandValidator;
 import io.github.dsheirer.module.decode.p25.P25SignalingEvent;
 import io.github.dsheirer.module.decode.p25.P25SignalingSemantics;
+import io.github.dsheirer.module.decode.p25.P25RadioPresence;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
+import io.github.dsheirer.module.decode.p25.P25WuidAssignmentRegistry;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshotProvider;
@@ -364,6 +367,10 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             //The standard control-channel message processor is the sole NAC authority. Any message reaching this
             //state has already passed that gate; traffic and conventional decoders retain their normal NAC behavior.
             getIdentifierCollection().update(message.getNAC());
+            if(isTrunkedControlChannel() && message.isValid())
+            {
+                mTrafficChannelManager.observeControlSource(message.getTimestamp());
+            }
 
             switch(message.getDUID())
             {
@@ -467,11 +474,11 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     {
         mNetworkConfigurationStabilizer.observe(observation, timestamp);
 
-        if(isTrunkedControlChannel() && observation != null &&
-            (observation.network() != null || observation.currentSite() != null))
+        if(isTrunkedControlChannel() && observation != null)
         {
             mTrafficChannelManager.processNetworkConfigurationIdentity(
-                mNetworkConfigurationStabilizer.getStableSiteIdentity());
+                mNetworkConfigurationStabilizer.getStableSiteIdentity(),
+                observation.siteStatus() != null ? observation.siteStatus().wuidLeaseMinutes() : null, timestamp);
         }
 
         publishSiteMetadata(timestamp);
@@ -555,7 +562,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
         if(isTrunkedControlChannel() && isResolvedChannel(channel))
         {
             MutableIdentifierCollection mic = getMutableIdentifierCollection(identifiers, timestamp);
-            mTrafficChannelManager.getTalkerAliasManager().enrichMutable(mic);
+            mTrafficChannelManager.enrichMutableIdentifiers(mic, timestamp);
             mTrafficChannelManager.processP1ControlDirectedChannelGrant(channel, serviceOptions, mic, opcode, timestamp);
         }
     }
@@ -577,7 +584,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
         }
 
         MutableIdentifierCollection mic = getMutableIdentifierCollection(identifiers, timestamp);
-        mTrafficChannelManager.getTalkerAliasManager().enrichMutable(mic);
+        mTrafficChannelManager.enrichMutableIdentifiers(mic, timestamp);
         mTrafficChannelManager.processP1ControlAnnouncedTrafficUpdate(channel, serviceOptions, mic, opcode, timestamp);
     }
 
@@ -626,7 +633,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             serviceOptions = VoiceServiceOptions.createUnencrypted();
         }
 
-        mTrafficChannelManager.getTalkerAliasManager().enrichMutable(getIdentifierCollection());
+        mTrafficChannelManager.enrichMutableIdentifiers(getIdentifierCollection(), timestamp);
         MutableIdentifierCollection mic = getMutableIdentifierCollection(getIdentifierCollection().getIdentifiers(), timestamp);
         mTrafficChannelManager.processP1TrafficCurrentUser(getCurrentFrequency(), getCurrentChannel(), decodeEventType,
                 serviceOptions, mic, timestamp, null);
@@ -674,7 +681,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     {
         MutableIdentifierCollection mic = getMutableIdentifierCollection(identifiers, timestamp);
 
-        mTrafficChannelManager.getTalkerAliasManager().enrichMutable(mic);
+        mTrafficChannelManager.enrichMutableIdentifiers(mic, timestamp);
 
         broadcast(P25DecodeEvent.builder(decodeEventType, timestamp)
                 .channel(getCurrentChannel())
@@ -687,7 +694,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     {
         MutableIdentifierCollection identifiers = getMutableIdentifierCollection(message.getIdentifiers(),
             message.getTimestamp());
-        mTrafficChannelManager.getTalkerAliasManager().enrichMutable(identifiers);
+        mTrafficChannelManager.enrichMutableIdentifiers(identifiers, message.getTimestamp());
         P25SignalingEvent event = new P25SignalingEvent(DecodeEventType.RESPONSE, message.getTimestamp(),
             P25SignalingSemantics.Action.BUSY);
         event.setChannelDescriptor(getCurrentChannel());
@@ -698,15 +705,29 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
 
     private void broadcastAffiliation(List<Identifier> identifiers, long timestamp, DecodeEventType eventType,
                                       String details, P25AffiliationEvent.Outcome outcome, Identifier<?> radio,
-                                      Identifier<?> talkgroup)
+                                      Integer explicitWorkingId, Identifier<?> talkgroup)
     {
+        P25RadioPresence presence = P25RadioPresence.from(radio, explicitWorkingId);
+        P25WuidAssignmentRegistry.AssignmentObservation assignmentObservation =
+            mTrafficChannelManager.processP25RadioPresence(outcome, eventType, presence, timestamp);
         MutableIdentifierCollection mic = getMutableIdentifierCollection(identifiers, timestamp);
-        mTrafficChannelManager.getTalkerAliasManager().enrichMutable(mic);
-        P25AffiliationEvent event = new P25AffiliationEvent(eventType, timestamp, outcome, radio, talkgroup);
+        mTrafficChannelManager.enrichMutableIdentifiers(mic, timestamp);
+        P25AffiliationEvent event = new P25AffiliationEvent(eventType, timestamp, outcome, presence,
+            assignmentObservation, radio, talkgroup);
         event.setChannelDescriptor(getCurrentChannel());
         event.setDetails(details);
         event.setIdentifierCollection(mic);
         broadcast(event);
+    }
+
+    private static Integer explicitWorkingId(Identifier<?> radio)
+    {
+        if(radio instanceof FullyQualifiedRadioIdentifier fullyQualified)
+        {
+            return fullyQualified.getWorkingAddress();
+        }
+
+        return radio != null && radio.getValue() instanceof Number number ? number.intValue() : null;
     }
 
     /**
@@ -756,7 +777,8 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     {
                         broadcastAffiliation(ambtc.getIdentifiers(), ambtc.getTimestamp(), DecodeEventType.REQUEST,
                             GROUP_AFFILIATION_LABEL, P25AffiliationEvent.Outcome.REQUESTED,
-                            request.getSourceAddress(), request.getGroupId());
+                            request.getSourceAddress(), explicitWorkingId(request.getSourceAddress()),
+                            request.getGroupId());
                     }
                     break;
                 case ISP_INDIVIDUAL_DATA_SERVICE_REQUEST:
@@ -895,7 +917,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
 
                         broadcastAffiliation(ambtc.getIdentifiers(), ambtc.getTimestamp(), DecodeEventType.RESPONSE,
                             details.toString(), P25AffiliationEvent.Outcome.from(response),
-                            gar.getTargetAddress(), gar.getGroupAddress());
+                            gar.getTargetAddress(), explicitWorkingId(gar.getTargetAddress()), gar.getGroupAddress());
                     }
                     break;
                 case OSP_MESSAGE_UPDATE:
@@ -931,7 +953,8 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     {
                         broadcastAffiliation(ambtc.getIdentifiers(), ambtc.getTimestamp(), DecodeEventType.REGISTER,
                             urr.getResponse() + " UNIT REGISTRATION",
-                            P25AffiliationEvent.Outcome.from(urr.getResponse()), urr.getRegistrationAddress(), null);
+                            P25AffiliationEvent.Outcome.from(urr.getResponse()), urr.getRegistrationAddress(),
+                            explicitWorkingId(urr.getRegistrationAddress()), null);
                     }
                     break;
                 case OSP_IDENTIFIER_UPDATE_TDMA:
@@ -1611,7 +1634,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     {
                         broadcastAffiliation(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.DEREGISTER,
                             "ACKNOWLEDGE UNIT DE-REGISTRATION", P25AffiliationEvent.Outcome.CLEARED,
-                            acknowledge.getTargetAddress(), null);
+                            acknowledge.getTargetAddress(), null, null);
                     }
                     break;
                 case OSP_ROAMING_ADDRESS_COMMAND:
@@ -1757,7 +1780,8 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     {
                         broadcastAffiliation(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.REQUEST,
                             GROUP_AFFILIATION_LABEL, P25AffiliationEvent.Outcome.REQUESTED,
-                            request.getSourceAddress(), request.getGroupAddress());
+                            request.getSourceAddress(), explicitWorkingId(request.getSourceAddress()),
+                            request.getGroupAddress());
                     }
                     break;
                 case ISP_GROUP_AFFILIATION_QUERY_RESPONSE:
@@ -1766,15 +1790,16 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                         broadcastAffiliation(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.RESPONSE,
                             "AFFILIATION - GROUP:" + gaqr.getGroupAddress() + ANNOUNCEMENT_GROUP_LABEL +
                                 gaqr.getAnnouncementGroupAddress(), P25AffiliationEvent.Outcome.CONFIRMED,
-                            gaqr.getSourceAddress(), gaqr.getGroupAddress());
+                            gaqr.getSourceAddress(), explicitWorkingId(gaqr.getSourceAddress()),
+                            gaqr.getGroupAddress());
                     }
                     break;
                 case ISP_UNIT_DE_REGISTRATION_REQUEST:
                     if(tsbk instanceof UnitDeRegistrationRequest request)
                     {
                         broadcastAffiliation(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.DEREGISTER,
-                            "UNIT DE-REGISTRATION REQUEST", P25AffiliationEvent.Outcome.CLEARED,
-                            request.getSourceAddress(), null);
+                            "UNIT DE-REGISTRATION REQUEST", P25AffiliationEvent.Outcome.REQUESTED,
+                            request.getSourceAddress(), null, null);
                     }
                     break;
                 case ISP_UNIT_REGISTRATION_REQUEST:
@@ -1955,7 +1980,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             Identifier registeredRadio = urr.getRegisteredRadio(mNetworkConfigurationStabilizer.getStableNetworkWacn());
             broadcastAffiliation(List.of(registeredRadio), tsbk.getTimestamp(), DecodeEventType.REGISTER,
                 urr.getResponse() + " UNIT REGISTRATION - UNIT ID:" + registeredRadio,
-                P25AffiliationEvent.Outcome.from(urr.getResponse()), registeredRadio, null);
+                P25AffiliationEvent.Outcome.from(urr.getResponse()), registeredRadio, urr.getSourceAddress(), null);
         }
     }
 
@@ -1966,7 +1991,8 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             Response response = lrr.getResponse();
             broadcastAffiliation(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.REGISTER,
                 response + " LOCATION REGISTRATION - GROUP:" + lrr.getGroupAddress(),
-                P25AffiliationEvent.Outcome.from(response), lrr.getTargetAddress(), lrr.getGroupAddress());
+                P25AffiliationEvent.Outcome.from(response), lrr.getTargetAddress(),
+                explicitWorkingId(lrr.getTargetAddress()), lrr.getGroupAddress());
         }
     }
 
@@ -1979,7 +2005,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 response + " AFFILIATION GROUP: " + gar.getGroupAddress() +
                 (gar.isGlobalAffiliation() ? " (GLOBAL)" : " (LOCAL)") + ANNOUNCEMENT_GROUP_LABEL +
                     gar.getAnnouncementGroupAddress(), P25AffiliationEvent.Outcome.from(response),
-                gar.getTargetAddress(), gar.getGroupAddress());
+                gar.getTargetAddress(), explicitWorkingId(gar.getTargetAddress()), gar.getGroupAddress());
         }
     }
 

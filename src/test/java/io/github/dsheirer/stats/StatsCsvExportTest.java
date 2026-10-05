@@ -81,17 +81,63 @@ class StatsCsvExportTest
                 Map.entry("radio_system_key", "p25:bee00:348"), Map.entry("wacn", 0xBEE00),
                 Map.entry("system_id", 0x348), Map.entry("identity_key", "v1-r-bee00-348-42"),
                 Map.entry("native_id", 42), Map.entry("last_talker_alias", "Engine 4"),
+                Map.entry("canonical_wacn", 0xBEE00), Map.entry("canonical_system_id", 0x348),
+                Map.entry("canonical_subscriber_id", 9_601_699),
                 Map.entry("alias_name", "Portable 42"), Map.entry("logical_call_count", 12),
                 Map.entry("encrypted_logical_call_count", 2), Map.entry("last_talker_alias_seen_ms", 2_000))));
 
         CSVRecord row = firstRecord(export);
         assertEquals("42", row.get("native_id"));
+        assertEquals("BEE00.348.9601699", row.get("canonical_identity"));
+        assertEquals("BEE00", row.get("canonical_wacn_hex"));
+        assertEquals("781824", row.get("canonical_wacn"));
+        assertEquals("348", row.get("canonical_system_id_hex"));
+        assertEquals("840", row.get("canonical_system_id"));
+        assertEquals("9601699", row.get("canonical_subscriber_id"));
         assertEquals("Engine 4", row.get("talker_alias"));
         assertEquals("Portable 42", row.get("alias"));
         assertEquals("12", row.get("logical_calls"));
         assertEquals("2", row.get("encrypted_logical_calls"));
         assertEquals("1970-01-01T00:00:02Z", row.get("talker_alias_seen_utc"));
         assertFalse(row.isMapped("affiliated_talkgroup_id"));
+    }
+
+    @Test
+    void exportsCanonicalP25SubscriberComponentsWithoutReplacingWorkingIds() throws Exception
+    {
+        Map<String,Object> canonical = Map.ofEntries(
+            Map.entry("protocol", "P25"), Map.entry("protocol_code", 1),
+            Map.entry("system_name", "County"), Map.entry("radio_system_key", "p25:bee00:348"),
+            Map.entry("wacn", 0xBEE00), Map.entry("system_id", 0x348),
+            Map.entry("identity_key", "v1-r-bee00-348-130001"), Map.entry("native_id", 130_001),
+            Map.entry("observed_local_id", 130_001), Map.entry("observed_working_id", 130_001),
+            Map.entry("working_subscriber_id", 130_001), Map.entry("canonical_wacn", 0xBEE00),
+            Map.entry("canonical_system_id", 0x348), Map.entry("canonical_subscriber_id", 9_601_699));
+
+        CSVRecord systemRadio = firstRecord(StatsCsvExport.create("radio-system-radios", "County",
+            List.of(canonical)));
+        assertEquals("130001", systemRadio.get("native_id"));
+        assertEquals("BEE00.348.9601699", systemRadio.get("canonical_identity"));
+        assertEquals("BEE00", systemRadio.get("canonical_wacn_hex"));
+        assertEquals("781824", systemRadio.get("canonical_wacn"));
+        assertEquals("348", systemRadio.get("canonical_system_id_hex"));
+        assertEquals("840", systemRadio.get("canonical_system_id"));
+        assertEquals("9601699", systemRadio.get("canonical_subscriber_id"));
+        assertEquals("130001", systemRadio.get("working_subscriber_id"));
+
+        CSVRecord channelRadio = firstRecord(StatsCsvExport.create("channel-radios", "County",
+            List.of(canonical)));
+        assertEquals("130001", channelRadio.get("native_id"));
+        assertEquals("", channelRadio.get("observed_local_id"),
+            "legacy local-ID storage is not exported as working-address evidence for canonical subscribers");
+        assertEquals("130001", channelRadio.get("observed_working_id"));
+        assertEquals("BEE00.348.9601699", channelRadio.get("canonical_identity"));
+
+        CSVRecord legacy = firstRecord(StatsCsvExport.create("radio-system-radios", "County",
+            List.of(Map.of("protocol", "P25", "native_id", 1201))));
+        assertEquals("1201", legacy.get("native_id"));
+        assertEquals("", legacy.get("canonical_identity"));
+        assertEquals("", legacy.get("canonical_subscriber_id"));
     }
 
     @Test

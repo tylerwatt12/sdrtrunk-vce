@@ -16,12 +16,14 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.WeakHashMap;
 
 /**
  * Prospective Alias Activity projection.  It runs only in the statistics database writer transaction and credits
@@ -53,6 +55,8 @@ final class AliasActivityProjection
         ReceiverActivityRecords.Action.REQUEST, ReceiverActivityRecords.Action.STATUS,
         ReceiverActivityRecords.Action.CONTINUE,
         ReceiverActivityRecords.Action.UNKNOWN);
+    private static final Map<Connection,CanonicalSchemaSupport> CANONICAL_SCHEMA_SUPPORT =
+        Collections.synchronizedMap(new WeakHashMap<>());
 
     private AliasActivityProjection()
     {
@@ -67,7 +71,7 @@ final class AliasActivityProjection
         }
 
         int protocol = protocolCode(activity.protocol());
-        Resolver resolver = new Resolver(connection, protocol);
+        Resolver resolver = new Resolver(connection, protocol, activity.observedAtEpochMilliseconds());
         Map<Long,Delta> deltas = new LinkedHashMap<>();
 
         if(activity.receiverKind() == ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE)
@@ -75,7 +79,8 @@ final class AliasActivityProjection
             Delta signal = Delta.signal(activity.action(), protocol == 1);
             int targetKind = "RADIO".equals(activity.targetKind()) ? RADIO : TALKGROUP;
             addResolved(deltas, resolver.resolve(activity.configurationId(), targetKind,
-                positive(activity.targetId())), signal);
+                positive(activity.targetId()), activity.p25TargetIdentity(),
+                activity.targetObservedWorkingId()), signal);
 
             if("PATCH_GROUP".equals(activity.targetKind()))
             {
@@ -88,7 +93,8 @@ final class AliasActivityProjection
             if(!sameCanonicalRadioIdentity(activity, protocol))
             {
                 addResolved(deltas, resolver.resolve(activity.configurationId(), RADIO,
-                    positive(activity.sourceRadioId())), signal);
+                    positive(activity.sourceRadioId()), activity.p25SourceIdentity(),
+                    activity.sourceObservedWorkingId()), signal);
             }
         }
         else if(activity.countedCall())
@@ -96,7 +102,8 @@ final class AliasActivityProjection
             Delta call = Delta.call(activity.encrypted(), false, false);
             int targetKind = "RADIO".equals(activity.targetKind()) ? RADIO : TALKGROUP;
             addResolved(deltas, resolver.resolve(activity.configurationId(), targetKind,
-                positive(activity.targetId())), call);
+                positive(activity.targetId()), activity.p25TargetIdentity(),
+                activity.targetObservedWorkingId()), call);
             if("PATCH_GROUP".equals(activity.targetKind()))
             {
                 for(Integer member: activity.patchMemberTalkgroupIds())
@@ -108,7 +115,8 @@ final class AliasActivityProjection
             if(!sameCanonicalRadioIdentity(activity, protocol))
             {
                 addResolved(deltas, resolver.resolve(activity.configurationId(), RADIO,
-                    positive(activity.sourceRadioId())), call);
+                    positive(activity.sourceRadioId()), activity.p25SourceIdentity(),
+                    activity.sourceObservedWorkingId()), call);
             }
         }
 
@@ -136,17 +144,19 @@ final class AliasActivityProjection
         throws SQLException
     {
         int protocol = protocolCode(output.protocol());
-        Resolver resolver = new Resolver(connection, protocol);
+        Resolver resolver = new Resolver(connection, protocol, output.callStartEpochMilliseconds());
         Map<Long,Delta> deltas = new LinkedHashMap<>();
         Delta delta = output.output() == ReceiverActivityRecords.CallOutput.RECORDED ?
             Delta.recorded(false, false) : Delta.streamed(false, false);
         if(!sameConventionalRadioIdentity(output))
         {
-            addResolved(deltas, resolver.resolve(output.configurationId(), RADIO, output.sourceRadioId()), delta);
+            addResolved(deltas, resolver.resolve(output.configurationId(), RADIO, output.sourceRadioId(),
+                output.p25SourceIdentity(), output.sourceObservedWorkingId()), delta);
         }
         int targetKind = "RADIO".equals(output.targetKind()) ? RADIO : TALKGROUP;
         addResolved(deltas, resolver.resolve(output.configurationId(), targetKind,
-            positive(output.destinationId())), delta);
+            positive(output.destinationId()), output.p25TargetIdentity(),
+            output.targetObservedWorkingId()), delta);
         if("PATCH_GROUP".equals(output.targetKind()))
         {
             for(Integer member: output.patchMemberTalkgroupIds())
@@ -159,8 +169,19 @@ final class AliasActivityProjection
 
     private static boolean sameConventionalRadioIdentity(ReceiverActivityRecords.ConventionalCallOutput output)
     {
-        return "RADIO".equals(output.targetKind()) && output.sourceRadioId() != null &&
-            output.sourceRadioId() > 0 && output.destinationId() > 0 &&
+        if(!"RADIO".equals(output.targetKind()))
+        {
+            return false;
+        }
+
+        CanonicalP25Identity source = canonicalP25Identity(output.p25SourceIdentity());
+        CanonicalP25Identity destination = canonicalP25Identity(output.p25TargetIdentity());
+        if(source != null || destination != null)
+        {
+            return source != null && source.equals(destination);
+        }
+
+        return output.sourceRadioId() != null && output.sourceRadioId() > 0 && output.destinationId() > 0 &&
             output.sourceRadioId() == output.destinationId();
     }
 
@@ -168,7 +189,7 @@ final class AliasActivityProjection
         throws SQLException
     {
         int protocol = 3;
-        Resolver resolver = new Resolver(connection, protocol);
+        Resolver resolver = new Resolver(connection, protocol, call.callStartEpochMilliseconds());
         Map<Long,Delta> deltas = new LinkedHashMap<>();
         Delta delta = Delta.call(call.encrypted(), false, false);
         if(call.targetKind() != ReceiverActivityRecords.DmrTargetKind.PRIVATE || call.sourceRadioId() == null ||
@@ -191,7 +212,7 @@ final class AliasActivityProjection
         throws SQLException
     {
         int protocol = 4;
-        Resolver resolver = new Resolver(connection, protocol);
+        Resolver resolver = new Resolver(connection, protocol, call.callStartEpochMilliseconds());
         Map<Long,Delta> deltas = new LinkedHashMap<>();
         Delta delta = Delta.call(call.encrypted(), false, false);
         if(call.targetKind() != ReceiverActivityRecords.NxdnTargetKind.PRIVATE || call.sourceRadioId() == null ||
@@ -215,7 +236,7 @@ final class AliasActivityProjection
         throws SQLException
     {
         int protocol = protocolCode(attribution.protocol());
-        Resolver resolver = new Resolver(connection, protocol);
+        Resolver resolver = new Resolver(connection, protocol, attribution.callStartEpochMilliseconds());
         Map<Long,Delta> deltas = new LinkedHashMap<>();
         Delta touch = Delta.touch(true, protocol == 1);
         if(attribution.sourceBecameKnown())
@@ -243,7 +264,8 @@ final class AliasActivityProjection
     private static void projectLogicalCall(Connection connection, ReceiverActivityRecords.ResolvedLogicalCall call,
                                            Delta delta) throws SQLException
     {
-        Resolver resolver = new Resolver(connection, protocolCode(call.protocol()));
+        Resolver resolver = new Resolver(connection, protocolCode(call.protocol()),
+            call.callStartEpochMilliseconds());
         Map<Long,Delta> deltas = new LinkedHashMap<>();
         int protocol = protocolCode(call.protocol());
         List<ReceiverActivityRecords.P25SiteCallObservation> compatibleSiteObservations =
@@ -264,20 +286,22 @@ final class AliasActivityProjection
 
         if(protocol == 1 && !compatibleSiteObservations.isEmpty())
         {
-            List<LocalIdentity> sources = new ArrayList<>();
-            List<LocalIdentity> targets = new ArrayList<>();
+            List<P25ObservedIdentity> sources = new ArrayList<>();
+            List<P25ObservedIdentity> targets = new ArrayList<>();
             Map<String,List<LocalIdentity>> patchMembers = new LinkedHashMap<>();
             for(ReceiverActivityRecords.P25SiteCallObservation observation: compatibleSiteObservations)
             {
                 if(positive(observation.sourceObservedLocalId()) != null)
                 {
-                    sources.add(new LocalIdentity(observation.configurationId(),
-                        observation.sourceObservedLocalId()));
+                    sources.add(new P25ObservedIdentity(observation.configurationId(),
+                        observation.sourceObservedLocalId(), observation.p25SourceIdentity(),
+                        observation.sourceObservedWorkingId()));
                 }
                 if(positive(observation.targetObservedLocalId()) != null)
                 {
-                    targets.add(new LocalIdentity(observation.configurationId(),
-                        observation.targetObservedLocalId()));
+                    targets.add(new P25ObservedIdentity(observation.configurationId(),
+                        observation.targetObservedLocalId(), observation.p25TargetIdentity(),
+                        observation.targetObservedWorkingId()));
                 }
                 Set<Integer> fullyQualifiedLocals = new LinkedHashSet<>();
                 for(ReceiverActivityRecords.P25PatchMemberIdentity member:
@@ -312,8 +336,8 @@ final class AliasActivityProjection
                 }
             }
 
-            Long sourceAlias = resolver.consensus(sources, RADIO);
-            Long targetAlias = resolver.consensus(targets,
+            Long sourceAlias = resolver.p25Consensus(sources, RADIO);
+            Long targetAlias = resolver.p25Consensus(targets,
                 "RADIO".equals(call.destinationKind()) ? RADIO : TALKGROUP);
             addResolved(deltas, targetAlias, delta);
             if(!sameCanonicalRadioIdentity(call, protocol))
@@ -329,11 +353,11 @@ final class AliasActivityProjection
         {
             int targetKind = "RADIO".equals(call.destinationKind()) ? RADIO : TALKGROUP;
             addResolved(deltas, resolver.resolveSystemConsensus(call.radioSystemKey(), targetKind,
-                positive(call.destinationId())), delta);
+                positive(call.destinationId()), call.p25TargetIdentity(), call.targetObservedWorkingId()), delta);
             if(!sameCanonicalRadioIdentity(call, protocol))
             {
                 addResolved(deltas, resolver.resolveSystemConsensus(call.radioSystemKey(), RADIO,
-                    call.sourceRadioId()), delta);
+                    call.sourceRadioId(), call.p25SourceIdentity(), call.sourceObservedWorkingId()), delta);
             }
             if("PATCH_GROUP".equals(call.destinationKind()))
             {
@@ -426,6 +450,14 @@ final class AliasActivityProjection
             return null;
         }
         return new CanonicalP25Identity(systemWacn, systemId, localId);
+    }
+
+    private static CanonicalP25Identity canonicalP25Identity(ReceiverActivityRecords.P25Identity identity)
+    {
+        ReceiverActivityRecords.P25Identity evidence = identity != null ? identity :
+            ReceiverActivityRecords.P25Identity.UNKNOWN;
+        return evidence.isStableFullyQualified() && evidence.identityKindCode() == RADIO ?
+            new CanonicalP25Identity(evidence.homeWacn(), evidence.homeSystemId(), evidence.homeIdentityId()) : null;
     }
 
     private static void addResolved(Map<Long,Delta> deltas, Long aliasId, Delta delta)
@@ -529,13 +561,17 @@ final class AliasActivityProjection
     {
         private final Connection connection;
         private final int protocol;
+        private final long observedAt;
+        private final CanonicalSchemaSupport canonicalSchemaSupport;
         private final Map<String,Long> aliasLists = new HashMap<>();
         private final Map<String,Long> systemConsensusAliasLists = new HashMap<>();
 
-        private Resolver(Connection connection, int protocol)
+        private Resolver(Connection connection, int protocol, long observedAt) throws SQLException
         {
             this.connection = connection;
             this.protocol = protocol;
+            this.observedAt = observedAt;
+            this.canonicalSchemaSupport = canonicalSchemaSupport(connection);
         }
 
         private Long consensus(List<LocalIdentity> identities, int kind) throws SQLException
@@ -553,9 +589,39 @@ final class AliasActivityProjection
             return winner;
         }
 
+        private Long p25Consensus(List<P25ObservedIdentity> identities, int kind) throws SQLException
+        {
+            Long winner = null;
+            for(P25ObservedIdentity identity: new LinkedHashSet<>(identities))
+            {
+                Long candidate = resolve(identity.configurationId(), kind, identity.identifier(),
+                    identity.p25Identity(), identity.observedWorkingId());
+                if(candidate == null || winner != null && !winner.equals(candidate))
+                {
+                    return null;
+                }
+                winner = candidate;
+            }
+            return winner;
+        }
+
         private Long resolve(String configurationId, int kind, Integer identifier) throws SQLException
         {
-            if(protocol <= 0 || configurationId == null || identifier == null)
+            return resolve(configurationId, kind, identifier, ReceiverActivityRecords.P25Identity.UNKNOWN);
+        }
+
+        /** A complete P25 home identity wins before the site-local RADIO_ID fallback. */
+        private Long resolve(String configurationId, int kind, Integer identifier,
+                             ReceiverActivityRecords.P25Identity p25Identity) throws SQLException
+        {
+            return resolve(configurationId, kind, identifier, p25Identity, null);
+        }
+
+        private Long resolve(String configurationId, int kind, Integer identifier,
+                             ReceiverActivityRecords.P25Identity p25Identity,
+                             Integer observedWorkingId) throws SQLException
+        {
+            if(protocol <= 0 || configurationId == null)
             {
                 return null;
             }
@@ -578,7 +644,16 @@ final class AliasActivityProjection
                 }
                 aliasLists.put(configurationId, aliasListId);
             }
-            return aliasListId != null ? resolve(aliasListId, kind, identifier) : null;
+            if(aliasListId == null)
+            {
+                return null;
+            }
+
+            CanonicalP25Identity explicit = kind == RADIO ? canonicalP25Identity(p25Identity) : null;
+            Long canonical = resolveCanonical(aliasListId, kind, p25Identity);
+            Integer localFallback = explicit != null ? positive(observedWorkingId) : identifier;
+            return canonical != null ? canonical : localFallback != null ?
+                resolve(aliasListId, kind, localFallback) : null;
         }
 
         private boolean acceptsP25TrunkedObservation(String configurationId) throws SQLException
@@ -610,7 +685,20 @@ final class AliasActivityProjection
 
         private Long resolveSystemConsensus(String systemKey, int kind, Integer identifier) throws SQLException
         {
-            if(protocol != 1 || systemKey == null || identifier == null)
+            return resolveSystemConsensus(systemKey, kind, identifier, ReceiverActivityRecords.P25Identity.UNKNOWN);
+        }
+
+        private Long resolveSystemConsensus(String systemKey, int kind, Integer identifier,
+                                            ReceiverActivityRecords.P25Identity p25Identity) throws SQLException
+        {
+            return resolveSystemConsensus(systemKey, kind, identifier, p25Identity, null);
+        }
+
+        private Long resolveSystemConsensus(String systemKey, int kind, Integer identifier,
+                                            ReceiverActivityRecords.P25Identity p25Identity,
+                                            Integer observedWorkingId) throws SQLException
+        {
+            if(protocol != 1 || systemKey == null)
             {
                 return null;
             }
@@ -651,7 +739,38 @@ final class AliasActivityProjection
                 aliasListId = assigned.size() == 1 ? assigned.getFirst() : null;
                 systemConsensusAliasLists.put(systemKey, aliasListId);
             }
-            return aliasListId != null ? resolve(aliasListId, kind, identifier) : null;
+            if(aliasListId == null)
+            {
+                return null;
+            }
+
+            CanonicalP25Identity explicit = kind == RADIO ? canonicalP25Identity(p25Identity) : null;
+            Long canonical = resolveCanonical(aliasListId, kind, p25Identity);
+            Integer localFallback = explicit != null ? positive(observedWorkingId) : identifier;
+            return canonical != null ? canonical : localFallback != null ?
+                resolve(aliasListId, kind, localFallback) : null;
+        }
+
+        private Long resolveCanonical(long aliasListId, int kind,
+                                      ReceiverActivityRecords.P25Identity p25Identity) throws SQLException
+        {
+            CanonicalP25Identity identity = kind == RADIO ? canonicalP25Identity(p25Identity) : null;
+            if(!canonicalSchemaSupport.aliases() || protocol != 1 || identity == null)
+            {
+                return null;
+            }
+
+            try(PreparedStatement statement = connection.prepareStatement(canonicalResolverSql()))
+            {
+                statement.setLong(1, aliasListId);
+                statement.setInt(2, identity.homeWacn());
+                statement.setInt(3, identity.homeSystemId());
+                statement.setInt(4, identity.identityId());
+                try(ResultSet resultSet = statement.executeQuery())
+                {
+                    return resultSet.next() ? resultSet.getLong(1) : null;
+                }
+            }
         }
 
         private Long resolve(long aliasListId, int kind, int identifier) throws SQLException
@@ -701,6 +820,53 @@ final class AliasActivityProjection
               AND min_value <= ? AND max_value >= ?
             ORDER BY min_value DESC, max_value DESC, id DESC LIMIT 1
             """.formatted(matcher, protocolSql(protocol));
+    }
+
+    static String canonicalResolverSql()
+    {
+        return """
+            SELECT alias.id
+            FROM alias
+            JOIN alias_p25_subscriber_identity subscriber_alias ON subscriber_alias.alias_id = alias.id
+            JOIN p25_subscriber_identity subscriber
+              ON subscriber.id = subscriber_alias.p25_subscriber_identity_id
+            WHERE alias.alias_list_id = ? AND alias.matcher_type = 'P25_SUBSCRIBER_IDENTITY'
+              AND subscriber.home_wacn = ? AND subscriber.home_system_id = ? AND subscriber.subscriber_id = ?
+            ORDER BY alias.id DESC LIMIT 1
+            """;
+    }
+
+    private static CanonicalSchemaSupport canonicalSchemaSupport(Connection connection) throws SQLException
+    {
+        synchronized(CANONICAL_SCHEMA_SUPPORT)
+        {
+            CanonicalSchemaSupport cached = CANONICAL_SCHEMA_SUPPORT.get(connection);
+            if(cached != null)
+            {
+                return cached;
+            }
+
+            Set<String> tables = new LinkedHashSet<>();
+            try(PreparedStatement statement = connection.prepareStatement("""
+                SELECT name
+                FROM sqlite_schema
+                WHERE type='table' AND name IN (
+                    'alias_p25_subscriber_identity', 'p25_subscriber_identity'
+                )
+                """); ResultSet resultSet = statement.executeQuery())
+            {
+                while(resultSet.next())
+                {
+                    tables.add(resultSet.getString(1));
+                }
+            }
+
+            boolean aliases = tables.contains("alias_p25_subscriber_identity") &&
+                tables.contains("p25_subscriber_identity");
+            CanonicalSchemaSupport loaded = new CanonicalSchemaSupport(aliases);
+            CANONICAL_SCHEMA_SUPPORT.put(connection, loaded);
+            return loaded;
+        }
     }
 
     private static String protocolSql(int protocol)
@@ -818,5 +984,11 @@ final class AliasActivityProjection
 
     private record LocalIdentity(String configurationId, int identifier) {}
 
+    private record P25ObservedIdentity(String configurationId, int identifier,
+                                       ReceiverActivityRecords.P25Identity p25Identity,
+                                       Integer observedWorkingId) {}
+
     private record CanonicalP25Identity(Integer homeWacn, Integer homeSystemId, int identityId) {}
+
+    private record CanonicalSchemaSupport(boolean aliases) {}
 }

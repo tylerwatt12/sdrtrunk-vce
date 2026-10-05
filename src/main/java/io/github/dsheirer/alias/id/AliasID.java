@@ -35,6 +35,7 @@ import io.github.dsheirer.alias.id.lojack.LoJackFunctionAndID;
 import io.github.dsheirer.alias.id.priority.Priority;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioRange;
+import io.github.dsheirer.alias.id.radio.P25Subscriber;
 import io.github.dsheirer.alias.id.record.Record;
 import io.github.dsheirer.alias.id.status.UnitStatusID;
 import io.github.dsheirer.alias.id.status.UserStatusID;
@@ -62,6 +63,7 @@ import javafx.util.Callback;
     @JsonSubTypes.Type(value = NonRecordable.class, name = "nonRecordable"),
     @JsonSubTypes.Type(value = P25FullyQualifiedTalkgroup.class, name = "p25FullyQualifiedTalkgroup"),
     @JsonSubTypes.Type(value = Priority.class, name = "priority"),
+    @JsonSubTypes.Type(value = P25Subscriber.class, name = "p25SubscriberIdentity"),
     @JsonSubTypes.Type(value = Radio.class, name = "radio"),
     @JsonSubTypes.Type(value = RadioRange.class, name = "radioRange"),
     @JsonSubTypes.Type(value = Record.class, name = "record"),

@@ -293,6 +293,7 @@ enum StatsApiProtocol
         capabilities.put("channels", trunked);
         capabilities.put("group_identities", trunked);
         capabilities.put("radios", trunked);
+        capabilities.put("issi", this == P25);
         capabilities.put("activity", trunked);
         capabilities.put("talker_aliases", trunked);
         capabilities.put("current_affiliations", this == P25);

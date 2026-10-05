@@ -80,7 +80,7 @@ public class RoamingAddressResponse extends ISPMessage
             int wacn = getMessage().getInt(WACN);
             int system = getMessage().getInt(SYSTEM);
             int id = getMessage().getInt(SOURCE_ID);
-            mRoamingAddress = APCO25FullyQualifiedRadioIdentifier.createTo(id, wacn, system, id);
+            mRoamingAddress = APCO25FullyQualifiedRadioIdentifier.createFrom(id, wacn, system, id);
         }
 
         return mRoamingAddress;

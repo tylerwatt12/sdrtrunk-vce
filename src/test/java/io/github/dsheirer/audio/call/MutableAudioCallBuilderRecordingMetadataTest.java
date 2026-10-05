@@ -21,6 +21,7 @@ import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.id.radio.Radio;
+import io.github.dsheirer.alias.id.radio.P25Subscriber;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
 import io.github.dsheirer.identifier.IdentifierCollection;
@@ -31,6 +32,7 @@ import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifi
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
+import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -150,13 +152,123 @@ class MutableAudioCallBuilderRecordingMetadataTest
         aliasList.addAlias(alias);
 
         AudioCallRecordingMetadata.DestinationDecision decision = AudioCallRecordingMetadata.captureDestination(
-            aliasList, APCO25FullyQualifiedRadioIdentifier.createTo(123, 0xABCDE, 0x321, 9_001));
+            aliasList, APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(
+                123, 0xABCDE, 0x321, 9_001));
 
         assertEquals("Roaming Subscriber", decision.aliasName());
         assertEquals("123", decision.value());
         assertEquals("v1-r-abcde-321-9001", decision.receivedIdentity());
         assertEquals("exact:APCO-25:123", decision.matcherIdentity());
         assertTrue(decision.recordEnabled());
+    }
+
+    @Test
+    void identityOnlyPrivateRadioDoesNotBorrowAnOrdinaryLocalAlias()
+    {
+        Alias alias = new Alias("Unrelated local subscriber");
+        alias.setMatchIdentifier(new Radio(Protocol.APCO25, 9_001));
+        AliasList aliasList = new AliasList(new AliasListDefinition("P25", AliasListFamily.P25));
+        aliasList.addAlias(alias);
+
+        AudioCallRecordingMetadata.DestinationDecision decision = AudioCallRecordingMetadata.captureDestination(
+            aliasList, APCO25FullyQualifiedRadioIdentifier.createTo(9_001, 0xABCDE, 0x321, 9_001));
+
+        assertNull(decision.aliasName());
+        assertEquals("v1-r-abcde-321-9001", decision.matcherIdentity(),
+            "the canonical received identity remains available even when no alias matches");
+    }
+
+    @Test
+    void sourceAndPrivateCallDestinationRetainCanonicalAndWorkingIdentitiesSeparately()
+    {
+        Alias sourceAlias = new Alias("Source Subscriber");
+        sourceAlias.setMatchIdentifier(new P25Subscriber(0xBEE00, 0x348, 2_115_288));
+        Alias destinationAlias = new Alias("Destination Subscriber");
+        destinationAlias.setMatchIdentifier(new P25Subscriber(0xABCDE, 0x456, 9_001));
+        destinationAlias.setRecordable(true);
+        AliasList aliasList = new AliasList(new AliasListDefinition("P25", AliasListFamily.P25));
+        aliasList.addAlias(sourceAlias);
+        aliasList.addAlias(destinationAlias);
+
+        APCO25FullyQualifiedRadioIdentifier source =
+            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
+                501, 0xBEE00, 0x348, 2_115_288);
+        APCO25FullyQualifiedRadioIdentifier destination =
+            APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(
+                777, 0xABCDE, 0x456, 9_001);
+        AudioCallRecordingMetadata metadata = AudioCallRecordingMetadata.captureAtSnapshot(aliasList,
+            new IdentifierCollection(List.of(source, destination)));
+
+        assertEquals(new P25SubscriberIdentity(0xBEE00, 0x348, 2_115_288),
+            metadata.sourceP25Identity());
+        assertEquals(501, metadata.sourceObservedWorkingId());
+        assertEquals("501", metadata.sourceValue());
+        assertEquals("Source Subscriber", metadata.sourceAlias());
+        assertEquals(new P25SubscriberIdentity(0xABCDE, 0x456, 9_001),
+            metadata.destinationP25Identity());
+        assertEquals(777, metadata.destinationObservedWorkingId());
+        assertEquals("777", metadata.destinationValue());
+        assertEquals("Destination Subscriber", metadata.destinationAlias());
+        assertEquals("canonical:APCO25:ABCDE.456.9001", metadata.destinationMatcherIdentity());
+    }
+
+    @Test
+    void ordinaryAndIdentityOnlyQualifiedRadiosHaveNoWorkingAssignment()
+    {
+        AudioCallRecordingMetadata ordinary = AudioCallRecordingMetadata.captureAtSnapshot(null,
+            new IdentifierCollection(List.of(APCO25RadioIdentifier.createFrom(501),
+                APCO25RadioIdentifier.createTo(777))));
+
+        assertEquals("501", ordinary.sourceValue());
+        assertNull(ordinary.sourceP25Identity());
+        assertNull(ordinary.sourceObservedWorkingId());
+        assertEquals("777", ordinary.destinationValue());
+        assertNull(ordinary.destinationP25Identity());
+        assertNull(ordinary.destinationObservedWorkingId());
+
+        AudioCallRecordingMetadata nativeIdentity = AudioCallRecordingMetadata.captureAtSnapshot(null,
+            new IdentifierCollection(List.of(
+                APCO25FullyQualifiedRadioIdentifier.createFrom(9_001, 0xABCDE, 0x321, 9_001),
+                APCO25FullyQualifiedRadioIdentifier.createTo(9_002, 0xABCDE, 0x321, 9_002))));
+
+        assertEquals(new P25SubscriberIdentity(0xABCDE, 0x321, 9_001), nativeIdentity.sourceP25Identity());
+        assertNull(nativeIdentity.sourceObservedWorkingId());
+        assertEquals(new P25SubscriberIdentity(0xABCDE, 0x321, 9_002),
+            nativeIdentity.destinationP25Identity());
+        assertNull(nativeIdentity.destinationObservedWorkingId());
+
+        AudioCallRecordingMetadata explicitEqualIdentity = AudioCallRecordingMetadata.captureAtSnapshot(null,
+            new IdentifierCollection(List.of(
+                APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
+                    9_001, 0xABCDE, 0x321, 9_001),
+                APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(
+                    9_002, 0xABCDE, 0x321, 9_002))));
+        assertEquals(9_001, explicitEqualIdentity.sourceObservedWorkingId());
+        assertEquals(9_002, explicitEqualIdentity.destinationObservedWorkingId());
+    }
+
+    @Test
+    void finalResolvedIdentifiersPromoteBothStructuredP25SidesWithoutChangingFrozenPolicy()
+    {
+        AudioCallRecordingMetadata snapshot = AudioCallRecordingMetadata.captureAtSnapshot(null,
+            new IdentifierCollection());
+        APCO25FullyQualifiedRadioIdentifier source =
+            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
+                401, 0xBEE00, 0x348, 2_115_288);
+        APCO25FullyQualifiedRadioIdentifier destination =
+            APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(
+                402, 0xABCDE, 0x456, 9_001);
+
+        AudioCallRecordingMetadata resolved = snapshot.withResolvedUserIdentifiers(destination, source);
+
+        assertEquals(new P25SubscriberIdentity(0xBEE00, 0x348, 2_115_288),
+            resolved.sourceP25Identity());
+        assertEquals(401, resolved.sourceObservedWorkingId());
+        assertEquals(new P25SubscriberIdentity(0xABCDE, 0x456, 9_001),
+            resolved.destinationP25Identity());
+        assertEquals(402, resolved.destinationObservedWorkingId());
+        assertNull(resolved.sourceAlias());
+        assertNull(resolved.destinationAlias());
     }
 
     @Test
@@ -167,12 +279,14 @@ class MutableAudioCallBuilderRecordingMetadataTest
                 APCO25FullyQualifiedTalkgroupIdentifier.createTo(65_535, 0xABCDE, 0x321, 65_535)))));
         assertNull(allCall.destinationIdentity());
 
-        for(int radio: new int[]{10_000_000, 0xFFFFFF})
+        for(int radio: new int[]{0, 0xFFFFFD, 0xFFFFFF})
         {
             AudioCallRecordingMetadata metadata = assertDoesNotThrow(() ->
                 AudioCallRecordingMetadata.captureAtSnapshot(null, new IdentifierCollection(List.of(
                     APCO25FullyQualifiedRadioIdentifier.createFrom(123, 0xABCDE, 0x321, radio)))));
             assertEquals("123", metadata.sourceValue());
+            assertNull(metadata.sourceP25Identity());
+            assertNull(metadata.sourceObservedWorkingId());
         }
     }
 

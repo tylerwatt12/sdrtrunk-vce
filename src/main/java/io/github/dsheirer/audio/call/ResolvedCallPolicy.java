@@ -308,9 +308,11 @@ public record ResolvedCallPolicy(boolean recordAudio, boolean destinationRecordE
             else if(primary instanceof FullyQualifiedRadioIdentifier fullyQualified)
             {
                 Protocol protocol = normalizeProtocol(primary.getProtocol());
+                Integer workingAddress = fullyQualified.getWorkingAddress();
                 return eligible(protocol, Form.RADIO, fullyQualified.getRadio()) &&
                     eligibleDecoded(protocol, destination) ?
-                    new DestinationIdentity(protocol, Form.RADIO, fullyQualified.getValue(), fullyQualified.getRadio(),
+                    new DestinationIdentity(protocol, Form.RADIO,
+                        workingAddress != null ? workingAddress : 0, fullyQualified.getRadio(),
                         DestinationQualifier.networkAndSystem(fullyQualified.getWacn(), fullyQualified.getSystem())) :
                     null;
             }

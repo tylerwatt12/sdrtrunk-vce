@@ -121,17 +121,17 @@ public record CallLegSummary(CallLegId callLegId, CallLegSource source, long sta
         if(primary instanceof FullyQualifiedTalkgroupIdentifier fullyQualified)
         {
             return new P25IdentityObservation(patch ? Form.PATCH_GROUP : Form.TALKGROUP, number.intValue(),
-                fullyQualified.getWacn(), fullyQualified.getSystem(), fullyQualified.getTalkgroup());
+                fullyQualified.getWacn(), fullyQualified.getSystem(), fullyQualified.getTalkgroup(), null);
         }
         if(primary instanceof FullyQualifiedRadioIdentifier fullyQualified)
         {
             return new P25IdentityObservation(Form.RADIO, number.intValue(), fullyQualified.getWacn(),
-                fullyQualified.getSystem(), fullyQualified.getRadio());
+                fullyQualified.getSystem(), fullyQualified.getRadio(), fullyQualified.getWorkingAddress());
         }
         if(primary.getForm() == Form.TALKGROUP || primary.getForm() == Form.RADIO)
         {
             return new P25IdentityObservation(patch ? Form.PATCH_GROUP : primary.getForm(), number.intValue(),
-                null, null, null);
+                null, null, null, null);
         }
         return null;
     }
@@ -151,7 +151,22 @@ public record CallLegSummary(CallLegId callLegId, CallLegSource source, long sta
 
     /** Bounded immutable primitive evidence; no mutable identifier collection escapes the completed receiver leg. */
     public record P25IdentityObservation(Form form, int observedLocalId, Integer homeWacn,
-                                         Integer homeSystemId, Integer homeIdentityId)
+                                         Integer homeSystemId, Integer homeIdentityId,
+                                         Integer observedWorkingId)
     {
+        public P25IdentityObservation(Form form, int observedLocalId, Integer homeWacn,
+                                      Integer homeSystemId, Integer homeIdentityId)
+        {
+            this(form, observedLocalId, homeWacn, homeSystemId, homeIdentityId, null);
+        }
+
+        public P25IdentityObservation
+        {
+            if(form != Form.RADIO || observedWorkingId == null || observedWorkingId < 1 ||
+                observedWorkingId > 0xFFFFFC)
+            {
+                observedWorkingId = null;
+            }
+        }
     }
 }

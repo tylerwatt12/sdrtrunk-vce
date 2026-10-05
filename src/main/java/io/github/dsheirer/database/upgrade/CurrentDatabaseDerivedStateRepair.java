@@ -38,6 +38,7 @@ final class CurrentDatabaseDerivedStateRepair
     static final List<String> REPRODUCIBLE_TABLES = List.of(
         "radio_system",
         "radio_system_identity_summary",
+        "p25_wuid_assignment_observation_summary",
         "trunked_radio_group_summary",
         "trunked_radio_affiliation",
         "trunked_radio_channel_presence",
@@ -153,7 +154,7 @@ final class CurrentDatabaseDerivedStateRepair
         }
 
         long resetRows = damagedTables.isEmpty() ? 0 :
-            LegacyActivityReset.count(connection, REPRODUCIBLE_TABLES);
+            LegacyActivityReset.count(connection, repairTables(connection));
         return new Inspection(damagedTables.size(), resetRows, invalidMetricBoundaryKeys);
     }
 
@@ -167,7 +168,7 @@ final class CurrentDatabaseDerivedStateRepair
 
         if(before.damagedTables() > 0)
         {
-            LegacyActivityReset.clear(connection, REPRODUCIBLE_TABLES);
+            LegacyActivityReset.clear(connection, repairTables(connection));
             AliasActivitySummaryMaintenance.resetAll(connection);
             restartMetricBoundaries(connection, METRIC_BOUNDARY_KEYS);
         }
@@ -265,6 +266,7 @@ final class CurrentDatabaseDerivedStateRepair
                         WHERE summary.alias_id IS NULL
                            OR summary.alias_list_id<>configured.alias_list_id
                            OR summary.protocol_code<>CASE
+                               WHEN configured.matcher_type = 'P25_SUBSCRIBER_IDENTITY' THEN 1
                                WHEN configured.matcher_type IN (
                                    'TALKGROUP', 'TALKGROUP_RANGE', 'RADIO_ID', 'RADIO_ID_RANGE'
                                ) THEN CASE configured.protocol
@@ -296,6 +298,19 @@ final class CurrentDatabaseDerivedStateRepair
         }
     }
 
+    /** Earlier direct-source repairs run before the adjacent migration installs the observation table. */
+    private static List<String> repairTables(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement();
+            ResultSet rows = statement.executeQuery("SELECT 1 FROM sqlite_schema WHERE type='table' " +
+                "AND name='p25_wuid_assignment_observation_summary'"))
+        {
+            if(rows.next()) return REPRODUCIBLE_TABLES;
+        }
+        return REPRODUCIBLE_TABLES.stream()
+            .filter(table -> !"p25_wuid_assignment_observation_summary".equals(table)).toList();
+    }
+
     private static boolean tableChecksAreValid(Connection connection, String table) throws SQLException
     {
         if(!table.matches("[A-Za-z_][A-Za-z0-9_]*"))
@@ -303,6 +318,16 @@ final class CurrentDatabaseDerivedStateRepair
             throw new SQLException("Unsafe SQLite identifier in current derived-state repair: " + table);
         }
 
+        //Historical direct-source repair can precede the format-32 storage additions.
+        if("p25_wuid_assignment_observation_summary".equals(table))
+        {
+            try(Statement statement = connection.createStatement();
+                ResultSet rows = statement.executeQuery("SELECT 1 FROM sqlite_schema WHERE type='table' " +
+                    "AND name='p25_wuid_assignment_observation_summary'"))
+            {
+                if(!rows.next()) return true;
+            }
+        }
         boolean result = false;
         try(Statement statement = connection.createStatement();
             ResultSet rows = statement.executeQuery("PRAGMA quick_check('" + table + "')"))

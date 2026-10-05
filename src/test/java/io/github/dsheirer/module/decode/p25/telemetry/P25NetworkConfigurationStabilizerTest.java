@@ -510,8 +510,8 @@ public class P25NetworkConfigurationStabilizerTest
     {
         P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
         PatchGroup patchGroup = new PatchGroup(APCO25Talkgroup.create(65191), 9);
-        patchGroup.addPatchedRadio(APCO25FullyQualifiedRadioIdentifier.createFrom(0xFFFD26, 0xBEE00, 0x954,
-            831_102));
+        patchGroup.addPatchedRadio(APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
+            0xFFFD26, 0xBEE00, 0x954, 831_102));
         PatchGroupIdentifier identifier = APCO25PatchGroup.create(patchGroup);
 
         stabilizer.observePatchGroup(identifier, 1_000L);

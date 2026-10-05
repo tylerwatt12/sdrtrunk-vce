@@ -49,6 +49,7 @@ final class StatsApiV1Controller
     private final WebRequestSecurity mRequestSecurity;
     private final TunerDiagnosticService mTunerDiagnosticService;
     private final Supplier<Map<String,Object>> mReceiverHealthSupplier;
+    private final StatsP25AssignmentService mP25AssignmentService;
     private final Semaphore mCsvExportPermit = new Semaphore(1);
     private final Semaphore mActivityRadioPermit = new Semaphore(1, true);
 
@@ -62,11 +63,20 @@ final class StatsApiV1Controller
                          WebRequestSecurity requestSecurity, TunerDiagnosticService tunerDiagnosticService,
                          Supplier<Map<String,Object>> receiverHealthSupplier)
     {
+        this(database, statusSupplier, requestSecurity, tunerDiagnosticService, receiverHealthSupplier, null);
+    }
+
+    StatsApiV1Controller(StatsWebDatabase database, Supplier<Map<String,Object>> statusSupplier,
+                         WebRequestSecurity requestSecurity, TunerDiagnosticService tunerDiagnosticService,
+                         Supplier<Map<String,Object>> receiverHealthSupplier,
+                         StatsP25AssignmentService p25AssignmentService)
+    {
         mDatabase = database;
         mStatusSupplier = statusSupplier;
         mRequestSecurity = requestSecurity;
         mTunerDiagnosticService = tunerDiagnosticService;
         mReceiverHealthSupplier = receiverHealthSupplier;
+        mP25AssignmentService = p25AssignmentService;
     }
 
     void register(HttpServer server)
@@ -304,8 +314,64 @@ final class StatsApiV1Controller
                 "configuration_id", "sort", "direction", "limit", "offset");
             return page(mDatabase.radioSystemRelationships(radioSystemKey, request));
         }
+        else if("issi".equals(resource))
+        {
+            return radioSystemIssi(request, radioSystemKey, segments);
+        }
 
         throw notFound();
+    }
+
+    private Object radioSystemIssi(StatsRequest request, String radioSystemKey, List<String> segments)
+    {
+        if(segments.size() == 2)
+        {
+            request.requireOnly();
+            return mDatabase.radioSystemIssiOverview(radioSystemKey);
+        }
+        else if(segments.size() != 3)
+        {
+            throw notFound();
+        }
+
+        return switch(segments.get(2))
+        {
+            case "current-state" -> {
+                request.requireOnly();
+                requireAssignmentService(radioSystemKey);
+                yield mP25AssignmentService.currentState(radioSystemKey);
+            }
+            case "current-assignments", "recent-changes" -> {
+                request.requireOnly("q", "configuration_id", "roaming_only", "home_wacn", "home_system_id",
+                    "subscriber_id", "sort", "direction", "limit", "offset");
+                requireAssignmentService(radioSystemKey);
+                yield page("current-assignments".equals(segments.get(2)) ?
+                    mP25AssignmentService.currentAssignments(radioSystemKey, request) :
+                    mP25AssignmentService.recentChanges(radioSystemKey, request));
+            }
+            case "subscribers" -> {
+                request.requireOnly("q", "configuration_id", "sort", "direction", "limit", "offset");
+                yield page(mDatabase.radioSystemIssiSubscribers(radioSystemKey, request));
+            }
+            case "foreign-systems" -> {
+                request.requireOnly("q", "sort", "direction", "limit", "offset");
+                yield page(mDatabase.radioSystemIssiForeignSystems(radioSystemKey, request));
+            }
+            case "frequency-bands" -> {
+                request.requireOnly("q", "configuration_id", "sort", "direction", "limit", "offset");
+                yield page(mDatabase.radioSystemIssiFrequencyBands(radioSystemKey, request));
+            }
+            default -> throw notFound();
+        };
+    }
+
+    private void requireAssignmentService(String radioSystemKey)
+    {
+        if(mP25AssignmentService == null)
+        {
+            throw new StatsApiException(503, "current_assignments_unavailable", "Current assignments are unavailable");
+        }
+        mDatabase.requireKnownP25RadioSystem(radioSystemKey);
     }
 
     private Object groupIdentities(StatsRequest request, String radioSystemKey, List<String> segments)
@@ -761,11 +827,9 @@ final class StatsApiV1Controller
 
     private static JsonBody frequencyBands(Map<String,Object> result)
     {
-        JsonBody split = compound(result, "rows", "foreign_rows");
+        JsonBody split = compound(result, "rows");
         Map<?,?> source = (Map<?,?>)split.data();
-        Map<String,Object> data = Map.of(
-            "home_bands", source.get("rows"),
-            "foreign_bands", source.get("foreign_rows"));
+        Map<String,Object> data = Map.of("home_bands", source.get("rows"));
         return new JsonBody(data, split.meta());
     }
 

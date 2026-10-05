@@ -10,9 +10,9 @@ import java.util.Locale;
 /**
  * Canonical, URL-safe identity tuple used by storage, web navigation and playback controls.
  *
- * <p>The radio-system key scopes this value externally. A P25 identity carries its home WACN and System ID;
- * channel-scoped DMR and NXDN identities use the {@code x-x} sentinel. Database surrogate IDs are
- * deliberately excluded.</p>
+ * <p>The radio-system key scopes this value externally. A canonical P25 subscriber carries its home WACN and
+ * System ID; an unresolved P25 working address remains local to the serving system and uses the {@code x-x}
+ * sentinel, as do channel-scoped DMR and NXDN identities. Database surrogate IDs are deliberately excluded.</p>
  */
 public final class RadioSystemIdentityKey
 {
@@ -23,9 +23,10 @@ public final class RadioSystemIdentityKey
     public static final int MAX_P25_GROUP_ID = 65_534;
     /** Largest non-P25 group identity supported by the shared tuple syntax (DMR uses 24 bits). */
     public static final int MAX_OTHER_GROUP_ID = 0xFFFFFF;
-    /** Largest assignable P25 working unit address (TIA-102.AABC-B, Section 2.3.27). */
+    /** Largest assignable P25 unit address (TIA-102.AABC-B, Section 2.3.30, Table 2.3.30-1). */
     public static final int MAX_P25_WORKING_UNIT_ID = 0xFFFFFC;
-    public static final int MAX_P25_RADIO_ID = 9_999_999;
+    /** Fully qualified P25 subscriber IDs use the same assignable unit-address range. */
+    public static final int MAX_P25_RADIO_ID = 0xFFFFFC;
     public static final int MAX_OTHER_RADIO_ID = 0xFFFFFF;
     public static final int NO_HOME = -1;
 

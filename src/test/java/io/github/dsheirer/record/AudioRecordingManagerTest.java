@@ -25,6 +25,7 @@ import io.github.dsheirer.audio.call.CallLegId;
 import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.record.RecordingMode;
@@ -69,6 +70,16 @@ class AudioRecordingManagerTest
         {
             new UserPreferences().getRecordPreference().setRecordingMode(mOriginalMode);
         }
+    }
+
+    @Test
+    void recordingFilenameIdentityUsesCanonicalSubscriberAndExplicitWorkingId()
+    {
+        assertEquals("BEE00_348_2115288_Working_ID_501", AudioRecordingManager.cleanIdentifier(
+            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
+                501, 0xBEE00, 0x348, 2_115_288)));
+        assertEquals("BEE00_348_2115288", AudioRecordingManager.cleanIdentifier(
+            APCO25FullyQualifiedRadioIdentifier.createFrom(2_115_288, 0xBEE00, 0x348, 2_115_288)));
     }
 
     @Test

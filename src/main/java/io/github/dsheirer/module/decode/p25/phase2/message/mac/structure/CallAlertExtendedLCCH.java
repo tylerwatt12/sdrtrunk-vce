@@ -39,7 +39,7 @@ public class CallAlertExtendedLCCH extends MacStructureMultiFragment
     private static final IntField TARGET_SUID_WACN = IntField.length16(OCTET_17_BIT_128);
     private static final IntField FRAGMENT_0_TARGET_SUID_WACN = IntField.length4(OCTET_3_BIT_16);
     private static final IntField FRAGMENT_0_TARGET_SUID_SYSTEM = IntField.length12(OCTET_3_BIT_16 + 4);
-    private static final IntField FRAGMENT_0_TARGET_SUID_ID = IntField.length4(OCTET_5_BIT_32);
+    private static final IntField FRAGMENT_0_TARGET_SUID_ID = IntField.length24(OCTET_5_BIT_32);
     private APCO25FullyQualifiedRadioIdentifier mTargetSUID;
     private APCO25FullyQualifiedRadioIdentifier mSourceSUID;
 
@@ -82,7 +82,7 @@ public class CallAlertExtendedLCCH extends MacStructureMultiFragment
             wacn += getFragment(0).getInt(FRAGMENT_0_TARGET_SUID_WACN);
             int system = getFragment(0).getInt(FRAGMENT_0_TARGET_SUID_SYSTEM);
             int id = getFragment(0).getInt(FRAGMENT_0_TARGET_SUID_ID);
-            mTargetSUID = APCO25FullyQualifiedRadioIdentifier.createTo(address, wacn, system, id);
+            mTargetSUID = APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(address, wacn, system, id);
         }
 
         return mTargetSUID;
@@ -99,7 +99,7 @@ public class CallAlertExtendedLCCH extends MacStructureMultiFragment
             int wacn = getInt(SOURCE_SUID_WACN);
             int system = getInt(SOURCE_SUID_SYSTEM);
             int id = getInt(SOURCE_SUID_ID);
-            mSourceSUID = APCO25FullyQualifiedRadioIdentifier.createFrom(address, wacn, system, id);
+            mSourceSUID = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(address, wacn, system, id);
         }
 
         return mSourceSUID;

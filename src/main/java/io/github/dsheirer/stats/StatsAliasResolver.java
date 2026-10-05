@@ -82,10 +82,8 @@ class StatsAliasResolver
 
         requireBoundedRows(rows);
         Map<String,Set<Long>> aliasLists = loadAliasLists(connection, systemKeys(rows));
-        List<Rule> rules = loadRules(connection, RuleType.RADIO, P25_PROTOCOLS,
-            ruleTargets(rows, row -> systemAliasLists(row, aliasLists),
-                source(identifierColumn, ignored -> true)));
-        enrich(rows, rules, aliasLists, identifierColumn, prefix);
+        enrichP25SystemRadios(connection, rows, aliasLists, identifierColumn,
+            "observed_working_id", prefix);
     }
 
     /**
@@ -110,6 +108,103 @@ class StatsAliasResolver
             prefix);
     }
 
+    /**
+     * Resolves the ISSI Subscribers page without treating the permanent subscriber number as a local radio ID.
+     * An assignment row is owned by the exact saved channel that supplied it: its canonical Alias is tried first
+     * in that channel's Alias List, followed only by an Alias for the explicitly assigned Working ID in the same
+     * list. Observed-only rows retain the normal canonical system/evidence consensus and never gain a local fallback.
+     */
+    void enrichIssiSubscriberAliases(Connection connection, List<Map<String,Object>> rows,
+                                     String summaryIdColumn, String workingIdColumn,
+                                     String observationAliasListColumn, String prefix) throws SQLException
+    {
+        if(rows.isEmpty())
+        {
+            return;
+        }
+
+        requireBoundedRows(rows);
+        Map<String,Set<Long>> aliasListsBySystem = loadAliasLists(connection, systemKeys(rows));
+        Map<Long,List<LocalEvidence>> evidenceBySummary = loadP25LocalEvidence(connection, rows,
+            summaryIdColumn);
+        P25SubscriberRuleTargets canonicalTargets = new P25SubscriberRuleTargets();
+        RuleTargets workingTargets = new RuleTargets();
+
+        for(Map<String,Object> row: rows)
+        {
+            Long subscriberIdentityId = positiveLong(row.get("p25_subscriber_identity_id"));
+            Set<Long> canonicalAliasLists = issiCanonicalAliasLists(row, aliasListsBySystem,
+                evidenceBySummary, summaryIdColumn, observationAliasListColumn);
+            canonicalTargets.add(canonicalAliasLists, subscriberIdentityId);
+
+            Long observationAliasListId = positiveLong(row.get(observationAliasListColumn));
+            Integer workingId = integer(row.get(workingIdColumn));
+            if(observationAliasListId != null && workingId != null)
+            {
+                workingTargets.add(Set.of(observationAliasListId), workingId);
+            }
+        }
+
+        P25SubscriberRuleIndex canonical = loadP25SubscriberRules(connection, canonicalTargets);
+        RuleIndex working = index(loadRules(connection, RuleType.RADIO, P25_PROTOCOLS, workingTargets));
+
+        for(Map<String,Object> row: rows)
+        {
+            Long subscriberIdentityId = positiveLong(row.get("p25_subscriber_identity_id"));
+            Set<Long> canonicalAliasLists = issiCanonicalAliasLists(row, aliasListsBySystem,
+                evidenceBySummary, summaryIdColumn, observationAliasListColumn);
+            Rule best = subscriberIdentityId != null ? canonical.best(subscriberIdentityId,
+                canonicalAliasLists) : null;
+            boolean canonicalMatch = best != null;
+            Long observationAliasListId = positiveLong(row.get(observationAliasListColumn));
+            Integer workingId = integer(row.get(workingIdColumn));
+            if(best == null && observationAliasListId != null && workingId != null)
+            {
+                best = working.best(workingId, observationAliasListId);
+            }
+
+            applyPresentation(row, best, prefix);
+            if(best != null)
+            {
+                //A shared presentation does not make an arbitrary list the editing owner.
+                if(observationAliasListId != null || canonicalAliasLists.size() == 1)
+                {
+                    row.put(prefix + "id", best.aliasId());
+                    row.put(prefix + "list_id", best.aliasListId());
+                }
+                row.put(prefix + "matcher_type", canonicalMatch ? "p25_subscriber_identity" :
+                    best.ranged() ? "radio_id_range" : "radio_id");
+            }
+            row.remove(observationAliasListColumn);
+        }
+    }
+
+    private static Set<Long> issiCanonicalAliasLists(Map<String,Object> row,
+                                                      Map<String,Set<Long>> aliasListsBySystem,
+                                                      Map<Long,List<LocalEvidence>> evidenceBySummary,
+                                                      String summaryIdColumn,
+                                                      String observationAliasListColumn)
+    {
+        Long observationAliasListId = positiveLong(row.get(observationAliasListColumn));
+        if(observationAliasListId != null)
+        {
+            return Set.of(observationAliasListId);
+        }
+
+        Long summaryId = positiveLong(row.get(summaryIdColumn));
+        List<LocalEvidence> evidence = summaryId != null ?
+            evidenceBySummary.getOrDefault(summaryId, List.of()) : List.of();
+        if(!evidence.isEmpty())
+        {
+            Set<Long> aliasLists = new LinkedHashSet<>();
+            evidence.forEach(item -> aliasLists.add(item.aliasListId()));
+            return Set.copyOf(aliasLists);
+        }
+
+        String systemKey = string(row.get("radio_system_key"));
+        return systemKey != null ? aliasListsBySystem.getOrDefault(systemKey, Set.of()) : Set.of();
+    }
+
     void enrichActivity(Connection connection, List<Map<String,Object>> rows) throws SQLException
     {
         if(rows.isEmpty())
@@ -122,16 +217,18 @@ class StatsAliasResolver
 
         for(Map<String,Object> row: rows)
         {
-            enrichActivityIdentity(row, snapshot, true, "source_radio_id", "source_alias_");
+            enrichActivityIdentity(row, snapshot, true, "source_radio_id",
+                "source_p25_subscriber_identity_id", "source_observed_working_id", "source_alias_");
             Integer targetKind = integer(row.get("target_kind_code"));
 
             if(targetKind != null && (targetKind == 1 || targetKind == 3))
             {
-                enrichActivityIdentity(row, snapshot, false, "target_id", "target_alias_");
+                enrichActivityIdentity(row, snapshot, false, "target_id", null, null, "target_alias_");
             }
             else if(targetKind != null && targetKind == 2)
             {
-                enrichActivityIdentity(row, snapshot, true, "target_id", "target_alias_");
+                enrichActivityIdentity(row, snapshot, true, "target_id",
+                    "target_p25_subscriber_identity_id", "target_observed_working_id", "target_alias_");
             }
         }
     }
@@ -141,7 +238,8 @@ class StatsAliasResolver
      * assigned to that exact saved channel; another channel in a shared P25 system must never lend an alias.
      */
     private void enrichActivityIdentity(Map<String,Object> row, Snapshot snapshot, boolean radio,
-                                        String identifierColumn, String prefix)
+                                        String identifierColumn, String p25SubscriberIdentityColumn,
+                                        String observedWorkingColumn, String prefix)
     {
         String protocol = string(row.get("protocol"));
         RuleIndex rules;
@@ -160,8 +258,27 @@ class StatsAliasResolver
             protocol == null && integer(row.get("wacn")) != null && integer(row.get("system_id")) != null)
         {
             rules = radio ? snapshot.radios() : snapshot.talkgroups();
-
-            enrichByAssignedAliasList(row, rules, identifierColumn, prefix);
+            Rule best = null;
+            Long aliasListId = positiveLong(row.get("alias_list_id"));
+            Long p25SubscriberIdentityId = p25SubscriberIdentityColumn != null ?
+                positiveLong(row.get(p25SubscriberIdentityColumn)) : null;
+            if(radio && aliasListId != null && p25SubscriberIdentityId != null)
+            {
+                best = snapshot.p25Subscribers().best(p25SubscriberIdentityId, aliasListId);
+            }
+            if(best != null)
+            {
+                apply(row, best, prefix);
+            }
+            else
+            {
+                String fallbackColumn = radio && p25SubscriberIdentityId != null ? observedWorkingColumn :
+                    identifierColumn;
+                if(fallbackColumn != null)
+                {
+                    enrichByAssignedAliasList(row, rules, fallbackColumn, prefix);
+                }
+            }
         }
     }
 
@@ -174,14 +291,49 @@ class StatsAliasResolver
 
         requireBoundedRows(rows);
         Map<String,Set<Long>> aliasLists = loadAliasLists(connection, systemKeys(rows));
-        enrich(rows, loadRules(connection, RuleType.RADIO, P25_PROTOCOLS,
-            ruleTargets(rows, row -> systemAliasLists(row, aliasLists),
-                source("radio_id", ignored -> true))), aliasLists,
-            "radio_id", "radio_alias_");
+        enrichP25SystemRadios(connection, rows, aliasLists, "radio_id",
+            "radio_working_subscriber_id", "radio_alias_");
         enrich(rows, loadRules(connection, RuleType.TALKGROUP, P25_PROTOCOLS,
             ruleTargets(rows, row -> systemAliasLists(row, aliasLists),
                 source("talkgroup_id", ignored -> true))), aliasLists,
             "talkgroup_id", "talkgroup_alias_");
+    }
+
+    /**
+     * Resolves a P25 radio shown at system scope. A permanent subscriber Alias has precedence. Once a row carries
+     * that canonical foreign key, ordinary radio-number fallback is allowed only for a separately retained explicit
+     * Working ID; the permanent subscriber number itself is never treated as a local radio address.
+     */
+    private void enrichP25SystemRadios(Connection connection, List<Map<String,Object>> rows,
+                                       Map<String,Set<Long>> aliasLists, String identifierColumn,
+                                       String workingIdColumn, String prefix) throws SQLException
+    {
+        RuleIndex local = index(loadRules(connection, RuleType.RADIO, P25_PROTOCOLS,
+            ruleTargets(rows, row -> systemAliasLists(row, aliasLists),
+                source(identifierColumn,
+                    row -> positiveLong(row.get("p25_subscriber_identity_id")) == null),
+                source(workingIdColumn,
+                    row -> positiveLong(row.get("p25_subscriber_identity_id")) != null))));
+        P25SubscriberRuleIndex canonical = loadP25SubscriberRules(connection,
+            p25SubscriberRuleTargets(rows, row -> systemAliasLists(row, aliasLists),
+                p25SubscriberSource("p25_subscriber_identity_id", row -> protocolCode(row) == 1)));
+
+        for(Map<String,Object> row: rows)
+        {
+            Long p25SubscriberIdentityId = positiveLong(row.get("p25_subscriber_identity_id"));
+            String systemKey = string(row.get("radio_system_key"));
+            Set<Long> systemAliasLists = systemKey != null ?
+                aliasLists.getOrDefault(systemKey, Set.of()) : Set.of();
+            Rule best = p25SubscriberIdentityId != null ?
+                canonical.best(p25SubscriberIdentityId, systemAliasLists) : null;
+            Integer fallback = integer(row.get(p25SubscriberIdentityId != null ?
+                workingIdColumn : identifierColumn));
+            if(best == null && fallback != null)
+            {
+                best = local.best(fallback, systemAliasLists);
+            }
+            applyPresentation(row, best, prefix);
+        }
     }
 
     /**
@@ -190,9 +342,9 @@ class StatsAliasResolver
      * one observation count against multiple aliases.
      *
      * <p>Expected row fields are {@code protocol_code}, {@code topology}, {@code identity_kind_code},
-     * {@code identity_id}, and the normal system or assigned-list lookup fields. P25 evidence can also carry a decoded
-     * home tuple, but alias resolution deliberately uses only the local address stored in {@code identity_id}; the
-     * home tuple remains diagnostic protocol evidence.</p>
+     * {@code identity_id}, and the normal system or assigned-list lookup fields. A P25 radio row can additionally
+     * carry an explicit positive {@code p25_subscriber_identity_id}; that canonical matcher is tried first. Rows
+     * without the foreign key, including legacy home-tuple-only rows, use only the channel-local address.</p>
      */
     void resolveEvidenceAliases(Connection connection, List<Map<String,Object>> rows) throws SQLException
     {
@@ -208,6 +360,7 @@ class StatsAliasResolver
         Snapshot snapshot = evidenceSnapshot(connection, rows, systemAliasLists, p25Evidence);
         RuleIndex p25Talkgroups = snapshot.talkgroups();
         RuleIndex p25Radios = snapshot.radios();
+        P25SubscriberRuleIndex p25Subscribers = snapshot.p25Subscribers();
         RuleIndex dmrTalkgroups = snapshot.dmrTalkgroups();
         RuleIndex dmrRadios = snapshot.dmrRadios();
         RuleIndex nxdnTalkgroups = snapshot.nxdnTalkgroups();
@@ -240,17 +393,36 @@ class StatsAliasResolver
 
             Rule best = null;
             boolean trunkedP25 = protocol == 1 && "TRUNKED".equals(row.get("topology"));
+            Long p25SubscriberIdentityId = protocol == 1 && radio ?
+                positiveLong(row.get("p25_subscriber_identity_id")) : null;
 
             if(trunkedP25)
             {
                 Long summaryId = positiveLong(row.get("identity_summary_id"));
                 List<LocalEvidence> local = summaryId != null ?
                     p25Evidence.getOrDefault(summaryId, List.of()) : List.of();
+                if(p25SubscriberIdentityId != null)
+                {
+                    if(!local.isEmpty())
+                    {
+                        best = p25Subscribers.best(p25SubscriberIdentityId, local, true);
+                    }
+                    else
+                    {
+                        String systemKey = string(row.get("radio_system_key"));
+                        Set<Long> aliasLists = systemKey != null ?
+                            systemAliasLists.getOrDefault(systemKey, Set.of()) : Set.of();
+                        best = p25Subscribers.bestSameAlias(p25SubscriberIdentityId, aliasLists);
+                    }
+                }
                 if(!local.isEmpty())
                 {
-                    best = rules.best(local, true);
+                    if(best == null)
+                    {
+                        best = rules.best(local, true);
+                    }
                 }
-                else
+                else if(best == null && p25SubscriberIdentityId == null)
                 {
                     String systemKey = string(row.get("radio_system_key"));
                     Set<Long> aliasLists = systemKey != null ?
@@ -261,7 +433,14 @@ class StatsAliasResolver
             else
             {
                 Long aliasListId = positiveLong(row.get("alias_list_id"));
-                best = aliasListId != null ? rules.best(identifier, aliasListId) : null;
+                if(aliasListId != null && p25SubscriberIdentityId != null)
+                {
+                    best = p25Subscribers.best(p25SubscriberIdentityId, aliasListId);
+                }
+                if(best == null && p25SubscriberIdentityId == null)
+                {
+                    best = aliasListId != null ? rules.best(identifier, aliasListId) : null;
+                }
             }
 
             if(best != null)
@@ -301,6 +480,8 @@ class StatsAliasResolver
                 }
 
                 int ruleKind = kind == 2 ? 2 : 1;
+                Long p25SubscriberIdentityId = protocol == 1 && ruleKind == 2 ?
+                    positiveLong(row.get("p25_subscriber_identity_id")) : null;
                 Long winner;
                 if(protocol == 1 && "TRUNKED".equals(row.get("topology")))
                 {
@@ -313,14 +494,14 @@ class StatsAliasResolver
                     else
                     {
                         winner = resolver.resolveSystemConsensus(string(row.get("radio_system_key")),
-                            ruleKind, identifier);
+                            ruleKind, identifier, p25SubscriberIdentityId);
                     }
                 }
                 else
                 {
                     Long aliasListId = positiveLong(row.get("alias_list_id"));
-                    winner = aliasListId != null ? resolver.resolve(protocol, ruleKind, aliasListId,
-                        identifier) : null;
+                    winner = aliasListId != null ? resolver.resolvePreferred(protocol, ruleKind, aliasListId,
+                        identifier, p25SubscriberIdentityId) : null;
                 }
 
                 if(winner != null)
@@ -341,6 +522,7 @@ class StatsAliasResolver
         throws SQLException
     {
         Map<Long,Integer> requested = new LinkedHashMap<>();
+        Map<Long,Long> p25Subscribers = new HashMap<>();
         for(Map<String,Object> row: rows)
         {
             if(protocolCode(row) == 1)
@@ -350,6 +532,11 @@ class StatsAliasResolver
                 if(summaryId != null && kind != null)
                 {
                     requested.put(summaryId, kind == 2 ? 2 : 1);
+                    Long p25SubscriberIdentityId = positiveLong(row.get("p25_subscriber_identity_id"));
+                    if(kind == 2 && p25SubscriberIdentityId != null)
+                    {
+                        p25Subscribers.put(summaryId, p25SubscriberIdentityId);
+                    }
                 }
             }
         }
@@ -373,8 +560,8 @@ class StatsAliasResolver
                     {
                         long summaryId = resultSet.getLong("identity_summary_id");
                         int kind = requested.getOrDefault(summaryId, 1);
-                        Long winner = resolver.resolve(1, kind, resultSet.getLong("alias_list_id"),
-                            resultSet.getInt("observed_local_id"));
+                        Long winner = resolver.resolvePreferred(1, kind, resultSet.getLong("alias_list_id"),
+                            resultSet.getInt("observed_local_id"), p25Subscribers.get(summaryId), true);
                         result.computeIfAbsent(summaryId, ignored -> new MigrationConsensus()).accept(winner);
                     }
                 }
@@ -508,8 +695,36 @@ class StatsAliasResolver
     void enrichP25ConventionalRadios(Connection connection, List<Map<String,Object>> rows,
                                      String identifierColumn, String prefix) throws SQLException
     {
-        enrichByAssignedAliasList(connection, rows, RuleType.RADIO, P25_PROTOCOLS,
-            identifierColumn, prefix);
+        if(rows.isEmpty())
+        {
+            return;
+        }
+
+        requireBoundedRows(rows);
+        RuleIndex local = index(loadRules(connection, RuleType.RADIO, P25_PROTOCOLS,
+            ruleTargets(rows, StatsAliasResolver::assignedAliasList,
+                source(identifierColumn, row -> positiveLong(row.get("p25_subscriber_identity_id")) == null),
+                source("observed_working_id",
+                    row -> positiveLong(row.get("p25_subscriber_identity_id")) != null))));
+        P25SubscriberRuleIndex canonical = loadP25SubscriberRules(connection,
+            p25SubscriberRuleTargets(rows, StatsAliasResolver::assignedAliasList,
+                p25SubscriberSource("p25_subscriber_identity_id", ignored -> true)));
+        for(Map<String,Object> row: rows)
+        {
+            Long aliasListId = positiveLong(row.get("alias_list_id"));
+            Long p25SubscriberIdentityId = positiveLong(row.get("p25_subscriber_identity_id"));
+            Rule best = aliasListId != null && p25SubscriberIdentityId != null ?
+                canonical.best(p25SubscriberIdentityId, aliasListId) : null;
+            if(best != null)
+            {
+                apply(row, best, prefix);
+            }
+            else
+            {
+                String fallbackColumn = p25SubscriberIdentityId != null ? "observed_working_id" : identifierColumn;
+                enrichByAssignedAliasList(row, local, fallbackColumn, prefix);
+            }
+        }
     }
 
     private void enrichByAssignedAliasList(Connection connection, List<Map<String,Object>> rows, RuleType type,
@@ -552,6 +767,7 @@ class StatsAliasResolver
         Map<String,Set<Long>> aliasListsBySystem = loadAliasLists(connection, systemKeys(rows));
         Map<Long,List<LocalEvidence>> p25Evidence = loadP25LocalEvidence(connection, rows, summaryIdColumn);
         RuleTargets p25Targets = new RuleTargets();
+        P25SubscriberRuleTargets p25SubscriberTargets = new P25SubscriberRuleTargets();
         RuleTargets dmrTargets = new RuleTargets();
         RuleTargets nxdnTargets = new RuleTargets();
 
@@ -560,39 +776,55 @@ class StatsAliasResolver
             Integer protocol = integer(row.get("protocol_code"));
             Integer identifier = integer(row.get(identifierColumn));
             String systemKey = string(row.get("radio_system_key"));
-            if(protocol == null || identifier == null || systemKey == null)
+            if(protocol == null || systemKey == null)
             {
                 continue;
             }
 
             if(protocol == 1)
             {
+                Long subscriberIdentityId = type == RuleType.RADIO ?
+                    positiveLong(row.get("p25_subscriber_identity_id")) : null;
+                if(identifier == null && subscriberIdentityId == null)
+                {
+                    continue;
+                }
                 Long summaryId = positiveLong(row.get(summaryIdColumn));
                 List<LocalEvidence> evidence = summaryId != null ?
                     p25Evidence.getOrDefault(summaryId, List.of()) : List.of();
                 if(evidence.isEmpty())
                 {
-                    p25Targets.add(aliasListsBySystem.getOrDefault(systemKey, Set.of()), identifier);
+                    Set<Long> aliasLists = aliasListsBySystem.getOrDefault(systemKey, Set.of());
+                    if(identifier != null && subscriberIdentityId == null)
+                    {
+                        p25Targets.add(aliasLists, identifier);
+                    }
+                    p25SubscriberTargets.add(aliasLists, subscriberIdentityId);
                 }
                 else
                 {
                     for(LocalEvidence item: evidence)
                     {
-                        p25Targets.add(Set.of(item.aliasListId()), item.observedLocalId());
+                        if(identifier != null)
+                        {
+                            p25Targets.add(Set.of(item.aliasListId()), item.observedLocalId());
+                        }
+                        p25SubscriberTargets.add(Set.of(item.aliasListId()), subscriberIdentityId);
                     }
                 }
             }
-            else if(protocol == 3)
+            else if(protocol == 3 && identifier != null)
             {
                 dmrTargets.add(aliasListsBySystem.getOrDefault(systemKey, Set.of()), identifier);
             }
-            else if(protocol == 4)
+            else if(protocol == 4 && identifier != null)
             {
                 nxdnTargets.add(aliasListsBySystem.getOrDefault(systemKey, Set.of()), identifier);
             }
         }
 
         RuleIndex p25 = index(loadRules(connection, type, P25_PROTOCOLS, p25Targets));
+        P25SubscriberRuleIndex p25Subscribers = loadP25SubscriberRules(connection, p25SubscriberTargets);
         RuleIndex dmr = index(loadRules(connection, type, DMR_PROTOCOLS, dmrTargets));
         RuleIndex nxdn = index(loadRules(connection, type, NXDN_PROTOCOLS, nxdnTargets));
 
@@ -601,7 +833,7 @@ class StatsAliasResolver
             Integer protocol = integer(row.get("protocol_code"));
             Integer identifier = integer(row.get(identifierColumn));
             String systemKey = string(row.get("radio_system_key"));
-            if(protocol == null || identifier == null || systemKey == null)
+            if(protocol == null || systemKey == null)
             {
                 continue;
             }
@@ -609,17 +841,28 @@ class StatsAliasResolver
             Rule best = null;
             if(protocol == 1)
             {
+                Long subscriberIdentityId = type == RuleType.RADIO ?
+                    positiveLong(row.get("p25_subscriber_identity_id")) : null;
                 Long summaryId = positiveLong(row.get(summaryIdColumn));
                 List<LocalEvidence> evidence = summaryId != null ?
                     p25Evidence.getOrDefault(summaryId, List.of()) : List.of();
-                best = evidence.isEmpty() ? p25.best(identifier,
-                    aliasListsBySystem.getOrDefault(systemKey, Set.of())) : p25.best(evidence, false);
+                if(subscriberIdentityId != null)
+                {
+                    best = evidence.isEmpty() ? p25Subscribers.best(subscriberIdentityId,
+                        aliasListsBySystem.getOrDefault(systemKey, Set.of())) :
+                        p25Subscribers.best(subscriberIdentityId, evidence, false);
+                }
+                if(best == null && (subscriberIdentityId == null || !evidence.isEmpty()))
+                {
+                    best = identifier == null ? null : evidence.isEmpty() ? p25.best(identifier,
+                        aliasListsBySystem.getOrDefault(systemKey, Set.of())) : p25.best(evidence, false);
+                }
             }
-            else if(protocol == 3)
+            else if(protocol == 3 && identifier != null)
             {
                 best = dmr.best(identifier, aliasListsBySystem.getOrDefault(systemKey, Set.of()));
             }
-            else if(protocol == 4)
+            else if(protocol == 4 && identifier != null)
             {
                 best = nxdn.best(identifier, aliasListsBySystem.getOrDefault(systemKey, Set.of()));
             }
@@ -726,8 +969,20 @@ class StatsAliasResolver
                     source("target_id", row -> protocolCode(row) == 1 && talkgroupTarget.test(row))))),
             index(loadRules(connection, RuleType.RADIO, P25_PROTOCOLS,
                 ruleTargets(rows, StatsAliasResolver::assignedAliasList,
-                    source("source_radio_id", row -> protocolCode(row) == 1),
-                    source("target_id", row -> protocolCode(row) == 1 && radioTarget.test(row))))),
+                    source("source_radio_id", row -> protocolCode(row) == 1 &&
+                        positiveLong(row.get("source_p25_subscriber_identity_id")) == null),
+                    source("source_observed_working_id", row -> protocolCode(row) == 1 &&
+                        positiveLong(row.get("source_p25_subscriber_identity_id")) != null),
+                    source("target_id", row -> protocolCode(row) == 1 && radioTarget.test(row) &&
+                        positiveLong(row.get("target_p25_subscriber_identity_id")) == null),
+                    source("target_observed_working_id", row -> protocolCode(row) == 1 &&
+                        radioTarget.test(row) &&
+                        positiveLong(row.get("target_p25_subscriber_identity_id")) != null)))),
+            loadP25SubscriberRules(connection,
+                p25SubscriberRuleTargets(rows, StatsAliasResolver::assignedAliasList,
+                    p25SubscriberSource("source_p25_subscriber_identity_id", row -> protocolCode(row) == 1),
+                    p25SubscriberSource("target_p25_subscriber_identity_id",
+                        row -> protocolCode(row) == 1 && radioTarget.test(row)))),
             index(loadRules(connection, RuleType.TALKGROUP, DMR_PROTOCOLS,
                 ruleTargets(rows, StatsAliasResolver::assignedAliasList,
                     source("target_id", row -> protocolCode(row) == 3 && talkgroupTarget.test(row))))),
@@ -755,10 +1010,13 @@ class StatsAliasResolver
 
         RuleTargets p25TalkgroupTargets = canonicalEvidenceTargets(rows, p25Evidence, systemAliasLists, talkgroup);
         RuleTargets p25RadioTargets = canonicalEvidenceTargets(rows, p25Evidence, systemAliasLists, radio);
+        P25SubscriberRuleTargets p25SubscriberTargets = canonicalP25SubscriberEvidenceTargets(rows,
+            p25Evidence, systemAliasLists, radio);
 
         return new Snapshot(
             index(loadRules(connection, RuleType.TALKGROUP, P25_PROTOCOLS, p25TalkgroupTargets)),
             index(loadRules(connection, RuleType.RADIO, P25_PROTOCOLS, p25RadioTargets)),
+            loadP25SubscriberRules(connection, p25SubscriberTargets),
             index(loadRules(connection, RuleType.TALKGROUP, DMR_PROTOCOLS,
                 ruleTargets(rows, StatsAliasResolver::assignedAliasList,
                     source("identity_id", row -> protocolCode(row) == 3 && talkgroup.test(row))))),
@@ -798,7 +1056,8 @@ class StatsAliasResolver
             else
             {
                 Integer identifier = integer(row.get("identity_id"));
-                if(identifier == null)
+                if(identifier == null || Integer.valueOf(2).equals(integer(row.get("identity_kind_code"))) &&
+                    positiveLong(row.get("p25_subscriber_identity_id")) != null)
                 {
                     continue;
                 }
@@ -820,6 +1079,45 @@ class StatsAliasResolver
         return targets;
     }
 
+    private static P25SubscriberRuleTargets canonicalP25SubscriberEvidenceTargets(
+        List<Map<String,Object>> rows, Map<Long,List<LocalEvidence>> p25Evidence,
+        Map<String,Set<Long>> systemAliasLists, Predicate<Map<String,Object>> include)
+    {
+        P25SubscriberRuleTargets targets = new P25SubscriberRuleTargets();
+        for(Map<String,Object> row: rows)
+        {
+            Long p25SubscriberIdentityId = positiveLong(row.get("p25_subscriber_identity_id"));
+            if(protocolCode(row) != 1 || p25SubscriberIdentityId == null || !include.test(row))
+            {
+                continue;
+            }
+
+            Long summaryId = positiveLong(row.get("identity_summary_id"));
+            List<LocalEvidence> local = summaryId != null ?
+                p25Evidence.getOrDefault(summaryId, List.of()) : List.of();
+            if(!local.isEmpty())
+            {
+                for(LocalEvidence item: local)
+                {
+                    targets.add(Set.of(item.aliasListId()), p25SubscriberIdentityId);
+                }
+            }
+            else if("TRUNKED".equals(row.get("topology")))
+            {
+                String systemKey = string(row.get("radio_system_key"));
+                if(systemKey != null)
+                {
+                    targets.add(systemAliasLists.getOrDefault(systemKey, Set.of()), p25SubscriberIdentityId);
+                }
+            }
+            else
+            {
+                targets.add(assignedAliasList(row), p25SubscriberIdentityId);
+            }
+        }
+        return targets;
+    }
+
     private Snapshot observedSnapshot(Connection connection, List<Map<String,Object>> rows) throws SQLException
     {
         return new Snapshot(
@@ -827,6 +1125,7 @@ class StatsAliasResolver
                 ruleTargets(rows, StatsAliasResolver::assignedAliasList,
                     source("group_identity_id", row -> protocolCode(row) == 1)))),
             RuleIndex.empty(),
+            P25SubscriberRuleIndex.empty(),
             index(loadRules(connection, RuleType.TALKGROUP, DMR_PROTOCOLS,
                 ruleTargets(rows, StatsAliasResolver::assignedAliasList,
                     source("group_identity_id", row -> protocolCode(row) == 3)))),
@@ -916,12 +1215,18 @@ class StatsAliasResolver
 
         String sql = """
                 WITH requested(identity_summary_id) AS (VALUES %s), compact_evidence AS (
-                    SELECT bucket.identity_summary_id, bucket.channel_id, bucket.observed_local_id
+                    SELECT bucket.identity_summary_id, bucket.channel_id,
+                        CASE WHEN summary.identity_kind_code = 2
+                                  AND summary.p25_subscriber_identity_id IS NOT NULL
+                             THEN bucket.observed_working_id ELSE bucket.observed_local_id END AS observed_local_id
                     FROM requested
                     CROSS JOIN p25_site_call_identity_bucket bucket
                         INDEXED BY idx_p25_site_call_identity_identity
                       ON bucket.identity_summary_id = requested.identity_summary_id
-                    WHERE bucket.observed_local_id > 0
+                    JOIN radio_system_identity_summary summary ON summary.id = bucket.identity_summary_id
+                    WHERE CASE WHEN summary.identity_kind_code = 2
+                                      AND summary.p25_subscriber_identity_id IS NOT NULL
+                               THEN bucket.observed_working_id ELSE bucket.observed_local_id END > 0
                     UNION
                     SELECT member.identity_summary_id, event.channel_id, member.observed_local_id
                     FROM requested
@@ -930,18 +1235,27 @@ class StatsAliasResolver
                     JOIN receiver_activity_event event ON event.id = member.event_id
                     WHERE member.observed_local_id > 0
                     UNION
-                    SELECT presence.radio_identity_id, presence.channel_id, presence.observed_local_id
+                    SELECT presence.radio_identity_id, presence.channel_id,
+                        CASE WHEN summary.p25_subscriber_identity_id IS NOT NULL
+                             THEN presence.observed_working_id ELSE presence.observed_local_id END
                     FROM requested
                     JOIN trunked_radio_channel_presence presence
                       ON presence.radio_identity_id = requested.identity_summary_id
-                    WHERE presence.observed_local_id > 0
+                    JOIN radio_system_identity_summary summary ON summary.id = presence.radio_identity_id
+                    WHERE CASE WHEN summary.p25_subscriber_identity_id IS NOT NULL
+                               THEN presence.observed_working_id ELSE presence.observed_local_id END > 0
                     UNION
                     SELECT affiliation.radio_identity_id, affiliation.channel_id,
-                        affiliation.radio_observed_local_id
+                        CASE WHEN summary.p25_subscriber_identity_id IS NOT NULL
+                             THEN affiliation.radio_observed_working_id
+                             ELSE affiliation.radio_observed_local_id END
                     FROM requested
                     JOIN trunked_radio_affiliation affiliation
                       ON affiliation.radio_identity_id = requested.identity_summary_id
-                    WHERE affiliation.radio_observed_local_id > 0
+                    JOIN radio_system_identity_summary summary ON summary.id = affiliation.radio_identity_id
+                    WHERE CASE WHEN summary.p25_subscriber_identity_id IS NOT NULL
+                               THEN affiliation.radio_observed_working_id
+                               ELSE affiliation.radio_observed_local_id END > 0
                     UNION
                     SELECT affiliation.talkgroup_identity_id, affiliation.channel_id,
                         affiliation.talkgroup_observed_local_id
@@ -961,20 +1275,28 @@ class StatsAliasResolver
                     FROM compact_evidence
                     UNION
                     SELECT event.source_identity_summary_id, event.channel_id,
-                        event.source_observed_local_id
+                        CASE WHEN summary.p25_subscriber_identity_id IS NOT NULL
+                             THEN event.source_observed_working_id ELSE event.source_observed_local_id END
                     FROM detail_fallback
                     CROSS JOIN receiver_activity_event event
                         INDEXED BY idx_receiver_activity_event_source_time
                       ON event.source_identity_summary_id = detail_fallback.identity_summary_id
-                    WHERE event.source_observed_local_id > 0
+                    JOIN radio_system_identity_summary summary ON summary.id = event.source_identity_summary_id
+                    WHERE CASE WHEN summary.p25_subscriber_identity_id IS NOT NULL
+                               THEN event.source_observed_working_id ELSE event.source_observed_local_id END > 0
                     UNION
                     SELECT event.target_identity_summary_id, event.channel_id,
-                        event.target_observed_local_id
+                        CASE WHEN event.target_kind_code = 2
+                                  AND summary.p25_subscriber_identity_id IS NOT NULL
+                             THEN event.target_observed_working_id ELSE event.target_observed_local_id END
                     FROM detail_fallback
                     CROSS JOIN receiver_activity_event event
                         INDEXED BY idx_receiver_activity_event_target_time
                       ON event.target_identity_summary_id = detail_fallback.identity_summary_id
-                    WHERE event.target_observed_local_id > 0
+                    JOIN radio_system_identity_summary summary ON summary.id = event.target_identity_summary_id
+                    WHERE CASE WHEN event.target_kind_code = 2
+                                      AND summary.p25_subscriber_identity_id IS NOT NULL
+                               THEN event.target_observed_working_id ELSE event.target_observed_local_id END > 0
                 )
                 SELECT DISTINCT local_evidence.identity_summary_id, config.alias_list_id,
                     local_evidence.observed_local_id
@@ -1077,6 +1399,79 @@ class StatsAliasResolver
         }
 
         return List.copyOf(rules.values());
+    }
+
+    /** Loads only exact canonical subscriber aliases requested by this bounded page. */
+    private P25SubscriberRuleIndex loadP25SubscriberRules(Connection connection,
+                                                           P25SubscriberRuleTargets targets) throws SQLException
+    {
+        if(targets.isEmpty())
+        {
+            return P25SubscriberRuleIndex.empty();
+        }
+
+        Map<P25SubscriberRuleTarget,Rule> rules = new LinkedHashMap<>();
+        List<P25SubscriberRuleTarget> pairs = targets.pairs();
+        for(int offset = 0; offset < pairs.size(); offset += RULE_TARGET_CHUNK)
+        {
+            List<P25SubscriberRuleTarget> chunk = pairs.subList(offset,
+                Math.min(pairs.size(), offset + RULE_TARGET_CHUNK));
+            String sql = """
+                WITH requested(alias_list_id, p25_subscriber_identity_id) AS (VALUES %s)
+                SELECT requested.alias_list_id, requested.p25_subscriber_identity_id,
+                    definition.id AS alias_id, definition.name, definition.description,
+                    definition.group_name, definition.color, list.name AS alias_list_name
+                FROM requested
+                JOIN alias_p25_subscriber_identity subscriber_alias
+                  ON subscriber_alias.p25_subscriber_identity_id = requested.p25_subscriber_identity_id
+                JOIN alias definition
+                  ON definition.id = subscriber_alias.alias_id
+                 AND definition.alias_list_id = requested.alias_list_id
+                JOIN alias_list list ON list.id = definition.alias_list_id
+                WHERE definition.matcher_type = 'P25_SUBSCRIBER_IDENTITY'
+                ORDER BY definition.id
+                LIMIT ?
+                """.formatted(pairPlaceholders(chunk.size()));
+
+            try(PreparedStatement statement = connection.prepareStatement(sql))
+            {
+                int parameter = 1;
+                for(P25SubscriberRuleTarget target: chunk)
+                {
+                    statement.setLong(parameter++, target.aliasListId());
+                    statement.setLong(parameter++, target.p25SubscriberIdentityId());
+                }
+                statement.setInt(parameter, MAX_LOADED_RULES + 1);
+                try(ResultSet resultSet = statement.executeQuery())
+                {
+                    int loaded = 0;
+                    while(resultSet.next())
+                    {
+                        if(++loaded > MAX_LOADED_RULES)
+                        {
+                            throw tooLarge("Alias lookup matched too many canonical subscriber rules");
+                        }
+                        P25SubscriberRuleTarget target = new P25SubscriberRuleTarget(
+                            resultSet.getLong("alias_list_id"),
+                            resultSet.getLong("p25_subscriber_identity_id"));
+                        if(!rules.containsKey(target) && rules.size() >= MAX_LOADED_RULES)
+                        {
+                            throw tooLarge("Alias lookup matched too many canonical subscriber rules");
+                        }
+                        Rule rule = new Rule(null, null, null, false, resultSet.getString("name"),
+                            resultSet.getString("description"), resultSet.getString("group_name"),
+                            resultSet.getInt("color"), target.aliasListId(),
+                            resultSet.getString("alias_list_name"), resultSet.getLong("alias_id"));
+                        Rule current = rules.get(target);
+                        if(current == null || rule.aliasId() > current.aliasId())
+                        {
+                            rules.put(target, rule);
+                        }
+                    }
+                }
+            }
+        }
+        return new P25SubscriberRuleIndex(Map.copyOf(rules));
     }
 
     private void loadRules(Connection connection, RuleType type, List<String> protocols,
@@ -1195,6 +1590,33 @@ class StatsAliasResolver
         return new IdentifierSource(column, include);
     }
 
+    @SafeVarargs
+    private static P25SubscriberRuleTargets p25SubscriberRuleTargets(List<Map<String,Object>> rows,
+        Function<Map<String,Object>,Set<Long>> aliasLists, P25SubscriberSource... sources)
+    {
+        P25SubscriberRuleTargets targets = new P25SubscriberRuleTargets();
+        for(Map<String,Object> row: rows)
+        {
+            Set<Long> rowAliasLists = aliasLists.apply(row);
+            if(rowAliasLists == null || rowAliasLists.isEmpty())
+            {
+                continue;
+            }
+            for(P25SubscriberSource source: sources)
+            {
+                Long identityId = source.include().test(row) ? positiveLong(row.get(source.column())) : null;
+                targets.add(rowAliasLists, identityId);
+            }
+        }
+        return targets;
+    }
+
+    private static P25SubscriberSource p25SubscriberSource(String column,
+                                                            Predicate<Map<String,Object>> include)
+    {
+        return new P25SubscriberSource(column, include);
+    }
+
     private static Set<Long> systemAliasLists(Map<String,Object> row,
                                               Map<String,Set<Long>> aliasListsBySystem)
     {
@@ -1302,7 +1724,11 @@ class StatsAliasResolver
 
     private record IdentifierSource(String column, Predicate<Map<String,Object>> include) {}
 
+    private record P25SubscriberSource(String column, Predicate<Map<String,Object>> include) {}
+
     private record RuleTarget(long aliasListId, int identifier) {}
+
+    private record P25SubscriberRuleTarget(long aliasListId, long p25SubscriberIdentityId) {}
 
     private record LocalEvidence(long aliasListId, int observedLocalId) {}
 
@@ -1337,6 +1763,7 @@ class StatsAliasResolver
         private final Connection mConnection;
         private final Map<MigrationRuleKey,PreparedStatement> mExact = new HashMap<>();
         private final Map<MigrationRuleKey,PreparedStatement> mRange = new HashMap<>();
+        private PreparedStatement mP25Subscriber;
 
         private MigrationWinnerResolver(Connection connection)
         {
@@ -1377,7 +1804,50 @@ class StatsAliasResolver
             }
         }
 
+        private Long resolvePreferred(int protocol, int kind, long aliasListId, int identifier,
+                                      Long p25SubscriberIdentityId) throws SQLException
+        {
+            return resolvePreferred(protocol, kind, aliasListId, identifier, p25SubscriberIdentityId, false);
+        }
+
+        private Long resolvePreferred(int protocol, int kind, long aliasListId, int identifier,
+                                      Long p25SubscriberIdentityId, boolean explicitLocalEvidence)
+            throws SQLException
+        {
+            Long canonical = protocol == 1 && kind == 2 && p25SubscriberIdentityId != null ?
+                resolveP25Subscriber(aliasListId, p25SubscriberIdentityId) : null;
+            return canonical != null ? canonical : p25SubscriberIdentityId == null || explicitLocalEvidence ?
+                resolve(protocol, kind, aliasListId, identifier) : null;
+        }
+
+        private Long resolveP25Subscriber(long aliasListId, long p25SubscriberIdentityId) throws SQLException
+        {
+            if(mP25Subscriber == null)
+            {
+                mP25Subscriber = mConnection.prepareStatement("""
+                    SELECT alias.id
+                    FROM alias_p25_subscriber_identity subscriber_alias
+                    JOIN alias ON alias.id=subscriber_alias.alias_id
+                    WHERE alias.alias_list_id=? AND alias.matcher_type='P25_SUBSCRIBER_IDENTITY'
+                      AND subscriber_alias.p25_subscriber_identity_id=?
+                    ORDER BY alias.id DESC LIMIT 1
+                    """);
+            }
+            mP25Subscriber.setLong(1, aliasListId);
+            mP25Subscriber.setLong(2, p25SubscriberIdentityId);
+            try(ResultSet resultSet = mP25Subscriber.executeQuery())
+            {
+                return resultSet.next() ? resultSet.getLong(1) : null;
+            }
+        }
+
         private Long resolveSystemConsensus(String systemKey, int kind, int identifier) throws SQLException
+        {
+            return resolveSystemConsensus(systemKey, kind, identifier, null);
+        }
+
+        private Long resolveSystemConsensus(String systemKey, int kind, int identifier,
+                                            Long p25SubscriberIdentityId) throws SQLException
         {
             if(systemKey == null)
             {
@@ -1412,7 +1882,8 @@ class StatsAliasResolver
                     while(resultSet.next())
                     {
                         assignedCount++;
-                        Long candidate = resolve(1, kind, resultSet.getLong(1), identifier);
+                        Long candidate = resolvePreferred(1, kind, resultSet.getLong(1), identifier,
+                            p25SubscriberIdentityId);
                         if(candidate == null || winner != null && !winner.equals(candidate))
                         {
                             return null;
@@ -1444,6 +1915,17 @@ class StatsAliasResolver
                 try
                 {
                     statement.close();
+                }
+                catch(SQLException exception)
+                {
+                    failure = exception;
+                }
+            }
+            if(mP25Subscriber != null)
+            {
+                try
+                {
+                    mP25Subscriber.close();
                 }
                 catch(SQLException exception)
                 {
@@ -1519,6 +2001,44 @@ class StatsAliasResolver
         }
     }
 
+    private static final class P25SubscriberRuleTargets
+    {
+        private final Set<P25SubscriberRuleTarget> mPairs = new LinkedHashSet<>();
+        private final Set<Long> mAliasLists = new HashSet<>();
+
+        private void add(Set<Long> aliasLists, Long p25SubscriberIdentityId)
+        {
+            if(p25SubscriberIdentityId == null || p25SubscriberIdentityId <= 0)
+            {
+                return;
+            }
+
+            for(Long aliasListId: aliasLists)
+            {
+                if(aliasListId == null || aliasListId <= 0)
+                {
+                    continue;
+                }
+                mAliasLists.add(aliasListId);
+                requireMaximum(mAliasLists.size(), MAX_ALIAS_LISTS,
+                    "Alias lookup references too many alias lists");
+                mPairs.add(new P25SubscriberRuleTarget(aliasListId, p25SubscriberIdentityId));
+                requireMaximum(mPairs.size(), MAX_RULE_LOOKUP_PAIRS,
+                    "Alias lookup references too many list and canonical subscriber pairs");
+            }
+        }
+
+        private boolean isEmpty()
+        {
+            return mPairs.isEmpty();
+        }
+
+        private List<P25SubscriberRuleTarget> pairs()
+        {
+            return List.copyOf(mPairs);
+        }
+    }
+
     /** Shared bound across every system-key chunk in one resolver lookup. */
     static final class AliasListPairBudget
     {
@@ -1549,7 +2069,8 @@ class StatsAliasResolver
         }
     }
 
-    private record Snapshot(RuleIndex talkgroups, RuleIndex radios, RuleIndex dmrTalkgroups,
+    private record Snapshot(RuleIndex talkgroups, RuleIndex radios, P25SubscriberRuleIndex p25Subscribers,
+                            RuleIndex dmrTalkgroups,
                             RuleIndex dmrRadios, RuleIndex nxdnTalkgroups, RuleIndex nxdnRadios)
     {
     }
@@ -1679,6 +2200,87 @@ class StatsAliasResolver
                     return null;
                 }
 
+                if(best == null || candidate.aliasId() < best.aliasId())
+                {
+                    best = candidate;
+                }
+            }
+            return best;
+        }
+    }
+
+    private record P25SubscriberRuleIndex(Map<P25SubscriberRuleTarget,Rule> rules)
+    {
+        private static P25SubscriberRuleIndex empty()
+        {
+            return new P25SubscriberRuleIndex(Map.of());
+        }
+
+        private Rule best(long p25SubscriberIdentityId, long aliasListId)
+        {
+            return rules.get(new P25SubscriberRuleTarget(aliasListId, p25SubscriberIdentityId));
+        }
+
+        private Rule best(long p25SubscriberIdentityId, Set<Long> aliasLists)
+        {
+            if(aliasLists.isEmpty())
+            {
+                return null;
+            }
+
+            Rule best = null;
+            for(long aliasListId: aliasLists)
+            {
+                Rule candidate = best(p25SubscriberIdentityId, aliasListId);
+                if(candidate == null || best != null && !candidate.hasSamePresentationAs(best))
+                {
+                    return null;
+                }
+                if(best == null || candidate.aliasId() < best.aliasId())
+                {
+                    best = candidate;
+                }
+            }
+            return best;
+        }
+
+        private Rule bestSameAlias(long p25SubscriberIdentityId, Set<Long> aliasLists)
+        {
+            if(aliasLists.isEmpty())
+            {
+                return null;
+            }
+
+            Rule best = null;
+            for(long aliasListId: aliasLists)
+            {
+                Rule candidate = best(p25SubscriberIdentityId, aliasListId);
+                if(candidate == null || best != null && candidate.aliasId() != best.aliasId())
+                {
+                    return null;
+                }
+                best = candidate;
+            }
+            return best;
+        }
+
+        private Rule best(long p25SubscriberIdentityId, List<LocalEvidence> evidence,
+                          boolean requireSameAliasId)
+        {
+            if(evidence.isEmpty())
+            {
+                return null;
+            }
+
+            Rule best = null;
+            for(LocalEvidence item: evidence)
+            {
+                Rule candidate = best(p25SubscriberIdentityId, item.aliasListId());
+                if(candidate == null || best != null && (requireSameAliasId ?
+                    candidate.aliasId() != best.aliasId() : !candidate.hasSamePresentationAs(best)))
+                {
+                    return null;
+                }
                 if(best == null || candidate.aliasId() < best.aliasId())
                 {
                     best = candidate;

@@ -34,7 +34,7 @@ import java.util.List;
 public class RadioUnitMonitorEnhancedCommandExtended extends MacStructureMultiFragment
 {
     private static final IntField TARGET_ADDRESS = IntField.length24(OCTET_4_BIT_24);
-    private static final IntField SOURCE_SUID_WACN = IntField.range(OCTET_7_BIT_48, OCTET_7_BIT_48 + 20);
+    private static final IntField SOURCE_SUID_WACN = IntField.length20(OCTET_7_BIT_48);
     private static final IntField SOURCE_SUID_SYSTEM = IntField.range(68, 79);
     private static final IntField SOURCE_SUID_ID = IntField.length24(OCTET_11_BIT_80);
     private static final int SM = OCTET_14_BIT_104; //Stealth Mode
@@ -44,10 +44,10 @@ public class RadioUnitMonitorEnhancedCommandExtended extends MacStructureMultiFr
     private static final IntField ALGORITHM_ID = IntField.length8(OCTET_18_BIT_136);
 
     private static final IntField FRAGMENT_0_SOURCE_ADDRESS = IntField.length24(OCTET_3_BIT_16);
-    private static final IntField FRAGMENT_0_TARGET_SUID_WACN = IntField.range(OCTET_6_BIT_40, OCTET_6_BIT_40 + 20);
+    private static final IntField FRAGMENT_0_TARGET_SUID_WACN = IntField.length20(OCTET_6_BIT_40);
     private static final IntField FRAGMENT_0_TARGET_SUID_SYSTEM = IntField.range(60, 71);
     private static final IntField FRAGMENT_0_TARGET_SUID_ID = IntField.length24(OCTET_10_BIT_72);
-    private static final IntField FRAGMENT_0_SGID_WACN = IntField.range(OCTET_13_BIT_96, OCTET_13_BIT_96 + 20);
+    private static final IntField FRAGMENT_0_SGID_WACN = IntField.length20(OCTET_13_BIT_96);
     private static final IntField FRAGMENT_0_SGID_SYSTEM = IntField.range(116, 127);
     private static final IntField FRAGMENT_0_SGID_ID = IntField.length24(OCTET_17_BIT_128);
 
@@ -124,7 +124,8 @@ public class RadioUnitMonitorEnhancedCommandExtended extends MacStructureMultiFr
             int wacn = getFragment(0).getInt(FRAGMENT_0_TARGET_SUID_WACN);
             int system = getFragment(0).getInt(FRAGMENT_0_TARGET_SUID_SYSTEM);
             int id = getFragment(0).getInt(FRAGMENT_0_TARGET_SUID_ID);
-            mTargetAddress = APCO25FullyQualifiedRadioIdentifier.createTo(address, wacn, system, id);
+            mTargetAddress = APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(address, wacn, system,
+                id);
         }
 
         return mTargetAddress;
@@ -157,7 +158,8 @@ public class RadioUnitMonitorEnhancedCommandExtended extends MacStructureMultiFr
             int wacn = getInt(SOURCE_SUID_WACN);
             int system = getInt(SOURCE_SUID_SYSTEM);
             int id = getInt(SOURCE_SUID_ID);
-            mSourceAddress = APCO25FullyQualifiedRadioIdentifier.createFrom(address, wacn, system, id);
+            mSourceAddress = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(address, wacn, system,
+                id);
         }
 
         return mSourceAddress;

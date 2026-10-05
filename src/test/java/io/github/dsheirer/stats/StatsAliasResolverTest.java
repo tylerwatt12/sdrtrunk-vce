@@ -268,6 +268,169 @@ class StatsAliasResolverTest
     }
 
     @Test
+    void explicitCanonicalSubscriberForeignKeyWinsWithoutInferringLegacyHomeFields() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("canonical-p25-alias.sqlite");
+        createDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            clearFactoryAliasLists(statement);
+            statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES(1,'P25','P25')");
+            statement.executeUpdate("""
+                INSERT INTO alias(id,alias_list_id,name,description,matcher_type,protocol,value) VALUES
+                    (1,1,'Local Working Unit','Local fallback','RADIO_ID','APCO25',501),
+                    (2,1,'Permanent Subscriber','Canonical identity','P25_SUBSCRIBER_IDENTITY',NULL,NULL)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_subscriber_identity(id,home_wacn,home_system_id,subscriber_id)
+                VALUES(91,0xBEE00,0x4A2,2115288),
+                      (92,0xBEE00,0x4A2,2115289)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias_p25_subscriber_identity(alias_id,p25_subscriber_identity_id)
+                VALUES(2,91)
+                """);
+            insertP25Channel(statement, 77, P25_CONFIGURATION_ID, P25_RADIORESOLVE_ID, 1);
+
+            StatsAliasResolver resolver = new StatsAliasResolver();
+            Map<String,Object> systemRadio = p25Row();
+            systemRadio.put("radio_id", 501);
+            systemRadio.put("p25_subscriber_identity_id", 91L);
+            resolver.enrichRadios(connection, rows(systemRadio));
+            assertEquals("Permanent Subscriber", systemRadio.get("alias_name"));
+            assertEquals("Canonical identity", systemRadio.get("alias_description"));
+
+            Map<String,Object> identityOnly = p25Row();
+            identityOnly.put("radio_id", 501);
+            identityOnly.put("p25_subscriber_identity_id", 92L);
+            resolver.enrichRadios(connection, rows(identityOnly));
+            assertNull(identityOnly.get("alias_name"),
+                "a canonical identity without explicit Working-ID provenance must not use a local radio Alias");
+
+            Map<String,Object> explicitWorking = p25Row();
+            explicitWorking.put("radio_id", 2_115_289);
+            explicitWorking.put("observed_working_id", 501);
+            explicitWorking.put("p25_subscriber_identity_id", 92L);
+            resolver.enrichRadios(connection, rows(explicitWorking));
+            assertEquals("Local Working Unit", explicitWorking.get("alias_name"),
+                "an explicitly retained Working ID may use the corresponding local radio Alias");
+
+            Map<String,Object> identityOnlyRelationship = p25Row();
+            identityOnlyRelationship.put("radio_id", 501);
+            identityOnlyRelationship.put("talkgroup_id", 700);
+            identityOnlyRelationship.put("p25_subscriber_identity_id", 92L);
+            resolver.enrichRelationships(connection, rows(identityOnlyRelationship));
+            assertNull(identityOnlyRelationship.get("radio_alias_name"));
+
+            Map<String,Object> explicitWorkingRelationship = p25Row();
+            explicitWorkingRelationship.put("radio_id", 2_115_289);
+            explicitWorkingRelationship.put("radio_working_subscriber_id", 501);
+            explicitWorkingRelationship.put("talkgroup_id", 700);
+            explicitWorkingRelationship.put("p25_subscriber_identity_id", 92L);
+            resolver.enrichRelationships(connection, rows(explicitWorkingRelationship));
+            assertEquals("Local Working Unit", explicitWorkingRelationship.get("radio_alias_name"));
+
+            Map<String,Object> canonicalOnly = p25Row();
+            canonicalOnly.put("protocol_code", 1);
+            canonicalOnly.put("radio_id", null);
+            canonicalOnly.put("p25_subscriber_identity_id", 91L);
+            resolver.enrichCanonicalSystemRadios(connection, rows(canonicalOnly),
+                "identity_summary_id", "radio_id", "alias_");
+            assertEquals("Permanent Subscriber", canonicalOnly.get("alias_name"),
+                "an explicit canonical observation does not require a working/local radio ID");
+
+            Map<String,Object> legacyTupleOnly = p25Row();
+            legacyTupleOnly.put("radio_id", 501);
+            legacyTupleOnly.put("home_wacn", 0xBEE00);
+            legacyTupleOnly.put("home_system_id", 0x4A2);
+            legacyTupleOnly.put("subscriber_id", 2_115_288);
+            resolver.enrichRadios(connection, rows(legacyTupleOnly));
+            assertEquals("Local Working Unit", legacyTupleOnly.get("alias_name"),
+                "tuple-shaped legacy fields are not canonical identity authority without the explicit FK");
+
+            Map<String,Object> conventional = row(1, 501);
+            conventional.put("p25_subscriber_identity_id", 91L);
+            resolver.enrichP25ConventionalRadios(connection, rows(conventional), "identity_id", "alias_");
+            assertEquals("Permanent Subscriber", conventional.get("alias_name"));
+
+            Map<String,Object> activity = activityRow("APCO25", 1, 1, 501, 700, 1);
+            activity.put("source_p25_subscriber_identity_id", 91L);
+            resolver.enrichActivity(connection, rows(activity));
+            assertEquals("Permanent Subscriber", activity.get("source_alias_name"));
+
+            Map<String,Object> localActivity = activityRow("APCO25", 1, 1, 501, 700, 1);
+            localActivity.put("source_home_wacn", 0xBEE00);
+            localActivity.put("source_home_system_id", 0x4A2);
+            localActivity.put("source_subscriber_id", 2_115_288);
+            resolver.enrichActivity(connection, rows(localActivity));
+            assertEquals("Local Working Unit", localActivity.get("source_alias_name"));
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void canonicalAliasCatalogFiltersDisplaysAndCountsOnlyExplicitForeignKeyEvidence() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("canonical-p25-catalog.sqlite");
+        createDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            clearFactoryAliasLists(statement);
+            statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES(1,'P25','P25')");
+            statement.executeUpdate("""
+                INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,value)
+                VALUES(10,1,'Roaming Unit','P25_SUBSCRIBER_IDENTITY',NULL,NULL)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_subscriber_identity(id,home_wacn,home_system_id,subscriber_id)
+                VALUES(91,0xBEE00,0x4A2,2115288)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias_p25_subscriber_identity(alias_id,p25_subscriber_identity_id)
+                VALUES(10,91)
+                """);
+            insertP25Channel(statement, 77, P25_CONFIGURATION_ID, P25_RADIORESOLVE_ID, 1);
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary(
+                    id,radio_system_id,identity_kind_code,home_wacn,home_system_id,identity_id,
+                    first_seen_ms,last_seen_ms,logical_call_count,p25_subscriber_identity_id
+                ) VALUES(7001,77,2,0xBEE00,0x4A2,2115288,1000,2000,9,NULL)
+                """);
+            AliasActivitySummaryMaintenance.rebuildAll(connection);
+
+            StatsAliasCatalog catalog = new StatsAliasCatalog(new StatsAliasResolver());
+            Map<String,Object> filtered = catalog.aliases(connection, new StatsRequest(Map.of(
+                "matcher", "p25_subscriber_identity", "search", "bee00.4a2.2115288",
+                "include_activity", "false", "limit", "10")));
+            List<Map<String,Object>> filteredRows = (List<Map<String,Object>>)filtered.get("rows");
+            assertEquals(1, filteredRows.size());
+            assertEquals("BEE00.4A2.2115288", filteredRows.getFirst().get("identifier_display"));
+
+            Map<String,Object> legacyOnly = catalog.alias(connection, 10);
+            Map<String,Object> legacyAlias = (Map<String,Object>)legacyOnly.get("alias");
+            assertEquals(0L, ((Number)legacyAlias.get("observed_source_count")).longValue(),
+                "matching home fields without the canonical FK must not claim historical evidence");
+
+            statement.executeUpdate("""
+                UPDATE radio_system_identity_summary SET p25_subscriber_identity_id=91 WHERE id=7001
+                """);
+            AliasActivitySummaryMaintenance.rebuildAll(connection);
+            Map<String,Object> canonical = catalog.alias(connection, 10);
+            Map<String,Object> canonicalAlias = (Map<String,Object>)canonical.get("alias");
+            List<Map<String,Object>> breakdown = (List<Map<String,Object>>)canonical.get("breakdown");
+            assertEquals(1L, ((Number)canonicalAlias.get("observed_source_count")).longValue());
+            Map<String,Object> system = breakdown.stream()
+                .filter(row -> P25_SYSTEM_KEY.equals(row.get("radio_system_key")))
+                .findFirst().orElseThrow();
+            assertEquals(9L, ((Number)system.get("logical_call_count")).longValue());
+        }
+    }
+
+    @Test
     void sharedP25SystemAliasIsBlankWhenAssignedListsDisagree() throws Exception
     {
         Path database = mTemporaryFolder.resolve("shared-system-alias.sqlite");

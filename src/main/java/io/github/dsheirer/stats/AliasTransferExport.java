@@ -136,7 +136,7 @@ final class AliasTransferExport
         Map<String,String> row = new LinkedHashMap<>();
         AliasTransferCsv.HEADERS.forEach(header -> row.put(header, ""));
         String matcherType = text(source.get("matcher_type"));
-        row.put("format_version", "2");
+        row.put("format_version", "3");
         row.put("alias_list", text(source.get("alias_list_name")));
         row.put("name", text(source.get("name")));
         row.put("description", text(source.get("description")));
@@ -154,6 +154,9 @@ final class AliasTransferExport
         row.put("maximum", integer(source.get("max_value")));
         row.put("text", text(source.get("text_value")));
         row.put("tones", text(source.get("tone_sequence")));
+        row.put("home_wacn", hexadecimal(source.get("home_wacn"), 5));
+        row.put("home_system_id", hexadecimal(source.get("home_system_id"), 3));
+        row.put("subscriber_id", integer(source.get("subscriber_id")));
         row.put("record_enabled", bool(source.get("record_enabled")));
         row.put("scan_lists", jsonNames(source.get("scan_lists"), "scan_lists"));
         row.put("streaming_destinations", jsonNames(source.get("broadcast_channels"),
@@ -244,6 +247,41 @@ final class AliasTransferExport
         {
             throw new IllegalArgumentException("Alias numeric configuration value is invalid", exception);
         }
+    }
+
+    private static String hexadecimal(Object value, int width)
+    {
+        if(value == null)
+        {
+            return "";
+        }
+
+        long numericValue;
+
+        if(value instanceof Number number)
+        {
+            numericValue = number.longValue();
+        }
+        else
+        {
+            try
+            {
+                numericValue = Long.parseLong(String.valueOf(value));
+            }
+            catch(NumberFormatException exception)
+            {
+                throw new IllegalArgumentException("Alias hexadecimal configuration value is invalid", exception);
+            }
+        }
+
+        long maximum = (1L << (width * 4)) - 1;
+
+        if(numericValue < 0 || numericValue > maximum)
+        {
+            throw new IllegalArgumentException("Alias hexadecimal configuration value is out of range");
+        }
+
+        return String.format(Locale.ROOT, "%0" + width + "X", numericValue);
     }
 
     private static String text(Object value)

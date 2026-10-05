@@ -60,7 +60,7 @@ class ResolvedCallPolicyTest
     void privateRadioDestinationKeepsItsRoleAndCanonicalHomeTuple()
     {
         ResolvedCallPolicy.DestinationIdentity identity = ResolvedCallPolicy.DestinationIdentity.from(
-            APCO25FullyQualifiedRadioIdentifier.createTo(123, 0xABCDE, 0x321, 9_001));
+            APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(123, 0xABCDE, 0x321, 9_001));
 
         assertEquals(Protocol.APCO25, identity.protocol());
         assertEquals(io.github.dsheirer.identifier.Form.RADIO, identity.kind());
@@ -74,18 +74,38 @@ class ResolvedCallPolicyTest
     void p25SpecialRangeRadioDestinationsCannotBecomeDuplicateIdentity()
     {
         assertNull(ResolvedCallPolicy.DestinationIdentity.from(
-            APCO25RadioIdentifier.createTo(10_000_000)));
+            APCO25RadioIdentifier.createTo(0xFFFFFD)));
         assertNull(ResolvedCallPolicy.DestinationIdentity.from(
-            APCO25FullyQualifiedRadioIdentifier.createTo(123, 0xABCDE, 0x321, 10_000_000)));
-        assertNull(ResolvedCallPolicy.DestinationIdentity.from(
-            APCO25FullyQualifiedRadioIdentifier.createTo(0xFFFFFD, 0xABCDE, 0x321, 9_001)));
+            APCO25FullyQualifiedRadioIdentifier.createTo(123, 0xABCDE, 0x321, 0xFFFFFD)));
+        ResolvedCallPolicy.DestinationIdentity identityOnly = ResolvedCallPolicy.DestinationIdentity.from(
+            APCO25FullyQualifiedRadioIdentifier.createTo(0xFFFFFD, 0xABCDE, 0x321, 9_001));
+        assertEquals(0, identityOnly.localAddress(),
+            "an identity-only canonical value must not validate or retain the convenience local value");
         assertNull(ResolvedCallPolicy.DestinationIdentity.from(
             APCO25IncompleteRadioIdentifier.createTo(9_001)));
 
         ResolvedCallPolicy.DestinationIdentity roaming = ResolvedCallPolicy.DestinationIdentity.from(
-            APCO25FullyQualifiedRadioIdentifier.createTo(0xFFFD26, 0xBEE00, 0x954, 831_102));
+            APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(
+                0xFFFD26, 0xBEE00, 0x954, 831_102));
         assertEquals(0xFFFD26, roaming.localAddress());
         assertEquals(831_102, roaming.canonicalIdentity());
+    }
+
+    @Test
+    void qualifiedRadioUsesOnlyAnExplicitWorkingAddressForLocalMatching()
+    {
+        ResolvedCallPolicy.DestinationIdentity ordinary = ResolvedCallPolicy.DestinationIdentity.from(
+            APCO25RadioIdentifier.createTo(9_001));
+        ResolvedCallPolicy.DestinationIdentity identityOnly = ResolvedCallPolicy.DestinationIdentity.from(
+            APCO25FullyQualifiedRadioIdentifier.createTo(9_001, 0xABCDE, 0x321, 9_001));
+        ResolvedCallPolicy.DestinationIdentity equalWorking = ResolvedCallPolicy.DestinationIdentity.from(
+            APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(
+                9_001, 0xABCDE, 0x321, 9_001));
+
+        assertEquals(0, identityOnly.localAddress());
+        assertFalse(identityOnly.matches(ordinary));
+        assertEquals(9_001, equalWorking.localAddress());
+        assertTrue(equalWorking.matches(ordinary));
     }
 
     @Test

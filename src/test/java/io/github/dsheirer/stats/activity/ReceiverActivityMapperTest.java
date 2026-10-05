@@ -16,16 +16,24 @@ import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentif
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
+import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.dmr.DMRConventionalCallEvent;
+import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.nxdn.NXDNConventionalCallEvent;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25SignalingEvent;
 import io.github.dsheirer.module.decode.p25.P25SignalingSemantics;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
+import io.github.dsheirer.module.decode.p25.P25RadioPresence;
+import io.github.dsheirer.module.decode.p25.P25WuidAssignmentRegistry;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25IncompleteRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
+import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
+import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
+import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -99,7 +107,7 @@ class ReceiverActivityMapperTest
         channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
         APCO25IncompleteRadioIdentifier radio = APCO25IncompleteRadioIdentifier.createTo(831_102);
         P25AffiliationEvent event = new P25AffiliationEvent(DecodeEventType.REGISTER, 1_000L,
-            P25AffiliationEvent.Outcome.ACCEPTED, radio, null);
+            P25AffiliationEvent.Outcome.ACCEPTED, new P25RadioPresence(null, 831_102), radio, null);
         event.setIdentifierCollection(new MutableIdentifierCollection(List.of(radio)));
 
         ReceiverActivityRecords.ActivityEvent record = new ReceiverActivityMapper().map(channel, event);
@@ -107,9 +115,10 @@ class ReceiverActivityMapperTest
         assertEquals("831102", record.sourceRadioId());
         assertNull(record.targetId());
         assertNull(record.targetKind());
-        assertEquals(ReceiverActivityRecords.P25IdentityState.UNKNOWN, record.p25SourceIdentity().state());
-        assertEquals(ReceiverActivityRecords.P25IdentityState.UNKNOWN,
+        assertEquals(ReceiverActivityRecords.P25IdentityState.ORDINARY, record.p25SourceIdentity().state());
+        assertEquals(ReceiverActivityRecords.P25IdentityState.ORDINARY,
             record.radioPresenceUpdate().radioIdentity().state());
+        assertNull(record.p25WuidObservation());
     }
 
     @Test
@@ -118,10 +127,15 @@ class ReceiverActivityMapperTest
         Channel channel = new Channel("P25", Channel.ChannelType.STANDARD);
         channel.setConfigurationId(CONFIGURATION_ID);
         channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
-        APCO25FullyQualifiedRadioIdentifier radio = APCO25FullyQualifiedRadioIdentifier.createTo(0xFFFD26,
-            0xBEE00, 0x954, 831_102);
+        APCO25FullyQualifiedRadioIdentifier radio =
+            APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(0xFFFD26, 0xBEE00, 0x954, 831_102);
+        P25SubscriberIdentity subscriber = new P25SubscriberIdentity(0xBEE00, 0x954, 831_102);
+        P25WuidAssignmentRegistry.AssignmentObservation observation =
+            new P25WuidAssignmentRegistry.AssignmentObservation(0xABCDE, 0x123, 0xFFFD26, subscriber,
+                1_000L, 2_000L, P25WuidAssignmentRegistry.Evidence.REGISTRATION);
         P25AffiliationEvent event = new P25AffiliationEvent(DecodeEventType.REGISTER, 1_000L,
-            P25AffiliationEvent.Outcome.ACCEPTED, radio, null);
+            P25AffiliationEvent.Outcome.ACCEPTED, P25RadioPresence.from(radio, radio.getWorkingAddress()), observation,
+            radio, null);
         event.setIdentifierCollection(new MutableIdentifierCollection(List.of(radio)));
 
         ReceiverActivityRecords.ActivityEvent record = new ReceiverActivityMapper().map(channel, event);
@@ -133,6 +147,42 @@ class ReceiverActivityMapperTest
             record.p25SourceIdentity().state());
         assertEquals(0xFFFD26, record.radioPresenceUpdate().radioId());
         assertNull(record.radioPresenceUpdate().talkgroupId());
+        assertEquals(0xABCDE, record.p25WuidObservation().servingWacn());
+        assertEquals(0x123, record.p25WuidObservation().servingSystem());
+        assertEquals(0xFFFD26, record.p25WuidObservation().workingId());
+        assertEquals(subscriber, record.p25WuidObservation().subscriber());
+        assertEquals(2_000L, record.p25WuidObservation().expiresAtEpochMilliseconds());
+        assertEquals(ReceiverActivityRecords.RadioPresenceEvidence.REGISTRATION,
+            record.p25WuidObservation().evidence());
+    }
+
+    @Test
+    void canonicalTalkerAliasDoesNotInventAWorkingAddress()
+    {
+        APCO25FullyQualifiedRadioIdentifier radio =
+            APCO25FullyQualifiedRadioIdentifier.createFrom(831_102, 0xBEE00, 0x954, 831_102);
+        ReceiverActivityRecords.TalkerAliasUpdate record = new ReceiverActivityMapper().map(
+            new TrunkedTalkerAliasEvent(CONFIGURATION_ID, DecoderType.P25_PHASE1, Protocol.APCO25, radio,
+                "Canonical Only", List.of(radio), TrunkedIdentityDomain.STANDARD, 2_000L, 1_000L,
+                "p25:bee00:954"));
+
+        assertNull(record.radioId());
+        assertEquals(831_102, record.p25RadioIdentity().homeIdentityId());
+    }
+
+    @Test
+    void talkerAliasPreservesAnExplicitWorkingAddressEqualToTheSubscriberNumber()
+    {
+        APCO25FullyQualifiedRadioIdentifier radio =
+            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
+                831_102, 0xBEE00, 0x954, 831_102);
+        ReceiverActivityRecords.TalkerAliasUpdate record = new ReceiverActivityMapper().map(
+            new TrunkedTalkerAliasEvent(CONFIGURATION_ID, DecoderType.P25_PHASE1, Protocol.APCO25, radio,
+                "Equal Working Address", List.of(radio), TrunkedIdentityDomain.STANDARD, 2_000L, 1_000L,
+                "p25:bee00:954"));
+
+        assertEquals(831_102, record.radioId());
+        assertEquals(831_102, record.p25RadioIdentity().homeIdentityId());
     }
 
     @Test
@@ -241,7 +291,7 @@ class ReceiverActivityMapperTest
         channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
         APCO25IncompleteRadioIdentifier radio = APCO25IncompleteRadioIdentifier.createTo(831_102);
         P25AffiliationEvent event = new P25AffiliationEvent(DecodeEventType.REGISTER, 1_000L,
-            P25AffiliationEvent.Outcome.ACCEPTED, radio, null);
+            P25AffiliationEvent.Outcome.ACCEPTED, new P25RadioPresence(null, 831_102), radio, null);
         event.setIdentifierCollection(new MutableIdentifierCollection(frequency != null ?
             List.of(radio, FrequencyConfigurationIdentifier.create(frequency)) : List.of(radio)));
         return new ReceiverActivityMapper().map(channel, event);

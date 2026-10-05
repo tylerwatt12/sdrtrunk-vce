@@ -12,6 +12,7 @@ package io.github.dsheirer.module.decode.p25;
 
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
+import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 
@@ -110,17 +111,11 @@ public final class P25AffiliationSemantics
 
     private static boolean validRadio(Identifier<?> identifier, Integer observedId)
     {
-        if(observedId == null)
+        if(identifier instanceof FullyQualifiedRadioIdentifier)
         {
-            return false;
+            return P25SubscriberIdentity.from(identifier) != null;
         }
-
-        if(identifier instanceof FullyQualifiedRadioIdentifier fullyQualified)
-        {
-            return fullyQualified.getRadio() > 0 && observedId >= 0;
-        }
-
-        return observedId > 0;
+        return observedId != null && observedId > 0 && observedId <= 0xFFFFFC;
     }
 
     private static boolean validTalkgroup(Identifier<?> identifier, Integer observedId)

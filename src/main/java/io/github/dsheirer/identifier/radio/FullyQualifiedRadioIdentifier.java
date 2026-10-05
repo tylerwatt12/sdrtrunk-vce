@@ -28,9 +28,13 @@ import java.util.Objects;
  */
 public abstract class FullyQualifiedRadioIdentifier extends RadioIdentifier
 {
+    /** Highest P25 address assigned to an individual subscriber; larger values are infrastructure/reserved. */
+    private static final int MAXIMUM_WORKING_ADDRESS = 0xFFFFFC;
     private int mWacn;
     private int mSystem;
     private int mRadio;
+    private final boolean mExplicitWorkingAddress;
+    private final ResolvedRadioIdentity.Evidence mResolutionEvidence;
 
     /**
      * Constructs an instance
@@ -42,10 +46,34 @@ public abstract class FullyQualifiedRadioIdentifier extends RadioIdentifier
      */
     protected FullyQualifiedRadioIdentifier(int localAddress, int wacn, int system, int id, Role role)
     {
+        this(localAddress, wacn, system, id, role, false);
+    }
+
+    /**
+     * Constructs an instance and records whether {@code localAddress} came from a distinct protocol working-address
+     * field.  Callers that only have the canonical home identity must use the five-argument constructor so an equal
+     * local and subscriber number is not inferred to be a working-address assignment.
+     */
+    protected FullyQualifiedRadioIdentifier(int localAddress, int wacn, int system, int id, Role role,
+                                            boolean explicitWorkingAddress)
+    {
+        this(localAddress, wacn, system, id, role, explicitWorkingAddress, ResolvedRadioIdentity.Evidence.DIRECT);
+    }
+
+    protected FullyQualifiedRadioIdentifier(int localAddress, int wacn, int system, int id, Role role,
+                                            boolean explicitWorkingAddress, ResolvedRadioIdentity.Evidence evidence)
+    {
         super(localAddress, role);
         mWacn = wacn;
         mSystem = system;
         mRadio = id;
+        mExplicitWorkingAddress = explicitWorkingAddress;
+        mResolutionEvidence = Objects.requireNonNull(evidence);
+    }
+
+    public ResolvedRadioIdentity.Evidence getResolutionEvidence()
+    {
+        return mResolutionEvidence;
     }
 
     public int getWacn()
@@ -69,16 +97,34 @@ public abstract class FullyQualifiedRadioIdentifier extends RadioIdentifier
      */
     public String getFullyQualifiedRadioAddress()
     {
-        return mWacn + "." + mSystem + "." + mRadio;
+        return P25SubscriberIdentityFormatter.format(mWacn, mSystem, mRadio);
+    }
+
+    /** Indicates whether the protocol explicitly supplied a separate working/local address field. */
+    public boolean hasExplicitWorkingAddress()
+    {
+        return mExplicitWorkingAddress;
     }
 
     /**
-     * Indicates if the radio identity is aliased with a persona value that is different from the radio ID.
-     * @return true if aliased.
+     * Explicit, valid subscriber working address, or {@code null} when this identifier contains only a canonical
+     * identity (or when the separate address is reserved/invalid).  Equality of the working and home subscriber
+     * numbers does not erase the protocol fact that both fields were present.
+     */
+    public Integer getWorkingAddress()
+    {
+        Integer address = getValue();
+        return mExplicitWorkingAddress && address != null && address > 0 && address <= MAXIMUM_WORKING_ADDRESS ?
+            address : null;
+    }
+
+    /**
+     * Indicates that this radio has an explicit, valid working-address assignment.  The legacy method name remains
+     * for callers that use it to decide whether to display working-address context.
      */
     public boolean isAliased()
     {
-        return getValue() != 0 && getValue() != mRadio;
+        return getWorkingAddress() != null;
     }
 
     /**
@@ -96,7 +142,7 @@ public abstract class FullyQualifiedRadioIdentifier extends RadioIdentifier
     {
         if(isAliased())
         {
-            return super.toString() + "(" + getFullyQualifiedRadioAddress() + ")";
+            return getFullyQualifiedRadioAddress() + " (Working ID " + getWorkingAddress() + ")";
         }
         else
         {
@@ -129,7 +175,7 @@ public abstract class FullyQualifiedRadioIdentifier extends RadioIdentifier
     @Override
     public int hashCode()
     {
-        return Objects.hash(getClass(), getWacn(), getSystem(), getRadio(), getIdentifierClass(), getForm(),
+        return Objects.hash(getWacn(), getSystem(), getRadio(), getIdentifierClass(), getForm(),
                 getRole(), getProtocol());
     }
 }

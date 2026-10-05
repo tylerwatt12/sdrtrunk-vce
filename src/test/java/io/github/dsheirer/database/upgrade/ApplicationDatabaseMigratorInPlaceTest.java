@@ -36,7 +36,7 @@ class ApplicationDatabaseMigratorInPlaceTest
             statement.executeUpdate("""
                 INSERT INTO radio_system_identity_summary(radio_system_id, identity_kind_code,
                     home_wacn, home_system_id, identity_id, first_seen_ms, last_seen_ms)
-                VALUES(500, 2, 703710, 291, 10000000, 1000, 1000)
+                VALUES(500, 2, 703710, 291, 16777213, 1000, 1000)
                 """);
             assertThrows(SQLException.class, () -> ApplicationDatabaseMigrator.validateCurrentDatabase(connection));
         }
@@ -49,9 +49,9 @@ class ApplicationDatabaseMigratorInPlaceTest
         }
         assertEquals("30", format(staged));
         ApplicationDatabaseMigrator.migrateInPlace(database, ignored -> { });
-        assertEquals("31", format(database));
+        assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION), format(database));
         assertEquals("1", scalar(database,
-            "SELECT count(*) FROM radio_system_identity_summary WHERE identity_id=10000000"));
+            "SELECT count(*) FROM radio_system_identity_summary WHERE identity_id=16777213"));
     }
 
     @Test
@@ -94,7 +94,7 @@ class ApplicationDatabaseMigratorInPlaceTest
                 statement.executeUpdate("UPDATE configuration_channel SET config_json='{}' WHERE id=1");
             }
             var result = ApplicationDatabaseMigrator.migrateInPlace(database, ignored -> { });
-            assertEquals("31", format(database));
+            assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION), format(database));
             assertEquals("0", scalar(database, "SELECT count(*) FROM configuration_channel WHERE id=1"));
             assertEquals("1", scalar(database, "SELECT count(*) FROM configuration_channel WHERE id=2"));
             assertEquals("0", scalar(database, "SELECT count(*) FROM receiver_channel WHERE id=1"));
@@ -129,7 +129,7 @@ class ApplicationDatabaseMigratorInPlaceTest
             var result = ApplicationDatabaseMigrator.migrateInPlace(database, ignored -> { }, backups::incrementAndGet);
             assertEquals(1, backups.get());
             assertTrue(result.sourcePlan().requiresMigration());
-            assertEquals("31", format(database));
+            assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION), format(database));
             assertEquals("US", scalar(database,
                 "SELECT json_extract(settings_json,'$.country_code') FROM application_settings WHERE key='spectrum_snap_country'"));
         }
@@ -138,7 +138,7 @@ class ApplicationDatabaseMigratorInPlaceTest
     @Test
     void healthyCurrentDatabaseSkipsBackupAndDoesNotChangeItsBytes() throws Exception
     {
-        Path database = Format31TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
+        Path database = Format32TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
         byte[] before = Files.readAllBytes(database);
         var result = ApplicationDatabaseMigrator.migrateInPlace(database, ignored -> { },
             () -> fail("A healthy current database must not be backed up"));
@@ -167,7 +167,7 @@ class ApplicationDatabaseMigratorInPlaceTest
             messages.add(message);
             if(message.equals("Database update committed")) throw new IllegalStateException("observer failed");
         });
-        assertEquals("31", format(database));
+        assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION), format(database));
         assertTrue(messages.stream().anyMatch(message -> message.contains("observer reported a warning")));
     }
 
@@ -199,7 +199,7 @@ class ApplicationDatabaseMigratorInPlaceTest
             assertEquals("30", format(backup));
             assertEquals("dark", scalar(backup,
                 "SELECT json_extract(preferences_json,'$.appearance.theme') FROM web_user WHERE id=3"));
-            assertEquals("31", format(database));
+            assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION), format(database));
         }
     }
 
@@ -214,7 +214,7 @@ class ApplicationDatabaseMigratorInPlaceTest
         assertEquals(0, writer.exitValue(), Files.readString(mTemporaryFolder.resolve("hot-writer.log")));
         assertTrue(Files.size(Path.of(database + "-journal")) > 0);
         ApplicationDatabaseMigrator.migrateInPlace(database, ignored -> { });
-        assertEquals("31", format(database));
+        assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION), format(database));
         assertEquals("0", scalar(database,
             "SELECT count(*) FROM application_settings WHERE key='uncommitted_probe'"));
     }
@@ -232,7 +232,7 @@ class ApplicationDatabaseMigratorInPlaceTest
         assertEquals("14", format(backup));
         assertEquals("9223372036854775807", scalar(backup,
             "SELECT seq FROM sqlite_sequence WHERE name='alias_list'"));
-        assertEquals("31", format(database));
+        assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION), format(database));
         assertTrue(result.helperOutput().contains("DEFAULT SQLite identity high-water marks: 1 row(s)"),
             result.helperOutput());
         try(Connection connection = open(database); Statement statement = connection.createStatement())

@@ -15,6 +15,7 @@ import io.github.dsheirer.audio.call.LogicalCallId;
 import io.github.dsheirer.channel.metadata.activity.ChannelTag;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
+import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
@@ -99,8 +100,20 @@ final class ReceiverActivityRecords
                                   Integer sourceObservedLocalId, Integer targetObservedLocalId,
                                   String targetKind, P25Identity p25TargetIdentity,
                                   P25Identity p25SourceIdentity, List<Integer> patchMemberTalkgroupIds,
-                                  List<P25PatchMemberIdentity> p25PatchMemberIdentities)
+                                  List<P25PatchMemberIdentity> p25PatchMemberIdentities,
+                                  Integer sourceObservedWorkingId, Integer targetObservedWorkingId)
     {
+        P25SiteCallObservation(String configurationId, P25SiteIdentity site,
+                               Integer sourceObservedLocalId, Integer targetObservedLocalId,
+                               String targetKind, P25Identity p25TargetIdentity,
+                               P25Identity p25SourceIdentity, List<Integer> patchMemberTalkgroupIds,
+                               List<P25PatchMemberIdentity> p25PatchMemberIdentities)
+        {
+            this(configurationId, site, sourceObservedLocalId, targetObservedLocalId, targetKind,
+                p25TargetIdentity, p25SourceIdentity, patchMemberTalkgroupIds, p25PatchMemberIdentities,
+                null, null);
+        }
+
         P25SiteCallObservation
         {
             if(configurationId == null || configurationId.isBlank() || site == null)
@@ -113,6 +126,8 @@ final class ReceiverActivityRecords
                 targetObservedLocalId);
             p25PatchMemberIdentities = normalizeP25PatchMemberIdentities(p25PatchMemberIdentities,
                 patchMemberTalkgroupIds);
+            sourceObservedWorkingId = explicitWorkingId(sourceObservedWorkingId);
+            targetObservedWorkingId = explicitWorkingId(targetObservedWorkingId);
         }
     }
 
@@ -130,9 +145,24 @@ final class ReceiverActivityRecords
                                P25Identity p25SourceIdentity,
                                List<P25PatchMemberIdentity> p25PatchMemberIdentities,
                                List<P25SiteCallObservation> p25SiteObservations,
-                               String radioSystemKey)
+                               String radioSystemKey,
+                               Integer sourceObservedWorkingId, Integer targetObservedWorkingId)
         implements ReceiverActivityRecord
     {
+        ResolvedLogicalCall(LogicalCallId logicalCallId, long callStartEpochMilliseconds, String configurationId,
+                            String protocol, TrunkedIdentityDomain identityDomain, Integer wacn, Integer systemId,
+                            int destinationId, String destinationKind, List<Integer> patchMemberTalkgroupIds,
+                            Integer sourceRadioId, boolean encrypted, Integer encryptionAlgorithmId,
+                            Integer encryptionKeyId, P25Identity p25TargetIdentity, P25Identity p25SourceIdentity,
+                            List<P25PatchMemberIdentity> p25PatchMemberIdentities,
+                            List<P25SiteCallObservation> p25SiteObservations, String radioSystemKey)
+        {
+            this(logicalCallId, callStartEpochMilliseconds, configurationId, protocol, identityDomain, wacn,
+                systemId, destinationId, destinationKind, patchMemberTalkgroupIds, sourceRadioId, encrypted,
+                encryptionAlgorithmId, encryptionKeyId, p25TargetIdentity, p25SourceIdentity,
+                p25PatchMemberIdentities, p25SiteObservations, radioSystemKey, null, null);
+        }
+
         ResolvedLogicalCall
         {
             if(logicalCallId == null || callStartEpochMilliseconds <= 0 ||
@@ -154,6 +184,8 @@ final class ReceiverActivityRecords
                     .thenComparingInt(observation -> observation.site().rfss())
                     .thenComparingInt(observation -> observation.site().site()))
                 .toList();
+            sourceObservedWorkingId = explicitWorkingId(sourceObservedWorkingId);
+            targetObservedWorkingId = explicitWorkingId(targetObservedWorkingId);
         }
 
         @Override
@@ -305,18 +337,39 @@ final class ReceiverActivityRecords
     }
 
     /**
+     * One accepted over-the-air WUID assignment observation. This is ordinary, best-effort statistics input; the
+     * live decoder registry remains process-local and never restores this value from SQLite.
+     */
+    record P25WuidObservation(int servingWacn, int servingSystem, int workingId,
+                              P25SubscriberIdentity subscriber, long expiresAtEpochMilliseconds,
+                              RadioPresenceEvidence evidence)
+    {
+        P25WuidObservation
+        {
+            if(servingWacn < 0 || servingWacn > 0xFFFFF || servingSystem < 0 || servingSystem > 0xFFF ||
+                workingId < 1 || workingId > RadioSystemIdentityKey.MAX_P25_WORKING_UNIT_ID || subscriber == null ||
+                expiresAtEpochMilliseconds <= 0 || evidence == null)
+            {
+                throw new IllegalArgumentException("Invalid P25 WUID assignment observation");
+            }
+        }
+    }
+
+    /**
      * Authoritative radio state learned from an accepted registration or affiliation exchange. Every confirmed
      * update supplies site-local presence; a talkgroup, when present, independently confirms current affiliation.
      * A cleared update removes both states. Calls and other radio observations never create this record.
      */
-    record RadioPresenceUpdate(int radioId, Integer talkgroupId, RadioPresenceEvidence evidence, boolean cleared,
+    record RadioPresenceUpdate(Integer radioId, Integer talkgroupId, RadioPresenceEvidence evidence, boolean cleared,
                                P25Identity radioIdentity, P25Identity talkgroupIdentity)
     {
         RadioPresenceUpdate
         {
             radioIdentity = radioIdentity != null ? radioIdentity : P25Identity.UNKNOWN;
             talkgroupIdentity = talkgroupIdentity != null ? talkgroupIdentity : P25Identity.UNKNOWN;
-            boolean validRadio = radioId > 0 || radioId == 0 && radioIdentity.isStableFullyQualified() &&
+            boolean validRadio = radioId != null && radioId >= 1 &&
+                radioId <= RadioSystemIdentityKey.MAX_P25_WORKING_UNIT_ID || radioId == null &&
+                radioIdentity.isStableFullyQualified() &&
                 radioIdentity.identityKindCode() == RadioSystemIdentityKey.KIND_RADIO;
             boolean validTalkgroup = talkgroupId == null || talkgroupId > 0 || talkgroupId == 0 &&
                 talkgroupIdentity.isStableFullyQualified() &&
@@ -329,24 +382,24 @@ final class ReceiverActivityRecords
 
         }
 
-        static RadioPresenceUpdate confirmed(int radioId, Integer talkgroupId, RadioPresenceEvidence evidence)
+        static RadioPresenceUpdate confirmed(Integer radioId, Integer talkgroupId, RadioPresenceEvidence evidence)
         {
             return new RadioPresenceUpdate(radioId, talkgroupId, evidence, false, P25Identity.ORDINARY,
                 talkgroupId != null ? P25Identity.ORDINARY : P25Identity.UNKNOWN);
         }
 
-        static RadioPresenceUpdate cleared(int radioId)
+        static RadioPresenceUpdate cleared(Integer radioId)
         {
             return new RadioPresenceUpdate(radioId, null, null, true, P25Identity.ORDINARY, P25Identity.UNKNOWN);
         }
 
-        static RadioPresenceUpdate confirmed(int radioId, Integer talkgroupId, RadioPresenceEvidence evidence,
+        static RadioPresenceUpdate confirmed(Integer radioId, Integer talkgroupId, RadioPresenceEvidence evidence,
                                               P25Identity radioIdentity, P25Identity talkgroupIdentity)
         {
             return new RadioPresenceUpdate(radioId, talkgroupId, evidence, false, radioIdentity, talkgroupIdentity);
         }
 
-        static RadioPresenceUpdate cleared(int radioId, P25Identity radioIdentity)
+        static RadioPresenceUpdate cleared(Integer radioId, P25Identity radioIdentity)
         {
             return new RadioPresenceUpdate(radioId, null, null, true, radioIdentity, P25Identity.UNKNOWN);
         }
@@ -362,9 +415,46 @@ final class ReceiverActivityRecords
                          P25Identity p25TargetIdentity,
                          P25Identity p25SourceIdentity,
                          List<P25PatchMemberIdentity> p25PatchMemberIdentities,
-                         String radioSystemKey)
+                         String radioSystemKey,
+                         Integer sourceObservedWorkingId, Integer targetObservedWorkingId,
+                         P25WuidObservation p25WuidObservation)
         implements ReceiverActivityRecord
     {
+        ActivityEvent(long observedAtEpochMilliseconds, String configurationId, ReceiverKind receiverKind,
+                      String protocol, Action action, String eventType, String sourceRadioId, String targetId,
+                      String targetKind, List<Integer> patchMemberTalkgroupIds, Long frequencyHertz, String lcn,
+                      Integer timeslot, boolean encrypted, Integer encryptionAlgorithmId, Integer encryptionKeyId,
+                      Integer wacn, Integer systemId, Integer nac, Integer rfss, Integer site,
+                      String talkerAlias, boolean countedCall, String dedupeKey,
+                      RadioPresenceUpdate radioPresenceUpdate, TrunkedIdentityDomain identityDomain,
+                      P25Identity p25TargetIdentity, P25Identity p25SourceIdentity,
+                      List<P25PatchMemberIdentity> p25PatchMemberIdentities, String radioSystemKey)
+        {
+            this(observedAtEpochMilliseconds, configurationId, receiverKind, protocol, action, eventType,
+                sourceRadioId, targetId, targetKind, patchMemberTalkgroupIds, frequencyHertz, lcn, timeslot,
+                encrypted, encryptionAlgorithmId, encryptionKeyId, wacn, systemId, nac, rfss, site, talkerAlias,
+                countedCall, dedupeKey, radioPresenceUpdate, identityDomain, p25TargetIdentity, p25SourceIdentity,
+                p25PatchMemberIdentities, radioSystemKey, null, null, null);
+        }
+
+        ActivityEvent(long observedAtEpochMilliseconds, String configurationId, ReceiverKind receiverKind,
+                      String protocol, Action action, String eventType, String sourceRadioId, String targetId,
+                      String targetKind, List<Integer> patchMemberTalkgroupIds, Long frequencyHertz, String lcn,
+                      Integer timeslot, boolean encrypted, Integer encryptionAlgorithmId, Integer encryptionKeyId,
+                      Integer wacn, Integer systemId, Integer nac, Integer rfss, Integer site,
+                      String talkerAlias, boolean countedCall, String dedupeKey,
+                      RadioPresenceUpdate radioPresenceUpdate, TrunkedIdentityDomain identityDomain,
+                      P25Identity p25TargetIdentity, P25Identity p25SourceIdentity,
+                      List<P25PatchMemberIdentity> p25PatchMemberIdentities, String radioSystemKey,
+                      Integer sourceObservedWorkingId, Integer targetObservedWorkingId)
+        {
+            this(observedAtEpochMilliseconds, configurationId, receiverKind, protocol, action, eventType,
+                sourceRadioId, targetId, targetKind, patchMemberTalkgroupIds, frequencyHertz, lcn, timeslot,
+                encrypted, encryptionAlgorithmId, encryptionKeyId, wacn, systemId, nac, rfss, site, talkerAlias,
+                countedCall, dedupeKey, radioPresenceUpdate, identityDomain, p25TargetIdentity, p25SourceIdentity,
+                p25PatchMemberIdentities, radioSystemKey, sourceObservedWorkingId, targetObservedWorkingId, null);
+        }
+
         ActivityEvent
         {
             if(configurationId == null || configurationId.isBlank())
@@ -382,6 +472,8 @@ final class ReceiverActivityRecords
             p25PatchMemberIdentities = normalizeP25PatchMemberIdentities(p25PatchMemberIdentities,
                 patchMemberTalkgroupIds);
             radioSystemKey = validateRadioSystemKey(protocol, identityDomain, configurationId, radioSystemKey);
+            sourceObservedWorkingId = explicitWorkingId(sourceObservedWorkingId);
+            targetObservedWorkingId = explicitWorkingId(targetObservedWorkingId);
         }
 
     }
@@ -437,7 +529,7 @@ final class ReceiverActivityRecords
      */
     record TalkerAliasUpdate(long observedAtEpochMilliseconds, long callStartEpochMilliseconds,
                              String configurationId, String protocol, Integer wacn,
-                             Integer systemId, int radioId, P25Identity p25RadioIdentity, String talkerAlias,
+                             Integer systemId, Integer radioId, P25Identity p25RadioIdentity, String talkerAlias,
                              TrunkedIdentityDomain identityDomain, String radioSystemKey)
         implements ReceiverActivityRecord
     {
@@ -455,7 +547,7 @@ final class ReceiverActivityRecords
         }
 
         TalkerAliasUpdate(long observedAtEpochMilliseconds, String configurationId, String protocol, Integer wacn,
-                          Integer systemId, int radioId, String talkerAlias)
+                          Integer systemId, Integer radioId, String talkerAlias)
         {
             this(observedAtEpochMilliseconds, observedAtEpochMilliseconds, configurationId, protocol, wacn,
                 systemId, radioId, P25Identity.UNKNOWN, talkerAlias,
@@ -475,9 +567,23 @@ final class ReceiverActivityRecords
                                Long frequencyHertz, Integer timeslot, int destinationId, String targetKind,
                                List<Integer> patchMemberTalkgroupIds, Integer sourceRadioId, CallOutput output,
                                TrunkedIdentityDomain identityDomain, P25Identity p25TargetIdentity,
-                               List<P25PatchMemberIdentity> p25PatchMemberIdentities)
+                               P25Identity p25SourceIdentity,
+                               List<P25PatchMemberIdentity> p25PatchMemberIdentities,
+                               Integer sourceObservedWorkingId, Integer targetObservedWorkingId)
         implements ReceiverActivityRecord
     {
+        ConventionalCallOutput(long callStartEpochMilliseconds, String configurationId,
+                               ReceiverKind receiverKind, String protocol, Long frequencyHertz, Integer timeslot,
+                               int destinationId, String targetKind, List<Integer> patchMemberTalkgroupIds,
+                               Integer sourceRadioId, CallOutput output, TrunkedIdentityDomain identityDomain,
+                               P25Identity p25TargetIdentity, P25Identity p25SourceIdentity,
+                               List<P25PatchMemberIdentity> p25PatchMemberIdentities)
+        {
+            this(callStartEpochMilliseconds, configurationId, receiverKind, protocol, frequencyHertz, timeslot,
+                destinationId, targetKind, patchMemberTalkgroupIds, sourceRadioId, output, identityDomain,
+                p25TargetIdentity, p25SourceIdentity, p25PatchMemberIdentities, null, null);
+        }
+
         ConventionalCallOutput
         {
             if(configurationId == null || configurationId.isBlank())
@@ -487,8 +593,23 @@ final class ReceiverActivityRecords
             patchMemberTalkgroupIds = distinctPositiveTalkgroups(patchMemberTalkgroupIds, destinationId);
             identityDomain = identityDomain != null ? identityDomain : TrunkedIdentityDomain.STANDARD;
             p25TargetIdentity = p25TargetIdentity != null ? p25TargetIdentity : P25Identity.UNKNOWN;
+            p25SourceIdentity = p25SourceIdentity != null ? p25SourceIdentity : P25Identity.UNKNOWN;
             p25PatchMemberIdentities = normalizeP25PatchMemberIdentities(p25PatchMemberIdentities,
                 patchMemberTalkgroupIds);
+            sourceObservedWorkingId = explicitWorkingId(sourceObservedWorkingId);
+            targetObservedWorkingId = explicitWorkingId(targetObservedWorkingId);
+        }
+
+        ConventionalCallOutput(long callStartEpochMilliseconds, String configurationId,
+                               ReceiverKind receiverKind, String protocol, Long frequencyHertz, Integer timeslot,
+                               int destinationId, String targetKind, List<Integer> patchMemberTalkgroupIds,
+                               Integer sourceRadioId, CallOutput output, TrunkedIdentityDomain identityDomain,
+                               P25Identity p25TargetIdentity,
+                               List<P25PatchMemberIdentity> p25PatchMemberIdentities)
+        {
+            this(callStartEpochMilliseconds, configurationId, receiverKind, protocol, frequencyHertz, timeslot,
+                destinationId, targetKind, patchMemberTalkgroupIds, sourceRadioId, output, identityDomain,
+                p25TargetIdentity, P25Identity.UNKNOWN, p25PatchMemberIdentities, null, null);
         }
 
         @Override
@@ -611,6 +732,11 @@ final class ReceiverActivityRecords
         {
             return null;
         }
+    }
+
+    private static Integer explicitWorkingId(Integer value)
+    {
+        return value != null && value > 0 && value <= 0xFFFFFC ? value : null;
     }
 
     private static String validateRadioSystemKey(String protocol, TrunkedIdentityDomain identityDomain,

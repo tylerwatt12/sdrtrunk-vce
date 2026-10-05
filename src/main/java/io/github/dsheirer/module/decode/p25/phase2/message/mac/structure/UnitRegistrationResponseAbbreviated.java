@@ -93,7 +93,7 @@ public class UnitRegistrationResponseAbbreviated extends MacStructure
             return getTargetAddress();
         }
 
-        return APCO25FullyQualifiedRadioIdentifier.createTo(workingAddress, servingWacn,
+        return APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(workingAddress, servingWacn,
             getSourceSystemId(), getSourceId());
     }
 

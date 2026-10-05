@@ -26,6 +26,7 @@ import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
+import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
@@ -119,10 +120,19 @@ public class P25TrafficChannelEventTracker
      */
     public void addIdentifierIfMissing(Identifier identifier)
     {
-        if(identifier != null && !getEvent().getIdentifierCollection().hasIdentifier(identifier))
+        if(identifier != null)
         {
             Identifier existing = getEvent().getIdentifierCollection().getIdentifier(
                 identifier.getIdentifierClass(), identifier.getForm(), identifier.getRole());
+
+            if(getEvent().getIdentifierCollection().hasIdentifier(identifier) &&
+                !(existing instanceof FullyQualifiedRadioIdentifier oldRadio &&
+                    identifier instanceof FullyQualifiedRadioIdentifier newRadio &&
+                    newRadio.getWorkingAddress() != null &&
+                    !newRadio.getWorkingAddress().equals(oldRadio.getWorkingAddress())))
+            {
+                return;
+            }
 
             //An abbreviated grant must not erase the home identity learned from traffic signalling. Otherwise the
             //next fully qualified observation could silently replace a known, conflicting home identity.
@@ -271,13 +281,8 @@ public class P25TrafficChannelEventTracker
 
         if(first instanceof RadioIdentifier firstRadio && second instanceof RadioIdentifier secondRadio)
         {
-            if((firstRadio instanceof FullyQualifiedRadioIdentifier) ==
-                (secondRadio instanceof FullyQualifiedRadioIdentifier))
-            {
-                return false;
-            }
-
-            return firstRadio.getValue() > 0 && firstRadio.getValue().equals(secondRadio.getValue());
+            ResolvedRadioIdentity firstIdentity = ResolvedRadioIdentity.from(firstRadio);
+            return firstIdentity != null && firstIdentity.matchesWithinScope(ResolvedRadioIdentity.from(secondRadio));
         }
 
         if(first instanceof TalkgroupIdentifier firstGroup && second instanceof TalkgroupIdentifier secondGroup)

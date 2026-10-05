@@ -155,7 +155,8 @@ final class StatsSystemNameResolver
             !RadioSystemKey.isCanonical(configuredSystem) && !configuredSystem.matches("[0-9]+"))
             row.put("system_name", configuredSystem);
 
-        addSystem(row, "home", number(row, "home_wacn"), number(row, "home_system_id", "home_system"));
+        addSystem(row, "home", number(row, "home_wacn", "canonical_wacn"),
+            number(row, "home_system_id", "home_system", "canonical_system_id"));
         addSystem(row, "foreign", number(row, "foreign_wacn"), number(row, "foreign_system_id"));
         addSystem(row, "source_home", number(row, "source_home_wacn"),
             number(row, "source_home_system_id", "source_home_system"));

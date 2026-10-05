@@ -23,11 +23,11 @@ class TrunkedIdentityEligibilityTest
             Form.TALKGROUP, 0xFFFE));
         assertFalse(TrunkedIdentityEligibility.isEligible(Protocol.APCO25, TrunkedIdentityDomain.STANDARD,
             Form.TALKGROUP, 0xFFFF));
-        assertFalse(TrunkedIdentityEligibility.isEligible(Protocol.APCO25, TrunkedIdentityDomain.STANDARD,
+        assertTrue(TrunkedIdentityEligibility.isEligible(Protocol.APCO25, TrunkedIdentityDomain.STANDARD,
             Form.RADIO, 0xFFFFFC));
         assertTrue(TrunkedIdentityEligibility.isEligible(Protocol.APCO25_PHASE2,
             TrunkedIdentityDomain.STANDARD, Form.TALKGROUP, 0xFFFE));
-        assertFalse(TrunkedIdentityEligibility.isEligible(Protocol.APCO25_PHASE2,
+        assertTrue(TrunkedIdentityEligibility.isEligible(Protocol.APCO25_PHASE2,
             TrunkedIdentityDomain.STANDARD, Form.RADIO, 0xFFFFFC));
 
         assertTrue(TrunkedIdentityEligibility.isEligible(Protocol.DMR, TrunkedIdentityDomain.STANDARD,
@@ -48,18 +48,25 @@ class TrunkedIdentityEligibilityTest
     @Test
     void separatesPermanentP25RadioIdsFromTemporaryWorkingAddresses()
     {
-        assertFalse(TrunkedIdentityEligibility.isEligible(Protocol.APCO25,
+        assertTrue(TrunkedIdentityEligibility.isEligible(Protocol.APCO25,
             TrunkedIdentityDomain.STANDARD, Form.RADIO, 0xFFFD26));
         assertTrue(TrunkedIdentityEligibility.isEligibleDecodedIdentifier(Protocol.APCO25,
             TrunkedIdentityDomain.STANDARD,
-            APCO25FullyQualifiedRadioIdentifier.createTo(0xFFFD26, 0xBEE00, 0x954, 831_102)));
+            APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(
+                0xFFFD26, 0xBEE00, 0x954, 831_102)));
         assertFalse(TrunkedIdentityEligibility.isEligibleDecodedIdentifier(Protocol.APCO25,
+            TrunkedIdentityDomain.STANDARD,
+            APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(
+                0xFFFFFD, 0xBEE00, 0x954, 831_102)));
+        assertTrue(TrunkedIdentityEligibility.isEligibleDecodedIdentifier(Protocol.APCO25,
             TrunkedIdentityDomain.STANDARD,
             APCO25FullyQualifiedRadioIdentifier.createTo(0xFFFFFD, 0xBEE00, 0x954, 831_102)));
         assertFalse(TrunkedIdentityEligibility.isEligibleDecodedIdentifier(Protocol.APCO25,
             TrunkedIdentityDomain.STANDARD, APCO25IncompleteRadioIdentifier.createTo(831_102)));
         assertTrue(TrunkedIdentityEligibility.isObservedLocalEligible(Protocol.APCO25,
             TrunkedIdentityDomain.STANDARD, Form.RADIO, 0xFFFD26, true));
+        assertFalse(TrunkedIdentityEligibility.isObservedLocalEligible(Protocol.APCO25,
+            TrunkedIdentityDomain.STANDARD, Form.RADIO, 0, true));
         assertFalse(TrunkedIdentityEligibility.isObservedLocalEligible(Protocol.APCO25,
             TrunkedIdentityDomain.STANDARD, Form.RADIO, 0xFFFFFD, true));
     }

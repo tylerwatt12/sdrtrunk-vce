@@ -48,18 +48,30 @@ public class P25AffiliationEvent extends P25DecodeEvent
 
     private final Outcome mOutcome;
     private final Identifier<?> mRadio;
+    private final P25RadioPresence mRadioPresence;
+    private final P25WuidAssignmentRegistry.AssignmentObservation mAssignmentObservation;
     private final Identifier<?> mTalkgroup;
     private final Integer mRadioId;
     private final Integer mTalkgroupId;
 
-    public P25AffiliationEvent(DecodeEventType eventType, long timestamp, Outcome outcome, Identifier<?> radio,
-                               Identifier<?> talkgroup)
+    public P25AffiliationEvent(DecodeEventType eventType, long timestamp, Outcome outcome,
+                               P25RadioPresence radioPresence, Identifier<?> radio, Identifier<?> talkgroup)
+    {
+        this(eventType, timestamp, outcome, radioPresence, null, radio, talkgroup);
+    }
+
+    public P25AffiliationEvent(DecodeEventType eventType, long timestamp, Outcome outcome,
+                               P25RadioPresence radioPresence,
+                               P25WuidAssignmentRegistry.AssignmentObservation assignmentObservation,
+                               Identifier<?> radio, Identifier<?> talkgroup)
     {
         super(eventType, timestamp);
         mOutcome = outcome;
         mRadio = radio;
+        mRadioPresence = radioPresence;
+        mAssignmentObservation = assignmentObservation;
         mTalkgroup = talkgroup;
-        mRadioId = integerValue(radio);
+        mRadioId = radioPresence != null ? radioPresence.workingId() : null;
         mTalkgroupId = integerValue(talkgroup);
     }
 
@@ -77,6 +89,18 @@ public class P25AffiliationEvent extends P25DecodeEvent
     public Identifier<?> getRadioIdentifier()
     {
         return mRadio;
+    }
+
+    /** Canonical subscriber plus nullable WUID whose presence was established by the protocol message layout. */
+    public P25RadioPresence getRadioPresence()
+    {
+        return mRadioPresence;
+    }
+
+    /** Positive assignment established or refreshed while processing this event, otherwise null. */
+    public P25WuidAssignmentRegistry.AssignmentObservation getAssignmentObservation()
+    {
+        return mAssignmentObservation;
     }
 
     public Integer getTalkgroupId()

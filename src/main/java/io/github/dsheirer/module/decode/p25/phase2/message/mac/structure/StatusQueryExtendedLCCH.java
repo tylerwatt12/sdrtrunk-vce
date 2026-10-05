@@ -87,7 +87,7 @@ public class StatusQueryExtendedLCCH extends MacStructureMultiFragment
 
             int system = getFragment(0).getInt(FRAGMENT_0_TARGET_SUID_SYSTEM);
             int id = getFragment(0).getInt(FRAGMENT_0_TARGET_SUID_ID);
-            mTargetAddress = APCO25FullyQualifiedRadioIdentifier.createTo(address, wacn, system, id);
+            mTargetAddress = APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(address, wacn, system, id);
         }
 
         return mTargetAddress;
@@ -104,7 +104,8 @@ public class StatusQueryExtendedLCCH extends MacStructureMultiFragment
             int wacn = getInt(SOURCE_SUID_WACN);
             int system = getInt(SOURCE_SUID_SYSTEM);
             int id = getInt(SOURCE_SUID_ID);
-            mSourceAddress = APCO25FullyQualifiedRadioIdentifier.createFrom(address, wacn, system, id);
+            mSourceAddress = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(address, wacn, system,
+                id);
         }
 
         return mSourceAddress;

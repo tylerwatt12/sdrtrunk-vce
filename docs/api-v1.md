@@ -20,8 +20,8 @@ Collections put rows in `data` and bounded paging information in `meta`:
 {"data": [], "meta": {"limit": 100, "offset": 0, "total_count": 0, "has_more": false}}
 ```
 
-Compound resources name each result set inside `data`. For example, frequency bands use `home_bands` and
-`foreign_bands`, while patch groups use `groups`, `talkgroups`, and `radios`.
+Compound resources name each result set inside `data`. For example, a channel frequency-band response uses
+`home_bands`, while patch groups use `groups`, `talkgroups`, and `radios`.
 
 Errors have one shape:
 
@@ -49,6 +49,11 @@ selectors. Conventional group and radio observations belong to one saved channel
 only under `/channels/{configuration_id}`. The same number on another system or channel is a different identity. A
 channel's user-facing name, configured site label, Alias List, and frequency are properties of that channel; they are
 not radio-system identity.
+
+Canonical P25 subscriber rows expose a permanent `canonical_identity` object containing `wacn`, `system_id`, and
+`subscriber_id`. `observed_working_id` is present only when the decoder explicitly observed a temporary Working ID,
+including the valid case where it numerically equals the permanent Subscriber ID. A missing Working ID must not be
+inferred from the permanent identity or from an ordinary local radio number.
 
 Cross-channel grouping is deliberately limited to identities the decoder can prove: P25 uses WACN plus System ID;
 standard DMR Tier III uses model (`tiny`, `small`, `large`, or `huge`) plus Network ID; and NXDN Type-C uses location
@@ -94,13 +99,20 @@ instead of guessing a resource type from whichever fields happen to be present.
 | `GET /api/v1/radio-systems/{radio_system_key}/radios/{identity_key}` | One radio identity. |
 | `GET /api/v1/radio-systems/{radio_system_key}/talker-aliases` | Paged latest over-the-air talker aliases. |
 | `GET /api/v1/radio-systems/{radio_system_key}/relationships` | Paged radio-to-group or group-to-radio relationships. |
+| `GET /api/v1/radio-systems/{radio_system_key}/issi` | P25 ISSI summary for one radio system. |
+| `GET /api/v1/radio-systems/{radio_system_key}/issi/current-state` | Current receiver learning state, snapshot age, source count, and confirmation time. |
+| `GET /api/v1/radio-systems/{radio_system_key}/issi/current-assignments` | Paged current confirmed working-ID assignments, with permanent identities, friendly names, and observation sources. |
+| `GET /api/v1/radio-systems/{radio_system_key}/issi/recent-changes` | Bounded process-local assignment changes, including clears, expiration, and receiving gaps. |
+| `GET /api/v1/radio-systems/{radio_system_key}/issi/subscribers` | Paged canonical P25 subscriber identities and best-effort Working-ID observation history. |
+| `GET /api/v1/radio-systems/{radio_system_key}/issi/foreign-systems` | Paged foreign WACN/System pairs discovered from canonical subscriber/call evidence or advertised band plans. |
+| `GET /api/v1/radio-systems/{radio_system_key}/issi/frequency-bands` | Paged ISSI-advertised foreign-system band plans, with saved-channel provenance. |
 | `GET /api/v1/channels` | Paged saved trunked and conventional channels. |
 | `GET /api/v1/channels/{configuration_id}` | One saved channel and its summary. |
 | `GET /api/v1/channels/{configuration_id}/frequencies` | Paged learned or configured frequencies for a trunked channel. |
 | `GET /api/v1/channels/{configuration_id}/group-identities` | Paged group identities from channel-owned observations. Trunked channels also accept a time range. Shared native DMR/NXDN systems return an empty channel collection; use the radio-system resource for their system-wide identities. |
 | `GET /api/v1/channels/{configuration_id}/radios` | Paged radio identities from channel-owned observations. Shared native DMR/NXDN systems return an empty channel collection; use the radio-system resource for their system-wide identities. |
 | `GET /api/v1/channels/{configuration_id}/quality` | Current and bounded historical control-channel quality. |
-| `GET /api/v1/channels/{configuration_id}/frequency-bands` | Effective P25 home bandplan and ISSI-advertised foreign bands. |
+| `GET /api/v1/channels/{configuration_id}/frequency-bands` | Effective P25 home band plan for that saved channel. |
 | `GET /api/v1/channels/{configuration_id}/neighbors` | Paged RF-site neighbors learned by that channel. |
 | `GET /api/v1/channels/{configuration_id}/patch-groups` | Bounded P25 patch groups and members learned by that channel. |
 | `GET /api/v1/activity` | Cursor-paged detailed activity. |
@@ -130,6 +142,41 @@ The complete channel collection is always available at
 to their channels. A radio system never selects one arbitrary Alias List as its owner. A system-level identity Alias
 is returned only when every applicable channel Alias List resolves to the same effective Alias; a conflict leaves the
 Alias blank. Channel resources resolve Aliases through that exact channel's `alias_list_id`.
+
+P25 radio systems also advertise an `issi` capability. The ISSI overview and its `subscribers`, `foreign-systems`,
+and `frequency-bands` collections are radio-system resources. Foreign-system and band-plan rows retain the saved
+channel that supplied each observation, but clients browse them through the radio system's ISSI paths instead of
+mixing them into channel neighbors or the channel's home band plan.
+An ISSI subscriber learned from mapping evidence can appear before the activity directory has a detail row; that
+subscriber omits `entity_ref` until a navigable radio detail exists. Working-ID history is not current decoder state:
+the live mapping is process-local and is relearned from new signaling after every app start.
+
+The browser opens **System → ISSI → Current Assignments** by default. Assignments belong to the serving WACN and
+System ID; the displayed channel, RFSS, and site identify where the evidence was heard. They do not prove a radio's
+present location or that it is transmitting. **History** retains best-effort observations and never repopulates the
+receiver's current mapping. **Recent Changes** is a bounded list for this receiver process, not a permanent audit.
+
+The current collections accept `q`, `configuration_id`, `roaming_only`, `home_wacn`, `home_system_id`, `subscriber_id`,
+`sort`, `direction`, `limit`, and `offset`. Identity filters use decimal values and an exact home-system tuple.
+Search includes friendly system, channel, and Alias names before pagination. A source filter selects the channel
+that supplied the evidence. History subscribers also accept `configuration_id`. Band plans accept `q`,
+`configuration_id`, `sort`, and `direction`; foreign-system totals accept `q`, `sort`, and `direction` for their
+system-wide aggregation. Current assignment sorts are
+`canonical_identity`, `working_id`, `confirmed_at`, `expires_at`, `evidence`, and `alias`; recent-change sorts are
+`canonical_identity`, `working_id`, `changed_at`, `change`, and `alias`.
+
+Receiver-wide and system-wide invalidation notices remain visible when other Recent Changes filters are applied.
+They carry `invalidation_scope` and no subscriber tuple. They describe all mappings affected by that notice.
+
+`snapshot_at_ms` is the time of the shared background sample; `confirmed_at_ms` is the time of actual accepted
+registration or affiliation evidence. `snapshot_stale` explicitly marks an unavailable or old sample. Current state
+is `learning`, `current`, `needs_confirmation`, or `stopped` (no current observation for this system). A stale view
+reports zero current assignments and separately counts `retained_assignment_count` for the displayed prior sample.
+A complete receiving gap invalidates that serving
+system's assignments; another continuously observed source for the same system can preserve them. A source with
+no valid control observations for 60 seconds is treated as a receiving gap, independently of the protocol's WUID
+lease. Fresh signaling must confirm identities again. Friendly names are display labels; exact system and radio
+keys remain the selectors.
 
 The browser's **Radio Directory** uses the saved channel collection so trunked and conventional channels appear in
 one read-only view with their current running or stopped status. `GET /api/v1/identities` supplies its companion
@@ -239,6 +286,10 @@ database batches and downloaded from a validated temporary spool. Radio-system e
 `radio_system_key`; channel exports use `configuration_id`. Radio-system radio exports also accept `affiliated` and
 `configuration_id`. Talker-alias exports contain only radios with a nonblank over-the-air alias. Alias catalog reads
 and `aliases.csv` require administrator Alias access.
+
+For `channel-radios.csv`, canonical P25 subscriber rows leave the ambiguous legacy `observed_local_id` column blank;
+only `observed_working_id` represents an explicitly observed Working ID. Ordinary P25 radio rows retain their local
+number in `observed_local_id` and leave `observed_working_id` blank.
 
 ## Live data
 
@@ -354,8 +405,10 @@ Wire enum values are explicit and case-sensitive:
 
 - Access tiers are `public`, `user`, and `admin`.
 - Alias List families are `p25`, `dmr`, `nxdn`, and `nbfm`.
-- Alias matcher types are `talkgroup`, `talkgroup_range`, `radio`, `radio_range`, `user_status`, `unit_status`,
-  `tone_sequence`, `dcs`, and `esn`.
+- Alias matcher types are `talkgroup`, `talkgroup_range`, `p25_subscriber_identity`, `radio`, `radio_range`,
+  `user_status`, `unit_status`, `tone_sequence`, `dcs`, and `esn`. A `p25_subscriber_identity` matcher contains numeric
+  `home_wacn`, `home_system_id`, and `subscriber_id` fields. The browser presents WACN and System ID in hexadecimal and
+  Subscriber ID in decimal; a temporary working ID is not part of that matcher.
 - Alias matcher protocols are `am`, `p25`, `dmr`, `nxdn`, `nbfm`, `fleetsync`, and `mdc1200`.
 
 RadioReference account setup, directory browsing, and imports are web-first under

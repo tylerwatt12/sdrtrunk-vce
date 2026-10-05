@@ -11,6 +11,8 @@
 
 package io.github.dsheirer.stats;
 
+import io.github.dsheirer.identifier.radio.P25SubscriberIdentityFormatter;
+import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -122,6 +124,13 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 text("model", StatsCsvExport::dmrRadioSystemModel),
                 text("location_category", StatsCsvExport::nxdnRadioSystemLocationCategory),
                 text("identity_key", "identity_key"), number("native_id", "native_id"),
+                text("canonical_identity", StatsCsvExport::p25CanonicalSubscriber),
+                text("canonical_wacn_hex", row -> hex(row.get("canonical_wacn"), 5)),
+                number("canonical_wacn", "canonical_wacn"),
+                text("canonical_system_id_hex", row -> hex(row.get("canonical_system_id"), 3)),
+                number("canonical_system_id", "canonical_system_id"),
+                number("canonical_subscriber_id", "canonical_subscriber_id"),
+                number("working_subscriber_id", "working_subscriber_id"),
                 text("address_domain", StatsCsvExport::addressDomain),
                 text("formatted_native_id", row -> nxdnDisplay(row, "native_id")),
                 text("alias", "alias_name"), text("description", "alias_description"),
@@ -147,6 +156,12 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 text("model", StatsCsvExport::dmrRadioSystemModel),
                 text("location_category", StatsCsvExport::nxdnRadioSystemLocationCategory),
                 text("identity_key", "identity_key"), number("native_id", "native_id"),
+                text("canonical_identity", StatsCsvExport::p25CanonicalSubscriber),
+                text("canonical_wacn_hex", row -> hex(row.get("canonical_wacn"), 5)),
+                number("canonical_wacn", "canonical_wacn"),
+                text("canonical_system_id_hex", row -> hex(row.get("canonical_system_id"), 3)),
+                number("canonical_system_id", "canonical_system_id"),
+                number("canonical_subscriber_id", "canonical_subscriber_id"),
                 text("address_domain", StatsCsvExport::addressDomain),
                 text("formatted_native_id", row -> nxdnDisplay(row, "native_id")),
                 text("talker_alias", "last_talker_alias"), text("alias", "alias_name"),
@@ -260,7 +275,14 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 text("alias_list", "alias_list_name"), number("frequency_hz", "frequency_hz"),
                 text("frequency_mhz", row -> megahertz(row.get("frequency_hz"))),
                 number("timeslot", "timeslot"), number("native_id", "native_id"),
-                number("observed_local_id", "observed_local_id"),
+                number("observed_local_id", StatsCsvExport::unambiguousObservedLocalId),
+                number("observed_working_id", "observed_working_id"),
+                text("canonical_identity", StatsCsvExport::p25CanonicalSubscriber),
+                text("canonical_wacn_hex", row -> hex(row.get("canonical_wacn"), 5)),
+                number("canonical_wacn", "canonical_wacn"),
+                text("canonical_system_id_hex", row -> hex(row.get("canonical_system_id"), 3)),
+                number("canonical_system_id", "canonical_system_id"),
+                number("canonical_subscriber_id", "canonical_subscriber_id"),
                 text("alias", "alias_name"), text("description", "alias_description"),
                 text("group", "alias_group"), number("logical_calls", "logical_call_count"),
                 number("source_logical_calls", "source_logical_call_count"),
@@ -437,6 +459,42 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
     private static String p25Hex(Map<String,Object> row, String protocolKey, String key, int width)
     {
         return "P25".equals(row.get(protocolKey)) ? hex(row.get(key), width) : "";
+    }
+
+    private static String p25CanonicalSubscriber(Map<String,Object> row)
+    {
+        if(!(row.get("canonical_wacn") instanceof Number wacn) ||
+            !(row.get("canonical_system_id") instanceof Number systemId) ||
+            !(row.get("canonical_subscriber_id") instanceof Number subscriberId))
+        {
+            return "";
+        }
+
+        int canonicalWacn = wacn.intValue();
+        int canonicalSystemId = systemId.intValue();
+        int canonicalSubscriberId = subscriberId.intValue();
+        if(canonicalSubscriberId < 1 || canonicalSubscriberId > RadioSystemIdentityKey.MAX_P25_RADIO_ID)
+        {
+            return "";
+        }
+
+        try
+        {
+            return P25SubscriberIdentityFormatter.format(canonicalWacn, canonicalSystemId,
+                canonicalSubscriberId);
+        }
+        catch(IllegalArgumentException exception)
+        {
+            return "";
+        }
+    }
+
+    /** Legacy local-id storage is not working-address proof for a canonical P25 subscriber. */
+    private static Object unambiguousObservedLocalId(Map<String,Object> row)
+    {
+        boolean p25 = "P25".equalsIgnoreCase(String.valueOf(firstValue(row, "protocol"))) ||
+            row.get("protocol_code") instanceof Number code && code.intValue() == 1;
+        return p25 && row.get("canonical_subscriber_id") instanceof Number ? null : row.get("observed_local_id");
     }
 
     private static String nxdnDisplay(Map<String,Object> row, String key)

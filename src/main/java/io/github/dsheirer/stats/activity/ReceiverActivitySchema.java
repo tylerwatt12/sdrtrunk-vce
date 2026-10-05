@@ -84,7 +84,6 @@ public class ReceiverActivitySchema
     private static final int TARGET_RADIO = 2;
     private static final int TARGET_PATCH_GROUP = 3;
     private static final int P25_EVERYONE_TALKGROUP = 0xFFFF;
-    private static final int P25_FIRST_SPECIAL_RADIO = 0xFFFFFC;
 
     private static final int FORMAT_25_MAXIMUM_EVENT_TYPE_CODE = 57;
     private static final List<ReceiverActivityRecords.Action> ACTIONS = ReceiverActivityCodes.actionCodes();
@@ -127,27 +126,71 @@ public class ReceiverActivitySchema
 
     public static void create(Connection connection) throws SQLException
     {
-        create(connection, MAXIMUM_OBSERVED_SITE, true, true, EVENT_TYPES);
+        create(connection, MAXIMUM_OBSERVED_SITE, true, true, EVENT_TYPES, true);
         createEncryptedActivityFilterIndexes(connection);
     }
 
     /** Creates the frozen format-17 activity schema for the historical format-14-to-15 migration. */
     public static void createFormat17(Connection connection) throws SQLException
     {
-        create(connection, FORMAT_17_MAXIMUM_OBSERVED_SITE, false, false, PRE_FORMAT_26_EVENT_TYPES);
+        create(connection, FORMAT_17_MAXIMUM_OBSERVED_SITE, false, false, PRE_FORMAT_26_EVENT_TYPES, false);
+    }
+
+    /** Creates canonical P25 subscribers and best-effort WUID observations for the format-31-to-32 migration. */
+    public static void createFormat32P25SubscriberIdentityTables(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            RadioSystemSchema.createP25SubscriberIdentityTables(statement);
+        }
+    }
+
+    /** Adds the nullable canonical-subscriber reference without disturbing retained identity descendants. */
+    public static void addFormat32P25SubscriberIdentityReference(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                ALTER TABLE radio_system_identity_summary ADD COLUMN
+                    p25_subscriber_identity_id INTEGER
+                    REFERENCES p25_subscriber_identity(id) ON DELETE RESTRICT
+                    CHECK(p25_subscriber_identity_id IS NULL OR
+                        (typeof(p25_subscriber_identity_id) = 'integer' AND p25_subscriber_identity_id > 0
+                            AND identity_kind_code = 2 AND home_wacn >= 0 AND home_system_id >= 0))
+                """);
+            RadioSystemSchema.createP25SubscriberIdentitySummaryIndex(statement);
+            statement.executeUpdate("DROP VIEW receiver_activity_event_resolved");
+            statement.executeUpdate(createResolvedViewSql(true));
+        }
+    }
+
+    /** Adds nullable protocol provenance columns. Existing local-ID observations are deliberately not inferred. */
+    public static void addFormat32ExplicitWorkingAddressProvenance(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("ALTER TABLE receiver_activity_event ADD COLUMN " +
+                workingAddressColumn("source_observed_working_id", true));
+            statement.executeUpdate("ALTER TABLE receiver_activity_event ADD COLUMN " +
+                workingAddressColumn("target_observed_working_id", true));
+            statement.executeUpdate("ALTER TABLE p25_site_call_identity_bucket ADD COLUMN " +
+                workingAddressColumn("observed_working_id", true));
+            RadioSystemSchema.addFormat32ExplicitWorkingAddressProvenance(statement);
+        }
     }
 
     private static void create(Connection connection, int maximumObservedSite, boolean allowNxdnNullGroup,
                                boolean includeActivityFilterIndexes,
-                               List<ReceiverActivityCodes.EventTypeCode> eventTypes) throws SQLException
+                               List<ReceiverActivityCodes.EventTypeCode> eventTypes, boolean canonicalP25Subscribers) throws SQLException
     {
         try(Statement statement = connection.createStatement())
         {
             statement.executeUpdate(receiverChannelSql());
-            statement.executeUpdate(receiverActivityEventSql(maximumObservedSite, eventTypes));
+            statement.executeUpdate(receiverActivityEventSql(maximumObservedSite, eventTypes, canonicalP25Subscribers));
             statement.executeUpdate(createActivityEventIdentityMemberSql());
-            createTrunkedCallTables(statement);
-            RadioSystemSchema.create(statement);
+            createTrunkedCallTables(statement, canonicalP25Subscribers);
+            if(canonicalP25Subscribers) RadioSystemSchema.create(statement);
+            else RadioSystemSchema.createFormat31(statement);
             createConventionalTables(statement, eventTypes);
             createConventionalCallIdentityTable(statement, allowNxdnNullGroup);
             createP25SiteTables(statement);
@@ -159,7 +202,7 @@ public class ReceiverActivitySchema
                     updated_at_ms INTEGER NOT NULL CHECK(typeof(updated_at_ms) = 'integer' AND updated_at_ms > 0)
                 )
                 """);
-            createIndexesAndViews(statement, includeActivityFilterIndexes, eventTypes);
+            createIndexesAndViews(statement, includeActivityFilterIndexes, eventTypes, canonicalP25Subscribers);
         }
 
         SdrTrunkDatabaseStartup.setMetadata(connection, CONVENTIONAL_CALL_OUTPUT_METRICS_STARTED_AT_KEY,
@@ -192,7 +235,8 @@ public class ReceiverActivitySchema
                 createP25SiteCallBucketSql()),
             new SqliteSchemaValidator.Definition("table", "p25_site_call_identity_bucket",
                 createP25SiteCallIdentityBucketSql()),
-            new SqliteSchemaValidator.Definition("view", "receiver_activity_event_resolved", createResolvedViewSql())));
+            new SqliteSchemaValidator.Definition("view", "receiver_activity_event_resolved",
+                createResolvedViewSql(true))));
         SqliteSchemaValidator.validateDefinitions(connection, exactDefinitions);
         validateRequiredForeignKeys(connection);
         validatePositiveMetadataTimestamp(connection, CONVENTIONAL_CALL_OUTPUT_METRICS_STARTED_AT_KEY);
@@ -485,11 +529,17 @@ public class ReceiverActivitySchema
 
     private static String receiverActivityEventSql()
     {
-        return receiverActivityEventSql(MAXIMUM_OBSERVED_SITE, EVENT_TYPES);
+        return receiverActivityEventSql(MAXIMUM_OBSERVED_SITE, EVENT_TYPES, true);
     }
 
     private static String receiverActivityEventSql(int maximumObservedSite,
-                                                   List<ReceiverActivityCodes.EventTypeCode> eventTypes)
+        List<ReceiverActivityCodes.EventTypeCode> eventTypes)
+    {
+        return receiverActivityEventSql(maximumObservedSite, eventTypes, false);
+    }
+
+    private static String receiverActivityEventSql(int maximumObservedSite,
+                                                   List<ReceiverActivityCodes.EventTypeCode> eventTypes, boolean explicitWorkingAddresses)
     {
         return """
             CREATE TABLE IF NOT EXISTS receiver_activity_event (
@@ -538,7 +588,7 @@ public class ReceiverActivitySchema
                 observed_rfss INTEGER CHECK(observed_rfss IS NULL OR
                     (typeof(observed_rfss) = 'integer' AND observed_rfss BETWEEN 0 AND 255)),
                 observed_site INTEGER CHECK(observed_site IS NULL OR
-                    (typeof(observed_site) = 'integer' AND observed_site BETWEEN 0 AND %d)),
+                    (typeof(observed_site) = 'integer' AND observed_site BETWEEN 0 AND %d)),%s
                 UNIQUE(id, radio_system_id),
                 CHECK((lcn_band IS NULL) = (lcn_number IS NULL)),
                 CHECK(target_observed_local_id IS NOT NULL OR target_kind_code IS NULL),
@@ -552,7 +602,10 @@ public class ReceiverActivitySchema
                     REFERENCES radio_system_identity_summary(
                         id, radio_system_id, identity_kind_code) ON DELETE CASCADE
             )
-            """.formatted(ACTION_CODES, eventTypeCodes(eventTypes), maximumObservedSite);
+            """.formatted(ACTION_CODES, eventTypeCodes(eventTypes), maximumObservedSite,
+                explicitWorkingAddresses ? "\n                " +
+                    workingAddressColumn("source_observed_working_id", true) + ",\n                " +
+                    workingAddressColumn("target_observed_working_id", true) + "," : "");
     }
 
     /** Creates the replacement event table used only by the adjacent format-17-to-18 migration. */
@@ -861,20 +914,21 @@ public class ReceiverActivitySchema
         for(RadioSystemSchema.IdentityReference destination: RadioSystemSchema.destinationIdentityReferences(
             connection, radioSystem, call.destinationId() >= 0 ? Integer.toString(call.destinationId()) : null,
             call.destinationKind(), call.patchMemberTalkgroupIds(), call.p25TargetIdentity(),
-            call.p25PatchMemberIdentities()))
+            call.p25PatchMemberIdentities(), call.callStartEpochMilliseconds()))
         {
             upsertLogicalCallIdentity(connection, radioSystem.radioSystemId(), learnedSiteId, channelId, bucket,
                 call.callStartEpochMilliseconds(), IDENTITY_ROLE_DESTINATION, destination, calls, encrypted,
-                recorded, streamed, site);
+                recorded, streamed, site, call.targetObservedWorkingId());
         }
 
         RadioSystemSchema.IdentityReference source = RadioSystemSchema.identityReference(connection, radioSystem,
-            IDENTITY_KIND_RADIO, call.sourceRadioId(), call.p25SourceIdentity());
+            IDENTITY_KIND_RADIO, call.sourceRadioId(), call.p25SourceIdentity(),
+            call.callStartEpochMilliseconds());
         if(source != null)
         {
             upsertLogicalCallIdentity(connection, radioSystem.radioSystemId(), learnedSiteId, channelId, bucket,
                 call.callStartEpochMilliseconds(), IDENTITY_ROLE_SOURCE, source, calls, encrypted, recorded,
-                streamed, site);
+                streamed, site, call.sourceObservedWorkingId());
         }
     }
 
@@ -888,44 +942,62 @@ public class ReceiverActivitySchema
             connection, radioSystem,
             observation.targetObservedLocalId() != null ? observation.targetObservedLocalId().toString() : null,
             observation.targetKind(), observation.patchMemberTalkgroupIds(), observation.p25TargetIdentity(),
-            observation.p25PatchMemberIdentities()))
+            observation.p25PatchMemberIdentities(), observedAt))
         {
             upsertLogicalCallIdentity(connection, radioSystem.radioSystemId(), learnedSiteId, channelId, bucket,
-                observedAt, IDENTITY_ROLE_DESTINATION, destination, calls, encrypted, 0, 0, true);
+                observedAt, IDENTITY_ROLE_DESTINATION, destination, calls, encrypted, 0, 0, true,
+                observation.targetObservedWorkingId());
         }
 
         RadioSystemSchema.IdentityReference source = RadioSystemSchema.identityReference(connection, radioSystem,
-            IDENTITY_KIND_RADIO, observation.sourceObservedLocalId(), observation.p25SourceIdentity());
+            IDENTITY_KIND_RADIO, observation.sourceObservedLocalId(), observation.p25SourceIdentity(), observedAt);
         if(source != null)
         {
             upsertLogicalCallIdentity(connection, radioSystem.radioSystemId(), learnedSiteId, channelId, bucket,
-                observedAt, IDENTITY_ROLE_SOURCE, source, calls, encrypted, 0, 0, true);
+                observedAt, IDENTITY_ROLE_SOURCE, source, calls, encrypted, 0, 0, true,
+                observation.sourceObservedWorkingId());
         }
     }
 
     private static void upsertLogicalCallIdentity(Connection connection, int radioSystemId, Integer learnedSiteId,
                                                    int channelId, long bucket, long observedAt, int role,
                                                    RadioSystemSchema.IdentityReference identity, int calls,
-                                                   int encrypted, int recorded, int streamed, boolean site)
+                                                   int encrypted, int recorded, int streamed, boolean site,
+                                                   Integer observedWorkingId)
         throws SQLException
     {
         String sql = site ? """
             INSERT INTO p25_site_call_identity_bucket(
                 radio_system_id, learned_site_id, channel_id, bucket_start_ms, identity_role_code,
-                identity_kind_code, identity_summary_id, observed_local_id, last_observed_at_ms,
+                identity_kind_code, identity_summary_id, observed_local_id, observed_working_id, last_observed_at_ms,
                 observed_call_count, encrypted_observed_call_count
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(radio_system_id, learned_site_id, bucket_start_ms, channel_id,
                 identity_role_code, identity_summary_id)
             DO UPDATE SET
                 observed_local_id = CASE
-                    WHEN excluded.observed_local_id IS NOT NULL AND
-                        (excluded.last_observed_at_ms > p25_site_call_identity_bucket.last_observed_at_ms OR
+                    WHEN excluded.last_observed_at_ms > p25_site_call_identity_bucket.last_observed_at_ms OR
                          excluded.last_observed_at_ms = p25_site_call_identity_bucket.last_observed_at_ms AND
-                         excluded.observed_local_id < coalesce(
-                            p25_site_call_identity_bucket.observed_local_id, 2147483647))
+                         (excluded.observed_working_id IS NOT NULL AND
+                              p25_site_call_identity_bucket.observed_working_id IS NULL OR
+                          (excluded.observed_working_id IS NULL) =
+                              (p25_site_call_identity_bucket.observed_working_id IS NULL) AND
+                          excluded.observed_local_id < coalesce(
+                              p25_site_call_identity_bucket.observed_local_id, 2147483647))
                     THEN excluded.observed_local_id
                     ELSE p25_site_call_identity_bucket.observed_local_id
+                END,
+                observed_working_id = CASE
+                    WHEN excluded.last_observed_at_ms > p25_site_call_identity_bucket.last_observed_at_ms OR
+                         excluded.last_observed_at_ms = p25_site_call_identity_bucket.last_observed_at_ms AND
+                         (excluded.observed_working_id IS NOT NULL AND
+                              p25_site_call_identity_bucket.observed_working_id IS NULL OR
+                          (excluded.observed_working_id IS NULL) =
+                              (p25_site_call_identity_bucket.observed_working_id IS NULL) AND
+                          excluded.observed_local_id < coalesce(
+                              p25_site_call_identity_bucket.observed_local_id, 2147483647))
+                    THEN excluded.observed_working_id
+                    ELSE p25_site_call_identity_bucket.observed_working_id
                 END,
                 last_observed_at_ms = max(p25_site_call_identity_bucket.last_observed_at_ms,
                     excluded.last_observed_at_ms),
@@ -961,6 +1033,7 @@ public class ReceiverActivitySchema
             if(site)
             {
                 setInteger(statement, index++, identity.observedLocalId());
+                setInteger(statement, index++, observedWorkingId);
                 statement.setLong(index++, observedAt);
             }
             statement.setInt(index++, calls);
@@ -1106,11 +1179,12 @@ public class ReceiverActivitySchema
         }
 
         RadioSystemSchema.IdentityReference source = RadioSystemSchema.identityReference(connection, radioSystem,
-            IDENTITY_KIND_RADIO, attribution.sourceRadioId(), ReceiverActivityRecords.P25Identity.UNKNOWN);
+            IDENTITY_KIND_RADIO, attribution.sourceRadioId(), ReceiverActivityRecords.P25Identity.UNKNOWN,
+            attribution.callStartEpochMilliseconds());
         List<RadioSystemSchema.IdentityReference> destinations = RadioSystemSchema.destinationIdentityReferences(
             connection, radioSystem, attribution.destinationId() >= 0 ? Integer.toString(attribution.destinationId()) : null,
             attribution.destinationKind(), attribution.patchMemberTalkgroupIds(),
-            ReceiverActivityRecords.P25Identity.UNKNOWN, List.of());
+            ReceiverActivityRecords.P25Identity.UNKNOWN, List.of(), attribution.callStartEpochMilliseconds());
         RadioSystemSchema.IdentityReference target = destinations.isEmpty() ? null : destinations.get(0);
         boolean sourceKnown = source != null && attribution.sourceBecameKnown();
         boolean destinationKnown = target != null && attribution.destinationBecameKnown();
@@ -2010,7 +2084,8 @@ public class ReceiverActivitySchema
         return 0;
     }
 
-    private static void createTrunkedCallTables(Statement statement) throws SQLException
+    private static void createTrunkedCallTables(Statement statement, boolean explicitWorkingAddresses)
+        throws SQLException
     {
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_learned_site (
@@ -2028,7 +2103,7 @@ public class ReceiverActivitySchema
         statement.executeUpdate(createTrunkedLogicalCallBucketSql());
         statement.executeUpdate(createTrunkedLogicalCallIdentityBucketSql());
         statement.executeUpdate(createP25SiteCallBucketSql());
-        statement.executeUpdate(createP25SiteCallIdentityBucketSql());
+        statement.executeUpdate(createP25SiteCallIdentityBucketSql(explicitWorkingAddresses));
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS trunked_signaling_activity_bucket (
                 channel_id INTEGER NOT NULL REFERENCES receiver_channel(id) ON DELETE CASCADE
@@ -2108,6 +2183,11 @@ public class ReceiverActivitySchema
 
     private static String createP25SiteCallIdentityBucketSql()
     {
+        return createP25SiteCallIdentityBucketSql(true);
+    }
+
+    private static String createP25SiteCallIdentityBucketSql(boolean explicitWorkingAddresses)
+    {
         return """
             CREATE TABLE IF NOT EXISTS p25_site_call_identity_bucket (
                 radio_system_id INTEGER NOT NULL
@@ -2128,7 +2208,7 @@ public class ReceiverActivitySchema
                     CHECK(typeof(last_observed_at_ms) = 'integer' AND last_observed_at_ms > 0),
                 observed_call_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(observed_call_count) = 'integer' AND observed_call_count >= 0),
                 encrypted_observed_call_count INTEGER NOT NULL DEFAULT 0
-                    CHECK(typeof(encrypted_observed_call_count) = 'integer' AND encrypted_observed_call_count >= 0),
+                    CHECK(typeof(encrypted_observed_call_count) = 'integer' AND encrypted_observed_call_count >= 0),%s
                 PRIMARY KEY(
                     radio_system_id, learned_site_id, bucket_start_ms,
                     channel_id, identity_role_code, identity_summary_id
@@ -2140,7 +2220,14 @@ public class ReceiverActivitySchema
                     REFERENCES radio_system_identity_summary(
                         id, radio_system_id, identity_kind_code) ON DELETE CASCADE
             ) WITHOUT ROWID
-            """;
+            """.formatted(explicitWorkingAddresses ?
+                "\n                " + workingAddressColumn("observed_working_id", true) + "," : "");
+    }
+
+    private static String workingAddressColumn(String name, boolean nullable)
+    {
+        return name + " INTEGER CHECK(" + name + " IS NULL OR " +
+            "(typeof(" + name + ") = 'integer' AND " + name + " BETWEEN 1 AND 16777212))";
     }
 
     private static void createConventionalTables(Statement statement,
@@ -2670,7 +2757,13 @@ public class ReceiverActivitySchema
     }
 
     private static void createIndexesAndViews(Statement statement, boolean includeActivityFilterIndexes,
-                                              List<ReceiverActivityCodes.EventTypeCode> eventTypes)
+        List<ReceiverActivityCodes.EventTypeCode> eventTypes) throws SQLException
+    {
+        createIndexesAndViews(statement, includeActivityFilterIndexes, eventTypes, false);
+    }
+
+    private static void createIndexesAndViews(Statement statement, boolean includeActivityFilterIndexes,
+                                              List<ReceiverActivityCodes.EventTypeCode> eventTypes, boolean canonicalP25Subscribers)
         throws SQLException
     {
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_channel_radio_system ON receiver_channel(radio_system_id, id)");
@@ -2763,7 +2856,7 @@ public class ReceiverActivitySchema
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_neighbor_summary_channel_site ON p25_site_neighbor_summary(channel_id, system_id, rfss, site)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_trunked_control_quality_channel_time ON trunked_control_channel_quality(channel_id, observed_at_ms DESC)");
         createControlChannelQualityRetentionIndex(statement);
-        statement.executeUpdate(createResolvedViewSql(eventTypes));
+        statement.executeUpdate(createResolvedViewSql(eventTypes, canonicalP25Subscribers));
     }
 
     /**
@@ -2837,7 +2930,8 @@ public class ReceiverActivitySchema
             "event_type_code", "source_observed_local_id", "target_observed_local_id", "target_kind_code",
             "source_identity_summary_id", "source_identity_kind_code", "target_identity_summary_id", "frequency_hz",
             "lcn_band", "lcn_number", "timeslot", "encrypted", "encryption_algorithm_id", "encryption_key_id",
-            "observed_nac", "observed_rfss", "observed_site"),
+            "observed_nac", "observed_rfss", "observed_site", "source_observed_working_id",
+            "target_observed_working_id"),
         table("activity_event_identity_member", "event_id", "radio_system_id", "identity_summary_id",
             "identity_kind_code", "observed_local_id"),
         table("p25_learned_site", "learned_site_id", "radio_system_id", "rfss", "site", "first_seen_ms",
@@ -2851,7 +2945,8 @@ public class ReceiverActivitySchema
             "observed_call_count", "encrypted_observed_call_count"),
         table("p25_site_call_identity_bucket", "radio_system_id", "learned_site_id", "channel_id", "bucket_start_ms",
             "identity_role_code", "identity_kind_code", "identity_summary_id", "observed_local_id",
-            "last_observed_at_ms", "observed_call_count", "encrypted_observed_call_count"),
+            "last_observed_at_ms", "observed_call_count", "encrypted_observed_call_count",
+            "observed_working_id"),
         tableWithTrunkedSignalingActions("trunked_signaling_activity_bucket", "channel_id", "radio_system_id",
             "bucket_start_ms"),
         tableWithActionsBeforeLastEvent("conventional_activity_summary", "channel_id", "frequency_hz", "timeslot",
@@ -3211,11 +3306,12 @@ public class ReceiverActivitySchema
         Long activityId = null;
         RadioSystemSchema.IdentityReference sourceIdentity = radioSystem != null ?
             RadioSystemSchema.identityReference(connection, radioSystem, IDENTITY_KIND_RADIO,
-                parseInteger(activity.sourceRadioId()), activity.p25SourceIdentity()) : null;
+                parseInteger(activity.sourceRadioId()), activity.p25SourceIdentity(),
+                activity.observedAtEpochMilliseconds()) : null;
         List<RadioSystemSchema.IdentityReference> destinations = radioSystem != null ?
             RadioSystemSchema.destinationIdentityReferences(connection, radioSystem, activity.targetId(),
                 activity.targetKind(), activity.patchMemberTalkgroupIds(), activity.p25TargetIdentity(),
-                activity.p25PatchMemberIdentities()) : List.of();
+                activity.p25PatchMemberIdentities(), activity.observedAtEpochMilliseconds()) : List.of();
         RadioSystemSchema.IdentityReference targetIdentity = destinations.isEmpty() ? null : destinations.get(0);
 
         try(PreparedStatement statement = connection.prepareStatement("""
@@ -3224,8 +3320,9 @@ public class ReceiverActivitySchema
                 source_observed_local_id, target_observed_local_id, target_kind_code,
                 source_identity_summary_id, source_identity_kind_code, target_identity_summary_id,
                 frequency_hz, lcn_band, lcn_number, timeslot, encrypted, encryption_algorithm_id, encryption_key_id,
-                observed_nac, observed_rfss, observed_site
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                observed_nac, observed_rfss, observed_site, source_observed_working_id,
+                target_observed_working_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id
             """))
         {
@@ -3250,6 +3347,8 @@ public class ReceiverActivitySchema
             setInteger(statement, 19, activity.nac());
             setInteger(statement, 20, activity.rfss());
             setInteger(statement, 21, activity.site());
+            setInteger(statement, 22, activity.sourceObservedWorkingId());
+            setInteger(statement, 23, activity.targetObservedWorkingId());
             try(ResultSet resultSet = statement.executeQuery())
             {
                 if(resultSet.next())
@@ -3521,7 +3620,8 @@ public class ReceiverActivitySchema
             setInteger(statement, 13, status != null ? status.microSlots() : null);
             setBoolean(statement, 14, status != null ? status.dataService() : null);
             statement.setString(15, status != null ? status.dataAccess() : null);
-            setInteger(statement, 16, status != null ? status.wuidLeaseMinutes() : null);
+            Integer wuidLeaseMinutes = status != null ? status.wuidLeaseMinutes() : null;
+            setInteger(statement, 16, wuidLeaseMinutes != null && wuidLeaseMinutes > 0 ? wuidLeaseMinutes : null);
             setBoolean(statement, 17, status != null ? status.registrationService() : null);
             setBoolean(statement, 18, snapshot.tdma());
             setBoolean(statement, 19, status != null ? status.voiceService() : null);
@@ -4602,19 +4702,10 @@ public class ReceiverActivitySchema
         return "TALKGROUP".equals(targetKind) || "PATCH_GROUP".equals(targetKind);
     }
 
-    /**
-     * TIA-102.BAAC-A sections 2.4 and 2.5 reserve zero as "no one", reserve talkgroup FFFF as "everyone", and
-     * reserve radio identities FFFFFC-FFFFFF for infrastructure/special purposes.  These values remain visible in
-     * detailed activity, but are not projected into subscriber/talkgroup directory tables.
-     */
+    /** Zero and the P25 all-call value remain visible in detail but are not projected into the talkgroup directory. */
     private static boolean isDirectoryTalkgroup(Integer talkgroup)
     {
         return talkgroup != null && talkgroup > 0 && talkgroup < P25_EVERYONE_TALKGROUP;
-    }
-
-    private static boolean isDirectoryRadio(Integer radio)
-    {
-        return radio != null && radio > 0 && radio < P25_FIRST_SPECIAL_RADIO;
     }
 
     private static List<Integer> patchMemberTalkgroups(ReceiverActivityRecords.ActivityEvent activity)
@@ -4995,12 +5086,18 @@ public class ReceiverActivitySchema
         return neighbor.downlink() != null && neighbor.downlink() > 0 ? Long.toString(neighbor.downlink()) : null;
     }
 
-    private static String createResolvedViewSql()
+    private static String createResolvedViewSql(boolean canonicalP25Subscribers)
     {
-        return createResolvedViewSql(EVENT_TYPES);
+        return createResolvedViewSql(EVENT_TYPES, canonicalP25Subscribers);
     }
 
     private static String createResolvedViewSql(List<ReceiverActivityCodes.EventTypeCode> eventTypes)
+    {
+        return createResolvedViewSql(eventTypes, false);
+    }
+
+    private static String createResolvedViewSql(List<ReceiverActivityCodes.EventTypeCode> eventTypes,
+        boolean canonicalP25Subscribers)
     {
         return """
             CREATE VIEW IF NOT EXISTS receiver_activity_event_resolved AS
@@ -5017,7 +5114,7 @@ public class ReceiverActivitySchema
                 %s AS action,
                 %s AS event_type,
                 a.source_observed_local_id,
-                a.target_observed_local_id,
+                a.target_observed_local_id,%s
                 %s AS source_identity_key,
                 %s AS target_identity_key,
                 source_identity.identity_kind_code AS source_identity_kind_code,
@@ -5070,19 +5167,25 @@ public class ReceiverActivitySchema
             receiverKindCase(receiverKindSql("configured.channel_kind", "configured.decoder_type")),
             protocolCase(protocolSql("configured.decoder_type")),
             actionCase("a.action_code"), decodeEventTypeCase("a.event_type_code", eventTypes),
-            radioSystemIdentityKeySql("source_identity"), radioSystemIdentityKeySql("target_identity"),
+            canonicalP25Subscribers ? "\n                a.source_observed_working_id," +
+                "\n                a.target_observed_working_id," : "",
+            radioSystemIdentityKeySql("source_identity", canonicalP25Subscribers),
+            radioSystemIdentityKeySql("target_identity", canonicalP25Subscribers),
             targetKindCase("a.target_kind_code"),
             receiverKindSql("configured.channel_kind", "configured.decoder_type"),
             protocolSql("configured.decoder_type"));
     }
 
-    private static String radioSystemIdentityKeySql(String alias)
+    private static String radioSystemIdentityKeySql(String alias, boolean canonicalP25Subscribers)
     {
+        String unqualifiedP25 = canonicalP25Subscribers ? " OR (" + alias +
+            ".identity_kind_code=2 AND " + alias + ".p25_subscriber_identity_id IS NULL)" : "";
+        String noHomeWacn = alias + ".home_wacn=-1" + unqualifiedP25;
+        String noHomeSystem = alias + ".home_system_id=-1" + unqualifiedP25;
         return "CASE WHEN " + alias + ".id IS NULL THEN NULL ELSE 'v1-' || " +
             "CASE " + alias + ".identity_kind_code WHEN 1 THEN 'g' WHEN 2 THEN 'r' ELSE 'p' END || '-' || " +
-            "CASE WHEN " + alias + ".home_wacn=-1 THEN 'x' ELSE printf('%05x', " + alias +
-            ".home_wacn) END || '-' || CASE WHEN " + alias +
-            ".home_system_id=-1 THEN 'x' ELSE printf('%03x', " + alias +
+            "CASE WHEN " + noHomeWacn + " THEN 'x' ELSE printf('%05x', " + alias +
+            ".home_wacn) END || '-' || CASE WHEN " + noHomeSystem + " THEN 'x' ELSE printf('%03x', " + alias +
             ".home_system_id) END || '-' || " + alias + ".identity_id END";
     }
 

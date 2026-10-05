@@ -30,7 +30,7 @@ class P25TrafficChannelEventTrackerTest
     void localAndQualifiedAddressesDescribeTheSameTrackedCallInBothDirections()
     {
         RadioIdentifier plainRadio = APCO25RadioIdentifier.createFrom(1234567);
-        RadioIdentifier qualifiedRadio = APCO25FullyQualifiedRadioIdentifier.createFrom(
+        RadioIdentifier qualifiedRadio = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
             1234567, 0xABCDE, 0x123, 7654321);
         Identifier<?> plainGroup = APCO25Talkgroup.create(1201);
         Identifier<?> qualifiedGroup = APCO25FullyQualifiedTalkgroupIdentifier.createTo(
@@ -53,7 +53,7 @@ class P25TrafficChannelEventTrackerTest
     @Test
     void abbreviatedUpdatesCannotEraseLearnedHomeIdentities()
     {
-        RadioIdentifier qualifiedRadio = APCO25FullyQualifiedRadioIdentifier.createFrom(
+        RadioIdentifier qualifiedRadio = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
             1234567, 0xABCDE, 0x123, 7654321);
         Identifier<?> qualifiedGroup = APCO25FullyQualifiedTalkgroupIdentifier.createTo(
             1201, 0xABCDE, 0x123, 2201);
@@ -66,7 +66,7 @@ class P25TrafficChannelEventTrackerTest
 
         assertSame(qualifiedRadio, tracker.getEvent().getIdentifierCollection().getFromIdentifier());
         assertSame(qualifiedGroup, tracker.getEvent().getIdentifierCollection().getToIdentifier());
-        assertTrue(tracker.isDifferentTalker(APCO25FullyQualifiedRadioIdentifier.createFrom(
+        assertTrue(tracker.isDifferentTalker(APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
             1234567, 0xABCDE, 0x123, 7654322)));
         assertFalse(tracker.isSameCallCheckingToOnly(identifiers(
             APCO25FullyQualifiedTalkgroupIdentifier.createTo(1201, 0xABCDE, 0x123, 2202), qualifiedRadio),
@@ -76,16 +76,16 @@ class P25TrafficChannelEventTrackerTest
     @Test
     void matchingLocalAddressesCannotHideConflictingKnownHomeIdentities()
     {
-        RadioIdentifier radio = APCO25FullyQualifiedRadioIdentifier.createFrom(
+        RadioIdentifier radio = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
             1234567, 0xABCDE, 0x123, 7654321);
         Identifier<?> group = APCO25FullyQualifiedTalkgroupIdentifier.createTo(
             1201, 0xABCDE, 0x123, 2201);
         P25TrafficChannelEventTracker tracker = tracker(identifiers(group, radio));
 
         for(RadioIdentifier conflict: List.of(
-            APCO25FullyQualifiedRadioIdentifier.createFrom(1234567, 0xABCDF, 0x123, 7654321),
-            APCO25FullyQualifiedRadioIdentifier.createFrom(1234567, 0xABCDE, 0x124, 7654321),
-            APCO25FullyQualifiedRadioIdentifier.createFrom(1234567, 0xABCDE, 0x123, 7654322)))
+            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(1234567, 0xABCDF, 0x123, 7654321),
+            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(1234567, 0xABCDE, 0x124, 7654321),
+            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(1234567, 0xABCDE, 0x123, 7654322)))
         {
             assertTrue(tracker.isDifferentTalker(conflict));
             assertFalse(tracker.isSameCallCheckingToAndFrom(identifiers(group, conflict), START + 75L));
@@ -104,10 +104,21 @@ class P25TrafficChannelEventTrackerTest
     }
 
     @Test
+    void identityOnlyRadioCannotBorrowASameNumberWorkingAddress()
+    {
+        RadioIdentifier permanent = APCO25FullyQualifiedRadioIdentifier.createFrom(1234567,
+            0xABCDE, 0x123, 1234567);
+        P25TrafficChannelEventTracker tracked = tracker(1201, permanent);
+        assertTrue(tracked.isDifferentTalker(APCO25RadioIdentifier.createFrom(1234567)));
+        assertFalse(tracked.isSameCallCheckingToAndFrom(identifiers(1201,
+            APCO25RadioIdentifier.createFrom(1234567)), START + 75L));
+    }
+
+    @Test
     void localAddressMismatchAndUnknownZeroRemainSeparate()
     {
         P25TrafficChannelEventTracker tracker = tracker(1201, APCO25RadioIdentifier.createFrom(1234567));
-        assertTrue(tracker.isDifferentTalker(APCO25FullyQualifiedRadioIdentifier.createFrom(
+        assertTrue(tracker.isDifferentTalker(APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
             1234568, 0xABCDE, 0x123, 1234567)));
         assertFalse(tracker.isSameCallCheckingToOnly(identifiers(
             APCO25FullyQualifiedTalkgroupIdentifier.createTo(1202, 0xABCDE, 0x123, 1201), null), START + 75L));
@@ -115,7 +126,7 @@ class P25TrafficChannelEventTrackerTest
             APCO25RadioIdentifier.createFrom(0)));
         assertFalse(zero.isSameCallCheckingToAndFrom(identifiers(
             APCO25FullyQualifiedTalkgroupIdentifier.createTo(0, 0xABCDE, 0x123, 1201),
-            APCO25FullyQualifiedRadioIdentifier.createFrom(0, 0xABCDE, 0x123, 1234567)), START + 75L));
+            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(0, 0xABCDE, 0x123, 1234567)), START + 75L));
     }
 
     @Test

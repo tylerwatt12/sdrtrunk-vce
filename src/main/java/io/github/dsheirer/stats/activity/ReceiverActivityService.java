@@ -146,10 +146,66 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
         mAfterIngressSnapshotForTest = afterIngressSnapshotForTest;
         mBeforeWriterActivationForTest = beforeWriterActivationForTest;
         mWriterFactory = java.util.Objects.requireNonNull(writerFactory, "writerFactory cannot be null");
-        MyEventBus.getGlobalEventBus().register(this);
-        updateWriterState();
-        mObservationWorkerStarted = true;
-        mObservationWorker.execute(this::runObservationWorker);
+        boolean eventBusRegistered = false;
+
+        try
+        {
+            MyEventBus.getGlobalEventBus().register(this);
+            eventBusRegistered = true;
+            updateWriterState();
+            mObservationWorkerStarted = true;
+            mObservationWorker.execute(this::runObservationWorker);
+        }
+        catch(RuntimeException | Error failure)
+        {
+            rollbackFailedConstruction(eventBusRegistered, failure);
+            throw failure;
+        }
+    }
+
+    /** Removes registered callbacks and any writer that started before construction failed. */
+    private void rollbackFailedConstruction(boolean eventBusRegistered, Throwable failure)
+    {
+        mDisposed.set(true);
+
+        if(eventBusRegistered)
+        {
+            try
+            {
+                MyEventBus.getGlobalEventBus().unregister(this);
+            }
+            catch(RuntimeException | Error unregisterFailure)
+            {
+                failure.addSuppressed(unregisterFailure);
+            }
+        }
+
+        mCollectionEnabled = false;
+        mObservationIngress = new BoundedMpscPairQueue<>(OBSERVATION_QUEUE_SIZE);
+        mObservationWakeup.release();
+        mObservationWorker.shutdownNow();
+
+        try
+        {
+            mObservationWorker.awaitTermination(mDisposeTimeoutMilliseconds, TimeUnit.MILLISECONDS);
+        }
+        catch(InterruptedException interrupted)
+        {
+            Thread.currentThread().interrupt();
+            failure.addSuppressed(interrupted);
+        }
+
+        for(ReceiverActivityWriter writer: mStartedWriters.toArray(ReceiverActivityWriter[]::new))
+        {
+            try
+            {
+                closeTrackedWriter(writer);
+            }
+            catch(RuntimeException | Error closeFailure)
+            {
+                failure.addSuppressed(closeFailure);
+            }
+        }
     }
 
     private void runObservationWorker()
@@ -1529,8 +1585,8 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     private boolean shouldLogTalkerAlias(ReceiverActivityRecords.TalkerAliasUpdate update)
     {
         long now = System.currentTimeMillis();
-        String key = String.join("|", "talker-alias", update.configurationId(), Integer.toString(update.radioId()),
-            update.talkerAlias(), update.identityDomain().name());
+        String key = String.join("|", "talker-alias", update.configurationId(),
+            talkerAliasRadioKey(update), update.talkerAlias(), update.identityDomain().name());
 
         synchronized(mRecentDedupeKeys)
         {
@@ -1538,6 +1594,17 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
             Long previous = mRecentDedupeKeys.put(key, now);
             return previous == null;
         }
+    }
+
+    private static String talkerAliasRadioKey(ReceiverActivityRecords.TalkerAliasUpdate update)
+    {
+        ReceiverActivityRecords.P25Identity identity = update.p25RadioIdentity();
+        if(identity != null && identity.isStableFullyQualified())
+        {
+            return identity.homeWacn() + "." + identity.homeSystemId() + "." + identity.homeIdentityId() +
+                ":working:" + String.valueOf(update.radioId());
+        }
+        return String.valueOf(update.radioId());
     }
 
     private void cleanupDedupeKeys(long now)

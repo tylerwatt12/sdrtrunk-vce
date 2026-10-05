@@ -166,7 +166,7 @@ class P25P1DecoderStateTerminatorRecoveryTest
     {
         P25TrafficChannelManager manager = new P25TrafficChannelManager(new Channel("Parent"));
         P25ChannelGrantEvent call = startCall(manager, TALKGROUP, null, 1_000L);
-        Identifier reservedSource = APCO25RadioIdentifier.createFrom(0xFFFFFC);
+        Identifier reservedSource = APCO25RadioIdentifier.createFrom(0xFFFFFD);
 
         assertTrue(manager.recoverP25TrafficEndFrameIdentifiers(FREQUENCY, TimeslotMessage.TIMESLOT_1,
             Protocol.APCO25, new MutableIdentifierCollection(), List.of(reservedSource), 1_300L).isEmpty());

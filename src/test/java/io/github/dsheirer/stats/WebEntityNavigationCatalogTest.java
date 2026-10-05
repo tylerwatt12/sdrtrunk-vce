@@ -123,7 +123,7 @@ class WebEntityNavigationCatalogTest
     {
         WebEntityNavigationCatalog.Channel channel = p25Snapshot().channel(CONFIGURATION_ID);
         assertEquals(Map.of("kind", "radio", "radio_system_key", "p25:bee00:49f",
-            "identity_key", "v1-r-bee00-49f-1201"),
+            "identity_key", "v1-r-x-x-1201"),
             channel.identity(new ChannelActivitySnapshot.MatcherReference("radio", "p25", "phase_1", 1201))
                 .toMap());
         assertEquals(Map.of("kind", "patch_group", "radio_system_key", "p25:bee00:49f",

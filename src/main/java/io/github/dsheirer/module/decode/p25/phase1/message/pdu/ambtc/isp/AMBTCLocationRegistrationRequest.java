@@ -27,6 +27,7 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Lra;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.PDUSequence;
@@ -108,11 +109,11 @@ public class AMBTCLocationRegistrationRequest extends AMBTCMessage
 
     public Identifier getSourceId()
     {
-        if(mSourceId == null)
+        if(mSourceId == null && hasDataBlock(0))
         {
-            // TODO: Investigate whether BLOCK_0_SOURCE_ID is correctly read from the AMBTC header here,
-            // or whether this should come from data block 0 and the field name is the accurate one.
-            mSourceId = APCO25RadioIdentifier.createFrom(getHeader().getMessage().getInt(BLOCK_0_SOURCE_ID));
+            int subscriberId = getDataBlock(0).getMessage().getInt(BLOCK_0_SOURCE_ID);
+            mSourceId = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(getSourceAddressValue(), getWacnValue(),
+                getSystemValue(), subscriberId);
         }
 
         return mSourceId;
@@ -143,9 +144,9 @@ public class AMBTCLocationRegistrationRequest extends AMBTCMessage
 
     public Identifier getSourceAddress()
     {
-        if(mSourceAddress == null && hasDataBlock(0))
+        if(mSourceAddress == null)
         {
-            mSourceAddress = APCO25RadioIdentifier.createFrom(getDataBlock(0).getMessage().getInt(HEADER_ADDRESS));
+            mSourceAddress = APCO25RadioIdentifier.createFrom(getSourceAddressValue());
         }
 
         return mSourceAddress;
@@ -157,21 +158,14 @@ public class AMBTCLocationRegistrationRequest extends AMBTCMessage
         if(mIdentifiers == null)
         {
             mIdentifiers = new ArrayList<>();
-            if(getSourceAddress() != null)
-            {
-                mIdentifiers.add(getSourceAddress());
-            }
-            if(getWacn() != null)
-            {
-                mIdentifiers.add(getWacn());
-            }
-            if(getSystem() != null)
-            {
-                mIdentifiers.add(getSystem());
-            }
             if(getSourceId() != null)
             {
                 mIdentifiers.add(getSourceId());
+            }
+            else if(getSourceAddress() != null)
+            {
+                //An incomplete message can still expose the header's observed working address without inventing a SUID.
+                mIdentifiers.add(getSourceAddress());
             }
             if(getGroupAddress() != null)
             {
@@ -184,5 +178,21 @@ public class AMBTCLocationRegistrationRequest extends AMBTCMessage
         }
 
         return mIdentifiers;
+    }
+
+    private int getWacnValue()
+    {
+        int value = getHeader().getMessage().getInt(HEADER_WACN);
+        return (value << 4) + getDataBlock(0).getMessage().getInt(BLOCK_0_WACN);
+    }
+
+    private int getSystemValue()
+    {
+        return getDataBlock(0).getMessage().getInt(BLOCK_0_SYSTEM);
+    }
+
+    private int getSourceAddressValue()
+    {
+        return getHeader().getMessage().getInt(HEADER_ADDRESS);
     }
 }

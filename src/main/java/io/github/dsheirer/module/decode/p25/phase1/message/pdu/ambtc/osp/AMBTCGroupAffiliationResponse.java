@@ -103,7 +103,8 @@ public class AMBTCGroupAffiliationResponse extends AMBTCMessage
             wacn += getDataBlock(0).getMessage().getInt(BLOCK_0_SOURCE_WACN);
             int system = getDataBlock(0).getMessage().getInt(BLOCK_0_SOURCE_SYSTEM);
             int id = getDataBlock(0).getMessage().getInt(BLOCK_0_SOURCE_ID);
-            mTargetAddress = APCO25FullyQualifiedRadioIdentifier.createTo(localAddress, wacn, system, id);
+            mTargetAddress = APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(localAddress, wacn,
+                system, id);
         }
 
         return mTargetAddress;

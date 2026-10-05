@@ -25,8 +25,10 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.string.StringIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
+import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.identifier.tone.Tone;
 import io.github.dsheirer.identifier.tone.ToneIdentifier;
 import io.github.dsheirer.identifier.tone.ToneSequence;
@@ -485,7 +487,7 @@ public class AudioRecordingManager
 
             if(to != null)
             {
-                sb.append("_TO_").append(clean(to.toString()));
+                sb.append("_TO_").append(cleanIdentifier(to));
             }
             else
             {
@@ -493,7 +495,7 @@ public class AudioRecordingManager
 
                 if(!toIdentifiers.isEmpty())
                 {
-                    sb.append("_TO_").append(clean(toIdentifiers.get(0).toString()));
+                    sb.append("_TO_").append(cleanIdentifier(toIdentifiers.get(0)));
                 }
             }
 
@@ -501,7 +503,7 @@ public class AudioRecordingManager
 
             if(from != null)
             {
-                sb.append("_FROM_").append(clean(from.toString()));
+                sb.append("_FROM_").append(cleanIdentifier(from));
             }
             else
             {
@@ -513,7 +515,7 @@ public class AudioRecordingManager
                     {
                         if(identifier.getForm() != Form.TONE)
                         {
-                            sb.append("_FROM_").append(clean(identifier.toString()));
+                            sb.append("_FROM_").append(cleanIdentifier(identifier));
                             break;
                         }
                     }
@@ -648,12 +650,35 @@ public class AudioRecordingManager
             return value.replace(":", "")
                     .replace(".", "_")
                     .replace("(", "_")
-                    .replace(")", "")
-                    .replace("ROAM ", "")
-                    .replace("ISSI ", "");
+                    .replace(")", "");
         }
 
         return null;
+    }
+
+    /**
+     * Projects structured identifiers into a stable filename component without parsing presentation prefixes.
+     */
+    static String cleanIdentifier(Identifier identifier)
+    {
+        if(identifier instanceof FullyQualifiedRadioIdentifier radio)
+        {
+            String value = radio.getFullyQualifiedRadioAddress();
+
+            if(radio.isAliased())
+            {
+                value += "_Working_ID_" + radio.getValue();
+            }
+
+            return clean(value);
+        }
+
+        if(identifier instanceof FullyQualifiedTalkgroupIdentifier talkgroup)
+        {
+            return clean(talkgroup.getFullyQualifiedTalkgroupAddress());
+        }
+
+        return clean(identifier != null ? identifier.toString() : null);
     }
 
     /**

@@ -23,6 +23,7 @@ import io.github.dsheirer.alias.id.dcs.Dcs;
 import io.github.dsheirer.alias.id.esn.Esn;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioRange;
+import io.github.dsheirer.alias.id.radio.P25Subscriber;
 import io.github.dsheirer.alias.id.status.UnitStatusID;
 import io.github.dsheirer.alias.id.status.UserStatusID;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
@@ -37,6 +38,8 @@ import io.github.dsheirer.identifier.esn.ESNIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
+import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
+import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import io.github.dsheirer.identifier.status.UnitStatusIdentifier;
 import io.github.dsheirer.identifier.status.UserStatusIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
@@ -218,6 +221,23 @@ public class AliasList
             {
                 switch(id.getType())
                 {
+                    case P25_SUBSCRIBER_IDENTITY:
+                        P25Subscriber subscriber = (P25Subscriber)id;
+                        P25SubscriberIdentity subscriberIdentity = subscriber.identity();
+                        Alias existingSubscriberAlias = index.mP25SubscriberAliasMap.putIfAbsent(subscriberIdentity,
+                            alias);
+
+                        if(existingSubscriberAlias != null && !existingSubscriberAlias.equals(alias))
+                        {
+                            subscriber.setOverlap(true);
+                            AliasID existingMatcher = existingSubscriberAlias.getMatchIdentifier();
+                            if(existingMatcher instanceof P25Subscriber existingSubscriber &&
+                                existingSubscriber.matches(subscriber))
+                            {
+                                existingSubscriber.setOverlap(true);
+                            }
+                        }
+                        break;
                     case TALKGROUP:
                         Talkgroup talkgroup = (Talkgroup)id;
                         Protocol talkgroupProtocol =
@@ -714,19 +734,13 @@ public class AliasList
 
                     if(patchGroup.hasPatchedRadios())
                     {
-                        RadioAliasList radioAliasList =
-                            index.mRadioProtocolMap.get(lookupProtocol(patchGroupIdentifier.getProtocol()));
-
-                        if(radioAliasList != null)
+                        for(RadioIdentifier patchedRadio: patchGroup.getPatchedRadioIdentifiers())
                         {
-                            for(RadioIdentifier patchedRadio: patchGroup.getPatchedRadioIdentifiers())
-                            {
-                                Alias patchedRadioAlias = radioAliasList.getAlias(patchedRadio);
+                            Alias patchedRadioAlias = radioAlias(patchedRadio, index);
 
-                                if(patchedRadioAlias != null && !aliases.contains(patchedRadioAlias))
-                                {
-                                    aliases.add(patchedRadioAlias);
-                                }
+                            if(patchedRadioAlias != null && !aliases.contains(patchedRadioAlias))
+                            {
+                                aliases.add(patchedRadioAlias);
                             }
                         }
                     }
@@ -734,15 +748,7 @@ public class AliasList
                     return aliases;
                 case RADIO:
                     RadioIdentifier radio = (RadioIdentifier)identifier;
-
-                    RadioAliasList radioAliasList =
-                        index.mRadioProtocolMap.get(lookupProtocol(identifier.getProtocol()));
-
-                    if(radioAliasList != null)
-                    {
-                        return toList(radioAliasList.getAlias(radio));
-                    }
-                    break;
+                    return toList(radioAlias(radio, index));
                 case ESN:
                     if(identifier instanceof ESNIdentifier esnidentifier)
                     {
@@ -797,6 +803,33 @@ public class AliasList
         }
 
         return Collections.emptyList();
+    }
+
+    /** Exact permanent identity has precedence over any serving-system working-address alias. */
+    private Alias radioAlias(RadioIdentifier radio, LookupIndex index)
+    {
+        if(radio instanceof FullyQualifiedRadioIdentifier fullyQualified &&
+            radio.getProtocol() == Protocol.APCO25)
+        {
+            P25SubscriberIdentity identity = P25SubscriberIdentity.from(fullyQualified);
+            Alias canonical = identity != null ? index.mP25SubscriberAliasMap.get(identity) : null;
+            if(canonical != null)
+            {
+                return canonical;
+            }
+
+            Integer workingAddress = fullyQualified.getWorkingAddress();
+            if(workingAddress == null)
+            {
+                return null;
+            }
+
+            RadioAliasList local = index.mRadioProtocolMap.get(lookupProtocol(radio.getProtocol()));
+            return local != null ? local.getAlias(workingAddress) : null;
+        }
+
+        RadioAliasList local = index.mRadioProtocolMap.get(lookupProtocol(radio.getProtocol()));
+        return local != null ? local.getAlias(radio) : null;
     }
 
     /**
@@ -953,6 +986,7 @@ public class AliasList
             new EnumMap<>(Protocol.class);
         private final EnumMap<@NonNull Protocol,RadioAliasList> mRadioProtocolMap =
             new EnumMap<>(Protocol.class);
+        private final Map<P25SubscriberIdentity,Alias> mP25SubscriberAliasMap = new HashMap<>();
         private final EnumMap<@NonNull DCSCode,Alias> mDCSCodeAliasMap = new EnumMap<>(DCSCode.class);
         private final Map<String,Alias> mESNMap = new HashMap<>();
         private final Map<Integer,Alias> mUnitStatusMap = new HashMap<>();
@@ -1192,8 +1226,11 @@ public class AliasList
 
         public Alias getAlias(RadioIdentifier identifier)
         {
-            //Fully-qualified decoded radios use their local address for ordinary radio and range matching.
-            int value = identifier.getValue();
+            return getAlias(identifier.getValue());
+        }
+
+        public Alias getAlias(int value)
+        {
 
             Alias mapValue = mRadioAliasMap.get(value);
             if(mapValue != null)

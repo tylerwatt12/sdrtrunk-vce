@@ -22,6 +22,7 @@ package io.github.dsheirer.preference.identifier.talkgroup;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
+import io.github.dsheirer.identifier.radio.P25SubscriberIdentityFormatter;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
@@ -214,83 +215,10 @@ public class APCO25TalkgroupFormatter extends AbstractIntegerFormatter
      */
     public static String format(FullyQualifiedRadioIdentifier identifier, IntegerFormat format, boolean fixedWidth)
     {
-        int id = identifier.getValue();
-        int wacn = identifier.getWacn();
-        int system = identifier.getSystem();
         int radio = identifier.getRadio();
-
-        StringBuilder sb = new StringBuilder();
-
-        if(fixedWidth)
-        {
-            switch(format)
-            {
-                case DECIMAL:
-                case FORMATTED:
-                    if(id > 0)
-                    {
-                        sb.append(toDecimal(id, RADIO_DECIMAL_WIDTH)).append(" (");
-                    }
-                    sb.append(toHex(wacn, WACN_HEXADECIMAL_WIDTH));
-                    sb.append(".").append(toHex(system, SYSTEM_HEXADECIMAL_WIDTH));
-                    sb.append(".").append(toDecimal(radio, RADIO_DECIMAL_WIDTH));
-                    if(id > 0)
-                    {
-                        sb.append(")");
-                    }
-                    return sb.toString();
-                case HEXADECIMAL:
-                    if(id > 0)
-                    {
-                        sb.append(toHex(id, RADIO_HEXADECIMAL_WIDTH)).append(" (");
-                    }
-                    sb.append(toHex(wacn, WACN_HEXADECIMAL_WIDTH));
-                    sb.append(".").append(toHex(system, SYSTEM_HEXADECIMAL_WIDTH));
-                    sb.append(".").append(toHex(radio, RADIO_HEXADECIMAL_WIDTH));
-                    if(id > 0)
-                    {
-                        sb.append(")");
-                    }
-                    return sb.toString();
-                default:
-                    throw new IllegalArgumentException("Unrecognized integer format: " + format);
-            }
-        }
-        else
-        {
-            switch(format)
-            {
-                case DECIMAL:
-                case FORMATTED:
-                    if(id > 0)
-                    {
-                        sb.append(id).append(" (");
-                    }
-                    sb.append(toHex(wacn));
-                    sb.append(".").append(toHex(system));
-                    sb.append(".").append(radio);
-                    if(id > 0)
-                    {
-                        sb.append(")");
-                    }
-                    return sb.toString();
-                case HEXADECIMAL:
-                    if(id > 0)
-                    {
-                        sb.append(toHex(id)).append(" (");
-                    }
-                    sb.append(toHex(wacn));
-                    sb.append(".").append(toHex(system));
-                    sb.append(".").append(toHex(radio));
-                    if(id > 0)
-                    {
-                        sb.append(")");
-                    }
-                    return sb.toString();
-                default:
-                    throw new IllegalArgumentException("Unrecognized integer format: " + format);
-            }
-        }
+        String canonical = P25SubscriberIdentityFormatter.format(identifier.getWacn(), identifier.getSystem(), radio);
+        Integer workingAddress = identifier.getWorkingAddress();
+        return workingAddress != null ? canonical + " (Working ID " + workingAddress + ")" : canonical;
     }
 
     @Override

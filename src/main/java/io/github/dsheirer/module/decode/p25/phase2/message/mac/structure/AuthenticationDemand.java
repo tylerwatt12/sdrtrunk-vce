@@ -127,7 +127,8 @@ public class AuthenticationDemand extends MacStructureMultiFragment
             int system = getInt(TARGET_SUID_SYSTEM);
             int id = getInt((TARGET_SUID_ID));
 
-            mTargetAddress = APCO25FullyQualifiedRadioIdentifier.createTo(address, wacn, system, id);
+            mTargetAddress = APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(address, wacn, system,
+                id);
         }
 
         return mTargetAddress;

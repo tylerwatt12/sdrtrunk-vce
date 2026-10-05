@@ -129,6 +129,80 @@ public final class SdrTrunkDatabaseSchema
                 'TALKGROUP_RANGE',
                 'RADIO_ID',
                 'RADIO_ID_RANGE',
+                'P25_SUBSCRIBER_IDENTITY',
+                'STATUS',
+                'UNIT_STATUS',
+                'TONES',
+                'DCS',
+                'ESN'
+            )),
+            protocol TEXT CHECK(protocol IS NULL OR
+                (typeof(protocol) = 'text' AND protocol IN (
+                    'AM', 'APCO25', 'APCO25_PHASE2', 'DMR', 'FLEETSYNC', 'MDC1200', 'NBFM', 'NXDN'
+                ))),
+            value INTEGER CHECK(value IS NULL OR
+                (typeof(value) = 'integer' AND value BETWEEN 0 AND 16777215)),
+            min_value INTEGER CHECK(min_value IS NULL OR
+                (typeof(min_value) = 'integer' AND min_value BETWEEN 0 AND 16777215)),
+            max_value INTEGER CHECK(max_value IS NULL OR
+                (typeof(max_value) = 'integer' AND max_value BETWEEN 0 AND 16777215)),
+            text_value TEXT CHECK(text_value IS NULL OR
+                (typeof(text_value) = 'text' AND length(trim(text_value)) > 0)),
+            numeric_value INTEGER CHECK(numeric_value IS NULL OR
+                (typeof(numeric_value) = 'integer' AND numeric_value BETWEEN 0 AND 255)),
+            tone_sequence TEXT CHECK(tone_sequence IS NULL OR typeof(tone_sequence) = 'text'),
+            CHECK(
+                (matcher_type IN ('TALKGROUP', 'RADIO_ID')
+                    AND protocol IS NOT NULL AND value IS NOT NULL
+                    AND min_value IS NULL AND max_value IS NULL AND text_value IS NULL
+                    AND numeric_value IS NULL AND tone_sequence IS NULL)
+                OR
+                (matcher_type IN ('TALKGROUP_RANGE', 'RADIO_ID_RANGE')
+                    AND protocol IS NOT NULL AND value IS NULL
+                    AND min_value IS NOT NULL AND max_value IS NOT NULL AND min_value < max_value
+                    AND text_value IS NULL AND numeric_value IS NULL AND tone_sequence IS NULL)
+                OR
+                (matcher_type = 'P25_SUBSCRIBER_IDENTITY'
+                    AND protocol IS NULL AND value IS NULL AND min_value IS NULL AND max_value IS NULL
+                    AND text_value IS NULL AND numeric_value IS NULL AND tone_sequence IS NULL)
+                OR
+                (matcher_type IN ('STATUS', 'UNIT_STATUS')
+                    AND protocol IS NULL AND value IS NULL AND min_value IS NULL AND max_value IS NULL
+                    AND text_value IS NULL AND numeric_value IS NOT NULL AND tone_sequence IS NULL)
+                OR
+                (matcher_type = 'TONES'
+                    AND protocol IS NULL AND value IS NULL AND min_value IS NULL AND max_value IS NULL
+                    AND text_value IS NULL AND numeric_value IS NULL
+                    AND tone_sequence IS NOT NULL AND length(tone_sequence) > 0)
+                OR
+                (matcher_type IN ('DCS', 'ESN')
+                    AND protocol IS NULL AND value IS NULL AND min_value IS NULL AND max_value IS NULL
+                    AND text_value IS NOT NULL AND numeric_value IS NULL AND tone_sequence IS NULL)
+            )
+        )
+        """;
+    /** Frozen predecessor definition used only while constructing exact format-15-through-20 fixtures. */
+    private static final String FORMAT_20_ALIAS_TABLE_SQL = """
+        CREATE TABLE IF NOT EXISTS alias (
+            id INTEGER PRIMARY KEY AUTOINCREMENT CHECK(typeof(id) = 'integer' AND id > 0),
+            alias_list_id INTEGER NOT NULL REFERENCES alias_list(id) ON DELETE RESTRICT
+                CHECK(typeof(alias_list_id) = 'integer' AND alias_list_id > 0),
+            name TEXT NOT NULL CHECK(typeof(name) = 'text' AND length(trim(name)) > 0),
+            description TEXT CHECK(description IS NULL OR typeof(description) = 'text'),
+            group_name TEXT CHECK(group_name IS NULL OR typeof(group_name) = 'text'),
+            color INTEGER NOT NULL DEFAULT 0 CHECK(
+                typeof(color) = 'integer' AND color BETWEEN -2147483648 AND 2147483647
+            ),
+            icon_name TEXT CHECK(icon_name IS NULL OR typeof(icon_name) = 'text'),
+            stream_as_talkgroup INTEGER CHECK(stream_as_talkgroup IS NULL OR
+                (typeof(stream_as_talkgroup) = 'integer' AND stream_as_talkgroup BETWEEN 1 AND 16777215)),
+            record_enabled INTEGER NOT NULL DEFAULT 0
+                CHECK(typeof(record_enabled) = 'integer' AND record_enabled IN (0, 1)),
+            matcher_type TEXT NOT NULL CHECK(typeof(matcher_type) = 'text' AND matcher_type IN (
+                'TALKGROUP',
+                'TALKGROUP_RANGE',
+                'RADIO_ID',
+                'RADIO_ID_RANGE',
                 'STATUS',
                 'UNIT_STATUS',
                 'TONES',
@@ -175,6 +249,15 @@ public final class SdrTrunkDatabaseSchema
                     AND text_value IS NOT NULL AND numeric_value IS NULL AND tone_sequence IS NULL)
             )
         )
+        """;
+    private static final String ALIAS_P25_SUBSCRIBER_IDENTITY_TABLE_SQL = """
+        CREATE TABLE IF NOT EXISTS alias_p25_subscriber_identity (
+            alias_id INTEGER PRIMARY KEY REFERENCES alias(id) ON DELETE CASCADE
+                CHECK(typeof(alias_id) = 'integer' AND alias_id > 0),
+            p25_subscriber_identity_id INTEGER NOT NULL
+                REFERENCES p25_subscriber_identity(id) ON DELETE RESTRICT
+                CHECK(typeof(p25_subscriber_identity_id) = 'integer' AND p25_subscriber_identity_id > 0)
+        ) WITHOUT ROWID
         """;
     private static final String ALIAS_ACTIVITY_SUMMARY_TABLE_SQL = """
         CREATE TABLE IF NOT EXISTS alias_activity_summary (
@@ -575,6 +658,8 @@ public final class SdrTrunkDatabaseSchema
     private static final List<SqliteSchemaValidator.Definition> EXACT_ALIAS_OBJECTS = List.of(
         new SqliteSchemaValidator.Definition("table", "alias_list", ALIAS_LIST_TABLE_SQL),
         new SqliteSchemaValidator.Definition("table", "alias", ALIAS_TABLE_SQL),
+        new SqliteSchemaValidator.Definition("table", "alias_p25_subscriber_identity",
+            ALIAS_P25_SUBSCRIBER_IDENTITY_TABLE_SQL),
         new SqliteSchemaValidator.Definition("table", "alias_broadcast_channel",
             ALIAS_BROADCAST_CHANNEL_TABLE_SQL),
         new SqliteSchemaValidator.Definition("table", "alias_list_unmatched_talkgroup_stream",
@@ -625,6 +710,10 @@ public final class SdrTrunkDatabaseSchema
             ON alias(protocol, min_value, max_value, alias_list_id, id)
             WHERE matcher_type = 'RADIO_ID_RANGE'
             """),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_p25_subscriber_identity", """
+            CREATE INDEX IF NOT EXISTS idx_alias_p25_subscriber_identity
+            ON alias_p25_subscriber_identity(p25_subscriber_identity_id, alias_id)
+            """),
         new SqliteSchemaValidator.Definition("index", "idx_alias_broadcast_configuration",
             "CREATE INDEX IF NOT EXISTS idx_alias_broadcast_configuration " +
                 "ON alias_broadcast_channel(broadcast_configuration_id)"),
@@ -668,6 +757,8 @@ public final class SdrTrunkDatabaseSchema
             CREATE INDEX IF NOT EXISTS idx_alias_list_name_sort
             ON alias(alias_list_id, lower(coalesce(name, '')), id)
             """));
+    private static final List<SqliteSchemaValidator.Definition> FORMAT_20_EXACT_ALIAS_OBJECTS =
+        format20ExactAliasObjects();
     private static final List<SqliteSchemaValidator.Definition> EXACT_ALIAS_ACTIVITY_SUMMARY_OBJECTS = List.of(
         new SqliteSchemaValidator.Definition("table", "alias_activity_summary",
             ALIAS_ACTIVITY_SUMMARY_TABLE_SQL),
@@ -743,6 +834,7 @@ public final class SdrTrunkDatabaseSchema
         "idx_alias_talkgroup_range",
         "idx_alias_radio_value",
         "idx_alias_radio_range",
+        "idx_alias_p25_subscriber_identity",
         "idx_alias_list_id",
         "idx_alias_list_name_sort",
         "idx_alias_activity_talkgroup_range",
@@ -782,6 +874,8 @@ public final class SdrTrunkDatabaseSchema
                 "group_name", "color", "icon_name", "stream_as_talkgroup", "record_enabled",
                 "matcher_type", "protocol", "value", "min_value",
                 "max_value", "text_value", "numeric_value", "tone_sequence"),
+            new SqliteSchemaValidator.Table("alias_p25_subscriber_identity", "alias_id",
+                "p25_subscriber_identity_id"),
             new SqliteSchemaValidator.Table("alias_activity_summary", "alias_id", "alias_list_id",
                 "protocol_code", "metrics_state",
                 "logical_call_count", "recorded_logical_call_count", "stream_submitted_logical_call_count",
@@ -823,22 +917,24 @@ public final class SdrTrunkDatabaseSchema
 
     public static void create(Connection connection) throws SQLException
     {
-        create(connection, CONFIGURATION_CHANNEL_TABLE_SQL);
+        create(connection, CONFIGURATION_CHANNEL_TABLE_SQL, true);
         createReceiverHealthIncidentTable(connection);
     }
 
     /** Creates the exact format-15 target for its immutable adjacent migration. */
     public static void createFormat15(Connection connection) throws SQLException
     {
-        create(connection, FORMAT_15_CONFIGURATION_CHANNEL_TABLE_SQL);
+        create(connection, FORMAT_15_CONFIGURATION_CHANNEL_TABLE_SQL, false);
     }
 
-    private static void create(Connection connection, String configurationChannelTableSql) throws SQLException
+    private static void create(Connection connection, String configurationChannelTableSql,
+                               boolean currentAliasSchema) throws SQLException
     {
         try(Statement statement = connection.createStatement())
         {
             statement.executeUpdate(DATABASE_METADATA_TABLE_SQL);
-            for(SqliteSchemaValidator.Definition definition: EXACT_ALIAS_OBJECTS)
+            for(SqliteSchemaValidator.Definition definition:
+                currentAliasSchema ? EXACT_ALIAS_OBJECTS : FORMAT_20_EXACT_ALIAS_OBJECTS)
             {
                 boolean historical = !CONFIGURATION_CHANNEL_TABLE_SQL.equals(configurationChannelTableSql);
                 if(historical && (definition.name().equals("alias_list_new_alias_stream") ||
@@ -876,6 +972,16 @@ public final class SdrTrunkDatabaseSchema
 
     }
 
+    private static List<SqliteSchemaValidator.Definition> format20ExactAliasObjects()
+    {
+        return EXACT_ALIAS_OBJECTS.stream()
+            .filter(definition -> !"alias_p25_subscriber_identity".equals(definition.name()) &&
+                !"idx_alias_p25_subscriber_identity".equals(definition.name()))
+            .map(definition -> "alias".equals(definition.name()) ?
+                new SqliteSchemaValidator.Definition("table", "alias", FORMAT_20_ALIAS_TABLE_SQL) : definition)
+            .toList();
+    }
+
     /** Creates the current bounded Alias Editor browse and name-sort indexes. */
     public static void createAliasCatalogIndexes(Connection connection) throws SQLException
     {
@@ -886,6 +992,29 @@ public final class SdrTrunkDatabaseSchema
                 statement.executeUpdate(definition.sql());
             }
         }
+    }
+
+    /** Creates the format-32 Alias table after the staged migrator has isolated the format-31 table. */
+    public static void createFormat32AliasTable(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate(ALIAS_TABLE_SQL);
+        }
+    }
+
+    /** Restores the complete current Alias matcher schema after an adjacent table rebuild. */
+    public static void createCurrentAliasMatcherObjects(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            for(SqliteSchemaValidator.Definition definition: EXACT_ALIAS_OBJECTS)
+            {
+                statement.executeUpdate(definition.sql());
+            }
+        }
+        createAliasCatalogIndexes(connection);
+        createAliasActivitySummary(connection);
     }
 
     /** Creates the durable Alias Activity read model for fresh databases and the adjacent staged migrator only. */
@@ -1116,6 +1245,29 @@ public final class SdrTrunkDatabaseSchema
         SqliteSchemaValidator.validateDefinitions(connection, EXACT_CONFIGURATION_OBJECTS);
         SqliteSchemaValidator.validateDefinitions(connection, EXACT_WEB_SETTINGS_OBJECTS);
         Format5WebStateValidator.validate(connection);
+
+        try(Statement statement = connection.createStatement();
+            ResultSet rows = statement.executeQuery("""
+                SELECT issue FROM (
+                    SELECT 'canonical P25 subscriber Alias is missing its identity row' AS issue
+                    FROM alias
+                    LEFT JOIN alias_p25_subscriber_identity identity ON identity.alias_id=alias.id
+                    JOIN alias_list list ON list.id=alias.alias_list_id
+                    WHERE alias.matcher_type='P25_SUBSCRIBER_IDENTITY'
+                      AND (identity.alias_id IS NULL OR list.family<>'P25')
+                    UNION ALL
+                    SELECT 'non-canonical Alias has a canonical P25 subscriber identity row'
+                    FROM alias_p25_subscriber_identity identity
+                    JOIN alias ON alias.id=identity.alias_id
+                    WHERE alias.matcher_type<>'P25_SUBSCRIBER_IDENTITY'
+                ) LIMIT 1
+                """))
+        {
+            if(rows.next())
+            {
+                throw new SQLException(rows.getString("issue"));
+            }
+        }
 
         try(Statement statement = connection.createStatement();
             ResultSet rows = statement.executeQuery("SELECT COUNT(*) FROM receiver_health_incident"))

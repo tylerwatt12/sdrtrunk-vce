@@ -92,7 +92,8 @@ public class AMBTCIndividualDataChannelGrant extends AMBTCMessage implements IFr
             int wacn = getDataBlock(0).getMessage().getInt(BLOCK_0_SOURCE_WACN);
             int system = getDataBlock(0).getMessage().getInt(BLOCK_0_SOURCE_SYSTEM);
             int id = getDataBlock(0).getMessage().getInt(BLOCK_0_SOURCE_ID);
-            mSourceAddress = APCO25FullyQualifiedRadioIdentifier.createFrom(localAddress, wacn, system, id);
+            mSourceAddress = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(localAddress, wacn,
+                system, id);
         }
 
         return mSourceAddress;

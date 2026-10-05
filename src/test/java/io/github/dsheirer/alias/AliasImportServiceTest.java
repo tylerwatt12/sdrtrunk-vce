@@ -6,6 +6,7 @@ import io.github.dsheirer.alias.id.dcs.Dcs;
 import io.github.dsheirer.alias.id.esn.Esn;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioRange;
+import io.github.dsheirer.alias.id.radio.P25Subscriber;
 import io.github.dsheirer.alias.id.status.UnitStatusID;
 import io.github.dsheirer.alias.id.status.UserStatusID;
 import io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup;
@@ -50,7 +51,8 @@ class AliasImportServiceTest
         var tones = new TonesID(new ToneSequence(List.of(new Tone(AmbeTone.ALL_VALID_TONES.iterator().next(), 5))));
         List<AliasID> matchers = List.of(new Talkgroup(Protocol.APCO25, 123), new Talkgroup(Protocol.APCO25_PHASE2, 124),
             new TalkgroupRange(Protocol.DMR, 50, 70), new Radio(Protocol.NXDN, 4321),
-            new RadioRange(Protocol.APCO25, 100, 200), new Talkgroup(Protocol.FLEETSYNC, 123),
+            new RadioRange(Protocol.APCO25, 100, 200), new P25Subscriber(0xBEE00, 0x4A2, 2_115_288),
+            new Talkgroup(Protocol.FLEETSYNC, 123),
             new Talkgroup(Protocol.MDC1200, 123), new Talkgroup(Protocol.AM, 1),
             new Talkgroup(Protocol.NBFM, 1), user, unit, dcs, esn, tones);
         for(AliasID matcher: matchers)
@@ -107,6 +109,44 @@ class AliasImportServiceTest
         assertEquals("-Group", imported.alias().getGroup());
         assertEquals("@Icon", imported.alias().getIconName());
         assertEquals("=ESN", ((Esn)imported.alias().getMatchIdentifier()).getEsn());
+    }
+
+    @Test void canonicalSubscriberCsvUsesFixedWidthUppercaseHexAndKeepsVersionTwoCompatibility()
+    {
+        AliasListDefinition list = new AliasListDefinition("Destination", AliasListFamily.P25);
+        Alias alias = new Alias("Roaming subscriber");
+        alias.setMatchIdentifier(new P25Subscriber(0x00ABC, 0x04A, 2_115_288));
+        Map<String,String> fields = AliasTransferCsv.fields(alias, "County", List.of(), List.of());
+        assertEquals("00ABC", fields.get("home_wacn"));
+        assertEquals("04A", fields.get("home_system_id"));
+        assertEquals("2115288", fields.get("subscriber_id"));
+
+        AliasImportService.Input roundTrip = AliasTransferCsv.read(AliasTransferCsv.write(List.of(fields)),
+            AliasTransferCsv.Format.VCE, list).getFirst();
+        assertEquals(AliasTransferCsv.identity(alias), AliasTransferCsv.identity(roundTrip.alias()));
+
+        for(String invalid: List.of("00abc", "2748", "0xABC", "000ABC"))
+        {
+            Map<String,String> malformed = new LinkedHashMap<>(fields);
+            malformed.put("home_wacn", invalid);
+            assertThrows(IllegalArgumentException.class, () -> AliasTransferCsv.read(
+                AliasTransferCsv.write(List.of(malformed)), AliasTransferCsv.Format.VCE, list));
+        }
+        for(String invalid: List.of("04a", "74", "0x4A", "004A"))
+        {
+            Map<String,String> malformed = new LinkedHashMap<>(fields);
+            malformed.put("home_system_id", invalid);
+            assertThrows(IllegalArgumentException.class, () -> AliasTransferCsv.read(
+                AliasTransferCsv.write(List.of(malformed)), AliasTransferCsv.Format.VCE, list));
+        }
+
+        String versionTwo = String.join(",", AliasTransferCsv.VERSION_2_HEADERS) + "\r\n" +
+            String.join(",", List.of("2", "Legacy List", "Legacy Radio", "", "", "0", "", "RADIO_ID",
+                "APCO25", "123", "", "", "", "", "false", "[]", "[]", "")) + "\r\n";
+        AliasImportService.Input legacy = AliasTransferCsv.read(versionTwo, AliasTransferCsv.Format.VCE,
+            list).getFirst();
+        assertEquals(123, ((Radio)legacy.alias().getMatchIdentifier()).getValue());
+        assertEquals("Legacy List", legacy.sourceAliasList());
     }
 
     @Test void strictHeadersAndMalformedInputsAreRejected()

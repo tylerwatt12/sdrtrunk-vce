@@ -522,12 +522,14 @@ public record RadioResolveCallEnvelope(int schemaVersion, String submissionId, l
         }
         else if(identifier instanceof FullyQualifiedTalkgroupIdentifier fqTalkgroup)
         {
-            return new Party("talkgroup", fqTalkgroup.getValue().longValue(), fqTalkgroup.getTalkgroup(),
+            return new Party("talkgroup", fqTalkgroup.getValue().longValue(), (long)fqTalkgroup.getTalkgroup(),
                 fqTalkgroup.getWacn(), fqTalkgroup.getSystem(), List.of());
         }
         else if(identifier instanceof FullyQualifiedRadioIdentifier fqRadio)
         {
-            return new Party("radio", fqRadio.getValue().longValue(), fqRadio.getRadio(), fqRadio.getWacn(),
+            Integer workingAddress = fqRadio.getWorkingAddress();
+            return new Party("radio", workingAddress != null ? workingAddress.longValue() : null,
+                (long)fqRadio.getRadio(), fqRadio.getWacn(),
                 fqRadio.getSystem(), List.of());
         }
         else if(identifier instanceof TalkgroupIdentifier talkgroup && talkgroup.getValue() != null)
@@ -578,7 +580,17 @@ public record RadioResolveCallEnvelope(int schemaVersion, String submissionId, l
 
         long canonicalId = observation.homeIdentityId() != null ? observation.homeIdentityId() :
             observation.observedLocalId();
-        return new Party(type, observation.observedLocalId(), canonicalId, observation.homeWacn(),
+        Long localId;
+        if(observation.form() == Form.RADIO && observation.homeIdentityId() != null)
+        {
+            localId = observation.observedWorkingId() != null ?
+                observation.observedWorkingId().longValue() : null;
+        }
+        else
+        {
+            localId = Integer.valueOf(observation.observedLocalId()).longValue();
+        }
+        return new Party(type, localId, canonicalId, observation.homeWacn(),
             observation.homeSystemId(), List.copyOf(members));
     }
 
@@ -728,7 +740,7 @@ public record RadioResolveCallEnvelope(int schemaVersion, String submissionId, l
     public record Party(String type, Long localId, Long canonicalId, Integer homeWacn, Integer homeSystemId,
                         List<Party> members, String channelUuid)
     {
-        public Party(String type, long localId, long canonicalId, Integer homeWacn, Integer homeSystemId,
+        public Party(String type, Long localId, Long canonicalId, Integer homeWacn, Integer homeSystemId,
                      List<Party> members)
         {
             this(type, localId, canonicalId, homeWacn, homeSystemId, members, null);

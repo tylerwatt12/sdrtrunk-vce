@@ -30,7 +30,7 @@ Changes are saved in one transaction. A changed file, changed options, or change
 preview. A failed save does not partially import the list. Completion reports added, updated, deleted, and
 unchanged counts. Reimporting an unchanged file does not create duplicates.
 
-## VCE configuration CSV, version 2
+## VCE configuration CSV, version 3
 
 Choose **Export aliases…** for the selected list, then choose either every alias in that list or every result matching
 the current Alias table search and filters. A filtered export includes the complete server-side result, not just the
@@ -40,12 +40,13 @@ last/highest-ID exact-alias match after an empty-list round trip. The importer r
 order and capitalization:
 
 ```csv
-format_version,alias_list,name,description,group,color,icon,matcher_type,protocol,value,minimum,maximum,text,tones,record_enabled,scan_lists,streaming_destinations,stream_as_talkgroup
+format_version,alias_list,name,description,group,color,icon,matcher_type,protocol,value,minimum,maximum,text,tones,home_wacn,home_system_id,subscriber_id,record_enabled,scan_lists,streaming_destinations,stream_as_talkgroup
 ```
 
-All columns are required. `format_version` is `2`. Version 1 VCE exports remain importable using their original exact
-header, but new exports always use version 2. A matching existing alias receives all the supplied configuration,
-including membership replacements. Empty optional values clear those values. Unused matcher fields must be empty.
+All columns are required. `format_version` is `3`. Version 1 and version 2 VCE exports remain importable using their
+original exact headers, but new exports always use version 3. A matching existing alias receives all the supplied
+configuration, including membership replacements. Empty optional values clear those values. Unused matcher fields
+must be empty.
 
 | Columns | Values |
 | --- | --- |
@@ -53,12 +54,13 @@ including membership replacements. Empty optional values clear those values. Unu
 | `name`, `description`, `group` | Name is required. Existing database-valid text is preserved, subject to the file limits above. |
 | `color` | Signed decimal integer, as written by the exporter. |
 | `icon` | Exact configured icon name, or empty for none. |
-| `matcher_type` | `TALKGROUP`, `TALKGROUP_RANGE`, `RADIO_ID`, `RADIO_ID_RANGE`, `STATUS`, `UNIT_STATUS`, `DCS`, `ESN`, or `TONES`. |
+| `matcher_type` | `TALKGROUP`, `TALKGROUP_RANGE`, `P25_SUBSCRIBER_IDENTITY`, `RADIO_ID`, `RADIO_ID_RANGE`, `STATUS`, `UNIT_STATUS`, `DCS`, `ESN`, or `TONES`. |
 | `protocol` | For protocol matchers: `APCO25`, `APCO25_PHASE2`, `DMR`, `NXDN`, `AM`, `NBFM`, `FLEETSYNC`, or `MDC1200`, subject to destination-list compatibility. Otherwise empty. |
 | `value` | Decimal exact talkgroup/radio ID, user status, or unit status. |
 | `minimum`, `maximum` | Decimal inclusive range boundaries. |
 | `text` | DCS code enum name or ESN text, according to matcher type. |
 | `tones` | Ordered `TONE:duration` entries separated by semicolons, using exported tone names and integer durations. |
+| `home_wacn`, `home_system_id`, `subscriber_id` | For `P25_SUBSCRIBER_IDENTITY`, exactly five uppercase hexadecimal WACN digits, exactly three uppercase hexadecimal System ID digits, and a decimal Subscriber ID. Otherwise empty. |
 | `record_enabled` | Exactly `true` or `false`. |
 | `scan_lists` | JSON array of exact configured scan-list names. `[]` or an empty cell means none. |
 | `streaming_destinations` | JSON array of exact configured streaming-destination names. `[]` or an empty cell means none. |

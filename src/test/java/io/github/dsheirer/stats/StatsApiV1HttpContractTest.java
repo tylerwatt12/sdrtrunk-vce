@@ -111,6 +111,32 @@ class StatsApiV1HttpContractTest
     }
 
     @Test
+    void currentIssiRoutesUseSnapshotMetadataAndRejectInvalidFilters() throws Exception
+    {
+        String base = StatsApiV1.RADIO_SYSTEMS + "/p25%3A00001%3A047/issi";
+        HttpResponse<String> state = get(base + "/current-state");
+        assertEquals(200, state.statusCode(), state.body());
+        JsonNode data = OBJECT_MAPPER.readTree(state.body()).path("data");
+        assertTrue(data.path("receiver_started_at_ms").isIntegralNumber(), state.body());
+        assertTrue(data.path("snapshot_stale").isBoolean(), state.body());
+        assertEquals(0, data.path("current_assignment_count").intValue(), state.body());
+        for(String collection: List.of("current-assignments", "recent-changes"))
+        {
+            HttpResponse<String> response = get(base + "/" + collection + "?limit=1&q=County");
+            assertEquals(200, response.statusCode(), response.body());
+            JsonNode page = OBJECT_MAPPER.readTree(response.body());
+            assertTrue(page.path("data").isArray(), response.body());
+            assertEquals(0, page.at("/meta/total_count").intValue(), response.body());
+            assertTrue(page.at("/meta/snapshot_stale").isBoolean(), response.body());
+        }
+        assertStructuredError(get(base + "/current-assignments?home_wacn=1048576"),
+            400, "invalid_parameter", "home_wacn");
+        assertStructuredError(get(base + "/recent-changes?sort=unrecognized"),
+            400, "invalid_parameter", "sort");
+        assertEquals(404, get(StatsApiV1.RADIO_SYSTEMS + "/p25%3Afffff%3Afff/issi/current-state").statusCode());
+    }
+
+    @Test
     void canonicalObjectAndCollectionRoutesUseTheSharedSnakeCaseEnvelope() throws Exception
     {
         HttpResponse<String> statusResponse = get(StatsApiV1.STATUS);
@@ -150,6 +176,8 @@ class StatsApiV1HttpContractTest
         assertTrue(statsLogging.path("detailed_history_active").isBoolean(), statusResponse.body());
         assertTrue(statsLogging.path("retention_days").isIntegralNumber(), statusResponse.body());
         assertTrue(statsLogging.path("state").isTextual(), statusResponse.body());
+        assertFalse(statsLogging.has("canonical_identity_updates_written"), statusResponse.body());
+        assertFalse(statsLogging.has("canonical_identity_updates_dropped"), statusResponse.body());
         assertFalse(status.at("/data").has("statsLogging"), statusResponse.body());
 
         HttpResponse<String> dashboardResponse = get(StatsApiV1.DASHBOARD);
@@ -430,7 +458,7 @@ class StatsApiV1HttpContractTest
         assertStructuredError(doubleEncodedPath, 400, "invalid_path", null);
 
         HttpResponse<String> missingCursor = get(StatsApiV1.ACTIVITY +
-            "?before_id=999&group_identity_key=v1-g-bee00-49f-56735&radio_identity_key=v1-r-bee00-49f-2" +
+            "?before_id=999&group_identity_key=v1-g-bee00-49f-56735&radio_identity_key=v1-r-x-x-2" +
             "&radio_system_key=p25%3Abee00%3A49f&hide_grants=true&limit=1");
         assertEquals(200, missingCursor.statusCode(), missingCursor.body());
         JsonNode emptyPage = OBJECT_MAPPER.readTree(missingCursor.body());
@@ -521,6 +549,33 @@ class StatsApiV1HttpContractTest
         JsonNode page = OBJECT_MAPPER.readTree(response.body());
         assertTrue(page.get("data").isArray(), response.body());
         assertEquals(1, page.at("/meta/limit").intValue(), response.body());
+    }
+
+    @Test
+    void p25IssiRoutesExposeBoundedSystemScopedCollections() throws Exception
+    {
+        String base = StatsApiV1.RADIO_SYSTEMS + "/p25%3A00001%3A047/issi";
+        HttpResponse<String> overviewResponse = get(base);
+        assertEquals(200, overviewResponse.statusCode(), overviewResponse.body());
+        JsonNode overview = OBJECT_MAPPER.readTree(overviewResponse.body()).path("data");
+        assertEquals("p25", overview.path("protocol").textValue(), overviewResponse.body());
+        assertEquals("p25:00001:047", overview.path("radio_system_key").textValue(),
+            overviewResponse.body());
+
+        for(String resource: List.of("subscribers?limit=5",
+            "foreign-systems?limit=5", "frequency-bands?limit=5"))
+        {
+            HttpResponse<String> response = get(base + "/" + resource);
+            assertEquals(200, response.statusCode(), response.body());
+            JsonNode page = OBJECT_MAPPER.readTree(response.body());
+            assertTrue(page.path("data").isArray(), response.body());
+            assertEquals(5, page.at("/meta/limit").intValue(), response.body());
+            assertEquals(0, page.at("/meta/offset").intValue(), response.body());
+            assertTrue(page.at("/meta/has_more").isBoolean(), response.body());
+        }
+
+        HttpResponse<String> invalidState = get(base + "/subscribers?state=call-only");
+        assertStructuredError(invalidState, 400, "unknown_parameter", "state");
     }
 
     @Test

@@ -21,6 +21,7 @@ package io.github.dsheirer.alias;
 
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioRange;
+import io.github.dsheirer.alias.id.radio.P25Subscriber;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
@@ -34,6 +35,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class P25AliasTest
 {
@@ -157,7 +159,7 @@ public class P25AliasTest
     }
 
     /**
-     * Decoded fully-qualified P25 radios match a simple radio alias by their local radio value.
+     * Decoded fully-qualified P25 radios match a simple radio alias only through an explicit working address.
      */
     @Test
     void decodedFullyQualifiedRadioUsesLocalRadioAlias()
@@ -177,7 +179,8 @@ public class P25AliasTest
 
         //Identifier transmitted over the air that we want to alias
         APCO25FullyQualifiedRadioIdentifier decodedRadio =
-            APCO25FullyQualifiedRadioIdentifier.createFrom(aliasRadio, wacn, system, originalRadio);
+            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
+                aliasRadio, wacn, system, originalRadio);
 
         List<Alias> aliases = aliasList.getAliases(decodedRadio);
         assertEquals(1, aliases.size(), "Expected 1 matching alias");
@@ -185,7 +188,7 @@ public class P25AliasTest
     }
 
     /**
-     * Decoded fully-qualified P25 radios fall back to an ordinary radio range by their local radio value.
+     * Decoded fully-qualified P25 radios fall back to an ordinary radio range only through an explicit working address.
      */
     @Test
     void decodedFullyQualifiedRadioUsesLocalRadioRangeAlias()
@@ -205,11 +208,64 @@ public class P25AliasTest
 
         //Identifier transmitted over the air that we want to alias
         APCO25FullyQualifiedRadioIdentifier decodedRadio =
-            APCO25FullyQualifiedRadioIdentifier.createFrom(aliasRadio, wacn, system, originalRadio);
+            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
+                aliasRadio, wacn, system, originalRadio);
 
         List<Alias> aliases = aliasList.getAliases(decodedRadio);
         assertEquals(1, aliases.size(), "Expected 1 matching alias");
         assertEquals(correctAliasName, aliases.getFirst().getName(), "Unexpected alias name");
+    }
+
+    @Test
+    void fullyQualifiedSubscriberAliasWinsBeforeItsWorkingAddressFallback()
+    {
+        AliasList aliasList = p25AliasList();
+        Alias local = new Alias("Working Address");
+        local.setMatchIdentifier(new Radio(Protocol.APCO25, 501));
+        aliasList.addAlias(local);
+        Alias canonical = new Alias("Permanent Subscriber");
+        canonical.setMatchIdentifier(new P25Subscriber(0xBEE00, 0x348, 2_115_288));
+        aliasList.addAlias(canonical);
+
+        APCO25FullyQualifiedRadioIdentifier roamed =
+            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
+                501, 0xBEE00, 0x348, 2_115_288);
+        assertEquals(canonical, aliasList.getAliases(roamed).getFirst());
+        assertEquals(local, aliasList.getAliases(APCO25RadioIdentifier.createFrom(501)).getFirst(),
+            "ordinary working addresses must never be promoted to canonical aliases");
+
+        aliasList.removeAlias(canonical);
+        assertEquals(local, aliasList.getAliases(roamed).getFirst(),
+            "a complete SUID retains the existing local working-address fallback");
+    }
+
+    @Test
+    void identityOnlySubscriberDoesNotBorrowOrdinaryRadioAliases()
+    {
+        AliasList aliasList = p25AliasList();
+        Alias exact = new Alias("Unrelated local radio");
+        exact.setMatchIdentifier(new Radio(Protocol.APCO25, 300));
+        aliasList.addAlias(exact);
+        Alias range = new Alias("Unrelated local range");
+        range.setMatchIdentifier(new RadioRange(Protocol.APCO25, 250, 350));
+        aliasList.addAlias(range);
+
+        APCO25FullyQualifiedRadioIdentifier identityOnly =
+            APCO25FullyQualifiedRadioIdentifier.createFrom(300, 100, 200, 300);
+        assertTrue(aliasList.getAliases(identityOnly).isEmpty());
+    }
+
+    @Test
+    void equalExplicitWorkingAddressStillFallsBackToOrdinaryRadioAlias()
+    {
+        AliasList aliasList = p25AliasList();
+        Alias local = new Alias("Explicit equal working address");
+        local.setMatchIdentifier(new Radio(Protocol.APCO25, 300));
+        aliasList.addAlias(local);
+
+        APCO25FullyQualifiedRadioIdentifier equal =
+            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(300, 100, 200, 300);
+        assertEquals(local, aliasList.getAliases(equal).getFirst());
     }
 
     private static AliasList p25AliasList()

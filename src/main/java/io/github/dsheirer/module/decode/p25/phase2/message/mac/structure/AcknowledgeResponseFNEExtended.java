@@ -33,10 +33,10 @@ import java.util.List;
 public class AcknowledgeResponseFNEExtended extends MacStructureMultiFragment
 {
     private static final IntField SERVICE_TYPE = IntField.range(26, 31);
-    private static final IntField SOURCE_SUID_WACN = IntField.range(OCTET_5_BIT_32, OCTET_5_BIT_32 + 20);
+    private static final IntField SOURCE_SUID_WACN = IntField.length20(OCTET_5_BIT_32);
     private static final IntField SOURCE_SUID_SYSTEM = IntField.range(52, 63);
     private static final IntField SOURCE_SUID_ID = IntField.length24(OCTET_9_BIT_64);
-    private static final IntField TARGET_SUID_WACN = IntField.range(OCTET_12_BIT_88, OCTET_12_BIT_88 + 20);
+    private static final IntField TARGET_SUID_WACN = IntField.length20(OCTET_12_BIT_88);
     private static final IntField TARGET_SUID_SYSTEM = IntField.range(108, 119);
     private static final IntField TARGET_SUID_ID = IntField.length24(OCTET_16_BIT_120);
     private static final IntField FRAGMENT_0_SOURCE_ADDRESS = IntField.length24(OCTET_3_BIT_16);
@@ -97,7 +97,8 @@ public class AcknowledgeResponseFNEExtended extends MacStructureMultiFragment
             int wacn = getInt(TARGET_SUID_WACN);
             int system = getInt(TARGET_SUID_SYSTEM);
             int id = getInt(TARGET_SUID_ID);
-            mTargetAddress = APCO25FullyQualifiedRadioIdentifier.createTo(address, wacn, system, id);
+            mTargetAddress = APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(address, wacn, system,
+                id);
         }
 
         return mTargetAddress;
@@ -114,7 +115,8 @@ public class AcknowledgeResponseFNEExtended extends MacStructureMultiFragment
             int wacn = getInt(SOURCE_SUID_WACN);
             int system = getInt(SOURCE_SUID_SYSTEM);
             int id = getInt(SOURCE_SUID_ID);
-            mSourceAddress = APCO25FullyQualifiedRadioIdentifier.createFrom(address, wacn, system, id);
+            mSourceAddress = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(address, wacn, system,
+                id);
         }
 
         return mSourceAddress;

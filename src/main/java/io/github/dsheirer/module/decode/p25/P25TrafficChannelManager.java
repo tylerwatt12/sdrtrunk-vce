@@ -44,6 +44,7 @@ import io.github.dsheirer.identifier.patch.PatchGroupPreLoadDataContent;
 import io.github.dsheirer.identifier.scramble.ScrambleParameterIdentifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
+import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.log.LoggingSuppressor;
 import io.github.dsheirer.message.IMessage;
@@ -160,8 +161,14 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     private final P25FrequencyBandConfirmationTracker mFrequencyBandConfirmationTracker =
         new P25FrequencyBandConfirmationTracker();
     private final P25BandplanOverrideRegistry mBandplanOverrideRegistry;
+    private final P25WuidAssignmentRegistry mWuidAssignmentRegistry;
     private final boolean mUseBandplanOverride;
     private volatile P25SiteIdentity mStabilizedOverrideIdentity;
+    private volatile P25SiteIdentity mStabilizedRuntimeIdentity;
+    private volatile Integer mWuidLeaseMinutes;
+    private final String mWuidConfigurationId;
+    private volatile P25SiteIdentity mWuidSourceIdentity;
+    private volatile long mWuidLastHeartbeat;
     private Listener<ChannelEvent> mChannelEventListener;
     private Listener<IDecodeEvent> mDecodeEventListener;
     private TrafficChannelTeardownMonitor mTrafficChannelTeardownMonitor = new TrafficChannelTeardownMonitor();
@@ -238,30 +245,39 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      */
     public P25TrafficChannelManager(Channel parentChannel)
     {
-        this(parentChannel, P25BandplanOverrideRegistry.empty(), () -> false);
+        this(parentChannel, P25BandplanOverrideRegistry.empty(), new P25WuidAssignmentRegistry(), () -> false);
     }
 
-    /**
-     * Constructs an instance.
-     * @param parentChannel control channel that owns this traffic channel manager
-     * @param bandplanOverrideRegistry shared receiver-wide manual P25 bandplans
-     */
     public P25TrafficChannelManager(Channel parentChannel, P25BandplanOverrideRegistry bandplanOverrideRegistry)
     {
-        this(parentChannel, bandplanOverrideRegistry, () -> false);
+        this(parentChannel, bandplanOverrideRegistry, new P25WuidAssignmentRegistry(), () -> false);
     }
 
-    /**
-     * Constructs an instance with a live, non-blocking view of optional voice-decryption module state.
-     */
     public P25TrafficChannelManager(Channel parentChannel, P25BandplanOverrideRegistry bandplanOverrideRegistry,
                                     BooleanSupplier voiceDecryptionModuleLoaded)
     {
+        this(parentChannel, bandplanOverrideRegistry, new P25WuidAssignmentRegistry(), voiceDecryptionModuleLoaded);
+    }
+
+    public P25TrafficChannelManager(Channel parentChannel, P25BandplanOverrideRegistry bandplanOverrideRegistry,
+                                    P25WuidAssignmentRegistry wuidAssignmentRegistry)
+    {
+        this(parentChannel, bandplanOverrideRegistry, wuidAssignmentRegistry, () -> false);
+    }
+
+    /** Shared receiver identity state and the current, non-blocking optional decryption module state. */
+    public P25TrafficChannelManager(Channel parentChannel, P25BandplanOverrideRegistry bandplanOverrideRegistry,
+                                    P25WuidAssignmentRegistry wuidAssignmentRegistry,
+                                    BooleanSupplier voiceDecryptionModuleLoaded)
+    {
         mParentChannel = parentChannel;
+        mWuidConfigurationId = parentChannel.getConfigurationId();
         mGrantAllocationEnabled = !(parentChannel.getSourceConfiguration() instanceof SourceConfigRemote);
         mVoiceDecryptionModuleLoaded = Objects.requireNonNull(voiceDecryptionModuleLoaded);
         mBandplanOverrideRegistry = bandplanOverrideRegistry != null ? bandplanOverrideRegistry :
             P25BandplanOverrideRegistry.empty();
+        mWuidAssignmentRegistry = wuidAssignmentRegistry != null ? wuidAssignmentRegistry :
+            new P25WuidAssignmentRegistry();
         mUseBandplanOverride = parentChannel.getDecodeConfiguration() instanceof DecodeConfigP25 p25 &&
             p25.getUseP25BandplanOverride();
 
@@ -301,6 +317,72 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     public TalkerAliasManager getTalkerAliasManager()
     {
         return mTalkerAliasManager;
+    }
+
+    /**
+     * Promotes current WUID assignments before applying the independent over-the-air talker alias cache. Both
+     * lookups are bounded and in-memory; callers can safely use this on decoder callbacks.
+     */
+    public void enrichMutableIdentifiers(MutableIdentifierCollection identifiers, long timestamp)
+    {
+        mWuidAssignmentRegistry.enrich(servingSiteIdentity(), identifiers, timestamp);
+        mTalkerAliasManager.enrichMutable(identifiers);
+    }
+
+    /**
+     * Updates the ephemeral live WUID registry from the same accepted/confirmed/cleared structured event that is
+     * handed to the statistics writer. Requests, denials and incomplete identities never create assignments.
+     */
+    public P25WuidAssignmentRegistry.AssignmentObservation processP25RadioPresence(
+        P25AffiliationEvent.Outcome outcome, DecodeEventType eventType, P25RadioPresence presence, long timestamp)
+    {
+        observeControlSource(timestamp);
+        if(outcome == P25AffiliationEvent.Outcome.ACCEPTED ||
+            outcome == P25AffiliationEvent.Outcome.CONFIRMED)
+        {
+            return eventType == DecodeEventType.REGISTER ?
+                mWuidAssignmentRegistry.register(servingSiteIdentity(), presence, timestamp, mWuidLeaseMinutes, mWuidConfigurationId) :
+                mWuidAssignmentRegistry.refresh(servingSiteIdentity(), presence, timestamp, mWuidLeaseMinutes, mWuidConfigurationId);
+        }
+        else if(outcome == P25AffiliationEvent.Outcome.CLEARED)
+        {
+            mWuidAssignmentRegistry.clear(servingSiteIdentity(), presence, timestamp, mWuidLeaseMinutes);
+        }
+        return null;
+    }
+
+    /** Valid control messages keep observation continuity separate from a subscriber's WUID lease. */
+    public void observeControlSource(long timestamp)
+    {
+        if(!mParentChannel.isStandardChannel())
+        {
+            return;
+        }
+        P25SiteIdentity identity = servingSiteIdentity();
+        if(identity == null)
+        {
+            return;
+        }
+        P25SiteIdentity previous = mWuidSourceIdentity;
+        boolean same = previous != null && previous.wacn() == identity.wacn() &&
+            previous.system() == identity.system();
+        if(same && timestamp >= mWuidLastHeartbeat && timestamp - mWuidLastHeartbeat < 1_000L)
+        {
+            return;
+        }
+        if(previous != null && !same)
+        {
+            mWuidAssignmentRegistry.observationGap(previous, mWuidConfigurationId, timestamp);
+        }
+        mWuidSourceIdentity = identity;
+        mWuidLastHeartbeat = timestamp;
+        mWuidAssignmentRegistry.observeSource(identity, mWuidConfigurationId, timestamp);
+    }
+
+    private P25SiteIdentity servingSiteIdentity()
+    {
+        P25SiteIdentity configured = mParentChannel != null ? mParentChannel.getP25SiteIdentity() : null;
+        return configured != null ? configured : mStabilizedRuntimeIdentity;
     }
 
     /**
@@ -450,19 +532,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
     private static boolean radioMatches(RadioIdentifier authoritative, Identifier tracked)
     {
-        if(authoritative == null || !(tracked instanceof RadioIdentifier trackedRadio))
-        {
-            return false;
-        }
-
-        return authoritative.getValue().equals(trackedRadio.getValue()) ||
-            canonicalRadio(authoritative) == canonicalRadio(trackedRadio);
-    }
-
-    private static int canonicalRadio(RadioIdentifier radio)
-    {
-        return radio instanceof FullyQualifiedRadioIdentifier fullyQualified ? fullyQualified.getRadio() :
-            radio.getValue();
+        ResolvedRadioIdentity identity = ResolvedRadioIdentity.from(authoritative);
+        return identity != null && identity.matchesWithinScope(ResolvedRadioIdentity.from(tracked));
     }
 
     private static boolean talkgroupMatches(Identifier authoritative, Identifier tracked)
@@ -625,10 +696,43 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      */
     public void processNetworkConfigurationIdentity(P25SiteIdentity identity)
     {
+        processNetworkConfigurationIdentity(identity, null);
+    }
+
+    /**
+     * Updates the stable serving identity and latest advertised temporary-WUID lease. A missing lease retains the
+     * last explicit value; when no value has ever been advertised the registry uses the conservative 270-minute
+     * standards-valid minimum.
+     */
+    public void processNetworkConfigurationIdentity(P25SiteIdentity identity, Integer wuidLeaseMinutes)
+    {
+        processNetworkConfigurationIdentity(identity, wuidLeaseMinutes, System.currentTimeMillis());
+    }
+
+    public void processNetworkConfigurationIdentity(P25SiteIdentity identity, Integer wuidLeaseMinutes, long timestamp)
+    {
+        if(identity != null)
+        {
+            P25SiteIdentity previous = mStabilizedRuntimeIdentity;
+            if(previous != null && (previous.wacn() != identity.wacn() || previous.system() != identity.system()))
+            {
+                mWuidLeaseMinutes = null;
+            }
+            mStabilizedRuntimeIdentity = identity;
+        }
+
+        if(wuidLeaseMinutes != null && (wuidLeaseMinutes == P25WuidAssignmentRegistry.NO_EXPIRY_LEASE_MINUTES ||
+            wuidLeaseMinutes >= P25WuidAssignmentRegistry.DEFAULT_LEASE_MINUTES &&
+                wuidLeaseMinutes <= 7_890 && wuidLeaseMinutes % 30 == 0))
+        {
+            mWuidLeaseMinutes = wuidLeaseMinutes;
+        }
+
         if(mUseBandplanOverride && mParentChannel.getP25SiteIdentity() == null)
         {
             mStabilizedOverrideIdentity = identity;
         }
+        observeControlSource(timestamp);
     }
 
     /**
@@ -881,6 +985,13 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      */
     private P25TrafficChannelEventTracker createTracker(P25ChannelGrantEvent event, long frequency, int timeslot)
     {
+        IdentifierCollection identifiers = event.getIdentifierCollection();
+        if(identifiers != null)
+        {
+            IdentifierCollection enriched = mWuidAssignmentRegistry.enrich(servingSiteIdentity(), identifiers,
+                event.getTimeStart());
+            event.setIdentifierCollection(mTalkerAliasManager.enrich(enriched));
+        }
         P25TrafficChannelEventTracker tracker = new P25TrafficChannelEventTracker(event,
             RadioSystemKey.p25(mParentChannel != null ? mParentChannel.getP25SiteIdentity() : null));
         addTracker(tracker, frequency, timeslot);
@@ -2769,9 +2880,19 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
         try
         {
+            P25SiteIdentity observedIdentity = mWuidSourceIdentity;
+            if(observedIdentity != null)
+            {
+                mWuidAssignmentRegistry.observationGap(observedIdentity, mWuidConfigurationId,
+                    System.currentTimeMillis());
+                mWuidSourceIdentity = null;
+                mWuidLastHeartbeat = 0;
+            }
             mFrequencyBandMap.clear();
             mFrequencyBandConfirmationTracker.reset();
             mStabilizedOverrideIdentity = null;
+            mStabilizedRuntimeIdentity = null;
+            mWuidLeaseMinutes = null;
 
             if(mPhase2ScrambleParameters != null)
             {

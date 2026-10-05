@@ -13,6 +13,7 @@ package io.github.dsheirer.module.decode.p25.phase1;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
@@ -20,10 +21,14 @@ import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
+import io.github.dsheirer.module.decode.p25.P25RadioPresence;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
+import io.github.dsheirer.module.decode.p25.P25WuidAssignmentRegistry;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25IncompleteRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
@@ -31,10 +36,13 @@ import io.github.dsheirer.module.decode.p25.phase1.message.pdu.PDUSequence;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.AMBTCHeader;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp.AMBTCUnitRegistrationResponse;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.Opcode;
+import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.isp.UnitDeRegistrationRequest;
+import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.UnitDeRegistrationAcknowledge;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.UnitRegistrationResponse;
 import io.github.dsheirer.module.decode.p25.reference.Response;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationStabilizer;
+import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import org.junit.jupiter.api.Test;
@@ -43,6 +51,9 @@ class P25P1DecoderStateRegistrationTest
 {
     private static final int NAC = 0x293;
     private static final int RADIO_ID = 1_811_524;
+    private static final int HOME_WACN = 0xABCDE;
+    private static final int HOME_SYSTEM = 0x321;
+    private static final int WORKING_ID = 654_321;
     private static final String ABBREVIATED_REGISTRATION = "AC0009540CAE7EFFFD2657BA";
 
     @Test
@@ -68,7 +79,9 @@ class P25P1DecoderStateRegistrationTest
         Channel channel = new Channel("P25 Roaming Registration", ChannelType.STANDARD);
         channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
         P25NetworkConfigurationStabilizer stabilizer = stabilizer(0xBEE00, 0x3A9, 0x3A1);
-        P25P1DecoderState state = new P25P1DecoderState(channel, new P25TrafficChannelManager(channel), stabilizer);
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(channel);
+        manager.processNetworkConfigurationIdentity(stabilizer.getStableSiteIdentity());
+        P25P1DecoderState state = new P25P1DecoderState(channel, manager, stabilizer);
         List<IDecodeEvent> events = new CopyOnWriteArrayList<>();
         state.addDecodeEventListener(events::add);
 
@@ -82,6 +95,15 @@ class P25P1DecoderStateRegistrationTest
         assertEquals(0xBEE00, radio.getWacn());
         assertEquals(0x954, radio.getSystem());
         assertEquals(831_102, radio.getRadio());
+        P25WuidAssignmentRegistry.AssignmentObservation observation = event.getAssignmentObservation();
+        assertNotNull(observation);
+        assertEquals(0xBEE00, observation.servingWacn());
+        assertEquals(0x3A9, observation.servingSystem());
+        assertEquals(0xFFFD26, observation.workingId());
+        assertEquals(0xBEE00, observation.subscriber().homeWacn());
+        assertEquals(0x954, observation.subscriber().homeSystemId());
+        assertEquals(831_102, observation.subscriber().subscriberId());
+        assertEquals(P25WuidAssignmentRegistry.Evidence.REGISTRATION, observation.evidence());
     }
 
     @Test
@@ -125,6 +147,47 @@ class P25P1DecoderStateRegistrationTest
         assertEquals(0xFFFD26, event.getRadioId());
     }
 
+    @Test
+    void deregistrationRequestIsObservationOnlyButAcknowledgementClearsAuthority()
+    {
+        P25SiteIdentity site = new P25SiteIdentity(0xBEE00, 0x348, 1, 1);
+        P25SubscriberIdentity subscriber = new P25SubscriberIdentity(HOME_WACN, HOME_SYSTEM, RADIO_ID);
+        Channel channel = new Channel("P25 Deregistration", ChannelType.STANDARD);
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        channel.setP25SiteIdentity(site);
+        P25WuidAssignmentRegistry registry = new P25WuidAssignmentRegistry();
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(channel,
+            io.github.dsheirer.module.decode.p25.bandplan.P25BandplanOverrideRegistry.empty(), registry);
+        P25P1DecoderState state = new P25P1DecoderState(channel, manager);
+        List<IDecodeEvent> events = new CopyOnWriteArrayList<>();
+        state.addDecodeEventListener(events::add);
+        registry.register(site, new P25RadioPresence(subscriber, WORKING_ID), 500L, null);
+
+        state.receive(new TestUnitDeRegistrationRequest(1_000L));
+
+        P25AffiliationEvent request = assertInstanceOf(P25AffiliationEvent.class, events.getFirst());
+        assertEquals(P25AffiliationEvent.Outcome.REQUESTED, request.getOutcome());
+        assertNull(request.getAssignmentObservation());
+        assertInstanceOf(APCO25FullyQualifiedRadioIdentifier.class,
+            enrichedFrom(registry, site, WORKING_ID, 1_001L));
+
+        state.receive(new TestUnitDeRegistrationAcknowledge(2_000L));
+
+        P25AffiliationEvent acknowledgement = assertInstanceOf(P25AffiliationEvent.class, events.getLast());
+        assertEquals(P25AffiliationEvent.Outcome.CLEARED, acknowledgement.getOutcome());
+        assertNull(acknowledgement.getAssignmentObservation());
+        assertInstanceOf(APCO25RadioIdentifier.class, enrichedFrom(registry, site, WORKING_ID, 2_001L));
+    }
+
+    private static Identifier<?> enrichedFrom(P25WuidAssignmentRegistry registry, P25SiteIdentity site,
+                                                int workingId, long timestamp)
+    {
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection(
+            List.of(APCO25RadioIdentifier.createFrom(workingId)));
+        registry.enrich(site, identifiers, timestamp);
+        return identifiers.getFromIdentifier();
+    }
+
     private static P25NetworkConfigurationStabilizer stabilizer(int wacn, int system, int nac)
     {
         P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
@@ -143,6 +206,7 @@ class P25P1DecoderStateRegistrationTest
         assertEquals(outcome, event.getOutcome());
         assertEquals(RADIO_ID, event.getRadioId());
         assertNull(event.getTalkgroupId());
+        assertNull(event.getAssignmentObservation());
         assertEquals(timestamp, event.getTimeStart());
     }
 
@@ -184,6 +248,12 @@ class P25P1DecoderStateRegistrationTest
         }
 
         @Override
+        public int getSourceAddress()
+        {
+            return RADIO_ID;
+        }
+
+        @Override
         public List<Identifier> getIdentifiers()
         {
             return List.of(mRadio);
@@ -218,5 +288,35 @@ class P25P1DecoderStateRegistrationTest
         {
             return List.of(mRadio);
         }
+    }
+
+    private static class TestUnitDeRegistrationRequest extends UnitDeRegistrationRequest
+    {
+        private final Identifier mRadio = APCO25FullyQualifiedRadioIdentifier.createFrom(
+            RADIO_ID, HOME_WACN, HOME_SYSTEM, RADIO_ID);
+
+        private TestUnitDeRegistrationRequest(long timestamp)
+        {
+            super(P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1, new CorrectedBinaryMessage(96), NAC, timestamp);
+        }
+
+        @Override public Opcode getOpcode() { return Opcode.ISP_UNIT_DE_REGISTRATION_REQUEST; }
+        @Override public Identifier getSourceAddress() { return mRadio; }
+        @Override public List<Identifier> getIdentifiers() { return List.of(mRadio); }
+    }
+
+    private static class TestUnitDeRegistrationAcknowledge extends UnitDeRegistrationAcknowledge
+    {
+        private final Identifier mRadio = APCO25FullyQualifiedRadioIdentifier.createTo(
+            RADIO_ID, HOME_WACN, HOME_SYSTEM, RADIO_ID);
+
+        private TestUnitDeRegistrationAcknowledge(long timestamp)
+        {
+            super(P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1, new CorrectedBinaryMessage(96), NAC, timestamp);
+        }
+
+        @Override public Opcode getOpcode() { return Opcode.OSP_UNIT_DEREGISTRATION_ACKNOWLEDGE; }
+        @Override public Identifier getTargetAddress() { return mRadio; }
+        @Override public List<Identifier> getIdentifiers() { return List.of(mRadio); }
     }
 }

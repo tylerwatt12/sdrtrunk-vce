@@ -192,6 +192,104 @@ class ReceiverActivityRetentionTest
         }
     }
 
+    @Test
+    void oldWuidObservationsAreRetainedByTimeAndKeepCanonicalSubscribersReachable() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            execute(connection, """
+                INSERT INTO configuration_channel(
+                    configuration_id, channel_kind, sort_order, system_name, site_name, name,
+                    alias_list_id, auto_start, decoder_type, primary_frequency_hz, config_json)
+                VALUES ('%s', 'TRUNKED', 0, 'P25', 'Site', 'Control',
+                    (SELECT id FROM alias_list WHERE family='P25' LIMIT 1), 0, 'P25_PHASE1', 851012500, '{}')
+                """.formatted(CONFIGURATION_ID));
+            execute(connection, """
+                INSERT INTO radio_system(
+                    id, system_key, protocol_code, address_domain_code, p25_wacn, p25_system_id,
+                    first_seen_ms, last_seen_ms)
+                VALUES (1, 'p25:bee00:3a9', 1, 0, 0xBEE00, 0x3A9, 1, 1)
+                """);
+            execute(connection, """
+                INSERT INTO receiver_channel(
+                    id, configuration_id, first_seen_ms, last_seen_ms, radio_system_id,
+                    radio_system_assigned_at_ms)
+                VALUES (1, '%s', 1, 1, 1, 1)
+                """.formatted(CONFIGURATION_ID));
+            execute(connection, """
+                INSERT INTO p25_subscriber_identity(id,home_wacn,home_system_id,subscriber_id)
+                VALUES (1,0xABCDE,0x321,9001),(2,0xABCDE,0x321,9002),(3,0xABCDE,0x321,9003)
+                """);
+            execute(connection, """
+                INSERT INTO p25_wuid_assignment_observation_summary(
+                    radio_system_id,working_id,p25_subscriber_identity_id,
+                    first_observed_ms,last_observed_ms,last_registration_ms,last_affiliation_ms,
+                    registration_count,affiliation_count,last_evidence_code,last_channel_id)
+                VALUES (1,123,1,1,1,1,NULL,1,0,1,1)
+                """);
+            execute(connection, """
+                INSERT INTO alias(alias_list_id,name,matcher_type)
+                SELECT id,'Explicit canonical subscriber','P25_SUBSCRIBER_IDENTITY'
+                FROM alias_list WHERE family='P25' LIMIT 1
+                """);
+            execute(connection, """
+                INSERT INTO alias_p25_subscriber_identity(alias_id,p25_subscriber_identity_id)
+                SELECT id,2 FROM alias WHERE name='Explicit canonical subscriber'
+                """);
+
+            ReceiverActivityRetention.runPass(connection, 0);
+            assertEquals(1, scalar(connection,
+                "SELECT count(*) FROM p25_wuid_assignment_observation_summary"));
+            assertEquals(2, scalar(connection, "SELECT count(*) FROM p25_subscriber_identity"),
+                "the observation retains subscriber 1, the Alias retains subscriber 2, and orphan 3 is removed");
+
+            String systemHistoryPlan = queryPlan(connection, """
+                SELECT working_id FROM p25_wuid_assignment_observation_summary
+                WHERE radio_system_id=1 ORDER BY last_observed_ms DESC,working_id LIMIT 100
+                """);
+            assertTrue(systemHistoryPlan.contains("idx_p25_wuid_assignment_observation_system_time"),
+                systemHistoryPlan);
+            String subscriberHistoryPlan = queryPlan(connection, """
+                SELECT working_id FROM p25_wuid_assignment_observation_summary
+                WHERE p25_subscriber_identity_id=1 ORDER BY last_observed_ms DESC LIMIT 100
+                """);
+            assertTrue(subscriberHistoryPlan.contains("idx_p25_wuid_assignment_observation_subscriber"),
+                subscriberHistoryPlan);
+            String historyRetentionPlan = queryPlan(connection, """
+                SELECT observation.radio_system_id,observation.working_id,
+                    observation.p25_subscriber_identity_id
+                FROM p25_wuid_assignment_observation_summary observation
+                    INDEXED BY idx_p25_wuid_assignment_observation_retention
+                WHERE observation.last_observed_ms<2
+                ORDER BY observation.last_observed_ms,observation.radio_system_id,
+                    observation.working_id,observation.p25_subscriber_identity_id
+                LIMIT 100
+                """);
+            assertTrue(historyRetentionPlan.contains("idx_p25_wuid_assignment_observation_retention"),
+                historyRetentionPlan);
+            String orphanPlan = queryPlan(connection, """
+                SELECT subscriber.id
+                FROM p25_subscriber_identity subscriber
+                WHERE NOT EXISTS (SELECT 1 FROM radio_system_identity_summary identity
+                    WHERE identity.p25_subscriber_identity_id=subscriber.id)
+                  AND NOT EXISTS (SELECT 1 FROM p25_wuid_assignment_observation_summary history
+                    WHERE history.p25_subscriber_identity_id=subscriber.id)
+                  AND NOT EXISTS (SELECT 1 FROM alias_p25_subscriber_identity alias_identity
+                    WHERE alias_identity.p25_subscriber_identity_id=subscriber.id)
+                ORDER BY subscriber.id LIMIT 100
+                """);
+            assertTrue(orphanPlan.contains("idx_radio_system_identity_p25_subscriber"), orphanPlan);
+            assertTrue(orphanPlan.contains("idx_p25_wuid_assignment_observation_subscriber"), orphanPlan);
+            assertTrue(orphanPlan.contains("idx_alias_p25_subscriber_identity"), orphanPlan);
+
+            ReceiverActivityRetention.runPass(connection, 2);
+            assertEquals(0, scalar(connection,
+                "SELECT count(*) FROM p25_wuid_assignment_observation_summary"));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM p25_subscriber_identity"),
+                "time retention removes the old observation and its now-unreferenced subscriber only");
+        }
+    }
+
     private static Connection open() throws Exception
     {
         Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:");

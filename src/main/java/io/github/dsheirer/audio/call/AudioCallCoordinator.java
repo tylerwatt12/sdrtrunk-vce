@@ -39,6 +39,7 @@ import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
+import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.module.decode.DecoderType;
@@ -1375,8 +1376,12 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             snapshot.startTimestamp(), snapshot.lastActivityTimestamp(), decidedAtMs, wait,
             metadata != null ? metadata.destinationValue() : null,
             metadata != null ? metadata.destinationAlias() : null,
+            metadata != null ? metadata.destinationP25Identity() : null,
+            metadata != null ? metadata.destinationObservedWorkingId() : null,
             metadata != null ? metadata.sourceValue() : null,
-            metadata != null ? metadata.sourceAlias() : null, snapshot.encryptionState(),
+            metadata != null ? metadata.sourceAlias() : null,
+            metadata != null ? metadata.sourceP25Identity() : null,
+            metadata != null ? metadata.sourceObservedWorkingId() : null, snapshot.encryptionState(),
             p25 != null ? p25.wacn() : null, p25 != null ? p25.system() : null,
             source != null ? source.aliasListId() : 0L, aliasListName, learnedSites.size());
     }
@@ -1751,6 +1756,19 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         }
         if(exact instanceof FullyQualifiedRadioIdentifier radio)
         {
+            boolean explicitWorkingAddress = radio.hasExplicitWorkingAddress() && local.equals(radio.getValue());
+            if(winnerLocal instanceof FullyQualifiedRadioIdentifier winnerRadio &&
+                winnerRadio.hasExplicitWorkingAddress() && local.equals(winnerRadio.getValue()))
+            {
+                explicitWorkingAddress = true;
+            }
+
+            if(explicitWorkingAddress)
+            {
+                return APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(local, radio.getWacn(),
+                    radio.getSystem(), radio.getRadio(), role, radio.getResolutionEvidence());
+            }
+
             return role == Role.TO ? APCO25FullyQualifiedRadioIdentifier.createTo(local, radio.getWacn(),
                 radio.getSystem(), radio.getRadio()) : APCO25FullyQualifiedRadioIdentifier.createFrom(local,
                     radio.getWacn(), radio.getSystem(), radio.getRadio());
@@ -2350,15 +2368,14 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             {
                 return null;
             }
-            return new SourceIdentity(identifier.getProtocol() != null ? identifier.getProtocol().name() : null,
-                fullyQualified.getValue(), fullyQualified.getWacn(), fullyQualified.getSystem(),
-                fullyQualified.getRadio());
+            ResolvedRadioIdentity resolved = ResolvedRadioIdentity.from(fullyQualified);
+            return resolved != null ? new SourceIdentity(resolved) : null;
         }
         else if(identifier instanceof RadioIdentifier radio && radio.isValid() &&
             eligibleP25Radio(identifier.getProtocol(), radio.getValue()))
         {
-            return new SourceIdentity(identifier.getProtocol() != null ? identifier.getProtocol().name() : null,
-                radio.getValue(), null, null, null);
+            ResolvedRadioIdentity resolved = ResolvedRadioIdentity.from(radio);
+            return resolved != null ? new SourceIdentity(resolved) : null;
         }
 
         return null;
@@ -2901,24 +2918,11 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
     {
     }
 
-    private record SourceIdentity(String protocol, int localAddress, Integer wacn, Integer system,
-                                  Integer radio)
+    private record SourceIdentity(ResolvedRadioIdentity identity)
     {
         private boolean matches(SourceIdentity other)
         {
-            if(other == null || protocol == null || other.protocol == null ||
-                !protocol.equalsIgnoreCase(other.protocol))
-            {
-                return false;
-            }
-
-            if(wacn != null && system != null && radio != null && other.wacn != null &&
-                other.system != null && other.radio != null)
-            {
-                return wacn.equals(other.wacn) && system.equals(other.system) && radio.equals(other.radio);
-            }
-
-            return localAddress > 0 && localAddress == other.localAddress;
+            return other != null && identity.matchesWithinScope(other.identity);
         }
     }
 

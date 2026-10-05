@@ -48,11 +48,11 @@ class Format30To31DatabaseMigrationTest
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);
 
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
-            assertEquals(1, report.steps().size());
+            assertEquals(2, report.steps().size());
             assertEquals("format-30-to-31", report.steps().getFirst().id());
             assertEquals(before.size(), report.steps().getFirst().effects().getFirst().affectedRows());
-            assertEquals(31, DatabaseFormatCatalog.requireCurrent(connection).version());
-            assertEquals(fingerprint, SqliteSchemaValidator.fingerprint(connection));
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
             Map<Long,Preference> after = preferences(statement);
             assertEquals(before.keySet(), after.keySet());
             for(Map.Entry<Long,Preference> entry: before.entrySet())
@@ -99,7 +99,7 @@ class Format30To31DatabaseMigrationTest
                     assertTrue(MessageDigest.isEqual(credential.getValue(),
                         credentialDigests(statement).get(credential.getKey())), "Account or credential changed");
                 }
-                assertEquals(31, DatabaseFormatCatalog.requireCurrent(connection).version());
+                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
             }
         }
     }
@@ -131,7 +131,7 @@ class Format30To31DatabaseMigrationTest
             Path destination = Files.copy(source, mTemporaryFolder.resolve(name));
             try(Connection connection = open(destination); Statement statement = connection.createStatement())
             {
-                assertEquals(31, DatabaseMigrationChain.migrate(connection).target().version());
+                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseMigrationChain.migrate(connection).target().version());
                 for(Map.Entry<Long,Preference> entry: before.entrySet())
                 {
                     Preference current = preferences(statement).get(entry.getKey());
@@ -207,7 +207,7 @@ class Format30To31DatabaseMigrationTest
                 assertTrue(MessageDigest.isEqual(credentials.get(entry.getKey()),
                     credentialDigests(statement).get(entry.getKey())), "Account or credential changed");
             }
-            assertEquals(31, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
             assertFalse(statement.executeQuery("PRAGMA foreign_key_check").next());
         }
     }

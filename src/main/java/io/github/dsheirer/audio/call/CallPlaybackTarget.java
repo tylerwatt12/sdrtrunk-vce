@@ -191,7 +191,7 @@ public record CallPlaybackTarget(String key, Kind kind, String radioSystemKey, I
 
             if(kind != null)
             {
-                if(protocol == Protocol.APCO25 && servingP25Home != null)
+                if(protocol == Protocol.APCO25 && servingP25Home != null && kind != Kind.RADIO)
                 {
                     return identityTarget(prefix, radioSystemKey, protocol, identityDomain, kind,
                         identityKind(kind),

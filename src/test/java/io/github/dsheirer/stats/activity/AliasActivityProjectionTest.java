@@ -176,14 +176,14 @@ class AliasActivityProjectionTest
             ReceiverActivityRecords.P25Identity sameRadio =
                 ReceiverActivityRecords.P25Identity.fullyQualifiedRadio(0xABCDE, 0x123, 700_001);
             AliasActivityProjection.recordActivity(connection, p25RadioSignal(700, 701,
-                sameRadio, sameRadio, ReceiverActivityRecords.Action.JOIN));
+                sameRadio, sameRadio, ReceiverActivityRecords.Action.JOIN, 700, 701));
             assertEquals(1, metric(connection, 13, "join_observation_count"),
                 "one canonical radio observed as source and destination receives one signaling increment");
 
             ReceiverActivityRecords.P25Identity otherRadio =
                 ReceiverActivityRecords.P25Identity.fullyQualifiedRadio(0xABCDE, 0x124, 700_001);
             AliasActivityProjection.recordActivity(connection, p25RadioSignal(700, 700,
-                sameRadio, otherRadio, ReceiverActivityRecords.Action.REGISTER));
+                sameRadio, otherRadio, ReceiverActivityRecords.Action.REGISTER, 700, 700));
             assertEquals(2, metric(connection, 13, "register_observation_count"),
                 "distinct canonical radios resolving to one range alias each contribute");
             assertEquals(3, metric(connection, 13, "signaling_observation_count"));
@@ -191,7 +191,7 @@ class AliasActivityProjectionTest
             ReceiverActivityRecords.P25Identity canonical =
                 ReceiverActivityRecords.P25Identity.fullyQualifiedRadio(0xABCDE, 0x123, 700_001);
             List<ReceiverActivityRecords.P25SiteCallObservation> sameCanonical = List.of(
-                p25Observation(P25_A, 1, 700, 701, List.of(), List.of()));
+                p25RadioObservation(P25_A, 1, 700, 701, sameRadio, sameRadio));
             AliasActivityProjection.recordResolvedLogicalCall(connection, logicalCall(11, P25_A, "APCO25",
                 701, "RADIO", 700, List.of(), sameCanonical, P25_SYSTEM_KEY, canonical, canonical));
             assertEquals(1, metric(connection, 13, "logical_call_count"),
@@ -202,7 +202,7 @@ class AliasActivityProjectionTest
             ReceiverActivityRecords.P25Identity destination =
                 ReceiverActivityRecords.P25Identity.fullyQualifiedRadio(0xABCDE, 0x124, 700_001);
             List<ReceiverActivityRecords.P25SiteCallObservation> distinctCanonical = List.of(
-                p25Observation(P25_A, 1, 700, 700, List.of(), List.of()));
+                p25RadioObservation(P25_A, 1, 700, 700, source, destination));
             AliasActivityProjection.recordResolvedLogicalCall(connection, logicalCall(12, P25_A, "APCO25",
                 700, "RADIO", 700, List.of(), distinctCanonical, P25_SYSTEM_KEY, destination, source));
             assertEquals(3, metric(connection, 13, "logical_call_count"),
@@ -223,6 +223,119 @@ class AliasActivityProjectionTest
             assertEquals(2, metric(connection, 10, "logical_call_count"),
                 "system evidence without site provenance is withheld when assigned Alias Lists disagree");
             assertEquals(0, metric(connection, 20, "logical_call_count"));
+        }
+    }
+
+    @Test
+    void explicitCanonicalSubscriberWinsAndMissingCanonicalEvidenceFallsBackLocally() throws Exception
+    {
+        try(Connection connection = open("p25-canonical-alias.sqlite");
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES(1,'P25','P25')");
+            statement.executeUpdate("""
+                INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,value) VALUES
+                    (61,1,'Local source','RADIO_ID','APCO25',501),
+                    (62,1,'Local target','RADIO_ID','APCO25',777),
+                    (63,1,'Canonical source','P25_SUBSCRIBER_IDENTITY',NULL,NULL),
+                    (64,1,'Canonical target','P25_SUBSCRIBER_IDENTITY',NULL,NULL)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_subscriber_identity(id,home_wacn,home_system_id,subscriber_id) VALUES
+                    (1,0xBEE00,0x348,2115288),(2,0xABCDE,0x456,9001)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias_p25_subscriber_identity(alias_id,p25_subscriber_identity_id) VALUES
+                    (63,1),(64,2)
+                """);
+            insertConfiguration(statement, P25_A, 1, "P25_PHASE1");
+
+            ReceiverActivityRecords.P25Identity canonicalSource =
+                ReceiverActivityRecords.P25Identity.fullyQualifiedRadio(0xBEE00, 0x348, 2_115_288);
+            ReceiverActivityRecords.P25Identity canonicalTarget =
+                ReceiverActivityRecords.P25Identity.fullyQualifiedRadio(0xABCDE, 0x456, 9_001);
+            AliasActivityProjection.recordActivity(connection,
+                p25RadioSignal(501, 777, canonicalSource, canonicalTarget,
+                    ReceiverActivityRecords.Action.JOIN));
+
+            assertEquals(0, metric(connection, 61, "join_observation_count"));
+            assertEquals(0, metric(connection, 62, "join_observation_count"));
+            assertEquals(1, metric(connection, 63, "join_observation_count"));
+            assertEquals(1, metric(connection, 64, "join_observation_count"));
+
+            AliasActivityProjection.recordActivity(connection,
+                p25RadioSignal(501, 777, ReceiverActivityRecords.P25Identity.ORDINARY,
+                    ReceiverActivityRecords.P25Identity.ORDINARY, ReceiverActivityRecords.Action.REGISTER));
+            assertEquals(1, metric(connection, 61, "register_observation_count"));
+            assertEquals(1, metric(connection, 62, "register_observation_count"));
+            assertEquals(0, metric(connection, 63, "register_observation_count"),
+                "a local WUID must not be inferred as a canonical subscriber");
+            assertEquals(0, metric(connection, 64, "register_observation_count"));
+        }
+    }
+
+    @Test
+    void historicalWuidObservationNeverDrivesCanonicalAliasActivity() throws Exception
+    {
+        try(Connection connection = open("p25-current-wuid-alias.sqlite");
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES(1,'P25','P25')");
+            statement.executeUpdate("""
+                INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,value) VALUES
+                    (71,1,'Local WUID','RADIO_ID','APCO25',501),
+                    (72,1,'Canonical Subscriber','P25_SUBSCRIBER_IDENTITY',NULL,NULL)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_subscriber_identity(id,home_wacn,home_system_id,subscriber_id)
+                VALUES(11,0xBEE00,0x4A2,2115288)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias_p25_subscriber_identity(alias_id,p25_subscriber_identity_id)
+                VALUES(72,11)
+                """);
+            insertConfiguration(statement, P25_A, 1, "P25_PHASE1");
+
+            ReceiverActivityRecords.P25Identity canonical =
+                ReceiverActivityRecords.P25Identity.fullyQualifiedRadio(0xBEE00, 0x4A2, 2_115_288);
+            ReceiverActivityRecords.RadioPresenceUpdate registration =
+                ReceiverActivityRecords.RadioPresenceUpdate.confirmed(501, null,
+                    ReceiverActivityRecords.RadioPresenceEvidence.REGISTRATION, canonical,
+                    ReceiverActivityRecords.P25Identity.UNKNOWN);
+            ReceiverActivityRecords.ActivityEvent accepted = new ReceiverActivityRecords.ActivityEvent(
+                1_000, P25_A, ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25",
+                ReceiverActivityRecords.Action.REGISTER, "REGISTER", "501", null, null, List.of(),
+                851_012_500L, null, null, false, null, null, 0xBEE00, 0x348, null, 1, 1,
+                null, false, null, registration, TrunkedIdentityDomain.STANDARD,
+                ReceiverActivityRecords.P25Identity.UNKNOWN, canonical, List.of(), P25_SYSTEM_KEY);
+            ReceiverActivitySchema.recordActivity(connection, accepted, false);
+
+            ReceiverActivityRecords.ActivityEvent wuidOnly = new ReceiverActivityRecords.ActivityEvent(
+                2_000, P25_A, ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25",
+                ReceiverActivityRecords.Action.JOIN, "JOIN", "501", "700", "TALKGROUP", List.of(),
+                851_012_500L, null, null, false, null, null, 0xBEE00, 0x348, null, 1, 1,
+                null, false, null, null, TrunkedIdentityDomain.STANDARD,
+                ReceiverActivityRecords.P25Identity.ORDINARY, ReceiverActivityRecords.P25Identity.ORDINARY,
+                List.of(), P25_SYSTEM_KEY);
+            ReceiverActivitySchema.recordActivity(connection, wuidOnly, false);
+
+            assertEquals(1, metric(connection, 72, "register_observation_count"));
+            assertEquals(0, metric(connection, 72, "join_observation_count"),
+                "saved Working-ID history must not act as canonical identity authority");
+            assertEquals(0, metric(connection, 71, "register_observation_count"));
+            assertEquals(1, metric(connection, 71, "join_observation_count"));
+
+            ReceiverActivityRecords.ActivityEvent ordinary = new ReceiverActivityRecords.ActivityEvent(
+                3_000, P25_A, ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25",
+                ReceiverActivityRecords.Action.LOGOUT, "LOGOUT", "501", null, null, List.of(),
+                851_012_500L, null, null, false, null, null, 0xBEE00, 0x348, null, 1, 1,
+                null, false, null, null, TrunkedIdentityDomain.STANDARD,
+                ReceiverActivityRecords.P25Identity.UNKNOWN, ReceiverActivityRecords.P25Identity.ORDINARY,
+                List.of(), P25_SYSTEM_KEY);
+            ReceiverActivitySchema.recordActivity(connection, ordinary, false);
+            assertEquals(0, metric(connection, 72, "logout_observation_count"));
+            assertEquals(1, metric(connection, 71, "logout_observation_count"),
+                "ordinary WUID activity continues to use only its ordinary Alias");
         }
     }
 
@@ -518,11 +631,28 @@ class AliasActivityProjectionTest
         ReceiverActivityRecords.P25Identity sourceIdentity, ReceiverActivityRecords.P25Identity targetIdentity,
         ReceiverActivityRecords.Action action)
     {
+        return p25RadioSignal(source, target, sourceIdentity, targetIdentity, action, null, null);
+    }
+
+    private static ReceiverActivityRecords.ActivityEvent p25RadioSignal(int source, int target,
+        ReceiverActivityRecords.P25Identity sourceIdentity, ReceiverActivityRecords.P25Identity targetIdentity,
+        ReceiverActivityRecords.Action action, Integer sourceWorkingId, Integer targetWorkingId)
+    {
         return new ReceiverActivityRecords.ActivityEvent(2_000, P25_A,
             ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25", action, action.name(),
             Integer.toString(source), Integer.toString(target), "RADIO", List.of(), 851_012_500L,
             null, null, false, null, null, 0xBEE00, 0x348, null, 1, 1, null, false, null, null,
-            TrunkedIdentityDomain.STANDARD, targetIdentity, sourceIdentity, List.of(), P25_SYSTEM_KEY);
+            TrunkedIdentityDomain.STANDARD, targetIdentity, sourceIdentity, List.of(), P25_SYSTEM_KEY,
+            sourceWorkingId, targetWorkingId);
+    }
+
+    private static ReceiverActivityRecords.P25SiteCallObservation p25RadioObservation(String configurationId,
+        int site, int source, int target, ReceiverActivityRecords.P25Identity sourceIdentity,
+        ReceiverActivityRecords.P25Identity targetIdentity)
+    {
+        return new ReceiverActivityRecords.P25SiteCallObservation(configurationId,
+            new P25SiteIdentity(0xBEE00, 0x348, 1, site), source, target, "RADIO", targetIdentity,
+            sourceIdentity, List.of(), List.of(), source, target);
     }
 
     private static long metric(Connection connection, long aliasId, String column) throws Exception

@@ -103,6 +103,7 @@ class StatsApiProtocolTest
             () -> assertTrue(p25System.get("channels")),
             () -> assertTrue(p25System.get("group_identities")),
             () -> assertTrue(p25System.get("radios")),
+            () -> assertTrue(p25System.get("issi")),
             () -> assertTrue(p25System.get("activity")),
             () -> assertTrue(p25System.get("talker_aliases")),
             () -> assertTrue(p25System.get("current_affiliations")),
@@ -112,6 +113,7 @@ class StatsApiProtocolTest
         Map<String,Boolean> dmrSystem = StatsApiProtocol.DMR.radioSystemCapabilities();
         assertAll(
             () -> assertTrue(dmrSystem.get("channels")),
+            () -> assertFalse(dmrSystem.get("issi")),
             () -> assertFalse(dmrSystem.get("current_affiliations")),
             () -> assertFalse(dmrSystem.get("radio_channel_presence")),
             () -> assertFalse(dmrSystem.get("patch_groups")));

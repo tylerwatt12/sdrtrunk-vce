@@ -11,6 +11,7 @@ import io.github.dsheirer.channel.metadata.activity.ChannelActivitySnapshot;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.remote.RemoteOriginLookup;
+import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
 import io.github.dsheirer.web.http.ApiHttpResponse;
@@ -663,6 +664,8 @@ final class StatsLiveService implements AutoCloseable
             put(row, "alias_list_id", navigation.aliasListId());
             putText(row, "alias_list_name", navigation.aliasListName(), MAXIMUM_LIVE_TEXT_LENGTH);
             putText(row, "protocol", navigation.protocol(), MAXIMUM_LIVE_TEXT_LENGTH);
+            putP25SubscriberIdentity(row, "source", navigation.sourceMatcher());
+            putP25SubscriberIdentity(row, "target", navigation.targetMatcher());
             row.put("source_aliases", navigation.sourceAliases().stream().limit(MAXIMUM_LIVE_ALIAS_REFERENCES)
                 .map(StatsLiveService::activityAliasReference).toList());
             row.put("target_aliases", navigation.targetAliases().stream().limit(MAXIMUM_LIVE_ALIAS_REFERENCES)
@@ -729,6 +732,56 @@ final class StatsLiveService implements AutoCloseable
 
         return WebIdentityKey.channelScoped(configurationId, matcher.protocol(), form, matcher.value(),
             matcher.identityKey());
+    }
+
+    /**
+     * Publishes canonical P25 subscriber components only when the immutable receiver snapshot explicitly carries a
+     * fully-qualified radio identity key.  Local radio matchers have no identity key and must remain working IDs;
+     * this projection deliberately performs no radio-system or database inference.
+     */
+    private static void putP25SubscriberIdentity(Map<String,Object> row, String prefix,
+                                                  ChannelActivitySnapshot.MatcherReference matcher)
+    {
+        if(matcher != null && "radio".equals(matcher.type()) && "p25".equals(matcher.protocol()))
+        {
+            row.put(prefix + "_identity_source", matcher.radioIdentity() != null ?
+                switch(matcher.radioIdentity().evidence())
+                {
+                    case DIRECT -> "explicit_identity";
+                    case CONFIRMED_ASSIGNMENT -> "registration_mapping";
+                    case UNRESOLVED -> "working_id";
+                    case UNKNOWN -> "unresolved";
+                } : "unresolved");
+        }
+        if(matcher == null || !"radio".equals(matcher.type()) || !"p25".equals(matcher.protocol()) ||
+            matcher.identityKey() == null)
+        {
+            return;
+        }
+
+        try
+        {
+            RadioSystemIdentityKey.Identity identity = RadioSystemIdentityKey.parse(matcher.identityKey());
+            if(identity.kindCode() != RadioSystemIdentityKey.KIND_RADIO || !identity.hasHome())
+            {
+                return;
+            }
+
+            row.put(prefix + "_canonical_identity", Map.of(
+                "wacn", identity.homeWacn(),
+                "system_id", identity.homeSystemId(),
+                "subscriber_id", identity.identityId()));
+            Integer workingAddress = matcher.workingAddress();
+            if(workingAddress != null && workingAddress > 0 &&
+                workingAddress <= RadioSystemIdentityKey.MAX_P25_WORKING_UNIT_ID)
+            {
+                row.put(prefix + "_observed_working_id", workingAddress);
+            }
+        }
+        catch(IllegalArgumentException exception)
+        {
+            //Malformed or non-canonical matcher keys remain local working identifiers.
+        }
     }
 
     /**

@@ -276,8 +276,9 @@ final class WebEntityNavigationCatalog implements AutoCloseable
 
         WebEntityRef identity(Form form, Protocol identifierProtocol, int identifier)
         {
-            int homeWacn = protocolCode == 1 && p25Wacn != null ? p25Wacn : RadioSystemIdentityKey.NO_HOME;
-            int homeSystemId = protocolCode == 1 && p25SystemId != null ? p25SystemId :
+            boolean servingHomeIdentity = protocolCode == 1 && form != Form.RADIO;
+            int homeWacn = servingHomeIdentity && p25Wacn != null ? p25Wacn : RadioSystemIdentityKey.NO_HOME;
+            int homeSystemId = servingHomeIdentity && p25SystemId != null ? p25SystemId :
                 RadioSystemIdentityKey.NO_HOME;
             return identity(form, identifierProtocol, identifier, homeWacn, homeSystemId);
         }
@@ -304,9 +305,11 @@ final class WebEntityNavigationCatalog implements AutoCloseable
                 return null;
             }
 
-            if(protocolCode == 1 && (homeWacn < 0 || homeSystemId < 0) ||
-                protocolCode != 1 && (homeWacn != RadioSystemIdentityKey.NO_HOME ||
-                    homeSystemId != RadioSystemIdentityKey.NO_HOME))
+            boolean hasHome = homeWacn >= 0 && homeSystemId >= 0;
+            boolean noHome = homeWacn == RadioSystemIdentityKey.NO_HOME &&
+                homeSystemId == RadioSystemIdentityKey.NO_HOME;
+            if(protocolCode == 1 && (form == Form.RADIO ? !hasHome && !noHome : !hasHome) ||
+                protocolCode != 1 && !noHome)
             {
                 return null;
             }

@@ -24,6 +24,7 @@ import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.configuration.ConfigurationRepository;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
+import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.nio.file.Path;
@@ -758,7 +759,7 @@ class RadioSystemIdentityModelTest
     }
 
     @Test
-    void fullyQualifiedCurrentPresenceSupersedesButIsNotDowngradedByTheSamePositiveLocalAlias()
+    void fullyQualifiedAffiliationAloneDoesNotEstablishAWorkingIdAssignment()
         throws Exception
     {
         try(Connection connection = open())
@@ -774,16 +775,23 @@ class RadioSystemIdentityModelTest
                 ReceiverActivityRecords.P25Identity.ORDINARY, false));
 
             assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM trunked_radio_channel_presence"));
-            assertEquals(9_001, scalar(connection, """
+            assertEquals(123, scalar(connection, """
                 SELECT identity.identity_id
                 FROM trunked_radio_channel_presence presence
                 JOIN radio_system_identity_summary identity ON identity.id=presence.radio_identity_id
                 """));
-            assertEquals(0xABCDE, scalar(connection, """
+            assertEquals(-1, scalar(connection, """
                 SELECT identity.home_wacn
                 FROM trunked_radio_channel_presence presence
                 JOIN radio_system_identity_summary identity ON identity.id=presence.radio_identity_id
                 """));
+            assertEquals(0, scalar(connection,
+                "SELECT COUNT(*) FROM p25_wuid_assignment_observation_summary"));
+            assertEquals(1, scalar(connection, """
+                SELECT COUNT(*) FROM radio_system_identity_summary
+                WHERE identity_kind_code=2 AND home_wacn=703710 AND home_system_id=801
+                  AND identity_id=9001 AND p25_subscriber_identity_id IS NOT NULL
+                """), "the canonical observation remains in the directory without becoming WUID authority");
             assertEquals(1_200, scalar(connection,
                 "SELECT confirmed_at_ms FROM trunked_radio_channel_presence"));
 
@@ -795,7 +803,7 @@ class RadioSystemIdentityModelTest
             record(connection, p25Presence(P25_A, 1_400, 124, roamingRadio, false));
             record(connection, p25Presence(P25_A, 1_500, 124,
                 ReceiverActivityRecords.P25Identity.ORDINARY, false));
-            assertEquals(9_001, scalar(connection, """
+            assertEquals(124, scalar(connection, """
                 SELECT identity.identity_id
                 FROM trunked_radio_channel_presence presence
                 JOIN radio_system_identity_summary identity ON identity.id=presence.radio_identity_id
@@ -805,49 +813,168 @@ class RadioSystemIdentityModelTest
     }
 
     @Test
-    void fullyQualifiedCurrentPresenceUsesObservationTimeThenCanonicalTupleForReplacement() throws Exception
+    void positiveWuidEvidenceIsRetainedAsObservationHistoryWithoutBecomingIdentityAuthority() throws Exception
     {
         try(Connection connection = open())
         {
             insertChannel(connection, P25_A, "TRUNKED", "P25_PHASE1", 1, "P25 A", correlation(1));
-            ReceiverActivityRecords.P25Identity lower =
-                ReceiverActivityRecords.P25Identity.fullyQualifiedRadio(0xABCDE, 0x321, 9_001);
-            ReceiverActivityRecords.P25Identity higher =
-                ReceiverActivityRecords.P25Identity.fullyQualifiedRadio(0xABCDE, 0x322, 9_002);
+            insertChannel(connection, P25_B, "TRUNKED", "P25_PHASE1", 2, "P25 B", correlation(2));
+            record(connection, trunked(P25_B, "APCO25", 0xBEE00, 0x3A9, 91, 100));
+            P25SubscriberIdentity subscriber = new P25SubscriberIdentity(0xABCDE, 0x321, 0xF12345);
 
-            record(connection, p25Presence(P25_A, 1_200, 123, higher, false));
-            record(connection, p25Presence(P25_A, 1_100, 123, lower, false));
-            assertEquals(9_002, scalar(connection, """
-                SELECT identity.identity_id
-                FROM trunked_radio_channel_presence presence
-                JOIN radio_system_identity_summary identity ON identity.id=presence.radio_identity_id
+            record(connection, p25WuidObservation(P25_A, 1_000, 123, subscriber,
+                ReceiverActivityRecords.RadioPresenceEvidence.REGISTRATION));
+            record(connection, p25WuidObservation(P25_A, 900, 123, subscriber,
+                ReceiverActivityRecords.RadioPresenceEvidence.AFFILIATION));
+            record(connection, p25WuidObservation(P25_A, 1_100, 123, subscriber,
+                ReceiverActivityRecords.RadioPresenceEvidence.AFFILIATION));
+            record(connection, p25WuidObservation(P25_A, 1_100, 123, subscriber,
+                ReceiverActivityRecords.RadioPresenceEvidence.REGISTRATION));
+
+            assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM p25_subscriber_identity"));
+            assertEquals(1, scalar(connection,
+                "SELECT COUNT(*) FROM p25_wuid_assignment_observation_summary"));
+            assertEquals(900, scalar(connection,
+                "SELECT first_observed_ms FROM p25_wuid_assignment_observation_summary"));
+            assertEquals(1_100, scalar(connection,
+                "SELECT last_observed_ms FROM p25_wuid_assignment_observation_summary"));
+            assertEquals(1_100, scalar(connection,
+                "SELECT last_registration_ms FROM p25_wuid_assignment_observation_summary"));
+            assertEquals(1_100, scalar(connection,
+                "SELECT last_affiliation_ms FROM p25_wuid_assignment_observation_summary"));
+            assertEquals(2, scalar(connection,
+                "SELECT registration_count FROM p25_wuid_assignment_observation_summary"));
+            assertEquals(2, scalar(connection,
+                "SELECT affiliation_count FROM p25_wuid_assignment_observation_summary"));
+            assertEquals(ReceiverActivityRecords.RadioPresenceEvidence.REGISTRATION.code(),
+                scalar(connection, "SELECT last_evidence_code FROM p25_wuid_assignment_observation_summary"));
+            assertEquals(channelId(connection, P25_A), scalar(connection,
+                "SELECT last_channel_id FROM p25_wuid_assignment_observation_summary"));
+
+            //The saved channel is provenance only. Its removal does not discard the observation, but the retained
+            //history is never used to reinterpret a later ordinary radio ID.
+            execute(connection, "DELETE FROM configuration_channel WHERE configuration_id='" + P25_A + "'");
+            assertEquals(1, scalar(connection,
+                "SELECT COUNT(*) FROM p25_wuid_assignment_observation_summary WHERE last_channel_id IS NULL"));
+
+            assertTrue(ReceiverActivitySchema.recordResolvedLogicalCall(connection,
+                p25Call(P25_B, 41, 1_200, 0xBEE00, 0x3A9, null, 123)));
+            assertEquals(0, scalar(connection, """
+                SELECT source_logical_call_count
+                FROM radio_system_identity_summary
+                WHERE home_wacn=0xABCDE AND home_system_id=0x321 AND identity_id=0xF12345
+                  AND p25_subscriber_identity_id IS NOT NULL
+                """));
+            assertEquals(1, scalar(connection, """
+                SELECT source_logical_call_count
+                FROM radio_system_identity_summary
+                WHERE home_wacn=-1 AND home_system_id=-1 AND identity_id=123
+                  AND p25_subscriber_identity_id IS NULL
+                """));
+            ReceiverActivitySchema.validate(connection);
+        }
+    }
+
+    @Test
+    void separateSubscribersObservedOnOneWorkingIdRemainSeparateHistoricalFacts() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            insertChannel(connection, P25_A, "TRUNKED", "P25_PHASE1", 1, "P25 A", correlation(1));
+            recordTwoSubscribersOnOneWuid(connection);
+            assertEquals(2, scalar(connection, """
+                SELECT COUNT(*)
+                FROM p25_wuid_assignment_observation_summary observation
+                JOIN p25_subscriber_identity subscriber
+                  ON subscriber.id=observation.p25_subscriber_identity_id
+                WHERE observation.working_id=123 AND subscriber.subscriber_id IN (9001, 9002)
+                """));
+            assertEquals(1, scalar(connection, """
+                SELECT COUNT(*)
+                FROM p25_wuid_assignment_observation_summary observation
+                JOIN p25_subscriber_identity subscriber
+                  ON subscriber.id=observation.p25_subscriber_identity_id
+                WHERE observation.working_id=123 AND subscriber.subscriber_id=9001
+                  AND observation.last_evidence_code=1
+                """));
+            assertEquals(1, scalar(connection, """
+                SELECT COUNT(*)
+                FROM p25_wuid_assignment_observation_summary observation
+                JOIN p25_subscriber_identity subscriber
+                  ON subscriber.id=observation.p25_subscriber_identity_id
+                WHERE observation.working_id=123 AND subscriber.subscriber_id=9002
+                  AND observation.last_evidence_code=2
                 """));
 
-            record(connection, p25Presence(P25_A, 1_300, 123, lower, false));
-            assertEquals(9_001, scalar(connection, """
-                SELECT identity.identity_id
-                FROM trunked_radio_channel_presence presence
-                JOIN radio_system_identity_summary identity ON identity.id=presence.radio_identity_id
+            //Neither row replaces the other and there is deliberately no persisted "current" selection.
+            assertEquals(0, scalar(connection, """
+                SELECT COUNT(*) FROM sqlite_master
+                WHERE type='table' AND name IN (
+                    'p25_wuid_assignment_current', 'p25_wuid_assignment_summary',
+                    'p25_wuid_assignment_tombstone')
                 """));
+            ReceiverActivitySchema.validate(connection);
+        }
+    }
 
-            execute(connection, "DELETE FROM trunked_radio_affiliation");
-            execute(connection, "DELETE FROM trunked_radio_channel_presence");
-            record(connection, p25Presence(P25_A, 1_400, 124, higher, false));
-            record(connection, p25Presence(P25_A, 1_400, 124, lower, false));
-            assertEquals(9_001, scalar(connection, """
-                SELECT identity.identity_id
-                FROM trunked_radio_channel_presence presence
-                JOIN radio_system_identity_summary identity ON identity.id=presence.radio_identity_id
-                """));
+    @Test
+    void wuidObservationCapacityRejectsOnlyNewPairs() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            insertChannel(connection, P25_A, "TRUNKED", "P25_PHASE1", 1, "P25 A", correlation(1));
+            P25SubscriberIdentity first = new P25SubscriberIdentity(0xABCDE, 0x321, 9_001);
+            record(connection, p25WuidObservation(P25_A, 1_000, 123, first,
+                ReceiverActivityRecords.RadioPresenceEvidence.REGISTRATION));
 
-            execute(connection, "DELETE FROM trunked_radio_affiliation");
-            execute(connection, "DELETE FROM trunked_radio_channel_presence");
-            record(connection, p25Presence(P25_A, 1_500, 125, lower, false));
-            record(connection, p25Presence(P25_A, 1_500, 125, higher, false));
-            assertEquals(9_001, scalar(connection, """
-                SELECT identity.identity_id
-                FROM trunked_radio_channel_presence presence
-                JOIN radio_system_identity_summary identity ON identity.id=presence.radio_identity_id
+            int radioSystemId = (int)radioSystemId(connection, P25_A);
+            int channelId = (int)channelId(connection, P25_A);
+            RadioSystemSchema.RadioSystem system = new RadioSystemSchema.RadioSystem(radioSystemId,
+                1, TrunkedIdentityDomain.STANDARD, "p25:bee00:3a9", 0xBEE00, 0x3A9,
+                null, null, null, null, 1_000);
+            P25SubscriberIdentity second = new P25SubscriberIdentity(0xABCDE, 0x322, 9_002);
+            assertFalse(RadioSystemSchema.recordP25WuidObservation(connection, system, channelId, 1_100,
+                new ReceiverActivityRecords.P25WuidObservation(0xBEE00, 0x3A9, 124, second,
+                    10_000_000, ReceiverActivityRecords.RadioPresenceEvidence.AFFILIATION), 1));
+            assertEquals(1, scalar(connection,
+                "SELECT COUNT(*) FROM p25_wuid_assignment_observation_summary"));
+            assertEquals(0, scalar(connection, """
+                SELECT COUNT(*) FROM p25_subscriber_identity subscriber
+                WHERE subscriber.subscriber_id=9002
+                """), "capacity rejection does not leave an otherwise unreferenced subscriber row");
+
+            assertTrue(RadioSystemSchema.recordP25WuidObservation(connection, system, channelId, 1_200,
+                new ReceiverActivityRecords.P25WuidObservation(0xBEE00, 0x3A9, 123, first,
+                    10_000_000, ReceiverActivityRecords.RadioPresenceEvidence.AFFILIATION), 1));
+            assertEquals(1, scalar(connection,
+                "SELECT affiliation_count FROM p25_wuid_assignment_observation_summary"));
+            ReceiverActivitySchema.validate(connection);
+        }
+    }
+
+    private static void recordTwoSubscribersOnOneWuid(Connection connection) throws SQLException
+    {
+        record(connection, p25WuidObservation(P25_A, 1_000, 123,
+            new P25SubscriberIdentity(0xABCDE, 0x321, 9_001),
+            ReceiverActivityRecords.RadioPresenceEvidence.REGISTRATION));
+        record(connection, p25WuidObservation(P25_A, 1_100, 123,
+            new P25SubscriberIdentity(0xABCDE, 0x322, 9_002),
+            ReceiverActivityRecords.RadioPresenceEvidence.AFFILIATION));
+    }
+
+    @Test
+    void wuidObservationFixtureStoresBothSubscribers() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            insertChannel(connection, P25_A, "TRUNKED", "P25_PHASE1", 1, "P25 A", correlation(1));
+            recordTwoSubscribersOnOneWuid(connection);
+            assertEquals(2, scalar(connection, """
+                SELECT COUNT(*)
+                FROM p25_wuid_assignment_observation_summary observation
+                JOIN p25_subscriber_identity subscriber
+                  ON subscriber.id=observation.p25_subscriber_identity_id
+                WHERE observation.working_id=123
                 """));
         }
     }
@@ -873,10 +1000,11 @@ class RadioSystemIdentityModelTest
 
             assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM trunked_radio_channel_presence"));
             assertEquals(9_002, scalar(connection, """
-                SELECT identity.identity_id
+                SELECT subscriber.subscriber_id
                 FROM trunked_radio_channel_presence presence
                 JOIN receiver_channel channel ON channel.id=presence.channel_id
                 JOIN radio_system_identity_summary identity ON identity.id=presence.radio_identity_id
+                JOIN p25_subscriber_identity subscriber ON subscriber.id=identity.p25_subscriber_identity_id
                 WHERE channel.configuration_id='%s' AND presence.observed_local_id=123
                 """.formatted(P25_B)));
             assertEquals(0, scalar(connection, """
@@ -885,6 +1013,8 @@ class RadioSystemIdentityModelTest
                 JOIN receiver_channel channel ON channel.id=presence.channel_id
                 WHERE channel.configuration_id='%s'
                 """.formatted(P25_A)));
+            //No authoritative WUID mapping was established, so the local and explicitly observed canonical
+            //presence identities retain separate channel-scoped clear watermarks.
             assertEquals(2, scalar(connection,
                 "SELECT COUNT(*) FROM trunked_radio_channel_presence_clear"));
         }
@@ -927,6 +1057,12 @@ class RadioSystemIdentityModelTest
                 SELECT COUNT(*) FROM radio_system_identity_summary
                 WHERE home_wacn=0xABCDE AND home_system_id=0x321 AND identity_id=9001
                 """));
+
+            record(connection, p25Presence(P25_A, 1_200, 124, unseen, false));
+            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM p25_subscriber_identity"),
+                "capacity rejection must happen before a novel canonical tuple is inserted");
+            assertEquals(0, scalar(connection,
+                "SELECT COUNT(*) FROM p25_wuid_assignment_observation_summary"));
         }
     }
 
@@ -1460,13 +1596,41 @@ class RadioSystemIdentityModelTest
                                                                       ReceiverActivityRecords.P25Identity radio,
                                                                       boolean cleared)
     {
+        return p25Presence(configurationId, timestamp, localRadio, radio,
+            ReceiverActivityRecords.RadioPresenceEvidence.AFFILIATION, cleared);
+    }
+
+    private static ReceiverActivityRecords.ActivityEvent p25Presence(String configurationId, long timestamp,
+                                                                      int localRadio,
+                                                                      ReceiverActivityRecords.P25Identity radio,
+                                                                      ReceiverActivityRecords.RadioPresenceEvidence evidence,
+                                                                      boolean cleared)
+    {
         ReceiverActivityRecords.RadioPresenceUpdate update = cleared ?
             ReceiverActivityRecords.RadioPresenceUpdate.cleared(localRadio, radio) :
             ReceiverActivityRecords.RadioPresenceUpdate.confirmed(localRadio, 91,
-                ReceiverActivityRecords.RadioPresenceEvidence.AFFILIATION, radio,
+                evidence, radio,
                 ReceiverActivityRecords.P25Identity.ORDINARY);
         return p25Activity(configurationId, timestamp, "91", "TALKGROUP", List.of(),
             ReceiverActivityRecords.P25Identity.ORDINARY, List.of(), update);
+    }
+
+    private static ReceiverActivityRecords.ActivityEvent p25WuidObservation(
+        String configurationId, long observedAt, int workingId, P25SubscriberIdentity subscriber,
+        ReceiverActivityRecords.RadioPresenceEvidence evidence)
+    {
+        ReceiverActivityRecords.P25Identity identity = ReceiverActivityRecords.P25Identity.fullyQualifiedRadio(
+            subscriber.homeWacn(), subscriber.homeSystemId(), subscriber.subscriberId());
+        ReceiverActivityRecords.RadioPresenceUpdate presence =
+            ReceiverActivityRecords.RadioPresenceUpdate.confirmed(workingId, null, evidence, identity,
+                ReceiverActivityRecords.P25Identity.UNKNOWN);
+        return new ReceiverActivityRecords.ActivityEvent(observedAt, configurationId,
+            ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25", ReceiverActivityRecords.Action.REGISTER,
+            "REGISTER", Integer.toString(workingId), null, null, List.of(), 851_012_500L, "0-1", 1,
+            false, null, null, 0xBEE00, 0x3A9, null, null, null, null, false, null, presence,
+            TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.UNKNOWN, identity, List.of(), null,
+            workingId, null, new ReceiverActivityRecords.P25WuidObservation(0xBEE00, 0x3A9, workingId,
+                subscriber, observedAt + 270L * 60_000L, evidence));
     }
 
     private static ReceiverActivityRecords.ActivityEvent conventional(String configurationId, long frequency,
@@ -1498,6 +1662,22 @@ class RadioSystemIdentityModelTest
             sequence), timestamp, configurationId, "APCO25", TrunkedIdentityDomain.STANDARD, wacn, systemId, 91,
             "TALKGROUP", List.of(), null, false, null, null, ReceiverActivityRecords.P25Identity.ORDINARY,
             ReceiverActivityRecords.P25Identity.UNKNOWN, List.of(), List.of(), radioSystemKey);
+    }
+
+    private static ReceiverActivityRecords.ResolvedLogicalCall p25Call(String configurationId, long sequence,
+                                                                        long timestamp, Integer wacn,
+                                                                        Integer systemId, String radioSystemKey,
+                                                                        int sourceRadioId)
+    {
+        return new ReceiverActivityRecords.ResolvedLogicalCall(new io.github.dsheirer.audio.call.LogicalCallId(8,
+            sequence), timestamp, configurationId, "APCO25", TrunkedIdentityDomain.STANDARD, wacn, systemId, 91,
+            "TALKGROUP", List.of(), sourceRadioId, false, null, null,
+            ReceiverActivityRecords.P25Identity.ORDINARY,
+            ReceiverActivityRecords.P25Identity.ORDINARY, List.of(),
+            wacn != null && systemId != null ? List.of(new ReceiverActivityRecords.P25SiteCallObservation(
+                configurationId, new P25SiteIdentity(wacn, systemId, 1, 1), sourceRadioId, 91, "TALKGROUP",
+                ReceiverActivityRecords.P25Identity.ORDINARY, ReceiverActivityRecords.P25Identity.ORDINARY,
+                List.of(), List.of())) : List.of(), radioSystemKey);
     }
 
     private static ReceiverActivityRecords.TrunkedCallAttribution attribution(String configurationId,

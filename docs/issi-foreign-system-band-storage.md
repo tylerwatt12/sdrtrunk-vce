@@ -2,13 +2,17 @@
 
 ## User-visible purpose
 
-A P25 Phase 1 control channel can advertise a band plan for a different WACN and System ID. The website uses these
-facts in two bounded channel resources:
+A P25 Phase 1 control channel can advertise a band plan for a different WACN and System ID. Each fact remains stored
+under the saved channel that heard it, preserving observation provenance. The website browses those facts in the
+owning P25 radio system's bounded **ISSI** tab and resources:
 
-- `/api/v1/channels/{configuration_id}/neighbors` summarizes each advertised foreign radio system as an
-  `ISSI System` row.
-- `/api/v1/channels/{configuration_id}/frequency-bands` lists foreign-system band definitions separately from the
-  monitored channel's home bandplan.
+- `/api/v1/radio-systems/{radio_system_key}/issi/foreign-systems` summarizes foreign WACN/System pairs discovered
+  from canonical subscriber or call evidence, or from advertised band plans.
+- `/api/v1/radio-systems/{radio_system_key}/issi/frequency-bands` lists their band definitions and the saved channel
+  that supplied each observation.
+
+The channel neighbor resource remains about RF-site neighbors, and the channel frequency-band resource remains the
+monitored channel's effective home band plan.
 
 The ordinary home band table cannot own these facts because home and foreign systems can reuse the same four-bit band
 ID. Several foreign systems can also reuse it.
@@ -58,8 +62,11 @@ creates or repairs these tables.
 
 ## Query access path
 
-Both website queries resolve `configuration_id` to its internal `channel_id`, then constrain the leading primary-key
-column. The primary key serves those reads. Separate time-first indexes serve bounded retention deletes:
+The Band Plans query resolves `radio_system_key`, joins its saved channels, and constrains each result to those
+channel-owned rows. The Foreign Systems query also combines canonical subscriber and call evidence for foreign home
+systems. This gives one system-wide ISSI view without discarding channel provenance or changing the band-storage key.
+The natural primary key serves exact channel/system/band reads. Separate time-first indexes serve bounded retention
+deletes:
 
 ```text
 SEARCH p25_foreign_system_band_summary USING PRIMARY KEY (channel_id=?)
@@ -71,5 +78,6 @@ SEARCH p25_foreign_system_band_summary USING INDEX idx_p25_foreign_system_band_s
   (last_seen_ms<?)
 ```
 
-Representative-volume query-plan tests cover the detailed frequency-band read and both retention paths. Both website
-responses remain independently limited, so a large retained set cannot produce an unbounded response.
+Representative-volume query-plan tests cover the detailed frequency-band read and both retention paths. The ISSI
+Foreign Systems and Band Plans responses remain independently limited, so a large retained set cannot produce an
+unbounded response.

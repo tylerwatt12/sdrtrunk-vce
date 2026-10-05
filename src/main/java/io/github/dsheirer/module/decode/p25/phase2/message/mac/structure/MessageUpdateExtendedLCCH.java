@@ -99,7 +99,7 @@ public class MessageUpdateExtendedLCCH extends MacStructureMultiFragment
             int wacn = getFragment(0).getInt(FRAGMENT_0_TARGET_SUID_WACN);
             int system = getFragment(0).getInt(FRAGMENT_0_TARGET_SUID_SYSTEM);
             int id = getFragment(0).getInt(FRAGMENT_0_TARGET_SUID_ID);
-            mTargetSUID = APCO25FullyQualifiedRadioIdentifier.createFrom(address, wacn, system, id);
+            mTargetSUID = APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(address, wacn, system, id);
         }
 
         return mTargetSUID;
@@ -116,7 +116,7 @@ public class MessageUpdateExtendedLCCH extends MacStructureMultiFragment
             int wacn = getInt(SOURCE_SUID_WACN);
             int system = getInt(SOURCE_SUID_SYSTEM);
             int id = getInt(SOURCE_SUID_ID);
-            mSourceSUID = APCO25FullyQualifiedRadioIdentifier.createFrom(address, wacn, system, id);
+            mSourceSUID = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(address, wacn, system, id);
         }
 
         return mSourceSUID;

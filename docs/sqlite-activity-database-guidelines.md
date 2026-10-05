@@ -58,14 +58,15 @@ rows when counters in an existing talkgroup, site, frequency, or time bucket ans
 ## Write-Path Rules
 
 - Decoder, tuner, recording, and streaming threads must never perform SQLite work directly.
-- Route records through the bounded statistics queue and single background writer.
+- Route activity records, including best-effort P25 Working-ID observations, through the bounded statistics queue and
+  single background writer. Live Working-ID assignments stay in receiver memory and never wait for SQLite.
 - Batch related writes in one transaction and use atomic upserts for counters and summaries.
 - A single observed call/output must increment each intended aggregate once. Patch-group fan-out, retries, or provider
   delivery attempts must not multiply the original-call count.
 - Keep normal runtime paths validation-only for existing schemas. Schema creation belongs to the startup schema routine;
-  supported deployed changes belong exclusively to the bundled Application Migrator, which must back up the database,
-  migrate a staged copy through the global adjacent-step chain, and complete format, exact-schema, integrity, and
-  foreign-key validation before atomic promotion.
+  supported deployed changes belong exclusively to the bundled Application Migrator. Current-profile upgrades use
+  one adjacent-chain transaction with the selected recovery snapshot and final exact-format validation; external
+  imports retain staged-copy integrity, foreign-key validation, and atomic promotion.
 
 ## Website Query Rules
 
@@ -104,6 +105,34 @@ list-first indexes serve Calls, Signaling, and Last Seen sorts. Dedicated list-f
 prospective writer's range winner lookup without replacing the older protocol-first matcher indexes used by bounded
 page enrichment. These indexes contain no time-series rows: their size follows administrator-owned Alias
 configuration, not receiver uptime.
+
+### Canonical P25 subscribers and WUID observations
+
+`p25_subscriber_identity` stores one normalized row for an exact home WACN, home System ID, and assignable subscriber
+ID. It is the shared target for qualified radio-directory rows and explicit canonical Alias matchers; an ordinary
+local radio number alone never creates or attaches one. Growth follows distinct proven subscriber tuples and
+administrator-created canonical aliases, not message rate. Each row is four integers plus the primary-key and unique
+tuple indexes, with no repeated formatted text. A bounded retention task removes only rows that are no longer
+referenced by the radio directory, Working-ID observation history, or an Alias. Tuple resolution uses the unique
+`(home_wacn, home_system_id, subscriber_id)` index; reverse Alias and directory lookups use
+`idx_alias_p25_subscriber_identity` and the partial `idx_radio_system_identity_p25_subscriber` index.
+
+`p25_wuid_assignment_observation_summary` keeps one bounded aggregate for each observed
+`(radio_system_id, working_id, p25_subscriber_identity_id)` relationship. It records first and last observation,
+registration and affiliation counts, last evidence, and nullable saved-channel provenance. It never claims that a
+relationship is current and is never read by the decoder. Reuse and reassignment legitimately leave several
+historical pairs. Admission is capped at 500,000 pairs per radio system and ordinary activity retention removes old
+rows in indexed batches. The table starts empty on upgrade; legacy radio numbers are never guessed into it.
+Repeated messages update the existing pair, so new rows per hour equal newly observed distinct pairs rather than the
+message rate. An isolated 10,000-pair SQLite sample with millisecond timestamps and all three indexes occupied
+1,294,336 bytes (about 129 bytes per pair), projecting roughly 62 MiB at the per-system cap. This is a planning
+estimate rather than a hard byte limit: integer widths, page occupancy, the shared subscriber directory, and WAL
+traffic add variable cost. Several received systems each have their own pair cap.
+
+The live decoder registry is bounded, process-local state. Accepted registration establishes a mapping, accepted
+affiliation can refresh an exact mapping, and deregistration clears it. Decoder reads remain fixed-cost and database
+or statistics-queue loss can only lose history. A new app process deliberately starts with no Working-ID mappings and
+relearns them from new signaling.
 
 ### Receiver status alert history
 

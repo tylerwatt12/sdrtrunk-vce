@@ -42,7 +42,7 @@ public class UnitToUnitVoiceChannelGrantUpdateExtendedLCCH extends MacStructureM
 {
     private static final IntField SERVICE_OPTIONS = IntField.length8(OCTET_4_BIT_24);
     private static final IntField SOURCE_ADDRESS = IntField.length24(OCTET_5_BIT_32);
-    private static final IntField SOURCE_SUID_WACN = IntField.range(OCTET_8_BIT_56, OCTET_8_BIT_56 + 20);
+    private static final IntField SOURCE_SUID_WACN = IntField.length20(OCTET_8_BIT_56);
     private static final IntField SOURCE_SUID_SYSTEM = IntField.range(76, 87);
     private static final IntField SOURCE_SUID_ID = IntField.length24(OCTET_12_BIT_88);
     private static final IntField TRANSMIT_FREQUENCY_BAND = IntField.length4(OCTET_15_BIT_112);
@@ -51,7 +51,7 @@ public class UnitToUnitVoiceChannelGrantUpdateExtendedLCCH extends MacStructureM
     private static final IntField RECEIVE_CHANNEL_NUMBER = IntField.range(128, 139);
 
     private static final IntField FRAGMENT_0_TARGET_ADDRESS = IntField.length24(OCTET_3_BIT_16);
-    private static final IntField FRAGMENT_0_TARGET_SUID_WACN = IntField.range(OCTET_8_BIT_56, OCTET_8_BIT_56 + 20);
+    private static final IntField FRAGMENT_0_TARGET_SUID_WACN = IntField.length20(OCTET_8_BIT_56);
     private static final IntField FRAGMENT_0_TARGET_SUID_SYSTEM = IntField.range(76, 87);
     private static final IntField FRAGMENT_0_TARGET_SUID_ID = IntField.length24(OCTET_12_BIT_88);
 
@@ -120,7 +120,8 @@ public class UnitToUnitVoiceChannelGrantUpdateExtendedLCCH extends MacStructureM
             int wacn = getFragment(0).getInt(FRAGMENT_0_TARGET_SUID_WACN);
             int system = getFragment(0).getInt(FRAGMENT_0_TARGET_SUID_SYSTEM);
             int id = getFragment(0).getInt(FRAGMENT_0_TARGET_SUID_ID);
-            mTargetAddress = APCO25FullyQualifiedRadioIdentifier.createTo(address, wacn, system, id);
+            mTargetAddress = APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(address, wacn, system,
+                id);
         }
 
         return mTargetAddress;
@@ -134,7 +135,8 @@ public class UnitToUnitVoiceChannelGrantUpdateExtendedLCCH extends MacStructureM
             int wacn = getInt(SOURCE_SUID_WACN);
             int system = getInt(SOURCE_SUID_SYSTEM);
             int id = getInt(SOURCE_SUID_ID);
-            mSourceAddress = APCO25FullyQualifiedRadioIdentifier.createFrom(address, wacn, system, id);
+            mSourceAddress = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(address, wacn, system,
+                id);
         }
 
         return mSourceAddress;

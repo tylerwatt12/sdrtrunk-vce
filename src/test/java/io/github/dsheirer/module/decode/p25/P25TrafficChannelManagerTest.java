@@ -492,8 +492,8 @@ class P25TrafficChannelManagerTest
         int talkgroup = 56_132;
         P25TrafficChannelManager manager = new P25TrafficChannelManager(new Channel("Control"));
         RadioIdentifier localRadio = APCO25RadioIdentifier.createFrom(1_880_997);
-        RadioIdentifier fullyQualifiedRadio = APCO25FullyQualifiedRadioIdentifier.createFrom(1_880_997, 0xBEE00,
-            0x49F, 1_880_997);
+        RadioIdentifier fullyQualifiedRadio = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
+            1_880_997, 0xBEE00, 0x49F, 1_880_997);
         P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, 1_000L, null)
             .identifiers(identifiers(talkgroup, localRadio))
             .build();
@@ -506,6 +506,77 @@ class P25TrafficChannelManagerTest
             identifiers(talkgroup, fullyQualifiedRadio), 1_100L);
 
         assertTrue(event.getIdentifierCollection().hasIdentifier(alias));
+    }
+
+    @Test
+    void doesNotInferAWorkingAddressFromAnEqualCanonicalSubscriberNumber() throws Exception
+    {
+        long frequency = 851_012_500L;
+        int talkgroup = 56_132;
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(new Channel("Control"));
+        RadioIdentifier identityOnlyRadio = APCO25FullyQualifiedRadioIdentifier.createFrom(1_880_997, 0xBEE00,
+            0x49F, 1_880_997);
+        RadioIdentifier trackedLocalRadio = APCO25RadioIdentifier.createFrom(1_880_997);
+        P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, 1_000L, null)
+            .identifiers(identifiers(talkgroup, trackedLocalRadio))
+            .build();
+        P25TrafficChannelEventTracker tracker = new P25TrafficChannelEventTracker(event);
+        tracker.updateDurationTraffic(1_050L);
+        trafficTrackers(manager).put(frequency, tracker);
+        P25TalkerAliasIdentifier alias = P25TalkerAliasIdentifier.create("CDP #0997");
+
+        manager.processP1MotorolaTalkerAlias(frequency, identityOnlyRadio, APCO25Talkgroup.create(talkgroup), alias,
+            identifiers(talkgroup, identityOnlyRadio), 1_100L);
+
+        assertFalse(event.getIdentifierCollection().hasIdentifier(alias));
+    }
+
+    @Test
+    void doesNotAttachAliasWhenCanonicalSubscribersShareAWorkingAddress() throws Exception
+    {
+        long frequency = 851_012_500L;
+        int talkgroup = 56_132;
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(new Channel("Control"));
+        RadioIdentifier observedRadio = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(501,
+            0xBEE00, 0x49F, 1_880_997);
+        RadioIdentifier trackedRadio = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(501,
+            0xBEE00, 0x49F, 1_880_998);
+        P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, 1_000L, null)
+            .identifiers(identifiers(talkgroup, trackedRadio))
+            .build();
+        P25TrafficChannelEventTracker tracker = new P25TrafficChannelEventTracker(event);
+        tracker.updateDurationTraffic(1_050L);
+        trafficTrackers(manager).put(frequency, tracker);
+        P25TalkerAliasIdentifier alias = P25TalkerAliasIdentifier.create("CDP #0997");
+
+        manager.processP1MotorolaTalkerAlias(frequency, observedRadio, APCO25Talkgroup.create(talkgroup), alias,
+            identifiers(talkgroup, observedRadio), 1_100L);
+
+        assertFalse(event.getIdentifierCollection().hasIdentifier(alias));
+    }
+
+    @Test
+    void doesNotAttachAliasWhenHomeSystemsShareASubscriberNumber() throws Exception
+    {
+        long frequency = 851_012_500L;
+        int talkgroup = 56_132;
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(new Channel("Control"));
+        RadioIdentifier observedRadio = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(501,
+            0xBEE00, 0x49F, 1_880_997);
+        RadioIdentifier trackedRadio = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(777,
+            0xABCDE, 0x123, 1_880_997);
+        P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, 1_000L, null)
+            .identifiers(identifiers(talkgroup, trackedRadio))
+            .build();
+        P25TrafficChannelEventTracker tracker = new P25TrafficChannelEventTracker(event);
+        tracker.updateDurationTraffic(1_050L);
+        trafficTrackers(manager).put(frequency, tracker);
+        P25TalkerAliasIdentifier alias = P25TalkerAliasIdentifier.create("CDP #0997");
+
+        manager.processP1MotorolaTalkerAlias(frequency, observedRadio, APCO25Talkgroup.create(talkgroup), alias,
+            identifiers(talkgroup, observedRadio), 1_100L);
+
+        assertFalse(event.getIdentifierCollection().hasIdentifier(alias));
     }
 
     @Test
@@ -618,7 +689,7 @@ class P25TrafficChannelManagerTest
         long frequency = channel.getDownlinkFrequency();
         int timeslot = phaseTwo ? TimeslotMessage.TIMESLOT_2 : TimeslotMessage.TIMESLOT_1;
         MutableIdentifierCollection abbreviated = identifiers(1201, APCO25RadioIdentifier.createFrom(1234567));
-        RadioIdentifier qualifiedRadio = APCO25FullyQualifiedRadioIdentifier.createFrom(
+        RadioIdentifier qualifiedRadio = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
             1234567, 0xABCDE, 0x123, 7654321);
         Identifier<?> qualifiedGroup = APCO25FullyQualifiedTalkgroupIdentifier.createTo(
             1201, 0xABCDE, 0x123, 2201);

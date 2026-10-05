@@ -62,6 +62,7 @@ public final class AliasActivitySummaryMaintenance
             FROM (
                 SELECT id AS alias_id, alias_list_id,
                        CASE
+                           WHEN matcher_type = 'P25_SUBSCRIBER_IDENTITY' THEN 1
                            WHEN matcher_type IN (
                                'TALKGROUP', 'TALKGROUP_RANGE', 'RADIO_ID', 'RADIO_ID_RANGE'
                            ) THEN CASE protocol

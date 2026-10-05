@@ -125,8 +125,9 @@ class CallPlaybackTargetTest
         CallPlaybackTarget roaming = target(source,
             APCO25FullyQualifiedRadioIdentifier.createTo(123, 0xABCDE, 0x321, 9_001), 0);
 
-        assertEquals("system:p25:bee00:348:v1-r-bee00-348-123", ordinary.key());
-        assertEquals(ordinary, equivalentHome);
+        assertEquals("system:p25:bee00:348:v1-r-x-x-123", ordinary.key());
+        assertEquals("system:p25:bee00:348:v1-r-bee00-348-123", equivalentHome.key());
+        assertNotEquals(ordinary, equivalentHome);
         assertEquals("system:p25:bee00:348:v1-r-abcde-321-9001", roaming.key());
         assertNotEquals(ordinary, roaming);
     }

@@ -27,6 +27,7 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
 import io.github.dsheirer.module.decode.p25.identifier.message.APCO25ShortDataMessage;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.PDUSequence;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.AMBTCMessage;
@@ -119,7 +120,9 @@ public class AMBTCMessageUpdateRequest extends AMBTCMessage
     {
         if(mTargetId == null && hasDataBlock(0))
         {
-            mTargetId = APCO25RadioIdentifier.createTo(getDataBlock(0).getMessage().getInt(BLOCK_0_TARGET_ID));
+            int subscriberId = getDataBlock(0).getMessage().getInt(BLOCK_0_TARGET_ID);
+            mTargetId = APCO25FullyQualifiedRadioIdentifier.createTo(subscriberId, getWacnValue(),
+                getSystemValue(), subscriberId);
         }
 
         return mTargetId;
@@ -135,14 +138,6 @@ public class AMBTCMessageUpdateRequest extends AMBTCMessage
             {
                 mIdentifiers.add(getSourceAddress());
             }
-            if(getWacn() != null)
-            {
-                mIdentifiers.add(getWacn());
-            }
-            if(getSystem() != null)
-            {
-                mIdentifiers.add(getSystem());
-            }
             if(getTargetId() != null)
             {
                 mIdentifiers.add(getTargetId());
@@ -150,5 +145,15 @@ public class AMBTCMessageUpdateRequest extends AMBTCMessage
         }
 
         return mIdentifiers;
+    }
+
+    private int getWacnValue()
+    {
+        return getDataBlock(0).getMessage().getInt(BLOCK_0_WACN);
+    }
+
+    private int getSystemValue()
+    {
+        return getDataBlock(0).getMessage().getInt(BLOCK_0_SYSTEM);
     }
 }

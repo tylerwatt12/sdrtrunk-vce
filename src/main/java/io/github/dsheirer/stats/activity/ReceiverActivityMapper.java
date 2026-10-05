@@ -45,7 +45,9 @@ import io.github.dsheirer.module.decode.p25.P25AffiliationSemantics;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
 import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
 import io.github.dsheirer.module.decode.p25.P25SignalingEvent;
+import io.github.dsheirer.module.decode.p25.P25RadioPresence;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.decode.p25.P25WuidAssignmentRegistry;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
@@ -176,11 +178,13 @@ class ReceiverActivityMapper
         IdentifierFacts facts = IdentifierFacts.from(event.identifierCollection());
         long observedAt = event.observedAtEpochMilliseconds() > 0 ?
             event.observedAtEpochMilliseconds() : System.currentTimeMillis();
+        Integer observedWorkingId = event.radio() instanceof FullyQualifiedRadioIdentifier radio ?
+            radio.getWorkingAddress() : event.radio().getValue();
         return new ReceiverActivityRecords.TalkerAliasUpdate(observedAt, event.callStartEpochMilliseconds(),
             event.configurationId(),
             configuredProtocolName(decoderType, event.protocol()),
             facts.wacn(),
-            facts.systemId(), event.radio().getValue(),
+            facts.systemId(), observedWorkingId,
             p25Identity(event.radio(), event.protocol() == Protocol.APCO25),
             event.talkerAlias(),
             event.identityDomain(), event.radioSystemKey());
@@ -230,7 +234,8 @@ class ReceiverActivityMapper
             encryptionAlgorithmId, encryptionKeyId, facts.wacn(), facts.systemId(), facts.nac(), facts.rfss(),
             facts.site(), facts.talkerAlias(), true, null, null, TrunkedIdentityDomain.STANDARD,
             p25TargetIdentity(targetIdentifier, true), p25Identity(sourceIdentifier, true),
-            facts.p25PatchMemberIdentities(), callStart.radioSystemKey());
+            facts.p25PatchMemberIdentities(), callStart.radioSystemKey(),
+            p25WorkingAddress(sourceIdentifier), p25WorkingAddress(targetIdentifier));
     }
 
     ReceiverActivityRecords.ActivityEvent map(P25GrantObservationEvent observation)
@@ -269,7 +274,8 @@ class ReceiverActivityMapper
             facts.targetForm(), facts.patchMemberTalkgroupIds(), frequency, descriptor, timeslot, false, null, null,
             facts.wacn(), facts.systemId(), facts.nac(), facts.rfss(), facts.site(), facts.talkerAlias(), false, null,
             null, TrunkedIdentityDomain.STANDARD, p25TargetIdentity(target, true), p25Identity(source, true),
-            facts.p25PatchMemberIdentities(), observation.radioSystemKey());
+            facts.p25PatchMemberIdentities(), observation.radioSystemKey(),
+            p25WorkingAddress(source), p25WorkingAddress(target));
     }
 
     ReceiverActivityRecords.ConventionalCallOutput mapConventionalCallOutput(CompletedAudioCall call,
@@ -375,7 +381,7 @@ class ReceiverActivityMapper
             facts.patchMemberTalkgroupIds(), sourceRadio, snapshot.isEncrypted() || facts.encrypted(),
             facts.encryptionAlgorithmId(), facts.encryptionKeyId(), resolvedTargetIdentity,
             resolvedSourceIdentity, p25 ? facts.p25PatchMemberIdentities() : List.of(), siteObservations,
-            radioSystemKey);
+            radioSystemKey, p25WorkingAddress(source), p25WorkingAddress(target));
     }
 
     private static List<ReceiverActivityRecords.P25SiteCallObservation> p25SiteCallObservations(
@@ -440,7 +446,9 @@ class ReceiverActivityMapper
                     .filter(memberObservation -> p25Identity(memberObservation).isStableFullyQualified())
                     .map(memberObservation -> new ReceiverActivityRecords.P25PatchMemberIdentity(
                         memberObservation.observedLocalId(), p25Identity(memberObservation)))
-                    .toList());
+                    .toList(),
+                legSourceIdentity != null ? legSourceIdentity.observedWorkingId() : null,
+                legTarget != null ? legTarget.observedWorkingId() : null);
             String key = legConfigurationId + ':' + site.wacn() + ':' + site.system() + ':' +
                 site.rfss() + ':' + site.site();
             observations.putIfAbsent(key, observation);
@@ -532,7 +540,9 @@ class ReceiverActivityMapper
             facts.patchMemberTalkgroupIds(), sourceRadio, output,
             callLegSource.identityDomain(),
             p25TargetIdentity(targetIdentifier, isP25Decoder(facts.decoder())),
-            facts.p25PatchMemberIdentities());
+            p25Identity(sourceIdentifier, isP25Decoder(facts.decoder())),
+            facts.p25PatchMemberIdentities(), p25WorkingAddress(sourceIdentifier),
+            p25WorkingAddress(targetIdentifier));
     }
 
     private ReceiverActivityRecords.ActivityEvent map(Channel channel, IDecodeEvent event,
@@ -620,8 +630,10 @@ class ReceiverActivityMapper
         }
 
         P25AffiliationEvent affiliationEvent = event instanceof P25AffiliationEvent affiliation ? affiliation : null;
-        String sourceRadioId = affiliationEvent != null && affiliationEvent.getRadioId() != null ?
-            affiliationEvent.getRadioId().toString() : facts.sourceId();
+        String sourceRadioId = affiliationEvent != null ?
+            (affiliationEvent.getRadioPresence() != null &&
+                affiliationEvent.getRadioPresence().workingId() != null ?
+                affiliationEvent.getRadioPresence().workingId().toString() : null) : facts.sourceId();
         String targetId;
         String targetKind;
 
@@ -643,11 +655,16 @@ class ReceiverActivityMapper
         ReceiverActivityRecords.P25Identity p25TargetIdentity =
             p25TargetIdentity(targetIdentifier, isP25Decoder(decoderType));
         ReceiverActivityRecords.P25Identity p25SourceIdentity = affiliationEvent != null ?
-            p25Identity(affiliationEvent.getRadioIdentifier(), true) :
+            p25Identity(affiliationEvent.getRadioPresence()) :
             p25Identity(eventIdentifiers != null ? eventIdentifiers.getFromIdentifier() : null,
                 isP25Decoder(decoderType));
+        Integer sourceObservedWorkingId = affiliationEvent != null && p25SourceIdentity.isStableFullyQualified() &&
+            affiliationEvent.getRadioPresence() != null ? affiliationEvent.getRadioPresence().workingId() :
+            p25WorkingAddress(eventIdentifiers != null ? eventIdentifiers.getFromIdentifier() : null);
+        Integer targetObservedWorkingId = p25WorkingAddress(targetIdentifier);
 
         ReceiverActivityRecords.RadioPresenceUpdate radioPresenceUpdate = radioPresenceUpdate(affiliationEvent);
+        ReceiverActivityRecords.P25WuidObservation p25WuidObservation = p25WuidObservation(affiliationEvent);
         boolean metricsEncrypted = facts.encrypted() && event instanceof P25ChannelGrantEvent grantEvent &&
             P25EncryptionConfirmationTracker.isConfirmed(grantEvent, facts.encryptionAlgorithmId(),
                 facts.encryptionKeyId());
@@ -689,7 +706,8 @@ class ReceiverActivityMapper
                 (receiverKind != ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE || actionOverride != null), dedupeKey,
             radioPresenceUpdate, configuredIdentityDomain, p25TargetIdentity,
             p25SourceIdentity,
-            facts.p25PatchMemberIdentities(), radioSystemKey);
+            facts.p25PatchMemberIdentities(), radioSystemKey, sourceObservedWorkingId,
+            targetObservedWorkingId, p25WuidObservation);
     }
 
     static boolean isTypedCallOwnedObservation(Channel channel, IDecodeEvent event)
@@ -983,18 +1001,25 @@ class ReceiverActivityMapper
         P25AffiliationEvent affiliationEvent)
     {
         P25AffiliationSemantics.Observation observation = P25AffiliationSemantics.evaluate(affiliationEvent);
-
-        if(!observation.isObserved())
+        P25RadioPresence presence = affiliationEvent != null ? affiliationEvent.getRadioPresence() : null;
+        if(!observation.isObserved() || presence == null || presence.workingId() == null && presence.subscriber() == null)
         {
             return null;
         }
 
-        ReceiverActivityRecords.P25Identity radioIdentity =
-            p25Identity(affiliationEvent.getRadioIdentifier(), true);
+        ReceiverActivityRecords.P25Identity radioIdentity = p25Identity(presence);
         ReceiverActivityRecords.P25Identity talkgroupIdentity =
             p25TargetIdentity(affiliationEvent.getTalkgroupIdentifier(), true);
-        int radioId = affiliationEvent.getRadioId();
+        Integer radioId = presence.workingId();
         Integer talkgroupId = affiliationEvent.getTalkgroupId();
+        boolean validRadio = radioId != null || radioIdentity.isStableFullyQualified();
+        boolean validTalkgroup = talkgroupId == null || talkgroupId > 0 ||
+            talkgroupId == 0 && talkgroupIdentity.isStableFullyQualified();
+        if(!validRadio || !validTalkgroup)
+        {
+            return null;
+        }
+
         ReceiverActivityRecords.RadioPresenceEvidence evidence =
             observation.evidence() == P25AffiliationSemantics.Evidence.REGISTRATION ?
                 ReceiverActivityRecords.RadioPresenceEvidence.REGISTRATION :
@@ -1007,6 +1032,40 @@ class ReceiverActivityMapper
             case PRESENCE_CLEARED -> ReceiverActivityRecords.RadioPresenceUpdate.cleared(radioId, radioIdentity);
             case IGNORED -> null;
         };
+    }
+
+    private static ReceiverActivityRecords.P25WuidObservation p25WuidObservation(
+        P25AffiliationEvent affiliationEvent)
+    {
+        P25WuidAssignmentRegistry.AssignmentObservation observation = affiliationEvent != null ?
+            affiliationEvent.getAssignmentObservation() : null;
+
+        if(observation == null)
+        {
+            return null;
+        }
+
+        ReceiverActivityRecords.RadioPresenceEvidence evidence = switch(observation.evidence())
+        {
+            case REGISTRATION -> ReceiverActivityRecords.RadioPresenceEvidence.REGISTRATION;
+            case AFFILIATION -> ReceiverActivityRecords.RadioPresenceEvidence.AFFILIATION;
+        };
+
+        return new ReceiverActivityRecords.P25WuidObservation(observation.servingWacn(),
+            observation.servingSystem(), observation.workingId(), observation.subscriber(),
+            observation.expiresAt(), evidence);
+    }
+
+    private static ReceiverActivityRecords.P25Identity p25Identity(P25RadioPresence presence)
+    {
+        if(presence == null || presence.subscriber() == null)
+        {
+            return presence != null && presence.workingId() != null ?
+                ReceiverActivityRecords.P25Identity.ORDINARY : ReceiverActivityRecords.P25Identity.UNKNOWN;
+        }
+
+        return ReceiverActivityRecords.P25Identity.fullyQualifiedRadio(presence.subscriber().homeWacn(),
+            presence.subscriber().homeSystemId(), presence.subscriber().subscriberId());
     }
 
     private static Long frequency(IChannelDescriptor descriptor, IdentifierFacts facts)
@@ -1095,6 +1154,19 @@ class ReceiverActivityMapper
         return (p25Decoder || identifier != null && identifier.getProtocol() == Protocol.APCO25) &&
             (identifier instanceof RadioIdentifier || identifier instanceof TalkgroupIdentifier) ?
             ReceiverActivityRecords.P25Identity.ORDINARY : ReceiverActivityRecords.P25Identity.UNKNOWN;
+    }
+
+    /** Returns only a separate working-address field actually carried by a fully-qualified P25 radio identifier. */
+    private static Integer p25WorkingAddress(Identifier identifier)
+    {
+        if(identifier instanceof PatchGroupIdentifier patchGroup && patchGroup.getValue() != null)
+        {
+            identifier = patchGroup.getValue().getPatchGroup();
+        }
+
+        return identifier instanceof FullyQualifiedRadioIdentifier radio &&
+            (radio.getProtocol() == Protocol.APCO25 || radio.getProtocol() == Protocol.APCO25_PHASE2) ?
+            radio.getWorkingAddress() : null;
     }
 
     private static List<ReceiverActivityRecords.P25PatchMemberIdentity> p25PatchMemberIdentities(

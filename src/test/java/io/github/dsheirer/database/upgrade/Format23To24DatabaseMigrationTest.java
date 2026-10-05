@@ -62,14 +62,19 @@ class Format23To24DatabaseMigrationTest
 
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 23, report.steps().size());
             assertEquals("format-23-to-24", report.steps().getFirst().id());
-            assertEquals("format-30-to-31", report.steps().getLast().id());
+            assertEquals("format-31-to-32", report.steps().getLast().id());
             assertEquals(activityBefore.size(), report.steps().getFirst().effects().getFirst().affectedRows());
             assertEquals(rowsBefore, tableRowCounts(statement));
             assertEquals(activityBefore, activityRows(statement));
 
             Set<String> addedObjects = schemaObjects(statement);
             addedObjects.removeAll(objectsBefore);
-            assertEquals(FILTER_INDEXES, addedObjects);
+            Set<String> expectedObjects = new TreeSet<>(FILTER_INDEXES);
+            expectedObjects.addAll(Set.of("p25_subscriber_identity", "alias_p25_subscriber_identity",
+                "p25_wuid_assignment_observation_summary", "idx_alias_p25_subscriber_identity",
+                "idx_radio_system_identity_p25_subscriber", "idx_p25_wuid_assignment_observation_system_time",
+                "idx_p25_wuid_assignment_observation_subscriber", "idx_p25_wuid_assignment_observation_retention"));
+            assertEquals(expectedObjects, addedObjects);
             assertEquals(DatabaseFormatCatalog.current().fingerprint(),
                 SqliteSchemaValidator.fingerprint(connection));
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
@@ -226,6 +231,8 @@ class Format23To24DatabaseMigrationTest
         try(ResultSet tables = statement.executeQuery("""
             SELECT name FROM sqlite_schema
             WHERE type='table' AND name NOT LIKE 'sqlite_%'
+              AND name NOT IN ('p25_subscriber_identity','alias_p25_subscriber_identity',
+                  'p25_wuid_assignment_observation_summary')
             ORDER BY name
             """))
         {
@@ -274,7 +281,8 @@ class Format23To24DatabaseMigrationTest
                 List<Object> row = new ArrayList<>(metadata.getColumnCount());
                 for(int column = 1; column <= metadata.getColumnCount(); column++)
                 {
-                    row.add(rows.getObject(column));
+                    if(!metadata.getColumnName(column).endsWith("_observed_working_id"))
+                        row.add(rows.getObject(column));
                 }
                 snapshot.add(Collections.unmodifiableList(row));
             }

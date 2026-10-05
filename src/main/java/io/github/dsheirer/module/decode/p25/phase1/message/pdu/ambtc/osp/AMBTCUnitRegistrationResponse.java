@@ -83,7 +83,8 @@ public class AMBTCUnitRegistrationResponse extends AMBTCMessage
             int system = getDataBlock(0).getMessage().getInt(BLOCK_0_SYSTEM);
             int id = getDataBlock(0).getMessage().getInt(BLOCK_0_RADIO_ID);
 
-            mRegistrationAddress = APCO25FullyQualifiedRadioIdentifier.createTo(localAddress, wacn, system, id);
+            mRegistrationAddress = APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(localAddress, wacn,
+                system, id);
         }
 
         return mRegistrationAddress;

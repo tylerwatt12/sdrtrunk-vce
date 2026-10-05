@@ -30,6 +30,7 @@ import io.github.dsheirer.alias.id.esn.Esn;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioFormat;
 import io.github.dsheirer.alias.id.radio.RadioRange;
+import io.github.dsheirer.alias.id.radio.P25Subscriber;
 import io.github.dsheirer.alias.id.status.UnitStatusID;
 import io.github.dsheirer.alias.id.status.UserStatusID;
 import io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup;
@@ -41,6 +42,7 @@ import io.github.dsheirer.identifier.tone.AmbeTone;
 import io.github.dsheirer.identifier.tone.Tone;
 import io.github.dsheirer.identifier.tone.ToneSequence;
 import io.github.dsheirer.module.decode.dcs.DCSCode;
+import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.scanlist.ScanList;
 import java.io.IOException;
@@ -796,9 +798,12 @@ public final class AliasAdminHttpController
         int populated = (payload.protocol() != null ? 1 : 0) + (payload.value() != null ? 1 : 0) +
             (payload.minimum() != null ? 1 : 0) + (payload.maximum() != null ? 1 : 0) +
             (payload.status() != null ? 1 : 0) + (payload.code() != null ? 1 : 0) +
-            (payload.esn() != null ? 1 : 0) + (payload.tones() != null ? 1 : 0);
+            (payload.esn() != null ? 1 : 0) + (payload.tones() != null ? 1 : 0) +
+            (payload.homeWacn() != null ? 1 : 0) + (payload.homeSystemId() != null ? 1 : 0) +
+            (payload.subscriberId() != null ? 1 : 0);
         int expected = switch(type)
         {
+            case P25_SUBSCRIBER_IDENTITY -> 3;
             case TALKGROUP, RADIO_ID -> 2;
             case TALKGROUP_RANGE, RADIO_ID_RANGE -> 3;
             case STATUS, UNIT_STATUS, DCS, ESN, TONES -> 1;
@@ -811,6 +816,11 @@ public final class AliasAdminHttpController
 
         AliasID matcher = switch(type)
         {
+            case P25_SUBSCRIBER_IDENTITY -> new P25Subscriber(
+                bounded(payload.homeWacn(), "home_wacn", 0, 0xFFFFF),
+                bounded(payload.homeSystemId(), "home_system_id", 0, 0xFFF),
+                bounded(payload.subscriberId(), "subscriber_id", 1,
+                    RadioSystemIdentityKey.MAX_P25_RADIO_ID));
             case TALKGROUP -> new Talkgroup(requiredProtocol(payload.protocol(), payload.variant()),
                 required(payload.value(), "value"));
             case RADIO_ID -> new Radio(requiredProtocol(payload.protocol(), payload.variant()),
@@ -891,6 +901,11 @@ public final class AliasAdminHttpController
 
         switch(matcher)
         {
+            case P25Subscriber value -> {
+                response.put("homeWacn", value.getHomeWacn());
+                response.put("homeSystemId", value.getHomeSystemId());
+                response.put("subscriberId", value.getSubscriberId());
+            }
             case TalkgroupRange value -> {
                 addProtocol(response, value.getProtocol());
                 response.put("minimum", value.getMinTalkgroup());
@@ -955,6 +970,15 @@ public final class AliasAdminHttpController
             RadioFormat format = RadioFormat.get(range.getProtocol());
             response.put("minimum", format.getMinimumValidValue());
             response.put("maximum", format.getMaximumValidValue());
+        }
+        else if(descriptor.type() == AliasIDType.P25_SUBSCRIBER_IDENTITY)
+        {
+            response.put("homeWacnMinimum", 0);
+            response.put("homeWacnMaximum", 0xFFFFF);
+            response.put("homeSystemIdMinimum", 0);
+            response.put("homeSystemIdMaximum", 0xFFF);
+            response.put("subscriberIdMinimum", 1);
+            response.put("subscriberIdMaximum", RadioSystemIdentityKey.MAX_P25_RADIO_ID);
         }
         return response;
     }
@@ -1071,6 +1095,7 @@ public final class AliasAdminHttpController
     {
         return switch(type)
         {
+            case P25_SUBSCRIBER_IDENTITY -> List.of("home_wacn", "home_system_id", "subscriber_id");
             case TALKGROUP, RADIO_ID -> List.of("value");
             case TALKGROUP_RANGE, RADIO_ID_RANGE -> List.of("minimum", "maximum");
             case STATUS, UNIT_STATUS -> List.of("status");
@@ -1087,6 +1112,7 @@ public final class AliasAdminHttpController
         {
             case "talkgroup" -> AliasIDType.TALKGROUP;
             case "talkgroup_range" -> AliasIDType.TALKGROUP_RANGE;
+            case "p25_subscriber_identity" -> AliasIDType.P25_SUBSCRIBER_IDENTITY;
             case "radio" -> AliasIDType.RADIO_ID;
             case "radio_range" -> AliasIDType.RADIO_ID_RANGE;
             case "user_status" -> AliasIDType.STATUS;
@@ -1102,6 +1128,7 @@ public final class AliasAdminHttpController
     {
         return switch(type)
         {
+            case P25_SUBSCRIBER_IDENTITY -> "p25_subscriber_identity";
             case TALKGROUP -> "talkgroup";
             case TALKGROUP_RANGE -> "talkgroup_range";
             case RADIO_ID -> "radio";
@@ -1773,7 +1800,8 @@ public final class AliasAdminHttpController
     private record TonePayload(String tone, Integer duration) {}
 
     private record MatcherPayload(String type, String protocol, String variant, Integer value, Integer minimum,
-                                  Integer maximum, Integer status, String code, String esn, List<TonePayload> tones)
+                                  Integer maximum, Integer status, String code, String esn, List<TonePayload> tones,
+                                  Integer homeWacn, Integer homeSystemId, Integer subscriberId)
     {}
 
     private static final class RequestException extends Exception

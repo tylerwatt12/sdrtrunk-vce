@@ -15,6 +15,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
@@ -28,6 +29,11 @@ final class StatsApiV1Payload
     private static final Set<String> INTERNAL_FIELDS = Set.of(
         "radio_system_id", "channel_id", "identity_summary_id", "radio_identity_summary_id",
         "group_identity_summary_id", "affiliated_talkgroup_identity_summary_id",
+        "p25_subscriber_identity_id", "source_p25_subscriber_identity_id", "target_p25_subscriber_identity_id",
+        "canonical_wacn", "canonical_system_id", "canonical_subscriber_id",
+        "source_canonical_wacn", "source_canonical_system_id", "source_canonical_subscriber_id",
+        "target_canonical_wacn", "target_canonical_system_id", "target_canonical_subscriber_id",
+        "radio_canonical_wacn", "radio_canonical_system_id", "radio_canonical_subscriber_id",
         "source_identity_summary_id", "target_identity_summary_id",
         "representative_channel_id", "fallback_channel_id", "identity_id", "system_key", "site_type",
         "protocol_code", "variant_code", "site_variant_code",
@@ -176,6 +182,7 @@ final class StatsApiV1Payload
         putIdentityKind(source, presented, "identity_kind_code", "identity_kind");
         putIdentityKind(source, presented, "target_kind_code", "target_kind");
         putIdentityKind(source, presented, "group_identity_kind_code", "group_identity_kind");
+        addP25CanonicalIdentities(source, presented, protocol);
 
         JsonNode channelKind = source.get("channel_kind_code");
 
@@ -227,6 +234,87 @@ final class StatsApiV1Payload
         addLastEventType(source, presented);
 
         return presented;
+    }
+
+    /**
+     * Exposes protocol-native P25 subscriber identities as structured numbers. Formatting belongs to the browser so
+     * every surface uses the same WACN/System/subscriber convention, and a working ID is never mistaken for the
+     * permanent subscriber ID.
+     */
+    private static void addP25CanonicalIdentities(ObjectNode source, ObjectNode presented,
+                                                   StatsApiProtocol protocol)
+    {
+        if(protocol != StatsApiProtocol.P25)
+        {
+            return;
+        }
+
+        boolean directRadio = code(source, "identity_kind_code") == 2 ||
+            code(source, "group_identity_kind_code") == 2 ||
+            source.path("identity_key").asText("").startsWith("v1-r-") ||
+            source.has("canonical_subscriber_id");
+        if(directRadio)
+        {
+            putCanonicalIdentity(source, presented, "canonical_identity",
+                firstIntegral(source, "canonical_wacn"),
+                firstIntegral(source, "canonical_system_id"),
+                firstIntegral(source, "canonical_subscriber_id"));
+        }
+
+        putCanonicalIdentity(source, presented, "source_canonical_identity",
+            firstIntegral(source, "source_canonical_wacn"),
+            firstIntegral(source, "source_canonical_system_id"),
+            firstIntegral(source, "source_canonical_subscriber_id"));
+
+        putCanonicalIdentity(source, presented, "radio_canonical_identity",
+            firstIntegral(source, "radio_canonical_wacn"),
+            firstIntegral(source, "radio_canonical_system_id"),
+            firstIntegral(source, "radio_canonical_subscriber_id"));
+
+        int targetKind = code(source, "target_kind_code");
+        if(targetKind == 2 || source.has("target_canonical_subscriber_id"))
+        {
+            putCanonicalIdentity(source, presented, "target_canonical_identity",
+                firstIntegral(source, "target_canonical_wacn"),
+                firstIntegral(source, "target_canonical_system_id"),
+                firstIntegral(source, "target_canonical_subscriber_id"));
+        }
+    }
+
+    private static void putCanonicalIdentity(ObjectNode source, ObjectNode presented, String field,
+                                               Long wacn, Long systemId, Long subscriberId)
+    {
+        if(wacn == null || systemId == null || subscriberId == null ||
+            wacn < 0 || wacn > 0xFFFFF || systemId < 0 || systemId > 0xFFF ||
+            subscriberId < 1 || subscriberId > RadioSystemIdentityKey.MAX_P25_RADIO_ID)
+        {
+            return;
+        }
+
+        ObjectNode identity = OBJECT_MAPPER.createObjectNode();
+        identity.put("wacn", wacn);
+        identity.put("system_id", systemId);
+        identity.put("subscriber_id", subscriberId);
+        presented.set(field, identity);
+    }
+
+    private static Long firstIntegral(ObjectNode source, String... fields)
+    {
+        for(String field: fields)
+        {
+            JsonNode value = source.get(field);
+            if(value != null && value.isIntegralNumber())
+            {
+                return value.longValue();
+            }
+        }
+        return null;
+    }
+
+    private static int code(ObjectNode source, String field)
+    {
+        JsonNode value = source.get(field);
+        return value != null && value.isIntegralNumber() ? value.intValue() : -1;
     }
 
     private static void putIdentityKind(ObjectNode source, ObjectNode presented, String codeField, String field)
@@ -283,6 +371,7 @@ final class StatsApiV1Payload
     {
         return switch(value != null ? value : "")
         {
+            case "P25_SUBSCRIBER_IDENTITY" -> "p25_subscriber_identity";
             case "TALKGROUP" -> "talkgroup";
             case "TALKGROUP_RANGE" -> "talkgroup_range";
             case "RADIO_ID" -> "radio";

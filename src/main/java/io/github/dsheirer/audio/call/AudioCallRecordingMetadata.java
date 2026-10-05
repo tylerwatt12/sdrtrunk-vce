@@ -14,6 +14,7 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.UnmatchedTalkgroupPolicy;
 import io.github.dsheirer.alias.id.AliasID;
+import io.github.dsheirer.alias.id.radio.P25Subscriber;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioRange;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
@@ -28,9 +29,11 @@ import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
+import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
+import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.ArrayList;
 import java.util.List;
@@ -51,9 +54,47 @@ public record AudioCallRecordingMetadata(String systemName, String siteName,
                                          String destinationMatcherIdentity,
                                          boolean destinationRecordEnabled, String sourceProtocol,
                                          String sourceValue, String sourceAlias, String sourceDescription,
-                                         String sourceGroup)
+                                         String sourceGroup, P25SubscriberIdentity sourceP25Identity,
+                                         Integer sourceObservedWorkingId,
+                                         P25SubscriberIdentity destinationP25Identity,
+                                         Integer destinationObservedWorkingId,
+                                         ResolvedRadioIdentity sourceRadioIdentity,
+                                         ResolvedRadioIdentity destinationRadioIdentity)
 {
     private static final int MAXIMUM_LABEL_LENGTH = 160;
+
+    /** Older snapshots do not establish resolution provenance merely by carrying a canonical tuple. */
+    public AudioCallRecordingMetadata(String systemName, String siteName, String radioResolveId, String channelName,
+                                      String channelIdentity, String aliasListName, String destinationProtocol,
+                                      String destinationValue, String destinationIdentity, String destinationAlias,
+                                      String destinationDescription, String destinationGroup,
+                                      String destinationMatcherIdentity, boolean destinationRecordEnabled,
+                                      String sourceProtocol, String sourceValue, String sourceAlias,
+                                      String sourceDescription, String sourceGroup, P25SubscriberIdentity sourceP25Identity,
+                                      Integer sourceObservedWorkingId, P25SubscriberIdentity destinationP25Identity,
+                                      Integer destinationObservedWorkingId)
+    {
+        this(systemName, siteName, radioResolveId, channelName, channelIdentity, aliasListName, destinationProtocol,
+            destinationValue, destinationIdentity, destinationAlias, destinationDescription, destinationGroup,
+            destinationMatcherIdentity, destinationRecordEnabled, sourceProtocol, sourceValue, sourceAlias,
+            sourceDescription, sourceGroup, sourceP25Identity, sourceObservedWorkingId, destinationP25Identity,
+            destinationObservedWorkingId, null, null);
+    }
+
+    /** Source-compatible constructor for metadata captured before structured P25 subscriber identity was added. */
+    public AudioCallRecordingMetadata(String systemName, String siteName, String radioResolveId, String channelName,
+                                      String channelIdentity, String aliasListName, String destinationProtocol,
+                                      String destinationValue, String destinationIdentity, String destinationAlias,
+                                      String destinationDescription, String destinationGroup,
+                                      String destinationMatcherIdentity, boolean destinationRecordEnabled,
+                                      String sourceProtocol, String sourceValue, String sourceAlias,
+                                      String sourceDescription, String sourceGroup)
+    {
+        this(systemName, siteName, radioResolveId, channelName, channelIdentity, aliasListName, destinationProtocol,
+            destinationValue, destinationIdentity, destinationAlias, destinationDescription, destinationGroup,
+            destinationMatcherIdentity, destinationRecordEnabled, sourceProtocol, sourceValue, sourceAlias,
+            sourceDescription, sourceGroup, null, null, null, null);
+    }
 
     public static AudioCallRecordingMetadata captureAtSnapshot(AliasList aliasList,
                                                                IdentifierCollection identifiers)
@@ -82,7 +123,9 @@ public record AudioCallRecordingMetadata(String systemName, String siteName,
             safeDestination.value(), safeDestination.receivedIdentity(), safeDestination.aliasName(),
             safeDestination.aliasDescription(), safeDestination.aliasGroup(), safeDestination.matcherIdentity(),
             safeDestination.recordEnabled(), safeSource.protocol(), safeSource.value(), safeSource.aliasName(),
-            safeSource.aliasDescription(), safeSource.aliasGroup());
+            safeSource.aliasDescription(), safeSource.aliasGroup(), safeSource.p25Identity(),
+            safeSource.observedWorkingId(), safeDestination.p25Identity(), safeDestination.observedWorkingId(),
+            safeSource.radioIdentity(), safeDestination.radioIdentity());
     }
 
     /**
@@ -102,11 +145,34 @@ public record AudioCallRecordingMetadata(String systemName, String siteName,
             protocol(source) : sourceProtocol;
         String resolvedSourceValue = !hasText(sourceValue) && source != null ?
             receivedSourceIdentity(source) : sourceValue;
+        P25SubscriberIdentity resolvedSourceIdentity = P25SubscriberIdentity.from(source);
+        if(resolvedSourceIdentity == null)
+        {
+            resolvedSourceIdentity = sourceP25Identity;
+        }
+        Integer resolvedWorkingId = p25ObservedWorkingId(source);
+        if(resolvedWorkingId == null)
+        {
+            resolvedWorkingId = sourceObservedWorkingId;
+        }
+        P25SubscriberIdentity resolvedDestinationP25Identity = P25SubscriberIdentity.from(destination);
+        if(resolvedDestinationP25Identity == null)
+        {
+            resolvedDestinationP25Identity = destinationP25Identity;
+        }
+        Integer resolvedDestinationWorkingId = p25ObservedWorkingId(destination);
+        if(resolvedDestinationWorkingId == null)
+        {
+            resolvedDestinationWorkingId = destinationObservedWorkingId;
+        }
         return new AudioCallRecordingMetadata(systemName, siteName, radioResolveId, channelName,
             channelIdentity, aliasListName, resolvedDestinationProtocol, resolvedDestinationValue,
             resolvedDestinationIdentity, destinationAlias, destinationDescription, destinationGroup,
             destinationMatcherIdentity, destinationRecordEnabled, resolvedSourceProtocol,
-            resolvedSourceValue, sourceAlias, sourceDescription, sourceGroup);
+            resolvedSourceValue, sourceAlias, sourceDescription, sourceGroup, resolvedSourceIdentity,
+            resolvedWorkingId, resolvedDestinationP25Identity, resolvedDestinationWorkingId,
+            ResolvedRadioIdentity.from(source) != null ? ResolvedRadioIdentity.from(source) : sourceRadioIdentity,
+            ResolvedRadioIdentity.from(destination) != null ? ResolvedRadioIdentity.from(destination) : destinationRadioIdentity);
     }
 
     public static boolean isDestination(Identifier<?> identifier)
@@ -127,11 +193,13 @@ public record AudioCallRecordingMetadata(String systemName, String siteName,
     {
         String value = destinationValue(destination);
         String fallbackIdentity = receivedDestinationIdentity(destination);
+        P25SubscriberIdentity p25Identity = P25SubscriberIdentity.from(destination);
+        Integer observedWorkingId = p25ObservedWorkingId(destination);
 
         if(aliasList == null || destination == null)
         {
             return new DestinationDecision(protocol(destination), value, fallbackIdentity, null, null, null,
-                fallbackIdentity, false);
+                fallbackIdentity, false, p25Identity, observedWorkingId, ResolvedRadioIdentity.from(destination));
         }
 
         List<TalkgroupIdentifier> candidates = new ArrayList<>();
@@ -155,7 +223,7 @@ public record AudioCallRecordingMetadata(String systemName, String siteName,
                 String matcherIdentity = matcher != null ? matcherIdentity(matcher) : fallbackIdentity;
                 DestinationDecision match = new DestinationDecision(protocol(destination), value, fallbackIdentity,
                     label(alias.getName()), label(alias.getDescription()), label(alias.getGroup()), matcherIdentity,
-                    alias.isRecordable());
+                    alias.isRecordable(), p25Identity, observedWorkingId, ResolvedRadioIdentity.from(destination));
                 if(match.recordEnabled())
                 {
                     return match;
@@ -166,12 +234,12 @@ public record AudioCallRecordingMetadata(String systemName, String siteName,
                 }
             }
             return firstMatch != null ? firstMatch : new DestinationDecision(protocol(destination), value,
-                fallbackIdentity, null, null, null, fallbackIdentity, false);
+                fallbackIdentity, null, null, null, fallbackIdentity, false, p25Identity, observedWorkingId, ResolvedRadioIdentity.from(destination));
         }
         else
         {
             return new DestinationDecision(protocol(destination), value, fallbackIdentity, null, null, null,
-                fallbackIdentity, false);
+                fallbackIdentity, false, p25Identity, observedWorkingId, ResolvedRadioIdentity.from(destination));
         }
 
         DestinationDecision firstMatch = null;
@@ -190,7 +258,7 @@ public record AudioCallRecordingMetadata(String systemName, String siteName,
                     receivedDestinationIdentity(candidate);
                 DestinationDecision match = new DestinationDecision(protocol(destination), value, fallbackIdentity,
                     label(alias.getName()), label(alias.getDescription()), label(alias.getGroup()), matcherIdentity,
-                    alias.isRecordable());
+                    alias.isRecordable(), p25Identity, observedWorkingId, ResolvedRadioIdentity.from(destination));
 
                 if(match.recordEnabled())
                 {
@@ -211,7 +279,8 @@ public record AudioCallRecordingMetadata(String systemName, String siteName,
 
         UnmatchedTalkgroupPolicy unmatchedPolicy = aliasList.getUnmatchedTalkgroupPolicy(destination);
         return new DestinationDecision(protocol(destination), value, fallbackIdentity, null, null, null,
-            fallbackIdentity, unmatchedPolicy != null && unmatchedPolicy.isRecordEnabled());
+            fallbackIdentity, unmatchedPolicy != null && unmatchedPolicy.isRecordEnabled(), p25Identity,
+            observedWorkingId, ResolvedRadioIdentity.from(destination));
     }
 
     public static SourceDecision captureSource(AliasList aliasList, Identifier<?> source)
@@ -239,7 +308,8 @@ public record AudioCallRecordingMetadata(String systemName, String siteName,
         }
 
         return new SourceDecision(protocol(source),
-            source.getValue() != null ? source.getValue().toString() : null, aliasName, aliasDescription, aliasGroup);
+            source.getValue() != null ? source.getValue().toString() : null, aliasName, aliasDescription, aliasGroup,
+            P25SubscriberIdentity.from(source), p25ObservedWorkingId(source), ResolvedRadioIdentity.from(source));
     }
 
     private static AliasID matchingTalkgroupAliasId(Alias alias, TalkgroupIdentifier destination)
@@ -266,15 +336,26 @@ public record AudioCallRecordingMetadata(String systemName, String siteName,
     private static AliasID matchingRadioAliasId(Alias alias, RadioIdentifier destination)
     {
         AliasID aliasID = alias != null ? alias.getMatchIdentifier() : null;
+        P25SubscriberIdentity canonical = P25SubscriberIdentity.from(destination);
+        if(aliasID instanceof P25Subscriber matcher && canonical != null && matcher.identity().equals(canonical))
+        {
+            return matcher;
+        }
+        Integer localId = destination instanceof FullyQualifiedRadioIdentifier fullyQualified && canonical != null ?
+            fullyQualified.getWorkingAddress() : destination.getValue();
+        if(localId == null)
+        {
+            return null;
+        }
         if(aliasID instanceof Radio matcher &&
             protocolsMatch(matcher.getProtocol(), destination.getProtocol()) &&
-            matcher.getValue() == destination.getValue())
+            matcher.getValue() == localId)
         {
             return matcher;
         }
         if(aliasID instanceof RadioRange matcher &&
             protocolsMatch(matcher.getProtocol(), destination.getProtocol()) &&
-            matcher.contains(destination.getValue()))
+            matcher.contains(localId))
         {
             return matcher;
         }
@@ -308,6 +389,10 @@ public record AudioCallRecordingMetadata(String systemName, String siteName,
         else if(matcher instanceof Radio radio)
         {
             return "exact:" + radio.getProtocol() + ':' + radio.getValue();
+        }
+        else if(matcher instanceof P25Subscriber subscriber)
+        {
+            return "canonical:APCO25:" + subscriber.identity().display();
         }
 
         return matcher.getType() + ":" + matcher;
@@ -378,6 +463,12 @@ public record AudioCallRecordingMetadata(String systemName, String siteName,
         return source != null && source.getValue() != null ? source.getValue().toString() : null;
     }
 
+    private static Integer p25ObservedWorkingId(Identifier<?> source)
+    {
+        ResolvedRadioIdentity identity = ResolvedRadioIdentity.from(source);
+        return identity != null && identity.subscriber() != null ? identity.observedWorkingId() : null;
+    }
+
     /**
      * Decoder identifiers can legitimately describe P25 broadcast, everyone and infrastructure addresses that are
      * not subscriber-directory identities. Metadata capture must remain non-throwing for those observations.
@@ -424,20 +515,22 @@ public record AudioCallRecordingMetadata(String systemName, String siteName,
 
     public record DestinationDecision(String protocol, String value, String receivedIdentity, String aliasName,
                                       String aliasDescription, String aliasGroup, String matcherIdentity,
-                                      boolean recordEnabled)
+                                      boolean recordEnabled, P25SubscriberIdentity p25Identity,
+                                      Integer observedWorkingId, ResolvedRadioIdentity radioIdentity)
     {
         static DestinationDecision empty()
         {
-            return new DestinationDecision(null, null, null, null, null, null, null, false);
+            return new DestinationDecision(null, null, null, null, null, null, null, false, null, null, null);
         }
     }
 
     public record SourceDecision(String protocol, String value, String aliasName, String aliasDescription,
-                                 String aliasGroup)
+                                 String aliasGroup, P25SubscriberIdentity p25Identity,
+                                 Integer observedWorkingId, ResolvedRadioIdentity radioIdentity)
     {
         static SourceDecision empty()
         {
-            return new SourceDecision(null, null, null, null, null);
+            return new SourceDecision(null, null, null, null, null, null, null, null);
         }
     }
 }

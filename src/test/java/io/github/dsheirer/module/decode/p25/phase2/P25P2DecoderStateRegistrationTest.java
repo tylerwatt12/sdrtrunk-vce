@@ -13,6 +13,7 @@ package io.github.dsheirer.module.decode.p25.phase2;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
@@ -25,6 +26,7 @@ import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
+import io.github.dsheirer.module.decode.p25.P25WuidAssignmentRegistry;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.phase2.enumeration.DataUnitID;
@@ -73,7 +75,9 @@ class P25P2DecoderStateRegistrationTest
             new P25NetworkConfigurationSnapshot.Network(0xBEE00, 0x3A9, 0x3A1, null),
             new P25NetworkConfigurationSnapshot.CurrentSite(0x3A9, 0x3A1, 1, 1, null, true),
             List.of(), List.of(), List.of(), List.of(), List.of()), 100L);
-        P25P2DecoderState state = new P25P2DecoderState(channel, 0, new P25TrafficChannelManager(channel),
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(channel);
+        manager.processNetworkConfigurationIdentity(stabilizer.getStableSiteIdentity());
+        P25P2DecoderState state = new P25P2DecoderState(channel, 0, manager,
             new PatchGroupManager(), stabilizer, new SiteMetadataPublicationRateLimiter(1_000));
         List<IDecodeEvent> events = new CopyOnWriteArrayList<>();
         state.addDecodeEventListener(events::add);
@@ -87,6 +91,15 @@ class P25P2DecoderStateRegistrationTest
         assertEquals(0xBEE00, radio.getWacn());
         assertEquals(0x954, radio.getSystem());
         assertEquals(831_102, radio.getRadio());
+        P25WuidAssignmentRegistry.AssignmentObservation observation = event.getAssignmentObservation();
+        assertNotNull(observation);
+        assertEquals(0xBEE00, observation.servingWacn());
+        assertEquals(0x3A9, observation.servingSystem());
+        assertEquals(0xFFFD26, observation.workingId());
+        assertEquals(0xBEE00, observation.subscriber().homeWacn());
+        assertEquals(0x954, observation.subscriber().homeSystemId());
+        assertEquals(831_102, observation.subscriber().subscriberId());
+        assertEquals(P25WuidAssignmentRegistry.Evidence.REGISTRATION, observation.evidence());
     }
 
     @Test
@@ -129,6 +142,7 @@ class P25P2DecoderStateRegistrationTest
         assertEquals(outcome, event.getOutcome());
         assertEquals(RADIO_ID, event.getRadioId());
         assertNull(event.getTalkgroupId());
+        assertNull(event.getAssignmentObservation());
         assertEquals(timestamp, event.getTimeStart());
     }
 
@@ -159,6 +173,12 @@ class P25P2DecoderStateRegistrationTest
         public Identifier getTargetAddress()
         {
             return mRadio;
+        }
+
+        @Override
+        public int getSourceAddress()
+        {
+            return RADIO_ID;
         }
 
         @Override

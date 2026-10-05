@@ -72,7 +72,8 @@ final class RadioResolveTestFixtures
         long end = start + duration;
         Identifier<?> destination = APCO25FullyQualifiedTalkgroupIdentifier.createTo(4_400, 0xABCDE, 0x321,
             12_345);
-        Identifier<?> source = APCO25FullyQualifiedRadioIdentifier.createFrom(700_001, WACN, SYSTEM, 900_001);
+        Identifier<?> source = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
+            700_001, WACN, SYSTEM, 900_001);
         List<Identifier> identifierList = new ArrayList<>();
         identifierList.add(destination);
         identifierList.add(source);
@@ -138,8 +139,8 @@ final class RadioResolveTestFixtures
         boolean p25 = decoder == DecoderType.P25_CONVENTIONAL;
         Identifier<?> destination = p25 ? APCO25FullyQualifiedTalkgroupIdentifier.createTo(4_400, 0xABCDE,
             0x321, 12_345) : null;
-        Identifier<?> source = p25 ? APCO25FullyQualifiedRadioIdentifier.createFrom(700_001, WACN, SYSTEM,
-            900_001) : null;
+        Identifier<?> source = p25 ? APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
+            700_001, WACN, SYSTEM, 900_001) : null;
         List<Identifier> identifierList = new ArrayList<>();
 
         if(destination != null)

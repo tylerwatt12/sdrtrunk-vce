@@ -16,6 +16,7 @@ import io.github.dsheirer.alias.id.dcs.Dcs;
 import io.github.dsheirer.alias.id.esn.Esn;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioRange;
+import io.github.dsheirer.alias.id.radio.P25Subscriber;
 import io.github.dsheirer.alias.id.status.UnitStatusID;
 import io.github.dsheirer.alias.id.status.UserStatusID;
 import io.github.dsheirer.alias.id.talkgroup.P25FullyQualifiedTalkgroup;
@@ -60,6 +61,13 @@ public final class AliasFactory
                 P25FullyQualifiedTalkgroup original = (P25FullyQualifiedTalkgroup)id;
                 P25FullyQualifiedTalkgroup copy =
                     new P25FullyQualifiedTalkgroup(original.getWacn(), original.getSystem(), original.getValue());
+                copy.setOverlap(original.overlapProperty().get());
+                yield copy;
+            }
+            case P25_SUBSCRIBER_IDENTITY -> {
+                P25Subscriber original = (P25Subscriber)id;
+                P25Subscriber copy = new P25Subscriber(original.getHomeWacn(), original.getHomeSystemId(),
+                    original.getSubscriberId());
                 copy.setOverlap(original.overlapProperty().get());
                 yield copy;
             }

@@ -117,7 +117,8 @@ public class MotorolaGroupRegroupVoiceChannelUserExtended extends MacStructureVe
             int wacn = getInt(SOURCE_SUID_WACN);
             int system = getInt(SOURCE_SUID_SYSTEM);
             int id = getInt(SOURCE_SUID_ID);
-            mSource = APCO25FullyQualifiedRadioIdentifier.createFrom(localAddress, wacn, system, id);
+            mSource = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(localAddress, wacn, system,
+                id);
         }
 
         return mSource;

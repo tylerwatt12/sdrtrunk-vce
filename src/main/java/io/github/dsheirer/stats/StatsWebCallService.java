@@ -25,6 +25,8 @@ import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
+import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.scanlist.ScanListModel;
 import io.github.dsheirer.util.concurrent.BoundedMpscPairQueue;
@@ -614,6 +616,17 @@ final class StatsWebCallService implements AutoCloseable
             callLegSource.decoderType().name() :
             identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.DECODER_TYPE, Role.ANY));
         putText(value, "source_id", recordingMetadata != null ? recordingMetadata.sourceValue() : value(source));
+        if(recordingMetadata != null && recordingMetadata.sourceP25Identity() != null)
+        {
+            value.put("source_canonical_identity", Map.of(
+                "wacn", recordingMetadata.sourceP25Identity().homeWacn(),
+                "system_id", recordingMetadata.sourceP25Identity().homeSystemId(),
+                "subscriber_id", recordingMetadata.sourceP25Identity().subscriberId()));
+            if(validWorkingSubscriber(recordingMetadata.sourceObservedWorkingId()))
+            {
+                value.put("source_observed_working_id", recordingMetadata.sourceObservedWorkingId());
+            }
+        }
         putText(value, "source_alias", recordingMetadata != null ? recordingMetadata.sourceAlias() : null);
         putText(value, "source_description", recordingMetadata != null ? recordingMetadata.sourceDescription() : null,
             MAXIMUM_ALIAS_METADATA_TEXT_CHARACTERS);
@@ -623,6 +636,17 @@ final class StatsWebCallService implements AutoCloseable
         putText(value, "talker_alias", identifierValue(identifiers, IdentifierClass.USER, Form.TALKER_ALIAS,
             Role.FROM));
         putText(value, "target_id", recordingMetadata != null ? recordingMetadata.destinationValue() : value(target));
+        if(recordingMetadata != null && recordingMetadata.destinationP25Identity() != null)
+        {
+            value.put("target_canonical_identity", Map.of(
+                "wacn", recordingMetadata.destinationP25Identity().homeWacn(),
+                "system_id", recordingMetadata.destinationP25Identity().homeSystemId(),
+                "subscriber_id", recordingMetadata.destinationP25Identity().subscriberId()));
+            if(validWorkingSubscriber(recordingMetadata.destinationObservedWorkingId()))
+            {
+                value.put("target_observed_working_id", recordingMetadata.destinationObservedWorkingId());
+            }
+        }
         putText(value, "target_alias", recordingMetadata != null ? recordingMetadata.destinationAlias() : null);
         putText(value, "target_description",
             recordingMetadata != null ? recordingMetadata.destinationDescription() : null,
@@ -711,6 +735,11 @@ final class StatsWebCallService implements AutoCloseable
         return Map.copyOf(value);
     }
 
+    private static boolean validWorkingSubscriber(Integer value)
+    {
+        return value != null && value >= 1 && value <= RadioSystemIdentityKey.MAX_P25_WORKING_UNIT_ID;
+    }
+
     private static WebEntityRef navigationReference(WebEntityNavigationCatalog.Channel channel,
                                                     Identifier<?> identifier)
     {
@@ -785,10 +814,17 @@ final class StatsWebCallService implements AutoCloseable
         }
 
         String alias = recordingMetadata != null ? recordingMetadata.destinationAlias() : null;
+        String canonicalRadio = playbackTarget.kind() == CallPlaybackTarget.Kind.RADIO ?
+            canonicalRadioLabel(recordingMetadata, target) : null;
 
         if(alias != null && !alias.isBlank())
         {
-            return alias.strip();
+            return canonicalRadio != null ? alias.strip() + " · " + canonicalRadio : alias.strip();
+        }
+
+        if(canonicalRadio != null)
+        {
+            return canonicalRadio;
         }
 
         String identifier = recordingMetadata != null ? recordingMetadata.destinationValue() : null;
@@ -806,6 +842,25 @@ final class StatsWebCallService implements AutoCloseable
             default -> "Target";
         };
         return identifier != null && !identifier.isBlank() ? kind + ' ' + identifier : kind;
+    }
+
+    private static String canonicalRadioLabel(AudioCallRecordingMetadata recordingMetadata, Identifier<?> target)
+    {
+        P25SubscriberIdentity identity = recordingMetadata != null ?
+            recordingMetadata.destinationP25Identity() : null;
+        Integer workingId = recordingMetadata != null ? recordingMetadata.destinationObservedWorkingId() : null;
+        if(identity == null)
+        {
+            identity = P25SubscriberIdentity.from(target);
+            workingId = target instanceof FullyQualifiedRadioIdentifier radio ? radio.getWorkingAddress() : null;
+        }
+        if(identity == null)
+        {
+            return null;
+        }
+
+        String label = identity.display();
+        return validWorkingSubscriber(workingId) ? label + " (Working ID " + workingId + ')' : label;
     }
 
     private static Object identifierValue(IdentifierCollection identifiers, IdentifierClass identifierClass,
