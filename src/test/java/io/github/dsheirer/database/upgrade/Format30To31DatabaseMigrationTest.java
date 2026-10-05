@@ -48,7 +48,7 @@ class Format30To31DatabaseMigrationTest
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);
 
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
-            assertEquals(2, report.steps().size());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 30, report.steps().size());
             assertEquals("format-30-to-31", report.steps().getFirst().id());
             assertEquals(before.size(), report.steps().getFirst().effects().getFirst().affectedRows());
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());

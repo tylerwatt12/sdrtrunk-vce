@@ -128,6 +128,20 @@ public class ReceiverActivitySchema
     {
         create(connection, MAXIMUM_OBSERVED_SITE, true, true, EVENT_TYPES, true);
         createEncryptedActivityFilterIndexes(connection);
+        createSourceWorkingEvidenceIndex(connection);
+    }
+
+    /** Indexes only qualified source Working-ID evidence without expanding the general event indexes. */
+    public static void createSourceWorkingEvidenceIndex(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_source_working_evidence
+                ON receiver_activity_event(source_identity_summary_id, channel_id, source_observed_working_id)
+                WHERE source_identity_summary_id IS NOT NULL AND source_observed_working_id > 0
+                """);
+        }
     }
 
     /** Creates the frozen format-17 activity schema for the historical format-14-to-15 migration. */
@@ -270,6 +284,8 @@ public class ReceiverActivitySchema
             List.of("observed_at_ms", "id"));
         validateIndexColumns(connection, "idx_receiver_activity_event_system_time",
             List.of("radio_system_id", "observed_at_ms", "id"));
+        validateIndexColumns(connection, "idx_receiver_activity_event_source_working_evidence",
+            List.of("source_identity_summary_id", "channel_id", "source_observed_working_id"));
         validateIndexColumns(connection, "idx_receiver_activity_event_system_action_time",
             List.of("radio_system_id", "action_code", "observed_at_ms", "id"));
         validateIndexColumns(connection, "idx_receiver_activity_event_channel_action_time",
@@ -3006,6 +3022,7 @@ public class ReceiverActivitySchema
         "idx_receiver_activity_event_channel_time",
         "idx_receiver_activity_event_target_time",
         "idx_receiver_activity_event_source_time",
+        "idx_receiver_activity_event_source_working_evidence",
         "idx_receiver_activity_event_frequency_time",
         "idx_receiver_activity_event_encryption",
         "idx_receiver_activity_event_system_action_time",

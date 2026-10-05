@@ -961,6 +961,129 @@ class StatsAliasResolverTest
     }
 
     @Test
+    void p25CanonicalSourceFallbackSkipsRetainedEventsWithoutWorkingIdEvidence() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("p25-source-working-evidence-volume.sqlite");
+        createDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            clearFactoryAliasLists(statement);
+            statement.executeUpdate("INSERT INTO alias_list(id, name, family) VALUES (1, 'County', 'P25')");
+            statement.executeUpdate("""
+                INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, value)
+                VALUES (1, 1, 'Local Address', 'RADIO_ID', 'APCO25', 501),
+                       (2, 1, 'Working Unit', 'RADIO_ID', 'APCO25', 601),
+                       (3, 1, 'Local Unit', 'RADIO_ID', 'APCO25', 700)
+                """);
+            insertP25Channel(statement, 77, P25_CONFIGURATION_ID, P25_RADIORESOLVE_ID, 1);
+            statement.executeUpdate("""
+                INSERT INTO p25_subscriber_identity(id, home_wacn, home_system_id, subscriber_id)
+                VALUES (91, 0xABCDE, 0x123, 9000001), (92, 0xABCDE, 0x123, 9000002)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary(
+                    id, radio_system_id, identity_kind_code, home_wacn, home_system_id,
+                    identity_id, p25_subscriber_identity_id, first_seen_ms, last_seen_ms
+                ) VALUES (7001, 77, 2, 0xABCDE, 0x123, 9000001, 91, 1, 2),
+                         (7002, 77, 2, 0xBEE00, 0x348, 800, NULL, 1, 2),
+                         (7003, 77, 2, 0xABCDE, 0x123, 9000002, 92, 1, 2)
+                """);
+            statement.executeUpdate("""
+                WITH RECURSIVE first(value) AS (
+                    SELECT 1 UNION ALL SELECT value + 1 FROM first WHERE value < 250
+                ), second(value) AS (
+                    SELECT 1 UNION ALL SELECT value + 1 FROM second WHERE value < 400
+                )
+                INSERT INTO receiver_activity_event(
+                    channel_id, radio_system_id, observed_at_ms, action_code,
+                    source_identity_summary_id, source_observed_local_id
+                )
+                SELECT 77, 77, 1000 + first.value * 400 + second.value, 12, 7001, 501
+                FROM first CROSS JOIN second
+                """);
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_event(
+                    channel_id, radio_system_id, observed_at_ms, action_code,
+                    source_identity_summary_id, source_observed_local_id, source_observed_working_id
+                ) VALUES (77, 77, 200001, 12, 7001, 501, 601),
+                         (77, 77, 200002, 12, 7001, 0, 601),
+                         (77, 77, 200003, 12, 7002, 700, 601),
+                         (77, 77, 200004, 12, 7002, 0, 601),
+                         (77, 77, 200005, 12, 7002, NULL, 601),
+                         (77, 77, 200006, 12, 7003, 601, NULL)
+                """);
+            statement.execute("ANALYZE");
+
+            String sql = StatsAliasResolver.p25LocalEvidenceSql(3);
+            String plan = queryPlan(connection, sql, 7001L, 7002L, 7003L,
+                StatsAliasResolver.MAX_RULE_LOOKUP_PAIRS + 1);
+            assertTrue(plan.contains("USING COVERING INDEX idx_receiver_activity_event_source_working_evidence " +
+                "(source_identity_summary_id=?)"), plan);
+            assertTrue(plan.contains("idx_receiver_activity_event_source_time"), plan);
+            assertTrue(plan.contains("idx_receiver_activity_event_target_time"), plan);
+            assertFalse(plan.contains("SCAN event"), plan);
+
+            List<List<Long>> evidence = new ArrayList<>();
+            try(PreparedStatement query = connection.prepareStatement(sql))
+            {
+                query.setLong(1, 7001);
+                query.setLong(2, 7002);
+                query.setLong(3, 7003);
+                query.setInt(4, StatsAliasResolver.MAX_RULE_LOOKUP_PAIRS + 1);
+                try(ResultSet resultSet = query.executeQuery())
+                {
+                    while(resultSet.next())
+                    {
+                        evidence.add(List.of(resultSet.getLong("identity_summary_id"),
+                            resultSet.getLong("alias_list_id"), resultSet.getLong("observed_local_id")));
+                    }
+                }
+            }
+            assertEquals(List.of(List.of(7001L, 1L, 601L), List.of(7002L, 1L, 700L)), evidence,
+                "Canonical evidence uses Working IDs; ordinary evidence uses positive local IDs and deduplicates");
+
+            AtomicInteger progressCalls = new AtomicInteger();
+            ProgressHandler.setHandler(connection, 1_000, new ProgressHandler()
+            {
+                @Override
+                protected int progress()
+                {
+                    progressCalls.incrementAndGet();
+                    return 0;
+                }
+            });
+            Map<String,Object> canonical = canonicalEvidenceRow(7001, 2, 9_000_001);
+            canonical.put("p25_subscriber_identity_id", 91L);
+            Map<String,Object> ordinary = canonicalEvidenceRow(7002, 2, 800);
+            Map<String,Object> withoutWorkingId = canonicalEvidenceRow(7003, 2, 9_000_002);
+            withoutWorkingId.put("p25_subscriber_identity_id", 92L);
+            try
+            {
+                new StatsAliasResolver().enrichCanonicalSystemRadios(connection,
+                    rows(canonical, ordinary, withoutWorkingId), "identity_summary_id", "identity_id", "alias_");
+            }
+            finally
+            {
+                ProgressHandler.clearHandler(connection);
+            }
+            assertEquals("Working Unit", canonical.get("alias_name"));
+            assertEquals("Local Unit", ordinary.get("alias_name"));
+            assertNull(withoutWorkingId.get("alias_name"),
+                "A canonical identity without Working-ID evidence must not inherit a local-address Alias");
+            assertTrue(progressCalls.get() < 100,
+                "Canonical lookup revisited retained local-only events; progress callbacks=" + progressCalls);
+
+            statement.executeUpdate("DROP INDEX idx_receiver_activity_event_source_working_evidence");
+            new StatsAliasResolver().resolveEvidenceAliasesForMigration(connection, rows(canonical, ordinary));
+            assertEquals(2L, canonical.get("resolved_alias_id"));
+            assertEquals(3L, ordinary.get("resolved_alias_id"),
+                "Earlier migration consensus must retain the existing indexes and identical Alias attribution");
+        }
+    }
+
+    @Test
     @SuppressWarnings("unchecked")
     void aliasCatalogUsesCurrentChannelAndRadioSystemKeys() throws Exception
     {

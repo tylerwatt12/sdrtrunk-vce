@@ -142,7 +142,7 @@ class Format31To32DatabaseMigrationTest
             long identityFacts = scalar(statement, "SELECT count(*) FROM trunked_logical_call_identity_bucket");
             DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspectForMigration(connection));
-            assertEquals("format-31-to-32", preflight.steps().getLast().id());
+            assertEquals("format-32-to-33", preflight.steps().getLast().id());
             assertEquals(aliases, new Format31To32DatabaseMigration().validateSource(connection)
                 .getFirst().affectedRows());
 
@@ -163,12 +163,12 @@ class Format31To32DatabaseMigrationTest
                 connection.setAutoCommit(true);
             }
 
-            assertEquals(32, report.target().version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
             assertEquals(independentDefaults, scalar(statement, "SELECT count(*) FROM alias_list " +
                 "WHERE family='P25' AND new_alias_record_enabled=1 AND unmatched_talkgroup_record_enabled=0"));
             assertEquals(newAliasStreams, scalar(statement, "SELECT count(*) FROM alias_list_new_alias_stream"));
             assertEquals(newAliasScanLists, scalar(statement, "SELECT count(*) FROM alias_list_new_alias_scan_list_membership"));
-            assertEquals(activityIndexes, scalar(statement, "SELECT count(*) FROM sqlite_schema WHERE type='index' " +
+            assertEquals(activityIndexes + 1, scalar(statement, "SELECT count(*) FROM sqlite_schema WHERE type='index' " +
                 "AND name LIKE 'idx_receiver_activity_event_%'"));
             assertEquals(preferencesBefore, text(statement, "SELECT group_concat(preferences_json) FROM web_user ORDER BY id"));
             assertEquals(aliases, scalar(statement, "SELECT count(*) FROM alias"));
@@ -248,7 +248,7 @@ class Format31To32DatabaseMigrationTest
                 SqliteSchemaValidator.fingerprint(connection));
             SdrTrunkDatabaseSchema.validate(connection);
             ReceiverActivitySchema.validate(connection);
-            assertTrue(report.steps().getLast().effects().stream()
+            assertTrue(report.steps().getFirst().effects().stream()
                 .anyMatch(effect -> effect.kind() == DatabaseMigrationEffect.Kind.DEFAULT));
         }
     }

@@ -62,7 +62,7 @@ class Format23To24DatabaseMigrationTest
 
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 23, report.steps().size());
             assertEquals("format-23-to-24", report.steps().getFirst().id());
-            assertEquals("format-31-to-32", report.steps().getLast().id());
+            assertEquals("format-32-to-33", report.steps().getLast().id());
             assertEquals(activityBefore.size(), report.steps().getFirst().effects().getFirst().affectedRows());
             assertEquals(rowsBefore, tableRowCounts(statement));
             assertEquals(activityBefore, activityRows(statement));
@@ -70,6 +70,7 @@ class Format23To24DatabaseMigrationTest
             Set<String> addedObjects = schemaObjects(statement);
             addedObjects.removeAll(objectsBefore);
             Set<String> expectedObjects = new TreeSet<>(FILTER_INDEXES);
+            expectedObjects.add("idx_receiver_activity_event_source_working_evidence");
             expectedObjects.addAll(Set.of("p25_subscriber_identity", "alias_p25_subscriber_identity",
                 "p25_wuid_assignment_observation_summary", "idx_alias_p25_subscriber_identity",
                 "idx_radio_system_identity_p25_subscriber", "idx_p25_wuid_assignment_observation_system_time",

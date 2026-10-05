@@ -1277,16 +1277,7 @@ class StatsAliasResolver
                     SELECT identity_summary_id, channel_id, observed_local_id
                     FROM compact_evidence
                     UNION
-                    SELECT event.source_identity_summary_id, event.channel_id,
-                        CASE WHEN summary.p25_subscriber_identity_id IS NOT NULL
-                             THEN event.source_observed_working_id ELSE event.source_observed_local_id END
-                    FROM detail_fallback
-                    CROSS JOIN receiver_activity_event event
-                        INDEXED BY idx_receiver_activity_event_source_time
-                      ON event.source_identity_summary_id = detail_fallback.identity_summary_id
-                    JOIN radio_system_identity_summary summary ON summary.id = event.source_identity_summary_id
-                    WHERE CASE WHEN summary.p25_subscriber_identity_id IS NOT NULL
-                               THEN event.source_observed_working_id ELSE event.source_observed_local_id END > 0
+                    %s
                     UNION
                     SELECT event.target_identity_summary_id, event.channel_id,
                         CASE WHEN event.target_kind_code = 2
@@ -1312,8 +1303,46 @@ class StatsAliasResolver
                   AND local_evidence.observed_local_id > 0
                 ORDER BY local_evidence.identity_summary_id, config.alias_list_id,
                     local_evidence.observed_local_id
-                """.formatted(valuesPlaceholders(requestedCount));
+                """.formatted(valuesPlaceholders(requestedCount), p25SourceEvidenceSql(bounded));
         return bounded ? sql + " LIMIT ?" : sql;
+    }
+
+    /** Earlier migration steps resolve consensus before the current Working-ID evidence index exists. */
+    private static String p25SourceEvidenceSql(boolean currentIndex)
+    {
+        if(!currentIndex)
+        {
+            return """
+                SELECT event.source_identity_summary_id, event.channel_id,
+                    CASE WHEN summary.p25_subscriber_identity_id IS NOT NULL
+                         THEN event.source_observed_working_id ELSE event.source_observed_local_id END
+                FROM detail_fallback
+                CROSS JOIN receiver_activity_event event
+                    INDEXED BY idx_receiver_activity_event_source_time
+                  ON event.source_identity_summary_id = detail_fallback.identity_summary_id
+                JOIN radio_system_identity_summary summary ON summary.id = event.source_identity_summary_id
+                WHERE CASE WHEN summary.p25_subscriber_identity_id IS NOT NULL
+                           THEN event.source_observed_working_id ELSE event.source_observed_local_id END > 0
+                """;
+        }
+
+        return """
+            SELECT event.source_identity_summary_id, event.channel_id, event.source_observed_local_id
+            FROM detail_fallback
+            JOIN radio_system_identity_summary summary ON summary.id = detail_fallback.identity_summary_id
+            CROSS JOIN receiver_activity_event event
+                INDEXED BY idx_receiver_activity_event_source_time
+              ON event.source_identity_summary_id = detail_fallback.identity_summary_id
+            WHERE summary.p25_subscriber_identity_id IS NULL AND event.source_observed_local_id > 0
+            UNION
+            SELECT event.source_identity_summary_id, event.channel_id, event.source_observed_working_id
+            FROM detail_fallback
+            JOIN radio_system_identity_summary summary ON summary.id = detail_fallback.identity_summary_id
+            CROSS JOIN receiver_activity_event event
+                INDEXED BY idx_receiver_activity_event_source_working_evidence
+              ON event.source_identity_summary_id = detail_fallback.identity_summary_id
+            WHERE summary.p25_subscriber_identity_id IS NOT NULL AND event.source_observed_working_id > 0
+            """;
     }
 
     private Map<String,Set<Long>> loadAliasLists(Connection connection, Set<String> systemKeys)

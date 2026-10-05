@@ -241,11 +241,11 @@ class DatabaseFormatCatalogTest
 
             DatabaseMigrationChain.PreflightReport plan =
                 DatabaseMigrationChain.validateSource(connection, migration);
-            assertEquals(2, plan.steps().size());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 30, plan.steps().size());
             assertEquals("format-30-to-31", plan.steps().getFirst().id());
 
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
-            assertEquals(2, report.steps().size());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 30, report.steps().size());
             assertEquals("format-30-to-31", report.steps().getFirst().id());
             assertTrue(report.target().markerPresent());
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
@@ -254,9 +254,28 @@ class DatabaseFormatCatalogTest
     }
 
     @Test
-    void exactMarkerlessFormat32IsRecognizedPlannedAndSafelyAdopted() throws Exception
+    void exactMarkerlessFormat32RequiresSourceWorkingEvidenceMigration() throws Exception
     {
         Path database = Format32TestDatabase.create(mTemporaryFolder.resolve("markerless-format-32.sqlite"));
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DELETE FROM database_metadata WHERE key='database_format_version'");
+            DatabaseFormatCatalog.DetectedFormat source = DatabaseFormatCatalog.inspect(connection);
+            assertEquals(32, source.version());
+            assertFalse(source.markerPresent());
+            assertEquals("format-32-to-33", DatabaseMigrationChain.validateSource(connection, source)
+                .steps().getFirst().id());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
+                DatabaseMigrationChain.migrate(connection).target().version());
+            assertEquals(DatabaseFormatCatalog.current().fingerprint(),
+                SqliteSchemaValidator.fingerprint(connection));
+        }
+    }
+
+    @Test
+    void exactMarkerlessFormat33IsRecognizedPlannedAndSafelyAdopted() throws Exception
+    {
+        Path database = Format33TestDatabase.create(mTemporaryFolder.resolve("markerless-format-33.sqlite"));
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {

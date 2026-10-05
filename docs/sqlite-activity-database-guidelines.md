@@ -134,6 +134,35 @@ affiliation can refresh an exact mapping, and deregistration clears it. Decoder 
 or statistics-queue loss can only lose history. A new app process deliberately starts with no Working-ID mappings and
 relearns them from new signaling.
 
+### Historical P25 alias evidence
+
+Talkgroup and radio pages first use existing compact call, affiliation, presence, and identity-member evidence to
+find the saved channel's Alias List and observed address. Some retained identities have no usable compact evidence,
+so their labels need a detailed-event fallback. Format 33 adds only
+`idx_receiver_activity_event_source_working_evidence(source_identity_summary_id, channel_id, source_observed_working_id)`
+with the predicate `source_identity_summary_id IS NOT NULL AND source_observed_working_id > 0`.
+
+The source fallback splits ordinary local-address identities from canonical subscribers before seeking events.
+The canonical branch uses `SEARCH event USING COVERING INDEX idx_receiver_activity_event_source_working_evidence
+(source_identity_summary_id=?)`. Its index contains every required event value and excludes historical observations
+whose missing working address makes them unusable. The ordinary branch retains the source/time index; target
+evidence and compact summaries remain unchanged. This does not add a summary, retain extra events, copy text, or
+infer a working address from a local radio number.
+
+There is one index entry per retained detailed event with a positive source working address. New entries per hour
+equal qualifying accepted detailed events, and worst-case cardinality equals all retained source-linked detailed
+events. At the maximum 365-day retention, an observed rate of R qualifying events per hour projects 8,760 × R entries.
+Detailed history remains optional. Retention, explicit statistics clears, event deletion, and attribution updates
+maintain the index through the existing background writer and SQLite transactions.
+
+An isolated 293,531-event projection contained 315 qualifying source events; the new index occupied 12 KiB, about
+39 bytes per qualifying entry including page overhead. At 1,000 qualifying events per hour over 365 days, that sample
+ratio projects approximately 326 MiB. Integer widths, page occupancy, and WAL costs vary, so neither the sample's
+sparsity nor the estimate is a storage cap. The same 100-identity evidence query returned identical aliases and took
+approximately 10 ms rather than 28 ms with the index and split. These are warm projection timings, not production
+page timings. Widening both existing source/target indexes achieved similar query time but added roughly 6 MiB in
+the projection; a second working-evidence target index had no measured benefit and is omitted.
+
 ### Receiver status alert history
 
 The `receiver_health_incident` table retains the lifecycle of recent Receiver status alerts so a debug report that
