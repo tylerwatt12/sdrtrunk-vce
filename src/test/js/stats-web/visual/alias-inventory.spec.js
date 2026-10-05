@@ -13,6 +13,8 @@ test.beforeAll(async () => {
 
 test('Alias inventory waits for a supported list selection', async ({ page }) => {
   const coverageRequests = [];
+  let releaseUnassignedCount;
+  const unassignedCountReady = new Promise((resolve) => { releaseUnassignedCount = resolve; });
   const pageOf = (rows) => ({ rows, total_count: rows.length, limit: 100, offset: 0,
     has_more: false, next_offset: null });
   const lists = pageOf([
@@ -37,6 +39,7 @@ test('Alias inventory waits for a supported list selection', async ({ page }) =>
   await page.route('**/api/v1/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname;
     if (pathname.startsWith('/api/v1/identities/lists')) coverageRequests.push(pathname);
+    if (pathname === '/api/v1/identities/lists/2/unassigned') await unassignedCountReady;
     const data = pathname === '/api/v1/auth/session' ? {
       configured: true, authenticated: true, username: 'operator', tier: 'admin', primary: true,
       csrf_token: 'test-token', capabilities: { dashboard: true, radio: true, 'admin-aliases': true }
@@ -83,6 +86,9 @@ test('Alias inventory waits for a supported list selection', async ({ page }) =>
   await expect(inventory.getByRole('heading', { name: 'Alias inventory' })).toBeVisible();
   await expect(inventory.getByRole('button', { name: 'Other', exact: true })).toBeVisible();
   await expect(inventory.getByText('Fire Dispatch', { exact: true })).toBeVisible();
+  await expect(inventory.locator('.alias-coverage-summary')).toContainText('Loading…');
+  releaseUnassignedCount();
+  await expect(inventory.locator('.alias-coverage-summary')).not.toContainText('Loading…');
   const toneRow = inventory.locator('.alias-coverage-table-section tbody tr')
     .filter({ hasText: 'Dispatch Tone' });
   await expect(toneRow).toContainText('Tone');

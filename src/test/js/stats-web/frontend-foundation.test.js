@@ -292,6 +292,146 @@ async function checkGroupIdentityRadiosLoading(browsingWorkflows, tableLayouts) 
   assert.equal(staleHost.children[0].textContent, 'Loading radios…');
 }
 
+async function checkAliasCoverageIndependentCount() {
+  function node(tag, className = '', text = '') {
+    const classes = new Set(className.split(/\s+/).filter(Boolean));
+    const element = {
+      tagName: tag.toUpperCase(), children: [], dataset: {}, attributes: {}, isConnected: true, textContent: text,
+      classList: { add: (...values) => values.forEach((value) => classes.add(value)),
+        contains: (value) => classes.has(value),
+        toggle: (value, enabled) => enabled ? classes.add(value) : classes.delete(value) },
+      setAttribute(name, value) { this.attributes[name] = value; },
+      removeAttribute(name) { delete this.attributes[name]; },
+      append(...values) { values.forEach((value) => {
+        if (value && typeof value === 'object') value.parentNode = this;
+        this.children.push(value);
+      }); },
+      prepend(...values) { this.children.unshift(...values); },
+      replaceChildren(...values) { this.children = []; this.append(...values); },
+      replaceWith(value) {
+        const parent = this.parentNode;
+        parent.children.splice(parent.children.indexOf(this), 1, value);
+        value.parentNode = parent;
+      },
+      remove() { this.parentNode?.children.splice(this.parentNode.children.indexOf(this), 1); },
+      addEventListener(name, listener) { this[name] = listener; },
+      focus() {}, scrollIntoView() {}, getBoundingClientRect: () => ({ top: 0 }),
+      contains(value) { return this.children.includes(value) || this.children.some((child) => child?.contains?.(value)); },
+      querySelector(selector) {
+        const className = selector.match(/\.([\w-]+)/)?.[1];
+        return this.children.find((child) => child?.classList?.contains(className)) ||
+          this.children.map((child) => child?.querySelector?.(selector)).find(Boolean) || null;
+      }
+    };
+    return element;
+  }
+  const content = node('main');
+  const host = node('div');
+  const segments = [];
+  const tables = [];
+  const requests = [];
+  const pendingCounts = [];
+  const pageController = new AbortController();
+  let current = true;
+  const directory = { element: host, host,
+    async load(load, present) { host.replaceChildren(present(await load())); } };
+  const context = {
+    route: new URLSearchParams('view=dashboard&directory_view=coverage&alias_list_id=2'),
+    content, node, URLSearchParams, AbortController,
+    window: { location: { href: 'https://localhost/' }, scrollBy() {} },
+    createAsyncSection: () => directory, renderIsCurrent: () => current,
+    beginPage: (_renderContext, ...children) => { content.replaceChildren(...children); return true; },
+    pageHeader: () => node('header'), radioDirectoryPerspectiveControl: () => node('div'),
+    aliasListFamily: (row) => row.family, aliasListFamilyLabel: () => 'P25', number: String,
+    uiSelect: () => node('select'), uiSelectFrame: (select) => select,
+    uiSegmentedControl: (choices, selected, onChange) => {
+      const control = node('div'); control.onChange = onChange;
+      control.selected = selected; segments.push(control); return control;
+    },
+    aliasCoverageScope: () => node('section'), aliasCoverageSearch: () => node('form'),
+    aliasCoverageAliasesColumns: () => [], aliasCoverageUnassignedColumns: () => [],
+    sectionActionHost: () => node('div', 'alias-coverage-table-actions'),
+    pagedTableContent: (page, _columns, type) => {
+      tables.push({ page, type }); return node('div', 'test-table');
+    },
+    metrics: (entries) => { const summary = node('div'); summary.entries = entries; return summary; },
+    uiStatus: (text) => node('span', '', text), uiActionButton: (text) => node('button', '', text),
+    currentHref: (values) => {
+      const next = new URLSearchParams(context.route);
+      Object.entries(values).forEach(([key, value]) => value === null ? next.delete(key) : next.set(key, value));
+      return `https://localhost/?${next}`;
+    },
+    routeFoundation: { navigate: (_window, target, apply) => apply(new URL(target).searchParams) },
+    api: async () => ({ totals: { configured_alias_count: 2 }, channels: [] }),
+    apiPage: (path, parameters, options) => {
+      if (path === '/api/v1/identities/lists') return Promise.resolve({ rows: [
+        { alias_list_id: 2, family: 'P25', name: 'County', alias_count: 2 }
+      ] });
+      if (path.endsWith('/aliases')) return Promise.resolve({ rows: [{ name: 'Dispatch' }], total_count: 2 });
+      requests.push({ parameters, signal: options.signal, tablesPresented: tables.length });
+      return pendingCounts.shift().promise;
+    }
+  };
+  vm.createContext(context);
+  for (const signature of ['aliasCoverageSummaryCards(totals, unassigned, countFailed = false)',
+    'async loadAliasCoverageModel(parameters, previous = null, signal = null)',
+    'async renderAliasCoverageDirectory(renderContext, embedded = false)']) {
+    const [asyncPrefix, declaration] = signature.startsWith('async ') ? ['async ', signature.slice(6)] : ['', signature];
+    const name = declaration.slice(0, declaration.indexOf('('));
+    vm.runInContext(`${asyncPrefix}function ${declaration} ${functionBinding(appSource, name)}`, context);
+  }
+  const summary = () => host.querySelector('.alias-coverage-summary').entries[3];
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+  const navigateTab = async (value) => {
+    segments.findLast((segment) => segment.attributes['aria-label'] === 'Alias inventory').onChange(value);
+    await flush();
+  };
+  const slowCount = deferred();
+  pendingCounts.push(slowCount);
+  await context.renderAliasCoverageDirectory({ signal: pageController.signal });
+  assert.equal(tables.length, 1, 'Configured aliases appear while their Unassigned count remains pending');
+  assert.equal(requests[0].tablesPresented, 1, 'The independent count starts after Configured presentation');
+  assert.equal(summary()[2], 'Loading…', 'A pending count must not look like zero');
+  slowCount.reject(new Error('Count unavailable'));
+  await flush();
+  assert.equal(tables.length, 1, 'Count failure must preserve the Configured table');
+  assert.equal(summary()[2], 'Unavailable');
+  assert.equal(host.querySelector('.alias-coverage-refresh-error'), null);
+
+  const observations = deferred();
+  pendingCounts.push(observations);
+  await navigateTab('unassigned');
+  assert.equal(requests[1].parameters.limit, 100, 'Selecting Unassigned loads its actual page');
+  observations.resolve({ rows: [{ native_id: 101 }], total_count: 55, limit: 100, offset: 0 });
+  await flush();
+  assert.equal(tables.at(-1).type, 'alias-coverage-unassigned-v1');
+  assert.equal(summary()[1], 55, 'The active Unassigned tab keeps its exact count');
+
+  const staleCount = deferred();
+  pendingCounts.push(staleCount);
+  await navigateTab('configured');
+  assert.equal(summary()[2], 'Loading…');
+  const refreshedObservations = deferred();
+  pendingCounts.push(refreshedObservations);
+  await navigateTab('unassigned');
+  assert.equal(requests[2].signal.aborted, true, 'Tab navigation cancels the previous count');
+  refreshedObservations.resolve({ rows: [], total_count: 56 });
+  await flush();
+  staleCount.resolve({ rows: [], total_count: 999 });
+  await flush();
+  assert.equal(summary()[1], 56, 'A stale Configured count cannot replace the selected Unassigned count');
+
+  const abandonedCount = deferred();
+  pendingCounts.push(abandonedCount);
+  await navigateTab('configured');
+  current = false;
+  pageController.abort();
+  assert.equal(requests[4].signal.aborted, true, 'Leaving the page cancels its independent count');
+  abandonedCount.resolve({ rows: [], total_count: 777 });
+  await flush();
+  assert.equal(summary()[2], 'Loading…', 'An abandoned page must not receive late count presentation');
+}
+
 async function main() {
   const [routes, preferences, preferenceSchema, tableLayouts, tableDefaults, pageTitles, entityRefs, playerModule] =
     await Promise.all([
@@ -936,6 +1076,7 @@ async function main() {
   assert.ok(coverageSource.indexOf('return wrapper;') < coverageSource.indexOf('aliasCoverageSummaryCards(totals'),
     'The unselected view should not render summary cards, channel usage, or the alias table');
   const coverageRequests = [];
+  const coveragePageParameters = [];
   const coverageLists = { rows: [
     { alias_list_id: 1, family: 'NBFM' }, { alias_list_id: 2, family: 'P25' },
     { alias_list_id: 3, family: 'AM' }, { alias_list_id: 4, family: 'DMR' },
@@ -944,8 +1085,9 @@ async function main() {
   const loadAliasCoverageModel = vm.runInNewContext(
     `(async function loadAliasCoverageModel(parameters, previous = null, signal = null) ${
       functionBinding(appSource, 'loadAliasCoverageModel')})`, {
-      apiPage: async (path) => {
+      apiPage: async (path, parameters) => {
         coverageRequests.push(path);
+        coveragePageParameters.push({ path, parameters });
         return path === '/api/v1/identities/lists' ? coverageLists : { rows: [], total_count: 0 };
       },
       api: async (path) => { coverageRequests.push(path); return { totals: {}, channels: [] }; },
@@ -967,8 +1109,18 @@ async function main() {
   const selectedCoverage = await loadAliasCoverageModel(new URLSearchParams('alias_list_id=2'));
   assert.equal(selectedCoverage.selectedListId, 2);
   assert.deepEqual(coverageRequests, ['/api/v1/identities/lists',
-    '/api/v1/identities/lists/2/overview', '/api/v1/identities/lists/2/aliases',
-    '/api/v1/identities/lists/2/unassigned']);
+    '/api/v1/identities/lists/2/overview', '/api/v1/identities/lists/2/aliases']);
+  assert.equal(selectedCoverage.unassigned, null,
+    'Configured aliases must load independently of the Unassigned count');
+  coverageRequests.length = 0;
+  const unassignedCoverage = await loadAliasCoverageModel(new URLSearchParams(
+    'alias_list_id=2&identity_tab=unassigned&q=Dispatch&offset=100&sort=system&direction=asc'));
+  assert.equal(unassignedCoverage.unassigned.total_count, 0);
+  assert.deepEqual(coverageRequests, ['/api/v1/identities/lists',
+    '/api/v1/identities/lists/2/overview', '/api/v1/identities/lists/2/unassigned']);
+  assert.deepEqual(JSON.parse(JSON.stringify(coveragePageParameters.at(-1).parameters)),
+    { q: 'Dispatch', limit: 100, offset: '100', sort: 'system', direction: 'asc' },
+    'The selected Unassigned page retains search, paging, and sorting');
   const radioDirectorySource = functionBinding(appSource, 'renderNestedRadioDirectory');
   assert.match(radioDirectorySource, /radioDirectoryEmbeddedPanel\('systems', loading\.element\)/);
   assert.match(radioDirectorySource, /bare: true/);
@@ -1485,6 +1637,7 @@ async function main() {
   ]), 'radios.talker-alias-affiliation-channel');
   assert.match(appSource, /radioTableType\('group-identity-radios', columns\)/);
   await checkGroupIdentityRadiosLoading(browsing, tableLayouts);
+  await checkAliasCoverageIndependentCount();
   assert.match(appSource, /signalingMetrics\(signalingActionRows\(response\.action_counts\)/);
   assert.match(functionBinding(appSource, 'signalingMetrics'), /values\.filter\(\(\[, count\]\) => Number\(count\) > 0\)/);
   assert.equal(tableDefaults.width('channel-frequencies-p25', { id: 'tags' }), 130);
