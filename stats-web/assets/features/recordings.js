@@ -1,5 +1,6 @@
 import { createDualRange } from '../core/dual-range.js?v=1';
 import { systemLabel, systemName } from '../core/system-labels.js?v=1';
+import { formatP25RadioIdentifier } from '../core/radio-labels.js?v=1';
 
 const CALLS = '/api/v1/recordings/calls';
 const SUGGESTIONS = '/api/v1/recordings/suggestions';
@@ -32,6 +33,25 @@ function value(row, ...names) {
   return null;
 }
 
+function recordingRadioId(row, prefix, id) {
+  if (!/^(?:APCO25|P25)(?:_|$)/i.test(String(row?.protocol || ''))) return id;
+  const identity = {
+    wacn: row?.[`${prefix}_home_wacn`],
+    system_id: row?.[`${prefix}_home_system_id`],
+    subscriber_id: row?.[`${prefix}_home_id`]
+  };
+  const home = row?.[`${prefix}_home_system`];
+  const homeKey = home?.radio_system_key || home?.key ||
+    (identity.wacn != null && identity.system_id != null ?
+      `p25:${Number(identity.wacn).toString(16).padStart(5, '0')}:${
+        Number(identity.system_id).toString(16).padStart(3, '0')}` : '');
+  return formatP25RadioIdentifier(identity, {
+    servingSystemKey: row?.system_key || row?.radio_system_key,
+    homeSystemName: row?.[`${prefix}_home_system_name`] || systemName(home) || systemName(homeKey),
+    workingId: id
+  }) || id;
+}
+
 function label(row) {
   const group = value(row, 'talkgroup_alias', 'group_alias', 'talkgroup_name');
   const groupId = value(row, 'talkgroup_id', 'group_id');
@@ -40,20 +60,20 @@ function label(row) {
   const channel = value(row, 'channel_name', 'analog_channel_name');
   if (['NBFM', 'AM'].includes(value(row, 'protocol'))) return channel || 'Recorded channel';
   return group || (groupId !== null ? `Talkgroup ${groupId}` :
-    (destination !== null ? `Direct to ${destinationAlias || `Radio ${destination}`}` : channel)) ||
+    (destination !== null ? `Direct to ${destinationAlias || `Radio ${recordingRadioId(row, 'target', destination)}`}` : channel)) ||
     systemName(row) || 'Recorded call';
 }
 
 function sourceLabel(row) {
   const source = value(row, 'source_alias', 'radio_alias');
-  const id = value(row, 'source_id', 'radio_id');
+  const id = recordingRadioId(row, 'source', value(row, 'source_id', 'radio_id'));
   const ota = value(row, 'source_ota_alias', 'source_ota_ta', 'ota_alias', 'talker_alias');
   return [source || (id !== null ? `Radio ${id}` : null), source && id !== null ? `Radio ${id}` : null,
     ota && ota !== source ? `OTA ${ota}` : null].filter(Boolean).join(' · ');
 }
 
 function sourceBrief(row) {
-  const id = value(row, 'source_id', 'radio_id');
+  const id = recordingRadioId(row, 'source', value(row, 'source_id', 'radio_id'));
   return value(row, 'source_alias', 'radio_alias', 'source_ota_alias', 'source_ota_ta', 'ota_alias', 'talker_alias') ||
     (id !== null ? `Radio ${id}` : '');
 }

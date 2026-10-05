@@ -170,7 +170,7 @@
 
 .activity-identity-result {
   display: grid;
-  grid-template-columns: max-content minmax(0, 1fr) max-content;
+  grid-template-columns: max-content minmax(0, 1fr) minmax(0, 1fr);
   justify-content: stretch;
 }
 
@@ -189,7 +189,8 @@
   color: var(--muted);
   font-family: var(--font-mono);
   font-size: var(--font-size-meta);
-  white-space: nowrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .activity-identity-status {

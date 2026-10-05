@@ -6,6 +6,7 @@ import * as tableDefaults from './core/table-defaults.js?v=14';
 import { Controller as PageTitleController } from './core/page-title.js?v=2';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
 import * as systemLabels from './core/system-labels.js?v=1';
+import { formatP25RadioIdentifier, p25ServingSystemKey } from './core/radio-labels.js?v=1';
 import * as pageLifecycle from './core/page-lifecycle.js';
 import { installIconHints } from './core/icon-hints.js?v=3';
 import { createFormWorkflow } from './core/form-workflows.js?v=1';
@@ -27,14 +28,14 @@ import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from
 import { createStreamingWorkspace } from './features/streaming.js?v=8';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=8';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=12';
-import { createRecordingsFeature } from './features/recordings.js?v=18';
+import { createRecordingsFeature } from './features/recordings.js?v=19';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft } from './features/spectrum-search.js?v=16';
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult } from './features/discovery-radioreference.js?v=1';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createAudioDock } from './core/audio-dock.js?v=10';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=1';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
-import { WebCallPlayer } from './web-call-player.js?v=8';
+import { WebCallPlayer } from './web-call-player.js?v=9';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
@@ -1584,7 +1585,8 @@ function p25CanonicalSubscriber(row, prefix = '') {
   const homeSystemId = nested?.system_id ?? scalar('system_id');
   const homeSubscriberId = nested?.subscriber_id ?? scalar('subscriber_id');
   if ([homeWacn, homeSystemId, homeSubscriberId].some((value) =>
-    value === null || value === undefined || value === '' || typeof value === 'string' && !value.trim())) return null;
+    typeof value !== 'number' && typeof value !== 'string' ||
+    typeof value === 'string' && !value.trim())) return null;
   const wacn = Number(homeWacn);
   const systemId = Number(homeSystemId);
   const subscriberId = Number(homeSubscriberId);
@@ -1624,10 +1626,14 @@ function radioIdentifierText(row, value, prefix = radioIdentityPrefix(row, value
   if (!isP25(row)) return identityNumber(row, value);
   const canonical = p25CanonicalSubscriber(row, prefix);
   if (!canonical) return identityNumber(row, value);
-  const canonicalText = canonicalSubscriberText(canonical);
-  const working = workingSubscriberId(row, prefix);
-  return working !== null && working !== canonical.subscriber_id ?
-    `${canonicalText} (Working ID ${working})` : canonicalText;
+  const homeKey = `p25:${hex(canonical.wacn, 5)}:${hex(canonical.system_id, 3)}`;
+  const homeName = row?.[prefix ? `${prefix}_home_system_name` : 'home_system_name'] ||
+    systemLabels.systemName(homeKey);
+  return formatP25RadioIdentifier(canonical, {
+    servingSystemKey: p25ServingSystemKey(row),
+    homeSystemName: homeName,
+    workingId: workingSubscriberId(row, prefix)
+  });
 }
 
 function trunkedSiteLabel(row) {
@@ -1980,7 +1986,9 @@ function groupIdentityLink(row, id, label, reference = row?.entity_ref) {
 
 function radioLink(row, id, label, reference = row?.entity_ref) {
   id = radioDisplayId(row, id);
-  const text = label || radioIdentifierText(row, id);
+  const displayRow = !p25ServingSystemKey(row) && reference?.radio_system_key ?
+    { ...row, radio_system_key: reference.radio_system_key } : row;
+  const text = label || radioIdentifierText(displayRow, id);
   const target = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ?
     entityTarget(reference, { channel: 'radios' }) : '';
   return target ? anchor(text, target) : text;
@@ -17110,9 +17118,9 @@ function liveIdentityFacts(row, kind) {
   if (!isP25(row) || liveIdentityType(row, kind) !== 'radio' && !canonical) return null;
   const homeKey = canonical ? `p25:${hex(canonical.wacn, 5).toLowerCase()}:${hex(canonical.system_id, 3).toLowerCase()}` : '';
   const homeIdentity = canonical ? `${hex(canonical.wacn, 5)}.${hex(canonical.system_id, 3)}` : '';
-  const homeName = row?.[`${kind}_home_system_name`] || row?.home_system_name ||
+  const homeName = row?.[`${kind}_home_system_name`] ||
     systemLabels.systemName(homeKey) || homeIdentity;
-  const homeReference = row?.[`${kind}_home_system_entity_ref`] || row?.home_system_entity_ref;
+  const homeReference = row?.[`${kind}_home_system_entity_ref`];
   const homeTarget = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ? entityRefHref(homeReference) : '';
   const values = [
     ['Serving System', radioSystemContextLink(row)],
@@ -18791,10 +18799,14 @@ function issiBandColumns() {
 function issiSubscriberCell(row) {
   if (row.invalidation_scope === 'receiver') return 'All ISSI assignments';
   if (row.invalidation_scope === 'system') return 'All assignments on this system';
-  const canonical = canonicalSubscriberText(row.canonical_identity);
-  const label = aliasLabel(row) || row.last_talker_alias || canonical || 'Unknown radio';
+  // Home System and Working ID have their own columns on every ISSI radio table.
+  const subscriber = p25CanonicalSubscriber({ protocol: 'P25', canonical_identity: row.canonical_identity });
+  const identifier = subscriber ? String(subscriber.subscriber_id) : '';
+  const label = aliasLabel(row) || row.last_talker_alias || identifier || 'Unknown radio';
   const target = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ? entityRefHref(row.entity_ref) : '';
-  return identitySummaryValue(label, label === canonical ? '' : canonical, target);
+  const summary = identitySummaryValue(label, label === identifier ? '' : identifier, target);
+  if (subscriber) summary.title = canonicalSubscriberText(subscriber);
+  return summary;
 }
 
 function issiHomeSystemCell(row) {
@@ -19397,8 +19409,7 @@ async function renderRadio() {
   const radio = response;
   const tab = route.get('tab') || 'info';
   const permanentIdentity = p25CanonicalSubscriber(radio);
-  const formattedId = permanentIdentity ? canonicalSubscriberText(permanentIdentity) :
-    radioIdentifierText(radio, radio.native_id);
+  const formattedId = radioIdentifierText(radio, radio.native_id);
   const title = entityPageTitle('Radio', aliasLabel(radio),
     normalizedSiteText(radio.last_talker_alias) || formattedId);
   if (!beginPage(renderContext,
@@ -19435,11 +19446,20 @@ async function renderRadio() {
       identityContext.append(valueNode(radioSystemInfoValue(radio)));
       systemFact = fragment(radioSystemContextLink(radio), identityContext);
     }
+    const identifierFact = node('span', '', formattedId);
+    if (permanentIdentity) identifierFact.title = canonicalSubscriberText(permanentIdentity);
     const identityValues = [
       [radioSystemOwnerLabel(radio), systemFact],
-      ['Radio ID', formattedId],
+      ['Radio ID', identifierFact],
       ['Alias', aliasLabel(radio)]
     ];
+    if (permanentIdentity) {
+      const homeKey = `p25:${hex(permanentIdentity.wacn, 5)}:${hex(permanentIdentity.system_id, 3)}`.toLowerCase();
+      if (homeKey !== radioSystem.radio_system_key.toLowerCase()) {
+        identityValues.splice(1, 0, ['Home System', issiHomeSystemCell({ ...radio,
+          canonical_identity: permanentIdentity, home_radio_system_key: homeKey })]);
+      }
+    }
     if (permanentIdentity && workingSubscriberId(radio) !== null) {
       identityValues.push(['Last Observed Working ID', identifierNumber(workingSubscriberId(radio))]);
     }
@@ -20500,7 +20520,7 @@ function activityIdentityKindLabel(kind, plural = false) {
   return plural ? 'Talkgroups' : 'Talkgroup';
 }
 
-function activityIdentitySuggestion(row, requestedKind = '') {
+function activityIdentitySuggestion(row, requestedKind = '', context = null) {
   const nativeId = row?.native_id ?? row?.radio_native_id ?? row?.group_native_id;
   const identityKey = activityIdentityKey(row?.identity_key || row?.radio_identity_key ||
     row?.group_identity_key);
@@ -20509,23 +20529,31 @@ function activityIdentitySuggestion(row, requestedKind = '') {
   if (!['radio', 'talkgroup', 'patch_group'].includes(kind)) return null;
   const alias = String(aliasLabel(row) || row?.last_talker_alias || '').trim();
   const kindLabel = activityIdentityKindLabel(kind);
-  const displayId = String(identityNumber(row, nativeId));
+  const displayRow = p25ServingSystemKey(row) || !context?.radioSystemKey ? row :
+    { ...row, radio_system_key: context.radioSystemKey };
+  const displayId = String(kind === 'radio' ? radioIdentifierText(displayRow, nativeId) :
+    identityNumber(row, nativeId));
   const [, , homeWacn, homeSystemId] = identityKey.split('-');
-  const home = homeWacn === 'x' ? '' : `${homeWacn}-${homeSystemId}`;
+  const home = kind === 'radio' || homeWacn === 'x' ? '' : `${homeWacn}-${homeSystemId}`;
   return Object.freeze({ key: identityKey, id: Number(nativeId), displayId, alias, kind, kindLabel, home,
     label: `${kindLabel} ${displayId}${alias ? ` · ${alias}` : ''}${home ? ` · ${home}` : ''}` });
 }
 
-function activityIdentityInitialSelection(identityKey, requestedKind = '') {
+function activityIdentityInitialSelection(identityKey, requestedKind = '', context = null) {
   const key = activityIdentityKey(identityKey);
   if (!key) return null;
   const kind = requestedKind || activityIdentityKindFromKey(key);
   const parts = key.split('-');
   const id = Number(parts.at(-1));
-  const home = parts[2] === 'x' ? '' : `${parts[2]}-${parts[3]}`;
+  const qualifiedRadio = kind === 'radio' && parts[2] !== 'x' && parts[3] !== 'x';
+  const displayId = qualifiedRadio ? radioIdentifierText({
+    protocol: 'P25', radio_system_key: context?.radioSystemKey,
+    canonical_identity: { wacn: parseInt(parts[2], 16), system_id: parseInt(parts[3], 16), subscriber_id: id }
+  }, id) : parts.at(-1);
+  const home = kind === 'radio' || parts[2] === 'x' ? '' : `${parts[2]}-${parts[3]}`;
   const kindLabel = activityIdentityKindLabel(kind);
-  return Object.freeze({ key, id, displayId: parts.at(-1), alias: '', kind, kindLabel, home,
-    label: `${kindLabel} ${parts.at(-1)}${home ? ` · ${home}` : ''}` });
+  return Object.freeze({ key, id, displayId, alias: '', kind, kindLabel, home,
+    label: `${kindLabel} ${displayId}${home ? ` · ${home}` : ''}` });
 }
 
 function activityIdentityPicker(context, options = {}) {
@@ -20581,7 +20609,7 @@ function activityIdentityPicker(context, options = {}) {
   let activeKind = '';
   const committedKey = activityIdentityKey(options.identityKey);
   const committedKind = committedKey ? activityIdentityKindFromKey(committedKey) : options.kind || '';
-  let selected = activityIdentityInitialSelection(options.identityKey, options.kind || '');
+  let selected = activityIdentityInitialSelection(options.identityKey, options.kind || '', context);
   if (!selected && destination && options.kind) {
     const kindLabel = activityIdentityKindLabel(options.kind);
     selected = Object.freeze({ key: '', id: null, displayId: '', alias: '', kind: options.kind,
@@ -20730,7 +20758,7 @@ function activityIdentityPicker(context, options = {}) {
       const deduplicated = new Map();
       fulfilled.forEach(({ kind, page }) => (page.rows || []).forEach((row) => {
         const rowKind = kind === 'radio' ? 'radio' : rowGroupIdentityKind(row);
-        const entry = activityIdentitySuggestion(row, rowKind);
+        const entry = activityIdentitySuggestion(row, rowKind, context);
         if (entry) deduplicated.set(entry.key, entry);
       }));
       loadedEntries = [...deduplicated.values()].sort((left, right) => {

@@ -61,8 +61,10 @@ async function main() {
     '../../../../stats-web/assets/features/recordings.js'));
   const source = fs.readFileSync(modulePath, 'utf8');
   const labelsUrl = pathToFileURL(path.resolve(path.dirname(modulePath), '../core/system-labels.js')).href;
+  const radioLabelsUrl = pathToFileURL(path.resolve(path.dirname(modulePath), '../core/radio-labels.js')).href;
   const executable = source.replace(/^import .*dual-range.*;\n/m, 'const createDualRange = () => {};\n')
-    .replace(/from '\.\.\/core\/system-labels\.js\?v=\d+'/, `from '${labelsUrl}'`);
+    .replace(/from '\.\.\/core\/system-labels\.js\?v=\d+'/, `from '${labelsUrl}'`)
+    .replace(/from '\.\.\/core\/radio-labels\.js\?v=\d+'/, `from '${radioLabelsUrl}'`);
   const { createRecordingsFeature } = await import(`data:text/javascript;base64,${Buffer.from(executable).toString('base64')}`);
   const originalAudio = global.Audio;
   const audios = [];
@@ -312,6 +314,37 @@ async function main() {
     }
     assert.ok(descendants(details).some((child) => child.attributes?.get('href') === '/entity/member'),
       'Patch member identities must preserve available drilldown links');
+
+    const primaryFact = (recording, name) => {
+      sharing.renderDetails(details, recording);
+      const facts = details.firstElementChild.children;
+      const index = facts.findIndex((child) => child.tagName === 'dt' && child.textContent === name);
+      return text(facts[index + 1]).trim();
+    };
+    const localRadio = { ...call(9), system_key: 'p25:bee00:348',
+      source_home_wacn: 0xBEE00, source_home_system_id: 0x348, source_home_id: 1863924 };
+    assert.equal(primaryFact(localRadio, 'Source'), 'Radio 1863924',
+      'Confirmed local recording radios must not repeat their WACN and SysID');
+    assert.equal(primaryFact({ ...localRadio, source_home_id: 12345 }, 'Source'),
+      'Radio 12345 (Working ID 1863924)', 'A different observed Working ID remains useful');
+    const foreignRadio = { ...localRadio, source_home_system_id: 0x4A2 };
+    assert.equal(primaryFact({ ...foreignRadio, source_home_system_name: 'Home Network' }, 'Source'),
+      'Radio Home Network · 1863924', 'Foreign recording radios use their friendly home system name');
+    assert.equal(primaryFact(foreignRadio, 'Source'), 'Radio BEE00.4A2.1863924',
+      'An unnamed foreign recording radio must retain its full home address');
+    assert.equal(primaryFact({ ...foreignRadio, source_home_id: null }, 'Source'), 'Radio 1863924',
+      'An incomplete saved home address must not imply a permanent radio ID');
+    const { rememberSystemNames } = await import(labelsUrl);
+    rememberSystemNames({ radio_system_key: 'p25:bee00:4a2', system_name: 'Home Network' });
+    assert.equal(primaryFact(foreignRadio, 'Source'), 'Radio Home Network · 1863924',
+      'Recording labels can reuse home names already returned by an authorized read');
+    const directRadio = { ...foreignRadio, call_type: 'DIRECT', talkgroup_id: null, talkgroup_alias: null,
+      destination_radio_id: 71, target_home_wacn: 0xBEE00, target_home_system_id: 0x4A2, target_home_id: 12345 };
+    assert.equal(primaryFact(directRadio, 'Target'), 'Direct to Radio Home Network · 12345 (Working ID 71)',
+      'Direct call destinations follow the same permanent and Working ID display rule');
+    sharing.renderDetails(details, directRadio);
+    assert.ok(text(details).includes('Source home WACN') && text(details).includes('Target home identity'),
+      'Complete recording identifiers remain available in the detail disclosures');
     const transcript = node('div');
     sharing.renderTranscript(transcript, { ...richCall, transcription: { status: 'failed' } });
     assert.ok(!text(transcript).includes('Retry transcription'), 'Non-administrators cannot retry transcription');

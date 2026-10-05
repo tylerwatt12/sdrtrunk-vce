@@ -33,6 +33,8 @@ async function main() {
     path.resolve(__dirname, '../../../../stats-web/assets/web-call-player.js'));
   const source = fs.readFileSync(playerPath, 'utf8');
   const { WebCallPlayer } = await import(pathToFileURL(playerPath).href);
+  const { rememberSystemNames } = await import(pathToFileURL(path.join(path.dirname(playerPath),
+    'core/system-labels.js')).href + '?v=1');
 
   let now = 0;
   let nextTimerId = 1;
@@ -339,6 +341,52 @@ async function main() {
       'Dispatch · BEE00.348.2115288');
     assert.equal(labels.targetLabel(equalWorkingTarget),
       'Dispatch · BEE00.348.2115288');
+    const localRadioTarget = { ...equalWorkingTarget, radio_system_key: 'p25:bee00:348' };
+    assert.equal(labels.callLabel(localRadioTarget), 'Dispatch · 2115288',
+      'Local radio numbers should stay compact in the listening player.');
+    assert.equal(labels.targetLabel(localRadioTarget), 'Dispatch · 2115288',
+      'Hold and Avoid must use the same local radio label as the listening player.');
+    const foreignNamedRadio = {
+      ...equalWorkingTarget, radio_system_key: 'p25:bee00:349',
+      target_home_system_name: 'Home System', home_system_name: 'Less specific name'
+    };
+    assert.equal(labels.callLabel(foreignNamedRadio), 'Dispatch · Home System · 2115288',
+      'A foreign radio with the same Working ID still needs its home system.');
+    assert.equal(labels.targetLabel(foreignNamedRadio), 'Dispatch · Home System · 2115288');
+    assert.equal(labels.targetLabel({ ...foreignNamedRadio, target_home_system_name: ' ' }),
+      'Dispatch · BEE00.348.2115288', 'An unqualified home name must not be assigned to either radio endpoint.');
+    assert.equal(labels.targetLabel({ ...foreignNamedRadio, target_observed_working_id: 501 }),
+      'Dispatch · Home System · 2115288 (Working ID 501)');
+    assert.equal(labels.targetLabel({ ...foreignNamedRadio, radio_system_key: 'p25:bee01:348' }),
+      'Dispatch · Home System · 2115288', 'A matching SysID alone does not establish local ownership.');
+    assert.equal(labels.targetLabel({ ...equalWorkingTarget,
+      playback_target: { kind: 'radio', radio_system_key: 'p25:bee00:348' } }), 'Dispatch · 2115288');
+    assert.equal(labels.targetLabel({ ...foreignNamedRadio,
+      playback_target: { kind: 'radio', radio_system_key: 'p25:bee00:348' } }),
+      'Dispatch · Home System · 2115288', 'The call receiving system takes precedence over playback context.');
+    assert.equal(labels.callLabel({ ...localRadioTarget, target_alias: '', target_observed_working_id: 501 }),
+      '2115288 (Working ID 501)');
+    assert.equal(labels.canonicalRadioLabel({ ...foreignNamedRadio, radio_system_key: '',
+      target_home_system_name: 'Home System' }, 'target'), 'Home System · 2115288',
+      'Missing receiving scope should keep home system context even when the Working ID matches.');
+    const differentHomes = {
+      protocol: 'P25', radio_system_key: 'p25:bee00:349',
+      source_form: 'RADIO', source_id: 501, source_home_system_name: 'Source Home',
+      source_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 501 },
+      target_form: 'RADIO', target_id: 501,
+      target_canonical_identity: { wacn: 0xBEE01, system_id: 0x348, subscriber_id: 501 },
+      home_system_name: 'Source Home'
+    };
+    assert.equal(labels.callLabel(differentHomes), 'BEE01.348.501 ← Source Home · 501',
+      'The source home name must not label a target radio from a different home, even with equal radio numbers.');
+    assert.equal(labels.callLabel({ ...differentHomes, target_home_system_name: 'Target Home' }),
+      'Target Home · 501 ← Source Home · 501');
+    rememberSystemNames({ radio_system_key: 'p25:bee00:348', system_name: 'Cached Home' });
+    assert.equal(labels.targetLabel(equalWorkingTarget), 'Dispatch · Cached Home · 2115288',
+      'Previously received system names can label an exact home identity.');
+    assert.equal(labels.targetLabel(localRadioTarget), 'Dispatch · 2115288',
+      'A cached name must not lengthen a confirmed local radio label.');
+    rememberSystemNames({ radio_system_key: 'p25:bee00:348', system_name: '' });
     const conventionalCanonicalTarget = {
       protocol: 'P25', target_form: 'RADIO', target_id: 501,
       target_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 2_115_288 },

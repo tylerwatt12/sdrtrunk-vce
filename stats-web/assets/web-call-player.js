@@ -1,4 +1,5 @@
 import { systemLabel, systemName } from './core/system-labels.js?v=1';
+import { formatP25RadioIdentifier, p25ServingSystemKey } from './core/radio-labels.js?v=1';
 
 export class WebCallPlayer {
   static MAXIMUM_SEEN_CALL_IDS = 2048;
@@ -1146,20 +1147,15 @@ export class WebCallPlayer {
 
   canonicalRadioLabel(call, prefix) {
     const identity = call?.[`${prefix}_canonical_identity`];
-    if (!identity || [identity.wacn, identity.system_id, identity.subscriber_id].some(value =>
-      value === null || value === undefined || (typeof value === 'string' && !value.trim()))) return '';
-    const wacn = Number(identity?.wacn);
-    const systemId = Number(identity?.system_id);
-    const subscriberId = Number(identity?.subscriber_id);
-    if (!Number.isInteger(wacn) || wacn < 0 || wacn > 0xFFFFF ||
-        !Number.isInteger(systemId) || systemId < 0 || systemId > 0xFFF ||
-        !Number.isInteger(subscriberId) || subscriberId < 1 || subscriberId > 0xFFFFFC) return '';
-    const homeWacn = wacn.toString(16).toUpperCase().padStart(5, '0');
-    const homeSystem = systemId.toString(16).toUpperCase().padStart(3, '0');
-    const canonical = `${homeWacn}.${homeSystem}.${subscriberId}`;
-    const workingId = Number(call?.[`${prefix}_observed_working_id`]);
-    return Number.isInteger(workingId) && workingId >= 1 && workingId <= 0xFFFFFC && workingId !== subscriberId ?
-      `${canonical} (Working ID ${workingId})` : canonical;
+    if (!formatP25RadioIdentifier(identity)) return '';
+    const homeKey = `p25:${Number(identity.wacn).toString(16).padStart(5, '0')}:` +
+      Number(identity.system_id).toString(16).padStart(3, '0');
+    const homeName = String(call?.[`${prefix}_home_system_name`] || '').trim() ||
+      systemName(homeKey);
+    return formatP25RadioIdentifier(identity, {
+      servingSystemKey: p25ServingSystemKey(call), homeSystemName: homeName,
+      workingId: call?.[`${prefix}_observed_working_id`]
+    });
   }
 
   callLabel(call) {

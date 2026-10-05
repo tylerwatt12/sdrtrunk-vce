@@ -11,6 +11,10 @@ const labelsSource = fs.readFileSync(path.resolve(__dirname,
   '../../../../stats-web/assets/core/system-labels.js'), 'utf8');
 const systemLabels = vm.runInNewContext(labelsSource.replace(/^export .*;$/m, '') +
   '\n({systemName, systemLabel, systemIdentity, rememberSystemNames});');
+const radioLabelsSource = fs.readFileSync(path.resolve(__dirname,
+  '../../../../stats-web/assets/core/radio-labels.js'), 'utf8');
+const radioLabels = vm.runInNewContext(radioLabelsSource.replace(/^export .*;$/m, '') +
+  '\n({formatP25RadioIdentifier, p25ServingSystemKey});');
 
 function closingBrace(start) {
   let depth = 0;
@@ -46,6 +50,13 @@ function functionSource(name) {
 
 const behavior = vm.runInNewContext(`(() => {
   function aliasAdminAllowed() { return true; }
+  function aliasLabel(row) { return row.alias_name || ''; }
+  function capabilityAllowed() { return true; }
+  const ACCESS_CAPABILITIES = { RADIO: 'radio' };
+  function entityRefHref(reference) { return reference?.href || ''; }
+  function radioSystemContextLink() { return 'Receiving system'; }
+  function identitySummaryValue(primary, secondary, target) { return {primary, secondary, target}; }
+  function keyValues(values) { return {values, classList: {add() {}}}; }
   function node(tag, className, textContent) {
     return { tag, className, textContent, setAttribute() {} };
   }
@@ -99,14 +110,22 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('activitySourceAlias')}
   ${functionSource('activitySourceTalkerAlias')}
   ${functionSource('activityTargetAlias')}
+  ${functionSource('activityIdentityKey')}
+  ${functionSource('activityIdentityKindFromKey')}
+  ${functionSource('activityIdentityKindLabel')}
+  ${functionSource('activityIdentitySuggestion')}
+  ${functionSource('activityIdentityInitialSelection')}
   ${functionSource('liveIdentityType')}
   ${functionSource('liveIdentityLabel')}
   ${functionSource('liveIdentityActionTitle')}
+  ${functionSource('p25IdentityEvidenceLabel')}
+  ${functionSource('liveIdentityFacts')}
   return { radioSystemLabel, trunkedSiteLabel, dashboardChannelContext,
     channelDirectoryRfIdentity, channelLocationIdentity, dmrChannelDetailRows,
     scannerNetworkSiteIdentity, observedGroupIdentityKey, radioIdentifierText, liveIdentityActionTitle,
-    activityIdentifier, activitySourceAlias, activitySourceTalkerAlias, activityTargetAlias };
-})()`, { URLSearchParams, systemLabels });
+    activityIdentifier, activitySourceAlias, activitySourceTalkerAlias, activityTargetAlias,
+    activityIdentitySuggestion, activityIdentityInitialSelection, liveIdentityFacts };
+})()`, { URLSearchParams, systemLabels, ...radioLabels });
 
 assert.equal(behavior.radioIdentifierText({
   protocol: 'P25', canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 9_601_699 },
@@ -262,7 +281,7 @@ const pageHeaders = [];
 let pageResponse;
 const pageRoute = new URLSearchParams('tab=info');
 const pageContext = {
-  systemLabels, route: pageRoute,
+  systemLabels, ...radioLabels, route: pageRoute,
   captureRenderContext: () => ({}), renderIsCurrent: () => true,
   requiredRadioSystem: () => ({ radio_system_key: 'p25:bee00:348' }),
   requiredIdentityKey: () => 'v1-g-bee00-348-7',
@@ -377,10 +396,77 @@ async function pageHeading(renderer, response) {
   assert.equal((await pageHeading('renderRadio', { ...radio, alias_name: ' ', last_talker_alias: ' ' })).title,
     'Radio: 42', 'Whitespace names fall through to the usable ID');
   assert.equal((await pageHeading('renderRadio', radio)).title, 'Radio: 42');
-  assert.equal((await pageHeading('renderRadio', { protocol: 'P25', native_id: 130001,
+  assert.equal((await pageHeading('renderRadio', { protocol: 'P25', radio_system_key: 'p25:bee00:348', native_id: 130001,
     canonical_identity: { wacn: 0xbee00, system_id: 0x348, subscriber_id: 9601699 },
-    working_subscriber_id: 130001 })).title, 'Radio: BEE00.348.9601699',
-  'P25 radio headings retain the permanent subscriber identity');
+    working_subscriber_id: 130001 })).title, 'Radio: 9601699 (Working ID 130001)',
+  'Local P25 radio headings retain the permanent number and a different Working ID');
   assert.equal((await pageHeading('renderRadio', { protocol: 'NXDN',
     address_domain: 'nxdn_type_d', native_id: (12 << 11) | 34 })).title, 'Radio: 12-0034');
 })().catch((error) => { console.error(error); process.exitCode = 1; });
+
+const localRadio = {
+  protocol: 'P25', radio_system_key: 'p25:bee00:348',
+  canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 4326018 },
+  observed_working_id: 4326018
+};
+assert.equal(behavior.radioIdentifierText(localRadio, 4326018), '4326018');
+assert.equal(behavior.radioIdentifierText({ protocol: 'P25', radio_system_key: localRadio.radio_system_key },
+  4326018), behavior.radioIdentifierText(localRadio, 4326018),
+  'Complete registration and ordinary local activity should display the same radio number.');
+assert.equal(behavior.radioIdentifierText({ ...localRadio, observed_working_id: 12345 }, 12345),
+  '4326018 (Working ID 12345)');
+const foreignRadio = { ...localRadio, radio_system_key: 'p25:00001:047', home_system_name: 'County Radio' };
+assert.equal(behavior.radioIdentifierText(foreignRadio, 4326018), 'County Radio · 4326018',
+  'Foreign radios retain their home system even when the numeric IDs match.');
+assert.equal(behavior.radioIdentifierText({ ...foreignRadio, home_system_name: '', radio_system_key: '' },
+  4326018), 'BEE00.348.4326018', 'Unknown serving context retains a full address.');
+assert.equal(behavior.radioIdentifierText({ ...localRadio, radio_system_key: 'p25:00001:348' },
+  4326018), 'BEE00.348.4326018', 'Matching SysID alone does not establish local ownership.');
+const prefixedLocal = { protocol: 'P25', radio_system_key: localRadio.radio_system_key,
+  source_id: 4326018, source_canonical_identity: localRadio.canonical_identity,
+  source_observed_working_id: 4326018 };
+assert.equal(behavior.activityIdentifier(prefixedLocal, 4326018, 'radio', null, false, 'source'), '4326018');
+assert.equal(dock.sourceId(prefixedLocal), '4326018', 'The shared audio dock follows the table display rule.');
+const pickerContext = { radioSystemKey: localRadio.radio_system_key };
+const suggestion = behavior.activityIdentitySuggestion({ ...localRadio, native_id: 4326018,
+  identity_key: 'v1-r-bee00-348-4326018', alias_name: 'Engine 42' }, 'radio', pickerContext);
+assert.equal(suggestion.label, 'Radio 4326018 · Engine 42');
+assert.equal(suggestion.key, 'v1-r-bee00-348-4326018', 'Short labels preserve the complete filter key.');
+assert.equal(behavior.activityIdentityInitialSelection(suggestion.key, 'radio', pickerContext).label,
+  'Radio 4326018', 'A saved local filter should not regain the redundant system prefix.');
+systemLabels.rememberSystemNames([{ radio_system_key: 'p25:bee00:348', system_name: 'County Radio' }]);
+assert.equal(behavior.activityIdentityInitialSelection(suggestion.key, 'radio',
+  { radioSystemKey: 'p25:00001:047' }).label, 'Radio County Radio · 4326018');
+
+const links = vm.runInNewContext(`${functionSource('radioDisplayId')}\n${functionSource('radioLink')}` +
+  '\n({radioLink});', { ...radioLabels, radioIdentifierText: behavior.radioIdentifierText,
+    ACCESS_CAPABILITIES: { RADIO: 'radio' }, capabilityAllowed: () => true,
+    entityTarget: reference => reference.identity_key,
+    anchor: (label, target) => ({ label, target }) });
+const relationship = { protocol: 'P25', radio_native_id: 4326018,
+  radio_canonical_identity: localRadio.canonical_identity };
+const localRef = { kind: 'radio', radio_system_key: 'p25:bee00:348',
+  identity_key: 'v1-r-bee00-348-4326018' };
+assert.equal(links.radioLink(relationship, 4326018, undefined, localRef).label, '4326018',
+  'A Talkgroup Radios link supplies its receiving scope when the row omits it.');
+assert.equal(links.radioLink({ ...relationship, radio_system_key: 'p25:00001:047' }, 4326018,
+  undefined, localRef).label, 'County Radio · 4326018',
+  'An explicit receiving scope wins over conflicting navigation context.');
+assert.equal(links.radioLink(relationship, 4326018, undefined, localRef).target, localRef.identity_key,
+  'The shorter visible number does not replace its complete drilldown identity.');
+assert.equal(behavior.activityIdentitySuggestion({ ...localRadio, radio_system_key: '',
+  system_key: 'p25:00001:047', native_id: 4326018, identity_key: suggestion.key }, 'radio', pickerContext).displayId,
+  'County Radio · 4326018', 'An explicit system scope is preserved before picker context is used.');
+for (const invalid of [false, true, [], {}]) {
+  assert.equal(behavior.radioIdentifierText({ ...localRadio,
+    canonical_identity: { ...localRadio.canonical_identity, wacn: invalid } }, 4326018), '4326018',
+    'Invalid typed home fields do not become fabricated complete identities.');
+}
+const targetFacts = behavior.liveIdentityFacts({ protocol: 'P25', target_form: 'RADIO', target_id: 501,
+  target_canonical_identity: { wacn: 0xBEE01, system_id: 0x348, subscriber_id: 501 },
+  home_system_name: 'Source home name', home_system_entity_ref: { href: '/source-home' } }, 'target');
+const targetHome = targetFacts.values.find(([label]) => label === 'Home System')[1];
+assert.equal(targetHome.primary, 'BEE01.348', 'Target details do not borrow the source home-system name.');
+assert.equal(targetHome.target, '', 'Target details do not navigate to the source home system.');
+assert.equal(targetFacts.values.find(([label]) => label === 'Permanent Radio ID')[1], 'BEE01.348.501',
+  'Explicit identity inspection retains the exact permanent address.');

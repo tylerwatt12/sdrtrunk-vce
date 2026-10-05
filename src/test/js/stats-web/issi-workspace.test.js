@@ -270,7 +270,11 @@ async function main() {
     'A system-wide observation gap must not invent an unknown subscriber or home system.');
   const named = behavior.issiSubscriberCell({canonical_identity:canonical,alias_name:'Engine 4'});
   assert.equal(named.primary, 'Engine 4');
-  assert.match(named.secondary, /34006/);
+  assert.equal(named.secondary, '34006', 'Home identity has its own column, so the Radio cell needs only its number.');
+  assert.match(named.title, /34006/, 'The full address remains available on the cell.');
+  const unnamed = behavior.issiSubscriberCell({canonical_identity:canonical});
+  assert.equal(unnamed.primary, '34006');
+  assert.equal(unnamed.secondary, '');
   assert.equal(behavior.issiHomeSystemCell({canonical_identity:canonical}).primary, '92498.926',
     'An unknown friendly system name must still show the exact home-system identity.');
   console.log('ISSI workspace behavior checks passed');
