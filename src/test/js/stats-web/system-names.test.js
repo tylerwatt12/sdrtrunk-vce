@@ -85,7 +85,8 @@ const context = {
 const names = ['protocol', 'protocolFamily', 'isP25', 'identifierNumber', 'hex', 'semanticLabel',
   'savedChannelScopeLabel', 'isSavedChannelRadioSystem', 'radioSystemOwnerLabel', 'radioSystemLabel',
   'radioSystemPrimaryName', 'radioSystemDisplayName', 'radioSystemValue', 'radioSystemAliasLists',
-  'radioSystemIdentityValue', 'radioSystemInfoValue', 'sameSiteText', 'radioSystemsDirectoryDetails', 'renderRadioSystem'];
+  'radioSystemIdentityValue', 'radioSystemInfoValue', 'sameSiteText', 'radioSystemsDirectoryDetails',
+  'entityPageTitle', 'renderRadioSystem'];
 vm.createContext(context);
 vm.runInContext(names.map(declaration).join('\n'), context);
 vm.runInContext(declaration('relatedRadioSystem'), context);
@@ -97,11 +98,12 @@ assert.equal(unknownForeign.radio_system_entity_ref, null, 'Unknown foreign syst
 
 (async () => {
   await context.renderRadioSystem();
-  assert.equal(headers[0].title, marcs.system_name, 'Groups shares the named heading');
-  assert.equal(headers[0].subtitle, marcs.channel_names, 'Identity remains in Info instead of duplicating the heading');
+  assert.equal(headers[0].title, `System: ${marcs.system_name}`, 'Groups shares the typed named heading');
+  assert.equal(headers[0].subtitle, `P25 · ${marcs.channel_names}`,
+    'The protocol distinguishes systems while their exact identity remains in Info');
   route.set('tab', 'info');
   await context.renderRadioSystem();
-  assert.equal(headers[1].title, marcs.system_name);
+  assert.equal(headers[1].title, `System: ${marcs.system_name}`);
   const identity = facts.find(([label]) => label === 'Radio System')[1].textContent;
   assert.equal(identity, 'BEE00-348 HEX·781824-840 DEC');
   assert.ok(!identity.includes(marcs.system_name), 'Info fact does not repeat the friendly heading');

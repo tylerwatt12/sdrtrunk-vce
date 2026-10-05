@@ -2,6 +2,8 @@
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
 
 const modulePath = process.argv[2];
 assert.ok(modulePath, 'The page lifecycle module path is required.');
@@ -19,6 +21,99 @@ function deferred() {
 
 function assertInvalid(action, path = '/api/test') {
   assert.throws(action, (error) => error?.code === 'invalid_response' && error?.path === path);
+}
+
+async function verifyDetailPageOrientation() {
+  const app = fs.readFileSync(path.resolve(path.dirname(modulePath), '../app.js'), 'utf8');
+  const start = app.indexOf('function pendingDetailPageTitle(');
+  const end = app.indexOf("\ndocument.addEventListener('click'", start);
+  assert.ok(start >= 0 && end > start, 'The application render lifecycle is available.');
+  const node = (_tag, className, textContent) => ({
+    className, textContent, setAttribute() {}
+  });
+  const content = {
+    children: [],
+    setAttribute() {},
+    replaceChildren(...children) { this.children = children; },
+    querySelector() { return this.children.find((child) => child.className === 'page-header'); }
+  };
+  const context = {
+    URLSearchParams, AbortController, node, content,
+    route: new URLSearchParams('view=radio'), activeRenderEpoch: 0,
+    activeRenderController: null, document: { body: { dataset: {} } },
+    ACCESS_CAPABILITIES: { RECORDINGS: 'recordings' },
+    recordingsFeature: { playback: { reset() {} } }, audioDock: { synchronize() {} },
+    setNavigationOpen() {}, capabilityAllowed: () => true,
+    closeReadOnlyModal: () => true, restorePlaybackBarBeforeRender() {},
+    closePageConnections() {}, synchronizeAccessLanding: () => false,
+    clearAliasSelectionOutsideEditor() {}, activateNavigation() {},
+    clearInactiveAliasSelection() {}, databaseLoggingNotice: () => null,
+    pageHeader: (title) => node('h1', 'page-header', title),
+    pageTitleController: { update(values) { context.pageTitle = values.pageTitle; } },
+    applicationRoutes: Object.fromEntries([
+      ['radio-system', 'Radio System Details'], ['group-identity', 'Group Identity Details'],
+      ['radio', 'Radio Details'], ['channel', 'Channel Details'], ['aliases', 'Aliases']
+    ].map(([id, title]) => [id, { id, title, allowed: () => true }])),
+    routeFoundation: {
+      requestedView: (parameters) => parameters.get('view') || 'dashboard',
+      resolve: (registry, parameters) => registry[parameters.get('view')]
+    },
+    renderIsCurrent: (renderContext) => renderContext.epoch === context.activeRenderEpoch &&
+      !renderContext.signal.aborted,
+    beginPage(renderContext, ...children) {
+      if (!context.renderIsCurrent(renderContext)) return false;
+      content.replaceChildren(...children);
+      const header = content.querySelector();
+      if (header) context.pageTitle = header.textContent;
+      return true;
+    }
+  };
+  vm.createContext(context);
+  vm.runInContext(app.slice(start, end), context);
+  const heading = () => content.querySelector()?.textContent;
+  for (const view of ['radio-system', 'group-identity', 'radio', 'channel']) {
+    assert.equal(context.pendingDetailPageTitle(view), context.applicationRoutes[view].title);
+  }
+  assert.equal(context.pendingDetailPageTitle('aliases', new URLSearchParams('list=1')),
+    'Alias List Details');
+  assert.equal(context.pendingDetailPageTitle('aliases', new URLSearchParams('scanListId=2')),
+    'Scan List Members');
+  assert.equal(context.pendingDetailPageTitle('aliases', new URLSearchParams()), '');
+  assert.equal(context.pendingDetailPageTitle('not-found'), '');
+
+  const loading = deferred();
+  context.applicationRoutes.radio.handler = () => loading.promise;
+  const firstRender = context.render();
+  assert.equal(heading(), 'Radio Details', 'A detail route retains its type while loading.');
+  assert.equal(context.pageTitle, 'Radio Details');
+  assert.equal(content.children[1].className, 'loading');
+  loading.reject(new Error('The radio could not be loaded.'));
+  await firstRender;
+  assert.equal(heading(), 'Radio Details', 'A failed detail request retains its type heading.');
+  assert.equal(content.children[1].className, 'error');
+
+  context.applicationRoutes.radio.handler = async () => {
+    context.beginPage({ epoch: context.activeRenderEpoch, signal: context.activeRenderController.signal },
+      context.pageHeader('Radio: Engine 4'));
+    throw new Error('Radio activity could not be loaded.');
+  };
+  await context.render();
+  assert.equal(heading(), 'Radio: Engine 4', 'Later failure retains an already loaded entity heading.');
+
+  const obsolete = deferred();
+  const current = deferred();
+  context.applicationRoutes.radio.handler = () => obsolete.promise;
+  const obsoleteRender = context.render();
+  context.route = new URLSearchParams('view=channel');
+  context.applicationRoutes.channel.handler = () => current.promise;
+  const currentRender = context.render();
+  obsolete.reject(new Error('Obsolete radio failure.'));
+  await obsoleteRender;
+  assert.equal(heading(), 'Channel Details', 'A stale failure cannot replace the active route heading.');
+  assert.equal(content.children[1].className, 'loading');
+  current.reject(new Error('The channel could not be loaded.'));
+  await currentRender;
+  assert.equal(heading(), 'Channel Details');
 }
 
 async function main() {
@@ -156,6 +251,7 @@ async function main() {
     }), (caught) => caught === error);
     assert.equal(errorCommitted, false);
   }
+  await verifyDetailPageOrientation();
 }
 
 main().catch((error) => {

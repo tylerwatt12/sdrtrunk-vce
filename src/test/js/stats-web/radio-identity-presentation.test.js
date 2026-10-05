@@ -255,3 +255,132 @@ const conventionalDmr = {
 assert.notEqual(behavior.observedGroupIdentityKey({ ...conventionalDmr, timeslot: 1 }),
   behavior.observedGroupIdentityKey({ ...conventionalDmr, timeslot: 2 }),
   'Conventional DMR discovery rows must retain their independent timeslot identity');
+
+// Exercise the actual page renderers through their header boundary. Stopping at beginPage keeps this contract
+// independent of the tables below each heading while proving that every protocol uses its saved topology.
+const pageHeaders = [];
+let pageResponse;
+const pageRoute = new URLSearchParams('tab=info');
+const pageContext = {
+  systemLabels, route: pageRoute,
+  captureRenderContext: () => ({}), renderIsCurrent: () => true,
+  requiredRadioSystem: () => ({ radio_system_key: 'p25:bee00:348' }),
+  requiredIdentityKey: () => 'v1-g-bee00-348-7',
+  api: async () => pageResponse, channelApiPath: () => '/', radioSystemApiPath: () => '/',
+  groupIdentityApiPath: () => '/',
+  pageHeader: (title, subtitle) => { pageHeaders.push({ title, subtitle }); return null; },
+  beginPage: () => false, fragment: (...values) => values,
+  radioSystemContextLink: () => '', radioSystemsDirectoryDetails: () => '',
+  trunkedChannelTabItems: () => [{ id: 'info' }], trunkedChannelTabs: () => null,
+  channelTabItems: () => [{ id: 'info' }], tabs: () => null, entityTabs: () => null,
+  radioSystemTabItems: () => [{ id: 'info' }], radioSystemTabs: () => null
+};
+const pageFunctions = [
+  'protocol', 'protocolFamily', 'isP25', 'identifierNumber', 'identityNumber', 'hex', 'frequency',
+  'normalizedSiteText', 'sameSiteText', 'siteNameValue', 'nameValue', 'channelDisplayParts',
+  'channelLabel', 'channelValue', 'observedSiteLabel', 'trunkedSiteLabel', 'trunkedVariant',
+  'semanticLabel', 'channelLocationIdentity', 'channelSiteIdentity', 'savedChannelScopeLabel',
+  'isSavedChannelRadioSystem', 'radioSystemLabel', 'radioSystemPrimaryName', 'radioSystemDisplayName',
+  'radioSystemValue', 'aliasLabel', 'identityKind', 'rowGroupIdentityKind', 'groupIdentityLabel',
+  'p25CanonicalSubscriber', 'canonicalSubscriberText', 'radioIdentityPrefix', 'workingSubscriberId',
+  'radioIdentifierText', 'entityPageTitle', 'renderChannel', 'renderTrunkedChannel',
+  'renderConventionalChannel', 'renderRadioSystem', 'renderGroupIdentity', 'renderRadio'
+];
+vm.createContext(pageContext);
+vm.runInContext(pageFunctions.map((name) => {
+  const start = source.indexOf(`function ${name}(`);
+  return `${source.slice(start - 6, start) === 'async ' ? 'async ' : ''}${functionSource(name)}`;
+}).join('\n'), pageContext);
+
+async function pageHeading(renderer, response) {
+  pageResponse = response;
+  const before = pageHeaders.length;
+  await pageContext[renderer]();
+  assert.equal(pageHeaders.length, before + 1, `${renderer} renders exactly one header`);
+  return pageHeaders.at(-1);
+}
+
+(async () => {
+  const configurationId = '00000000-0000-0000-0000-000000000074';
+  pageRoute.set('configuration_id', configurationId);
+  const protocols = [
+    ['P25', 'P25_PHASE1', 'TRUNKED'], ['P25', 'P25_PHASE2', 'TRUNKED'],
+    ['P25', 'P25_CONVENTIONAL', 'CONVENTIONAL'],
+    ['DMR', 'DMR', 'TRUNKED'], ['DMR', 'DMR', 'CONVENTIONAL'],
+    ['NXDN', 'NXDN', 'TRUNKED'], ['NXDN', 'NXDN', 'CONVENTIONAL'],
+    ['AM', 'AM', 'CONVENTIONAL'], ['NBFM', 'NBFM', 'CONVENTIONAL']
+  ];
+  for (const [protocol, decoder, kind] of protocols) {
+    const channel = { configuration_id: configurationId, protocol, decoder, channel_kind: kind,
+      name: ' North ', site_name: 'North', source_frequencies_hz: [460012500, 461012500] };
+    const heading = await pageHeading('renderChannel', { channel });
+    assert.equal(heading.title, `${kind === 'TRUNKED' ? 'Site' : 'Channel'}: North`,
+      `${decoder} ${kind} uses the saved topology even with multiple frequencies`);
+  }
+  for (const auxiliary of ['DCS', 'FLEETSYNC2', 'LJ_1200', 'MDC1200', 'TAIT_1200']) {
+    const heading = await pageHeading('renderChannel', { channel: { configuration_id: configurationId,
+      protocol: 'NBFM', decoder: 'NBFM', channel_kind: 'CONVENTIONAL', name: 'Dispatch',
+      auxiliary_decoders: [auxiliary] } });
+    assert.equal(heading.title, 'Channel: Dispatch', `${auxiliary} does not change primary channel topology`);
+  }
+  for (const kind of [undefined, 'FUTURE']) {
+    const heading = await pageHeading('renderChannel', { channel: { configuration_id: configurationId,
+      protocol: 'DMR', decoder: 'DMR', channel_kind: kind, name: 'Dispatch' } });
+    assert.equal(heading.title, 'Channel: Dispatch', 'Missing or unknown topology does not imply a trunked site');
+  }
+  assert.equal((await pageHeading('renderChannel', { channel: { configuration_id: configurationId,
+    protocol: 'NBFM', channel_kind: 'CONVENTIONAL', name: ' ', primary_frequency_hz: 460012500 }
+  })).title, 'Channel: 460.01250 MHz', 'An unnamed conventional channel falls back to its frequency');
+  assert.equal((await pageHeading('renderChannel', { channel: { configuration_id: configurationId,
+    protocol: 'NBFM', channel_kind: 'CONVENTIONAL', name: null }
+  })).title, 'Channel Details', 'Missing names do not produce Channel: Channel');
+
+  for (const system of [
+    { protocol: 'P25', radio_system_key: 'p25:bee00:348', wacn: 0xbee00, system_id: 0x348 },
+    nativeDmr,
+    { protocol: 'NXDN', radio_system_key: 'nxdn-c:regional:123', location_category: 'regional', system_id: 123 }
+  ]) {
+    assert.equal((await pageHeading('renderRadioSystem', { ...system, system_name: 'Metro' })).title,
+      'System: Metro', `${system.protocol} native system retains its type when named`);
+    const heading = await pageHeading('renderRadioSystem', system);
+    assert.match(heading.title, /^System: /, 'An unmatched system identity keeps its type prefix');
+    assert.ok(heading.subtitle.startsWith(system.protocol), 'System context includes its protocol');
+  }
+  for (const [protocol, family] of [['DMR', 'dmr'], ['NXDN', 'nxdn-c'], ['NXDN', 'nxdn-d']]) {
+    const scoped = { protocol, radio_system_key: `${family}:channel:${configurationId}` };
+    assert.equal((await pageHeading('renderRadioSystem', { ...scoped, system_name: 'Metro' })).title,
+      'Channel Activity: Metro', 'A saved channel scope never presents itself as a proven native system');
+    assert.equal((await pageHeading('renderRadioSystem', { ...scoped, channel_names: 'North' })).title,
+      'Channel Activity: North');
+    assert.equal((await pageHeading('renderRadioSystem', scoped)).title, `Channel Activity: ${protocol}`,
+      'Unnamed saved channel scopes fall back without repeating their type');
+  }
+
+  for (const protocol of ['P25', 'DMR', 'NXDN']) {
+    for (const [kind, label] of [['talkgroup', 'Talkgroup'], ['patch_group', 'Patch Group']]) {
+      const group = { protocol, group_identity_kind: kind, native_id: 7 };
+      assert.equal((await pageHeading('renderGroupIdentity', { ...group, alias_name: 'Dispatch' })).title,
+        `${label}: Dispatch`, `${protocol} aliases retain their actual group kind`);
+      assert.equal((await pageHeading('renderGroupIdentity', group)).title, `${label}: 7`,
+        'Unmatched identities get one prefix and their formatted number');
+    }
+  }
+  assert.equal((await pageHeading('renderGroupIdentity', { protocol: 'NXDN',
+    address_domain: 'nxdn_type_d', group_identity_kind: 'talkgroup', native_id: (12 << 11) | 34 }
+  )).title, 'Talkgroup: 12-0034', 'NXDN Type-D retains its home/repeater group format');
+
+  const radio = { protocol: 'DMR', native_id: 42 };
+  assert.equal((await pageHeading('renderRadio', { ...radio, alias_name: 'Engine', last_talker_alias: 'ENG' })).title,
+    'Radio: Engine', 'A configured radio alias keeps its prefix and wins over OTA text');
+  assert.equal((await pageHeading('renderRadio', { ...radio, last_talker_alias: 'ENG' })).title,
+    'Radio: ENG', 'An OTA-only radio name keeps its type prefix');
+  assert.equal((await pageHeading('renderRadio', { ...radio, alias_name: ' ', last_talker_alias: ' ' })).title,
+    'Radio: 42', 'Whitespace names fall through to the usable ID');
+  assert.equal((await pageHeading('renderRadio', radio)).title, 'Radio: 42');
+  assert.equal((await pageHeading('renderRadio', { protocol: 'P25', native_id: 130001,
+    canonical_identity: { wacn: 0xbee00, system_id: 0x348, subscriber_id: 9601699 },
+    working_subscriber_id: 130001 })).title, 'Radio: BEE00.348.9601699',
+  'P25 radio headings retain the permanent subscriber identity');
+  assert.equal((await pageHeading('renderRadio', { protocol: 'NXDN',
+    address_domain: 'nxdn_type_d', native_id: (12 << 11) | 34 })).title, 'Radio: 12-0034');
+})().catch((error) => { console.error(error); process.exitCode = 1; });
