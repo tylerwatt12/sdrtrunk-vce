@@ -19197,9 +19197,6 @@ async function renderGroupIdentity() {
       radioSystemCapability(groupIdentity, 'current_affiliations');
     const channelPresence = currentAffiliations && radioSystemCapability(groupIdentity, 'radio_channel_presence');
     const affiliatedOnly = currentAffiliations && route.get('affiliated') === 'true';
-    const relationships = await apiPage(radioSystemApiPath(radioSystem.radio_system_key, 'relationships'),
-      pageParameters({ group_identity_key: identityKey,
-        affiliated: affiliatedOnly ? true : null }));
     const columns = [
       { id: 'radio', label: 'Radio', render: (row) => radioLink(row, row.radio_native_id, undefined,
         row.radio_entity_ref), className: 'numeric', sort: 'radio', sortValue: (row) => Number(row.radio_native_id) },
@@ -19224,8 +19221,20 @@ async function renderGroupIdentity() {
     const action = currentAffiliations ? anchor(affiliatedOnly ? 'Clear Filter' : 'Show Affiliated',
       currentHref({ affiliated: affiliatedOnly ? null : true, offset: null }),
       'ui-button ui-button-secondary') : null;
-    content.append(pagedSection(affiliatedOnly ? 'Affiliated Radios' : 'Radios', relationships,
-      columns, null, radioTableType('group-identity-radios', columns), action));
+    const directory = createAsyncSection(affiliatedOnly ? 'Affiliated Radios' : 'Radios', {
+      action,
+      loadingMessage: 'Loading radios…',
+      errorMessage: 'The radios could not be loaded.'
+    });
+    content.append(directory.element);
+    await directory.load(
+      () => apiPage(radioSystemApiPath(radioSystem.radio_system_key, 'relationships'),
+        pageParameters({ group_identity_key: identityKey,
+          affiliated: affiliatedOnly ? true : null, limit: 25 })),
+      (page) => pagedTableContent(page, columns, radioTableType('group-identity-radios', columns), {
+        tableOptions: { layoutMenuHost: directory.titleActions, controller: directory.tableController }
+      }),
+      renderContext);
   } else if (tab === 'activity') {
     await renderActivity({ ...radioSystem, group_identity_key: identityKey, _activity_context: {
       kind: kind === 'patch_group' ? 'patch-group' : 'talkgroup',

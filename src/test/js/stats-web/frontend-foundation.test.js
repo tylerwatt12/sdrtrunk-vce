@@ -162,6 +162,136 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
+async function checkGroupIdentityRadiosLoading(browsingWorkflows, tableLayouts) {
+  const pageLifecycle = await loadModule('page-lifecycle');
+  function node(tag, className = '', text = '') {
+    const classes = new Set(className.split(/\s+/).filter(Boolean));
+    const element = {
+      tagName: tag.toUpperCase(), children: [], dataset: {}, attributes: {}, isConnected: true,
+      classList: { add: (...values) => values.forEach((value) => classes.add(value)),
+        remove: (...values) => values.forEach((value) => classes.delete(value)),
+        contains: (value) => classes.has(value),
+        toggle: (value, enabled) => enabled ? classes.add(value) : classes.delete(value) },
+      setAttribute(name, value) { this.attributes[name] = value; },
+      append(...values) { values.filter(Boolean).forEach((value) => {
+        if (value.tagName === 'FRAGMENT') this.append(...value.children);
+        else this.children.push(value);
+      }); },
+      replaceChildren(...values) { this.children = []; this.append(...values); },
+      addEventListener(name, listener) { this[name] = listener; },
+      focus() { this.focused = true; },
+      querySelector(selector) {
+        const className = selector.match(/\.([\w-]+)/)?.[1];
+        return this.children.find((child) => child.classList?.contains(className)) ||
+          this.children.map((child) => child.querySelector?.(selector)).find(Boolean) || null;
+      },
+      textContent: text
+    };
+    return element;
+  }
+  const radioSystemKey = 'p25:00001:002';
+  const identityKey = 'v1-g-00001-002-23';
+  const route = new URLSearchParams({ view: 'group-identity', radio_system_key: radioSystemKey,
+    identity_key: identityKey, tab: 'radios', affiliated: 'true', sort: 'radio_alias',
+    direction: 'asc', offset: '25' });
+  let epoch = 1;
+  const requests = [];
+  const tables = [];
+  const pending = [];
+  const content = node('main');
+  const context = {
+    route, URLSearchParams, pageLifecycle, browsingWorkflows, tableLayouts, node, content,
+    SERVER_TABLE_DEFAULT_SORTS: { 'group-identity-radios': 'last_seen' },
+    captureRenderContext: () => ({ epoch }), renderIsCurrent: (renderContext) => renderContext.epoch === epoch,
+    requiredRadioSystem: () => ({ radio_system_key: radioSystemKey }), requiredIdentityKey: () => identityKey,
+    api: async () => ({ native_id: 23, alias_name: 'Dispatch' }),
+    apiPage: (path, parameters) => { requests.push({ path, parameters }); return pending.shift().promise; },
+    rowGroupIdentityKind: () => 'talkgroup', identityNumber: (_row, value) => String(value),
+    aliasLabel: () => 'Dispatch', radioSystemCapability: () => true,
+    pageHeader: (title) => node('header', '', title), radioSystemContextLink: () => node('a'),
+    entityTabs: () => node('nav'),
+    beginPage: (renderContext, ...children) => {
+      if (renderContext.epoch !== epoch) return false;
+      content.replaceChildren(...children); return true;
+    },
+    fragment: (...children) => { const value = node('fragment'); value.append(...children); return value; },
+    anchor: (label, href, className) => { const value = node('a', className, label); value.href = href; return value; },
+    number: String, cleanupTableLayoutMenu: () => {},
+    table: (rows, columns, _emptyText, options) => {
+      tables.push({ rows, columns, options }); return node('div', 'ui-table-wrap');
+    }
+  };
+  vm.createContext(context);
+  for (const signature of [
+    'radioSystemApiPath(radioSystemKey, child = "")',
+    'groupIdentityApiPath(radioSystemKey, identityKey, child = "")', 'currentHref(overrides = {})',
+    'pageParameters(extra = {})', 'entityPageTitle(kind, label, fallback = "")',
+    'section(title, child, action = null)', 'sectionActionHost(action = null)',
+    'replaceAsyncContent(host, rendered)', 'asyncSectionFailure(error, fallbackMessage, retry)',
+    'createAsyncSection(title, options = {})', 'pager(page, position = "bottom", itemLabel = "Rows")',
+    'pagedTableContent(page, columns, tableType, options = {})', 'radioTableType(baseType, columns)'
+  ]) {
+    const name = signature.slice(0, signature.indexOf('('));
+    vm.runInContext(`function ${signature} ${functionBinding(appSource, name)}`, context);
+  }
+  vm.runInContext(`async function renderGroupIdentity() ${functionBinding(appSource, 'renderGroupIdentity')}`, context);
+  const firstRequest = deferred();
+  pending.push(firstRequest);
+  const firstRender = context.renderGroupIdentity();
+  await new Promise((resolve) => setImmediate(resolve));
+  const directory = content.children[2];
+  const host = directory.querySelector('.async-section-content');
+  assert.equal(host.children[0].textContent, 'Loading radios…', 'The Radios section appears before its response');
+  assert.equal(host.attributes['aria-busy'], 'true');
+  assert.equal(requests[0].path, '/api/v1/radio-systems/p25%3A00001%3A002/relationships');
+  assert.deepEqual(JSON.parse(JSON.stringify(requests[0].parameters)), {
+    q: null, sort: 'radio_alias', direction: 'asc', offset: '25', limit: 25,
+    group_identity_key: identityKey, affiliated: true
+  });
+  firstRequest.reject(new Error('The radios could not be loaded.'));
+  await firstRender;
+  const retry = host.querySelector('.async-section-retry');
+  assert.equal(retry.textContent, 'Retry');
+  assert.equal(content.children[0].textContent, 'Talkgroup: Dispatch',
+    'A failed table request preserves the identity heading');
+  const retryRequest = deferred();
+  pending.push(retryRequest);
+  retry.click();
+  assert.equal(host.children[0].textContent, 'Loading radios…');
+  assert.equal(requests[1].parameters.limit, 25);
+  const rows = [{ radio_native_id: 42, radio_alias_name: 'Engine 1' }];
+  retryRequest.resolve({ rows, limit: 25, offset: 25, total_count: 76, has_more: true, next_offset: 50 });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(host.attributes['aria-busy'], 'false');
+  assert.strictEqual(tables[0].rows, rows);
+  assert.deepEqual(Array.from(tables[0].columns, (column) => column.id),
+    ['radio', 'alias', 'talker-alias', 'confirmed-channel', 'logical-calls', 'encrypted-logical-calls', 'last-seen']);
+  assert.equal(tables[0].options.defaultSort, 'last_seen');
+  assert.equal(tables[0].options.serverSort, true);
+  const pager = host.children[1];
+  const next = pager.children[1].children[1];
+  const nextParameters = new URL(next.href, 'https://localhost').searchParams;
+  assert.equal(nextParameters.get('offset'), '50', 'The shared pager advances by the returned page size');
+  assert.equal(nextParameters.get('affiliated'), 'true');
+  assert.equal(nextParameters.get('sort'), 'radio_alias');
+  route.delete('affiliated');
+  route.delete('offset');
+  const staleRequest = deferred();
+  pending.push(staleRequest);
+  const staleRender = context.renderGroupIdentity();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests[2].parameters.affiliated, null);
+  const staleHost = content.children[2].querySelector('.async-section-content');
+  epoch += 1;
+  const nextPage = node('div', '', 'Another page');
+  content.replaceChildren(nextPage);
+  staleRequest.resolve({ rows, limit: 25, offset: 0, has_more: false, next_offset: null });
+  await staleRender;
+  assert.deepEqual(content.children, [nextPage], 'An old Radios response cannot replace the next page');
+  assert.equal(tables.length, 1, 'Navigation prevents obsolete table rendering');
+  assert.equal(staleHost.children[0].textContent, 'Loading radios…');
+}
+
 async function main() {
   const [routes, preferences, preferenceSchema, tableLayouts, tableDefaults, pageTitles, entityRefs, playerModule] =
     await Promise.all([
@@ -1354,6 +1484,7 @@ async function main() {
     { id: 'radio' }, { id: 'talker-alias' }, { id: 'affiliation' }, { id: 'confirmed-channel' }
   ]), 'radios.talker-alias-affiliation-channel');
   assert.match(appSource, /radioTableType\('group-identity-radios', columns\)/);
+  await checkGroupIdentityRadiosLoading(browsing, tableLayouts);
   assert.match(appSource, /signalingMetrics\(signalingActionRows\(response\.action_counts\)/);
   assert.match(functionBinding(appSource, 'signalingMetrics'), /values\.filter\(\(\[, count\]\) => Number\(count\) > 0\)/);
   assert.equal(tableDefaults.width('channel-frequencies-p25', { id: 'tags' }), 130);
