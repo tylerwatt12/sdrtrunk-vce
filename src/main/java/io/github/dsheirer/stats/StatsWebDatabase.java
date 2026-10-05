@@ -7721,20 +7721,21 @@ class StatsWebDatabase
 
     /**
      * Shared identity summaries retain only the latest raw algorithm and key IDs. Translate them at read time so the
-     * Java GUI and web interface use the same protocol-specific vocabulary.
+     * Java GUI and web interface use the same protocol-specific vocabulary. Signaling can identify the algorithm
+     * before any encrypted logical call completes.
      */
     private static void enrichSummaryEncryption(List<Map<String,Object>> rows)
     {
         for(Map<String,Object> row: rows)
         {
-            if(number(row.get("encrypted_logical_call_count")) == 0)
+            Integer algorithm = integer(row.get("last_encryption_algorithm_id"));
+            if(algorithm == null && number(row.get("encrypted_logical_call_count")) == 0)
             {
                 continue;
             }
 
             VoiceEncryptionProtocol protocol =
                 VoiceEncryptionProtocol.fromProtocolName(String.valueOf(row.get("protocol")));
-            Integer algorithm = integer(row.get("last_encryption_algorithm_id"));
             row.put("last_encryption_algorithm_display",
                 VoiceEncryptionDisplay.compactAlgorithm(protocol, algorithm));
             row.put("last_encryption_algorithm_name",

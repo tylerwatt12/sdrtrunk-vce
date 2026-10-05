@@ -879,6 +879,121 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void lastEncryptionNamesDoNotRequireCompletedEncryptedCalls() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                UPDATE radio_system_identity_summary
+                SET last_encryption_algorithm_id = 0x84, last_encryption_key_id = 7
+                WHERE id IN (7101, 7102)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary (
+                    id, radio_system_id, identity_kind_code, home_wacn, home_system_id, identity_id,
+                    first_seen_ms, last_seen_ms, last_encryption_algorithm_id
+                ) VALUES (7103, 71, 3, 0xBEE00, 0x49F, 101, 1000, 4000, 0x84)
+                """);
+        }
+
+        List<Map<String,Object>> summaries = List.of(
+            map(mDatabase.radioSystemGroupIdentity(RADIO_SYSTEM_KEY,
+                p25IdentityKey(RadioSystemIdentityKey.KIND_TALKGROUP, 101)), "group_identity"),
+            map(mDatabase.radioSystemGroupIdentity(RADIO_SYSTEM_KEY,
+                p25IdentityKey(RadioSystemIdentityKey.KIND_PATCH_GROUP, 101)), "group_identity"),
+            map(mDatabase.radio(RADIO_SYSTEM_KEY, p25LocalRadioKey(202)), "radio"));
+        for(Map<String,Object> summary: summaries)
+        {
+            assertEquals(0, number(summary.get("encrypted_logical_call_count")));
+            assertEquals(0x84, number(summary.get("last_encryption_algorithm_id")));
+            assertEquals("AES256", summary.get("last_encryption_algorithm_display"));
+            assertEquals("AES-256", summary.get("last_encryption_algorithm_name"));
+        }
+    }
+
+    @Test
+    void lastEncryptionNamesUseTheSummaryProtocol() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            seedTrunkedDmrAndNxdn(statement);
+            statement.executeUpdate("""
+                UPDATE radio_system_identity_summary SET last_encryption_algorithm_id = 1
+                WHERE id IN (7801, 7803, 7901, 7903)
+                """);
+        }
+
+        String dmrSystem = "dmr:channel:" + DMR_TRUNKED_CHANNEL;
+        String nxdnSystem = "nxdn-c:channel:" + NXDN_TRUNKED_CHANNEL;
+        for(Map<String,Object> summary: List.of(
+            map(mDatabase.radioSystemGroupIdentity(dmrSystem,
+                RadioSystemIdentityKey.format(1, -1, -1, 7)), "group_identity"),
+            map(mDatabase.radio(dmrSystem, RadioSystemIdentityKey.format(2, -1, -1, 501)), "radio")))
+        {
+            assertEquals(0, number(summary.get("encrypted_logical_call_count")));
+            assertEquals("Hytera Basic Privacy", summary.get("last_encryption_algorithm_name"));
+        }
+        for(Map<String,Object> summary: List.of(
+            map(mDatabase.radioSystemGroupIdentity(nxdnSystem,
+                RadioSystemIdentityKey.format(1, -1, -1, 9)), "group_identity"),
+            map(mDatabase.radio(nxdnSystem, RadioSystemIdentityKey.format(2, -1, -1, 601)), "radio")))
+        {
+            assertEquals(0, number(summary.get("encrypted_logical_call_count")));
+            assertEquals("Scrambler", summary.get("last_encryption_algorithm_name"));
+        }
+    }
+
+    @Test
+    void lastEncryptionNamesPreserveMissingAndUnknownEvidence() throws Exception
+    {
+        String groupKey = p25IdentityKey(RadioSystemIdentityKey.KIND_TALKGROUP, 101);
+        String radioKey = p25LocalRadioKey(202);
+        for(Map<String,Object> summary: List.of(
+            map(mDatabase.radioSystemGroupIdentity(RADIO_SYSTEM_KEY, groupKey), "group_identity"),
+            map(mDatabase.radio(RADIO_SYSTEM_KEY, radioKey), "radio")))
+        {
+            assertNull(summary.get("last_encryption_algorithm_display"));
+            assertNull(summary.get("last_encryption_algorithm_name"));
+        }
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                UPDATE radio_system_identity_summary SET encrypted_logical_call_count = 1
+                WHERE id IN (7101, 7102)
+                """);
+        }
+        for(Map<String,Object> summary: List.of(
+            map(mDatabase.radioSystemGroupIdentity(RADIO_SYSTEM_KEY, groupKey), "group_identity"),
+            map(mDatabase.radio(RADIO_SYSTEM_KEY, radioKey), "radio")))
+        {
+            assertEquals("ENC", summary.get("last_encryption_algorithm_display"));
+            assertEquals("ENC", summary.get("last_encryption_algorithm_name"));
+        }
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                UPDATE radio_system_identity_summary
+                SET encrypted_logical_call_count = 0, last_encryption_algorithm_id = 0x3C
+                WHERE id IN (7101, 7102)
+                """);
+        }
+        for(Map<String,Object> summary: List.of(
+            map(mDatabase.radioSystemGroupIdentity(RADIO_SYSTEM_KEY, groupKey), "group_identity"),
+            map(mDatabase.radio(RADIO_SYSTEM_KEY, radioKey), "radio")))
+        {
+            assertEquals(0x3C, number(summary.get("last_encryption_algorithm_id")));
+            assertEquals("ALG:3C", summary.get("last_encryption_algorithm_display"));
+            assertEquals("ALG:3C", summary.get("last_encryption_algorithm_name"));
+        }
+    }
+
+    @Test
     void sitePresenceAndSystemSummaryPreferUniqueConfiguredChannelNames() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
