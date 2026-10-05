@@ -7,7 +7,7 @@ import java.sql.SQLException;
 import java.util.List;
 
 /** Preserves retained evidence while storing its existing member observation channel for covering lookups. */
-final class Format35To36DatabaseMigration implements DatabaseMigrationStep
+final class Format38To39DatabaseMigration implements DatabaseMigrationStep
 {
     @Override public String id() { return "format-35-to-36"; }
     @Override public String description() { return "Speed up retained channel-local identity name lookups"; }

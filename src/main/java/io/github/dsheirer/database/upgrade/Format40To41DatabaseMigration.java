@@ -6,13 +6,13 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.List;
 
-/** Adds two reproducible positive local-address indexes without rewriting retained rows. */
-final class Format36To37DatabaseMigration implements DatabaseMigrationStep
+/** Adds two reproducible lookup indexes without rewriting retained rows or existing indexes. */
+final class Format40To41DatabaseMigration implements DatabaseMigrationStep
 {
-    @Override public String id() { return "format-36-to-37"; }
-    @Override public String description() { return "Speed up retained identity name search"; }
-    @Override public int sourceVersion() { return 36; }
-    @Override public int targetVersion() { return 37; }
+    @Override public String id() { return "format-37-to-38"; }
+    @Override public String description() { return "Speed up retained statistics filters"; }
+    @Override public int sourceVersion() { return 37; }
+    @Override public int targetVersion() { return 38; }
 
     @Override
     public List<DatabaseMigrationEffect> declaredEffects() { return effects(); }
@@ -28,22 +28,22 @@ final class Format36To37DatabaseMigration implements DatabaseMigrationStep
     public void migrate(Connection connection) throws SQLException
     {
         requireSource(connection);
-        ReceiverActivitySchema.createIdentityLocalAddressEvidenceIndexes(connection);
+        ReceiverActivitySchema.createRemainingQueryLookupIndexes(connection);
     }
 
     private static void requireSource(Connection connection) throws SQLException
     {
-        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 36)
+        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 37)
         {
-            throw new SQLException("Expected format 36");
+            throw new SQLException("Expected format 37");
         }
     }
 
     private static List<DatabaseMigrationEffect> effects()
     {
         return List.of(new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM,
-            "positive source and target local-address lookup indexes", 2,
-            "Add two sparse covering indexes while preserving every retained row, allocator, " +
-                "identity relationship, administrator setting, credential, and personal preference unchanged"));
+            "retained statistics lookup indexes", 2,
+            "Add two covering lookup indexes while preserving every existing schema definition, retained row, " +
+                "allocator, identity relationship, administrator setting, credential, and personal preference unchanged"));
     }
 }

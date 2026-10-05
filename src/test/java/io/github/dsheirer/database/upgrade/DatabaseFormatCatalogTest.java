@@ -291,7 +291,7 @@ class DatabaseFormatCatalogTest
     @Test
     void exactMarkerlessFormat35IsRecognizedPlannedAndSafelyMigrated() throws Exception
     {
-        Path database = Format35TestDatabase.create(mTemporaryFolder.resolve("markerless-format-35.sqlite"));
+        Path database = Format38TestDatabase.create(mTemporaryFolder.resolve("markerless-format-35.sqlite"));
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             assertEquals(1, statement.executeUpdate(
@@ -315,7 +315,7 @@ class DatabaseFormatCatalogTest
     @Test
     void exactMarkerlessFormat36IsRecognizedAndSafelyMigrated() throws Exception
     {
-        Path database = Format36TestDatabase.create(mTemporaryFolder.resolve("markerless-format-36.sqlite"));
+        Path database = Format39TestDatabase.create(mTemporaryFolder.resolve("markerless-format-36.sqlite"));
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);
@@ -339,7 +339,7 @@ class DatabaseFormatCatalogTest
     @Test
     void exactMarkerlessFormat37IsRecognizedAndSafelyMigrated() throws Exception
     {
-        Path database = Format37TestDatabase.create(mTemporaryFolder.resolve("markerless-format-37.sqlite"));
+        Path database = Format40TestDatabase.create(mTemporaryFolder.resolve("markerless-format-37.sqlite"));
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);
@@ -363,7 +363,7 @@ class DatabaseFormatCatalogTest
     @Test
     void exactMarkerlessCurrentFormatIsAdoptedWithoutChangingItsSchema() throws Exception
     {
-        Path database = Format38TestDatabase.create(mTemporaryFolder.resolve("markerless-current.sqlite"));
+        Path database = Format41TestDatabase.create(mTemporaryFolder.resolve("markerless-current.sqlite"));
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);

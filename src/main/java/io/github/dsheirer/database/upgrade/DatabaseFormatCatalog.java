@@ -424,7 +424,7 @@ public final class DatabaseFormatCatalog
     private static final FormatDescriptor FORMAT_35 = new FormatDescriptor(35, "covering-activity-lookups-v1",
         "Covering identity-evidence and saved-channel activity indexes", FORMAT_35_FINGERPRINT, Map.of(),
         List.of("main format 35"),
-        "src/test/java/io/github/dsheirer/database/upgrade/Format35TestDatabase.java", List.of(
+        "src/test/java/io/github/dsheirer/database/upgrade/Format38TestDatabase.java", List.of(
             "Preserve every retained receiver activity event, event ID, and identity relationship unchanged",
             "Replace four existing lookup indexes with covering equivalents in the same ordering",
             "Add one narrow event/channel index without changing retained rows or foreign-key parent keys",
@@ -433,7 +433,7 @@ public final class DatabaseFormatCatalog
     private static final FormatDescriptor FORMAT_36 = new FormatDescriptor(36, "covered-local-alias-evidence-v1",
         "Stored member observation channels and local-address evidence indexes", FORMAT_36_FINGERPRINT, Map.of(),
         List.of("main format 36"),
-        "src/test/java/io/github/dsheirer/database/upgrade/Format36TestDatabase.java", List.of(
+        "src/test/java/io/github/dsheirer/database/upgrade/Format39TestDatabase.java", List.of(
             "Preserve every retained event, member relationship, identity, and administrator-owned setting",
             "Copy each member's immutable observation channel from its existing parent event",
             "Enforce the event/channel relationship with a unique parent index and composite foreign key",
@@ -442,7 +442,7 @@ public final class DatabaseFormatCatalog
     private static final FormatDescriptor FORMAT_37 = new FormatDescriptor(37, "positive-local-address-evidence-v1",
         "Positive retained source and target local-address covering indexes", FORMAT_37_FINGERPRINT, Map.of(),
         List.of("main format 37"),
-        "src/test/java/io/github/dsheirer/database/upgrade/Format37TestDatabase.java", List.of(
+        "src/test/java/io/github/dsheirer/database/upgrade/Format40TestDatabase.java", List.of(
             "Preserve every retained Activity row, member channel, identity relationship, and allocator unchanged",
             "Add two sparse covering source and target local-address indexes for identity name search",
             "Keep existing time ordering, Working-ID evidence, ownership, and retention behavior unchanged",
@@ -451,7 +451,7 @@ public final class DatabaseFormatCatalog
     private static final FormatDescriptor FORMAT_38 = new FormatDescriptor(38, "filtered-activity-lookup-v1",
         "Target event-type and channel frequency Activity covering indexes", FORMAT_38_FINGERPRINT, Map.of(),
         List.of("main format 38"),
-        "src/test/java/io/github/dsheirer/database/upgrade/Format38TestDatabase.java", List.of(
+        "src/test/java/io/github/dsheirer/database/upgrade/Format41TestDatabase.java", List.of(
             "Add two sparse Activity indexes for target event-type and channel frequency lookups",
             "Preserve every existing schema definition, retained row, relationship, and allocator unchanged",
             "Keep existing Activity time/ID ordering, ownership, and bounded retention behavior unchanged",

@@ -28,7 +28,7 @@ import java.util.TreeSet;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-class Format36To37DatabaseMigrationTest
+class Format39To40DatabaseMigrationTest
 {
     private static final Set<String> ADDED = Set.of("idx_receiver_activity_event_source_identity_address",
         "idx_receiver_activity_event_target_identity_address");
@@ -37,7 +37,7 @@ class Format36To37DatabaseMigrationTest
     @Test
     void preservesEveryRowAndAllocatorAcrossRollbackAndRetry() throws Exception
     {
-        Path source = Format36TestDatabase.create(mTemporaryFolder.resolve("source.sqlite"));
+        Path source = Format39TestDatabase.create(mTemporaryFolder.resolve("source.sqlite"));
         Map<String,TableContents> expected;
         Map<String,String> indexes;
         try(Connection connection = open(source); Statement statement = connection.createStatement())
@@ -55,7 +55,7 @@ class Format36To37DatabaseMigrationTest
             assertTrue(expected.get("configuration_channel").rows()>0);
             assertEquals("017064542dbb5cfab978e1928679e5666fa0c22583970033c01f5b0f322a2be1",
                 SqliteSchemaValidator.fingerprint(connection));
-            assertEquals(List.of(2L),new Format36To37DatabaseMigration().validateSource(connection).stream()
+            assertEquals(List.of(2L),new Format39To40DatabaseMigration().validateSource(connection).stream()
                 .map(DatabaseMigrationEffect::affectedRows).toList());
         }
         byte[] bytes = Files.readAllBytes(source);
@@ -67,11 +67,11 @@ class Format36To37DatabaseMigrationTest
             try(Connection connection = open(candidate); Statement statement = connection.createStatement())
             {
                 connection.setAutoCommit(false);
-                new Format36To37DatabaseMigration().migrate(connection);connection.rollback();
+                new Format39To40DatabaseMigration().migrate(connection);connection.rollback();
                 assertEquals(DatabaseFormatCatalog.requireVersion(36).fingerprint(),SqliteSchemaValidator.fingerprint(connection));
                 assertEquals(indexes,indexDefinitions(connection));assertEquals(expected,tableContents(connection));
                 List<DatabaseMigrationEffect> effects =
-                    new Format36To37DatabaseMigration().migrateAndReport(connection, false);
+                    new Format39To40DatabaseMigration().migrateAndReport(connection, false);
                 DatabaseFormatCatalog.stampForMigration(connection,37);connection.commit();
                 assertEquals(List.of(2L),effects.stream()
                     .map(DatabaseMigrationEffect::affectedRows).toList());
@@ -93,8 +93,8 @@ class Format36To37DatabaseMigrationTest
     @Test
     void refusesOlderAndMixedSourcesWithoutMutation() throws Exception
     {
-        Path older = Format35TestDatabase.create(mTemporaryFolder.resolve("older.sqlite"));
-        Path mixed = Format36TestDatabase.create(mTemporaryFolder.resolve("mixed.sqlite"));
+        Path older = Format38TestDatabase.create(mTemporaryFolder.resolve("older.sqlite"));
+        Path mixed = Format39TestDatabase.create(mTemporaryFolder.resolve("mixed.sqlite"));
         try(Connection connection = open(mixed); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("DROP INDEX idx_receiver_activity_event_id_channel");
@@ -107,7 +107,7 @@ class Format36To37DatabaseMigrationTest
             {
                 String fingerprint = SqliteSchemaValidator.fingerprint(connection);
                 Map<String,TableContents> contents = tableContents(connection);
-                assertThrows(SQLException.class,() -> new Format36To37DatabaseMigration().migrate(connection));
+                assertThrows(SQLException.class,() -> new Format39To40DatabaseMigration().migrate(connection));
                 assertEquals(fingerprint,SqliteSchemaValidator.fingerprint(connection));assertEquals(contents,tableContents(connection));
             }
             assertArrayEquals(bytes,Files.readAllBytes(source));
@@ -117,7 +117,7 @@ class Format36To37DatabaseMigrationTest
     @Test
     void frozenFormat37MatchesItsHistoricalCreator() throws Exception
     {
-        Path current = Format37TestDatabase.create(mTemporaryFolder.resolve("historical.sqlite"));
+        Path current = Format40TestDatabase.create(mTemporaryFolder.resolve("historical.sqlite"));
         Path fresh = mTemporaryFolder.resolve("fresh-historical.sqlite");
         try(Connection connection = open(current); Connection freshConnection = open(fresh))
         {

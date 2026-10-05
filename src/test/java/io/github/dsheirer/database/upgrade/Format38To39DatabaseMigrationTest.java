@@ -24,14 +24,14 @@ import java.util.TreeSet;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-class Format35To36DatabaseMigrationTest
+class Format38To39DatabaseMigrationTest
 {
     @TempDir Path mTemporaryFolder;
 
     @Test
     void preservesEveryOriginalFieldAndAllocatorAcrossRollbackAndRetry() throws Exception
     {
-        Path source = Format35TestDatabase.create(mTemporaryFolder.resolve("source.sqlite"));
+        Path source = Format38TestDatabase.create(mTemporaryFolder.resolve("source.sqlite"));
         Map<String,TableContents> expected;
         Map<String,String> indexes;
         try(Connection connection = open(source); Statement statement = connection.createStatement())
@@ -46,7 +46,7 @@ class Format35To36DatabaseMigrationTest
             assertEquals(3, expected.get("activity_event_identity_member").rows());
             assertTrue(expected.get("web_user").rows() > 0);
             assertTrue(expected.get("configuration_channel").rows() > 0);
-            assertEquals(List.of(3L,2L,1L), new Format35To36DatabaseMigration().validateSource(connection).stream()
+            assertEquals(List.of(3L,2L,1L), new Format38To39DatabaseMigration().validateSource(connection).stream()
                 .map(DatabaseMigrationEffect::affectedRows).toList());
             assertEquals("8eb528aead7c9b9f052dad03c8e0157ecf1e14055b2ec7fdc4f15c65d982cbce",
                 SqliteSchemaValidator.fingerprint(connection), "Already admitted format 35 remains frozen");
@@ -61,15 +61,15 @@ class Format35To36DatabaseMigrationTest
             try(Connection connection = open(candidate); Statement statement = connection.createStatement())
             {
                 connection.setAutoCommit(false);
-                new Format35To36DatabaseMigration().migrate(connection);
+                new Format38To39DatabaseMigration().migrate(connection);
                 connection.rollback();
                 assertEquals(DatabaseFormatCatalog.requireVersion(35).fingerprint(),
                     SqliteSchemaValidator.fingerprint(connection));
                 assertEquals(indexes, indexDefinitions(connection));
                 assertEquals(expected, tableContents(connection));
 
-                List<DatabaseMigrationEffect> effects = new Format35To36DatabaseMigration().validateSource(connection);
-                new Format35To36DatabaseMigration().migrate(connection);
+                List<DatabaseMigrationEffect> effects = new Format38To39DatabaseMigration().validateSource(connection);
+                new Format38To39DatabaseMigration().migrate(connection);
                 DatabaseFormatCatalog.stamp(connection,36);
                 connection.commit();
                 assertEquals(List.of(3L,2L,1L), effects.stream()
@@ -98,9 +98,9 @@ class Format35To36DatabaseMigrationTest
     void rejectsOlderMixedOrOrphanSourcesWithoutMutation() throws Exception
     {
         Path older = Format34TestDatabase.create(mTemporaryFolder.resolve("older.sqlite"));
-        Path mixed = Format35TestDatabase.create(mTemporaryFolder.resolve("mixed.sqlite"));
-        Path orphan = Format35TestDatabase.create(mTemporaryFolder.resolve("orphan.sqlite"));
-        Path wrongOwner = Format35TestDatabase.create(mTemporaryFolder.resolve("wrong-owner.sqlite"));
+        Path mixed = Format38TestDatabase.create(mTemporaryFolder.resolve("mixed.sqlite"));
+        Path orphan = Format38TestDatabase.create(mTemporaryFolder.resolve("orphan.sqlite"));
+        Path wrongOwner = Format38TestDatabase.create(mTemporaryFolder.resolve("wrong-owner.sqlite"));
         try(Connection connection = open(mixed); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("DROP INDEX idx_receiver_activity_event_id_channel");
@@ -123,7 +123,7 @@ class Format35To36DatabaseMigrationTest
             {
                 String fingerprint = SqliteSchemaValidator.fingerprint(connection);
                 Map<String,TableContents> contents = tableContents(connection);
-                assertThrows(SQLException.class, () -> new Format35To36DatabaseMigration().migrate(connection));
+                assertThrows(SQLException.class, () -> new Format38To39DatabaseMigration().migrate(connection));
                 assertEquals(fingerprint,SqliteSchemaValidator.fingerprint(connection));
                 assertEquals(contents,tableContents(connection));
             }
@@ -134,7 +134,7 @@ class Format35To36DatabaseMigrationTest
     @Test
     void adjacentFormat36FixtureRetainsItsExactFrozenContract() throws Exception
     {
-        Path current = Format36TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
+        Path current = Format39TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
         try(Connection connection = open(current))
         {
             assertEquals(36,DatabaseFormatCatalog.inspect(connection).version());
@@ -148,7 +148,7 @@ class Format35To36DatabaseMigrationTest
     @Test
     void storedChannelChecksRejectMismatchAndKeepBothOwnerRelationships() throws Exception
     {
-        Path database = Format36TestDatabase.create(mTemporaryFolder.resolve("constraints.sqlite"));
+        Path database = Format39TestDatabase.create(mTemporaryFolder.resolve("constraints.sqlite"));
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             for(String channel: List.of("NULL","0","'wrong'","900002"))
@@ -186,7 +186,7 @@ class Format35To36DatabaseMigrationTest
     @Test
     void addressCoversPreserveOrderedActivityAndBoundMemberDistinct() throws Exception
     {
-        Path database = Format36TestDatabase.create(mTemporaryFolder.resolve("plans.sqlite"));
+        Path database = Format39TestDatabase.create(mTemporaryFolder.resolve("plans.sqlite"));
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             String member = "SELECT DISTINCT identity_summary_id,channel_id,observed_local_id " +

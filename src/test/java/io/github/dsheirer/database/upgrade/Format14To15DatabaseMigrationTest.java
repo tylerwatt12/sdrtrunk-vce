@@ -806,13 +806,13 @@ class Format14To15DatabaseMigrationTest
             DatabaseFormatCatalog.stampForMigration(connection, 33);
             new Format33To34DatabaseMigration().migrateAndReport(connection, false);
             DatabaseFormatCatalog.stampForMigration(connection, 34);
-            new Format34To35DatabaseMigration().migrateAndReport(connection, false);
-            DatabaseFormatCatalog.stampForMigration(connection, 35);
-            new Format35To36DatabaseMigration().migrateAndReport(connection, false);
-            DatabaseFormatCatalog.stampForMigration(connection, 36);
-            new Format36To37DatabaseMigration().migrateAndReport(connection, false);
-            DatabaseFormatCatalog.stampForMigration(connection, 37);
             new Format37To38DatabaseMigration().migrateAndReport(connection, false);
+            DatabaseFormatCatalog.stampForMigration(connection, 35);
+            new Format38To39DatabaseMigration().migrateAndReport(connection, false);
+            DatabaseFormatCatalog.stampForMigration(connection, 36);
+            new Format39To40DatabaseMigration().migrateAndReport(connection, false);
+            DatabaseFormatCatalog.stampForMigration(connection, 37);
+            new Format40To41DatabaseMigration().migrateAndReport(connection, false);
             DatabaseFormatCatalog.stampForMigration(connection, 38);
             connection.commit();
 

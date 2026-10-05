@@ -7,19 +7,19 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 
 /** Exact populated format-37 fixture produced only by the adjacent format-36 migration. */
-public final class Format37TestDatabase
+public final class Format40TestDatabase
 {
-    private Format37TestDatabase() {}
+    private Format40TestDatabase() {}
 
     public static Path create(Path database) throws Exception
     {
-        Format36TestDatabase.create(database);
+        Format39TestDatabase.create(database);
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:"+database))
         {
             connection.setAutoCommit(false);
             try
             {
-                new Format36To37DatabaseMigration().migrate(connection);
+                new Format39To40DatabaseMigration().migrate(connection);
                 DatabaseFormatCatalog.stamp(connection,37);
                 connection.commit();
             }

@@ -1,7 +1,11 @@
 /* Copyright (C) 2026 Dennis Sheirer. SPDX-License-Identifier: GPL-3.0-or-later */
 package io.github.dsheirer.database.upgrade;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.SqliteSchemaValidator;
@@ -26,231 +30,209 @@ import org.junit.jupiter.api.io.TempDir;
 
 class Format37To38DatabaseMigrationTest
 {
-    private static final Map<String,String> ADDED = Map.of(
-        "idx_receiver_activity_event_target_event_type_time", """
-            CREATE INDEX idx_receiver_activity_event_target_event_type_time
-            ON receiver_activity_event(target_identity_summary_id,event_type_code,observed_at_ms DESC,id DESC,
-                radio_system_id,action_code) WHERE target_identity_summary_id IS NOT NULL
-            """,
-        "idx_receiver_activity_event_channel_frequency_time", """
-            CREATE INDEX idx_receiver_activity_event_channel_frequency_time
-            ON receiver_activity_event(channel_id,frequency_hz,observed_at_ms DESC,id DESC,
-                lcn_band,lcn_number,timeslot,radio_system_id,action_code) WHERE frequency_hz IS NOT NULL
-            """);
+    private static final Set<String> REBUILT_INDEXES = Set.of(
+        "idx_receiver_activity_event_source_time", "idx_receiver_activity_event_target_time",
+        "idx_receiver_activity_event_channel_action_time", "idx_activity_event_member_identity_event");
     @TempDir Path mTemporaryFolder;
 
     @Test
-    void preservesEveryRowAndAllocatorAcrossRollbackAndRetry() throws Exception
+    void preservesEveryRowAndAllocatorAcrossRollbackAndRetryToExactHistoricalFormat35() throws Exception
     {
-        Path source = Format37TestDatabase.create(mTemporaryFolder.resolve("source.sqlite"));
-        Map<String,TableContents> expected;
-        Map<String,String> indexes;
-        try(Connection connection = open(source); Statement statement = connection.createStatement())
+        Path source = Format34TestDatabase.create(mTemporaryFolder.resolve("source.sqlite"));
+        byte[] sourceBytes = Files.readAllBytes(source);
+        Map<String,TableContents> expectedRows;
+        Map<String,String> sourceIndexes;
+        try(Connection connection = open(source))
         {
-            seedLookupRows(statement);
-            expected = tableContents(connection);
-            indexes = schemaDefinitions(connection);
-            assertTrue(expected.get("activity_event_identity_member").rows()>0);
-            assertTrue(expected.get("web_user").rows()>0);
-            assertTrue(expected.get("configuration_channel").rows()>0);
-            assertEquals("82dc5ddb416a5c87b409544d1979fe2b9a3a2fde1a48418981376b2200067915",
-                SqliteSchemaValidator.fingerprint(connection));
-            assertEquals(List.of(2L),new Format37To38DatabaseMigration().validateSource(connection).stream()
+            expectedRows = tableContents(connection);
+            sourceIndexes = indexDefinitions(connection);
+            assertTrue(expectedRows.get("receiver_activity_event").rows() > 0);
+            assertTrue(expectedRows.get("activity_event_identity_member").rows() > 0);
+            assertTrue(expectedRows.get("configuration_channel").rows() > 0);
+            assertTrue(expectedRows.get("web_user").rows() > 0);
+            DatabaseMigrationChain.PreflightReport plan = DatabaseMigrationChain.validateSource(connection,
+                DatabaseFormatCatalog.inspect(connection));
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 34, plan.steps().size());
+            assertEquals("format-34-to-35", plan.steps().getFirst().id());
+            assertEquals(List.of(4L, 1L), plan.steps().getFirst().effects().stream()
                 .map(DatabaseMigrationEffect::affectedRows).toList());
         }
-        byte[] bytes = Files.readAllBytes(source);
-        assertThrows(SQLException.class,() -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(source));
-        assertArrayEquals(bytes,Files.readAllBytes(source));
-        for(int attempt=0;attempt<2;attempt++)
+
+        //Normal receiver startup must refuse the prior format without changing it.
+        assertThrows(SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(source));
+        assertArrayEquals(sourceBytes, Files.readAllBytes(source));
+
+        for(int attempt = 0; attempt < 2; attempt++)
         {
-            Path candidate = Files.copy(source,mTemporaryFolder.resolve("candidate-"+attempt+".sqlite"));
+            Path candidate = Files.copy(source, mTemporaryFolder.resolve("candidate-" + attempt + ".sqlite"));
             try(Connection connection = open(candidate); Statement statement = connection.createStatement())
             {
                 connection.setAutoCommit(false);
-                new Format37To38DatabaseMigration().migrate(connection);connection.rollback();
-                assertEquals(DatabaseFormatCatalog.requireVersion(37).fingerprint(),SqliteSchemaValidator.fingerprint(connection));
-                assertEquals(indexes,schemaDefinitions(connection));assertEquals(expected,tableContents(connection));
-                DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);connection.commit();
-                assertEquals(1,report.steps().size());
-                assertEquals("format-37-to-38",report.steps().getFirst().id());
-                assertEquals(List.of(2L),report.steps().getFirst().effects().stream()
+                new Format37To38DatabaseMigration().migrate(connection);
+                connection.rollback();
+                assertEquals(DatabaseFormatCatalog.requireVersion(34).fingerprint(),
+                    SqliteSchemaValidator.fingerprint(connection));
+                assertEquals(sourceIndexes, indexDefinitions(connection));
+                assertEquals(expectedRows, tableContents(connection));
+
+                List<DatabaseMigrationEffect> effects =
+                    new Format37To38DatabaseMigration().migrateAndReport(connection, false);
+                DatabaseFormatCatalog.stamp(connection, 35);
+                connection.commit();
+                assertEquals(List.of(DatabaseMigrationEffect.Kind.TRANSFORM, DatabaseMigrationEffect.Kind.TRANSFORM),
+                    effects.stream().map(DatabaseMigrationEffect::kind).toList());
+                assertEquals(List.of(4L, 1L), effects.stream()
                     .map(DatabaseMigrationEffect::affectedRows).toList());
-                assertEquals(expected,tableContents(connection),"Only the format marker changes");
-                assertEquals(38,DatabaseFormatCatalog.requireCurrent(connection).version());
-                assertEquals(DatabaseFormatCatalog.current().fingerprint(),SqliteSchemaValidator.fingerprint(connection));
-                Map<String,String> actual = schemaDefinitions(connection);
-                Set<String> names = new TreeSet<>(indexes.keySet());
-                ADDED.keySet().forEach(name -> names.add("index:"+name));
-                assertEquals(names,actual.keySet());indexes.forEach((name,sql) -> assertEquals(sql,actual.get(name)));
-                ADDED.forEach((name,sql) -> assertEquals(normalizeSql(sql),actual.get("index:"+name)));
-                assertLookupPlansAndResults(statement);
-                assertEquals("ok",scalar(statement,"PRAGMA integrity_check"));
-                assertEquals("0",scalar(statement,"SELECT count(*) FROM pragma_foreign_key_check"));
+                assertEquals(expectedRows, tableContents(connection),
+                    "Only the global format marker changes; every other row and allocator survives");
+                assertEquals(DatabaseFormatCatalog.requireVersion(35).fingerprint(),
+                    SqliteSchemaValidator.fingerprint(connection));
+                assertEquals(35, DatabaseFormatCatalog.inspect(connection).version());
+                assertFourRebuiltIndexesAndOneAdded(sourceIndexes, indexDefinitions(connection));
+                assertCoveringPlansAndStableTieOrdering(statement);
+                assertCoveringMemberEvidencePlan(statement);
+                assertEquals("ok", scalar(statement, "PRAGMA integrity_check"));
+                try(ResultSet violations = statement.executeQuery("PRAGMA foreign_key_check"))
+                {
+                    assertFalse(violations.next());
+                }
             }
-            SdrTrunkDatabaseStartup.validateGlobalDatabase(candidate);
-            assertArrayEquals(bytes,Files.readAllBytes(source));
+            assertThrows(SQLException.class, () ->
+                SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(candidate));
+            assertArrayEquals(sourceBytes, Files.readAllBytes(source), "The selected source remains unchanged");
         }
     }
 
     @Test
-    void refusesOlderAndMixedSourcesWithoutMutation() throws Exception
+    void refusesUnrelatedAndMixedSourcesWithoutMutation() throws Exception
     {
-        Path older = Format36TestDatabase.create(mTemporaryFolder.resolve("older.sqlite"));
-        Path mixed = Format37TestDatabase.create(mTemporaryFolder.resolve("mixed.sqlite"));
+        Path older = Format32TestDatabase.create(mTemporaryFolder.resolve("format32.sqlite"));
+        Path prior = Format33TestDatabase.create(mTemporaryFolder.resolve("format33.sqlite"));
+        Path mixed = Format34TestDatabase.create(mTemporaryFolder.resolve("mixed.sqlite"));
         try(Connection connection = open(mixed); Statement statement = connection.createStatement())
         {
-            statement.executeUpdate("DROP INDEX idx_receiver_activity_event_source_identity_address");
-            statement.executeUpdate("CREATE INDEX idx_receiver_activity_event_source_identity_address " +
-                "ON receiver_activity_event(source_identity_summary_id,source_observed_local_id,channel_id)");
+            statement.executeUpdate("DROP INDEX idx_receiver_activity_event_source_time");
+            statement.executeUpdate("CREATE INDEX idx_receiver_activity_event_source_time " +
+                "ON receiver_activity_event(source_identity_summary_id,channel_id)");
         }
-        for(Path source: List.of(older,mixed))
+        for(Path database: List.of(older, prior, mixed))
         {
-            byte[] bytes = Files.readAllBytes(source);
-            try(Connection connection = open(source))
+            byte[] before = Files.readAllBytes(database);
+            try(Connection connection = open(database))
             {
-                String fingerprint = SqliteSchemaValidator.fingerprint(connection);
-                Map<String,TableContents> contents = tableContents(connection);
-                assertThrows(SQLException.class,() -> new Format37To38DatabaseMigration().migrate(connection));
-                assertEquals(fingerprint,SqliteSchemaValidator.fingerprint(connection));assertEquals(contents,tableContents(connection));
+                String signature = SqliteSchemaValidator.fingerprint(connection);
+                assertThrows(SQLException.class, () -> new Format37To38DatabaseMigration().migrate(connection));
+                assertEquals(signature, SqliteSchemaValidator.fingerprint(connection));
             }
-            assertArrayEquals(bytes,Files.readAllBytes(source));
+            assertArrayEquals(before, Files.readAllBytes(database));
         }
     }
 
     @Test
-    void freshAndMigratedFormat38HaveTheSameSchemaAndCurrentMigrationIsANoOp() throws Exception
+    void format35FixtureRemainsFrozenAndCannotRunThePreviousAdjacentStep() throws Exception
     {
         Path current = Format38TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
-        Path fresh = mTemporaryFolder.resolve("fresh.sqlite");SdrTrunkDatabaseStartup.createGlobalDatabase(fresh);
-        try(Connection connection = open(current); Connection freshConnection = open(fresh))
+        byte[] beforeBytes = Files.readAllBytes(current);
+        try(Connection connection = open(current))
         {
             Map<String,TableContents> before = tableContents(connection);
-            assertTrue(DatabaseMigrationChain.migrate(connection).steps().isEmpty());assertEquals(before,tableContents(connection));
-            assertEquals(SqliteSchemaValidator.fingerprint(freshConnection),SqliteSchemaValidator.fingerprint(connection));
-            // Historical table rebuilds retain harmless identifier quotes; the fingerprint checks their definitions.
-            assertEquals(schemaDefinitions(freshConnection).keySet(),schemaDefinitions(connection).keySet());
-        }
-    }
-
-    @Test
-    void adjacentFormat37FixtureRetainsItsExactFrozenContract() throws Exception
-    {
-        Path historical = Format37TestDatabase.create(mTemporaryFolder.resolve("historical.sqlite"));
-        try(Connection connection = open(historical))
-        {
-            assertEquals(37,DatabaseFormatCatalog.inspect(connection).version());
-            assertEquals("82dc5ddb416a5c87b409544d1979fe2b9a3a2fde1a48418981376b2200067915",
+            assertThrows(SQLException.class, () -> new Format37To38DatabaseMigration().migrate(connection));
+            assertEquals(before, tableContents(connection));
+            assertEquals(DatabaseFormatCatalog.requireVersion(35).fingerprint(),
                 SqliteSchemaValidator.fingerprint(connection));
-            Map<String,String> definitions = schemaDefinitions(connection);
-            ADDED.keySet().forEach(name -> assertFalse(definitions.containsKey("index:"+name)));
+            assertEquals(35, DatabaseFormatCatalog.inspect(connection).version());
         }
+        assertArrayEquals(beforeBytes, Files.readAllBytes(current));
     }
 
-    private static void seedLookupRows(Statement statement) throws SQLException
+    private static void assertFourRebuiltIndexesAndOneAdded(Map<String,String> before, Map<String,String> after)
     {
-        statement.executeUpdate("""
-            INSERT INTO receiver_activity_event(id,channel_id,radio_system_id,observed_at_ms,action_code,
-                event_type_code,target_identity_summary_id,target_observed_local_id,target_kind_code,
-                frequency_hz,lcn_band,lcn_number,timeslot)
-            VALUES(900010,900001,900001,4000,1,1,900003,0,2,851000000,0,0,1),
-                  (900011,900001,900001,4000,1,1,900003,9002,2,851000000,1,2,2),
-                  (900012,900001,900001,4000,12,1,900003,9002,2,851000000,1,2,2),
-                  (900013,900001,900001,4000,1,2,900003,9002,2,851000000,1,2,2),
-                  (900014,900001,900001,4000,1,1,900002,100,1,851000000,1,2,2),
-                  (900015,900001,900001,4000,1,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),
-                  (900016,900001,900001,5000,1,NULL,900003,9002,2,851000000,NULL,NULL,NULL),
-                  (900017,900001,900001,4000,1,1,900003,9002,2,852000000,1,2,2)
-            """);
-        statement.executeUpdate("""
-            INSERT INTO trunked_logical_call_identity_bucket(radio_system_id,bucket_start_ms,identity_role_code,
-                identity_kind_code,identity_summary_id,logical_call_count,encrypted_logical_call_count,
-                recorded_output_count,streamed_output_count)
-            VALUES(900001,2000,1,1,900002,5,2,3,4),
-                  (900001,0,1,1,900002,7,1,2,3),
-                  (900001,4000,2,2,900003,11,2,3,4)
-            """);
+        Set<String> expected = new TreeSet<>(before.keySet());
+        expected.add("idx_receiver_activity_event_id_channel");
+        assertEquals(expected, after.keySet(), "Only the narrow event/channel projection is added");
+        Set<String> changed = new TreeSet<>();
+        before.forEach((name, sql) -> { if(!sql.equals(after.get(name))) changed.add(name); });
+        assertEquals(REBUILT_INDEXES, changed);
     }
 
-    private static void assertLookupPlansAndResults(Statement statement) throws Exception
+    private static void assertCoveringMemberEvidencePlan(Statement statement) throws Exception
     {
-        String target = "SELECT id FROM receiver_activity_event INDEXED BY %s " +
-            "WHERE radio_system_id=900001 AND target_identity_summary_id=900003 AND event_type_code=1 " +
-            "AND action_code<>12 ORDER BY observed_at_ms DESC,id DESC";
-        String targetCover = target.formatted("idx_receiver_activity_event_target_event_type_time");
-        assertEquals(List.of("900017","900011","900010"),results(statement,targetCover));
-        assertEquals(results(statement,target.formatted("idx_receiver_activity_event_target_time")),
-            results(statement,targetCover));
-        assertCoveringPlan(statement,targetCover,"idx_receiver_activity_event_target_event_type_time",
-            List.of("target_identity_summary_id=?","event_type_code=?"));
-        String targetCursor = targetCover.replace("ORDER BY", "AND (observed_at_ms<4000 OR " +
-            "(observed_at_ms=4000 AND id<900011)) ORDER BY");
-        assertEquals(List.of("900010"),results(statement,targetCursor));
-        assertEquals("4",scalar(statement,"SELECT count(*) FROM receiver_activity_event " +
-            "INDEXED BY idx_receiver_activity_event_target_event_type_time " +
-            "WHERE target_identity_summary_id=900003 AND event_type_code IS NULL"),
-            "The new target index must retain null-subtype observations");
-
-        String frequency = "SELECT id FROM receiver_activity_event INDEXED BY %s " +
-            "WHERE channel_id=900001 AND frequency_hz=851000000 AND lcn_band=1 AND lcn_number=2 " +
-            "AND timeslot=2 AND radio_system_id=900001 AND action_code<>12 " +
-            "ORDER BY observed_at_ms DESC,id DESC";
-        String frequencyCover = frequency.formatted("idx_receiver_activity_event_channel_frequency_time");
-        assertEquals(List.of("900014","900013","900011"),results(statement,frequencyCover));
-        assertEquals(results(statement,frequency.formatted("idx_receiver_activity_event_channel_time")),
-            results(statement,frequencyCover));
-        assertCoveringPlan(statement,frequencyCover,"idx_receiver_activity_event_channel_frequency_time",
-            List.of("channel_id=?","frequency_hz=?"));
-        assertTrue(results(statement,frequencyCover.replace("timeslot=2","timeslot=1")).isEmpty());
-        assertEquals("7",scalar(statement,"SELECT count(*) FROM receiver_activity_event " +
-            "INDEXED BY idx_receiver_activity_event_channel_frequency_time " +
-            "WHERE frequency_hz IS NOT NULL"),"Null-frequency observations are outside the sparse index");
-
-        for(String role: List.of("source","target"))
-        {
-            String ordered = "SELECT id FROM receiver_activity_event INDEXED BY idx_receiver_activity_event_"+
-                role+"_time WHERE "+role+"_identity_summary_id="+(role.equals("source") ? "900001" : "900003")+" " +
-                "ORDER BY observed_at_ms DESC,id DESC LIMIT 2";
-            List<String> plan = queryPlan(statement,ordered);
-            assertFalse(plan.stream().anyMatch(row -> row.contains("USE TEMP B-TREE")),plan::toString);
-        }
-    }
-
-    private static void assertCoveringPlan(Statement statement, String sql, String index,
-                                           List<String> predicates) throws Exception
-    {
-        List<String> plan = queryPlan(statement,sql);
-        assertTrue(plan.stream().anyMatch(row -> row.contains("SEARCH") && row.contains("COVERING INDEX "+index)
-            && predicates.stream().allMatch(row::contains)),plan::toString);
-        assertFalse(plan.stream().anyMatch(row -> row.contains("USE TEMP B-TREE")),plan::toString);
-    }
-
-    private static List<String> queryPlan(Statement statement, String sql) throws SQLException
-    {
+        String query = "SELECT member.observed_local_id,event.channel_id FROM activity_event_identity_member member " +
+            "INDEXED BY idx_activity_event_member_identity_event JOIN receiver_activity_event event " +
+            "INDEXED BY idx_receiver_activity_event_id_channel ON event.id=member.event_id " +
+            "WHERE member.identity_summary_id=900002 AND member.observed_local_id>0";
         List<String> plan = new ArrayList<>();
-        try(ResultSet rows = statement.executeQuery("EXPLAIN QUERY PLAN "+sql))
+        try(ResultSet rows = statement.executeQuery("EXPLAIN QUERY PLAN " + query))
         {
             while(rows.next()) plan.add(rows.getString("detail"));
         }
-        return plan;
-    }
-
-    private static List<String> results(Statement statement, String sql) throws SQLException
-    {
-        List<String> results = new ArrayList<>();
-        try(ResultSet rows = statement.executeQuery(sql))
+        assertTrue(plan.stream().anyMatch(row -> row.contains("SEARCH member USING COVERING INDEX " +
+            "idx_activity_event_member_identity_event") && row.contains("identity_summary_id=?")), plan::toString);
+        assertTrue(plan.stream().anyMatch(row -> row.contains("SEARCH event USING COVERING INDEX " +
+            "idx_receiver_activity_event_id_channel") && row.contains("id=?")), plan::toString);
+        assertFalse(plan.stream().anyMatch(row -> row.contains("SCAN member") || row.contains("SCAN event")),
+            plan::toString);
+        try(ResultSet rows = statement.executeQuery(query))
         {
-            int columns = rows.getMetaData().getColumnCount();
-            while(rows.next())
-            {
-                List<String> values = new ArrayList<>();
-                for(int column=1;column<=columns;column++) values.add(rows.getString(column));
-                results.add(String.join("|",values));
-            }
+            assertTrue(rows.next());
+            assertEquals(100, rows.getInt("observed_local_id"));
+            assertEquals(900001, rows.getInt("channel_id"));
+            assertFalse(rows.next());
         }
-        return results;
     }
 
-    /** Hashes every fixture field without exposing credentials or preference contents. */
+    private static void assertCoveringPlansAndStableTieOrdering(Statement statement) throws Exception
+    {
+        String source = "SELECT id,channel_id,source_observed_local_id,source_observed_working_id " +
+            "FROM receiver_activity_event INDEXED BY idx_receiver_activity_event_source_time " +
+            "WHERE source_identity_summary_id=900001 AND observed_at_ms BETWEEN 1000 AND 3000 " +
+            "ORDER BY observed_at_ms DESC,id DESC LIMIT 2";
+        String target = "SELECT id,channel_id,CASE WHEN target_kind_code IN (1,3) THEN target_observed_local_id " +
+            "ELSE COALESCE(target_observed_working_id,target_observed_local_id) END AS observed_id " +
+            "FROM receiver_activity_event INDEXED BY idx_receiver_activity_event_target_time " +
+            "WHERE target_identity_summary_id=900003 AND observed_at_ms BETWEEN 1000 AND 3000 " +
+            "ORDER BY observed_at_ms DESC,id DESC LIMIT 2";
+        String action = "SELECT id,radio_system_id,source_identity_summary_id,source_observed_local_id " +
+            "FROM receiver_activity_event INDEXED BY idx_receiver_activity_event_channel_action_time " +
+            "WHERE channel_id=900001 AND action_code=1 AND observed_at_ms BETWEEN 1000 AND 3000 " +
+            "ORDER BY observed_at_ms DESC,id DESC LIMIT 2";
+        assertCoveringOrderedPlan(statement, source, "idx_receiver_activity_event_source_time");
+        assertCoveringOrderedPlan(statement, target, "idx_receiver_activity_event_target_time");
+        assertCoveringOrderedPlan(statement, action, "idx_receiver_activity_event_channel_action_time");
+        assertEquals(List.of(900004L, 900003L), eventIds(statement, source));
+        assertEquals(List.of(900004L, 900003L), eventIds(statement, target));
+        assertEquals(List.of(900004L, 900003L), eventIds(statement, action));
+        assertEquals(List.of(900002L, 900001L), eventIds(statement, source.replace(
+            "ORDER BY observed_at_ms DESC,id DESC LIMIT 2",
+            "AND (observed_at_ms<2000 OR observed_at_ms=2000 AND id<900003) " +
+                "ORDER BY observed_at_ms DESC,id DESC LIMIT 2")));
+        assertTrue(scalar(statement, "SELECT sql FROM sqlite_schema WHERE name=" +
+            "'idx_receiver_activity_event_source_time'").contains("WHERE source_identity_summary_id IS NOT NULL"));
+        assertTrue(scalar(statement, "SELECT sql FROM sqlite_schema WHERE name=" +
+            "'idx_receiver_activity_event_target_time'").contains("WHERE target_identity_summary_id IS NOT NULL"));
+    }
+
+    private static void assertCoveringOrderedPlan(Statement statement, String sql, String index) throws Exception
+    {
+        List<String> plan = new ArrayList<>();
+        try(ResultSet rows = statement.executeQuery("EXPLAIN QUERY PLAN " + sql))
+        {
+            while(rows.next()) plan.add(rows.getString("detail"));
+        }
+        assertTrue(plan.stream().anyMatch(row -> row.contains("SEARCH") && row.contains("COVERING INDEX " + index)),
+            plan::toString);
+        assertFalse(plan.stream().anyMatch(row -> row.contains("SCAN receiver_activity_event") ||
+            row.contains("USE TEMP B-TREE")), plan::toString);
+    }
+
+    private static List<Long> eventIds(Statement statement, String sql) throws Exception
+    {
+        List<Long> ids = new ArrayList<>();
+        try(ResultSet rows = statement.executeQuery(sql)) { while(rows.next()) ids.add(rows.getLong("id")); }
+        return ids;
+    }
+
+    /** Hashes fixture values so a preservation assertion never prints credentials or preference contents. */
     private static Map<String,TableContents> tableContents(Connection connection) throws Exception
     {
         List<String> tables = new ArrayList<>();
@@ -262,61 +244,56 @@ class Format37To38DatabaseMigrationTest
         Map<String,TableContents> contents = new LinkedHashMap<>();
         for(String table: tables)
         {
-            String escaped = table.replace("\"","\"\"");
-            String projection = "*";
+            String escaped = table.replace("\"", "\"\"");
             int columns;
             try(Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery(
-                "SELECT "+projection+" FROM \""+escaped+"\" LIMIT 0"))
+                "SELECT * FROM \"" + escaped + "\" LIMIT 0"))
             {
                 columns = rows.getMetaData().getColumnCount();
             }
-            String ordering = java.util.stream.IntStream.rangeClosed(1,columns).mapToObj(Integer::toString)
+            String ordering = java.util.stream.IntStream.rangeClosed(1, columns).mapToObj(Integer::toString)
                 .collect(java.util.stream.Collectors.joining(","));
             String filter = table.equals("database_metadata") ? " WHERE key<>'database_format_version'" : "";
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             long count = 0;
             try(Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery(
-                "SELECT "+projection+" FROM \""+escaped+"\""+filter+" ORDER BY "+ordering))
+                "SELECT * FROM \"" + escaped + "\"" + filter + " ORDER BY " + ordering))
             {
                 while(rows.next())
                 {
                     count++;
-                    for(int column=1;column<=columns;column++)
+                    for(int column = 1; column <= columns; column++)
                     {
                         byte[] value = rows.getBytes(column);
-                        digest.update((byte)(value==null ? 0 : 1));
-                        if(value!=null)
+                        digest.update((byte)(value == null ? 0 : 1));
+                        if(value != null)
                         {
                             digest.update(Integer.toString(value.length).getBytes(StandardCharsets.UTF_8));
-                            digest.update((byte)0);digest.update(value);
+                            digest.update((byte)0);
+                            digest.update(value);
                         }
                     }
                 }
             }
-            contents.put(table,new TableContents(count,HexFormat.of().formatHex(digest.digest())));
+            contents.put(table, new TableContents(count, HexFormat.of().formatHex(digest.digest())));
         }
         return contents;
     }
 
-    private static Map<String,String> schemaDefinitions(Connection connection) throws Exception
+    private static Map<String,String> indexDefinitions(Connection connection) throws Exception
     {
         Map<String,String> indexes = new LinkedHashMap<>();
         try(Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery(
-            "SELECT type,name,sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"))
+            "SELECT name,sql FROM sqlite_schema WHERE type='index' AND sql IS NOT NULL ORDER BY name"))
         {
-            while(rows.next()) indexes.put(rows.getString(1)+":"+rows.getString(2),normalizeSql(rows.getString(3)));
+            while(rows.next()) indexes.put(rows.getString(1), rows.getString(2).replaceAll("\\s+", " ").trim());
         }
         return indexes;
     }
 
-    private static String normalizeSql(String sql)
-    {
-        return sql.replaceAll("\\s+"," ").trim().replace("IF NOT EXISTS ","").replaceAll("\\s*,\\s*",",");
-    }
-
     private static Connection open(Path database) throws SQLException
     {
-        Connection connection = DriverManager.getConnection("jdbc:sqlite:"+database);
+        Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
         try(Statement statement = connection.createStatement()) { statement.execute("PRAGMA foreign_keys=ON"); }
         return connection;
     }

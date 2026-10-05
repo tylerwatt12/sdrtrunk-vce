@@ -174,7 +174,7 @@ class Format26To27DatabaseMigrationTest
     @Test
     void currentFormatStartupDoesNotRewriteAccounts() throws Exception
     {
-        Path database = Format38TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
+        Path database = Format41TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
         Map<String,AccountSnapshot> accountsBefore;
         Map<String,byte[]> verifierDigestsBefore;
         long sequenceBefore;
