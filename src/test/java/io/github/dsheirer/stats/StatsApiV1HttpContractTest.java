@@ -128,6 +128,9 @@ class StatsApiV1HttpContractTest
             assertTrue(page.path("data").isArray(), response.body());
             assertEquals(0, page.at("/meta/total_count").intValue(), response.body());
             assertTrue(page.at("/meta/snapshot_stale").isBoolean(), response.body());
+            assertTrue(page.at("/meta/current_state/receiver_started_at_ms").isIntegralNumber(), response.body());
+            assertEquals(page.at("/meta/snapshot_at_ms"), page.at("/meta/current_state/snapshot_at_ms"));
+            assertEquals(page.at("/meta/snapshot_stale"), page.at("/meta/current_state/snapshot_stale"));
         }
         assertStructuredError(get(base + "/current-assignments?home_wacn=1048576"),
             400, "invalid_parameter", "home_wacn");

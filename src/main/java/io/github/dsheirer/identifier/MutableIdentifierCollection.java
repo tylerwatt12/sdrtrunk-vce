@@ -22,6 +22,7 @@ package io.github.dsheirer.identifier;
 import io.github.dsheirer.identifier.configuration.AliasListConfigurationIdentifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
+import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
 import io.github.dsheirer.sample.Listener;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -249,6 +250,7 @@ public class MutableIdentifierCollection extends IdentifierCollection implements
      * Preserves canonical fully-qualified radio equality while allowing a newly observed explicit working address to
      * enrich or replace the collection's current observation.  An identity-only identifier does not erase a confirmed
      * working address because its missing field means "not carried by this message", not "assignment removed".
+     * A complete direct observation can strengthen assignment-derived provenance without changing either ID.
      */
     private static boolean shouldReplace(Identifier existing, Identifier candidate)
     {
@@ -262,7 +264,9 @@ public class MutableIdentifierCollection extends IdentifierCollection implements
         {
             Integer candidateWorkingAddress = candidateRadio.getWorkingAddress();
             return candidateWorkingAddress != null &&
-                !candidateWorkingAddress.equals(existingRadio.getWorkingAddress());
+                (!candidateWorkingAddress.equals(existingRadio.getWorkingAddress()) ||
+                    candidateRadio.getResolutionEvidence() == ResolvedRadioIdentity.Evidence.DIRECT &&
+                    existingRadio.getResolutionEvidence() == ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT);
         }
 
         return false;

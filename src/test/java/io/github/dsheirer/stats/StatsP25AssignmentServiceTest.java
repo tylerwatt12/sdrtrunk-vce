@@ -46,6 +46,57 @@ class StatsP25AssignmentServiceTest
     }
 
     @Test
+    void assignmentPagesKeepStateFromTheirOwnSnapshotAndReportWholeSystemCounts()
+    {
+        long now = System.currentTimeMillis();
+        AtomicReference<P25WuidAssignmentRegistry.Snapshot> source = new AtomicReference<>(
+            snapshot(now, true, List.of(entry(3, "A", now), entry(20, "B", now)), true, 0));
+        var service = new StatsP25AssignmentService(time -> source.get(), (key, rows) -> rows, now - 100);
+        service.refresh(now);
+        Map<String,Object> retained = service.currentAssignments(SYSTEM, request("configuration_id=A&limit=1"));
+        Map<?,?> retainedState = (Map<?,?>)retained.get("current_state");
+        assertEquals(retained.get("snapshot_at_ms"), retainedState.get("snapshot_at_ms"));
+        assertEquals(retained.get("snapshot_stale"), retainedState.get("snapshot_stale"));
+        assertEquals(0, retainedState.get("current_assignment_count"));
+        assertEquals(2, retainedState.get("retained_assignment_count"), "State describes the complete scoped system");
+
+        source.set(snapshot(now + 1_000, false, List.of(entry(100, "B", now + 1_000)), true, 0));
+        service.refresh(now + 1_000);
+        Map<String,Object> fresh = service.recentChanges(SYSTEM, request(""));
+        Map<?,?> freshState = (Map<?,?>)fresh.get("current_state");
+        assertEquals(now + 1_000, freshState.get("snapshot_at_ms"));
+        assertEquals(false, freshState.get("snapshot_stale"));
+        assertEquals(1, freshState.get("current_assignment_count"));
+        assertEquals(now, retainedState.get("snapshot_at_ms"), "A later publish cannot change the returned page's state");
+        assertEquals(true, retainedState.get("snapshot_stale"));
+    }
+
+    @Test
+    void searchIncludesDisplayedLabelsAndIdentityIdsWithoutSearchingFieldNamesOrTimestamps()
+    {
+        long now = System.currentTimeMillis();
+        var service = new StatsP25AssignmentService(time ->
+            snapshot(now, false, List.of(entry(3, "A", now)), true, 0), (key, rows) -> rows.stream().map(row -> {
+                Map<String,Object> named = new LinkedHashMap<>(row);
+                named.put("alias_name", "Dispatch");
+                named.put("home_system_name", "County");
+                named.put("channel_name", "North");
+                named.put("site_name", "Hill");
+                named.put("alias_id", 987654321);
+                return named;
+            }).toList(), now - 100);
+        service.refresh(now);
+        for(String query: List.of("Dispatch", "County", "North", "Hill", "ABCDE.123.3", "203"))
+        {
+            assertEquals(1, service.currentAssignments(SYSTEM, request("q=" + query)).get("total_count"), query);
+        }
+        for(String query: List.of("radio_system_key", "canonical_identity", "987654321", String.valueOf(now)))
+        {
+            assertEquals(0, service.currentAssignments(SYSTEM, request("q=" + query)).get("total_count"), query);
+        }
+    }
+
+    @Test
     void staleViewsRetainTheirOriginalTimeAndStoppedSystemsDoNotAppearCurrent()
     {
         long now = System.currentTimeMillis();

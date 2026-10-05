@@ -223,7 +223,12 @@ final class StatsP25AssignmentService implements AutoCloseable
     Map<String,Object> currentState(String key)
     {
         requireP25(key);
-        View view = mView;
+        return currentState(key, mView);
+    }
+
+    /** Builds state from the same immutable view used by an assignment page. */
+    private Map<String,Object> currentState(String key, View view)
+    {
         Map<String,Object> result = new LinkedHashMap<>();
         result.put("radio_system_key", key);
         result.put("receiver_started_at_ms", mReceiverStartedAt);
@@ -317,8 +322,10 @@ final class StatsP25AssignmentService implements AutoCloseable
         result.put("offset", offset);
         result.put("total_count", filtered.size());
         result.put("has_more", from + limit < filtered.size());
-        result.put("snapshot_at_ms", view != null ? view.snapshot().asOf() : null);
-        result.put("snapshot_stale", stale(view));
+        Map<String,Object> state = currentState(key, view);
+        result.put("snapshot_at_ms", state.get("snapshot_at_ms"));
+        result.put("snapshot_stale", state.get("snapshot_stale"));
+        result.put("current_state", state);
         result.put("radio_system_key", key);
         return result;
     }
@@ -358,8 +365,29 @@ final class StatsP25AssignmentService implements AutoCloseable
 
     private static String searchable(Map<String,Object> row)
     {
-        //The projection contains only bounded public identity/source labels, not private settings.
-        return row.toString().toLowerCase(Locale.ROOT);
+        StringBuilder text = new StringBuilder();
+        for(String field: List.of("canonical_identity_display", "canonical_wacn", "canonical_system_id",
+            "canonical_subscriber_id", "observed_working_id", "previous_working_id", "alias_name",
+            "last_talker_alias", "home_system_name", "channel_name", "site_name", "configuration_id"))
+        {
+            appendSearchValue(text, row.get(field));
+        }
+        if(row.get("observed_on") instanceof Map<?,?> source)
+        {
+            for(String field: List.of("name", "site_name", "configuration_id", "rfss", "site_id"))
+            {
+                appendSearchValue(text, source.get(field));
+            }
+        }
+        return text.toString().toLowerCase(Locale.ROOT);
+    }
+
+    private static void appendSearchValue(StringBuilder text, Object value)
+    {
+        if(value instanceof String || value instanceof Number)
+        {
+            text.append(value).append(' ');
+        }
     }
 
     private static Integer boundedIdentity(StatsRequest request, String field, int maximum)

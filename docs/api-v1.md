@@ -172,6 +172,8 @@ They carry `invalidation_scope` and no subscriber tuple. They describe all mappi
 registration or affiliation evidence. `snapshot_stale` explicitly marks an unavailable or old sample. Current state
 is `learning`, `current`, `needs_confirmation`, or `stopped` (no current observation for this system). A stale view
 reports zero current assignments and separately counts `retained_assignment_count` for the displayed prior sample.
+Current assignment and Recent Changes pages include `meta.current_state` from the same receiver snapshot as their
+rows. Clients can use that state directly without combining it with a separately fetched snapshot.
 A complete receiving gap invalidates that serving
 system's assignments; another continuously observed source for the same system can preserve them. A source with
 no valid control observations for 60 seconds is treated as a receiving gap, independently of the protocol's WUID
