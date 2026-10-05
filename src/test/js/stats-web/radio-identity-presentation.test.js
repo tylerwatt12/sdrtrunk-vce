@@ -162,8 +162,8 @@ assert.equal(behavior.radioIdentifierText({
 assert.equal(behavior.radioIdentifierText({
   protocol: 'P25', canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 501 },
   observed_working_id: 501
-}, 501), 'BEE00.348.501 (Working ID 501)',
-  'An explicitly observed WUID remains a separate fact even when its number equals the subscriber ID.');
+}, 501), 'BEE00.348.501',
+  'An equal Working ID must not repeat the subscriber number in the radio label.');
 assert.equal(behavior.liveIdentityActionTitle({
   protocol: 'APCO25', source_form: 'RADIO', source_id: 130_001,
   source_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 9_601_699 },

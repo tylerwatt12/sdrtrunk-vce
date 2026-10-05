@@ -40,6 +40,21 @@ class Element {
   addEventListener(name, handler) { this.listeners[name] = handler; }
 }
 
+function descendant(element, tag) {
+  if (element?.tag === tag) return element;
+  for (const child of element?.children || []) {
+    const match = descendant(child, tag);
+    if (match) return match;
+  }
+  return null;
+}
+
+function facts(element) {
+  const result = descendant(element, 'dl');
+  assert.ok(result, 'Expected identity or receiver status facts.');
+  return result.values;
+}
+
 async function main() {
   const calls = [], intervals = [], timeouts = [], sections = [], renderedTables = [];
   const route = new URLSearchParams('configuration_id=site-7');
@@ -134,16 +149,16 @@ async function main() {
   assert.equal(renderedTables[0].columns.some(column => column.id === 'alias-action'), false,
     'Public Current Assignments must not render administrator editing actions.');
   assert.equal(calls.length, 2, 'Current Assignments must request channels and one coherent rows/status page.');
-  const initialSnapshotFacts = content.children[1].children[0].children[0].children[1].values;
+  const initialSnapshotFacts = facts(content.children[1]);
   assert.equal(initialSnapshotFacts.find(([label]) => label === 'Last Updated')[1], 'time:100',
     'Receiver status must come from the same response as the displayed assignment rows.');
-  const initialCounts = content.children[1].children[0].children[0].children.at(-1).values;
+  const initialCounts = descendant(content.children[1], 'metrics').values;
   assert.equal(initialCounts.find(([label]) => label === 'ISSI Assignments')[1], 1,
     'The ISSI summary must count useful mappings rather than every ordinary local registration.');
 
   state = { ...state, snapshot_at_ms: 200 };
   await intervals[0]();
-  const snapshotFacts = content.children[1].children[0].children[0].children[1].values;
+  const snapshotFacts = facts(content.children[1]);
   assert.equal(snapshotFacts.find(([label]) => label === 'Last Updated')[1], 'time:200');
   assert.equal(snapshotFacts.find(([label]) => label === 'Last Confirmed')[1], 'time:50',
     'Refreshing a snapshot must not manufacture fresh assignment confirmation.');
@@ -157,8 +172,7 @@ async function main() {
   assert.equal(renderedTables[0].data[0].observed_working_id, 130001, 'Refresh failure must preserve the displayed rows.');
   assert.match(sections[0].element.children.at(-1).textContent, /Could not update/);
   assert.equal(sections[0].element.children.at(-1).hidden, false);
-  const staleContent = content.children[1].children[0].children[0];
-  const staleCounts = staleContent.children.at(-1).values;
+  const staleCounts = descendant(content.children[1], 'metrics').values;
   assert.equal(staleCounts.find(([label]) => label === 'ISSI Assignments')[1], 0,
     'A failed refresh must not label retained rows as currently confirmed.');
   assert.equal(staleCounts.find(([label]) => label === 'Last Known Assignments')[1], 1);
@@ -195,7 +209,7 @@ async function main() {
   assert.equal(detailRequest.parameters.meaningful_only, undefined,
     'Radio Info must retain confirmed ordinary local assignments.');
   const detail = sections.at(-1);
-  const detailFacts = detail.host.children[0].children[1].values;
+  const detailFacts = facts(detail.host);
   assert.equal(detailFacts.find(([label]) => label === 'Last Updated')[1], 'time:300');
   assert.equal(detailFacts.find(([label]) => label === 'Working ID')[1], '901');
   assert.equal(detail.host.children[0].children.at(-1).children.length, 2);
@@ -209,7 +223,7 @@ async function main() {
   await timeouts.at(-1)();
   await new Promise(resolve => setImmediate(resolve));
   const localDetail = sections.at(-1);
-  const localFacts = localDetail.host.children[0].children[1].values;
+  const localFacts = facts(localDetail.host);
   assert.equal(localFacts.find(([label]) => label === 'Working ID')[1], 'Same as permanent radio ID');
   const localLink = localDetail.host.children[0].children.at(-1).children[0];
   assert.equal(localLink.textContent, 'ISSI Assignments');
@@ -217,7 +231,7 @@ async function main() {
     'Ordinary local assignments must link to the ISSI workspace without a filter that excludes themselves.');
   rows = [{ ...rows[0], canonical_identity: canonical }];
   await intervals[1]();
-  assert.equal(detail.host.children[0].children[1].values.find(([label]) => label === 'Working ID')[1], '34006',
+  assert.equal(facts(detail.host).find(([label]) => label === 'Working ID')[1], '34006',
     'Foreign subscribers with an equal numeric Working ID are still useful ISSI mappings.');
   const foreignLink = detail.host.children[0].children.at(-1).children[0];
   assert.equal(foreignLink.textContent, 'Current Assignments');
@@ -231,7 +245,7 @@ async function main() {
   assert.equal(calls.length, beforeChanges + 2, 'Recent Changes must request channels and one coherent rows/status page.');
   assert.equal(calls.at(-1).url, '/api/v1/radio-systems/p25:BEE00:348/issi/recent-changes');
   assert.equal(calls.at(-1).parameters.meaningful_only, true);
-  const changesFacts = content.children[beforeChangesContent + 1].children[0].children[0].children[1].values;
+  const changesFacts = facts(content.children[beforeChangesContent + 1]);
   assert.equal(changesFacts.find(([label]) => label === 'Last Updated')[1], 'time:400',
     'Recent Changes must use the receiver status captured with its change rows.');
   assert.equal(behavior.issiStateLabel({ state: 'current', snapshot_stale: true }), 'Updates delayed');

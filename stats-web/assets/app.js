@@ -34,7 +34,7 @@ import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createAudioDock } from './core/audio-dock.js?v=10';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=1';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
-import { WebCallPlayer } from './web-call-player.js?v=7';
+import { WebCallPlayer } from './web-call-player.js?v=8';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
@@ -1626,7 +1626,7 @@ function radioIdentifierText(row, value, prefix = radioIdentityPrefix(row, value
   if (!canonical) return identityNumber(row, value);
   const canonicalText = canonicalSubscriberText(canonical);
   const working = workingSubscriberId(row, prefix);
-  return working !== null ?
+  return working !== null && working !== canonical.subscriber_id ?
     `${canonicalText} (Working ID ${working})` : canonicalText;
 }
 
@@ -18862,11 +18862,7 @@ function issiStateContent(state) {
     assignmentCounts.push(['Last Known Assignments', state.retained_meaningful_assignment_count]);
   }
   assignmentCounts.push(['Monitored Channels', state?.observed_channel_count]);
-  return fragment(node('p', 'ui-section-note',
-    'Radios from other home systems or using a different Working ID. Online status is not shown.'),
-  state?.snapshot_stale === true ? node('p', 'ui-notice ui-notice-warning',
-    'Updates delayed. The displayed assignments may have changed.') : null,
-  keyValues([
+  return fragment(keyValues([
     ['Status', issiStateLabel(state)],
     ['Last Updated', state?.snapshot_at_ms ? dateTime(state.snapshot_at_ms) : 'Unavailable'],
     ['Last Confirmed', state?.last_confirmation_ms ? dateTime(state.last_confirmation_ms) : 'Waiting'],
@@ -18943,12 +18939,6 @@ async function renderRadioSystemIssi(system, renderContext) {
   if (live) {
     content.append(section('ISSI Status', stateHost));
   }
-  const descriptions = {
-    'recent-changes': 'Latest assignment changes since the receiver started.',
-    subscribers: 'Past radio activity. The last Working ID may no longer be in use.',
-    'foreign-systems': 'Other systems identified in received radio traffic.',
-    'frequency-bands': 'Band plans for other systems, heard on this system.'
-  };
   const views = {
     'current-assignments': ['Current Assignments', issiCurrentAssignmentColumns, 'issi-current-assignments'],
     'recent-changes': ['Recent Changes', issiRecentChangeColumns, 'issi-recent-changes'],
@@ -18961,8 +18951,6 @@ async function renderRadioSystemIssi(system, renderContext) {
     loadingMessage: `Loading ${title.toLowerCase()}…`,
     errorMessage: `${title} could not be loaded.`
   });
-  if (descriptions[active]) directory.element.insertBefore(
-    node('p', 'ui-section-note', descriptions[active]), directory.host);
   const feedback = node('p', 'ui-section-note');
   feedback.setAttribute('role', 'status');
   feedback.hidden = true;
@@ -19336,11 +19324,7 @@ function radioCurrentAssignmentSection(radio, renderContext) {
       ['Assignment Expires', row.expires_at_ms == null ? 'No expiry advertised' : dateTime(row.expires_at_ms)]
     );
     else values.push(['Working ID', 'No confirmed assignment']);
-    return fragment(node('p', 'ui-section-note',
-      'Working ID assigned on this system.'),
-    state?.snapshot_stale === true ? node('p', 'ui-notice ui-notice-warning',
-      'Updates delayed. The displayed assignments may have changed.') : null,
-    keyValues(values), !row ? node('p', 'ui-section-note', issiEmptyMessage(state)) : null,
+    return fragment(keyValues(values), !row ? node('p', 'ui-section-note', issiEmptyMessage(state)) : null,
     links(row, ordinaryLocal));
   };
   let loading = false;

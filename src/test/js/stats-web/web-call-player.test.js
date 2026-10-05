@@ -336,9 +336,9 @@ async function main() {
       playback_target: { kind: 'radio', label: 'Radio 2115288' }
     };
     assert.equal(labels.callLabel(equalWorkingTarget),
-      'Dispatch · BEE00.348.2115288 (Working ID 2115288)');
+      'Dispatch · BEE00.348.2115288');
     assert.equal(labels.targetLabel(equalWorkingTarget),
-      'Dispatch · BEE00.348.2115288 (Working ID 2115288)');
+      'Dispatch · BEE00.348.2115288');
     const conventionalCanonicalTarget = {
       protocol: 'P25', target_form: 'RADIO', target_id: 501,
       target_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 2_115_288 },

@@ -1158,7 +1158,7 @@ export class WebCallPlayer {
     const homeSystem = systemId.toString(16).toUpperCase().padStart(3, '0');
     const canonical = `${homeWacn}.${homeSystem}.${subscriberId}`;
     const workingId = Number(call?.[`${prefix}_observed_working_id`]);
-    return Number.isInteger(workingId) && workingId >= 1 && workingId <= 0xFFFFFC ?
+    return Number.isInteger(workingId) && workingId >= 1 && workingId <= 0xFFFFFC && workingId !== subscriberId ?
       `${canonical} (Working ID ${workingId})` : canonical;
   }
 
