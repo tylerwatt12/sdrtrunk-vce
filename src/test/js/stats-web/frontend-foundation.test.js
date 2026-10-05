@@ -1555,7 +1555,7 @@ async function main() {
 
   const decodedDefaults = preferenceSchema.validate(JSON.parse(JSON.stringify(preferenceSchema.defaults)));
   assert.deepEqual(decodedDefaults, {
-    version: 9,
+    version: 10,
     appearance: { theme: 'light', hue: null },
     page_titles: { prepend_playing_call: false },
     playback: {
@@ -1566,7 +1566,7 @@ async function main() {
       source_name_display: 'talker_alias',
       show_encryption_details: true, show_control_decode_quality: true,
       show_voice_decode_quality: true, decode_quality_display_mode: 'percentage', live_detail_row_limit: 200,
-      show_only_active_trunked_channels: true, retain_last_call_on_idle_rows: false,
+      show_only_active_trunked_channels: true, live_channel_sort: 'order_appeared', retain_last_call_on_idle_rows: false,
       clear_voice_quality_when_idle: false
     },
     tuner: {
@@ -1601,6 +1601,19 @@ async function main() {
   const savedActiveRowsOff = JSON.parse(JSON.stringify(decodedDefaults));
   savedActiveRowsOff.presentation.show_only_active_trunked_channels = false;
   assert.equal(preferenceSchema.validate(savedActiveRowsOff).presentation.show_only_active_trunked_channels, false);
+  for (const activeOnly of [true, false]) {
+    for (const sort of ['lcn', 'order_appeared', 'frequency']) {
+      const sortedProfile = JSON.parse(JSON.stringify(decodedDefaults));
+      sortedProfile.presentation.show_only_active_trunked_channels = activeOnly;
+      sortedProfile.presentation.live_channel_sort = sort;
+      assert.equal(preferenceSchema.validate(sortedProfile).presentation.live_channel_sort, sort);
+    }
+  }
+  for (const sort of ['status', '', null, 1, undefined]) {
+    const invalidSort = JSON.parse(JSON.stringify(decodedDefaults));
+    invalidSort.presentation.live_channel_sort = sort;
+    assert.throws(() => preferenceSchema.validate(invalidSort), /presentation.live_channel_sort/);
+  }
   const upgradedAnonymousTables = vm.runInNewContext(
     `((value) => ${functionBinding(appSource, 'upgradeAnonymousTableLayouts')})({ sample: {
       schema: ['name'], column_order: ['name'], column_widths: {}, hidden_columns: []
