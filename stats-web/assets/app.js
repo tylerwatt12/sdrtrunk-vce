@@ -34,7 +34,7 @@ import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createAudioDock } from './core/audio-dock.js?v=10';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=1';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
-import { WebCallPlayer } from './web-call-player.js?v=6';
+import { WebCallPlayer } from './web-call-player.js?v=7';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
@@ -19046,11 +19046,8 @@ async function renderRadioSystemIssi(system, renderContext) {
     next: { enabled: page.has_more, href: currentHref({ offset: page.next_offset }) }
   });
   const load = async () => {
-    const [page, currentState] = await Promise.all([
-      apiPage(`${base}/${active}`, parameters, { signal: renderContext.signal }),
-      live ? api(`${base}/current-state`, {}, { signal: renderContext.signal }) : Promise.resolve(null)
-    ]);
-    return { page, currentState };
+    const page = await apiPage(`${base}/${active}`, parameters, { signal: renderContext.signal });
+    return { page, currentState: live ? page.current_state : null };
   };
   const present = ({ page, currentState }) => {
     state = currentState;
@@ -19398,11 +19395,8 @@ function radioCurrentAssignmentSection(radio, renderContext) {
     if (loading || !renderIsCurrent(renderContext) || !directory.host.isConnected || document.hidden) return;
     loading = true; refresh.disabled = true;
     const load = async () => {
-      const [page, state] = await Promise.all([
-        apiPage(`${base}/current-assignments`, tuple, { signal: renderContext.signal }),
-        api(`${base}/current-state`, {}, { signal: renderContext.signal })
-      ]);
-      return { page, state };
+      const page = await apiPage(`${base}/current-assignments`, tuple, { signal: renderContext.signal });
+      return { page, state: page.current_state };
     };
     try {
       if (!displayed) {

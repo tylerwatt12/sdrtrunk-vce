@@ -113,7 +113,8 @@ class StatsWebRadioInformationArchitectureUiContractTest
         assertTrue(app.contains("['subscribers', 'History']"));
         assertTrue(app.contains("['foreign-systems', 'Foreign Systems']"));
         assertTrue(app.contains("['frequency-bands', 'Band Plans']"));
-        assertTrue(app.contains("`${base}/current-state`"));
+        assertTrue(app.contains("page.current_state"));
+        assertFalse(app.contains("`${base}/current-state`"));
         assertTrue(app.contains("Current Working Assignment"));
         assertTrue(app.contains("Identity Evidence"));
         assertTrue(app.contains("label: 'Last Working ID'"));

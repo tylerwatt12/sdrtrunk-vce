@@ -1146,9 +1146,8 @@ export class WebCallPlayer {
 
   canonicalRadioLabel(call, prefix) {
     const identity = call?.[`${prefix}_canonical_identity`];
-    if (!identity || identity.wacn === null || identity.wacn === undefined ||
-        identity.system_id === null || identity.system_id === undefined ||
-        identity.subscriber_id === null || identity.subscriber_id === undefined) return '';
+    if (!identity || [identity.wacn, identity.system_id, identity.subscriber_id].some(value =>
+      value === null || value === undefined || (typeof value === 'string' && !value.trim()))) return '';
     const wacn = Number(identity?.wacn);
     const systemId = Number(identity?.system_id);
     const subscriberId = Number(identity?.subscriber_id);

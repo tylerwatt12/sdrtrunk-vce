@@ -49,7 +49,7 @@ async function main() {
   let rows = [{ canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 501 },
     observed_working_id: 130001, confirmed_at_ms: 50, expires_at_ms: null, evidence: 'registration' }];
   const page = () => ({ rows: rows.slice(), limit: 100, offset: 0, total_count: rows.length,
-    has_more: false, next_offset: null });
+    has_more: false, next_offset: null, current_state: { ...state } });
   const node = (...args) => new Element(...args);
   const fragment = (...children) => { const element = node('fragment'); element.append(...children); return element; };
   const context = {
@@ -62,7 +62,7 @@ async function main() {
       if (failure) throw new Error('Connection lost');
       return page();
     },
-    api: async (url) => { calls.push({ url }); return state; },
+    api: async (url) => { throw new Error(`Unexpected separate status request: ${url}`); },
     section: (title, child) => { const element = node('section', '', title); element.append(child); return element; },
     keyValues: values => { const element = node('dl'); element.values = values; return element; },
     metrics: values => { const element = node('metrics'); element.values = values; return element; },
@@ -126,6 +126,10 @@ async function main() {
   assert.equal(renderedTables[0].options.serverSort, true);
   assert.equal(renderedTables[0].options.defaultSort, 'confirmed_at');
   assert.equal(renderedTables[0].data[0].observed_working_id, 130001);
+  assert.equal(calls.length, 2, 'Current Assignments must request channels and one coherent rows/status page.');
+  const initialSnapshotFacts = content.children[1].children[0].children[0].children[1].values;
+  assert.equal(initialSnapshotFacts.find(([label]) => label === 'Snapshot Updated')[1], 'time:100',
+    'Receiver status must come from the same response as the displayed assignment rows.');
 
   state = { ...state, snapshot_at_ms: 200 };
   await intervals[0]();
@@ -158,20 +162,38 @@ async function main() {
 
   current = true;
   const canonical = { wacn: 0x92498, system_id: 0x926, subscriber_id: 34006 };
+  state = { ...state, snapshot_at_ms: 300 };
+  rows = [{ canonical_identity: canonical, observed_working_id: 901,
+    confirmed_at_ms: 280, expires_at_ms: null, evidence: 'registration' }];
+  const beforeDetail = calls.length;
   behavior.radioCurrentAssignmentSection({ radio_system_key: 'p25:BEE00:348', canonical_identity: canonical }, { signal: {} });
   await timeouts[0]();
   await new Promise(resolve => setImmediate(resolve));
-  const detailRequest = calls.at(-2);
+  assert.equal(calls.length, beforeDetail + 1, 'Radio detail must obtain its assignment and status together.');
+  const detailRequest = calls.at(-1);
   assert.equal(detailRequest.url, '/api/v1/radio-systems/p25:BEE00:348/issi/current-assignments');
   assert.equal(detailRequest.parameters.home_wacn, canonical.wacn);
   assert.equal(detailRequest.parameters.home_system_id, canonical.system_id);
   assert.equal(detailRequest.parameters.subscriber_id, canonical.subscriber_id,
     'Radio detail must match the complete permanent identity, including a foreign home system.');
   const detail = sections.at(-1);
+  const detailFacts = detail.host.children[0].children[1].values;
+  assert.equal(detailFacts.find(([label]) => label === 'Snapshot Updated')[1], 'time:300');
+  assert.equal(detailFacts.find(([label]) => label === 'Working ID')[1], '901');
   assert.equal(detail.host.children[0].children.at(-1).children.length, 2);
   await intervals[1]();
   assert.equal(detail.host.children[0].children.at(-1).children.length, 2,
     'Current/history drilldowns must remain available after a refresh.');
+  route.set('issi_view', 'recent-changes');
+  state = { ...state, snapshot_at_ms: 400 };
+  const beforeChanges = calls.length;
+  const beforeChangesContent = content.children.length;
+  await behavior.renderRadioSystemIssi({ radio_system_key: 'p25:BEE00:348' }, { signal: {} });
+  assert.equal(calls.length, beforeChanges + 2, 'Recent Changes must request channels and one coherent rows/status page.');
+  assert.equal(calls.at(-1).url, '/api/v1/radio-systems/p25:BEE00:348/issi/recent-changes');
+  const changesFacts = content.children[beforeChangesContent + 1].children[0].children[0].children[1].values;
+  assert.equal(changesFacts.find(([label]) => label === 'Snapshot Updated')[1], 'time:400',
+    'Recent Changes must use the receiver status captured with its change rows.');
   assert.equal(behavior.issiStateLabel({ state: 'current', snapshot_stale: true }), 'Snapshot needs refresh');
   assert.match(behavior.p25IdentityEvidenceLabel({ source_identity_source: 'registration_mapping' }, 'source'), /confirmed working assignment/);
   assert.match(behavior.p25IdentityEvidenceLabel({ source_identity_source: 'working_id' }, 'source'), /not confirmed/);

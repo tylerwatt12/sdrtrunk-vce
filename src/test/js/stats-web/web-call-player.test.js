@@ -319,6 +319,16 @@ async function main() {
       source_form: 'RADIO', source_id: 2_115_288,
       source_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 2_115_288 }
     }), 'TGID 91 ← BEE00.348.2115288');
+    for (const homeField of ['wacn', 'system_id']) {
+      for (const missing of [null, undefined, '', ' ', '\t']) {
+        assert.equal(labels.canonicalRadioLabel({ source_canonical_identity: {
+          wacn: 0xBEE00, system_id: 0x348, subscriber_id: 501, [homeField]: missing
+        } }, 'source'), '', 'Missing home IDs must not fabricate a permanent identity containing zero.');
+      }
+    }
+    assert.equal(labels.canonicalRadioLabel({ source_canonical_identity: {
+      wacn: 0, system_id: 0, subscriber_id: 501
+    } }, 'source'), '00000.000.501', 'Explicit numeric zero remains a valid home ID.');
     const equalWorkingTarget = {
       protocol: 'P25', target_form: 'RADIO', target_id: 2_115_288, target_alias: 'Dispatch',
       target_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 2_115_288 },
