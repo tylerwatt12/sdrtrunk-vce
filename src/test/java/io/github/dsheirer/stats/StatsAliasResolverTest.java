@@ -15,6 +15,8 @@ import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -366,6 +368,96 @@ class StatsAliasResolverTest
             localActivity.put("source_subscriber_id", 2_115_288);
             resolver.enrichActivity(connection, rows(localActivity));
             assertEquals("Local Working Unit", localActivity.get("source_alias_name"));
+        }
+    }
+
+    @Test
+    void issiObservedAssignmentsSkipUnusedHistoryAndPreserveFallbackAliases() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("issi-observed-alias-fallback.sqlite");
+        createDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            clearFactoryAliasLists(statement);
+            statement.executeUpdate("""
+                INSERT INTO alias_list(id,name,family)
+                VALUES(1,'Observing Channel','P25'),(2,'Other Channel','P25')
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,value) VALUES
+                    (1,1,'Working Unit','RADIO_ID','APCO25',501),
+                    (2,1,'Permanent Subscriber','P25_SUBSCRIBER_IDENTITY',NULL,NULL),
+                    (3,2,'Other Channel Subscriber','P25_SUBSCRIBER_IDENTITY',NULL,NULL)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_subscriber_identity(id,home_wacn,home_system_id,subscriber_id)
+                VALUES(91,0xBEE00,0x4A2,2115288),(92,0xBEE00,0x4A2,2115289)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias_p25_subscriber_identity(alias_id,p25_subscriber_identity_id)
+                VALUES(2,91),(3,92)
+                """);
+            insertP25Channel(statement, 77, P25_CONFIGURATION_ID, P25_RADIORESOLVE_ID, 1);
+            insertP25Channel(statement, 78, SECOND_P25_CONFIGURATION_ID, SECOND_P25_RADIORESOLVE_ID, 2);
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary(
+                    id,radio_system_id,identity_kind_code,home_wacn,home_system_id,identity_id,
+                    first_seen_ms,last_seen_ms,p25_subscriber_identity_id
+                ) VALUES(7001,77,2,0xBEE00,0x4A2,2115288,1,2,91),
+                        (7002,77,2,0xBEE00,0x4A2,2115289,1,2,92)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_learned_site(learned_site_id,radio_system_id,rfss,site,first_seen_ms,last_seen_ms)
+                VALUES(701,77,1,1,1,2)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_call_identity_bucket(
+                    radio_system_id,learned_site_id,channel_id,bucket_start_ms,identity_role_code,
+                    identity_kind_code,identity_summary_id,observed_local_id,observed_working_id,
+                    last_observed_at_ms,observed_call_count,encrypted_observed_call_count
+                ) VALUES(77,701,77,0,2,2,7001,501,501,1,1,0)
+                """);
+
+            AtomicInteger historyQueries = new AtomicInteger();
+            AtomicInteger systemListQueries = new AtomicInteger();
+            Connection observed = countAliasFallbackQueries(connection, historyQueries, systemListQueries);
+            StatsAliasResolver resolver = new StatsAliasResolver();
+            Map<String,Object> canonical = canonicalEvidenceRow(7001, 2, 2_115_288);
+            canonical.put("p25_subscriber_identity_id", 91L);
+            canonical.put("observed_working_id", 501);
+            canonical.put("observation_alias_list_id", 1L);
+            Map<String,Object> working = canonicalEvidenceRow(7002, 2, 2_115_289);
+            working.put("p25_subscriber_identity_id", 92L);
+            working.put("observed_working_id", 501);
+            working.put("observation_alias_list_id", 1L);
+            resolver.enrichIssiSubscriberAliases(observed, rows(canonical, working),
+                "identity_summary_id", "observed_working_id", "observation_alias_list_id", "alias_");
+
+            assertEquals(0, historyQueries.get(),
+                "persisted directory rows with an observing Alias List must not query retained history");
+            assertEquals(0, systemListQueries.get(),
+                "the exact observing Alias List already supplies the matching scope");
+            assertEquals("Permanent Subscriber", canonical.get("alias_name"));
+            assertEquals("p25_subscriber_identity", canonical.get("alias_matcher_type"));
+            assertEquals("Working Unit", working.get("alias_name"),
+                "a canonical Alias from another channel must not displace the observing list's Working-ID Alias");
+            assertEquals("radio_id", working.get("alias_matcher_type"));
+
+            for(Long missingList: new Long[]{null, 0L})
+            {
+                Map<String,Object> fallback = canonicalEvidenceRow(7001, 2, 2_115_288);
+                fallback.put("p25_subscriber_identity_id", 91L);
+                fallback.put("observed_working_id", 501);
+                fallback.put("observation_alias_list_id", missingList);
+                resolver.enrichIssiSubscriberAliases(observed, rows(fallback),
+                    "identity_summary_id", "observed_working_id", "observation_alias_list_id", "alias_");
+                assertEquals("Permanent Subscriber", fallback.get("alias_name"),
+                    "missing or nonpositive observing lists must retain the historical fallback");
+            }
+            assertEquals(2, historyQueries.get());
+            assertEquals(2, systemListQueries.get());
         }
     }
 
@@ -1281,6 +1373,34 @@ class StatsAliasResolverTest
                 channel_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id, call_count
             ) VALUES (%d, 3600000, 2, 2, %d, %d)
             """.formatted(channelId, identityId, calls));
+    }
+
+    private static Connection countAliasFallbackQueries(Connection connection, AtomicInteger historyQueries,
+                                                         AtomicInteger systemListQueries)
+    {
+        return (Connection)Proxy.newProxyInstance(Connection.class.getClassLoader(),
+            new Class<?>[]{Connection.class}, (proxy, method, arguments) -> {
+                if("prepareStatement".equals(method.getName()) && arguments != null && arguments.length > 0 &&
+                    arguments[0] instanceof String sql)
+                {
+                    if(sql.contains("compact_evidence AS"))
+                    {
+                        historyQueries.incrementAndGet();
+                    }
+                    if(sql.contains("assigned_alias_list(system_key, alias_list_id)"))
+                    {
+                        systemListQueries.incrementAndGet();
+                    }
+                }
+                try
+                {
+                    return method.invoke(connection, arguments);
+                }
+                catch(InvocationTargetException exception)
+                {
+                    throw exception.getCause();
+                }
+            });
     }
 
     private static String queryPlan(Connection connection, String sql, Object... parameters) throws Exception

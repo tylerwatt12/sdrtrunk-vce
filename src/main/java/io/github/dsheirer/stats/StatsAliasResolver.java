@@ -124,8 +124,11 @@ class StatsAliasResolver
         }
 
         requireBoundedRows(rows);
-        Map<String,Set<Long>> aliasListsBySystem = loadAliasLists(connection, systemKeys(rows));
-        Map<Long,List<LocalEvidence>> evidenceBySummary = loadP25LocalEvidence(connection, rows,
+        //The observing channel owns its Alias List; retained evidence is only a fallback for unowned rows.
+        List<Map<String,Object>> fallbackRows = rows.stream()
+            .filter(row -> positiveLong(row.get(observationAliasListColumn)) == null).toList();
+        Map<String,Set<Long>> aliasListsBySystem = loadAliasLists(connection, systemKeys(fallbackRows));
+        Map<Long,List<LocalEvidence>> evidenceBySummary = loadP25LocalEvidence(connection, fallbackRows,
             summaryIdColumn);
         P25SubscriberRuleTargets canonicalTargets = new P25SubscriberRuleTargets();
         RuleTargets workingTargets = new RuleTargets();
