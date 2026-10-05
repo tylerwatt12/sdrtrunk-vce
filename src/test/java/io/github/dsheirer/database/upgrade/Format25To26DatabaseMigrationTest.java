@@ -201,7 +201,7 @@ class Format25To26DatabaseMigrationTest
     }
 
     @Test
-    void clearsActivityOrphanedByDirectFormat25ConfigurationRepair() throws Exception
+    void removesDiscardedChannelActivityWithoutResettingUnrelatedHistory() throws Exception
     {
         Path database = Format25TestDatabase.create(mTemporaryFolder.resolve("orphaned-format-25.sqlite"));
 
@@ -210,6 +210,54 @@ class Format25To26DatabaseMigrationTest
         {
             statement.execute("PRAGMA foreign_keys=ON");
             populateRepresentativeActivity(statement);
+            statement.executeUpdate("""
+                INSERT INTO configuration_channel(
+                    configuration_id, channel_kind, sort_order, system_name, site_name, name,
+                    alias_list_id, radioresolve_id, auto_start, auto_start_order, decoder_type,
+                    address_domain_code, primary_frequency_hz, config_json)
+                SELECT '11111111-1111-4111-8111-111111111111', channel_kind, sort_order,
+                    system_name, site_name, name, alias_list_id, NULL, auto_start,
+                    auto_start_order, decoder_type, address_domain_code, primary_frequency_hz, config_json
+                FROM configuration_channel ORDER BY id LIMIT 1
+                """);
+            statement.executeUpdate("""
+                INSERT INTO receiver_channel(id, configuration_id, first_seen_ms, last_seen_ms,
+                    radio_system_id, radio_system_assigned_at_ms)
+                VALUES (9505, '11111111-1111-4111-8111-111111111111', 1000, 3000, 9500, 1000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_event(id, channel_id, radio_system_id, observed_at_ms,
+                    action_code, event_type_code, source_observed_local_id, target_observed_local_id,
+                    target_kind_code, source_identity_summary_id, source_identity_kind_code,
+                    target_identity_summary_id, frequency_hz, lcn_band, lcn_number, timeslot, encrypted,
+                    encryption_algorithm_id, encryption_key_id, observed_nac, observed_rfss, observed_site)
+                SELECT 9601, 9505, radio_system_id, observed_at_ms, action_code, event_type_code,
+                    source_observed_local_id, target_observed_local_id, target_kind_code,
+                    source_identity_summary_id, source_identity_kind_code, target_identity_summary_id,
+                    frequency_hz, lcn_band, lcn_number, timeslot, encrypted, encryption_algorithm_id,
+                    encryption_key_id, observed_nac, observed_rfss, observed_site
+                FROM receiver_activity_event WHERE id=9600
+                """);
+            statement.executeUpdate("""
+                INSERT INTO activity_event_identity_member(
+                    event_id, radio_system_id, identity_summary_id, identity_kind_code, observed_local_id)
+                SELECT 9601, radio_system_id, identity_summary_id, identity_kind_code, observed_local_id
+                FROM activity_event_identity_member WHERE event_id=9600
+                """);
+            statement.executeUpdate("""
+                INSERT INTO conventional_activity_summary(channel_id, frequency_hz, timeslot,
+                    first_seen_ms, last_seen_ms, grant_count, denial_count, last_event_type_code,
+                    encrypted_count, recorded_count, streamed_count)
+                SELECT 9505, frequency_hz, timeslot, first_seen_ms, last_seen_ms, grant_count,
+                    denial_count, last_event_type_code, encrypted_count, recorded_count, streamed_count
+                FROM conventional_activity_summary WHERE channel_id=9500
+                """);
+            List<List<Object>> retainedEvents = rows(statement,
+                "SELECT * FROM receiver_activity_event WHERE channel_id=9505");
+            List<List<Object>> retainedMembers = rows(statement,
+                "SELECT * FROM activity_event_identity_member WHERE event_id=9601");
+            List<List<Object>> retainedSummaries = rows(statement,
+                "SELECT * FROM conventional_activity_summary WHERE channel_id=9505");
             assertEquals(1, statement.executeUpdate("""
                 UPDATE configuration_channel SET config_json='{}'
                 WHERE configuration_id=(
@@ -223,12 +271,21 @@ class Format25To26DatabaseMigrationTest
             assertTrue(effects.stream().anyMatch(effect ->
                 effect.kind() == DatabaseMigrationEffect.Kind.DROP &&
                     effect.subject().equals("unusable saved channel rows") && effect.affectedRows() == 1));
-            assertTrue(effects.stream().anyMatch(effect ->
+            assertFalse(effects.stream().anyMatch(effect ->
                 effect.kind() == DatabaseMigrationEffect.Kind.RESET &&
                     effect.subject().equals("bounded receiver activity and statistics rows") &&
                     effect.affectedRows() > 0));
-            assertEquals(0, number(statement, "SELECT count(*) FROM receiver_channel"));
-            assertEquals(0, number(statement, "SELECT count(*) FROM receiver_activity_event"));
+            assertEquals(0, number(statement, "SELECT count(*) FROM receiver_channel WHERE id=9500"));
+            assertEquals(0, number(statement, "SELECT count(*) FROM receiver_activity_event WHERE channel_id=9500"));
+            assertEquals(0, number(statement, "SELECT count(*) FROM activity_event_identity_member WHERE event_id=9600"));
+            assertEquals(0, number(statement, "SELECT count(*) FROM conventional_activity_summary WHERE channel_id=9500"));
+            assertEquals(1, number(statement, "SELECT count(*) FROM receiver_channel WHERE id=9505"));
+            assertEquals(retainedEvents, rows(statement,
+                "SELECT * FROM receiver_activity_event WHERE channel_id=9505"));
+            assertEquals(retainedMembers, rows(statement,
+                "SELECT * FROM activity_event_identity_member WHERE event_id=9601"));
+            assertEquals(retainedSummaries, rows(statement,
+                "SELECT * FROM conventional_activity_summary WHERE channel_id=9505"));
             assertFalse(statement.executeQuery("PRAGMA foreign_key_check").next());
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
                 DatabaseFormatCatalog.requireCurrent(connection).version());
