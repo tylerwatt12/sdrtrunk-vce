@@ -62,7 +62,7 @@ class Format23To24DatabaseMigrationTest
 
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 23, report.steps().size());
             assertEquals("format-23-to-24", report.steps().getFirst().id());
-            assertEquals("format-37-to-38", report.steps().getLast().id());
+            assertEquals("format-40-to-41", report.steps().getLast().id());
             assertEquals(activityBefore.size(), report.steps().getFirst().effects().getFirst().affectedRows());
             assertEquals(rowsBefore, tableRowCounts(statement));
             assertEquals(activityBefore, activityRows(statement));
@@ -71,6 +71,7 @@ class Format23To24DatabaseMigrationTest
             addedObjects.removeAll(objectsBefore);
             Set<String> expectedObjects = new TreeSet<>(FILTER_INDEXES);
             expectedObjects.add("idx_receiver_activity_event_source_working_evidence");
+            expectedObjects.add("idx_trunked_logical_identity_identity");
             expectedObjects.add("idx_receiver_activity_event_id_channel");
             expectedObjects.add("idx_activity_event_member_identity_channel_local");
             expectedObjects.add("idx_p25_site_call_identity_identity_address");

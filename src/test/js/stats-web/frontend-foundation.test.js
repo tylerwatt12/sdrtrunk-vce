@@ -657,7 +657,7 @@ async function main() {
   assert.match(livePresentationSource, /modal\.setDirty\(true\)/);
   assert.match(livePresentationSource, /modal\.setBusy\(true\)/);
   assert.match(livePresentationSource, /const submitted = \{/);
-  assert.match(livePresentationSource, /preferences\.presentation = submitted;/);
+  assert.match(livePresentationSource, /preferences\.presentation = \{ \.\.\.preferences\.presentation, \.\.\.submitted \};/);
   assert.match(livePresentationSource, /show_only_active_trunked_channels: activeOnly\.input\.checked/);
   assert.match(livePresentationSource, /retain_last_call_on_idle_rows: retainLastCall\.input\.checked/);
   assert.match(livePresentationSource, /clear_voice_quality_when_idle: clearIdleQuality\.input\.checked/);
@@ -1374,7 +1374,8 @@ async function main() {
 
   const scannerCallRenderKey = vm.runInNewContext(
     `(function(call, state, site) ${functionBinding(appSource, 'scannerCallRenderKey')})`, {
-      scannerDetailMode: 'normal', scannerMatchedScanLists: () => ''
+      scannerDetailMode: 'normal', scannerMatchedScanLists: () => '',
+      sourceNameDisplayMode: () => 'talker_alias', scannerSourceAlias: () => ''
     });
   const scannerCall = { call_id: 'call-1', started_at_ms: 100 };
   const scannerState = { stopped: false, paused: false };
@@ -1707,7 +1708,7 @@ async function main() {
 
   const decodedDefaults = preferenceSchema.validate(JSON.parse(JSON.stringify(preferenceSchema.defaults)));
   assert.deepEqual(decodedDefaults, {
-    version: 8,
+    version: 10,
     appearance: { theme: 'light', hue: null },
     page_titles: { prepend_playing_call: false },
     playback: {
@@ -1715,9 +1716,10 @@ async function main() {
     },
     scanner: { detail_mode: 'normal' },
     presentation: {
+      source_name_display: 'talker_alias',
       show_encryption_details: true, show_control_decode_quality: true,
       show_voice_decode_quality: true, decode_quality_display_mode: 'percentage', live_detail_row_limit: 200,
-      show_only_active_trunked_channels: true, retain_last_call_on_idle_rows: false,
+      show_only_active_trunked_channels: true, live_channel_sort: 'order_appeared', retain_last_call_on_idle_rows: false,
       clear_voice_quality_when_idle: false
     },
     tuner: {
@@ -1736,12 +1738,35 @@ async function main() {
       appearance: { theme: 'light', hue } }), /appearance.hue/);
   }
   assert.equal(decodedDefaults.scanner.detail_mode, 'normal');
+  for (const mode of ['talker_alias', 'source_alias', 'both']) {
+    assert.equal(preferenceSchema.validate({ ...decodedDefaults, presentation: {
+      ...decodedDefaults.presentation, source_name_display: mode
+    } }).presentation.source_name_display, mode);
+  }
+  for (const mode of ['', null, undefined, 'TA', true]) {
+    assert.throws(() => preferenceSchema.validate({ ...decodedDefaults, presentation: {
+      ...decodedDefaults.presentation, source_name_display: mode
+    } }), /source_name_display/);
+  }
   assert.deepEqual(decodedDefaults.playback.selected_scan_list_ids, []);
   assert.equal(decodedDefaults.playback.target_grouping, true);
   assert.equal(decodedDefaults.playback.target_burst_limit, 4);
   const savedActiveRowsOff = JSON.parse(JSON.stringify(decodedDefaults));
   savedActiveRowsOff.presentation.show_only_active_trunked_channels = false;
   assert.equal(preferenceSchema.validate(savedActiveRowsOff).presentation.show_only_active_trunked_channels, false);
+  for (const activeOnly of [true, false]) {
+    for (const sort of ['lcn', 'order_appeared', 'frequency']) {
+      const sortedProfile = JSON.parse(JSON.stringify(decodedDefaults));
+      sortedProfile.presentation.show_only_active_trunked_channels = activeOnly;
+      sortedProfile.presentation.live_channel_sort = sort;
+      assert.equal(preferenceSchema.validate(sortedProfile).presentation.live_channel_sort, sort);
+    }
+  }
+  for (const sort of ['status', '', null, 1, undefined]) {
+    const invalidSort = JSON.parse(JSON.stringify(decodedDefaults));
+    invalidSort.presentation.live_channel_sort = sort;
+    assert.throws(() => preferenceSchema.validate(invalidSort), /presentation.live_channel_sort/);
+  }
   const upgradedAnonymousTables = vm.runInNewContext(
     `((value) => ${functionBinding(appSource, 'upgradeAnonymousTableLayouts')})({ sample: {
       schema: ['name'], column_order: ['name'], column_widths: {}, hidden_columns: []

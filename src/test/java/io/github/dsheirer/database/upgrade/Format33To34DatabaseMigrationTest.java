@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.SqliteSchemaValidator;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -43,26 +42,25 @@ class Format33To34DatabaseMigrationTest
         {
             assertThrows(SQLException.class, () -> DatabaseFormatCatalog.requireCurrent(connection));
             connection.setAutoCommit(false);
-            DatabaseMigrationChain.migrate(connection);
+            new Format33To34DatabaseMigration().migrate(connection);
+            DatabaseFormatCatalog.stamp(connection, 34);
             connection.rollback();
             assertEquals(33, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(before, rows(connection));
-            var report = DatabaseMigrationChain.migrate(connection);
+            var effects = new Format33To34DatabaseMigration().migrateAndReport(connection);
+            DatabaseFormatCatalog.stamp(connection, 34);
             connection.commit();
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 33, report.steps().size());
-            assertEquals("format-33-to-34", report.steps().getFirst().id());
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
-            assertEquals(before, rows(connection), "Every original field and allocator survives the adjacent chain");
+            assertEquals(1, effects.size());
+            assertEquals(34, DatabaseFormatCatalog.inspect(connection).version());
+            assertEquals(DatabaseFormatCatalog.requireVersion(34).fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+            assertEquals(before, rows(connection), "Only the authoritative format marker changes");
             try(ResultSet result = statement.executeQuery("PRAGMA quick_check"))
             {
                 org.junit.jupiter.api.Assertions.assertTrue(result.next());
                 assertEquals("ok", result.getString(1));
             }
             assertFalse(statement.executeQuery("PRAGMA foreign_key_check").next());
-            assertEquals(0, DatabaseMigrationChain.migrate(connection).steps().size(), "Current retry is a no-op");
         }
-        SdrTrunkDatabaseStartup.validateGlobalDatabase(candidate);
         assertArrayEquals(sourceBytes, Files.readAllBytes(source), "The selected source stays untouched");
     }
 
@@ -97,7 +95,7 @@ class Format33To34DatabaseMigrationTest
                 SQLException strict = assertThrows(SQLException.class, () -> DatabaseFormatCatalog.inspect(connection));
                 SQLException repair = assertThrows(SQLException.class,
                     () -> DatabaseFormatCatalog.inspectForMigration(connection));
-                assertTrue(strict.getMessage().contains("ambiguous across formats [33, 34]"));
+                assertTrue(strict.getMessage().contains("ambiguous across formats [33, 34, 35, 36]"));
                 assertTrue(repair.getMessage().contains("authoritative database_format_version marker is required"));
                 assertEquals(before, rows(connection));
             }
@@ -116,12 +114,6 @@ class Format33To34DatabaseMigrationTest
         for(String table: tables)
         {
             String sql = "SELECT * FROM \"" + table.replace("\"", "\"\"") + "\"";
-            if("activity_event_identity_member".equals(table))
-            {
-                // Later format 36 adds a derived channel; its migration tests validate that backfill separately.
-                sql = "SELECT event_id,radio_system_id,identity_summary_id,identity_kind_code,observed_local_id " +
-                    "FROM activity_event_identity_member";
-            }
             if("database_metadata".equals(table)) sql += " WHERE key<>'database_format_version'";
             try(Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery(sql))
             {

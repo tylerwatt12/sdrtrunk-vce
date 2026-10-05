@@ -48,8 +48,8 @@ class Format38To39DatabaseMigrationTest
             assertTrue(expected.get("configuration_channel").rows() > 0);
             assertEquals(List.of(3L,2L,1L), new Format38To39DatabaseMigration().validateSource(connection).stream()
                 .map(DatabaseMigrationEffect::affectedRows).toList());
-            assertEquals("8eb528aead7c9b9f052dad03c8e0157ecf1e14055b2ec7fdc4f15c65d982cbce",
-                SqliteSchemaValidator.fingerprint(connection), "Already admitted format 35 remains frozen");
+            assertEquals("f38cf9d43b6120cb21a5375aa64e631881e5a96c90c2d3e43e9193c631ab66c4",
+                SqliteSchemaValidator.fingerprint(connection), "Already admitted format 38 remains frozen");
         }
         byte[] sourceBytes = Files.readAllBytes(source);
         assertThrows(SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(source));
@@ -63,21 +63,21 @@ class Format38To39DatabaseMigrationTest
                 connection.setAutoCommit(false);
                 new Format38To39DatabaseMigration().migrate(connection);
                 connection.rollback();
-                assertEquals(DatabaseFormatCatalog.requireVersion(35).fingerprint(),
+                assertEquals(DatabaseFormatCatalog.requireVersion(38).fingerprint(),
                     SqliteSchemaValidator.fingerprint(connection));
                 assertEquals(indexes, indexDefinitions(connection));
                 assertEquals(expected, tableContents(connection));
 
                 List<DatabaseMigrationEffect> effects = new Format38To39DatabaseMigration().validateSource(connection);
                 new Format38To39DatabaseMigration().migrate(connection);
-                DatabaseFormatCatalog.stamp(connection,36);
+                DatabaseFormatCatalog.stamp(connection,39);
                 connection.commit();
                 assertEquals(List.of(3L,2L,1L), effects.stream()
                     .map(DatabaseMigrationEffect::affectedRows).toList());
                 assertEquals(expected, tableContents(connection),
                     "Only the format marker and new member channel are added; original values survive exactly");
-                assertEquals(DatabaseFormatCatalog.requireVersion(36).fingerprint(), SqliteSchemaValidator.fingerprint(connection));
-                assertEquals(36, DatabaseFormatCatalog.inspect(connection).version());
+                assertEquals(DatabaseFormatCatalog.requireVersion(39).fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+                assertEquals(39, DatabaseFormatCatalog.inspect(connection).version());
                 assertEquals("0", scalar(statement, """
                     SELECT count(*) FROM activity_event_identity_member member
                     JOIN receiver_activity_event event ON event.id=member.event_id
@@ -97,7 +97,7 @@ class Format38To39DatabaseMigrationTest
     @Test
     void rejectsOlderMixedOrOrphanSourcesWithoutMutation() throws Exception
     {
-        Path older = Format34TestDatabase.create(mTemporaryFolder.resolve("older.sqlite"));
+        Path older = Format37TestDatabase.create(mTemporaryFolder.resolve("older.sqlite"));
         Path mixed = Format38TestDatabase.create(mTemporaryFolder.resolve("mixed.sqlite"));
         Path orphan = Format38TestDatabase.create(mTemporaryFolder.resolve("orphan.sqlite"));
         Path wrongOwner = Format38TestDatabase.create(mTemporaryFolder.resolve("wrong-owner.sqlite"));
@@ -132,13 +132,13 @@ class Format38To39DatabaseMigrationTest
     }
 
     @Test
-    void adjacentFormat36FixtureRetainsItsExactFrozenContract() throws Exception
+    void adjacentFormat39FixtureRetainsItsExactFrozenContract() throws Exception
     {
         Path current = Format39TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
         try(Connection connection = open(current))
         {
-            assertEquals(36,DatabaseFormatCatalog.inspect(connection).version());
-            assertEquals("017064542dbb5cfab978e1928679e5666fa0c22583970033c01f5b0f322a2be1",
+            assertEquals(39,DatabaseFormatCatalog.inspect(connection).version());
+            assertEquals("b681c3aa302fdf4f65cb7f5570e41b80e282952e451edfbb64616c8fc27318cb",
                 SqliteSchemaValidator.fingerprint(connection));
             assertFalse(indexDefinitions(connection).containsKey("idx_receiver_activity_event_source_identity_address"));
             assertFalse(indexDefinitions(connection).containsKey("idx_receiver_activity_event_target_identity_address"));

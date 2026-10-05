@@ -162,12 +162,12 @@ sparsity nor the estimate is a storage cap. The same 100-identity evidence query
 approximately 10 ms rather than 28 ms with the index and split. These are warm projection timings, not production
 page timings. For that sparse canonical-source query, widening both existing source/target indexes achieved similar
 query time but added roughly 6 MiB in the projection and was omitted from format 33. A second sparse working-evidence
-target index had no measured benefit and remains omitted. Format 35 addresses the separate broad local/target
+target index had no measured benefit and remains omitted. Format 38 addresses the separate broad local/target
 evidence and exact Activity ranking paths described below.
 
 ### Covering Activity lookup replacements
 
-Format 35 replaces four existing Activity indexes rather than retaining duplicate narrow and covering copies, and
+Format 38 replaces four existing Activity indexes rather than retaining duplicate narrow and covering copies, and
 adds one narrow event/channel projection for historical member evidence:
 
 ```sql
@@ -216,7 +216,7 @@ Activity-order probes. Five warm-run medians reduced correlated unmatched source
 target local/Working-ID CASE evidence from 21 ms to 1.2 ms, and an action-slice radio grouping from 24 ms to 6.4 ms.
 These are SQL projection timings, not full production-page results. The source and target ordered probes retained
 their time/ID seek without a temporary sort. Placing payload columns before the implicit ID instead would require a
-temporary tree for the last ordering term, which is why format 35 makes the ID explicit.
+temporary tree for the last ordering term, which is why format 38 makes the ID explicit.
 
 All three indexes contain at most one entry per qualifying retained detailed event; the source and target indexes
 still exclude events without that identity role. New entries per hour equal qualifying accepted detailed events per
@@ -233,7 +233,7 @@ time from 49 ms to 61 ms and generated WAL from 8.7 MB to 10.8 MB. Those samples
 the sparse Working-ID index, so their roughly 26% time and 25% WAL increases cannot predict the complete receiver
 writer's cost. The measured read benefit justifies replacing the existing indexes for these demonstrated paths;
 receiver queues and checkpoints still require operational verification. Fresh schema creation uses the covering DDL,
-the adjacent 34-to-35 Application Migrator rebuilds these three indexes and the member index below, adds one narrow
+the adjacent 37-to-38 Application Migrator rebuilds these three indexes and the member index below, adds one narrow
 event/channel index, and reports four rebuilt plus one added index. Prior formats keep exact frozen definitions.
 No runtime startup repair or migration is added.
 
@@ -270,11 +270,11 @@ the member/event indexes and parent keys; they do not contain the full receiver 
 schedule. Their storage and write cost is the measured tradeoff for eliminating the demonstrated wide-row fetches,
 and cannot be added to the percentages from the separate three-index projection above to predict production cost.
 
-### Covering channel-local evidence (format 36)
+### Covering channel-local evidence (format 39)
 
-Format 35's covered member/event join still revisits one event-index leaf for each retained member. Sorting those
-lookups and increasing a connection's page cache did not remove the demonstrated large-request cost. Format 36
-stores the existing parent observation channel on each member and retains the format-35 identity/event cover for
+Format 38's covered member/event join still revisits one event-index leaf for each retained member. Sorting those
+lookups and increasing a connection's page cache did not remove the demonstrated large-request cost. Format 39
+stores the existing parent observation channel on each member and retains the format-38 identity/event cover for
 Activity paging. An additional cover groups historical channel/address evidence:
 
 ```sql
@@ -303,7 +303,7 @@ identity/address equality and inclusive range bounds, with named Alias candidate
 lookups. Search still matches the complete scoped set before ordering and paging, and the old compact-before-detail,
 canonical/local-address and assigned-list ownership rules remain unchanged.
 
-A fresh SQLite 3.51.0 integer projection compared the final two-member-index design with format 35 on 1,000,000
+A fresh SQLite 3.51.0 integer projection compared the final two-member-index design with format 38 on 1,000,000
 wide events and 771,824 member rows. The 101 requested identities contained 471,824 members. The covered parent
 join took 451.39 ms warm; nested DISTINCT inside UNION took 1.034 ms and returned the same 1,212 triples, using
 52 rather than thousands of progress callbacks. Original member fields, committed-insert survivors and bounded
@@ -320,15 +320,15 @@ Three committed synthetic insertion samples each added 10,000 events and 7,715 m
 and composite-FK design changed median time from 43.19 to 161.72 ms and WAL from 5.27 to 15.87 MB. A bounded
 1,000-event/1,000-member retention pass changed 12.82 to 21.65 ms and WAL 2.10 to 4.97 MB. These fixtures exclude
 the new compact-call address index, the rest of the receiver index set, background queues and checkpoint scheduling;
-the percentages cannot be added to the earlier format-35 measurements or treated as a production writer forecast.
+the percentages cannot be added to the earlier format-38 measurements or treated as a production writer forecast.
 A separate 440,000-bucket negative-address fixture returned identical matches and changed the original name filter
 from 156.8 to 5.51 ms with the address cover; exact/range plans used identity and address bounds. Full copied-data
 route measurements and receiver continuity checks remain required operational evidence.
 
-### Positive detailed address covers (format 37)
+### Positive detailed address covers (format 40)
 
-With format 36's compact bucket and member covers, configured-name search still spent substantial time proving
-that detailed source/target addresses did not match. Format 37 adds two partial indexes with a different second
+With format 39's compact bucket and member covers, configured-name search still spent substantial time proving
+that detailed source/target addresses did not match. Format 40 adds two partial indexes with a different second
 key from Activity's time order:
 
 ```sql
@@ -351,7 +351,7 @@ address predicate makes the partial index eligible and all three selected event 
 migration consensus keeps the old source/time path, and canonical Working-ID or mixed target evidence retains
 its existing index so a positive Working ID with a null local address remains usable.
 
-A 440,000-event negative-address fixture using the format-35 time covers changed 38.9 ms / 6.24 million VM steps
+A 440,000-event negative-address fixture using the format-38 time covers changed 38.9 ms / 6.24 million VM steps
 to 7.04 ms / 80,000 VM steps with the new address covers. Exact/range plans and 174 ordered comparisons against
 the original predicate passed. These isolate predicate work rather than measuring complete page latency.
 
@@ -368,15 +368,15 @@ contribute none. At maximum 365-day retention and R retained events per hour, ea
 entries. Existing retention and explicit clears remove them automatically. The fixture excludes parent foreign-key
 lookups, member/summary writes and checkpoint time and ran while other tests were active; these figures are
 synthetic event costs and cannot predict receiver latency or be added to earlier migration percentages. The
-Application Migrator adds exactly these two indexes, preserving frozen format-36 DDL and all retained contents.
+Application Migrator adds exactly these two indexes, preserving frozen format-39 DDL and all retained contents.
 
-### Target-type and channel-frequency Activity covers (format 38)
+### Target-type and channel-frequency Activity covers (format 41)
 
 Two existing Activity filters could still traverse a busy identity or channel before finding the requested events.
 A secondary target identity plus event type needs that exact combination; an action-first index cannot provide its
 seek when the action predicate only excludes grants. A saved channel plus frequency needs the frequency seek before
 applying optional LCN and timeslot predicates. Hourly counters cannot return these individual event IDs and cursor
-positions. Format 38 adds two covers for the existing detailed Activity rows:
+positions. Format 41 adds two covers for the existing detailed Activity rows:
 
 ```sql
 CREATE INDEX idx_receiver_activity_event_target_event_type_time
@@ -434,6 +434,28 @@ These independent projections measure added event-index cost, not the complete r
 schedule. Their timings and storage estimates cannot be added to earlier migration percentages or treated as fixed
 byte caps. The Application Migrator adds exactly these two indexes; every prior table/index definition, retained row,
 relationship and allocator is preserved. Formats 35, 36 and 37 remain frozen, and startup does not migrate them.
+
+### Identity retention lookup
+
+Format 37 adds `idx_trunked_logical_identity_identity(identity_summary_id, radio_system_id, identity_kind_code)`
+to the existing logical-call identity bucket table. Both the retention descendant probe and SQLite's exact
+identity foreign-key check use an identity-first `SEARCH` through this index. The migration analyzes this table
+once so the planner can compare populated index selectivity for the implicit foreign-key lookup after upgrade. The existing system/time primary key
+and time-first dashboard index cannot seek that identity without scanning the system's complete bucket history.
+Detailed-event source and target probes remain separate seeks through their existing identity indexes.
+
+There is one index entry per existing logical-call identity bucket, with no additional observations or duplicated
+names. New entries per hour equal newly populated system/hour/role/identity tuples. With R such tuples per hour,
+365-day retention gives at most 8,760 × R entries. Ordinary retention and explicit saved-data cleanup remove entries
+with their bucket rows; upserts maintain the index on the background writer. A 50,000-row synthetic sample using
+wide system and identity integers occupied 1,138,688 bytes (about 22.8 bytes per row), projecting about 21 MiB for a
+981,975-row table. Integer widths, page occupancy, and WAL traffic vary; this is a planning estimate.
+
+Routine cleanup also has a 1,000-row pass cap, a 256-row statement cap, a 250 ms SQLite execution budget per
+statement, and a one-second execution budget per pass. SQLite interruption rolls back only the current standalone
+statement; earlier completed batches stay committed. The fair cursor advances past a deferred task, and follow-up
+passes wait at least five seconds so ingestion and user saves can acquire the writer. These execution budgets
+protect receiver continuity; they do not replace the index-backed lookup paths.
 
 ### Receiver status alert history
 

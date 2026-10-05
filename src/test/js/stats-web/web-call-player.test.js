@@ -273,6 +273,23 @@ async function main() {
     };
 
     const labels = Object.create(WebCallPlayer.prototype);
+    const namedSource = { target_id: 77, source_id: 312, source_alias: 'Engine 4', talker_alias: 'ENG 4' };
+    assert.equal(labels.callLabel(namedSource), 'ID 77 ← ENG 4 · Radio 312',
+      'Live call labels prefer the talker alias by default while retaining the source ID');
+    assert.equal(labels.callLabel({ ...namedSource, talker_alias: '  ' }), 'ID 77 ← Engine 4 · Radio 312',
+      'A missing or blank talker alias falls back to the configured source alias');
+    let sourceMode = 'source_alias';
+    labels.getSourceNameDisplay = () => sourceMode;
+    assert.equal(labels.callLabel(namedSource), 'ID 77 ← Engine 4 · Radio 312');
+    assert.equal(labels.callLabel({ ...namedSource, source_alias: '' }), 'ID 77 ← ENG 4 · Radio 312');
+    sourceMode = 'both';
+    assert.equal(labels.callLabel(namedSource), 'ID 77 ← Engine 4 · ENG 4 · Radio 312',
+      'Both shows the two distinct names without a name prefix');
+    assert.equal(labels.callLabel({ ...namedSource, talker_alias: ' engine 4 ' }),
+      'ID 77 ← Engine 4 · Radio 312', 'Both must not repeat an equivalent name');
+    sourceMode = 'talker_alias';
+    assert.equal(labels.callLabel(namedSource), 'ID 77 ← ENG 4 · Radio 312',
+      'Call labels read a changed source-name preference without creating a new player');
     assert.equal(labels.callLabel({
       channel: 'Fire Dispatch', decoder: 'NBFM', target_form: 'TALKGROUP', target_id: 1,
       target_alias: 'Synthetic route', source_id: '',

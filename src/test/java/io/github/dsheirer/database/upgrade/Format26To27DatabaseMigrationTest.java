@@ -76,7 +76,7 @@ class Format26To27DatabaseMigrationTest
 
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 26, report.steps().size());
             assertEquals("format-26-to-27", report.steps().getFirst().id());
-            assertEquals("format-37-to-38", report.steps().getLast().id());
+            assertEquals("format-40-to-41", report.steps().getLast().id());
             assertEffect(report.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.TRANSFORM,
                 "ordinary administrator accounts", 1);
             Map<String,AccountSnapshot> after = accounts(statement);
@@ -291,7 +291,8 @@ class Format26To27DatabaseMigrationTest
         {
             return new AccountSnapshot(id, username, replacement, primaryAdmin, credentialVersion,
                 passwordAlgorithm, passwordIterations, passwordDerivedKeyBits, passwordChangedAtMs, authRevision,
-                Format23WebUserPreferencesCodec.migrateToFormat31(preferencesJson), preferencesRevision + 1,
+                Format36WebUserPreferencesCodec.migrateFromFormat35(Format35WebUserPreferencesCodec.migrateFromFormat34(
+                    Format23WebUserPreferencesCodec.migrateToFormat31(preferencesJson))), preferencesRevision + 3,
                 createdAtMs, migratedUpdatedAtMs);
         }
     }

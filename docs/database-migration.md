@@ -80,7 +80,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -389,7 +389,36 @@ Historical conventional attribution and site reception times cannot be reconstru
 aggregates, so this migration neither fabricates corrections nor resets those rows. Historical site counts retain
 their earlier snapshot-update meaning. Future drop causes are classified; old cumulative drops remain unclassified.
 
-The format 34-to-35 step preserves every row, rebuilds four existing Activity lookup indexes as covering indexes,
+The format 34-to-35 step upgrades every exact version-8 per-user browser preference document to version 9. It adds
+`presentation.source_name_display`, selecting Talker Alias preferred (`talker_alias`) for existing accounts. Users can
+instead prefer Source Alias (`source_alias`) or show both distinct names (`both`). The display falls back to the other
+available name when the preferred one is absent. Every usable personal setting, account, credential, receiver setting,
+and retained activity row is preserved; each usable preference revision is incremented. Only malformed or oversized
+preference documents are defaulted for the affected user. Invalid or exhausted revisions are rebased without losing
+usable personal settings. If the added choice exceeds the unchanged storage limit, remove only enough cached table
+layouts to fit and report their exact count. Direct format-34 upgrades apply the bounded current-component repair
+policy; an intermediate format 34 does not repeat those repairs. The DDL is unchanged and this shared semantic
+format family still requires its authoritative global marker. Historical version-8 preference validation remains frozen.
+
+The format 35-to-36 step upgrades exact version-9 per-user browser preference documents to version 10. It adds
+`presentation.live_channel_sort`, initially `order_appeared` when the account shows only active trunked channels
+and `lcn` when idle rows are shown. Each user can subsequently save `lcn`, `order_appeared`, or `frequency`
+independently of that filter. Existing usable personal settings, including the source-name display choice, accounts,
+credentials, receiver configuration, and retained history are preserved. Each preference revision is incremented;
+an unusable or exhausted revision is rebased while usable settings survive. Only malformed or oversized documents
+are defaulted. If the added field would exceed the unchanged storage bound, only necessary cached table layouts
+are removed and their count is reported. Direct format-35 sources receive bounded current-component repairs;
+intermediate format-35 sources do not repeat them. Format 36 shares the format-33/34/35 DDL fingerprint, whose
+earlier receiver semantics cannot be distinguished from retained rows. A markerless file in this shared-layout
+family requires its authoritative global format marker. Historical version-9 preference validation remains frozen.
+
+The format 36-to-37 step preserves every row and adds one identity-first lookup index to logical-call
+identity buckets, with statistics for SQLite's query planner. Routine retention and foreign-key checks can seek an
+exact radio-system identity rather than scan all of its system's retained call history. No settings, preference
+revisions, accounts, credentials, counters, or retained observations are rewritten. The bundled Application Migrator
+adds the index transactionally; runtime startup continues to validate the existing schema without modifying it.
+
+The format 37-to-38 step preserves every row, rebuilds four existing Activity lookup indexes as covering indexes,
 and adds one narrow event/channel index. Source and target identity/time lookups retain their partial predicates and
 place an explicit event ID immediately after observation time, preserving the previous implicit-row-ID tie order.
 Saved-channel/action/time retains descending observation time and event ID. The identity-member lookup retains its
@@ -404,7 +433,7 @@ storage and background write cost, as documented in the SQLite Activity Database
 Application Migrator may change them; historical format creators keep their frozen definitions and normal startup
 remains validation-only.
 
-The format 35-to-36 step copies each identity member's immutable observation channel from its exact parent event,
+The format 38-to-39 step copies each identity member's immutable observation channel from its exact parent event,
 without adding or dropping any event or membership. The existing member key and owner/kind foreign keys remain;
 a new `(event_id, channel_id)` foreign key uses the existing event/channel index promoted to a unique parent key.
 The current writers already know that channel and store it without an additional lookup. Preflight refuses members
@@ -419,18 +448,18 @@ search. The member lookup keeps an explicit DISTINCT subquery before the outer U
 duplicate skipping. Both indexes follow the existing retention and cascade paths and create no additional history.
 All administrator settings, credentials, personal preferences and allocator high-water marks are preserved.
 The added storage and background write cost are measured separately in the SQLite Activity Database Guidelines.
-Format 35 remains a frozen supported source; only the bundled adjacent Application Migrator applies format 36,
+Format 38 remains a frozen supported source; only the bundled adjacent Application Migrator applies format 39,
 and normal startup still refuses older formats without changing them.
 
-The format 36-to-37 step adds two partial source/target local-address covering indexes. Each leads with the
+The format 39-to-40 step adds two partial source/target local-address covering indexes. Each leads with the
 identity summary and positive observed local address, then the saved channel. This lets scoped configured-name
 search seek exact addresses or inclusive ranges and skips null, zero and unattributed evidence. Existing time/ID
 indexes, table definitions, retained rows, relationships, settings, credentials, preferences and allocators remain
-unchanged. The adjacent migration reports exactly two added indexes, retains frozen format 36 as a supported
+unchanged. The adjacent migration reports exactly two added indexes, retains frozen format 39 as a supported
 source, and applies only through the bundled Application Migrator. The indexes follow existing event retention;
 their measured storage and write costs are documented in the SQLite Activity Database Guidelines.
 
-The format 37-to-38 step adds exactly two partial Activity lookup indexes while retaining every existing index
+The format 40-to-41 step adds exactly two partial Activity lookup indexes while retaining every existing index
 and table definition. The target/event-type/time cover seeks one target identity and event type in newest time/ID
 order; the saved-channel/frequency/time cover seeks one channel and frequency while covering optional LCN,
 timeslot, system and action filters. They serve existing detailed Activity rows without changing query predicates,
@@ -439,8 +468,8 @@ target identity for the first, and a known frequency for the second. Existing re
 deletion remove entries automatically.
 
 The adjacent migration preserves all retained rows, IDs, relationships, allocator high-water marks, settings,
-credentials and personal preferences, and reports two added indexes with no rebuild, reset or drop. Formats 35,
-36 and 37 keep their frozen DDL and remain supported sources. Only fresh current creation and the bundled
+credentials and personal preferences, and reports two added indexes with no rebuild, reset or drop. Formats 38,
+39 and 40 keep their frozen DDL and remain supported sources. Only fresh current creation and the bundled
 Application Migrator apply the new definitions; normal startup remains validation-only. The separate bounded
 storage and background write measurements are documented in the SQLite Activity Database Guidelines.
 
@@ -454,7 +483,7 @@ counters, and adds no transcript rows. Catalog format 3 adds a constrained `tran
 transcript, marking calls with an existing transcript `complete` and other calls `pending`. Short calls stay pending;
 the background worker applies its configured minimum duration when selecting work. A failed call is retried only by
 an administrator action. Fresh format-3 catalogs use the same status default and index. The main application database
-is independently at format 38; transcript-catalog migrations do not change it. Recognized older catalogs are backed up
+is independently at format 41; transcript-catalog migrations do not change it. Recognized older catalogs are backed up
 and updated in one transaction at the pre-receiver setup boundary, with an optional SQLite-aware recovery snapshot
 before changes. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with
 Managed Recordings unavailable, so optional catalog trouble does not prevent ordinary receiving.

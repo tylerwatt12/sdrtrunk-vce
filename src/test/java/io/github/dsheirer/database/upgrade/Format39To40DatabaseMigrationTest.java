@@ -53,7 +53,7 @@ class Format39To40DatabaseMigrationTest
             assertTrue(expected.get("activity_event_identity_member").rows()>0);
             assertTrue(expected.get("web_user").rows()>0);
             assertTrue(expected.get("configuration_channel").rows()>0);
-            assertEquals("017064542dbb5cfab978e1928679e5666fa0c22583970033c01f5b0f322a2be1",
+            assertEquals("b681c3aa302fdf4f65cb7f5570e41b80e282952e451edfbb64616c8fc27318cb",
                 SqliteSchemaValidator.fingerprint(connection));
             assertEquals(List.of(2L),new Format39To40DatabaseMigration().validateSource(connection).stream()
                 .map(DatabaseMigrationEffect::affectedRows).toList());
@@ -68,16 +68,16 @@ class Format39To40DatabaseMigrationTest
             {
                 connection.setAutoCommit(false);
                 new Format39To40DatabaseMigration().migrate(connection);connection.rollback();
-                assertEquals(DatabaseFormatCatalog.requireVersion(36).fingerprint(),SqliteSchemaValidator.fingerprint(connection));
+                assertEquals(DatabaseFormatCatalog.requireVersion(39).fingerprint(),SqliteSchemaValidator.fingerprint(connection));
                 assertEquals(indexes,indexDefinitions(connection));assertEquals(expected,tableContents(connection));
                 List<DatabaseMigrationEffect> effects =
                     new Format39To40DatabaseMigration().migrateAndReport(connection, false);
-                DatabaseFormatCatalog.stampForMigration(connection,37);connection.commit();
+                DatabaseFormatCatalog.stampForMigration(connection,40);connection.commit();
                 assertEquals(List.of(2L),effects.stream()
                     .map(DatabaseMigrationEffect::affectedRows).toList());
                 assertEquals(expected,tableContents(connection),"Only the format marker changes");
-                assertEquals(37,DatabaseFormatCatalog.inspect(connection).version());
-                assertEquals(DatabaseFormatCatalog.requireVersion(37).fingerprint(),SqliteSchemaValidator.fingerprint(connection));
+                assertEquals(40,DatabaseFormatCatalog.inspect(connection).version());
+                assertEquals(DatabaseFormatCatalog.requireVersion(40).fingerprint(),SqliteSchemaValidator.fingerprint(connection));
                 Map<String,String> actual = indexDefinitions(connection);
                 Set<String> names = new TreeSet<>(indexes.keySet());names.addAll(ADDED);
                 assertEquals(names,actual.keySet());indexes.forEach((name,sql) -> assertEquals(sql,actual.get(name)));
@@ -115,17 +115,17 @@ class Format39To40DatabaseMigrationTest
     }
 
     @Test
-    void frozenFormat37MatchesItsHistoricalCreator() throws Exception
+    void frozenFormat40MatchesItsHistoricalCreator() throws Exception
     {
         Path current = Format40TestDatabase.create(mTemporaryFolder.resolve("historical.sqlite"));
         Path fresh = mTemporaryFolder.resolve("fresh-historical.sqlite");
         try(Connection connection = open(current); Connection freshConnection = open(fresh))
         {
             SdrTrunkDatabaseSchema.create(freshConnection);
-            ReceiverActivitySchema.createFormat37(freshConnection);
+            ReceiverActivitySchema.createFormat40(freshConnection);
             DmrActivitySchema.create(freshConnection);
             TrunkedSiteSchema.create(freshConnection);
-            assertEquals(DatabaseFormatCatalog.requireVersion(37).fingerprint(),SqliteSchemaValidator.fingerprint(connection));
+            assertEquals(DatabaseFormatCatalog.requireVersion(40).fingerprint(),SqliteSchemaValidator.fingerprint(connection));
             assertEquals(SqliteSchemaValidator.fingerprint(freshConnection),SqliteSchemaValidator.fingerprint(connection));
             assertEquals(indexDefinitions(freshConnection),indexDefinitions(connection));
         }

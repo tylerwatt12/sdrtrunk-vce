@@ -142,7 +142,7 @@ class Format31To32DatabaseMigrationTest
             long identityFacts = scalar(statement, "SELECT count(*) FROM trunked_logical_call_identity_bucket");
             DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspectForMigration(connection));
-            assertEquals("format-37-to-38", preflight.steps().getLast().id());
+            assertEquals("format-40-to-41", preflight.steps().getLast().id());
             assertEquals(aliases, new Format31To32DatabaseMigration().validateSource(connection)
                 .getFirst().affectedRows());
 
@@ -170,7 +170,10 @@ class Format31To32DatabaseMigrationTest
             assertEquals(newAliasScanLists, scalar(statement, "SELECT count(*) FROM alias_list_new_alias_scan_list_membership"));
             assertEquals(activityIndexes + 6, scalar(statement, "SELECT count(*) FROM sqlite_schema WHERE type='index' " +
                 "AND name LIKE 'idx_receiver_activity_event_%'"));
-            assertEquals(preferencesBefore, text(statement, "SELECT group_concat(preferences_json) FROM web_user ORDER BY id"));
+            assertEquals(preferencesBefore, text(statement, """
+                SELECT group_concat(json_remove(json_set(preferences_json, '$.version', 8),
+                    '$.presentation.source_name_display', '$.presentation.live_channel_sort')) FROM web_user ORDER BY id
+                """), "The downstream personal preference upgrades preserve all previous personal settings");
             assertEquals(aliases, scalar(statement, "SELECT count(*) FROM alias"));
             assertEquals(identities, scalar(statement, "SELECT count(*) FROM radio_system_identity_summary"));
             assertEquals(memberships, scalar(statement, "SELECT count(*) FROM alias_scan_list_membership"));

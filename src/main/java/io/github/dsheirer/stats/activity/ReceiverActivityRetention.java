@@ -16,6 +16,9 @@ import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
+import java.util.function.LongSupplier;
+import org.sqlite.ProgressHandler;
 
 /**
  * One bounded, fair pass over retention-owned activity data.
@@ -30,6 +33,9 @@ final class ReceiverActivityRetention
     static final String CURSOR_STATUS_KEY = "retention_task_cursor";
     static final int MAXIMUM_ROWS_PER_PASS = 1_000;
     static final int MAXIMUM_ROWS_PER_TASK = 256;
+    static final long MAXIMUM_TASK_NANOSECONDS = TimeUnit.MILLISECONDS.toNanos(250);
+    static final long MAXIMUM_PASS_NANOSECONDS = TimeUnit.SECONDS.toNanos(1);
+    private static final int SQLITE_PROGRESS_STEPS = 1_000;
 
     private static final List<RetentionTask> TASKS = tasks();
 
@@ -39,27 +45,52 @@ final class ReceiverActivityRetention
 
     static Pass runPass(Connection connection, long cutoffEpochMilliseconds) throws SQLException
     {
+        return runPass(connection, cutoffEpochMilliseconds, System::nanoTime);
+    }
+
+    static Pass runPass(Connection connection, long cutoffEpochMilliseconds, LongSupplier nanoTime)
+        throws SQLException
+    {
+        //An interrupted SQLite DELETE can roll back its entire transaction. Each task must own only its statement,
+        //so earlier completed batches stay durable and the writer is released when an expensive task is interrupted.
+        if(!connection.getAutoCommit())
+        {
+            throw new SQLException("Activity retention requires an idle database writer connection");
+        }
+        long startedAt = nanoTime.getAsLong();
         int cursor = Math.floorMod((int)ReceiverActivitySchema.readStatusLong(connection, CURSOR_STATUS_KEY),
             TASKS.size());
         int visited = 0;
         int deleted = 0;
         int consecutiveEmptyTasks = 0;
+        boolean budgetExhausted = false;
         long hourlyCutoff = cutoffEpochMilliseconds - Math.floorMod(cutoffEpochMilliseconds, 3_600_000L);
 
         while(consecutiveEmptyTasks < TASKS.size() && deleted < MAXIMUM_ROWS_PER_PASS)
         {
+            if(nanoTime.getAsLong() - startedAt >= MAXIMUM_PASS_NANOSECONDS)
+            {
+                budgetExhausted = true;
+                break;
+            }
             RetentionTask task = TASKS.get(cursor);
             int maximumRows = Math.min(MAXIMUM_ROWS_PER_TASK, MAXIMUM_ROWS_PER_PASS - deleted);
             int taskDeleted = task.delete(connection, task.hourly() ? hourlyCutoff : cutoffEpochMilliseconds,
-                maximumRows);
-            deleted = Math.addExact(deleted, taskDeleted);
-            consecutiveEmptyTasks = taskDeleted > 0 ? 0 : consecutiveEmptyTasks + 1;
+                maximumRows, nanoTime, startedAt);
             cursor = (cursor + 1) % TASKS.size();
             visited++;
+            if(taskDeleted < 0)
+            {
+                //Skip this task on the next pass so one costly descendant probe cannot starve every other table.
+                budgetExhausted = true;
+                break;
+            }
+            deleted = Math.addExact(deleted, taskDeleted);
+            consecutiveEmptyTasks = taskDeleted > 0 ? 0 : consecutiveEmptyTasks + 1;
         }
 
         ReceiverActivitySchema.updateStatus(connection, CURSOR_STATUS_KEY, Integer.toString(cursor));
-        boolean moreWorkLikely = deleted == MAXIMUM_ROWS_PER_PASS;
+        boolean moreWorkLikely = budgetExhausted || deleted == MAXIMUM_ROWS_PER_PASS;
         return new Pass(deleted, moreWorkLikely, visited, cursor);
     }
 
@@ -185,22 +216,27 @@ final class ReceiverActivityRetention
                   AND NOT EXISTS (SELECT 1 FROM trunked_radio_channel_presence_clear child
                       WHERE child.radio_system_id = identity.radio_system_id
                         AND child.radio_identity_id = identity.id)
-                  AND NOT EXISTS (SELECT 1 FROM trunked_logical_call_identity_bucket child
-                      WHERE child.radio_system_id = identity.radio_system_id
-                        AND child.identity_summary_id = identity.id)
                   AND NOT EXISTS (SELECT 1 FROM p25_site_call_identity_bucket child
                       WHERE child.radio_system_id = identity.radio_system_id
                         AND child.identity_summary_id = identity.id)
                   AND NOT EXISTS (SELECT 1 FROM receiver_activity_event child
+                      INDEXED BY idx_receiver_activity_event_source_time
                       WHERE child.radio_system_id = identity.radio_system_id
-                        AND (child.source_identity_summary_id = identity.id
-                          OR child.target_identity_summary_id = identity.id))
+                        AND child.source_identity_summary_id = identity.id)
+                  AND NOT EXISTS (SELECT 1 FROM receiver_activity_event child
+                      INDEXED BY idx_receiver_activity_event_target_time
+                      WHERE child.radio_system_id = identity.radio_system_id
+                        AND child.target_identity_summary_id = identity.id)
                   AND NOT EXISTS (SELECT 1 FROM activity_event_identity_member child
                       WHERE child.radio_system_id = identity.radio_system_id
                         AND child.identity_summary_id = identity.id)
                   AND NOT EXISTS (SELECT 1 FROM p25_wuid_assignment_observation_summary assignment
                       WHERE assignment.radio_system_id = identity.radio_system_id
                         AND assignment.p25_subscriber_identity_id = identity.p25_subscriber_identity_id)
+                  AND NOT EXISTS (SELECT 1 FROM trunked_logical_call_identity_bucket child
+                      INDEXED BY idx_trunked_logical_identity_identity
+                      WHERE child.radio_system_id = identity.radio_system_id
+                        AND child.identity_summary_id = identity.id)
                 ORDER BY identity.last_seen_ms, identity.radio_system_id, identity.id
                 LIMIT ?
             )
@@ -370,8 +406,22 @@ final class ReceiverActivityRetention
 
     private record RetentionTask(String name, boolean hourly, boolean usesCutoff, String sql)
     {
-        private int delete(Connection connection, long cutoff, int maximumRows) throws SQLException
+        private int delete(Connection connection, long cutoff, int maximumRows, LongSupplier nanoTime,
+                           long passStartedAt) throws SQLException
         {
+            long taskStartedAt = nanoTime.getAsLong();
+            boolean[] budgetExhausted = {false};
+            ProgressHandler.setHandler(connection, SQLITE_PROGRESS_STEPS, new ProgressHandler()
+            {
+                @Override
+                protected int progress()
+                {
+                    long now = nanoTime.getAsLong();
+                    budgetExhausted[0] = now - taskStartedAt >= MAXIMUM_TASK_NANOSECONDS ||
+                        now - passStartedAt >= MAXIMUM_PASS_NANOSECONDS;
+                    return budgetExhausted[0] ? 1 : 0;
+                }
+            });
             try(PreparedStatement statement = connection.prepareStatement(sql))
             {
                 int index = 1;
@@ -384,7 +434,16 @@ final class ReceiverActivityRetention
             }
             catch(SQLException e)
             {
+                if(budgetExhausted[0] && e.getErrorCode() == 9) //SQLITE_INTERRUPT
+                {
+                    return -1;
+                }
                 throw new SQLException("Activity retention task failed [" + name + "]", e);
+            }
+            finally
+            {
+                //The long-lived statistics connection also handles ingestion and status writes after retention.
+                ProgressHandler.clearHandler(connection);
             }
         }
     }

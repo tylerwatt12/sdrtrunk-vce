@@ -36,9 +36,9 @@ class Format37To38DatabaseMigrationTest
     @TempDir Path mTemporaryFolder;
 
     @Test
-    void preservesEveryRowAndAllocatorAcrossRollbackAndRetryToExactHistoricalFormat35() throws Exception
+    void preservesEveryRowAndAllocatorAcrossRollbackAndRetryToExactHistoricalFormat38() throws Exception
     {
-        Path source = Format34TestDatabase.create(mTemporaryFolder.resolve("source.sqlite"));
+        Path source = Format37TestDatabase.create(mTemporaryFolder.resolve("source.sqlite"));
         byte[] sourceBytes = Files.readAllBytes(source);
         Map<String,TableContents> expectedRows;
         Map<String,String> sourceIndexes;
@@ -52,8 +52,8 @@ class Format37To38DatabaseMigrationTest
             assertTrue(expectedRows.get("web_user").rows() > 0);
             DatabaseMigrationChain.PreflightReport plan = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspect(connection));
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 34, plan.steps().size());
-            assertEquals("format-34-to-35", plan.steps().getFirst().id());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 37, plan.steps().size());
+            assertEquals("format-37-to-38", plan.steps().getFirst().id());
             assertEquals(List.of(4L, 1L), plan.steps().getFirst().effects().stream()
                 .map(DatabaseMigrationEffect::affectedRows).toList());
         }
@@ -70,14 +70,14 @@ class Format37To38DatabaseMigrationTest
                 connection.setAutoCommit(false);
                 new Format37To38DatabaseMigration().migrate(connection);
                 connection.rollback();
-                assertEquals(DatabaseFormatCatalog.requireVersion(34).fingerprint(),
+                assertEquals(DatabaseFormatCatalog.requireVersion(37).fingerprint(),
                     SqliteSchemaValidator.fingerprint(connection));
                 assertEquals(sourceIndexes, indexDefinitions(connection));
                 assertEquals(expectedRows, tableContents(connection));
 
                 List<DatabaseMigrationEffect> effects =
                     new Format37To38DatabaseMigration().migrateAndReport(connection, false);
-                DatabaseFormatCatalog.stamp(connection, 35);
+                DatabaseFormatCatalog.stamp(connection, 38);
                 connection.commit();
                 assertEquals(List.of(DatabaseMigrationEffect.Kind.TRANSFORM, DatabaseMigrationEffect.Kind.TRANSFORM),
                     effects.stream().map(DatabaseMigrationEffect::kind).toList());
@@ -85,9 +85,9 @@ class Format37To38DatabaseMigrationTest
                     .map(DatabaseMigrationEffect::affectedRows).toList());
                 assertEquals(expectedRows, tableContents(connection),
                     "Only the global format marker changes; every other row and allocator survives");
-                assertEquals(DatabaseFormatCatalog.requireVersion(35).fingerprint(),
+                assertEquals(DatabaseFormatCatalog.requireVersion(38).fingerprint(),
                     SqliteSchemaValidator.fingerprint(connection));
-                assertEquals(35, DatabaseFormatCatalog.inspect(connection).version());
+                assertEquals(38, DatabaseFormatCatalog.inspect(connection).version());
                 assertFourRebuiltIndexesAndOneAdded(sourceIndexes, indexDefinitions(connection));
                 assertCoveringPlansAndStableTieOrdering(statement);
                 assertCoveringMemberEvidencePlan(statement);
@@ -108,7 +108,7 @@ class Format37To38DatabaseMigrationTest
     {
         Path older = Format32TestDatabase.create(mTemporaryFolder.resolve("format32.sqlite"));
         Path prior = Format33TestDatabase.create(mTemporaryFolder.resolve("format33.sqlite"));
-        Path mixed = Format34TestDatabase.create(mTemporaryFolder.resolve("mixed.sqlite"));
+        Path mixed = Format37TestDatabase.create(mTemporaryFolder.resolve("mixed.sqlite"));
         try(Connection connection = open(mixed); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("DROP INDEX idx_receiver_activity_event_source_time");
@@ -129,7 +129,7 @@ class Format37To38DatabaseMigrationTest
     }
 
     @Test
-    void format35FixtureRemainsFrozenAndCannotRunThePreviousAdjacentStep() throws Exception
+    void format38FixtureRemainsFrozenAndCannotRunThePreviousAdjacentStep() throws Exception
     {
         Path current = Format38TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
         byte[] beforeBytes = Files.readAllBytes(current);
@@ -138,9 +138,9 @@ class Format37To38DatabaseMigrationTest
             Map<String,TableContents> before = tableContents(connection);
             assertThrows(SQLException.class, () -> new Format37To38DatabaseMigration().migrate(connection));
             assertEquals(before, tableContents(connection));
-            assertEquals(DatabaseFormatCatalog.requireVersion(35).fingerprint(),
+            assertEquals(DatabaseFormatCatalog.requireVersion(38).fingerprint(),
                 SqliteSchemaValidator.fingerprint(connection));
-            assertEquals(35, DatabaseFormatCatalog.inspect(connection).version());
+            assertEquals(38, DatabaseFormatCatalog.inspect(connection).version());
         }
         assertArrayEquals(beforeBytes, Files.readAllBytes(current));
     }

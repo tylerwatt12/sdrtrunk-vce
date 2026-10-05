@@ -126,20 +126,38 @@ public class ReceiverActivitySchema
 
     public static void create(Connection connection) throws SQLException
     {
-        createFormat37(connection);
+        createFormat40(connection);
         createRemainingQueryLookupIndexes(connection);
     }
 
-    /** Creates the exact historical format-37 activity schema without later lookup indexes. */
+    /** Creates the exact main format-37 activity schema before later performance changes. */
     public static void createFormat37(Connection connection) throws SQLException
     {
-        create(connection, MAXIMUM_OBSERVED_SITE, true, true, EVENT_TYPES, true);
+        create(connection, MAXIMUM_OBSERVED_SITE, true, true, EVENT_TYPES, true, false);
         createEncryptedActivityFilterIndexes(connection);
         createSourceWorkingEvidenceIndex(connection);
+        createIdentityRetentionIndexes(connection);
+    }
+
+    /** Creates the exact format-38 covering-index schema without later stored-channel evidence. */
+    public static void createFormat38(Connection connection) throws SQLException
+    {
+        createFormat37(connection);
+        rebuildCoveringActivityIndexes(connection);
+        rebuildHistoricalMemberEvidenceIndexes(connection);
+    }
+
+    /** Creates the exact format-40 activity schema without the later event-type and frequency covers. */
+    public static void createFormat40(Connection connection) throws SQLException
+    {
+        create(connection, MAXIMUM_OBSERVED_SITE, true, true, EVENT_TYPES, true, true);
+        createEncryptedActivityFilterIndexes(connection);
+        createSourceWorkingEvidenceIndex(connection);
+        createIdentityRetentionIndexes(connection);
         createIdentityLocalAddressEvidenceIndexes(connection);
     }
 
-    /** Adds bounded lookup covers only for fresh current creation and the format-37-to-38 migration. */
+    /** Adds bounded lookup covers only for fresh current creation and the format-40-to-41 migration. */
     public static void createRemainingQueryLookupIndexes(Connection connection) throws SQLException
     {
         try(Statement statement = connection.createStatement())
@@ -159,7 +177,7 @@ public class ReceiverActivitySchema
         }
     }
 
-    /** Adds positive local-address covers only to fresh current databases and the adjacent format-36-to-37 step. */
+    /** Adds positive local-address covers only to fresh current databases and the adjacent format-39-to-40 step. */
     public static void createIdentityLocalAddressEvidenceIndexes(Connection connection) throws SQLException
     {
         try(Statement statement = connection.createStatement())
@@ -174,6 +192,21 @@ public class ReceiverActivitySchema
                 ON receiver_activity_event(target_identity_summary_id, target_observed_local_id, channel_id)
                 WHERE target_identity_summary_id IS NOT NULL AND target_observed_local_id > 0
                 """);
+        }
+    }
+
+    /** Supports identity retention and foreign-key checks without scanning a system's logical-call history. */
+    public static void createIdentityRetentionIndexes(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                CREATE INDEX IF NOT EXISTS idx_trunked_logical_identity_identity
+                ON trunked_logical_call_identity_bucket(identity_summary_id, radio_system_id, identity_kind_code)
+                """);
+            //Implicit foreign-key checks cannot force an index. Compare the new lookup with the existing table
+            //indexes using their actual populated selectivity, rather than stale or default estimates.
+            statement.execute("ANALYZE trunked_logical_call_identity_bucket");
         }
     }
 
@@ -193,7 +226,7 @@ public class ReceiverActivitySchema
     /** Creates the frozen format-17 activity schema for the historical format-14-to-15 migration. */
     public static void createFormat17(Connection connection) throws SQLException
     {
-        create(connection, FORMAT_17_MAXIMUM_OBSERVED_SITE, false, false, PRE_FORMAT_26_EVENT_TYPES, false);
+        create(connection, FORMAT_17_MAXIMUM_OBSERVED_SITE, false, false, PRE_FORMAT_26_EVENT_TYPES, false, false);
     }
 
     /** Creates canonical P25 subscribers and best-effort WUID observations for the format-31-to-32 migration. */
@@ -241,13 +274,14 @@ public class ReceiverActivitySchema
 
     private static void create(Connection connection, int maximumObservedSite, boolean allowNxdnNullGroup,
                                boolean includeActivityFilterIndexes,
-                               List<ReceiverActivityCodes.EventTypeCode> eventTypes, boolean canonicalP25Subscribers) throws SQLException
+                               List<ReceiverActivityCodes.EventTypeCode> eventTypes, boolean canonicalP25Subscribers,
+                               boolean currentEvidenceIndexes) throws SQLException
     {
         try(Statement statement = connection.createStatement())
         {
             statement.executeUpdate(receiverChannelSql());
             statement.executeUpdate(receiverActivityEventSql(maximumObservedSite, eventTypes, canonicalP25Subscribers));
-            statement.executeUpdate(createActivityEventIdentityMemberSql(canonicalP25Subscribers));
+            statement.executeUpdate(createActivityEventIdentityMemberSql(currentEvidenceIndexes));
             createTrunkedCallTables(statement, canonicalP25Subscribers);
             if(canonicalP25Subscribers) RadioSystemSchema.create(statement);
             else RadioSystemSchema.createFormat31(statement);
@@ -262,7 +296,8 @@ public class ReceiverActivitySchema
                     updated_at_ms INTEGER NOT NULL CHECK(typeof(updated_at_ms) = 'integer' AND updated_at_ms > 0)
                 )
                 """);
-            createIndexesAndViews(statement, includeActivityFilterIndexes, eventTypes, canonicalP25Subscribers);
+            createIndexesAndViews(statement, includeActivityFilterIndexes, eventTypes, canonicalP25Subscribers,
+                currentEvidenceIndexes);
         }
 
         SdrTrunkDatabaseStartup.setMetadata(connection, CONVENTIONAL_CALL_OUTPUT_METRICS_STARTED_AT_KEY,
@@ -312,6 +347,8 @@ public class ReceiverActivitySchema
             List.of("bucket_start_ms", "radio_system_id"));
         validateIndexColumns(connection, "idx_trunked_logical_identity_dashboard_time",
             List.of("bucket_start_ms", "identity_role_code", "radio_system_id", "identity_summary_id"));
+        validateIndexColumns(connection, "idx_trunked_logical_identity_identity",
+            List.of("identity_summary_id", "radio_system_id", "identity_kind_code"));
         validateIndexColumns(connection, "idx_p25_site_call_bucket_time",
             List.of("bucket_start_ms", "radio_system_id", "learned_site_id"));
         validateIndexColumns(connection, "idx_p25_site_call_identity_time",
@@ -2205,7 +2242,7 @@ public class ReceiverActivitySchema
         return selectReceiverChannelId(connection, quality.configurationId());
     }
 
-    /** Runs one globally bounded retention pass across every activity subsystem. */
+    /** Runs one globally bounded retention pass across every activity subsystem on an idle auto-commit connection. */
     public static int runRetentionPass(Connection connection, long cutoffEpochMilliseconds) throws SQLException
     {
         return ReceiverActivityRetention.runPass(connection, cutoffEpochMilliseconds).deletedRows();
@@ -2543,7 +2580,7 @@ public class ReceiverActivitySchema
         return createActivityEventIdentityMemberSql(true);
     }
 
-    /** Historical creators retain the exact pre-format-36 member table. */
+    /** Historical creators retain the exact pre-format-39 member table. */
     private static String createActivityEventIdentityMemberSql(boolean storedChannel)
     {
         return """
@@ -3011,18 +3048,18 @@ public class ReceiverActivitySchema
     private static void createIndexesAndViews(Statement statement, boolean includeActivityFilterIndexes,
         List<ReceiverActivityCodes.EventTypeCode> eventTypes) throws SQLException
     {
-        createIndexesAndViews(statement, includeActivityFilterIndexes, eventTypes, false);
+        createIndexesAndViews(statement, includeActivityFilterIndexes, eventTypes, false, false);
     }
 
     private static void createIndexesAndViews(Statement statement, boolean includeActivityFilterIndexes,
-                                              List<ReceiverActivityCodes.EventTypeCode> eventTypes, boolean canonicalP25Subscribers)
-        throws SQLException
+                                              List<ReceiverActivityCodes.EventTypeCode> eventTypes, boolean canonicalP25Subscribers,
+                                              boolean currentEvidenceIndexes) throws SQLException
     {
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_channel_radio_system ON receiver_channel(radio_system_id, id)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_retention ON receiver_activity_event(observed_at_ms, id)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_system_time ON receiver_activity_event(radio_system_id, observed_at_ms, id)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_channel_time ON receiver_activity_event(channel_id, observed_at_ms)");
-        if(canonicalP25Subscribers)
+        if(currentEvidenceIndexes)
         {
             createCoveringIdentityEvidenceIndexes(statement);
         }
@@ -3036,9 +3073,9 @@ public class ReceiverActivitySchema
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_encryption ON receiver_activity_event(encryption_algorithm_id, encryption_key_id, observed_at_ms) WHERE encrypted = 1");
         if(includeActivityFilterIndexes)
         {
-            createActivityFilterIndexes(statement, canonicalP25Subscribers);
+            createActivityFilterIndexes(statement, currentEvidenceIndexes);
         }
-        if(canonicalP25Subscribers)
+        if(currentEvidenceIndexes)
         {
             createStoredMemberEvidenceIndexes(statement);
             createP25IdentityAddressIndex(statement);
@@ -3194,7 +3231,7 @@ public class ReceiverActivitySchema
             """);
     }
 
-    /** Replaces only three reproducible indexes in the adjacent format-34-to-35 migration. */
+    /** Replaces only three reproducible indexes in the adjacent format-37-to-38 migration. */
     public static void rebuildCoveringActivityIndexes(Connection connection) throws SQLException
     {
         try(Statement statement = connection.createStatement())
@@ -3207,7 +3244,7 @@ public class ReceiverActivitySchema
         }
     }
 
-    /** Replaces one member lookup and adds one narrow event projection in the format-34-to-35 migrator. */
+    /** Replaces one member lookup and adds one narrow event projection in the format-37-to-38 migrator. */
     public static void rebuildHistoricalMemberEvidenceIndexes(Connection connection) throws SQLException
     {
         try(Statement statement = connection.createStatement())
@@ -3229,7 +3266,7 @@ public class ReceiverActivitySchema
             """);
     }
 
-    /** Copies the immutable observation channel into members for the adjacent format-35-to-36 migration. */
+    /** Copies the immutable observation channel into members for the adjacent format-38-to-39 migration. */
     public static void rebuildStoredMemberChannelEvidence(Connection connection) throws SQLException
     {
         try(Statement statement = connection.createStatement())
@@ -3238,18 +3275,18 @@ public class ReceiverActivitySchema
             createUniqueEventChannelIndex(statement);
             statement.executeUpdate("DROP INDEX idx_activity_event_member_identity_event");
             statement.executeUpdate("ALTER TABLE activity_event_identity_member " +
-                "RENAME TO activity_event_identity_member_format35");
+                "RENAME TO activity_event_identity_member_format38");
             statement.executeUpdate(createActivityEventIdentityMemberSql());
             statement.executeUpdate("""
                 INSERT INTO activity_event_identity_member(
                     event_id, radio_system_id, identity_summary_id, identity_kind_code, observed_local_id, channel_id)
                 SELECT member.event_id, member.radio_system_id, member.identity_summary_id,
                     member.identity_kind_code, member.observed_local_id, event.channel_id
-                FROM activity_event_identity_member_format35 member
+                FROM activity_event_identity_member_format38 member
                 CROSS JOIN receiver_activity_event event INDEXED BY idx_receiver_activity_event_id_channel
                   ON event.id = member.event_id
                 """);
-            statement.executeUpdate("DROP TABLE activity_event_identity_member_format35");
+            statement.executeUpdate("DROP TABLE activity_event_identity_member_format38");
             createStoredMemberEvidenceIndexes(statement);
             createP25IdentityAddressIndex(statement);
         }
@@ -3420,10 +3457,13 @@ public class ReceiverActivitySchema
         "idx_receiver_activity_event_id_channel",
         "idx_receiver_activity_event_source_identity_address",
         "idx_receiver_activity_event_target_identity_address",
+        "idx_receiver_activity_event_target_event_type_time",
+        "idx_receiver_activity_event_channel_frequency_time",
         "idx_trunked_signaling_activity_time",
         "idx_trunked_signaling_activity_system",
         "idx_trunked_logical_call_bucket_time",
         "idx_trunked_logical_identity_dashboard_time",
+        "idx_trunked_logical_identity_identity",
         "idx_p25_site_call_bucket_time",
         "idx_p25_site_call_identity_time",
         "idx_p25_site_call_identity_retention",

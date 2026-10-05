@@ -1,6 +1,7 @@
 import { createDualRange } from '../core/dual-range.js?v=1';
 import { systemLabel, systemName } from '../core/system-labels.js?v=1';
 import { formatP25RadioIdentifier } from '../core/radio-labels.js?v=1';
+import { formatSourceName } from '../core/source-names.js?v=1';
 
 const CALLS = '/api/v1/recordings/calls';
 const SUGGESTIONS = '/api/v1/recordings/suggestions';
@@ -64,17 +65,17 @@ function label(row) {
     systemName(row) || 'Recorded call';
 }
 
-function sourceLabel(row) {
+function sourceLabel(row, mode) {
   const source = value(row, 'source_alias', 'radio_alias');
   const id = recordingRadioId(row, 'source', value(row, 'source_id', 'radio_id'));
   const ota = value(row, 'source_ota_alias', 'source_ota_ta', 'ota_alias', 'talker_alias');
-  return [source || (id !== null ? `Radio ${id}` : null), source && id !== null ? `Radio ${id}` : null,
-    ota && ota !== source ? `OTA ${ota}` : null].filter(Boolean).join(' · ');
+  return [formatSourceName(source, ota, mode), id !== null ? `Radio ${id}` : null].filter(Boolean).join(' · ');
 }
 
-function sourceBrief(row) {
+function sourceBrief(row, mode) {
   const id = recordingRadioId(row, 'source', value(row, 'source_id', 'radio_id'));
-  return value(row, 'source_alias', 'radio_alias', 'source_ota_alias', 'source_ota_ta', 'ota_alias', 'talker_alias') ||
+  return formatSourceName(value(row, 'source_alias', 'radio_alias'),
+    value(row, 'source_ota_alias', 'source_ota_ta', 'ota_alias', 'talker_alias'), mode) ||
     (id !== null ? `Radio ${id}` : '');
 }
 
@@ -196,7 +197,8 @@ function select(node, options, labelText) {
 export function createRecordingsFeature(deps) {
   const { node, requestJson, openReadOnlyModal, section, pageHeader, beginPage,
     captureRenderContext, renderIsCurrent, content, isPrimaryAdmin, canViewRadio,
-    entityRefHref, stopLiveAudio, href, anchor, uiToggleField, metrics, browsingWorkflows, modalFooter } = deps;
+    entityRefHref, stopLiveAudio, href, anchor, uiToggleField, metrics, browsingWorkflows, modalFooter,
+    getSourceNameDisplay = () => 'talker_alias' } = deps;
   const search = {
     q: '', transcript: '', from_ms: '', to_ms: '', system_key: '', site: '', talkgroup_id: '', radio_id: '',
     channel_id: '', min_duration_ms: '', max_duration_ms: '', frequency_hz: '',
@@ -747,7 +749,7 @@ export function createRecordingsFeature(deps) {
   function factGroups(row, { includeEmpty = false, empty = false } = {}) {
     const group = value(row, 'call_type') === 'PATCH' ? 'Patch' : 'Talkgroup';
     const target = label(row);
-    const source = sourceLabel(row);
+    const source = sourceLabel(row, getSourceNameDisplay());
     const savedChannel = value(row, 'channel_name', 'analog_channel_name') ||
       (row?.channel_entity_ref ? 'Open channel' : null);
     const groups = [
@@ -965,7 +967,7 @@ export function createRecordingsFeature(deps) {
         winningSite(row) && siteScope && `${siteScope}|${JSON.stringify(row.audio_from) || winningSite(row)}`],
       ['channel', 'Channel', value(row, 'channel_name', 'analog_channel_name'), row.channel_entity_ref,
         value(row, 'channel_id') || row.channel_entity_ref?.key],
-      ['source', 'Source radio', sourceLabel(row), row.source_entity_ref,
+      ['source', 'Source radio', sourceLabel(row, getSourceNameDisplay()), row.source_entity_ref,
         sourceId !== null && system && `${system}|${sourceId}|` +
           ['source_home_wacn', 'source_home_system_id', 'source_home_id'].map((key) => value(row, key)).join('|')]
     ].filter(([, , text, , identity]) => Boolean(text || identity));
@@ -987,13 +989,13 @@ export function createRecordingsFeature(deps) {
     const main = node('div', 'recordings-call-main');
     const analog = ['NBFM', 'AM'].includes(value(row, 'protocol'));
     const sharedGroup = sharedDetails.has('target');
-    const source = sourceBrief(row);
+    const source = sourceBrief(row, getSourceNameDisplay());
     const sourceIsTitle = sharedGroup && Boolean(source);
     const title = sourceIsTitle ? source :
       (analog && sharedDetails.has('channel') ? 'Analog call' : sharedGroup ? 'Unidentified source' : label(row));
     const heading = node('div', 'recordings-call-heading');
     const titleHost = node('strong', 'recordings-call-title');
-    titleHost.title = sourceIsTitle ? sourceLabel(row) : title;
+    titleHost.title = sourceIsTitle ? sourceLabel(row, getSourceNameDisplay()) : title;
     titleHost.append(entityLink(title, sourceIsTitle ? row.source_entity_ref :
       analog ? row.channel_entity_ref : row.target_entity_ref));
     heading.append(titleHost);
@@ -1010,7 +1012,7 @@ export function createRecordingsFeature(deps) {
     const addContext = (name, text, ref, key) => {
       if (!text) return;
       const item = node('span', `recordings-call-context recordings-context-${key}`);
-      item.title = `${name}: ${key === 'source' ? sourceLabel(row) : text}`;
+      item.title = `${name}: ${key === 'source' ? sourceLabel(row, getSourceNameDisplay()) : text}`;
       item.append(entityLink(text, ref));
       meta.append(item);
     };

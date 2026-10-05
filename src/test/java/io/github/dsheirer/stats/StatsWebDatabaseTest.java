@@ -2476,9 +2476,11 @@ class StatsWebDatabaseTest
             Statement statement = connection.createStatement())
         {
             try(ResultSet resultSet = statement.executeQuery(
-                "SELECT name FROM sqlite_schema WHERE name = 'sqlite_stat1'"))
+                "SELECT count(*) FROM sqlite_stat1"))
             {
-                assertFalse(resultSet.next(), "The representative plan must not rely on ANALYZE statistics");
+                assertTrue(resultSet.next());
+                assertEquals(0, resultSet.getInt(1),
+                    "Fresh retention creation can create sqlite_stat1; this fixture has no planner statistics");
             }
 
             statement.executeUpdate("""

@@ -100,7 +100,7 @@ class Format14To15DatabaseMigrationTest
             {
                 DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
                 assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
-                assertEquals("format-37-to-38", report.steps().getLast().id());
+                assertEquals("format-40-to-41", report.steps().getLast().id());
                 connection.commit();
             }
             catch(Exception exception)
@@ -806,14 +806,20 @@ class Format14To15DatabaseMigrationTest
             DatabaseFormatCatalog.stampForMigration(connection, 33);
             new Format33To34DatabaseMigration().migrateAndReport(connection, false);
             DatabaseFormatCatalog.stampForMigration(connection, 34);
-            new Format37To38DatabaseMigration().migrateAndReport(connection, false);
+            new Format34To35DatabaseMigration().migrateAndReport(connection, false);
             DatabaseFormatCatalog.stampForMigration(connection, 35);
-            new Format38To39DatabaseMigration().migrateAndReport(connection, false);
+            new Format35To36DatabaseMigration().migrateAndReport(connection, false);
             DatabaseFormatCatalog.stampForMigration(connection, 36);
-            new Format39To40DatabaseMigration().migrateAndReport(connection, false);
+            new Format36To37DatabaseMigration().migrate(connection);
             DatabaseFormatCatalog.stampForMigration(connection, 37);
-            new Format40To41DatabaseMigration().migrateAndReport(connection, false);
+            new Format37To38DatabaseMigration().migrateAndReport(connection, false);
             DatabaseFormatCatalog.stampForMigration(connection, 38);
+            new Format38To39DatabaseMigration().migrateAndReport(connection, false);
+            DatabaseFormatCatalog.stampForMigration(connection, 39);
+            new Format39To40DatabaseMigration().migrateAndReport(connection, false);
+            DatabaseFormatCatalog.stampForMigration(connection, 40);
+            new Format40To41DatabaseMigration().migrateAndReport(connection, false);
+            DatabaseFormatCatalog.stampForMigration(connection, 41);
             connection.commit();
 
             assertTrue(effect(effects, DatabaseMigrationEffect.Kind.DEFAULT,
@@ -2579,10 +2585,11 @@ class Format14To15DatabaseMigrationTest
         {
             Preference prior = entry.getValue();
             Preference current = after.get(entry.getKey());
-            assertEquals(Format23WebUserPreferencesCodec.migrateToFormat31(
-                Format22WebUserPreferencesCodec.migrateToFormat23(
-                    Format14WebUserPreferencesCodec.migrate(prior.json()))), current.json());
-            assertEquals(prior.revision() + 3, current.revision());
+            assertEquals(Format36WebUserPreferencesCodec.migrateFromFormat35(Format35WebUserPreferencesCodec.migrateFromFormat34(
+                Format23WebUserPreferencesCodec.migrateToFormat31(
+                    Format22WebUserPreferencesCodec.migrateToFormat23(
+                        Format14WebUserPreferencesCodec.migrate(prior.json()))))), current.json());
+            assertEquals(prior.revision() + 5, current.revision());
             assertTrue(current.updatedAtMs() >= prior.updatedAtMs());
         }
     }

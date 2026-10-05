@@ -9,10 +9,10 @@ import java.util.List;
 /** Rebuilds four activity lookup indexes and adds a narrow event projection without changing retained rows. */
 final class Format37To38DatabaseMigration implements DatabaseMigrationStep
 {
-    @Override public String id() { return "format-34-to-35"; }
+    @Override public String id() { return "format-37-to-38"; }
     @Override public String description() { return "Speed up activity rankings and identity name lookups"; }
-    @Override public int sourceVersion() { return 34; }
-    @Override public int targetVersion() { return 35; }
+    @Override public int sourceVersion() { return 37; }
+    @Override public int targetVersion() { return 38; }
 
     @Override
     public List<DatabaseMigrationEffect> declaredEffects()
@@ -37,9 +37,9 @@ final class Format37To38DatabaseMigration implements DatabaseMigrationStep
 
     private static void requireSource(Connection connection) throws SQLException
     {
-        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 34)
+        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 37)
         {
-            throw new SQLException("Expected format 34");
+            throw new SQLException("Expected format 37");
         }
     }
 

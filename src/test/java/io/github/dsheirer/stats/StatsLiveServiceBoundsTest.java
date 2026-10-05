@@ -67,7 +67,7 @@ class StatsLiveServiceBoundsTest
         ChannelActivitySnapshot.Row row = new ChannelActivitySnapshot.Row("row", "Dispatch", null, "CALL",
             List.of("VOICE"), 1L, "0-101", 851_012_500L, "WPFF205", -22.5, null, 0L, 0L, 0L, 0L, 0L,
             0L, 4_321L, null, 2, "1201", "RADIO", "Engine 1", "Engine company one", "Portable 12",
-            "Engine 1 · TA: Portable 12", "4400", "TALKGROUP", "Fire Dispatch", "Primary dispatch",
+            "Engine 1 · Portable 12", "4400", "TALKGROUP", "Fire Dispatch", "Primary dispatch",
             "P25_PHASE1", null, new ChannelActivitySnapshot.Navigation(
             "728d2d66-de4e-476b-a696-919f32dd4d12", 41L, "County",
             "p25", List.of(new ChannelActivitySnapshot.AliasReference(301L, 41L, "Engine 1")),

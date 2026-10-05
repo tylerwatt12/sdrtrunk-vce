@@ -1,4 +1,5 @@
 import { systemLabel } from './system-labels.js?v=1';
+import { formatSourceName } from './source-names.js?v=1';
 
 /* Reuse map: global workspace composition; ui-button/ui-audio-visibility/ui-icon-button, ui-segmented, ui-select,
  * ui-range, ui-feedback, ui-fact-list and ui-section-disclosure. Existing scanner
@@ -6,6 +7,7 @@ import { systemLabel } from './system-labels.js?v=1';
  * recording adapter; the dock owns presentation only, in light/dark and all sizes. */
 export function createAudioDock({ node, iconButton, uiToggleField, recordings, getLivePlayer, access, openRecordings,
   entityRefHref, canViewRadio, href, getTitlePreference, setTitlePreference,
+  getSourceNameDisplay = () => 'talker_alias',
   radioIdentifier = (_call, value) => value }) {
   const dock = node('section', 'audio-dock ui-audio-surface');
   dock.id = 'audio-dock';
@@ -71,16 +73,17 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     if (target !== undefined && target !== null && target !== '') return `${kind} ${kind === 'Radio' ? targetId(call) : target}`;
     return call.playback_target?.label || call.channel_name || call.channel || 'Recorded call';
   };
-  const sourceName = (call) => call?.source_alias || call?.source_ota_alias || call?.talker_alias ||
+  const sourceName = (call) => formatSourceName(call?.source_alias || call?.radio_alias,
+    call?.source_ota_alias || call?.source_ota_ta || call?.talker_alias || call?.ota_alias, getSourceNameDisplay()) ||
     (call?.source_id !== undefined && call?.source_id !== null ? `Radio ${sourceId(call)}` : '');
   const sourceSummary = (call) => {
     if (!call) return '';
     const alias = call.source_alias || call.radio_alias;
     const id = sourceId(call);
     const ota = call.source_ota_alias || call.source_ota_ta || call.talker_alias || call.ota_alias;
-    return [alias || (id !== undefined && id !== null && id !== '' ? `${identityType(call.source_form, 'Radio')} ${id}` : ''),
-      alias && id !== undefined && id !== null && id !== '' ? `${identityType(call.source_form, 'Radio')} ${id}` : '',
-      ota && String(ota).toLowerCase() !== String(alias || '').toLowerCase() ? `OTA ${ota}` : ''].filter(Boolean).join(' · ');
+    const name = formatSourceName(alias, ota, getSourceNameDisplay());
+    return [name, id !== undefined && id !== null && id !== '' ? `${identityType(call.source_form, 'Radio')} ${id}` : '']
+      .filter(Boolean).join(' · ');
   };
   const time = (seconds) => {
     const value = Math.max(0, Math.floor(Number(seconds) || 0));
@@ -667,7 +670,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
         active.scanLists, active.clickMode, active.continuation, active.stopped, active.paused] : panel === 'transcript' ?
         [call?.id, call?.transcription, active.detailsLoading, active.detailsError] :
         [active.current, active.stopped, active.scanLists, active.detailsLoading, active.detailsError];
-      const nextKey = JSON.stringify([source, panel, ...panelState]);
+      const nextKey = JSON.stringify([source, panel, getSourceNameDisplay(), ...panelState]);
       if (panelKey !== nextKey) {
         panelKey = nextKey;
         const scrollTop = panelHost.scrollTop;

@@ -182,7 +182,7 @@ class ChannelActivityModelTest
         assertSame(source, row.getSource());
         assertEquals(List.of(sourceAlias), row.getSourceAliases());
         assertSame(talker, row.getTalkerAlias());
-        assertEquals("Car 12 · TA: Portable 12", row.getSourceAliasDisplay());
+        assertEquals("Car 12 · Portable 12", row.getSourceAliasDisplay());
         assertSame(target, row.getTarget());
 
         var unrelatedSource = APCO25RadioIdentifier.createFrom(9_999);

@@ -679,7 +679,7 @@ class ReceiverActivityWriter implements AutoCloseable
         long now = System.currentTimeMillis();
         boolean scheduled = now - mLastRetentionCleanup >= RETENTION_CLEANUP_INTERVAL_MILLISECONDS;
         boolean backlogDue = mRetentionCleanupRequested.get() &&
-            (mQueue.isEmpty() || now - mLastRetentionCleanup >= RETENTION_BACKLOG_RETRY_MILLISECONDS);
+            now - mLastRetentionCleanup >= RETENTION_BACKLOG_RETRY_MILLISECONDS;
         boolean maintenanceDue = now - mLastMaintenance >= MAINTENANCE_INTERVAL_MILLISECONDS;
 
         if(maintenanceDue)

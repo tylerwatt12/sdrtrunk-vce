@@ -62,9 +62,11 @@ async function main() {
   const source = fs.readFileSync(modulePath, 'utf8');
   const labelsUrl = pathToFileURL(path.resolve(path.dirname(modulePath), '../core/system-labels.js')).href;
   const radioLabelsUrl = pathToFileURL(path.resolve(path.dirname(modulePath), '../core/radio-labels.js')).href;
+  const sourceNamesUrl = pathToFileURL(path.resolve(path.dirname(modulePath), '../core/source-names.js')).href;
   const executable = source.replace(/^import .*dual-range.*;\n/m, 'const createDualRange = () => {};\n')
     .replace(/from '\.\.\/core\/system-labels\.js\?v=\d+'/, `from '${labelsUrl}'`)
-    .replace(/from '\.\.\/core\/radio-labels\.js\?v=\d+'/, `from '${radioLabelsUrl}'`);
+    .replace(/from '\.\.\/core\/radio-labels\.js\?v=\d+'/, `from '${radioLabelsUrl}'`)
+    .replace(/from '\.\.\/core\/source-names\.js\?v=\d+'/, `from '${sourceNamesUrl}'`);
   const { createRecordingsFeature } = await import(`data:text/javascript;base64,${Buffer.from(executable).toString('base64')}`);
   const originalAudio = global.Audio;
   const audios = [];
@@ -270,11 +272,12 @@ async function main() {
     assert.equal(canceledStart.viewState().playing, false);
 
     const sharedRequests = [];
+    let sourceMode = 'talker_alias';
     const sharing = make(async (url) => {
       sharedRequests.push(url);
       if (url.endsWith('/2')) throw new Error('Recording unavailable');
       return { call: call(Number(url.split('/').at(-1))) };
-    }).playback;
+    }, { getSourceNameDisplay: () => sourceMode }).playback;
     assert.equal(await sharing.loadSharedQueue(new URLSearchParams('recording_queue=3,2,1')), true);
     assert.deepEqual(sharing.viewState().queue.map((row) => row.id), [3, 1], 'Shared queue must preserve URL order');
     assert.equal(sharing.viewState().playing, false, 'Opening a shared URL must never autoplay');
@@ -325,6 +328,19 @@ async function main() {
       source_home_wacn: 0xBEE00, source_home_system_id: 0x348, source_home_id: 1863924 };
     assert.equal(primaryFact(localRadio, 'Source'), 'Radio 1863924',
       'Confirmed local recording radios must not repeat their WACN and SysID');
+    const namedSource = { ...localRadio, source_alias: 'Engine 4', source_ota_alias: 'ENG 4' };
+    assert.equal(primaryFact(namedSource, 'Source'), 'ENG 4 · Radio 1863924',
+      'Recording source summaries prefer the latest OTA alias and retain the radio ID');
+    assert.equal(primaryFact(namedSource, 'Latest OTA name'), 'ENG 4',
+      'The explicit latest OTA fact remains available regardless of display preference');
+    sourceMode = 'source_alias';
+    assert.equal(primaryFact(namedSource, 'Source'), 'Engine 4 · Radio 1863924');
+    sourceMode = 'both';
+    assert.equal(primaryFact(namedSource, 'Source'), 'Engine 4 · ENG 4 · Radio 1863924');
+    assert.equal(primaryFact({ ...namedSource, source_ota_alias: ' engine 4 ' }, 'Source'),
+      'Engine 4 · Radio 1863924', 'Recording names deduplicate across case and surrounding spaces');
+    sourceMode = 'talker_alias';
+    assert.equal(primaryFact({ ...namedSource, source_ota_alias: '' }, 'Source'), 'Engine 4 · Radio 1863924');
     assert.equal(primaryFact({ ...localRadio, source_home_id: 12345 }, 'Source'),
       'Radio 12345 (Working ID 1863924)', 'A different observed Working ID remains useful');
     const foreignRadio = { ...localRadio, source_home_system_id: 0x4A2 };

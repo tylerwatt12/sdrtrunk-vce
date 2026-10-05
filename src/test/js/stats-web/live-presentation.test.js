@@ -41,10 +41,13 @@ function constantSource(name, ending) {
 }
 
 const behavior = vm.runInNewContext(`(() => {
+  function sourceNameDisplayMode() { return 'talker_alias'; }
   ${constantSource('LIVE_IDLE_CALL_FIELDS', '];')}
   ${constantSource('LIVE_VOICE_QUALITY_FIELDS', '];')}
   ${functionSource('liveRowIsActive')}
   ${functionSource('livePresentedRow')}
+  ${functionSource('liveChannelSortMethod')}
+  ${functionSource('liveCompareChannelRows')}
   ${functionSource('livePresentedTableRows')}
   ${functionSource('liveIdentityRenderKey')}
   ${functionSource('liveDetailSelectionUnchanged')}
@@ -60,7 +63,8 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('rowGroupIdentityKind')}
   ${functionSource('groupIdentityLabel')}
   ${functionSource('activityTargetKind')}
-  return { liveRowIsActive, livePresentedRow, livePresentedTableRows,
+  return { liveRowIsActive, livePresentedRow, liveChannelSortMethod, liveCompareChannelRows,
+    livePresentedTableRows,
     liveIdentityRenderKey, liveDetailSelectionUnchanged, liveRequestedChannelMatch,
     livePickerNavigationIndex, liveDetailsPanelPercent, liveIdentityHasDisplayLabel,
     liveRemoteOriginLabel,
@@ -201,6 +205,71 @@ assert.deepEqual(keys(behavior.livePresentedTableRows({ table_id: 'site', rows: 
   row('new', 'CALL', { activation_order: 3 }), row('first', 'IDLE')
 ] }, preferences)), ['new', 'control']);
 
+assert.equal(behavior.liveChannelSortMethod(preferences), 'order_appeared',
+  'Active-only mode must default to the order channels appeared');
+assert.equal(behavior.liveChannelSortMethod({ show_only_active_trunked_channels: false }), 'lcn',
+  'Showing all channels must default to LCN order');
+assert.equal(behavior.liveChannelSortMethod({ ...preferences, live_channel_sort: 'invalid' }),
+  'order_appeared', 'An unsupported sort must fall back to the current mode');
+for (const method of ['lcn', 'order_appeared', 'frequency']) {
+  assert.equal(behavior.liveChannelSortMethod({ ...preferences, live_channel_sort: method }), method,
+    'A selected sort must remain available while active-only mode is on');
+}
+
+const sortableRows = [
+  row('missing-lcn', 'IDLE', { frequency_hz: 850000000 }),
+  row('lcn-ten', 'CALL', { lcn: '0-10 TS:1', frequency_hz: 851000000, timeslot: 1,
+    activation_order: 2 }),
+  row('lcn-two-slot-two', 'CALL', { lcn: '0-2 TS:2', frequency_hz: 852000000, timeslot: 2,
+    activation_order: 4 }),
+  row('lcn-two-slot-one', 'CALL', { lcn: '0-2 TS:1', frequency_hz: 852000000, timeslot: 1,
+    activation_order: 3 }),
+  row('idle-lcn-one', 'IDLE', { lcn: '0-1', frequency_hz: 853000000 }),
+  row('first-active', 'CONTROL', { lcn: '1-1', frequency_hz: 854000000,
+    activation_order: 1 })
+];
+const sortableTable = { table_id: 'site', rows: sortableRows };
+const rowsBeforeSort = JSON.stringify(sortableRows);
+const allChannels = { ...preferences, show_only_active_trunked_channels: false,
+  retain_last_call_on_idle_rows: true };
+assert.deepEqual(keys(behavior.livePresentedTableRows(sortableTable,
+  { ...allChannels, live_channel_sort: 'lcn' })), [
+  'idle-lcn-one', 'lcn-two-slot-one', 'lcn-two-slot-two', 'lcn-ten', 'first-active', 'missing-lcn'
+], 'LCN order must compare numeric band, channel, and timeslot labels naturally, with missing LCNs last');
+assert.deepEqual(keys(behavior.livePresentedTableRows(sortableTable,
+  { ...allChannels, live_channel_sort: 'frequency' })), [
+  'missing-lcn', 'lcn-ten', 'lcn-two-slot-one', 'lcn-two-slot-two', 'idle-lcn-one', 'first-active'
+], 'Frequency order must compare Hz numerically and use timeslot to order a shared frequency');
+assert.deepEqual(keys(behavior.livePresentedTableRows(sortableTable,
+  { ...allChannels, live_channel_sort: 'order_appeared' })), [
+  'first-active', 'lcn-ten', 'lcn-two-slot-one', 'lcn-two-slot-two', 'idle-lcn-one', 'missing-lcn'
+], 'Order appeared must keep active rows in authoritative order and place idle rows after them');
+assert.deepEqual(keys(behavior.livePresentedTableRows(sortableTable,
+  { ...preferences, live_channel_sort: 'lcn' })), [
+  'lcn-two-slot-one', 'lcn-two-slot-two', 'lcn-ten', 'first-active'
+], 'Choosing LCN order must retain active-only filtering');
+assert.deepEqual(keys(behavior.livePresentedTableRows(sortableTable,
+  { ...preferences, live_channel_sort: 'frequency' })), [
+  'lcn-ten', 'lcn-two-slot-one', 'lcn-two-slot-two', 'first-active'
+], 'Choosing frequency order must retain active-only filtering');
+assert.equal(JSON.stringify(sortableRows), rowsBeforeSort,
+  'Sorting must not reorder or modify authoritative Live rows');
+
+const tiedRows = [
+  row('z-idle', 'IDLE', { lcn: '0-2', frequency_hz: 852000000 }),
+  row('a-idle', 'IDLE', { lcn: '0-2', frequency_hz: 851000000 }),
+  row('b-idle', 'IDLE', { lcn: '0-2', frequency_hz: 851000000 }),
+  row('active', 'CALL', { lcn: '0-10', frequency_hz: 853000000, activation_order: 1 })
+];
+assert.deepEqual(keys(behavior.livePresentedTableRows({ table_id: 'site', rows: tiedRows },
+  { ...allChannels, live_channel_sort: 'order_appeared' })), [
+  'active', 'a-idle', 'b-idle', 'z-idle'
+], 'Idle rows in order-appeared mode need a deterministic LCN, frequency, and row-key fallback');
+assert.deepEqual(keys(behavior.livePresentedTableRows({ table_id: 'conventional', rows: tiedRows },
+  { ...preferences, live_channel_sort: 'frequency', retain_last_call_on_idle_rows: true })), [
+  'a-idle', 'b-idle', 'z-idle', 'active'
+], 'Conventional channels must remain visible and follow the selected sort');
+
 const idle = row('conventional', 'IDLE', {
   source_id: '1201', source_alias: 'Engine 1', source_aliases: [{ alias_id: 1 }],
   target_id: '44', target_alias: 'Dispatch', talker_alias: 'CAR 1', encryption_details: 'AES',
@@ -268,8 +337,10 @@ assert.match(channels,
   'A remote Live system must carry its cloud badge in the picker title');
 assert.match(channels, /const originSuffix = remoteLabel \? ` · \$\{remoteLabel\}` : ''/,
   'A generic remote marker must remain available in pointer and accessible picker labels');
-assert.match(channels, /liveTable\.tableController\.setSortable\(!activeFilter\)/,
-  'Conventional tables stay sortable while active-only trunked tables retain activation order');
+assert.match(channels, /sortable: false/,
+  'The selected Calls sort must govern ordering without a conflicting table-header sort');
+assert.doesNotMatch(channels, /setSortable\(!activeFilter\)/,
+  'Active-only filtering must not prevent selecting a Calls sort');
 assert.match(channels, /liveDetailSelectionUnchanged\(selection, nextSelection\)/,
   'Repeated snapshots must not redispatch an unchanged selected row');
 assert.match(channels, /liveTable\.tableController\.reconcileRows\(displayed\.rows\)/,

@@ -9,10 +9,10 @@ import java.util.List;
 /** Adds two reproducible positive local-address indexes without rewriting retained rows. */
 final class Format39To40DatabaseMigration implements DatabaseMigrationStep
 {
-    @Override public String id() { return "format-36-to-37"; }
+    @Override public String id() { return "format-39-to-40"; }
     @Override public String description() { return "Speed up retained identity name search"; }
-    @Override public int sourceVersion() { return 36; }
-    @Override public int targetVersion() { return 37; }
+    @Override public int sourceVersion() { return 39; }
+    @Override public int targetVersion() { return 40; }
 
     @Override
     public List<DatabaseMigrationEffect> declaredEffects() { return effects(); }
@@ -33,9 +33,9 @@ final class Format39To40DatabaseMigration implements DatabaseMigrationStep
 
     private static void requireSource(Connection connection) throws SQLException
     {
-        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 36)
+        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 39)
         {
-            throw new SQLException("Expected format 36");
+            throw new SQLException("Expected format 39");
         }
     }
 

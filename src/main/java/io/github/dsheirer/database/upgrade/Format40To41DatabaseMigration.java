@@ -9,10 +9,10 @@ import java.util.List;
 /** Adds two reproducible lookup indexes without rewriting retained rows or existing indexes. */
 final class Format40To41DatabaseMigration implements DatabaseMigrationStep
 {
-    @Override public String id() { return "format-37-to-38"; }
+    @Override public String id() { return "format-40-to-41"; }
     @Override public String description() { return "Speed up retained statistics filters"; }
-    @Override public int sourceVersion() { return 37; }
-    @Override public int targetVersion() { return 38; }
+    @Override public int sourceVersion() { return 40; }
+    @Override public int targetVersion() { return 41; }
 
     @Override
     public List<DatabaseMigrationEffect> declaredEffects() { return effects(); }
@@ -33,9 +33,9 @@ final class Format40To41DatabaseMigration implements DatabaseMigrationStep
 
     private static void requireSource(Connection connection) throws SQLException
     {
-        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 37)
+        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 40)
         {
-            throw new SQLException("Expected format 37");
+            throw new SQLException("Expected format 40");
         }
     }
 

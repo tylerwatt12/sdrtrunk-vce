@@ -112,7 +112,7 @@ class Format32To33DatabaseMigrationTest
         {
             while(rows.next()) plan.add(rows.getString("detail"));
         }
-        //Format 35 also covers this projection with the general source/time index. SQLite may prefer either
+        //Format 38 also covers this projection with the general source/time index. SQLite may prefer either
         //identity equality seek on this small fixture; the sparse index still has its own exact DDL contract.
         assertTrue(plan.stream().anyMatch(row -> row.contains("SEARCH receiver_activity_event") &&
             row.contains("COVERING INDEX ") && row.contains("source_identity_summary_id=?") &&

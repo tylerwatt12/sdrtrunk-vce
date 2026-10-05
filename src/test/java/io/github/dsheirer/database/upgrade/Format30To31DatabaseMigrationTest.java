@@ -59,8 +59,8 @@ class Format30To31DatabaseMigrationTest
             {
                 Preference prior = entry.getValue();
                 Preference current = after.get(entry.getKey());
-                assertEquals(Format23WebUserPreferencesCodec.migrateToFormat31(prior.json()), current.json());
-                assertEquals(prior.revision() + 1, current.revision());
+                assertEquals(migrateToCurrent(prior.json()), current.json());
+                assertEquals(prior.revision() + 3, current.revision());
                 assertTrue(current.updatedAtMs() >= prior.updatedAtMs());
                 assertTrue(WebUserPreferencesCodec.decode(current.json()).appearance().hue() == null);
                 assertTrue(MessageDigest.isEqual(credentials.get(entry.getKey()),
@@ -90,9 +90,9 @@ class Format30To31DatabaseMigrationTest
                 DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
                 assertTrue(report.steps().getFirst().effects().stream().anyMatch(effect ->
                     effect.kind() == DatabaseMigrationEffect.Kind.DEFAULT && effect.affectedRows() == 1));
-                assertEquals(change.startsWith("preferences_json=") ? Format31WebUserPreferencesCodec.defaults() :
-                    Format23WebUserPreferencesCodec.migrateToFormat31(selected), preferences(statement).get(3L).json());
-                assertEquals(Format23WebUserPreferencesCodec.migrateToFormat31(sibling),
+                assertEquals(change.startsWith("preferences_json=") ? Format36WebUserPreferencesCodec.defaults() :
+                    migrateToCurrent(selected), preferences(statement).get(3L).json());
+                assertEquals(migrateToCurrent(sibling),
                     preferences(statement).get(2L).json());
                 for(Map.Entry<Long,byte[]> credential: credentials.entrySet())
                 {
@@ -135,9 +135,9 @@ class Format30To31DatabaseMigrationTest
                 for(Map.Entry<Long,Preference> entry: before.entrySet())
                 {
                     Preference current = preferences(statement).get(entry.getKey());
-                    assertEquals(Format23WebUserPreferencesCodec.migrateToFormat31(entry.getValue().json()),
+                    assertEquals(migrateToCurrent(entry.getValue().json()),
                         current.json());
-                    assertEquals(entry.getValue().revision() + 1, current.revision());
+                    assertEquals(entry.getValue().revision() + 3, current.revision());
                 }
                 assertEquals(DatabaseFormatCatalog.current().fingerprint(),
                     SqliteSchemaValidator.fingerprint(connection));
@@ -192,8 +192,10 @@ class Format30To31DatabaseMigrationTest
             assertEquals(1, reset.affectedRows());
             ObjectMapper mapper = new ObjectMapper();
             ObjectNode expected = (ObjectNode)mapper.readTree(source);
-            expected.put("version", 8);
+            expected.put("version", 10);
+            ((ObjectNode)expected.get("presentation")).put("live_channel_sort", "order_appeared");
             ((ObjectNode)expected.get("appearance")).putNull("hue");
+            ((ObjectNode)expected.get("presentation")).put("source_name_display", "talker_alias");
             ObjectNode tables = (ObjectNode)expected.get("tables");
             String last = null;
             for(var names = tables.fieldNames(); names.hasNext(); ) last = names.next();
@@ -202,7 +204,7 @@ class Format30To31DatabaseMigrationTest
             assertTrue(preferences(statement).get(3L).json().length() <= WebUserPreferences.MAXIMUM_JSON_BYTES);
             for(Map.Entry<Long,Preference> entry: before.entrySet())
             {
-                if(entry.getKey() != 3L) assertEquals(Format23WebUserPreferencesCodec.migrateToFormat31(
+                if(entry.getKey() != 3L) assertEquals(migrateToCurrent(
                     entry.getValue().json()), preferences(statement).get(entry.getKey()).json());
                 assertTrue(MessageDigest.isEqual(credentials.get(entry.getKey()),
                     credentialDigests(statement).get(entry.getKey())), "Account or credential changed");
@@ -245,6 +247,12 @@ class Format30To31DatabaseMigrationTest
             order.set(order.size() - 1, mapper.getNodeFactory().textNode(shortened));
         }
         return document.toString();
+    }
+
+    private static String migrateToCurrent(String json) throws IOException
+    {
+        return Format36WebUserPreferencesCodec.migrateFromFormat35(Format35WebUserPreferencesCodec.migrateFromFormat34(
+            Format23WebUserPreferencesCodec.migrateToFormat31(json)));
     }
 
     private static Connection open(Path database) throws Exception

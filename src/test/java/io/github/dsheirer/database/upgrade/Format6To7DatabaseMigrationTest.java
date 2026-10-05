@@ -65,12 +65,12 @@ class Format6To7DatabaseMigrationTest
             assertEquals("format-6-to-7", report.steps().getFirst().id());
             assertEquals("3", scalar(connection, """
                 SELECT COUNT(*) FROM web_user
-                WHERE json_extract(preferences_json, '$.version')=8
+                WHERE json_extract(preferences_json, '$.version')=10
                   AND json_extract(preferences_json, '$.playback.target_grouping')=1
                   AND json_extract(preferences_json, '$.playback.target_burst_limit')=4
                   AND json_array_length(json_extract(preferences_json,
                       '$.health_alerts.disabled_codes'))=0
-                  AND preferences_revision=8
+                  AND preferences_revision=10
                 """));
             assertEquals("1.0:0:1.0:0", scalar(connection, """
                 SELECT min(json_extract(preferences_json, '$.playback.volume')) || ':' ||
@@ -162,7 +162,7 @@ class Format6To7DatabaseMigrationTest
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
             assertEffect(report.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.DEFAULT,
                 "unusable per-user browser preferences", 1);
-            assertEquals("7", scalar(connection,
+            assertEquals("9", scalar(connection,
                 "SELECT preferences_revision FROM web_user WHERE id=1"));
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
                 DatabaseFormatCatalog.requireCurrent(connection).version());
@@ -177,7 +177,7 @@ class Format6To7DatabaseMigrationTest
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
             assertEffect(report.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.DEFAULT,
                 "unusable per-user browser preferences", 1);
-            assertEquals("7", scalar(connection,
+            assertEquals("9", scalar(connection,
                 "SELECT preferences_revision FROM web_user WHERE id=1"));
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
                 DatabaseFormatCatalog.requireCurrent(connection).version());

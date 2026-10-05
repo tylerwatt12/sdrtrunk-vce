@@ -1,5 +1,6 @@
 import { systemLabel, systemName } from './core/system-labels.js?v=1';
 import { formatP25RadioIdentifier, p25ServingSystemKey } from './core/radio-labels.js?v=1';
+import { formatSourceName } from './core/source-names.js?v=1';
 
 export class WebCallPlayer {
   static MAXIMUM_SEEN_CALL_IDS = 2048;
@@ -11,8 +12,9 @@ export class WebCallPlayer {
   static FEED_RETRY_INTERVAL_MS = 2000;
   static MAXIMUM_AVOIDS = 256;
 
-  constructor(ids) {
+  constructor(ids, { getSourceNameDisplay = () => 'talker_alias' } = {}) {
     this.ui = Object.fromEntries(Object.entries(ids).map(([key, id]) => [key, document.getElementById(id)]));
+    this.getSourceNameDisplay = getSourceNameDisplay;
     this.queuedCalls = [];
     this.queuedCount = 0;
     this.avoids = new Map();
@@ -1178,8 +1180,9 @@ export class WebCallPlayer {
       (call.target_alias ?
         `${call.target_alias}${targetIdentity ? ` · ${targetIdentity}` : ''}` :
         (targetIdentity || call.channel || 'Unknown target'));
-    const source = call.source_alias ?
-      `${call.source_alias}${sourceIdentity ? ` · ${sourceIdentity}` : ''}` : sourceIdentity;
+    const sourceName = formatSourceName(call.source_alias, call.talker_alias, this.getSourceNameDisplay?.());
+    const source = sourceName ?
+      `${sourceName}${sourceIdentity ? ` · ${sourceIdentity}` : ''}` : sourceIdentity;
     return `${target}${source ? ` ← ${source}` : ''}`;
   }
 

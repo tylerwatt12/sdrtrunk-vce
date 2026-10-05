@@ -1713,7 +1713,7 @@ test('mobile Live activity uses compact cards and a collapsible details tray', a
   await expect(labeled.locator('[data-column="target-alias"]')).toHaveText('Fire Dispatch');
   await expect(labeled.locator('[data-column="source"]')).toBeHidden();
   await expect(labeled.locator('[data-column="target"]')).toBeHidden();
-  await expect(otaLabeled.locator('[data-column="source-alias"]')).toHaveText('TA: Unit 312');
+  await expect(otaLabeled.locator('[data-column="source-alias"]')).toHaveText('Unit 312');
   await expect(otaLabeled.locator('[data-column="source"]')).toBeHidden();
   await expect(otaLabeled.locator('[data-column="target"]')).toBeVisible();
   await expect(fallback.locator('[data-column="source"]')).toHaveText('318');

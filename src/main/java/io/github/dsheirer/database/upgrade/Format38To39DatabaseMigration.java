@@ -9,10 +9,10 @@ import java.util.List;
 /** Preserves retained evidence while storing its existing member observation channel for covering lookups. */
 final class Format38To39DatabaseMigration implements DatabaseMigrationStep
 {
-    @Override public String id() { return "format-35-to-36"; }
+    @Override public String id() { return "format-38-to-39"; }
     @Override public String description() { return "Speed up retained channel-local identity name lookups"; }
-    @Override public int sourceVersion() { return 35; }
-    @Override public int targetVersion() { return 36; }
+    @Override public int sourceVersion() { return 38; }
+    @Override public int targetVersion() { return 39; }
 
     @Override
     public List<DatabaseMigrationEffect> declaredEffects()
@@ -35,15 +35,15 @@ final class Format38To39DatabaseMigration implements DatabaseMigrationStep
         ReceiverActivitySchema.rebuildStoredMemberChannelEvidence(connection);
         if(memberCount(connection) != members)
         {
-            throw new SQLException("Format 36 must preserve every retained Activity member");
+            throw new SQLException("Format 39 must preserve every retained Activity member");
         }
     }
 
     private static void requireSource(Connection connection) throws SQLException
     {
-        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 35)
+        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 38)
         {
-            throw new SQLException("Expected format 35");
+            throw new SQLException("Expected format 38");
         }
         try(var statement = connection.createStatement(); var rows = statement.executeQuery("""
             SELECT 1 FROM activity_event_identity_member member

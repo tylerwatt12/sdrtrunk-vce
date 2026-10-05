@@ -273,7 +273,7 @@ class DatabaseFormatCatalogTest
     }
 
     @Test
-    void markerlessFormat33And34RequiresAuthoritativeMarker() throws Exception
+    void markerlessFormat33Through35RequiresAuthoritativeMarker() throws Exception
     {
         Path database = Format33TestDatabase.create(mTemporaryFolder.resolve("markerless-format-33.sqlite"));
         try(Connection connection = open(database); Statement statement = connection.createStatement())
@@ -283,78 +283,78 @@ class DatabaseFormatCatalogTest
             SQLException strict = assertThrows(SQLException.class, () -> DatabaseFormatCatalog.inspect(connection));
             SQLException migration = assertThrows(SQLException.class,
                 () -> DatabaseFormatCatalog.inspectForMigration(connection));
-            assertTrue(strict.getMessage().contains("ambiguous across formats [33, 34]"), strict::getMessage);
-            assertTrue(migration.getMessage().contains("ambiguous across formats [33, 34]"), migration::getMessage);
+            assertTrue(strict.getMessage().contains("ambiguous across formats [33, 34, 35, 36]"), strict::getMessage);
+            assertTrue(migration.getMessage().contains("ambiguous across formats [33, 34, 35, 36]"), migration::getMessage);
         }
     }
 
     @Test
-    void exactMarkerlessFormat35IsRecognizedPlannedAndSafelyMigrated() throws Exception
+    void exactMarkerlessFormat38IsRecognizedPlannedAndSafelyMigrated() throws Exception
     {
-        Path database = Format38TestDatabase.create(mTemporaryFolder.resolve("markerless-format-35.sqlite"));
+        Path database = Format38TestDatabase.create(mTemporaryFolder.resolve("markerless-format-38.sqlite"));
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             assertEquals(1, statement.executeUpdate(
                 "DELETE FROM database_metadata WHERE key='database_format_version'"));
             DatabaseFormatCatalog.DetectedFormat strict = DatabaseFormatCatalog.inspect(connection);
             DatabaseFormatCatalog.DetectedFormat migration = DatabaseFormatCatalog.inspectForMigration(connection);
-            assertEquals(35, strict.version());
+            assertEquals(38, strict.version());
             assertFalse(strict.markerPresent());
             assertEquals(strict, migration);
             DatabaseMigrationChain.PreflightReport plan = DatabaseMigrationChain.validateSource(connection, migration);
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 35, plan.steps().size());
-            assertEquals("format-35-to-36", plan.steps().getFirst().id());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 38, plan.steps().size());
+            assertEquals("format-38-to-39", plan.steps().getFirst().id());
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 35, report.steps().size());
-            assertEquals("format-37-to-38", report.steps().getLast().id());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 38, report.steps().size());
+            assertEquals("format-40-to-41", report.steps().getLast().id());
             assertTrue(report.target().markerPresent());
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
         }
     }
 
     @Test
-    void exactMarkerlessFormat36IsRecognizedAndSafelyMigrated() throws Exception
+    void exactMarkerlessFormat39IsRecognizedAndSafelyMigrated() throws Exception
     {
-        Path database = Format39TestDatabase.create(mTemporaryFolder.resolve("markerless-format-36.sqlite"));
+        Path database = Format39TestDatabase.create(mTemporaryFolder.resolve("markerless-format-39.sqlite"));
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);
             assertEquals(1, statement.executeUpdate(
                 "DELETE FROM database_metadata WHERE key='database_format_version'"));
             DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspect(connection);
-            assertEquals(36, detected.version());
+            assertEquals(39, detected.version());
             assertFalse(detected.markerPresent());
             DatabaseMigrationChain.PreflightReport plan = DatabaseMigrationChain.validateSource(connection, detected);
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 36, plan.steps().size());
-            assertEquals("format-36-to-37", plan.steps().getFirst().id());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 39, plan.steps().size());
+            assertEquals("format-39-to-40", plan.steps().getFirst().id());
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 36, report.steps().size());
-            assertEquals("format-36-to-37", report.steps().getFirst().id());
-            assertEquals(DatabaseFormatCatalog.requireVersion(36).fingerprint(), fingerprint);
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 39, report.steps().size());
+            assertEquals("format-39-to-40", report.steps().getFirst().id());
+            assertEquals(DatabaseFormatCatalog.requireVersion(39).fingerprint(), fingerprint);
             assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
             assertTrue(DatabaseFormatCatalog.requireCurrent(connection).markerPresent());
         }
     }
 
     @Test
-    void exactMarkerlessFormat37IsRecognizedAndSafelyMigrated() throws Exception
+    void exactMarkerlessFormat40IsRecognizedAndSafelyMigrated() throws Exception
     {
-        Path database = Format40TestDatabase.create(mTemporaryFolder.resolve("markerless-format-37.sqlite"));
+        Path database = Format40TestDatabase.create(mTemporaryFolder.resolve("markerless-format-40.sqlite"));
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);
             assertEquals(1, statement.executeUpdate(
                 "DELETE FROM database_metadata WHERE key='database_format_version'"));
             DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspect(connection);
-            assertEquals(37, detected.version());
+            assertEquals(40, detected.version());
             assertFalse(detected.markerPresent());
             DatabaseMigrationChain.PreflightReport plan = DatabaseMigrationChain.validateSource(connection, detected);
             assertEquals(1, plan.steps().size());
-            assertEquals("format-37-to-38", plan.steps().getFirst().id());
+            assertEquals("format-40-to-41", plan.steps().getFirst().id());
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
             assertEquals(1, report.steps().size());
-            assertEquals("format-37-to-38", report.steps().getFirst().id());
-            assertEquals(DatabaseFormatCatalog.requireVersion(37).fingerprint(), fingerprint);
+            assertEquals("format-40-to-41", report.steps().getFirst().id());
+            assertEquals(DatabaseFormatCatalog.requireVersion(40).fingerprint(), fingerprint);
             assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
             assertTrue(DatabaseFormatCatalog.requireCurrent(connection).markerPresent());
         }
