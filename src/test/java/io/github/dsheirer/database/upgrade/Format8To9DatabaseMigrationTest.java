@@ -68,14 +68,14 @@ class Format8To9DatabaseMigrationTest
             assertEquals("format-8-to-9", report.steps().getFirst().id());
             assertEquals("3", scalar(connection, """
                 SELECT COUNT(*) FROM web_user
-                WHERE json_extract(preferences_json, '$.version')=8
+                WHERE json_extract(preferences_json, '$.version')=10
                   AND json_extract(preferences_json,
                       '$.presentation.show_only_active_trunked_channels')=0
                   AND json_extract(preferences_json,
                       '$.presentation.retain_last_call_on_idle_rows')=1
                   AND json_extract(preferences_json,
                       '$.presentation.clear_voice_quality_when_idle')=0
-                  AND preferences_revision=8
+                  AND preferences_revision=10
                 """));
             assertEquals(preferencesBefore, existingPreferenceDigest(connection));
             assertEquals(securityBefore.replace(":operator:ADMIN:0:", ":operator:USER:0:"),
@@ -263,6 +263,8 @@ class Format8To9DatabaseMigrationTest
                     '$.presentation.clear_voice_quality_when_idle',
                     '$.tuner.show_idle_channels',
                     '$.appearance.hue',
+                    '$.presentation.source_name_display',
+                    '$.presentation.live_channel_sort',
                     '$.playback.target_grouping',
                     '$.playback.target_burst_limit') AS row_value
                 FROM web_user ORDER BY id)

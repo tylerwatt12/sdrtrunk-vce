@@ -36,7 +36,7 @@ import java.util.Map;
 public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
-    public static final int CURRENT_VERSION = 35;
+    public static final int CURRENT_VERSION = 36;
     static final String RETIRED_TRUNKED_IDENTITY_BOUNDARY_KEY = "trunked_identity_metrics_started_at_ms";
     static final List<String> RETIRED_SUBSYSTEM_VERSION_KEYS = List.of(
         "alias_schema_version", "configuration_schema_version", "settings_schema_version", "icon_schema_version",
@@ -428,11 +428,22 @@ public final class DatabaseFormatCatalog
             "Rebase an unusable preference revision without discarding usable personal settings",
             "Reset only the necessary cached table layouts if adding the choice exceeds the unchanged storage limit"));
 
+    private static final FormatDescriptor FORMAT_36 = new FormatDescriptor(36, "live-channel-sort-preferences-v10",
+        "Per-user Live calls sorting method", FORMAT_33_FINGERPRINT, Map.of(),
+        List.of("main format 36"),
+        "src/test/java/io/github/dsheirer/database/upgrade/Format36TestDatabase.java", List.of(
+            "Preserve every usable account, credential, personal setting, and receiver setting",
+            "Default Live calls sorting to order appeared for active-only views and LCN for views with idle rows",
+            "Allow each user to save LCN, order appeared, or frequency sorting independently of the row filter",
+            "Default only malformed or oversized per-user preference documents",
+            "Rebase an unusable preference revision without discarding usable personal settings",
+            "Reset only necessary cached table layouts if adding the sort method exceeds the unchanged storage limit"));
+
     private static final List<FormatDescriptor> FORMATS =
         List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7, FORMAT_8, FORMAT_9,
             FORMAT_10, FORMAT_11, FORMAT_12, FORMAT_13, FORMAT_14, FORMAT_15, FORMAT_16, FORMAT_17, FORMAT_18,
             FORMAT_19, FORMAT_20, FORMAT_21, FORMAT_22, FORMAT_23, FORMAT_24, FORMAT_25, FORMAT_26, FORMAT_27,
-            FORMAT_28, FORMAT_29, FORMAT_30, FORMAT_31, FORMAT_32, FORMAT_33, FORMAT_34, FORMAT_35);
+            FORMAT_28, FORMAT_29, FORMAT_30, FORMAT_31, FORMAT_32, FORMAT_33, FORMAT_34, FORMAT_35, FORMAT_36);
 
     private static final Map<Integer,FormatDescriptor> BY_VERSION = FORMATS.stream().collect(
         java.util.stream.Collectors.toUnmodifiableMap(FormatDescriptor::version, descriptor -> descriptor));
@@ -613,7 +624,7 @@ public final class DatabaseFormatCatalog
     /** Current catalog descriptor. */
     public static FormatDescriptor current()
     {
-        return FORMAT_35;
+        return FORMAT_36;
     }
 
     /** Ordered manifest used by completeness tests and migration UX. */
@@ -905,6 +916,7 @@ public final class DatabaseFormatCatalog
             case 23, 24, 25, 26, 27, 28, 29, 30 -> 7;
             case 31, 32, 33, 34 -> 8;
             case 35 -> 9;
+            case 36 -> 10;
             default -> throw new IllegalArgumentException("No web preference version for database format " +
                 descriptor.version());
         };

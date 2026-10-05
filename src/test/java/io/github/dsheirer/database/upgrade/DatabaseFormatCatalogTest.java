@@ -283,8 +283,8 @@ class DatabaseFormatCatalogTest
             SQLException strict = assertThrows(SQLException.class, () -> DatabaseFormatCatalog.inspect(connection));
             SQLException migration = assertThrows(SQLException.class,
                 () -> DatabaseFormatCatalog.inspectForMigration(connection));
-            assertTrue(strict.getMessage().contains("ambiguous across formats [33, 34, 35]"), strict::getMessage);
-            assertTrue(migration.getMessage().contains("ambiguous across formats [33, 34, 35]"), migration::getMessage);
+            assertTrue(strict.getMessage().contains("ambiguous across formats [33, 34, 35, 36]"), strict::getMessage);
+            assertTrue(migration.getMessage().contains("ambiguous across formats [33, 34, 35, 36]"), migration::getMessage);
         }
     }
 

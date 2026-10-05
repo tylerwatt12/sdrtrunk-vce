@@ -71,7 +71,7 @@ class Format19To20DatabaseMigrationTest
             }
 
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
-            assertEquals("format-34-to-35", report.steps().getLast().id());
+            assertEquals("format-35-to-36", report.steps().getLast().id());
             assertEquals(aliases, number(statement, "SELECT count(*) FROM alias"));
             assertEquals(aliases, number(statement, "SELECT count(*) FROM alias_activity_summary"));
             assertEquals(aliasLists, number(statement, "SELECT count(*) FROM alias_list"));
