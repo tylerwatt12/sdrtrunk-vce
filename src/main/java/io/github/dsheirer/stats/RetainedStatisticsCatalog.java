@@ -87,7 +87,7 @@ final class RetainedStatisticsCatalog
     private static final Set<String> SCOPED_DATA_TYPES = Set.of("all", "site_state", "band_plans",
         "foreign_band_plans", "neighbors", "patches", "control_quality", "relationships",
         "affiliations", "call_activity", "signaling_activity", "hourly_history", "detailed_events",
-        "alias_activity");
+        "alias_activity", "issi_assignment_history");
 
     private final Path mDatabasePath;
 
@@ -217,6 +217,7 @@ final class RetainedStatisticsCatalog
                 case "radios" -> "Radio IDs";
                 case "talkgroups" -> "Talkgroups";
                 case "relationships" -> "Radio relationships";
+                case "issi_assignment_history" -> "ISSI assignment history";
                 case "affiliations" -> "Affiliations & presence";
                 case "call_activity" -> "Call totals";
                 case "signaling_activity" -> "Signaling totals";
@@ -287,7 +288,8 @@ final class RetainedStatisticsCatalog
                 case "channels" -> channelResults(connection, sourceKind, sourceKey, search, limit, offset);
                 case "systems" -> systemResults(connection, sourceKey, search, limit, offset);
                 case "all", "site_state", "control_quality", "relationships",
-                    "affiliations", "call_activity", "signaling_activity", "hourly_history", "detailed_events" ->
+                    "affiliations", "call_activity", "signaling_activity", "hourly_history", "detailed_events",
+                    "issi_assignment_history" ->
                     aggregateResult(connection, sourceKind, sourceKey, siteConfigurationId,
                         dataType, search, limit, offset);
                 default -> throw new IllegalStateException("Unreachable data type");
@@ -353,7 +355,7 @@ final class RetainedStatisticsCatalog
             case "band_plans", "foreign_band_plans", "patches", "neighbors" ->
                 List.of("current", "summary");
             case "control_quality", "hourly_history" -> List.of("buckets");
-            case "relationships", "alias_activity" -> List.of("summary");
+            case "relationships", "alias_activity", "issi_assignment_history" -> List.of("summary");
             case "detailed_events" -> List.of("events");
             case "radios", "talkgroups" -> "saved_channel".equals(sourceKind) ?
                 List.of("summary", "events") : List.of("summary", "buckets", "events");
@@ -374,6 +376,7 @@ final class RetainedStatisticsCatalog
             case "patches" -> "Patch groups";
             case "control_quality" -> "Control quality";
             case "relationships" -> "Radio relationships";
+            case "issi_assignment_history" -> "ISSI assignment history";
             case "affiliations" -> "Affiliations and presence";
             case "call_activity" -> "Call totals";
             case "signaling_activity" -> "Signaling totals";
@@ -382,13 +385,16 @@ final class RetainedStatisticsCatalog
             default -> throw new IllegalArgumentException("Unsupported aggregate type");
         };
         List<Map<String,Object>> sources = "radio_system".equals(sourceKind) ?
-            queryRows(connection, "SELECT system.system_key, " + SYSTEM_LABEL + " AS label " +
+            queryRows(connection, "SELECT system.system_key, system.protocol_code, " + SYSTEM_LABEL + " AS label " +
                 "FROM radio_system system WHERE system.system_key=?", sourceKey) :
             queryRows(connection, "SELECT config.configuration_id, " + CHANNEL_LABEL + " AS label " +
                 "FROM configuration_channel config WHERE config.configuration_id=? " +
                 "AND config.channel_kind='CONVENTIONAL'", sourceKey);
         if(sources.isEmpty())
             throw new StatsApiException(404, "source_not_found", "Statistics source was not found");
+        if("issi_assignment_history".equals(dataType) &&
+            numberOrZero(sources.getFirst().get("protocol_code")) != 1)
+            throw invalid("data_type", "ISSI assignment history requires a P25 radio system");
         Map<String,Object> site = siteConfigurationId == null ? null :
             selectedSite(connection, sourceKind, sourceKey, siteConfigurationId);
         if("patches".equals(dataType) && site != null && numberOrZero(site.get("p25_snapshot")) == 0)

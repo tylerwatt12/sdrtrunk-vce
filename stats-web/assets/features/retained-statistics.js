@@ -21,7 +21,8 @@ const TYPE_GROUPS = Object.freeze({
     ] },
     { label: 'Activity & history', types: [
       ['call_activity', 'Call totals'], ['signaling_activity', 'Signaling totals'],
-      ['hourly_history', 'Hourly history'], ['detailed_events', 'Detailed events']
+      ['hourly_history', 'Hourly history'], ['detailed_events', 'Detailed events'],
+      ['issi_assignment_history', 'ISSI assignment history']
     ] }
   ],
   saved_channel: [
@@ -46,13 +47,14 @@ function typeLabel(sourceKind, type) {
 }
 const SITE_TYPES = new Set(['site_state', 'frequencies', 'band_plans',
   'foreign_band_plans', 'neighbors', 'patches', 'control_quality']);
-const P25_TYPES = new Set(['band_plans', 'foreign_band_plans', 'patches']);
+const P25_TYPES = new Set(['band_plans', 'foreign_band_plans', 'patches', 'issi_assignment_history']);
 const PART_LABELS = Object.freeze({ current: 'Current observations',
   summary: 'Summary statistics', buckets: 'History buckets', events: 'Detailed events' });
 const PART_ORDER = Object.keys(PART_LABELS);
 
 function partLabel(sourceKind, type, part) {
   if (type === 'alias_activity' && part === 'summary') return 'Activity counters & timestamps';
+  if (type === 'issi_assignment_history' && part === 'summary') return 'Saved mappings & counts';
   if (['band_plans', 'foreign_band_plans'].includes(type)) {
     return ({ current: 'Current learned plan', summary: 'Lifetime summary' })[part] ||
       PART_LABELS[part];
@@ -663,13 +665,13 @@ export function createRetainedStatisticsWorkspace(deps) {
       radios: 'Radio alias, over-the-air name, or ID', talkgroups: 'Talkgroup alias or ID',
       band_plans: 'Band or base MHz', foreign_band_plans: 'Foreign system or band',
       alias_activity: 'Alias name or list' })[state.type] || 'Search results';
-    resultSearchForm.hidden = state.type === 'all';
+    resultSearchForm.hidden = ['all', 'issi_assignment_history'].includes(state.type);
     if (state.sourceKind === 'alias_activity') {
       resultContext.replaceChildren('Receiver-wide');
     } else resultContext.replaceChildren(renderSource(selectedSource(), selectedSource()?.label));
     if (selectedSite()) resultContext.append(' · ', renderSource(selectedSite(),
       selectedSite().label));
-    else if (state.sourceKind === 'radio_system' && state.type === 'all') {
+    else if (state.sourceKind === 'radio_system' && ['all', 'issi_assignment_history'].includes(state.type)) {
       resultContext.append(' · All sites');
     }
     const contextList = state.sourceKind === 'alias_activity' ? null :

@@ -10,6 +10,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
+import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -29,10 +31,10 @@ final class StatsSystemNameResolver
         .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
     private static final Pattern CONFIGURATION = Pattern.compile(
         "(?:^|channel:)([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:$|\\))");
-    private static final Pattern CANONICAL_IDENTITY = Pattern.compile(
-        "v1-[grp]-([0-9a-f]{5})-([0-9a-f]{3})-([0-9]+)");
-    private static final Pattern QUALIFIED_RADIO = Pattern.compile(
-        "(?:(?:ISSI|ROAM) )?(?:([0-9]+)\\()?([0-9]+)\\.([0-9]+)\\.([0-9]+)\\)?");
+    private static final Pattern LEGACY_RADIO = Pattern.compile(
+        "(?:(?:ISSI|ROAM) )?([0-9]+)\\.([0-9]+)\\.([0-9]+)");
+    private static final Pattern LEGACY_WORKING_RADIO = Pattern.compile(
+        "(?:(?:ISSI|ROAM) )?([0-9]+)\\(([0-9]+)\\.([0-9]+)\\.([0-9]+)\\)");
     private static final Pattern FORMATTED_RADIO = Pattern.compile(
         "([0-9A-Fa-f]{5})\\.([0-9A-Fa-f]{3})\\.([0-9]+)(?: \\(Working ID ([0-9]+)\\))?");
     private final Connection mConnection;
@@ -203,34 +205,32 @@ final class StatsSystemNameResolver
     {
         String value = text(row, field);
         if(value == null) return;
-        Matcher canonical = CANONICAL_IDENTITY.matcher(value);
-        Matcher dotted = QUALIFIED_RADIO.matcher(value);
+        Matcher dotted = LEGACY_RADIO.matcher(value);
+        Matcher legacyWorking = LEGACY_WORKING_RADIO.matcher(value);
         Matcher formatted = FORMATTED_RADIO.matcher(value);
         try
         {
             int wacn;
             int system;
-            long subscriber;
-            if(canonical.matches())
+            int subscriber;
+            if(value.startsWith("v1-"))
             {
-                wacn = Integer.parseInt(canonical.group(1), 16);
-                system = Integer.parseInt(canonical.group(2), 16);
-                subscriber = Long.parseLong(canonical.group(3));
+                RadioSystemIdentityKey.Identity canonical = RadioSystemIdentityKey.parse(value);
+                if(!canonical.hasHome()) return;
+                wacn = canonical.homeWacn();
+                system = canonical.homeSystemId();
+                subscriber = canonical.identityId();
             }
             else if(formatted.matches())
             {
                 wacn = Integer.parseInt(formatted.group(1), 16);
                 system = Integer.parseInt(formatted.group(2), 16);
-                subscriber = Long.parseLong(formatted.group(3));
-                if(formatted.group(4) != null)
-                {
-                    long workingId = Long.parseLong(formatted.group(4));
-                    if(workingId < 1 || workingId > 0xFFFFFC) return;
-                }
+                subscriber = Integer.parseInt(formatted.group(3));
+                if(formatted.group(4) != null && !validWorkingId(formatted.group(4))) return;
                 if(dotted.matches())
                 {
-                    int decimalWacn = Integer.parseInt(dotted.group(2));
-                    int decimalSystem = Integer.parseInt(dotted.group(3));
+                    int decimalWacn = Integer.parseInt(dotted.group(1));
+                    int decimalSystem = Integer.parseInt(dotted.group(2));
                     if(wacn != decimalWacn || system != decimalSystem)
                     {
                         //A bare all-digit fixed-width tuple can be current hexadecimal or legacy decimal.
@@ -246,17 +246,25 @@ final class StatsSystemNameResolver
                         else if(homeWacn != wacn || homeSystem != system) return;
                     }
                 }
+                new P25SubscriberIdentity(wacn, system, subscriber);
             }
             else if(dotted.matches())
             {
-                wacn = Integer.parseInt(dotted.group(2));
-                system = Integer.parseInt(dotted.group(3));
-                subscriber = Long.parseLong(dotted.group(4));
+                wacn = Integer.parseInt(dotted.group(1));
+                system = Integer.parseInt(dotted.group(2));
+                subscriber = Integer.parseInt(dotted.group(3));
+                new P25SubscriberIdentity(wacn, system, subscriber);
+            }
+            else if(legacyWorking.matches())
+            {
+                if(!validWorkingId(legacyWorking.group(1))) return;
+                wacn = Integer.parseInt(legacyWorking.group(2));
+                system = Integer.parseInt(legacyWorking.group(3));
+                subscriber = Integer.parseInt(legacyWorking.group(4));
+                new P25SubscriberIdentity(wacn, system, subscriber);
             }
             else return;
 
-            if(wacn < 0 || wacn > 0xFFFFF || system < 0 || system > 0xFFF ||
-                subscriber < 0 || subscriber > 0xFFFFFF) return;
             Integer homeWacn = number(row, prefix + "_wacn");
             Integer homeSystem = number(row, prefix + "_system_id");
             if(homeWacn != null && homeWacn != wacn || homeSystem != null && homeSystem != system) return;
@@ -265,7 +273,13 @@ final class StatsSystemNameResolver
             row.put(prefix + "_system_id", system);
             addSystem(row, prefix, wacn, system);
         }
-        catch(NumberFormatException ignored) { /* Malformed retained text has no trustworthy native identity. */ }
+        catch(IllegalArgumentException ignored) { /* Malformed retained text has no trustworthy native identity. */ }
+    }
+
+    private static boolean validWorkingId(String value)
+    {
+        int workingId = Integer.parseInt(value);
+        return workingId > 0 && workingId <= RadioSystemIdentityKey.MAX_P25_WORKING_UNIT_ID;
     }
 
     private void addSystem(ObjectNode row, String prefix, Integer wacn, Integer systemId) throws SQLException

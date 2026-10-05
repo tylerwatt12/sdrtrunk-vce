@@ -27,7 +27,7 @@ import {
 } from './features/alias-list-create.js?v=3';
 import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=22';
 import { createStreamingWorkspace } from './features/streaming.js?v=8';
-import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=8';
+import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=9';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=12';
 import { createRecordingsFeature } from './features/recordings.js?v=19';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft } from './features/spectrum-search.js?v=17';

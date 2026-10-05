@@ -108,7 +108,8 @@ async function openStatistics(page, options = {}) {
           protocol: 'DMR', channel_kind: 'CONVENTIONAL', primary_frequency_hz: 155_115_000,
           alias_list_id: 9, alias_list_name: 'Metro DMR aliases',
           entity_ref: { kind: 'channel', key: CHANNEL } }] :
-          [{ source_kind: kind, source_key: SYSTEM, label: 'Metro P25', protocol: 'P25',
+          [{ source_kind: kind, source_key: SYSTEM, label: 'Metro P25',
+            protocol: options.systemProtocol || 'P25',
             alias_list_id: 7, alias_list_name: 'Metro P25 aliases',
             entity_ref: { kind: 'radio_system', key: SYSTEM } }];
       await route.fulfill({ json: wrap(rows, { limit: 50, offset: 0, has_more: false }) });
@@ -137,10 +138,12 @@ async function openStatistics(page, options = {}) {
               dataType === 'alias_activity' ? aliases :
                 [{ label: dataType === 'all' ? 'All retained data' :
                   dataType === 'hourly_history' ? 'Hourly history' :
-                    dataType === 'control_quality' ? 'Quality history' : 'Saved activity',
+                    dataType === 'control_quality' ? 'Quality history' :
+                      dataType === 'issi_assignment_history' ? 'ISSI assignment history' : 'Saved activity',
                 detail: kind === 'radio_system' ? 'Metro P25' : 'Downtown repeater',
                 target: scoped(kind, dataType, dataType === 'all' ?
-                  ['current', 'summary', 'buckets', 'events'] : ['buckets'],
+                  ['current', 'summary', 'buckets', 'events'] :
+                    dataType === 'issi_assignment_history' ? ['summary'] : ['buckets'],
                 url.searchParams.get('site_configuration_id') ?
                   { site_configuration_id: SITE, expected_site_key: 'opaque-site' } : {}) }];
       await route.fulfill({ json: paged(rows) });
@@ -158,7 +161,10 @@ async function openStatistics(page, options = {}) {
       } else await route.fulfill({ json: wrap({ outcome: 'found',
         counts_by_part: Object.fromEntries(target.parts.map((part) => [part, options.largeJob ? 213_000 : 2])),
         rows_total: options.largeJob ? 213_000 : target.parts.length * 2,
-        effects: ['Linked history may also be removed by this selection.'] }) });
+        effects: target.data_type === 'issi_assignment_history' ?
+          ['Saved Working ID assignments and their observation counts are removed.',
+            'Current assignments, radio IDs and aliases remain. Receiving can create new assignment history.'] :
+          ['Linked history may also be removed by this selection.'] }) });
     } else if (pathname.endsWith('/retained-statistics/deletions') &&
       route.request().method() === 'POST') {
       const body = JSON.parse(route.request().postData() || '{}');
@@ -197,6 +203,52 @@ async function openStatistics(page, options = {}) {
   await page.goto('/app.html?view=admin&tab=retained-statistics');
   return requests;
 }
+
+for (const appearance of [
+  { theme: 'light', viewport: { width: 1440, height: 1000 } },
+  { theme: 'dark', viewport: { width: 390, height: 844 } }
+]) {
+  test(`ISSI assignment cleanup stays system-wide and previews only saved history (${appearance.theme})`,
+    async ({ page }, testInfo) => {
+      await page.setViewportSize(appearance.viewport);
+      const requests = await openStatistics(page, { theme: appearance.theme });
+      const workspace = page.locator('.retained-statistics-page');
+      await workspace.getByRole('combobox', { name: 'Radio system' }).selectOption(SYSTEM);
+      // A previous site selection must not leak into this system-wide cleanup.
+      await workspace.getByRole('button', { name: 'Band plans', exact: true }).click();
+      await workspace.getByRole('combobox', { name: 'Site' }).selectOption(SITE);
+      await expect(workspace.locator('.retained-statistics-result-count')).toHaveText('6 results');
+      await workspace.getByRole('button', { name: 'ISSI assignment history', exact: true }).click();
+      await expect(workspace.getByRole('combobox', { name: 'Site' })).toBeHidden();
+      await expect(workspace.getByRole('searchbox', { name: 'Search results' })).toBeHidden();
+      const parts = workspace.getByRole('group', { name: 'Saved parts to delete' });
+      await expect(parts.getByRole('checkbox')).toHaveCount(1);
+      await expect(parts.getByRole('checkbox', { name: 'Saved mappings & counts' })).toBeChecked();
+      await workspace.getByRole('button', { name: 'Delete statistics for ISSI assignment history' }).click();
+      const dialog = page.getByRole('dialog');
+      await expect(dialog.getByText('2 directly matched records')).toBeVisible();
+      await expect(dialog.getByText('Saved Working ID assignments and their observation counts are removed.')).toBeVisible();
+      await expect(dialog.getByText('Current assignments, radio IDs and aliases remain.',
+        { exact: false })).toBeVisible();
+      await expect(dialog.getByLabel('Frequency in MHz')).toHaveCount(0);
+      await page.screenshot({ path: testInfo.outputPath(`issi-history-cleanup-${appearance.theme}.png`),
+        fullPage: true });
+      expect(requests.writes).toHaveLength(0);
+      await dialog.getByRole('button', { name: 'Delete statistics', exact: true }).click();
+      await expect(workspace.getByText('Statistics deleted.')).toBeVisible();
+      expect(requests.writes[0].target).toEqual(scoped('radio_system', 'issi_assignment_history', ['summary']));
+      expect(requests.results).toContainEqual(expect.objectContaining({
+        dataType: 'issi_assignment_history', site: null
+      }));
+    });
+}
+
+test('ISSI assignment cleanup is unavailable for non-P25 systems', async ({ page }) => {
+  await openStatistics(page, { systemProtocol: 'DMR' });
+  const workspace = page.locator('.retained-statistics-page');
+  await workspace.getByRole('combobox', { name: 'Radio system' }).selectOption(SYSTEM);
+  await expect(workspace.getByRole('button', { name: 'ISSI assignment history', exact: true })).toBeDisabled();
+});
 
 test('system site drilldown shows band plan details and preview counts before removal',
   async ({ page }, testInfo) => {

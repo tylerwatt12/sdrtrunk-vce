@@ -265,6 +265,154 @@ class ReceiverActivityBatchedDeletionTest
         return new ScopedData("radio_system", SYSTEM, CHANNEL, SITE, "control_quality", null, List.of("buckets"));
     }
 
+    @Test
+    void issiHistoryCleanupIsBoundedResumableAndKeepsFreshObservationsAndIdentityOwners() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            seedIssiHistory(connection, 1500);
+            execute(connection, "INSERT INTO radio_system(id,system_key,protocol_code,p25_wacn,p25_system_id,first_seen_ms,last_seen_ms) " +
+                "VALUES(2,'p25:abcde:124',1,703710,292,1000,1000)");
+            execute(connection, "INSERT INTO p25_wuid_assignment_observation_summary " +
+                "(radio_system_id,working_id,p25_subscriber_identity_id,first_observed_ms,last_observed_ms," +
+                "last_registration_ms,registration_count,last_evidence_code) VALUES(2,1,1,1000,1000,1000,1,1)");
+            execute(connection, "INSERT INTO radio_system_identity_summary" +
+                "(id,radio_system_id,identity_kind_code,identity_id,home_wacn,home_system_id,p25_subscriber_identity_id,first_seen_ms,last_seen_ms) " +
+                "VALUES(1,1,2,9001,703710,801,1,1000,1000)");
+            execute(connection, "INSERT INTO alias(alias_list_id,name,matcher_type) " +
+                "SELECT id,'Medic 7','P25_SUBSCRIBER_IDENTITY' FROM alias_list WHERE family='P25' LIMIT 1");
+            execute(connection, "INSERT INTO alias_p25_subscriber_identity(alias_id,p25_subscriber_identity_id) " +
+                "SELECT id,1 FROM alias WHERE name='Medic 7'");
+            ScopedData target = new ScopedData("radio_system", SYSTEM, null, null,
+                "issi_assignment_history", null, List.of("summary"));
+            var preview = ReceiverActivityMaintenance.preview(connection, target);
+            assertEquals(1500, preview.rowsTotal());
+            assertEquals(1500, preview.countsByPart().get("summary"));
+            assertTrue(preview.effects().stream().anyMatch(effect -> effect.contains("observation counts")));
+            assertTrue(preview.effects().stream().anyMatch(effect -> effect.contains("Current assignments, radio IDs and aliases remain")));
+
+            String countPlan = queryPlan(connection, "SELECT count(*) FROM p25_wuid_assignment_observation_summary " +
+                "WHERE radio_system_id=1 AND last_observed_ms<=1000");
+            assertTrue(countPlan.contains("idx_p25_wuid_assignment_observation_system_time"), countPlan);
+            String batchPlan = queryPlan(connection, "SELECT radio_system_id,working_id,p25_subscriber_identity_id " +
+                "FROM p25_wuid_assignment_observation_summary WHERE radio_system_id=1 AND last_observed_ms<=1000 " +
+                "ORDER BY radio_system_id,working_id,p25_subscriber_identity_id LIMIT 512");
+            assertTrue(batchPlan.contains("SEARCH"), batchPlan);
+            assertFalse(batchPlan.contains("SCAN p25_wuid_assignment_observation_summary"), batchPlan);
+            assertFalse(batchPlan.contains("TEMP B-TREE"), batchPlan);
+
+            StatsDatabaseMaintenanceRequest request = StatsDatabaseMaintenanceRequest.delete(target);
+            assertNull(ReceiverActivityMaintenance.deleteRetainedStatsPass(connection, null, request, 0));
+            assertEquals(512, request.progress().rowsDeleted());
+            long cutoff = request.progress().cutoffMs();
+            long later = cutoff + 1;
+            execute(connection, "UPDATE p25_wuid_assignment_observation_summary SET last_observed_ms=" + later +
+                ",last_registration_ms=" + later + ",registration_count=2 WHERE radio_system_id=1 AND working_id=1500");
+            execute(connection, "INSERT INTO p25_wuid_assignment_observation_summary " +
+                "(radio_system_id,working_id,p25_subscriber_identity_id,first_observed_ms,last_observed_ms," +
+                "last_registration_ms,registration_count,last_evidence_code) VALUES(1,1501,1," + later + "," + later + "," + later + ",1,1)");
+            request.cancel();
+            var interrupted = ReceiverActivityMaintenance.deleteRetainedStatsPass(connection, null, request, 0);
+            request.result().complete(interrupted);
+            assertEquals(ReceiverActivityMaintenance.DeletionOutcome.INTERRUPTED, interrupted.deletionOutcome());
+            StatsDatabaseMaintenanceRequest continuation = request.resume();
+            ReceiverActivityMaintenance.Result result;
+            do
+            {
+                long before = scalar(connection, "SELECT total_changes()");
+                result = ReceiverActivityMaintenance.deleteRetainedStatsPass(connection, null, continuation, 0);
+                assertTrue(scalar(connection, "SELECT total_changes()") - before <= 512);
+                assertTrue(connection.getAutoCommit());
+            }
+            while(result == null);
+            assertEquals(ReceiverActivityMaintenance.DeletionOutcome.DELETED, result.deletionOutcome());
+            assertEquals(cutoff, continuation.progress().cutoffMs());
+            assertEquals(1499, continuation.progress().rowsDeleted());
+            assertEquals(1, continuation.progress().rowsRetained());
+            assertEquals(3, scalar(connection, "SELECT count(*) FROM p25_wuid_assignment_observation_summary"));
+            assertEquals(2, scalar(connection, "SELECT registration_count FROM p25_wuid_assignment_observation_summary " +
+                "WHERE radio_system_id=1 AND working_id=1500"));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM p25_subscriber_identity"));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM radio_system_identity_summary"));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM alias_p25_subscriber_identity"));
+            assertEquals(2, scalar(connection, "SELECT count(*) FROM receiver_channel"));
+            assertEquals("ok", text(connection, "PRAGMA quick_check"));
+            assertEquals(0, scalar(connection, "SELECT count(*) FROM pragma_foreign_key_check"));
+        }
+    }
+
+    @Test
+    void allSystemSummaryIncludesIssiHistoryButSiteCleanupKeepsAggregatePairs() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            seedIssiHistory(connection, 2);
+            ScopedData site = new ScopedData("radio_system", SYSTEM, CHANNEL, SITE, "all", null, List.of("summary"));
+            var preview = ReceiverActivityMaintenance.preview(connection, site);
+            assertTrue(preview.effects().stream().anyMatch(effect -> effect.contains("ISSI assignment history remains")));
+            finish(connection, StatsDatabaseMaintenanceRequest.delete(site));
+            assertEquals(2, scalar(connection, "SELECT count(*) FROM p25_wuid_assignment_observation_summary"));
+            ScopedData system = new ScopedData("radio_system", SYSTEM, null, null, "all", null, List.of("summary"));
+            assertEquals(2, ReceiverActivityMaintenance.preview(connection, system).rowsTotal());
+            finish(connection, StatsDatabaseMaintenanceRequest.delete(system));
+            assertEquals(0, scalar(connection, "SELECT count(*) FROM p25_wuid_assignment_observation_summary"));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM p25_subscriber_identity"));
+            assertEquals(2, scalar(connection, "SELECT count(*) FROM receiver_channel"));
+        }
+    }
+
+    @Test
+    void issiCleanupRejectsInvalidScopesPartsFiltersAndNonP25AndDetectsMissingSystems() throws Exception
+    {
+        assertThrows(IllegalArgumentException.class, () -> new ScopedData("saved_channel", CHANNEL, null, null,
+            "issi_assignment_history", null, List.of("summary")));
+        assertThrows(IllegalArgumentException.class, () -> new ScopedData("radio_system", SYSTEM, CHANNEL, SITE,
+            "issi_assignment_history", null, List.of("summary")));
+        assertThrows(IllegalArgumentException.class, () -> new ScopedData("radio_system", SYSTEM, null, null,
+            "issi_assignment_history", "1", List.of("summary")));
+        assertThrows(IllegalArgumentException.class, () -> new ScopedData("radio_system", SYSTEM, null, null,
+            "issi_assignment_history", null, List.of("current")));
+        assertThrows(IllegalArgumentException.class, () -> new ScopedData("radio_system", SYSTEM, null, null,
+            "issi_assignment_history", null, List.of("summary"), 1000L, null, null));
+        try(Connection connection = open())
+        {
+            seedIssiHistory(connection, 2);
+            execute(connection, "INSERT INTO radio_system(id,system_key,protocol_code,dmr_model_code,dmr_network_id,first_seen_ms,last_seen_ms) " +
+                "VALUES(2,'dmr:tier3:small:42',3,2,42,1000,1000)");
+            ScopedData dmr = new ScopedData("radio_system", "dmr:tier3:small:42", null, null,
+                "issi_assignment_history", null, List.of("summary"));
+            assertThrows(IllegalArgumentException.class, () -> ReceiverActivityMaintenance.preview(connection, dmr));
+            assertThrows(IllegalArgumentException.class, () -> ReceiverActivityMaintenance.deleteRetainedStatsPass(
+                connection, null, StatsDatabaseMaintenanceRequest.delete(dmr), 0));
+            ScopedData missing = new ScopedData("radio_system", "p25:abcde:124", null, null,
+                "issi_assignment_history", null, List.of("summary"));
+            assertEquals(ReceiverActivityMaintenance.DeletionOutcome.NOT_FOUND,
+                ReceiverActivityMaintenance.preview(connection, missing).outcome());
+            assertEquals(2, scalar(connection, "SELECT count(*) FROM p25_wuid_assignment_observation_summary"));
+        }
+    }
+
+    private static void seedIssiHistory(Connection connection, int count) throws SQLException
+    {
+        execute(connection, "INSERT INTO p25_subscriber_identity(id,home_wacn,home_system_id,subscriber_id) " +
+            "VALUES(1,703710,801,9001)");
+        execute(connection, "WITH RECURSIVE n(value) AS (VALUES(1) UNION ALL SELECT value+1 FROM n WHERE value<" + count + ") " +
+            "INSERT INTO p25_wuid_assignment_observation_summary " +
+            "(radio_system_id,working_id,p25_subscriber_identity_id,first_observed_ms,last_observed_ms," +
+            "last_registration_ms,registration_count,last_evidence_code,last_channel_id) " +
+            "SELECT 1,value,1,1000,1000,1000,1,1,1 FROM n");
+    }
+
+    private static String queryPlan(Connection connection, String sql) throws SQLException
+    {
+        StringBuilder result = new StringBuilder();
+        try(Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery("EXPLAIN QUERY PLAN " + sql))
+        {
+            while(rows.next()) result.append(rows.getString("detail")).append('\n');
+        }
+        return result.toString();
+    }
+
     private static void finish(Connection connection, StatsDatabaseMaintenanceRequest request) throws Exception
     {
         ReceiverActivityMaintenance.Result result;

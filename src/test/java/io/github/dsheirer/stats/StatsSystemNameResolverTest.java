@@ -100,9 +100,12 @@ class StatsSystemNameResolverTest
     @Test
     void mapRecognizesActualIssiAndRoamingRadioTextWithoutConfusingServingScope() throws Exception
     {
-        for(int local: List.of(1103, 77))
+        for(String identifier: List.of(
+            APCO25FullyQualifiedRadioIdentifier.createFrom(1103, 781824, 840, 1103).toString(),
+            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(77, 781824, 840, 1103).toString(),
+            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(1103, 781824, 840, 1103).toString(),
+            "bee00.348.1103"))
         {
-            String identifier = APCO25FullyQualifiedRadioIdentifier.createFrom(local, 781824, 840, 1103).toString();
             JsonNode row = mNames.enrich(Map.of("configuration_id", CHANNEL,
                 "identifier", identifier, "positions", List.of()));
             assertEquals("GCRCN", row.path("system_name").asText());
@@ -118,7 +121,7 @@ class StatsSystemNameResolverTest
     void legacyDecimalRadioTextKeepsItsHomeSystem() throws Exception
     {
         for(String identifier: List.of("781824.840.1103", "ISSI 781824.840.1103",
-            "ROAM 77(781824.840.1103)"))
+            "ROAM 77(781824.840.1103)", "77(781824.840.1103)"))
         {
             JsonNode row = mNames.enrich(Map.of("configuration_id", CHANNEL,
                 "identifier", identifier, "positions", List.of()));
@@ -151,6 +154,66 @@ class StatsSystemNameResolverTest
             "identifier", explicitCurrent, "positions", List.of()));
         assertEquals("Hex home", current.path("home_system_name").asText());
         assertEquals("p25:00001:018", current.path("home_system").path("key").asText());
+
+        for(String explicitLegacy: List.of("ISSI 00001.018.1103", "ROAM 77(00001.018.1103)"))
+        {
+            JsonNode prefixed = mNames.enrich(Map.of("configuration_id", CHANNEL,
+                "identifier", explicitLegacy, "positions", List.of()));
+            assertEquals("Decimal home", prefixed.path("home_system_name").asText(), explicitLegacy);
+            assertEquals("p25:00001:012", prefixed.path("home_system").path("key").asText(), explicitLegacy);
+        }
+    }
+
+    @Test
+    void formattedHomeIdentityWithoutConfiguredNameKeepsExactFactsAndNoInventedLink() throws Exception
+    {
+        String identifier = "ABCDE.ABC.16777212 (Working ID 16777212)";
+        JsonNode row = mNames.enrich(Map.of("configuration_id", CHANNEL,
+            "identifier", identifier, "positions", List.of()));
+        assertEquals("GCRCN", row.path("system_name").asText());
+        assertEquals(GCRCN, row.path("serving_system").path("key").asText());
+        assertEquals("p25:abcde:abc", row.path("home_system").path("key").asText());
+        assertEquals(0xABCDE, row.path("home_wacn").asInt());
+        assertEquals(0xABC, row.path("home_system_id").asInt());
+        assertEquals(0xFFFFFC, row.path("radio_id").asInt());
+        assertFalse(row.has("home_system_name"));
+        assertFalse(row.has("home_system_entity_ref"));
+        assertFalse(row.path("home_system").has("entity_ref"));
+        assertEquals(identifier, row.path("identifier").asText());
+    }
+
+    @Test
+    void malformedAndReservedRadioTextCannotCreateHomeIdentity() throws Exception
+    {
+        for(String identifier: List.of(
+            "ROAM 77(781824.840.1103", "ROAM 781824.840.1103)",
+            "77(781824.840.1103", "781824.840.1103)",
+            "ROAM 0(781824.840.1103)", "ROAM 16777213(781824.840.1103)",
+            "BEE00.348.1103 (Working ID 0)", "BEE00.348.1103 (Working ID 16777213)",
+            "BEE00.348.1103 (Working ID 999999999999999999999)",
+            "BEE00.348.0", "BEE00.348.16777213", "781824.840.16777215",
+            "1048576.840.1103", "781824.4096.1103", "BEE0.348.1103",
+            "v1-r-bee00-348-0", "v1-r-bee00-348-16777213", "v1-r-bee00-348-01103",
+            "v1-g-bee00-348-65535", "v1-r-x-x-1103"))
+        {
+            JsonNode row = mNames.enrich(Map.of("configuration_id", CHANNEL,
+                "identifier", identifier, "positions", List.of()));
+            assertEquals("GCRCN", row.path("system_name").asText(), identifier);
+            assertFalse(row.has("home_system"), identifier);
+            assertFalse(row.has("home_wacn"), identifier);
+            assertFalse(row.has("radio_id"), identifier);
+            assertEquals(identifier, row.path("identifier").asText());
+        }
+    }
+
+    @Test
+    void canonicalGroupIdentityStillEnrichesItsHomeSystem() throws Exception
+    {
+        JsonNode row = mNames.enrich(Map.of("radio_system_key", GCRCN,
+            "source_value", "v1-r-bee00-348-1103", "destination_value", "v1-g-bee00-348-65534"));
+        assertEquals("Ohio MARCS-IP", row.path("target_home_system_name").asText());
+        assertEquals(MARCS, row.path("target_home_system").path("key").asText());
+        assertEquals(65534, row.path("target_native_id").asInt());
     }
 
     @Test
