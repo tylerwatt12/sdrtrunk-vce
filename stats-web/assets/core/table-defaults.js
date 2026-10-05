@@ -17,9 +17,35 @@ const COLUMN_WIDTHS = Object.freeze({
 });
 
 const TABLE_DEFAULTS = Object.freeze({
+  'issi-current-assignments': {
+    widths: { radio: 220, 'home-system': 230, 'working-id': 120, confirmed: 180,
+      expires: 185, evidence: 130, 'observed-on': 260, 'alias-action': 190 },
+    grow: ['radio', 'home-system', 'observed-on']
+  },
+  'issi-recent-changes': {
+    widths: { changed: 180, radio: 220, 'home-system': 230, change: 165,
+      'working-id': 120, 'previous-working-id': 160, 'observed-on': 260 },
+    grow: ['radio', 'home-system', 'observed-on']
+  },
+  'issi-subscribers': {
+    widths: { 'canonical-subscriber': 220, 'working-id': 170, 'home-system': 230,
+      'talker-alias': 220, evidence: 150, affiliation: 220, 'observed-on': 260,
+      'last-mapping-seen': 180, 'last-seen': 180 },
+    grow: ['canonical-subscriber', 'home-system', 'talker-alias', 'observed-on']
+  },
+  'issi-foreign-systems': {
+    widths: { 'home-system': 250, subscribers: 115, 'wuid-observed-subscribers': 120,
+      registrations: 85, affiliations: 85, calls: 100, bands: 70, 'first-seen': 180, 'last-seen': 180 },
+    grow: ['home-system']
+  },
+  'issi-frequency-bands': {
+    widths: { 'home-system': 250, band: 90, 'observed-on': 260, state: 160, 'last-seen': 180 },
+    grow: ['home-system', 'observed-on']
+  },
   'retained-statistics-v3': {
     widths: { action: 112 }
   },
+  activity: { widths: { source: 220, target: 220 } },
   'streaming-aliases': {
     widths: { selected: 88, name: 220, identifier: 145, list: 230 },
     grow: ['name', 'list']
@@ -64,13 +90,13 @@ const TABLE_DEFAULTS = Object.freeze({
     grow: ['group-identity-name', 'group-identity-description', 'alias-group']
   },
   radios: {
-    widths: { radio: 90, alias: 175, 'talker-alias': 175,
+    widths: { radio: 220, alias: 175, 'talker-alias': 175,
       affiliation: 210, 'confirmed-channel': 260, 'logical-calls': 90,
       'encrypted-logical-calls': 90, 'last-seen': 174 },
     grow: ['alias', 'talker-alias', 'affiliation', 'confirmed-channel']
   },
   'group-identity-radios': {
-    widths: { radio: 90, alias: 175, 'talker-alias': 175,
+    widths: { radio: 220, alias: 175, 'talker-alias': 175,
       'confirmed-channel': 260, 'logical-calls': 90,
       'encrypted-logical-calls': 90, 'last-seen': 174 },
     grow: ['alias', 'talker-alias', 'confirmed-channel']
@@ -129,7 +155,7 @@ const TABLE_DEFAULTS = Object.freeze({
     source: 90, 'target-alias': 220, target: 90, decoder: 78
   }, grow: ['channel', 'source-alias', 'target-alias'] },
   'alias-editor-configure': {
-    widths: { select: 48, alias: 190, description: 260, identifier: 82,
+    widths: { select: 48, alias: 190, description: 260, identifier: 180,
       matcher: 120, group: 180, behavior: 145, overlap: 92 },
     grow: ['alias', 'description', 'group', 'behavior']
   },

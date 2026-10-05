@@ -165,6 +165,7 @@ class StatsWebAliasCatalogUiContractTest
     {
         String source = source();
         String fields = function(source, "function aliasMatcherFields(host, descriptor, matcher, options)");
+        String fieldLimit = function(source, "function aliasMatcherFieldLimit(descriptor, field, bound)");
         String payload = function(source, "function aliasMatcherPayload(form, descriptor)");
         String editorPayload = function(source, "function aliasEditorPayload(form, options)");
         String tabs = function(source, "function aliasEditorModalTabs(panels, initial = 'basics')");
@@ -177,6 +178,13 @@ class StatsWebAliasCatalogUiContractTest
         {
             assertTrue(fields.contains("field === '" + field + "'"), () -> "Missing matcher field " + field);
         }
+        assertTrue(fields.contains("field === 'homeWacn' || field === 'homeSystemId'"));
+        assertTrue(fields.contains("field === 'subscriberId'"));
+        assertTrue(source.contains("home_wacn: 'homeWacn'"));
+        assertTrue(source.contains("subscriber_id: 'subscriberId'"));
+        assertTrue(fieldLimit.contains("descriptor?.[`${snake}_${bound}`]"));
+        assertTrue(payload.contains("homeWacn: 'home_wacn'"));
+        assertTrue(payload.contains("subscriberId: 'subscriber_id'"));
         assertTrue(fields.contains("duration.min = '1'"));
         assertTrue(fields.contains("duration.max = '50'"));
         assertTrue(fields.contains("alias-tone-up"));
@@ -201,8 +209,9 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(source.contains("value: 'RESET', label: 'Reset to default'"));
         assertTrue(source.contains("Discard your unsaved changes?"));
         assertFalse(source.contains("Discard your unsaved alias changes?"));
-        assertTrue(function(source, "async function render()").contains("if (!closeReadOnlyModal()) return"));
-        assertTrue(source.contains("if (!closeReadOnlyModal()) {\n    window.history.pushState"));
+        assertTrue(function(source, "async function render()")
+            .contains("if (!closeReadOnlyModal(false, false, (closed) => { if (closed) void render(); })) return"));
+        assertTrue(source.contains("if (!closeReadOnlyModal(false, false, (closed) => { if (closed) navigateTo(target); }))"));
     }
 
     @Test
@@ -212,7 +221,8 @@ class StatsWebAliasCatalogUiContractTest
         String columns = function(source, "function aliasEditorSourceBreakdownColumns()");
         String activity = function(source, "function aliasActivityContent(response)");
 
-        assertTrue(columns.contains("availableValue(row.source_label)"));
+        assertTrue(columns.contains("radioSystemPrimaryName(row) || row.source_label || radioSystemDisplayName(row)"));
+        assertTrue(columns.contains("radioSystemLink(row.radio_system_entity_ref, availableValue(label))"));
         assertTrue(columns.contains("availableValue(row.topology)"));
         assertTrue(columns.contains("aliasMetricValue(row, 'logical_call_count')"));
         assertTrue(columns.contains("aliasMetricValue(row, 'signaling_observation_count')"));

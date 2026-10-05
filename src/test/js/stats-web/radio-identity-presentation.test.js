@@ -45,11 +45,31 @@ function functionSource(name) {
 }
 
 const behavior = vm.runInNewContext(`(() => {
+  function aliasAdminAllowed() { return true; }
+  function node(tag, className, textContent) {
+    return { tag, className, textContent, setAttribute() {} };
+  }
+  function radioLink(_row, value, label) { return { value, label }; }
+  function isAnalogChannel() { return false; }
+  function href(view, values) {
+    const parameters = new URLSearchParams();
+    parameters.set('view', view);
+    Object.entries(values).forEach(([key, value]) => {
+      if (value !== null && value !== undefined && value !== '') parameters.set(key, String(value));
+    });
+    return '/?' + parameters.toString();
+  }
   ${functionSource('protocol')}
   ${functionSource('protocolFamily')}
   ${functionSource('isP25')}
   ${functionSource('identifierNumber')}
+  ${functionSource('identityNumber')}
   ${functionSource('hex')}
+  ${functionSource('p25CanonicalSubscriber')}
+  ${functionSource('canonicalSubscriberText')}
+  ${functionSource('radioIdentityPrefix')}
+  ${functionSource('workingSubscriberId')}
+  ${functionSource('radioIdentifierText')}
   ${functionSource('semanticLabel')}
   ${functionSource('trunkedVariant')}
   ${functionSource('savedChannelScopeLabel')}
@@ -73,10 +93,171 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('rowGroupIdentityKind')}
   ${functionSource('observedGroupIdentityProtocol')}
   ${functionSource('observedGroupIdentityKey')}
+  ${functionSource('specialIdentifierLabel')}
+  ${functionSource('activityIdentifier')}
+  ${functionSource('activityTargetKind')}
+  ${functionSource('activitySourceAlias')}
+  ${functionSource('activitySourceTalkerAlias')}
+  ${functionSource('activityTargetAlias')}
+  ${functionSource('liveAliasProtocol')}
+  ${functionSource('liveAliasP25Variant')}
+  ${functionSource('liveIdentityType')}
+  ${functionSource('liveIdentityLabel')}
+  ${functionSource('liveIdentityActionTitle')}
+  ${functionSource('liveAliasDraftHref')}
   return { radioSystemLabel, trunkedSiteLabel, dashboardChannelContext,
     channelDirectoryRfIdentity, channelLocationIdentity, dmrChannelDetailRows,
-    scannerNetworkSiteIdentity, observedGroupIdentityKey };
-})()`, { systemLabels });
+    scannerNetworkSiteIdentity, observedGroupIdentityKey, radioIdentifierText, liveIdentityActionTitle,
+    liveAliasDraftHref, activityIdentifier, activitySourceAlias, activitySourceTalkerAlias, activityTargetAlias };
+})()`, { URLSearchParams, systemLabels });
+
+assert.equal(behavior.radioIdentifierText({
+  protocol: 'P25', canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 9_601_699 },
+  working_subscriber_id: 130_001
+}, 130_001), 'BEE00.348.9601699 (Working ID 130001)');
+assert.equal(behavior.radioIdentifierText({
+  protocol: 'P25', canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 2_115_288 },
+  observed_working_id: 501
+}, 2_115_288), 'BEE00.348.2115288 (Working ID 501)');
+assert.equal(behavior.radioIdentifierText({
+  protocol: 'APCO25', source_canonical_identity: {
+    wacn: 0xBEE00, system_id: 0x348, subscriber_id: 9_601_699
+  }, source_id: 130_001, source_observed_working_id: 130_001
+}, 130_001, 'source'), 'BEE00.348.9601699 (Working ID 130001)');
+assert.equal(behavior.radioIdentifierText({
+  protocol: 'P25', home_wacn: 0xBEE00, home_system_id: 0x348, native_id: 130_001
+}, 130_001), '130001',
+  'An ordinary local P25 radio must not be relabeled as a roaming working ID.');
+assert.equal(behavior.radioIdentifierText({
+  protocol: 'P25', source_canonical_identity: {
+    wacn: 0x92498, system_id: 0x926, subscriber_id: 34_006
+  }, source_id: 130_002, source_observed_working_id: 130_002
+}, 130_002), '92498.926.34006 (Working ID 130002)');
+assert.equal(behavior.radioIdentifierText({
+  protocol: 'P25', target_canonical_identity: {
+    wacn: 0xBEE00, system_id: 0x348, subscriber_id: 0xFFFFFC
+  }, target_id: 130_003, target_observed_working_id: 130_003
+}, 130_003), 'BEE00.348.16777212 (Working ID 130003)');
+assert.equal(behavior.radioIdentifierText({
+  protocol: 'P25', target_canonical_identity: {
+    wacn: 0xBEE00, system_id: 0x348, subscriber_id: 0xFFFFFD
+  }, target_id: 130_004, target_observed_working_id: 130_004
+}, 130_004), '130004');
+assert.equal(behavior.radioIdentifierText({ protocol: 'P25' }, 0), '0');
+assert.equal(behavior.radioIdentifierText({ protocol: 'P25' }, 0xFFFFFD), '16777213');
+assert.equal(behavior.radioIdentifierText({ protocol: 'P25' }, 0xFFFFFF), '16777215');
+for (const missing of [null, undefined, '', ' ']) {
+  assert.equal(behavior.radioIdentifierText({ protocol: 'P25', canonical_wacn: missing,
+    canonical_system_id: missing, canonical_subscriber_id: 501 }, 130_001), '130001',
+  'A partial scalar identity must not fabricate a zero home system.');
+}
+assert.equal(behavior.radioIdentifierText({ protocol: 'P25', canonical_wacn: 0,
+  canonical_system_id: 0, canonical_subscriber_id: 501 }, 501), '00000.000.501',
+  'Explicit numeric zero home values are retained.');
+assert.equal(behavior.radioIdentifierText({
+  protocol: 'P25', canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 501 },
+  observed_working_id: 0
+}, 501), 'BEE00.348.501', 'Zero must not be appended as an observed working ID.');
+assert.equal(behavior.radioIdentifierText({
+  protocol: 'P25', canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 501 },
+  observed_working_id: 0xFFFFFD
+}, 501), 'BEE00.348.501', 'Reserved addresses must not be appended as observed working IDs.');
+assert.equal(behavior.radioIdentifierText({
+  protocol: 'P25', canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 501 },
+  observed_working_id: 501
+}, 501), 'BEE00.348.501 (Working ID 501)',
+  'An explicitly observed WUID remains a separate fact even when its number equals the subscriber ID.');
+assert.equal(behavior.liveIdentityActionTitle({
+  protocol: 'APCO25', source_form: 'RADIO', source_id: 130_001,
+  source_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 9_601_699 },
+  source_observed_working_id: 130_001
+}, 'source'), 'Radio BEE00.348.9601699 (Working ID 130001)',
+  'The Live action dialog title must retain the canonical subscriber and explicit working ID.');
+assert.match(functionSource('liveIdentityActionLink'),
+  /openReadOnlyModal\(liveIdentityActionTitle\(row, kind, label\),/,
+  'The Live action dialog must pass its selected label to the identity-aware title formatter.');
+assert.equal(behavior.liveIdentityActionTitle({
+  protocol: 'P25', source_form: 'RADIO', source_id: 130_001, source_alias: 'Engine 42',
+  source_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 9_601_699 }
+}, 'source', 'Engine 42'), 'Radio Engine 42', 'A known friendly Alias is the Live dialog title.');
+
+const dockSource = fs.readFileSync(path.resolve(__dirname,
+  '../../../../stats-web/assets/core/audio-dock.js'), 'utf8');
+const dock = vm.runInNewContext(`(() => {
+  ${dockSource.slice(dockSource.indexOf('  const identityType ='), dockSource.indexOf('  const time ='))}
+  return { title, sourceSummary, sourceId, targetId };
+})()`, { radioIdentifier: behavior.radioIdentifierText });
+const dockCall = {
+  protocol: 'P25', source_id: 130_001, source_form: 'RADIO', source_alias: 'Engine 42',
+  source_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 9_601_699 },
+  source_observed_working_id: 130_001, target_id: 130_002, target_form: 'RADIO',
+  target_canonical_identity: { wacn: 0x92498, system_id: 0x926, subscriber_id: 16_777_212 },
+  target_observed_working_id: 130_002
+};
+assert.equal(dock.sourceSummary(dockCall), 'Engine 42 · Radio BEE00.348.9601699 (Working ID 130001)');
+assert.equal(dock.sourceId(dockCall), 'BEE00.348.9601699 (Working ID 130001)');
+assert.equal(dock.targetId(dockCall), '92498.926.16777212 (Working ID 130002)');
+assert.equal(dock.title(dockCall), 'Radio 92498.926.16777212 (Working ID 130002)');
+assert.equal(dock.title({ target_id: 1201, target_form: 'TALKGROUP' }), 'TGID 1201');
+assert.equal(dock.title({ destination_radio_id: 501 }), 'Radio 501');
+assert.equal(dock.sourceSummary({}), '', 'Missing source facts remain empty in the audio player.');
+assert.match(dockSource, /\['Target ID', targetId\(call\),/);
+assert.match(dockSource, /\['Source ID', sourceId\(call\),/);
+assert.equal(behavior.activityIdentifier({
+  protocol: 'P25', source_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 16_777_212 },
+  source_observed_working_id: 130_001
+}, 16_777_212, 'radio', null, false, 'source'), 'BEE00.348.16777212 (Working ID 130001)',
+'An explicit permanent subscriber tuple takes precedence over a bare special-number interpretation.');
+assert.equal(behavior.activityIdentifier({ protocol: 'P25' }, 16_777_212, 'radio', null, false).textContent, 'FNE',
+  'Bare special signaling remains labeled FNE.');
+const activityMaximum = {
+  protocol: 'P25', source_radio_id: 16_777_212, source_alias_name: 'Engine 42', source_talker_alias: 'ENG42',
+  source_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 16_777_212 },
+  target_kind: 'radio', target_id: 16_777_212, target_alias_name: 'Command',
+  target_canonical_identity: { wacn: 0x92498, system_id: 0x926, subscriber_id: 16_777_212 }
+};
+assert.equal(behavior.activitySourceAlias(activityMaximum).label, 'Engine 42');
+assert.equal(behavior.activitySourceTalkerAlias(activityMaximum).label, 'ENG42');
+assert.equal(behavior.activityTargetAlias(activityMaximum).label, 'Command');
+assert.equal(behavior.activitySourceAlias({ ...activityMaximum, source_canonical_identity: null }), 'Engine 42');
+assert.equal(behavior.activityTargetAlias({ ...activityMaximum, target_canonical_identity: null }), 'Command',
+  'A canonical source does not turn an unrelated bare special target into a subscriber.');
+
+const aliasRoute = (row, kind = 'source') =>
+  new URL(behavior.liveAliasDraftHref(row, kind), 'http://receiver.invalid').searchParams;
+const equalWorkingRoute = aliasRoute({
+  protocol: 'p25', decoder: 'P25_PHASE1', alias_list_id: 41, source_form: 'RADIO', source_id: 501,
+  source_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 501 },
+  source_observed_working_id: 501
+});
+assert.equal(equalWorkingRoute.get('createType'), 'p25_subscriber_identity');
+assert.equal(equalWorkingRoute.get('createHomeWacn'), 'BEE00');
+assert.equal(equalWorkingRoute.get('createHomeSystemId'), '348');
+assert.equal(equalWorkingRoute.get('createSubscriberId'), '501');
+assert.equal(equalWorkingRoute.get('createWorkingAddress'), '501',
+  'An explicit equal-valued WUID must remain separate route context.');
+assert.equal(equalWorkingRoute.has('createValue'), false,
+  'A canonical subscriber route must never degrade to a local radio matcher.');
+assert.equal(equalWorkingRoute.has('createProtocol'), false);
+
+const identityOnlyRoute = aliasRoute({
+  protocol: 'p25', decoder: 'P25_PHASE2', alias_list_id: 41, target_form: 'RADIO', target_id: 9_601_699,
+  target_canonical_identity: { wacn: 0x92498, system_id: 0x926, subscriber_id: 9_601_699 }
+}, 'target');
+assert.equal(identityOnlyRoute.get('createType'), 'p25_subscriber_identity');
+assert.equal(identityOnlyRoute.has('createWorkingAddress'), false,
+  'Identity-only evidence must not invent an equal working address.');
+
+const ordinaryRoute = aliasRoute({
+  protocol: 'p25', decoder: 'P25_PHASE2', alias_list_id: 41, source_form: 'RADIO', source_id: 1201,
+  home_wacn: 0xBEE00, home_system_id: 0x348
+});
+assert.equal(ordinaryRoute.get('createType'), 'radio');
+assert.equal(ordinaryRoute.get('createProtocol'), 'p25');
+assert.equal(ordinaryRoute.get('createVariant'), 'phase_2');
+assert.equal(ordinaryRoute.get('createValue'), '1201');
+assert.equal(ordinaryRoute.has('createHomeWacn'), false,
+  'Ambient system fields must not promote an ordinary local radio to a canonical subscriber.');
 
 const nativeDmr = Object.freeze({
   protocol: 'DMR', channel_kind: 'TRUNKED', radio_system_key: 'dmr:tier3:small:0',

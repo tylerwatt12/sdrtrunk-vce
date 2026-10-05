@@ -21,6 +21,7 @@ class StatsWebInteractionUiContractTest
 {
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
     private static final Path WEB_CALL_PLAYER = Path.of("stats-web", "assets", "web-call-player.js");
+    private static final Path BROWSING_WORKFLOWS = Path.of("stats-web", "assets", "core", "browsing-workflows.js");
     private static final Path INDEX_HTML = Path.of("stats-web", "index.html");
     private static final Path WEB_SERVER = Path.of("src", "main", "java", "io", "github", "dsheirer", "stats",
         "StatsWebServerService.java");
@@ -77,8 +78,11 @@ class StatsWebInteractionUiContractTest
         assertTrue(activity.contains("activityTable.tableController.replaceRows(rows)"));
         assertTrue(activity.contains("updatePager(refreshed)"));
         assertTrue(activity.contains("page?.next_before_id"));
-        assertTrue(activity.contains("current?.tagName === 'A'"));
-        assertTrue(activity.contains("current.setAttribute('href', target)"));
+        assertTrue(activity.contains("browsingWorkflows.createBrowsingPager({ node, ariaLabel: 'Activity pages' })"));
+        assertTrue(activity.contains("controls.update({"));
+        String browsing = readText(BROWSING_WORKFLOWS);
+        assertTrue(browsing.contains("if (!control || control.tagName !== tag)"));
+        assertTrue(browsing.contains("if (tag === 'A') control.href = option.href"));
         assertFalse(activity.contains("controls.replaceChildren"));
         assertTrue(activity.contains("paused || document.hidden || !renderIsCurrent(renderContext)"));
         assertTrue(activity.contains("!paused && !document.hidden ?"));
@@ -154,7 +158,8 @@ class StatsWebInteractionUiContractTest
         assertFalse(status.contains("historyLabel"));
         assertFalse(status.contains("History off"));
         assertTrue(historyNotice.contains("Save individual activity events"));
-        assertTrue(historyNotice.contains("anchor('Call output & activity', href('admin', { tab: 'operations' }))"));
+        assertTrue(historyNotice.contains("anchor('Activity settings', href('admin', { tab: 'activity' }))"));
+        assertTrue(historyNotice.contains("capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS)"));
         assertTrue(historyNotice.contains("No saved activity is available."));
         assertFalse(historyNotice.contains("earlier activity cannot be recovered"));
         assertTrue(historyNotice.contains("New activity is not being saved."));
@@ -194,12 +199,12 @@ class StatsWebInteractionUiContractTest
         assertFalse(system.contains("Number(database.database_bytes || 0)"));
         assertFalse(system.contains("['Summary collection', summaryState]"));
         assertTrue(system.contains("capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS)"));
-        assertTrue(system.contains("receiverHealthSection('saved-activity', 'Saved activity'"));
+        assertTrue(system.contains("receiverHealthSection('saved-activity', activityPage ? 'Current collection status' : 'Saved activity'"));
         assertTrue(system.contains("settingsLink.dataset.receiverHealthFocus = 'saved-activity-settings'"));
         assertTrue(refresh.contains("const focusedControl = receiverHealthFocusedControl(current)"));
         assertTrue(refresh.contains("current.replaceWith(replacement)"));
         assertTrue(refresh.contains("receiverHealthRestoreFocus(replacement, focusedControl)"));
-        assertTrue(loadStatus.contains("currentView === 'admin' && (route.get('tab') || 'health') === 'health'"));
+        assertTrue(loadStatus.contains("currentView === 'admin' && ['health', 'activity'].includes(route.get('tab') || 'health')"));
         assertTrue(loadStatus.contains("refreshReceiverHealthSavedActivityStatus();"));
         String refreshButton = function(javascript, "function receiverHealthRefreshButton()");
         assertTrue(refreshButton.contains("Promise.all([receiverHealthController.refresh(), loadStatus(true)])"));
@@ -292,9 +297,11 @@ class StatsWebInteractionUiContractTest
     {
         String source = source();
         String css = StatsWebStylesheetTestSupport.readAll();
-        assertTrue(css.contains("grid-template-columns: repeat(auto-fill, minmax(min(100%, 170px), 1fr));"));
+        assertTrue(css.contains("grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));"));
         assertTrue(css.contains(".ui-metric {\n  min-width: 0;"));
-        assertTrue(css.contains("font-variant-numeric: tabular-nums;\n  overflow-wrap: anywhere;"));
+        String metricValue = function(css, ".ui-metric-copy > strong");
+        assertTrue(metricValue.contains("font-variant-numeric: tabular-nums;"));
+        assertTrue(metricValue.contains("overflow-wrap: anywhere;"));
         assertTrue(css.contains(".ui-data-table.resizable-table th:last-child .column-resizer {\n  right: 0;"));
         assertTrue(css.contains(".ui-data-table.table-column-autofit-measurement {"));
         assertFalse(css.contains("[data-table-type=\"alias-editor-scope-breakdown\"] th:last-child .column-resizer"));
@@ -510,9 +517,13 @@ class StatsWebInteractionUiContractTest
         String system = function(source, "async function renderRadioSystem()");
         String css = StatsWebStylesheetTestSupport.readAll();
 
-        assertTrue(pager.contains("const totalCount = page.total_count"));
-        assertTrue(pager.contains("of ${number(totalCount)}"));
-        assertTrue(pager.contains("aria-label"));
+        assertTrue(pager.contains("browsingWorkflows.createBrowsingPager"));
+        assertTrue(pager.contains("browsingWorkflows.pageRangeText({ offset, visible: page.rows.length"));
+        assertTrue(pager.contains("total: page.total_count, label: itemLabel, format: number"));
+        assertTrue(pager.contains("ariaLabel: `${position === 'top' ? 'Top' : 'Bottom'} table pagination`"));
+        String browsing = readText(BROWSING_WORKFLOWS);
+        assertTrue(browsing.contains("Number.isInteger(total) ? ` of ${format(total)}`"));
+        assertTrue(browsing.contains("pager.setAttribute('aria-label', ariaLabel)"));
         assertTrue(content.contains("if (options.topPager) result.append(pager(page, 'top', itemLabel))"));
         assertTrue(content.contains("result.append(pager(page, 'bottom', itemLabel))"));
         assertTrue(source.contains("const actions = sectionActionHost(action);"));
@@ -570,8 +581,8 @@ class StatsWebInteractionUiContractTest
     {
         String source = source();
         String css = StatsWebStylesheetTestSupport.readAll();
-        String labels = function(source, "function specialIdentifierLabel(row, value, kind)");
-        String renderer = function(source, "function activityIdentifier(row, value, kind, reference, linked = true)");
+        String labels = function(source, "function specialIdentifierLabel(row, value, kind, prefix = '')");
+        String renderer = function(source, "function activityIdentifier(row, value, kind, reference, linked = true, prefix = '')");
         String sourceAlias = function(source, "function activitySourceAlias(row, linked = true)");
         String sourceTalkerAlias = function(source, "function activitySourceTalkerAlias(row, linked = true)");
         String columns = function(source, "function activityColumns(context, filters)");
@@ -599,7 +610,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains("text-overflow: ellipsis"));
         assertFalse(css.contains(".special-signaling"));
         assertTrue(renderer.indexOf("if (specialLabel)") < renderer.indexOf("groupIdentityLink(row, value"));
-        assertTrue(sourceAlias.contains("specialIdentifierLabel(row, row.source_radio_id, 'radio')"));
+        assertTrue(sourceAlias.contains("specialIdentifierLabel(row, row.source_radio_id, 'radio', 'source')"));
         assertTrue(sourceAlias.indexOf("specialIdentifierLabel") < sourceAlias.indexOf("radioLink("));
         assertTrue(sourceTalkerAlias.contains("row.source_talker_alias"));
         assertTrue(sourceTalkerAlias.contains("radioLink(row, row.source_radio_id, alias, row.source_entity_ref)"));
@@ -617,13 +628,13 @@ class StatsWebInteractionUiContractTest
         assertTrue(identifier.contains("String(Math.trunc(numeric))"));
         assertFalse(identifier.contains("number(value)"));
         assertTrue(function(source, "function dashboardIdentityId(row)")
-            .contains("identityNumber(row, row.identity_id)"));
+            .contains("kind === 'radio' ? radioIdentifierText(row, value) : identityNumber(row, value)"));
         assertTrue(function(source, "function identityNumber(row, value)")
             .contains("String((numeric >> 11) & 0x1F).padStart(2, '0')"));
         assertTrue(function(source, "function identityNumber(row, value)")
             .contains("String(numeric & 0x7FF).padStart(4, '0')"));
         assertTrue(function(source, "function radioLink(row, id, label, reference = row?.entity_ref)")
-            .contains("identityNumber(row, id)"));
+            .contains("radioIdentifierText(row, id)"));
         assertTrue(function(source, "function groupIdentityLink(row, id, label, reference = row?.entity_ref)")
             .contains("specialIdentifierLabel(row, id, rowGroupIdentityKind(row))"));
         assertTrue(source.contains("render: (row) => number(row.logical_call_count)"));
@@ -695,8 +706,8 @@ class StatsWebInteractionUiContractTest
         String application = source();
         String css = StatsWebStylesheetTestSupport.readAll();
         String changeVolume = function(source, "  changeVolume(write = false)");
-        String applyPreferences = function(source, "  applyPreferences(preferences)");
-        String writePreferences = function(source, "  writePreferences()");
+        String applyPreferences = function(source, "  applyPreferences(preferences, options = {})");
+        String writePreferences = function(source, "  writePreferences({ volume = false } = {})");
         String bindControls = function(source, "  bindControls()");
         String ensureAudioContext = function(source, "  ensureAudioContext()");
         String startCurrent = function(source, "  startCurrent()");
@@ -706,7 +717,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.contains("aria-label=\"Browser playback volume\""));
         assertTrue(html.contains("class=\"playback-volume-label\" aria-hidden=\"true\">VOL</span>"));
         assertFalse(html.contains("id=\"playback-volume-value\""));
-        assertTrue(application.contains("import { WebCallPlayer } from './web-call-player.js?v=4';"));
+        assertTrue(application.matches("(?s).*import \\{ WebCallPlayer \\} from '\\./web-call-player\\.js\\?v=[1-9][0-9]*';.*"));
         assertFalse(html.contains("/assets/web-call-player.js"));
         assertFalse(source.contains("VOLUME_KEY"));
         assertFalse(source.contains("localStorage"));
@@ -715,8 +726,11 @@ class StatsWebInteractionUiContractTest
         assertTrue(applyPreferences.contains("this.gainNode.gain.value = volume"));
         assertTrue(changeVolume.contains("this.gainNode.gain.value = this.volume"));
         assertTrue(bindControls.contains("this.changeVolume(false)"));
-        assertTrue(bindControls.contains("this.writePreferences()"));
-        assertTrue(writePreferences.contains("this.preferenceWriter({"));
+        assertTrue(bindControls.contains("this.ui.volume.addEventListener('change', () => this.writePreferences({ volume: true }))"));
+        assertTrue(writePreferences.contains("const snapshot = {"));
+        assertTrue(writePreferences.contains("this.preferenceWriter(snapshot)"));
+        assertTrue(applyPreferences.contains("!this.volumeEditPending && Number.isFinite(volume)"));
+        assertTrue(applyPreferences.contains("options.identity !== this.preferenceIdentity"));
         assertTrue(writePreferences.contains("volume: this.volume"));
         assertFalse(changeVolume.contains("this.paused"));
         assertTrue(function(source, "  synchronizeSubscription()").contains("else this.setStatus('Ready')"));
@@ -956,8 +970,10 @@ class StatsWebInteractionUiContractTest
         assertTrue(detail.contains("ui-surface"));
         assertTrue(detail.contains("node('h2', 'scan-list-detail-title', name)"));
         assertTrue(detail.contains("scan-list-detail-badges"));
-        assertTrue(detail.contains("'Hidden from listeners'"));
-        assertTrue(detail.contains("'Available to listeners'"));
+        assertTrue(detail.contains("browsingWorkflows.scanListAvailabilityPill(node, scanList)"));
+        String browsing = readText(BROWSING_WORKFLOWS);
+        assertTrue(browsing.contains("row?.published === false ? 'Hidden from listeners' : 'Available to listeners'"));
+        assertTrue(browsing.contains("node('span', 'ui-pill', scanListAvailabilityLabel(row))"));
         assertTrue(detail.contains("adminScanListUnmatchedAliasLists"));
         assertTrue(actions.contains("anchor('Manage aliases'"));
         assertTrue(actions.contains("scanListId: scanList.id"));
@@ -1068,7 +1084,8 @@ class StatsWebInteractionUiContractTest
         assertFalse(css.contains(":root[data-theme=\"dark\"] #content .scanner-display {"));
         assertFalse(css.contains(".scanner-quality-track {"));
         assertTrue(css.contains(".scanner-participant-grid {"));
-        assertTrue(css.contains("font-size: 14px;"));
+        assertTrue(function(css, ".scanner-field-value,")
+            .contains("font-size: var(--font-size-secondary);"));
         assertFalse(source.contains("ui-button ${styleClass} scanner-key"));
         assertTrue(scanner.contains("ui-choice-card scanner-scan-button"));
         assertFalse(css.contains(":root[data-theme=\"dark\"] #content .scanner-key {"));
@@ -1112,8 +1129,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(scanListDetail.contains("node('h2', 'scan-list-detail-title', name)"));
         assertTrue(scanListDetail.contains("unmatched_alias_list_count"));
         assertTrue(scanListDetail.contains("adminScanListUnmatchedAliasLists"));
-        assertTrue(scanListDetail.contains("'Hidden from listeners'"));
-        assertTrue(scanListDetail.contains("'Available to listeners'"));
+        assertTrue(scanListDetail.contains("browsingWorkflows.scanListAvailabilityPill(node, scanList)"));
+        assertTrue(readText(BROWSING_WORKFLOWS)
+            .contains("row?.published === false ? 'Hidden from listeners' : 'Available to listeners'"));
         String unmatchedAliasLists = function(source, "function adminScanListUnmatchedAliasLists(scanList)");
         assertTrue(unmatchedAliasLists.contains("scanList?.unmatched_alias_lists"));
         assertTrue(unmatchedAliasLists.contains("list: id, aliasTab: 'configure'"));
@@ -1249,6 +1267,7 @@ class StatsWebInteractionUiContractTest
         String draftAlias = function(source, "function liveAliasDraftHref(row, kind)");
         String identityInfo = function(source, "function liveIdentityInfo(row, kind)");
         String routedPrefill = function(source, "function routedAliasPrefill(selectedList, options)");
+        String aliasEditor = function(source, "async function openAliasEditorModal(mode = 'create', id = null, prefill = null)");
         String scannerNavigate = function(source, "function scannerNavigate(call, channel, destination)");
         String conventional = function(source, "function liveConventionalChannelValue(row)");
         String systems = function(source, "function liveChannelsSection(onSelectionChange)");
@@ -1268,6 +1287,12 @@ class StatsWebInteractionUiContractTest
         assertTrue(draftAlias.contains("createType: type"));
         assertTrue(draftAlias.contains("createProtocol: protocol"));
         assertTrue(draftAlias.contains("createValue: value"));
+        assertTrue(draftAlias.contains("createType: 'p25_subscriber_identity'"));
+        assertTrue(draftAlias.contains("createHomeWacn: hex(canonical.wacn, 5)"));
+        assertTrue(draftAlias.contains("createHomeSystemId: hex(canonical.system_id, 3)"));
+        assertTrue(draftAlias.contains("createSubscriberId: canonical.subscriber_id"));
+        assertTrue(draftAlias.contains("createWorkingAddress: workingAddress"));
+        assertTrue(draftAlias.contains("p25CanonicalSubscriber(row, kind)"));
         assertTrue(identityInfo.contains("entityRefHref(row?.[`${kind}_entity_ref`])"));
         assertTrue(identityInfo.contains("{ channel: kind === 'source' ? 'radios' : 'groups' }"));
         assertTrue(identityInfo.contains("`Open channel ${collection}`"));
@@ -1276,6 +1301,10 @@ class StatsWebInteractionUiContractTest
         assertTrue(scannerNavigate.contains("{ channel: 'radios' }"));
         assertTrue(routedPrefill.contains("aliasMatcherDescriptor(options, type, protocol, variant)"));
         assertTrue(routedPrefill.contains("selectedList.new_alias_behavior"));
+        assertTrue(routedPrefill.contains("type === 'p25_subscriber_identity'"));
+        assertTrue(routedPrefill.contains("home_wacn: canonical.wacn"));
+        assertTrue(routedPrefill.contains("working_address: workingAddress"));
+        assertTrue(aliasEditor.contains("Observed Working ID ${workingAddress} is serving-system context only"));
         assertTrue(conventional.contains("entityRefHref(row?.entity_ref)"));
         assertFalse(conventional.contains("context_key"));
         assertFalse(upsert.contains("entityTarget(value.entity_ref)"));

@@ -97,6 +97,11 @@ function harness(liveAllowed = true) {
     source.indexOf('const RADIO_REFERENCE_DETAIL_CACHE_LIMIT')), context);
   [
     'function protocol(value)', 'function protocolFamily(row)', 'function isAnalogChannel(row)',
+    'function hex(value, width = 0)', 'function isP25(row)', 'function identifierNumber(value)',
+    'function identityNumber(row, value)', "function p25CanonicalSubscriber(row, prefix = '')",
+    'function canonicalSubscriberText(identity)', 'function radioIdentityPrefix(row, value)',
+    "function workingSubscriberId(row, prefix = '')",
+    "function radioIdentifierText(row, value, prefix = radioIdentityPrefix(row, value))",
     'function channelTagSet(...values)', 'function tunerStoredBoolean(key, fallback)',
     'function storeTunerBoolean(key, value)', 'function tunerActivityStatus(row, includeIdle = false)',
     'function updateSpectrumActivityTable(table)', 'function activeCarriers(includeIdle = false)',

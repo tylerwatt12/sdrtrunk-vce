@@ -13,7 +13,7 @@
     if ((match[2] === 'x') !== (match[3] === 'x') || (kind === 'patch_group' && noHome)) return '';
     const identifier = Number(match[4]);
     if (!Number.isSafeInteger(identifier) || identifier < 1 || String(identifier) !== match[4]) return '';
-    const maximum = kind === 'radio' ? (noHome ? 0xFFFFFF : 9_999_999) :
+    const maximum = kind === 'radio' ? (noHome ? 0xFFFFFF : 0xFFFFFC) :
       (noHome ? 0xFFFFFF : 0xFFFE);
     return identifier <= maximum ? key : '';
   }

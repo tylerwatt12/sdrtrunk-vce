@@ -2,9 +2,9 @@ import * as routeFoundation from './core/routes.js?v=8';
 import * as preferenceSchema from './core/preference-schema.js?v=3';
 import { Controller as UserPreferenceController } from './core/user-preferences.js';
 import * as tableLayouts from './core/table-layout.js';
-import * as tableDefaults from './core/table-defaults.js?v=11';
+import * as tableDefaults from './core/table-defaults.js?v=13';
 import { Controller as PageTitleController } from './core/page-title.js?v=2';
-import { href as entityRefHref } from './core/entity-ref.js';
+import { href as entityRefHref } from './core/entity-ref.js?v=1';
 import * as systemLabels from './core/system-labels.js?v=1';
 import * as pageLifecycle from './core/page-lifecycle.js';
 import { installIconHints } from './core/icon-hints.js?v=3';
@@ -31,7 +31,7 @@ import { createRecordingsFeature } from './features/recordings.js?v=18';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft } from './features/spectrum-search.js?v=16';
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult } from './features/discovery-radioreference.js?v=1';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
-import { createAudioDock } from './core/audio-dock.js?v=9';
+import { createAudioDock } from './core/audio-dock.js?v=10';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=1';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=6';
@@ -52,7 +52,8 @@ function installStickyHeaderOffset() {
 
 installStickyHeaderOffset();
 const ALIAS_CREATE_ROUTE_KEYS = Object.freeze([
-  'createAlias', 'createListId', 'createType', 'createProtocol', 'createVariant', 'createValue', 'createName'
+  'createAlias', 'createListId', 'createType', 'createProtocol', 'createVariant', 'createValue', 'createName',
+  'createHomeWacn', 'createHomeSystemId', 'createSubscriberId', 'createWorkingAddress'
 ]);
 const ALIAS_TRANSFER_IMPORT_MAX_BYTES = 128 * 1024 * 1024;
 const ALIAS_TRANSFER_EXPORT_READY_COOKIE_PREFIX = 'sdrtrunk_alias_export_ready_';
@@ -279,7 +280,12 @@ const SERVER_TABLE_DEFAULT_SORTS = {
   'radio-groups': 'last_seen',
   channels: 'name',
   'channel-group-identities': 'logical_call_count',
-  'channel-radios': 'logical_call_count'
+  'channel-radios': 'logical_call_count',
+  'issi-current-assignments': 'confirmed_at',
+  'issi-recent-changes': 'changed_at',
+  'issi-frequency-bands': 'last_seen',
+  'issi-subscribers': 'last_seen',
+  'issi-foreign-systems': 'last_seen'
 };
 const CHANNEL_IDENTITY_PAGE_LIMIT = 100;
 const SERVICE_STATUS_FAILURE_WARNING_THRESHOLD = 3;
@@ -1543,7 +1549,9 @@ function isAnalogChannel(row) {
 }
 
 function isP25(row) {
-  return protocolFamily(row) === 'P25';
+  const protocolName = String(row?.protocol || '').trim().toUpperCase();
+  const decoder = String(row?.decoder || '').trim().toUpperCase();
+  return protocolFamily(row) === 'P25' || protocolName.startsWith('APCO25') || decoder.startsWith('P25');
 }
 
 function identifierNumber(value) {
@@ -1565,6 +1573,61 @@ function identityNumber(row, value) {
       String(numeric & 0x7FF).padStart(4, '0')}`;
   }
   return identifierNumber(value);
+}
+
+function p25CanonicalSubscriber(row, prefix = '') {
+  if (!isP25(row)) return null;
+  const name = prefix ? `${prefix}_canonical_identity` : 'canonical_identity';
+  const nested = row?.[name];
+  const scalar = (suffix) => row?.[prefix ? `${prefix}_canonical_${suffix}` : `canonical_${suffix}`];
+  const homeWacn = nested?.wacn ?? scalar('wacn');
+  const homeSystemId = nested?.system_id ?? scalar('system_id');
+  const homeSubscriberId = nested?.subscriber_id ?? scalar('subscriber_id');
+  if ([homeWacn, homeSystemId, homeSubscriberId].some((value) =>
+    value === null || value === undefined || value === '' || typeof value === 'string' && !value.trim())) return null;
+  const wacn = Number(homeWacn);
+  const systemId = Number(homeSystemId);
+  const subscriberId = Number(homeSubscriberId);
+  if (!Number.isInteger(wacn) || wacn < 0 || wacn > 0xFFFFF ||
+      !Number.isInteger(systemId) || systemId < 0 || systemId > 0xFFF ||
+      !Number.isInteger(subscriberId) || subscriberId < 1 || subscriberId > 0xFFFFFC) return null;
+  return { wacn, system_id: systemId, subscriber_id: subscriberId };
+}
+
+function canonicalSubscriberText(identity) {
+  return identity ? `${hex(identity.wacn, 5)}.${hex(identity.system_id, 3)}.${identity.subscriber_id}` : '';
+}
+
+function radioIdentityPrefix(row, value) {
+  const numeric = Number(value);
+  const matches = (candidate) => Number.isFinite(numeric) && Number(candidate) === numeric;
+  if (row?.radio_canonical_identity && matches(row.radio_native_id)) return 'radio';
+  if (row?.source_canonical_identity && matches(row.source_id ?? row.source_radio_id ?? row.source_native_id)) {
+    return 'source';
+  }
+  if (row?.target_canonical_identity && matches(row.target_id ?? row.target_native_id)) return 'target';
+  return '';
+}
+
+function workingSubscriberId(row, prefix = '') {
+  const candidates = prefix ? [
+    row?.[`${prefix}_working_subscriber_id`], row?.[`${prefix}_observed_working_id`]
+  ] : [row?.working_subscriber_id, row?.observed_working_id];
+  for (const candidate of candidates) {
+    const numeric = Number(candidate);
+    if (Number.isInteger(numeric) && numeric >= 1 && numeric <= 0xFFFFFC) return numeric;
+  }
+  return null;
+}
+
+function radioIdentifierText(row, value, prefix = radioIdentityPrefix(row, value)) {
+  if (!isP25(row)) return identityNumber(row, value);
+  const canonical = p25CanonicalSubscriber(row, prefix);
+  if (!canonical) return identityNumber(row, value);
+  const canonicalText = canonicalSubscriberText(canonical);
+  const working = workingSubscriberId(row, prefix);
+  return working !== null ?
+    `${canonicalText} (Working ID ${working})` : canonicalText;
 }
 
 function trunkedSiteLabel(row) {
@@ -1916,7 +1979,7 @@ function groupIdentityLink(row, id, label, reference = row?.entity_ref) {
 
 function radioLink(row, id, label, reference = row?.entity_ref) {
   id = radioDisplayId(row, id);
-  const text = label || identityNumber(row, id);
+  const text = label || radioIdentifierText(row, id);
   const target = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ?
     entityTarget(reference, { channel: 'radios' }) : '';
   return target ? anchor(text, target) : text;
@@ -3727,7 +3790,16 @@ function aliasMatcherSummary(matcher) {
   const type = aliasMatcherOption(matcher.type).label || 'Matcher';
   const context = [matcher.protocol, matcher.variant].filter(Boolean).join(' · ');
   let value = '';
-  if (matcher.value !== null && matcher.value !== undefined) value = identifierNumber(matcher.value);
+  const canonical = p25CanonicalSubscriber({
+    protocol: 'P25',
+    canonical_identity: {
+      wacn: matcher.homeWacn ?? matcher.home_wacn,
+      system_id: matcher.homeSystemId ?? matcher.home_system_id,
+      subscriber_id: matcher.subscriberId ?? matcher.subscriber_id
+    }
+  });
+  if (canonical) value = canonicalSubscriberText(canonical);
+  else if (matcher.value !== null && matcher.value !== undefined) value = identifierNumber(matcher.value);
   else if (matcher.minimum !== null && matcher.minimum !== undefined &&
       matcher.maximum !== null && matcher.maximum !== undefined) {
     value = `${identifierNumber(matcher.minimum)}–${identifierNumber(matcher.maximum)}`;
@@ -4711,6 +4783,17 @@ function aliasNumericValue(value) {
   return Number.NaN;
 }
 
+function aliasHexValue(value) {
+  const text = String(value ?? '').trim();
+  if (!/^(?:0x)?[0-9a-f]+$/i.test(text)) return Number.NaN;
+  return Number.parseInt(text.replace(/^0x/i, ''), 16);
+}
+
+function aliasDecimalValue(value) {
+  const text = String(value ?? '').trim();
+  return /^[0-9]+$/.test(text) ? Number.parseInt(text, 10) : Number.NaN;
+}
+
 function aliasColorHex(value) {
   const numeric = Number(value ?? -1) >>> 0;
   return `#${numeric.toString(16).padStart(8, '0').slice(-6)}`;
@@ -4748,15 +4831,36 @@ function aliasMatcherDescriptor(options, keyOrType, protocol = '', variant = '')
   return typed || matchers[0];
 }
 
+function aliasMatcherCanonicalField(field) {
+  return ({ home_wacn: 'homeWacn', home_system_id: 'homeSystemId',
+    subscriber_id: 'subscriberId' })[field] || field;
+}
+
+function aliasMatcherFieldValue(matcher, field) {
+  const snake = ({ homeWacn: 'home_wacn', homeSystemId: 'home_system_id',
+    subscriberId: 'subscriber_id' })[field];
+  return matcher?.[field] ?? (snake ? matcher?.[snake] : undefined);
+}
+
+function aliasMatcherFieldLimit(descriptor, field, bound) {
+  const snake = ({ homeWacn: 'home_wacn', homeSystemId: 'home_system_id',
+    subscriberId: 'subscriber_id' })[field];
+  const camelBound = `${field}${bound[0].toUpperCase()}${bound.slice(1)}`;
+  return descriptor?.[camelBound] ?? (snake ? descriptor?.[`${snake}_${bound}`] : undefined);
+}
+
 function aliasMatcherDefault(descriptor, options = {}) {
   const matcher = { type: descriptor?.type };
   if (descriptor?.protocol) matcher.protocol = descriptor.protocol;
   if (descriptor?.variant) matcher.variant = descriptor.variant;
-  (descriptor?.fields || []).forEach((field) => {
+  (descriptor?.fields || []).forEach((rawField) => {
+    const field = aliasMatcherCanonicalField(rawField);
     if (field === 'tones') matcher.tones = [{ tone: options.tones?.[0] || '', duration: 1 }];
     else if (field === 'code') matcher.code = options.dcs_codes?.[0] || 'n023';
     else if (field === 'esn') matcher.esn = '';
-    else matcher[field] = field === 'minimum' ? Number(descriptor.minimum || 0) :
+    else if (['homeWacn', 'homeSystemId', 'subscriberId'].includes(field)) {
+      matcher[field] = Number(aliasMatcherFieldLimit(descriptor, field, 'minimum') ?? 0);
+    } else matcher[field] = field === 'minimum' ? Number(descriptor.minimum || 0) :
       (field === 'maximum' ? Number(descriptor.minimum || 0) : 0);
   });
   return matcher;
@@ -4775,18 +4879,32 @@ function aliasMatcherFields(host, descriptor, matcher, options) {
   host.replaceChildren();
   const fields = descriptor?.fields || [];
   const numberField = (field, label, help = '') => {
-    const input = aliasTextInput(`matcher-${field}`, matcher?.[field] ?? '', 'text');
+    const input = aliasTextInput(`matcher-${field}`, aliasMatcherFieldValue(matcher, field) ?? '', 'text');
     input.inputMode = 'numeric';
     input.required = true;
     host.append(aliasFormField(label, input, help));
   };
-  fields.forEach((field) => {
+  fields.forEach((rawField) => {
+    const field = aliasMatcherCanonicalField(rawField);
     if (field === 'value') {
       numberField(field, 'Identifier', descriptor?.minimum !== undefined ?
         `${identifierNumber(descriptor.minimum)} through ${identifierNumber(descriptor.maximum)}` : 'Decimal value');
     } else if (field === 'minimum') numberField(field, 'Minimum identifier');
     else if (field === 'maximum') numberField(field, 'Maximum identifier');
-    else if (field === 'status') numberField(field, 'Status', '0 through 255');
+    else if (field === 'homeWacn' || field === 'homeSystemId') {
+      const width = field === 'homeWacn' ? 5 : 3;
+      const label = field === 'homeWacn' ? 'Home WACN' : 'Home System ID';
+      const input = aliasTextInput(`matcher-${field}`, hex(aliasMatcherFieldValue(matcher, field), width), 'text');
+      input.autocomplete = 'off';
+      input.spellcheck = false;
+      input.required = true;
+      host.append(aliasFormField(label, input,
+        `${'0'.repeat(width)} through ${'F'.repeat(width)} hexadecimal`));
+    } else if (field === 'subscriberId') {
+      numberField(field, 'Subscriber ID',
+        `${identifierNumber(aliasMatcherFieldLimit(descriptor, field, 'minimum'))} through ${
+          identifierNumber(aliasMatcherFieldLimit(descriptor, field, 'maximum'))} decimal`);
+    } else if (field === 'status') numberField(field, 'Status', '0 through 255');
     else if (field === 'code') {
       host.append(aliasFormField('DCS code', aliasSelect('matcher-code', options?.dcs_codes || [], matcher?.code)));
     } else if (field === 'esn') {
@@ -4864,7 +4982,8 @@ function aliasMatcherPayload(form, descriptor) {
     if (preserveProtocol && selector.dataset.originalVariant) matcher.variant = selector.dataset.originalVariant;
     else if (descriptor.variant) matcher.variant = descriptor.variant;
   }
-  (descriptor.fields || []).forEach((field) => {
+  (descriptor.fields || []).forEach((rawField) => {
+    const field = aliasMatcherCanonicalField(rawField);
     if (field === 'tones') {
       matcher.tones = [...form.querySelectorAll('.alias-tone-row')].map((row) => ({
         tone: row.querySelector('[name="matcher-tone"]').value,
@@ -4872,7 +4991,13 @@ function aliasMatcherPayload(form, descriptor) {
       }));
     } else if (field === 'code') matcher.code = form.elements['matcher-code'].value;
     else if (field === 'esn') matcher.esn = form.elements['matcher-esn'].value.trim();
-    else matcher[field] = aliasNumericValue(form.elements[`matcher-${field}`].value);
+    else {
+      const payloadField = ({ homeWacn: 'home_wacn', homeSystemId: 'home_system_id',
+        subscriberId: 'subscriber_id' })[field] || field;
+      const raw = form.elements[`matcher-${field}`].value;
+      matcher[payloadField] = ['homeWacn', 'homeSystemId'].includes(field) ? aliasHexValue(raw) :
+        (field === 'subscriberId' ? aliasDecimalValue(raw) : aliasNumericValue(raw));
+    }
   });
   return matcher;
 }
@@ -4942,6 +5067,12 @@ function aliasEditorModalTabs(panels, initial = 'basics') {
   return navigation;
 }
 
+function aliasMatcherBoundText(field, value) {
+  if (field === 'homeWacn') return hex(value, 5);
+  if (field === 'homeSystemId') return hex(value, 3);
+  return identifierNumber(value);
+}
+
 function aliasEditorPayload(form, options) {
   const matcherType = form.elements.matcherType.value;
   const descriptor = aliasMatcherDescriptor(options, matcherType);
@@ -4960,6 +5091,20 @@ function aliasEditorPayload(form, options) {
     throw new Error(`The identifier must be between ${identifierNumber(descriptor.minimum)} and ${
       identifierNumber(descriptor.maximum)}`);
   }
+  [
+    ['home_wacn', 'homeWacn', 'Home WACN'],
+    ['home_system_id', 'homeSystemId', 'Home System ID'],
+    ['subscriber_id', 'subscriberId', 'Subscriber ID']
+  ].forEach(([payloadField, descriptorField, label]) => {
+    if (matcher[payloadField] === undefined) return;
+    const minimum = Number(aliasMatcherFieldLimit(descriptor, descriptorField, 'minimum'));
+    const maximum = Number(aliasMatcherFieldLimit(descriptor, descriptorField, 'maximum'));
+    if (!Number.isInteger(matcher[payloadField]) || matcher[payloadField] < minimum ||
+        matcher[payloadField] > maximum) {
+      throw new Error(`${label} must be between ${aliasMatcherBoundText(descriptorField, minimum)} and ${
+        aliasMatcherBoundText(descriptorField, maximum)}`);
+    }
+  });
   const streamValue = form.elements.streamAsTalkgroup.value.trim();
   return {
     alias_list_id: Number(form.elements.aliasListId.value),
@@ -5088,6 +5233,13 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     matcherType.dataset.originalProtocol = String(source.matcher?.protocol || '');
     matcherType.dataset.originalVariant = String(source.matcher?.variant || '');
     const matcherNotice = node('div', 'alias-identifier-notice');
+    const workingAddress = Number(source.working_address);
+    if (!editing && !cloning && String(initialMatcher?.type || '').toLowerCase() === 'p25_subscriber_identity' &&
+        Number.isInteger(workingAddress) && workingAddress >= 1 && workingAddress <= 0xFFFFFC) {
+      matcherNotice.append(node('div', 'metric-meaning-note',
+        `Observed Working ID ${workingAddress} is serving-system context only; this Alias matches the permanent ` +
+          'WACN.System.Subscriber identity shown below.'));
+    }
     if (source.overlap) {
       const warning = node('div', 'ui-notice ui-notice-danger ui-notice-spaced',
         'This identifier overlaps another alias in the list.');
@@ -6632,19 +6784,46 @@ function routedAliasPrefill(selectedList, options) {
   const type = String(route.get('createType') || '').trim().toLowerCase();
   const protocol = String(route.get('createProtocol') || '').trim().toLowerCase();
   const variant = String(route.get('createVariant') || '').trim().toLowerCase();
-  const valueText = String(route.get('createValue') || '').trim();
-  if (!['talkgroup', 'radio'].includes(type) ||
-      !['am', 'p25', 'dmr', 'nxdn', 'nbfm', 'fleetsync', 'mdc1200'].includes(protocol) ||
-      !/^[0-9]+$/.test(valueText)) return null;
-  if ((protocol === 'p25' && !['phase_1', 'phase_2'].includes(variant)) ||
-      (protocol !== 'p25' && variant)) return null;
-  const value = Number(valueText);
-  if (!Number.isSafeInteger(value) || value < 0) return null;
-  const descriptor = aliasMatcherDescriptor(options, type, protocol, variant);
-  if (!descriptor || String(descriptor.type) !== type || String(descriptor.protocol || '') !== protocol ||
-      (protocol !== 'p25' && String(descriptor.variant || '') !== variant) ||
-      (descriptor.minimum !== undefined && value < Number(descriptor.minimum)) ||
-      (descriptor.maximum !== undefined && value > Number(descriptor.maximum))) return null;
+  let matcher;
+  let workingAddress = null;
+  if (type === 'p25_subscriber_identity') {
+    if (protocol || variant || route.has('createValue')) return null;
+    const homeWacnText = String(route.get('createHomeWacn') || '').trim();
+    const homeSystemIdText = String(route.get('createHomeSystemId') || '').trim();
+    const subscriberIdText = String(route.get('createSubscriberId') || '').trim();
+    if (!/^(?:0x)?[0-9a-f]{1,5}$/i.test(homeWacnText) ||
+        !/^(?:0x)?[0-9a-f]{1,3}$/i.test(homeSystemIdText) || !/^[0-9]+$/.test(subscriberIdText)) return null;
+    const canonical = p25CanonicalSubscriber({
+      protocol: 'p25', canonical_identity: {
+        wacn: aliasHexValue(homeWacnText), system_id: aliasHexValue(homeSystemIdText),
+        subscriber_id: aliasDecimalValue(subscriberIdText)
+      }
+    });
+    const descriptor = aliasMatcherDescriptor(options, type);
+    if (!canonical || !descriptor || String(descriptor.type || '').toLowerCase() !== type) return null;
+    matcher = { type, home_wacn: canonical.wacn, home_system_id: canonical.system_id,
+      subscriber_id: canonical.subscriber_id };
+    if (route.has('createWorkingAddress')) {
+      const workingText = String(route.get('createWorkingAddress') || '').trim();
+      workingAddress = /^[0-9]+$/.test(workingText) ? Number(workingText) : Number.NaN;
+      if (!Number.isInteger(workingAddress) || workingAddress < 1 || workingAddress > 0xFFFFFC) return null;
+    }
+  } else {
+    const valueText = String(route.get('createValue') || '').trim();
+    if (!['talkgroup', 'radio'].includes(type) ||
+        !['am', 'p25', 'dmr', 'nxdn', 'nbfm', 'fleetsync', 'mdc1200'].includes(protocol) ||
+        !/^[0-9]+$/.test(valueText)) return null;
+    if ((protocol === 'p25' && !['phase_1', 'phase_2'].includes(variant)) ||
+        (protocol !== 'p25' && variant)) return null;
+    const value = Number(valueText);
+    if (!Number.isSafeInteger(value) || value < 0) return null;
+    const descriptor = aliasMatcherDescriptor(options, type, protocol, variant);
+    if (!descriptor || String(descriptor.type) !== type || String(descriptor.protocol || '') !== protocol ||
+        (protocol !== 'p25' && String(descriptor.variant || '') !== variant) ||
+        (descriptor.minimum !== undefined && value < Number(descriptor.minimum)) ||
+        (descriptor.maximum !== undefined && value > Number(descriptor.maximum))) return null;
+    matcher = { type, protocol, ...(variant ? { variant } : {}), value };
+  }
   const policy = selectedList.new_alias_behavior || {};
   return {
     alias_list_id: aliasListId(selectedList),
@@ -6657,7 +6836,8 @@ function routedAliasPrefill(selectedList, options) {
     broadcast_configuration_ids: [...(policy.broadcast_configuration_ids || [])],
     scan_list_ids: [...(policy.scan_list_ids || [])],
     stream_as_talkgroup: null,
-    matcher: { type, protocol, ...(variant ? { variant } : {}), value }
+    matcher,
+    ...(workingAddress !== null ? { working_address: workingAddress } : {})
   };
 }
 
@@ -10212,7 +10392,9 @@ function scannerNetworkSiteIdentity(call) {
 
 function scannerTargetLabel(call, channel) {
   if (isAnalogChannel(channel || call)) return call?.channel || channel?.name || 'Analog channel';
-  return call?.target_alias || (call?.target_id ? `${identifierTypeLabel(call.target_form)} ${call.target_id}` :
+  const targetId = String(call?.target_form || '').toUpperCase() === 'RADIO' || call?.target_canonical_identity ?
+    radioIdentifierText(call, call?.target_id, 'target') : call?.target_id;
+  return call?.target_alias || (targetId ? `${identifierTypeLabel(call.target_form)} ${targetId}` :
     call?.channel || 'Waiting for a call');
 }
 
@@ -10369,6 +10551,8 @@ function scannerCallRenderKey(call, state, site) {
   if (!call) return `idle:${scannerDetailMode}:${state.stopped ? 'stopped' : state.paused ? 'paused' : 'listening'}`;
   return JSON.stringify([
     scannerDetailMode, call.call_id || '', call.started_at_ms || '',
+    call.source_id || '', call.source_canonical_identity || '', call.source_observed_working_id || '',
+    call.target_id || '', call.target_canonical_identity || '', call.target_observed_working_id || '',
     scannerMatchedScanLists(call, state), site?.p25_decoder_mode || '',
     site?.modulation || '', site?.configuration_id || '', site?.channel_kind || '',
     site?.entity_ref?.key || ''
@@ -10424,10 +10608,13 @@ function renderScannerCall(host, state, channelMetadata) {
   const participants = node('div', 'scanner-participant-grid');
   const visibleParticipants = [];
   if (!analog && detailLevel >= SCANNER_DETAIL_LEVELS.normal) {
-    visibleParticipants.push(scannerParticipant('Target', call.target_alias, call.target_id, call.target_description,
+    const targetId = String(call?.target_form || '').toUpperCase() === 'RADIO' || call?.target_canonical_identity ?
+      radioIdentifierText(call, call.target_id, 'target') : call.target_id;
+    visibleParticipants.push(scannerParticipant('Target', call.target_alias, targetId, call.target_description,
       call.target_group, open('target-alias'), open('target')));
   }
-  visibleParticipants.push(scannerParticipant('Source', scannerSourceAlias(call), call.source_id,
+  visibleParticipants.push(scannerParticipant('Source', scannerSourceAlias(call),
+    radioIdentifierText(call, call.source_id, 'source'),
     call.source_description, call.source_group, open('source-alias'), open('source')));
   visibleParticipants.filter(Boolean).forEach((participant) => participants.append(participant));
   const networkSiteIdentity = scannerNetworkSiteIdentity(call);
@@ -10850,6 +11037,9 @@ function radioSystemTabItems(system) {
   if (radioSystemCapability(system, 'radios')) {
     items.push({ id: 'radios', label: 'Radios', href: href('radio-system', { ...values, tab: 'radios' }) });
   }
+  if (radioSystemCapability(system, 'issi')) {
+    items.push({ id: 'issi', label: 'ISSI', href: href('radio-system', { ...values, tab: 'issi' }) });
+  }
   if (radioSystemCapability(system, 'activity')) {
     items.push({ id: 'activity', label: 'Activity', href: href('radio-system', { ...values, tab: 'activity' }) });
   }
@@ -10990,8 +11180,10 @@ function dashboardChannelContext(row) {
 }
 
 function dashboardIdentityId(row) {
-  return identityKind(row.identity_kind) === 'unknown' || Number(row.identity_id) <= 0 ? '—' :
-    identityNumber(row, row.identity_id);
+  const value = row.identity_id ?? row.native_id;
+  const kind = identityKind(row.identity_kind);
+  if (kind === 'unknown' || Number(value) <= 0) return '—';
+  return kind === 'radio' ? radioIdentifierText(row, value) : identityNumber(row, value);
 }
 
 function dashboardIdentityLink(row, label = dashboardIdentityId(row)) {
@@ -11183,7 +11375,7 @@ function dashboardActivitySystem(row) {
 }
 
 function dashboardActivityRadio(row) {
-  const identifier = identityNumber(row, radioDisplayId(row)) || '—';
+  const identifier = radioIdentifierText(row, radioDisplayId(row)) || '—';
   const reference = row.radio_entity_ref;
   const target = entityReferenceAllowed(reference) ?
     entityTarget(reference, { channel: 'radios' }) : '';
@@ -11195,6 +11387,7 @@ function dashboardActivityAlias(row) {
   const description = String(row.alias_description || '').trim();
   if (!alias && !description) return '—';
   const summary = node('span', 'dashboard-identity');
+  summary.title = [alias, description].filter(Boolean).join(' · ');
   const primary = node('span', 'dashboard-identity-primary');
   primary.textContent = alias || description;
   summary.append(primary);
@@ -16142,10 +16335,11 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
       .map((row) => String(row.target_form || '').toUpperCase()))];
     (targetForms.length ? targetForms : ['']).forEach((form) => add(targetIdentifierLabel(form),
       activityValues(identityRows.filter((row) => String(row.target_form || '').toUpperCase() === form ||
-        (!form && !row.target_form)), (row) => row.target_id)));
+        (!form && !row.target_form)), (row) => form === 'RADIO' || row.target_canonical_identity ?
+        radioIdentifierText(row, row.target_id, 'target') : row.target_id)));
     add('Target alias', activityValues(identityRows, (row) => activityAliasLabel(row, 'target')));
     add('Source type', activityValues(rows, (row) => activityTokenLabel(row.source_form)));
-    add('Source', activityValues(rows, (row) => row.source_id));
+    add('Source', activityValues(rows, (row) => radioIdentifierText(row, row.source_id, 'source')));
     add('Source alias', activityValues(rows, (row) => activityAliasLabel(row, 'source')));
     add('Talker alias', activityValues(rows, (row) => row.talker_alias));
     const measuredSignal = activityValues(rows, (row) => Number.isFinite(Number(row.signal_dbfs)) ?
@@ -16844,6 +17038,18 @@ function liveExistingAliasHref(reference) {
   }) : '';
 }
 
+function liveAliasProtocol(row, kind) {
+  const value = String(row?.protocol || row?.[`${kind}_matcher`]?.protocol || '').trim().toLowerCase();
+  return ['am', 'p25', 'dmr', 'nxdn', 'nbfm', 'fleetsync', 'mdc1200'].includes(value) ? value : '';
+}
+
+function liveAliasP25Variant(row, kind) {
+  const explicit = String(row?.protocol_variant || row?.[`${kind}_matcher`]?.variant || '').trim().toLowerCase();
+  if (['phase_1', 'phase_2'].includes(explicit)) return explicit;
+  const decoder = String(row?.decoder || '').trim().toUpperCase().replace(/[^A-Z0-9]+/g, '');
+  return decoder.includes('PHASE2') || decoder === 'P252' ? 'phase_2' : 'phase_1';
+}
+
 function liveIdentityType(row, kind) {
   const matcherType = String(row?.[`${kind}_matcher`]?.type || '').trim().toLowerCase();
   if (['talkgroup', 'patch_group', 'radio'].includes(matcherType)) return matcherType;
@@ -16888,12 +17094,56 @@ function liveIdentityInfo(row, kind) {
 
 let liveIdentityActionSequence = 0;
 
+function liveIdentityActionTitle(row, kind, label = '') {
+  const canonical = p25CanonicalSubscriber(row, kind);
+  const radio = liveIdentityType(row, kind) === 'radio' || Boolean(canonical);
+  const value = row?.[`${kind}_id`];
+  const identity = radio ? radioIdentifierText(row, value, kind) :
+    (value === null || value === undefined ? '' : String(value));
+  const type = radio ? 'Radio' : liveIdentityLabel(row, kind, true);
+  const displayedAlias = label && String(label) !== identity ? String(label) :
+    (row?.[`${kind}_alias_display`] || row?.[`${kind}_alias`] ||
+      row?.[`${kind}_aliases`]?.[0]?.name || (kind === 'source' ? row?.talker_alias : ''));
+  return [type, radio && displayedAlias ? displayedAlias : identity].filter(Boolean).join(' ');
+}
+
+function p25IdentityEvidenceLabel(row, kind = '') {
+  const key = kind ? `${kind}_identity_source` : 'identity_source';
+  return ({
+    explicit_identity: 'Permanent identity carried in the decoded message',
+    registration_mapping: 'Permanent identity resolved from a confirmed working assignment',
+    working_id: 'Working ID only; permanent identity not confirmed',
+    unresolved: 'Identity could not be resolved'
+  })[row?.[key]] || 'Identity source not recorded';
+}
+
+function liveIdentityFacts(row, kind) {
+  const canonical = p25CanonicalSubscriber(row, kind);
+  if (!isP25(row) || liveIdentityType(row, kind) !== 'radio' && !canonical) return null;
+  const homeKey = canonical ? `p25:${hex(canonical.wacn, 5).toLowerCase()}:${hex(canonical.system_id, 3).toLowerCase()}` : '';
+  const homeIdentity = canonical ? `${hex(canonical.wacn, 5)}.${hex(canonical.system_id, 3)}` : '';
+  const homeName = row?.[`${kind}_home_system_name`] || row?.home_system_name ||
+    systemLabels.systemName(homeKey) || homeIdentity;
+  const homeReference = row?.[`${kind}_home_system_entity_ref`] || row?.home_system_entity_ref;
+  const homeTarget = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ? entityRefHref(homeReference) : '';
+  const values = [
+    ['Serving System', radioSystemContextLink(row)],
+    ['Home System', homeName ? identitySummaryValue(homeName, homeName === homeIdentity ? '' : homeIdentity, homeTarget) : 'Not confirmed'],
+    ['Permanent Identity', canonical ? canonicalSubscriberText(canonical) : 'Not confirmed'],
+    ['Working ID', workingSubscriberId(row, kind) == null ? 'Not supplied' :
+      identifierNumber(workingSubscriberId(row, kind))],
+    ['Identity Evidence', p25IdentityEvidenceLabel(row, kind)]
+  ];
+  return keyValues(values);
+}
+
 function liveIdentityActionLink(row, kind, label, aliasTarget, aliasMode = 'edit') {
   const info = liveIdentityInfo(row, kind);
   const infoTarget = info?.target || '';
   if (!aliasTarget && !infoTarget) return label;
   const trigger = anchor(label, infoTarget || aliasTarget, 'live-alias-link');
-  if (!aliasTarget || !infoTarget) return trigger;
+  const identityFacts = liveIdentityFacts(row, kind);
+  if ((!aliasTarget || !infoTarget) && !identityFacts) return trigger;
   const id = `live-identity-action-${++liveIdentityActionSequence}`;
   trigger.id = id;
   trigger.setAttribute('aria-haspopup', 'dialog');
@@ -16903,17 +17153,21 @@ function liveIdentityActionLink(row, kind, label, aliasTarget, aliasMode = 'edit
     event.preventDefault();
     const identityLabel = liveIdentityLabel(row, kind);
     const modalBody = node('div', 'tuner-frequency-action-body');
-    modalBody.append(node('p', 'tuner-frequency-action-intro', `Choose what to do with ${String(label)}.`));
+    modalBody.append(node('p', 'tuner-frequency-action-intro', `Choose an action for this ${identityLabel}.`));
+    const facts = liveIdentityFacts(row, kind);
+    if (facts) modalBody.append(facts);
     const actions = node('div', 'tuner-frequency-action-list');
     const manage = anchor('', aliasTarget, 'ui-button ui-button-secondary tuner-frequency-action');
     manage.append(node('strong', '', aliasMode === 'create' ? 'Create alias' : 'Edit alias'),
       node('small', '', `${aliasMode === 'create' ? 'Create' : 'Open'} this ${identityLabel}'s configured alias.`));
-    const infoLink = anchor('', infoTarget, 'ui-button ui-button-secondary tuner-frequency-action');
-    infoLink.append(node('strong', '', info.title),
-      node('small', '', info.description));
-    actions.append(manage, infoLink);
+    if (aliasTarget) actions.append(manage);
+    if (infoTarget) {
+      const infoLink = anchor('', infoTarget, 'ui-button ui-button-secondary tuner-frequency-action');
+      infoLink.append(node('strong', '', info.title), node('small', '', info.description));
+      actions.append(infoLink);
+    }
     modalBody.append(actions);
-    openReadOnlyModal(`${liveIdentityLabel(row, kind, true)} ${row?.[`${kind}_id`] || ''}`,
+    openReadOnlyModal(liveIdentityActionTitle(row, kind, label),
       modalBody, { id: 'live-identity-actions', className: 'frequency-action-modal',
         returnFocusSelector: `#${id}` });
   });
@@ -16921,17 +17175,28 @@ function liveIdentityActionLink(row, kind, label, aliasTarget, aliasMode = 'edit
 }
 
 function liveAliasDraftHref(row, kind) {
-  const matcher = row?.[`${kind}_matcher`];
   const aliasListId = Number(row?.alias_list_id);
-  const type = String(matcher?.type || '').trim().toLowerCase();
-  const protocol = String(matcher?.protocol || '').trim().toLowerCase();
-  const variant = String(matcher?.variant || '').trim().toLowerCase();
-  const value = Number(matcher?.value);
+  const type = liveIdentityType(row, kind);
+  const protocol = liveAliasProtocol(row, kind);
+  const value = Number(row?.[`${kind}_id`] ?? row?.[`${kind}_matcher`]?.value);
   if (!aliasAdminAllowed() || !Number.isInteger(aliasListId) || aliasListId <= 0 ||
       !['talkgroup', 'radio'].includes(type) ||
       !['am', 'p25', 'dmr', 'nxdn', 'nbfm', 'fleetsync', 'mdc1200'].includes(protocol) ||
-      !Number.isSafeInteger(value) || value < 0 ||
-      specialIdentifierLabel(row, value, type)) return '';
+      !Number.isSafeInteger(value) || value < 0) return '';
+  const canonical = type === 'radio' ? p25CanonicalSubscriber(row, kind) : null;
+  if (canonical) {
+    const workingAddress = workingSubscriberId(row, kind);
+    const suggestedName = kind === 'source' && String(row?.talker_alias || '').trim() ?
+      String(row.talker_alias).trim() : `Radio ${canonicalSubscriberText(canonical)}`;
+    return href('aliases', {
+      aliasTab: 'configure', createAlias: 1, createListId: aliasListId,
+      createType: 'p25_subscriber_identity', createHomeWacn: hex(canonical.wacn, 5),
+      createHomeSystemId: hex(canonical.system_id, 3), createSubscriberId: canonical.subscriber_id,
+      createWorkingAddress: workingAddress, createName: suggestedName
+    });
+  }
+  if (specialIdentifierLabel(row, value, type)) return '';
+  const variant = protocol === 'p25' ? liveAliasP25Variant(row, kind) : '';
   const suggestedName = kind === 'source' && String(row?.talker_alias || '').trim() ?
     String(row.talker_alias).trim() : `${type === 'radio' ? 'Radio' : 'Talkgroup'} ${value}`;
   return href('aliases', {
@@ -16942,7 +17207,10 @@ function liveAliasDraftHref(row, kind) {
 
 function liveIdentifierAliasValue(row, kind) {
   const value = row?.[`${kind}_id`];
-  const text = value === null || value === undefined ? '' : String(value);
+  const radio = kind === 'source' || String(row?.[`${kind}_form`] || '').toUpperCase() === 'RADIO' ||
+    Boolean(row?.[`${kind}_canonical_identity`]);
+  const text = value === null || value === undefined ? '' :
+    (radio ? radioIdentifierText(row, value, kind) : String(value));
   if (!text) return '';
   const reference = liveAliasReferences(row, kind)[0];
   const target = liveExistingAliasHref(reference) || liveAliasDraftHref(row, kind);
@@ -17081,7 +17349,10 @@ async function activateLivePresentationSettings(button) {
 
 const LIVE_IDLE_CALL_FIELDS = [
   'source_id', 'source_form', 'source_alias', 'source_alias_description', 'source_alias_display',
-  'source_aliases', 'source_entity_ref', 'talker_alias', 'target_id', 'target_form', 'target_alias',
+  'source_aliases', 'source_entity_ref', 'source_canonical_identity', 'source_working_subscriber_id',
+  'source_observed_working_id', 'source_identity_source',
+  'talker_alias', 'target_id', 'target_form', 'target_alias', 'target_canonical_identity',
+  'target_working_subscriber_id', 'target_observed_working_id', 'target_identity_source',
   'target_alias_description', 'target_aliases', 'target_entity_ref', 'encryption_details'
 ];
 const LIVE_VOICE_QUALITY_FIELDS = [
@@ -17095,6 +17366,8 @@ function liveIdentityRenderKey(row, kind) {
     row?.[`${kind}_alias_description`], row?.[`${kind}_alias_display`],
     row?.[`${kind}_aliases`], row?.[`${kind}_entity_ref`], row?.[`${kind}_matcher`],
     kind === 'source' ? row?.talker_alias : null, row?.alias_list_id, row?.protocol,
+    row?.[`${kind}_canonical_identity`], row?.[`${kind}_working_subscriber_id`],
+    row?.[`${kind}_observed_working_id`], row?.[`${kind}_identity_source`],
     row?.decoder, row?.tags, row?.entity_ref, row?.channel_kind, row?.channel_name
   ]);
 }
@@ -18465,6 +18738,376 @@ function radioSystemsDirectoryDetails(row) {
   ].filter(Boolean).join(' · ');
 }
 
+function issiHomeSystemText(row) {
+  const wacn = hex(row?.canonical_identity?.wacn ?? row?.foreign_wacn, 5);
+  const systemId = hex(row?.canonical_identity?.system_id ?? row?.foreign_system_id, 3);
+  return wacn && systemId ? `${wacn}.${systemId}` : '';
+}
+
+function issiObservedOnCell(row) {
+  const channel = row?.observed_on;
+  if (!channel || typeof channel !== 'object' || Array.isArray(channel)) return '—';
+  const display = presenceChannelDisplayParts(channel);
+  if (!display.primary) return '—';
+  const target = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ? entityRefHref(channel.entity_ref) : '';
+  return identitySummaryValue(display.primary, display.secondary, target);
+}
+
+function issiSubscriberColumns() {
+  return [
+    { id: 'canonical-subscriber', label: 'Radio',
+      render: issiSubscriberCell, className: 'alias-cell',
+      sort: 'canonical_identity', sortValue: (row) => canonicalSubscriberText(row.canonical_identity) },
+    { id: 'working-id', label: 'Last Working ID', key: 'last_observed_working_id', className: 'numeric',
+      sort: 'working_id', render: (row) => identifierNumber(row.last_observed_working_id) },
+    { id: 'home-system', label: 'Home System', render: issiHomeSystemCell, className: 'alias-cell' },
+    { id: 'talker-alias', label: 'OTA Alias', key: 'last_talker_alias', className: 'alias-cell' },
+    { id: 'evidence', label: 'Last Evidence', render: (row) =>
+      semanticLabel(row.last_assignment_evidence) },
+    { id: 'affiliation', label: 'Affiliation', render: affiliationTalkgroupCell,
+      className: 'alias-cell' },
+    { id: 'observed-on', label: 'Observed On', render: issiObservedOnCell,
+      className: 'alias-cell' },
+    { id: 'registrations', label: 'Reg', fullLabel: 'Accepted Registration Observations',
+      render: (row) => number(row.registration_observation_count), className: 'numeric',
+      sort: 'registration_observation_count' },
+    { id: 'affiliations', label: 'Aff', fullLabel: 'Accepted Affiliation Observations',
+      render: (row) => number(row.affiliation_observation_count), className: 'numeric',
+      sort: 'affiliation_observation_count' },
+    { id: 'logical-calls', label: 'Calls', fullLabel: 'Logical Calls',
+      render: (row) => number(row.logical_call_count), className: 'numeric', sort: 'logical_call_count' },
+    { id: 'last-mapping-seen', label: 'Mapping Seen', fullLabel: 'Last Mapping Observed',
+      render: (row) => dateTime(row.last_mapping_observed_ms), sort: 'last_mapping_seen',
+      sortValue: (row) => Number(row.last_mapping_observed_ms || 0) },
+    { id: 'last-seen', label: 'Seen', fullLabel: 'Last Observed',
+      render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen',
+      sortValue: (row) => Number(row.last_seen_ms || 0) }
+  ];
+}
+
+function issiForeignSystemColumns() {
+  return [
+    { id: 'home-system', label: 'Home System', render: issiHomeSystemCell,
+      className: 'alias-cell', sort: 'identity', sortValue: issiHomeSystemText },
+    { id: 'subscribers', label: 'Subscribers', key: 'subscriber_count', className: 'numeric',
+      sort: 'subscribers' },
+    { id: 'wuid-observed-subscribers', label: 'WUID Seen',
+      fullLabel: 'Subscribers Seen With a Working ID', key: 'wuid_observed_subscriber_count',
+      className: 'numeric', sort: 'wuid_observed_subscribers' },
+    { id: 'registrations', label: 'Reg', fullLabel: 'Accepted Registration Observations',
+      key: 'registration_observation_count', className: 'numeric', sort: 'registrations' },
+    { id: 'affiliations', label: 'Aff', fullLabel: 'Accepted Affiliation Observations',
+      key: 'affiliation_observation_count', className: 'numeric', sort: 'affiliations' },
+    { id: 'calls', label: 'Calls', fullLabel: 'Logical Calls', key: 'logical_call_count',
+      className: 'numeric', sort: 'logical_call_count' },
+    { id: 'bands', label: 'Bands', key: 'band_count', className: 'numeric', sort: 'bands' },
+    { id: 'first-seen', label: 'First', fullLabel: 'First Observed',
+      render: (row) => dateTime(row.first_seen_ms), sort: 'first_seen' },
+    { id: 'last-seen', label: 'Seen', fullLabel: 'Last Observed',
+      render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen' }
+  ];
+}
+
+function issiBandColumns() {
+  return [
+    { id: 'home-system', label: 'Home System', render: issiHomeSystemCell,
+      className: 'alias-cell', sort: 'identity', sortValue: issiHomeSystemText },
+    { id: 'band', label: 'Band', key: 'band', className: 'numeric', sort: 'band' },
+    { id: 'mode', label: 'Mode', render: (row) => semanticLabel(row.access_mode) },
+    { id: 'base', label: 'Base', fullLabel: 'Base MHz', render: (row) => frequency(row.base_hz),
+      className: 'numeric', sort: 'base_hz', sortValue: (row) => Number(row.base_hz || 0) },
+    { id: 'spacing', label: 'Space', fullLabel: 'Spacing kHz',
+      render: (row) => row.spacing_hz ? (row.spacing_hz / 1000).toFixed(3) : '',
+      className: 'numeric', sort: 'spacing_hz', sortValue: (row) => Number(row.spacing_hz || 0) },
+    { id: 'bandwidth', label: 'BW Hz', fullLabel: 'Bandwidth Hz', key: 'bandwidth_hz',
+      className: 'numeric' },
+    { id: 'offset', label: 'Offset', fullLabel: 'Offset MHz',
+      render: (row) => row.transmit_offset_hz ? (row.transmit_offset_hz / 1000000).toFixed(5) : '',
+      className: 'numeric', sort: 'transmit_offset_hz', sortValue: (row) => Number(row.transmit_offset_hz || 0) },
+    { id: 'slots', label: 'Slots', key: 'timeslots', className: 'numeric' },
+    { id: 'voice-rate', label: 'Voice Rate', render: (row) => semanticLabel(row.voice_rate) },
+    { id: 'observed-on', label: 'Observed On', render: issiObservedOnCell, className: 'alias-cell', sort: 'channel' },
+    { id: 'state', label: 'Observation', render: (row) => uiPill(
+      String(row.state || '').toLowerCase() === 'current' ? 'Recently observed' : 'Historical', 'neutral'),
+      sortValue: (row) => row.state || '' },
+    { id: 'observations', label: 'Observations', key: 'observation_count', className: 'numeric', sort: 'observations' },
+    { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen',
+      render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
+  ];
+}
+
+// Reuse map: system tabs, identity summaries, async sections, table controllers, filter
+// disclosure/sheets, paging, metrics and page timers provide every ISSI surface. No feature CSS.
+function issiSubscriberCell(row) {
+  if (row.invalidation_scope === 'receiver') return 'All receiver mappings';
+  if (row.invalidation_scope === 'system') return 'All mappings on this system';
+  const canonical = canonicalSubscriberText(row.canonical_identity);
+  const label = aliasLabel(row) || row.last_talker_alias || canonical || 'Unknown subscriber';
+  const target = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ? entityRefHref(row.entity_ref) : '';
+  return identitySummaryValue(label, label === canonical ? '' : canonical, target);
+}
+
+function issiHomeSystemCell(row) {
+  if (row.invalidation_scope) return '—';
+  const reference = row.home_system_entity_ref || row.foreign_system_entity_ref;
+  const label = row.home_system_name || row.foreign_system_name ||
+    systemLabels.systemName(row.home_radio_system_key || reference?.radio_system_key) || issiHomeSystemText(row);
+  const identity = issiHomeSystemText(row);
+  const target = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ? entityRefHref(reference) : '';
+  return identitySummaryValue(label || 'Unknown home system', label === identity ? '' : identity, target);
+}
+
+function issiAliasAction(row) {
+  if (!aliasAdminAllowed()) return '';
+  const canonical = row.canonical_identity;
+  if (!canonical || !(Number(row.alias_list_id) > 0)) return '';
+  const permanent = String(row.alias_matcher_type || '').toLowerCase() === 'p25_subscriber_identity';
+  const edit = permanent && Number(row.alias_id) > 0;
+  const target = edit ? liveExistingAliasHref(row) : liveAliasDraftHref({
+    ...row, protocol: 'p25', source_form: 'RADIO', source_id: canonical.subscriber_id,
+    source_canonical_identity: canonical, source_observed_working_id: row.observed_working_id,
+    talker_alias: row.last_talker_alias
+  }, 'source');
+  return target ? anchor(edit ? 'Edit permanent Alias' : 'Add permanent Alias', target,
+    'ui-button ui-button-secondary') : '';
+}
+
+function issiCurrentAssignmentColumns() {
+  return [
+    { id: 'radio', label: 'Radio', render: issiSubscriberCell, sort: 'canonical_identity' },
+    { id: 'home-system', label: 'Home System', render: issiHomeSystemCell },
+    { id: 'working-id', label: 'Working ID', render: (row) => identifierNumber(row.observed_working_id),
+      className: 'numeric', sort: 'working_id' },
+    { id: 'confirmed', label: 'Last Confirmed', render: (row) => dateTime(row.confirmed_at_ms),
+      sort: 'confirmed_at' },
+    { id: 'expires', label: 'Lease Ends', render: (row) => row.expires_at_ms == null ?
+      'No expiry advertised' : dateTime(row.expires_at_ms), sort: 'expires_at' },
+    { id: 'evidence', label: 'Evidence', render: (row) => semanticLabel(row.evidence), sort: 'evidence' },
+    { id: 'observed-on', label: 'Observed On', render: issiObservedOnCell },
+    { id: 'alias-action', label: 'Alias', render: issiAliasAction }
+  ];
+}
+
+function issiRecentChangeColumns() {
+  return [
+    { id: 'changed', label: 'Changed', render: (row) => dateTime(row.changed_at_ms), sort: 'changed_at' },
+    { id: 'radio', label: 'Radio', render: issiSubscriberCell, sort: 'canonical_identity' },
+    { id: 'home-system', label: 'Home System', render: issiHomeSystemCell },
+    { id: 'change', label: 'Change', render: (row) => semanticLabel(row.change), sort: 'change' },
+    { id: 'working-id', label: 'Working ID', render: (row) => identifierNumber(row.observed_working_id),
+      className: 'numeric', sort: 'working_id' },
+    { id: 'previous-working-id', label: 'Previous Working ID',
+      render: (row) => identifierNumber(row.previous_working_id), className: 'numeric' },
+    { id: 'observed-on', label: 'Observed On', render: issiObservedOnCell }
+  ];
+}
+
+function issiStateLabel(state) {
+  if (state?.snapshot_stale === true) return 'Snapshot needs refresh';
+  return ({ current: 'Confirmed mappings', learning: 'Learning assignments',
+    needs_confirmation: 'Mappings need confirmation', stopped: 'No current observation' })[state?.state] ||
+    'Assignment state unavailable';
+}
+
+function issiEmptyMessage(state) {
+  if (state?.snapshot_stale === true) return 'Current assignments cannot be confirmed while the receiver snapshot is out of date.';
+  if (state?.state === 'stopped') return 'No current observation for this system; waiting for assignment evidence.';
+  if (state?.state === 'needs_confirmation') return 'Waiting for fresh confirmation after an observation gap.';
+  return 'Waiting for registration evidence; an empty list does not mean no radios are registered.';
+}
+
+function issiStateContent(state) {
+  const assignmentCounts = [['Confirmed Assignments', state?.current_assignment_count]];
+  if (Number(state?.retained_assignment_count) > 0) {
+    assignmentCounts.push(['Last Snapshot Assignments', state.retained_assignment_count]);
+  }
+  assignmentCounts.push(['Observation Channels', state?.observed_channel_count]);
+  return fragment(node('p', 'ui-section-note',
+    'Current assignments are the receiver’s confirmed knowledge, not a list of radios online. ' +
+    'Observed On identifies the source of the evidence, not the radio’s location.'),
+  state?.snapshot_stale === true ? node('p', 'ui-notice ui-notice-warning',
+    'This snapshot is out of date. Retained rows are available for inspection and are not current confirmed assignments.') : null,
+  keyValues([
+    ['Receiver knowledge', issiStateLabel(state)],
+    ['Snapshot Updated', state?.snapshot_at_ms ? dateTime(state.snapshot_at_ms) : 'Unavailable'],
+    ['Last Assignment Confirmation', state?.last_confirmation_ms ? dateTime(state.last_confirmation_ms) : 'Waiting'],
+    ['App Started', state?.receiver_started_at_ms ? dateTime(state.receiver_started_at_ms) : 'Unavailable']
+  ]), metrics(assignmentCounts, true));
+}
+
+function issiSectionTabs(active) {
+  return tabs([
+    ['current-assignments', 'Current Assignments'], ['recent-changes', 'Recent Changes'],
+    ['subscribers', 'History'], ['foreign-systems', 'Foreign Systems'], ['frequency-bands', 'Band Plans']
+  ].map(([id, label]) => ({ id, label, href: currentHref({
+    issi_view: id, q: null, configuration_id: null, roaming_only: null,
+    sort: null, direction: null, offset: null
+  }) })), active);
+}
+
+function issiFilterToolbar(channels, live, evidenceFilter = true, sourceLabel = 'Evidence heard on') {
+  const form = searchBar('Search aliases, home systems, channels, or IDs');
+  form.classList.add('ui-catalog-toolbar');
+  form.querySelectorAll('input[type="hidden"]').forEach((input) => {
+    if (['configuration_id', 'roaming_only'].includes(input.name)) input.remove();
+  });
+  if (!evidenceFilter && !live) {
+    const clear = anchor('Clear search', currentHref({ q: null, configuration_id: null,
+      roaming_only: null, offset: null }), 'ui-button ui-button-secondary');
+    clear.hidden = !route.get('q');
+    form.append(clear);
+    return form;
+  }
+  const panel = node('div', 'ui-form-grid');
+  const field = node('label', 'ui-field');
+  field.append(node('span', 'ui-field-label', sourceLabel));
+  const select = aliasSelect('configuration_id', (channels || []).map((row) => ({
+    value: row.configuration_id, label: [channelDisplayParts(row).primary, row.site_name]
+      .filter((value, index, values) => value && values.indexOf(value) === index).join(' · ')
+  })), route.get('configuration_id') || '', true);
+  field.append(uiSelectFrame(select));
+  if (evidenceFilter) panel.append(field);
+  if (live) {
+    const choice = node('label', 'ui-choice-card');
+    const checkbox = node('input', 'ui-selection-check');
+    checkbox.type = 'checkbox'; checkbox.name = 'roaming_only'; checkbox.value = 'true';
+    checkbox.checked = route.get('roaming_only') === 'true';
+    choice.append(checkbox, node('span', '', 'Only foreign home systems'));
+    panel.append(choice);
+  }
+  const toggle = node('button', 'ui-button ui-button-secondary', 'Filters');
+  toggle.id = 'issi-filters-toggle';
+  const activeCount = Number(evidenceFilter && Boolean(route.get('configuration_id'))) +
+    Number(live && route.get('roaming_only') === 'true');
+  if (activeCount) toggle.append(uiPill(number(activeCount), 'neutral'));
+  const clear = anchor('Clear filters', currentHref({ q: null, configuration_id: null,
+    roaming_only: null, offset: null }), 'ui-button ui-button-secondary');
+  clear.hidden = !route.get('q') && !activeCount;
+  form.append(toggle, clear, panel);
+  browsingWorkflows.createFilterDisclosure({ node, openReadOnlyModal, form, panel, button: toggle,
+    clearAction: clear, initialExpanded: activeCount > 0,
+    returnFocusSelector: '#issi-filters-toggle', id: 'issi-filters' });
+  return form;
+}
+
+async function renderRadioSystemIssi(system, renderContext) {
+  const base = radioSystemApiPath(system.radio_system_key, 'issi');
+  const requested = String(route.get('issi_view') || 'current-assignments');
+  const active = ['current-assignments', 'recent-changes', 'subscribers', 'foreign-systems', 'frequency-bands']
+    .includes(requested) ? requested : 'current-assignments';
+  const live = ['current-assignments', 'recent-changes'].includes(active);
+  const channels = await apiPage(radioSystemApiPath(system.radio_system_key, 'channels'),
+    { limit: 500 }, { signal: renderContext.signal });
+  if (!renderIsCurrent(renderContext)) return;
+  content.append(issiSectionTabs(active));
+  const stateHost = node('div');
+  if (live) {
+    content.append(section('Current Receiver Knowledge', stateHost));
+    if (active === 'recent-changes') content.append(node('p', 'ui-section-note',
+      'Recent Changes is a bounded list for this app session; older changes can drop from the list. ' +
+      'A cleared or expired mapping describes receiver knowledge; ' +
+      'it does not establish whether the radio is online. Receiver or system observation gaps affect all mappings ' +
+      'in that scope and remain visible when filters are applied.'));
+  }
+  else content.append(node('p', 'ui-section-note',
+    'Saved observations are history. Assignments are relearned after every app start; a last observed Working ID ' +
+    'does not establish a current assignment.' + (active === 'subscribers' ?
+      ' The source filter uses each radio’s latest saved assignment observation.' : '')));
+  const views = {
+    'current-assignments': ['Current Assignments', issiCurrentAssignmentColumns, 'issi-current-assignments'],
+    'recent-changes': ['Recent Changes', issiRecentChangeColumns, 'issi-recent-changes'],
+    subscribers: ['Subscriber History', issiSubscriberColumns, 'issi-subscribers'],
+    'foreign-systems': ['Foreign Home Systems', issiForeignSystemColumns, 'issi-foreign-systems'],
+    'frequency-bands': ['ISSI Advertised Band Plans', issiBandColumns, 'issi-frequency-bands']
+  };
+  const [title, columns, tableType] = views[active];
+  const directory = createAsyncSection(title, {
+    loadingMessage: `Loading ${title.toLowerCase()}…`,
+    errorMessage: `${title} could not be loaded.`
+  });
+  const feedback = node('p', 'ui-section-note');
+  feedback.setAttribute('role', 'status');
+  const refresh = node('button', 'ui-button ui-button-secondary', 'Refresh');
+  refresh.type = 'button';
+  directory.titleActions.prepend(refresh);
+  content.append(issiFilterToolbar(channels.rows, live, active !== 'foreign-systems',
+    active === 'subscribers' ? 'Last observed source' : 'Evidence heard on'), feedback, directory.element);
+  const parameters = pageParameters({ configuration_id: active === 'foreign-systems' ? null : route.get('configuration_id'),
+    ...(live ? { roaming_only: route.get('roaming_only') === 'true' ? true : null } : {}) });
+  let state = null;
+  let loading = false;
+  let pagerHost = null;
+  let displayedRowsKey = '';
+  let displayedEmptyText = '';
+  const updatePager = (page) => pagerHost?.update({
+    countText: browsingWorkflows.pageRangeText({ offset: page.offset, visible: page.rows.length,
+      total: page.total_count, label: active === 'recent-changes' ? 'Changes' : 'Rows', format: number }),
+    previous: { enabled: page.offset > 0, href: currentHref({ offset: Math.max(0, page.offset - page.limit) }) },
+    next: { enabled: page.has_more, href: currentHref({ offset: page.next_offset }) }
+  });
+  const load = async () => {
+    const [page, currentState] = await Promise.all([
+      apiPage(`${base}/${active}`, parameters, { signal: renderContext.signal }),
+      live ? api(`${base}/current-state`, {}, { signal: renderContext.signal }) : Promise.resolve(null)
+    ]);
+    return { page, currentState };
+  };
+  const present = ({ page, currentState }) => {
+    state = currentState;
+    if (live) stateHost.replaceChildren(issiStateContent(state));
+    const empty = active === 'current-assignments' ? issiEmptyMessage(state) :
+      active === 'recent-changes' ? 'No assignment changes observed in this app session.' : 'No saved observations match these filters.';
+    displayedRowsKey = JSON.stringify(page.rows);
+    displayedEmptyText = empty;
+    const result = table(page.rows, columns(), empty, { type: tableType, mobileCards: true,
+      serverSort: true, defaultSort: SERVER_TABLE_DEFAULT_SORTS[tableType], defaultDirection: 'desc',
+      controller: directory.tableController, layoutMenuHost: directory.titleActions });
+    pagerHost = pager(page, 'bottom', active === 'recent-changes' ? 'Changes' : 'Rows');
+    return fragment(result, pagerHost);
+  };
+  const reload = async (initial = false) => {
+    if (loading || !renderIsCurrent(renderContext) || !directory.host.isConnected ||
+        (!initial && document.hidden)) return;
+    loading = true; refresh.disabled = true;
+    try {
+      if (!directory.tableController.replaceRows) {
+        await directory.load(load, present, renderContext);
+      } else {
+        const result = await load();
+        if (!renderIsCurrent(renderContext) || document.hidden || !directory.host.isConnected) return;
+        state = result.currentState;
+        if (live) stateHost.replaceChildren(issiStateContent(state));
+        if (active === 'current-assignments' && result.page.rows.length === 0 &&
+            displayedEmptyText !== issiEmptyMessage(state)) {
+          directory.host.replaceChildren(present(result));
+        } else {
+          const rowsKey = JSON.stringify(result.page.rows);
+          if (rowsKey !== displayedRowsKey) {
+            directory.tableController.replaceRows(result.page.rows);
+            displayedRowsKey = rowsKey;
+          }
+          updatePager(result.page);
+        }
+      }
+      feedback.textContent = '';
+    } catch (error) {
+      if (error?.name === 'AbortError' || !renderIsCurrent(renderContext)) return;
+      if (pageLifecycle.requiresPageHandling(error)) throw error;
+      if (live && state) {
+        state = { ...state, snapshot_stale: true, current_assignment_count: 0,
+          retained_assignment_count: state.retained_assignment_count || state.current_assignment_count || 0 };
+        stateHost.replaceChildren(issiStateContent(state));
+      }
+      feedback.textContent = 'Refresh failed. The last displayed snapshot was retained; use Refresh to try again.';
+    } finally {
+      loading = false; refresh.disabled = false;
+    }
+  };
+  refresh.addEventListener('click', () => { void reload().catch(() => { void render(); }); });
+  await reload(true);
+  if (live) pageInterval(() => reload(), 5_000);
+}
+
 async function renderRadioSystem() {
   const renderContext = captureRenderContext();
   const radioSystem = requiredRadioSystem();
@@ -18518,6 +19161,8 @@ async function renderRadioSystem() {
         tableOptions: { layoutMenuHost: directory.titleActions, controller: directory.tableController }
       }),
       renderContext);
+  } else if (tab === 'issi') {
+    await renderRadioSystemIssi(system, renderContext);
   } else if (tab === 'talker-aliases') {
     const columns = [
     { id: 'radio', label: 'Radio', fullLabel: 'Radio ID', render: (row) => radioLink(row), className: 'numeric', sort: 'radio', sortValue: (row) => Number(row.native_id) },
@@ -18695,6 +19340,101 @@ async function renderGroupIdentity() {
   }
 }
 
+function radioCurrentAssignmentSection(radio, renderContext) {
+  const canonical = p25CanonicalSubscriber(radio);
+  const directory = createAsyncSection('Current Working Assignment', {
+    loadingMessage: 'Loading current working assignment…',
+    errorMessage: 'The current assignment could not be loaded.'
+  });
+  const base = radioSystemApiPath(radio.radio_system_key, 'issi');
+  const tuple = { home_wacn: canonical.wacn, home_system_id: canonical.system_id,
+    subscriber_id: canonical.subscriber_id, limit: 20, offset: 0 };
+  const workspace = { radio_system_key: radio.radio_system_key, tab: 'issi' };
+  const links = () => {
+    const actions = node('div', 'ui-action-row');
+    actions.append(anchor('Current Assignments', href('radio-system', {
+      ...workspace, issi_view: 'current-assignments', q: canonicalSubscriberText(canonical)
+    }), 'ui-button ui-button-secondary'), anchor('Assignment History', href('radio-system', {
+      ...workspace, issi_view: 'subscribers', q: canonicalSubscriberText(canonical)
+    }), 'ui-button ui-button-secondary'));
+    return actions;
+  };
+  const feedback = node('p', 'ui-section-note');
+  feedback.setAttribute('role', 'status');
+  const refresh = node('button', 'ui-button ui-button-secondary', 'Refresh');
+  refresh.type = 'button';
+  directory.titleActions.append(refresh);
+  let displayedModel = null;
+  const present = ({ page, state }) => {
+    displayedModel = { page, state };
+    const row = page.rows[0];
+    const values = [
+      ['Receiver knowledge', issiStateLabel(state)],
+      ['Snapshot Updated', state?.snapshot_at_ms ? dateTime(state.snapshot_at_ms) : 'Unavailable']
+    ];
+    if (row) values.push(
+      ['Home System', issiHomeSystemCell(row)],
+      [state?.snapshot_stale === true ? 'Last Reported Working ID' : 'Working ID',
+        identifierNumber(row.observed_working_id)],
+      ['Last Confirmed', dateTime(row.confirmed_at_ms)],
+      ['Evidence', semanticLabel(row.evidence)],
+      ['Observed On', issiObservedOnCell(row)],
+      ['Lease Ends', row.expires_at_ms == null ? 'No expiry advertised' : dateTime(row.expires_at_ms)]
+    );
+    else values.push(['Working ID', 'No current confirmed assignment']);
+    return fragment(node('p', 'ui-section-note',
+      'This assignment is receiver knowledge for this serving system, not an online status. ' +
+      'Observed On identifies where the evidence was heard, not the radio’s location.'),
+    state?.snapshot_stale === true ? node('p', 'ui-notice ui-notice-warning',
+      'This snapshot is out of date. The displayed assignment is retained for inspection and needs fresh confirmation.') : null,
+    keyValues(values), !row ? node('p', 'ui-section-note', issiEmptyMessage(state)) : issiAliasAction(row),
+    node('p', 'ui-section-note',
+      'History keeps past observations. Current assignments are relearned after every app start.'),
+    links());
+  };
+  let loading = false;
+  let displayed = false;
+  const reload = async () => {
+    if (loading || !renderIsCurrent(renderContext) || !directory.host.isConnected || document.hidden) return;
+    loading = true; refresh.disabled = true;
+    const load = async () => {
+      const [page, state] = await Promise.all([
+        apiPage(`${base}/current-assignments`, tuple, { signal: renderContext.signal }),
+        api(`${base}/current-state`, {}, { signal: renderContext.signal })
+      ]);
+      return { page, state };
+    };
+    try {
+      if (!displayed) {
+        const result = await directory.load(load, (value) => {
+          displayed = true;
+          return present(value);
+        }, renderContext);
+        if (result?.state === 'error') return;
+      } else {
+        const result = await load();
+        if (!renderIsCurrent(renderContext) || !directory.host.isConnected || document.hidden) return;
+        directory.host.replaceChildren(present(result));
+      }
+      feedback.textContent = '';
+    } catch (error) {
+      if (error?.name === 'AbortError' || !renderIsCurrent(renderContext)) return;
+      if (pageLifecycle.requiresPageHandling(error)) throw error;
+      if (displayedModel) directory.host.replaceChildren(present({
+        ...displayedModel, state: { ...displayedModel.state, snapshot_stale: true }
+      }));
+      feedback.textContent = 'Refresh failed. The displayed assignment may be out of date; use Refresh to try again.';
+    } finally {
+      loading = false; refresh.disabled = false;
+    }
+  };
+  refresh.addEventListener('click', () => { void reload().catch(() => { void render(); }); });
+  directory.element.append(feedback);
+  pageTimeout(() => { void reload().catch(() => { void render(); }); }, 0);
+  pageInterval(() => reload(), 5_000);
+  return directory.element;
+}
+
 async function renderRadio() {
   const renderContext = captureRenderContext();
   const radioSystem = requiredRadioSystem();
@@ -18702,7 +19442,9 @@ async function renderRadio() {
   const response = await api(`${radioSystemApiPath(radioSystem.radio_system_key, 'radios')}/${encodeURIComponent(identityKey)}`);
   const radio = response;
   const tab = route.get('tab') || 'info';
-  const formattedId = identityNumber(radio, radio.native_id);
+  const permanentIdentity = p25CanonicalSubscriber(radio);
+  const formattedId = permanentIdentity ? canonicalSubscriberText(permanentIdentity) :
+    radioIdentifierText(radio, radio.native_id);
   const title = aliasLabel(radio) || radio.last_talker_alias || `Radio ${formattedId}`;
   if (!beginPage(renderContext,
     pageHeader(title, fragment(radioSystemContextLink(radio), ` · Radio ${formattedId}`)),
@@ -18732,11 +19474,20 @@ async function renderRadio() {
     } });
   } else {
     const infoColumn = node('div', 'entity-info-column entity-info-standalone');
+    let systemFact = radioSystemLink(radio.radio_system_entity_ref, radioSystemInfoValue(radio));
+    if (radioSystemPrimaryName(radio)) {
+      const identityContext = node('small', 'identity-summary-context');
+      identityContext.append(valueNode(radioSystemInfoValue(radio)));
+      systemFact = fragment(radioSystemContextLink(radio), identityContext);
+    }
     const identityValues = [
-      [radioSystemOwnerLabel(radio), radioSystemLink(radio.radio_system_entity_ref, radioSystemInfoValue(radio))],
+      [radioSystemOwnerLabel(radio), systemFact],
       ['Radio ID', formattedId],
       ['Alias', aliasLabel(radio)]
     ];
+    if (permanentIdentity && workingSubscriberId(radio) !== null) {
+      identityValues.push(['Last Observed Working ID', identifierNumber(workingSubscriberId(radio))]);
+    }
     if (radioSystemCapability(radio, 'talker_aliases')) {
       identityValues.push(['Talker Alias', radio.last_talker_alias]);
     }
@@ -18772,6 +19523,9 @@ async function renderRadio() {
       ['Last Observed', dateTime(radio.last_seen_ms)]
     ])), section('Collected Signaling Observations', fragment(
       signalingMetrics(signalingCounts(radio)), activityMetricGuide())));
+    if (p25CanonicalSubscriber(radio)) {
+      blocks.unshift(radioCurrentAssignmentSection(radio, renderContext));
+    }
     infoColumn.append(...blocks);
     content.append(infoColumn);
   }
@@ -19008,7 +19762,6 @@ function p25ChannelNeighborColumns() {
   return [
     { id: 'state', label: 'State', render: (row) => stateBadge(row.state),
       sortValue: (row) => row.state || '' },
-    { id: 'type', label: 'Type', render: (row) => row.entry_type === 'ISSI' ? 'ISSI System' : 'Site' },
     { id: 'neighbor-name', label: 'Name / Site', fullLabel: 'Monitored Name and Site',
       render: neighborSiteLink,
       sortValue: (row) => neighborSiteDisplayParts(row).primary },
@@ -19024,8 +19777,6 @@ function p25ChannelNeighborColumns() {
     { id: 'control-frequency', label: 'CC MHz', fullLabel: 'Control Frequency MHz',
       render: (row) => frequency(row.downlink_hz), className: 'numeric',
       sortValue: (row) => Number(row.downlink_hz || 0) },
-    { id: 'modes', label: 'Modes', render: neighborModes },
-    { id: 'bands', label: 'Bands', key: 'band_count', className: 'numeric' },
     { id: 'advertised-status', label: 'Status', fullLabel: 'Advertised Status',
       render: (row) => neighborStatus(row.status), sortValue: (row) => row.status || '' },
     { id: 'observations', label: 'Obs', fullLabel: 'Observations',
@@ -19158,7 +19909,13 @@ function renderTrunkedChannelBandPlans(channel, data) {
   );
   const bandSource = badge(overrideActive ? 'P25 override' : 'OTA band plan',
     overrideActive ? 'state-current' : '');
-  return fragment(tableSection('Home System Band Plan', data.home_bands || [], homeBandColumns,
+  const issiTarget = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) && channel.radio_system_key ?
+    href('radio-system', { radio_system_key: channel.radio_system_key, tab: 'issi',
+      issi_view: 'frequency-bands', configuration_id: channel.configuration_id }) : '';
+  const issiContext = node('p', 'ui-section-note',
+    'These foreign band plans are advertisements heard on this channel. ');
+  if (issiTarget) issiContext.append(anchor('View this system’s ISSI Band Plans', issiTarget));
+  return fragment(issiContext, tableSection('Home System Band Plan', data.home_bands || [], homeBandColumns,
     'No home-system band plan recorded', { type: overrideActive ? 'channel-frequency-bands-override' :
       'channel-frequency-bands', tableClass: 'ui-data-table-calm' }, null, bandSource),
   data.foreign_bands?.length ? tableSection('ISSI Advertised Band Plans', data.foreign_bands, [
@@ -19304,7 +20061,8 @@ async function renderTrunkedChannel(channel, configurationId, renderContext) {
   }
 }
 
-function specialIdentifierLabel(row, value, kind) {
+function specialIdentifierLabel(row, value, kind, prefix = '') {
+  if (kind === 'radio' && p25CanonicalSubscriber(row, prefix || radioIdentityPrefix(row, value))) return '';
   const identifier = Number(value);
   if (isP25(row)) {
     if (kind === 'talkgroup') {
@@ -19380,10 +20138,10 @@ function specialIdentifierLabel(row, value, kind) {
   return '';
 }
 
-function activityIdentifier(row, value, kind, reference, linked = true) {
-  const identifier = identityNumber(row, value);
+function activityIdentifier(row, value, kind, reference, linked = true, prefix = '') {
+  const identifier = kind === 'radio' ? radioIdentifierText(row, value, prefix) : identityNumber(row, value);
   if (identifier === '') return '';
-  const specialLabel = specialIdentifierLabel(row, value, kind);
+  const specialLabel = specialIdentifierLabel(row, value, kind, prefix);
   if (specialLabel) {
     const protocol = protocolFamily(row);
     const result = node('span', 'special-identifier', specialLabel);
@@ -19407,20 +20165,20 @@ function activityTargetKind(row) {
 function activityTargetIdentifier(row, linked = true) {
   if (isAnalogChannel(row)) return '';
   const kind = activityTargetKind(row);
-  return activityIdentifier(row, row.target_id, kind, row.target_entity_ref, linked);
+  return activityIdentifier(row, row.target_id, kind, row.target_entity_ref, linked, kind === 'radio' ? 'target' : '');
 }
 
 function activitySourceAlias(row, linked = true) {
   const alias = row.source_alias_name || '';
   if (!alias) return '';
-  return !linked || specialIdentifierLabel(row, row.source_radio_id, 'radio') ?
+  return !linked || specialIdentifierLabel(row, row.source_radio_id, 'radio', 'source') ?
     alias : radioLink(row, row.source_radio_id, alias, row.source_entity_ref);
 }
 
 function activitySourceTalkerAlias(row, linked = true) {
   const alias = String(row.source_talker_alias || '').trim();
   if (!alias) return '';
-  return !linked || specialIdentifierLabel(row, row.source_radio_id, 'radio') ?
+  return !linked || specialIdentifierLabel(row, row.source_radio_id, 'radio', 'source') ?
     alias : radioLink(row, row.source_radio_id, alias, row.source_entity_ref);
 }
 
@@ -19429,7 +20187,7 @@ function activityTargetAlias(row, linked = true) {
   const alias = row.target_alias_name || '';
   if (!alias) return '';
   const kind = activityTargetKind(row);
-  if (!linked || specialIdentifierLabel(row, row.target_id, kind)) return alias;
+  if (!linked || specialIdentifierLabel(row, row.target_id, kind, kind === 'radio' ? 'target' : '')) return alias;
   if (['talkgroup', 'patch_group'].includes(kind)) {
     return groupIdentityLink(row, row.target_id, alias, row.target_entity_ref);
   }
@@ -20906,7 +21664,7 @@ function activityColumns(context, filters) {
       sortValue: (row) => row.event_type || '' },
     { id: 'source', label: 'Src', fullLabel: 'Source ID',
       render: (row) => activityCellValue(activityIdentifier(row, row.source_radio_id, 'radio',
-        row.source_entity_ref, false), row, 'source', context, filters),
+        row.source_entity_ref, false, 'source'), row, 'source', context, filters),
       className: 'numeric identifier-cell', sortValue: (row) => Number(row.source_radio_id || 0) },
     { id: 'source-alias', label: 'Src Alias', fullLabel: 'Source Alias',
       render: (row) => activityCellValue(activitySourceAlias(row, false), row, 'source-alias', context, filters),
@@ -29554,7 +30312,7 @@ const audioDock = createAudioDock({
   getLivePlayer: () => webCallPlayer,
   access: () => ({ live: capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO),
     recordings: capabilityAllowed(ACCESS_CAPABILITIES.RECORDINGS) }),
-  entityRefHref, href,
+  entityRefHref, href, radioIdentifier: radioIdentifierText,
   canViewRadio: () => capabilityAllowed(ACCESS_CAPABILITIES.RADIO),
   getTitlePreference: () => activeUserPreferences().page_titles.prepend_playing_call,
   setTitlePreference: (value) => settleUserPreferenceMutation((preferences) => {

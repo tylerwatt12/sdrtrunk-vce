@@ -308,6 +308,37 @@ async function main() {
     assert.equal(labels.targetLabel({ target_id: 77 }), 'ID 77');
     assert.equal(labels.targetLabel({ target_form: 'TELEPHONE_NUMBER', target_id: 5551212 }), 'ID 5551212');
     assert.equal(labels.targetLabel({}), 'Unknown identity');
+    assert.equal(labels.callLabel({
+      protocol: 'P25', target_form: 'TALKGROUP', target_id: 91,
+      source_form: 'RADIO', source_id: 501,
+      source_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 2_115_288 },
+      source_observed_working_id: 501
+    }), 'TGID 91 ← BEE00.348.2115288 (Working ID 501)');
+    assert.equal(labels.callLabel({
+      protocol: 'P25', target_form: 'TALKGROUP', target_id: 91,
+      source_form: 'RADIO', source_id: 2_115_288,
+      source_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 2_115_288 }
+    }), 'TGID 91 ← BEE00.348.2115288');
+    const equalWorkingTarget = {
+      protocol: 'P25', target_form: 'RADIO', target_id: 2_115_288, target_alias: 'Dispatch',
+      target_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 2_115_288 },
+      target_observed_working_id: 2_115_288,
+      playback_target: { kind: 'radio', label: 'Radio 2115288' }
+    };
+    assert.equal(labels.callLabel(equalWorkingTarget),
+      'Dispatch · BEE00.348.2115288 (Working ID 2115288)');
+    assert.equal(labels.targetLabel(equalWorkingTarget),
+      'Dispatch · BEE00.348.2115288 (Working ID 2115288)');
+    const conventionalCanonicalTarget = {
+      protocol: 'P25', target_form: 'RADIO', target_id: 501,
+      target_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 2_115_288 },
+      target_observed_working_id: 501,
+      playback_target: { key: 'channel:p25-conventional', kind: 'channel', label: 'P25 Conventional' }
+    };
+    assert.equal(labels.callLabel(conventionalCanonicalTarget),
+      'BEE00.348.2115288 (Working ID 501)');
+    assert.equal(labels.targetLabel(conventionalCanonicalTarget), 'P25 Conventional',
+      'Hold and Avoid labels must describe the channel-scoped playback target');
     const firstSystemScope = labels.avoidSystemScope(trunked);
     const secondSystemScope = labels.avoidSystemScope({
       ...trunked, system: 'Display name can change', radio_system_key: 'p25:bee00:4a0',

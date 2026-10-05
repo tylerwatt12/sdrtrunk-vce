@@ -1144,6 +1144,25 @@ export class WebCallPlayer {
     return String(call?._playbackTargetKey || call?.playback_target?.key || '').trim();
   }
 
+  canonicalRadioLabel(call, prefix) {
+    const identity = call?.[`${prefix}_canonical_identity`];
+    if (!identity || identity.wacn === null || identity.wacn === undefined ||
+        identity.system_id === null || identity.system_id === undefined ||
+        identity.subscriber_id === null || identity.subscriber_id === undefined) return '';
+    const wacn = Number(identity?.wacn);
+    const systemId = Number(identity?.system_id);
+    const subscriberId = Number(identity?.subscriber_id);
+    if (!Number.isInteger(wacn) || wacn < 0 || wacn > 0xFFFFF ||
+        !Number.isInteger(systemId) || systemId < 0 || systemId > 0xFFF ||
+        !Number.isInteger(subscriberId) || subscriberId < 1 || subscriberId > 0xFFFFFC) return '';
+    const homeWacn = wacn.toString(16).toUpperCase().padStart(5, '0');
+    const homeSystem = systemId.toString(16).toUpperCase().padStart(3, '0');
+    const canonical = `${homeWacn}.${homeSystem}.${subscriberId}`;
+    const workingId = Number(call?.[`${prefix}_observed_working_id`]);
+    return Number.isInteger(workingId) && workingId >= 1 && workingId <= 0xFFFFFC ?
+      `${canonical} (Working ID ${workingId})` : canonical;
+  }
+
   callLabel(call) {
     const targetId = call.target_id === null || call.target_id === undefined || call.target_id === '' ? '' :
       String(call.target_id);
@@ -1151,6 +1170,10 @@ export class WebCallPlayer {
       String(call.source_id);
     const targetType = this.identifierType(call.target_form, 'ID');
     const sourceType = this.identifierType(call.source_form, 'Radio');
+    const targetCanonical = this.canonicalRadioLabel(call, 'target');
+    const sourceCanonical = this.canonicalRadioLabel(call, 'source');
+    const targetIdentity = targetCanonical || (targetId ? `${targetType} ${targetId}` : '');
+    const sourceIdentity = sourceCanonical || (sourceId ? `${sourceType} ${sourceId}` : '');
     const playbackLabel = typeof call.playback_target?.label === 'string' ?
       call.playback_target.label.trim() : '';
     const analogMode = String(call.decoder || call.protocol || '').trim().toUpperCase();
@@ -1158,19 +1181,22 @@ export class WebCallPlayer {
     const target = analog ?
       (playbackLabel || call.channel || 'Saved channel') :
       (call.target_alias ?
-        `${call.target_alias}${targetId ? ` · ${targetType} ${targetId}` : ''}` :
-        (targetId ? `${targetType} ${targetId}` : call.channel || 'Unknown target'));
+        `${call.target_alias}${targetIdentity ? ` · ${targetIdentity}` : ''}` :
+        (targetIdentity || call.channel || 'Unknown target'));
     const source = call.source_alias ?
-      `${call.source_alias}${sourceId ? ` · ${sourceType} ${sourceId}` : ''}` :
-      (sourceId ? `${sourceType} ${sourceId}` : '');
+      `${call.source_alias}${sourceIdentity ? ` · ${sourceIdentity}` : ''}` : sourceIdentity;
     return `${target}${source ? ` ← ${source}` : ''}`;
   }
 
   targetLabel(call) {
     if (!call) return '';
+    const playbackKind = String(call.playback_target?.kind || '').trim().toLowerCase();
+    const canonical = playbackKind === 'radio' || !playbackKind ?
+      this.canonicalRadioLabel(call, 'target') : '';
+    const alias = String(call.target_alias || '').trim();
+    if (canonical) return alias ? `${alias} · ${canonical}` : canonical;
     const playbackLabel = typeof call.playback_target?.label === 'string' ? call.playback_target.label.trim() : '';
     if (playbackLabel) return playbackLabel;
-    const alias = String(call.target_alias || '').trim();
     if (alias) return alias;
     const targetId = call.target_id === null || call.target_id === undefined || call.target_id === '' ? '' :
       String(call.target_id);

@@ -72,7 +72,9 @@ class StatsWebRadioInformationArchitectureUiContractTest
         assertTrue(app.contains("entityTarget(row.entity_ref, { channel: row.identity_type === 'radio' ? 'radios' : 'groups' })"));
         assertFalse(app.contains("identitySummaryValue(label, row.identity_key || ''"));
         assertTrue(app.contains("function adminSettingsTree(groups, active)"));
-        assertTrue(app.contains("{ label: 'Receiving & output', items: ["));
+        assertTrue(app.contains("{ label: 'Receiver configuration', items: ["));
+        assertTrue(app.contains("{ label: 'Audio & recordings', items: ["));
+        assertTrue(app.contains("{ label: 'Activity & storage', items: ["));
         assertTrue(app.contains("id: 'protocol-p25'"));
         assertFalse(app.contains("id: 'protocol-dmr'"));
         assertFalse(app.contains("id: 'protocol-nxdn'"));
@@ -81,7 +83,9 @@ class StatsWebRadioInformationArchitectureUiContractTest
         assertFalse(app.contains("Traffic-row idle delay"));
         assertTrue(app.contains("Mark a traffic row idle after (milliseconds)"));
         assertFalse(app.contains("This does not keep ' +\n        'the call, tuner, or traffic channel active."));
-        assertTrue(css.contains(".admin-settings-shell {"));
+        assertTrue(app.contains("node('div', 'admin-settings-shell ui-settings-workspace')"));
+        assertTrue(css.contains(".ui-settings-workspace {"));
+        assertTrue(css.contains("grid-template-columns: var(--settings-sidebar-width) minmax(0, 1fr);"));
         assertFalse(css.contains(".admin-settings-nested-branch"));
         assertFalse(css.contains(".alias-coverage-guidance"));
         assertTrue(css.contains(".alias-coverage-scope-list"));
@@ -92,5 +96,34 @@ class StatsWebRadioInformationArchitectureUiContractTest
     private static String readText(Path path) throws Exception
     {
         return Files.readString(path).replace("\r\n", "\n").replace('\r', '\n');
+    }
+
+    @Test
+    void givesP25IssiItsOwnSystemWorkspaceWithoutMixingItIntoSiteTables() throws Exception
+    {
+        String app = Files.readString(APP);
+        int radios = app.indexOf("items.push({ id: 'radios', label: 'Radios'");
+        int issi = app.indexOf("items.push({ id: 'issi', label: 'ISSI'", radios);
+        int activity = app.indexOf("items.push({ id: 'activity', label: 'Activity'", issi);
+        assertTrue(radios >= 0 && issi > radios && activity > issi,
+            "The P25 ISSI tab belongs immediately after Radios");
+        assertTrue(app.contains("radioSystemCapability(system, 'issi')"));
+        assertTrue(app.contains("['current-assignments', 'Current Assignments']"));
+        assertTrue(app.contains("['recent-changes', 'Recent Changes']"));
+        assertTrue(app.contains("['subscribers', 'History']"));
+        assertTrue(app.contains("['foreign-systems', 'Foreign Systems']"));
+        assertTrue(app.contains("['frequency-bands', 'Band Plans']"));
+        assertTrue(app.contains("`${base}/current-state`"));
+        assertTrue(app.contains("Current Working Assignment"));
+        assertTrue(app.contains("Identity Evidence"));
+        assertTrue(app.contains("label: 'Last Working ID'"));
+        assertTrue(app.contains("relearned after every app start"));
+        assertFalse(app.contains("issiSubscriberFilterActions"));
+        assertTrue(app.contains("ISSI Advertised Band Plans"));
+        assertTrue(app.contains("label: 'Observed On'"));
+        assertTrue(app.contains("View this system’s ISSI Band Plans"));
+        assertTrue(app.contains("not a list of radios online"));
+        assertTrue(app.contains("Snapshot Updated"));
+        assertTrue(app.contains("Last Assignment Confirmation"));
     }
 }

@@ -76,6 +76,7 @@ vm.runInContext(`
     });
     return '/?' + parameters.toString();
   }
+  function aliasAdminAllowed() { return true; }
   let aliasEditorSelection = new Set();
   let aliasEditorSelectionScope = null;
   let aliasEditorSelectionRequest = 0;
@@ -103,7 +104,25 @@ vm.runInContext(`
   ${functionSource("function exportCsvFileName(response, fallback = 'export.csv')")}
   ${functionSource('function reorderedAliasToneRows(rows, index, direction)')}
   ${functionSource('function fullScanListMembershipRequest(revision, operation, aliasListId = null)')}
+  ${functionSource('function protocol(value)')}
+  ${functionSource('function protocolFamily(row)')}
+  ${functionSource('function isP25(row)')}
+  ${functionSource('function hex(value, width = 0)')}
+  ${functionSource("function p25CanonicalSubscriber(row, prefix = '')")}
+  ${functionSource('function canonicalSubscriberText(identity)')}
+  ${functionSource('function aliasNumericValue(value)')}
+  ${functionSource('function aliasHexValue(value)')}
+  ${functionSource('function aliasDecimalValue(value)')}
+  ${functionSource('function aliasMatcherCanonicalField(field)')}
+  ${functionSource('function aliasMatcherKey(value)')}
+  ${functionSource('function aliasMatcherFieldValue(matcher, field)')}
+  ${functionSource('function aliasMatcherFieldLimit(descriptor, field, bound)')}
+  ${functionSource('function aliasMatcherDescriptor(options, keyOrType, protocol = \'\', variant = \'\')')}
+  ${functionSource('function aliasMatcherDefault(descriptor, options = {})')}
+  ${functionSource('function aliasMatcherPayload(form, descriptor)')}
+  ${functionSource('function routedAliasPrefill(selectedList, options)')}
   ${functionSource('function aliasMatcherSummary(matcher)')}
+  ${functionSource('function aliasMatcherBoundText(field, value)')}
   ${functionSource('function aliasSelectionScopeKey(kind, filters = {})')}
   ${functionSource('function completeAliasSelection(response, maximum = ALIAS_BULK_SELECTION_LIMIT)')}
   ${functionSource('function extendedAliasSelection(selection, additions, maximum = ALIAS_BULK_SELECTION_LIMIT)')}
@@ -137,7 +156,14 @@ vm.runInContext(`
   globalThis.exportFileName = exportCsvFileName;
   globalThis.reorderTones = reorderedAliasToneRows;
   globalThis.fullMembershipRequest = fullScanListMembershipRequest;
+  globalThis.matcherDefault = aliasMatcherDefault;
+  globalThis.matcherPayload = aliasMatcherPayload;
+  globalThis.routedPrefill = (query, selectedList, options) => {
+    route = new URLSearchParams(query);
+    return routedAliasPrefill(selectedList, options);
+  };
   globalThis.matcherSummary = aliasMatcherSummary;
+  globalThis.matcherBoundText = aliasMatcherBoundText;
   globalThis.selectionScopeKey = aliasSelectionScopeKey;
   globalThis.completeSelection = completeAliasSelection;
   globalThis.extendSelection = extendedAliasSelection;
@@ -511,6 +537,62 @@ assert.equal(context.matcherSummary({ type: 'talkgroup_range', protocol: 'P25', 
 assert.equal(context.matcherSummary({ type: 'tone_sequence', tones: [
   { tone: 'DTMF_1', duration: 2 }, { tone: 'DTMF_2', duration: 3 }
 ] }), 'Tone Sequence · DTMF_1 ×2 → DTMF_2 ×3');
+assert.equal(context.matcherSummary({ type: 'p25_subscriber_identity', home_wacn: 0xBEE00,
+  home_system_id: 0x348, subscriber_id: 9_601_699 }),
+  'P25 Subscriber Identity · BEE00.348.9601699');
+const canonicalDescriptor = {
+  type: 'P25_SUBSCRIBER_IDENTITY', fields: ['home_wacn', 'home_system_id', 'subscriber_id'],
+  home_wacn_minimum: 0, home_wacn_maximum: 0xFFFFF,
+  home_system_id_minimum: 0, home_system_id_maximum: 0xFFF,
+  subscriber_id_minimum: 1, subscriber_id_maximum: 0xFFFFFC
+};
+assert.deepEqual(JSON.parse(JSON.stringify(context.matcherDefault(canonicalDescriptor))), {
+  type: 'P25_SUBSCRIBER_IDENTITY', homeWacn: 0, homeSystemId: 0, subscriberId: 1
+});
+const canonicalForm = { elements: {
+  matcherType: { value: 'P25_SUBSCRIBER_IDENTITY', dataset: {} },
+  'matcher-homeWacn': { value: 'BEE00' },
+  'matcher-homeSystemId': { value: '348' },
+  'matcher-subscriberId': { value: '9601699' }
+} };
+assert.deepEqual(JSON.parse(JSON.stringify(context.matcherPayload(canonicalForm, canonicalDescriptor))), {
+  type: 'P25_SUBSCRIBER_IDENTITY', home_wacn: 0xBEE00,
+  home_system_id: 0x348, subscriber_id: 9_601_699
+});
+assert.equal(context.matcherBoundText('homeWacn', 0xFFFFF), 'FFFFF');
+assert.equal(context.matcherBoundText('homeSystemId', 0xFFF), 'FFF');
+assert.equal(context.matcherBoundText('subscriberId', 0xFFFFFC), '16777212');
+
+const routedList = {
+  alias_list_id: 41,
+  unmatched_talkgroup_policy: { recordable: true, broadcast_configuration_ids: ['stream'], scan_list_ids: [7] }
+};
+const routedOptions = { matchers: [{
+  type: 'p25_subscriber_identity', fields: ['home_wacn', 'home_system_id', 'subscriber_id'],
+  home_wacn_minimum: 0, home_wacn_maximum: 0xFFFFF,
+  home_system_id_minimum: 0, home_system_id_maximum: 0xFFF,
+  subscriber_id_minimum: 1, subscriber_id_maximum: 0xFFFFFC
+}, { type: 'radio', protocol: 'p25', variant: 'phase_1', minimum: 1, maximum: 0xFFFFFF }] };
+const canonicalPrefill = context.routedPrefill(
+  '?createAlias=1&createType=p25_subscriber_identity&createHomeWacn=BEE00&createHomeSystemId=348' +
+    '&createSubscriberId=501&createWorkingAddress=501&createName=Portable+501', routedList, routedOptions);
+assert.deepEqual(JSON.parse(JSON.stringify(canonicalPrefill)), {
+  alias_list_id: 41, name: 'Portable 501', description: '', group: '', color: 0, icon_name: null,
+  recordable: false, broadcast_configuration_ids: [], scan_list_ids: [], stream_as_talkgroup: null,
+  matcher: { type: 'p25_subscriber_identity', home_wacn: 0xBEE00, home_system_id: 0x348,
+    subscriber_id: 501 },
+  working_address: 501
+}, 'Canonical Live routing must prefill the permanent tuple and keep an equal explicit WUID as context only.');
+const ordinaryPrefill = context.routedPrefill(
+  '?createAlias=1&createType=radio&createProtocol=p25&createVariant=phase_1&createValue=501',
+  routedList, routedOptions);
+assert.deepEqual(JSON.parse(JSON.stringify(ordinaryPrefill.matcher)), {
+  type: 'radio', protocol: 'p25', variant: 'phase_1', value: 501
+}, 'An ordinary P25 radio route must remain an ordinary local matcher.');
+assert.equal(context.routedPrefill(
+  '?createAlias=1&createType=p25_subscriber_identity&createHomeWacn=BEE00&createHomeSystemId=348' +
+    '&createSubscriberId=501&createWorkingAddress=not-a-radio', routedList, routedOptions), null,
+  'Malformed working context must fail closed instead of silently changing the routed identity.');
 
 const selectionFilters = {
   list: 42, type: 'talkgroup', matcher: 'talkgroup', group: 'Dispatch', scan_list_id: 7,

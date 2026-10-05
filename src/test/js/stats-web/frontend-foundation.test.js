@@ -1005,7 +1005,7 @@ async function main() {
   assert.match(callMatchingRenderer, /callMatchingHistoryPage\(latest\.duplicates, historyPage\)/);
   assert.match(callMatchingRenderer, /callMatchingHistoryPager\(page, \(nextPage\) =>/);
   const tableCalls = functionCalls(appSource, 'table');
-  assert.equal(tableCalls.length, 15, 'Every application table call must be audited');
+  assert.equal(tableCalls.length, 16, 'Every application table call must be audited');
   assert.match(appSource,
     /else if \(!options\.serverSort && options\.sortable !== false\)/,
     'Server-paged tables must not offer current-page-only sorting for derived columns');
@@ -1022,7 +1022,8 @@ async function main() {
     'aliasEditorSourceBreakdownColumns', 'aliasEditorBaseColumns', 'scanListMemberColumns',
     'dashboardIdentityColumns', 'radioSystemRadioColumns', 'p25ChannelFrequencyColumns',
     'trunkedChannelFrequencyColumns', 'p25ChannelNeighborColumns', 'trunkedChannelNeighborColumns',
-    'activityColumns', 'aliasCoverageAliasesColumns',
+    'activityColumns', 'issiCurrentAssignmentColumns', 'issiRecentChangeColumns',
+    'issiSubscriberColumns', 'issiForeignSystemColumns', 'issiBandColumns', 'aliasCoverageAliasesColumns',
     'aliasCoverageUnassignedColumns', 'channelGroupIdentityColumns', 'channelRadioColumns'
   ].forEach((name) => {
     const ids = [...functionBinding(appSource, name).matchAll(/\bid\s*:\s*'([^']+)'/g)]
@@ -1667,6 +1668,15 @@ async function main() {
   assert.equal(entityRefs.href({
     kind: 'talkgroup', radio_system_key: 'p25:bee00:49f', identity_key: 'v1-g-bee00-49f-56735'
   }), '/?view=group-identity&radio_system_key=p25%3Abee00%3A49f&identity_key=v1-g-bee00-49f-56735');
+  assert.equal(entityRefs.href({
+    kind: 'radio', radio_system_key: 'p25:bee00:49f', identity_key: 'v1-r-bee00-49f-16777212'
+  }), '/?view=radio&radio_system_key=p25%3Abee00%3A49f&identity_key=v1-r-bee00-49f-16777212');
+  assert.equal(entityRefs.href({
+    kind: 'radio', radio_system_key: 'p25:bee00:49f', identity_key: 'v1-r-x-x-130001'
+  }), '/?view=radio&radio_system_key=p25%3Abee00%3A49f&identity_key=v1-r-x-x-130001');
+  assert.equal(entityRefs.href({
+    kind: 'radio', radio_system_key: 'p25:bee00:49f', identity_key: 'v1-r-bee00-49f-16777213'
+  }), null);
   const channelUuid = 'fd6dd61b-a7d8-4fa0-9b7d-c46382827ca8';
   assert.equal(entityRefs.href({ kind: 'channel', key: channelUuid }),
     `/?view=channel&configuration_id=${channelUuid}`);

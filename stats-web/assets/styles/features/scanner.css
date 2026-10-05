@@ -290,10 +290,9 @@ body[data-view="scanner"] .content {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  overflow: hidden;
   color: var(--link);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .scanner-field-link::after {
@@ -703,6 +702,7 @@ body[data-view="scanner"] .content {
     font-size: var(--font-size-meta);
   }
 
+  .scanner-participant-fields,
   .scanner-field-grid,
   .scanner-display[data-scanner-mode="advanced"] .scanner-field-grid,
   .scanner-display[data-scanner-mode="engineer"] .scanner-field-grid {

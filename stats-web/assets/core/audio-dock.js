@@ -5,7 +5,8 @@ import { systemLabel } from './system-labels.js?v=1';
  * and recording-choice modal retain their lifecycle. One live engine and one
  * recording adapter; the dock owns presentation only, in light/dark and all sizes. */
 export function createAudioDock({ node, iconButton, uiToggleField, recordings, getLivePlayer, access, openRecordings,
-  entityRefHref, canViewRadio, href, getTitlePreference, setTitlePreference }) {
+  entityRefHref, canViewRadio, href, getTitlePreference, setTitlePreference,
+  radioIdentifier = (_call, value) => value }) {
   const dock = node('section', 'audio-dock ui-audio-surface');
   dock.id = 'audio-dock';
   dock.setAttribute('aria-label', 'Audio player');
@@ -50,6 +51,13 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const current = () => state().displayCall || state().current;
   const identityType = (form, fallback = 'ID') =>
     ({ TALKGROUP: 'TGID', PATCH_GROUP: 'Patch', RADIO: 'Radio' })[String(form || '').toUpperCase()] || fallback;
+  const sourceId = (call) => {
+    const value = call?.source_id ?? call?.radio_id;
+    return value === undefined || value === null || value === '' ? value : radioIdentifier(call, value, 'source');
+  };
+  const targetId = (call) => String(call?.target_form || '').toUpperCase() === 'RADIO' || call?.target_canonical_identity ||
+    call?.destination_radio_id !== undefined && call?.destination_radio_id !== null ?
+    radioIdentifier(call, call?.target_id ?? call?.destination_radio_id, 'target') : call?.target_id;
   const title = (call) => {
     if (!call) return 'Nothing queued';
     const analog = ['NBFM', 'AM'].includes(String(call.decoder || call.protocol || '').toUpperCase());
@@ -60,15 +68,15 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     const kind = call.call_type === 'PATCH' ? 'Patch' : call.destination_radio_id !== undefined &&
       call.destination_radio_id !== null ? 'Radio' : identityType(call.target_form,
         call.talkgroup_id !== undefined && call.talkgroup_id !== null ? 'TGID' : 'ID');
-    if (target !== undefined && target !== null && target !== '') return `${kind} ${target}`;
+    if (target !== undefined && target !== null && target !== '') return `${kind} ${kind === 'Radio' ? targetId(call) : target}`;
     return call.playback_target?.label || call.channel_name || call.channel || 'Recorded call';
   };
   const sourceName = (call) => call?.source_alias || call?.source_ota_alias || call?.talker_alias ||
-    (call?.source_id !== undefined && call?.source_id !== null ? `Radio ${call.source_id}` : '');
+    (call?.source_id !== undefined && call?.source_id !== null ? `Radio ${sourceId(call)}` : '');
   const sourceSummary = (call) => {
     if (!call) return '';
     const alias = call.source_alias || call.radio_alias;
-    const id = call.source_id ?? call.radio_id;
+    const id = sourceId(call);
     const ota = call.source_ota_alias || call.source_ota_ta || call.talker_alias || call.ota_alias;
     return [alias || (id !== undefined && id !== null && id !== '' ? `${identityType(call.source_form, 'Radio')} ${id}` : ''),
       alias && id !== undefined && id !== null && id !== '' ? `${identityType(call.source_form, 'Radio')} ${id}` : '',
@@ -410,8 +418,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     const call = liveState.current || {};
     const options = { empty: !liveState.current || liveState.stopped, includeEmpty: true };
     panelHost.append(factList([
-      ['Target', title(call), call.target_entity_ref], ['Target ID', call.target_id, call.target_entity_ref],
-      ['Source', sourceName(call), call.source_entity_ref], ['Source ID', call.source_id, call.source_entity_ref],
+      ['Target', title(call), call.target_entity_ref], ['Target ID', targetId(call), call.target_entity_ref],
+      ['Source', sourceName(call), call.source_entity_ref], ['Source ID', sourceId(call), call.source_entity_ref],
       ['System', systemLabel(call), call.radio_system_entity_ref], ['Channel', call.channel, call.entity_ref],
       ['Started', date(call)], ['Duration', call.duration_ms !== undefined ? `${Number(call.duration_ms) / 1000} sec` : null],
       ['Scan lists', (liveState.scanLists || []).filter((item) => (call._matchedScanListIds || call.scan_list_ids || [])

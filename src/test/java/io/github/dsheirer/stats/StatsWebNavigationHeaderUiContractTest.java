@@ -5,6 +5,7 @@
  */
 package io.github.dsheirer.stats;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -93,15 +94,17 @@ class StatsWebNavigationHeaderUiContractTest
             assertTrue(end > position);
             String link = html.substring(position, end);
             assertTrue(link.contains("class=\"nav-lock\""));
-            assertFalse(html.substring(position, html.indexOf('>', position)).contains(" hidden"));
+            String openingTag = html.substring(position, html.indexOf('>', position));
+            assertEquals(openingTag.contains("data-view=\"settings\""), openingTag.contains(" hidden"));
             links++;
             position = end + 4;
         }
         assertTrue(links >= 10);
         assertFalse(html.contains("nav-group-protected"));
         assertTrue(access.contains("link.classList.toggle('access-locked', locked)"));
-        assertTrue(access.contains("lock.hidden = !locked"));
+        assertTrue(access.contains("lock.toggleAttribute('hidden', !locked)"));
         assertTrue(access.contains("link.hidden = administratorOnly && locked"));
+        assertTrue(access.contains("link.dataset.view === 'settings' && !accessSession.authenticated"));
         assertTrue(access.contains("group.hidden = !group.querySelector"));
     }
 
