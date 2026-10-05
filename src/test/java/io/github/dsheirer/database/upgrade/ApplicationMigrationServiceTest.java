@@ -22,6 +22,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
+import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import io.github.dsheirer.module.decode.DecoderFactory;
 import io.github.dsheirer.module.decode.DecoderType;
@@ -1170,7 +1171,9 @@ class ApplicationMigrationServiceTest
             ApplicationMigrationService.readMigrationPlan(sourceDatabase);
 
         assertFalse(plan.source().requiresMigration());
-        assertEquals(plan, ApplicationMigrationService.readStartupPlan(sourceDatabase));
+        assertEquals(plan.source(), ApplicationMigrationService.readStartupPlan(sourceDatabase).source());
+        assertEquals("repair-portable-preferences",
+            ApplicationMigrationService.readStartupPlan(sourceDatabase).steps().getFirst().id());
         assertTrue(plan.requiresMigration());
         assertEquals(1, plan.steps().size());
         assertEquals("repair-portable-preferences", plan.steps().getFirst().id());
@@ -1179,8 +1182,6 @@ class ApplicationMigrationServiceTest
         assertTrue(description.contains("\n  - reset unusable portable preference components"));
         assertFalse(description.contains("; "));
         assertArrayEquals(sourceHash, sha256(sourceDatabase));
-        assertFalse(Files.exists(Path.of(sourceDatabase + "-wal")));
-        assertFalse(Files.exists(Path.of(sourceDatabase + "-shm")));
 
         Path targetRoot = Files.createDirectory(mTemporaryFolder.resolve("repairable-current-target"));
         ApplicationMigrationService.ApprovedMigrationPlan approval =
@@ -1235,28 +1236,23 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
-    void currentProfileRefreshRetainsSafetyBackup() throws Exception
+    void healthyCurrentProfileNeedsNoBackupOrMigration() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("current-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
         SdrTrunkTestDatabase.create(database);
         insertAlias(database, "Retained");
-
         ApplicationMigrationService.MigrationResult result =
             inProcessMigrationService().migrateCurrent(dataRoot, null);
-
         assertFalse(result.importedPreviousProfile());
-        assertNotNull(result.safetyBackup());
-        assertTrue(Files.isRegularFile(result.safetyBackup()));
-        assertEquals(1, count(result.safetyBackup(), "alias"));
-        assertCurrentFormat(result.safetyBackup());
+        assertNull(result.safetyBackup());
         assertEquals(1, count(database, "alias"));
         assertCurrentFormat(database);
-        assertEquals("wal", journalMode(database));
+        assertFalse(Files.exists(database.getParent().resolve("backups")));
     }
 
     @Test
-    void fastCurrentMigrationPreservesDataAndFormatWithoutCreatingABackup() throws Exception
+    void currentMigrationPreservesDataAndFormatWithoutCreatingABackup() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("fast-current-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
@@ -1266,7 +1262,7 @@ class ApplicationMigrationServiceTest
         List<String> progress = new ArrayList<>();
 
         ApplicationMigrationService.MigrationResult result =
-            new ApplicationMigrationService().migrateCurrentWithoutBackup(dataRoot, progress::add);
+            new ApplicationMigrationService().migrateCurrent(dataRoot, false, progress::add);
 
         assertFalse(result.importedPreviousProfile());
         assertEquals(24, result.sourceFormat().version());
@@ -1276,8 +1272,8 @@ class ApplicationMigrationServiceTest
             "SELECT COUNT(*) FROM alias WHERE name='Retained by fast migration'"));
         assertCurrentFormat(database);
         assertTrue(result.helperOutput().contains(
-            "Safety backup and full-file integrity checks were skipped by operator choice"));
-        assertFalse(result.helperOutput().contains("repair-portable-preferences"));
+            "Recovery backup skipped by operator choice"));
+        assertTrue(result.helperOutput().contains("repair-portable-preferences"));
         int stepCount = DatabaseFormatCatalog.CURRENT_VERSION - 24;
         assertTrue(progress.contains(
             "Step 1 of " + stepCount + " — Add opt-in encrypted traffic-channel suppression"));
@@ -1291,13 +1287,13 @@ class ApplicationMigrationServiceTest
         assertTrue(progress.contains("Step 6 of " + stepCount + " — Index encrypted Activity by owner and time"));
         assertTrue(progress.contains("Step 7 of " + stepCount +
             " — Add a personal theme hue with the original palette as default"));
-        assertTrue(progress.contains("Updating database directly"));
+        assertTrue(progress.contains("Opening the inactive database"));
         assertEquals("Database update committed", progress.getLast());
         assertFalse(Files.exists(database.getParent().resolve("backups")));
     }
 
     @Test
-    void fastFormat26MigrationDemotesSecondaryAdministratorWithoutCreatingABackup() throws Exception
+    void format26MigrationDemotesSecondaryAdministratorWithoutCreatingABackup() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("fast-format-26-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
@@ -1311,7 +1307,7 @@ class ApplicationMigrationServiceTest
         List<String> progress = new ArrayList<>();
 
         ApplicationMigrationService.MigrationResult result =
-            new ApplicationMigrationService().migrateCurrentWithoutBackup(dataRoot, progress::add);
+            new ApplicationMigrationService().migrateCurrent(dataRoot, false, progress::add);
 
         assertEquals(26, result.sourceFormat().version());
         assertNull(result.safetyBackup());
@@ -1335,21 +1331,17 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
-    void fastCurrentMigrationRefusesAnAlreadyCurrentDatabase() throws Exception
+    void noBackupUpdateAcceptsAnAlreadyCurrentDatabase() throws Exception
     {
-        Path dataRoot = mTemporaryFolder.resolve("fast-already-current");
+        Path dataRoot = mTemporaryFolder.resolve("already-current");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
         SdrTrunkTestDatabase.create(database);
         insertAlias(database, "Current database remains unchanged");
         int aliasesBefore = count(database, "alias");
-
-        SQLException exception = assertThrows(SQLException.class,
-            () -> new ApplicationMigrationService().migrateCurrentWithoutBackup(dataRoot, null));
-
-        assertTrue(exception.getMessage().contains("already current"), exception::getMessage);
+        ApplicationMigrationService.MigrationResult result =
+            new ApplicationMigrationService().migrateCurrent(dataRoot, false, null);
+        assertNull(result.safetyBackup());
         assertEquals(aliasesBefore, count(database, "alias"));
-        assertEquals("1", scalar(database,
-            "SELECT COUNT(*) FROM alias WHERE name='Current database remains unchanged'"));
         assertCurrentFormat(database);
         assertFalse(Files.exists(database.getParent().resolve("backups")));
     }
@@ -1359,7 +1351,7 @@ class ApplicationMigrationServiceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("posix-current-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        SdrTrunkTestDatabase.create(database);
+        Format30TestDatabase.create(database);
         PosixFileAttributeView view = Files.getFileAttributeView(database, PosixFileAttributeView.class);
         Assumptions.assumeTrue(view != null, "POSIX file attributes are unavailable");
         view.setPermissions(PosixFilePermissions.fromString("rw-------"));
@@ -1441,49 +1433,92 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
-    void helperFailureLeavesTheCurrentDatabaseUntouched() throws Exception
+    void transactionFailureRetainsBackupAndAllowsRetry() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("failure-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        SdrTrunkTestDatabase.create(database);
+        Format30TestDatabase.create(database);
         insertAlias(database, "Do Not Lose");
-        byte[] before = sha256(database);
-        AtomicReference<Path> stagedDatabase = new AtomicReference<>();
-        ApplicationMigrationService service = new ApplicationMigrationService(
-            (source, destination) -> Files.copy(source, destination),
-            (staged, source, target) ->
+        int aliasesBefore = count(database, "alias");
+        RuntimeException failure = assertThrows(RuntimeException.class,
+            () -> inProcessMigrationService().migrateCurrent(dataRoot, phase ->
             {
-                stagedDatabase.set(staged);
-                Files.writeString(Path.of(staged + "-journal"), "private rollback content");
-                Files.writeString(Path.of(staged + "-wal"), "private WAL content");
-                Files.writeString(Path.of(staged + "-shm"), "private shared-memory content");
-                throw new IOException("forced helper failure");
-            });
-
-        IOException exception = assertThrows(IOException.class, () -> service.migrateCurrent(dataRoot, null));
-
-        assertTrue(exception.getMessage().contains("forced helper failure"));
-        assertArrayEquals(before, sha256(database));
-        assertEquals(1, count(database, "alias"));
-        assertNotNull(stagedDatabase.get());
-        for(String suffix: List.of("", "-journal", "-wal", "-shm"))
-        {
-            assertFalse(Files.exists(suffix.isEmpty() ? stagedDatabase.get() :
-                Path.of(stagedDatabase.get() + suffix)));
-        }
-        Path backupDirectory = database.getParent().resolve("backups");
-        try(var paths = Files.list(backupDirectory))
+                if(phase.equals("Committing the database update"))
+                    throw new RuntimeException("forced failure before commit");
+            }));
+        assertTrue(failure.getMessage().contains("forced failure before commit"));
+        assertEquals("30", scalar(database, "SELECT value FROM database_metadata WHERE key='database_format_version'"));
+        assertEquals(aliasesBefore, count(database, "alias"));
+        try(var paths = Files.list(database.getParent().resolve("backups")))
         {
             List<Path> backups = paths.toList();
             assertEquals(1, backups.size());
-            assertCurrentFormat(backups.getFirst());
+            assertEquals("30", scalar(backups.getFirst(), "SELECT value FROM database_metadata WHERE key='database_format_version'"));
+            assertEquals(aliasesBefore, count(backups.getFirst(), "alias"));
         }
-
         ApplicationMigrationService.MigrationResult retry =
             inProcessMigrationService().migrateCurrent(dataRoot, null);
         assertNotNull(retry.safetyBackup());
         assertCurrentFormat(database);
-        assertEquals(1, count(database, "alias"));
+        assertEquals(aliasesBefore, count(database, "alias"));
+    }
+
+    @Test
+    void completionObserverFailureCannotMakeCommittedUpgradeRetryable() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("completed-update-observer-failure");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Format30TestDatabase.create(database);
+        insertAlias(database, "Preserved after completion warning");
+        ApplicationMigrationService.MigrationResult result =
+            inProcessMigrationService().migrateCurrent(dataRoot, phase ->
+            {
+                if(phase.equals("Database update committed"))
+                    throw new RuntimeException("forced observer failure after commit");
+            });
+        assertCurrentFormat(database);
+        assertNotNull(result.safetyBackup());
+        assertEquals(30, result.sourceFormat().version());
+        assertEquals("1", scalar(database,
+            "SELECT COUNT(*) FROM alias WHERE name='Preserved after completion warning'"));
+    }
+
+    @Test
+    void scratchCleanupFailureAfterReplacementIsACompletedUpdateWarning() throws Exception
+    {
+        Path source = Format30TestDatabase.create(mTemporaryFolder.resolve("replacement-source.sqlite"));
+        insertAlias(source, "Imported despite cleanup warning");
+        byte[] sourceBefore = sha256(source);
+        Path dataRoot = mTemporaryFolder.resolve("completed-replacement-cleanup-warning");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        SdrTrunkTestDatabase.create(database);
+        AtomicReference<Path> stagedPath = new AtomicReference<>();
+        ApplicationMigrationService service = new ApplicationMigrationService(SqliteDatabaseSnapshot::create,
+            (staged, from, to) ->
+            {
+                stagedPath.set(staged);
+                return ApplicationMigrationServiceTestSupport.runMigratorInProcess(staged, from, to);
+            }, promoted ->
+            {
+                SdrTrunkDatabaseStartup.validateGlobalDatabase(promoted);
+                leaveNonemptyScratchSidecar(stagedPath.get());
+            });
+
+        ApplicationMigrationService.MigrationResult result = service.replaceCurrentDatabase(source, dataRoot, null);
+
+        assertCurrentFormat(database);
+        assertTrue(Files.isRegularFile(result.safetyBackup()));
+        assertArrayEquals(sourceBefore, sha256(source));
+        assertEquals("Imported despite cleanup warning", scalar(database,
+            "SELECT name FROM alias WHERE name='Imported despite cleanup warning'"));
+        assertTrue(result.helperOutput().contains("The update is complete; do not repeat it."));
+        assertTrue(result.completedWithRepairsOrSkippedItems());
+    }
+
+    private static void leaveNonemptyScratchSidecar(Path staged) throws IOException
+    {
+        Path scratch = Files.createDirectory(Path.of(staged + "-shm"));
+        Files.writeString(scratch.resolve("blocked-cleanup"), "private test scratch");
     }
 
     @Test
@@ -1493,10 +1528,11 @@ class ApplicationMigrationServiceTest
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
         SdrTrunkTestDatabase.create(database);
         insertAlias(database, "Retained Safety Backup Alias");
+        Path source = SdrTrunkTestDatabase.create(mTemporaryFolder.resolve("replacement.sqlite"));
         Path sidecar = Path.of(database + "-wal");
         ApplicationMigrationService service = new ApplicationMigrationService(
             SqliteDatabaseSnapshot::create,
-            (staged, source, target) -> "migration helper complete",
+            (staged, from, to) -> "migration helper complete",
             promoted ->
             {
                 Files.writeString(Path.of(promoted + "-wal"), "forced active sidecar");
@@ -1507,7 +1543,7 @@ class ApplicationMigrationServiceTest
         try
         {
             failure = assertThrows(ApplicationMigrationService.LiveDatabaseRecoveryException.class,
-                () -> service.migrateCurrent(dataRoot, null));
+                () -> service.replaceCurrentDatabase(source, dataRoot, null));
         }
         finally
         {
@@ -1523,36 +1559,25 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
-    void failedPostPromotionValidationRestoresAndValidatesExactOlderFormatBackup() throws Exception
+    void failedReplacementValidationRestoresCurrentProfileBackup() throws Exception
     {
-        Path dataRoot = mTemporaryFolder.resolve("older-format-post-promotion-failure");
+        Path dataRoot = mTemporaryFolder.resolve("replacement-validation-failure");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        Format14TestDatabase.create(database);
-        insertAlias(database, "Restore Older Format Alias");
-        ApplicationMigrationService.ApprovedMigrationPlan approval =
-            ApplicationMigrationService.readMigrationApproval(database);
-        ApplicationMigrationService service = new ApplicationMigrationService(
-            SqliteDatabaseSnapshot::create,
-            ApplicationMigrationServiceTestSupport::runMigratorInProcess,
-            promoted ->
+        SdrTrunkTestDatabase.create(database);
+        insertAlias(database, "Restore Current Profile Alias");
+        Path selected = Format30TestDatabase.create(mTemporaryFolder.resolve("selected-older.sqlite"));
+        ApplicationMigrationService service = new ApplicationMigrationService(SqliteDatabaseSnapshot::create,
+            ApplicationMigrationServiceTestSupport::runMigratorInProcess, promoted ->
             {
                 throw new SQLException("forced post-promotion validation failure");
             });
-
         SQLException failure = assertThrows(SQLException.class,
-            () -> service.migrateCurrent(dataRoot, approval, null));
-
+            () -> service.replaceCurrentDatabase(selected, dataRoot, null));
         assertTrue(failure.getMessage().contains("forced post-promotion validation failure"));
-        assertEquals(approval.plan(), ApplicationMigrationService.readMigrationPlan(database));
-        assertEquals("Restore Older Format Alias", scalar(database,
-            "SELECT name FROM alias WHERE name='Restore Older Format Alias'"));
+        assertCurrentFormat(database);
+        assertEquals("1", scalar(database,
+            "SELECT COUNT(*) FROM alias WHERE name='Restore Current Profile Alias'"));
         assertEquals("ok", scalar(database, "PRAGMA integrity_check"));
-        try(var paths = Files.list(database.getParent().resolve("backups")))
-        {
-            List<Path> backups = paths.toList();
-            assertEquals(1, backups.size());
-            assertEquals(-1L, Files.mismatch(backups.getFirst(), database));
-        }
     }
 
     @Test
@@ -1560,7 +1585,7 @@ class ApplicationMigrationServiceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("snapshot-failure-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        SdrTrunkTestDatabase.create(database);
+        Format30TestDatabase.create(database);
         byte[] before = sha256(database);
         ApplicationMigrationService service = new ApplicationMigrationService(
             (source, destination) ->

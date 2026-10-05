@@ -71,10 +71,27 @@ public final class DatabaseMigrationChain
         return plan(source, true);
     }
 
-    /** Builds the exact adjacent plan for the no-backup path, excluding optional direct-source repairs. */
-    static PreflightReport planFast(DatabaseFormatCatalog.DetectedFormat source) throws SQLException
+    /** Builds an owned-profile plan without inspecting physical integrity or derived history. */
+    static PreflightReport planInPlace(Connection connection, DatabaseFormatCatalog.DetectedFormat source)
+        throws SQLException
     {
-        return plan(source, false);
+        PreflightReport plan = plan(source, false);
+        if(source.version() != DatabaseFormatCatalog.CURRENT_VERSION) return plan;
+        List<StepPreflight> steps = new ArrayList<>();
+        int portable = ApplicationDatabaseMigrator.inspectCurrentPortablePreferenceRepairs(connection);
+        if(portable > 0)
+        {
+            steps.add(new StepPreflight("repair-portable-preferences", "Repair unusable portable preferences",
+                source.version(), source.version(), List.of(new DatabaseMigrationEffect(
+                    DatabaseMigrationEffect.Kind.RESET, "unusable portable preference components", portable,
+                    "Preserve independent usable settings"))));
+        }
+        var administrative = CurrentDatabaseAdministrativeRepair.inspect(connection, false);
+        if(administrative.requiresRepair()) steps.add(CurrentDatabaseAdministrativeRepair.preflight(administrative));
+        var configuration = CurrentDatabaseBestEffortRepair.inspect(connection);
+        if(configuration.requiresRepair()) steps.add(CurrentDatabaseBestEffortRepair.preflight(configuration));
+        steps.addAll(plan.steps());
+        return new PreflightReport(source, plan.target(), List.copyOf(steps));
     }
 
     private static PreflightReport plan(DatabaseFormatCatalog.DetectedFormat source,
@@ -211,23 +228,14 @@ public final class DatabaseMigrationChain
     /** Runs every required adjacent step on the caller-provided staged connection. */
     public static MigrationReport migrate(Connection connection) throws SQLException
     {
-        return migrate(connection, true, ignored -> { });
+        return migrate(connection, DatabaseFormatCatalog.inspectForMigration(connection), true, ignored -> { });
     }
 
-    /**
-     * Runs the exact adjacent chain without the optional direct-source repair sweep. This is used only by the
-     * operator-selected no-backup upgrade path, which trades those deep checks for shorter downtime.
-     */
-    static MigrationReport migrateFast(Connection connection, Consumer<StepDescriptor> progress)
+    /** Runs the shared chain with an already admitted source and caller-owned final validation. */
+    static MigrationReport migrate(Connection connection, DatabaseFormatCatalog.DetectedFormat source,
+                                   boolean repairSelectedSource, Consumer<StepDescriptor> progress)
         throws SQLException
     {
-        return migrate(connection, false, progress == null ? ignored -> { } : progress);
-    }
-
-    private static MigrationReport migrate(Connection connection, boolean repairSelectedSource,
-                                           Consumer<StepDescriptor> progress) throws SQLException
-    {
-        DatabaseFormatCatalog.DetectedFormat source = DatabaseFormatCatalog.inspectForMigration(connection);
         List<StepReport> reports = new ArrayList<>();
         DatabaseFormatCatalog.DetectedFormat detected = source;
 
@@ -241,8 +249,8 @@ public final class DatabaseMigrationChain
                 step.migrateAndReport(connection,
                     repairSelectedSource && step.sourceVersion() == source.version()));
             requireObservedCounts(step, effects);
-            DatabaseFormatCatalog.stampForMigration(connection, step.targetVersion());
-            DatabaseFormatCatalog.DetectedFormat target = DatabaseFormatCatalog.inspectForMigration(connection);
+            DatabaseFormatCatalog.DetectedFormat target =
+                DatabaseFormatCatalog.stampForMigration(connection, step.targetVersion());
 
             if(target.version() != step.targetVersion() || !target.markerPresent())
             {
@@ -257,14 +265,13 @@ public final class DatabaseMigrationChain
 
         if(!detected.markerPresent())
         {
-            DatabaseFormatCatalog.stampForMigration(connection, detected.version());
-            detected = DatabaseFormatCatalog.requireCurrent(connection);
+            detected = DatabaseFormatCatalog.stampForMigration(connection, detected.version());
             StepPreflight adoption = markerAdoptionPreflight(detected.version());
             reports.add(new StepReport(adoption.id(), adoption.description(), adoption.sourceVersion(),
                 adoption.targetVersion(), adoption.effects()));
         }
 
-        DatabaseFormatCatalog.requireCurrent(connection);
+        if(repairSelectedSource) DatabaseFormatCatalog.requireCurrent(connection);
         return new MigrationReport(source, detected, List.copyOf(reports));
     }
 

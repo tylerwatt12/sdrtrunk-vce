@@ -51,7 +51,7 @@ public final class SdrTrunkDatabaseBootstrap
         boolean catalogNeedsUpgrade = false;
         try
         {
-            catalogNeedsUpgrade = ManagedRecordingCatalogMigrator.inspect(managedRecordingCatalog).needsMigration();
+            catalogNeedsUpgrade = ManagedRecordingCatalogMigrator.inspectForStartup(managedRecordingCatalog).needsMigration();
         }
         catch(IOException | SQLException ignored)
         {
@@ -70,19 +70,18 @@ public final class SdrTrunkDatabaseBootstrap
         {
             if(options.upgradeData() != null) throw new IOException("The current portable data folder already has a database");
             var plan = ApplicationMigrationService.readStartupPlan(database);
-            if(plan.requiresMigration())
+            if(plan.requiresMigration() || options.upgradeCurrent())
             {
                 if(!options.upgradeCurrent()) throw new IOException("The portable database requires these changes: " +
                     ApplicationMigrationService.describePlan(plan) +
                     ". Start once with --upgrade-current to create a safety backup and migrate it.");
-                var approval = ApplicationMigrationService.readMigrationApproval(database, database.getParent());
-                var result = migrationService.migrateCurrent(normalized, approval,
+                var result = migrationService.migrateCurrent(normalized, options.createUpgradeBackup(),
                     System.out::println);
                 if(!result.helperOutput().isBlank()) System.out.println(result.helperOutput());
                 if(result.safetyBackup() != null)
                     System.out.println("Safety backup: " + result.safetyBackup().toAbsolutePath().normalize());
             }
-            SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
+            SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database);
         }
         else
         {
@@ -117,11 +116,18 @@ public final class SdrTrunkDatabaseBootstrap
         }
         if(catalogNeedsUpgrade)
         {
-            var catalogMigration = ManagedRecordingCatalogMigrator.migrate(managedRecordingCatalog);
-            if(catalogMigration.migrated())
+            try
             {
-                System.out.println("Managed recordings safety backup: " +
-                    catalogMigration.backup().toAbsolutePath().normalize());
+                var catalogMigration = ManagedRecordingCatalogMigrator.migrate(managedRecordingCatalog,
+                    options.createUpgradeBackup());
+                if(catalogMigration.backup() != null)
+                    System.out.println("Managed recordings recovery backup: " +
+                        catalogMigration.backup().toAbsolutePath().normalize());
+            }
+            catch(IOException | SQLException failure)
+            {
+                System.err.println("Managed recordings could not be updated and remain unavailable. " +
+                    "Receiving will continue; retry the catalog update on a later launch. " + failure.getMessage());
             }
         }
         prepareVault(normalized);
@@ -221,7 +227,7 @@ public final class SdrTrunkDatabaseBootstrap
 
     public record Options(boolean fresh, Path importXml, Path upgradeData, boolean upgradeCurrent,
                           boolean upgradeManagedRecordings,
-                           Path adminPasswordFile)
+                          Path adminPasswordFile, boolean createUpgradeBackup)
     {
         public static Options parse(String[] args)
         {
@@ -231,6 +237,7 @@ public final class SdrTrunkDatabaseBootstrap
             boolean upgradeCurrent = false;
             boolean upgradeManagedRecordings = false;
             Path adminPasswordFile = null;
+            boolean createUpgradeBackup = true;
 
             for(int x = 0; x < args.length; x++)
             {
@@ -239,6 +246,7 @@ public final class SdrTrunkDatabaseBootstrap
                     case "--fresh" -> fresh = true;
                     case "--upgrade-current" -> upgradeCurrent = true;
                     case "--upgrade-managed-recordings" -> upgradeManagedRecordings = true;
+                    case "--no-upgrade-backup" -> createUpgradeBackup = false;
                     case "--admin-password-file" ->
                     {
                         if(++x >= args.length)
@@ -279,8 +287,13 @@ public final class SdrTrunkDatabaseBootstrap
                     "--upgrade-data, or --upgrade-current");
             }
 
+            if(!createUpgradeBackup && !upgradeCurrent && !upgradeManagedRecordings)
+            {
+                throw new IllegalArgumentException("--no-upgrade-backup requires --upgrade-current or --upgrade-managed-recordings");
+            }
+
             return new Options(fresh, importXml, upgradeData, upgradeCurrent, upgradeManagedRecordings,
-                adminPasswordFile);
+                adminPasswordFile, createUpgradeBackup);
         }
     }
 }

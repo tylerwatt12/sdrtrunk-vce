@@ -80,6 +80,31 @@ final class Format23WebUserPreferencesCodec
         return migrated;
     }
 
+    /** Sacrifices only cached table layouts when the added field would exceed the unchanged storage limit. */
+    static BoundedMigration migrateToBoundedFormat31(String json) throws IOException
+    {
+        validate(json);
+        ObjectNode target = readObject(json);
+        target.put("version", 8);
+        ((ObjectNode)target.get("appearance")).putNull("hue");
+        ObjectNode tables = (ObjectNode)target.get("tables");
+        int resetLayouts = 0;
+        String migrated = MAPPER.writeValueAsString(target);
+        while(migrated.getBytes(StandardCharsets.UTF_8).length > MAXIMUM_JSON_BYTES)
+        {
+            String last = null;
+            for(var fields = tables.fieldNames(); fields.hasNext(); ) last = fields.next();
+            if(last == null) throw new IOException("Personal preferences cannot fit without changing non-layout settings");
+            tables.remove(last);
+            resetLayouts++;
+            migrated = MAPPER.writeValueAsString(target);
+        }
+        Format31WebUserPreferencesCodec.validate(migrated);
+        return new BoundedMigration(migrated, resetLayouts);
+    }
+
+    record BoundedMigration(String json, int resetLayouts) { }
+
     static String defaults() throws IOException
     {
         //Freeze the version-7 defaults used by the current administrative repair through database format 30.

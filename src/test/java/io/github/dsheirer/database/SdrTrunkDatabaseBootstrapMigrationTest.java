@@ -21,6 +21,7 @@ import io.github.dsheirer.database.upgrade.ApplicationMigrationServiceTestSuppor
 import io.github.dsheirer.database.upgrade.DatabaseFormatCatalog;
 import io.github.dsheirer.database.upgrade.Format1TestDatabase;
 import io.github.dsheirer.database.upgrade.Format3TestDatabase;
+import io.github.dsheirer.database.upgrade.Format30TestDatabase;
 import io.github.dsheirer.database.upgrade.ManagedRecordingCatalogMigrator;
 import io.github.dsheirer.record.managed.ManagedRecordingSchema;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultPath;
@@ -42,6 +43,29 @@ class SdrTrunkDatabaseBootstrapMigrationTest
 {
     @TempDir
     Path mTemporaryFolder;
+
+    @Test
+    void explicitCurrentUpgradeRepairsConfigurationEvenWhenCatalogAdmissionIsCurrent() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("current-configuration-repair");
+        Path database = io.github.dsheirer.database.upgrade.Format31TestDatabase.create(
+            SdrTrunkDatabasePath.getDatabasePath(dataRoot));
+        String aliasesBefore = scalar(database, "SELECT COUNT(*) FROM alias");
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA ignore_check_constraints=ON");
+            statement.executeUpdate("UPDATE configuration_channel SET config_json='{invalid' WHERE rowid=" +
+                "(SELECT MIN(rowid) FROM configuration_channel)");
+        }
+        assertFalse(ApplicationMigrationService.readStartupPlan(database).requiresMigration());
+        SdrTrunkDatabaseBootstrap.run(new String[]{"--upgrade-current"}, dataRoot, true);
+        assertEquals("0", scalar(database,
+            "SELECT COUNT(*) FROM configuration_channel WHERE config_json='{invalid'"));
+        assertEquals(aliasesBefore, scalar(database, "SELECT COUNT(*) FROM alias"));
+        assertEquals(1, regularFiles(database.getParent().resolve("backups")).size());
+        SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
+    }
 
     @Test
     void headlessFormat1WithoutUpgradeFlagRefusesWithoutMutation() throws Exception
@@ -243,6 +267,59 @@ class SdrTrunkDatabaseBootstrapMigrationTest
         assertEquals(ManagedRecordingCatalogMigrator.State.UPGRADE_REQUIRED,
             ManagedRecordingCatalogMigrator.inspect(catalog).state());
         assertTrue(catalogBackups(catalog).isEmpty());
+    }
+
+    @Test
+    void headlessCurrentUpgradeUsesOneFlowWithAnOptionalRecoveryBackup() throws Exception
+    {
+        for(boolean backup: new boolean[]{true, false})
+        {
+            Path dataRoot = mTemporaryFolder.resolve(backup ? "upgrade-with-backup" : "upgrade-without-backup");
+            Path database = Format30TestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(dataRoot));
+            String aliases = scalar(database, "SELECT COUNT(*) FROM alias");
+            String channels = scalar(database, "SELECT COUNT(*) FROM configuration_channel");
+            String passwordVerifier = scalar(database, "SELECT hex(password_hash) FROM web_user WHERE primary_admin=1");
+            String[] args = backup ? new String[]{"--upgrade-current"} :
+                new String[]{"--upgrade-current", "--no-upgrade-backup"};
+
+            assertTrue(SdrTrunkDatabaseBootstrap.run(args, dataRoot, true).startApplication());
+
+            assertCurrentDatabase(database);
+            assertEquals(aliases, scalar(database, "SELECT COUNT(*) FROM alias"));
+            assertEquals(channels, scalar(database, "SELECT COUNT(*) FROM configuration_channel"));
+            assertEquals(passwordVerifier, scalar(database, "SELECT hex(password_hash) FROM web_user WHERE primary_admin=1"));
+            Path backups = database.getParent().resolve("backups");
+            if(backup)
+            {
+                try(var files = Files.list(backups))
+                {
+                    assertEquals(1, files.filter(Files::isRegularFile).count());
+                }
+            }
+            else assertFalse(Files.exists(backups));
+        }
+    }
+
+    @Test
+    void failedOptionalCatalogUpgradeDoesNotBlockReceivingOrReplaceItsSource() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("catalog-backup-failure");
+        Path database = SdrTrunkTestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(dataRoot));
+        Path catalog = createFormat1Catalog(database.resolveSibling("managed-recordings.sqlite"));
+        byte[] before = sha256(catalog);
+        Path backupBlocker = database.getParent().resolve("backups");
+        Files.writeString(backupBlocker, "existing unrelated file");
+
+        Path password = passwordFile("catalog-failure-admin-password.txt");
+        assertTrue(SdrTrunkDatabaseBootstrap.run(new String[]{"--upgrade-managed-recordings",
+            "--admin-password-file", password.toString()}, dataRoot, true)
+            .startApplication());
+
+        assertArrayEquals(before, sha256(catalog));
+        assertEquals("existing unrelated file", Files.readString(backupBlocker));
+        assertEquals(ManagedRecordingCatalogMigrator.State.UPGRADE_REQUIRED,
+            ManagedRecordingCatalogMigrator.inspectForStartup(catalog).state());
+        assertCurrentDatabase(database);
     }
 
     @Test

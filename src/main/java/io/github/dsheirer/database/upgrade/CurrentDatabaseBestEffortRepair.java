@@ -27,6 +27,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -140,6 +141,7 @@ final class CurrentDatabaseBestEffortRepair
             analysis.streamRoutes().unmatchedRoutes().repairs());
         applyStreamRouteRepairs(connection, "alias_list_new_alias_stream",
             analysis.streamRoutes().newAliasRoutes().repairs());
+        deleteDependentReceiverRows(connection, analysis.channels().invalidRowIds());
         deleteRows(connection, "configuration_channel", analysis.channels().invalidRowIds());
         applyChannelRepairs(connection, analysis.channels().repairs());
         reassignUnusableChannelAliasLists(connection, analysis.clearedChannelAliasLists(),
@@ -160,6 +162,45 @@ final class CurrentDatabaseBestEffortRepair
             throw new SQLException("Bounded current-format relationship repair did not remove every targeted row");
         }
         return before;
+    }
+
+    /** Historical table rebuilds relax foreign keys; emulate only cascades owned by skipped channels. */
+    private static void deleteDependentReceiverRows(Connection connection, List<Long> rows) throws SQLException
+    {
+        if(rows.isEmpty()) return;
+        try(Statement statement = connection.createStatement(); ResultSet setting = statement.executeQuery(
+            "PRAGMA foreign_keys"))
+        {
+            if(setting.next() && setting.getInt(1) != 0) return;
+        }
+        String ids = rows.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
+        String configuration = "SELECT configuration_id FROM configuration_channel WHERE rowid IN (" + ids + ")";
+        String channels = "SELECT id FROM receiver_channel WHERE configuration_id IN (" + configuration + ")";
+        String systems = "SELECT id FROM radio_system WHERE configuration_id IN (" + configuration + ")";
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DELETE FROM activity_event_identity_member WHERE event_id IN " +
+                "(SELECT id FROM receiver_activity_event WHERE channel_id IN (" + channels + ") OR " +
+                "radio_system_id IN (" + systems + "))");
+            for(String table: CurrentDatabaseDerivedStateRepair.REPRODUCIBLE_TABLES)
+            {
+                Set<String> columns = new HashSet<>();
+                try(ResultSet fields = statement.executeQuery("PRAGMA table_info(" + table + ")"))
+                {
+                    while(fields.next()) columns.add(fields.getString("name"));
+                }
+                List<String> predicates = new ArrayList<>();
+                if(columns.contains("channel_id")) predicates.add("channel_id IN (" + channels + ")");
+                if(columns.contains("radio_system_id") && !table.equals("receiver_channel"))
+                    predicates.add("radio_system_id IN (" + systems + ")");
+                if(!predicates.isEmpty())
+                    statement.executeUpdate("DELETE FROM " + table + " WHERE " + String.join(" OR ", predicates));
+            }
+            statement.executeUpdate("UPDATE receiver_channel SET radio_system_id=NULL WHERE " +
+                "radio_system_id IN (" + systems + ") AND id NOT IN (" + channels + ")");
+            statement.executeUpdate("DELETE FROM receiver_channel WHERE id IN (" + channels + ")");
+            statement.executeUpdate("DELETE FROM radio_system WHERE id IN (" + systems + ")");
+        }
     }
 
     static DatabaseMigrationChain.StepPreflight preflight(Inspection inspection)

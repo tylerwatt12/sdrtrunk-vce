@@ -169,7 +169,7 @@ class Format30To31DatabaseMigrationTest
     }
 
     @Test
-    void refusesAUsableDocumentWhoseAddedHueWouldExceedTheBoundWithoutChangingAnyRows() throws Exception
+    void resetsOneCachedLayoutOnlyWhenTheAddedHueExceedsTheUnchangedBound() throws Exception
     {
         Path database = Format30TestDatabase.create(mTemporaryFolder.resolve("full-preferences.sqlite"));
         String source = fullVersionSevenDocument();
@@ -184,15 +184,31 @@ class Format30To31DatabaseMigrationTest
                 assertEquals(1, update.executeUpdate());
             }
             Map<Long,Preference> before = preferences(statement);
-            //Also prove refusal precedes optional administrative repair, rather than silently fixing another row.
-            statement.executeUpdate("DELETE FROM application_settings WHERE key='spectrum_snap_country'");
-            SQLException refusal = assertThrows(SQLException.class, () -> DatabaseMigrationChain.migrate(connection));
-            assertTrue(refusal.getMessage().contains("cannot fit the version-8 storage bound"));
-            assertEquals(before, preferences(statement));
-            assertEquals("30", scalar(statement,
-                "SELECT value FROM database_metadata WHERE key='database_format_version'"));
-            assertEquals("0", scalar(statement,
-                "SELECT count(*) FROM application_settings WHERE key='spectrum_snap_country'"));
+            Map<Long,byte[]> credentials = credentialDigests(statement);
+            DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
+            var reset = report.steps().getFirst().effects().stream().filter(effect ->
+                effect.kind() == DatabaseMigrationEffect.Kind.RESET &&
+                    effect.subject().contains("personal-preference storage bound")).findFirst().orElseThrow();
+            assertEquals(1, reset.affectedRows());
+            ObjectMapper mapper = new ObjectMapper();
+            ObjectNode expected = (ObjectNode)mapper.readTree(source);
+            expected.put("version", 8);
+            ((ObjectNode)expected.get("appearance")).putNull("hue");
+            ObjectNode tables = (ObjectNode)expected.get("tables");
+            String last = null;
+            for(var names = tables.fieldNames(); names.hasNext(); ) last = names.next();
+            tables.remove(last);
+            assertEquals(expected, mapper.readTree(preferences(statement).get(3L).json()));
+            assertTrue(preferences(statement).get(3L).json().length() <= WebUserPreferences.MAXIMUM_JSON_BYTES);
+            for(Map.Entry<Long,Preference> entry: before.entrySet())
+            {
+                if(entry.getKey() != 3L) assertEquals(Format23WebUserPreferencesCodec.migrateToFormat31(
+                    entry.getValue().json()), preferences(statement).get(entry.getKey()).json());
+                assertTrue(MessageDigest.isEqual(credentials.get(entry.getKey()),
+                    credentialDigests(statement).get(entry.getKey())), "Account or credential changed");
+            }
+            assertEquals(31, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertFalse(statement.executeQuery("PRAGMA foreign_key_check").next());
         }
     }
 

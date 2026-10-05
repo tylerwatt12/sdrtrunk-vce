@@ -114,6 +114,28 @@ public final class SdrTrunkDatabaseStartup
         }
     }
 
+    /**
+     * Admits an exact current database at normal startup without scanning retained receiver-derived history.
+     * The global catalog verifies the complete schema fingerprint, marker, and bounded required settings.
+     * Explicit migration and maintenance retain {@link #validateGlobalDatabase(Path)} and their full checks.
+     */
+    public static void validateGlobalDatabaseForStartup(Path databasePath) throws IOException, SQLException
+    {
+        Path normalized = requireDatabase(databasePath, "VCE");
+
+        try(Connection connection = openReadOnly(normalized))
+        {
+            requireMainTrackDatabase(connection);
+            DatabaseFormatCatalog.requireCurrent(connection);
+        }
+
+        //No writable connection or operational journal change is allowed until exact admission succeeds.
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + normalized))
+        {
+            configure(connection);
+        }
+    }
+
     public static void createVaultDatabase(Path vaultPath) throws IOException, SQLException
     {
         Path normalized = vaultPath.toAbsolutePath().normalize();

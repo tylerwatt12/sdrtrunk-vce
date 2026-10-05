@@ -68,10 +68,6 @@ final class ManagedRecordingStore implements AutoCloseable
         mWriterConnection = open();
         try
         {
-            try(Statement statement = mWriterConnection.createStatement())
-            {
-                statement.execute("PRAGMA journal_mode=WAL");
-            }
             if(fresh)
             {
                 createFresh();
@@ -79,6 +75,11 @@ final class ManagedRecordingStore implements AutoCloseable
             else
             {
                 validateExisting();
+            }
+            //A refused old or unknown catalog must retain its journal mode for retry with the proper migrator.
+            try(Statement statement = mWriterConnection.createStatement())
+            {
+                statement.execute("PRAGMA journal_mode=WAL");
             }
         }
         catch(SQLException | RuntimeException exception)

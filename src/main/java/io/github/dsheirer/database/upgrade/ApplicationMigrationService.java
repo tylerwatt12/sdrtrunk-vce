@@ -53,11 +53,11 @@ import org.sqlite.ProgressHandler;
 import org.sqlite.SQLiteConfig;
 
 /**
- * Stages, validates, and promotes portable data accepted by the current sdrtrunk-vce build.
+ * Updates an inactive current profile or stages and promotes explicitly selected external data.
  *
- * <p>The Application Migrator always runs in a child process and only receives a staged database. Normal startup
- * services remain validation-only for an existing SQLite schema. Every supported Alpha 8-or-newer source is resolved
- * by the whole-file format catalog and advanced through the same adjacent migration chain.</p>
+ * <p>Current-profile updates use one optional recovery snapshot and one transaction in the bundled Application
+ * Migrator. External imports retain their private staged child process and source approval. Both advance through
+ * the same adjacent migration chain; normal database services remain validation-only.</p>
  */
 public final class ApplicationMigrationService
 {
@@ -81,28 +81,28 @@ public final class ApplicationMigrationService
     {
         this(SqliteDatabaseSnapshot::createExternal, SqliteDatabaseSnapshot::create,
             ApplicationMigratorLauncher::run,
-            ApplicationMigrationService::moveAtomically, ApplicationMigrationService::validateGlobalDatabase,
+            ApplicationMigrationService::moveAtomically, ApplicationMigrationService::validatePromotedDatabase,
             true, true);
     }
 
     ApplicationMigrationService(MigrationRunner migrationRunner)
     {
         this(SqliteDatabaseSnapshot::createExternal, SqliteDatabaseSnapshot::create, migrationRunner,
-            ApplicationMigrationService::moveAtomically, ApplicationMigrationService::validateGlobalDatabase,
+            ApplicationMigrationService::moveAtomically, ApplicationMigrationService::validatePromotedDatabase,
             true, true);
     }
 
     ApplicationMigrationService(Snapshotter snapshotter, MigrationRunner migrationRunner)
     {
         this(snapshotter, snapshotter, migrationRunner, ApplicationMigrationService::moveAtomically,
-            ApplicationMigrationService::validateGlobalDatabase, false, false);
+            ApplicationMigrationService::validatePromotedDatabase, false, false);
     }
 
     ApplicationMigrationService(Snapshotter snapshotter, MigrationRunner migrationRunner,
                                 StagePromoter stagePromoter)
     {
         this(snapshotter, snapshotter, migrationRunner, stagePromoter,
-            ApplicationMigrationService::validateGlobalDatabase, false, false);
+            ApplicationMigrationService::validatePromotedDatabase, false, false);
     }
 
     private ApplicationMigrationService(Snapshotter externalSnapshotter, Snapshotter liveSnapshotter,
@@ -355,6 +355,7 @@ public final class ApplicationMigrationService
         Path staged = databaseDirectory.resolve("." + SdrTrunkDatabasePath.DATABASE_FILENAME + ".migration-" +
             UUID.randomUUID());
 
+        MigrationResult completedResult = null;
         Throwable primaryFailure = null;
         try
         {
@@ -396,7 +397,7 @@ public final class ApplicationMigrationService
 
             validatePromotedDatabaseOrRestore(target, backup, targetAttributes);
 
-            return new MigrationResult(false, backup, sourcePlan, helperOutput,
+            completedResult = new MigrationResult(false, backup, sourcePlan, helperOutput,
                 PreviousBuildLocator.InputScope.DATABASE_FILE);
         }
         catch(IOException | SQLException | InterruptedException | RuntimeException e)
@@ -441,136 +442,90 @@ public final class ApplicationMigrationService
                 {
                     primaryFailure.addSuppressed(cleanupFailure);
                 }
+                else if(completedResult != null)
+                {
+                    completedResult = withCleanupWarning(completedResult);
+                }
                 else
                 {
                     throw cleanupFailure;
                 }
             }
         }
+        return Objects.requireNonNull(completedResult, "Database replacement did not complete");
     }
 
-    /**
-     * Migrates a supported earlier database already in the current portable data root and retains a safety backup.
-     */
+    /** Updates the inactive current profile, retaining one recovery backup by default. */
     public MigrationResult migrateCurrent(Path dataRoot, ProgressListener progress)
         throws IOException, SQLException, InterruptedException
     {
-        return migrateCurrent(dataRoot, null, progress);
+        return migrateCurrent(dataRoot, true, progress);
     }
 
-    /** Migrates in place only if the source still matches the plan already presented to the operator. */
-    public MigrationResult migrateCurrent(Path dataRoot, ApprovedMigrationPlan approvedPlan,
-                                          ProgressListener progress)
+    /**
+     * Uses the same adjacent migration transaction with or without a recovery backup. The caller holds the portable
+     * data-root lock and has not started receivers or database services. A requested snapshot is taken under the
+     * transaction's writer reservation, before any changes, and includes committed WAL data.
+     */
+    public MigrationResult migrateCurrent(Path dataRoot, boolean createBackup, ProgressListener progress)
         throws IOException, SQLException, InterruptedException
     {
         ProgressListener listener = progress == null ? ignored -> { } : progress;
-        Path normalizedRoot = dataRoot.toAbsolutePath().normalize();
-        Path database = SdrTrunkDatabasePath.getDatabasePath(normalizedRoot);
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot.toAbsolutePath().normalize());
         SqliteDatabaseSnapshot.requireSourceUsable(database);
-        FileAccessAttributeSnapshot liveDatabaseAttributes = FileAccessAttributeSnapshot.capture(database);
-        listener.update("Checking previous data");
-        ApprovedMigrationPlan expectedPlan = approvedPlan != null ? approvedPlan :
-            readMigrationApproval(database, database.getParent(), listener);
-        listener.update("Migration plan: " + describePlan(expectedPlan.plan()));
-        listener.update("Migration scope: existing portable-profile database; external artifacts remain in place " +
-            "and stored paths are not remapped.");
-
-        Path databaseDirectory = database.getParent();
-        //Safety backup + staged database + worst-case rollback journal/WAL for the staged transformation.
-        int databaseCopies = 3;
-        long requiredDatabaseSpace = safeMultiply(sqliteFootprint(database), databaseCopies);
-        ensureFreeSpace(databaseDirectory, safeAdd(requiredDatabaseSpace, FREE_SPACE_MARGIN_BYTES));
-        Path backupDirectory = databaseDirectory.resolve("backups");
-        Files.createDirectories(backupDirectory);
+        FileAccessAttributeSnapshot attributes = FileAccessAttributeSnapshot.capture(database);
+        //The live transaction needs rollback space; only the selected recovery copy adds another footprint.
+        ensureFreeSpace(database.getParent(), safeAdd(safeMultiply(sqliteFootprint(database),
+            createBackup ? 2 : 1), FREE_SPACE_MARGIN_BYTES));
         String identity = BACKUP_TIME.format(LocalDateTime.now()) + "-" +
             UUID.randomUUID().toString().substring(0, 8);
+        Path backupDirectory = database.getParent().resolve("backups");
         Path backup = backupDirectory.resolve("sdrtrunk-before-application-migration-" + identity + ".sqlite");
-        Path stagedBackup = databaseDirectory.resolve("." + backup.getFileName() + ".incomplete-" + UUID.randomUUID());
-        Path staged = databaseDirectory.resolve("." + SdrTrunkDatabasePath.DATABASE_FILENAME + ".migration-" +
-            UUID.randomUUID());
-
+        Path incomplete = database.resolveSibling("." + backup.getFileName() + ".incomplete-" + UUID.randomUUID());
+        AtomicBoolean backedUp = new AtomicBoolean();
+        MigrationResult completedResult = null;
         Throwable primaryFailure = null;
         try
         {
-            listener.update("Creating safety backup");
-            mLiveSnapshotter.create(database, stagedBackup);
-            liveDatabaseAttributes.applyTo(stagedBackup);
-            ApprovedMigrationPlan backupPlan = readPrivateApprovedMigrationPlan(stagedBackup,
-                mLiveSnapshotsAreCanonical);
-            requireApprovedPlan(expectedPlan, backupPlan, "source database selected after confirmation");
-            DatabaseMigrationChain.PreflightReport sourcePlan = backupPlan.plan();
-            finalizeStandaloneSnapshot(stagedBackup);
-            requireNoSidecars(stagedBackup,
-                "The safety backup still has SQLite sidecar files and cannot be published safely.");
-            DatabaseMigrationChain.PreflightReport finalizedBackupPlan = readPrivateMigrationPlan(stagedBackup);
-            requireMatchingPlan(sourcePlan, finalizedBackupPlan, "finalized safety backup");
-            RestoredDatabaseExpectation rollbackExpectation = new RestoredDatabaseExpectation(finalizedBackupPlan,
-                SqliteDatabaseSnapshot.sha256(stagedBackup));
-            liveDatabaseAttributes.applyTo(stagedBackup);
-            moveAtomically(stagedBackup, backup);
-            Files.copy(backup, staged, StandardCopyOption.COPY_ATTRIBUTES);
-
-            listener.update("Updating database");
-            String helperOutput = mMigrationRunner.run(staged, normalizedRoot, normalizedRoot);
-            InitialAdminSetup.preserveGrandfatheredAbsence(backup, staged);
-
-            listener.update("Checking updated data");
-            validateGlobalDatabase(staged);
-            requireNoSidecars(staged,
-                "The staged database still has SQLite sidecar files and cannot replace the live database safely.");
-            liveDatabaseAttributes.applyTo(staged);
-
-            listener.update("Finishing");
-            prepareLiveDatabaseForReplacement(database);
-            moveAtomicallyReplacing(staged, database);
-
-            validatePromotedDatabaseOrRestore(database, backup, liveDatabaseAttributes,
-                restored -> validateRestoredMigrationSource(restored, rollbackExpectation));
-
-            return new MigrationResult(false, backup, sourcePlan, helperOutput,
+            ApplicationDatabaseMigrator.InPlaceMigrationResult result =
+                ApplicationDatabaseMigrator.migrateInPlace(database, listener::update, createBackup ? () ->
+                {
+                    listener.update("Creating recovery backup");
+                    Files.createDirectories(backupDirectory);
+                    mLiveSnapshotter.create(database, incomplete);
+                    attributes.applyTo(incomplete);
+                    requireNoSidecars(incomplete, "The recovery backup must be a standalone SQLite snapshot.");
+                    moveAtomically(incomplete, backup);
+                    backedUp.set(true);
+                } : null);
+            String backupReport = backedUp.get() ? "Recovery backup retained: " + backup :
+                createBackup ? "No recovery backup was needed; the database was already current." :
+                    "WARNING: Recovery backup skipped by operator choice.";
+            completedResult = new MigrationResult(false, backedUp.get() ? backup : null, result.sourcePlan(),
+                result.helperOutput() + System.lineSeparator() + backupReport,
                 PreviousBuildLocator.InputScope.DATABASE_FILE);
         }
-        catch(IOException | SQLException | InterruptedException | RuntimeException e)
+        catch(IOException | SQLException | RuntimeException | Error failure)
         {
-            primaryFailure = e;
-            throw e;
-        }
-        catch(Error e)
-        {
-            primaryFailure = e;
-            throw e;
+            primaryFailure = failure;
+            if(backedUp.get()) failure.addSuppressed(new IOException("Recovery backup retained: " + backup));
+            throw failure;
         }
         finally
         {
-            IOException cleanupFailure = null;
             try
             {
-                deleteDatabaseAndSidecarsIfExists(staged);
+                deleteDatabaseAndSidecarsIfExists(incomplete);
             }
-            catch(IOException e)
-            {
-                cleanupFailure = e;
-            }
-            try
-            {
-                deleteDatabaseAndSidecarsIfExists(stagedBackup);
-            }
-            catch(IOException e)
-            {
-                if(cleanupFailure == null)
-                {
-                    cleanupFailure = e;
-                }
-                else
-                {
-                    cleanupFailure.addSuppressed(e);
-                }
-            }
-            if(cleanupFailure != null)
+            catch(IOException cleanupFailure)
             {
                 if(primaryFailure != null)
                 {
                     primaryFailure.addSuppressed(cleanupFailure);
+                }
+                else if(completedResult != null)
+                {
+                    completedResult = withCleanupWarning(completedResult);
                 }
                 else
                 {
@@ -578,70 +533,50 @@ public final class ApplicationMigrationService
                 }
             }
         }
+        return Objects.requireNonNull(completedResult, "Database migration did not complete");
     }
 
-    /**
-     * Applies the required adjacent steps directly to the inactive application database. The operator explicitly
-     * chooses this path to skip the recovery copy, approval digest, source repair sweep, and whole-file checks.
-     */
-    public MigrationResult migrateCurrentWithoutBackup(Path dataRoot, ProgressListener progress)
-        throws IOException, SQLException
+    private static MigrationResult withCleanupWarning(MigrationResult result)
     {
-        ProgressListener listener = progress == null ? ignored -> { } : progress;
-        Path normalizedRoot = dataRoot.toAbsolutePath().normalize();
-        Path database = SdrTrunkDatabasePath.getDatabasePath(normalizedRoot);
-        SqliteDatabaseSnapshot.requireSourceUsable(database);
-        if(Files.isRegularFile(Path.of(database + "-journal"), LinkOption.NOFOLLOW_LINKS))
-        {
-            throw new IOException("The database has a recovery journal. Use the safe update path instead.");
-        }
-
-        listener.update("Updating database directly");
-        listener.update("Checking temporary disk space");
-        ensureFreeSpace(database.getParent(), safeAdd(safeMultiply(sqliteFootprint(database), 2),
-            FREE_SPACE_MARGIN_BYTES));
-        ApplicationDatabaseMigrator.FastMigrationResult result =
-            ApplicationDatabaseMigrator.migrateCurrentFast(database, listener::update);
-        return new MigrationResult(false, null, result.sourcePlan(), result.helperOutput(),
-            PreviousBuildLocator.InputScope.DATABASE_FILE);
+        String warning = "WARNING: Temporary migration files could not be removed after installation. " +
+            "The update is complete; do not repeat it.";
+        return new MigrationResult(result.importedPreviousProfile(), result.safetyBackup(), result.sourcePlan(),
+            Objects.toString(result.helperOutput(), "") + System.lineSeparator() + warning, result.inputScope());
     }
 
     /**
-     * Accepts an exact current-format database without a full-file quick check or derived-state scan. Older formats
-     * and databases that fail the bounded current-format checks still receive the full preflight for migration or
-     * repair. Damage detectable only by the omitted scans is deferred until an explicit full inspection.
+     * Inspects the inactive application-owned profile under its portable-data lock. SQLite honors committed WAL
+     * content and may recover an interrupted rollback journal; this does not run a migration or a full-history scan.
+     * Explicit external-source review continues to use its private immutable snapshot instead.
      */
     public static DatabaseMigrationChain.PreflightReport readStartupPlan(Path database)
         throws IOException, SQLException
     {
         Path normalized = database.toAbsolutePath().normalize();
         SqliteDatabaseSnapshot.requireSourceUsable(normalized);
-        if(!Files.isRegularFile(Path.of(normalized + "-journal"), LinkOption.NOFOLLOW_LINKS))
+        ApplicationDatabaseMigrator.requireSingleFilesystemLinkWhenSupported(normalized);
+        boolean recoveryRequired = Files.isRegularFile(Path.of(normalized + "-journal"), LinkOption.NOFOLLOW_LINKS);
+        SQLiteConfig config = new SQLiteConfig();
+        config.setReadOnly(!recoveryRequired);
+        config.setBusyTimeout(SdrTrunkDatabase.BUSY_TIMEOUT_MILLISECONDS);
+        config.enforceForeignKeys(true);
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + normalized, config.toProperties()))
         {
-            Path wal = Path.of(normalized + "-wal");
-            boolean committedWalPresent = Files.isRegularFile(wal, LinkOption.NOFOLLOW_LINKS) && Files.size(wal) > 0;
-            try(Connection connection = committedWalPresent ? openLiveReadOnly(normalized) : openReadOnly(normalized))
+            SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
+            DatabaseFormatCatalog.DetectedFormat source = DatabaseFormatCatalog.inspectForMigration(connection);
+            if(source.version() == DatabaseFormatCatalog.CURRENT_VERSION)
             {
-                SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
                 try
                 {
                     return DatabaseMigrationChain.plan(DatabaseFormatCatalog.requireCurrent(connection));
                 }
-                catch(SQLException ignored)
+                catch(SQLException rejectedCurrent)
                 {
-                    DatabaseFormatCatalog.DetectedFormat source =
-                        DatabaseFormatCatalog.inspectForMigration(connection);
-                    if(source.version() < DatabaseFormatCatalog.CURRENT_VERSION)
-                    {
-                        //Show setup immediately for a recognized older format. The operator-selected safe path does
-                        //the full source inspection; the no-backup path deliberately skips it.
-                        return DatabaseMigrationChain.plan(source);
-                    }
-                    //The full preflight distinguishes repairable current-format data from an invalid database.
+                    //Inspect bounded repairable configuration only when ordinary current-format admission fails.
                 }
             }
+            return DatabaseMigrationChain.planInPlace(connection, source);
         }
-        return readMigrationPlan(normalized);
     }
 
     /**
@@ -998,8 +933,16 @@ public final class ApplicationMigrationService
 
         ConfigurationSnapshotValidator.validateForStartup(new ConfigurationRepository(database).load());
 
-        //The read-only checks above establish that it is safe to apply the main runtime's WAL configuration.
-        SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
+        //The full staged checks above have already validated derived rows and physical integrity. Bounded startup
+        //admission applies the runtime WAL settings without scanning that same retained history again.
+        SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database);
+    }
+
+    /** Atomic promotion changes only the file location; the staged contents already passed full validation. */
+    private static void validatePromotedDatabase(Path database) throws IOException, SQLException
+    {
+        SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database);
+        ConfigurationSnapshotValidator.validateForStartup(new ConfigurationRepository(database).load());
     }
 
     private static void requireMatchingPlan(DatabaseMigrationChain.PreflightReport expected,
@@ -1315,36 +1258,6 @@ public final class ApplicationMigrationService
                     throw cleanupFailure;
                 }
             }
-        }
-    }
-
-    /**
-     * An in-place rollback restores the exact supported source rather than a current-format database. Validate its
-     * physical integrity and bind it to both the reviewed source plan and the published backup's complete content.
-     */
-    private static void validateRestoredMigrationSource(Path database, RestoredDatabaseExpectation expected)
-        throws IOException, SQLException
-    {
-        String actualContentSha256 = SqliteDatabaseSnapshot.sha256(database);
-        if(!expected.contentSha256().equals(actualContentSha256))
-        {
-            throw new IOException("The restored database content does not match the retained in-place migration " +
-                "safety backup.");
-        }
-
-        DatabaseMigrationChain.PreflightReport actualPlan = readPrivateMigrationPlan(database);
-        if(!expected.plan().equals(actualPlan))
-        {
-            throw new IOException("The restored database does not match the approved in-place migration source " +
-                "plan.");
-        }
-
-        try(Connection connection = openReadOnly(database); Statement statement = connection.createStatement())
-        {
-            //The migration chain explicitly admits repairable row CHECK violations. Verify full physical integrity
-            //without reclassifying that approved source data as an unsafe rollback.
-            statement.execute("PRAGMA ignore_check_constraints=ON");
-            requireIntegrity(connection);
         }
     }
 
@@ -1740,15 +1653,6 @@ public final class ApplicationMigrationService
         void validate(Path database) throws IOException, SQLException;
     }
 
-    private record RestoredDatabaseExpectation(DatabaseMigrationChain.PreflightReport plan, String contentSha256)
-    {
-        private RestoredDatabaseExpectation
-        {
-            Objects.requireNonNull(plan);
-            Objects.requireNonNull(contentSha256);
-        }
-    }
-
     /** Signals that neither the promoted database nor automatic restoration could be confirmed safe. */
     public static final class LiveDatabaseRecoveryException extends IOException
     {
@@ -1816,6 +1720,7 @@ public final class ApplicationMigrationService
         {
             return helperOutput != null &&
                 (helperOutput.contains("OUTCOME: Migration completed with ") ||
+                    helperOutput.contains("WARNING: Temporary migration files could not be removed") ||
                     helperOutput.contains("WARNING - skipped because it could not be imported safely"));
         }
     }

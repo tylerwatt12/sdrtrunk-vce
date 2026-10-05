@@ -397,6 +397,7 @@ class AudioRecordingManagerTest
             assertEquals(0, manager.getQueueStatus().queuedCalls());
             assertEquals(0, manager.getQueueStatus().queuedSourceBytes());
             assertEquals(1, manager.getQueueStatus().droppedRecordings());
+            assertEquals(RecordingMode.MANAGED, preferences.getRecordPreference().getRecordingMode());
             manager.stop();
             assertEquals(0, writes.get());
         }

@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.net.URI;
+import java.net.http.HttpClient;
 import org.junit.jupiter.api.Test;
 
 class UpdateManifestTest
@@ -89,6 +90,18 @@ class UpdateManifestTest
         assertThrows(IllegalArgumentException.class, () -> UpdateCheckService.manifestUri("main"));
         assertThrows(IllegalArgumentException.class, () -> UpdateCheckService.manifestUri("webfirst"));
         assertThrows(IllegalArgumentException.class, () -> UpdateCheckService.manifestUri("experimental"));
+    }
+
+    @Test
+    void missingLocalUpdateMetadataIsUnavailable()
+    {
+        try(HttpClient client = HttpClient.newHttpClient())
+        {
+            assertEquals(UpdateCheckResult.State.UNAVAILABLE,
+                new UpdateCheckService(client, null, -1).check().state());
+            assertEquals(UpdateCheckResult.State.UNAVAILABLE,
+                new UpdateCheckService(client, null, 1).check().state());
+        }
     }
 
     private static String manifest(String track, String build, String version)

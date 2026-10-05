@@ -67,7 +67,6 @@ import io.github.dsheirer.record.AudioRecordingManager;
 import io.github.dsheirer.remote.RemoteConnectivityService;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog;
 import io.github.dsheirer.record.managed.ManagedRecordingTranscriptionService;
-import io.github.dsheirer.preference.record.RecordingMode;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.sdrplay.api.SDRPlayLibraryHelper;
 import io.github.dsheirer.stats.StatsWebServerService;
@@ -268,11 +267,7 @@ public class SDRTrunk
         {
             //A damaged or unavailable optional catalog must not prevent Classic recording or live reception.
             mLog.error("Managed recordings catalog is unavailable", exception);
-            if(mUserPreferences.getRecordPreference().getRecordingMode() == RecordingMode.MANAGED)
-            {
-                mUserPreferences.getRecordPreference().setRecordingMode(RecordingMode.CLASSIC);
-                mLog.warn("Managed recordings were reset to Classic because the catalog is unavailable");
-            }
+            mLog.warn("Managed recordings are unavailable for this run; the saved recording mode is unchanged");
         }
 
         mAudioRecordingManager = mManagedRecordingCatalog != null ?

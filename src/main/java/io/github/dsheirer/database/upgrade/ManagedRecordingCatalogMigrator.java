@@ -12,35 +12,27 @@ package io.github.dsheirer.database.upgrade;
 
 import io.github.dsheirer.record.managed.ManagedRecordingSchema;
 import java.io.IOException;
-import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
-import java.util.concurrent.TimeUnit;
-import java.util.regex.Pattern;
 import org.sqlite.SQLiteConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Explicit, pre-receiver upgrade of the separate Managed Recordings catalog. Normal catalog startup only validates
- * its format. The Application Migrator child changes the schema of a private staged copy; this class retains a
- * recoverable source-format backup under database/backups and promotes the checked current copy only after the child
- * has exited successfully.
+ * Explicit pre-receiver upgrade of the application-owned Managed Recordings catalog. The optional source-format
+ * backup is created once, then the adjacent transformations and final exact-format validation share one in-place
+ * transaction. Normal catalog startup validates only; it never applies schema changes.
  */
 public final class ManagedRecordingCatalogMigrator
 {
@@ -48,19 +40,6 @@ public final class ManagedRecordingCatalogMigrator
     private static final int LEGACY_FORMAT = 1;
     private static final int CURRENT_FORMAT = ManagedRecordingSchema.CURRENT_FORMAT_VERSION;
     private static final long FREE_SPACE_MARGIN = 16L * 1024L * 1024L;
-    private static final Pattern STAGED_NAME = Pattern.compile(
-        "^\\.managed-recordings\\.sqlite\\.migration-[0-9a-fA-F-]{36}$");
-    private static final Map<String,String> ROW_ORDER = Map.of(
-        "catalog_metadata", "id",
-        "recording_system", "id",
-        "recording_channel", "id",
-        "recording_site", "id",
-        "recording_system_site", "system_id,site_id",
-        "recording_call", "id",
-        "recording_transcript", "call_id",
-        "recording_call_site", "call_id,site_id",
-        "recording_patch_member", "call_id,kind,local_id,home_wacn,home_system,home_id",
-        "sqlite_sequence", "name");
 
     private ManagedRecordingCatalogMigrator() {}
 
@@ -68,17 +47,20 @@ public final class ManagedRecordingCatalogMigrator
 
     public record Inspection(State state)
     {
-        public boolean needsMigration()
-        {
-            return state == State.UPGRADE_REQUIRED;
-        }
+        public boolean needsMigration() { return state == State.UPGRADE_REQUIRED; }
     }
 
     public record MigrationResult(boolean migrated, Path backup) {}
 
+    /** Bounded exact-format admission; retained history is not scanned or copied during startup. */
+    public static Inspection inspectForStartup(Path database) throws IOException, SQLException
+    {
+        return inspect(database);
+    }
+
     /**
-     * Classifies an existing catalog without changing its schema. Current-format startup uses a bounded read-only
-     * schema/metadata check; an older format receives a full source-immutable snapshot and integrity check.
+     * Classifies the inactive application-owned catalog. SQLite may recover its hot rollback journal, but no DDL
+     * or catalog rows are changed by this inspection. A committed WAL is always read through SQLite.
      */
     public static Inspection inspect(Path database) throws IOException, SQLException
     {
@@ -88,55 +70,32 @@ public final class ManagedRecordingCatalogMigrator
             requireNoOrphanSidecars(source);
             return new Inspection(State.ABSENT);
         }
-        SqliteDatabaseSnapshot.requireSourceUsable(source);
-        if(!Files.exists(Path.of(source + "-journal"), LinkOption.NOFOLLOW_LINKS))
+        requireOwnedSourceUsable(source);
+        try(Connection connection = Files.exists(Path.of(source + "-journal"), LinkOption.NOFOLLOW_LINKS) ?
+            openWritable(source) : openReadOnly(source))
         {
-            // Ordinary launches of a current catalog need only bounded exact-format admission. An older file
-            // receives the full source-immutable snapshot and integrity scan before approval is offered. A read-only
-            // live connection sees committed WAL pages when the previous launch left a WAL sidecar.
-            if(readBoundedState(source) == State.CURRENT)
-            {
-                return new Inspection(State.CURRENT);
-            }
-        }
-        Path scratch = privateScratch(source);
-        Throwable primaryFailure = null;
-        try
-        {
-            Path snapshot = scratch.resolve("inspection.sqlite");
-            SqliteDatabaseSnapshot.createExternal(source, snapshot);
-            return inspectStandalone(snapshot);
-        }
-        catch(IOException | SQLException | RuntimeException | Error failure)
-        {
-            primaryFailure = failure;
-            throw failure;
-        }
-        finally
-        {
-            try
-            {
-                deletePrivateScratch(scratch);
-            }
-            catch(IOException cleanupFailure)
-            {
-                if(primaryFailure != null)
-                {
-                    primaryFailure.addSuppressed(cleanupFailure);
-                }
-                else
-                {
-                    throw cleanupFailure;
-                }
-            }
+            return new Inspection(state(requireSupportedVersion(connection)));
         }
     }
 
+    /** Defaults to retaining one SQLite-aware source-format backup. Catalog users must already be stopped. */
+    public static MigrationResult migrate(Path database) throws IOException, SQLException
+    {
+        return migrate(database, true);
+    }
+
     /**
-     * Upgrades only after the caller has approved it and stopped all catalog users under the portable-data lock.
-     * A no-op for an absent or already-current catalog. The returned backup remains in database/backups on success.
+     * Runs one transaction under the caller's portable-data lock. A failed pre-commit update rolls back; after a
+     * successful commit there is no automatic rollback, and skipping the backup leaves no retained earlier copy.
      */
-    public static MigrationResult migrate(Path database) throws IOException, SQLException, InterruptedException
+    public static MigrationResult migrate(Path database, boolean createBackup) throws IOException, SQLException
+    {
+        return migrate(database, createBackup, ignored -> {}, ManagedRecordingCatalogMigrator::openWritable);
+    }
+
+    /** Fault boundaries exercise rollback and committed-cleanup behavior without a subprocess or staging path. */
+    static MigrationResult migrate(Path database, boolean createBackup, BeforeCommit beforeCommit,
+                                   ConnectionFactory connectionFactory) throws IOException, SQLException
     {
         Path source = normalized(database);
         if(!Files.exists(source, LinkOption.NOFOLLOW_LINKS))
@@ -144,257 +103,149 @@ public final class ManagedRecordingCatalogMigrator
             requireNoOrphanSidecars(source);
             return new MigrationResult(false, null);
         }
-        SqliteDatabaseSnapshot.requireSourceUsable(source);
-        if(!Files.exists(Path.of(source + "-journal"), LinkOption.NOFOLLOW_LINKS) &&
-            readBoundedState(source) == State.CURRENT)
-        {
-            return new MigrationResult(false, null);
-        }
-        requireSpace(source);
-        SqliteDatabaseSnapshot.ExternalSourceState sourceState =
-            SqliteDatabaseSnapshot.captureExternalSourceState(source);
-        FileAccessAttributeSnapshot attributes = FileAccessAttributeSnapshot.capture(source);
-        Path scratch = privateScratch(source);
-        Path backup = source.getParent().resolve("backups").resolve(
-            "managed-recordings-before-upgrade-" + UUID.randomUUID() + ".sqlite");
-        boolean backupCreated = false;
-        boolean promoted = false;
+        requireOwnedSourceUsable(source);
+        Connection connection = null;
+        Path backup = null;
+        boolean transactionStarted = false;
+        boolean completed = false;
+        boolean migrated = false;
         Throwable primaryFailure = null;
         try
         {
-            Path snapshot = scratch.resolve("original.sqlite");
-            SqliteDatabaseSnapshot.createExternal(source, snapshot);
-            Inspection inspection = inspectStandalone(snapshot);
-            SqliteDatabaseSnapshot.requireExternalSourceUnchanged(source, sourceState);
-            if(!inspection.needsMigration())
+            // Writable admission lets SQLite recover a hot journal before the read-only backup connection opens.
+            connection = connectionFactory.open(source);
+            int version = requireSupportedVersion(connection);
+            if(version == CURRENT_FORMAT)
             {
+                completed = true;
                 return new MigrationResult(false, null);
             }
-
-            Files.createDirectories(backup.getParent());
-            Files.copy(snapshot, backup);
-            backupCreated = true;
-            FileAccessAttributeSnapshot.restrictSensitiveFile(backup);
-            if(inspectStandalone(backup).state() != State.UPGRADE_REQUIRED ||
-                !sameLogicalRows(snapshot, backup))
+            requireSpace(source, createBackup);
+            try(Statement statement = connection.createStatement())
             {
-                throw new IOException("The retained managed recordings catalog backup did not validate.");
+                statement.execute("BEGIN IMMEDIATE");
+                transactionStarted = true;
+                version = requireSupportedVersion(connection);
+                if(version == CURRENT_FORMAT)
+                {
+                    statement.execute("ROLLBACK");
+                    transactionStarted = false;
+                    completed = true;
+                    return new MigrationResult(false, null);
+                }
+                if(createBackup)
+                {
+                    Path backupDirectory = source.getParent().resolve("backups");
+                    Files.createDirectories(backupDirectory);
+                    Path candidate = backupDirectory.resolve("managed-recordings-before-upgrade-" +
+                        UUID.randomUUID() + ".sqlite");
+                    SqliteDatabaseSnapshot.create(source, candidate);
+                    backup = candidate;
+                }
+                applyAdjacentSteps(statement, version);
+                beforeCommit.validate(connection);
+                requireExact(connection, CURRENT_FORMAT);
+                statement.execute("COMMIT");
+                transactionStarted = false;
+                completed = true;
+                migrated = true;
             }
-            Path staged = scratch.resolve(".managed-recordings.sqlite.migration-" + UUID.randomUUID());
-            Files.copy(snapshot, staged);
-            FileAccessAttributeSnapshot.restrictSensitiveFile(staged);
-            launchChild(staged);
-
-            // A SQLite child may leave its private connection in WAL mode. Canonicalize it into one file before
-            // validating and promoting it, so no staged WAL can be lost or mixed with source sidecars.
-            Path promotable = scratch.resolve("promotable.sqlite");
-            SqliteDatabaseSnapshot.create(staged, promotable);
-            if(inspectStandalone(promotable).state() != State.CURRENT)
-            {
-                throw new SQLException("The staged managed recordings catalog did not reach format " +
-                    CURRENT_FORMAT + ".");
-            }
-            attributes.applyTo(promotable);
-            SqliteDatabaseSnapshot.requireExternalSourceUnchanged(source, sourceState);
-
-            // Checkpointing changes physical SQLite files but leaves the original valid in its old format if a crash
-            // occurs before the atomic main-file replacement. The already retained backup includes committed WAL.
-            checkpointOriginal(source);
-            Path checkpointed = scratch.resolve("checkpointed.sqlite");
-            SqliteDatabaseSnapshot.createExternal(source, checkpointed);
-            if(inspectStandalone(checkpointed).state() != State.UPGRADE_REQUIRED ||
-                !sameLogicalRows(snapshot, checkpointed))
-            {
-                throw new IOException("The managed recordings catalog changed during WAL checkpoint; " +
-                    "its backup was retained and the upgrade was not installed.");
-            }
-            requireNoRecoverySidecars(source);
-            try
-            {
-                Files.move(promotable, source, StandardCopyOption.ATOMIC_MOVE,
-                    StandardCopyOption.REPLACE_EXISTING);
-            }
-            catch(AtomicMoveNotSupportedException exception)
-            {
-                throw new IOException("Atomic replacement is unavailable for the managed recordings catalog; " +
-                    "the source backup was retained.", exception);
-            }
-            promoted = true;
             return new MigrationResult(true, backup);
         }
-        catch(IOException | SQLException | InterruptedException | RuntimeException | Error exception)
+        catch(IOException | SQLException | RuntimeException | Error failure)
         {
-            primaryFailure = exception;
-            if(backupCreated)
+            // Statement cleanup can fail after COMMIT returned. The catalog is already upgraded at that point.
+            if(completed)
             {
-                exception.addSuppressed(new IOException("Recoverable managed recordings catalog backup retained " +
-                    "under the database backups directory."));
+                LOG.warn("Managed recordings catalog update completed, but statement cleanup failed");
+                return new MigrationResult(migrated, backup);
             }
-            throw exception;
+            primaryFailure = failure;
+            if(transactionStarted && connection != null)
+            {
+                try(Statement rollback = connection.createStatement())
+                {
+                    rollback.execute("ROLLBACK");
+                }
+                catch(SQLException rollbackFailure)
+                {
+                    failure.addSuppressed(rollbackFailure);
+                }
+            }
+            if(backup != null)
+            {
+                String retained = "Managed recordings catalog update failed; source-format backup retained at " + backup + ". ";
+                if(failure instanceof SQLException sqlFailure)
+                    throw new SQLException(retained + sqlFailure.getMessage(), sqlFailure.getSQLState(),
+                        sqlFailure.getErrorCode(), sqlFailure);
+                if(failure instanceof IOException ioFailure)
+                    throw new IOException(retained + ioFailure.getMessage(), ioFailure);
+                failure.addSuppressed(new IOException(retained));
+            }
+            throw failure;
         }
         finally
         {
-            try
+            if(connection != null)
             {
-                deletePrivateScratch(scratch);
-            }
-            catch(IOException cleanupFailure)
-            {
-                if(primaryFailure != null)
+                try { connection.close(); }
+                catch(SQLException | RuntimeException cleanupFailure)
                 {
-                    primaryFailure.addSuppressed(cleanupFailure);
-                }
-                else if(promoted)
-                {
-                    LOG.warn("Managed recordings catalog was upgraded, but private scratch cleanup failed");
-                }
-                else
-                {
-                    throw cleanupFailure;
+                    if(primaryFailure != null) primaryFailure.addSuppressed(cleanupFailure);
+                    else if(completed) LOG.warn("Managed recordings catalog update completed, but connection cleanup failed");
+                    else throw cleanupFailure;
                 }
             }
         }
     }
 
-    /** ApplicationDatabaseMigrator CLI dispatch calls this only for a private, pattern-matched stage. */
-    public static void runChild(Path stagedDatabase) throws IOException, SQLException
+    private static void applyAdjacentSteps(Statement statement, int version) throws SQLException
     {
-        Path staged = normalized(stagedDatabase);
-        Path parent = staged.getParent();
-        if(parent == null || parent.getFileName() == null ||
-            !parent.getFileName().toString().startsWith(".managed-recordings-migration-") ||
-            !STAGED_NAME.matcher(staged.getFileName().toString()).matches() ||
-            Files.isSymbolicLink(staged) || !Files.isRegularFile(staged, LinkOption.NOFOLLOW_LINKS))
+        if(version == 1)
         {
-            throw new IOException("The managed recordings migrator accepts only a private staged catalog.");
+            statement.execute(ManagedRecordingSchema.ddlForFormat(2).get("recording_transcript"));
+            stamp(statement, 2);
         }
-        int sourceVersion;
-        try(Connection source = SqliteDatabaseSnapshot.openImmutable(staged))
-        {
-            sourceVersion = pragmaInt(source, "user_version");
-        }
-        if(inspectStandalone(staged).state() != State.UPGRADE_REQUIRED)
-        {
-            throw new SQLException("The staged managed recordings catalog is not an exact older format.");
-        }
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + staged);
-            Statement statement = connection.createStatement())
-        {
-            statement.execute("PRAGMA foreign_keys=ON");
-            statement.execute("PRAGMA busy_timeout=10000");
-            connection.setAutoCommit(false);
-            try
-            {
-                if(sourceVersion == 1)
-                {
-                    statement.execute(ManagedRecordingSchema.ddlForFormat(2).get("recording_transcript"));
-                    stamp(statement, 2);
-                    requireExact(connection, 2);
-                }
-                statement.execute("ALTER TABLE recording_call ADD COLUMN " +
-                    ManagedRecordingSchema.TRANSCRIPTION_STATUS_COLUMN);
-                statement.executeUpdate("UPDATE recording_call SET transcription_status='complete' " +
-                    "WHERE id IN (SELECT call_id FROM recording_transcript)");
-                statement.execute(ManagedRecordingSchema.ddlForFormat(3).get(
-                    "idx_recording_call_transcription_pending"));
-                stamp(statement, CURRENT_FORMAT);
-                requireExact(connection, CURRENT_FORMAT);
-                requireIntegrity(connection);
-                connection.commit();
-            }
-            catch(SQLException exception)
-            {
-                connection.rollback();
-                throw exception;
-            }
-        }
+        statement.execute("ALTER TABLE recording_call ADD COLUMN " + ManagedRecordingSchema.TRANSCRIPTION_STATUS_COLUMN);
+        statement.executeUpdate("UPDATE recording_call SET transcription_status='complete' " +
+            "WHERE id IN (SELECT call_id FROM recording_transcript)");
+        statement.execute(ManagedRecordingSchema.ddlForFormat(3).get("idx_recording_call_transcription_pending"));
+        stamp(statement, CURRENT_FORMAT);
     }
 
-    private static Inspection inspectStandalone(Path standalone) throws SQLException
+    private static int requireSupportedVersion(Connection connection) throws SQLException
     {
-        try(Connection connection = SqliteDatabaseSnapshot.openImmutable(standalone))
-        {
-            int version = pragmaInt(connection, "user_version");
-            if(version < LEGACY_FORMAT || version > CURRENT_FORMAT)
-            {
-                throw new SQLException("Unsupported managed recordings catalog version " + version + ".");
-            }
-            requireExact(connection, version);
-            requireIntegrity(connection);
-            return new Inspection(version < CURRENT_FORMAT ? State.UPGRADE_REQUIRED : State.CURRENT);
-        }
-    }
-
-    private static State readBoundedState(Path source) throws SQLException
-    {
-        try(Connection connection = hasWalSidecars(source) ? openLiveReadOnly(source) :
-            SqliteDatabaseSnapshot.openImmutable(source))
-        {
-            int version = pragmaInt(connection, "user_version");
-            if(version == CURRENT_FORMAT)
-            {
-                requireExact(connection, CURRENT_FORMAT);
-                return State.CURRENT;
-            }
-            if(version >= LEGACY_FORMAT && version < CURRENT_FORMAT)
-            {
-                return State.UPGRADE_REQUIRED;
-            }
+        int version = pragmaInt(connection, "user_version");
+        if(version < LEGACY_FORMAT || version > CURRENT_FORMAT)
             throw new SQLException("Unsupported managed recordings catalog version " + version + ".");
-        }
+        requireExact(connection, version);
+        return version;
+    }
+
+    private static State state(int version)
+    {
+        return version == CURRENT_FORMAT ? State.CURRENT : State.UPGRADE_REQUIRED;
     }
 
     private static void requireExact(Connection connection, int version) throws SQLException
     {
         if(pragmaInt(connection, "application_id") != ManagedRecordingSchema.APPLICATION_ID ||
             pragmaInt(connection, "user_version") != version)
-        {
             throw new SQLException("Unrecognized managed recordings catalog identity or version.");
-        }
         Map<String,String> actual = new LinkedHashMap<>();
         try(Statement statement = connection.createStatement();
             ResultSet rows = statement.executeQuery("SELECT name,sql FROM sqlite_master " +
-                "WHERE type IN ('table','index','view','trigger') AND name NOT GLOB 'sqlite_*' " +
-                "ORDER BY name"))
+                "WHERE type IN ('table','index','view','trigger') AND name NOT GLOB 'sqlite_*' ORDER BY name"))
         {
-            while(rows.next())
-            {
-                actual.put(rows.getString(1), rows.getString(2));
-            }
+            while(rows.next()) actual.put(rows.getString(1), rows.getString(2));
         }
         if(!actual.equals(ManagedRecordingSchema.ddlForFormat(version)))
-        {
             throw new SQLException("Managed recordings catalog schema is unknown or partially migrated.");
-        }
         try(Statement statement = connection.createStatement();
-            ResultSet rows = statement.executeQuery("SELECT format_version,call_count,total_bytes " +
-                "FROM catalog_metadata WHERE id=1"))
+            ResultSet rows = statement.executeQuery("SELECT format_version,call_count,total_bytes FROM catalog_metadata WHERE id=1"))
         {
-            if(!rows.next() || rows.getInt(1) != version || rows.getLong(2) < 0 ||
-                rows.getLong(3) < 0 || rows.next())
-            {
+            if(!rows.next() || rows.getInt(1) != version || rows.getLong(2) < 0 || rows.getLong(3) < 0 || rows.next())
                 throw new SQLException("Managed recordings catalog metadata is invalid.");
-            }
-        }
-    }
-
-    private static void requireIntegrity(Connection connection) throws SQLException
-    {
-        try(Statement statement = connection.createStatement();
-            ResultSet rows = statement.executeQuery("PRAGMA integrity_check"))
-        {
-            if(!rows.next() || !"ok".equals(rows.getString(1)) || rows.next())
-            {
-                throw new SQLException("Managed recordings catalog failed SQLite integrity_check.");
-            }
-        }
-        try(Statement statement = connection.createStatement();
-            ResultSet rows = statement.executeQuery("PRAGMA foreign_key_check"))
-        {
-            if(rows.next())
-            {
-                throw new SQLException("Managed recordings catalog contains broken foreign keys.");
-            }
         }
     }
 
@@ -406,251 +257,61 @@ public final class ManagedRecordingCatalogMigrator
 
     private static int pragmaInt(Connection connection, String name) throws SQLException
     {
-        try(Statement statement = connection.createStatement();
-            ResultSet rows = statement.executeQuery("PRAGMA " + name))
+        try(Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery("PRAGMA " + name))
         {
-            if(!rows.next())
-            {
-                throw new SQLException("Missing SQLite " + name + " pragma.");
-            }
+            if(!rows.next()) throw new SQLException("Missing SQLite " + name + " pragma.");
             return rows.getInt(1);
         }
     }
 
-    private static boolean sameLogicalRows(Path before, Path after) throws SQLException
+    private static Connection openWritable(Path source) throws SQLException
     {
-        try(Connection first = SqliteDatabaseSnapshot.openImmutable(before);
-            Connection second = SqliteDatabaseSnapshot.openImmutable(after))
-        {
-            int version = pragmaInt(first, "user_version");
-            for(Map.Entry<String,String> entry: ROW_ORDER.entrySet())
-            {
-                if(version == 1 && "recording_transcript".equals(entry.getKey()))
-                {
-                    continue;
-                }
-                String query = "SELECT * FROM " + entry.getKey() + " ORDER BY " + entry.getValue();
-                try(Statement firstStatement = first.createStatement();
-                    Statement secondStatement = second.createStatement();
-                    ResultSet firstRows = firstStatement.executeQuery(query);
-                    ResultSet secondRows = secondStatement.executeQuery(query))
-                {
-                    int columns = firstRows.getMetaData().getColumnCount();
-                    while(true)
-                    {
-                        boolean firstHasRow = firstRows.next();
-                        boolean secondHasRow = secondRows.next();
-                        if(firstHasRow != secondHasRow)
-                        {
-                            return false;
-                        }
-                        if(!firstHasRow)
-                        {
-                            break;
-                        }
-                        for(int column = 1; column <= columns; column++)
-                        {
-                            if(!Objects.deepEquals(firstRows.getObject(column), secondRows.getObject(column)))
-                            {
-                                return false;
-                            }
-                        }
-                    }
-                }
-            }
-            return true;
-        }
+        SQLiteConfig config = new SQLiteConfig();
+        config.setBusyTimeout(10_000);
+        config.enforceForeignKeys(true);
+        return DriverManager.getConnection("jdbc:sqlite:" + source.toUri().toASCIIString() + "?mode=rw", config.toProperties());
     }
 
-    private static void checkpointOriginal(Path source) throws SQLException
-    {
-        // SQLite itself retires its WAL and shared-memory files when the last connection closes after switching
-        // to DELETE mode. The migration must never delete live sidecars: another writer could have committed to a
-        // WAL between a size check and deletion.
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
-            source.toUri().toASCIIString() + "?mode=rw");
-            Statement statement = connection.createStatement())
-        {
-            try(ResultSet result = statement.executeQuery("PRAGMA wal_checkpoint(TRUNCATE)"))
-            {
-                if(!result.next() || result.getInt(1) != 0)
-                {
-                    throw new SQLException("The managed recordings WAL is busy; close catalog users and retry.");
-                }
-            }
-            try(ResultSet result = statement.executeQuery("PRAGMA journal_mode=DELETE"))
-            {
-                if(!result.next() || !"delete".equalsIgnoreCase(result.getString(1)))
-                {
-                    throw new SQLException("The managed recordings WAL could not be retired; " +
-                        "close catalog users and retry.");
-                }
-            }
-        }
-    }
-
-    private static Connection openLiveReadOnly(Path source) throws SQLException
+    private static Connection openReadOnly(Path source) throws SQLException
     {
         SQLiteConfig config = new SQLiteConfig();
         config.setReadOnly(true);
         config.setBusyTimeout(10_000);
-        config.enforceForeignKeys(true);
         return DriverManager.getConnection("jdbc:sqlite:" + source, config.toProperties());
     }
 
-    private static void requireNoRecoverySidecars(Path source) throws IOException
-    {
-        for(String suffix: List.of("-wal", "-shm", "-journal"))
-        {
-            if(Files.exists(Path.of(source + suffix), LinkOption.NOFOLLOW_LINKS))
-            {
-                throw new IOException("Managed recordings SQLite recovery sidecars remain after checkpoint; " +
-                    "close catalog users and retry.");
-            }
-        }
-    }
-
-    private static void launchChild(Path staged) throws IOException, InterruptedException
-    {
-        List<String> command = new ArrayList<>(ApplicationMigratorLauncher.command(staged));
-        command.add(command.size() - 1, "--managed-recording-catalog");
-        Process child = new ProcessBuilder(command).redirectErrorStream(true).start();
-        CompletableFuture<byte[]> output = CompletableFuture.supplyAsync(() ->
-        {
-            try
-            {
-                return ApplicationMigratorLauncher.readBounded(child.getInputStream());
-            }
-            catch(IOException exception)
-            {
-                throw new CompletionException(exception);
-            }
-        });
-        try
-        {
-            if(!child.waitFor(30, TimeUnit.MINUTES))
-            {
-                child.destroyForcibly();
-                child.waitFor();
-                throw new IOException("Managed recordings Application Migrator timed out.");
-            }
-        }
-        catch(InterruptedException exception)
-        {
-            child.destroyForcibly();
-            Thread.currentThread().interrupt();
-            throw exception;
-        }
-        if(child.exitValue() != 0)
-        {
-            String details;
-            try
-            {
-                details = new String(output.join(), java.nio.charset.StandardCharsets.UTF_8).trim();
-            }
-            catch(CompletionException exception)
-            {
-                details = "Diagnostic output could not be read.";
-            }
-            throw new IOException("Managed recordings Application Migrator failed (exit " +
-                child.exitValue() + "): " + details);
-        }
-        try
-        {
-            output.join();
-        }
-        catch(CompletionException exception)
-        {
-            if(exception.getCause() instanceof IOException ioException)
-            {
-                throw ioException;
-            }
-            throw exception;
-        }
-    }
-
-    private static Path privateScratch(Path source) throws IOException
-    {
-        Path directory = Files.createTempDirectory(source.getParent(), ".managed-recordings-migration-");
-        try
-        {
-            FileAccessAttributeSnapshot.restrictPrivateDirectory(directory);
-        }
-        catch(IOException exception)
-        {
-            try
-            {
-                Files.deleteIfExists(directory);
-            }
-            catch(IOException cleanupFailure)
-            {
-                exception.addSuppressed(cleanupFailure);
-            }
-            throw exception;
-        }
-        return directory;
-    }
-
-    private static void deletePrivateScratch(Path scratch) throws IOException
-    {
-        if(Files.exists(scratch))
-        {
-            try(var paths = Files.walk(scratch))
-            {
-                for(Path path: paths.sorted(java.util.Comparator.reverseOrder()).toList())
-                {
-                    Files.deleteIfExists(path);
-                }
-            }
-        }
-    }
-
-    private static void requireSpace(Path source) throws IOException
+    private static void requireSpace(Path source, boolean createBackup) throws IOException
     {
         long footprint = Files.size(source);
-        for(String suffix: List.of("-wal", "-journal", "-shm"))
+        for(String suffix: List.of("-wal", "-journal"))
         {
             Path sidecar = Path.of(source + suffix);
-            if(Files.exists(sidecar, LinkOption.NOFOLLOW_LINKS))
-            {
-                footprint = Math.addExact(footprint, Files.size(sidecar));
-            }
+            if(Files.exists(sidecar, LinkOption.NOFOLLOW_LINKS)) footprint = Math.addExact(footprint, Files.size(sidecar));
         }
-        // Original snapshot, retained backup, child stage and its possible WAL, promotable copy, and the
-        // post-checkpoint comparison snapshot can coexist at the peak.
-        long needed = Math.addExact(Math.multiplyExact(footprint, 6), FREE_SPACE_MARGIN);
+        // One optional backup plus a worst-case rollback journal or WAL for the one in-place transaction.
+        long needed = Math.addExact(Math.multiplyExact(footprint, createBackup ? 2 : 1), FREE_SPACE_MARGIN);
         if(Files.getFileStore(source).getUsableSpace() < needed)
-        {
-            throw new IOException("Insufficient free space for a managed recordings catalog backup and stage.");
-        }
+            throw new IOException("Insufficient free space for the managed recordings catalog update.");
     }
 
     private static void requireNoOrphanSidecars(Path source) throws IOException
     {
-        for(String suffix: List.of("-wal", "-journal", "-shm"))
-        {
+        for(String suffix: List.of("-wal", "-shm", "-journal"))
             if(Files.exists(Path.of(source + suffix), LinkOption.NOFOLLOW_LINKS))
-            {
                 throw new IOException("A managed recordings SQLite sidecar exists without its catalog file.");
-            }
-        }
     }
 
-    private static boolean hasWalSidecars(Path source)
+    private static void requireOwnedSourceUsable(Path source) throws IOException
     {
-        for(String suffix: List.of("-wal", "-shm"))
-        {
-            if(Files.exists(Path.of(source + suffix), LinkOption.NOFOLLOW_LINKS))
-            {
-                return true;
-            }
-        }
-        return false;
+        SqliteDatabaseSnapshot.requireSourceUsable(source);
+        ApplicationDatabaseMigrator.requireSingleFilesystemLinkWhenSupported(source);
     }
 
     private static Path normalized(Path database)
     {
-        return Objects.requireNonNull(database, "Managed recordings catalog path is required")
-            .toAbsolutePath().normalize();
+        return Objects.requireNonNull(database, "Managed recordings catalog path is required").toAbsolutePath().normalize();
     }
+
+    @FunctionalInterface interface BeforeCommit { void validate(Connection connection) throws SQLException; }
+    @FunctionalInterface interface ConnectionFactory { Connection open(Path source) throws SQLException; }
 }

@@ -56,10 +56,6 @@ public final class SetupWizard extends JDialog
         public Result(UserPreferences preferences, PortableDataRootLock lock, boolean startChannels)
         { this(preferences, lock, startChannels, null, false); }
     }
-    private record CurrentMigrationInspection(DatabaseMigrationChain.PreflightReport plan,
-                                              ApplicationMigrationService.ApprovedMigrationPlan approval)
-    {
-    }
     private final Path root;
     private final Path database;
     private final Path managedRecordingCatalog;
@@ -126,6 +122,7 @@ public final class SetupWizard extends JDialog
     private DatabaseMigrationChain.PreflightReport startupMigrationPlan;
     private boolean managedRecordingCatalogNeedsUpgrade;
     private String managedRecordingCatalogReport = "";
+    private boolean createUpgradeBackup = true;
 
     /** Retry an actual listener bind race in the same shell, before tuner activation or output workers start. */
     public static boolean ensureListener(UserPreferences preferences, StatsWebServerService server) throws Exception
@@ -169,7 +166,7 @@ public final class SetupWizard extends JDialog
             try
             {
                 wizard.managedRecordingCatalogNeedsUpgrade =
-                    ManagedRecordingCatalogMigrator.inspect(wizard.managedRecordingCatalog).needsMigration();
+                    ManagedRecordingCatalogMigrator.inspectForStartup(wizard.managedRecordingCatalog).needsMigration();
             }
             catch(java.io.IOException | java.sql.SQLException ignored)
             {
@@ -210,7 +207,7 @@ public final class SetupWizard extends JDialog
                 }
                 else wizard.showPage(SetupStep.SOURCE);
                 if(showInspectionFailure != null) wizard.fail(
-                    "We couldn’t check your saved settings. Choose Check my settings to try again. No files have been changed.",
+                    "We couldn’t check your saved settings. Choose Check my settings to try again. Receiving hasn’t started.",
                     CopyableErrorDialog.message(showInspectionFailure));
                 if(wizard.databaseImportRequested && wizard.preferences != null)
                 {
@@ -238,6 +235,7 @@ public final class SetupWizard extends JDialog
         database = SdrTrunkDatabasePath.getDatabasePath(root);
         managedRecordingCatalog = database.resolveSibling("managed-recordings.sqlite");
         options = SdrTrunkDatabaseBootstrap.Options.parse(args);
+        createUpgradeBackup = options.createUpgradeBackup();
         if(Files.isRegularFile(database) && options.upgradeData() != null)
             throw new IllegalArgumentException("This profile already has a database. Use File → Import SQLite Database for explicitly confirmed replacement.");
         if(!Files.isRegularFile(database) && options.upgradeCurrent())
@@ -370,7 +368,7 @@ public final class SetupWizard extends JDialog
 
     private void initialize(boolean newPreferences) throws Exception
     {
-        SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
+        SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database);
         InitialAdminSetup.initializeNewProfile(database);
         InitialAdminSetup.isPasswordRequired(database); //A persisted administrator is authoritative after interruption.
         SdrTrunkDatabaseBootstrap.prepareVault(root);
@@ -506,15 +504,16 @@ public final class SetupWizard extends JDialog
         // Finish validating or updating the main profile before changing its separate recording catalog.
         if(managedRecordingCatalogNeedsUpgrade && preferences != null)
         {
-            notice("Managed recordings need an update", "This catalog needs a one-time schema update before receiving starts. A recovery copy will be kept, and its recordings will be preserved.", false);
+            notice("Managed recordings need an update", "The catalog needs a one-time update. Its recording entries will be preserved.", false);
             details("Catalog to update", managedRecordingCatalog.toString());
-            next.setText("Back up & update recordings");
-            accept = this::upgradeManagedRecordingCatalog;
+            upgradeBackupChoice();
+            next.setText("Update");
+            accept = () -> confirmMigration(this::upgradeManagedRecordingCatalog);
             return;
         }
         if(!managedRecordingCatalogReport.isBlank())
         {
-            notice("Managed recordings updated", managedRecordingCatalogReport, true);
+            notice("Managed recordings", managedRecordingCatalogReport, false);
         }
         if(preferences != null)
         {
@@ -534,46 +533,30 @@ public final class SetupWizard extends JDialog
         }
         if(Files.isRegularFile(database))
         {
-            notice("Your existing settings are protected", "The update keeps a recovery copy and checks the updated data before using it.", false);
-            Runnable inspect = () -> {
-                AtomicBoolean directUpdateRequested = new AtomicBoolean();
-                boolean directUpdateAvailable = startupMigrationPlan != null &&
-                    startupMigrationPlan.source().requiresMigration();
-                Runnable requestDirectUpdate = directUpdateAvailable ? () -> {
-                    if(directUpdateRequested.compareAndSet(false, true))
-                    {
-                        cancel.setEnabled(false);
-                        operation = "Stopping safety checks…";
-                    }
-                } : null;
-                job("Checking your saved settings…", "Skip safety checks & update now", requestDirectUpdate, () -> {
-                    ApplicationMigrationService.ApprovedMigrationPlan approval =
-                        ApplicationMigrationService.readMigrationApproval(database, database.getParent(),
-                            value -> {
-                                if(directUpdateRequested.get()) output.accept(value);
-                                else migrationProgress(value);
-                            }, directUpdateRequested::get);
-                    return new CurrentMigrationInspection(approval.plan(), approval);
-                }, inspection -> {
-                    if(directUpdateRequested.get())
-                    {
-                        confirmFastMigration();
-                        return;
-                    }
-                    DatabaseMigrationChain.PreflightReport plan = inspection.plan();
-                    page.removeAll();
-                    migrationDetails(plan);
-                    if(plan.source().requiresMigration())
-                    {
-                        button("Update without backup", this::confirmFastMigration);
-                    }
-                    next.setText(plan.requiresMigration() ? "Back up & update" : "Continue setup");
-                    accept = plan.requiresMigration() ? () -> migrate(null, false, false, inspection.approval()) :
-                        () -> job("Loading your settings…", null, () -> { initialize(false); return true; }, ignored -> showPage(initialStep()));
-                    page.revalidate();
-                }, ignored -> confirmFastMigration());
-            };
-            next.setText("Check safely"); accept = inspect;
+            if(startupMigrationPlan == null)
+            {
+                paragraph("Check this installation’s saved settings before continuing.");
+                next.setText("Check my settings");
+                accept = () -> job("Checking your saved settings…", null,
+                    () -> ApplicationMigrationService.readStartupPlan(database), plan -> {
+                        startupMigrationPlan = plan;
+                        showPage(SetupStep.SOURCE);
+                    });
+                return;
+            }
+            if(!startupMigrationPlan.requiresMigration())
+            {
+                notice("Your settings are ready", "Continue using this installation’s saved settings.", true);
+                accept = () -> job("Loading your settings…", null, () -> {
+                    initialize(false); return true;
+                }, ignored -> showPage(initialStep()));
+                return;
+            }
+            notice("Your settings need an update", "This build needs to update the database before receiving starts.", false);
+            migrationDetails(startupMigrationPlan);
+            upgradeBackupChoice();
+            next.setText("Update");
+            accept = () -> confirmMigration(() -> migrate(null, false, false, null));
             return;
         }
         paragraph("Welcome! Is this your first time using VCE, or are you bringing settings from an older installation?");
@@ -635,22 +618,34 @@ public final class SetupWizard extends JDialog
     private void upgradeManagedRecordingCatalog()
     {
         job("Updating managed recordings…", null,
-            () -> ManagedRecordingCatalogMigrator.migrate(managedRecordingCatalog), result -> {
+            () -> ManagedRecordingCatalogMigrator.migrate(managedRecordingCatalog, createUpgradeBackup), result -> {
                 managedRecordingCatalogNeedsUpgrade = false;
                 managedRecordingCatalogReport = result.migrated() ?
-                    "The catalog is ready. Recovery copy: " + result.backup() : "The catalog is already current.";
+                    "The catalog is ready. " + (result.backup() == null ? "No recovery copy was requested." :
+                        "Recovery copy: " + result.backup()) : "The catalog is already current.";
                 showPage(SetupStep.SOURCE);
+            }, failure -> {
+                showPage(SetupStep.SOURCE);
+                fail("Managed recordings could not be updated. Try again, or continue receiving with managed recordings unavailable.",
+                    CopyableErrorDialog.message(failure));
+                button("Continue without managed recordings", () -> {
+                    managedRecordingCatalogNeedsUpgrade = false;
+                    managedRecordingCatalogReport = "Managed recordings are unavailable. Receiving can continue; the saved recording preference is unchanged. Try updating the catalog again on a later launch.";
+                    showPage(SetupStep.SOURCE);
+                });
             });
+    }
+
+    private void upgradeBackupChoice()
+    {
+        JCheckBox backup = new JCheckBox("Create a recovery backup first", createUpgradeBackup);
+        backup.addActionListener(e -> createUpgradeBackup = backup.isSelected());
+        append(backup);
+        paragraph("A backup can take time for a large database. Without it, there is no recovery copy for the previous build.");
     }
 
     private void migrate(Path source, boolean fresh, boolean xml,
                          ApplicationMigrationService.ApprovedMigrationPlan approved)
-    {
-        migrate(source, fresh, xml, approved, false);
-    }
-
-    private void migrate(Path source, boolean fresh, boolean xml,
-                         ApplicationMigrationService.ApprovedMigrationPlan approved, boolean withoutBackup)
     {
         job("Preparing your profile…", null, () -> {
             String report;
@@ -660,9 +655,8 @@ public final class SetupWizard extends JDialog
             {
                 ApplicationMigrationService service = new ApplicationMigrationService();
                 if(source == null)
-                    report = ApplicationMigrationSuccessDialog.currentDatabaseReport(withoutBackup ?
-                        service.migrateCurrentWithoutBackup(root, this::migrationProgress) :
-                        service.migrateCurrent(root, approved, this::migrationProgress));
+                    report = ApplicationMigrationSuccessDialog.currentDatabaseReport(
+                        service.migrateCurrent(root, createUpgradeBackup, this::migrationProgress));
                 else
                 {
                     var selected = PreviousBuildLocator.resolveSelection(source).orElseThrow();
@@ -694,16 +688,17 @@ public final class SetupWizard extends JDialog
         });
     }
 
-    private void confirmFastMigration()
+    private void confirmMigration(Runnable update)
     {
         int selected = JOptionPane.showOptionDialog(this,
-            "Continue without a recovery copy or full safety checks? The schema update still runs, but the " +
-                "previous VCE version cannot reopen this database after it completes.",
-            "Update without a backup?", JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE, null,
-            new Object[]{"Update now", "Cancel"}, "Cancel");
+            (createUpgradeBackup ? "A recovery copy will be kept before updating. " :
+                "No recovery copy will be kept. ") +
+                "The previous VCE version cannot reopen the updated database. Continue?",
+            "Update saved data?", JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE, null,
+            new Object[]{"Update", "Cancel"}, "Cancel");
         if(selected == 0)
         {
-            migrate(null, false, false, null, true);
+            update.run();
         }
     }
 
@@ -1222,18 +1217,18 @@ public final class SetupWizard extends JDialog
 
     private <T> void job(String description, Runnable cancelAction, Callable<T> work, Consumer<T> success)
     {
+        job(description, cancelAction, work, success, null);
+    }
+
+    private <T> void job(String description, Runnable cancelAction, Callable<T> work, Consumer<T> success,
+                         Consumer<Throwable> failureHandler)
+    {
         String cancelCaption = step == SetupStep.HARDWARE ? "Skip discovery" : "Cancel operation";
         Runnable cancellationRequest = cancelAction == null ? null : () -> {
             cancel.setEnabled(false);
             operation = "Stopping safely…";
             cancelAction.run();
         };
-        job(description, cancelCaption, cancellationRequest, work, success, null);
-    }
-
-    private <T> void job(String description, String cancelCaption, Runnable cancellationRequest, Callable<T> work,
-                         Consumer<T> success, Consumer<Throwable> stoppedHandler)
-    {
         if(busy) return;
         SetupProgress.State previous = progress == null ? PENDING : progress.get(step);
         busy=true; cancellation=cancellationRequest; long attempt=++generation;
@@ -1255,14 +1250,13 @@ public final class SetupWizard extends JDialog
                 {
                     boolean stopped=problem instanceof InterruptedException ||
                         problem instanceof CancellationException;
-                    if(stopped && stoppedHandler != null)
+                    if(progress!=null) { progress.set(step,stopped?DEFERRED:NEEDS_ATTENTION); persist(); }
+                    if(failureHandler != null)
                     {
-                        if(progress != null) { progress.set(step, previous); persist(); }
-                        attempt(() -> stoppedHandler.accept(problem));
+                        attempt(() -> failureHandler.accept(problem));
                         updateNavigation();
                         return;
                     }
-                    if(progress!=null) { progress.set(step,stopped?DEFERRED:NEEDS_ATTENTION); persist(); }
                     if(step == SetupStep.SOURCE &&
                         problem instanceof ApplicationMigrationService.LiveDatabaseRecoveryException recovery)
                     {
@@ -1325,7 +1319,7 @@ public final class SetupWizard extends JDialog
         if(step==SetupStep.JMBE) return "Digital voice setup couldn’t finish. Check your internet connection or the JMBE file you selected, then try again. Any working library is still safe. You can also set this up later.";
         if(step==SetupStep.ADMINISTRATOR) return "Administrator setup failed. Check the current password and password rules, then retry.";
         if(step==SetupStep.REVIEW) return "Web access couldn’t start. Another application may be using this port, or the security settings may need attention. Return to Web access, check the port and try again.";
-        if(step==SetupStep.SOURCE) return "Your saved data could not be imported. The original is unchanged. Use Copy error when reporting this problem.";
+        if(step==SetupStep.SOURCE) return "Your saved data could not be updated or imported. Use Copy error when reporting this problem.";
         return "This step couldn’t finish. Try again, or return to it later. Any completed setup choices are still saved.";
     }
 

@@ -50,7 +50,18 @@ final class SqliteIdentityRepair
 
     static Inspection repair(Connection connection) throws SQLException
     {
-        Analysis analysis = analyze(connection);
+        return repair(connection, true);
+    }
+
+    /** Normalizes only bounded configuration allocator rows; retained data and receiver history stay untouched. */
+    static Inspection repairAllocators(Connection connection) throws SQLException
+    {
+        return repair(connection, false);
+    }
+
+    private static Inspection repair(Connection connection, boolean repairConfigurationRows) throws SQLException
+    {
+        Analysis analysis = analyze(connection, repairConfigurationRows);
         Inspection before = analysis.inspection();
         if(!before.requiresRepair())
         {
@@ -110,7 +121,7 @@ final class SqliteIdentityRepair
             }
         }
 
-        Inspection remaining = inspect(connection);
+        Inspection remaining = analyze(connection, repairConfigurationRows).inspection();
         if(remaining.requiresRepair())
         {
             throw new SQLException("SQLite identity repair did not produce usable allocator state");
@@ -139,6 +150,11 @@ final class SqliteIdentityRepair
 
     private static Analysis analyze(Connection connection) throws SQLException
     {
+        return analyze(connection, true);
+    }
+
+    private static Analysis analyze(Connection connection, boolean inspectConfigurationRows) throws SQLException
+    {
         Set<String> autoIncrementTables = autoIncrementTables(connection);
         Map<String,TableInspection> tables = new LinkedHashMap<>();
         long droppedRows = 0;
@@ -146,7 +162,7 @@ final class SqliteIdentityRepair
 
         for(String table: autoIncrementTables)
         {
-            long unsafeRows = unsafeConfigurationRows(connection, table);
+            long unsafeRows = inspectConfigurationRows ? unsafeConfigurationRows(connection, table) : 0;
             long retainedMaximum = maximumRetainedId(connection, table);
             SequenceState sequence = inspectSequence(connection, table, retainedMaximum);
             tables.put(table, new TableInspection(table, unsafeRows, sequence.repairRequired()));

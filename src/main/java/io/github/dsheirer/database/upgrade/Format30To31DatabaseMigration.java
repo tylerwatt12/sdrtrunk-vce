@@ -26,14 +26,14 @@ final class Format30To31DatabaseMigration implements DatabaseMigrationStep
     public List<DatabaseMigrationEffect> declaredEffects(boolean selectedSourceStep)
     {
         return effects(DatabaseMigrationEffect.UNKNOWN_COUNT, DatabaseMigrationEffect.UNKNOWN_COUNT,
-            DatabaseMigrationEffect.UNKNOWN_COUNT, List.of(), true, selectedSourceStep);
+            DatabaseMigrationEffect.UNKNOWN_COUNT, DatabaseMigrationEffect.UNKNOWN_COUNT, List.of(), true, selectedSourceStep);
     }
 
     @Override
     public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
     {
         UserInspection inspection = inspect(connection);
-        return effects(inspection.updates().size(), inspection.defaultedUsers(), inspection.rebasedRevisions(),
+        return effects(inspection.updates().size(), inspection.defaultedUsers(), inspection.rebasedRevisions(), inspection.resetLayouts(),
             inspectRepairs(connection), false, true);
     }
 
@@ -54,7 +54,7 @@ final class Format30To31DatabaseMigration implements DatabaseMigrationStep
         throws SQLException
     {
         requireSource(connection);
-        //Refuse a valid document that cannot fit the new generation before any staged component repair writes.
+        //Inspect the bounded layout fallback before any component repairs.
         UserInspection initial = inspect(connection);
         List<DatabaseMigrationEffect> repairs = selectedSourceStep ? repair(connection) : List.of();
         UserInspection inspection = selectedSourceStep ? inspect(connection) : initial;
@@ -75,7 +75,7 @@ final class Format30To31DatabaseMigration implements DatabaseMigrationStep
                 }
             }
         }
-        return effects(inspection.updates().size(), inspection.defaultedUsers(), inspection.rebasedRevisions(),
+        return effects(inspection.updates().size(), inspection.defaultedUsers(), inspection.rebasedRevisions(), inspection.resetLayouts(),
             repairs, false,
             selectedSourceStep);
     }
@@ -94,6 +94,7 @@ final class Format30To31DatabaseMigration implements DatabaseMigrationStep
         List<UserUpdate> updates = new ArrayList<>();
         long defaultedUsers = 0;
         long rebasedRevisions = 0;
+        long resetLayouts = 0;
         try(var query = connection.createStatement(); ResultSet rows = query.executeQuery("""
             SELECT id,
                    CASE WHEN typeof(preferences_json)='text'
@@ -126,12 +127,14 @@ final class Format30To31DatabaseMigration implements DatabaseMigrationStep
                 {
                     try
                     {
-                        target = Format23WebUserPreferencesCodec.migrateToFormat31(source);
+                        var migrated = Format23WebUserPreferencesCodec.migrateToBoundedFormat31(source);
+                        target = migrated.json();
+                        resetLayouts += migrated.resetLayouts();
                     }
                     catch(IOException | RuntimeException conversionFailure)
                     {
-                        throw new SQLException("Usable browser preferences cannot fit the version-8 storage bound; " +
-                            "the original preferences must be preserved", conversionFailure);
+                        throw new SQLException("Personal preferences cannot be converted within the version-8 storage bound",
+                            conversionFailure);
                     }
                 }
                 else
@@ -151,7 +154,7 @@ final class Format30To31DatabaseMigration implements DatabaseMigrationStep
                 updates.add(new UserUpdate(id, target, incrementable ? revision + 1 : 1));
             }
         }
-        return new UserInspection(List.copyOf(updates), defaultedUsers, rebasedRevisions);
+        return new UserInspection(List.copyOf(updates), defaultedUsers, rebasedRevisions, resetLayouts);
     }
 
     private static List<DatabaseMigrationEffect> inspectRepairs(Connection connection) throws SQLException
@@ -185,6 +188,7 @@ final class Format30To31DatabaseMigration implements DatabaseMigrationStep
     }
 
     private static List<DatabaseMigrationEffect> effects(long users, long defaultedUsers, long rebasedRevisions,
+        long resetLayouts,
         List<DatabaseMigrationEffect> repairs, boolean declared, boolean includeRepairs)
     {
         List<DatabaseMigrationEffect> effects = new ArrayList<>();
@@ -198,6 +202,10 @@ final class Format30To31DatabaseMigration implements DatabaseMigrationStep
         effects.add(new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
             "unusable per-user preference revisions", rebasedRevisions,
             "Rebase an invalid or exhausted preference revision while preserving its usable personal settings"));
+        effects.add(new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.RESET,
+            "saved table layouts exceeding the upgraded personal-preference storage bound", resetLayouts,
+            "Remove only enough cached table layouts to fit the added hue; preserve all other personal settings, " +
+                "accounts, credentials and receiver configuration"));
         if(includeRepairs)
         {
             List<DatabaseMigrationEffect> described = declared ? repairEffects(
@@ -214,5 +222,6 @@ final class Format30To31DatabaseMigration implements DatabaseMigrationStep
     }
 
     private record UserUpdate(long id, String json, long revision) {}
-    private record UserInspection(List<UserUpdate> updates, long defaultedUsers, long rebasedRevisions) {}
+    private record UserInspection(List<UserUpdate> updates, long defaultedUsers, long rebasedRevisions,
+                                  long resetLayouts) {}
 }

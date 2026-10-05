@@ -49,7 +49,7 @@ public class UpdateCheckService
 
     public UpdateCheckResult check()
     {
-        if(!MANIFEST_URIS.containsKey(mTrack) || mCurrentBuild < 0)
+        if(mTrack == null || !MANIFEST_URIS.containsKey(mTrack) || mCurrentBuild < 0)
         {
             return UpdateCheckResult.unavailable("This build does not contain valid update metadata");
         }

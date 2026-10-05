@@ -177,14 +177,14 @@ the global format catalog and chain runner. Remove the old gate instead of retai
 transformation logic that is still correct is assigned to the appropriate adjacent step rather than exposed as an
 alternate path.
 
-Retain the existing launcher, child-process isolation, source backup, staged-copy workflow,
-validation, and atomic promotion where they already meet this contract. Graphical setup, headless setup, and direct
-SQLite-file selection are entry points to the same engine, not separate implementations.
+Current-profile graphical and headless upgrades share one in-place transaction with an optional recovery snapshot.
+Explicitly selected external imports retain the launcher, private child process, source approval, staged-copy
+validation, and atomic promotion. Both use the same format catalog and adjacent migration chain.
 
-The Swing Setup Wizard owns first-run graphical presentation. Migration preflight performs a read-only structural
-inspection and quick integrity check, then shows the declared best-effort policy for every required step. It does not
-run a redundant throwaway migration. The child process scans and migrates the staged copy once and the completion
-report replaces unknown preflight counts with the exact observed repair, reset, and skip counts.
+The Swing Setup Wizard owns first-run graphical presentation. Current-profile inspection checks the registered
+format and bounded configuration before showing the declared best-effort policy. A recovery-backup checkbox is on
+by default. External-source review uses its private snapshot and fuller checks. Neither review runs a throwaway
+migration; the completion report supplies the observed repair, reset, and skip counts.
 Preflight, progress, and completion stay on its Starting point page; completion offers Copy Message and a ten-second
 continuation countdown. Errors remain compact and inline with expandable details and a Copy error action. Database
 replacement and startup errors use the same bounded, expandable, copyable presentation instead of message-sized
@@ -356,8 +356,9 @@ colors and categorical chart colors keep their existing meaning. Only a malforme
 is replaced with bounded version-8 defaults; an unusable or exhausted revision is rebased while usable personal
 settings survive. When format 30 is the directly selected source, the step applies the bounded current-component
 repair policy; an intermediate format 30 does not repeat those
-repairs. A usable version-7 document that cannot fit the new field within the unchanged storage bound causes refusal,
-not a reset; the source remains unchanged. Format 31 shares the format-30 DDL fingerprint and uses the explicit
+repairs. If adding the hue to a usable document would exceed the unchanged storage bound, remove only the necessary
+saved table layouts and report their exact count. Accounts, credentials, non-layout personal settings, and receiver
+configuration remain intact. Format 31 shares the format-30 DDL fingerprint and uses the explicit
 preference generation to distinguish populated markerless profiles; an ambiguous markerless file requires its
 authoritative global format marker.
 
@@ -372,7 +373,9 @@ transcript, marking calls with an existing transcript `complete` and other calls
 the background worker applies its configured minimum duration when selecting work. A failed call is retried only by
 an administrator action. Fresh format-3 catalogs use the same status default and index. The main application database
 is independently at format 31; transcript-catalog migrations do not change it. Recognized older catalogs are backed up
-and migrated on a staged copy at the pre-receiver setup boundary; normal catalog startup validates only.
+and updated in one transaction at the pre-receiver setup boundary, with an optional SQLite-aware recovery snapshot
+before changes. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with
+Managed Recordings unavailable, so optional catalog trouble does not prevent ordinary receiving.
 
 Every change to persisted DDL or persisted meaning must land with all of the following:
 
@@ -403,74 +406,55 @@ Migration support does not mean every historical value must survive. Each step c
 | State for intentionally retired features | Drop when it has no supported current representation. |
 | Invalid, over-capacity, or ambiguous row state | Default or skip that bounded component and report it. Refuse only when the database structure, integrity, final consistency, or promotion cannot be made safe. |
 
-Every possible reset or drop is named during preflight. Exact counts are determined by the one real staged migration
+Every possible reset or drop is named during preflight. Exact counts are determined by the one real migration
 and repeated in the completion report, so every build reports its exact preservation and loss behavior. Numbered
 release notes additionally summarize the user-visible policy for each format introduced by that release.
 
-## Safe Execution
+## Upgrade Execution
 
-The bundled Application Migrator is the only component allowed to change an existing supported database schema. Its
-default safe execution pipeline is:
+The bundled Application Migrator is the only component allowed to change an existing supported database schema.
+Current-profile upgrades run after the portable-data lock is acquired and before the main receiver window, tuners,
+and database services start. The Setup Wizard can already be visible at this point.
 
-1. Open the source read-only, fingerprint it, resolve its format, and run a quick physical integrity check. Source
-   checks do not apply row `CHECK` rules that staged repair can fix; final validation remains strict. The selected
-   file and its containing folder do not need to be writable. The database and any readable journal/WAL are copied
-   into private scratch space on the selected destination's filesystem, after a free-space check. The original files
-   are verified byte-for-byte unchanged, and SQLite recovery or WAL replay occurs only on that private copy. If the
-   source changes during this copy, the attempt is refused and can be retried after closing the prior application.
-2. Present the source, target, external-file scope, and declared resets or drops before mutation.
-3. Create a recoverable backup or snapshot and a separate staged database.
-4. Run the chain once, only against the staged copy in the migration child process. Legacy foreign-key enforcement is
-   relaxed during the transaction so orphaned rows can be removed, but a complete foreign-key check is mandatory
-   before commit.
-5. Validate the final global version, exact schema fingerprint, required row invariants, SQLite integrity, and foreign
-   keys.
-6. Promote the staged result atomically only after every validation succeeds. Freed pages remain reusable by SQLite;
-   migration does not run a temporary-space-intensive compaction pass.
+1. Inspect the registered format, exact schema, and bounded required configuration. Unknown, mixed, newer, or
+   unsupported formats are refused. SQLite reads committed WAL data and recovers an interrupted rollback journal.
+2. Show the required adjacent steps and declared resets or drops. The recovery-backup checkbox defaults to on;
+   headless upgrade commands accept `--no-upgrade-backup` to omit it.
+3. Reserve the database writer with `BEGIN IMMEDIATE` and check the source format again. If selected, make one
+   standalone SQLite-aware recovery snapshot before any changes. A backup failure aborts without changing data.
+4. Run the existing `N -> N+1 -> ... -> current` chain in the same transaction. Each step verifies its exact target
+   schema. Once the final layout is reached, independently repair unusable portable, account, and configuration
+   components and report their counts. Preserve usable configuration and credentials.
+5. Validate the final global format, exact schema, required settings, and startup configuration once, then commit.
+   Normal startup opens the result with validation only. Freed pages remain reusable; upgrades do not compact them.
 
-The one execution exception is an explicitly confirmed no-backup update of the current installation's inactive
-database at the pre-receiver startup boundary. It is offered only when bounded startup inspection has identified an
-older supported format; it is not a current-format repair path, an import/replacement path, or a route for an unknown,
-mixed, newer, physically suspect, or recovery-journal-bearing database. The update writes the application database
-directly. It deliberately omits the recovery backup, staged copy and promotion, approval digest, full source and final
-SQLite integrity scans, foreign-key scan, and optional direct-source repair sweeps. Required adjacent-step
-transformations and their declared preserve, reset, default, drop, or skip behavior still apply, but this path does not
-first repair damage merely because the safe staged path could isolate it.
+Selecting or skipping a recovery backup changes only step 3. There are no separate safe/fast upgrade engines,
+approval copies or content digests, staged current-profile copies, promotion, or repeated full-history checks.
+Ordinary startup and current-profile upgrades do not run whole-file integrity or derived-history scans. Damage that
+those scans alone could detect can surface later; explicit inspection and external import retain their fuller checks.
 
-While the default approval inspection is copying, checking, fingerprinting, or cleaning its temporary files, setup
-offers one `Skip safety checks & update now` control. A skip request stops cancellable file and SQLite work, then waits
-for the current native SQLite backup boundary when one is already running. Temporary approval files are deleted before
-the direct-update confirmation is shown, and the direct update is never started concurrently with inspection. A
-scratch-cleanup failure remains an error instead of falling through to the no-backup update.
+A conversion or final-validation failure before commit rolls back the entire transaction. The adjacent steps do not
+commit independently and do not create restart checkpoints. After commit, the prior application version cannot open
+the upgraded format. The optional snapshot remains for manual recovery; there is no automatic post-commit restore.
+Without it, recovery requires another available backup. Statement, connection, temporary-file, or progress-observer
+errors after commit are completion warnings and must not present an already completed update as safely retryable.
+A healthy current-format profile is a no-op and does not create a backup.
 
-The shortcut does not create another migration route. Inside one `BEGIN IMMEDIATE` transaction it runs the same exact
-registered `N -> N+1 -> ... -> current` chain, stamps and verifies the exact target after every step, restores strict
-row `CHECK` enforcement, and retains final validation of the current global format, exact schema contracts, required
-settings, and startup configuration before `COMMIT`. Any failure before a successful commit attempts `ROLLBACK`, so
-the adjacent steps have no independent durability or resume boundary. After commit, there is no retained prior copy
-or automatic rollback; the previous application version cannot reopen the upgraded database, and a power or storage
-failure can require manual recovery.
+Progress shows the current phase and elapsed time, with detailed output available on demand. The engine emits
+`Step X of Y — description` before each adjacent conversion, then validation and commit phases. The commit-phase
+message is not success; success is reported only after `COMMIT` returns. Confirmation cancellation, error retry, and
+completion navigation remain in the wizard. The backup setting applies to both application and optional catalog
+upgrades; each upgraded database gets one snapshot when selected.
 
-Migration progress is one current phase with elapsed time, not a percentage or durable progress journal. Detailed
-phase output is available on demand. The no-backup update emits `Step X of Y — description` immediately before each
-adjacent step, followed by explicit validation and commit phases. Those messages are not per-step commits or restart
-checkpoints, and the commit-phase message is not success; success is reported only after `COMMIT` returns. A
-connection-cleanup problem after that point is a warning about an already committed update, not a reason to present
-the operation as safely retryable.
-
-For an import, the selected source database and previous installation remain unchanged. For an in-place upgrade, the
-live database is replaced only after the staged result passes every check, and the pre-migration safety backup is
-retained. On cancellation, a crash before promotion, failed conversion, or failed validation, the staged result is
-not promoted. After the atomic promotion point, the already validated result may be live; in-place post-promotion
-validation restores the retained backup on failure. Normal application startup after setup is exact-schema
-validation-only and never creates, repairs, or migrates an existing schema.
-
-For ordinary launches of an exact current-format database, startup checks the format, schema, and bounded required
-settings without running a full SQLite quick check or scanning all receiver-derived tables. A recognized older format
-can enter setup after that bounded inspection so the operator can choose the default safe inspection/update or the
-explicit no-backup exception above. A database that fails bounded format admission still receives the full read-only
-preflight before setup offers migration or repair. Damage detectable only by omitted scans may surface later or during
-explicit maintenance. Safe migration and import continue to perform the full integrity and staged-result checks above.
+Explicit imports and replacement use a different ownership boundary, while reusing the same conversion chain. The
+selected source and its containing folder need not be writable. After checking free space, copy its database and
+readable journal/WAL into private destination scratch space, recover that copy, fingerprint its registered format,
+and perform physical integrity checks. Verify the selected files unchanged and bind confirmation to the snapshot's
+content digest; refuse a source that changed during review. Show source, target, scope, and declared effects before
+mutation. Run the chain in the private child process, validate final schema, required rows, integrity and foreign
+keys, then promote atomically. Cancelled or failed imports never promote partial data. Replacement retains a
+current-profile backup and restores it if post-promotion validation fails. Normal application startup never repairs
+or migrates an existing schema.
 
 After setup, **File > Import SQLite Database…** provides an explicit database-only replacement workflow. It safely
 restarts into the pre-receiver setup boundary and first closes the receiver and its database-owning runtime services.

@@ -16,6 +16,27 @@ public final class SetupWizardSmoke
             throw new IllegalArgumentException("Use a wizard-smoke- disposable directory");
         Files.createDirectories(root);
         System.setProperty(PortableApplicationPaths.DATA_ROOT_PROPERTY,root.toString());
+        String mode = System.getProperty("wizard.exercise", "");
+        if(mode.startsWith("upgrade-"))
+        {
+            if(mode.equals("upgrade-catalog-failure"))
+            {
+                io.github.dsheirer.database.upgrade.Format31TestDatabase.create(root.resolve("database/sdrtrunk.sqlite"));
+                Path catalog = root.resolve("database/managed-recordings.sqlite");
+                try(var connection = java.sql.DriverManager.getConnection("jdbc:sqlite:" + catalog);
+                    var statement = connection.createStatement())
+                {
+                    for(String ddl: io.github.dsheirer.record.managed.ManagedRecordingSchema.ddlForFormat(1).values())
+                        statement.execute(ddl);
+                    statement.execute("INSERT INTO catalog_metadata(id,format_version,call_count,total_bytes) VALUES(1,1,0,0)");
+                    statement.execute("PRAGMA application_id=" + io.github.dsheirer.record.managed.ManagedRecordingSchema.APPLICATION_ID);
+                    statement.execute("PRAGMA user_version=1");
+                }
+                Files.writeString(root.resolve("database/backups"), "unrelated file");
+            }
+            else io.github.dsheirer.database.upgrade.Format30TestDatabase.create(root.resolve("database/sdrtrunk.sqlite"));
+            if(mode.equals("upgrade-retry")) Files.writeString(root.resolve("database/backups"), "unrelated file");
+        }
         if(!System.getProperty("wizard.exercise", "").isBlank())
         {
             Thread driver=new Thread(()-> {
@@ -44,6 +65,12 @@ public final class SetupWizardSmoke
         if(wizard==null) throw new AssertionError("Wizard not shown");
         SetupWizard target=wizard;
         String mode=System.getProperty("wizard.exercise");
+        if(mode.startsWith("upgrade-"))
+        {
+            if(mode.equals("upgrade-catalog-failure")) exerciseCatalogFailure(target, root);
+            else exerciseUpgrade(target, root, mode);
+            return;
+        }
         if(mode.equals("revisit"))
         {
             await(target,SetupStep.CALIBRATION);
@@ -176,6 +203,129 @@ public final class SetupWizardSmoke
         awaitClosed(target);
         if(!SetupProgress.read(root.resolve("database/sdrtrunk.sqlite")).isComplete())
             throw new AssertionError("Final launch action did not complete setup");
+    }
+
+    private static void exerciseUpgrade(SetupWizard wizard, Path root, String mode) throws Exception
+    {
+        Path database = root.resolve("database/sdrtrunk.sqlite");
+        byte[] source = Files.readAllBytes(database);
+        javax.swing.JCheckBox[] checkbox = new javax.swing.JCheckBox[1];
+        javax.swing.SwingUtilities.invokeAndWait(() -> {
+            checkbox[0] = descendants(wizard).stream()
+                .filter(component -> component instanceof javax.swing.JCheckBox box && box.isShowing() &&
+                    box.getText().equals("Create a recovery backup first"))
+                .map(component -> (javax.swing.JCheckBox)component).findFirst().orElseThrow();
+            if(!checkbox[0].isSelected()) throw new AssertionError("Upgrade backup is not on by default");
+            if(descendants(wizard).stream().anyMatch(component -> component instanceof javax.swing.JButton button &&
+                button.isShowing() && (button.getText().contains("Check safely") || button.getText().contains("Skip safety"))))
+                throw new AssertionError("Upgrade still requires the discarded safety-review workflow");
+        });
+        capture(wizard, root, "upgrade-ready");
+        openUpgradeConfirmation(wizard);
+        answerUpgradeConfirmation("Cancel");
+        await(wizard, SetupStep.SOURCE);
+        if(!java.util.Arrays.equals(source, Files.readAllBytes(database)))
+            throw new AssertionError("Cancelling confirmation changed the database");
+        if(mode.equals("upgrade-no-backup"))
+            javax.swing.SwingUtilities.invokeAndWait(() -> checkbox[0].doClick());
+        openUpgradeConfirmation(wizard);
+        answerUpgradeConfirmation("Update");
+        await(wizard, SetupStep.SOURCE);
+        if(mode.equals("upgrade-retry"))
+        {
+            var danger = SetupWizard.class.getDeclaredField("danger"); danger.setAccessible(true);
+            if(!((javax.swing.JTextArea)danger.get(wizard)).isVisible())
+                throw new AssertionError("Failed backup did not show an inline error");
+            if(!java.util.Arrays.equals(source, Files.readAllBytes(database)))
+                throw new AssertionError("Failed backup changed the database");
+            javax.swing.SwingUtilities.invokeAndWait(() -> checkbox[0].doClick());
+            openUpgradeConfirmation(wizard);
+            answerUpgradeConfirmation("Update");
+            await(wizard, SetupStep.SOURCE);
+            if(!Files.readString(root.resolve("database/backups")).equals("unrelated file"))
+                throw new AssertionError("Retry replaced unrelated backup-path content");
+        }
+        try(var connection = java.sql.DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            if(io.github.dsheirer.database.upgrade.DatabaseFormatCatalog.requireCurrent(connection).version() != 31)
+                throw new AssertionError("Update did not reach the current format");
+        }
+        if(mode.equals("upgrade-backup"))
+        {
+            try(var files = Files.list(root.resolve("database/backups")))
+            {
+                if(files.filter(Files::isRegularFile).count() != 1)
+                    throw new AssertionError("Update did not retain exactly one backup");
+            }
+        }
+        else if(mode.equals("upgrade-no-backup") && Files.exists(root.resolve("database/backups")))
+            throw new AssertionError("Backup-off update created backup files");
+        capture(wizard, root, "upgrade-complete");
+        if(mode.equals("upgrade-backup"))
+        {
+            //Exercise automatic continuation without entering hardware discovery or launching a receiver.
+            var field = SetupWizard.class.getDeclaredField("progress"); field.setAccessible(true);
+            javax.swing.SwingUtilities.invokeAndWait(() -> {
+                try { ((SetupProgress)field.get(wizard)).set(SetupStep.ADMINISTRATOR, SetupProgress.State.PENDING); }
+                catch(IllegalAccessException e) { throw new RuntimeException(e); }
+            });
+            await(wizard, SetupStep.ADMINISTRATOR);
+            click(wizard, "Back");
+            await(wizard, SetupStep.SOURCE);
+            if(descendants(wizard).stream().anyMatch(component -> component instanceof javax.swing.JCheckBox box &&
+                box.isShowing() && box.getText().equals("Create a recovery backup first")))
+                throw new AssertionError("Back offered to run the committed update again");
+        }
+        click(wizard, "Exit setup");
+        awaitClosed(wizard);
+    }
+
+    private static void answerUpgradeConfirmation(String answer) throws Exception
+    {
+        for(int attempt = 0; attempt < 100; attempt++)
+        {
+            boolean[] answered = {false};
+            javax.swing.SwingUtilities.invokeAndWait(() -> {
+                for(java.awt.Window window: java.awt.Window.getWindows())
+                    if(window instanceof javax.swing.JDialog dialog && dialog.isShowing() &&
+                        dialog.getTitle().equals("Update saved data?"))
+                        for(java.awt.Component component: descendants(dialog))
+                            if(component instanceof javax.swing.JButton button && button.isShowing() && button.getText().equals(answer))
+                            { button.doClick(); answered[0] = true; }
+            });
+            if(answered[0]) return;
+            Thread.sleep(25);
+        }
+        throw new AssertionError("Upgrade confirmation not shown");
+    }
+
+    private static void openUpgradeConfirmation(SetupWizard wizard)
+    {
+        //The modal confirmation runs a nested Swing event loop; do not block the driver waiting for it to close.
+        javax.swing.SwingUtilities.invokeLater(() -> wizard.getRootPane().getDefaultButton().doClick());
+    }
+
+    private static void exerciseCatalogFailure(SetupWizard wizard, Path root) throws Exception
+    {
+        Path catalog = root.resolve("database/managed-recordings.sqlite");
+        byte[] before = Files.readAllBytes(catalog);
+        openUpgradeConfirmation(wizard);
+        answerUpgradeConfirmation("Update");
+        await(wizard, SetupStep.SOURCE);
+        capture(wizard, root, "upgrade-catalog-failed");
+        click(wizard, "Continue without managed recordings");
+        await(wizard, SetupStep.SOURCE);
+        if(!java.util.Arrays.equals(before, Files.readAllBytes(catalog)))
+            throw new AssertionError("Failed catalog update changed the source");
+        if(!Files.readString(root.resolve("database/backups")).equals("unrelated file"))
+            throw new AssertionError("Failed catalog update replaced unrelated backup-path content");
+        if(!hasVisibleText(wizard, "Managed recordings are unavailable"))
+            throw new AssertionError("Continuation hid the unavailable recordings warning");
+        var restart = SetupWizard.class.getDeclaredField("restartRequired"); restart.setAccessible(true);
+        if(restart.getBoolean(wizard)) throw new AssertionError("Optional catalog failure blocked all receiving");
+        capture(wizard, root, "upgrade-catalog-unavailable");
+        click(wizard, "Exit setup");
+        awaitClosed(wizard);
     }
 
     /** The successful listener check must leave the first-run guidance on screen until the final launch action. */

@@ -37,6 +37,31 @@ class ManagedRecordingStoreTest
     Path temporary;
 
     @Test
+    void refusedOlderCatalogRetainsItsBytesAndJournalMode() throws Exception
+    {
+        Path database = temporary.resolve("older-catalog.sqlite");
+        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            var statement = connection.createStatement())
+        {
+            for(String ddl: ManagedRecordingSchema.ddlForFormat(2).values()) statement.execute(ddl);
+            statement.execute("INSERT INTO catalog_metadata(id,format_version,call_count,total_bytes) VALUES(1,2,0,0)");
+            statement.execute("PRAGMA application_id=" + ManagedRecordingSchema.APPLICATION_ID);
+            statement.execute("PRAGMA user_version=2");
+        }
+        byte[] before = Files.readAllBytes(database);
+        assertThrows(SQLException.class, () -> new ManagedRecordingStore(database, temporary.resolve("audio")));
+        org.junit.jupiter.api.Assertions.assertArrayEquals(before, Files.readAllBytes(database));
+        assertFalse(Files.exists(Path.of(database + "-wal")));
+        assertFalse(Files.exists(Path.of(database + "-shm")));
+        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            var statement = connection.createStatement(); var mode = statement.executeQuery("PRAGMA journal_mode"))
+        {
+            assertTrue(mode.next());
+            assertEquals("delete", mode.getString(1));
+        }
+    }
+
+    @Test
     void numericSuggestionsUseRecordedRolesPrefixesAndSystemScopeWithoutAliases() throws Exception
     {
         Path root = temporary.resolve("numeric-suggestions");

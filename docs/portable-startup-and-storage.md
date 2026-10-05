@@ -76,13 +76,14 @@ selecting an option or returning with Back never imports or replaces data; each 
 confirmation. Fresh-start and folder-copy choices remain exclusive to new installations. Imports are no longer in
 the File menu. After an import completes, Starting point becomes a results review for that session.
 
-The bundled Application Migrator is the only supported release database-migration entry point. During first-launch
-migration it copies an accepted SQLite database into a private staging folder, updates only that staged copy, runs
-schema, integrity, and foreign-key checks, and installs it only after every check succeeds. The source database and
-previous installation are never changed. In-place upgrades and post-setup database replacement instead retain a
-timestamped safety backup before atomically promoting their validated staged copy. The saved vault, JMBE libraries,
-and optional module files are also copied when present during a full portable-data migration. Logs, recordings, event
-logs, screenshots, and streaming output remain in the previous data folder instead of being duplicated.
+The bundled Application Migrator is the only supported release database-migration entry point. An upgrade of the
+current profile uses one transaction before receiving starts. The recovery-backup checkbox defaults to on and saves
+one timestamped SQLite-aware snapshot before changes; skipping it uses the same conversion and final checks. A
+failure before commit rolls back the transaction. After commit, the optional backup remains for manual recovery.
+External imports and post-setup replacement keep their private staged-copy validation and atomic installation;
+the selected source database and previous installation remain unchanged. The saved vault, JMBE libraries, and
+optional module files are copied when present during a full portable-data import. Logs, recordings, event logs,
+screenshots, and streaming output remain in the previous data folder instead of being duplicated.
 
 For full-folder migration, saved output and library paths inside the previous data folder are changed to the matching
 location inside the new data folder. Deliberately shared paths outside it are left alone. SQLite-only imports preserve
@@ -171,10 +172,13 @@ deterministic prior-format fixture, and tests. The bundled chain retains those s
 a verified older Alpha or Nightly database does not require sequential installation of skipped builds.
 Ordinary application services remain validation-only.
 
-When startup finds a verified older format, it offers the Application Migrator. The migrator first creates a
-timestamped backup under `data/database/backups`, migrates another staged copy through the required steps, validates
-the exact target signature and complete database, and then replaces the current database atomically. If migration
-fails, the application does not start and the completed backup is retained.
+When startup recognizes an older format, it offers the Application Migrator. The wizard may already be visible,
+but the main receiver window and receiving have not started. With the profile locked, the migrator takes the optional
+backup under `data/database/backups`, applies all required adjacent steps to the existing database in one transaction,
+checks the exact final schema and bounded configuration, then commits. It avoids repeated copies, full-history scans,
+and compaction. If conversion or validation fails before commit, the transaction rolls back and setup offers retry.
+Explicit inspection and external imports retain fuller integrity checks. A healthy current-format profile needs no
+upgrade or backup.
 
 For a numbered Alpha, see its version-matched release notes for accepted sources and migration behavior. For a rolling
 Nightly, use its bundled documentation and read the migrator's preflight and completion reports. An Alpha with an
@@ -193,7 +197,9 @@ When an existing profile's Managed Recordings catalog needs a format update, gra
 before receiving starts. Headless startup of that profile requires an explicit `--upgrade-current` or
 `--upgrade-managed-recordings` run. If the main database is absent but an older catalog remains, add
 `--upgrade-managed-recordings` to `--fresh`, `--import-xml`, or `--upgrade-data`; setup prepares the main database and
-administrator first, then backs up and updates the catalog before receiving starts.
+administrator first, then updates the catalog before receiving starts. `--no-upgrade-backup` omits the optional
+recovery snapshot for either upgrade flag. A catalog upgrade failure allows ordinary receiving to continue with
+Managed Recordings unavailable; graphical setup also offers retry.
 
 The retired `webfirst` development branch used an incompatible managed-recording catalog. Its database is not a
 supported migration input for either active channel, so an old `webfirst` data directory must remain separate.
@@ -248,7 +254,8 @@ optional modules, or other external profile files, so the completion report will
 
 For an existing older database already in the active data path, headless startup uses `--upgrade-current` as the
 explicit authorization to run the migrator. That flag authorizes any verified older format in the bundled Alpha
-8-to-current chain.
+8-to-current chain. It also explicitly checks and repairs unusable bounded configuration in an already-current
+profile. Add `--no-upgrade-backup` to omit its default recovery snapshot.
 
 Once a portable database exists, the app holds an operating-system lock for that data folder until shutdown. A second
 sdrtrunk-vce process receives a clear “already in use” error before it can validate, upgrade, or write the same data.

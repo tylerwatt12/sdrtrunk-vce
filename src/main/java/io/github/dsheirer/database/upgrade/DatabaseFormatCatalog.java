@@ -387,7 +387,7 @@ public final class DatabaseFormatCatalog
             "Allow each user to save a custom integer hue from 0 through 359",
             "Default only malformed or oversized per-user preference documents",
             "Rebase an unusable preference revision without discarding usable personal settings",
-            "Refuse a usable document that cannot fit after adding the hue; preserve the source unchanged"));
+            "Reset only the necessary cached table layouts if adding the hue would exceed the unchanged storage limit"));
 
     private static final List<FormatDescriptor> FORMATS =
         List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7, FORMAT_8, FORMAT_9,
@@ -611,14 +611,15 @@ public final class DatabaseFormatCatalog
 
     /**
      * Stamps an intermediate migration result after its exact schema has been verified.  Redundant subsystem markers
-     * and recoverable data invariants may remain until a later step; the current target is always checked fully.
+     * and recoverable data invariants may remain until bounded repair completes. The caller validates all required
+     * current invariants before committing; the public chain validates them before returning.
      */
-    static void stampForMigration(Connection connection, int version) throws SQLException
+    static DetectedFormat stampForMigration(Connection connection, int version) throws SQLException
     {
-        stamp(connection, version, true);
+        return stamp(connection, version, true);
     }
 
-    private static void stamp(Connection connection, int version, boolean allowRecoverableLegacyData)
+    private static DetectedFormat stamp(Connection connection, int version, boolean allowRecoverableLegacyData)
         throws SQLException
     {
         FormatDescriptor descriptor = BY_VERSION.get(version);
@@ -636,11 +637,11 @@ public final class DatabaseFormatCatalog
                 "]: schema fingerprint is " + fingerprint + "; expected " + descriptor.fingerprint());
         }
 
-        if(!allowRecoverableLegacyData || version == CURRENT_VERSION)
+        if(!allowRecoverableLegacyData)
         {
             validateMetadata(connection, descriptor);
         }
-        if(!allowRecoverableLegacyData || version == CURRENT_VERSION)
+        if(!allowRecoverableLegacyData)
         {
             validateInvariants(connection, descriptor, false);
         }
@@ -671,6 +672,7 @@ public final class DatabaseFormatCatalog
             statement.setLong(3, System.currentTimeMillis());
             statement.executeUpdate();
         }
+        return new DetectedFormat(descriptor, true);
     }
 
     static FormatDescriptor requireVersion(int version) throws SQLException

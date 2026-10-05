@@ -8,6 +8,18 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class SetupStartupBoundaryTest
 {
+    @Test
+    void unavailableOptionalCatalogDoesNotRewriteTheSavedRecordingMode() throws Exception
+    {
+        String startup = Files.readString(Path.of("src/main/java/io/github/dsheirer/gui/SDRTrunk.java"));
+        int catalog = startup.indexOf("mManagedRecordingCatalog = new ManagedRecordingCatalog");
+        int audio = startup.indexOf("mAudioRecordingManager =", catalog);
+        String fallback = startup.substring(catalog, audio);
+        assertTrue(fallback.contains("catch(Exception exception)"));
+        assertTrue(fallback.contains("saved recording mode is unchanged"));
+        assertFalse(fallback.contains("setRecordingMode("));
+    }
+
     @Test void graphicalSetupPrecedesReceiverConstructionAndActualWebBindPrecedesActivation() throws Exception
     {
         String startup=Files.readString(Path.of("src/main/java/io/github/dsheirer/gui/SDRTrunk.java"));
@@ -44,7 +56,7 @@ class SetupStartupBoundaryTest
     {
         String wizard = Files.readString(Path.of("src/main/java/io/github/dsheirer/gui/setup/SetupWizard.java"));
         assertTrue(wizard.contains("This step couldn’t finish. Try again, or return to it later."));
-        assertTrue(wizard.contains("The original is unchanged. Use Copy error when reporting this problem."));
+        assertTrue(wizard.contains("Your saved data could not be updated or imported. Use Copy error when reporting this problem."));
         assertFalse(wizard.contains("Copy the technical details below"));
         assertFalse(wizard.contains("make sure there is enough free space"));
     }
@@ -58,16 +70,16 @@ class SetupStartupBoundaryTest
         String wizard = Files.readString(Path.of("src/main/java/io/github/dsheirer/gui/setup/SetupWizard.java"));
         String sourcePage = wizard.substring(wizard.indexOf("private void sourcePage()"),
             wizard.indexOf("private void migrate(Path source"));
-        assertTrue(sourcePage.contains("next.setText(\"Check safely\")"));
-        assertTrue(sourcePage.contains("\"Skip safety checks & update now\""));
-        assertTrue(sourcePage.contains("directUpdateRequested::get"));
-        assertTrue(sourcePage.contains("ignored -> confirmFastMigration()"));
-        assertTrue(sourcePage.contains("button(\"Update without backup\", this::confirmFastMigration)"));
-        assertFalse(sourcePage.contains("migrationDetails(startupMigrationPlan)"));
+        assertTrue(sourcePage.contains("migrationDetails(startupMigrationPlan)"));
+        assertTrue(sourcePage.contains("upgradeBackupChoice()"));
+        assertTrue(sourcePage.contains("next.setText(\"Update\")"));
+        assertTrue(wizard.contains("private boolean createUpgradeBackup = true"));
+        assertFalse(sourcePage.contains("readMigrationApproval(database"));
+        assertFalse(wizard.contains("directUpdateRequested"));
         assertFalse(wizard.contains("Need the receiver back sooner?"));
         assertFalse(wizard.contains("Faster update available"));
         assertFalse(wizard.contains("Skip backup & safety checks"));
-        assertTrue(wizard.contains("service.migrateCurrentWithoutBackup(root, this::migrationProgress)"));
+        assertTrue(wizard.contains("service.migrateCurrent(root, createUpgradeBackup, this::migrationProgress)"));
         assertTrue(wizard.contains("elapsedLabel(System.nanoTime() - operationStartedNanos)"));
     }
 
