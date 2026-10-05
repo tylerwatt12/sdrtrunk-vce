@@ -129,6 +129,22 @@ public class ReceiverActivitySchema
         create(connection, MAXIMUM_OBSERVED_SITE, true, true, EVENT_TYPES, true);
         createEncryptedActivityFilterIndexes(connection);
         createSourceWorkingEvidenceIndex(connection);
+        createIdentityRetentionIndexes(connection);
+    }
+
+    /** Supports identity retention and foreign-key checks without scanning a system's logical-call history. */
+    public static void createIdentityRetentionIndexes(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                CREATE INDEX IF NOT EXISTS idx_trunked_logical_identity_identity
+                ON trunked_logical_call_identity_bucket(identity_summary_id, radio_system_id, identity_kind_code)
+                """);
+            //Implicit foreign-key checks cannot force an index. Compare the new lookup with the existing table
+            //indexes using their actual populated selectivity, rather than stale or default estimates.
+            statement.execute("ANALYZE trunked_logical_call_identity_bucket");
+        }
     }
 
     /** Indexes only qualified source Working-ID evidence without expanding the general event indexes. */
@@ -266,6 +282,8 @@ public class ReceiverActivitySchema
             List.of("bucket_start_ms", "radio_system_id"));
         validateIndexColumns(connection, "idx_trunked_logical_identity_dashboard_time",
             List.of("bucket_start_ms", "identity_role_code", "radio_system_id", "identity_summary_id"));
+        validateIndexColumns(connection, "idx_trunked_logical_identity_identity",
+            List.of("identity_summary_id", "radio_system_id", "identity_kind_code"));
         validateIndexColumns(connection, "idx_p25_site_call_bucket_time",
             List.of("bucket_start_ms", "radio_system_id", "learned_site_id"));
         validateIndexColumns(connection, "idx_p25_site_call_identity_time",
@@ -2135,7 +2153,7 @@ public class ReceiverActivitySchema
         return selectReceiverChannelId(connection, quality.configurationId());
     }
 
-    /** Runs one globally bounded retention pass across every activity subsystem. */
+    /** Runs one globally bounded retention pass across every activity subsystem on an idle auto-commit connection. */
     public static int runRetentionPass(Connection connection, long cutoffEpochMilliseconds) throws SQLException
     {
         return ReceiverActivityRetention.runPass(connection, cutoffEpochMilliseconds).deletedRows();
@@ -3195,6 +3213,7 @@ public class ReceiverActivitySchema
         "idx_trunked_signaling_activity_system",
         "idx_trunked_logical_call_bucket_time",
         "idx_trunked_logical_identity_dashboard_time",
+        "idx_trunked_logical_identity_identity",
         "idx_p25_site_call_bucket_time",
         "idx_p25_site_call_identity_time",
         "idx_p25_site_call_identity_retention",

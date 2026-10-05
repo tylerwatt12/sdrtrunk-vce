@@ -163,6 +163,28 @@ approximately 10 ms rather than 28 ms with the index and split. These are warm p
 page timings. Widening both existing source/target indexes achieved similar query time but added roughly 6 MiB in
 the projection; a second working-evidence target index had no measured benefit and is omitted.
 
+### Identity retention lookup
+
+Format 36 adds `idx_trunked_logical_identity_identity(identity_summary_id, radio_system_id, identity_kind_code)`
+to the existing logical-call identity bucket table. Both the retention descendant probe and SQLite's exact
+identity foreign-key check use an identity-first `SEARCH` through this index. The migration analyzes this table
+once so the planner can compare populated index selectivity for the implicit foreign-key lookup after upgrade. The existing system/time primary key
+and time-first dashboard index cannot seek that identity without scanning the system's complete bucket history.
+Detailed-event source and target probes remain separate seeks through their existing identity indexes.
+
+There is one index entry per existing logical-call identity bucket, with no additional observations or duplicated
+names. New entries per hour equal newly populated system/hour/role/identity tuples. With R such tuples per hour,
+365-day retention gives at most 8,760 × R entries. Ordinary retention and explicit saved-data cleanup remove entries
+with their bucket rows; upserts maintain the index on the background writer. A 50,000-row synthetic sample using
+wide system and identity integers occupied 1,138,688 bytes (about 22.8 bytes per row), projecting about 21 MiB for a
+981,975-row table. Integer widths, page occupancy, and WAL traffic vary; this is a planning estimate.
+
+Routine cleanup also has a 1,000-row pass cap, a 256-row statement cap, a 250 ms SQLite execution budget per
+statement, and a one-second execution budget per pass. SQLite interruption rolls back only the current standalone
+statement; earlier completed batches stay committed. The fair cursor advances past a deferred task, and follow-up
+passes wait at least five seconds so ingestion and user saves can acquire the writer. These execution budgets
+protect receiver continuity; they do not replace the index-backed lookup paths.
+
 ### Receiver status alert history
 
 The `receiver_health_incident` table retains the lifecycle of recent Receiver status alerts so a debug report that

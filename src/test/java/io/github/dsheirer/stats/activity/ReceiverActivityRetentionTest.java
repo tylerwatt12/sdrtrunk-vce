@@ -8,20 +8,164 @@ package io.github.dsheirer.stats.activity;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.sqlite.Function;
 
 /** Regression coverage for the single bounded routine-retention path. */
 class ReceiverActivityRetentionTest
 {
     private static final String CONFIGURATION_ID = "123e4567-e89b-42d3-a456-426614174000";
+
+    @Test
+    void interruptedDeletePreservesCommittedTasksAndReleasesPreferencesWriter(@TempDir Path temporary)
+        throws Exception
+    {
+        String databaseUrl = "jdbc:sqlite:" + temporary.resolve("retention.sqlite");
+        try(Connection connection = open(databaseUrl);
+            Connection preferencesConnection = DriverManager.getConnection(databaseUrl))
+        {
+            seedChannel(connection);
+            seedUser(connection);
+            execute(connection, """
+                INSERT INTO receiver_activity_event(channel_id, observed_at_ms, action_code)
+                VALUES (1, 1, 4)
+                """);
+            execute(connection, """
+                INSERT INTO conventional_activity_bucket(channel_id, frequency_hz, timeslot, bucket_start_ms)
+                VALUES (1, 450000001, 1, 1), (1, 450000002, 1, 1), (1, 450000003, 1, 1)
+                """);
+            execute(connection, """
+                INSERT INTO p25_site_snapshot(channel_id, first_seen_ms, last_seen_ms)
+                VALUES (1, 1, 10000000)
+                """);
+            execute(connection, """
+                INSERT INTO p25_site_channel_summary(
+                    channel_id, channel_key, first_seen_ms, last_seen_ms, observation_count)
+                VALUES (1, '1-1', 1, 1, 1)
+                """);
+            execute(connection, "CREATE TABLE retention_test_work(value INTEGER NOT NULL)");
+            execute(connection, """
+                WITH RECURSIVE n(value) AS (VALUES(1) UNION ALL SELECT value + 1 FROM n WHERE value < 4000)
+                INSERT INTO retention_test_work SELECT value FROM n
+                """);
+
+            AtomicLong nanoTime = new AtomicLong();
+            AtomicInteger triggeredDeletes = new AtomicInteger();
+            Function.create(connection, "retention_test_expire", new Function()
+            {
+                @Override
+                protected void xFunc() throws SQLException
+                {
+                    if(triggeredDeletes.incrementAndGet() >= 2)
+                    {
+                        nanoTime.set(ReceiverActivityRetention.MAXIMUM_TASK_NANOSECONDS + 1);
+                    }
+                    result(0);
+                }
+            });
+            execute(connection, """
+                CREATE TEMP TRIGGER retention_test_slow_delete BEFORE DELETE ON conventional_activity_bucket
+                BEGIN
+                    SELECT retention_test_expire();
+                    SELECT sum(value) FROM retention_test_work;
+                END
+                """);
+            ReceiverActivitySchema.updateStatus(connection, ReceiverActivityRetention.CURSOR_STATUS_KEY, "1");
+
+            ReceiverActivityRetention.Pass interrupted = ReceiverActivityRetention.runPass(connection,
+                3_700_000, nanoTime::get);
+
+            assertEquals(2, triggeredDeletes.get(), "the second row interrupts an already-started DELETE");
+            assertEquals(1, interrupted.deletedRows(), "the earlier event task remains committed");
+            assertTrue(interrupted.moreWorkLikely());
+            assertEquals(9, interrupted.nextCursor(), "resume after the interrupted conventional bucket task");
+            assertEquals(interrupted.nextCursor(), ReceiverActivitySchema.readStatusLong(connection,
+                ReceiverActivityRetention.CURSOR_STATUS_KEY));
+            assertEquals(0, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
+            assertEquals(3, scalar(connection, "SELECT count(*) FROM conventional_activity_bucket"),
+                "interruption rolls back the whole current statement, including its first deleted row");
+            assertTrue(connection.getAutoCommit());
+
+            // This UPDATE crosses the progress-callback threshold while the clock still exceeds the deadline.
+            execute(connection, """
+                UPDATE web_user
+                SET preferences_json=json_object('retentionTest', (SELECT sum(value) FROM retention_test_work)),
+                    preferences_revision=preferences_revision+1, updated_at_ms=2
+                WHERE username='retention-test'
+                """);
+            assertEquals(2, scalar(connection, "SELECT preferences_revision FROM web_user"),
+                "the progress handler must be cleared before the connection is reused");
+            execute(preferencesConnection, """
+                UPDATE web_user SET preferences_json='{"theme":"dark"}',
+                    preferences_revision=preferences_revision+1, updated_at_ms=3
+                WHERE username='retention-test'
+                """);
+            assertEquals(3, scalar(connection, "SELECT preferences_revision FROM web_user"),
+                "the interrupted statement must release the database writer lock");
+
+            nanoTime.set(0);
+            ReceiverActivityRetention.Pass following = ReceiverActivityRetention.runPass(connection,
+                3_700_000, nanoTime::get);
+            assertEquals(1, following.deletedRows(), "the next pass reaches the later P25 task first");
+            assertTrue(following.moreWorkLikely());
+            assertEquals(0, scalar(connection, "SELECT count(*) FROM p25_site_channel_summary"));
+            assertEquals(3, scalar(connection, "SELECT count(*) FROM conventional_activity_bucket"));
+
+            execute(connection, "DROP TRIGGER retention_test_slow_delete");
+            ReceiverActivityRetention.Pass drained = ReceiverActivityRetention.runPass(connection,
+                3_700_000, () -> 0L);
+            assertEquals(3, drained.deletedRows());
+            assertFalse(drained.moreWorkLikely());
+            assertEquals(0, scalar(connection, "SELECT count(*) FROM conventional_activity_bucket"));
+        }
+    }
+
+    @Test
+    void callerTransactionIsRejectedBeforeRetentionWritesOrCommits(@TempDir Path temporary) throws Exception
+    {
+        String databaseUrl = "jdbc:sqlite:" + temporary.resolve("transaction.sqlite");
+        try(Connection connection = open(databaseUrl);
+            Connection observer = DriverManager.getConnection(databaseUrl))
+        {
+            seedChannel(connection);
+            seedUser(connection);
+            execute(connection, """
+                INSERT INTO receiver_activity_event(channel_id, observed_at_ms, action_code)
+                VALUES (1, 1, 4)
+                """);
+            ReceiverActivitySchema.updateStatus(connection, ReceiverActivityRetention.CURSOR_STATUS_KEY, "1");
+            connection.setAutoCommit(false);
+            execute(connection, "UPDATE web_user SET preferences_revision=2 WHERE username='retention-test'");
+
+            assertThrows(SQLException.class, () -> ReceiverActivityRetention.runPass(connection, 3_700_000));
+            assertFalse(connection.getAutoCommit());
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
+            assertEquals(1, ReceiverActivitySchema.readStatusLong(connection,
+                ReceiverActivityRetention.CURSOR_STATUS_KEY));
+            assertEquals(2, scalar(connection, "SELECT preferences_revision FROM web_user"),
+                "retention must preserve the caller's pending writes");
+            assertEquals(1, scalar(observer, "SELECT preferences_revision FROM web_user"),
+                "retention must not commit the caller's transaction");
+
+            connection.rollback();
+            assertEquals(1, scalar(connection, "SELECT preferences_revision FROM web_user"));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
+        }
+    }
 
     @Test
     void passHasOneGlobalCapRotatesAndEventuallyDrainsEveryBacklog() throws Exception
@@ -292,7 +436,12 @@ class ReceiverActivityRetentionTest
 
     private static Connection open() throws Exception
     {
-        Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:");
+        return open("jdbc:sqlite::memory:");
+    }
+
+    private static Connection open(String databaseUrl) throws Exception
+    {
+        Connection connection = DriverManager.getConnection(databaseUrl);
         try(Statement statement = connection.createStatement())
         {
             statement.execute("PRAGMA foreign_keys=ON");
@@ -303,6 +452,17 @@ class ReceiverActivityRetentionTest
         DmrActivitySchema.create(connection);
         TrunkedSiteSchema.create(connection);
         return connection;
+    }
+
+    private static void seedUser(Connection connection) throws Exception
+    {
+        execute(connection, """
+            INSERT INTO web_user(username,tier,primary_admin,credential_version,password_algorithm,
+                password_iterations,password_derived_key_bits,password_salt,password_hash,
+                password_changed_at_ms,auth_revision,preferences_json,preferences_revision,created_at_ms,updated_at_ms)
+            VALUES ('retention-test','USER',0,1,'PBKDF2WithHmacSHA256',600000,256,
+                zeroblob(16),zeroblob(32),1,1,'{}',1,1,1)
+            """);
     }
 
     private static void seedChannel(Connection connection) throws Exception

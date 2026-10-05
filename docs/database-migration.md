@@ -80,7 +80,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -400,6 +400,12 @@ layouts to fit and report their exact count. Direct format-34 upgrades apply the
 policy; an intermediate format 34 does not repeat those repairs. The DDL is unchanged and this shared semantic
 format family still requires its authoritative global marker. Historical version-8 preference validation remains frozen.
 
+The format 35-to-36 step preserves every row and adds one identity-first lookup index to logical-call
+identity buckets, with statistics for SQLite's query planner. Routine retention and foreign-key checks can seek an
+exact radio-system identity rather than scan all of its system's retained call history. No settings, preference
+revisions, accounts, credentials, counters, or retained observations are rewritten. The bundled Application Migrator
+adds the index transactionally; runtime startup continues to validate the existing schema without modifying it.
+
 ## Schema-Change Rule
 
 The optional Managed Recordings catalog is a separate SQLite file with its own adjacent format chain. Its format 2
@@ -410,7 +416,7 @@ counters, and adds no transcript rows. Catalog format 3 adds a constrained `tran
 transcript, marking calls with an existing transcript `complete` and other calls `pending`. Short calls stay pending;
 the background worker applies its configured minimum duration when selecting work. A failed call is retried only by
 an administrator action. Fresh format-3 catalogs use the same status default and index. The main application database
-is independently at format 35; transcript-catalog migrations do not change it. Recognized older catalogs are backed up
+is independently at format 36; transcript-catalog migrations do not change it. Recognized older catalogs are backed up
 and updated in one transaction at the pre-receiver setup boundary, with an optional SQLite-aware recovery snapshot
 before changes. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with
 Managed Recordings unavailable, so optional catalog trouble does not prevent ordinary receiving.
