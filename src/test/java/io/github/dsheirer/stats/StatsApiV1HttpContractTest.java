@@ -120,9 +120,11 @@ class StatsApiV1HttpContractTest
         assertTrue(data.path("receiver_started_at_ms").isIntegralNumber(), state.body());
         assertTrue(data.path("snapshot_stale").isBoolean(), state.body());
         assertEquals(0, data.path("current_assignment_count").intValue(), state.body());
+        assertTrue(data.path("meaningful_assignment_count").isIntegralNumber(), state.body());
+        assertTrue(data.path("retained_meaningful_assignment_count").isIntegralNumber(), state.body());
         for(String collection: List.of("current-assignments", "recent-changes"))
         {
-            HttpResponse<String> response = get(base + "/" + collection + "?limit=1&q=County");
+            HttpResponse<String> response = get(base + "/" + collection + "?limit=1&q=County&meaningful_only=true");
             assertEquals(200, response.statusCode(), response.body());
             JsonNode page = OBJECT_MAPPER.readTree(response.body());
             assertTrue(page.path("data").isArray(), response.body());
@@ -136,6 +138,8 @@ class StatsApiV1HttpContractTest
             400, "invalid_parameter", "home_wacn");
         assertStructuredError(get(base + "/recent-changes?sort=unrecognized"),
             400, "invalid_parameter", "sort");
+        assertStructuredError(get(base + "/current-assignments?meaningful_only=invalid"),
+            400, "invalid_parameter", "meaningful_only");
         assertEquals(404, get(StatsApiV1.RADIO_SYSTEMS + "/p25%3Afffff%3Afff/issi/current-state").statusCode());
     }
 

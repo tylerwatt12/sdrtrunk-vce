@@ -171,12 +171,129 @@ class StatsP25AssignmentServiceTest
         assertThrows(StatsApiException.class, () -> service.currentAssignments(SYSTEM, request("home_wacn=1048576")));
     }
 
+    @Test
+    void meaningfulCurrentMappingsKeepForeignEqualNumbersAndUnknownEvidenceBeforePaging()
+    {
+        long now = System.currentTimeMillis();
+        var local = new P25SubscriberIdentity(0xABCDE, 0x123, 3);
+        var foreign = new P25SubscriberIdentity(0xFFFFF, 0x456, 4);
+        var entries = List.of(entry(local, 3, "A", now), entry(foreign, 4, "B", now),
+            entry(20, "B", now), entry(null, 400, "A", now));
+        AtomicReference<P25WuidAssignmentRegistry.Snapshot> source = new AtomicReference<>(
+            snapshot(now, false, entries, true, 0));
+        var service = new StatsP25AssignmentService(time -> source.get(), (key, rows) -> rows, now);
+        service.refresh(now);
+
+        assertEquals(4, service.currentAssignments(SYSTEM, request("")).get("total_count"),
+            "Existing callers retain ordinary local assignments");
+        Map<String,Object> page = service.currentAssignments(SYSTEM, request(
+            "meaningful_only=true&sort=working_id&direction=asc&limit=1&offset=1"));
+        assertEquals(3, page.get("total_count"));
+        assertEquals(true, page.get("has_more"));
+        assertEquals(20, ((Map<?,?>)((List<?>)page.get("rows")).getFirst()).get("canonical_subscriber_id"));
+        assertEquals(2, service.currentAssignments(SYSTEM,
+            request("meaningful_only=true&configuration_id=B")).get("total_count"));
+        assertEquals(0, service.currentAssignments(SYSTEM,
+            request("meaningful_only=true&subscriber_id=3")).get("total_count"));
+        assertEquals(1, service.currentAssignments(SYSTEM,
+            request("meaningful_only=true&subscriber_id=4")).get("total_count"),
+            "A foreign home system matters even when the two numeric IDs match");
+        Map<?,?> state = (Map<?,?>)page.get("current_state");
+        assertEquals(4, state.get("current_assignment_count"));
+        assertEquals(3L, state.get("meaningful_assignment_count"));
+        assertEquals(0L, state.get("retained_meaningful_assignment_count"));
+
+        source.set(snapshot(now, true, entries, true, 0));
+        service.refresh(now);
+        Map<?,?> stale = service.currentState(SYSTEM);
+        assertEquals(0L, stale.get("meaningful_assignment_count"));
+        assertEquals(3L, stale.get("retained_meaningful_assignment_count"));
+        assertEquals(4, stale.get("retained_assignment_count"));
+        assertEquals(3L, state.get("meaningful_assignment_count"), "A later view cannot alter the page's state");
+    }
+
+    @Test
+    void ordinaryLocalMappingsRemainCurrentButHaveNoMeaningfulCount()
+    {
+        long now = System.currentTimeMillis();
+        var entries = List.of(entry(new P25SubscriberIdentity(0xABCDE, 0x123, 3), 3, "A", now));
+        var service = new StatsP25AssignmentService(time -> snapshot(now, false, entries, true, 0),
+            (key, rows) -> rows, now);
+        service.refresh(now);
+        Map<String,Object> page = service.currentAssignments(SYSTEM, request("meaningful_only=true"));
+        assertEquals(0, page.get("total_count"));
+        Map<?,?> state = (Map<?,?>)page.get("current_state");
+        assertEquals("current", state.get("state"));
+        assertEquals(1, state.get("current_assignment_count"));
+        assertEquals(0L, state.get("meaningful_assignment_count"));
+    }
+
+    @Test
+    void meaningfulRecentChangesKeepMovesAndRemovalsButHideRefreshesAndOrdinaryLocalRows()
+    {
+        long now = System.currentTimeMillis();
+        var local = new P25SubscriberIdentity(0xABCDE, 0x123, 3);
+        var foreign = new P25SubscriberIdentity(0xFFFFF, 0x456, 4);
+        var remapped = new P25SubscriberIdentity(0xABCDE, 0x123, 20);
+        var changes = List.of(
+            change(1, now, P25WuidAssignmentRegistry.ChangeReason.REGISTERED, local, 3, null),
+            change(2, now, P25WuidAssignmentRegistry.ChangeReason.REGISTERED, foreign, 4, null),
+            change(3, now, P25WuidAssignmentRegistry.ChangeReason.REGISTERED, remapped, 220, null),
+            change(4, now, P25WuidAssignmentRegistry.ChangeReason.REFRESHED, remapped, 220, null),
+            change(5, now, P25WuidAssignmentRegistry.ChangeReason.REASSIGNED, remapped, 20, 220),
+            change(6, now, P25WuidAssignmentRegistry.ChangeReason.CLEARED, remapped, 20, 220),
+            change(7, now, P25WuidAssignmentRegistry.ChangeReason.CLEARED, remapped, 220, null),
+            change(8, now, P25WuidAssignmentRegistry.ChangeReason.CLEARED, local, 3, null),
+            new P25WuidAssignmentRegistry.Change(9, now, P25WuidAssignmentRegistry.ChangeReason.RESET,
+                null, null, null, null, null),
+            change(10, now, P25WuidAssignmentRegistry.ChangeReason.OBSERVATION_GAP, null, null, null),
+            change(11, now, P25WuidAssignmentRegistry.ChangeReason.REGISTERED, null, 500, null));
+        var source = new P25WuidAssignmentRegistry.Snapshot(now, 1, 2, false, 0, List.of(), changes,
+            List.of(new P25WuidAssignmentRegistry.SystemObservation(0xABCDE, 0x123, true, 0, List.of("A"))), 0, 0);
+        var service = new StatsP25AssignmentService(time -> source, (key, rows) -> rows, now);
+        service.refresh(now);
+
+        assertEquals(11, service.recentChanges(SYSTEM, request("")).get("total_count"));
+        Map<String,Object> useful = service.recentChanges(SYSTEM,
+            request("meaningful_only=true&sort=changed_at&direction=asc&limit=1&offset=1"));
+        assertEquals(8, useful.get("total_count"));
+        assertEquals(3L, ((Map<?,?>)((List<?>)useful.get("rows")).getFirst()).get("sequence"),
+            "Filtering happens before pagination");
+        List<?> rows = (List<?>)service.recentChanges(SYSTEM, request("meaningful_only=true")).get("rows");
+        assertTrue(rows.stream().map(row -> (Map<?,?>)row).noneMatch(row ->
+            "refreshed".equals(row.get("change_reason"))));
+        for(long sequence: List.of(5L, 6L, 7L))
+        {
+            assertTrue(rows.stream().map(row -> (Map<?,?>)row).anyMatch(row ->
+                Long.valueOf(sequence).equals(row.get("sequence"))), "Remap transition " + sequence);
+        }
+        Map<String,Object> notices = service.recentChanges(SYSTEM, request(
+            "meaningful_only=true&subscriber_id=999&configuration_id=B&roaming_only=true&q=NoMatchingName"));
+        assertEquals(2, notices.get("total_count"), "Both receiver and system invalidations survive every filter");
+        assertTrue(((List<?>)notices.get("rows")).stream().map(row -> (Map<?,?>)row)
+            .allMatch(row -> row.containsKey("invalidation_scope")));
+    }
+
     private static P25WuidAssignmentRegistry.Entry entry(int id, String configuration, long now)
     {
-        return new P25WuidAssignmentRegistry.Entry(0xABCDE, 0x123, id + 200,
-            new P25SubscriberIdentity(0xABCDE, 0x123, id), now, now, now + 20_000,
+        return entry(new P25SubscriberIdentity(0xABCDE, 0x123, id), id + 200, configuration, now);
+    }
+
+    private static P25WuidAssignmentRegistry.Entry entry(P25SubscriberIdentity identity, int workingId,
+                                                        String configuration, long now)
+    {
+        return new P25WuidAssignmentRegistry.Entry(0xABCDE, 0x123, workingId,
+            identity, now, now, now + 20_000,
             P25WuidAssignmentRegistry.Evidence.REGISTRATION, P25WuidAssignmentRegistry.LeaseSource.FALLBACK,
             new P25SiteIdentity(0xABCDE, 0x123, 1, 2), configuration);
+    }
+
+    private static P25WuidAssignmentRegistry.Change change(long sequence, long now,
+        P25WuidAssignmentRegistry.ChangeReason reason, P25SubscriberIdentity identity, Integer working,
+        Integer previous)
+    {
+        return new P25WuidAssignmentRegistry.Change(sequence, now - 20 + sequence, reason, 0xABCDE, 0x123,
+            working, previous, identity, new P25SiteIdentity(0xABCDE, 0x123, 1, 2), "A");
     }
 
     private static P25WuidAssignmentRegistry.Snapshot snapshot(long now, boolean stale,

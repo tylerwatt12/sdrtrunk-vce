@@ -251,6 +251,9 @@ final class StatsP25AssignmentService implements AutoCloseable
         result.put("state", state);
         result.put("current_assignment_count", stale ? 0 : rows.size());
         result.put("retained_assignment_count", stale ? rows.size() : 0);
+        long meaningful = rows.stream().filter(row -> meaningfulMapping(key, row, false)).count();
+        result.put("meaningful_assignment_count", stale ? 0L : meaningful);
+        result.put("retained_meaningful_assignment_count", stale ? meaningful : 0L);
         result.put("observed_channel_count", system != null ? system.configurationIds().size() : 0);
         long confirmed = rows.stream().mapToLong(row -> number(row.get("confirmed_at_ms"))).max().orElse(0);
         result.put("last_confirmation_ms", confirmed > 0 ? confirmed : null);
@@ -278,6 +281,7 @@ final class StatsP25AssignmentService implements AutoCloseable
         String search = request.search();
         String configurationId = request.text("configuration_id");
         boolean roamingOnly = request.booleanValue("roaming_only", false);
+        boolean meaningfulOnly = request.booleanValue("meaningful_only", false);
         Integer homeWacn = boundedIdentity(request, "home_wacn", 0xFFFFF);
         Integer homeSystem = boundedIdentity(request, "home_system_id", 0xFFF);
         Integer subscriber = boundedIdentity(request, "subscriber_id", RadioSystemIdentityKey.MAX_P25_RADIO_ID);
@@ -307,6 +311,8 @@ final class StatsP25AssignmentService implements AutoCloseable
         }
         String query = search != null ? search.toLowerCase(Locale.ROOT) : null;
         List<Map<String,Object>> filtered = candidates.stream()
+            .filter(row -> isInvalidation(row) || !meaningfulOnly ||
+                (!recent || !"refreshed".equals(row.get("change_reason"))) && meaningfulMapping(key, row, recent))
             .filter(row -> isInvalidation(row) || configurationId == null || configurationId.equals(row.get("configuration_id")))
             .filter(row -> isInvalidation(row) || !roamingOnly || row.get("canonical_wacn") != null &&
                 !key.equals(RadioSystemKey.p25((int)number(row.get("canonical_wacn")),
@@ -408,6 +414,29 @@ final class StatsP25AssignmentService implements AutoCloseable
     private static boolean isInvalidation(Map<String,Object> row)
     {
         return row.containsKey("invalidation_scope");
+    }
+
+    /** Hides only a fully known ordinary local address; incomplete evidence remains visible. */
+    private static boolean meaningfulMapping(String servingKey, Map<String,Object> row, boolean recent)
+    {
+        if(!(row.get("canonical_wacn") instanceof Number wacn) ||
+            !(row.get("canonical_system_id") instanceof Number system) ||
+            !(row.get("canonical_subscriber_id") instanceof Number subscriber))
+        {
+            return true;
+        }
+        if(!servingKey.equals(RadioSystemKey.p25(wacn.intValue(), system.intValue())))
+        {
+            return true;
+        }
+        //A move back to the home ID still changes a previously remapped address.
+        if(recent && row.get("previous_working_id") instanceof Number previous &&
+            previous.longValue() != subscriber.longValue())
+        {
+            return true;
+        }
+        return !(row.get("observed_working_id") instanceof Number working) ||
+            working.longValue() != subscriber.longValue();
     }
 
     private static long number(Object value)
