@@ -137,6 +137,75 @@ class RetainedStatisticsAdminHttpControllerTest
     }
 
     @Test
+    void issiAssignmentHistoryCatalogAndRoutesUseOneP25SystemOwnedSummaryTarget() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabase);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA foreign_keys=ON");
+            statement.executeUpdate("INSERT INTO p25_subscriber_identity(id,home_wacn,home_system_id,subscriber_id) " +
+                "VALUES(71,0xBEE00,0x348,1103)");
+            statement.executeUpdate("INSERT INTO p25_wuid_assignment_observation_summary " +
+                "(radio_system_id,working_id,p25_subscriber_identity_id,first_observed_ms,last_observed_ms," +
+                "last_registration_ms,registration_count,last_evidence_code,last_channel_id) " +
+                "VALUES(71,77,71,1000,4000,4000,4,1,71),(71,78,71,1000,4000,4000,1,1,72)," +
+                "(73,77,71,1000,4000,4000,1,1,73)");
+            statement.executeUpdate("INSERT INTO radio_system(id,system_key,protocol_code,dmr_model_code,dmr_network_id,first_seen_ms,last_seen_ms) " +
+                "VALUES(75,'dmr:tier3:small:42',3,2,42,1000,1000)");
+        }
+        var page = mCatalog.results("radio_system", SYSTEM, "issi_assignment_history", null, null, 10, 0);
+        assertEquals(1, page.totalCount());
+        assertEquals("ISSI assignment history", page.rows().getFirst().get("label"));
+        assertEquals("Shared P25", page.rows().getFirst().get("detail"));
+        assertEquals(List.of("summary"), page.rows().getFirst().get("available_parts"));
+        JsonNode target = MAPPER.valueToTree(page.rows().getFirst().get("target"));
+        assertEquals("radio_system", target.get("source_kind").textValue());
+        assertEquals(SYSTEM, target.get("source_key").textValue());
+        assertEquals("issi_assignment_history", target.get("data_type").textValue());
+        assertFalse(target.has("site_configuration_id"));
+        assertFalse(target.has("record_key"));
+        assertEquals(1, mCatalog.results("radio_system", SYSTEM, "issi_assignment_history", null,
+            "Shared P25", 10, 0).totalCount());
+        assertEquals(0, mCatalog.results("radio_system", SYSTEM, "issi_assignment_history", null,
+            "Other P25", 10, 0).totalCount());
+        assertEquals(0, mCatalog.results("radio_system", SYSTEM, "issi_assignment_history", null,
+            null, 10, 1).rows().size());
+        var scoped = new StatsDatabaseMaintenanceRequest.ScopedData("radio_system", SYSTEM, null, null,
+            "issi_assignment_history", null, List.of("summary"));
+        assertEquals("ISSI assignment history · Shared P25", mCatalog.jobLabel(scoped));
+        assertEquals(2, mCatalog.preview(scoped).rowsTotal());
+        assertThrows(StatsApiException.class, () -> mCatalog.results("radio_system", SYSTEM,
+            "issi_assignment_history", SITE_A, null, 10, 0));
+        assertThrows(StatsApiException.class, () -> mCatalog.results("saved_channel", DMR_CHANNEL,
+            "issi_assignment_history", null, null, 10, 0));
+        assertThrows(StatsApiException.class, () -> mCatalog.results("radio_system", "dmr:tier3:small:42",
+            "issi_assignment_history", null, null, 10, 0));
+        assertThrows(StatsApiException.class, () -> mCatalog.results("radio_system", "p25:bee00:4a1",
+            "issi_assignment_history", null, null, 10, 0));
+
+        Session admin = login();
+        String base = RetainedStatisticsAdminHttpController.PATH;
+        HttpResponse<String> results = send(request(base + "/results?source_kind=radio_system&source_key=" +
+            SYSTEM + "&data_type=issi_assignment_history").header("Cookie", admin.cookie()).GET());
+        assertEquals(200, results.statusCode(), results.body());
+        HttpResponse<String> preview = send(mutation(base + "/preview", admin).POST(HttpRequest.BodyPublishers.ofString(
+            MAPPER.writeValueAsString(Map.of("target", target)))));
+        assertEquals(200, preview.statusCode(), preview.body());
+        assertEquals(2, json(preview).at("/data/rows_total").intValue());
+        assertEquals(2, json(preview).at("/data/counts_by_part/summary").intValue());
+        assertEquals(400, send(request(base + "/results?source_kind=radio_system&source_key=dmr:tier3:small:42" +
+            "&data_type=issi_assignment_history").header("Cookie", admin.cookie()).GET()).statusCode());
+        JsonNode invalidPart = target.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode)invalidPart).putArray("parts").add("current");
+        assertEquals(400, send(mutation(base + "/preview", admin).POST(HttpRequest.BodyPublishers.ofString(
+            MAPPER.writeValueAsString(Map.of("target", invalidPart))))).statusCode());
+        String body = MAPPER.writeValueAsString(Map.of("request_id", UUID.randomUUID().toString(), "target", target));
+        assertEquals(202, send(mutation(base + "/deletions", admin).POST(HttpRequest.BodyPublishers.ofString(body))).statusCode());
+        assertEquals(scoped, mDispatched.get().deletionTarget());
+        assertEquals(1, mDispatchCount.get());
+    }
+
+    @Test
     void catalogRequiresSourceAndSiteAndPagesExactOwnedTargets() throws Exception
     {
         RetainedStatisticsCatalog.Page sources = mCatalog.sources("radio_system", null, 10, 0);

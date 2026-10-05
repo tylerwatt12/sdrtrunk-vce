@@ -293,7 +293,7 @@ public final class StatsDatabaseMaintenanceRequest
         private static final Set<String> DATA_TYPES = Set.of("all", "site_state", "frequencies", "band_plans",
             "foreign_band_plans", "neighbors", "patches", "control_quality", "radios", "talkgroups",
             "relationships", "affiliations", "call_activity", "signaling_activity", "detailed_events",
-            "hourly_history", "alias_activity");
+            "hourly_history", "alias_activity", "issi_assignment_history");
         private static final Set<String> PARTS = Set.of("current", "summary", "buckets", "events");
 
         public ScopedData(String sourceKind, String sourceKey, String siteConfigurationId, String expectedSiteKey,
@@ -340,6 +340,10 @@ public final class StatsDatabaseMaintenanceRequest
             parts = parts.stream().distinct().sorted().toList();
             if("alias_activity".equals(dataType) && !parts.equals(List.of("summary")))
                 throw new IllegalArgumentException("Alias Activity has only a summary part");
+            if("issi_assignment_history".equals(dataType) &&
+                (!"radio_system".equals(sourceKind) || siteConfigurationId != null || recordKey != null ||
+                    !parts.equals(List.of("summary"))))
+                throw new IllegalArgumentException("ISSI assignment history requires a whole radio system and saved mappings & counts");
         }
     }
 

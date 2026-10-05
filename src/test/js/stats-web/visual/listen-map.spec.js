@@ -35,7 +35,7 @@ async function openMap(page, allowed = true, mapSnapshot = snapshot, options = {
     const pathname = new URL(route.request().url()).pathname;
     if (pathname === '/api/v1/auth/session') {
       await route.fulfill({ json: { data: { configured: true, authenticated: false,
-        capabilities: { 'call-audio': allowed, dashboard: true } } } });
+        capabilities: { 'call-audio': allowed, dashboard: true, radio: options.radio === true } } } });
     } else if (pathname === '/api/v1/me/preferences') {
       await route.fulfill({ json: { revision: 1, preferences: defaultPreferences } });
     } else if (pathname === '/api/v1/listen/map') {
@@ -117,6 +117,30 @@ test('public listener sees geographic map, trail, standard icon, and selected de
   await expectFlatFacts(page.locator('.listen-map-facts > .ui-fact'), { padding: '5px 0px', radius: null });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 });
+
+test('roaming Map details keep serving and home systems distinct with the exact hexadecimal identifier',
+  async ({ page }) => {
+    const roaming = { ...snapshot, entities: [{ ...snapshot.entities[0],
+      identifier: 'BEE00.348.1103 (Working ID 77)', system: 'GCRCN',
+      serving_system: { key: 'p25:bee00:49f', name: 'GCRCN', wacn: 0xBEE00, system_id: 0x49F,
+        entity_ref: { kind: 'radio_system', key: 'p25:bee00:49f' } },
+      home_system: { key: 'p25:bee00:348', name: 'Ohio MARCS-IP', wacn: 0xBEE00, system_id: 0x348,
+        entity_ref: { kind: 'radio_system', key: 'p25:bee00:348' } }
+    }] };
+    await openMap(page, true, roaming, { radio: true });
+    const facts = page.locator('.listen-map-facts');
+    await expect(facts).toContainText('BEE00.348.1103 (Working ID 77)');
+    await expect(facts).toContainText('BEE00-49F');
+    await expect(facts).toContainText('BEE00-348');
+    const servingLink = facts.getByRole('link', { name: 'GCRCN', exact: true });
+    const homeLink = facts.getByRole('link', { name: 'Ohio MARCS-IP', exact: true });
+    await expect(servingLink).toHaveAttribute('href', /radio_system_key=p25%3Abee00%3A49f/);
+    await expect(homeLink).toHaveAttribute('href', /radio_system_key=p25%3Abee00%3A348/);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(homeLink).toBeVisible();
+    await expect(facts).toContainText('BEE00.348.1103 (Working ID 77)');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+  });
 
 test('delayed first locations keep both startup views bounded and unchanged refreshes reuse tiles', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });

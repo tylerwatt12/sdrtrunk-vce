@@ -174,9 +174,12 @@ final class ReceiverActivityScopedDeletion
             {
                 plan.system("summary", "trunked_radio_group_summary");
                 plan.system("summary", "radio_system_identity_summary");
+                if(scope.protocol == 1) addIssiAssignmentHistory(plan);
                 plan.effects.add("Deleting system identity summaries also removes linked identity history, " +
                     "detailed events, and radio relationships through database foreign keys.");
             }
+            else if(scope.protocol == 1)
+                plan.effects.add("System-wide ISSI assignment history remains because its observations can span several sites.");
         }
         if(has(target, "current") && !scope.conventional)
         {
@@ -193,6 +196,12 @@ final class ReceiverActivityScopedDeletion
             }
             addSiteState(plan);
         }
+    }
+
+    private static void addIssiAssignmentHistory(Plan plan)
+    {
+        plan.system("summary", "p25_wuid_assignment_observation_summary");
+        plan.effects.add("Saved Working ID assignments and their observation counts are removed.");
     }
 
     private static void applyHistoryFilters(Plan plan, ScopedData target) throws SQLException
@@ -250,7 +259,7 @@ final class ReceiverActivityScopedDeletion
             case "site_state", "affiliations" -> Set.of("current");
             case "band_plans", "foreign_band_plans", "neighbors", "patches" -> Set.of("current", "summary");
             case "control_quality", "hourly_history" -> Set.of("buckets");
-            case "relationships" -> Set.of("summary");
+            case "relationships", "issi_assignment_history" -> Set.of("summary");
             case "detailed_events" -> Set.of("events");
             case "frequencies", "all" -> Set.of("current", "summary", "buckets", "events");
             case "radios", "talkgroups", "call_activity", "signaling_activity" ->
@@ -263,7 +272,7 @@ final class ReceiverActivityScopedDeletion
             throw new IllegalArgumentException("Data type requires a trunked system");
         if(scope.conventional && "frequencies".equals(type) && target.parts().contains("current"))
             throw new IllegalArgumentException("Conventional frequencies have no current site projection");
-        if(scope.protocol != 1 && Set.of("band_plans", "foreign_band_plans", "patches").contains(type))
+        if(scope.protocol != 1 && Set.of("band_plans", "foreign_band_plans", "patches", "issi_assignment_history").contains(type))
             throw new IllegalArgumentException("Data type requires P25");
         if(scope.protocol != 1 && "neighbors".equals(type) && target.parts().contains("current"))
             throw new IllegalArgumentException("Current neighbors require P25");
@@ -432,6 +441,11 @@ final class ReceiverActivityScopedDeletion
             {
                 if(scope.systemWide && has(target, "summary"))
                     plan.system("summary", "trunked_radio_group_summary");
+            }
+            case "issi_assignment_history" ->
+            {
+                addIssiAssignmentHistory(plan);
+                plan.effects.add("Current assignments, radio IDs and aliases remain. Receiving can create new assignment history.");
             }
             case "affiliations" ->
             {
@@ -997,7 +1011,8 @@ final class ReceiverActivityScopedDeletion
                 return ReceiverActivityMaintenance.DeletionOutcome.NOT_FOUND;
             }
             Scope current = resolve(connection, target);
-            if(current == null || current.systemId != plan.scope.systemId || current.channelId != plan.scope.channelId)
+            if(current == null || current.systemId != plan.scope.systemId || current.channelId != plan.scope.channelId ||
+                current.protocol != plan.scope.protocol)
                 return ReceiverActivityMaintenance.DeletionOutcome.NOT_FOUND;
             if(!current.stale) return ReceiverActivityMaintenance.DeletionOutcome.DELETED;
             if(removedOwnSnapshot)
@@ -1098,7 +1113,7 @@ final class ReceiverActivityScopedDeletion
                 predicate += " AND bucket_start_ms<?";
                 arguments.add(cutoffMs - Math.floorMod(cutoffMs, interval));
             }
-            for(String time: List.of("last_seen_ms", "confirmed_at_ms", "observed_at_ms", "cleared_at_ms", "updated_at_ms"))
+            for(String time: List.of("last_seen_ms", "last_observed_ms", "confirmed_at_ms", "observed_at_ms", "cleared_at_ms", "updated_at_ms"))
             {
                 if(table.columns.contains(time))
                 {
