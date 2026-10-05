@@ -2,7 +2,7 @@ import * as routeFoundation from './core/routes.js?v=8';
 import * as preferenceSchema from './core/preference-schema.js?v=3';
 import { Controller as UserPreferenceController } from './core/user-preferences.js';
 import * as tableLayouts from './core/table-layout.js';
-import * as tableDefaults from './core/table-defaults.js?v=14';
+import * as tableDefaults from './core/table-defaults.js?v=15';
 import { Controller as PageTitleController } from './core/page-title.js?v=2';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
 import * as systemLabels from './core/system-labels.js?v=1';
@@ -21590,7 +21590,9 @@ function activityCellValue(displayValue, row, columnId, context, filters) {
 
   const rowKey = String(row?.id ?? `new-${++activityCellActionSequence}`).replace(/[^a-z0-9_-]/gi, '-');
   const triggerId = `activity-cell-action-${rowKey}-${columnId}`;
-  const trigger = anchor(displayValue, navigation.target, 'activity-cell-action-link');
+  const content = node('span', 'identity-summary activity-cell-action-content');
+  content.append(valueNode(displayValue));
+  const trigger = anchor(content, navigation.target, 'activity-cell-action-link');
   trigger.id = triggerId;
   trigger.setAttribute('aria-label', `${dimension} ${text} actions`);
   trigger.setAttribute('aria-expanded', 'false');

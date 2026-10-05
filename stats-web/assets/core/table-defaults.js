@@ -16,6 +16,42 @@ const COLUMN_WIDTHS = Object.freeze({
   select: 48
 });
 
+const ALIAS_WIDTHS = Object.freeze({
+  select: 48, alias: 190, description: 260, identifier: 180,
+  matcher: 120, group: 180, behavior: 145, overlap: 92
+});
+const ALIAS_GROW = ['alias', 'description', 'group', 'behavior'];
+const ACTIVITY_DEFAULTS = {
+  widths: { action: 110, event: 180, source: 220, target: 220, channel: 320,
+    'source-alias': 190, 'source-ota-alias': 190, 'target-alias': 190 },
+  grow: ['channel', 'source-alias', 'source-ota-alias', 'target-alias']
+};
+const NEIGHBOR_DEFAULTS = {
+  widths: { 'neighbor-name': 240, system: 250 },
+  grow: ['neighbor-name', 'system']
+};
+const PATCH_DEFAULTS = {
+  widths: { 'patch-name': 190, 'member-talkgroup-ids': 180,
+    'member-talkgroup-names': 240, 'member-radio-ids': 240, 'member-radio-names': 240 },
+  grow: ['patch-name', 'member-talkgroup-names', 'member-radio-names']
+};
+const RETAINED_DEFAULTS = {
+  widths: { item: 320, action: 112, 'alias-list': 210, 'alias-group': 190,
+    'last-seen': 174, 'saved-records': 120 },
+  grow: ['item', 'alias-list', 'alias-group']
+};
+const RETAINED_FREQUENCIES = {
+  widths: { ...RETAINED_DEFAULTS.widths, item: 180, channel: 130, use: 160,
+    uplink: 110, timeslots: 80, slots: 80, state: 100,
+    observation_count: 110, voice_grant_observations: 110 },
+  grow: ['item', 'use']
+};
+const RETAINED_BANDS = {
+  widths: { ...RETAINED_DEFAULTS.widths, item: 180, base: 110, spacing: 110,
+    offset: 120, timeslots: 80, state: 100, observation_count: 110 },
+  grow: ['item']
+};
+
 const TABLE_DEFAULTS = Object.freeze({
   'issi-current-assignments': {
     widths: { radio: 220, 'home-system': 230, 'working-id': 120, confirmed: 180,
@@ -42,10 +78,13 @@ const TABLE_DEFAULTS = Object.freeze({
     widths: { 'home-system': 250, band: 90, 'observed-on': 260, state: 160, 'last-seen': 180 },
     grow: ['home-system', 'observed-on']
   },
-  'retained-statistics-v3': {
-    widths: { action: 112 }
-  },
-  activity: { widths: { source: 220, target: 220 } },
+  'retained-statistics-v3': RETAINED_DEFAULTS,
+  'retained-statistics-v3.radio_system.frequencies': RETAINED_FREQUENCIES,
+  'retained-statistics-v3.saved_channel.frequencies': RETAINED_FREQUENCIES,
+  'retained-statistics-v3.radio_system.band_plans': RETAINED_BANDS,
+  'retained-statistics-v3.radio_system.foreign_band_plans': RETAINED_BANDS,
+  activity: ACTIVITY_DEFAULTS,
+  'activity-conventional-analog-v1': ACTIVITY_DEFAULTS,
   'streaming-aliases': {
     widths: { selected: 88, name: 220, identifier: 145, list: 230 },
     grow: ['name', 'list']
@@ -101,6 +140,29 @@ const TABLE_DEFAULTS = Object.freeze({
       'encrypted-logical-calls': 90, 'last-seen': 174 },
     grow: ['alias', 'talker-alias', 'confirmed-channel']
   },
+  'talker-aliases': {
+    widths: { radio: 220, 'talker-alias': 190, 'radio-alias': 190,
+      'logical-calls': 90, 'encrypted-logical-calls': 90, 'last-seen': 174 },
+    grow: ['talker-alias', 'radio-alias']
+  },
+  'channel-radios': {
+    widths: { radio: 220, 'radio-alias': 190, 'talkgroup-name': 190,
+      'last-peer': 220, 'peer-alias': 190, 'last-talkgroup': 100 },
+    grow: ['radio-alias', 'talkgroup-name', 'peer-alias']
+  },
+  'channel-group-identities': {
+    widths: { source: 220, 'source-alias': 190 },
+    grow: ['group-identity-name', 'group-identity-description', 'source-alias']
+  },
+  'channel-top-groups': {
+    widths: { group: 190, 'group-identity-name': 190 },
+    grow: ['group', 'group-identity-name']
+  },
+  'alias-observed-group-identities': {
+    widths: { 'group-identity-id': 190, source: 280, calls: 80,
+      signaling: 110, 'last-seen': 174, action: 112 },
+    grow: ['group-identity-id', 'source']
+  },
   'alias-coverage-unassigned-v1': {
     widths: { identity: 230, system: 260, calls: 80, first: 190, last: 190 },
     grow: ['identity', 'system']
@@ -119,6 +181,18 @@ const TABLE_DEFAULTS = Object.freeze({
     widths: { name: 180, details: 260, 'control-frequency': 120,
       channels: 56, neighbors: 56, 'last-seen': 174 },
     grow: ['name', 'details']
+  },
+  'channel-neighbors-p25': NEIGHBOR_DEFAULTS,
+  'channel-neighbors-trunked': NEIGHBOR_DEFAULTS,
+  'channel-patches': PATCH_DEFAULTS,
+  'channel-patches-versioned': PATCH_DEFAULTS,
+  'channel-foreign-frequency-bands': {
+    widths: { system: 250 }, grow: ['system']
+  },
+  'dashboard-activity-radios': {
+    widths: { system: 280, radio: 220, alias: 220,
+      observations: 110, 'last-seen': 174 },
+    grow: ['system', 'alias']
   },
   'dashboard-call-sources': {
     widths: { receiver: 300, mode: 80, 'logical-calls': 85,
@@ -139,25 +213,30 @@ const TABLE_DEFAULTS = Object.freeze({
     name: 442, mode: 180, context: 315, frequency: 237, 'last-seen': 419
   } },
   'live-events': { widths: {
-    time: 92, duration: 78, event: 181, from: 96, to: 164,
-    channel: 92, details: 864
-  } },
+    time: 92, duration: 78, event: 181, from: 220, to: 220,
+    channel: 260, details: 600
+  }, grow: ['from', 'to', 'channel', 'details'] },
   'live-messages': { widths: { time: 95, context: 110, message: 1200 } },
   'alias-editor-source-breakdown': { widths: {
     source: 230, 'source-calls': 100, 'source-signaling': 110, 'last-seen': 166
   } },
-  'alias-editor-custom': { visible: [
-    'select', 'alias', 'description', 'identifier', 'matcher', 'group', 'calls', 'signaling', 'last-seen'
-  ] },
+  'alias-editor-activity': { widths: ALIAS_WIDTHS, grow: ALIAS_GROW },
+  'alias-editor-custom': {
+    widths: ALIAS_WIDTHS, grow: ALIAS_GROW,
+    visible: ['select', 'alias', 'description', 'identifier', 'matcher', 'group',
+      'calls', 'signaling', 'last-seen']
+  },
+  'alias-scan-list-members': {
+    widths: { ...ALIAS_WIDTHS, 'alias-list': 210, family: 120 },
+    grow: [...ALIAS_GROW, 'alias-list']
+  },
   'live-channels': { widths: {
     status: 105, tags: 100, channel: 150, frequency: 96, signal: 95,
     'decode-health': { normal: 105, detailed: 260 }, 'source-alias': 220,
     source: 90, 'target-alias': 220, target: 90, decoder: 78
   }, grow: ['channel', 'source-alias', 'target-alias'] },
   'alias-editor-configure': {
-    widths: { select: 48, alias: 190, description: 260, identifier: 180,
-      matcher: 120, group: 180, behavior: 145, overlap: 92 },
-    grow: ['alias', 'description', 'group', 'behavior']
+    widths: ALIAS_WIDTHS, grow: ALIAS_GROW
   },
   'admin-users': { widths: {
     username: 230, 'access-tier': 150, 'password-changed': 190, actions: 230

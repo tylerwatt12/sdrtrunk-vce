@@ -309,6 +309,12 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.activity-cell-action-content {
+  flex: 1 1 auto;
 }
 
 .activity-cell-action-link > svg {

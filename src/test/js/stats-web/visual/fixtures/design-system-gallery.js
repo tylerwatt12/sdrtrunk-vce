@@ -752,6 +752,23 @@ initializeReceiverHealth();
 if (view === 'activity-action-tooltip') {
   const trigger = document.querySelector('#visual-activity-cell-trigger');
   const tooltip = document.querySelector('#visual-activity-cell-tooltip');
+  const table = document.querySelector('.visual-activity-action-tooltip-example table');
+  const columns = [...table.querySelectorAll('thead th')].map((heading) => ({
+    id: heading.dataset.column, label: heading.textContent
+  }));
+  const columnGroup = document.createElement('colgroup');
+  const columnElements = columns.map(() => document.createElement('col'));
+  columnGroup.append(...columnElements);
+  table.prepend(columnGroup);
+  const applyWidths = () => {
+    const widths = tableDefaults.fittedWidths('activity', columns,
+      columns.map((column) => tableDefaults.width('activity', column)), {}, table.parentElement.clientWidth);
+    columnElements.forEach((column, index) => { column.style.width = `${widths[index]}px`; });
+    const total = widths.reduce((sum, width) => sum + width, 0);
+    table.style.width = `${total}px`;
+    table.style.minWidth = `${total}px`;
+  };
+  applyWidths();
   tooltip.showPopover();
   const positionTooltip = () => {
     const anchor = trigger.getBoundingClientRect();
@@ -761,7 +778,7 @@ if (view === 'activity-action-tooltip') {
     tooltip.style.top = `${anchor.bottom + 6}px`;
   };
   positionTooltip();
-  window.addEventListener('resize', positionTooltip);
+  window.addEventListener('resize', () => { applyWidths(); positionTooltip(); });
 }
 if (view === 'activity-filters') {
   const bindVisualActivityPopover = (triggerId, panelId) => {

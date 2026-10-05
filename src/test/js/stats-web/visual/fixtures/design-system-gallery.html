@@ -446,9 +446,9 @@
 
   <main class="visual-activity-action-tooltip-example visual-feature-example">
     <div class="ui-table-wrap">
-      <table class="ui-data-table ui-data-table-quiet">
-        <thead><tr><th>Seen</th><th>Source ID</th><th>Target</th><th>Channel</th></tr></thead>
-        <tbody><tr><td>09:48:33</td><td><a class="activity-cell-action-link" href="#radio" aria-controls="visual-activity-cell-tooltip" aria-expanded="true" id="visual-activity-cell-trigger">2808137<svg aria-hidden="true"><use href="#visual-icon-chevron"></use></svg></a></td><td>Fire Dispatch</td><td>County Simulcast</td></tr></tbody>
+      <table class="ui-data-table resizable-table ui-data-table-quiet" data-table-type="activity">
+        <thead><tr><th data-column="time">Seen</th><th data-column="source">Source ID</th><th data-column="target-alias">Target</th><th data-column="channel">Channel</th></tr></thead>
+        <tbody><tr><td data-label="Seen">09:48:33</td><td data-label="Source ID"><a class="activity-cell-action-link" href="#radio" aria-controls="visual-activity-cell-tooltip" aria-expanded="true" id="visual-activity-cell-trigger"><span class="identity-summary activity-cell-action-content"><span class="identity-summary-primary">Engine 12 Portable</span><small class="identity-summary-context">2808137</small></span><svg aria-hidden="true"><use href="#visual-icon-chevron"></use></svg></a></td><td data-label="Target">Regional Fire Dispatch</td><td data-label="Channel"><a class="activity-cell-action-link" href="#channel"><span class="identity-summary activity-cell-action-content"><span>North County Regional Emergency Services Simulcast</span><small class="identity-summary-context">851.01250 MHz · LCN 0-1234 · Slot 2</small></span><svg aria-hidden="true"><use href="#visual-icon-chevron"></use></svg></a></td></tr></tbody>
       </table>
     </div>
     <div class="ui-popover ui-icon-action-tooltip activity-cell-action-tooltip" id="visual-activity-cell-tooltip" role="group" aria-label="source radio 2808137 actions" popover="auto">
