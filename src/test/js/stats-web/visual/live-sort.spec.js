@@ -32,7 +32,9 @@ async function openLive(page, theme = 'light') {
   let revision = 1;
   let preferences = structuredClone(defaultPreferences);
   preferences.appearance.theme = theme;
+  preferences.presentation.source_name_display = 'both';
   const writes = [];
+  const reads = [];
   const receiverWrites = [];
   await page.addInitScript((liveSnapshot) => {
     const originalFetch = window.fetch.bind(window);
@@ -81,7 +83,7 @@ async function openLive(page, theme = 'light') {
         preferences = request.postDataJSON();
         writes.push(structuredClone(preferences));
         revision += 1;
-      }
+      } else reads.push(structuredClone(preferences));
       await route.fulfill({ json: { revision, preferences } });
     } else if (pathname === '/api/v1/live/multiplex/control') {
       await route.fulfill({ json: { data: { accepted: true } } });
@@ -91,7 +93,7 @@ async function openLive(page, theme = 'light') {
     }
   });
   await page.goto('/app.html?view=live&channel=metro-north');
-  return { writes, receiverWrites, preferences: () => preferences };
+  return { writes, reads, receiverWrites, preferences: () => preferences };
 }
 
 async function presentationDialog(page) {
@@ -144,6 +146,7 @@ test('Live presentation switches sort defaults and saves explicit sorting throug
   // The app canonicalizes its URL to /, which this harness reserves for its gallery.
   await page.goto('/app.html?view=live&channel=metro-north');
   await expectCallOrder(page, ['lcn-30', 'lcn-20', 'lcn-5', 'lcn-10']);
+  expect(app.reads.at(-1).presentation.source_name_display).toBe('both');
   dialog = await presentationDialog(page);
   await expect(sort()).toHaveValue('frequency');
   await expect(activeOnly()).not.toBeChecked();
@@ -159,11 +162,14 @@ test('Live presentation switches sort defaults and saves explicit sorting throug
   await expectCallOrder(page, ['lcn-30', 'lcn-20', 'lcn-10']);
   await page.goto('/app.html?view=live&channel=metro-north');
   await expectCallOrder(page, ['lcn-30', 'lcn-20', 'lcn-10']);
+  expect(app.reads.at(-1).presentation.source_name_display).toBe('both');
   dialog = await presentationDialog(page);
   await expect(sort()).toHaveValue('frequency');
   await expect(activeOnly()).toBeChecked();
   expect(app.writes.map((write) => write.presentation.live_channel_sort))
     .toEqual(['lcn', 'order_appeared', 'frequency', 'order_appeared', 'frequency']);
+  expect(app.writes.map((write) => write.presentation.source_name_display))
+    .toEqual(Array(5).fill('both'));
   expect(app.receiverWrites).toEqual([]);
 });
 
