@@ -5238,8 +5238,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     if (!editing && !cloning && String(initialMatcher?.type || '').toLowerCase() === 'p25_subscriber_identity' &&
         Number.isInteger(workingAddress) && workingAddress >= 1 && workingAddress <= 0xFFFFFC) {
       matcherNotice.append(node('div', 'metric-meaning-note',
-        `Observed Working ID ${workingAddress} is serving-system context only; this Alias matches the permanent ` +
-          'WACN.System.Subscriber identity shown below.'));
+        'This alias follows the permanent radio ID, even when its Working ID changes.'));
     }
     if (source.overlap) {
       const warning = node('div', 'ui-notice ui-notice-danger ui-notice-spaced',
@@ -17093,11 +17092,11 @@ function liveIdentityActionTitle(row, kind, label = '') {
 function p25IdentityEvidenceLabel(row, kind = '') {
   const key = kind ? `${kind}_identity_source` : 'identity_source';
   return ({
-    explicit_identity: 'Permanent identity carried in the decoded message',
-    registration_mapping: 'Permanent identity resolved from a confirmed working assignment',
-    working_id: 'Working ID only; permanent identity not confirmed',
-    unresolved: 'Identity could not be resolved'
-  })[row?.[key]] || 'Identity source not recorded';
+    explicit_identity: 'Included in the radio message',
+    registration_mapping: 'Confirmed Working ID assignment',
+    working_id: 'Working ID only',
+    unresolved: 'Unknown'
+  })[row?.[key]] || 'Unknown';
 }
 
 function liveIdentityFacts(row, kind) {
@@ -17112,12 +17111,14 @@ function liveIdentityFacts(row, kind) {
   const values = [
     ['Serving System', radioSystemContextLink(row)],
     ['Home System', homeName ? identitySummaryValue(homeName, homeName === homeIdentity ? '' : homeIdentity, homeTarget) : 'Not confirmed'],
-    ['Permanent Identity', canonical ? canonicalSubscriberText(canonical) : 'Not confirmed'],
+    ['Permanent Radio ID', canonical ? canonicalSubscriberText(canonical) : 'Not confirmed'],
     ['Working ID', workingSubscriberId(row, kind) == null ? 'Not supplied' :
       identifierNumber(workingSubscriberId(row, kind))],
-    ['Identity Evidence', p25IdentityEvidenceLabel(row, kind)]
+    ['ID Source', p25IdentityEvidenceLabel(row, kind)]
   ];
-  return keyValues(values);
+  const facts = keyValues(values);
+  facts.classList.add('ui-facts-embedded');
+  return facts;
 }
 
 function liveIdentityActionLink(row, kind, label) {
@@ -18705,21 +18706,21 @@ function issiSubscriberColumns() {
       sort: 'working_id', render: (row) => identifierNumber(row.last_observed_working_id) },
     { id: 'home-system', label: 'Home System', render: issiHomeSystemCell, className: 'alias-cell' },
     { id: 'talker-alias', label: 'OTA Alias', key: 'last_talker_alias', className: 'alias-cell' },
-    { id: 'evidence', label: 'Last Evidence', render: (row) =>
+    { id: 'evidence', label: 'Last Confirmed By', render: (row) =>
       semanticLabel(row.last_assignment_evidence) },
     { id: 'affiliation', label: 'Affiliation', render: affiliationTalkgroupCell,
       className: 'alias-cell' },
-    { id: 'observed-on', label: 'Observed On', render: issiObservedOnCell,
+    { id: 'observed-on', label: 'Heard On', render: issiObservedOnCell,
       className: 'alias-cell' },
-    { id: 'registrations', label: 'Reg', fullLabel: 'Accepted Registration Observations',
+    { id: 'registrations', label: 'Reg', fullLabel: 'Registrations',
       render: (row) => number(row.registration_observation_count), className: 'numeric',
       sort: 'registration_observation_count' },
-    { id: 'affiliations', label: 'Aff', fullLabel: 'Accepted Affiliation Observations',
+    { id: 'affiliations', label: 'Aff', fullLabel: 'Affiliations',
       render: (row) => number(row.affiliation_observation_count), className: 'numeric',
       sort: 'affiliation_observation_count' },
     { id: 'logical-calls', label: 'Calls', fullLabel: 'Logical Calls',
       render: (row) => number(row.logical_call_count), className: 'numeric', sort: 'logical_call_count' },
-    { id: 'last-mapping-seen', label: 'Mapping Seen', fullLabel: 'Last Mapping Observed',
+    { id: 'last-mapping-seen', label: 'Assignment Heard', fullLabel: 'Last Assignment Heard',
       render: (row) => dateTime(row.last_mapping_observed_ms), sort: 'last_mapping_seen',
       sortValue: (row) => Number(row.last_mapping_observed_ms || 0) },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Observed',
@@ -18732,14 +18733,14 @@ function issiForeignSystemColumns() {
   return [
     { id: 'home-system', label: 'Home System', render: issiHomeSystemCell,
       className: 'alias-cell', sort: 'identity', sortValue: issiHomeSystemText },
-    { id: 'subscribers', label: 'Subscribers', key: 'subscriber_count', className: 'numeric',
+    { id: 'subscribers', label: 'Radios', key: 'subscriber_count', className: 'numeric',
       sort: 'subscribers' },
-    { id: 'wuid-observed-subscribers', label: 'WUID Seen',
-      fullLabel: 'Subscribers Seen With a Working ID', key: 'wuid_observed_subscriber_count',
+    { id: 'wuid-observed-subscribers', label: 'Working ID Seen',
+      fullLabel: 'Radios Heard With a Working ID', key: 'wuid_observed_subscriber_count',
       className: 'numeric', sort: 'wuid_observed_subscribers' },
-    { id: 'registrations', label: 'Reg', fullLabel: 'Accepted Registration Observations',
+    { id: 'registrations', label: 'Reg', fullLabel: 'Registrations',
       key: 'registration_observation_count', className: 'numeric', sort: 'registrations' },
-    { id: 'affiliations', label: 'Aff', fullLabel: 'Accepted Affiliation Observations',
+    { id: 'affiliations', label: 'Aff', fullLabel: 'Affiliations',
       key: 'affiliation_observation_count', className: 'numeric', sort: 'affiliations' },
     { id: 'calls', label: 'Calls', fullLabel: 'Logical Calls', key: 'logical_call_count',
       className: 'numeric', sort: 'logical_call_count' },
@@ -18769,7 +18770,7 @@ function issiBandColumns() {
       className: 'numeric', sort: 'transmit_offset_hz', sortValue: (row) => Number(row.transmit_offset_hz || 0) },
     { id: 'slots', label: 'Slots', key: 'timeslots', className: 'numeric' },
     { id: 'voice-rate', label: 'Voice Rate', render: (row) => semanticLabel(row.voice_rate) },
-    { id: 'observed-on', label: 'Observed On', render: issiObservedOnCell, className: 'alias-cell', sort: 'channel' },
+    { id: 'observed-on', label: 'Heard On', render: issiObservedOnCell, className: 'alias-cell', sort: 'channel' },
     { id: 'state', label: 'Observation', render: (row) => uiPill(
       String(row.state || '').toLowerCase() === 'current' ? 'Recently observed' : 'Historical', 'neutral'),
       sortValue: (row) => row.state || '' },
@@ -18782,10 +18783,10 @@ function issiBandColumns() {
 // Reuse map: system tabs, identity summaries, async sections, table controllers, filter
 // disclosure/sheets, paging, metrics and page timers provide every ISSI surface. No feature CSS.
 function issiSubscriberCell(row) {
-  if (row.invalidation_scope === 'receiver') return 'All receiver mappings';
-  if (row.invalidation_scope === 'system') return 'All mappings on this system';
+  if (row.invalidation_scope === 'receiver') return 'All ISSI assignments';
+  if (row.invalidation_scope === 'system') return 'All assignments on this system';
   const canonical = canonicalSubscriberText(row.canonical_identity);
-  const label = aliasLabel(row) || row.last_talker_alias || canonical || 'Unknown subscriber';
+  const label = aliasLabel(row) || row.last_talker_alias || canonical || 'Unknown radio';
   const target = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ? entityRefHref(row.entity_ref) : '';
   return identitySummaryValue(label, label === canonical ? '' : canonical, target);
 }
@@ -18808,10 +18809,10 @@ function issiCurrentAssignmentColumns() {
       className: 'numeric', sort: 'working_id' },
     { id: 'confirmed', label: 'Last Confirmed', render: (row) => dateTime(row.confirmed_at_ms),
       sort: 'confirmed_at' },
-    { id: 'expires', label: 'Lease Ends', render: (row) => row.expires_at_ms == null ?
+    { id: 'expires', label: 'Assignment Expires', render: (row) => row.expires_at_ms == null ?
       'No expiry advertised' : dateTime(row.expires_at_ms), sort: 'expires_at' },
-    { id: 'evidence', label: 'Evidence', render: (row) => semanticLabel(row.evidence), sort: 'evidence' },
-    { id: 'observed-on', label: 'Observed On', render: issiObservedOnCell }
+    { id: 'evidence', label: 'Confirmed By', render: (row) => semanticLabel(row.evidence), sort: 'evidence' },
+    { id: 'observed-on', label: 'Heard On', render: issiObservedOnCell }
   ];
 }
 
@@ -18829,49 +18830,47 @@ function issiRecentChangeColumns() {
       className: 'numeric', sort: 'working_id' },
     { id: 'previous-working-id', label: 'Previous Working ID',
       render: (row) => identifierNumber(row.previous_working_id), className: 'numeric' },
-    { id: 'observed-on', label: 'Observed On', render: issiObservedOnCell }
+    { id: 'observed-on', label: 'Heard On', render: issiObservedOnCell }
   ];
 }
 
 function issiStateLabel(state) {
-  if (state?.snapshot_stale === true) return 'Snapshot out of date';
-  return ({ current: 'Confirmed mappings', learning: 'Learning assignments',
-    needs_confirmation: 'Relearning assignments', stopped: 'No current observation' })[state?.state] ||
+  if (state?.snapshot_stale === true) return 'Updates delayed';
+  return ({ current: 'Confirmed assignments', learning: 'Waiting for assignments',
+    needs_confirmation: 'Relearning assignments', stopped: 'Not monitoring this system' })[state?.state] ||
     'Assignment state unavailable';
 }
 
 function issiEmptyMessage(state, meaningfulOnly = false) {
-  if (state?.snapshot_stale === true) return 'Current assignments cannot be confirmed while the receiver snapshot is out of date.';
-  if (state?.state === 'stopped') return 'No current observation for this system; waiting for assignment evidence.';
-  if (state?.state === 'needs_confirmation') return 'Waiting for fresh assignment evidence after earlier mappings were cleared.';
+  if (state?.snapshot_stale === true) return 'No confirmed assignments to show.';
+  if (state?.state === 'stopped') return 'This system is not being monitored.';
+  if (state?.state === 'needs_confirmation') return 'Waiting for new registrations or affiliations.';
   if (meaningfulOnly && state?.state === 'current') {
     if (Number(state.current_assignment_count) > 0 && Number(state.meaningful_assignment_count) === 0) {
-      return 'Only ordinary local IDs have been confirmed; no foreign or remapped assignments are currently known.';
+      return 'No foreign radios or different Working IDs to show.';
     }
     return Number(state.meaningful_assignment_count) > 0 ?
-      'No foreign or remapped assignments match these filters.' :
-      'No foreign or remapped assignments have been confirmed for this system.';
+      'No assignments match these filters.' :
+      'No ISSI assignments to show.';
   }
-  return 'Waiting for registration evidence; an empty list does not mean no radios are registered.';
+  return 'Waiting for registrations or affiliations.';
 }
 
 function issiStateContent(state) {
-  const assignmentCounts = [['ISSI Mappings', state?.meaningful_assignment_count]];
+  const assignmentCounts = [['ISSI Assignments', state?.meaningful_assignment_count]];
   if (Number(state?.retained_meaningful_assignment_count) > 0) {
-    assignmentCounts.push(['Last Snapshot ISSI Mappings', state.retained_meaningful_assignment_count]);
+    assignmentCounts.push(['Last Known Assignments', state.retained_meaningful_assignment_count]);
   }
-  assignmentCounts.push(['Observation Channels', state?.observed_channel_count]);
+  assignmentCounts.push(['Monitored Channels', state?.observed_channel_count]);
   return fragment(node('p', 'ui-section-note',
-    'ISSI mappings show a foreign home system or a Working ID different from the permanent subscriber ID. ' +
-    'These are the receiver’s confirmed knowledge, not a list of radios online. ' +
-    'Observed On identifies the source of the evidence, not the radio’s location.'),
+    'Radios from other home systems or using a different Working ID. Online status is not shown.'),
   state?.snapshot_stale === true ? node('p', 'ui-notice ui-notice-warning',
-    'This snapshot is out of date. Retained rows are available for inspection and are not current confirmed assignments.') : null,
+    'Updates delayed. The displayed assignments may have changed.') : null,
   keyValues([
-    ['Receiver knowledge', issiStateLabel(state)],
-    ['Snapshot Updated', state?.snapshot_at_ms ? dateTime(state.snapshot_at_ms) : 'Unavailable'],
-    ['Last Assignment Confirmation', state?.last_confirmation_ms ? dateTime(state.last_confirmation_ms) : 'Waiting'],
-    ['App Started', state?.receiver_started_at_ms ? dateTime(state.receiver_started_at_ms) : 'Unavailable']
+    ['Status', issiStateLabel(state)],
+    ['Last Updated', state?.snapshot_at_ms ? dateTime(state.snapshot_at_ms) : 'Unavailable'],
+    ['Last Confirmed', state?.last_confirmation_ms ? dateTime(state.last_confirmation_ms) : 'Waiting'],
+    ['Receiver Started', state?.receiver_started_at_ms ? dateTime(state.receiver_started_at_ms) : 'Unavailable']
   ]), metrics(assignmentCounts, true));
 }
 
@@ -18885,7 +18884,7 @@ function issiSectionTabs(active) {
   }) })), active);
 }
 
-function issiFilterToolbar(channels, live, evidenceFilter = true, sourceLabel = 'Evidence heard on') {
+function issiFilterToolbar(channels, live, evidenceFilter = true, sourceLabel = 'Heard On') {
   const form = searchBar('Search aliases, home systems, channels, or IDs');
   form.classList.add('ui-catalog-toolbar');
   form.querySelectorAll('input[type="hidden"]').forEach((input) => {
@@ -18940,24 +18939,20 @@ async function renderRadioSystemIssi(system, renderContext) {
     { limit: 500 }, { signal: renderContext.signal });
   if (!renderIsCurrent(renderContext)) return;
   content.append(issiSectionTabs(active));
-  const stateHost = node('div');
+  const stateHost = node('div', 'ui-section-body');
   if (live) {
-    content.append(section('Current Receiver Knowledge', stateHost));
-    if (active === 'recent-changes') content.append(node('p', 'ui-section-note',
-      'Recent Changes is a bounded list for this app session; older changes can drop from the list. ' +
-      'Unchanged confirmations and ordinary local IDs are omitted. ' +
-      'A cleared or expired mapping describes receiver knowledge; ' +
-      'it does not establish whether the radio is online. Receiver or system observation gaps affect all mappings ' +
-      'in that scope and remain visible when filters are applied.'));
+    content.append(section('ISSI Status', stateHost));
   }
-  else content.append(node('p', 'ui-section-note',
-    'Saved observations are history. Assignments are relearned after every app start; a last observed Working ID ' +
-    'does not establish a current assignment.' + (active === 'subscribers' ?
-      ' The source filter uses each radio’s latest saved assignment observation.' : '')));
+  const descriptions = {
+    'recent-changes': 'Latest assignment changes since the receiver started.',
+    subscribers: 'Past radio activity. The last Working ID may no longer be in use.',
+    'foreign-systems': 'Other systems identified in received radio traffic.',
+    'frequency-bands': 'Band plans for other systems, heard on this system.'
+  };
   const views = {
     'current-assignments': ['Current Assignments', issiCurrentAssignmentColumns, 'issi-current-assignments'],
     'recent-changes': ['Recent Changes', issiRecentChangeColumns, 'issi-recent-changes'],
-    subscribers: ['Subscriber History', issiSubscriberColumns, 'issi-subscribers'],
+    subscribers: ['Radio History', issiSubscriberColumns, 'issi-subscribers'],
     'foreign-systems': ['Foreign Home Systems', issiForeignSystemColumns, 'issi-foreign-systems'],
     'frequency-bands': ['ISSI Advertised Band Plans', issiBandColumns, 'issi-frequency-bands']
   };
@@ -18966,13 +18961,17 @@ async function renderRadioSystemIssi(system, renderContext) {
     loadingMessage: `Loading ${title.toLowerCase()}…`,
     errorMessage: `${title} could not be loaded.`
   });
+  if (descriptions[active]) directory.element.insertBefore(
+    node('p', 'ui-section-note', descriptions[active]), directory.host);
   const feedback = node('p', 'ui-section-note');
   feedback.setAttribute('role', 'status');
+  feedback.hidden = true;
+  directory.element.append(feedback);
   const refresh = node('button', 'ui-button ui-button-secondary', 'Refresh');
   refresh.type = 'button';
   directory.titleActions.prepend(refresh);
   content.append(issiFilterToolbar(channels.rows, live, active !== 'foreign-systems',
-    active === 'subscribers' ? 'Last observed source' : 'Evidence heard on'), feedback, directory.element);
+    active === 'subscribers' ? 'Last Heard On' : 'Heard On'), directory.element);
   const parameters = pageParameters({ configuration_id: active === 'foreign-systems' ? null : route.get('configuration_id'),
     ...(live ? { meaningful_only: true, roaming_only: route.get('roaming_only') === 'true' ? true : null } : {}) });
   let state = null;
@@ -18994,7 +18993,7 @@ async function renderRadioSystemIssi(system, renderContext) {
     state = currentState;
     if (live) stateHost.replaceChildren(issiStateContent(state));
     const empty = active === 'current-assignments' ? issiEmptyMessage(state, true) :
-      active === 'recent-changes' ? 'No matching ISSI assignment changes in this app session.' : 'No saved observations match these filters.';
+      active === 'recent-changes' ? 'No assignment changes match these filters.' : 'No history matches these filters.';
     displayedRowsKey = JSON.stringify(page.rows);
     displayedEmptyText = empty;
     const result = table(page.rows, columns(), empty, { type: tableType, mobileCards: true,
@@ -19028,6 +19027,7 @@ async function renderRadioSystemIssi(system, renderContext) {
         }
       }
       feedback.textContent = '';
+      feedback.hidden = true;
     } catch (error) {
       if (error?.name === 'AbortError' || !renderIsCurrent(renderContext)) return;
       if (pageLifecycle.requiresPageHandling(error)) throw error;
@@ -19038,7 +19038,8 @@ async function renderRadioSystemIssi(system, renderContext) {
           retained_meaningful_assignment_count: state.retained_meaningful_assignment_count || state.meaningful_assignment_count || 0 };
         stateHost.replaceChildren(issiStateContent(state));
       }
-      feedback.textContent = 'Refresh failed. The last displayed snapshot was retained; use Refresh to try again.';
+      feedback.textContent = 'Could not update this list. Select Refresh to retry.';
+      feedback.hidden = false;
     } finally {
       loading = false; refresh.disabled = false;
     }
@@ -19291,10 +19292,11 @@ function issiAssignmentIsOrdinaryLocal(row, servingKey) {
 
 function radioCurrentAssignmentSection(radio, renderContext) {
   const canonical = p25CanonicalSubscriber(radio);
-  const directory = createAsyncSection('Current Working Assignment', {
-    loadingMessage: 'Loading current working assignment…',
-    errorMessage: 'The current assignment could not be loaded.'
+  const directory = createAsyncSection('Current Working ID', {
+    loadingMessage: 'Loading Working ID…',
+    errorMessage: 'The Working ID could not be loaded.'
   });
+  directory.host.classList.add('ui-section-body');
   const base = radioSystemApiPath(radio.radio_system_key, 'issi');
   const tuple = { home_wacn: canonical.wacn, home_system_id: canonical.system_id,
     subscriber_id: canonical.subscriber_id, limit: 20, offset: 0 };
@@ -19302,7 +19304,7 @@ function radioCurrentAssignmentSection(radio, renderContext) {
   const links = (row, ordinaryLocal) => {
     const actions = node('div', 'ui-action-row');
     const filtered = Boolean(row && !ordinaryLocal);
-    actions.append(anchor(filtered ? 'Current Assignments' : 'ISSI Mappings', href('radio-system', {
+    actions.append(anchor(filtered ? 'Current Assignments' : 'ISSI Assignments', href('radio-system', {
       ...workspace, issi_view: 'current-assignments', q: filtered ? canonicalSubscriberText(canonical) : null
     }), 'ui-button ui-button-secondary'), anchor('Assignment History', href('radio-system', {
       ...workspace, issi_view: 'subscribers', q: canonicalSubscriberText(canonical)
@@ -19311,6 +19313,7 @@ function radioCurrentAssignmentSection(radio, renderContext) {
   };
   const feedback = node('p', 'ui-section-note');
   feedback.setAttribute('role', 'status');
+  feedback.hidden = true;
   const refresh = node('button', 'ui-button ui-button-secondary', 'Refresh');
   refresh.type = 'button';
   directory.titleActions.append(refresh);
@@ -19320,27 +19323,24 @@ function radioCurrentAssignmentSection(radio, renderContext) {
     const row = page.rows[0];
     const ordinaryLocal = issiAssignmentIsOrdinaryLocal(row, radio.radio_system_key);
     const values = [
-      ['Receiver knowledge', issiStateLabel(state)],
-      ['Snapshot Updated', state?.snapshot_at_ms ? dateTime(state.snapshot_at_ms) : 'Unavailable']
+      ['Status', issiStateLabel(state)],
+      ['Last Updated', state?.snapshot_at_ms ? dateTime(state.snapshot_at_ms) : 'Unavailable']
     ];
     if (row) values.push(
       ['Home System', issiHomeSystemCell(row)],
       [state?.snapshot_stale === true ? 'Last Reported Working ID' : 'Working ID',
         ordinaryLocal ? 'Same as permanent radio ID' : identifierNumber(row.observed_working_id)],
       ['Last Confirmed', dateTime(row.confirmed_at_ms)],
-      ['Evidence', semanticLabel(row.evidence)],
-      ['Observed On', issiObservedOnCell(row)],
-      ['Lease Ends', row.expires_at_ms == null ? 'No expiry advertised' : dateTime(row.expires_at_ms)]
+      ['Confirmed By', semanticLabel(row.evidence)],
+      ['Heard On', issiObservedOnCell(row)],
+      ['Assignment Expires', row.expires_at_ms == null ? 'No expiry advertised' : dateTime(row.expires_at_ms)]
     );
-    else values.push(['Working ID', 'No current confirmed assignment']);
+    else values.push(['Working ID', 'No confirmed assignment']);
     return fragment(node('p', 'ui-section-note',
-      'This assignment is receiver knowledge for this serving system, not an online status. ' +
-      'Observed On identifies where the evidence was heard, not the radio’s location.'),
+      'Working ID assigned on this system.'),
     state?.snapshot_stale === true ? node('p', 'ui-notice ui-notice-warning',
-      'This snapshot is out of date. The displayed assignment is retained for inspection; its current use is not confirmed.') : null,
+      'Updates delayed. The displayed assignments may have changed.') : null,
     keyValues(values), !row ? node('p', 'ui-section-note', issiEmptyMessage(state)) : null,
-    node('p', 'ui-section-note',
-      'History keeps past observations. Current assignments are relearned after every app start.'),
     links(row, ordinaryLocal));
   };
   let loading = false;
@@ -19365,13 +19365,15 @@ function radioCurrentAssignmentSection(radio, renderContext) {
         directory.host.replaceChildren(present(result));
       }
       feedback.textContent = '';
+      feedback.hidden = true;
     } catch (error) {
       if (error?.name === 'AbortError' || !renderIsCurrent(renderContext)) return;
       if (pageLifecycle.requiresPageHandling(error)) throw error;
       if (displayedModel) directory.host.replaceChildren(present({
         ...displayedModel, state: { ...displayedModel.state, snapshot_stale: true }
       }));
-      feedback.textContent = 'Refresh failed. The displayed assignment may be out of date; use Refresh to try again.';
+      feedback.textContent = 'Could not update the Working ID. Select Refresh to retry.';
+      feedback.hidden = false;
     } finally {
       loading = false; refresh.disabled = false;
     }

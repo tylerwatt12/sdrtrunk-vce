@@ -112,6 +112,19 @@
   margin-top: var(--space-3);
 }
 
+/* Reuse map: sections and opted-in async bodies own one inset for notices,
+   notes, boxed facts, metric grids and actions; their children keep tile spacing. */
+.ui-section-body,
+.async-section-content.ui-section-body {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+}
+
+.ui-section-body > :is(.ui-notice, .ui-section-note) { margin: 0; }
+.ui-section-body > .ui-section-note { padding: 0; border-top: 0; }
+
 .ui-section-title {
   min-height: 44px;
   display: flex;
@@ -296,6 +309,10 @@
    inside padded panels and modal bodies inherit that surrounding spacing. */
 .ui-section > .ui-metric-grid-embedded { padding: var(--space-3); }
 .ui-metric-grid-fit { grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); }
+
+/* Embedded facts also reuse an already padded owner such as a modal body. */
+.ui-facts.ui-facts-embedded,
+.ui-section-body > :is(.ui-facts, .ui-metric-grid) { padding: 0; }
 
 /* Boxed metadata and counts share one card foundation. Definition lists keep
    text, dates, and linked identities at a readable size; record and map rows
