@@ -178,7 +178,8 @@ public class P25P1NetworkConfigurationMonitor
                     mSynchronizationBroadcast = synchronizationBroadcast;
                     return statusObservation(new P25NetworkConfigurationSnapshot.SiteStatus(
                         synchronizationBroadcast.hasValidDate() ? synchronizationBroadcast.getSystemTime() : null,
-                        synchronizationBroadcast.getMicroSlots(), null, null, null, null, null, null));
+                        synchronizationBroadcast.hasValidMicroSlots() ? synchronizationBroadcast.getMicroSlots() : null,
+                        null, null, null, null, null, null));
                 }
                 break;
             case OSP_TIME_DATE_ANNOUNCEMENT:
@@ -908,7 +909,7 @@ public class P25P1NetworkConfigurationMonitor
                 baseStationId.getChannel(), baseStationId.getCWID());
             if(channel != null)
             {
-                callsigns.add(channel);
+                callsigns.add(channel.withObservedAt(baseStationId.getTimestamp()));
             }
         }
 

@@ -38,6 +38,7 @@ import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.database.configuration.ChannelAndBroadcastConfiguration;
 import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.configuration.ChannelConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.DecoderTypeConfigurationIdentifier;
@@ -63,6 +64,7 @@ import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelLookup;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
+import io.github.dsheirer.module.decode.p25.P25ConventionalCallUpdateEvent;
 import io.github.dsheirer.module.decode.p25.P25ChannelGrantEvent;
 import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
@@ -214,6 +216,10 @@ class ReceiverActivityServiceLifecycleTest
             }
         };
         DecodeEvent ordinary = DecodeEvent.builder(DecodeEventType.CALL, System.currentTimeMillis()).build();
+        P25ConventionalCallUpdateEvent conventional = new P25ConventionalCallUpdateEvent(new P25CallStartEvent(
+            "00000000-0000-0000-0000-000000000730", DecoderType.P25_CONVENTIONAL,
+            DecodeEventType.CALL_GROUP, System.currentTimeMillis(), List.of(APCO25Talkgroup.create(1201)),
+            154_875_000L, null, null, 1, false, false, null, "bounded-handoff"), true);
         Thread decoderThread = Thread.currentThread();
 
         try
@@ -224,17 +230,141 @@ class ReceiverActivityServiceLifecycleTest
 
             for(int x = 0; x < ReceiverActivityService.OBSERVATION_QUEUE_SIZE + 16; x++)
             {
-                service.getDecodeEventListener().accept(channel, ordinary);
+                if(x % 2 == 0) service.getDecodeEventListener().accept(channel, ordinary);
+                else service.receiveConventionalCallUpdate(conventional);
             }
 
             long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
             assertTrue(elapsedMs < 500, "bounded offers took " + elapsedMs + " ms");
             assertTrue(service.getObservationDropCount() > 0);
+            ReceiverActivityStatus status = service.getStatus();
+            assertEquals(service.getObservationDropCount(), status.dropDiagnostics().observationQueueOverflow());
+            assertTrue(status.dropDiagnostics().lastObservationQueueOverflowMs() > 0);
+            assertTrue(status.recordsDropped() >= service.getObservationDropCount());
             assertFalse(decoderThread == projectionThread.get());
         }
         finally
         {
             releaseProjection.countDown();
+            disposeAndAwait(service);
+        }
+    }
+
+    @Test
+    void conventionalCallFromBeforeCollectionResumeCannotReceiveLateCredit() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkTestDatabase.create(database);
+        Channel channel = new Channel("Conventional collection epoch", Channel.ChannelType.STANDARD);
+        channel.setConfigurationId("00000000-0000-0000-0000-000000000734");
+        channel.setDecodeConfiguration(new DecodeConfigP25Conventional());
+        SourceConfigTuner source = new SourceConfigTuner();
+        source.setFrequency(154_875_000L);
+        channel.setSourceConfiguration(source);
+        persistChannels(database, channel);
+        TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
+        TestUserPreferences preferences =
+            new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
+        ReceiverActivityService service = fastWriterService(preferences);
+        long start = System.currentTimeMillis() + 1;
+        P25CallStartEvent initial = new P25CallStartEvent(channel.getPersistedConfigurationId(),
+            DecoderType.P25_CONVENTIONAL, DecodeEventType.CALL_GROUP, start,
+            List.of(APCO25Talkgroup.create(1201)), 154_875_000L, null, null, 1,
+            false, false, null, "before-resume");
+        try
+        {
+            service.receiveCallStart(initial);
+            assertTrue(service.awaitObservationDrain(5, TimeUnit.SECONDS));
+            awaitScalar(database, "SELECT sum(call_count) FROM conventional_activity_summary", 1);
+            applicationPreference.setCollectionEnabled(false);
+            service.preferenceUpdated(PreferenceType.APPLICATION);
+            applicationPreference.setCollectionEnabled(true);
+            service.preferenceUpdated(PreferenceType.APPLICATION);
+            assertTrue(service.awaitObservationDrain(5, TimeUnit.SECONDS));
+
+            List<Identifier> identified = List.of(APCO25Talkgroup.create(1201),
+                APCO25RadioIdentifier.createFrom(700_001));
+            service.receiveConventionalCallUpdate(new P25ConventionalCallUpdateEvent(new P25CallStartEvent(
+                initial.configurationId(), initial.decoderType(), initial.eventType(), start, identified,
+                initial.frequencyHertz(), null, null, 1, false, false, null, initial.callToken()), true));
+            P25CallStartEvent fresh = new P25CallStartEvent(initial.configurationId(), initial.decoderType(),
+                initial.eventType(), System.currentTimeMillis() + 1, identified, initial.frequencyHertz(),
+                null, null, 1, false, false, null, "after-resume");
+            service.receiveCallStart(fresh);
+            service.receiveConventionalCallUpdate(new P25ConventionalCallUpdateEvent(fresh, true));
+            assertTrue(service.awaitObservationDrain(5, TimeUnit.SECONDS));
+            awaitScalar(database, "SELECT sum(call_count) FROM conventional_activity_summary", 2);
+            assertEquals(1, scalar(database, """
+                SELECT sum(call_count) FROM conventional_call_identity_bucket
+                WHERE identity_role_code=2 AND identity_id=700001
+                """));
+            assertEquals(1, scalar(database, """
+                SELECT count(*) FROM receiver_activity_event WHERE source_observed_local_id IS NULL
+                """));
+        }
+        finally
+        {
+            disposeAndAwait(service);
+        }
+    }
+
+    @Test
+    void statsResetFencesQueuedAndDelayedConventionalInitialSnapshots() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkTestDatabase.create(database);
+        Channel channel = new Channel("Conventional reset epoch", Channel.ChannelType.STANDARD);
+        channel.setConfigurationId("00000000-0000-0000-0000-000000000735");
+        channel.setDecodeConfiguration(new DecodeConfigP25Conventional());
+        SourceConfigTuner source = new SourceConfigTuner();
+        source.setFrequency(154_875_000L);
+        channel.setSourceConfiguration(source);
+        persistChannels(database, channel);
+        TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
+        ReceiverActivityService service = fastWriterService(new TestUserPreferences(applicationPreference,
+            new TestDirectoryPreference(mTemporaryFolder)));
+        Channel blocker = new Channel("Reset ingress barrier", Channel.ChannelType.STANDARD);
+        blocker.setDecodeConfiguration(new DecodeConfigNBFM());
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        long start = System.currentTimeMillis();
+        P25CallStartEvent initial = new P25CallStartEvent(channel.getPersistedConfigurationId(),
+            DecoderType.P25_CONVENTIONAL, DecodeEventType.CALL_GROUP, start,
+            List.of(APCO25Talkgroup.create(1201)), 154_875_000L, null, null, 1,
+            false, false, null, "before-reset-barrier");
+        try
+        {
+            service.getDecodeEventListener().accept(blocker, blockingDecodeEvent(start - 1, entered, release));
+            assertTrue(entered.await(2, TimeUnit.SECONDS));
+            service.receiveCallStart(initial);
+            Thread.sleep(2);
+            StatsDatabaseMaintenanceRequest reset = StatsDatabaseMaintenanceRequest.forOperation(
+                ReceiverActivityMaintenance.Operation.RESET_STATS);
+            service.receiveMaintenanceRequest(reset);
+            assertFalse(reset.result().isDone(), "reset must wait behind the accepted initial observation");
+            release.countDown();
+            reset.result().get(5, TimeUnit.SECONDS);
+
+            //An initial callback delayed until after the reset barrier still belongs to the pre-reset call.
+            service.receiveCallStart(initial);
+            P25CallStartEvent identified = new P25CallStartEvent(initial.configurationId(), initial.decoderType(),
+                initial.eventType(), start, List.of(APCO25Talkgroup.create(1201),
+                    APCO25RadioIdentifier.createFrom(700_001)), initial.frequencyHertz(), null, null, 1,
+                false, false, null, initial.callToken());
+            service.receiveConventionalCallUpdate(new P25ConventionalCallUpdateEvent(identified, true));
+            P25CallStartEvent fresh = new P25CallStartEvent(initial.configurationId(), initial.decoderType(),
+                initial.eventType(), System.currentTimeMillis() + 1, identified.identifiers(), initial.frequencyHertz(),
+                null, null, 1, false, false, null, "after-reset-barrier");
+            service.receiveCallStart(fresh);
+            assertTrue(service.awaitObservationDrain(5, TimeUnit.SECONDS));
+            awaitScalar(database, "SELECT sum(call_count) FROM conventional_activity_summary", 1);
+            assertEquals(1, scalar(database, "SELECT count(*) FROM receiver_activity_event"));
+            assertEquals(0, scalar(database,
+                "SELECT count(*) FROM receiver_activity_event WHERE observed_at_ms<=" + start));
+        }
+        finally
+        {
+            release.countDown();
             disposeAndAwait(service);
         }
     }

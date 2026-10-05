@@ -292,6 +292,103 @@ class P25TrafficChannelManagerTest
     }
 
     @Test
+    void conventionalLateSourceAndCompletionKeepTheSameImmutableCallTokenAndOriginalOwnership()
+    {
+        long frequency = 154_875_000L;
+        Channel parent = new Channel("Conventional");
+        parent.setConfigurationId("00000000-0000-0000-0000-000000000402");
+        parent.setDecodeConfiguration(new DecodeConfigP25Conventional());
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(parent);
+        CallStartSubscriber subscriber = new CallStartSubscriber();
+        MyEventBus.getGlobalEventBus().register(subscriber);
+        try
+        {
+            manager.processP1TrafficCallStart(frequency, APCO25Talkgroup.create(1201), null,
+                EncryptionKeyIdentifier.create(APCO25EncryptionKey.create(0x80, 0)),
+                VoiceServiceOptions.createUnencrypted(), new StandardChannel(frequency), 1_000L);
+            parent.setConfigurationId("00000000-0000-0000-0000-000000000403");
+            manager.processP1TrafficCurrentUser(frequency, APCO25RadioIdentifier.createFrom(700_001), 1_100L);
+            manager.processP1TrafficCurrentUser(frequency, APCO25RadioIdentifier.createFrom(700_001), 1_150L);
+            assertTrue(manager.processP1TrafficCallEnd(frequency, 1_200L));
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(subscriber);
+        }
+        assertEquals(1, subscriber.events.size());
+        assertEquals(2, subscriber.updates.size());
+        P25CallStartEvent initial = subscriber.events.getFirst();
+        assertNotNull(initial.callToken());
+        assertNull(initial.identifierCollection().getFromIdentifier());
+        for(P25ConventionalCallUpdateEvent update: subscriber.updates)
+        {
+            assertEquals(initial.callToken(), update.call().callToken());
+            assertEquals(initial.configurationId(), update.call().configurationId());
+            assertEquals(initial.startedAtEpochMilliseconds(), update.call().startedAtEpochMilliseconds());
+            assertEquals(frequency, update.call().frequencyHertz());
+            assertEquals(APCO25RadioIdentifier.createFrom(700_001),
+                update.call().identifierCollection().getFromIdentifier());
+        }
+        assertFalse(subscriber.updates.getFirst().complete());
+        assertTrue(subscriber.updates.getLast().complete());
+    }
+
+    @Test
+    void aDifferentConventionalTalkerGetsANewTokenInsteadOfEnrichingThePreviousCall()
+    {
+        Channel parent = new Channel("Conventional");
+        parent.setConfigurationId("00000000-0000-0000-0000-000000000404");
+        parent.setDecodeConfiguration(new DecodeConfigP25Conventional());
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(parent);
+        CallStartSubscriber subscriber = new CallStartSubscriber();
+        MyEventBus.getGlobalEventBus().register(subscriber);
+        try
+        {
+            manager.processP1TrafficCurrentUser(154_875_000L, null, DecodeEventType.CALL_GROUP,
+                VoiceServiceOptions.createUnencrypted(), identifiers(1201,
+                    APCO25RadioIdentifier.createFrom(700_001)), 1_000L, null);
+            manager.processP1TrafficCurrentUser(154_875_000L, null, DecodeEventType.CALL_GROUP,
+                VoiceServiceOptions.createUnencrypted(), identifiers(1201,
+                    APCO25RadioIdentifier.createFrom(700_002)), 1_100L, null);
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(subscriber);
+        }
+        assertEquals(2, subscriber.events.size());
+        assertFalse(subscriber.events.getFirst().callToken().equals(subscriber.events.getLast().callToken()));
+    }
+
+    @Test
+    void aChannelIdentifierDoesNotMakeUnchangedConventionalBroadcastsPublishUpdates() throws Exception
+    {
+        Channel parent = new Channel("Conventional");
+        parent.setConfigurationId("00000000-0000-0000-0000-000000000405");
+        parent.setDecodeConfiguration(new DecodeConfigP25Conventional());
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(parent);
+        MutableIdentifierCollection identifiers = identifiers(1201, APCO25RadioIdentifier.createFrom(700_001));
+        APCO25Channel channelIdentifier = APCO25Channel.create(0, 1);
+        identifiers.update(channelIdentifier);
+        CallStartSubscriber subscriber = new CallStartSubscriber();
+        MyEventBus.getGlobalEventBus().register(subscriber);
+        try
+        {
+            manager.processP1TrafficCurrentUser(154_875_000L, null, DecodeEventType.CALL_GROUP,
+                VoiceServiceOptions.createUnencrypted(), identifiers, 1_000L, null);
+            P25TrafficChannelEventTracker tracker = trafficTrackers(manager).get(154_875_000L);
+            assertTrue(tracker.getEvent().getIdentifierCollection().hasIdentifier(channelIdentifier));
+            manager.broadcast(tracker);
+            manager.broadcast(tracker);
+            assertEquals(1, subscriber.events.size());
+            assertEquals(0, subscriber.updates.size());
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(subscriber);
+        }
+    }
+
+    @Test
     void clearsFrequencyBandsWhenControlFrequencyChanges() throws Exception
     {
         Channel parentChannel = new Channel("Control");
@@ -858,11 +955,18 @@ class P25TrafficChannelManagerTest
     private static class CallStartSubscriber
     {
         private final List<P25CallStartEvent> events = new CopyOnWriteArrayList<>();
+        private final List<P25ConventionalCallUpdateEvent> updates = new CopyOnWriteArrayList<>();
 
         @Subscribe
         public void receive(P25CallStartEvent callStartEvent)
         {
             events.add(callStartEvent);
+        }
+
+        @Subscribe
+        public void receive(P25ConventionalCallUpdateEvent update)
+        {
+            updates.add(update);
         }
     }
 }

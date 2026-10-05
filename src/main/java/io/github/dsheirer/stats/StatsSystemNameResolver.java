@@ -33,6 +33,8 @@ final class StatsSystemNameResolver
         "v1-[grp]-([0-9a-f]{5})-([0-9a-f]{3})-([0-9]+)");
     private static final Pattern QUALIFIED_RADIO = Pattern.compile(
         "(?:(?:ISSI|ROAM) )?(?:([0-9]+)\\()?([0-9]+)\\.([0-9]+)\\.([0-9]+)\\)?");
+    private static final Pattern FORMATTED_RADIO = Pattern.compile(
+        "([0-9A-Fa-f]{5})\\.([0-9A-Fa-f]{3})\\.([0-9]+)(?: \\(Working ID ([0-9]+)\\))?");
     private final Connection mConnection;
     private final Map<String,ObjectNode> mSystems = new HashMap<>();
     private final Map<String,ObjectNode> mChannels = new HashMap<>();
@@ -203,26 +205,65 @@ final class StatsSystemNameResolver
         if(value == null) return;
         Matcher canonical = CANONICAL_IDENTITY.matcher(value);
         Matcher dotted = QUALIFIED_RADIO.matcher(value);
+        Matcher formatted = FORMATTED_RADIO.matcher(value);
         try
         {
+            int wacn;
+            int system;
+            long subscriber;
             if(canonical.matches())
             {
-                int wacn = Integer.parseInt(canonical.group(1), 16);
-                int system = Integer.parseInt(canonical.group(2), 16);
-                row.put(idField, Long.parseLong(canonical.group(3)));
-                row.put(prefix + "_wacn", wacn);
-                row.put(prefix + "_system_id", system);
-                addSystem(row, prefix, wacn, system);
+                wacn = Integer.parseInt(canonical.group(1), 16);
+                system = Integer.parseInt(canonical.group(2), 16);
+                subscriber = Long.parseLong(canonical.group(3));
+            }
+            else if(formatted.matches())
+            {
+                wacn = Integer.parseInt(formatted.group(1), 16);
+                system = Integer.parseInt(formatted.group(2), 16);
+                subscriber = Long.parseLong(formatted.group(3));
+                if(formatted.group(4) != null)
+                {
+                    long workingId = Long.parseLong(formatted.group(4));
+                    if(workingId < 1 || workingId > 0xFFFFFC) return;
+                }
+                if(dotted.matches())
+                {
+                    int decimalWacn = Integer.parseInt(dotted.group(2));
+                    int decimalSystem = Integer.parseInt(dotted.group(3));
+                    if(wacn != decimalWacn || system != decimalSystem)
+                    {
+                        //A bare all-digit fixed-width tuple can be current hexadecimal or legacy decimal.
+                        //Only numeric origin facts can resolve its base; inventory membership cannot prove it.
+                        Integer homeWacn = number(row, prefix + "_wacn");
+                        Integer homeSystem = number(row, prefix + "_system_id");
+                        if(homeWacn == null || homeSystem == null) return;
+                        if(homeWacn == decimalWacn && homeSystem == decimalSystem)
+                        {
+                            wacn = decimalWacn;
+                            system = decimalSystem;
+                        }
+                        else if(homeWacn != wacn || homeSystem != system) return;
+                    }
+                }
             }
             else if(dotted.matches())
             {
-                int wacn = Integer.parseInt(dotted.group(2));
-                int system = Integer.parseInt(dotted.group(3));
-                row.put(idField, Long.parseLong(dotted.group(4)));
-                row.put(prefix + "_wacn", wacn);
-                row.put(prefix + "_system_id", system);
-                addSystem(row, prefix, wacn, system);
+                wacn = Integer.parseInt(dotted.group(2));
+                system = Integer.parseInt(dotted.group(3));
+                subscriber = Long.parseLong(dotted.group(4));
             }
+            else return;
+
+            if(wacn < 0 || wacn > 0xFFFFF || system < 0 || system > 0xFFF ||
+                subscriber < 0 || subscriber > 0xFFFFFF) return;
+            Integer homeWacn = number(row, prefix + "_wacn");
+            Integer homeSystem = number(row, prefix + "_system_id");
+            if(homeWacn != null && homeWacn != wacn || homeSystem != null && homeSystem != system) return;
+            if(!row.hasNonNull(idField)) row.put(idField, subscriber);
+            row.put(prefix + "_wacn", wacn);
+            row.put(prefix + "_system_id", system);
+            addSystem(row, prefix, wacn, system);
         }
         catch(NumberFormatException ignored) { /* Malformed retained text has no trustworthy native identity. */ }
     }

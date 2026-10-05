@@ -1043,7 +1043,7 @@ class StatsWebDatabase
      * Returns bounded, read-only coverage for one Alias List. The selected range defines which aliases are considered
      * recently heard; zero-call and never-heard counts remain lifetime inventory facts.
      */
-    Map<String,Object> publicIdentityOverview(int aliasListId, StatsRequest request)
+    Map<String,Object> publicIdentityOverview(long aliasListId, StatsRequest request)
     {
         long activeAfter = identityActivityCutoff(request);
         return readSnapshot(connection -> {
@@ -1121,7 +1121,7 @@ class StatsWebDatabase
     }
 
     /** Public, configuration-safe Alias inventory for one selected list. */
-    Map<String,Object> publicIdentityAliases(int aliasListId, StatsRequest request)
+    Map<String,Object> publicIdentityAliases(long aliasListId, StatsRequest request)
     {
         long activeAfter = identityActivityCutoff(request);
         String type = request.text("type");
@@ -1227,7 +1227,7 @@ class StatsWebDatabase
      * Range aliases and identifiers shared by multiple systems deliberately remain plain text instead of linking
      * to an arbitrary owner.  A zero-call exact alias can still resolve from its configured channel ownership.
      */
-    private void decoratePublicAliasEntityReferences(Connection connection, int aliasListId,
+    private void decoratePublicAliasEntityReferences(Connection connection, long aliasListId,
                                                        List<Map<String,Object>> aliases) throws SQLException
     {
         if(aliases.isEmpty())
@@ -1292,7 +1292,7 @@ class StatsWebDatabase
         }
     }
 
-    Map<String,Object> unassignedGroupIdentities(int aliasListId, StatsRequest request)
+    Map<String,Object> unassignedGroupIdentities(long aliasListId, StatsRequest request)
     {
         Map<String,Object> response = observedGroupIdentities(aliasListId, request, ignored -> {}, true);
         Object rows = response.get("rows");
@@ -1404,7 +1404,7 @@ class StatsWebDatabase
         return readSnapshot(connection -> mAliasCatalog.matchingAliasIds(connection, request));
     }
 
-    Map<String,Object> alias(int aliasId)
+    Map<String,Object> alias(long aliasId)
     {
         return readSnapshot(connection -> mAliasCatalog.alias(connection, aliasId));
     }
@@ -1414,7 +1414,7 @@ class StatsWebDatabase
      * The default excludes identities with an exact definition so an ordinary range cannot hide groups that still
      * need names.
      */
-    Map<String,Object> observedGroupIdentities(int aliasListId, StatsRequest request)
+    Map<String,Object> observedGroupIdentities(long aliasListId, StatsRequest request)
     {
         return observedGroupIdentities(aliasListId, request, ignored -> {}, false);
     }
@@ -1422,13 +1422,13 @@ class StatsWebDatabase
     /**
      * Runs the observed-group-identity query and exposes the exact immutable statement to focused query-plan diagnostics.
      */
-    Map<String,Object> observedGroupIdentities(int aliasListId, StatsRequest request,
+    Map<String,Object> observedGroupIdentities(long aliasListId, StatsRequest request,
                                           Consumer<ObservedGroupIdentityQuery> queryObserver)
     {
         return observedGroupIdentities(aliasListId, request, queryObserver, false);
     }
 
-    private Map<String,Object> observedGroupIdentities(int aliasListId, StatsRequest request,
+    private Map<String,Object> observedGroupIdentities(long aliasListId, StatsRequest request,
         Consumer<ObservedGroupIdentityQuery> queryObserver, boolean onlyUnassigned)
     {
         if(aliasListId <= 0)
@@ -7879,7 +7879,7 @@ class StatsWebDatabase
         return activityRange(request).label();
     }
 
-    private static Map<String,Object> requirePublicAliasList(Connection connection, int aliasListId)
+    private static Map<String,Object> requirePublicAliasList(Connection connection, long aliasListId)
         throws SQLException
     {
         if(aliasListId <= 0)

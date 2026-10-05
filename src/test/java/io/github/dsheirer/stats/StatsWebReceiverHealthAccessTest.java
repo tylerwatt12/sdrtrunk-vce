@@ -13,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.web.auth.AccessTier;
 import io.github.dsheirer.web.auth.WebAccessService;
 import io.github.dsheirer.web.auth.WebAuthenticationService;
@@ -76,7 +77,7 @@ class StatsWebReceiverHealthAccessTest
         ExecutorService executor = Executors.newCachedThreadPool();
         server.setExecutor(executor);
         new WebSessionHttpController(accessService, authenticationService, requestSecurity).register(server);
-        new StatsApiV1Controller(null, Map::of, requestSecurity, null,
+        new StatsApiV1Controller(new StatsWebDatabase(new UserPreferences(), database), Map::of, requestSecurity, null,
             () -> Map.of("summary", Map.of("severity", "healthy"),
                 "radioresolve_accepted_calls", 3L, "started_at_ms", 1234L)).register(server);
         server.start();

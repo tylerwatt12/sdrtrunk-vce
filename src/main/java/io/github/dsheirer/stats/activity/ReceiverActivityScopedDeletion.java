@@ -298,16 +298,16 @@ final class ReceiverActivityScopedDeletion
             return new Scope(0, channel.id(), 0, true, false, false);
         }
 
-        int systemId = ReceiverActivityDeletion.systemId(connection, target.sourceKey());
+        long systemId = ReceiverActivityDeletion.systemId(connection, target.sourceKey());
         if(systemId == 0) return null;
-        int protocol = scalar(connection, "SELECT protocol_code FROM radio_system WHERE id=?", List.of(systemId));
+        int protocol = Math.toIntExact(scalar(connection, "SELECT protocol_code FROM radio_system WHERE id=?", List.of(systemId)));
         if(target.siteConfigurationId() == null)
             return new Scope(systemId, 0, protocol, false, true, false);
 
         ReceiverActivityDeletion.SavedChannel channel =
             ReceiverActivityDeletion.savedChannel(connection, target.siteConfigurationId());
         if(channel == null) return null;
-        int owner = scalar(connection,
+        long owner = scalar(connection,
             "SELECT radio_system_id FROM receiver_channel WHERE id=? AND radio_system_id=?",
             List.of(channel.id(), systemId));
         if(owner == 0 || !"TRUNKED".equals(channel.kind())) return null;
@@ -591,7 +591,7 @@ final class ReceiverActivityScopedDeletion
         if(!scope.systemWide) return;
         String predicate = "identity_kind_code=?";
         List<Object> args = List.of(kind);
-        int summaryId = 0;
+        long summaryId = 0;
         if(key != null)
         {
             ReceiverActivityDeletion.ParsedIdentity identity = ReceiverActivityDeletion.parseIdentity(
@@ -695,7 +695,7 @@ final class ReceiverActivityScopedDeletion
         }
     }
 
-    private static void clearConventionalLastReferences(Connection connection, int channelId,
+    private static void clearConventionalLastReferences(Connection connection, long channelId,
                                                          ScopedData target) throws SQLException
     {
         boolean radio = "radios".equals(target.dataType());
@@ -810,14 +810,14 @@ final class ReceiverActivityScopedDeletion
         }
     }
 
-    private static int scalar(Connection connection, String sql, List<Object> args) throws SQLException
+    private static long scalar(Connection connection, String sql, List<Object> args) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement(sql))
         {
             bind(statement, args);
             try(ResultSet rows = statement.executeQuery())
             {
-                return rows.next() ? rows.getInt(1) : 0;
+                return rows.next() ? rows.getLong(1) : 0;
             }
         }
     }
@@ -1222,7 +1222,7 @@ final class ReceiverActivityScopedDeletion
         }
     }
 
-    private record Scope(int systemId, int channelId, int protocol, boolean conventional,
+    private record Scope(long systemId, long channelId, int protocol, boolean conventional,
                          boolean systemWide, boolean stale)
     {
         String channelPredicate()

@@ -271,9 +271,14 @@ class StatsWebInteractionUiContractTest
         assertTrue(systemLink.contains("capabilityAllowed(ACCESS_CAPABILITIES.RADIO)"));
         assertTrue(systemLink.contains("entityRefHref(reference)"));
         assertFalse(systemLink.contains("row?.entity_ref"));
-        assertTrue(source.contains("radioSystemLink(groupIdentity.radio_system_entity_ref"));
-        assertTrue(source.contains("radioSystemLink(radio.radio_system_entity_ref"));
-        assertTrue(source.contains("radioSystemLink(channel.radio_system_entity_ref"));
+        String systemContext = function(source, "function radioSystemContextLink(row)");
+        assertTrue(systemContext.contains("radioSystemLink(row.radio_system_entity_ref, radioSystemDisplayName(row))"));
+        assertTrue(function(source, "async function renderGroupIdentity()")
+            .contains("radioSystemContextLink(groupIdentity)"));
+        assertTrue(function(source, "async function renderRadio()")
+            .contains("radioSystemContextLink(radio)"));
+        assertTrue(function(source, "async function renderTrunkedChannel(channel, configurationId, renderContext)")
+            .contains("radioSystemContextLink(channel)"));
         assertTrue(function(source, "function channelLink(row, label = channelValue(row))")
             .contains("capabilityAllowed(ACCESS_CAPABILITIES.RADIO)"));
         assertTrue(function(source, "function channelNameSummary(row, linked = true)")
@@ -409,7 +414,11 @@ class StatsWebInteractionUiContractTest
         assertFalse(source.contains("row.evidence_total"));
         assertFalse(source.contains("'Open full Action Counts'"));
         assertFalse(source.contains("node('details', 'evidence')"));
-        assertFalse(source.contains("fullLabel: 'Affiliations'"));
+        assertFalse(function(source, "function channelGroupIdentityColumns()")
+            .contains("fullLabel: 'Affiliations'"));
+        assertFalse(history.contains("fullLabel: 'Affiliations'"));
+        assertTrue(function(source, "function issiForeignSystemColumns()")
+            .contains("fullLabel: 'Affiliations'"));
         assertTrue(source.contains("groupIdentity.alias_description"));
         assertFalse(source.contains("section('Action Counts'"));
         assertTrue(function(source, "function channelGroupIdentityColumns()")
@@ -633,8 +642,11 @@ class StatsWebInteractionUiContractTest
             .contains("String((numeric >> 11) & 0x1F).padStart(2, '0')"));
         assertTrue(function(source, "function identityNumber(row, value)")
             .contains("String(numeric & 0x7FF).padStart(4, '0')"));
-        assertTrue(function(source, "function radioLink(row, id, label, reference = row?.entity_ref)")
-            .contains("radioIdentifierText(row, id)"));
+        String radioLink = function(source, "function radioLink(row, id, label, reference = row?.entity_ref)");
+        assertTrue(radioLink.contains("{ ...row, radio_system_key: reference.radio_system_key } : row"));
+        assertTrue(radioLink.contains("radioIdentifierText(displayRow, id)"));
+        assertTrue(function(source, "function radioIdentifierText(row, value, prefix = radioIdentityPrefix(row, value))")
+            .contains("if (!isP25(row)) return identityNumber(row, value)"));
         assertTrue(function(source, "function groupIdentityLink(row, id, label, reference = row?.entity_ref)")
             .contains("specialIdentifierLabel(row, id, rowGroupIdentityKind(row))"));
         assertTrue(source.contains("render: (row) => number(row.logical_call_count)"));
@@ -1283,9 +1295,10 @@ class StatsWebInteractionUiContractTest
         assertTrue(identityInfo.contains("`Open channel ${collection}`"));
         assertTrue(identityFacts.contains("['Serving System', radioSystemContextLink(row)]"));
         assertTrue(identityFacts.contains("['Home System', homeName"));
-        assertTrue(identityFacts.contains("['Permanent Identity', canonical"));
-        assertTrue(identityFacts.contains("['Working ID', workingSubscriberId(row, kind)"));
-        assertTrue(identityFacts.contains("['Identity Evidence', p25IdentityEvidenceLabel(row, kind)]"));
+        assertTrue(identityFacts.contains("['Permanent Radio ID', canonical ? canonicalSubscriberText(canonical) : 'Not confirmed']"));
+        assertTrue(identityFacts.contains("['Working ID', workingSubscriberId(row, kind) == null ? 'Not supplied'"));
+        assertTrue(identityFacts.contains("identifierNumber(workingSubscriberId(row, kind))"));
+        assertTrue(identityFacts.contains("['ID Source', p25IdentityEvidenceLabel(row, kind)]"));
         assertTrue(identityAction.contains("const facts = liveIdentityFacts(row, kind)"));
         assertTrue(identityAction.contains("info.title"));
         assertTrue(identityAction.contains("info.description"));
@@ -1298,7 +1311,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(routedPrefill.contains("type === 'p25_subscriber_identity'"));
         assertTrue(routedPrefill.contains("home_wacn: canonical.wacn"));
         assertTrue(routedPrefill.contains("working_address: workingAddress"));
-        assertTrue(aliasEditor.contains("Observed Working ID ${workingAddress} is serving-system context only"));
+        assertTrue(aliasEditor.contains("String(initialMatcher?.type || '').toLowerCase() === 'p25_subscriber_identity'"));
+        assertTrue(aliasEditor.contains("Number.isInteger(workingAddress) && workingAddress >= 1 && workingAddress <= 0xFFFFFC"));
+        assertTrue(aliasEditor.contains("This alias follows the permanent radio ID, even when its Working ID changes."));
         assertTrue(conventional.contains("entityRefHref(row?.entity_ref)"));
         assertFalse(conventional.contains("context_key"));
         assertFalse(upsert.contains("entityTarget(value.entity_ref)"));
@@ -1368,13 +1383,17 @@ class StatsWebInteractionUiContractTest
         assertTrue(system.contains("...(live ? { meaningful_only: true,"));
         assertTrue(system.contains("issiCurrentAssignmentColumns"));
         assertTrue(subscriber.contains("entityRefHref(row.entity_ref)"));
-        assertTrue(subscriber.contains("identitySummaryValue(label, label === canonical ? '' : canonical, target)"));
+        assertTrue(subscriber.contains("const identifier = subscriber ? String(subscriber.subscriber_id) : ''"));
+        assertTrue(subscriber.contains("identitySummaryValue(label, label === identifier ? '' : identifier, target)"));
+        assertTrue(subscriber.contains("if (subscriber) summary.title = canonicalSubscriberText(subscriber)"));
+        assertTrue(function(source, "function issiCurrentAssignmentColumns()")
+            .contains("label: 'Home System', render: issiHomeSystemCell"));
         assertTrue(identifier.contains("liveIdentityActionLink(row, kind, text)"));
         assertTrue(alias.contains("liveIdentityActionLink(row, kind, label)"));
         assertTrue(assignment.contains("issiAssignmentIsOrdinaryLocal(row, radio.radio_system_key)"));
         assertTrue(assignment.contains("links(row, ordinaryLocal)"));
         assertTrue(assignmentLinks.contains("const filtered = Boolean(row && !ordinaryLocal)"));
-        assertTrue(assignmentLinks.contains("anchor(filtered ? 'Current Assignments' : 'ISSI Mappings', href('radio-system'"));
+        assertTrue(assignmentLinks.contains("anchor(filtered ? 'Current Assignments' : 'ISSI Assignments', href('radio-system'"));
         assertTrue(assignmentLinks.contains("issi_view: 'current-assignments', q: filtered ? canonicalSubscriberText(canonical) : null"));
         assertTrue(assignmentLinks.contains("anchor('Assignment History', href('radio-system'"));
         assertTrue(radio.contains("['Alias', aliasLabel(radio)]"));

@@ -27,7 +27,6 @@ import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.identifier.message.APCO25ShortDataMessage;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
-import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DataUnitID;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.OSPMessage;
 
@@ -80,7 +79,7 @@ public class MessageUpdate extends OSPMessage
     {
         if(mTargetAddress == null)
         {
-            mTargetAddress = APCO25Talkgroup.create(getMessage().getInt(TARGET_ADDRESS));
+            mTargetAddress = APCO25RadioIdentifier.createTo(getMessage().getInt(TARGET_ADDRESS));
         }
 
         return mTargetAddress;

@@ -16,6 +16,7 @@ import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.PlottableDecodeEvent;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -30,6 +31,24 @@ import org.junit.jupiter.api.Test;
 
 class MapSnapshotServiceTest
 {
+    @Test
+    void keepsTypedHomeIdentityWhenHexDisplayContainsOnlyDigits() throws Exception
+    {
+        try(MapSnapshotService service = new MapSnapshotService((aliasList, identifier) -> null, 8, 8, 2))
+        {
+            MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+            identifiers.update(APCO25FullyQualifiedRadioIdentifier.createFrom(1103, 1, 0x018, 1103));
+            service.receive(PlottableDecodeEvent.plottableBuilder(DecodeEventType.GPS, 1_000)
+                .identifiers(identifiers).location(new GeoPosition(40, -83)).build());
+            await(() -> service.snapshot().entities().size() == 1);
+            MapSnapshotService.Entity entity = service.snapshot().entities().getFirst();
+            assertEquals("00001.018.1103", entity.identifier());
+            assertEquals(1, entity.homeWacn());
+            assertEquals(24, entity.homeSystemId());
+            assertEquals(1103, entity.radioId());
+        }
+    }
+
     @Test
     void retainsOnlyRecentEntitiesAndLocations() throws Exception
     {

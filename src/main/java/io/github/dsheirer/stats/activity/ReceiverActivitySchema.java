@@ -392,7 +392,7 @@ public class ReceiverActivitySchema
             return null;
         }
 
-        int channelId = upsertReceiverChannel(connection, ReceiverChannelMetadata.from(activity),
+        long channelId = upsertReceiverChannel(connection, ReceiverChannelMetadata.from(activity),
             activity.receiverKind() == ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE);
         if(channelId <= 0)
         {
@@ -430,7 +430,7 @@ public class ReceiverActivitySchema
             }
         }
 
-        Map<String,Integer> channelIds = new LinkedHashMap<>();
+        Map<String,Long> channelIds = new LinkedHashMap<>();
         //Channel assignment timestamps are constrained by last_seen_ms, so extend each run's bounds first.
         for(Map.Entry<String,ReceiverChannelMetadata> entry: channels.entrySet())
         {
@@ -441,7 +441,7 @@ public class ReceiverActivitySchema
         RadioSystemSchema.ActivityBatch batch = new RadioSystemSchema.ActivityBatch();
         for(ReceiverActivityRecords.ActivityEvent activity: accepted)
         {
-            int channelId = channelIds.getOrDefault(activity.configurationId(), 0);
+            long channelId = channelIds.getOrDefault(activity.configurationId(), 0L);
             if(channelId > 0)
             {
                 recordAcceptedActivity(connection, activity, detailedEventHistoryEnabled, channelId, batch);
@@ -451,7 +451,7 @@ public class ReceiverActivitySchema
     }
 
     private static Long recordAcceptedActivity(Connection connection, ReceiverActivityRecords.ActivityEvent activity,
-                                               boolean detailedEventHistoryEnabled, int channelId,
+                                               boolean detailedEventHistoryEnabled, long channelId,
                                                RadioSystemSchema.ActivityBatch batch) throws SQLException
     {
         Long activityId = null;
@@ -684,6 +684,163 @@ public class ReceiverActivitySchema
         }
     }
 
+    /** Worker-only receipt for credits that will be retained only after their transaction commits. */
+    record ConventionalCallCredit(long channelId, Long detailedEventId, Integer sourceRadioId,
+                                  String targetId, String targetKind, List<Integer> patchMemberTalkgroupIds,
+                                  ReceiverActivityRecords.P25Identity sourceIdentity,
+                                  ReceiverActivityRecords.P25Identity targetIdentity,
+                                  Integer sourceWorkingId, Integer targetWorkingId)
+    {
+    }
+
+    static ConventionalCallCredit recordConventionalCall(Connection connection,
+        ReceiverActivityRecords.ActivityEvent activity, boolean detailedEventHistoryEnabled) throws SQLException
+    {
+        if(activity.receiverKind() != ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_P25 ||
+            !configurationAccepts(connection, activity.configurationId(), receiverKindCode(activity.receiverKind()),
+                protocolCode(activity.protocol()), activity.identityDomain()))
+        {
+            return null;
+        }
+        var channelId = upsertReceiverChannel(connection, ReceiverChannelMetadata.from(activity), false);
+        if(channelId <= 0 || !matchesCurrentP25Generation(
+            selectReceiverChannelIdentity(connection, activity.configurationId()), activity))
+        {
+            return null;
+        }
+        Long detailId = recordAcceptedActivity(connection, activity, detailedEventHistoryEnabled, channelId, null);
+        return new ConventionalCallCredit(channelId, detailId, positiveInteger(activity.sourceRadioId()),
+            conventionalDestinationId(activity), activity.targetKind(),
+            activity.patchMemberTalkgroupIds(), activity.p25SourceIdentity(), activity.p25TargetIdentity(),
+            activity.sourceObservedWorkingId(), activity.targetObservedWorkingId());
+    }
+
+    static ConventionalCallCredit enrichConventionalCall(Connection connection,
+        ReceiverActivityRecords.ActivityEvent original, ReceiverActivityRecords.ActivityEvent observation,
+        ConventionalCallCredit credit) throws SQLException
+    {
+        ReceiverChannelIdentity channel = selectReceiverChannelIdentity(connection, original.configurationId());
+        if(channel == null || channel.channelId() != credit.channelId() ||
+            !original.configurationId().equals(observation.configurationId()) ||
+            original.observedAtEpochMilliseconds() != observation.observedAtEpochMilliseconds() ||
+            original.observedAtEpochMilliseconds() < channel.firstSeenEpochMilliseconds() ||
+            !configurationAccepts(connection, original.configurationId(), receiverKindCode(original.receiverKind()),
+                protocolCode(original.protocol()), original.identityDomain()) ||
+            !matchesCurrentP25Generation(channel, original))
+        {
+            return null;
+        }
+
+        Integer source = positiveInteger(observation.sourceRadioId());
+        boolean newSource = credit.sourceRadioId() == null && source != null;
+        boolean newTarget = credit.targetId() == null && conventionalDestinationId(observation) != null;
+        boolean sameTarget = newTarget || java.util.Objects.equals(credit.targetId(), observation.targetId()) &&
+            java.util.Objects.equals(credit.targetKind(), observation.targetKind());
+        List<Integer> newMembers = sameTarget && "PATCH_GROUP".equals(observation.targetKind()) ?
+            observation.patchMemberTalkgroupIds().stream()
+                .filter(member -> !credit.patchMemberTalkgroupIds().contains(member)).toList() : List.of();
+        long bucket = bucketStart(original.observedAtEpochMilliseconds());
+        int encrypted = original.encrypted() ? 1 : 0;
+        if(newSource)
+        {
+            upsertCallIdentityBucket(connection, credit.channelId(), bucket, IDENTITY_ROLE_SOURCE,
+                IDENTITY_KIND_RADIO, source, 1, encrypted, 0, 0);
+        }
+        if(newTarget || !newMembers.isEmpty())
+        {
+            for(CallIdentity destination: destinationIdentities(newTarget ? observation.targetId() : null,
+                observation.targetKind(), newMembers, TrunkedIdentityPolicy.protocolFamilyCode(original.protocol()),
+                original.identityDomain()))
+            {
+                if(destination.kindCode() == IDENTITY_KIND_CHANNEL_OR_UNKNOWN)
+                {
+                    continue;
+                }
+                upsertCallIdentityBucket(connection, credit.channelId(), bucket, IDENTITY_ROLE_DESTINATION,
+                    destination.kindCode(), destination.identityId(), 1, encrypted, 0, 0);
+            }
+            if(newTarget)
+            {
+                //The initial unknown destination already received the call; move that role's credit to its identity.
+                try(PreparedStatement statement = connection.prepareStatement("""
+                    UPDATE conventional_call_identity_bucket SET
+                        call_count = call_count - 1, encrypted_count = encrypted_count - ?
+                    WHERE channel_id = ? AND bucket_start_ms = ? AND identity_role_code = ?
+                      AND identity_kind_code = ? AND identity_id = 0 AND call_count > 0 AND encrypted_count >= ?
+                    """))
+                {
+                    statement.setInt(1, encrypted);
+                    statement.setLong(2, credit.channelId());
+                    statement.setLong(3, bucket);
+                    statement.setInt(4, IDENTITY_ROLE_DESTINATION);
+                    statement.setInt(5, IDENTITY_KIND_CHANNEL_OR_UNKNOWN);
+                    statement.setInt(6, encrypted);
+                    statement.executeUpdate();
+                }
+            }
+        }
+        List<Integer> members = new ArrayList<>(credit.patchMemberTalkgroupIds());
+        members.addAll(newMembers);
+        ConventionalCallCredit updated = new ConventionalCallCredit(credit.channelId(), credit.detailedEventId(),
+            newSource ? source : credit.sourceRadioId(), newTarget ? observation.targetId() : credit.targetId(),
+            newTarget ? observation.targetKind() : credit.targetKind(), List.copyOf(members),
+            newSource ? observation.p25SourceIdentity() : credit.sourceIdentity(),
+            newTarget ? observation.p25TargetIdentity() : credit.targetIdentity(),
+            newSource ? observation.sourceObservedWorkingId() : credit.sourceWorkingId(),
+            newTarget ? observation.targetObservedWorkingId() : credit.targetWorkingId());
+        if(newSource || newTarget || !newMembers.isEmpty())
+        {
+            ReceiverActivityRecords.ActivityEvent effective = observation.withConventionalIdentities(
+                updated.sourceRadioId(), updated.targetId(), updated.targetKind(), updated.patchMemberTalkgroupIds(),
+                updated.sourceIdentity(), updated.targetIdentity(), updated.sourceWorkingId(), updated.targetWorkingId());
+            AliasActivityProjection.recordConventionalCallAttribution(connection, effective, newSource,
+                newTarget, newMembers, original.encrypted(), credit.sourceRadioId() != null);
+            enrichDetailedConventionalCall(connection, credit, effective, newSource, newTarget);
+        }
+        return updated;
+    }
+
+    private static String conventionalDestinationId(ReceiverActivityRecords.ActivityEvent activity)
+    {
+        Integer target = positiveInteger(activity.targetId());
+        Integer kind = TrunkedIdentityPolicy.identityKindCode(activity.targetKind());
+        return target != null && kind != null && TrunkedIdentityPolicy.isDirectoryIdentity(
+            TrunkedIdentityPolicy.protocolFamilyCode(activity.protocol()), activity.identityDomain(), kind, target) ?
+            activity.targetId() : null;
+    }
+
+    private static void enrichDetailedConventionalCall(Connection connection, ConventionalCallCredit credit,
+        ReceiverActivityRecords.ActivityEvent observation, boolean newSource, boolean newTarget) throws SQLException
+    {
+        if(credit.detailedEventId() == null)
+        {
+            return;
+        }
+        try(PreparedStatement statement = connection.prepareStatement("""
+            UPDATE receiver_activity_event SET
+                source_observed_local_id = coalesce(source_observed_local_id, ?),
+                source_observed_working_id = coalesce(source_observed_working_id, ?),
+                target_observed_local_id = CASE WHEN ? = 1 THEN ? ELSE target_observed_local_id END,
+                target_kind_code = CASE WHEN ? = 1 THEN ? ELSE target_kind_code END,
+                target_observed_working_id = CASE WHEN ? = 1 THEN ? ELSE target_observed_working_id END
+            WHERE id = ? AND channel_id = ? AND observed_at_ms = ? AND radio_system_id IS NULL
+            """))
+        {
+            setInteger(statement, 1, newSource ? positiveInteger(observation.sourceRadioId()) : null);
+            setInteger(statement, 2, newSource ? observation.sourceObservedWorkingId() : null);
+            statement.setInt(3, newTarget ? 1 : 0);
+            setInteger(statement, 4, newTarget ? positiveInteger(observation.targetId()) : null);
+            statement.setInt(5, newTarget ? 1 : 0);
+            setInteger(statement, 6, newTarget ? targetKindCode(observation.targetKind()) : null);
+            statement.setInt(7, newTarget ? 1 : 0);
+            setInteger(statement, 8, newTarget ? observation.targetObservedWorkingId() : null);
+            statement.setLong(9, credit.detailedEventId());
+            statement.setLong(10, credit.channelId());
+            statement.setLong(11, observation.observedAtEpochMilliseconds());
+            statement.executeUpdate();
+        }
+    }
+
     static boolean applyConventionalCallOutput(Connection connection,
                                                ReceiverActivityRecords.ConventionalCallOutput conventionalOutput)
         throws SQLException
@@ -746,7 +903,7 @@ public class ReceiverActivitySchema
                         streamed_count = conventional_activity_bucket.streamed_count + excluded.streamed_count
                     """))
             {
-                summary.setInt(1, channel.channelId());
+                summary.setLong(1, channel.channelId());
                 summary.setLong(2, frequency);
                 summary.setInt(3, timeslot);
                 summary.setLong(4, callStart);
@@ -755,7 +912,7 @@ public class ReceiverActivitySchema
                 summary.setInt(7, streamed);
                 summary.executeUpdate();
 
-                hourly.setInt(1, channel.channelId());
+                hourly.setLong(1, channel.channelId());
                 hourly.setLong(2, frequency);
                 hourly.setInt(3, timeslot);
                 hourly.setLong(4, bucket);
@@ -807,7 +964,7 @@ public class ReceiverActivitySchema
 
         if(protocol == TrunkedIdentityPolicy.PROTOCOL_P25 && call.wacn() != null && call.systemId() != null)
         {
-            java.util.Set<Integer> countedSites = new java.util.LinkedHashSet<>();
+            java.util.Set<Long> countedSites = new java.util.LinkedHashSet<>();
             for(ReceiverActivityRecords.P25SiteCallObservation observation: call.p25SiteObservations())
             {
                 io.github.dsheirer.module.decode.p25.P25SiteIdentity site = observation.site();
@@ -824,7 +981,7 @@ public class ReceiverActivitySchema
                     continue;
                 }
 
-                int learnedSiteId = upsertLearnedP25Site(connection, radioSystem.radioSystemId(), site,
+                long learnedSiteId = upsertLearnedP25Site(connection, radioSystem.radioSystemId(), site,
                     call.callStartEpochMilliseconds());
                 if(countedSites.add(learnedSiteId))
                 {
@@ -884,7 +1041,7 @@ public class ReceiverActivitySchema
             return null;
         }
 
-        int channelId = upsertReceiverChannel(connection, ReceiverChannelMetadata.from(call), true);
+        long channelId = upsertReceiverChannel(connection, ReceiverChannelMetadata.from(call), true);
         if(channelId <= 0)
         {
             return null;
@@ -894,7 +1051,7 @@ public class ReceiverActivitySchema
             call.radioSystemKey());
     }
 
-    private static void upsertLogicalCallBucket(Connection connection, int radioSystemId, long bucket, int calls,
+    private static void upsertLogicalCallBucket(Connection connection, long radioSystemId, long bucket, int calls,
                                                 int encrypted, int recorded, int streamed) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
@@ -910,7 +1067,7 @@ public class ReceiverActivitySchema
                 streamed_output_count = trunked_logical_call_bucket.streamed_output_count + excluded.streamed_output_count
             """))
         {
-            statement.setInt(1, radioSystemId);
+            statement.setLong(1, radioSystemId);
             statement.setLong(2, bucket);
             statement.setInt(3, calls);
             statement.setInt(4, encrypted);
@@ -921,11 +1078,11 @@ public class ReceiverActivitySchema
     }
 
     private static void upsertLogicalCallIdentities(Connection connection,
-                                                     RadioSystemSchema.RadioSystem radioSystem, int channelId,
+                                                     RadioSystemSchema.RadioSystem radioSystem, long channelId,
                                                      long bucket,
                                                      ReceiverActivityRecords.ResolvedLogicalCall call, int calls,
                                                      int encrypted, int recorded, int streamed, boolean site,
-                                                     Integer learnedSiteId) throws SQLException
+                                                     Long learnedSiteId) throws SQLException
     {
         for(RadioSystemSchema.IdentityReference destination: RadioSystemSchema.destinationIdentityReferences(
             connection, radioSystem, call.destinationId() >= 0 ? Integer.toString(call.destinationId()) : null,
@@ -949,8 +1106,8 @@ public class ReceiverActivitySchema
     }
 
     private static void upsertP25SiteCallIdentities(Connection connection,
-                                                    RadioSystemSchema.RadioSystem radioSystem, int channelId,
-                                                    int learnedSiteId, long bucket, long observedAt,
+                                                    RadioSystemSchema.RadioSystem radioSystem, long channelId,
+                                                    long learnedSiteId, long bucket, long observedAt,
                                                     ReceiverActivityRecords.P25SiteCallObservation observation,
                                                     int calls, int encrypted) throws SQLException
     {
@@ -975,8 +1132,8 @@ public class ReceiverActivitySchema
         }
     }
 
-    private static void upsertLogicalCallIdentity(Connection connection, int radioSystemId, Integer learnedSiteId,
-                                                   int channelId, long bucket, long observedAt, int role,
+    private static void upsertLogicalCallIdentity(Connection connection, long radioSystemId, Long learnedSiteId,
+                                                   long channelId, long bucket, long observedAt, int role,
                                                    RadioSystemSchema.IdentityReference identity, int calls,
                                                    int encrypted, int recorded, int streamed, boolean site,
                                                    Integer observedWorkingId)
@@ -1036,16 +1193,16 @@ public class ReceiverActivitySchema
         try(PreparedStatement statement = connection.prepareStatement(sql))
         {
             int index = 1;
-            statement.setInt(index++, radioSystemId);
+            statement.setLong(index++, radioSystemId);
             if(site)
             {
-                statement.setInt(index++, learnedSiteId);
-                statement.setInt(index++, channelId);
+                statement.setLong(index++, learnedSiteId);
+                statement.setLong(index++, channelId);
             }
             statement.setLong(index++, bucket);
             statement.setInt(index++, role);
             statement.setInt(index++, identity.kindCode());
-            statement.setInt(index++, identity.summaryId());
+            statement.setLong(index++, identity.summaryId());
             if(site)
             {
                 setInteger(statement, index++, identity.observedLocalId());
@@ -1063,7 +1220,7 @@ public class ReceiverActivitySchema
         }
     }
 
-    private static int upsertLearnedP25Site(Connection connection, int radioSystemId,
+    private static long upsertLearnedP25Site(Connection connection, long radioSystemId,
                                              io.github.dsheirer.module.decode.p25.P25SiteIdentity site,
                                              long observedAt) throws SQLException
     {
@@ -1076,7 +1233,7 @@ public class ReceiverActivitySchema
             RETURNING learned_site_id
             """))
         {
-            statement.setInt(1, radioSystemId);
+            statement.setLong(1, radioSystemId);
             statement.setInt(2, site.rfss());
             statement.setInt(3, site.site());
             statement.setLong(4, observedAt);
@@ -1085,14 +1242,14 @@ public class ReceiverActivitySchema
             {
                 if(resultSet.next())
                 {
-                    return resultSet.getInt(1);
+                    return resultSet.getLong(1);
                 }
             }
         }
         throw new SQLException("SQLite did not return a learned P25 site id");
     }
 
-    private static void upsertP25SiteCallBucket(Connection connection, int radioSystemId, int learnedSiteId, long bucket,
+    private static void upsertP25SiteCallBucket(Connection connection, long radioSystemId, long learnedSiteId, long bucket,
                                                  int calls, int encrypted) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
@@ -1105,8 +1262,8 @@ public class ReceiverActivitySchema
                     excluded.encrypted_observed_call_count
             """))
         {
-            statement.setInt(1, radioSystemId);
-            statement.setInt(2, learnedSiteId);
+            statement.setLong(1, radioSystemId);
+            statement.setLong(2, learnedSiteId);
             statement.setLong(3, bucket);
             statement.setInt(4, calls);
             statement.setInt(5, encrypted);
@@ -1182,7 +1339,7 @@ public class ReceiverActivitySchema
      * Updates the optional detailed row for the already-counted call.  The physical call and every compact summary
      * remain unchanged; this only fills facts that were not present on the first grant.
      */
-    private static void enrichDetailedTrunkedCall(Connection connection, int channelId,
+    private static void enrichDetailedTrunkedCall(Connection connection, long channelId,
                                                    RadioSystemSchema.RadioSystem radioSystem,
                                                    ReceiverActivityRecords.TrunkedCallAttribution attribution)
         throws SQLException
@@ -1229,7 +1386,7 @@ public class ReceiverActivitySchema
             WHERE id = ? AND (radio_system_id IS NULL OR radio_system_id = ?)
             """))
         {
-            statement.setInt(1, radioSystem.radioSystemId());
+            statement.setLong(1, radioSystem.radioSystemId());
             statement.setInt(2, sourceKnown ? 1 : 0);
             setInteger(statement, 3, sourceKnown ? source.observedLocalId() : null);
             statement.setInt(4, destinationKnown ? 1 : 0);
@@ -1237,14 +1394,14 @@ public class ReceiverActivitySchema
             statement.setInt(6, destinationKnown ? 1 : 0);
             setInteger(statement, 7, destinationKnown ? targetKindCode(attribution.destinationKind()) : null);
             statement.setInt(8, sourceKnown ? 1 : 0);
-            setInteger(statement, 9, sourceKnown ? source.summaryId() : null);
+            setLong(statement, 9, sourceKnown ? source.summaryId() : null);
             statement.setInt(10, destinationKnown ? 1 : 0);
-            setInteger(statement, 11, destinationKnown ? target.summaryId() : null);
+            setLong(statement, 11, destinationKnown ? target.summaryId() : null);
             statement.setInt(12, encryptionKnown ? 1 : 0);
             setInteger(statement, 13, attribution.encryptionAlgorithmId());
             setInteger(statement, 14, attribution.encryptionKeyId());
             statement.setLong(15, activityId);
-            statement.setInt(16, radioSystem.radioSystemId());
+            statement.setLong(16, radioSystem.radioSystemId());
             int updated = statement.executeUpdate();
             if(updated == 0)
             {
@@ -1260,7 +1417,7 @@ public class ReceiverActivitySchema
      * Finds the retained detail row for a one-time trunked call observation.  Frequency is used when the attribution
      * contains it, and timeslot is matched null-safely so simultaneous DMR slots cannot update each other.
      */
-    private static Long findDetailedTrunkedCallId(Connection connection, int channelId,
+    private static Long findDetailedTrunkedCallId(Connection connection, long channelId,
                                                    ReceiverActivityRecords.TrunkedCallAttribution attribution)
         throws SQLException
     {
@@ -1286,7 +1443,7 @@ public class ReceiverActivitySchema
     }
 
     private static Long findDetailedTrunkedCallId(
-        Connection connection, int channelId, ReceiverActivityRecords.TrunkedCallAttribution attribution,
+        Connection connection, long channelId, ReceiverActivityRecords.TrunkedCallAttribution attribution,
         String frequencyPredicate, Long frequency, int frequencyParameterCount, boolean requireUnique)
         throws SQLException
     {
@@ -1301,7 +1458,7 @@ public class ReceiverActivitySchema
             """.formatted(frequencyPredicate.strip(), requireUnique ? 2 : 1)))
         {
             int index = 1;
-            statement.setInt(index++, channelId);
+            statement.setLong(index++, channelId);
             statement.setLong(index++, attribution.callStartEpochMilliseconds());
             statement.setInt(index++, actionCode(ReceiverActivityRecords.Action.CALL));
 
@@ -1354,7 +1511,7 @@ public class ReceiverActivitySchema
         {
             return null;
         }
-        int channelId = upsertReceiverChannel(connection, ReceiverChannelMetadata.from(call), false);
+        long channelId = upsertReceiverChannel(connection, ReceiverChannelMetadata.from(call), false);
 
         if(!matchesReceiverChannel(selectReceiverChannelIdentity(connection, call.configurationId()),
             RECEIVER_CONVENTIONAL_DMR, TrunkedIdentityPolicy.PROTOCOL_DMR))
@@ -1404,7 +1561,7 @@ public class ReceiverActivitySchema
         {
             return null;
         }
-        int channelId = upsertReceiverChannel(connection, ReceiverChannelMetadata.from(call), false);
+        long channelId = upsertReceiverChannel(connection, ReceiverChannelMetadata.from(call), false);
 
         if(!matchesReceiverChannel(selectReceiverChannelIdentity(connection, call.configurationId()),
             RECEIVER_CONVENTIONAL_NXDN, TrunkedIdentityPolicy.PROTOCOL_NXDN))
@@ -1587,7 +1744,7 @@ public class ReceiverActivitySchema
             (previousChannel.kindCode() != RECEIVER_TRUNKED_SITE ||
              TrunkedIdentityPolicy.protocolFamilyCode(previousChannel.protocolCode()) !=
                  TrunkedIdentityPolicy.PROTOCOL_P25 || nativeComponentChanged);
-        int channelId = upsertReceiverChannel(connection, ReceiverChannelMetadata.from(snapshot), true);
+        long channelId = upsertReceiverChannel(connection, ReceiverChannelMetadata.from(snapshot), true);
         if(channelId <= 0)
         {
             return;
@@ -1820,7 +1977,7 @@ public class ReceiverActivitySchema
             return false;
         }
 
-        int channelId = upsertReceiverChannel(connection, ReceiverChannelMetadata.from(snapshot), true);
+        long channelId = upsertReceiverChannel(connection, ReceiverChannelMetadata.from(snapshot), true);
         if(channelId <= 0)
         {
             return false;
@@ -1907,7 +2064,7 @@ public class ReceiverActivitySchema
         {
             return;
         }
-        int channelId = ensureControlChannelQualityChannel(connection, quality);
+        long channelId = ensureControlChannelQualityChannel(connection, quality);
         if(channelId <= 0)
         {
             return;
@@ -1935,7 +2092,7 @@ public class ReceiverActivitySchema
             WHERE excluded.observed_at_ms >= trunked_control_channel_quality.observed_at_ms
             """))
         {
-            statement.setInt(1, channelId);
+            statement.setLong(1, channelId);
             statement.setLong(2, quality.frequencyHertz());
             statement.setLong(3, qualityBucketStart(quality.observedAtEpochMilliseconds()));
             statement.setLong(4, quality.observedAtEpochMilliseconds());
@@ -1958,7 +2115,7 @@ public class ReceiverActivitySchema
      * Quality samples can arrive before the first decoded site snapshot.  Establish a minimal shared receiver owner
      * so the quality table can use a real cascading foreign key without changing a known protocol classification.
      */
-    private static int ensureControlChannelQualityChannel(Connection connection,
+    private static long ensureControlChannelQualityChannel(Connection connection,
                                                           ReceiverActivityRecords.ControlChannelQuality quality)
         throws SQLException
     {
@@ -3149,7 +3306,7 @@ public class ReceiverActivitySchema
 
     private static void upsertTrunkedSignalingMetrics(Connection connection,
                                                       ReceiverActivityRecords.ActivityEvent activity,
-                                                      int channelId, int radioSystemId) throws SQLException
+                                                      long channelId, long radioSystemId) throws SQLException
     {
         if(activity.action() == null || activity.action() == ReceiverActivityRecords.Action.UNKNOWN ||
             activity.action() == ReceiverActivityRecords.Action.CALL ||
@@ -3169,8 +3326,8 @@ public class ReceiverActivitySchema
             actionUpdateSql("trunked_signaling_activity_bucket", TRUNKED_SIGNALING_ACTION_COUNT_COLUMNS))))
         {
             int index = 1;
-            statement.setInt(index++, channelId);
-            statement.setInt(index++, radioSystemId);
+            statement.setLong(index++, channelId);
+            statement.setLong(index++, radioSystemId);
             statement.setLong(index++, bucketStart(activity.observedAtEpochMilliseconds()));
             for(ReceiverActivityRecords.Action action: TRUNKED_SIGNALING_ACTIONS)
             {
@@ -3182,7 +3339,7 @@ public class ReceiverActivitySchema
 
     private static void upsertCallIdentityBuckets(Connection connection,
                                                   ReceiverActivityRecords.ActivityEvent activity,
-                                                  int channelId) throws SQLException
+                                                  long channelId) throws SQLException
     {
         long bucket = bucketStart(activity.observedAtEpochMilliseconds());
         int encrypted = activity.encrypted() ? 1 : 0;
@@ -3206,7 +3363,7 @@ public class ReceiverActivitySchema
     }
 
     private static void upsertConventionalCallOutputIdentityBuckets(
-        Connection connection, ReceiverActivityRecords.ConventionalCallOutput output, int channelId,
+        Connection connection, ReceiverActivityRecords.ConventionalCallOutput output, long channelId,
         int protocol, int recorded, int streamed) throws SQLException
     {
         long bucket = bucketStart(output.callStartEpochMilliseconds());
@@ -3229,7 +3386,7 @@ public class ReceiverActivitySchema
         }
     }
 
-    private static void upsertCallIdentityBucket(Connection connection, int channelId, long bucketStart,
+    private static void upsertCallIdentityBucket(Connection connection, long channelId, long bucketStart,
                                                  int roleCode, int kindCode, int identityId, int calls,
                                                  int encrypted, int recorded, int streamed) throws SQLException
     {
@@ -3247,7 +3404,7 @@ public class ReceiverActivitySchema
                 streamed_count = conventional_call_identity_bucket.streamed_count + excluded.streamed_count
             """))
         {
-            statement.setInt(1, channelId);
+            statement.setLong(1, channelId);
             statement.setLong(2, bucketStart);
             statement.setInt(3, roleCode);
             statement.setInt(4, kindCode);
@@ -3316,7 +3473,7 @@ public class ReceiverActivitySchema
 
     private static long insertReceiverActivityEvent(Connection connection,
                                                     ReceiverActivityRecords.ActivityEvent activity,
-                                                    int channelId,
+                                                    long channelId,
                                                     RadioSystemSchema.RadioSystem radioSystem) throws SQLException
     {
         Lcn lcn = Lcn.parse(activity.lcn());
@@ -3343,17 +3500,17 @@ public class ReceiverActivitySchema
             RETURNING id
             """))
         {
-            statement.setInt(1, channelId);
-            setInteger(statement, 2, radioSystem != null ? radioSystem.radioSystemId() : null);
+            statement.setLong(1, channelId);
+            setLong(statement, 2, radioSystem != null ? radioSystem.radioSystemId() : null);
             statement.setLong(3, activity.observedAtEpochMilliseconds());
             statement.setInt(4, actionCode(activity.action()));
             setInteger(statement, 5, eventTypeCode(activity.eventType()));
             setInteger(statement, 6, parseInteger(activity.sourceRadioId()));
             setInteger(statement, 7, parseInteger(activity.targetId()));
             setInteger(statement, 8, targetKindCode(activity.targetKind()));
-            setInteger(statement, 9, sourceIdentity != null ? sourceIdentity.summaryId() : null);
+            setLong(statement, 9, sourceIdentity != null ? sourceIdentity.summaryId() : null);
             statement.setInt(10, IDENTITY_KIND_RADIO);
-            setInteger(statement, 11, targetIdentity != null ? targetIdentity.summaryId() : null);
+            setLong(statement, 11, targetIdentity != null ? targetIdentity.summaryId() : null);
             setLong(statement, 12, activity.frequencyHertz());
             setInteger(statement, 13, lcn.band());
             setInteger(statement, 14, lcn.number());
@@ -3388,7 +3545,7 @@ public class ReceiverActivitySchema
     private static void insertActivityEventIdentityMembers(Connection connection, long activityId,
                                                             RadioSystemSchema.RadioSystem radioSystem,
                                                             List<RadioSystemSchema.IdentityReference> destinations,
-                                                            Integer targetIdentityId)
+                                                            Long targetIdentityId)
         throws SQLException
     {
         if(radioSystem == null)
@@ -3414,8 +3571,8 @@ public class ReceiverActivitySchema
             for(RadioSystemSchema.IdentityReference member: members)
             {
                 statement.setLong(1, activityId);
-                statement.setInt(2, radioSystem.radioSystemId());
-                statement.setInt(3, member.summaryId());
+                statement.setLong(2, radioSystem.radioSystemId());
+                statement.setLong(3, member.summaryId());
                 statement.setInt(4, IDENTITY_KIND_TALKGROUP);
                 setInteger(statement, 5, member.observedLocalId());
                 statement.addBatch();
@@ -3426,7 +3583,7 @@ public class ReceiverActivitySchema
     }
 
     private static void upsertConventionalSummary(Connection connection, ReceiverActivityRecords.ActivityEvent activity,
-                                                  int channelId) throws SQLException
+                                                  long channelId) throws SQLException
     {
         long frequencyHertz = activity.frequencyHertz() != null && activity.frequencyHertz() > 0 ?
             activity.frequencyHertz() : 0;
@@ -3451,7 +3608,7 @@ public class ReceiverActivitySchema
                 actionUpdateSql("conventional_activity_summary"))))
             {
                 int index = 1;
-                statement.setInt(index++, channelId);
+                statement.setLong(index++, channelId);
                 statement.setLong(index++, frequencyHertz);
                 statement.setInt(index++, timeslot);
                 statement.setLong(index++, activity.observedAtEpochMilliseconds());
@@ -3474,7 +3631,7 @@ public class ReceiverActivitySchema
             actionUpdateSql("conventional_activity_bucket"))))
         {
             int index = 1;
-            statement.setInt(index++, channelId);
+            statement.setLong(index++, channelId);
             statement.setLong(index++, frequencyHertz);
             statement.setInt(index++, timeslot);
             statement.setLong(index++, bucketStart(activity.observedAtEpochMilliseconds()));
@@ -3484,7 +3641,7 @@ public class ReceiverActivitySchema
         }
     }
 
-    private static int upsertReceiverChannel(Connection connection, ReceiverChannelMetadata metadata,
+    private static long upsertReceiverChannel(Connection connection, ReceiverChannelMetadata metadata,
                                              boolean trunked)
         throws SQLException
     {
@@ -3511,7 +3668,7 @@ public class ReceiverActivitySchema
             statement.setBoolean(5, trunked);
             try(ResultSet resultSet = statement.executeQuery())
             {
-                return resultSet.next() ? resultSet.getInt(1) : 0;
+                return resultSet.next() ? resultSet.getLong(1) : 0;
             }
         }
     }
@@ -3584,7 +3741,7 @@ public class ReceiverActivitySchema
     }
 
     private static void upsertSiteSnapshot(Connection connection, ReceiverActivityRecords.SiteSnapshot snapshot,
-                                           int channelId, boolean retainSiteIdentity) throws SQLException
+                                           long channelId, boolean retainSiteIdentity) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO p25_site_snapshot (
@@ -3621,7 +3778,7 @@ public class ReceiverActivitySchema
                 current_control_hz = excluded.current_control_hz
             """))
         {
-            statement.setInt(1, channelId);
+            statement.setLong(1, channelId);
             statement.setString(2, snapshot.snapshotHash());
             statement.setLong(3, snapshot.observedAtEpochMilliseconds());
             statement.setLong(4, snapshot.observedAtEpochMilliseconds());
@@ -3649,7 +3806,7 @@ public class ReceiverActivitySchema
     }
 
     private static void upsertSiteChannelSummaries(Connection connection, ReceiverActivityRecords.SiteSnapshot snapshot,
-                                                   int channelId, Map<String,SiteChannelEvidence> channels)
+                                                   long channelId, Map<String,SiteChannelEvidence> channels)
         throws SQLException
     {
         for(Map.Entry<String,SiteChannelEvidence> entry: channels.entrySet())
@@ -3671,9 +3828,10 @@ public class ReceiverActivitySchema
                     callsign = coalesce(excluded.callsign, p25_site_channel_summary.callsign),
                     last_seen_ms = max(p25_site_channel_summary.last_seen_ms, excluded.last_seen_ms),
                     observation_count = p25_site_channel_summary.observation_count + 1
+                WHERE excluded.last_seen_ms > p25_site_channel_summary.last_seen_ms
                 """))
             {
-                statement.setInt(1, channelId);
+                statement.setLong(1, channelId);
                 statement.setString(2, key);
                 statement.setString(3, channel.descriptor());
                 setLong(statement, 4, channel.downlink());
@@ -3681,15 +3839,15 @@ public class ReceiverActivitySchema
                 setBoolean(statement, 6, channel.tdma());
                 setInteger(statement, 7, channel.timeslots());
                 statement.setString(8, channel.callsign());
-                statement.setLong(9, snapshot.observedAtEpochMilliseconds());
-                statement.setLong(10, snapshot.observedAtEpochMilliseconds());
+                statement.setLong(9, siteFactTimestamp(channel.observedAtMs(), snapshot));
+                statement.setLong(10, siteFactTimestamp(channel.observedAtMs(), snapshot));
                 statement.executeUpdate();
             }
 
             for(ChannelTag tag: channel.summaryTags())
             {
-                upsertChannelTagSummary(connection, channelId, key, tag,
-                    snapshot.observedAtEpochMilliseconds(), 1);
+                upsertSiteChannelTagSummary(connection, channelId, key, tag,
+                    siteFactTimestamp(channel.tagObservedAtMs().get(tag), snapshot));
             }
         }
     }
@@ -3716,7 +3874,7 @@ public class ReceiverActivitySchema
             return;
         }
 
-        int channelId = selectReceiverChannelId(connection, fact.configurationId());
+        long channelId = selectReceiverChannelId(connection, fact.configurationId());
         String channelKey = lcn.channelKey();
         boolean tdma = fact.tdma();
 
@@ -3734,7 +3892,7 @@ public class ReceiverActivitySchema
                 observation_count = p25_site_channel_summary.observation_count + 1
             """))
         {
-            statement.setInt(1, channelId);
+            statement.setLong(1, channelId);
             statement.setString(2, channelKey);
             statement.setString(3, channelKey);
             statement.setLong(4, fact.frequencyHertz());
@@ -3749,7 +3907,7 @@ public class ReceiverActivitySchema
             fact.observedAtEpochMilliseconds(), 1);
     }
 
-    private static void upsertChannelTagSummary(Connection connection, int channelId, String channelKey,
+    private static void upsertChannelTagSummary(Connection connection, long channelId, String channelKey,
                                                 ChannelTag tag, long timestamp, int observations)
         throws SQLException
     {
@@ -3762,7 +3920,7 @@ public class ReceiverActivitySchema
                 observation_count = p25_site_channel_tag_summary.observation_count + excluded.observation_count
             """))
         {
-            statement.setInt(1, channelId);
+            statement.setLong(1, channelId);
             statement.setString(2, channelKey);
             statement.setString(3, tag.name());
             statement.setLong(4, timestamp);
@@ -3772,9 +3930,36 @@ public class ReceiverActivitySchema
         }
     }
 
+    private static long siteFactTimestamp(Long observedAt, ReceiverActivityRecords.SiteSnapshot snapshot)
+    {
+        return observedAt != null && observedAt > 0 ? observedAt : snapshot.observedAtEpochMilliseconds();
+    }
+
+    private static void upsertSiteChannelTagSummary(Connection connection, long channelId, String key,
+                                                   ChannelTag tag, long timestamp) throws SQLException
+    {
+        try(PreparedStatement statement = connection.prepareStatement("""
+            INSERT INTO p25_site_channel_tag_summary
+                (channel_id, channel_key, tag, first_seen_ms, last_seen_ms, observation_count)
+            VALUES (?, ?, ?, ?, ?, 1)
+            ON CONFLICT(channel_id, channel_key, tag) DO UPDATE SET
+                last_seen_ms = excluded.last_seen_ms,
+                observation_count = p25_site_channel_tag_summary.observation_count + 1
+            WHERE excluded.last_seen_ms > p25_site_channel_tag_summary.last_seen_ms
+            """))
+        {
+            statement.setLong(1, channelId);
+            statement.setString(2, key);
+            statement.setString(3, tag.name());
+            statement.setLong(4, timestamp);
+            statement.setLong(5, timestamp);
+            statement.executeUpdate();
+        }
+    }
+
     private static void upsertSiteFrequencyBandSummaries(Connection connection,
                                                          ReceiverActivityRecords.SiteSnapshot snapshot,
-                                                         int channelId)
+                                                         long channelId)
         throws SQLException
     {
         if(snapshot.frequencyBands() == null)
@@ -3803,12 +3988,13 @@ public class ReceiverActivitySchema
                     spacing_hz = coalesce(excluded.spacing_hz, p25_site_frequency_band_summary.spacing_hz),
                     transmit_offset_hz = coalesce(excluded.transmit_offset_hz, p25_site_frequency_band_summary.transmit_offset_hz),
                     timeslots = coalesce(excluded.timeslots, p25_site_frequency_band_summary.timeslots)
+                WHERE excluded.last_seen_ms > p25_site_frequency_band_summary.last_seen_ms
                 """))
             {
-                statement.setInt(1, channelId);
+                statement.setLong(1, channelId);
                 statement.setInt(2, band.band());
-                statement.setLong(3, snapshot.observedAtEpochMilliseconds());
-                statement.setLong(4, snapshot.observedAtEpochMilliseconds());
+                statement.setLong(3, siteFactTimestamp(band.observedAtMs(), snapshot));
+                statement.setLong(4, siteFactTimestamp(band.observedAtMs(), snapshot));
                 setBoolean(statement, 5, band.tdma());
                 setLong(statement, 6, band.base());
                 setInteger(statement, 7, band.bandwidth());
@@ -3821,7 +4007,7 @@ public class ReceiverActivitySchema
     }
 
     private static void upsertSiteNeighborSummaries(Connection connection,
-                                                    ReceiverActivityRecords.SiteSnapshot snapshot, int channelId)
+                                                    ReceiverActivityRecords.SiteSnapshot snapshot, long channelId)
         throws SQLException
     {
         if(snapshot.neighborSites() == null)
@@ -3854,9 +4040,10 @@ public class ReceiverActivitySchema
                     status = coalesce(excluded.status, p25_site_neighbor_summary.status),
                     last_seen_ms = excluded.last_seen_ms,
                     observation_count = p25_site_neighbor_summary.observation_count + 1
+                WHERE excluded.last_seen_ms > p25_site_neighbor_summary.last_seen_ms
                 """))
             {
-                statement.setInt(1, channelId);
+                statement.setLong(1, channelId);
                 statement.setString(2, key);
                 setInteger(statement, 3, neighbor.system());
                 setInteger(statement, 4, neighbor.rfss());
@@ -3866,8 +4053,8 @@ public class ReceiverActivitySchema
                 setLong(statement, 8, neighbor.downlink());
                 setLong(statement, 9, neighbor.uplink());
                 statement.setString(10, neighbor.status());
-                statement.setLong(11, snapshot.observedAtEpochMilliseconds());
-                statement.setLong(12, snapshot.observedAtEpochMilliseconds());
+                statement.setLong(11, siteFactTimestamp(neighbor.observedAtMs(), snapshot));
+                statement.setLong(12, siteFactTimestamp(neighbor.observedAtMs(), snapshot));
                 statement.executeUpdate();
             }
         }
@@ -3875,7 +4062,7 @@ public class ReceiverActivitySchema
 
     private static void upsertForeignSystemBandSummaries(Connection connection,
                                                          ReceiverActivityRecords.SiteSnapshot snapshot,
-                                                         int channelId)
+                                                         long channelId)
         throws SQLException
     {
         for(P25NetworkConfigurationSnapshot.ForeignSystemBand band: list(snapshot.foreignSystemBands()))
@@ -3898,18 +4085,19 @@ public class ReceiverActivitySchema
                         p25_foreign_system_band_summary.transmit_offset_hz),
                     last_seen_ms = excluded.last_seen_ms,
                     observation_count = p25_foreign_system_band_summary.observation_count + 1
+                WHERE excluded.last_seen_ms > p25_foreign_system_band_summary.last_seen_ms
                 """))
             {
                 setForeignSystemBand(statement, channelId, band);
-                statement.setLong(9, snapshot.observedAtEpochMilliseconds());
-                statement.setLong(10, snapshot.observedAtEpochMilliseconds());
+                statement.setLong(9, siteFactTimestamp(band.observedAtMs(), snapshot));
+                statement.setLong(10, siteFactTimestamp(band.observedAtMs(), snapshot));
                 statement.executeUpdate();
             }
         }
     }
 
     private static void upsertSitePatchSummaries(Connection connection,
-                                                 ReceiverActivityRecords.SiteSnapshot snapshot, int channelId)
+                                                 ReceiverActivityRecords.SiteSnapshot snapshot, long channelId)
         throws SQLException
     {
         if(snapshot.patchGroups() == null)
@@ -3932,13 +4120,14 @@ public class ReceiverActivitySchema
                     version = coalesce(excluded.version, p25_site_patch_group_summary.version),
                     last_seen_ms = excluded.last_seen_ms,
                     observation_count = p25_site_patch_group_summary.observation_count + 1
+                WHERE excluded.last_seen_ms > p25_site_patch_group_summary.last_seen_ms
                 """))
             {
-                statement.setInt(1, channelId);
+                statement.setLong(1, channelId);
                 statement.setInt(2, patchGroup.localPatchGroupId());
                 setInteger(statement, 3, patchGroup.version());
-                statement.setLong(4, snapshot.observedAtEpochMilliseconds());
-                statement.setLong(5, snapshot.observedAtEpochMilliseconds());
+                statement.setLong(4, siteFactTimestamp(patchGroup.observedAtMs(), snapshot));
+                statement.setLong(5, siteFactTimestamp(patchGroup.observedAtMs(), snapshot));
                 statement.executeUpdate();
             }
 
@@ -3948,7 +4137,7 @@ public class ReceiverActivitySchema
     }
 
     private static void upsertSitePatchTalkgroupSummaries(Connection connection,
-        ReceiverActivityRecords.SiteSnapshot snapshot, int channelId,
+        ReceiverActivityRecords.SiteSnapshot snapshot, long channelId,
         P25NetworkConfigurationSnapshot.PatchGroup patchGroup)
         throws SQLException
     {
@@ -3972,20 +4161,21 @@ public class ReceiverActivitySchema
                 ON CONFLICT(channel_id, local_patch_group_id, local_talkgroup_id) DO UPDATE SET
                     last_seen_ms = excluded.last_seen_ms,
                     observation_count = p25_site_patch_group_talkgroup_summary.observation_count + 1
+                WHERE excluded.last_seen_ms > p25_site_patch_group_talkgroup_summary.last_seen_ms
                 """))
             {
-                statement.setInt(1, channelId);
+                statement.setLong(1, channelId);
                 statement.setInt(2, patchGroup.localPatchGroupId());
                 statement.setInt(3, talkgroup);
-                statement.setLong(4, snapshot.observedAtEpochMilliseconds());
-                statement.setLong(5, snapshot.observedAtEpochMilliseconds());
+                statement.setLong(4, siteFactTimestamp(patchGroup.observedAtMs(), snapshot));
+                statement.setLong(5, siteFactTimestamp(patchGroup.observedAtMs(), snapshot));
                 statement.executeUpdate();
             }
         }
     }
 
     private static void upsertSitePatchRadioSummaries(Connection connection,
-        ReceiverActivityRecords.SiteSnapshot snapshot, int channelId,
+        ReceiverActivityRecords.SiteSnapshot snapshot, long channelId,
         P25NetworkConfigurationSnapshot.PatchGroup patchGroup)
         throws SQLException
     {
@@ -4009,19 +4199,20 @@ public class ReceiverActivitySchema
                 ON CONFLICT(channel_id, local_patch_group_id, local_radio_id) DO UPDATE SET
                     last_seen_ms = excluded.last_seen_ms,
                     observation_count = p25_site_patch_group_radio_summary.observation_count + 1
+                WHERE excluded.last_seen_ms > p25_site_patch_group_radio_summary.last_seen_ms
                 """))
             {
-                statement.setInt(1, channelId);
+                statement.setLong(1, channelId);
                 statement.setInt(2, patchGroup.localPatchGroupId());
                 statement.setInt(3, radio);
-                statement.setLong(4, snapshot.observedAtEpochMilliseconds());
-                statement.setLong(5, snapshot.observedAtEpochMilliseconds());
+                statement.setLong(4, siteFactTimestamp(patchGroup.observedAtMs(), snapshot));
+                statement.setLong(5, siteFactTimestamp(patchGroup.observedAtMs(), snapshot));
                 statement.executeUpdate();
             }
         }
     }
 
-    private static SiteSnapshotState siteSnapshotState(Connection connection, int channelId)
+    private static SiteSnapshotState siteSnapshotState(Connection connection, long channelId)
         throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement(
@@ -4031,7 +4222,7 @@ public class ReceiverActivitySchema
             WHERE site.channel_id = ?
             """))
         {
-            statement.setInt(1, channelId);
+            statement.setLong(1, channelId);
 
             try(ResultSet resultSet = statement.executeQuery())
             {
@@ -4070,11 +4261,10 @@ public class ReceiverActivitySchema
     }
 
     private static void replaceCurrentSiteFacts(Connection connection, ReceiverActivityRecords.SiteSnapshot snapshot,
-                                                int channelId, Map<String,SiteChannelEvidence> channels)
+                                                long channelId, Map<String,SiteChannelEvidence> channels)
         throws SQLException
     {
         clearCurrentSiteFacts(connection, channelId);
-        long timestamp = snapshot.observedAtEpochMilliseconds();
 
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO p25_site_channel
@@ -4093,7 +4283,7 @@ public class ReceiverActivitySchema
             for(Map.Entry<String,SiteChannelEvidence> entry: channels.entrySet())
             {
                 SiteChannelEvidence channel = entry.getValue();
-                statement.setInt(1, channelId);
+                statement.setLong(1, channelId);
                 statement.setString(2, entry.getKey());
                 statement.setString(3, channel.descriptor());
                 setLong(statement, 4, channel.downlink());
@@ -4101,7 +4291,7 @@ public class ReceiverActivitySchema
                 setBoolean(statement, 6, channel.tdma());
                 setInteger(statement, 7, channel.timeslots());
                 statement.setString(8, channel.callsign());
-                statement.setLong(9, timestamp);
+                statement.setLong(9, siteFactTimestamp(channel.observedAtMs(), snapshot));
                 statement.addBatch();
             }
 
@@ -4117,10 +4307,10 @@ public class ReceiverActivitySchema
             {
                 for(ChannelTag tag: entry.getValue().currentTags())
                 {
-                    statement.setInt(1, channelId);
+                    statement.setLong(1, channelId);
                     statement.setString(2, entry.getKey());
                     statement.setString(3, tag.name());
-                    statement.setLong(4, timestamp);
+                    statement.setLong(4, siteFactTimestamp(entry.getValue().tagObservedAtMs().get(tag.asHistoricalEvidence()), snapshot));
                     statement.addBatch();
                 }
             }
@@ -4138,7 +4328,7 @@ public class ReceiverActivitySchema
             {
                 if(band != null && band.band() != null)
                 {
-                    statement.setInt(1, channelId);
+                    statement.setLong(1, channelId);
                     statement.setInt(2, band.band());
                     setBoolean(statement, 3, band.tdma());
                     setLong(statement, 4, band.base());
@@ -4146,7 +4336,7 @@ public class ReceiverActivitySchema
                     setLong(statement, 6, band.spacing());
                     setLong(statement, 7, band.transmitOffset());
                     setInteger(statement, 8, band.timeslots());
-                    statement.setLong(9, timestamp);
+                    statement.setLong(9, siteFactTimestamp(band.observedAtMs(), snapshot));
                     statement.addBatch();
                 }
             }
@@ -4167,7 +4357,7 @@ public class ReceiverActivitySchema
 
                 if(key != null)
                 {
-                    statement.setInt(1, channelId);
+                    statement.setLong(1, channelId);
                     statement.setString(2, key);
                     setInteger(statement, 3, neighbor.system());
                     setInteger(statement, 4, neighbor.rfss());
@@ -4177,7 +4367,7 @@ public class ReceiverActivitySchema
                     setLong(statement, 8, neighbor.downlink());
                     setLong(statement, 9, neighbor.uplink());
                     statement.setString(10, neighbor.status());
-                    statement.setLong(11, timestamp);
+                    statement.setLong(11, siteFactTimestamp(neighbor.observedAtMs(), snapshot));
                     statement.addBatch();
                 }
             }
@@ -4197,7 +4387,7 @@ public class ReceiverActivitySchema
                 if(isValidForeignSystemBand(band))
                 {
                     setForeignSystemBand(statement, channelId, band);
-                    statement.setLong(9, timestamp);
+                    statement.setLong(9, siteFactTimestamp(band.observedAtMs(), snapshot));
                     statement.addBatch();
                 }
             }
@@ -4225,20 +4415,20 @@ public class ReceiverActivitySchema
                     continue;
                 }
 
-                group.setInt(1, channelId);
+                group.setLong(1, channelId);
                 group.setInt(2, patch.localPatchGroupId());
                 setInteger(group, 3, patch.version());
-                group.setLong(4, timestamp);
+                group.setLong(4, siteFactTimestamp(patch.observedAtMs(), snapshot));
                 group.addBatch();
 
                 for(Integer member: list(patch.localTalkgroupIds()))
                 {
                     if(member != null)
                     {
-                        talkgroup.setInt(1, channelId);
+                        talkgroup.setLong(1, channelId);
                         talkgroup.setInt(2, patch.localPatchGroupId());
                         talkgroup.setInt(3, member);
-                        talkgroup.setLong(4, timestamp);
+                        talkgroup.setLong(4, siteFactTimestamp(patch.observedAtMs(), snapshot));
                         talkgroup.addBatch();
                     }
                 }
@@ -4247,10 +4437,10 @@ public class ReceiverActivitySchema
                 {
                     if(member != null)
                     {
-                        radio.setInt(1, channelId);
+                        radio.setLong(1, channelId);
                         radio.setInt(2, patch.localPatchGroupId());
                         radio.setInt(3, member);
-                        radio.setLong(4, timestamp);
+                        radio.setLong(4, siteFactTimestamp(patch.observedAtMs(), snapshot));
                         radio.addBatch();
                     }
                 }
@@ -4262,7 +4452,7 @@ public class ReceiverActivitySchema
         }
     }
 
-    private static void clearCurrentSiteFacts(Connection connection, int channelId) throws SQLException
+    private static void clearCurrentSiteFacts(Connection connection, long channelId) throws SQLException
     {
         for(String table: List.of("p25_site_patch_group_radio", "p25_site_patch_group_talkgroup",
             "p25_site_patch_group", "p25_site_neighbor", "p25_foreign_system_band", "p25_site_frequency_band",
@@ -4270,28 +4460,17 @@ public class ReceiverActivitySchema
         {
             try(PreparedStatement statement = connection.prepareStatement("DELETE FROM " + table + " WHERE channel_id = ?"))
             {
-                statement.setInt(1, channelId);
+                statement.setLong(1, channelId);
                 statement.executeUpdate();
             }
         }
     }
 
     private static void confirmCurrentSiteFacts(Connection connection, ReceiverActivityRecords.SiteSnapshot snapshot,
-                                                int channelId)
+                                                long channelId)
         throws SQLException
     {
-        for(String table: List.of("p25_site_patch_group_radio", "p25_site_patch_group_talkgroup",
-            "p25_site_patch_group", "p25_site_neighbor", "p25_foreign_system_band", "p25_site_frequency_band",
-            "p25_site_channel_tag", "p25_site_channel"))
-        {
-            try(PreparedStatement statement = connection.prepareStatement(
-                "UPDATE " + table + " SET confirmed_at_ms = ? WHERE channel_id = ?"))
-            {
-                statement.setLong(1, snapshot.observedAtEpochMilliseconds());
-                statement.setInt(2, channelId);
-                statement.executeUpdate();
-            }
-        }
+        replaceCurrentSiteFacts(connection, snapshot, channelId, mergeSiteChannels(snapshot));
     }
 
     private static <T> List<T> list(List<T> values)
@@ -4307,11 +4486,11 @@ public class ReceiverActivitySchema
             band.channelType() != null && band.channelType() >= 0 && band.channelType() <= 5;
     }
 
-    private static void setForeignSystemBand(PreparedStatement statement, int channelId,
+    private static void setForeignSystemBand(PreparedStatement statement, long channelId,
                                              P25NetworkConfigurationSnapshot.ForeignSystemBand band)
         throws SQLException
     {
-        statement.setInt(1, channelId);
+        statement.setLong(1, channelId);
         statement.setInt(2, band.wacn());
         statement.setInt(3, band.system());
         statement.setInt(4, band.band());
@@ -4321,7 +4500,7 @@ public class ReceiverActivitySchema
         setLong(statement, 8, band.transmitOffset());
     }
 
-    private static int selectReceiverChannelId(Connection connection, String configurationId) throws SQLException
+    private static long selectReceiverChannelId(Connection connection, String configurationId) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement(
             "SELECT id FROM receiver_channel WHERE configuration_id = ?"))
@@ -4332,7 +4511,7 @@ public class ReceiverActivitySchema
             {
                 if(resultSet.next())
                 {
-                    return resultSet.getInt(1);
+                    return resultSet.getLong(1);
                 }
             }
         }
@@ -4365,11 +4544,11 @@ public class ReceiverActivitySchema
             try(ResultSet resultSet = statement.executeQuery())
             {
                 return resultSet.next() ?
-                    new ReceiverChannelState(resultSet.getInt("id"),
+                    new ReceiverChannelState(resultSet.getLong("id"),
                         receiverKindCode(resultSet.getString("channel_kind"),
                             resultSet.getString("decoder_type")),
                         protocolCodeForDecoder(resultSet.getString("decoder_type")),
-                        nullableInteger(resultSet, "radio_system_id"),
+                        nullableLong(resultSet, "radio_system_id"),
                         nullableInteger(resultSet, "p25_wacn"), nullableInteger(resultSet, "p25_system_id"),
                         resultSet.getLong("first_seen_ms"),
                         resultSet.getLong("last_seen_ms"),
@@ -4378,12 +4557,12 @@ public class ReceiverActivitySchema
         }
     }
 
-    private static int clearP25SiteProjection(Connection connection, int channelId) throws SQLException
+    private static int clearP25SiteProjection(Connection connection, long channelId) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement(
             "DELETE FROM p25_site_snapshot WHERE channel_id = ?"))
         {
-            statement.setInt(1, channelId);
+            statement.setLong(1, channelId);
             return statement.executeUpdate();
         }
     }
@@ -4412,8 +4591,8 @@ public class ReceiverActivitySchema
                 {
                     long primaryFrequency = resultSet.getLong("primary_frequency_hz");
                     Long nullablePrimaryFrequency = resultSet.wasNull() ? null : primaryFrequency;
-                    return new ReceiverChannelIdentity(resultSet.getInt("id"),
-                        nullableInteger(resultSet, "radio_system_id"),
+                    return new ReceiverChannelIdentity(resultSet.getLong("id"),
+                        nullableLong(resultSet, "radio_system_id"),
                         receiverKindCode(resultSet.getString("channel_kind"),
                             resultSet.getString("decoder_type")),
                         protocolCodeForDecoder(resultSet.getString("decoder_type")),
@@ -4948,14 +5127,14 @@ public class ReceiverActivitySchema
         return merged;
     }
 
-    private record ReceiverChannelIdentity(int channelId, Integer radioSystemId, int kindCode, int protocolCode,
+    private record ReceiverChannelIdentity(long channelId, Long radioSystemId, int kindCode, int protocolCode,
                                            Long primaryFrequencyHertz, long firstSeenEpochMilliseconds,
                                            Long radioSystemAssignedAtEpochMilliseconds,
                                            Integer p25Wacn, Integer p25SystemId)
     {
     }
 
-    private record ReceiverChannelState(int channelId, int kindCode, int protocolCode, Integer radioSystemId,
+    private record ReceiverChannelState(long channelId, int kindCode, int protocolCode, Long radioSystemId,
                                         Integer p25Wacn, Integer p25SystemId,
                                         long firstSeenEpochMilliseconds, long lastSeenEpochMilliseconds,
                                         Long radioSystemAssignedAtEpochMilliseconds)
@@ -4967,7 +5146,7 @@ public class ReceiverActivitySchema
     }
 
     private record SiteChannelEvidence(String descriptor, Long downlink, Long uplink, Boolean tdma, Integer timeslots,
-                                       String callsign, Set<ChannelTag> tags)
+                                       String callsign, Set<ChannelTag> tags, Long observedAtMs, Map<ChannelTag,Long> tagObservedAtMs)
     {
         private SiteChannelEvidence
         {
@@ -4987,7 +5166,10 @@ public class ReceiverActivitySchema
             return new SiteChannelEvidence(channel != null ? channel.descriptor() : null,
                 channel != null ? channel.downlink() : null, channel != null ? channel.uplink() : null,
                 channel != null ? channel.tdma() : null, channel != null ? channel.timeslots() : null,
-                channel != null ? channel.callsign() : null, tags);
+                channel != null ? channel.callsign() : null, tags,
+                channel != null ? channel.observedAtMs() : null,
+                tag != null ? Map.of(tag.asHistoricalEvidence(),
+                    channel.observedAtMs() != null ? channel.observedAtMs() : 0L) : Map.of());
         }
 
         private SiteChannelEvidence merge(SiteChannelEvidence other)
@@ -4999,9 +5181,13 @@ public class ReceiverActivitySchema
                 firstNonNull(tdma, other.tdma);
             Integer mergedTimeslots = timeslots != null && other.timeslots != null ?
                 Math.max(timeslots, other.timeslots) : firstNonNull(timeslots, other.timeslots);
+            Map<ChannelTag,Long> mergedTimes = new LinkedHashMap<>(tagObservedAtMs);
+            other.tagObservedAtMs.forEach((tag, time) -> mergedTimes.merge(tag, time, Math::max));
+            Long newest = observedAtMs == null ? other.observedAtMs : other.observedAtMs == null ? observedAtMs :
+                Math.max(observedAtMs, other.observedAtMs);
             return new SiteChannelEvidence(firstNonBlank(descriptor, other.descriptor),
                 firstNonNull(downlink, other.downlink), firstNonNull(uplink, other.uplink), mergedTdma,
-                mergedTimeslots, firstNonBlank(callsign, other.callsign), mergedTags);
+                mergedTimeslots, firstNonBlank(callsign, other.callsign), mergedTags, newest, Map.copyOf(mergedTimes));
         }
 
         private List<String> conflictsWith(SiteChannelEvidence other)

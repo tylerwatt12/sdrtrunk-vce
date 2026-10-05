@@ -36,7 +36,7 @@ import java.util.Map;
 public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
-    public static final int CURRENT_VERSION = 33;
+    public static final int CURRENT_VERSION = 34;
     static final String RETIRED_TRUNKED_IDENTITY_BOUNDARY_KEY = "trunked_identity_metrics_started_at_ms";
     static final List<String> RETIRED_SUBSYSTEM_VERSION_KEYS = List.of(
         "alias_schema_version", "configuration_schema_version", "settings_schema_version", "icon_schema_version",
@@ -408,11 +408,20 @@ public final class DatabaseFormatCatalog
             "Add one sparse covering index for qualified source Working-ID alias evidence",
             "Keep every administrator-owned configuration, credential, and personal setting unchanged"));
 
+    private static final FormatDescriptor FORMAT_34 = new FormatDescriptor(34, "receiver-evidence-accounting-v2",
+        "Corrected prospective receiver identity and observation accounting", FORMAT_33_FINGERPRINT, Map.of(),
+        List.of("main format 34"),
+        "src/test/java/io/github/dsheirer/database/upgrade/Format34TestDatabase.java", List.of(
+            "Preserve every administrator-owned configuration, credential, and personal setting unchanged",
+            "Preserve retained history without guessing missing radio attribution or reception timestamps",
+            "Apply corrected identity types, late conventional attribution, and fresh site-fact semantics to new observations",
+            "Keep database-generated references at their full SQLite width and classify future statistics drops"));
+
     private static final List<FormatDescriptor> FORMATS =
         List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7, FORMAT_8, FORMAT_9,
             FORMAT_10, FORMAT_11, FORMAT_12, FORMAT_13, FORMAT_14, FORMAT_15, FORMAT_16, FORMAT_17, FORMAT_18,
             FORMAT_19, FORMAT_20, FORMAT_21, FORMAT_22, FORMAT_23, FORMAT_24, FORMAT_25, FORMAT_26, FORMAT_27,
-            FORMAT_28, FORMAT_29, FORMAT_30, FORMAT_31, FORMAT_32, FORMAT_33);
+            FORMAT_28, FORMAT_29, FORMAT_30, FORMAT_31, FORMAT_32, FORMAT_33, FORMAT_34);
 
     private static final Map<Integer,FormatDescriptor> BY_VERSION = FORMATS.stream().collect(
         java.util.stream.Collectors.toUnmodifiableMap(FormatDescriptor::version, descriptor -> descriptor));
@@ -518,7 +527,8 @@ public final class DatabaseFormatCatalog
             return new DetectedFormat(descriptor, true);
         }
 
-        if(FORMAT_25_FINGERPRINT.equals(fingerprint) || FORMAT_28_FINGERPRINT.equals(fingerprint))
+        if(FORMAT_25_FINGERPRINT.equals(fingerprint) || FORMAT_28_FINGERPRINT.equals(fingerprint) ||
+            FORMAT_33_FINGERPRINT.equals(fingerprint))
         {
             //These adjacent semantic formats intentionally have identical DDL, preference generations, and can have
             //identical preserved row content.
@@ -593,7 +603,7 @@ public final class DatabaseFormatCatalog
     /** Current catalog descriptor. */
     public static FormatDescriptor current()
     {
-        return FORMAT_33;
+        return FORMAT_34;
     }
 
     /** Ordered manifest used by completeness tests and migration UX. */
@@ -883,7 +893,7 @@ public final class DatabaseFormatCatalog
             case 12, 13, 14 -> 5;
             case 15, 16, 17, 18, 19, 20, 21, 22 -> 6;
             case 23, 24, 25, 26, 27, 28, 29, 30 -> 7;
-            case 31, 32, 33 -> 8;
+            case 31, 32, 33, 34 -> 8;
             default -> throw new IllegalArgumentException("No web preference version for database format " +
                 descriptor.version());
         };

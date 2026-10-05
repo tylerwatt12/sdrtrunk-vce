@@ -9,12 +9,20 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.identifier.MutableIdentifierCollection;
+import io.github.dsheirer.identifier.configuration.ChannelConfigurationIdentifier;
+import io.github.dsheirer.map.MapSnapshotService;
+import io.github.dsheirer.module.decode.event.DecodeEventType;
+import io.github.dsheirer.module.decode.event.PlottableDecodeEvent;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.Statement;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
+import org.jdesktop.swingx.mapviewer.GeoPosition;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -103,6 +111,84 @@ class StatsSystemNameResolverTest
             assertEquals(GCRCN, row.path("serving_system").path("key").asText());
             assertEquals(1103, row.path("radio_id").asInt());
             assertEquals(identifier, row.path("identifier").asText());
+        }
+    }
+
+    @Test
+    void legacyDecimalRadioTextKeepsItsHomeSystem() throws Exception
+    {
+        for(String identifier: List.of("781824.840.1103", "ISSI 781824.840.1103",
+            "ROAM 77(781824.840.1103)"))
+        {
+            JsonNode row = mNames.enrich(Map.of("configuration_id", CHANNEL,
+                "identifier", identifier, "positions", List.of()));
+            assertEquals("Ohio MARCS-IP", row.path("home_system_name").asText(), identifier);
+            assertEquals(1103, row.path("radio_id").asInt(), identifier);
+            assertEquals(identifier, row.path("identifier").asText());
+        }
+    }
+
+    @Test
+    void ambiguousNumericTuplesNeedOriginFactsEvenWhenBothSystemsAreKnown() throws Exception
+    {
+        seedAmbiguousHomeSystems();
+        String identifier = "00001.018.1103";
+        JsonNode ambiguous = mNames.enrich(Map.of("configuration_id", CHANNEL,
+            "identifier", identifier, "positions", List.of()));
+        assertFalse(ambiguous.has("home_system_name"));
+        assertFalse(ambiguous.has("home_wacn"));
+        assertEquals(identifier, ambiguous.path("identifier").asText());
+
+        JsonNode legacy = mNames.enrich(Map.of("configuration_id", CHANNEL, "identifier", identifier,
+            "positions", List.of(), "home_wacn", 1, "home_system_id", 18, "radio_id", 1103));
+        assertEquals("Decimal home", legacy.path("home_system_name").asText());
+        assertEquals("p25:00001:012", legacy.path("home_system").path("key").asText());
+
+        String explicitCurrent = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
+            77, 1, 0x018, 1103).toString();
+        assertEquals(identifier + " (Working ID 77)", explicitCurrent);
+        JsonNode current = mNames.enrich(Map.of("configuration_id", CHANNEL,
+            "identifier", explicitCurrent, "positions", List.of()));
+        assertEquals("Hex home", current.path("home_system_name").asText());
+        assertEquals("p25:00001:018", current.path("home_system").path("key").asText());
+    }
+
+    @Test
+    void typedMapOriginResolvesNumericOnlyHexHomeWithoutParsingItsDisplay() throws Exception
+    {
+        seedAmbiguousHomeSystems();
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(ChannelConfigurationIdentifier.create(CHANNEL));
+        identifiers.update(APCO25FullyQualifiedRadioIdentifier.createFrom(1103, 1, 0x018, 1103));
+        PlottableDecodeEvent event = PlottableDecodeEvent.plottableBuilder(DecodeEventType.GPS, 1_000)
+            .identifiers(identifiers).location(new GeoPosition(40, -83)).build();
+        try(MapSnapshotService service = new MapSnapshotService((AliasModel)null))
+        {
+            service.receive(event);
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+            while(service.snapshot().entities().isEmpty() && System.nanoTime() < deadline) Thread.sleep(10);
+            assertEquals(1, service.snapshot().entities().size());
+            MapSnapshotService.Entity entity = service.snapshot().entities().getFirst();
+            assertEquals("00001.018.1103", entity.identifier());
+            assertEquals(1, entity.homeWacn());
+            assertEquals(24, entity.homeSystemId());
+            JsonNode row = mNames.enrich(service.snapshot()).path("entities").get(0);
+            assertEquals("GCRCN", row.path("system_name").asText());
+            assertEquals("Hex home", row.path("home_system_name").asText());
+            assertEquals("p25:00001:018", row.path("home_system").path("key").asText());
+            assertEquals(1103, row.path("radio_id").asInt());
+            assertEquals(entity.identifier(), row.path("identifier").asText());
+        }
+    }
+
+    private void seedAmbiguousHomeSystems() throws Exception
+    {
+        try(Statement statement = mConnection.createStatement())
+        {
+            statement.execute("INSERT INTO radio_system VALUES " +
+                "(7,'p25:00001:018','hex-home',1),(8,'p25:00001:012','decimal-home',1)");
+            statement.execute("INSERT INTO configuration_channel VALUES " +
+                "('hex-home','Home','','Hex home'),('decimal-home','Home','','Decimal home')");
         }
     }
 

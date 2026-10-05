@@ -103,6 +103,21 @@ class ManagedRecordingLabelsTest
         assertEquals("Metro System", missingOrigin.get("system_name"));
         assertEquals("Metro System", missingOrigin.get("source_home_system_name"));
         assertEquals("p25:00001:001", ((Map<?,?>)missingOrigin.get("source_home_system")).get("key"));
+
+        long largeAliasListId = 2_147_483_648L;
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE alias_list SET id=" + largeAliasListId + " WHERE id=7");
+            statement.executeUpdate("UPDATE alias SET alias_list_id=" + largeAliasListId);
+            statement.executeUpdate("UPDATE configuration_channel SET alias_list_id=" + largeAliasListId);
+        }
+        Map<String,Object> largeListCall = labels.decorate(List.of(call)).getFirst();
+        assertEquals("Fire Dispatch", largeListCall.get("group_alias"));
+        assertEquals("Engine 1", largeListCall.get("source_alias"));
+        Map<String,Object> withoutChannel = labels.decorate(List.of(Map.of(
+            "alias_list_id", largeAliasListId, "protocol", "APCO25", "talkgroup_id", 1201))).getFirst();
+        assertEquals("Fire Dispatch", withoutChannel.get("group_alias"));
     }
 
     @Test

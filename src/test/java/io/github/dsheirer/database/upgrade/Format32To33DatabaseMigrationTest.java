@@ -72,7 +72,7 @@ class Format32To33DatabaseMigrationTest
 
                 DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
                 connection.commit();
-                assertEquals(1, report.steps().size());
+                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 32, report.steps().size());
                 assertEquals("format-32-to-33", report.steps().getFirst().id());
                 assertEquals(1, report.steps().getFirst().effects().getFirst().affectedRows());
                 assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));

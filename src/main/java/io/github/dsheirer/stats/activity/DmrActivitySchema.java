@@ -234,7 +234,7 @@ public final class DmrActivitySchema
             index("timeslot", false), index("radio_id", false)));
     }
 
-    static void recordCompletedCall(Connection connection, int channelId,
+    static void recordCompletedCall(Connection connection, long channelId,
                                     ReceiverActivityRecords.DmrConventionalCall call) throws SQLException
     {
         requireValid(channelId, call);
@@ -325,7 +325,7 @@ public final class DmrActivitySchema
         return deleted;
     }
 
-    private static void upsertTalkgroup(Connection connection, int channelId,
+    private static void upsertTalkgroup(Connection connection, long channelId,
                                         ReceiverActivityRecords.DmrConventionalCall call, long timestamp)
         throws SQLException
     {
@@ -345,7 +345,7 @@ public final class DmrActivitySchema
                     ELSE dmr_conventional_talkgroup_summary.last_source_radio_id END
             """))
         {
-            statement.setInt(1, channelId);
+            statement.setLong(1, channelId);
             statement.setLong(2, call.frequencyHertz());
             statement.setInt(3, call.timeslot());
             statement.setInt(4, call.talkgroupId());
@@ -357,7 +357,7 @@ public final class DmrActivitySchema
         }
     }
 
-    private static void upsertRadio(Connection connection, int channelId,
+    private static void upsertRadio(Connection connection, long channelId,
                                     ReceiverActivityRecords.DmrConventionalCall call, int radioId,
                                     boolean source, boolean target, long timestamp) throws SQLException
     {
@@ -394,7 +394,7 @@ public final class DmrActivitySchema
                     ELSE dmr_conventional_radio_summary.last_peer_radio_id END
             """))
         {
-            statement.setInt(1, channelId);
+            statement.setLong(1, channelId);
             statement.setLong(2, call.frequencyHertz());
             statement.setInt(3, call.timeslot());
             statement.setInt(4, radioId);
@@ -411,7 +411,7 @@ public final class DmrActivitySchema
         }
     }
 
-    private static boolean canAdmitTalkgroup(Connection connection, int channelId,
+    private static boolean canAdmitTalkgroup(Connection connection, long channelId,
                                              ReceiverActivityRecords.DmrConventionalCall call) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
@@ -419,7 +419,7 @@ public final class DmrActivitySchema
             WHERE channel_id = ? AND frequency_hz = ? AND timeslot = ? AND talkgroup_id = ?
             """))
         {
-            statement.setInt(1, channelId);
+            statement.setLong(1, channelId);
             statement.setLong(2, call.frequencyHertz());
             statement.setInt(3, call.timeslot());
             statement.setInt(4, call.talkgroupId());
@@ -436,7 +436,7 @@ public final class DmrActivitySchema
         return channelRowCountBelow(connection, TALKGROUP_TABLE, channelId, MAXIMUM_TALKGROUPS_PER_CHANNEL);
     }
 
-    private static boolean canAdmitRadio(Connection connection, int channelId,
+    private static boolean canAdmitRadio(Connection connection, long channelId,
                                          ReceiverActivityRecords.DmrConventionalCall call, int radioId)
         throws SQLException
     {
@@ -445,7 +445,7 @@ public final class DmrActivitySchema
             WHERE channel_id = ? AND frequency_hz = ? AND timeslot = ? AND radio_id = ?
             """))
         {
-            statement.setInt(1, channelId);
+            statement.setLong(1, channelId);
             statement.setLong(2, call.frequencyHertz());
             statement.setInt(3, call.timeslot());
             statement.setInt(4, radioId);
@@ -462,13 +462,13 @@ public final class DmrActivitySchema
         return channelRowCountBelow(connection, RADIO_TABLE, channelId, MAXIMUM_RADIOS_PER_CHANNEL);
     }
 
-    private static boolean channelRowCountBelow(Connection connection, String table, int channelId, int maximumRows)
+    private static boolean channelRowCountBelow(Connection connection, String table, long channelId, int maximumRows)
         throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement(
             "SELECT count(*) FROM " + table + " WHERE channel_id = ?"))
         {
-            statement.setInt(1, channelId);
+            statement.setLong(1, channelId);
 
             try(ResultSet resultSet = statement.executeQuery())
             {
@@ -477,7 +477,7 @@ public final class DmrActivitySchema
         }
     }
 
-    private static void requireValid(int channelId, ReceiverActivityRecords.DmrConventionalCall call)
+    private static void requireValid(long channelId, ReceiverActivityRecords.DmrConventionalCall call)
         throws SQLException
     {
         validateCompletedCall(call);

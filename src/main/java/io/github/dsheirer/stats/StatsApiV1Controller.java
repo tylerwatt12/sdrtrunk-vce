@@ -195,7 +195,7 @@ final class StatsApiV1Controller
         }
         else if(segments.size() == 3 && "lists".equals(segments.getFirst()))
         {
-            int aliasListId = pathIdentifier("alias_list_id", segments.get(1));
+            long aliasListId = pathIdentifier("alias_list_id", segments.get(1));
             return switch(segments.get(2))
             {
                 case "overview" -> {
@@ -753,7 +753,7 @@ final class StatsApiV1Controller
         }
     }
 
-    private static int pathIdentifier(String field, String value)
+    private static long pathIdentifier(String field, String value)
     {
         if(value == null || !value.matches("[0-9]+"))
         {
@@ -763,7 +763,7 @@ final class StatsApiV1Controller
 
         try
         {
-            int identifier = Integer.parseInt(value);
+            long identifier = Long.parseLong(value);
 
             if(identifier < 0)
             {

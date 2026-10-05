@@ -22,7 +22,7 @@ package io.github.dsheirer.module.decode.p25.phase1.message.lc.standard;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
-import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.VoiceLinkControlMessage;
 import java.util.Collections;
 import java.util.List;
@@ -74,7 +74,9 @@ public class LCTelephoneInterconnectVoiceChannelUser extends VoiceLinkControlMes
     {
         if(mAddress == null)
         {
-            mAddress = APCO25Talkgroup.create(getInt(ADDRESS));
+            //TIA-102.AABF-A 7.3.6 carries a subscriber Source/Target Address, not a group address.
+            //Retain the endpoint's existing TO placement without inferring the direction of the telephone call.
+            mAddress = APCO25RadioIdentifier.createTo(getInt(ADDRESS));
         }
 
         return mAddress;

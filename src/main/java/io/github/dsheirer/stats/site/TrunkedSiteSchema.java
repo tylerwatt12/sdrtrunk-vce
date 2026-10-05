@@ -315,7 +315,7 @@ public final class TrunkedSiteSchema
         throws SQLException
     {
         requireValid(snapshot);
-        int receiverChannelId = receiverChannelId(connection, snapshot.configurationId());
+        long receiverChannelId = receiverChannelId(connection, snapshot.configurationId());
         SiteState previous = siteState(connection, receiverChannelId);
 
         if(previous != null && (snapshot.observedAtEpochMilliseconds() < previous.lastSeenEpochMilliseconds() ||
@@ -396,12 +396,12 @@ public final class TrunkedSiteSchema
      * saved channel can be reconfigured, so retained facts from an incompatible classification must not be merged
      * into the new evidence.
      */
-    private static void deleteSnapshot(Connection connection, int channelId) throws SQLException
+    private static void deleteSnapshot(Connection connection, long channelId) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement(
             "DELETE FROM trunked_site_snapshot WHERE channel_id = ?"))
         {
-            statement.setInt(1, channelId);
+            statement.setLong(1, channelId);
             statement.executeUpdate();
         }
     }
@@ -411,7 +411,7 @@ public final class TrunkedSiteSchema
      * confirmation advances freshness without inflating the independent-observation counter. Learned traffic,
      * alternate-control, and neighbor facts remain tied to their own observation timestamps.
      */
-    private static void confirmCurrentControls(Connection connection, int channelId, Snapshot snapshot,
+    private static void confirmCurrentControls(Connection connection, long channelId, Snapshot snapshot,
                                                long childRetentionCutoffEpochMilliseconds)
         throws SQLException
     {
@@ -440,7 +440,7 @@ public final class TrunkedSiteSchema
         }
     }
 
-    private static void clearMutableChannelRoles(Connection connection, int channelId) throws SQLException
+    private static void clearMutableChannelRoles(Connection connection, long channelId) throws SQLException
     {
         int mutableRoleFlags = CHANNEL_ROLE_CURRENT_CONTROL | CHANNEL_ROLE_ALTERNATE_CONTROL;
 
@@ -451,7 +451,7 @@ public final class TrunkedSiteSchema
             """))
         {
             statement.setInt(1, ~mutableRoleFlags);
-            statement.setInt(2, channelId);
+            statement.setLong(2, channelId);
             statement.setInt(3, mutableRoleFlags);
             statement.executeUpdate();
         }
@@ -463,7 +463,7 @@ public final class TrunkedSiteSchema
      * been inserted or confirmed above, so its current-control role and freshness are preserved. Unresolved
      * frequencies and placeholders for other frequencies remain intact.
      */
-    private static void reconcileProvisionalChannels(Connection connection, int channelId, Snapshot snapshot)
+    private static void reconcileProvisionalChannels(Connection connection, long channelId, Snapshot snapshot)
         throws SQLException
     {
         Set<Long> resolvedFrequencies = new HashSet<>();
@@ -506,7 +506,7 @@ public final class TrunkedSiteSchema
         {
             for(Long frequency: resolvedFrequencies)
             {
-                statement.setInt(1, channelId);
+                statement.setLong(1, channelId);
                 statement.setInt(2, UNKNOWN);
                 statement.setInt(3, UNKNOWN);
                 statement.setInt(4, UNKNOWN);
@@ -783,7 +783,7 @@ public final class TrunkedSiteSchema
         return value != null && (value < minimum || value > maximum);
     }
 
-    private static int receiverChannelId(Connection connection, String configurationId) throws SQLException
+    private static long receiverChannelId(Connection connection, String configurationId) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement(
             "SELECT id FROM receiver_channel WHERE configuration_id = ?"))
@@ -793,14 +793,14 @@ public final class TrunkedSiteSchema
             {
                 if(resultSet.next())
                 {
-                    return resultSet.getInt(1);
+                    return resultSet.getLong(1);
                 }
             }
         }
         throw new SQLException("No receiver channel exists for configuration [" + configurationId + "]");
     }
 
-    private static SiteState siteState(Connection connection, int channelId) throws SQLException
+    private static SiteState siteState(Connection connection, long channelId) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement(
             """
@@ -810,7 +810,7 @@ public final class TrunkedSiteSchema
             WHERE channel_id = ?
             """))
         {
-            statement.setInt(1, channelId);
+            statement.setLong(1, channelId);
 
             try(ResultSet resultSet = statement.executeQuery())
             {
@@ -831,7 +831,7 @@ public final class TrunkedSiteSchema
             return false;
         }
 
-        int channelId = receiverChannelId(connection, snapshot.configurationId());
+        long channelId = receiverChannelId(connection, snapshot.configurationId());
         return generationChanged(siteState(connection, channelId), snapshot);
     }
 
@@ -848,7 +848,7 @@ public final class TrunkedSiteSchema
                 locationChanged(previous.ran(), snapshot.ran()));
     }
 
-    private static void upsertSite(Connection connection, int channelId, Snapshot snapshot) throws SQLException
+    private static void upsertSite(Connection connection, long channelId, Snapshot snapshot) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO trunked_site_snapshot (
@@ -938,7 +938,7 @@ public final class TrunkedSiteSchema
             """))
         {
             int parameter = 1;
-            statement.setInt(parameter++, channelId);
+            statement.setLong(parameter++, channelId);
             statement.setString(parameter++, snapshot.snapshotHash());
             statement.setInt(parameter++, snapshot.protocolCode());
             statement.setInt(parameter++, snapshot.variantCode());
@@ -964,7 +964,7 @@ public final class TrunkedSiteSchema
         }
     }
 
-    private static void upsertChannel(Connection connection, int channelId, long observedAt, Channel channel)
+    private static void upsertChannel(Connection connection, long channelId, long observedAt, Channel channel)
         throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
@@ -985,7 +985,7 @@ public final class TrunkedSiteSchema
                     CASE WHEN excluded.last_seen_ms > trunked_site_channel_summary.last_seen_ms THEN 1 ELSE 0 END
             """))
         {
-            statement.setInt(1, channelId);
+            statement.setLong(1, channelId);
             statement.setInt(2, known(channel.channelNumber()));
             statement.setInt(3, known(channel.inboundChannelNumber()));
             statement.setInt(4, known(channel.timeslot()));
@@ -998,7 +998,7 @@ public final class TrunkedSiteSchema
         }
     }
 
-    private static void confirmChannel(Connection connection, int channelId, long confirmedAt, Channel channel)
+    private static void confirmChannel(Connection connection, long channelId, long confirmedAt, Channel channel)
         throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
@@ -1012,7 +1012,7 @@ public final class TrunkedSiteSchema
                 last_seen_ms = max(trunked_site_channel_summary.last_seen_ms, excluded.last_seen_ms)
             """))
         {
-            statement.setInt(1, channelId);
+            statement.setLong(1, channelId);
             statement.setInt(2, known(channel.channelNumber()));
             statement.setInt(3, known(channel.inboundChannelNumber()));
             statement.setInt(4, known(channel.timeslot()));
@@ -1025,7 +1025,7 @@ public final class TrunkedSiteSchema
         }
     }
 
-    private static void upsertNeighbor(Connection connection, int channelId, int protocolCode, long observedAt,
+    private static void upsertNeighbor(Connection connection, long channelId, int protocolCode, long observedAt,
                                        Neighbor neighbor) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
@@ -1044,7 +1044,7 @@ public final class TrunkedSiteSchema
                     CASE WHEN excluded.last_seen_ms > trunked_site_neighbor_summary.last_seen_ms THEN 1 ELSE 0 END
             """))
         {
-            statement.setInt(1, channelId);
+            statement.setLong(1, channelId);
             statement.setInt(2, protocolCode);
             statement.setInt(3, neighbor.variantCode());
             statement.setInt(4, neighbor.dmrModelCode());
@@ -1061,7 +1061,7 @@ public final class TrunkedSiteSchema
         }
     }
 
-    private static Set<ChannelKey> channelKeys(Connection connection, int channelId) throws SQLException
+    private static Set<ChannelKey> channelKeys(Connection connection, long channelId) throws SQLException
     {
         Set<ChannelKey> keys = new HashSet<>();
 
@@ -1070,7 +1070,7 @@ public final class TrunkedSiteSchema
             FROM trunked_site_channel_summary WHERE channel_id = ?
             """))
         {
-            statement.setInt(1, channelId);
+            statement.setLong(1, channelId);
 
             try(ResultSet resultSet = statement.executeQuery())
             {
@@ -1085,7 +1085,7 @@ public final class TrunkedSiteSchema
         return keys;
     }
 
-    private static Set<NeighborKey> neighborKeys(Connection connection, int channelId) throws SQLException
+    private static Set<NeighborKey> neighborKeys(Connection connection, long channelId) throws SQLException
     {
         Set<NeighborKey> keys = new HashSet<>();
 
@@ -1095,7 +1095,7 @@ public final class TrunkedSiteSchema
             FROM trunked_site_neighbor_summary WHERE channel_id = ?
             """))
         {
-            statement.setInt(1, channelId);
+            statement.setLong(1, channelId);
 
             try(ResultSet resultSet = statement.executeQuery())
             {

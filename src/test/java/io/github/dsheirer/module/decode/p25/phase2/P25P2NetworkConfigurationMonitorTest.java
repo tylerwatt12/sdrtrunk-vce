@@ -189,6 +189,28 @@ class P25P2NetworkConfigurationMonitorTest
         assertEquals(95, monitor.getSnapshot().siteStatus().microSlots());
     }
 
+    @Test
+    void rejectsImpossibleCalendarAndTimingFieldsWithoutCalendarNormalization()
+    {
+        int offset = MacMessageFactory.DEFAULT_MAC_STRUCTURE_INDEX;
+        CorrectedBinaryMessage message = synchronizationBroadcast(2, 28, 7999).getMessage();
+        message.setInt(31, IntField.range(43 + offset, 47 + offset));
+        assertFalse((new SynchronizationBroadcast(message, offset)).hasValidDate());
+        message.setInt(29, IntField.range(43 + offset, 47 + offset));
+        assertFalse((new SynchronizationBroadcast(message, offset)).hasValidDate());
+        message.setInt(24, IntField.range(32 + offset, 38 + offset));
+        assertTrue((new SynchronizationBroadcast(message, offset)).hasValidDate());
+        message.setInt(31, IntField.range(48 + offset, 52 + offset));
+        assertFalse((new SynchronizationBroadcast(message, offset)).hasValidDate());
+        message.setInt(23, IntField.range(48 + offset, 52 + offset));
+        message.setInt(63, IntField.range(53 + offset, 58 + offset));
+        assertFalse((new SynchronizationBroadcast(message, offset)).hasValidDate());
+        message.setInt(59, IntField.range(53 + offset, 58 + offset));
+        message.setInt(8000, IntField.range(59 + offset, 71 + offset));
+        assertFalse((new SynchronizationBroadcast(message, offset)).hasValidDate());
+        assertFalse((new SynchronizationBroadcast(message, offset)).hasValidMicroSlots());
+    }
+
     private static MacMessage synchronizationBroadcast(int month, int day, int microSlots)
     {
         int offset = MacMessageFactory.DEFAULT_MAC_STRUCTURE_INDEX;

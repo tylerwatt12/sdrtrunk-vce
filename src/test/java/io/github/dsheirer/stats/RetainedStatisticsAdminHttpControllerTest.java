@@ -146,7 +146,7 @@ class RetainedStatisticsAdminHttpControllerTest
 
         RetainedStatisticsCatalog.Page sites = mCatalog.sites("radio_system", SYSTEM, null, 10, 0);
         assertEquals(2, sites.totalCount());
-        assertEquals(RetainedSiteKey.p25(1, 1, 71, 71, 1000),
+        assertEquals(RetainedSiteKey.p25(1, 1, 71, 71L, 1000),
             sites.rows().getFirst().get("site_key"));
         assertEquals(SITE_A, sites.rows().getFirst().get("configuration_id"));
 
@@ -161,7 +161,7 @@ class RetainedStatisticsAdminHttpControllerTest
         JsonNode target = MAPPER.valueToTree(first.rows().getFirst().get("target"));
         assertEquals("scoped_data", target.get("kind").textValue());
         assertEquals(SITE_A, target.get("site_configuration_id").textValue());
-        assertEquals(RetainedSiteKey.p25(1, 1, 71, 71, 1000),
+        assertEquals(RetainedSiteKey.p25(1, 1, 71, 71L, 1000),
             target.get("expected_site_key").textValue());
         assertEquals("851012500", target.get("record_key").textValue());
         assertEquals("frequencies", target.get("data_type").textValue());
@@ -505,7 +505,7 @@ class RetainedStatisticsAdminHttpControllerTest
         String requestId = UUID.randomUUID().toString();
         String body = MAPPER.writeValueAsString(Map.of("request_id", requestId, "target",
             Map.of("kind", "frequency", "site_configuration_id", SITE_A,
-                "expected_site_key", RetainedSiteKey.p25(1, 1, 71, 71, 1000),
+                "expected_site_key", RetainedSiteKey.p25(1, 1, 71, 71L, 1000),
                 "frequency_hz", 851012500)));
         assertEquals(403, send(request(base + "/deletions")
             .header("Origin", mOrigin.toString()).header("Cookie", admin.cookie())
@@ -786,7 +786,7 @@ class RetainedStatisticsAdminHttpControllerTest
         target.put("source_kind", "radio_system");
         target.put("source_key", SYSTEM);
         target.put("site_configuration_id", SITE_A);
-        target.put("expected_site_key", RetainedSiteKey.p25(1, 1, 71, 71, 1000));
+        target.put("expected_site_key", RetainedSiteKey.p25(1, 1, 71, 71L, 1000));
         target.put("data_type", "control_quality");
         target.put("parts", List.of("buckets"));
         return target;

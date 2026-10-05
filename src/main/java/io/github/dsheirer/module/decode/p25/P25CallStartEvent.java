@@ -35,7 +35,7 @@ import java.util.List;
 public record P25CallStartEvent(String configurationId, DecoderType decoderType, DecodeEventType eventType,
                                 long startedAtEpochMilliseconds, List<Identifier> identifiers,
                                 Long frequencyHertz, Integer channelBand, Integer channelNumber, Integer timeslot,
-                                boolean tdma, boolean encryptionConfirmed, String radioSystemKey)
+                                boolean tdma, boolean encryptionConfirmed, String radioSystemKey, String callToken)
 {
     public P25CallStartEvent
     {
@@ -53,9 +53,32 @@ public record P25CallStartEvent(String configurationId, DecoderType decoderType,
     /** Captures all facts before publishing to the asynchronous statistics worker. */
     public P25CallStartEvent(Channel channel, P25ChannelGrantEvent event, String radioSystemKey)
     {
+        this(channel, event, radioSystemKey, null);
+    }
+
+    public P25CallStartEvent(Channel channel, P25ChannelGrantEvent event, String radioSystemKey, String callToken)
+    {
         this(ChannelConfigurationKey.configured(channel), decoderType(channel), eventType(event), start(event),
             identifiers(event), frequency(event), band(event), channelNumber(event), timeslot(event), isTdma(event),
-            encryptionConfirmed(event), radioSystemKey);
+            encryptionConfirmed(event), radioSystemKey, callToken);
+    }
+
+    /** Compatibility for producers that do not publish subsequent conventional call snapshots. */
+    public P25CallStartEvent(String configurationId, DecoderType decoderType, DecodeEventType eventType,
+                             long startedAtEpochMilliseconds, List<Identifier> identifiers,
+                             Long frequencyHertz, Integer channelBand, Integer channelNumber, Integer timeslot,
+                             boolean tdma, boolean encryptionConfirmed, String radioSystemKey)
+    {
+        this(configurationId, decoderType, eventType, startedAtEpochMilliseconds, identifiers, frequencyHertz,
+            channelBand, channelNumber, timeslot, tdma, encryptionConfirmed, radioSystemKey, null);
+    }
+
+    /** Updates identifiers while retaining the original call's configured ownership, time, frequency and slot. */
+    public P25CallStartEvent withIdentifiers(P25ChannelGrantEvent event)
+    {
+        return new P25CallStartEvent(configurationId, decoderType, eventType, startedAtEpochMilliseconds,
+            identifiers(event), frequencyHertz, channelBand, channelNumber, timeslot, tdma,
+            encryptionConfirmed(event), radioSystemKey, callToken);
     }
 
     public P25CallStartEvent(Channel channel, P25ChannelGrantEvent event)

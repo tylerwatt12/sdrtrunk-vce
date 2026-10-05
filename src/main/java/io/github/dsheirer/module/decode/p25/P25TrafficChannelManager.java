@@ -105,6 +105,7 @@ import java.util.Objects;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedTransferQueue;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BooleanSupplier;
 import java.util.stream.Collectors;
@@ -138,6 +139,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     IChannelEventProvider, IMessageListener
 {
     private static final Logger mLog = LoggerFactory.getLogger(P25TrafficChannelManager.class);
+    private static final AtomicLong CONVENTIONAL_CALL_SEQUENCE = new AtomicLong();
     private static final LoggingSuppressor LOGGING_SUPPRESSOR = new LoggingSuppressor(mLog);
     public static final String CHANNEL_START_REJECTED = "CHANNEL START REJECTED";
     public static final String MAX_TRAFFIC_CHANNELS_EXCEEDED = "MAX TRAFFIC CHANNELS EXCEEDED";
@@ -890,6 +892,11 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     public void broadcast(P25TrafficChannelEventTracker tracker)
     {
         broadcast(tracker.getEvent());
+        P25ConventionalCallUpdateEvent conventionalUpdate = tracker.conventionalCallUpdate();
+        if(conventionalUpdate != null)
+        {
+            MyEventBus.getGlobalEventBus().post(conventionalUpdate);
+        }
         notifyActivityEncryptionDetails(tracker);
         notifyActivityTalkerAlias(tracker);
     }
@@ -1017,8 +1024,10 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 event.setChannelDescriptor(new StandardChannel(frequency));
             }
 
-            MyEventBus.getGlobalEventBus().post(new P25CallStartEvent(mParentChannel, event,
-                tracker.getRadioSystemKey()));
+            P25CallStartEvent callStart = new P25CallStartEvent(mParentChannel, event,
+                tracker.getRadioSystemKey(), Long.toString(CONVENTIONAL_CALL_SEQUENCE.incrementAndGet()));
+            tracker.setConventionalCallStart(callStart);
+            MyEventBus.getGlobalEventBus().post(callStart);
         }
 
         return tracker;

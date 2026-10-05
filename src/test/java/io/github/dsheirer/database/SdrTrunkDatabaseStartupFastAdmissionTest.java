@@ -27,11 +27,11 @@ class SdrTrunkDatabaseStartupFastAdmissionTest
                 INSERT INTO radio_system(id,system_key,protocol_code,p25_wacn,p25_system_id,
                     first_seen_ms,last_seen_ms) VALUES(1,'p25:00001:001',1,1,1,1000,1000)
                 """);
-            //The table permits positive IDs; the full protocol-semantic check rejects this P25 directory ID.
+            //DDL admits the 24-bit broadcast value; protocol-semantic validation rejects it as a directory radio.
             statement.executeUpdate("""
                 INSERT INTO radio_system_identity_summary(radio_system_id,identity_kind_code,
                     home_wacn,home_system_id,identity_id,first_seen_ms,last_seen_ms)
-                VALUES(1,2,1,1,10000000,1000,1000)
+                VALUES(1,2,1,1,0xFFFFFF,1000,1000)
                 """);
         }
         SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database);
@@ -41,7 +41,7 @@ class SdrTrunkDatabaseStartupFastAdmissionTest
             var rows = statement.executeQuery("SELECT identity_id FROM radio_system_identity_summary"))
         {
             rows.next();
-            assertEquals(10000000, rows.getInt(1));
+            assertEquals(0xFFFFFF, rows.getInt(1));
         }
     }
 

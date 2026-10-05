@@ -273,31 +273,18 @@ class DatabaseFormatCatalogTest
     }
 
     @Test
-    void exactMarkerlessFormat33IsRecognizedPlannedAndSafelyAdopted() throws Exception
+    void markerlessFormat33And34RequiresAuthoritativeMarker() throws Exception
     {
         Path database = Format33TestDatabase.create(mTemporaryFolder.resolve("markerless-format-33.sqlite"));
-
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             assertEquals(1, statement.executeUpdate(
                 "DELETE FROM database_metadata WHERE key='database_format_version'"));
-            DatabaseFormatCatalog.DetectedFormat strict = DatabaseFormatCatalog.inspect(connection);
-            DatabaseFormatCatalog.DetectedFormat migration = DatabaseFormatCatalog.inspectForMigration(connection);
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, strict.version());
-            assertFalse(strict.markerPresent());
-            assertEquals(strict, migration);
-
-            DatabaseMigrationChain.PreflightReport plan =
-                DatabaseMigrationChain.validateSource(connection, migration);
-            assertEquals(1, plan.steps().size());
-            assertEquals("adopt-global-format-marker", plan.steps().getFirst().id());
-
-            DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
-            assertEquals(1, report.steps().size());
-            assertEquals("adopt-global-format-marker", report.steps().getFirst().id());
-            assertTrue(report.target().markerPresent());
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
-                DatabaseFormatCatalog.requireCurrent(connection).version());
+            SQLException strict = assertThrows(SQLException.class, () -> DatabaseFormatCatalog.inspect(connection));
+            SQLException migration = assertThrows(SQLException.class,
+                () -> DatabaseFormatCatalog.inspectForMigration(connection));
+            assertTrue(strict.getMessage().contains("ambiguous across formats [33, 34]"), strict::getMessage);
+            assertTrue(migration.getMessage().contains("ambiguous across formats [33, 34]"), migration::getMessage);
         }
     }
 

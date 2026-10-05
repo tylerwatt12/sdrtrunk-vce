@@ -25,7 +25,7 @@ class ReceiverActivityBatchedDeletionTest
     private static final String CHANNEL = "123e4567-e89b-42d3-a456-426614174000";
     private static final String OTHER = "223e4567-e89b-42d3-a456-426614174000";
     private static final String SYSTEM = "p25:abcde:123";
-    private static final String SITE = RetainedSiteKey.p25(1, 2, 1, 1, 1000);
+    private static final String SITE = RetainedSiteKey.p25(1, 2, 1, 1L, 1000);
 
     @Test
     void moreThan100000QualityRowsDeleteInSmallCommittedPassesAndKeepOtherSitesAndActiveBucket() throws Exception

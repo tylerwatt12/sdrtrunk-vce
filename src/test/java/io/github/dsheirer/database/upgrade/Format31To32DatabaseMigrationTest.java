@@ -142,7 +142,7 @@ class Format31To32DatabaseMigrationTest
             long identityFacts = scalar(statement, "SELECT count(*) FROM trunked_logical_call_identity_bucket");
             DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspectForMigration(connection));
-            assertEquals("format-32-to-33", preflight.steps().getLast().id());
+            assertEquals("format-33-to-34", preflight.steps().getLast().id());
             assertEquals(aliases, new Format31To32DatabaseMigration().validateSource(connection)
                 .getFirst().affectedRows());
 
