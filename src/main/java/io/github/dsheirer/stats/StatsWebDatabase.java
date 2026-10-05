@@ -61,6 +61,7 @@ class StatsWebDatabase
     private static final long HOUR_MILLISECONDS = 3_600_000L;
     private static final long DAY_MILLISECONDS = 24L * HOUR_MILLISECONDS;
     private static final int MAX_ACTIVITY_ACTION_FILTERS = 23;
+    private static final int MAX_ACTIVITY_RADIO_INDEX_HINT_EVENTS = 1_000;
 
     /** Reuses existing native site history for restart-safe discovery. No new persisted semantics are introduced. */
     List<RetainedDiscoveryIdentity> retainedDiscoveryIdentities(TrunkedDiscoveryEvidence evidence)
@@ -5310,7 +5311,7 @@ class StatsWebDatabase
                 fromMilliseconds, toMilliseconds, actionCode, actionCodes, eventTypeCode, encryption, sourceId, targetId,
                 targetKind, frequencyHertz, lcn.band(), lcn.number(), timeslot, hideGrants, beforeTimestamp,
                 beforeId, afterId, watermarkId, forwardFloorId, limit);
-            ActivityQuery query = buildActivityQuery(filters);
+            ActivityQuery query = buildActivityQuery(connection, filters);
             queryObserver.accept(query);
             List<Map<String,Object>> rows = queryRows(connection, query.sql(), query.parameters().toArray());
             mAliasResolver.enrichActivity(connection, rows);
@@ -5320,7 +5321,7 @@ class StatsWebDatabase
         });
     }
 
-    private static ActivityQuery buildActivityQuery(ActivityFilters filters)
+    private static ActivityQuery buildActivityQuery(Connection connection, ActivityFilters filters) throws SQLException
     {
         List<ActivityCandidateBranch> branches = new ArrayList<>();
         String candidateSource = activityCandidateSource(filters);
@@ -5343,12 +5344,14 @@ class StatsWebDatabase
         {
             if(filters.radioRole() != ActivityRadioRole.TARGET)
             {
-                branches.add(activityCandidateBranch(filters, candidateSource,
+                String source = activityRadioCandidateSource(connection, filters, true);
+                branches.add(activityCandidateBranch(filters, source,
                     "candidate.source_identity_summary_id = ?", List.of(filters.radioIdentitySummaryId()), false));
             }
             if(filters.radioRole() != ActivityRadioRole.SOURCE)
             {
-                branches.add(activityCandidateBranch(filters, candidateSource,
+                String source = activityRadioCandidateSource(connection, filters, false);
+                branches.add(activityCandidateBranch(filters, source,
                     "candidate.target_identity_summary_id = ?", List.of(filters.radioIdentitySummaryId()), false));
             }
         }
@@ -5392,9 +5395,35 @@ class StatsWebDatabase
         return new ActivityQuery(sql.toString(), List.copyOf(parameters));
     }
 
+    private static String activityRadioCandidateSource(Connection connection, ActivityFilters filters,
+                                                        boolean sourceRole) throws SQLException
+    {
+        String source = activityCandidateSource(filters);
+        // Forward polling orders by row ID, so a history/time index can make it slower.
+        if(filters.afterId() != null)
+        {
+            return source;
+        }
+
+        // SQLite's system/action averages can hide a particular radio's sparse history. Probe at most 1,001
+        // covering-index entries, independently for each role. Busy roles retain planner freedom so selective
+        // action/channel filters can use their own indexes instead of reading the radio's entire history.
+        long events = scalarLong(connection, activityRadioIndexProbeSql(sourceRole),
+            filters.radioIdentitySummaryId(), MAX_ACTIVITY_RADIO_INDEX_HINT_EVENTS + 1);
+        return events <= MAX_ACTIVITY_RADIO_INDEX_HINT_EVENTS ? source + " INDEXED BY " +
+            "idx_receiver_activity_event_" + (sourceRole ? "source" : "target") + "_time" : source;
+    }
+
+    static String activityRadioIndexProbeSql(boolean sourceRole)
+    {
+        String role = sourceRole ? "source" : "target";
+        return "SELECT COUNT(*) FROM (SELECT 1 FROM receiver_activity_event INDEXED BY " +
+            "idx_receiver_activity_event_" + role + "_time WHERE " + role + "_identity_summary_id = ? LIMIT ?)";
+    }
+
     /**
      * Keeps the sparse encrypted indexes deterministic for the common owner-scoped history page before SQLite has
-     * planner statistics.  More selective identity/filter branches and forward polling retain planner freedom.
+     * planner statistics. Other identity/filter branches do not use this hint; forward polling retains planner freedom.
      */
     private static String activityCandidateSource(ActivityFilters filters)
     {

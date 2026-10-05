@@ -36,12 +36,14 @@ import java.sql.Statement;
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.sqlite.ProgressHandler;
 
 /**
  * Focused read-model coverage for the current radio-system and saved-channel API. Historical schema shapes and
@@ -2166,10 +2168,13 @@ class StatsWebDatabaseTest
         assertEquals(List.of(11_000L, 10_000L), activityTimes(all),
             "A direct event that is also a member candidate must be returned once");
 
+        StatsWebDatabase.ActivityQuery[] combinedQuery = new StatsWebDatabase.ActivityQuery[1];
         Map<String,Object> combined = mDatabase.activity(request("/?radio_system_key=" + RADIO_SYSTEM_KEY +
             "&group_identity_key=" + talkgroup + "&radio_identity_key=" + radio303 +
-            "&radio_role=source&limit=20"));
+            "&radio_role=source&limit=20"), query -> combinedQuery[0] = query);
         assertEquals(List.of(11_000L), activityTimes(combined));
+        assertFalse(combinedQuery[0].sql().contains("INDEXED BY"),
+            "Combined group/radio queries retain their direct-group and patch-member access paths");
 
         Map<String,Object> source = mDatabase.activity(request("/?radio_system_key=" + RADIO_SYSTEM_KEY +
             "&radio_identity_key=" + radio202 + "&radio_role=source&limit=20"));
@@ -2407,6 +2412,209 @@ class StatsWebDatabaseTest
             assertTrue(systemPlan.stream().anyMatch(detail ->
                     detail.contains("idx_receiver_activity_event_system_encrypted_time")),
                 () -> "Expected the sparse system/encrypted/time index without stats, plan was: " + systemPlan);
+        }
+    }
+
+    @Test
+    void radioRegisterHistoryUsesRoleIndexesDespiteSkewedActionStatistics() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary (
+                    id, radio_system_id, identity_kind_code, home_wacn, home_system_id, identity_id,
+                    first_seen_ms, last_seen_ms, logical_call_count)
+                VALUES (7105, 71, 2, 0xBEE00, 0x49F, 303, 1000, 2000000, 1),
+                       (7106, 71, 2, 0xBEE00, 0x49F, 404, 1000, 2000000, 1)
+                """);
+            statement.executeUpdate("""
+                WITH digits(value) AS (VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9)),
+                events(value) AS (
+                    SELECT a.value + 10*b.value + 100*c.value + 1000*d.value + 10000*e.value
+                    FROM digits a CROSS JOIN digits b CROSS JOIN digits c CROSS JOIN digits d CROSS JOIN digits e
+                )
+                INSERT INTO receiver_activity_event (
+                    channel_id, radio_system_id, observed_at_ms, action_code,
+                    source_identity_summary_id, source_identity_kind_code, source_observed_local_id,
+                    target_identity_summary_id, target_kind_code, target_observed_local_id)
+                SELECT 71, 71, 1000000 + value, 20, 7105, 2, 303, 7105, 2, 303
+                FROM events
+                """);
+            statement.executeUpdate("""
+                WITH digits(value) AS (VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9)),
+                events(value) AS (
+                    SELECT a.value + 10*b.value + 100*c.value + 1000*d.value
+                    FROM digits a CROSS JOIN digits b CROSS JOIN digits c CROSS JOIN digits d
+                )
+                INSERT INTO receiver_activity_event (
+                    channel_id, radio_system_id, observed_at_ms, action_code,
+                    source_identity_summary_id, source_identity_kind_code, source_observed_local_id,
+                    target_identity_summary_id, target_kind_code, target_observed_local_id)
+                SELECT 71, 71, 2000000 + value, 20, 7105, 2, 303, 7106, 2, 404
+                FROM events WHERE value <= 1000
+                """);
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_event (
+                    id, channel_id, radio_system_id, observed_at_ms, action_code,
+                    source_identity_summary_id, source_identity_kind_code, source_observed_local_id,
+                    target_identity_summary_id, target_kind_code, target_observed_local_id)
+                VALUES (500001, 71, 71, 1000, 20, 7102, 2, 202, 7105, 2, 303),
+                       (500002, 71, 71, 2000, 20, 7105, 2, 303, 7102, 2, 202),
+                       (500003, 71, 71, 3000, 20, 7102, 2, 202, 7102, 2, 202),
+                       (500004, 71, 71, 4000, 4, 7102, 2, 202, 7105, 2, 303),
+                       (500005, 71, 71, 5000, 20, 7102, 2, 202, 7105, 2, 303),
+                       (500006, 71, 71, 5000, 20, 7105, 2, 303, 7102, 2, 202),
+                       (500007, 72, 71, 6000, 20, 7102, 2, 202, 7105, 2, 303),
+                       (500008, 71, 71, 7000, 4, 7106, 2, 404, 7105, 2, 303)
+                """);
+            statement.executeUpdate("ANALYZE");
+            // Production averages tied even though this particular radio had only a few events. Keep that skew
+            // explicit so the plan test does not depend on the small fixture's naturally favorable averages.
+            statement.executeUpdate("""
+                UPDATE sqlite_stat1 SET stat = '100007 1000 1'
+                WHERE idx IN ('idx_receiver_activity_event_source_time', 'idx_receiver_activity_event_target_time')
+                """);
+            statement.executeUpdate("""
+                UPDATE sqlite_stat1 SET stat = '100007 1000 1000 1 1'
+                WHERE idx = 'idx_receiver_activity_event_system_action_time'
+                """);
+            statement.execute("ANALYZE sqlite_schema");
+        }
+
+        String scope = "/?radio_system_key=" + RADIO_SYSTEM_KEY + "&radio_identity_key=" +
+            p25IdentityKey(RadioSystemIdentityKey.KIND_RADIO, 202) + "&action=REGISTER&hide_grants=true";
+        StatsWebDatabase.ActivityQuery[] anyQuery = new StatsWebDatabase.ActivityQuery[1];
+        Map<String,Object> any = mDatabase.activity(request(scope + "&radio_role=any&limit=200"),
+            query -> anyQuery[0] = query);
+        List<Long> expected = List.of(500007L, 500006L, 500005L, 500003L, 500002L, 500001L);
+        assertEquals(expected, rows(any).stream().map(row -> number(row.get("id"))).toList(),
+            "Source/target matches deduplicate while retaining timestamp/ID ordering");
+        assertFalse((Boolean)any.get("has_more"));
+        assertTrue(rows(any).stream().allMatch(row -> "REGISTER".equals(row.get("action"))));
+        assertTrue(anyQuery[0].sql().contains("INDEXED BY idx_receiver_activity_event_source_time"));
+        assertTrue(anyQuery[0].sql().contains("INDEXED BY idx_receiver_activity_event_target_time"));
+
+        StatsWebDatabase.ActivityQuery[] sourceQuery = new StatsWebDatabase.ActivityQuery[1];
+        Map<String,Object> source = mDatabase.activity(request(scope + "&radio_role=source&limit=200"),
+            query -> sourceQuery[0] = query);
+        assertEquals(List.of(6000L, 5000L, 3000L, 1000L), activityTimes(source));
+        assertTrue(sourceQuery[0].sql().contains("INDEXED BY idx_receiver_activity_event_source_time"));
+        assertFalse(sourceQuery[0].sql().contains("INDEXED BY idx_receiver_activity_event_target_time"));
+        StatsWebDatabase.ActivityQuery[] targetQuery = new StatsWebDatabase.ActivityQuery[1];
+        Map<String,Object> target = mDatabase.activity(request(scope + "&radio_role=target&limit=200"),
+            query -> targetQuery[0] = query);
+        assertEquals(List.of(5000L, 3000L, 2000L), activityTimes(target));
+        assertTrue(targetQuery[0].sql().contains("INDEXED BY idx_receiver_activity_event_target_time"));
+        assertFalse(targetQuery[0].sql().contains("INDEXED BY idx_receiver_activity_event_source_time"));
+
+        Map<String,Object> first = mDatabase.activity(request(scope + "&limit=2"));
+        assertEquals(List.of(6000L, 5000L), activityTimes(first));
+        assertTrue((Boolean)first.get("has_more"));
+        Map<String,Object> second = mDatabase.activity(request(scope + "&limit=2&before_id=" +
+            first.get("next_before_id")));
+        assertEquals(List.of(5000L, 3000L), activityTimes(second),
+            "Backward pagination must retain the remaining event at the same timestamp");
+        Map<String,Object> bounded = mDatabase.activity(request(scope + "&configuration_id=" + P25_CHANNEL_A +
+            "&from_ms=2000&to_ms=6000&limit=200"));
+        assertEquals(List.of(5000L, 5000L, 3000L, 2000L), activityTimes(bounded));
+
+        StatsWebDatabase.ActivityQuery[] forwardQuery = new StatsWebDatabase.ActivityQuery[1];
+        Map<String,Object> forward = mDatabase.activity(request(scope + "&after_id=500000&limit=200"),
+            query -> forwardQuery[0] = query);
+        assertEquals(expected.reversed(), rows(forward).stream().map(row -> number(row.get("id"))).toList());
+        assertFalse(forwardQuery[0].sql().contains("INDEXED BY"),
+            "Forward polling needs planner freedom to order by event ID");
+        assertTrue(forwardQuery[0].sql().contains("ORDER BY candidate.id ASC"));
+
+        String busyScope = "/?radio_system_key=" + RADIO_SYSTEM_KEY + "&radio_identity_key=" +
+            p25IdentityKey(RadioSystemIdentityKey.KIND_RADIO, 303) + "&action=CALL&limit=200";
+        StatsWebDatabase.ActivityQuery[] busyAnyQuery = new StatsWebDatabase.ActivityQuery[1];
+        mDatabase.activity(request(busyScope), query -> busyAnyQuery[0] = query);
+        assertFalse(busyAnyQuery[0].sql().contains("INDEXED BY"),
+            "Both busy roles retain planner freedom");
+        StatsWebDatabase.ActivityQuery[] busyQuery = new StatsWebDatabase.ActivityQuery[1];
+        Map<String,Object> busy = mDatabase.activity(request(busyScope + "&radio_role=target"),
+            query -> busyQuery[0] = query);
+        assertEquals(List.of(7000L, 4000L), activityTimes(busy));
+        assertFalse(busyQuery[0].sql().contains("INDEXED BY"),
+            "A busy radio with a rare action must retain the selective action-index access path");
+        StatsWebDatabase.ActivityQuery[] mixedQuery = new StatsWebDatabase.ActivityQuery[1];
+        Map<String,Object> mixed = mDatabase.activity(request("/?radio_system_key=" + RADIO_SYSTEM_KEY +
+            "&radio_identity_key=" + p25IdentityKey(RadioSystemIdentityKey.KIND_RADIO, 404) +
+            "&action=CALL&limit=200"), query -> mixedQuery[0] = query);
+        assertEquals(List.of(7000L), activityTimes(mixed));
+        assertTrue(mixedQuery[0].sql().contains("INDEXED BY idx_receiver_activity_event_source_time"));
+        assertFalse(mixedQuery[0].sql().contains("INDEXED BY idx_receiver_activity_event_target_time"),
+            "The target role has 1,001 entries and must make its own decision independently of the sparse source");
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            List<String> plan = explain(connection, anyQuery[0].sql(), anyQuery[0].parameters().toArray());
+            assertTrue(plan.stream().anyMatch(detail -> detail.contains(
+                "SEARCH candidate USING INDEX idx_receiver_activity_event_source_time")), plan.toString());
+            assertTrue(plan.stream().anyMatch(detail -> detail.contains(
+                "SEARCH candidate USING INDEX idx_receiver_activity_event_target_time")), plan.toString());
+            List<String> busyPlan = explain(connection, busyQuery[0].sql(), busyQuery[0].parameters().toArray());
+            assertTrue(busyPlan.stream().anyMatch(detail -> detail.contains(
+                "SEARCH candidate USING INDEX idx_receiver_activity_event_system_action_time")), busyPlan.toString());
+            AtomicInteger progressCalls = new AtomicInteger();
+            ProgressHandler.setHandler(connection, 1_000, new ProgressHandler()
+            {
+                @Override
+                protected int progress()
+                {
+                    return progressCalls.incrementAndGet() >= 100 ? 1 : 0;
+                }
+            });
+            try
+            {
+                for(boolean sourceRole : List.of(true, false))
+                {
+                    String probe = StatsWebDatabase.activityRadioIndexProbeSql(sourceRole);
+                    List<String> probePlan = explain(connection, probe, 7105L, 1001);
+                    assertTrue(probePlan.stream().anyMatch(detail -> detail.contains(
+                        "USING COVERING INDEX idx_receiver_activity_event_" +
+                            (sourceRole ? "source" : "target") + "_time")), probePlan.toString());
+                    try(PreparedStatement statement = connection.prepareStatement(probe))
+                    {
+                        statement.setLong(1, 7105);
+                        statement.setInt(2, 1001);
+                        try(ResultSet resultSet = statement.executeQuery())
+                        {
+                            assertTrue(resultSet.next());
+                            assertEquals(1001, resultSet.getInt(1),
+                                "The population probe must stop at its cap rather than counting the busy history");
+                        }
+                    }
+                }
+                for(StatsWebDatabase.ActivityQuery query : List.of(anyQuery[0], busyQuery[0]))
+                {
+                    try(PreparedStatement statement = connection.prepareStatement(query.sql()))
+                    {
+                        for(int index = 0; index < query.parameters().size(); index++)
+                        {
+                            statement.setObject(index + 1, query.parameters().get(index));
+                        }
+                        try(ResultSet resultSet = statement.executeQuery())
+                        {
+                            int matches = 0;
+                            while(resultSet.next())
+                            {
+                                matches++;
+                            }
+                            assertEquals(query == anyQuery[0] ? 6 : 2, matches);
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                ProgressHandler.clearHandler(connection);
+            }
+            assertTrue(progressCalls.get() < 100,
+                "Bounded probes plus rare-radio history must not revisit unrelated REGISTER events; callbacks=" +
+                    progressCalls);
         }
     }
 
