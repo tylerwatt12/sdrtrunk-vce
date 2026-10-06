@@ -57,9 +57,35 @@ async function expectPlayerPill(control, expanded) {
     .toBe(expanded ? 'none' : 'matrix(-1, 0, 0, -1, 0, 0)');
 }
 
-async function expectExpandedPlayerPill(page) {
+async function expectExpandedCloseControl(page) {
   await expect(hide(page)).toBeVisible();
-  await expectPlayerPill(hide(page), true);
+  await expect(hide(page)).toHaveText('');
+  await expect(hide(page)).toHaveAttribute('aria-expanded', 'true');
+  await expect(hide(page)).toHaveAttribute('aria-controls', 'audio-dock-presentation');
+  await expect.poll(() => hide(page).evaluate((element) => element.dataset.uiHint || element.title))
+    .toBe('Hide audio player. Audio keeps playing.');
+  await expect(hide(page).locator('svg')).toHaveAttribute('aria-hidden', 'true');
+  await expect(hide(page).locator('use')).toHaveAttribute('href', '#icon-close');
+  const appearance = await hide(page).evaluate((element) => {
+    const style = getComputedStyle(element);
+    const bounds = element.getBoundingClientRect();
+    const parent = element.closest('#audio-dock').getBoundingClientRect();
+    const glyph = element.querySelector('svg').getBoundingClientRect();
+    return { idle: !element.matches(':hover, :focus-visible'), border: style.borderWidth,
+      background: style.backgroundColor, shadow: style.boxShadow,
+      width: bounds.width, height: bounds.height, rightInset: parent.right - bounds.right,
+      glyphTopInset: glyph.top - parent.top, glyphBottomInset: parent.bottom - glyph.bottom };
+  });
+  if (appearance.idle) {
+    expect(appearance.background).toBe('rgba(0, 0, 0, 0)');
+  }
+  expect(appearance.border).toBe('0px');
+  expect(await hide(page).locator('svg').evaluate((icon) => getComputedStyle(icon).transform)).toBe('none');
+  expect(appearance.shadow).toBe('none');
+  expect(appearance.width).toBe(appearance.height);
+  expect(appearance.rightInset).toBeGreaterThanOrEqual(8);
+  expect(appearance.glyphTopInset).toBeGreaterThanOrEqual(8);
+  expect(appearance.glyphBottomInset).toBeGreaterThanOrEqual(8);
   await expect(page.locator('#audio-dock-presentation')).toHaveJSProperty('hidden', false);
   const placement = await hide(page).evaluate((element) => {
     const bounds = element.getBoundingClientRect();
@@ -126,19 +152,21 @@ async function expectSuperCollapsed(page) {
 
 for (const theme of ['light', 'dark']) {
   for (const value of ['collapsed', 'minimal', 'full']) {
-    test(`desktop ${value} Player pill toggles presentation and preserves state in ${theme}`, async ({ page }) => {
+    test(`desktop ${value} close control toggles presentation and preserves state in ${theme}`, async ({ page }, testInfo) => {
       await page.setViewportSize({ width: 1280, height: 900 });
       const state = await openApp(page, { theme });
       await size(page, 'full');
       await selectDockSource(dock(page), 'recordings');
       await dock(page).getByRole('tab', { name: 'Queue', exact: true }).click();
       await size(page, value);
-      await expectExpandedPlayerPill(page);
+      await expectExpandedCloseControl(page);
+      if (value === 'collapsed') await page.screenshot({ path: testInfo.outputPath(`thin-expanded-${theme}.png`) });
       const transport = await page.evaluate(() => [...window.audioTest.recordings]);
       const writes = [...state.preferenceWrites];
       await hide(page).focus();
       await hide(page).press('Enter');
       await expectSuperCollapsed(page);
+      if (value === 'collapsed') await page.screenshot({ path: testInfo.outputPath(`thin-collapsed-${theme}.png`) });
       await expect(restore(page)).toBeFocused();
       expect(await page.evaluate(() => window.audioTest.recordings)).toEqual(transport);
       await restore(page).press('Space');
@@ -147,7 +175,7 @@ for (const theme of ['light', 'dark']) {
       await expect(dock(page)).toHaveAttribute('data-state', value);
       await expect(dock(page)).toHaveAttribute('data-source', 'recordings');
       await expect(hide(page)).toBeFocused();
-      await expectExpandedPlayerPill(page);
+      await expectExpandedCloseControl(page);
       expect(await page.evaluate(() => window.audioTest.recordings)).toEqual(transport);
       // Both native activation keys keep the remembered size and source through
       // repeated presentation changes without invoking audio or preferences.
@@ -156,7 +184,7 @@ for (const theme of ['light', 'dark']) {
         await expectSuperCollapsed(page);
         await expect(restore(page)).toBeFocused();
         await restore(page).press(key);
-        await expectExpandedPlayerPill(page);
+        await expectExpandedCloseControl(page);
         await expect(hide(page)).toBeFocused();
         await expect(dock(page)).toHaveAttribute('data-state', value);
         await expect(dock(page)).toHaveAttribute('data-source', 'recordings');
@@ -336,7 +364,7 @@ for (const theme of ['light', 'dark']) test(`hidden desktop choice is suspended 
   await expect(restore(page)).toBeFocused();
   await restore(page).click();
   await expect(dock(page)).toHaveAttribute('data-state', 'minimal');
-  await expectExpandedPlayerPill(page);
+  await expectExpandedCloseControl(page);
 });
 
 test('short desktop full player hides every control and restores in its original size', async ({ page }) => {

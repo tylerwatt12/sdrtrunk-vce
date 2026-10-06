@@ -1,7 +1,7 @@
 import { systemLabel } from './system-labels.js?v=1';
 import { formatSourceName } from './source-names.js?v=1';
 
-/* Reuse map: global workspace composition; ui-button/ui-audio-visibility/ui-icon-button, ui-segmented, ui-select,
+/* Reuse map: global workspace composition; ui-button/ui-audio-visibility/ui-disclosure-button/ui-icon-button, ui-segmented, ui-select,
  * ui-range, ui-feedback, ui-fact-list and ui-section-disclosure. Existing scanner
  * and recording-choice modal retain their lifecycle. One live engine and one
  * recording adapter; the dock owns presentation only, in light/dark and all sizes. */
@@ -260,9 +260,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     render();
     (value ? restore : hide).focus({ preventScroll: true });
   };
-  const hide = iconButton('icon-chevron-down', 'Hide audio player',
-    'ui-button ui-button-secondary ui-audio-visibility ui-audio-dismiss');
-  hide.prepend(node('span', '', 'Player'));
+  const hide = iconButton('icon-close', 'Hide audio player',
+    'ui-disclosure-button ui-icon-button ui-audio-dismiss');
   hide.title = 'Hide audio player. Audio keeps playing.';
   hide.setAttribute('aria-controls', presentation.id);
   hide.addEventListener('click', () => setSuperCollapsed(true));
