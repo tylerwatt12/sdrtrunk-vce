@@ -146,8 +146,6 @@ public class SiteControlChannelLearner implements SiteMetadataListener
                 sourceConfig.addFrequency(frequency);
                 decodeConfig.addLearnedControlFrequency(frequency);
                 frequenciesChanged = true;
-                LOGGER.info("Learned announced P25 control channel {} Hz for channel {} ({})", frequency,
-                    channel.getName(), boundIdentity.display());
             }
         }
 
