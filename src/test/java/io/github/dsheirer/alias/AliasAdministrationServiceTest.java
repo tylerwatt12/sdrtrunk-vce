@@ -34,6 +34,7 @@ import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
+import io.github.dsheirer.database.configuration.ConfigurationRepository;
 import io.github.dsheirer.database.scanlist.ScanListDatabaseStore;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.identifier.tone.AmbeTone;
@@ -70,6 +71,38 @@ class AliasAdministrationServiceTest
     void persistsValidatedChangesAndUpdatesTheLiveCatalog() throws Exception
     {
         exerciseService();
+    }
+
+    @Test
+    void aliasListNamesAccept128CodeUnitsAndKeepBlankAndOverlongValidation() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("long-list-name-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        SdrTrunkTestDatabase.create(database);
+        ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
+            new AliasModel(), null, null);
+        try
+        {
+            manager.init();
+            AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+            String name = "x".repeat(126) + "🚒";
+            var saved = service.createAliasList("  " + name + "  ", AliasListFamily.P25, service.currentRevision());
+            assertEquals(128, name.length());
+            assertEquals(name, service.catalog().aliasLists().stream()
+                .filter(list -> list.getId() == saved.aliasListId()).findFirst().orElseThrow().getName());
+            assertEquals(name, new ConfigurationRepository(database)
+                .load().aliasListDefinitions().stream().filter(list -> list.getId() == saved.aliasListId())
+                .findFirst().orElseThrow().getName());
+            assertThrows(IllegalArgumentException.class,
+                () -> service.createAliasList("x".repeat(129), AliasListFamily.P25, saved.revision()));
+            assertThrows(IllegalArgumentException.class,
+                () -> service.createAliasList("   ", AliasListFamily.P25, saved.revision()));
+            assertEquals(saved.revision(), service.currentRevision(), "invalid names do not change configuration");
+        }
+        finally
+        {
+            flushAndUnregister(manager);
+        }
     }
 
     @Test

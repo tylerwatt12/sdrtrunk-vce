@@ -81,7 +81,7 @@ class Format25To26DatabaseMigrationTest
 
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 25, report.steps().size());
             assertEquals("format-25-to-26", report.steps().getFirst().id());
-            assertEquals("format-42-to-43", report.steps().getLast().id());
+            assertEquals("format-43-to-44", report.steps().getLast().id());
             assertEquals(expectedEffects, report.steps().getFirst().effects());
             assertEquals(eventsBefore, rows(statement, "SELECT * FROM receiver_activity_event ORDER BY id"));
             assertEquals(membersBefore, rows(statement,

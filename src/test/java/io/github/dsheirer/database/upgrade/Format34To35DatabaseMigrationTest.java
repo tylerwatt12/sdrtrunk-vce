@@ -42,7 +42,7 @@ class Format34To35DatabaseMigrationTest
             assertEquals(33, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(before, preferences(statement));
         }
-        Path current = Format43TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
+        Path current = Format44TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
         byte[] before = Files.readAllBytes(current);
         try(Connection connection = open(current))
         {

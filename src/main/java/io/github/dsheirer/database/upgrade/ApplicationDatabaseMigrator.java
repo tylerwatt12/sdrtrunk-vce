@@ -383,8 +383,9 @@ public final class ApplicationDatabaseMigrator
         try(Statement statement = connection.createStatement())
         {
             boolean transactionOpen = false;
-            boolean foreignKeysRelaxed = expectedSource.version() < DatabaseFormatCatalog.CURRENT_VERSION &&
-                (!inPlace || expectedSource.version() < 26);
+            // Every historical route now replaces the Alias List parent table at format 43 -> 44.
+            // Disable enforcement before BEGIN even for owned profiles that previously needed only index updates.
+            boolean foreignKeysRelaxed = expectedSource.version() < DatabaseFormatCatalog.CURRENT_VERSION;
             boolean checkConstraintsRelaxed = expectedSource.version() < DatabaseFormatCatalog.CURRENT_VERSION;
 
             if(foreignKeysRelaxed)

@@ -168,7 +168,7 @@ class Format41To42DatabaseMigrationTest
     {
         Path fresh = mTemporaryFolder.resolve("fresh.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(fresh);
-        Path migrated = Format43TestDatabase.create(mTemporaryFolder.resolve("migrated.sqlite"));
+        Path migrated = Format44TestDatabase.create(mTemporaryFolder.resolve("migrated.sqlite"));
         try(Connection current = open(migrated); Connection clean = open(fresh))
         {
             assertEquals(DatabaseFormatCatalog.current().fingerprint(),SqliteSchemaValidator.fingerprint(clean));
@@ -284,7 +284,8 @@ class Format41To42DatabaseMigrationTest
     private static Connection open(Path database) throws SQLException
     {
         Connection connection = DriverManager.getConnection("jdbc:sqlite:"+database);
-        try(Statement statement = connection.createStatement()) { statement.execute("PRAGMA foreign_keys=ON"); }
+        // The complete offline chain rebuilds parent tables with the same FK-off boundary as the migrator.
+        try(Statement statement = connection.createStatement()) { statement.execute("PRAGMA foreign_keys=OFF"); }
         return connection;
     }
 

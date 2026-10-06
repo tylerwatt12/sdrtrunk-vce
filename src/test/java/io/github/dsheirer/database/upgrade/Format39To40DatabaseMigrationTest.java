@@ -121,7 +121,7 @@ class Format39To40DatabaseMigrationTest
         Path fresh = mTemporaryFolder.resolve("fresh-historical.sqlite");
         try(Connection connection = open(current); Connection freshConnection = open(fresh))
         {
-            SdrTrunkDatabaseSchema.create(freshConnection);
+            SdrTrunkDatabaseSchema.createFormat43(freshConnection);
             ReceiverActivitySchema.createFormat40(freshConnection);
             DmrActivitySchema.create(freshConnection);
             TrunkedSiteSchema.create(freshConnection);

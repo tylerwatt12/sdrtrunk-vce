@@ -118,7 +118,7 @@ class Format40To41DatabaseMigrationTest
     @Test
     void freshAndMigratedCurrentFormatHaveTheSameSchemaAndCurrentMigrationIsANoOp() throws Exception
     {
-        Path current = Format43TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
+        Path current = Format44TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
         Path fresh = mTemporaryFolder.resolve("fresh.sqlite");SdrTrunkDatabaseStartup.createGlobalDatabase(fresh);
         try(Connection connection = open(current); Connection freshConnection = open(fresh))
         {
@@ -314,8 +314,9 @@ class Format40To41DatabaseMigrationTest
 
     private static Connection open(Path database) throws SQLException
     {
+        // Full-chain fixtures use the same offline foreign-key boundary as the Application Migrator.
         Connection connection = DriverManager.getConnection("jdbc:sqlite:"+database);
-        try(Statement statement = connection.createStatement()) { statement.execute("PRAGMA foreign_keys=ON"); }
+        try(Statement statement = connection.createStatement()) { statement.execute("PRAGMA foreign_keys=OFF"); }
         return connection;
     }
 

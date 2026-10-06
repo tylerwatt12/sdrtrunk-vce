@@ -327,10 +327,17 @@ final class CurrentDatabaseBestEffortRepair
             }
         }
 
-        Map<Long,String> desiredNames = ConfigurationNameRepair.plan(names, 25, false);
+        Map<Long,String> desiredNames = ConfigurationNameRepair.plan(names, aliasListNameLength(connection), false);
         Map<Long,String> nameRepairs = changedNames(originals, desiredNames);
         return new AliasListInspection(List.copyOf(invalidRows), Map.copyOf(nameRepairs),
             Set.copyOf(defaultedPolicies));
+    }
+
+    private static int aliasListNameLength(Connection connection) throws SQLException
+    {
+        // Migration admission identifies the exact layout without recursively invoking component repair.
+        // Historical steps must keep the bound accepted by their still-frozen Alias List table.
+        return DatabaseFormatCatalog.inspectForMigration(connection).version() >= 44 ? 128 : 25;
     }
 
     private static ScanListInspection inspectScanLists(Connection connection) throws SQLException
@@ -1424,7 +1431,7 @@ final class CurrentDatabaseBestEffortRepair
         throws SQLException
     {
         Map<Long,String> temporaryNames = temporaryNamePlan(connection, "alias_list",
-            inspection.nameRepairs(), 25);
+            inspection.nameRepairs(), aliasListNameLength(connection));
         try(PreparedStatement statement = connection.prepareStatement("""
             UPDATE alias_list
             SET name=?,

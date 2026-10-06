@@ -58,11 +58,12 @@ class Format23To24DatabaseMigrationTest
             List<List<Object>> activityBefore = activityRows(statement);
             Set<String> objectsBefore = schemaObjects(statement);
 
+            statement.execute("PRAGMA foreign_keys=OFF");
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
 
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 23, report.steps().size());
             assertEquals("format-23-to-24", report.steps().getFirst().id());
-            assertEquals("format-42-to-43", report.steps().getLast().id());
+            assertEquals("format-43-to-44", report.steps().getLast().id());
             assertEquals(activityBefore.size(), report.steps().getFirst().effects().getFirst().affectedRows());
             assertEquals(rowsBefore, tableRowCounts(statement));
             assertEquals(activityBefore, activityRows(statement));

@@ -53,6 +53,7 @@ class Format19To20DatabaseMigrationTest
             assertEquals(aliases, new Format19To20DatabaseMigration().validateSource(connection)
                 .getFirst().affectedRows());
 
+            statement.execute("PRAGMA foreign_keys=OFF");
             connection.setAutoCommit(false);
             DatabaseMigrationChain.MigrationReport report;
             try
@@ -71,7 +72,7 @@ class Format19To20DatabaseMigrationTest
             }
 
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
-            assertEquals("format-42-to-43", report.steps().getLast().id());
+            assertEquals("format-43-to-44", report.steps().getLast().id());
             assertEquals(aliases, number(statement, "SELECT count(*) FROM alias"));
             assertEquals(aliases, number(statement, "SELECT count(*) FROM alias_activity_summary"));
             assertEquals(aliasLists, number(statement, "SELECT count(*) FROM alias_list"));
@@ -249,6 +250,7 @@ class Format19To20DatabaseMigrationTest
             seedHighCardinalityRetainedActivity(statement);
             long aliasesBefore = number(statement, "SELECT count(*) FROM alias");
 
+            statement.execute("PRAGMA foreign_keys=OFF");
             connection.setAutoCommit(false);
             DatabaseMigrationChain.MigrationReport report;
             try
@@ -383,6 +385,7 @@ class Format19To20DatabaseMigrationTest
                     (%1$d,14400000,2,2,602,1,1,1,1)
                 """.formatted(channelId));
 
+            statement.execute("PRAGMA foreign_keys=OFF");
             connection.setAutoCommit(false);
             try
             {

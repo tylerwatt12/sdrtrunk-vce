@@ -152,8 +152,9 @@ class Format32To33DatabaseMigrationTest
 
     private static Connection open(Path database) throws SQLException
     {
+        // Full-chain fixtures use the same offline foreign-key boundary as the Application Migrator.
         Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
-        try(Statement statement = connection.createStatement()) { statement.execute("PRAGMA foreign_keys=ON"); }
+        try(Statement statement = connection.createStatement()) { statement.execute("PRAGMA foreign_keys=OFF"); }
         return connection;
     }
 

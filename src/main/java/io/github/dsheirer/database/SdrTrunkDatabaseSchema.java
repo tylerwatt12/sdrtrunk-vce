@@ -86,6 +86,27 @@ public final class SdrTrunkDatabaseSchema
         CREATE TABLE IF NOT EXISTS alias_list (
             id INTEGER PRIMARY KEY AUTOINCREMENT CHECK(typeof(id) = 'integer' AND id > 0),
             name TEXT NOT NULL COLLATE NOCASE CHECK(
+                typeof(name) = 'text' AND length(trim(name)) BETWEEN 1 AND 128
+            ),
+            family TEXT NOT NULL CHECK(typeof(family) = 'text' AND family IN (
+                'P25', 'DMR', 'NXDN', 'NBFM'
+            )),
+            unmatched_talkgroup_record_enabled INTEGER NOT NULL DEFAULT 0 CHECK(
+                typeof(unmatched_talkgroup_record_enabled) = 'integer'
+                AND unmatched_talkgroup_record_enabled IN (0, 1)
+            ),
+            new_alias_record_enabled INTEGER NOT NULL DEFAULT 0 CHECK(
+                typeof(new_alias_record_enabled) = 'integer'
+                AND new_alias_record_enabled IN (0, 1)
+            ),
+            UNIQUE(name)
+        )
+        """;
+    /** Frozen format-43 parent definition; future current-table changes must not alter historical admission. */
+    private static final String FORMAT_43_ALIAS_LIST_TABLE_SQL = """
+        CREATE TABLE IF NOT EXISTS alias_list (
+            id INTEGER PRIMARY KEY AUTOINCREMENT CHECK(typeof(id) = 'integer' AND id > 0),
+            name TEXT NOT NULL COLLATE NOCASE CHECK(
                 typeof(name) = 'text' AND length(trim(name)) BETWEEN 1 AND 25
             ),
             family TEXT NOT NULL CHECK(typeof(family) = 'text' AND family IN (
@@ -102,7 +123,7 @@ public final class SdrTrunkDatabaseSchema
             UNIQUE(name)
         )
         """;
-    private static final String FORMAT_20_ALIAS_LIST_TABLE_SQL = ALIAS_LIST_TABLE_SQL.replace("""
+    private static final String FORMAT_20_ALIAS_LIST_TABLE_SQL = FORMAT_43_ALIAS_LIST_TABLE_SQL.replace("""
             new_alias_record_enabled INTEGER NOT NULL DEFAULT 0 CHECK(
                 typeof(new_alias_record_enabled) = 'integer'
                 AND new_alias_record_enabled IN (0, 1)
@@ -921,6 +942,13 @@ public final class SdrTrunkDatabaseSchema
         createReceiverHealthIncidentTable(connection);
     }
 
+    /** Creates the frozen format-43 core schema, before the Alias List name bound was expanded. */
+    public static void createFormat43(Connection connection) throws SQLException
+    {
+        create(connection, CONFIGURATION_CHANNEL_TABLE_SQL, true, FORMAT_43_ALIAS_LIST_TABLE_SQL);
+        createReceiverHealthIncidentTable(connection);
+    }
+
     /** Creates the exact format-15 target for its immutable adjacent migration. */
     public static void createFormat15(Connection connection) throws SQLException
     {
@@ -929,6 +957,12 @@ public final class SdrTrunkDatabaseSchema
 
     private static void create(Connection connection, String configurationChannelTableSql,
                                boolean currentAliasSchema) throws SQLException
+    {
+        create(connection, configurationChannelTableSql, currentAliasSchema, ALIAS_LIST_TABLE_SQL);
+    }
+
+    private static void create(Connection connection, String configurationChannelTableSql,
+                               boolean currentAliasSchema, String aliasListTableSql) throws SQLException
     {
         try(Statement statement = connection.createStatement())
         {
@@ -943,8 +977,8 @@ public final class SdrTrunkDatabaseSchema
                 {
                     continue;
                 }
-                statement.executeUpdate(historical && definition.name().equals("alias_list") ?
-                    FORMAT_20_ALIAS_LIST_TABLE_SQL : definition.sql());
+                statement.executeUpdate(definition.name().equals("alias_list") ?
+                    (historical ? FORMAT_20_ALIAS_LIST_TABLE_SQL : aliasListTableSql) : definition.sql());
             }
             if(CONFIGURATION_CHANNEL_TABLE_SQL.equals(configurationChannelTableSql))
             {
@@ -1000,6 +1034,15 @@ public final class SdrTrunkDatabaseSchema
         try(Statement statement = connection.createStatement())
         {
             statement.executeUpdate(ALIAS_TABLE_SQL);
+        }
+    }
+
+    /** Creates the exact format-44 Alias List table after the adjacent migrator has isolated format 43. */
+    public static void createFormat44AliasListTable(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate(ALIAS_LIST_TABLE_SQL);
         }
     }
 

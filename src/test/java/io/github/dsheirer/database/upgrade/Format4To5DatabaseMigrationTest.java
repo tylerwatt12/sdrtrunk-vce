@@ -665,10 +665,11 @@ class Format4To5DatabaseMigrationTest
 
     private static Connection open(Path database) throws Exception
     {
+        // Full-chain fixtures use the same offline foreign-key boundary as the Application Migrator.
         Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
         try(Statement statement = connection.createStatement())
         {
-            statement.execute("PRAGMA foreign_keys=ON");
+            statement.execute("PRAGMA foreign_keys=OFF");
         }
         return connection;
     }

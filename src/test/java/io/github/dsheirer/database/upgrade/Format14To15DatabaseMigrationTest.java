@@ -95,12 +95,13 @@ class Format14To15DatabaseMigrationTest
                 WHERE channel.configuration_id='%s'
                 """.formatted(CONVENTIONAL_CHANNEL));
 
+            execute(connection, "PRAGMA foreign_keys=OFF");
             connection.setAutoCommit(false);
             try
             {
                 DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
                 assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
-                assertEquals("format-42-to-43", report.steps().getLast().id());
+                assertEquals("format-43-to-44", report.steps().getLast().id());
                 connection.commit();
             }
             catch(Exception exception)
@@ -578,6 +579,7 @@ class Format14To15DatabaseMigrationTest
                 WHERE configuration_id='%s'
                 """.formatted(MIXED_CASE_CHANNEL));
 
+            execute(connection, "PRAGMA foreign_keys=OFF");
             connection.setAutoCommit(false);
             DatabaseMigrationChain.migrate(connection);
             connection.commit();
@@ -634,6 +636,7 @@ class Format14To15DatabaseMigrationTest
                 WHERE configuration_id='%s'
                 """.formatted(authoritativeRadioResolveId, MIXED_CASE_CHANNEL));
 
+            execute(connection, "PRAGMA foreign_keys=OFF");
             connection.setAutoCommit(false);
             DatabaseMigrationChain.migrate(connection);
             connection.commit();
@@ -729,6 +732,7 @@ class Format14To15DatabaseMigrationTest
                     (99102, 101, ' Operations Repair ', NULL, 1, 0)
                 """);
 
+            execute(connection, "PRAGMA foreign_keys=OFF");
             connection.setAutoCommit(false);
             List<DatabaseMigrationEffect> effects =
                 new Format14To15DatabaseMigration().migrateAndReport(connection);
@@ -764,6 +768,7 @@ class Format14To15DatabaseMigrationTest
                 VALUES (982, 981, 'Preserved Unicode-blank owner', 'TALKGROUP', 'APCO25', 104)
                 """);
 
+            execute(connection, "PRAGMA foreign_keys=OFF");
             connection.setAutoCommit(false);
             List<DatabaseMigrationEffect> effects =
                 new Format14To15DatabaseMigration().migrateAndReport(connection);
@@ -824,6 +829,8 @@ class Format14To15DatabaseMigrationTest
             DatabaseFormatCatalog.stampForMigration(connection, 42);
             new Format42To43DatabaseMigration().migrateAndReport(connection, false);
             DatabaseFormatCatalog.stampForMigration(connection, 43);
+            new Format43To44DatabaseMigration().migrateAndReport(connection, false);
+            DatabaseFormatCatalog.stampForMigration(connection, 44);
             connection.commit();
 
             assertTrue(effect(effects, DatabaseMigrationEffect.Kind.DEFAULT,
@@ -868,6 +875,7 @@ class Format14To15DatabaseMigrationTest
                 """);
             execute(connection, "PRAGMA ignore_check_constraints=OFF");
 
+            execute(connection, "PRAGMA foreign_keys=OFF");
             connection.setAutoCommit(false);
             List<DatabaseMigrationEffect> effects =
                 new Format14To15DatabaseMigration().migrateAndReport(connection);
@@ -908,6 +916,7 @@ class Format14To15DatabaseMigrationTest
                 UPDATE alias SET description=hex(zeroblob(2097153)) WHERE name='Migration Dispatch'
                 """);
 
+            execute(connection, "PRAGMA foreign_keys=OFF");
             connection.setAutoCommit(false);
             List<DatabaseMigrationEffect> effects = migration.migrateAndReport(connection);
             assertEquals(baselineDrops, effect(effects, DatabaseMigrationEffect.Kind.DROP,
@@ -962,6 +971,7 @@ class Format14To15DatabaseMigrationTest
 
         try(Connection connection = open(database))
         {
+            execute(connection, "PRAGMA foreign_keys=OFF");
             connection.setAutoCommit(false);
             List<DatabaseMigrationEffect> effects =
                 new Format14To15DatabaseMigration().migrateAndReport(connection);
@@ -1326,6 +1336,7 @@ class Format14To15DatabaseMigrationTest
             assertEquals(sourceRows, effect(planned, DatabaseMigrationEffect.Kind.TRANSFORM,
                 "scan-list memberships recovered into Default").affectedRows());
 
+            execute(connection, "PRAGMA foreign_keys=OFF");
             connection.setAutoCommit(false);
             new Format14To15DatabaseMigration().migrate(connection);
 
@@ -1383,6 +1394,7 @@ class Format14To15DatabaseMigrationTest
             assertEquals(recoverableRows, effect(planned, DatabaseMigrationEffect.Kind.TRANSFORM,
                 "scan-list memberships recovered into Default").affectedRows());
 
+            execute(connection, "PRAGMA foreign_keys=OFF");
             connection.setAutoCommit(false);
             new Format14To15DatabaseMigration().migrate(connection);
 
@@ -1657,6 +1669,7 @@ class Format14To15DatabaseMigrationTest
             assertEquals(baselineDefaults + 1, effect(effects, DatabaseMigrationEffect.Kind.DEFAULT,
                 "recoverable configuration values").affectedRows());
 
+            execute(connection, "PRAGMA foreign_keys=OFF");
             connection.setAutoCommit(false);
             DatabaseMigrationChain.migrate(connection);
             assertEquals("keep", scalar(connection, """
@@ -1698,6 +1711,7 @@ class Format14To15DatabaseMigrationTest
             assertEquals(baselineDefaults + 1, effect(effects, DatabaseMigrationEffect.Kind.DEFAULT,
                 "recoverable configuration values").affectedRows());
 
+            execute(connection, "PRAGMA foreign_keys=OFF");
             connection.setAutoCommit(false);
             DatabaseMigrationChain.migrate(connection);
             assertEquals("second", scalar(connection, """
@@ -2097,6 +2111,7 @@ class Format14To15DatabaseMigrationTest
                 update.setString(2, configurationId);
                 assertEquals(1, update.executeUpdate());
             }
+            execute(connection, "PRAGMA foreign_keys=OFF");
             connection.setAutoCommit(false);
             List<DatabaseMigrationEffect> effects = new Format14To15DatabaseMigration().migrateAndReport(connection);
 

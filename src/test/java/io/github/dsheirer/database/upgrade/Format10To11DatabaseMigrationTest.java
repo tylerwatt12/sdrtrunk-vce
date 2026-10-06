@@ -356,6 +356,7 @@ class Format10To11DatabaseMigrationTest
     {
         try(Connection connection = fixture())
         {
+            execute(connection, "PRAGMA foreign_keys=OFF");
             connection.setAutoCommit(false);
             DatabaseMigrationChain.migrate(connection);
             connection.rollback();

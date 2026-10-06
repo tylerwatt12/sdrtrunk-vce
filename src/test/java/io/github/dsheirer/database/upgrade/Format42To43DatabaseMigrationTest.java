@@ -42,7 +42,7 @@ class Format42To43DatabaseMigrationTest
             assertEquals(41, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(before, preferences(statement));
         }
-        Path current = Format43TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
+        Path current = Format44TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
         byte[] before = Files.readAllBytes(current);
         try(Connection connection = open(current))
         {
@@ -77,7 +77,8 @@ class Format42To43DatabaseMigrationTest
             assertEquals(before.size(), report.steps().getFirst().effects().getFirst().affectedRows());
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
             assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
-            assertEquals(fingerprint, SqliteSchemaValidator.fingerprint(connection), "Density changed the database schema");
+            assertEquals(DatabaseFormatCatalog.requireVersion(43).fingerprint(), fingerprint,
+                "The density step shares the frozen format-42 schema; later name widening changes the current schema");
             Map<Long,Preference> after = preferences(statement);
             assertEquals(before.keySet(), after.keySet());
             for(Map.Entry<Long,Preference> entry: before.entrySet())

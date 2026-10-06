@@ -125,7 +125,7 @@ class Format3To4DatabaseMigrationTest
 
             assertEquals(3, report.source().version());
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
-            assertEquals("format-42-to-43", report.steps().getLast().id());
+            assertEquals("format-43-to-44", report.steps().getLast().id());
             DatabaseFormatCatalog.DetectedFormat current = DatabaseFormatCatalog.requireCurrent(connection);
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, current.version());
             assertEquals(DatabaseFormatCatalog.current().fingerprint(),
@@ -171,10 +171,11 @@ class Format3To4DatabaseMigrationTest
 
     private static Connection open(Path database) throws Exception
     {
+        // Full-chain fixtures use the same offline foreign-key boundary as the Application Migrator.
         Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
         try(Statement statement = connection.createStatement())
         {
-            statement.execute("PRAGMA foreign_keys=ON");
+            statement.execute("PRAGMA foreign_keys=OFF");
         }
         return connection;
     }

@@ -48,6 +48,7 @@ class Format29To30DatabaseMigrationTest
             assertFalse(indexExists(statement, SYSTEM_INDEX));
             assertFalse(indexExists(statement, CHANNEL_INDEX));
 
+            statement.execute("PRAGMA foreign_keys=OFF");
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
 
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 29, report.steps().size());

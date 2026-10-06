@@ -48,7 +48,7 @@ class SdrTrunkDatabaseBootstrapMigrationTest
     void explicitCurrentUpgradeRepairsConfigurationEvenWhenCatalogAdmissionIsCurrent() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("current-configuration-repair");
-        Path database = io.github.dsheirer.database.upgrade.Format43TestDatabase.create(
+        Path database = io.github.dsheirer.database.upgrade.Format44TestDatabase.create(
             SdrTrunkDatabasePath.getDatabasePath(dataRoot));
         String aliasesBefore = scalar(database, "SELECT COUNT(*) FROM alias");
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);

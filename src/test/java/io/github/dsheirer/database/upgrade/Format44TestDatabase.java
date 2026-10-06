@@ -6,21 +6,21 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 
-/** Exact populated format-43 fixture produced by the adjacent Live row-density preference migration. */
-public final class Format43TestDatabase
+/** Exact populated format-44 fixture produced by the adjacent Alias List name-bound migration. */
+public final class Format44TestDatabase
 {
-    private Format43TestDatabase() {}
+    private Format44TestDatabase() {}
 
     public static Path create(Path database) throws Exception
     {
-        Format42TestDatabase.create(database);
+        Format43TestDatabase.create(database);
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
             connection.setAutoCommit(false);
             try
             {
-                new Format42To43DatabaseMigration().migrate(connection);
-                DatabaseFormatCatalog.stamp(connection, 43);
+                new Format43To44DatabaseMigration().migrate(connection);
+                DatabaseFormatCatalog.stamp(connection, 44);
                 connection.commit();
             }
             catch(Exception exception)
@@ -32,11 +32,10 @@ public final class Format43TestDatabase
             {
                 connection.setAutoCommit(true);
             }
-            if(DatabaseFormatCatalog.inspect(connection).version() != 43 ||
-                !DatabaseFormatCatalog.requireVersion(43).fingerprint().equals(
-                    SqliteSchemaValidator.fingerprint(connection)))
+            if(DatabaseFormatCatalog.requireCurrent(connection).version() != 44 ||
+                !DatabaseFormatCatalog.current().fingerprint().equals(SqliteSchemaValidator.fingerprint(connection)))
             {
-                throw new IllegalStateException("Global format 43 fixture signature mismatch");
+                throw new IllegalStateException("Global format 44 fixture signature mismatch");
             }
         }
         return database;

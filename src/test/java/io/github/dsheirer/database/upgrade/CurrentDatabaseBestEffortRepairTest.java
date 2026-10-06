@@ -338,7 +338,7 @@ class CurrentDatabaseBestEffortRepairTest
             execute(connection, "PRAGMA ignore_check_constraints=ON");
             execute(connection, """
                 INSERT INTO alias_list(id, name, family, unmatched_talkgroup_record_enabled)
-                VALUES (983, replace(printf('%025d', 0), '0', char(8195)) || 'x', 'P25', 0)
+                VALUES (983, replace(printf('%0128d', 0), '0', char(8195)) || 'x', 'P25', 0)
                 """);
             execute(connection, """
                 INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, value)
