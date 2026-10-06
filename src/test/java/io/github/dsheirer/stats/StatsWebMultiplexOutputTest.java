@@ -481,7 +481,7 @@ class StatsWebMultiplexOutputTest
         assertTrue(update > sameTarget);
         assertTrue(close > update,
             "Same-target viewport and profile updates must not tear down the producer/session");
-        assertTrue(source.contains("writeMultiplexRecoveryJson(output, TOPIC_CHANNEL_ACTIVITY, \"snapshot\""));
+        assertTrue(source.contains("mLiveService.snapshotWire(mChannelActivityMarkers)"));
         assertTrue(source.contains("metadataGap(output, TOPIC_CHANNEL_ACTIVITY"));
         assertFalse(source.contains("TOPIC_CALLS"));
         assertFalse(source.contains("metadataGap(output, TOPIC_DECODE_EVENTS"));
@@ -490,8 +490,8 @@ class StatsWebMultiplexOutputTest
         assertFalse(source.contains("case \"calls\""));
         assertTrue(source.contains("TOPIC_DECODE_EVENTS, \"live_gap\""));
         assertTrue(source.contains("TOPIC_DECODE_MESSAGES, \"live_gap\""));
-        assertTrue(source.contains("writeMultiplexRecoverySequenceJson(output, TOPIC_CHANNEL_ACTIVITY,"));
-        assertTrue(source.contains("\"live_gap\", Map.of(\"dropped\""));
+        assertTrue(source.contains("output.offerRecoverySequence(TOPIC_CHANNEL_ACTIVITY,"));
+        assertTrue(source.contains("LiveMultiplexFrame.json(TOPIC_CHANNEL_ACTIVITY, \"live_gap\","));
         assertTrue(source.contains("mLiveService.droppedActivityIngressEvents()"));
         assertTrue(source.contains(
             "writeMultiplexRecoveryJson(output, TOPIC_DECODE_MESSAGES, \"source_change\""));

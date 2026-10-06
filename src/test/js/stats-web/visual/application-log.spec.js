@@ -92,6 +92,40 @@ test('loaded search, level filters, full details and shown exports preserve read
   expect(fs.readFileSync(await download.path(), 'utf8')).toBe((await page.evaluate(() => window.copiedLogText)) + '\n');
 });
 
+test('compact log deltas upsert stack traces, preserve copy text, and stop hidden polling', async ({ page }) => {
+  const prefix = '20261002 105431.012 [receiver worker] ERROR  example.Service - ';
+  const id = '0123456789abcdef:1';
+  const first = { ...entry(id, 'ERROR', 'Failure', 'initial trace'), text: undefined, header_prefix: prefix };
+  const requests = [];
+  page.on('request', (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === '/api/v1/application-log') requests.push(Object.fromEntries(url.searchParams));
+  });
+  const state = await openLog(page, { snapshot: documentFor([first], {
+    revision: '0123456789abcdef:80', first_id: id, incremental: false }) });
+  await expect(page.locator('.application-log-entry')).toHaveCount(1);
+  state.snapshot = documentFor([{ ...first, details: 'initial trace\ncontinued trace' }], {
+    revision: '0123456789abcdef:90', first_id: id, incremental: true });
+  await page.getByRole('button', { name: 'Refresh application log' }).click();
+  await expect(page.locator('.application-log-entry')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Copy shown', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.copiedLogText)).toBe(
+    `${prefix}Failure\ninitial trace\ncontinued trace`);
+  expect(requests.at(-1).revision).toBe('0123456789abcdef:80');
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  const count = requests.length;
+  await page.waitForTimeout(2_200);
+  expect(requests).toHaveLength(count);
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await expect.poll(() => requests.length).toBeGreaterThan(count);
+});
+
 test('pause freezes rows, resume sends the last cursor, disconnect retains rows, and access loss removes them', async ({ page }) => {
   const state = await openLog(page);
   await expect(page.locator('.application-log-entry')).toHaveCount(4);

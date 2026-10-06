@@ -15,6 +15,7 @@ import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
 import io.github.dsheirer.web.http.ApiHttpResponse;
+import com.fasterxml.jackson.databind.JsonNode;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -22,9 +23,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
+import io.github.dsheirer.util.concurrent.BoundedMpscReferenceQueue;
 import java.util.concurrent.locks.LockSupport;
 
 /**
@@ -120,9 +122,11 @@ final class StatsLiveService implements AutoCloseable
                 mRowSystemScopeState = scopes;
                 mEncodedChannelActivitySnapshot = null;
                 mCurrentRun = run;
-                worker.start();
-
+                // Register before capturing the baseline: notifications arriving afterward are already queued.
+                // The lifecycle lock prevents a browser subscriber from observing a partially initialized run.
                 mActivitySource.addListener(run.mListener);
+                run.mInitialSnapshot = currentSnapshotSet();
+                worker.start();
             }
         }
     }
@@ -141,7 +145,6 @@ final class StatsLiveService implements AutoCloseable
                 mRunGeneration.incrementAndGet();
                 mActivitySource.removeListener(run.mListener);
 
-                run.mPendingActivity.set(null);
                 worker = run.mWorker;
 
                 if(worker != null)
@@ -176,9 +179,21 @@ final class StatsLiveService implements AutoCloseable
 
     StatsLiveEventHub.Subscription subscribeChannelActivity()
     {
+        return subscribeChannelActivity(false);
+    }
+
+    StatsLiveEventHub.Subscription subscribeChannelActivity(boolean deltas)
+    {
+        return subscribeChannelActivity(deltas, false);
+    }
+
+    StatsLiveEventHub.Subscription subscribeChannelActivity(boolean deltas, boolean markers)
+    {
         synchronized(mLifecycleLock)
         {
-            return mCurrentRun != null ? mChannelActivityHub.subscribe() : null;
+            return mCurrentRun != null ? mChannelActivityHub.subscribe(event ->
+                event.markers() == markers &&
+                !Objects.equals(event.name(), deltas ? "activity_table" : "activity_delta")) : null;
         }
     }
 
@@ -196,7 +211,7 @@ final class StatsLiveService implements AutoCloseable
             return;
         }
 
-        if(run.mPendingActivity.getAndSet(event) != null)
+        if(!run.mPendingActivity.offer(event))
         {
             mDroppedProjectionEvents.incrementAndGet();
             run.mResyncRequired.set(true);
@@ -207,9 +222,24 @@ final class StatsLiveService implements AutoCloseable
 
     private void projectionLoop(ProjectionRun run)
     {
+        // Seed one shared baseline before processing ordered notifications. Browser snapshots can be newer than
+        // this baseline; revision checks let those viewers skip the already-covered notifications safely.
+        rebuildBaseline(run, run.mInitialSnapshot);
+        run.mInitialSnapshot = null;
         while(isCurrentRun(run))
         {
-            ChannelActivityEvent event = run.mPendingActivity.getAndSet(null);
+            ChannelActivityEvent event = run.mPendingActivity.poll();
+
+            if(run.mResyncRequired.getAndSet(false))
+            {
+                for(int count = 0; count < run.mPendingActivity.capacity(); count++)
+                {
+                    if(run.mPendingActivity.poll() == null) break;
+                }
+                rebuildBaseline(run, currentSnapshotSet());
+                publishAuthoritativeResync(run);
+                continue;
+            }
 
             if(event == null)
             {
@@ -234,9 +264,15 @@ final class StatsLiveService implements AutoCloseable
 
     private void projectAndPublish(ProjectionRun run, ChannelActivityEvent event)
     {
+        if(event.revision() > 0 && event.revision() <= run.mPublishedRevision)
+        {
+            return;
+        }
+        publishNavigationRefreshIfNeeded(run);
         WebEntityNavigationCatalog.Snapshot navigation = navigationSnapshot();
         RemoteOriginLookup.OriginSnapshot remoteOrigins = remoteOriginSnapshot();
-        PreparedActivityEvent prepared = prepare(event, navigation, remoteOrigins, run.mRowSystemScopes);
+        PreparedActivityEvent prepared = prepare(event, navigation, remoteOrigins, run.mRowSystemScopes,
+            run.mSourceTables.get(event.snapshot().tableId()), run.mProjectedTables.get(event.snapshot().tableId()));
 
         if(prepared == null)
         {
@@ -253,6 +289,17 @@ final class StatsLiveService implements AutoCloseable
         }
 
         update.put("revision", event.revision() > 0 ? event.revision() : currentSnapshotSet().revision());
+        update.put("base_revision", run.mPublishedRevision);
+        long revision = ((Number)update.get("revision")).longValue();
+        Map<String,Object> delta = activityDelta(prepared, run.mProjectedTables.get(prepared.tableId()),
+            run.mPublishedRevision, revision);
+        Map<String,Object> markerTable = prepared.table() != null ? markerTable(prepared.table(),
+            run.mProjectedTables.get(prepared.tableId()), run.mMarkerTables.get(prepared.tableId())) : null;
+        LinkedHashMap<String,Object> markerUpdate = new LinkedHashMap<>(update);
+        if(markerTable != null) markerUpdate.put("table", markerTable);
+        Map<String,Object> markerDelta = activityDelta(new PreparedActivityEvent(prepared.operation(),
+            prepared.tableId(), markerTable), run.mMarkerTables.get(prepared.tableId()),
+            run.mPublishedRevision, revision);
         synchronized(mLifecycleLock)
         {
             if(!isCurrentRun(run))
@@ -263,22 +310,154 @@ final class StatsLiveService implements AutoCloseable
             mEncodedChannelActivitySnapshot = null;
             run.mPublishedNavigation = navigation;
             run.mPublishedRemoteOrigins = remoteOrigins;
-            mChannelActivityHub.publish("activity_table", Map.copyOf(update));
-        }
-
-        if(run.mResyncRequired.getAndSet(false) && isCurrentRun(run))
-        {
-            Map<String,Object> authoritative = snapshot(currentSnapshotSet(), MAXIMUM_TOTAL_LIVE_ROWS,
-                navigationSnapshot(), remoteOriginSnapshot(), run.mRowSystemScopes);
-
-            synchronized(mLifecycleLock)
+            StatsLiveEventHub.LiveEvent complete = new StatsLiveEventHub.LiveEvent("activity_table", Map.copyOf(update));
+            mChannelActivityHub.publish(complete);
+            mChannelActivityHub.publish(new StatsLiveEventHub.LiveEvent("activity_delta", delta, complete));
+            StatsLiveEventHub.LiveEvent compact = new StatsLiveEventHub.LiveEvent("activity_table",
+                Map.copyOf(markerUpdate), null, true);
+            mChannelActivityHub.publish(compact);
+            mChannelActivityHub.publish(new StatsLiveEventHub.LiveEvent("activity_delta", markerDelta, compact, true));
+            run.mPublishedRevision = revision;
+            if(prepared.table() == null)
             {
-                if(isCurrentRun(run))
+                run.mProjectedTables.remove(prepared.tableId());
+                run.mSourceTables.remove(prepared.tableId());
+                run.mMarkerTables.remove(prepared.tableId());
+            }
+            else
+            {
+                run.mProjectedTables.put(prepared.tableId(), prepared.table());
+                run.mSourceTables.put(prepared.tableId(), event.snapshot());
+                run.mMarkerTables.put(prepared.tableId(), markerTable);
+                while(run.mProjectedTables.size() > MAXIMUM_LIVE_TABLES)
                 {
-                    mChannelActivityHub.publish("activity_resync", Map.of("snapshot", authoritative));
+                    String eldest = run.mProjectedTables.keySet().iterator().next();
+                    run.mProjectedTables.remove(eldest);
+                    run.mSourceTables.remove(eldest);
+                    run.mMarkerTables.remove(eldest);
                 }
             }
         }
+    }
+
+    private void rebuildBaseline(ProjectionRun run, ChannelActivityModel.SnapshotSet source)
+    {
+        run.mProjectedTables.clear();
+        run.mSourceTables.clear();
+        run.mMarkerTables.clear();
+        WebEntityNavigationCatalog.Snapshot navigation = navigationSnapshot();
+        RemoteOriginLookup.OriginSnapshot origins = remoteOriginSnapshot();
+        source.tables().stream().filter(StatsLiveService::isVisibleLiveTable).limit(MAXIMUM_LIVE_TABLES)
+            .forEach(table -> {
+                run.mSourceTables.put(table.tableId(), table);
+                Map<String,Object> projected = activityTable(table, MAXIMUM_ROWS_PER_TABLE,
+                    navigation, origins, run.mRowSystemScopes);
+                run.mProjectedTables.put(table.tableId(), projected);
+                run.mMarkerTables.put(table.tableId(), markerTable(projected, null, null));
+            });
+        run.mPublishedRevision = source.revision();
+        run.mPublishedNavigation = navigation;
+        run.mPublishedRemoteOrigins = origins;
+    }
+
+    private void publishAuthoritativeResync(ProjectionRun run)
+    {
+        Map<String,Object> authoritative = boundedSnapshot(new ChannelActivityModel.SnapshotSet(run.mPublishedRevision,
+            List.copyOf(run.mSourceTables.values())), MAXIMUM_TOTAL_LIVE_ROWS, run.mPublishedNavigation,
+            run.mPublishedRemoteOrigins, run.mRowSystemScopes);
+        synchronized(mLifecycleLock)
+        {
+            if(isCurrentRun(run))
+            {
+                mEncodedChannelActivitySnapshot = null;
+                mChannelActivityHub.publish("activity_resync", Map.of("snapshot", authoritative));
+                mChannelActivityHub.publish(new StatsLiveEventHub.LiveEvent("activity_resync",
+                    Map.of("snapshot", markerSnapshot(authoritative)), null, true));
+            }
+        }
+    }
+
+    /** Full changed rows keep field removal unambiguous while unchanged rows remain in the browser baseline. */
+    static Map<String,Object> activityDelta(PreparedActivityEvent prepared, Map<String,Object> previous,
+                                            long baseRevision, long revision)
+    {
+        LinkedHashMap<String,Object> delta = new LinkedHashMap<>();
+        delta.put("operation", prepared.operation().name().toLowerCase());
+        delta.put("table_id", prepared.tableId());
+        delta.put("base_revision", baseRevision);
+        delta.put("revision", revision);
+        if(prepared.table() != null)
+        {
+            Map<String,Object> current = prepared.table();
+            LinkedHashMap<String,Object> metadata = new LinkedHashMap<>(current);
+            metadata.remove("rows");
+            LinkedHashMap<String,Object> oldMetadata = previous != null ? new LinkedHashMap<>(previous) : null;
+            if(oldMetadata != null) oldMetadata.remove("rows");
+            if(!metadata.equals(oldMetadata)) delta.put("table", Map.copyOf(metadata));
+            Map<String,Map<String,Object>> oldRows = rowIndex(previous);
+            Map<String,Map<String,Object>> newRows = rowIndex(current);
+            delta.put("rows", newRows.entrySet().stream()
+                .filter(entry -> !entry.getValue().equals(oldRows.get(entry.getKey())))
+                .map(Map.Entry::getValue).toList());
+            delta.put("removed_row_keys", oldRows.keySet().stream().filter(key -> !newRows.containsKey(key)).toList());
+            if(!List.copyOf(oldRows.keySet()).equals(List.copyOf(newRows.keySet())))
+            {
+                delta.put("row_order", List.copyOf(newRows.keySet()));
+            }
+        }
+        return Map.copyOf(delta);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String,Map<String,Object>> rowIndex(Map<String,Object> table)
+    {
+        LinkedHashMap<String,Map<String,Object>> rows = new LinkedHashMap<>();
+        if(table != null && table.get("rows") instanceof List<?> values)
+        {
+            for(Object value: values)
+            {
+                Map<String,Object> row = (Map<String,Object>)value;
+                rows.put(String.valueOf(row.get("key")), row);
+            }
+        }
+        return rows;
+    }
+
+    private static final Set<String> NON_MARKER_FIELDS = Set.of("activation_order", "tags_truncated",
+        "cc_valid_frames", "cc_invalid_frames", "cc_corrected_bits", "cc_sync_loss_bits", "cc_dropped_bits",
+        "cc_last_valid_decode_ms", "quality_observed_at_ms", "vc_decoded_frames", "vc_repeated_frames",
+        "vc_concealed_frames", "vc_missing_frames", "vc_fec_errors", "vc_fec_protected_bits",
+        "call_leg_id", "tx_state", "tx_observed_at_ms", "tx_start_ms", "tx_last_observed_at_ms", "tx_end_certain",
+        "tx_burst_generation", "tx_burst_started_at_ms", "source_aliases", "target_aliases",
+        "alias_list_id", "alias_list_name");
+
+    /** Spectrum hover keeps aliases, identities and navigation; raw decode/transmission counters are unrelated. */
+    static Map<String,Object> markerTable(Map<String,Object> table, Map<String,Object> previous,
+                                           Map<String,Object> previousMarker)
+    {
+        LinkedHashMap<String,Object> compact = new LinkedHashMap<>(table);
+        Map<String,Map<String,Object>> oldRows = rowIndex(previous);
+        Map<String,Map<String,Object>> oldMarkers = rowIndex(previousMarker);
+        List<Map<String,Object>> rows = rowIndex(table).entrySet().stream().map(entry -> {
+            if(entry.getValue() == oldRows.get(entry.getKey()) && oldMarkers.containsKey(entry.getKey()))
+            {
+                return oldMarkers.get(entry.getKey());
+            }
+            LinkedHashMap<String,Object> row = new LinkedHashMap<>(entry.getValue());
+            NON_MARKER_FIELDS.forEach(row::remove);
+            return Map.copyOf(row);
+        }).toList();
+        compact.put("rows", rows);
+        return Map.copyOf(compact);
+    }
+
+    @SuppressWarnings("unchecked")
+    static Map<String,Object> markerSnapshot(Map<String,Object> snapshot)
+    {
+        LinkedHashMap<String,Object> compact = new LinkedHashMap<>(snapshot);
+        compact.put("tables", ((List<Map<String,Object>>)snapshot.get("tables")).stream()
+            .map(table -> markerTable(table, null, null)).toList());
+        return Map.copyOf(compact);
     }
 
     private void publishNavigationRefreshIfNeeded(ProjectionRun run)
@@ -291,8 +470,9 @@ final class StatsLiveService implements AutoCloseable
             return;
         }
 
-        ChannelActivityModel.SnapshotSet source = currentSnapshotSet();
-        Map<String,Object> authoritative = snapshot(source, MAXIMUM_TOTAL_LIVE_ROWS, navigation, remoteOrigins,
+        ChannelActivityModel.SnapshotSet source = new ChannelActivityModel.SnapshotSet(run.mPublishedRevision,
+            List.copyOf(run.mSourceTables.values()));
+        Map<String,Object> authoritative = boundedSnapshot(source, MAXIMUM_TOTAL_LIVE_ROWS, navigation, remoteOrigins,
             run.mRowSystemScopes);
 
         synchronized(mLifecycleLock)
@@ -304,6 +484,11 @@ final class StatsLiveService implements AutoCloseable
                 run.mPublishedNavigation = navigation;
                 run.mPublishedRemoteOrigins = remoteOrigins;
                 mChannelActivityHub.publish("activity_resync", Map.of("snapshot", authoritative));
+                mChannelActivityHub.publish(new StatsLiveEventHub.LiveEvent("activity_resync",
+                    Map.of("snapshot", markerSnapshot(authoritative)), null, true));
+                run.mProjectedTables.replaceAll((id, old) -> activityTable(run.mSourceTables.get(id),
+                    MAXIMUM_ROWS_PER_TABLE, navigation, remoteOrigins, run.mRowSystemScopes));
+                run.mProjectedTables.forEach((id, table) -> run.mMarkerTables.put(id, markerTable(table, null, null)));
             }
         }
     }
@@ -327,6 +512,44 @@ final class StatsLiveService implements AutoCloseable
     {
         return snapshot(currentSnapshotSet(), MAXIMUM_TOTAL_LIVE_ROWS, navigationSnapshot(), remoteOriginSnapshot(),
             mRowSystemScopeState);
+    }
+
+    /** Recovery and navigation refreshes obey the same byte budget as initial snapshots. */
+    private Map<String,Object> boundedSnapshot(ChannelActivityModel.SnapshotSet source, int maximumRows,
+                                               WebEntityNavigationCatalog.Snapshot navigation,
+                                               RemoteOriginLookup.OriginSnapshot origins, RowSystemScopeState scopes)
+    {
+        int low = 0;
+        int high = maximumRows;
+        Map<String,Object> best = null;
+        try
+        {
+            Map<String,Object> full = snapshot(source, maximumRows, navigation, origins, scopes);
+            if(ApiHttpResponse.encodePayload(StatsApiV1Payload.present(full)).length <=
+                MAXIMUM_SYSTEM_SNAPSHOT_BYTES - 64)
+            {
+                return full;
+            }
+            high = maximumRows - 1;
+            while(low <= high)
+            {
+                int limit = low + (high - low) / 2;
+                Map<String,Object> candidate = snapshot(source, limit, navigation, origins, scopes);
+                if(ApiHttpResponse.encodePayload(StatsApiV1Payload.present(candidate)).length <=
+                    MAXIMUM_SYSTEM_SNAPSHOT_BYTES - 64)
+                {
+                    best = candidate;
+                    low = limit + 1;
+                }
+                else high = limit - 1;
+            }
+        }
+        catch(IOException exception)
+        {
+            throw new IllegalStateException("Live snapshot encoding failed", exception);
+        }
+        if(best == null) throw new IllegalStateException("Live metadata exceeds its snapshot byte budget");
+        return best;
     }
 
     private Map<String,Object> snapshot(ChannelActivityModel.SnapshotSet source, int maximumRows,
@@ -383,6 +606,31 @@ final class StatsLiveService implements AutoCloseable
 
     byte[] encodedSnapshot() throws IOException
     {
+        return encodedSnapshotState().payload();
+    }
+
+    LiveMultiplexFrame snapshotFrame() throws IOException
+    {
+        return encodedSnapshotState().frame();
+    }
+
+    SnapshotWire snapshotWire() throws IOException
+    {
+        return snapshotWire(false);
+    }
+
+    SnapshotWire snapshotWire(boolean markers) throws IOException
+    {
+        EncodedSnapshot snapshot = encodedSnapshotState();
+        return new SnapshotWire(snapshot.revision(), markers ? snapshot.markerFrame() : snapshot.frame());
+    }
+
+    record SnapshotWire(long revision, LiveMultiplexFrame frame)
+    {
+    }
+
+    private EncodedSnapshot encodedSnapshotState() throws IOException
+    {
         long generation = mRunGeneration.get();
         ChannelActivityModel.SnapshotSet source = currentSnapshotSet();
         WebEntityNavigationCatalog.Snapshot navigation = navigationSnapshot();
@@ -393,7 +641,7 @@ final class StatsLiveService implements AutoCloseable
         if(cached != null && cached.generation() == generation && cached.revision() == source.revision() &&
             cached.navigation() == navigation && cached.remoteOrigins() == remoteOrigins)
         {
-            return cached.payload();
+            return cached;
         }
 
         synchronized(mEncodedSnapshotLock)
@@ -403,23 +651,38 @@ final class StatsLiveService implements AutoCloseable
             if(cached != null && cached.generation() == generation && cached.revision() == source.revision() &&
                 cached.navigation() == navigation && cached.remoteOrigins() == remoteOrigins)
             {
-                return cached.payload();
+                return cached;
             }
 
             int low = 0;
-            int high = MAXIMUM_TOTAL_LIVE_ROWS;
-            byte[] best = null;
+            int high = MAXIMUM_TOTAL_LIVE_ROWS - 1;
+            Map<String,Object> bestProjection = snapshot(source, MAXIMUM_TOTAL_LIVE_ROWS, navigation,
+                remoteOrigins, rowSystemScopes);
+            JsonNode bestDocument = StatsApiV1Payload.present(bestProjection);
+            byte[] best = ApiHttpResponse.encodePayload(bestDocument);
+            if(best.length <= MAXIMUM_SYSTEM_SNAPSHOT_BYTES)
+            {
+                high = -1;
+            }
+            else
+            {
+                best = null;
+                bestDocument = null;
+                bestProjection = null;
+            }
 
             while(low <= high)
             {
                 int candidateLimit = low + (high - low) / 2;
-                byte[] candidate = ApiHttpResponse.encodePayload(
-                    StatsApiV1Payload.present(snapshot(source, candidateLimit, navigation, remoteOrigins,
-                        rowSystemScopes)));
+                Map<String,Object> projection = snapshot(source, candidateLimit, navigation, remoteOrigins, rowSystemScopes);
+                JsonNode document = StatsApiV1Payload.present(projection);
+                byte[] candidate = ApiHttpResponse.encodePayload(document);
 
                 if(candidate.length <= MAXIMUM_SYSTEM_SNAPSHOT_BYTES)
                 {
                     best = candidate;
+                    bestDocument = document;
+                    bestProjection = projection;
                     low = candidateLimit + 1;
                 }
                 else
@@ -434,14 +697,15 @@ final class StatsLiveService implements AutoCloseable
             }
 
             EncodedSnapshot encoded = new EncodedSnapshot(generation, source.revision(), navigation,
-                remoteOrigins, best);
+                remoteOrigins, best, LiveMultiplexFrame.json(1, "snapshot", bestDocument),
+                LiveMultiplexFrame.json(1, "snapshot", StatsApiV1Payload.present(markerSnapshot(bestProjection))));
 
             if(mRunGeneration.get() == generation && mRowSystemScopeState == rowSystemScopes)
             {
                 mEncodedChannelActivitySnapshot = encoded;
             }
 
-            return encoded.payload();
+            return encoded;
         }
     }
 
@@ -453,7 +717,8 @@ final class StatsLiveService implements AutoCloseable
     private PreparedActivityEvent prepare(ChannelActivityEvent event,
                                           WebEntityNavigationCatalog.Snapshot navigation,
                                           RemoteOriginLookup.OriginSnapshot remoteOrigins,
-                                          RowSystemScopeState rowSystemScopes)
+                                          RowSystemScopeState rowSystemScopes,
+                                          ChannelActivitySnapshot previousSource, Map<String,Object> previousTable)
     {
         String tableId = boundedText(event.snapshot().tableId(), MAXIMUM_LIVE_TEXT_LENGTH);
 
@@ -471,7 +736,7 @@ final class StatsLiveService implements AutoCloseable
         else
         {
             table = activityTable(event.snapshot(), MAXIMUM_ROWS_PER_TABLE, navigation, remoteOrigins,
-                rowSystemScopes);
+                rowSystemScopes, previousSource, previousTable);
         }
         return new PreparedActivityEvent(event.operation(), tableId, table);
     }
@@ -500,6 +765,15 @@ final class StatsLiveService implements AutoCloseable
                                              WebEntityNavigationCatalog.Snapshot navigation,
                                              RemoteOriginLookup.OriginSnapshot remoteOrigins,
                                              RowSystemScopeState rowSystemScopes)
+    {
+        return activityTable(snapshot, maximumRows, navigation, remoteOrigins, rowSystemScopes, null, null);
+    }
+
+    private Map<String,Object> activityTable(ChannelActivitySnapshot snapshot, int maximumRows,
+                                             WebEntityNavigationCatalog.Snapshot navigation,
+                                             RemoteOriginLookup.OriginSnapshot remoteOrigins,
+                                             RowSystemScopeState rowSystemScopes,
+                                             ChannelActivitySnapshot previousSource, Map<String,Object> previousTable)
     {
         LinkedHashMap<String,Object> table = new LinkedHashMap<>();
         WebEntityNavigationCatalog.Channel tableChannel = navigation.channel(snapshot.configurationId());
@@ -536,9 +810,19 @@ final class StatsLiveService implements AutoCloseable
             .map(StatsLiveService::activityIdentifier).toList());
         int rowCount = snapshot.rows().size();
         int included = Math.min(rowCount, Math.max(0, maximumRows));
+        LinkedHashMap<String,ChannelActivitySnapshot.Row> oldSources = new LinkedHashMap<>();
+        if(previousSource != null)
+        {
+            previousSource.rows().stream().limit(MAXIMUM_ROWS_PER_TABLE)
+                .forEach(row -> oldSources.put(row.key(), row));
+        }
+        Map<String,Map<String,Object>> oldRows = rowIndex(previousTable);
+        boolean sameSite = previousSource != null && Objects.equals(snapshot.site(), previousSource.site()) &&
+            Objects.equals(snapshot.configurationId(), previousSource.configurationId());
         table.put("rows", snapshot.rows().stream().limit(included)
-            .map(row -> activityRow(snapshot.tableId(), row, tableChannel, snapshot.site(), navigation,
-                remoteOrigins, rowSystemScopes)).toList());
+            .map(row -> sameSite && row.equals(oldSources.get(row.key())) && oldRows.containsKey(row.key()) ?
+                oldRows.get(row.key()) : activityRow(snapshot.tableId(), row, tableChannel, snapshot.site(), navigation,
+                    remoteOrigins, rowSystemScopes)).toList());
         table.put("rows_total", rowCount);
         table.put("rows_omitted", rowCount - included);
         table.put("rows_truncated", rowCount > included);
@@ -885,7 +1169,7 @@ final class StatsLiveService implements AutoCloseable
         stop();
     }
 
-    private record PreparedActivityEvent(ChannelActivityEvent.Operation operation, String tableId,
+    record PreparedActivityEvent(ChannelActivityEvent.Operation operation, String tableId,
                                          Map<String,Object> table)
     {
     }
@@ -893,7 +1177,7 @@ final class StatsLiveService implements AutoCloseable
     private record EncodedSnapshot(long generation, long revision,
                                    WebEntityNavigationCatalog.Snapshot navigation,
                                    RemoteOriginLookup.OriginSnapshot remoteOrigins,
-                                   byte[] payload)
+                                   byte[] payload, LiveMultiplexFrame frame, LiveMultiplexFrame markerFrame)
     {
     }
 
@@ -913,7 +1197,13 @@ final class StatsLiveService implements AutoCloseable
     {
         private final long mGeneration;
         private final RowSystemScopeState mRowSystemScopes;
-        private final AtomicReference<ChannelActivityEvent> mPendingActivity = new AtomicReference<>();
+        private ChannelActivityModel.SnapshotSet mInitialSnapshot;
+        private final BoundedMpscReferenceQueue<ChannelActivityEvent> mPendingActivity =
+            new BoundedMpscReferenceQueue<>(256);
+        private final LinkedHashMap<String,Map<String,Object>> mProjectedTables = new LinkedHashMap<>();
+        private final LinkedHashMap<String,ChannelActivitySnapshot> mSourceTables = new LinkedHashMap<>();
+        private final LinkedHashMap<String,Map<String,Object>> mMarkerTables = new LinkedHashMap<>();
+        private long mPublishedRevision;
         private final AtomicBoolean mResyncRequired = new AtomicBoolean();
         private final Listener<ChannelActivityEvent> mListener = event -> receiveChannelActivity(this, event);
         private volatile WebEntityNavigationCatalog.Snapshot mPublishedNavigation;

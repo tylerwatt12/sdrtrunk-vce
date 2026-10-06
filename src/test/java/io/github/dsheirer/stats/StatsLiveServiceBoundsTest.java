@@ -32,6 +32,188 @@ import org.junit.jupiter.api.Test;
 class StatsLiveServiceBoundsTest
 {
     @Test
+    void registrationRaceRetainsEveryTableInTheSharedBaseline() throws Exception
+    {
+        TestChannelActivitySource delegate = new TestChannelActivitySource();
+        StatsLiveService.ActivitySource racingSource = new StatsLiveService.ActivitySource()
+        {
+            @Override public io.github.dsheirer.channel.metadata.activity.ChannelActivityModel.SnapshotSet snapshot()
+            { return delegate.snapshot(); }
+            @Override public long droppedIngressCount() { return 0; }
+            @Override public void addListener(io.github.dsheirer.sample.Listener<ChannelActivityEvent> listener)
+            {
+                // These two changes happen before notification registration. Capturing a baseline beforehand
+                // would miss them; a later update to alpha cannot reconstruct the missing beta table.
+                delegate.publish(activity("alpha", List.of(activityRow("alpha-row"))));
+                delegate.publish(activity("beta", List.of(activityRow("beta-row"))));
+                delegate.addListener(listener);
+            }
+            @Override public void removeListener(io.github.dsheirer.sample.Listener<ChannelActivityEvent> listener)
+            { delegate.removeListener(listener); }
+        };
+        AtomicReference<WebEntityNavigationCatalog.Snapshot> loaded =
+            new AtomicReference<>(WebEntityNavigationCatalog.Snapshot.empty());
+        WebEntityNavigationCatalog catalog = new WebEntityNavigationCatalog(loaded::get, 60_000L);
+        catalog.refreshNow();
+        StatsLiveService service = StatsLiveService.fromActivitySource(racingSource, catalog);
+        try
+        {
+            service.start();
+            try(StatsLiveEventHub.Subscription subscription = service.subscribeChannelActivity())
+            {
+                delegate.publish(activity("alpha", List.of(activityRow("changed-alpha"))));
+                StatsLiveEventHub.LiveEvent update = subscription.poll(1, TimeUnit.SECONDS);
+                assertNotNull(update);
+                assertEquals("activity_table", update.name());
+                String configurationId = "728d2d66-de4e-476b-a696-919f32dd4d12";
+                loaded.set(WebEntityNavigationCatalog.Snapshot.of(List.of(new WebEntityNavigationCatalog.Channel(
+                    configurationId, WebEntityRef.channel(configurationId), null, 0, 0, null, null))));
+                catalog.refreshNow();
+                StatsLiveEventHub.LiveEvent refresh = subscription.poll(1, TimeUnit.SECONDS);
+                assertNotNull(refresh);
+                assertEquals("activity_resync", refresh.name());
+                Map<String,Object> snapshot = (Map<String,Object>)((Map<?,?>)refresh.data()).get("snapshot");
+                assertEquals(List.of("alpha", "beta"), tables(snapshot).stream().map(table -> table.get("table_id")).toList());
+                assertEquals("changed-alpha", rows(tables(snapshot).getFirst()).getFirst().get("key"));
+            }
+        }
+        finally { service.close(); }
+    }
+
+    @Test
+    void viewersShareEncodedEventsAndLegacyMarkerVariantsStayIndependent() throws Exception
+    {
+        TestChannelActivitySource source = new TestChannelActivitySource();
+        StatsLiveService service = StatsLiveService.fromActivitySource(source, null);
+        try
+        {
+            service.start();
+            try(StatsLiveEventHub.Subscription first = service.subscribeChannelActivity(true);
+                StatsLiveEventHub.Subscription second = service.subscribeChannelActivity(true);
+                StatsLiveEventHub.Subscription legacy = service.subscribeChannelActivity();
+                StatsLiveEventHub.Subscription marker = service.subscribeChannelActivity(true, true))
+            {
+                source.publish(activity("site", List.of(activityRow("call"))));
+                StatsLiveEventHub.LiveEvent firstEvent = first.poll(1, TimeUnit.SECONDS);
+                StatsLiveEventHub.LiveEvent secondEvent = second.poll(1, TimeUnit.SECONDS);
+                StatsLiveEventHub.LiveEvent legacyEvent = legacy.poll(1, TimeUnit.SECONDS);
+                StatsLiveEventHub.LiveEvent markerEvent = marker.poll(1, TimeUnit.SECONDS);
+                assertNotNull(firstEvent);
+                assertNotNull(markerEvent);
+                assertSame(firstEvent, secondEvent);
+                assertSame(firstEvent.frame(1), secondEvent.frame(1));
+                assertSame(firstEvent.baseline(), legacyEvent);
+                assertEquals("activity_table", legacyEvent.name());
+                assertEquals("activity_delta", markerEvent.name());
+                assertTrue(markerEvent.markers());
+                assertFalse(firstEvent.markers());
+                assertFalse(firstEvent.frame(1) == markerEvent.frame(1));
+            }
+        }
+        finally { service.close(); }
+    }
+
+    @Test
+    void compactMarkerProjectionKeepsHoverLabelsIdentitiesAndNavigation()
+    {
+        Map<String,Object> row = Map.ofEntries(
+            Map.entry("key", "call"), Map.entry("source_alias", "Engine 1"),
+            Map.entry("source_alias_description", "Engine company one"), Map.entry("target_alias", "Dispatch"),
+            Map.entry("source_canonical_identity", Map.of("wacn", 1, "system_id", 2, "subscriber_id", 3)),
+            Map.entry("source_observed_working_id", 1201), Map.entry("source_entity_ref", Map.of("kind", "radio")),
+            Map.entry("frequency_hz", 851_012_500L), Map.entry("signal_dbfs", -25.5),
+            Map.entry("decode_health_pct", 99.5), Map.entry("vc_quality_pct", 98.5),
+            Map.entry("cc_valid_frames", 2000L), Map.entry("tx_observed_at_ms", 9876L),
+            Map.entry("source_aliases", List.of(Map.of("alias_id", 10))));
+        Map<String,Object> table = Map.of("table_id", "site", "system_name", "County", "site_name", "Downtown",
+            "identifiers", List.of(Map.of("label", "WACN", "value", "BEE00")), "rows", List.of(row));
+        Map<String,Object> compact = StatsLiveService.markerTable(table, null, null);
+        Map<?,?> result = (Map<?,?>)((List<?>)compact.get("rows")).getFirst();
+        for(String field: List.of("source_alias", "source_alias_description", "target_alias",
+            "source_canonical_identity", "source_observed_working_id", "source_entity_ref", "frequency_hz",
+            "signal_dbfs", "decode_health_pct", "vc_quality_pct")) assertEquals(row.get(field), result.get(field));
+        assertEquals(table.get("identifiers"), compact.get("identifiers"));
+        assertFalse(result.containsKey("cc_valid_frames"));
+        assertFalse(result.containsKey("tx_observed_at_ms"));
+        assertFalse(result.containsKey("source_aliases"));
+        Map<String,Object> unchanged = StatsLiveService.markerTable(table, table, compact);
+        assertSame(result, ((List<?>)unchanged.get("rows")).getFirst(), "unchanged shared rows must be reused");
+    }
+
+    @Test
+    void rowDeltasPreserveRemovalsOptionalFieldClearingAndOrdering()
+    {
+        Map<String,Object> unchanged = Map.of("key", "control", "status", "CONTROL");
+        Map<String,Object> oldCall = Map.of("key", "call", "status", "CALL", "source_alias", "Engine 1");
+        Map<String,Object> newCall = Map.of("key", "call", "status", "IDLE");
+        Map<String,Object> previous = Map.of("table_id", "site", "title", "County", "rows",
+            List.of(unchanged, oldCall, Map.of("key", "removed")));
+        Map<String,Object> current = Map.of("table_id", "site", "title", "County", "rows",
+            List.of(newCall, unchanged));
+        Map<String,Object> delta = StatsLiveService.activityDelta(new StatsLiveService.PreparedActivityEvent(
+            ChannelActivityEvent.Operation.UPSERT, "site", current), previous, 40, 41);
+        assertEquals(40L, delta.get("base_revision"));
+        assertEquals(41L, delta.get("revision"));
+        assertEquals(List.of(newCall), delta.get("rows"));
+        assertEquals(List.of("removed"), delta.get("removed_row_keys"));
+        assertEquals(List.of("call", "control"), delta.get("row_order"));
+        assertFalse(delta.containsKey("table"), "unchanged table metadata must remain in the baseline");
+        assertFalse(((Map<?,?>)((List<?>)delta.get("rows")).getFirst()).containsKey("source_alias"),
+            "changed rows replace the entire prior row so missing optional fields are cleared");
+    }
+
+    @Test
+    void orderedObserverBurstPreservesEveryRevisionWithoutResnapshot() throws Exception
+    {
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        List<String> blockedTags = new AbstractList<>()
+        {
+            @Override public int size() { return 1; }
+            @Override public String get(int index)
+            {
+                entered.countDown();
+                try { release.await(2, TimeUnit.SECONDS); }
+                catch(InterruptedException exception) { Thread.currentThread().interrupt(); }
+                return "VOICE";
+            }
+        };
+        StatsLiveService service = StatsLiveService.fromActivitySource(new TestChannelActivitySource(), null);
+        try
+        {
+            service.start();
+            try(StatsLiveEventHub.Subscription subscription = service.subscribeChannelActivity(true))
+            {
+                service.receiveChannelActivity(new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT,
+                    activity("site", List.of(activityRow("first", null, blockedTags, null))).snapshot(), 1));
+                assertTrue(entered.await(1, TimeUnit.SECONDS));
+                for(int revision = 2; revision <= 20; revision++)
+                {
+                    service.receiveChannelActivity(new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT,
+                        activity("site", List.of(activityRow("call-" + revision))).snapshot(), revision));
+                }
+                release.countDown();
+                for(long revision = 1; revision <= 20; revision++)
+                {
+                    StatsLiveEventHub.LiveEvent event = subscription.poll(1, TimeUnit.SECONDS);
+                    assertNotNull(event);
+                    assertEquals("activity_delta", event.name());
+                    Map<?,?> delta = (Map<?,?>)event.data();
+                    assertEquals(revision, delta.get("revision"));
+                    assertEquals(revision - 1, delta.get("base_revision"));
+                    assertNotNull(event.baseline(), "a shared full table is available for truncated initial baselines");
+                }
+                assertEquals(0, service.droppedProjectionEvents());
+            }
+        }
+        finally
+        {
+            release.countDown();
+            service.close();
+        }
+    }
+
+    @Test
     void capsRowsWithinEachActivityTableAndReportsTheOriginalCount()
     {
         TestChannelActivitySource source = new TestChannelActivitySource();
@@ -520,14 +702,14 @@ class StatsLiveServiceBoundsTest
                 assertFalse(producer == projectionThread.get(),
                     "projection must execute on the low-priority observer worker");
 
-                for(int revision = 2; revision <= 100; revision++)
+                for(int revision = 2; revision <= 400; revision++)
                 {
                     service.receiveChannelActivity(new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT,
                         activity("latest", List.of(activityRow("row"))).snapshot(), revision));
                 }
 
                 assertTrue(service.droppedProjectionEvents() > 0,
-                    "a full latest-value handoff must coalesce stale observer events");
+                    "a genuinely full ordered observer handoff must report loss without blocking the producer");
                 releaseProjection.countDown();
                 boolean resynchronized = false;
 

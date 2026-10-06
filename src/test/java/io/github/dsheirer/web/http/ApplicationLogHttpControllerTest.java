@@ -60,17 +60,55 @@ class ApplicationLogHttpControllerTest
             assertEquals("Started", snapshot.at("/entries/0/message").textValue());
             assertTrue(snapshot.path("updated_at").longValue() > 0);
             assertFalse(snapshot.has("fileName"));
+            assertTrue(snapshot.at("/entries/0").has("text"));
+            TestExchange compact = new TestExchange(ApplicationLogHttpController.PATH + "?compact=true", "GET");
+            controller.handle(compact);
+            JsonNode wire = MAPPER.readTree(compact.body()).path("data");
+            assertFalse(wire.at("/entries/0").has("text"));
+            assertEquals("20261002 105431.012 [main] INFO  example.Service - ",
+                wire.at("/entries/0/header_prefix").textValue());
             TestExchange cursor = new TestExchange(ApplicationLogHttpController.PATH + "?log=current&after=" +
                 snapshot.path("latest_id").textValue(), "GET");
             controller.handle(cursor);
             JsonNode same = MAPPER.readTree(cursor.body()).path("data");
             assertEquals(1, same.path("entries").size());
             assertFalse(same.path("gap").booleanValue());
+            TestExchange incremental = new TestExchange(ApplicationLogHttpController.PATH + "?log=current&after=" +
+                snapshot.path("latest_id").textValue() + "&compact=true&revision=" + snapshot.path("revision").textValue(), "GET");
+            controller.handle(incremental);
+            JsonNode delta = MAPPER.readTree(incremental.body()).path("data");
+            assertTrue(delta.path("incremental").booleanValue());
+            assertEquals(0, delta.path("entries").size());
 
             TestExchange missing = new TestExchange(ApplicationLogHttpController.PATH + "?log=previous", "GET");
             controller.handle(missing);
             assertEquals(200, missing.getResponseCode());
             assertFalse(MAPPER.readTree(missing.body()).at("/data/available").booleanValue());
+        }
+    }
+
+    @Test
+    void compactEntriesReconstructEmptyDetailLinesUnstructuredAndTruncatedMessages() throws Exception
+    {
+        String header = "20261002 105431.012 [main] INFO  example.Service - ";
+        for(String original: java.util.List.of(header + "Started\n\n", "Unstructured diagnostic\n\n",
+            header + "x".repeat(70_000) + "\n"))
+        {
+            Files.writeString(mDirectory.resolve("sdrtrunk_app.log"), original);
+            try(ApplicationLogService service = new ApplicationLogService(mDirectory))
+            {
+                ApplicationLogHttpController controller = new ApplicationLogHttpController(service);
+                TestExchange legacy = new TestExchange(ApplicationLogHttpController.PATH, "GET");
+                controller.handle(legacy);
+                TestExchange compact = new TestExchange(ApplicationLogHttpController.PATH + "?compact=true", "GET");
+                controller.handle(compact);
+                JsonNode entry = MAPPER.readTree(compact.body()).at("/data/entries/0");
+                assertTrue(entry.path("multiline").booleanValue());
+                String reconstructed = entry.path("header_prefix").textValue() + entry.path("message").textValue() +
+                    (entry.path("multiline").booleanValue() ? "\n" + entry.path("details").textValue() : "");
+                assertEquals(MAPPER.readTree(legacy.body()).at("/data/entries/0/text").textValue(), reconstructed);
+                assertFalse(entry.has("text"));
+            }
         }
     }
 
@@ -81,7 +119,7 @@ class ApplicationLogHttpControllerTest
         {
             ApplicationLogHttpController controller = new ApplicationLogHttpController(service);
             for(String query: java.util.List.of("log=current&log=previous", "file=private.txt", "log=../private",
-                "after=/private", "log=", "after=%FF", "", "log=current&", "extra=" + "x".repeat(300)))
+                "compact=false", "revision=abcd:1", "after=/private", "log=", "after=%FF", "", "log=current&", "extra=" + "x".repeat(300)))
             {
                 TestExchange invalid = new TestExchange(ApplicationLogHttpController.PATH + "?" + query, "GET");
                 controller.handle(invalid);

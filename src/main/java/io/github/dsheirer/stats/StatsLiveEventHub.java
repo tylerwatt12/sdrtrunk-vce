@@ -125,7 +125,11 @@ final class StatsLiveEventHub implements AutoCloseable
 
     void publish(String name, Object data)
     {
-        LiveEvent event = new LiveEvent(name, data);
+        publish(new LiveEvent(name, data));
+    }
+
+    void publish(LiveEvent event)
+    {
 
         for(Subscription subscription: mSubscriptions)
         {
@@ -144,8 +148,72 @@ final class StatsLiveEventHub implements AutoCloseable
         mSubscriptions.clear();
     }
 
-    record LiveEvent(String name, Object data)
+    static final class LiveEvent
     {
+        private final String mName;
+        private final Object mData;
+        private final LiveEvent mBaseline;
+        private final boolean mMarkers;
+        private volatile LiveMultiplexFrame mFrame;
+
+        LiveEvent(String name, Object data)
+        {
+            this(name, data, null);
+        }
+
+        LiveEvent(String name, Object data, LiveEvent baseline)
+        {
+            this(name, data, baseline, false);
+        }
+
+        LiveEvent(String name, Object data, LiveEvent baseline, boolean markers)
+        {
+            mName = name;
+            mData = data;
+            mBaseline = baseline;
+            mMarkers = markers;
+        }
+
+        String name()
+        {
+            return mName;
+        }
+
+        Object data()
+        {
+            return mData;
+        }
+
+        LiveEvent baseline()
+        {
+            return mBaseline;
+        }
+
+        boolean markers()
+        {
+            return mMarkers;
+        }
+
+        LiveMultiplexFrame frame(int topic) throws java.io.IOException
+        {
+            LiveMultiplexFrame frame = mFrame;
+            if(frame == null)
+            {
+                synchronized(this)
+                {
+                    frame = mFrame;
+                    if(frame == null)
+                    {
+                        // Match authoritative activity snapshots at the public presentation boundary. This
+                        // conversion runs once on a web observer, never in the producer's callback.
+                        Object data = mName.startsWith("activity_") ? StatsApiV1Payload.present(mData) : mData;
+                        frame = LiveMultiplexFrame.json(topic, mName, data);
+                        mFrame = frame;
+                    }
+                }
+            }
+            return frame;
+        }
     }
 
     final class Subscription implements AutoCloseable

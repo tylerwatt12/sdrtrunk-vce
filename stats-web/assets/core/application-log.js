@@ -21,6 +21,21 @@ export function applicationLogShownText(entries) {
     entry.message, entry.details].filter(Boolean).join('\n')).join('\n');
 }
 
+export function mergeApplicationLogSnapshot(previous, next) {
+  const incoming = next.entries.map((entry) => ({ ...entry, text: entry.text ??
+    (entry.header_prefix !== undefined ?
+      `${entry.header_prefix}${entry.message}${entry.multiline || entry.details ? `\n${entry.details || ''}` : ''}` : undefined) }));
+  if (!next.incremental || !previous || next.gap || previous.log !== next.log) return { ...next, entries: incoming };
+  const entries = new Map(previous.entries.map((entry) => [entry.id, entry]));
+  incoming.forEach((entry) => entries.set(entry.id, entry));
+  const floor = /^([0-9a-f]{16}):([0-9a-f]+)$/.exec(String(next.first_id || ''));
+  const retained = [...entries.values()].filter((entry) => {
+    const id = /^([0-9a-f]{16}):([0-9a-f]+)$/.exec(String(entry.id || ''));
+    return floor && id && id[1] === floor[1] && BigInt(`0x${id[2]}`) >= BigInt(`0x${floor[2]}`);
+  }).slice(-Math.max(1, Number(next.max_entries) || 500));
+  return { ...next, entries: retained };
+}
+
 // Reuse map: Administration owns the settings workspace and navigation. Shared
 // ui-field/select/input, ui-action-row/buttons, ui-selection-check, ui-status,
 // ui-notice/feedback and disclosure controls own appearance and keyboard behavior.
@@ -249,20 +264,20 @@ export function createApplicationLogWorkspace(deps) {
 
   function schedule() {
     stopTimer();
-    if (!disposed && !denied && !paused && savedLog.value === 'current') {
+    if (!disposed && !denied && !paused && !document.hidden && savedLog.value === 'current') {
       timer = window.setTimeout(() => void refresh(), POLL_MILLISECONDS);
     }
   }
 
   async function refresh() {
-    if (disposed || denied || activeRequest) return;
+    if (disposed || denied || activeRequest || document.hidden) return;
     stopTimer();
     const controller = new AbortController();
     activeRequest = controller;
     const sequence = ++requestSequence;
     syncState();
     try {
-      const next = await api(LOG_PATH, { log: savedLog.value, after: snapshot?.latest_id },
+      const next = await api(LOG_PATH, { log: savedLog.value, compact: true, after: snapshot?.latest_id, revision: snapshot?.revision },
         { signal: controller.signal, page: false });
       if (disposed || sequence !== requestSequence) return;
       if (!next || !Array.isArray(next.entries) || typeof next.available !== 'boolean') {
@@ -277,7 +292,7 @@ export function createApplicationLogWorkspace(deps) {
         errorNotice.hidden = false;
         return;
       }
-      snapshot = next;
+      snapshot = mergeApplicationLogSnapshot(snapshot, next);
       disconnected = false;
       unavailable = false;
       errorNotice.hidden = true;
@@ -379,6 +394,12 @@ export function createApplicationLogWorkspace(deps) {
     syncState();
     if (!paused) void refresh();
   });
+  const synchronizeVisibility = () => {
+    stopTimer();
+    if (document.hidden) cancelRequest();
+    else if (!paused && savedLog.value === 'current') void refresh();
+  };
+  document.addEventListener('visibilitychange', synchronizeVisibility);
   refreshButton.addEventListener('click', () => void refresh());
   savedLog.addEventListener('change', () => {
     stopTimer();
@@ -398,6 +419,7 @@ export function createApplicationLogWorkspace(deps) {
     disposed = true;
     stopTimer();
     cancelRequest();
+    document.removeEventListener('visibilitychange', synchronizeVisibility);
     objectUrls.forEach((url) => URL.revokeObjectURL(url));
     objectUrls.clear();
     signal?.removeEventListener('abort', close);

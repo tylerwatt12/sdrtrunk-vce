@@ -32,6 +32,7 @@ async function installLiveStream(page) {
     let controller = null;
     let sequence = 0;
     let generation = 0;
+    let activeParameters = {};
     const multiplex = (topic, kind, payload) => {
       const frame = new Uint8Array(16 + payload.byteLength);
       const header = new DataView(frame.buffer);
@@ -43,13 +44,14 @@ async function installLiveStream(page) {
       frame.set(payload, 16);
       return frame;
     };
-    const diagnostic = (type, payload, centerHz, count = 0) => {
-      const frame = new Uint8Array(72 + payload.byteLength);
+    const diagnostic = (type, payload, centerHz, count = 0, compact = false) => {
+      const headerBytes = compact ? 84 : 72;
+      const frame = new Uint8Array(headerBytes + payload.byteLength);
       const header = new DataView(frame.buffer);
       header.setUint32(0, 0x53444447, true);
       header.setUint8(4, 1);
       header.setUint8(5, type);
-      header.setUint16(6, 72, true);
+      header.setUint16(6, headerBytes, true);
       header.setUint32(8, payload.byteLength, true);
       header.setUint32(12, count, true);
       header.setBigInt64(16, BigInt(generation), true);
@@ -61,11 +63,18 @@ async function installLiveStream(page) {
       header.setInt32(60, 2048, true);
       header.setInt32(64, 0, true);
       header.setInt32(68, count, true);
-      frame.set(payload, 72);
+      if (compact) {
+        header.setUint8(72, 6);
+        header.setUint8(73, 1);
+        header.setFloat32(76, -80, true);
+        header.setFloat32(80, 0, true);
+      }
+      frame.set(payload, headerBytes);
       return frame;
     };
-    const emit = (centerHz, parameters = {}, { streamState = 'live', reason = null } = {}) => {
+    const emit = (centerHz, parameters = activeParameters, { streamState = 'live', reason = null } = {}) => {
       if (!controller || controller.desiredSize === null) return;
+      activeParameters = parameters;
       const state = {
         stream_state: streamState, center_frequency_hz: centerHz,
         sample_rate_hz: sampleRateHz, profile: parameters.profile || 'balanced', reason
@@ -78,9 +87,19 @@ async function installLiveStream(page) {
       }
       controller.enqueue(multiplex(5, 2, diagnostic(1, encoder.encode(JSON.stringify(state)), centerHz)));
       if (streamState !== 'live') return;
-      const values = new Uint8Array(2048).fill(118);
-      values[900] = 180;
-      controller.enqueue(multiplex(5, 2, diagnostic(4, values, centerHz, values.length)));
+      const compact = parameters.strength_encoding === 'packed6';
+      const values = new Uint8Array(2048).fill(compact ? 20 : 118);
+      values[900] = compact ? 63 : 180;
+      let payload = values;
+      if (compact) {
+        payload = new Uint8Array(Math.ceil(values.length * 6 / 8));
+        values.forEach((value, index) => {
+          const bit = index * 6;
+          payload[bit >> 3] |= value << (bit & 7);
+          if ((bit & 7) > 2) payload[(bit >> 3) + 1] |= value >> (8 - (bit & 7));
+        });
+      }
+      controller.enqueue(multiplex(5, 2, diagnostic(4, payload, centerHz, values.length, compact)));
     };
     window.spectrumDragStream = { emit, opened: 0, cancelled: 0 };
     document.addEventListener('pointerdown', (event) => {
@@ -214,6 +233,32 @@ async function install(page) {
 function plot(page, surface = 'fft') {
   return page.locator(`.tuner-spectrum-${surface} canvas`);
 }
+
+test('compact strength frames retain numeric hover after changing the waterfall display range', async ({ page }) => {
+  const state = await install(page);
+  await expect.poll(() => state.controls.some((value) => value?.strength_encoding === 'packed6')).toBe(true);
+  await page.evaluate(({ centerHz }) => window.spectrumDragStream.emit(centerHz,
+    { strength_encoding: 'packed6' }), { centerHz: INITIAL_CENTER_HZ });
+  await page.getByRole('button', { name: 'Display options', exact: true }).click();
+  await page.getByLabel('Smooth FFT', { exact: true }).uncheck();
+  await page.getByRole('button', { name: 'Display options', exact: true }).click();
+  const canvas = plot(page);
+  const bounds = await canvas.boundingBox();
+  await page.mouse.move(bounds.x + bounds.width * 0.2, bounds.y + bounds.height * 0.5);
+  await expect(page.locator('.tuner-spectrum-cursor-power')).toHaveText('-54.6 dB');
+  await page.getByRole('button', { name: 'Display options', exact: true }).click();
+  const floor = page.getByRole('slider', { name: 'Lower display limit' });
+  await floor.focus();
+  await page.keyboard.press('ArrowRight');
+  await page.getByRole('button', { name: 'Display options', exact: true }).click();
+  await page.mouse.move(bounds.x + bounds.width * 0.2, bounds.y + bounds.height * 0.5);
+  await expect(page.locator('.tuner-spectrum-cursor-power')).toHaveText('-54.6 dB');
+  expect(await plot(page, 'waterfall').evaluate((value) => {
+    const pixels = value.getContext('2d').getImageData(0, 0, value.width, 1).data;
+    return pixels.some((component, index) => index % 4 !== 3 && component > 0);
+  })).toBe(true);
+  state.releaseAll();
+});
 
 async function beginDrag(page, canvas, ratio = 0.6) {
   const bounds = await canvas.boundingBox();

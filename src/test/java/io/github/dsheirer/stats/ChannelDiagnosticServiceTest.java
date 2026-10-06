@@ -21,6 +21,7 @@ import io.github.dsheirer.module.decode.FeedbackDecoder;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.sample.complex.ComplexSamples;
+import io.github.dsheirer.sample.complex.IComplexSamplesListener;
 import io.github.dsheirer.source.ComplexSource;
 import io.github.dsheirer.source.SourceEvent;
 import java.time.Duration;
@@ -214,6 +215,58 @@ class ChannelDiagnosticServiceTest
             service.close();
             firstChain.dispose();
             secondChain.dispose();
+            manager.shutdown();
+        }
+    }
+
+    @Test
+    void compactAndLegacyViewersShareOneTapAndCompactEncodedFrames()
+        throws Exception
+    {
+        TestProcessingChain chain = new TestProcessingChain();
+        chain.setSource(new TestComplexSource());
+        chain.setProcessing(true);
+        ChannelProcessingManager manager = manager(chain);
+        ChannelDiagnosticService service = new ChannelDiagnosticService(manager);
+        ChannelDiagnosticService.Scope scope = new ChannelDiagnosticService.Scope(CONFIGURATION_ID, 851_012_500L,
+            null);
+        ChannelDiagnosticService.Session legacy = service.tryOpen(scope).session();
+        ChannelDiagnosticService.Session compact = service.tryOpen(scope, true).session();
+        ChannelDiagnosticService.Session shared = service.tryOpen(scope, true).session();
+        try
+        {
+            await(() -> "live".equals(shared.state().signalState()));
+            assertEquals(1, chain.signalTapCount());
+            assertEquals(1, service.activeProducerCount());
+            IComplexSamplesListener tap = (IComplexSamplesListener)chain.getModules().stream()
+                .filter(module -> "SignalTap".equals(module.getClass().getSimpleName())).findFirst().orElseThrow();
+            float[] i = new float[512];
+            float[] q = new float[512];
+            for(int sample = 0; sample < i.length; sample++)
+            {
+                i[sample] = (float)Math.cos(sample * 0.1);
+                q[sample] = (float)Math.sin(sample * 0.1);
+            }
+            tap.getComplexSamplesListener().receive(new ComplexSamples(i, q, 100));
+            // NativeBufferManager transfers the completed first window when the next buffer arrives.
+            tap.getComplexSamplesListener().receive(new ComplexSamples(i, q, 101));
+            DiagnosticStreamFrame oldFrame = legacy.poll(Duration.ofSeconds(2));
+            DiagnosticStreamFrame compactFrame = compact.poll(Duration.ofSeconds(2));
+            DiagnosticStreamFrame sharedFrame = shared.poll(Duration.ofSeconds(2));
+            assertSame(compactFrame, sharedFrame);
+            assertTrue(compactFrame != null);
+            assertEquals(oldFrame.sequence(), compactFrame.sequence());
+            assertEquals(oldFrame.valueCount(), compactFrame.valueCount());
+            assertEquals(72 + oldFrame.valueCount() * 4, oldFrame.encoded().length);
+            assertEquals(84 + (compactFrame.valueCount() * 6 + 7) / 8, compactFrame.encoded().length);
+        }
+        finally
+        {
+            legacy.close();
+            compact.close();
+            shared.close();
+            service.close();
+            chain.dispose();
             manager.shutdown();
         }
     }

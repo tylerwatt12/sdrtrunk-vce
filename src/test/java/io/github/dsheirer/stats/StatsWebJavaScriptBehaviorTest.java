@@ -47,6 +47,8 @@ class StatsWebJavaScriptBehaviorTest
         contract("health alert settings", "health-alert-settings.test.js", APP_JAVASCRIPT),
         contract("Live detail filters", "live-detail-filters.test.js", APP_JAVASCRIPT),
         contract("Live presentation", "live-presentation.test.js", APP_JAVASCRIPT),
+        contract("Live bandwidth", "live-bandwidth.test.js", APP_JAVASCRIPT),
+        contract("Call matching deltas", "call-matching-deltas.test.js", APP_JAVASCRIPT),
         contract("source names", "source-names.test.js", CORE_MODULES.resolve("source-names.js")),
         contract("source name preference", "source-name-preference.test.js", APP_JAVASCRIPT),
         contract("public Alias navigation", "public-alias-navigation.test.js", APP_JAVASCRIPT),
@@ -64,6 +66,7 @@ class StatsWebJavaScriptBehaviorTest
         contract("status availability", "status-availability.test.js", APP_JAVASCRIPT),
         contract("support report", "support-report.test.js", APP_JAVASCRIPT),
         contract("tuner idle markers", "tuner-idle-markers.test.js", APP_JAVASCRIPT),
+        contract("diagnostic strength encoding", "diagnostic-strength.test.js", APP_JAVASCRIPT),
         contract("web call player", "web-call-player.test.js", WEB_CALL_PLAYER));
 
     @TestFactory

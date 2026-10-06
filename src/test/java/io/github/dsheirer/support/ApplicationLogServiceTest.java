@@ -87,6 +87,34 @@ class ApplicationLogServiceTest
     }
 
     @Test
+    void revisionPollsReturnOnlyAppendAndGrowingLastEntryAndResetOnRotation() throws Exception
+    {
+        Files.writeString(current(), header("INFO", "first") + header("ERROR", "failure") + "initial trace\n");
+        try(ApplicationLogService service = service())
+        {
+            var initial = service.snapshot("current", null, null);
+            var unchanged = service.snapshot("current", initial.latestId(), initial.revision());
+            assertTrue(unchanged.incremental());
+            assertTrue(unchanged.entries().isEmpty());
+            Files.writeString(current(), "continued trace\n" + header("INFO", "new"), StandardOpenOption.APPEND);
+            advance();
+            var appended = service.snapshot("current", initial.latestId(), initial.revision());
+            assertTrue(appended.incremental());
+            assertEquals(2, appended.entries().size());
+            assertEquals(initial.latestId(), appended.entries().getFirst().id());
+            assertTrue(appended.entries().getFirst().details().contains("continued trace"));
+            assertEquals("new", appended.entries().getLast().message());
+            assertEquals(initial.entries().getFirst().id(), appended.firstId());
+            Files.writeString(current(), header("INFO", "replacement"));
+            advance();
+            var rotated = service.snapshot("current", appended.latestId(), appended.revision());
+            assertFalse(rotated.incremental());
+            assertTrue(rotated.gap());
+            assertEquals("replacement", rotated.entries().getFirst().message());
+        }
+    }
+
+    @Test
     void parsesPaddedAndNestedReceiverThreadNames() throws Exception
     {
         Files.writeString(current(), "20261002 105431.012 [sdrtrunk USB tuner - bus [2] port [1.4]]    WARN  " +

@@ -1209,14 +1209,38 @@ public class StatsWebServerService implements AutoCloseable
         server.put("status_message", runtimeState.statusMessage());
         server.put("assets_available", listener != null &&
             Files.isRegularFile(listener.configuration().requested().assetRoot().resolve("index.html")));
-        server.put("live_transport", Map.of(
-            "stream", StatsApiV1.LIVE_MULTIPLEX,
-            "control", StatsApiV1.LIVE_MULTIPLEX_CONTROL,
-            "maximum_clients", MAXIMUM_MULTIPLEX_CLIENTS,
-            "active_clients", mMultiplexClients.size(),
-            "rejected_clients", mMultiplexRejectedClients.get(),
-            "slow_disconnects", mMultiplexSlowDisconnects.get(),
-            "event_drops", mMultiplexEventDrops.get()));
+        LinkedHashMap<String,Object> transport = new LinkedHashMap<>();
+        transport.put("stream", StatsApiV1.LIVE_MULTIPLEX);
+        transport.put("control", StatsApiV1.LIVE_MULTIPLEX_CONTROL);
+        transport.put("maximum_clients", MAXIMUM_MULTIPLEX_CLIENTS);
+        transport.put("active_clients", mMultiplexClients.size());
+        transport.put("rejected_clients", mMultiplexRejectedClients.get());
+        transport.put("slow_disconnects", mMultiplexSlowDisconnects.get());
+        transport.put("event_drops", mMultiplexEventDrops.get());
+        long activeDrops = 0;
+        long writtenBytes = 0;
+        long writtenFrames = 0;
+        long pendingBytes = 0;
+        for(MultiplexClient client: mMultiplexClients.values())
+        {
+            MultiplexOutput output = client.mOutput;
+            if(output != null)
+            {
+                activeDrops += output.eventDrops();
+                writtenBytes += output.mWrittenBytes.get();
+                writtenFrames += output.mWrittenFrames.get();
+                for(int topic = 0; topic <= TOPIC_MAXIMUM; topic++) pendingBytes += output.pendingEventBytes(topic);
+            }
+        }
+        transport.put("active_event_drops", activeDrops);
+        transport.put("active_written_bytes", writtenBytes);
+        transport.put("active_written_frames", writtenFrames);
+        transport.put("pending_event_bytes", pendingBytes);
+        transport.put("shared_frame_encodes", LiveMultiplexFrame.encodingCount());
+        transport.put("shared_frame_compressions", LiveMultiplexFrame.compressionCount());
+        transport.put("activity_projection_drops", mLiveService.droppedProjectionEvents());
+        transport.put("activity_ingress_drops", mLiveService.droppedActivityIngressEvents());
+        server.put("live_transport", Map.copyOf(transport));
         status.put("server", server);
         status.put("database", mDatabase.status());
         status.put("stats_logging", statsLoggingStatusResponse());
@@ -1380,11 +1404,18 @@ public class StatsWebServerService implements AutoCloseable
         }
 
         String clientId;
+        boolean gzip;
 
         try
         {
             StatsRequest request = StatsRequest.from(exchange.getRequestURI());
             clientId = UUID.fromString(request.requiredText("client_id")).toString();
+            String compression = request.text("compression");
+            if(compression != null && !"gzip".equals(compression))
+            {
+                throw new IllegalArgumentException("compression is invalid");
+            }
+            gzip = "gzip".equals(compression);
             request.requireFullyConsumed();
         }
         catch(StatsApiException | IllegalArgumentException exception)
@@ -1429,8 +1460,9 @@ public class StatsWebServerService implements AutoCloseable
             exchange.sendResponseHeaders(200, 0);
             HttpServer server = exchange.getHttpContext().getServer();
             MultiplexOutput connectedOutput = new MultiplexOutput(exchange.getResponseBody(), Duration.ofSeconds(8),
-                false, () -> {}, releaseConnection);
+                false, () -> {}, releaseConnection, gzip);
             output = connectedOutput;
+            client.mOutput = connectedOutput;
 
             try(connectedOutput)
             {
@@ -1616,10 +1648,14 @@ public class StatsWebServerService implements AutoCloseable
         switch(name)
         {
             case "channel_activity" -> {
-                if(parameters.size() != 0)
+                if(parameters.size() > 2)
                 {
-                    throw new StatsApiException(400, "This live subscription does not accept parameters");
+                    throw new StatsApiException(400, "Channel activity options are invalid");
                 }
+                parameters.fields().forEachRemaining(field -> {
+                    if(!Set.of("delta", "markers").contains(field.getKey()) || !field.getValue().isBoolean())
+                        throw new StatsApiException(400, "Channel activity options are invalid");
+                });
             }
             case "decode_events" -> decodeEventScope(uri);
             case "decode_messages" -> decodeMessageScope(uri);
@@ -1687,6 +1723,7 @@ public class StatsWebServerService implements AutoCloseable
         Long viewportStart = request.optionalLong("viewport_start_hz");
         Long viewportEnd = request.optionalLong("viewport_end_hz");
         String profileId = request.text("profile");
+        boolean compactStrength = compactStrength(request.text("strength_encoding"));
 
         if((viewportStart == null) != (viewportEnd == null))
         {
@@ -1719,7 +1756,7 @@ public class StatsWebServerService implements AutoCloseable
         }
 
         request.requireFullyConsumed();
-        return new TunerDiagnosticRequest(targetId, viewport, profile);
+        return new TunerDiagnosticRequest(targetId, viewport, profile, compactStrength);
     }
 
     private static FrequencyListenRequest frequencyListenRequest(URI uri)
@@ -1746,15 +1783,13 @@ public class StatsWebServerService implements AutoCloseable
     private static void writeMultiplexJson(MultiplexOutput output, int topic, String event, Object data)
         throws IOException
     {
-        output.offerEvent(topic, encodeMultiplexEnvelope(MULTIPLEX_JSON, topic,
-            ApiHttpResponse.encodePayload(Map.of("event", event, "data", data))));
+        output.offerEvent(topic, LiveMultiplexFrame.json(topic, event, data).bytes(output.mGzipEnabled));
     }
 
     private static void writeMultiplexRecoveryJson(MultiplexOutput output, int topic, String event, Object data)
         throws IOException
     {
-        output.offerRecovery(topic, encodeMultiplexEnvelope(MULTIPLEX_JSON, topic,
-            ApiHttpResponse.encodePayload(Map.of("event", event, "data", data))));
+        output.offerRecovery(topic, LiveMultiplexFrame.json(topic, event, data).bytes(output.mGzipEnabled));
     }
 
     private static void writeMultiplexRecoverySequenceJson(MultiplexOutput output, int topic,
@@ -1762,15 +1797,14 @@ public class StatsWebServerService implements AutoCloseable
                                                             String secondEvent, Object secondData) throws IOException
     {
         output.offerRecoverySequence(topic,
-            encodeMultiplexEnvelope(MULTIPLEX_JSON, topic,
-                ApiHttpResponse.encodePayload(Map.of("event", firstEvent, "data", firstData))),
-            encodeMultiplexEnvelope(MULTIPLEX_JSON, topic,
-                ApiHttpResponse.encodePayload(Map.of("event", secondEvent, "data", secondData))));
+            LiveMultiplexFrame.json(topic, firstEvent, firstData).bytes(output.mGzipEnabled),
+            LiveMultiplexFrame.json(topic, secondEvent, secondData).bytes(output.mGzipEnabled));
     }
 
     private static void writeMultiplexDiagnostic(MultiplexOutput output, int topic, DiagnosticStreamFrame frame)
+        throws IOException
     {
-        byte[] encoded = encodeMultiplexEnvelope(MULTIPLEX_DIAGNOSTIC, topic, frame.encoded());
+        byte[] encoded = frame.multiplexFrame(topic).bytes(output.mGzipEnabled);
 
         if(frame.type() == DiagnosticStreamFrame.TYPE_STATE)
         {
@@ -1803,6 +1837,11 @@ public class StatsWebServerService implements AutoCloseable
 
     private static DecodeEventRequest decodeEventRequest(URI uri)
     {
+        return decodeEventRequest(uri, false);
+    }
+
+    private static DecodeEventRequest decodeEventRequest(URI uri, boolean diagnostics)
+    {
         StatsRequest request = StatsRequest.from(uri);
         String configurationId;
 
@@ -1818,6 +1857,7 @@ public class StatsWebServerService implements AutoCloseable
         Long frequency = request.optionalLong("frequency_hz");
         Integer timeslot = request.optionalInt("timeslot");
         String subscriptionId = request.text("subscription_id");
+        boolean compactStrength = diagnostics && compactStrength(request.text("strength_encoding"));
 
         if(frequency != null)
         {
@@ -1847,7 +1887,7 @@ public class StatsWebServerService implements AutoCloseable
 
         request.requireFullyConsumed();
         return new DecodeEventRequest(new DecodeEventViewService.Scope(configurationId, frequency, timeslot),
-            subscriptionId);
+            subscriptionId, compactStrength);
     }
 
 
@@ -1908,7 +1948,7 @@ public class StatsWebServerService implements AutoCloseable
 
     private static ChannelDiagnosticRequest channelDiagnosticRequest(URI uri)
     {
-        DecodeEventRequest selected = decodeEventRequest(uri);
+        DecodeEventRequest selected = decodeEventRequest(uri, true);
 
         if(selected.scope().frequencyHz() == null)
         {
@@ -1916,7 +1956,15 @@ public class StatsWebServerService implements AutoCloseable
         }
 
         return new ChannelDiagnosticRequest(new ChannelDiagnosticService.Scope(selected.scope().configurationId(),
-            selected.scope().frequencyHz(), selected.scope().timeslot()), selected.subscriptionId());
+            selected.scope().frequencyHz(), selected.scope().timeslot()), selected.subscriptionId(),
+            selected.compactStrength());
+    }
+
+    private static boolean compactStrength(String value)
+    {
+        if(value == null || "legacy".equals(value)) return false;
+        if("packed6".equals(value)) return true;
+        throw new StatsApiException(400, "strength_encoding is invalid");
     }
 
     private void handleScanLists(HttpExchange exchange) throws IOException
@@ -2600,6 +2648,7 @@ public class StatsWebServerService implements AutoCloseable
         private static final int LATEST_SQUELCH_LANE = 2;
         private static final int LATEST_AUDIO_LANE = 3;
         private final OutputStream mOutputStream;
+        private final boolean mGzipEnabled;
         private final long mWriteStallNanos;
         private final boolean mCloseStreamOnClose;
         private final Runnable mAfterEmptyStatePoll;
@@ -2619,6 +2668,8 @@ public class StatsWebServerService implements AutoCloseable
         private final AtomicLong mLastProgressNanos = new AtomicLong(System.nanoTime());
         private final AtomicLong mWriteStartedNanos = new AtomicLong();
         private final AtomicLong mEventDrops = new AtomicLong();
+        private final AtomicLong mWrittenBytes = new AtomicLong();
+        private final AtomicLong mWrittenFrames = new AtomicLong();
         private final AtomicLongArray mTopicEventDrops = new AtomicLongArray(TOPIC_MAXIMUM + 1);
         private final AtomicLongArray mRecentTopicEventDrops = new AtomicLongArray(TOPIC_MAXIMUM + 1);
         private final long[] mPendingEventBytes = new long[TOPIC_MAXIMUM + 1];
@@ -2653,7 +2704,14 @@ public class StatsWebServerService implements AutoCloseable
         MultiplexOutput(OutputStream outputStream, Duration writeStall, boolean closeStreamOnClose,
                         Runnable afterEmptyStatePoll, Runnable onWriterTerminated)
         {
+            this(outputStream, writeStall, closeStreamOnClose, afterEmptyStatePoll, onWriterTerminated, false);
+        }
+
+        MultiplexOutput(OutputStream outputStream, Duration writeStall, boolean closeStreamOnClose,
+                        Runnable afterEmptyStatePoll, Runnable onWriterTerminated, boolean gzip)
+        {
             mOutputStream = Objects.requireNonNull(outputStream, "Multiplex output stream cannot be null");
+            mGzipEnabled = gzip;
             mWriteStallNanos = Objects.requireNonNull(writeStall, "Write stall duration cannot be null").toNanos();
             mCloseStreamOnClose = closeStreamOnClose;
             mAfterEmptyStatePoll = Objects.requireNonNull(afterEmptyStatePoll,
@@ -2905,6 +2963,8 @@ public class StatsWebServerService implements AutoCloseable
                     mWriteStartedNanos.set(System.nanoTime());
                     mOutputStream.write(envelope);
                     mOutputStream.flush();
+                    mWrittenBytes.addAndGet(envelope.length);
+                    mWrittenFrames.incrementAndGet();
                     mLastProgressNanos.set(System.nanoTime());
                     mWriteStartedNanos.set(0);
 
@@ -3172,6 +3232,7 @@ public class StatsWebServerService implements AutoCloseable
         private static final int MAXIMUM_EVENTS_PER_PUMP = 16;
         private static final int MAXIMUM_RECOVERY_DISCARD = 512;
         private final String mClientId;
+        private volatile MultiplexOutput mOutput;
         private final HttpExchange mExchange;
         private final MultiplexClientLifecycle mLifecycle = new MultiplexClientLifecycle(Thread.currentThread());
         private final AtomicReference<MultiplexConfiguration> mRequested =
@@ -3194,6 +3255,9 @@ public class StatsWebServerService implements AutoCloseable
         private long mLastTunerStatePoll;
         private long mChannelActivityDrops;
         private long mChannelActivityIngressDrops;
+        private long mChannelActivityBaselineRevision;
+        private boolean mChannelActivityMarkers;
+        private final Set<String> mChannelActivityTableBaselines = new LinkedHashSet<>();
         private long mDecodeEventDrops;
         private long mDecodeEventIngressDrops;
         private long mDecodeMessageDrops;
@@ -3361,14 +3425,17 @@ public class StatsWebServerService implements AutoCloseable
                     positiveDelta(ingressDrops, mChannelActivityIngressDrops) +
                     positiveDelta(outputDrops, mObservedOutputDrops[TOPIC_CHANNEL_ACTIVITY]);
                 discardSubscription(mChannelActivity);
-                byte[] snapshot = mLiveService.encodedSnapshot();
+                StatsLiveService.SnapshotWire snapshot = mLiveService.snapshotWire(mChannelActivityMarkers);
                 var recovery = new RecoveryCapture<>(activityDrops, snapshot);
                 mChannelActivityDrops = recovery.dropBaseline();
                 mChannelActivityIngressDrops = ingressDrops;
                 mObservedOutputDrops[TOPIC_CHANNEL_ACTIVITY] = outputDrops;
-                writeMultiplexRecoverySequenceJson(output, TOPIC_CHANNEL_ACTIVITY,
-                    "live_gap", Map.of("dropped", dropped > 0 ? dropped : 1),
-                    "snapshot", MULTIPLEX_OBJECT_MAPPER.readTree(recovery.snapshot()));
+                output.offerRecoverySequence(TOPIC_CHANNEL_ACTIVITY,
+                    LiveMultiplexFrame.json(TOPIC_CHANNEL_ACTIVITY, "live_gap",
+                        Map.of("dropped", dropped > 0 ? dropped : 1)).bytes(output.mGzipEnabled),
+                    recovery.snapshot().frame().bytes(output.mGzipEnabled));
+                mChannelActivityBaselineRevision = snapshot.revision();
+                mChannelActivityTableBaselines.clear();
                 wrote = true;
             }
 
@@ -3467,7 +3534,8 @@ public class StatsWebServerService implements AutoCloseable
                 }
 
                 if("tuner_diagnostics".equals(topic) && wanted != null && active != null &&
-                    mTunerDiagnostics != null && Objects.equals(wanted.path("target_id"), active.path("target_id")))
+                    mTunerDiagnostics != null && Objects.equals(wanted.path("target_id"), active.path("target_id")) &&
+                    Objects.equals(wanted.path("strength_encoding"), active.path("strength_encoding")))
                 {
                     try
                     {
@@ -3535,14 +3603,17 @@ public class StatsWebServerService implements AutoCloseable
             {
                 case "channel_activity" -> {
                     long ingressDropBaseline = mLiveService.droppedActivityIngressEvents();
-                    mChannelActivity = requiredSubscription(mLiveService.subscribeChannelActivity(), topic);
+                    mChannelActivityMarkers = parameters.path("markers").asBoolean(false);
+                    mChannelActivity = requiredSubscription(mLiveService.subscribeChannelActivity(
+                        parameters.path("delta").asBoolean(false), mChannelActivityMarkers), topic);
                     long dropBaseline = mChannelActivity.droppedCount();
-                    byte[] snapshot = mLiveService.encodedSnapshot();
+                    StatsLiveService.SnapshotWire snapshot = mLiveService.snapshotWire(mChannelActivityMarkers);
                     var recovery = new RecoveryCapture<>(dropBaseline, snapshot);
                     mChannelActivityDrops = recovery.dropBaseline();
                     mChannelActivityIngressDrops = ingressDropBaseline;
-                    writeMultiplexRecoveryJson(output, TOPIC_CHANNEL_ACTIVITY, "snapshot",
-                        MULTIPLEX_OBJECT_MAPPER.readTree(recovery.snapshot()));
+                    output.offerRecovery(TOPIC_CHANNEL_ACTIVITY, recovery.snapshot().frame().bytes(output.mGzipEnabled));
+                    mChannelActivityBaselineRevision = snapshot.revision();
+                    mChannelActivityTableBaselines.clear();
                     observeOutputDrops(output, TOPIC_CHANNEL_ACTIVITY);
                 }
                 case "decode_events" -> {
@@ -3611,7 +3682,8 @@ public class StatsWebServerService implements AutoCloseable
 
             mChannelDiagnosticPermit = true;
             ChannelDiagnosticRequest request = channelDiagnosticRequest(uri);
-            ChannelDiagnosticService.OpenResult result = mChannelDiagnosticService.tryOpen(request.scope());
+            ChannelDiagnosticService.OpenResult result = mChannelDiagnosticService.tryOpen(request.scope(),
+                request.compactStrength());
 
             if(result.status() != ChannelDiagnosticService.OpenStatus.OPEN)
             {
@@ -3639,7 +3711,7 @@ public class StatsWebServerService implements AutoCloseable
             mTunerDiagnosticPermit = true;
             TunerDiagnosticRequest request = tunerDiagnosticRequest(uri);
             TunerDiagnosticService.OpenResult result = mTunerDiagnosticService.tryOpen(request.targetId(),
-                request.viewport(), request.profile());
+                request.viewport(), request.profile(), request.compactStrength());
 
             if(result.status() != TunerDiagnosticService.OpenStatus.OPEN)
             {
@@ -3698,7 +3770,42 @@ public class StatsWebServerService implements AutoCloseable
                     break;
                 }
 
-                writeMultiplexJson(output, topic, event.name(), event.data());
+                if(topic == TOPIC_CHANNEL_ACTIVITY && event.data() instanceof Map<?,?> data)
+                {
+                    if("activity_resync".equals(event.name()))
+                    {
+                        Map<?,?> snapshot = (Map<?,?>)data.get("snapshot");
+                        long revision = ((Number)snapshot.get("revision")).longValue();
+                        if(revision < mChannelActivityBaselineRevision) continue;
+                        output.offerRecovery(topic, event.frame(topic).bytes(output.mGzipEnabled));
+                        mChannelActivityBaselineRevision = revision;
+                        mChannelActivityTableBaselines.clear();
+                        // Any earlier output eviction is covered by this authoritative replacement already.
+                        observeOutputDrops(output, topic);
+                    }
+                    else
+                    {
+                        long revision = ((Number)data.get("revision")).longValue();
+                        if(revision <= mChannelActivityBaselineRevision) continue;
+                        String tableId = String.valueOf(data.get("table_id"));
+                        StatsLiveEventHub.LiveEvent selected = event;
+                        if(event.baseline() != null && mChannelActivityTableBaselines.add(tableId))
+                        {
+                            selected = event.baseline();
+                            if(mChannelActivityTableBaselines.size() > StatsLiveService.MAXIMUM_LIVE_TABLES)
+                            {
+                                mChannelActivityTableBaselines.remove(mChannelActivityTableBaselines.iterator().next());
+                            }
+                        }
+                        if("remove".equals(data.get("operation"))) mChannelActivityTableBaselines.remove(tableId);
+                        output.offerEvent(topic, selected.frame(topic).bytes(output.mGzipEnabled));
+                        mChannelActivityBaselineRevision = revision;
+                    }
+                }
+                else
+                {
+                    output.offerEvent(topic, event.frame(topic).bytes(output.mGzipEnabled));
+                }
                 wrote = true;
             }
 
@@ -3713,6 +3820,9 @@ public class StatsWebServerService implements AutoCloseable
                     mChannelActivity = closeSubscription(mChannelActivity);
                     mChannelActivityDrops = 0;
                     mChannelActivityIngressDrops = 0;
+                    mChannelActivityBaselineRevision = 0;
+                    mChannelActivityMarkers = false;
+                    mChannelActivityTableBaselines.clear();
                 }
                 case "decode_events" -> closeDecodeEvents();
                 case "decode_messages" -> closeDecodeMessages();
@@ -3962,7 +4072,8 @@ public class StatsWebServerService implements AutoCloseable
     {
     }
 
-    private record DecodeEventRequest(DecodeEventViewService.Scope scope, String subscriptionId)
+    private record DecodeEventRequest(DecodeEventViewService.Scope scope, String subscriptionId,
+                                      boolean compactStrength)
     {
     }
 
@@ -3982,7 +4093,8 @@ public class StatsWebServerService implements AutoCloseable
     {
     }
 
-    private record ChannelDiagnosticRequest(ChannelDiagnosticService.Scope scope, String subscriptionId)
+    private record ChannelDiagnosticRequest(ChannelDiagnosticService.Scope scope, String subscriptionId,
+                                             boolean compactStrength)
     {
     }
 
@@ -3991,7 +4103,7 @@ public class StatsWebServerService implements AutoCloseable
     }
 
     private record TunerDiagnosticRequest(String targetId, TunerDiagnosticService.Viewport viewport,
-                                          TunerDiagnosticService.SpectrumProfile profile)
+                                          TunerDiagnosticService.SpectrumProfile profile, boolean compactStrength)
     {
     }
 

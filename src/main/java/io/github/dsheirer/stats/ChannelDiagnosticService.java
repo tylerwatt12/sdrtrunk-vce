@@ -93,6 +93,11 @@ public final class ChannelDiagnosticService implements AutoCloseable
 
     public OpenResult tryOpen(Scope scope)
     {
+        return tryOpen(scope, false);
+    }
+
+    public OpenResult tryOpen(Scope scope, boolean compactStrength)
+    {
         Objects.requireNonNull(scope, "Diagnostic scope cannot be null");
         ScopeBinding binding;
         Session session;
@@ -110,7 +115,7 @@ public final class ChannelDiagnosticService implements AutoCloseable
             }
 
             binding = mBindings.computeIfAbsent(scope, ScopeBinding::new);
-            session = new Session(binding);
+            session = new Session(binding, compactStrength);
             mSessions.add(session);
             binding.add(session);
             ensureBindingTask();
@@ -337,10 +342,12 @@ public final class ChannelDiagnosticService implements AutoCloseable
         private final ScopeBinding mBinding;
         private final DiagnosticFrameQueue mFrames = new DiagnosticFrameQueue();
         private final AtomicBoolean mSessionClosed = new AtomicBoolean();
+        private final boolean mCompactStrength;
 
-        private Session(ScopeBinding binding)
+        private Session(ScopeBinding binding, boolean compactStrength)
         {
             mBinding = binding;
+            mCompactStrength = compactStrength;
         }
 
         public State refresh()
@@ -876,6 +883,29 @@ public final class ChannelDiagnosticService implements AutoCloseable
             return mSubscribers.isEmpty();
         }
 
+        private void publishStrength(long sequence, long observedAtEpochMs, BindingInfo info, float[] bins)
+        {
+            if(mClosed.get()) return;
+            boolean legacyNeeded = false;
+            boolean compactNeeded = false;
+            for(Session subscriber: mSubscribers)
+            {
+                if(subscriber.mCompactStrength) compactNeeded = true;
+                else legacyNeeded = true;
+            }
+            DiagnosticStreamFrame legacy = legacyNeeded ? DiagnosticStreamFrame.float32(
+                DiagnosticStreamFrame.TYPE_CHANNEL_SIGNAL, mGeneration, sequence, observedAtEpochMs,
+                info.frequencyHz(), info.sampleRateHz(), info.fftSize(), bins) : null;
+            DiagnosticStreamFrame compact = compactNeeded ? DiagnosticStreamFrame.compactStrength(
+                DiagnosticStreamFrame.TYPE_CHANNEL_SIGNAL, mGeneration, sequence, observedAtEpochMs,
+                info.frequencyHz(), info.sampleRateHz(), info.fftSize(), bins) : null;
+            for(Session subscriber: mSubscribers)
+            {
+                DiagnosticStreamFrame frame = subscriber.mCompactStrength ? compact : legacy;
+                if(frame != null) subscriber.offer(frame);
+            }
+        }
+
         private void publish(DiagnosticStreamFrame frame)
         {
             if(mClosed.get())
@@ -964,9 +994,7 @@ public final class ChannelDiagnosticService implements AutoCloseable
             if(!mClosed.get())
             {
                 BindingInfo info = mProducer.info();
-                mProducer.publish(DiagnosticStreamFrame.float32(DiagnosticStreamFrame.TYPE_CHANNEL_SIGNAL,
-                    mProducer.generation(), mSequence.incrementAndGet(), observedAtEpochMs,
-                    info.frequencyHz(), info.sampleRateHz(), info.fftSize(), bins));
+                mProducer.publishStrength(mSequence.incrementAndGet(), observedAtEpochMs, info, bins);
             }
         }
 

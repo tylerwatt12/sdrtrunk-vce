@@ -76,8 +76,14 @@ public final class CallMatchingHttpController
             WebHttpSupport.notFound(exchange);
             return;
         }
-        if(!WebHttpSupport.requireNoQuery(exchange))
+        Map<String,String> query;
+        try
         {
+            query = query(exchange.getRequestURI().getRawQuery());
+        }
+        catch(IllegalArgumentException exception)
+        {
+            ApiHttpResponse.sendError(exchange, 400, "invalid_request", "Call matching parameters are invalid");
             return;
         }
         if(!"GET".equals(exchange.getRequestMethod()))
@@ -112,9 +118,52 @@ public final class CallMatchingHttpController
             return;
         }
 
+        if(query.containsKey("decision_sequence"))
+        {
+            long sequence = Long.parseLong(query.get("decision_sequence"));
+            LogicalCallDiagnosticDecision selected = history.sessionId().equals(query.get("session_id")) ?
+                history.recentDuplicates().stream().filter(decision -> decision != null &&
+                    decision.decisionSequence() == sequence).findFirst().orElse(null) : null;
+            if(selected == null)
+            {
+                ApiHttpResponse.sendError(exchange, 404, "matched_call_expired",
+                    "Matched call details are no longer available. Close this window and choose another call.");
+            }
+            else
+            {
+                ApiHttpResponse.sendData(exchange, 200, mPresenter.apply(duplicate(selected)));
+            }
+            return;
+        }
+
         ApiHttpResponse.sendData(exchange, 200,
             mPresenter.apply(document(history, resolver, queue, service.retentionCapacity(),
-                System.currentTimeMillis())));
+                System.currentTimeMillis(), query)));
+    }
+
+    private static Map<String,String> query(String raw)
+    {
+        Map<String,String> values = new LinkedHashMap<>();
+        if(raw == null) return values;
+        if(raw.isEmpty() || raw.length() > 256) throw new IllegalArgumentException("Invalid query");
+        for(String part: raw.split("&", -1))
+        {
+            String[] pair = part.split("=", 2);
+            String name = ApiRequestDecoder.decodeComponent(pair[0], true);
+            String value = pair.length == 2 ? ApiRequestDecoder.decodeComponent(pair[1], true) : "";
+            if(!List.of("summary", "after", "session_id", "decision_sequence").contains(name) || value.isEmpty() ||
+                values.putIfAbsent(name, value) != null) throw new IllegalArgumentException("Invalid query");
+            if("summary".equals(name) && !"true".equals(value) ||
+                "session_id".equals(name) && !value.matches("[0-9a-fA-F-]{36}") ||
+                ("after".equals(name) || "decision_sequence".equals(name)) &&
+                    (!value.matches("[0-9]{1,16}") || Long.parseLong(value) > 9_007_199_254_740_991L))
+                throw new IllegalArgumentException("Invalid query");
+        }
+        if(values.containsKey("after") && (!values.containsKey("summary") || !values.containsKey("session_id")) ||
+            values.containsKey("decision_sequence") && (!values.containsKey("session_id") ||
+                values.containsKey("after") || values.containsKey("summary")))
+            throw new IllegalArgumentException("Invalid query");
+        return values;
     }
 
     private static void unavailable(HttpExchange exchange) throws IOException
@@ -125,18 +174,32 @@ public final class CallMatchingHttpController
 
     private static Document document(LogicalCallDiagnosticServiceSnapshot history,
                                      LogicalCallDiagnosticSnapshot resolver,
-                                     AudioCallCoordinator.CoordinatorQueueStatus queue, int retentionCapacity, long now)
+                                     AudioCallCoordinator.CoordinatorQueueStatus queue, int retentionCapacity, long now,
+                                     Map<String,String> query)
     {
-        List<DuplicateDecision> duplicates = new ArrayList<>(MAXIMUM_VISIBLE_DUPLICATES);
+        List<LogicalCallDiagnosticDecision> visible = new ArrayList<>(MAXIMUM_VISIBLE_DUPLICATES);
         List<LogicalCallDiagnosticDecision> decisions = history.recentDuplicates();
 
-        for(int index = decisions.size() - 1; index >= 0 && duplicates.size() < MAXIMUM_VISIBLE_DUPLICATES; index--)
+        for(int index = decisions.size() - 1; index >= 0 && visible.size() < MAXIMUM_VISIBLE_DUPLICATES; index--)
         {
             LogicalCallDiagnosticDecision decision = decisions.get(index);
 
             if(decision != null && decision.outcome() == LogicalCallDecisionOutcome.MERGED)
             {
-                duplicates.add(duplicate(decision));
+                visible.add(decision);
+            }
+        }
+        long cursor = visible.isEmpty() ? 0 : visible.getFirst().decisionSequence();
+        long firstSequence = visible.isEmpty() ? 0 : visible.getLast().decisionSequence();
+        Long after = query.containsKey("after") ? Long.parseLong(query.get("after")) : null;
+        boolean incremental = after != null && history.sessionId().equals(query.get("session_id")) &&
+            after <= cursor && (after == cursor || after >= firstSequence);
+        List<Object> duplicates = new ArrayList<>();
+        for(LogicalCallDiagnosticDecision decision: visible)
+        {
+            if(!incremental || decision.decisionSequence() > after)
+            {
+                duplicates.add(query.containsKey("summary") ? summary(decision) : duplicate(decision));
             }
         }
 
@@ -152,9 +215,21 @@ public final class CallMatchingHttpController
             queue.totalIngressCapacity(), queue.acceptedIngress(), queue.droppedIngress(),
             queue.droppedLifecycle(), queue.droppedOperations(), queue.abortedCalls());
         HistoryStatus historyStatus = new HistoryStatus(decisions.size(), history.duplicatesEvicted(),
-            MAXIMUM_VISIBLE_DUPLICATES, duplicates.size(), retentionCapacity);
+            MAXIMUM_VISIBLE_DUPLICATES, visible.size(), retentionCapacity);
         return new Document(true, safeLabel(history.sessionId()), history.sessionStartedAtEpochMillis(),
-            resolverStatus, queueStatus, diagnosticStatus(status), historyStatus, List.copyOf(duplicates));
+            resolverStatus, queueStatus, diagnosticStatus(status), historyStatus, List.copyOf(duplicates),
+            incremental, cursor, firstSequence);
+    }
+
+    private static SummaryDecision summary(LogicalCallDiagnosticDecision decision)
+    {
+        DuplicateDecision detail = duplicate(decision);
+        CopyView selected = detail.legs().stream().filter(CopyView::selected).findFirst().orElse(null);
+        List<SummaryCopy> legs = selected == null ? List.of() : List.of(new SummaryCopy(selected.copyIndex(), true,
+            selected.decoder(), selected.channelName(), selected.wacn(), selected.system(), selected.rfss(),
+            selected.site(), selected.frequencyHz(), selected.timeslot()));
+        return new SummaryDecision(detail.decisionSequence(), detail.decidedAtMs(), detail.outcome(),
+            detail.callIdentity(), detail.outputPolicy(), detail.winner(), legs, detail.legs().size(), false);
     }
 
     private static String matchingHealth(LogicalCallDiagnosticSnapshot resolver,
@@ -474,9 +549,18 @@ public final class CallMatchingHttpController
 
     private record Document(boolean available, String sessionId, long sessionStartedAtEpochMillis,
                             ResolverStatus resolver, QueueStatus queue, DiagnosticStatus diagnosticStatus,
-                            HistoryStatus history, List<DuplicateDecision> duplicates)
+                            HistoryStatus history, List<Object> duplicates, boolean incremental, long cursor,
+                            long firstSequence)
     {
     }
+
+    private record SummaryDecision(long decisionSequence, long decidedAtMs, String outcome,
+                                   CallIdentityView callIdentity, OutputPolicyView outputPolicy, WinnerView winner,
+                                   List<SummaryCopy> legs, int copyCount, boolean detailsAvailable) { }
+
+    private record SummaryCopy(int copyIndex, boolean selected, String decoder, String channelName,
+                               Integer wacn, Integer system, Integer rfss, Integer site, Long frequencyHz,
+                               Integer timeslot) { }
 
     private record ResolverStatus(String sessionId, long startedAtMs, long generatedAtMs, long revision,
                                   long snapshotAgeMs, String healthState, boolean accepting, boolean disposed,

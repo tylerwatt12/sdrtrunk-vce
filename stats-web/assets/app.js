@@ -35,7 +35,7 @@ import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMa
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl } from './features/discovery-radioreference.js?v=5';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createAudioDock } from './core/audio-dock.js?v=13';
-import { createApplicationLogWorkspace } from './core/application-log.js?v=1';
+import { createApplicationLogWorkspace } from './core/application-log.js?v=3';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=12';
 
@@ -9385,6 +9385,32 @@ function invokeLiveListener(callback, ...parameters) {
   }
 }
 
+async function inflateLiveMultiplexPayload(payload, expectedBytes) {
+  if (!Number.isSafeInteger(expectedBytes) || expectedBytes <= 0 ||
+      expectedBytes > LIVE_MULTIPLEX_MAXIMUM_BYTES || typeof DecompressionStream !== 'function') {
+    throw new Error('The live connection returned unsupported compressed data.');
+  }
+  const reader = new Blob([payload]).stream().pipeThrough(new DecompressionStream('gzip')).getReader();
+  const result = new Uint8Array(expectedBytes);
+  let offset = 0;
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value.byteLength > expectedBytes - offset) {
+        throw new Error('The live connection returned an invalid compressed size.');
+      }
+      result.set(value, offset);
+      offset += value.byteLength;
+    }
+    if (offset !== expectedBytes) throw new Error('The live connection returned incomplete compressed data.');
+    return result;
+  } finally {
+    void reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+}
+
 class LiveMultiplexer {
   constructor() {
     this.subscribers = new Map();
@@ -9489,7 +9515,8 @@ class LiveMultiplexer {
       }
     }, 1_000);
     try {
-      const response = await fetch(`/api/v1/live/multiplex?client_id=${encodeURIComponent(this.clientId)}`, {
+      const compression = typeof DecompressionStream === 'function' ? '&compression=gzip' : '';
+      const response = await fetch(`/api/v1/live/multiplex?client_id=${encodeURIComponent(this.clientId)}${compression}`, {
         cache: 'no-store',
         credentials: 'same-origin',
         headers: { Accept: 'application/vnd.sdrtrunk.live+binary' },
@@ -9506,7 +9533,7 @@ class LiveMultiplexer {
         const { done, value } = await attemptReader.read();
         if (done) break;
         if (this.controller !== controller) break;
-        this.consume(value);
+        await this.consume(value, attempt);
       }
       if (!controller.signal.aborted) throw new Error('The live connection ended.');
     } catch (error) {
@@ -9537,7 +9564,7 @@ class LiveMultiplexer {
     this.reconnectDelay = Math.min(10_000, Math.round(this.reconnectDelay * 1.7));
   }
 
-  consume(chunk) {
+  async consume(chunk, attempt = this.attempt) {
     if (!(chunk instanceof Uint8Array) || !chunk.byteLength) return;
     if (!this.pending.byteLength) this.pending = chunk;
     else {
@@ -9546,26 +9573,35 @@ class LiveMultiplexer {
       combined.set(chunk, this.pending.byteLength);
       this.pending = combined;
     }
+    const pending = this.pending;
     let offset = 0;
-    while (this.pending.byteLength - offset >= LIVE_MULTIPLEX_HEADER_BYTES) {
-      const header = new DataView(this.pending.buffer, this.pending.byteOffset + offset,
-        this.pending.byteLength - offset);
+    while (pending.byteLength - offset >= LIVE_MULTIPLEX_HEADER_BYTES) {
+      const header = new DataView(pending.buffer, pending.byteOffset + offset,
+        pending.byteLength - offset);
       if (header.getUint32(0) !== LIVE_MULTIPLEX_MAGIC || header.getUint8(4) !== LIVE_MULTIPLEX_VERSION) {
         throw new Error('The live connection returned an invalid frame marker.');
       }
-      const kind = header.getUint8(5);
+      const wireKind = header.getUint8(5);
+      const kind = wireKind & 0x7f;
+      const compressed = Boolean(wireKind & 0x80);
       const topic = LIVE_MULTIPLEX_TOPICS[header.getUint16(6)];
       const payloadBytes = header.getUint32(8);
-      if (!topic || ![1, 2].includes(kind) || payloadBytes > LIVE_MULTIPLEX_MAXIMUM_BYTES) {
+      const inflatedBytes = header.getUint32(12);
+      if (!topic || ![1, 2].includes(kind) || payloadBytes > LIVE_MULTIPLEX_MAXIMUM_BYTES ||
+          (compressed && (!inflatedBytes || inflatedBytes > LIVE_MULTIPLEX_MAXIMUM_BYTES)) ||
+          (!compressed && inflatedBytes !== 0)) {
         throw new Error('The live connection returned an unsupported frame.');
       }
       const frameBytes = LIVE_MULTIPLEX_HEADER_BYTES + payloadBytes;
-      if (this.pending.byteLength - offset < frameBytes) break;
-      const payload = this.pending.slice(offset + LIVE_MULTIPLEX_HEADER_BYTES, offset + frameBytes);
+      if (pending.byteLength - offset < frameBytes) break;
+      let payload = pending.slice(offset + LIVE_MULTIPLEX_HEADER_BYTES, offset + frameBytes);
+      this.lastFrameAt = Date.now();
+      if (compressed) payload = await inflateLiveMultiplexPayload(payload, inflatedBytes);
+      if (attempt !== this.attempt) return;
       this.dispatch(topic, kind, payload);
       offset += frameBytes;
     }
-    this.pending = offset ? this.pending.slice(offset) : this.pending;
+    if (attempt === this.attempt) this.pending = offset ? pending.slice(offset) : pending;
   }
 
   dispatch(topic, kind, payload) {
@@ -9921,14 +9957,55 @@ function liveWorkspaceResizer(workspace) {
 }
 
 function applyLiveChannelActivitySnapshot(snapshot) {
+  const revision = Math.max(0, Number(snapshot?.revision) || 0);
+  if (revision && revision < liveChannelActivityRevision) return;
   liveChannelActivityTables.clear();
   (Array.isArray(snapshot?.tables) ? snapshot.tables : []).forEach((table) => {
     if (table?.table_id) liveChannelActivityTables.set(String(table.table_id), table);
   });
-  liveChannelActivityRevision = Math.max(0, Number(snapshot?.revision) || 0);
+  liveChannelActivityRevision = revision;
   liveChannelActivityNeedsResync = false;
   const current = { ...snapshot, tables: [...liveChannelActivityTables.values()] };
   liveChannelActivitySubscribers.forEach((target) => invokeLiveSubscriber(target, 'snapshot', current));
+}
+
+function mergeLiveChannelActivityDelta(update, currentTable) {
+  const id = String(update?.table_id || '');
+  if (!id) throw new Error('Missing activity table identity.');
+  if (update.operation === 'remove') return { ...update, table_id: id };
+  if (!currentTable && !update.table) throw new Error('Missing activity table baseline.');
+  const rows = new Map();
+  for (const row of currentTable?.rows || []) {
+    const key = String(row?.key ?? '');
+    if (!key || rows.has(key)) throw new Error('Invalid activity row baseline.');
+    rows.set(key, row);
+  }
+  for (const key of update.removed_row_keys || []) rows.delete(String(key));
+  for (const row of update.rows || []) {
+    const key = String(row?.key ?? '');
+    if (!key) throw new Error('Missing activity row identity.');
+    rows.set(key, row);
+  }
+  let orderedRows = [...rows.values()];
+  if (update.row_order !== undefined) {
+    if (!Array.isArray(update.row_order) || update.row_order.length !== rows.size ||
+        new Set(update.row_order.map(String)).size !== rows.size) {
+      throw new Error('Invalid activity row order.');
+    }
+    orderedRows = update.row_order.map((key) => {
+      const row = rows.get(String(key));
+      if (!row) throw new Error('Missing activity row in order.');
+      return row;
+    });
+  }
+  return { ...update, table_id: id,
+    table: { ...currentTable, ...update.table, table_id: id, rows: orderedRows } };
+}
+
+function reportLiveChannelActivityGap(detail, reconnect = false) {
+  liveChannelActivityNeedsResync = true;
+  liveChannelActivitySubscribers.forEach((target) => invokeLiveSubscriber(target, 'gap', detail));
+  if (reconnect) liveMultiplexer.restart();
 }
 
 function synchronizeLiveChannelActivitySource() {
@@ -9943,9 +10020,12 @@ function synchronizeLiveChannelActivitySource() {
     return;
   }
 
+  const parameters = { delta: true };
+  if ([...liveChannelActivitySubscribers].every((subscriber) => subscriber.markers)) parameters.markers = true;
+  if (liveChannelActivitySource?.update(parameters)) liveChannelActivityNeedsResync = true;
   if (!liveChannelActivitySource) {
     liveChannelActivityState = 'connecting';
-    const source = liveConnection('channel_activity', {}, false);
+    const source = liveConnection('channel_activity', parameters, false);
     liveChannelActivitySource = source;
     source.addEventListener('snapshot', (event) => {
       try {
@@ -9962,7 +10042,10 @@ function synchronizeLiveChannelActivitySource() {
         const revision = Math.max(0, Number(update?.revision) || 0);
         if (liveChannelActivityNeedsResync) return;
         if (revision && revision <= liveChannelActivityRevision) return;
-        if (revision && liveChannelActivityRevision && revision !== liveChannelActivityRevision + 1) {
+        const baseRevision = update.base_revision === undefined ?
+          liveChannelActivityRevision : Number(update.base_revision);
+        if (revision && liveChannelActivityRevision && (baseRevision !== liveChannelActivityRevision ||
+            (update.base_revision === undefined && revision !== liveChannelActivityRevision + 1))) {
           liveChannelActivityNeedsResync = true;
           liveChannelActivitySubscribers.forEach((target) => invokeLiveSubscriber(target, 'gap', {
             reason: 'channel_activity_revision_gap', expected_revision: liveChannelActivityRevision + 1,
@@ -9978,13 +10061,35 @@ function synchronizeLiveChannelActivitySource() {
         //Ignore one malformed update; a later snapshot restores authoritative state.
       }
     });
+    source.addEventListener('activity_delta', (event) => {
+      try {
+        const update = JSON.parse(event.data);
+        const revision = Math.max(0, Number(update?.revision) || 0);
+        if (liveChannelActivityNeedsResync || !revision || revision <= liveChannelActivityRevision) return;
+        if (Number(update.base_revision) !== liveChannelActivityRevision) {
+          reportLiveChannelActivityGap({ reason: 'channel_activity_revision_gap',
+            expected_revision: liveChannelActivityRevision, observed_revision: update.base_revision }, true);
+          return;
+        }
+        const id = String(update?.table_id || '');
+        const merged = mergeLiveChannelActivityDelta(update, liveChannelActivityTables.get(id));
+        if (merged.operation === 'remove') liveChannelActivityTables.delete(id);
+        else liveChannelActivityTables.set(id, merged.table);
+        liveChannelActivityRevision = revision;
+        liveChannelActivitySubscribers.forEach((target) => invokeLiveSubscriber(target, 'activityTable', merged));
+      } catch (_) {
+        reportLiveChannelActivityGap({ reason: 'channel_activity_invalid_delta' }, true);
+      }
+    });
     source.addEventListener('activity_resync', (event) => {
       try {
         const resync = JSON.parse(event.data);
+        const snapshot = resync?.snapshot || resync;
+        if (Number(snapshot?.revision) < liveChannelActivityRevision) return;
         liveChannelActivitySubscribers.forEach((target) => invokeLiveSubscriber(target, 'gap', {
           reason: 'channel_activity_resync', dropped: Number(resync?.dropped) || 0
         }));
-        applyLiveChannelActivitySnapshot(resync?.snapshot || resync);
+        applyLiveChannelActivitySnapshot(snapshot);
       } catch (error) {
         //A later drop-triggered authoritative snapshot remains a bounded fallback.
       }
@@ -10003,6 +10108,8 @@ function synchronizeLiveChannelActivitySource() {
     });
     source.onopen = () => {
       if (liveChannelActivitySource !== source) return;
+      liveChannelActivityRevision = 0;
+      liveChannelActivityNeedsResync = true;
       liveChannelActivityState = 'open';
       liveChannelActivitySubscribers.forEach((target) => invokeLiveSubscriber(target, 'open'));
     };
@@ -10016,8 +10123,9 @@ function synchronizeLiveChannelActivitySource() {
 
 document.addEventListener('visibilitychange', synchronizeLiveChannelActivitySource);
 
-function subscribeLiveChannelActivity(callbacks = {}) {
+function subscribeLiveChannelActivity(callbacks = {}, options = {}) {
   const subscriber = {
+    markers: options.markers === true,
     snapshot: typeof callbacks.snapshot === 'function' ? callbacks.snapshot : null,
     activityTable: typeof callbacks.activityTable === 'function' ? callbacks.activityTable : null,
     gap: typeof callbacks.gap === 'function' ? callbacks.gap : null,
@@ -10028,7 +10136,7 @@ function subscribeLiveChannelActivity(callbacks = {}) {
   synchronizeLiveChannelActivitySource();
 
   if (liveChannelActivitySource) {
-    if (liveChannelActivityTables.size) {
+    if (liveChannelActivityTables.size && !liveChannelActivityNeedsResync) {
       invokeLiveSubscriber(subscriber, 'snapshot', { tables: [...liveChannelActivityTables.values()] });
     }
     if (liveChannelActivityState === 'open') invokeLiveSubscriber(subscriber, 'open');
@@ -10098,6 +10206,9 @@ function decodeDiagnosticFrame(encoded) {
     fftSize: header.getInt32(60, true),
     firstBin: headerBytes >= 68 ? header.getInt32(64, true) : 0,
     sourceBinCount: headerBytes >= 72 ? header.getInt32(68, true) : valueCount,
+    strengthBits: headerBytes >= 84 && header.getUint8(73) === 1 ? header.getUint8(72) : null,
+    minimumDb: headerBytes >= 84 && header.getUint8(73) === 1 ? header.getFloat32(76, true) : -196,
+    maximumDb: headerBytes >= 84 && header.getUint8(73) === 1 ? header.getFloat32(80, true) : 20,
     payload: encoded.slice(headerBytes)
   };
 }
@@ -10131,25 +10242,53 @@ function diagnosticJsonPayload(frame) {
   }
 }
 
-function diagnosticFloatPayload(frame) {
+function diagnosticValueFormat(frame) {
   const count = Math.max(0, Number(frame.valueCount || 0));
   const payloadBytes = frame.payload.byteLength;
-  const valueBits = payloadBytes === count * 4 ? 32 : payloadBytes === count * 2 ? 16 :
+  const explicitBits = Number(frame.strengthBits || 0);
+  const valueBits = explicitBits || (payloadBytes === count * 4 ? 32 : payloadBytes === count * 2 ? 16 :
     payloadBytes === count ? 8 : payloadBytes === Math.ceil(count / 2) ? 4 :
-      payloadBytes === Math.ceil(count / 4) ? 2 : 0;
-  if (!valueBits) throw new Error('The diagnostic stream returned unsupported values.');
-  const values = new Float32Array(count);
+      payloadBytes === Math.ceil(count / 4) ? 2 : 0);
+  const minimum = Number(frame.minimumDb ?? -196);
+  const maximum = Number(frame.maximumDb ?? 20);
+  if (![2, 4, 6, 8, 16, 32].includes(valueBits) || !Number.isInteger(count) ||
+      payloadBytes !== Math.ceil(count * valueBits / 8) || !Number.isFinite(minimum) ||
+      !Number.isFinite(maximum) || minimum < -196 || maximum > 20 || maximum < minimum) {
+    throw new Error('The diagnostic stream returned unsupported values.');
+  }
   const data = new DataView(frame.payload.buffer, frame.payload.byteOffset, frame.payload.byteLength);
   const maximumCode = valueBits === 32 ? 0 : (1 << valueBits) - 1;
-  for (let index = 0; index < count; index += 1) {
-    if (valueBits === 32) values[index] = data.getFloat32(index * 4, true);
-    else {
-      const code = valueBits === 16 ? data.getUint16(index * 2, true) : valueBits === 8 ? data.getUint8(index) :
-        data.getUint8(Math.floor(index * valueBits / 8)) >> (index * valueBits % 8) & maximumCode;
-      values[index] = -196 + code * 216 / maximumCode;
-    }
+  return { count, valueBits, minimum, maximum, maximumCode, data };
+}
+
+function diagnosticValueAt(format, index) {
+  const { valueBits, minimum, maximum, maximumCode, data } = format;
+  if (valueBits === 32) return data.getFloat32(index * 4, true);
+  let code;
+  if (valueBits === 16) code = data.getUint16(index * 2, true);
+  else if (valueBits === 8) code = data.getUint8(index);
+  else {
+    const bitOffset = index * valueBits;
+    const byteOffset = Math.floor(bitOffset / 8);
+    const shift = bitOffset % 8;
+    const packed = data.getUint8(byteOffset) |
+      (shift + valueBits > 8 ? data.getUint8(byteOffset + 1) << 8 : 0);
+    code = packed >> shift & maximumCode;
   }
+  return Math.fround(minimum + code * (maximum - minimum) / maximumCode);
+}
+
+function diagnosticFloatPayload(frame) {
+  const format = diagnosticValueFormat(frame);
+  const values = new Float32Array(format.count);
+  for (let index = 0; index < values.length; index += 1) values[index] = diagnosticValueAt(format, index);
   return values;
+}
+
+function diagnosticStrengthHistory(frame) {
+  const format = diagnosticValueFormat(frame);
+  return { valueCount: format.count, strengthBits: format.valueBits,
+    minimumDb: format.minimum, maximumDb: format.maximum, payload: frame.payload.slice() };
 }
 
 function diagnosticPcm16Payload(frame) {
@@ -12875,6 +13014,7 @@ function liveChannelPane() {
     const epoch = ++streamEpoch;
     const parameters = liveDetailTransportParameters(selection, true);
     parameters.subscription_id = expectedSubscriptionId;
+    parameters.strength_encoding = 'packed6';
     stream = binaryFrameConnection('channel_diagnostics', parameters, {
       onOpen: () => {
         if (epoch === streamEpoch) setStatus('Connected', 'state-current');
@@ -12972,6 +13112,7 @@ function liveChannelPane() {
       if (stream && parameters) {
         expectedSubscriptionId = randomLiveClientId();
         parameters.subscription_id = expectedSubscriptionId;
+        parameters.strength_encoding = 'packed6';
         stream.update(parameters);
       }
       else if (stream) closeStream();
@@ -14880,7 +15021,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
       'balanced', Object.keys(TUNER_SPECTRUM_PROFILES))) : 'efficient';
   profileControl.append(profileLabel, uiSelectFrame(profileSelect));
   const profileWarning = node('p', 'tuner-spectrum-control-help',
-    'Higher-detail profiles use more CPU and may affect decoding on lower-end systems. All profiles use 8-bit spectrum data.');
+    'Higher-detail profiles use more CPU and may affect decoding on lower-end systems.');
   profilePanel.append(profileControl);
   const qualityControl = node('div', 'tuner-spectrum-quality-control ui-segmented');
   qualityControl.setAttribute('role', 'group');
@@ -15430,9 +15571,11 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     };
   }
 
-  const renderWaterfallRow = (values, metadata, observedAtEpochMs, rowCount = 1, retune = null) => {
-    if (!values.length || !metadata || !waterfallRowImage || !viewport) return;
-    const domain = tunerFrameDomain(metadata, values.length);
+  const renderWaterfallRow = (encodedValues, metadata, observedAtEpochMs, rowCount = 1, retune = null,
+    decodedValues = null) => {
+    const values = diagnosticValueFormat(encodedValues);
+    if (!values.count || !metadata || !waterfallRowImage || !viewport) return;
+    const domain = tunerFrameDomain(metadata, values.count);
     const domainSpan = domain.endHz - domain.startHz;
     const viewportSpan = viewport.endHz - viewport.startHz;
     if (!(domainSpan > 0) || !(viewportSpan > 0)) return;
@@ -15449,13 +15592,14 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
       const overlapStartHz = Math.max(cellStartHz, domain.startHz);
       const overlapEndHz = Math.min(cellEndHz, domain.endHz);
       if (overlapEndHz <= overlapStartHz) continue;
-      const firstBin = Math.max(0, Math.min(values.length - 1,
-        Math.floor((overlapStartHz - domain.startHz) / domainSpan * values.length)));
-      const lastBin = Math.min(values.length, Math.max(firstBin + 1,
-        Math.ceil((overlapEndHz - domain.startHz) / domainSpan * values.length)));
+      const firstBin = Math.max(0, Math.min(values.count - 1,
+        Math.floor((overlapStartHz - domain.startHz) / domainSpan * values.count)));
+      const lastBin = Math.min(values.count, Math.max(firstBin + 1,
+        Math.ceil((overlapEndHz - domain.startHz) / domainSpan * values.count)));
       let raw = -Infinity;
       for (let bin = firstBin; bin < lastBin; bin += 1) {
-        if (Number.isFinite(values[bin])) raw = Math.max(raw, values[bin]);
+        const value = decodedValues ? decodedValues[bin] : diagnosticValueAt(values, bin);
+        if (Number.isFinite(value)) raw = Math.max(raw, value);
       }
       const value = Number.isFinite(raw) ? Math.max(dbFloor, Math.min(dbCeiling, raw)) : dbFloor;
       const color = Math.max(0, Math.min(255,
@@ -15502,14 +15646,15 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     const observedAtEpochMs = Number(frameMetadata?.observedAtEpochMs || 0);
     const retune = pendingWaterfallRetune ? { ...pendingWaterfallRetune, observedAtEpochMs } : null;
     pendingWaterfallRetune = null;
-    const cached = { values: fftValues.slice(), metadata: waterfallMetadata(frameMetadata, fftValues.length),
+    const cached = { values: diagnosticStrengthHistory(frameMetadata),
+      metadata: waterfallMetadata(frameMetadata, fftValues.length),
       observedAtEpochMs, repeat: rowCount, retune };
     waterfallHistoryRows.push(cached);
     retainedWaterfallRows += rowCount;
     while (retainedWaterfallRows > TUNER_WATERFALL_HISTORY_ROWS && waterfallHistoryRows.length) {
       retainedWaterfallRows -= waterfallHistoryRows.shift().repeat;
     }
-    renderWaterfallRow(cached.values, cached.metadata, observedAtEpochMs, rowCount, retune);
+    renderWaterfallRow(cached.values, cached.metadata, observedAtEpochMs, rowCount, retune, fftValues);
   };
 
   const drawWaterfall = () => {
@@ -15626,7 +15771,8 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   function diagnosticParameters() {
     const parameters = {
       target_id: selectedTargetId(),
-      profile: spectrumProfile
+      profile: spectrumProfile,
+      strength_encoding: 'packed6'
     };
     if (fullViewport && viewport && zoomAmount() > 1.0001) {
       parameters.viewport_start_hz = Math.round(viewport.startHz);
@@ -16356,7 +16502,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
         else if (update.table) updateSpectrumActivityTable(update.table);
         renderActiveChannels();
       }
-    });
+    }, { markers: true });
     activeChannelSource = source;
   }
 
@@ -29992,6 +30138,15 @@ function callMatchingSnapshot(value) {
   return { ...value, duplicates };
 }
 
+function mergeCallMatchingSnapshot(previous, value) {
+  const next = callMatchingSnapshot(value);
+  if (!next.incremental || !previous || previous.session_id !== next.session_id) return next;
+  const duplicates = new Map(previous.duplicates.map((decision) => [Number(decision.decision_sequence), decision]));
+  next.duplicates.forEach((decision) => duplicates.set(Number(decision.decision_sequence), decision));
+  return callMatchingSnapshot({ ...next, duplicates: [...duplicates.values()].filter((decision) =>
+    Number(decision.decision_sequence) >= Number(next.first_sequence || 0)) });
+}
+
 function callMatchingHistoryPage(decisions, requestedPage) {
   const total = decisions.length;
   const pageCount = Math.max(1, Math.ceil(total / CALL_MATCHING_PAGE_SIZE));
@@ -30163,7 +30318,6 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
   let sessionKey = null;
   let historyPage = 0;
   let paused = false;
-  let pendingSnapshot = null;
   let pollingError = false;
   const highlightedSequences = new Set();
   const syncPauseControl = () => {
@@ -30183,7 +30337,7 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
     { id: 'site', label: 'Selected site', className: 'call-matching-field-site',
       render: (row) => callMatchingCopySummary(callMatchingWinner(row)) },
     { id: 'copies', label: 'Copies', className: 'call-matching-field-copies',
-      render: (row) => callMatchingCount(row.legs?.length) },
+      render: (row) => callMatchingCount(row.copy_count ?? row.legs?.length) },
     { id: 'match', label: 'Why selected', className: 'call-matching-field-match',
       render: (row) => callMatchingCriterion(row.winner?.criterion) },
     { id: 'outputs', label: 'Selected for', className: 'call-matching-field-outputs',
@@ -30200,13 +30354,32 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
           candidate.classList.remove('selected'));
         button.closest('tr')?.classList.add('selected');
         const comparisonAbort = new AbortController();
-        selectedModal = openReadOnlyModal('Matched call details', callMatchingComparison(row, comparisonAbort.signal), {
+        const comparisonHost = row.details_available === false ?
+          node('div', 'loading', 'Loading matched call details…') : callMatchingComparison(row, comparisonAbort.signal);
+        const modal = openReadOnlyModal('Matched call details', comparisonHost, {
           id: 'call-matching-details', className: 'call-matching-modal',
           returnFocusSelector: `.call-matching-compare[data-decision-sequence="${row.decision_sequence}"]`,
           cleanup: () => comparisonAbort.abort(),
           onClose: () => { selectedModal = null; }
         });
-        if (!selectedModal) comparisonAbort.abort();
+        selectedModal = modal;
+        if (!modal) comparisonAbort.abort();
+        else if (row.details_available === false) {
+          const loadComparison = async () => {
+            try {
+              const detail = await api('/api/v1/admin/call-matching', {
+                decision_sequence: row.decision_sequence, session_id: latest.session_id
+              }, { signal: comparisonAbort.signal, page: false });
+              if (!comparisonAbort.signal.aborted) comparisonHost.replaceChildren(
+                callMatchingComparison(detail, comparisonAbort.signal));
+            } catch (error) {
+              if (comparisonAbort.signal.aborted || error?.name === 'AbortError') return;
+              comparisonHost.replaceChildren(asyncSectionFailure(error,
+                'Matched call details could not be loaded.', loadComparison));
+            }
+          };
+          void modal.ready.then(() => { if (!comparisonAbort.signal.aborted) void loadComparison(); });
+        }
       });
       return button;
     } }
@@ -30305,26 +30478,30 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
     renderHistory();
   };
   let inFlight = false;
+  let requestController = null;
   let stopped = false;
   let pollingTimer = null;
   const refresh = async () => {
-    if (inFlight || stopped || !renderIsCurrent(renderContext) || !workspace.isConnected) return;
+    if (inFlight || stopped || paused || document.hidden || !renderIsCurrent(renderContext) || !workspace.isConnected) return;
     inFlight = true;
+    const controller = new AbortController();
+    requestController = controller;
+    const abort = () => controller.abort();
+    renderContext.signal.addEventListener('abort', abort, { once: true });
     try {
-      const value = await api('/api/v1/admin/call-matching', {}, { signal: renderContext.signal });
-      if (renderIsCurrent(renderContext) && workspace.isConnected) {
-        const snapshot = callMatchingSnapshot(value);
+      const value = await api('/api/v1/admin/call-matching', {
+        summary: true, after: latest?.cursor,
+        session_id: latest?.cursor !== undefined ? latest.session_id : null
+      }, { signal: controller.signal });
+      if (!controller.signal.aborted && !paused && !document.hidden && renderIsCurrent(renderContext) && workspace.isConnected) {
+        const snapshot = mergeCallMatchingSnapshot(latest, value);
         pollingError = false;
-        if (paused) {
-          // Keep one fresh snapshot without changing the call list being inspected.
-          pendingSnapshot = snapshot;
-          connectionState.replaceChildren(uiStatus('Live', 'success'));
-        } else update(snapshot);
+        update(snapshot);
         pause.disabled = false;
         syncPauseControl();
       }
     } catch (error) {
-      if (error?.name === 'AbortError' || !renderIsCurrent(renderContext)) return;
+      if (controller.signal.aborted || error?.name === 'AbortError' || !renderIsCurrent(renderContext)) return;
       if (error?.status === 401 || error?.status === 403) {
         stopped = true;
         if (pollingTimer !== null) {
@@ -30336,7 +30513,6 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
         selectedModal = null;
         selectedSequence = null;
         latest = null;
-        pendingSnapshot = null;
         paused = false;
         pause.disabled = true;
         syncPauseControl();
@@ -30353,26 +30529,34 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
         return;
       }
       pollingError = true;
-      pendingSnapshot = null;
       connectionState.replaceChildren(uiStatus('Unavailable', 'danger'));
       syncPauseControl();
       if (!latest) statusContent.replaceChildren(node('div', 'error', error.message ||
         'Call matching status is unavailable.'));
     } finally {
+      renderContext.signal.removeEventListener('abort', abort);
+      if (requestController === controller) requestController = null;
       inFlight = false;
     }
   };
   pause.addEventListener('click', () => {
     if (!latest || stopped) return;
     paused = !paused;
+    if (paused) requestController?.abort();
     syncPauseControl();
     if (!paused) {
-      const snapshot = pendingSnapshot;
-      pendingSnapshot = null;
-      if (snapshot) update(snapshot);
       void refresh();
     }
   });
+  const synchronizeVisibility = () => {
+    if (document.hidden) requestController?.abort();
+    else if (!paused) void refresh();
+  };
+  document.addEventListener('visibilitychange', synchronizeVisibility);
+  renderContext.signal.addEventListener('abort', () => {
+    requestController?.abort();
+    document.removeEventListener('visibilitychange', synchronizeVisibility);
+  }, { once: true });
   let initialRequest = true;
   await refresh();
   initialRequest = false;

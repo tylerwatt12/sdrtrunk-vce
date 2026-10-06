@@ -98,8 +98,14 @@ public final class ApplicationLogService implements AutoCloseable
         mWallClock = Objects.requireNonNull(wallClock);
     }
 
-    /** Returns a full snapshot even with a cursor, so newly appended exception lines update their existing entry. */
+    /** Compatibility snapshot for callers that do not track the file revision. */
     public Snapshot snapshot(String log, String after) throws IOException
+    {
+        return snapshot(log, after, null);
+    }
+
+    /** A changed tail upserts its cursor entry so appended stack-trace lines are never lost. */
+    public Snapshot snapshot(String log, String after, String revision) throws IOException
     {
         if(!"current".equals(log) && !"previous".equals(log))
         {
@@ -108,6 +114,10 @@ public final class ApplicationLogService implements AutoCloseable
         if(after != null && !after.matches("[0-9a-f]{16}:[0-9a-f]{1,16}"))
         {
             throw new IllegalArgumentException("Invalid application log cursor");
+        }
+        if(revision != null && !revision.matches("[0-9a-f]{16}:[0-9a-f]{1,16}"))
+        {
+            throw new IllegalArgumentException("Invalid application log revision");
         }
         if(mClosed.get())
         {
@@ -145,15 +155,25 @@ public final class ApplicationLogService implements AutoCloseable
             }
         }
         Snapshot value = cached.snapshot();
-        boolean gap = after != null && value.entries().stream().noneMatch(entry -> entry.id().equals(after));
+        int cursorIndex = -1;
+        for(int index = 0; index < value.entries().size(); index++)
+        {
+            if(value.entries().get(index).id().equals(after)) cursorIndex = index;
+        }
+        boolean gap = after != null && cursorIndex < 0;
         String reason = "";
         if(gap)
         {
             reason = !value.available() ? "unavailable" :
                 after.startsWith(cached.generation() + ":") ? "history_limit" : cached.changeReason();
         }
-        return new Snapshot(value.log(), value.fileName(), value.available(), value.entries(), value.updatedAt(),
-            MAXIMUM_ENTRIES, value.truncated(), value.latestId(), gap, reason);
+        String currentRevision = cached.generation() + ":" + Long.toHexString(cached.size());
+        boolean incremental = revision != null && after != null && !gap;
+        List<Entry> entries = !incremental ? value.entries() : currentRevision.equals(revision) ? List.of() :
+            value.entries().subList(cursorIndex, value.entries().size());
+        return new Snapshot(value.log(), value.fileName(), value.available(), entries, value.updatedAt(),
+            MAXIMUM_ENTRIES, value.truncated(), value.latestId(), gap, reason, currentRevision, incremental,
+            value.entries().isEmpty() ? null : value.entries().getFirst().id());
     }
 
     private Cached cache(String log)
@@ -219,7 +239,8 @@ public final class ApplicationLogService implements AutoCloseable
         Parsed parsed = parse(bytes, start, generation);
         List<Entry> entries = parsed.entries();
         Snapshot snapshot = new Snapshot(log, file.getFileName().toString(), true, entries, mWallClock.getAsLong(),
-            MAXIMUM_ENTRIES, start > 0 || parsed.truncated(), entries.isEmpty() ? null : entries.getLast().id(), false, "");
+            MAXIMUM_ENTRIES, start > 0 || parsed.truncated(), entries.isEmpty() ? null : entries.getLast().id(), false, "",
+            null, false, null);
         byte[] endAnchor = Arrays.copyOfRange(bytes, Math.max(0, bytes.length - ANCHOR_BYTES), bytes.length);
         return new Cached(snapshot, now, directory, identity, size, anchor, endAnchor, generation, changeReason);
     }
@@ -228,7 +249,7 @@ public final class ApplicationLogService implements AutoCloseable
     {
         String generation = UUID.randomUUID().toString().replace("-", "").substring(0, 16);
         Snapshot snapshot = new Snapshot(log, "current".equals(log) ? CURRENT_FILE : null, false, List.of(),
-            mWallClock.getAsLong(), MAXIMUM_ENTRIES, false, null, false, "");
+            mWallClock.getAsLong(), MAXIMUM_ENTRIES, false, null, false, "", null, false, null);
         return new Cached(snapshot, now, directory, null, 0, new byte[0], new byte[0], generation,
             previous != null && !directory.equals(previous.directory()) ? "source_changed" : "rotation");
     }
@@ -412,7 +433,8 @@ public final class ApplicationLogService implements AutoCloseable
                         boolean truncated) { }
 
     public record Snapshot(String log, String fileName, boolean available, List<Entry> entries, long updatedAt,
-                           int maxEntries, boolean truncated, String latestId, boolean gap, String changeReason) { }
+                           int maxEntries, boolean truncated, String latestId, boolean gap, String changeReason,
+                           String revision, boolean incremental, String firstId) { }
 
     public static final class BusyException extends IOException
     {

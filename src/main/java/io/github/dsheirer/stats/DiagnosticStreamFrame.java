@@ -20,11 +20,14 @@ import java.util.Objects;
  */
 record DiagnosticStreamFrame(int type, long generation, long sequence, long observedAtEpochMs,
                              long encodedAtEpochMs, long centerFrequencyHz, int sampleRateHz, int fftSize,
-                             int firstBin, int sourceBinCount, int valueCount, byte[] encoded)
+                             int firstBin, int sourceBinCount, int valueCount, byte[] encoded,
+                             MultiplexCache multiplexCache)
 {
     static final int MAGIC = 0x53444447;
     static final int VERSION = 1;
     static final int HEADER_BYTES = 72;
+    static final int COMPACT_STRENGTH_HEADER_BYTES = 84;
+    static final int COMPACT_STRENGTH_BITS = 6;
     static final int TYPE_STATE = 1;
     static final int TYPE_CHANNEL_SIGNAL = 2;
     static final int TYPE_CHANNEL_SYMBOLS = 3;
@@ -32,6 +35,14 @@ record DiagnosticStreamFrame(int type, long generation, long sequence, long obse
     static final int TYPE_SQUELCH = 5;
     static final int TYPE_AUDIO_PCM16 = 6;
     static final int TYPE_HEARTBEAT = 127;
+
+    DiagnosticStreamFrame(int type, long generation, long sequence, long observedAtEpochMs,
+                          long encodedAtEpochMs, long centerFrequencyHz, int sampleRateHz, int fftSize,
+                          int firstBin, int sourceBinCount, int valueCount, byte[] encoded)
+    {
+        this(type, generation, sequence, observedAtEpochMs, encodedAtEpochMs, centerFrequencyHz, sampleRateHz,
+            fftSize, firstBin, sourceBinCount, valueCount, encoded, new MultiplexCache());
+    }
 
     DiagnosticStreamFrame
     {
@@ -43,6 +54,29 @@ record DiagnosticStreamFrame(int type, long generation, long sequence, long obse
         }
 
         Objects.requireNonNull(encoded, "Encoded diagnostic frame cannot be null");
+        Objects.requireNonNull(multiplexCache, "Diagnostic multiplex cache cannot be null");
+    }
+
+    /** The first web handler prepares the shared envelope; receiver and diagnostic producers never compress. */
+    LiveMultiplexFrame multiplexFrame(int topic)
+    {
+        return multiplexCache.frame(topic, encoded);
+    }
+
+    static final class MultiplexCache
+    {
+        private int mTopic = -1;
+        private LiveMultiplexFrame mFrame;
+
+        private synchronized LiveMultiplexFrame frame(int topic, byte[] encoded)
+        {
+            if(mFrame == null || mTopic != topic)
+            {
+                mTopic = topic;
+                mFrame = LiveMultiplexFrame.diagnostic(topic, encoded);
+            }
+            return mFrame;
+        }
     }
 
     static DiagnosticStreamFrame float32(int type, long generation, long sequence, long observedAtEpochMs,
@@ -194,6 +228,68 @@ record DiagnosticStreamFrame(int type, long generation, long sequence, long obse
             centerFrequencyHz, (int)sampleRateHz, fftSize, 0, fftSize, values.length, buffer.array());
     }
 
+    /** Encoded on the diagnostic worker, once per shared strength variant. Every frequency bin is retained. */
+    static DiagnosticStreamFrame compactStrength(int type, long generation, long sequence, long observedAtEpochMs,
+                                                  long centerFrequencyHz, long sampleRateHz, int fftSize,
+                                                  float[] values)
+    {
+        if(type != TYPE_CHANNEL_SIGNAL && type != TYPE_TUNER_FFT)
+        {
+            throw new IllegalArgumentException("Compact encoding requires signal strength values");
+        }
+        Objects.requireNonNull(values, "Diagnostic values cannot be null");
+        if(sampleRateHz < 0 || sampleRateHz > Integer.MAX_VALUE)
+        {
+            throw new IllegalArgumentException("Diagnostic sample rate is invalid");
+        }
+
+        // Retain the complete existing amplitude domain, including weak peaks and the nonfinite sentinel.
+        float minimum = 20.0f;
+        float maximum = -196.0f;
+        for(float raw: values)
+        {
+            float value = strengthValue(raw);
+            minimum = Math.min(minimum, value);
+            maximum = Math.max(maximum, value);
+        }
+        if(values.length == 0) minimum = maximum = -196.0f;
+        int payloadBytes = Math.toIntExact(((long)values.length * COMPACT_STRENGTH_BITS + 7) / Byte.SIZE);
+        int sourceBinCount = fftSize > 0 ? fftSize : values.length;
+        ByteBuffer buffer = header(type, payloadBytes, values.length, generation, sequence, observedAtEpochMs,
+            0, centerFrequencyHz, (int)sampleRateHz, fftSize, 0, sourceBinCount,
+            COMPACT_STRENGTH_HEADER_BYTES);
+        buffer.put((byte)COMPACT_STRENGTH_BITS);
+        buffer.put((byte)1); // Explicit adaptive-strength format; legacy frames have no extension.
+        buffer.putShort((short)0);
+        buffer.putFloat(minimum);
+        buffer.putFloat(maximum);
+        int packed = 0;
+        int packedBits = 0;
+        float span = maximum - minimum;
+        for(float raw: values)
+        {
+            int code = span > 0 ? Math.round((strengthValue(raw) - minimum) * 63.0f / span) : 0;
+            packed |= Math.max(0, Math.min(63, code)) << packedBits;
+            packedBits += COMPACT_STRENGTH_BITS;
+            while(packedBits >= Byte.SIZE)
+            {
+                buffer.put((byte)packed);
+                packed >>>= Byte.SIZE;
+                packedBits -= Byte.SIZE;
+            }
+        }
+        if(packedBits > 0) buffer.put((byte)packed);
+        long encodedAt = System.currentTimeMillis();
+        buffer.putLong(40, encodedAt);
+        return new DiagnosticStreamFrame(type, generation, sequence, observedAtEpochMs, encodedAt,
+            centerFrequencyHz, (int)sampleRateHz, fftSize, 0, sourceBinCount, values.length, buffer.array());
+    }
+
+    private static float strengthValue(float raw)
+    {
+        return Float.isFinite(raw) ? Math.max(-196.0f, Math.min(20.0f, raw)) : -196.0f;
+    }
+
     static DiagnosticStreamFrame jsonState(long generation, long revision, byte[] json)
     {
         Objects.requireNonNull(json, "Diagnostic state JSON cannot be null");
@@ -215,12 +311,20 @@ record DiagnosticStreamFrame(int type, long generation, long sequence, long obse
                                      long observedAtEpochMs, long encodedAtEpochMs, long centerFrequencyHz,
                                      int sampleRateHz, int fftSize, int firstBin, int sourceBinCount)
     {
-        ByteBuffer buffer = ByteBuffer.allocate(Math.addExact(HEADER_BYTES, payloadBytes))
+        return header(type, payloadBytes, valueCount, generation, sequence, observedAtEpochMs, encodedAtEpochMs,
+            centerFrequencyHz, sampleRateHz, fftSize, firstBin, sourceBinCount, HEADER_BYTES);
+    }
+
+    private static ByteBuffer header(int type, int payloadBytes, int valueCount, long generation, long sequence,
+                                     long observedAtEpochMs, long encodedAtEpochMs, long centerFrequencyHz,
+                                     int sampleRateHz, int fftSize, int firstBin, int sourceBinCount, int headerBytes)
+    {
+        ByteBuffer buffer = ByteBuffer.allocate(Math.addExact(headerBytes, payloadBytes))
             .order(ByteOrder.LITTLE_ENDIAN);
         buffer.putInt(MAGIC);
         buffer.put((byte)VERSION);
         buffer.put((byte)type);
-        buffer.putShort((short)HEADER_BYTES);
+        buffer.putShort((short)headerBytes);
         buffer.putInt(payloadBytes);
         buffer.putInt(valueCount);
         buffer.putLong(generation);

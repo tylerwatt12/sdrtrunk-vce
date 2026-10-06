@@ -115,7 +115,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(synchronize.contains("liveChannelActivityNeedsResync = true"));
         assertTrue(synchronize.contains("if (update.operation === 'remove')"));
         assertTrue(synchronize.contains("source.addEventListener('activity_resync'"));
-        assertTrue(synchronize.contains("applyLiveChannelActivitySnapshot(resync?.snapshot || resync)"));
+        assertTrue(synchronize.contains("applyLiveChannelActivitySnapshot(snapshot)"));
+        assertTrue(synchronize.contains("source.addEventListener('activity_delta'"));
+        assertTrue(synchronize.contains("Number(update.base_revision) !== liveChannelActivityRevision"));
         assertTrue(synchronize.contains("source.addEventListener('live_gap'"));
         assertTrue(synchronize.contains("invokeLiveSubscriber(target, 'gap', detail)"));
     }
@@ -1673,7 +1675,7 @@ class StatsWebInteractionUiContractTest
         String binary = function(source, "function binaryFrameConnection(topic, parameters = {}, callbacks = {})");
         String diagnostic = function(source, "function decodeDiagnosticFrame(encoded)");
         String activity = function(source, "function synchronizeLiveChannelActivitySource()");
-        String subscribeActivity = function(source, "function subscribeLiveChannelActivity(callbacks = {})");
+        String subscribeActivity = function(source, "function subscribeLiveChannelActivity(callbacks = {}, options = {})");
         String frequencyMapping = function(source, "function tunerFrequencyAtBin(domain, coordinate)");
         String inverseFrequencyMapping = function(source, "function tunerBinAtFrequency(domain, frequencyHz)");
         String snapCandidate = function(source, "function tunerScopeSnapCandidate(scope, frequencyHz)");
@@ -1729,7 +1731,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("'Balanced · 8,192 bins / 10 FPS'"));
         assertTrue(tuner.contains("'High detail · 16,384 bins / 20 FPS · high load'"));
         assertTrue(tuner.contains("'Maximum detail · 32,768 bins / 20 FPS · highest load'"));
-        assertTrue(tuner.contains("All profiles use 8-bit spectrum data."));
+        assertFalse(tuner.contains("All profiles use 8-bit spectrum data."));
         assertTrue(parameters.contains("profile: spectrumProfile"));
         assertTrue(acceptState.contains("Object.hasOwn(TUNER_SPECTRUM_PROFILES, acceptedProfile)"));
         assertTrue(source.contains("LIVE_UI_STATE_STORAGE_KEY"));
@@ -1807,7 +1809,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("'Channel markers require Live access.'"));
         assertTrue(tuner.contains("subscribeLiveChannelActivity({"));
         assertTrue(systems.contains("subscribeLiveChannelActivity({"));
-        assertTrue(activity.contains("liveConnection('channel_activity', {}, false)"));
+        assertTrue(activity.contains("liveConnection('channel_activity', parameters, false)"));
+        assertTrue(activity.contains("const parameters = { delta: true }"));
+        assertTrue(activity.contains("if ([...liveChannelActivitySubscribers].every((subscriber) => subscriber.markers)) parameters.markers = true"));
         assertTrue(activity.contains("liveChannelActivityTables"));
         assertTrue(subscribeActivity.contains("invokeLiveSubscriber(subscriber, 'snapshot'"));
         assertTrue(tuner.contains("const tableChannelName = String(table?.channel_name || '').trim()"));
@@ -1928,7 +1932,10 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("const waterfallHistoryRows = []"));
         assertTrue(tuner.contains("waterfallHistoryRows.push(cached)"));
         assertTrue(tuner.contains("const cellStartHz = viewport.startHz"));
-        assertTrue(tuner.contains("Math.floor((overlapStartHz - domain.startHz) / domainSpan * values.length)"));
+        assertTrue(tuner.contains("Math.floor((overlapStartHz - domain.startHz) / domainSpan * values.count)"));
+        assertTrue(tuner.contains("values: diagnosticStrengthHistory(frameMetadata)"));
+        assertTrue(tuner.contains("decodedValues ? decodedValues[bin] : diagnosticValueAt(values, bin)"));
+        assertFalse(tuner.contains("values: fftValues.slice()"));
         assertTrue(tuner.contains("function waterfallHistoryRow(yRatio)"));
         assertTrue(tuner.contains("function waterfallFrequencyAt(row, ratio)"));
         assertTrue(tuner.contains("const frequencyHz = viewport.startHz + ratio * (viewport.endHz - viewport.startHz)"));

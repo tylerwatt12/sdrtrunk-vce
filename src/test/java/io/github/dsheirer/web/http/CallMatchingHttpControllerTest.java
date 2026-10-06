@@ -55,6 +55,68 @@ class CallMatchingHttpControllerTest
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     @Test
+    void cursorPollingSendsOnlyNewSummariesAndDetailsRemainAvailableOnDemand() throws Exception
+    {
+        LogicalCallDiagnosticService service = diagnosticService();
+        AudioCallCoordinator coordinator = new AudioCallCoordinator(null, null, null, null, service);
+        try
+        {
+            assertTrue(service.offer(sensitiveDecision(1)));
+            CallMatchingHttpController controller = new CallMatchingHttpController(() -> service, () -> coordinator);
+            TestExchange initial = new TestExchange(CallMatchingHttpController.PATH + "?summary=true", "GET");
+            controller.handle(initial);
+            JsonNode first = MAPPER.readTree(initial.body()).path("data");
+            assertEquals(1, first.path("cursor").longValue());
+            assertFalse(first.path("incremental").booleanValue());
+            assertEquals(32, first.at("/duplicates/0/copy_count").intValue());
+            assertEquals(1, first.at("/duplicates/0/legs").size());
+            assertFalse(first.at("/duplicates/0/details_available").booleanValue());
+            assertFalse(first.at("/duplicates/0/legs/0").has("expected_frame_count"));
+            String session = first.path("session_id").textValue();
+            String cursorQuery = "?summary=true&after=1&session_id=" + session;
+            TestExchange unchanged = new TestExchange(CallMatchingHttpController.PATH + cursorQuery, "GET");
+            controller.handle(unchanged);
+            JsonNode same = MAPPER.readTree(unchanged.body()).path("data");
+            assertTrue(same.path("incremental").booleanValue());
+            assertEquals(0, same.path("duplicates").size());
+            assertEquals(1, same.at("/history/visible_count").intValue());
+            assertTrue(same.has("resolver"));
+            assertTrue(service.offer(sensitiveDecision(2)));
+            TestExchange appended = new TestExchange(CallMatchingHttpController.PATH + cursorQuery, "GET");
+            controller.handle(appended);
+            JsonNode delta = MAPPER.readTree(appended.body()).path("data");
+            assertTrue(delta.path("incremental").booleanValue());
+            assertEquals(1, delta.path("duplicates").size());
+            assertEquals(2, delta.at("/duplicates/0/decision_sequence").longValue());
+            TestExchange detail = new TestExchange(CallMatchingHttpController.PATH +
+                "?decision_sequence=1&session_id=" + session, "GET");
+            controller.handle(detail);
+            assertEquals(200, detail.getResponseCode());
+            JsonNode selected = MAPPER.readTree(detail.body()).path("data");
+            assertEquals(32, selected.path("legs").size());
+            assertTrue(selected.has("evidence"));
+            assertFalse(detail.body().contains("topsecret"));
+            TestExchange full = new TestExchange(CallMatchingHttpController.PATH, "GET");
+            controller.handle(full);
+            assertTrue(full.body().length() > initial.body().length() * 8,
+                "Summary polling must not transfer all copy metrics.");
+            TestExchange replacement = new TestExchange(CallMatchingHttpController.PATH +
+                "?summary=true&after=1&session_id=00000000-0000-0000-0000-000000000000", "GET");
+            controller.handle(replacement);
+            assertFalse(MAPPER.readTree(replacement.body()).at("/data/incremental").booleanValue());
+            TestExchange expired = new TestExchange(CallMatchingHttpController.PATH +
+                "?decision_sequence=999&session_id=" + session, "GET");
+            controller.handle(expired);
+            assertEquals(404, expired.getResponseCode());
+        }
+        finally
+        {
+            coordinator.disposeAndAwait(2, TimeUnit.SECONDS);
+            service.close();
+        }
+    }
+
+    @Test
     void returnsNewestConfirmedDuplicatesOnlyWithBoundedCopiesAndSafeLabels() throws Exception
     {
         LogicalCallDiagnosticService service = diagnosticService();
@@ -238,6 +300,13 @@ class CallMatchingHttpControllerTest
         TestExchange query = new TestExchange(CallMatchingHttpController.PATH + "?all=true", "GET");
         controller.handle(query);
         assertEquals(400, query.getResponseCode());
+        for(String invalid: List.of("summary=false", "after=1", "summary=true&after=-1&session_id=x",
+            "summary=true&summary=true", "decision_sequence=1", "summary=true&after=9007199254740992"))
+        {
+            TestExchange rejected = new TestExchange(CallMatchingHttpController.PATH + "?" + invalid, "GET");
+            controller.handle(rejected);
+            assertEquals(400, rejected.getResponseCode(), invalid);
+        }
 
         TestExchange method = new TestExchange(CallMatchingHttpController.PATH, "POST");
         controller.handle(method);

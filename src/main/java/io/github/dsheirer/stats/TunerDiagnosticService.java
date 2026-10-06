@@ -157,6 +157,11 @@ public final class TunerDiagnosticService implements AutoCloseable
 
     public OpenResult tryOpen(String targetId, Viewport viewport, SpectrumProfile profile)
     {
+        return tryOpen(targetId, viewport, profile, false);
+    }
+
+    public OpenResult tryOpen(String targetId, Viewport viewport, SpectrumProfile profile, boolean compactStrength)
+    {
         if(targetId == null || targetId.isBlank())
         {
             return new OpenResult(OpenStatus.NOT_FOUND, null);
@@ -190,7 +195,7 @@ public final class TunerDiagnosticService implements AutoCloseable
             try
             {
                 Session session = new Session(target, mNextGeneration.incrementAndGet(), viewport,
-                    Objects.requireNonNull(profile, "Tuner spectrum profile cannot be null"));
+                    Objects.requireNonNull(profile, "Tuner spectrum profile cannot be null"), compactStrength);
                 mActiveSession = session;
                 return new OpenResult(OpenStatus.OPEN, session);
             }
@@ -550,6 +555,7 @@ public final class TunerDiagnosticService implements AutoCloseable
         private final AtomicLong mDroppedIngressBuffers = new AtomicLong();
         private final AtomicLong mLastRecordingSampleAtNanos = new AtomicLong();
         private final FrameProcessor mProcessor;
+        private final boolean mCompactStrength;
         private volatile Target mMetadata;
         private final AtomicReference<AnalysisSelection> mAnalysis;
         private volatile long mMetadataStateRevision;
@@ -560,8 +566,10 @@ public final class TunerDiagnosticService implements AutoCloseable
         private boolean mSourceEventListenerAttached;
         private long mNextAvailabilityCheckNanos;
 
-        private Session(TargetSnapshot target, long generation, Viewport viewport, SpectrumProfile profile)
+        private Session(TargetSnapshot target, long generation, Viewport viewport, SpectrumProfile profile,
+                        boolean compactStrength)
         {
+            mCompactStrength = compactStrength;
             mTarget = target;
             mGeneration = generation;
             mMetadata = target.target();
@@ -900,9 +908,12 @@ public final class TunerDiagnosticService implements AutoCloseable
             }
 
             long sequence = mSequence.incrementAndGet();
-            mFrames.offer(DiagnosticStreamFrame.tunerFft(mGeneration,
-                sequence, result.observedAtEpochMs(), result.centerFrequencyHz(), result.sampleRateHz(),
-                result.fftSize(), QUANTIZATION_BITS, result.bins()));
+            mFrames.offer(mCompactStrength ? DiagnosticStreamFrame.compactStrength(
+                DiagnosticStreamFrame.TYPE_TUNER_FFT, mGeneration, sequence, result.observedAtEpochMs(),
+                result.centerFrequencyHz(), result.sampleRateHz(), result.fftSize(), result.bins()) :
+                DiagnosticStreamFrame.tunerFft(mGeneration, sequence, result.observedAtEpochMs(),
+                    result.centerFrequencyHz(), result.sampleRateHz(), result.fftSize(), QUANTIZATION_BITS,
+                    result.bins()));
         }
 
         private State state(String state, String reason)
@@ -928,7 +939,7 @@ public final class TunerDiagnosticService implements AutoCloseable
             return new State(revision, mGeneration, state, reason, metadata.targetId(), metadata.label(),
                 metadata.centerFrequencyHz(), metadata.sampleRateHz(), metadata.activeChannelCount(),
                 profile.id(), profile.fftSize(), profile.framesPerSecond(), MAXIMUM_DECIMATION, profile.fftSize(),
-                QUANTIZATION_BITS,
+                mCompactStrength ? DiagnosticStreamFrame.COMPACT_STRENGTH_BITS : QUANTIZATION_BITS,
                 receiver.requestedDurationMilliseconds(), receiver.queuedMilliseconds(), receiver.droppedBuffers(),
                 receiver.droppedMilliseconds(), mDroppedIngressBuffers.get() + mProcessor.droppedBufferCount(),
                 requestedStart, requestedEnd, plan.startFrequencyHz(), plan.endFrequencyHz(), 0,

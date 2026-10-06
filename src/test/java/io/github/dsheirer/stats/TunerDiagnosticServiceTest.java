@@ -435,6 +435,37 @@ class TunerDiagnosticServiceTest
     }
 
     @Test
+    void negotiatedCompactStrengthKeepsEveryProfileBinAndLatestFrameCadence()
+        throws Exception
+    {
+        FakeController controller = new FakeController(800_000_000L, 10_000_000.0);
+        FakeProcessorFactory processors = new FakeProcessorFactory();
+        TunerDiagnosticService service = service(List.of(
+            target(new Object(), TunerClass.AIRSPY, controller, 1)), processors);
+        try
+        {
+            TunerDiagnosticService.Session session = service.tryOpen(service.targets().getFirst().targetId(),
+                null, TunerDiagnosticService.SpectrumProfile.MAXIMUM_DETAIL, true).session();
+            assertEquals(6, session.state().quantizationBits());
+            assertEquals(20, session.state().framesPerSecond());
+            float[] values = new float[32_768];
+            for(int sequence = 0; sequence < 3; sequence++) processors.publish(
+                new TunerDiagnosticService.FftResult(100 + sequence, 800_000_000L,
+                    10_000_000L, 32_768, values));
+            DiagnosticStreamFrame frame = session.poll(Duration.ZERO);
+            assertNotNull(frame);
+            assertEquals(3, frame.sequence());
+            assertEquals(32_768, frame.valueCount());
+            assertEquals(84 + 24_576, frame.encoded().length);
+            assertNull(session.poll(Duration.ZERO));
+        }
+        finally
+        {
+            service.close();
+        }
+    }
+
+    @Test
     void selectsGuardedD1ThroughD32AnalysisPlans()
     {
         long center = 100_000_000L;

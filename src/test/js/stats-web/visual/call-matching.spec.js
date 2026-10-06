@@ -231,8 +231,8 @@ test('administrator sees only confirmed duplicates and compares receiver copies'
   await expect(dialog).toContainText('Matching voice frames');
   await expect(dialog).toContainText('27101');
   await expect(dialog).toContainText('1204185');
-  await expect(dialog.locator('.call-matching-comparison-summary .ui-fact')).toHaveCount(7);
-  await expect(dialog.locator('.call-matching-comparison-table tbody tr')).toHaveCount(12);
+  await expect(dialog.locator('.call-matching-comparison-summary .ui-fact')).toHaveCount(14);
+  await expect(dialog.locator('.call-matching-comparison-table tbody tr')).toHaveCount(16);
   await expect(dialog.locator('.call-matching-comparison-table thead th.ui-data-table-selected-column'))
     .toHaveCount(1);
   await page.keyboard.press('Escape');
@@ -591,7 +591,46 @@ test('a new receiver session resets history paging and closes old comparisons', 
   await expect(page.locator('.call-matching-history-pager')).toContainText('Page 1 of 3');
 });
 
-test('pausing freezes matching metrics and history while polling keeps the newest snapshot ready', async ({ page }) => {
+test('cursor summaries retain history, fetch comparison on demand, and stop hidden requests', async ({ page }) => {
+  const requests = [];
+  let newest = 71;
+  const app = await openApp(page, { matching: async (_count, route) => {
+    const query = new URL(route.request().url()).searchParams;
+    requests.push(Object.fromEntries(query));
+    if (query.has('decision_sequence')) return { data: duplicate(Number(query.get('decision_sequence'))) };
+    const rows = query.get('after') === String(newest) ? [] : [{ ...duplicate(newest),
+      legs: [duplicate(newest).legs.find((copy) => copy.selected)], copy_count: 2, details_available: false }];
+    return { data: { ...snapshot(rows), incremental: query.has('after'), cursor: newest, first_sequence: 71 } };
+  } });
+  const rows = page.locator('table[data-table-type="call-matching-duplicates"] tbody tr');
+  await expect(rows.first()).toHaveAttribute('data-id', '71');
+  await expect(rows.first().locator('td[data-column="copies"]')).toHaveText('2');
+  await expect.poll(() => requests.some((query) => query.after === '71')).toBe(true);
+  await expect(rows).toHaveCount(1);
+  newest = 72;
+  await expect(rows).toHaveCount(2);
+  await expect(rows.first()).toHaveAttribute('data-id', '72');
+  await page.getByRole('button', { name: 'Pause call matching monitor', exact: true }).click();
+  await page.getByRole('button', { name: 'Compare matched call 71', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Matched call details' })).toContainText('Cuyahoga Simulcast');
+  expect(requests.some((query) => query.decision_sequence === '71')).toBe(true);
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Resume call matching monitor', exact: true }).click();
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  const hiddenRequests = app.requests();
+  await page.waitForTimeout(1_200);
+  expect(app.requests()).toBe(hiddenRequests);
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await expect.poll(() => app.requests()).toBeGreaterThan(hiddenRequests);
+});
+
+test('pausing freezes matching metrics and history and stops polling until resume', async ({ page }) => {
   let current = snapshot([duplicate(71)]);
   const app = await openApp(page, { matching: async () => ({ data: current }) });
   const metrics = page.locator('.call-matching-status-content .ui-metric-copy > strong');
@@ -609,7 +648,8 @@ test('pausing freezes matching metrics and history while polling keeps the newes
   current = snapshot([duplicate(72)]);
   current.resolver.active_leg_count = 9;
   current.resolver.counters.merged_logical_calls = 222;
-  await expect.poll(() => app.requests()).toBeGreaterThanOrEqual(before + 2);
+  await page.waitForTimeout(1_200);
+  expect(app.requests()).toBe(before);
   await expect(metrics).toHaveText(originalMetrics);
   await expect(rows.first()).toHaveAttribute('data-id', '71');
 
@@ -617,7 +657,8 @@ test('pausing freezes matching metrics and history while polling keeps the newes
   current = snapshot([duplicate(73)]);
   current.resolver.active_leg_count = 12;
   current.resolver.counters.merged_logical_calls = 333;
-  await expect.poll(() => app.requests()).toBeGreaterThanOrEqual(before + 2);
+  await page.waitForTimeout(1_200);
+  expect(app.requests()).toBe(before);
   await expect(metrics).toHaveText(originalMetrics);
   await expect(rows).toHaveCount(1);
   await expect(rows.first()).toHaveAttribute('data-id', '71');
@@ -639,7 +680,8 @@ test('paused history keeps paging, displayed fields, and copy comparison usable'
   await page.getByRole('button', { name: 'Pause call matching monitor', exact: true }).click();
   const before = app.requests();
   current = snapshot([duplicate(100)]);
-  await expect.poll(() => app.requests()).toBeGreaterThanOrEqual(before + 2);
+  await page.waitForTimeout(1_200);
+  expect(app.requests()).toBe(before);
   await pager.getByRole('button', { name: 'Next', exact: true }).click();
   await expect(pager).toContainText('Matched calls 21–40 of 45 · Page 2 of 3');
   await expect(table.locator('tbody tr').first()).toHaveAttribute('data-id', '25');
@@ -654,7 +696,7 @@ test('paused history keeps paging, displayed fields, and copy comparison usable'
   await compare.click();
   const dialog = page.getByRole('dialog', { name: 'Matched call details' });
   await expect(dialog).toContainText('Cuyahoga Simulcast');
-  await expect(dialog.locator('.call-matching-comparison-table tbody tr')).toHaveCount(12);
+  await expect(dialog.locator('.call-matching-comparison-table tbody tr')).toHaveCount(16);
   await page.keyboard.press('Escape');
   await expect(compare).toBeFocused();
   await expect(pager).toContainText('Page 2 of 3');
@@ -677,7 +719,8 @@ test('resuming a paused replacement receiver resets frozen paging and the select
   const dialog = page.getByRole('dialog', { name: 'Matched call details' });
   const before = app.requests();
   current = { ...snapshot([duplicate(200)]), session_id: 'replacement-session' };
-  await expect.poll(() => app.requests()).toBeGreaterThanOrEqual(before + 2);
+  await page.waitForTimeout(1_200);
+  expect(app.requests()).toBe(before);
   await expect(dialog).toBeVisible();
   await expect(pager).toContainText('Page 2 of 3');
   await page.keyboard.press('Escape');
@@ -690,7 +733,7 @@ test('resuming a paused replacement receiver resets frozen paging and the select
 });
 
 for (const authorizationStatus of [401, 403]) {
-  test(`authorization loss ${authorizationStatus} clears paused data and stops polling`, async ({ page }) => {
+  test(`authorization loss ${authorizationStatus} clears data on resume and stops polling`, async ({ page }) => {
     let authorized = true;
     const app = await openApp(page, { matching: async () => authorized ?
       { data: snapshot() } : { status: authorizationStatus, message: 'Administrator required' } });
@@ -698,6 +741,11 @@ for (const authorizationStatus of [401, 403]) {
     await page.getByRole('button', { name: 'Pause call matching monitor', exact: true }).click();
     await page.getByRole('button', { name: 'Compare matched call 71', exact: true }).click();
     authorized = false;
+    const pausedRequests = app.requests();
+    await page.waitForTimeout(1_200);
+    expect(app.requests()).toBe(pausedRequests);
+    await page.keyboard.press('Escape');
+    await page.getByRole('button', { name: 'Resume call matching monitor', exact: true }).click();
     await expect(page.locator('.call-matching-live-status')).toContainText('Access denied', { timeout: 3500 });
     await expect(page.getByRole('dialog', { name: 'Matched call details' })).not.toBeVisible();
     await expect(page.locator('table[data-table-type="call-matching-duplicates"] tbody td.empty')).toBeVisible();
@@ -723,13 +771,14 @@ test('pausing during an in-flight update freezes its result without starting ove
   expect(app.requests()).toBe(2);
   await expect(rows.first()).toHaveAttribute('data-id', '71');
   release();
-  await expect.poll(() => app.requests()).toBeGreaterThanOrEqual(3);
+  await page.waitForTimeout(100);
+  expect(app.requests()).toBe(2);
   await expect(rows.first()).toHaveAttribute('data-id', '71');
   await page.getByRole('button', { name: 'Resume call matching monitor', exact: true }).click();
   await expect(rows.first()).toHaveAttribute('data-id', '72');
 });
 
-test('paused error recovery preserves the frozen view and navigation cancels future polling', async ({ page }) => {
+test('paused requests stay stopped and failed resume preserves history until recovery', async ({ page }) => {
   let response = { data: snapshot([duplicate(71)]) };
   const app = await openApp(page, { matching: async () => response });
   const rows = page.locator('table[data-table-type="call-matching-duplicates"] tbody tr');
@@ -737,21 +786,20 @@ test('paused error recovery preserves the frozen view and navigation cancels fut
   await page.getByRole('button', { name: 'Pause call matching monitor', exact: true }).click();
   let before = app.requests();
   response = { data: snapshot([duplicate(72)]) };
-  await expect.poll(() => app.requests()).toBeGreaterThanOrEqual(before + 2);
+  await page.waitForTimeout(1_200);
+  expect(app.requests()).toBe(before);
   await expect(rows.first()).toHaveAttribute('data-id', '71');
   response = { status: 503, message: 'Temporarily unavailable' };
-  await expect(page.locator('.call-matching-live-status')).toContainText('Unavailable', { timeout: 3500 });
-  await expect(page.locator('.call-matching-pause-state')).toBeVisible();
-  await expect(page.locator('.call-matching-pause-state')).toHaveText('Paused');
-  await expect(rows.first()).toHaveAttribute('data-id', '71');
   await page.getByRole('button', { name: 'Resume call matching monitor', exact: true }).click();
+  await expect(page.locator('.call-matching-live-status')).toContainText('Unavailable', { timeout: 3500 });
   await expect(rows.first()).toHaveAttribute('data-id', '71');
   await expect(page.locator('.call-matching-connection-state')).toContainText('Unavailable');
   await expect(page.locator('.call-matching-connection-state')).not.toContainText('Live');
   await page.getByRole('button', { name: 'Pause call matching monitor', exact: true }).click();
   before = app.requests();
   response = { data: snapshot([duplicate(73)]) };
-  await expect.poll(() => app.requests()).toBeGreaterThanOrEqual(before + 2);
+  await page.waitForTimeout(1_200);
+  expect(app.requests()).toBe(before);
   await expect(rows.first()).toHaveAttribute('data-id', '71');
   await page.getByRole('button', { name: 'Resume call matching monitor', exact: true }).click();
   await expect(rows.first()).toHaveAttribute('data-id', '73');
@@ -778,7 +826,8 @@ for (const theme of ['light', 'dark']) {
     await expect(resume).toHaveAttribute('aria-pressed', 'true');
     const before = app.requests();
     current = snapshot([duplicate(72)]);
-    await expect.poll(() => app.requests()).toBeGreaterThanOrEqual(before + 2);
+    await page.waitForTimeout(1_200);
+    expect(app.requests()).toBe(before);
     await expect(resume).toBeFocused();
     const fit = await resume.evaluate((button) => {
       const bounds = button.getBoundingClientRect();
