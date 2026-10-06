@@ -1,9 +1,9 @@
 # VCE
 
 VCE (`sdrtrunk-vce`) is an independent, enhanced version of
-[SDRTrunk](https://github.com/DSheirer/sdrtrunk). It keeps the familiar receiver, decoder, recording, streaming, and
-Java configuration tools while adding a browser activity screen, a built-in website, portable storage, browser
-scan-list listening, long-term statistics, and performance improvements.
+[SDRTrunk](https://github.com/DSheirer/sdrtrunk). It keeps SDRTrunk's receiving, decoding, recording, and streaming
+capabilities while adding a built-in website, portable storage, browser scan-list listening, long-term statistics,
+and performance improvements.
 
 This project is currently pre-release software with two intentionally different release lines. Numbered **Alpha**
 builds are the more conservative line; **Nightly** builds contain the current `main` feature set. Back up your
@@ -28,9 +28,9 @@ receiver data before installing or upgrading.
 - **Built-in webserver and scanner:** New profiles start the website on local-only HTTPS by default, while preserving
   an operator's saved enabled or disabled choice. View Live activity, the Radio Directory, Channels, group identities,
   radios, history, and statistics from a browser. Subscribe to one or more administrator-defined
-  [Scan Lists](docs/browser-listening-and-scan-lists.md); assign normal Aliases or Alias List Defaults to them. Those
-  defaults also normally initialize new talkgroup Aliases consistently across the desktop, web, Discover, and
-  RadioReference workflows. Overlapping routes are deduplicated before completed calls enter each browser's local
+  [Scan Lists](docs/browser-listening-and-scan-lists.md); assign normal Aliases or Alias List Defaults to them.
+  Unknown Alias Behavior handles unmatched calls, while New Alias Behavior supplies the starting choices for new
+  talkgroup Aliases. Overlapping routes are deduplicated before completed calls enter each browser's local
   queue, where optional Conversation Mode can regroup calls that are already waiting.
 - **Portable setup:** Each VCE installation keeps its own database, settings, tuners, JMBE library, logs, recordings,
   statistics, and web files. It does not rely on the sdrtrunk in the userprofile, so you can rest assured it will not overwrite files from previous versions of sdrtrunk
@@ -46,8 +46,8 @@ receiver data before installing or upgrading.
 Current `main` and Nightly builds expand the built-in website and strengthen P25 decoding. Numbered Alpha builds may
 omit these newer features until they are deliberately included in that release line.
 
-- **Secure web administration** adds automatic HTTPS, Public/User/Admin access tiers, user management, and custom
-  certificate import without manually stopping the server.
+- **Secure web administration** adds automatic HTTPS, Public/User/Admin access tiers, one primary administrator,
+  listener accounts, and custom certificate import without manually stopping the server.
 - **Alias management moves into the website**, including bulk editing, per-list unmatched-talkgroup behavior, observed
   talkgroup discovery, and RadioReference site, conventional-channel, and bulk talkgroup imports.
 - **Live diagnostics add Events, Messages, and bounded Signal and Symbols views**, plus a demand-driven whole-tuner
@@ -55,12 +55,19 @@ omit these newer features until they are deliberately included in that release l
   and channel flags.
 - **[P25 Visualizer](docs/network-visualizer.md) reconstructs a shared 3D scene** from retained noteworthy P25
   activity, including accepted affiliation changes, emergencies, denials, busy/queued responses, pages, and checks.
-- **Status icon choices are personal to each administrator:** each receiver issue type can be shown or hidden for that
-  account's status icon while shared monitoring, detailed measurements, and current and recently cleared issues remain
-  available.
-- **The Java receiver window is deliberately smaller:** Map (when enabled) and Tuners remain, while the old Systems
-  workspace, embedded diagnostics, and receiver-local tuner Spectrum/Waterfall displays are removed. Both selected-
-  channel and tuner-wide FFT/waterfall diagnostics remain available in the website.
+- **Channel discovery** finds and checks supported P25, DMR, and NXDN trunked signals with an available tuner.
+  Add selected channels from Channel Setup or Spectrum, match RadioReference names, and optionally import talkgroup
+  names into an Alias List.
+- **ISSI radio details** distinguish a radio's permanent home-system identity from the Working ID used on another
+  system. Friendly system names and short local radio IDs keep activity readable.
+- **Remote P25 Links** let trusted VCE receivers share decoded P25 signals for receiving on another installation.
+- **Optional Managed Recordings** adds a searchable recording library with browser playback and transcription.
+  Classic recording remains available, and upgrades keep the existing recording choice.
+- **Status icon choices are personal:** show or hide each receiver issue type in your status icon. Shared monitoring,
+  detailed measurements, and current and recently cleared issues remain available.
+- **The Java receiver window is deliberately smaller:** it opens the website and shows receiver status. Channel
+  Setup, Tuners, Streaming, and RadioReference are now managed in the website, alongside Map and signal diagnostics.
+  Setup, database import, file access, and debug recording remain available from the local window.
 - **P25 NAC, CRC, and error-correction handling is stricter**, while bounded weak-voice recovery preserves usable
   Phase 1 audio and late encryption details remain attached to the correct call.
 - **The exact Alpha 8/Alpha 9 database layout uses the built-in migrator.** Alpha 8 and Alpha 9 shipped the same

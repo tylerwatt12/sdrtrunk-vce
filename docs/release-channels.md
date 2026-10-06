@@ -20,6 +20,10 @@ body stays evergreen, but every publication requires a manual approval after the
 been reviewed. Use the documentation bundled with the downloaded build and read the Application Migrator's preflight
 and completion reports before replacing existing data.
 
+Nightly moves receiver administration into the website, including Channels, Tuners, Streaming, and RadioReference.
+The local receiver window still opens the website and provides setup, database import, file access, and debug
+recording. Numbered Alpha may retain older desktop tools until those changes reach its release line.
+
 ## Updates Stay On Their Channel
 
 New Alpha packages check only the Alpha update feed. New Nightly packages check only the Nightly feed. The updater can
