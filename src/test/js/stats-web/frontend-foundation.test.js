@@ -494,7 +494,8 @@ async function main() {
   assert.match(appCssSource, /\.ui-icon-button-compact \{[^}]*--icon-action-size: var\(--control-height-compact\)/s);
   assert.match(functionBinding(appSource, 'showUserPreferenceError'), /'Retry'/);
   assert.match(functionBinding(appSource, 'showUserPreferenceError'), /'Dismiss'/);
-  assert.match(appSource, /activeReadOnlyModal === modalState && closeReadOnlyModal\(false, true,/);
+  assert.match(appSource, /if \(activeReadOnlyModal !== modalState\) return false/);
+  assert.match(appSource, /closeReadOnlyModal\(false, true, finished\)/);
   assert.match(appSource, /for \(let current = active; current; current = topOnly \? null : current\.parent\)/);
   assert.match(appSource, /current\.isBusy\?\.\(\) \|\| current\.dismissalPending/);
   assert.match(functionBinding(appSource, 'confirmAction'), /'alertdialog'/);

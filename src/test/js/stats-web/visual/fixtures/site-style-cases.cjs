@@ -10,14 +10,15 @@ const galleryViews = [
   'radio-directory-panel', 'admin-scan-lists', 'scanner', 'tuner-spectrum', 'tuners', 'aliases',
   'alias-modal', 'alias-export', 'scan-list-members', 'channels', 'radio-directory', 'entity-details',
   'live-notice', 'live-filter', 'tuner-frequency-popover', 'spectrum-discovery', 'spectrum-search',
-  'control-states', 'table-overflow'
+  'control-states', 'table-overflow', 'setup-guide', 'call-matching', 'section-body'
 ];
 const gallerySelector = (view) => ({
   gallery: '.design-system-gallery', 'modal-long': '.visual-modal-example',
   'radio-directory-panel': '.visual-radio-directory-coverage-example',
   'live-notice': '.visual-live-example',
   'spectrum-discovery': '.visual-spectrum-discovery-example .spectrum-discovery-modal',
-  'spectrum-search': '.visual-spectrum-search-example .spectrum-search-modal'
+  'spectrum-search': '.visual-spectrum-search-example .spectrum-search-modal',
+  'setup-guide': '.ui-setup-guide'
 }[view] || `.visual-${view}-example`);
 const presentations = [
   { name: 'light-desktop', theme: 'light', viewport: { width: 1280, height: 900 } },

@@ -12,6 +12,7 @@ import { formatP25RadioIdentifier, p25ServingSystemKey } from './core/radio-labe
 import * as pageLifecycle from './core/page-lifecycle.js';
 import { installIconHints } from './core/icon-hints.js?v=4';
 import { createFormWorkflow } from './core/form-workflows.js?v=1';
+import { createChannelSetupGuide } from './features/channel-setup-guide.js?v=1';
 import { applyThemeHue } from './core/theme.js?v=1';
 import * as browsingWorkflows from './core/browsing-workflows.js?v=1';
 import {
@@ -2200,7 +2201,7 @@ function openReadOnlyModal(title, body, options = {}) {
   const header = node('header', 'modal-header');
   const heading = node('h2', '', title);
   heading.id = titleId;
-  const close = iconButton('icon-close', `Close ${title}`,
+  const close = iconButton('icon-close', options.closeLabel || `Close ${title}`,
     'ui-button ui-button-secondary ui-icon-button modal-close');
   header.append(heading, close);
   const contentNode = node('div', 'modal-content');
@@ -2209,8 +2210,17 @@ function openReadOnlyModal(title, body, options = {}) {
   backdrop.append(dialog);
 
   let modalState = null;
-  const dismiss = (onClosed = null) => activeReadOnlyModal === modalState && closeReadOnlyModal(false, true,
-    typeof onClosed === 'function' ? (closed) => { if (closed) onClosed(); } : null);
+  const dismiss = (onClosed = null) => {
+    if (activeReadOnlyModal !== modalState) return false;
+    const finished = (closed) => {
+      if (!closed) return;
+      options.onDismiss?.();
+      if (typeof onClosed === 'function') onClosed();
+    };
+    const closed = closeReadOnlyModal(false, true, finished);
+    if (closed) options.onDismiss?.();
+    return closed;
+  };
   const focusable = () => [...dialog.querySelectorAll(
     'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), ' +
     '[tabindex]:not([tabindex="-1"])')]
@@ -2306,8 +2316,8 @@ function openReadOnlyModal(title, body, options = {}) {
     },
     setTitle: (value) => {
       heading.textContent = String(value);
-      close.setAttribute('aria-label', `Close ${value}`);
-      close.title = `Close ${value}`;
+      close.setAttribute('aria-label', options.closeLabel || `Close ${value}`);
+      close.title = options.closeLabel || `Close ${value}`;
     },
     setDirty: (value = true) => { dirty = Boolean(value); },
     setDiscardMessage: (value) => { discardMessage = String(value || 'Discard your unsaved changes?'); },
@@ -23078,9 +23088,10 @@ async function renderModernChannelCatalog(renderContext) {
     const statusHost = node('div', 'channel-admin-status');
     statusHost.setAttribute('role', 'status');
     statusHost.setAttribute('aria-live', 'polite');
-    toolbar.append(uiActionButton('New channel', 'icon-plus', () =>
-      openChannelEditorModal('create', null, { protocols, options }), 'ui-button ui-button-primary'));
-    if (capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_TUNERS)) toolbar.append(uiActionButton('Find Trunked Systems',
+    const newChannelButton = uiActionButton('New channel', 'icon-plus', () =>
+      openChannelEditorModal('create', null, { protocols, options }), 'ui-button ui-button-primary');
+    toolbar.append(newChannelButton);
+    const findSystemsButton = capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_TUNERS) ? uiActionButton('Find Trunked Systems',
       'icon-scan-search', () => openSpectrumSearchWizard({ node, openReadOnlyModal, requestJson, uiActionButton, iconButton,
         uiSelect, uiSelectFrame, uiPill, formField, anchor, href, entityRefHref, channelMHz, hex,
         channelEditorControl, channelEditorFieldValue, protocols }, {
@@ -23099,7 +23110,14 @@ async function renderModernChannelCatalog(renderContext) {
             method: 'POST', body: { takeover: true }, page: false
           });
         }
-      }), 'ui-button ui-button-secondary'));
+      }), 'ui-button ui-button-secondary') : null;
+    if (findSystemsButton) toolbar.append(findSystemsButton);
+    const setupGuide = createChannelSetupGuide({ ui: { node, openReadOnlyModal }, account: accessSession.username,
+      channels: () => state.catalog.channels,
+      isCurrent: () => renderIsCurrent(renderContext) && wrapper.isConnected,
+      canPresent: () => !activeReadOnlyModal,
+      loadTuners: () => requestJson('/api/v1/admin/spectrum-search/catalog', { csrf: false }),
+      newChannelButton, findSystemsButton });
     const exportLink = exportCsvLink('channels');
     const refresh = uiActionButton('', 'icon-refresh', () => renderChannelSetup(), 'ui-button ui-icon-button');
     refresh.setAttribute('aria-label', 'Refresh channels');
@@ -23170,6 +23188,7 @@ async function renderModernChannelCatalog(renderContext) {
       if (!Number.isFinite(revision) || revision < state.revision) return false;
       state.revision = revision;
       state.catalog = refreshed;
+      if (refreshed.channels?.length) setupGuide.close();
       const available = new Set((refreshed.channels || []).map((row) => row.configuration_id));
       [...selected].filter((id) => !available.has(id)).forEach((id) => selected.delete(id));
       summaryHost.replaceChildren(channelSummaryCards(refreshed, true));
@@ -23326,6 +23345,7 @@ async function renderModernChannelCatalog(renderContext) {
     draw({ rebuild: true });
     wrapper.append(summaryHost, toolbar, selectedBar, tableHost);
     updateSelection();
+    pageTimeout(() => { void setupGuide.refresh(); }, 0);
 
     let refreshInFlight = false;
     pageInterval(async () => {
@@ -23334,7 +23354,7 @@ async function renderModernChannelCatalog(renderContext) {
       refreshInFlight = true;
       try {
         const refreshed = await requestJson('/api/v1/admin/channels', { csrf: false });
-        if (applyCatalog(refreshed)) draw();
+        if (applyCatalog(refreshed)) { draw(); void setupGuide.refresh(); }
       } catch (_) { /* Preserve the last confirmed catalog; explicit actions still surface errors. */ }
       finally { refreshInFlight = false; }
     }, 5_000);

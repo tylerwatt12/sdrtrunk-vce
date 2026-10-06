@@ -7,7 +7,7 @@
 @layer reset, tokens, components, compositions, features, utilities;
 
 @import url("./styles/base.css?v=2") layer(reset);
-@import url("./styles/tokens.css?v=26") layer(tokens);
+@import url("./styles/tokens.css?v=27") layer(tokens);
 @import url("./styles/components/semantic-text.css?v=3") layer(components);
 @import url("./styles/components/controls.css?v=32") layer(components);
 @import url("./styles/components/audio-controls.css?v=6") layer(components);
@@ -17,7 +17,7 @@
 @import url("./styles/compositions/app-chrome.css?v=14") layer(compositions);
 @import url("./styles/compositions/audio-dock.css?v=9") layer(compositions);
 @import url("./styles/compositions/charts.css?v=4") layer(compositions);
-@import url("./styles/compositions/modals.css?v=9") layer(compositions);
+@import url("./styles/compositions/modals.css?v=10") layer(compositions);
 @import url("./styles/compositions/settings.css?v=8") layer(compositions);
 @import url("./styles/features/access-landing.css?v=2") layer(features);
 @import url("./styles/features/about.css?v=1") layer(features);

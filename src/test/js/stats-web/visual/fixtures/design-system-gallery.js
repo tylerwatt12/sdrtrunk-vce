@@ -7,6 +7,7 @@ import { mountAudioDockGallery } from '/visual/audio-dock-gallery.js';
 import { createFormWorkflow } from '/assets/core/form-workflows.js';
 import { createBrowsingPager, createFilterDisclosure, pageRangeText, scanListAvailabilityPill } from '/assets/core/browsing-workflows.js';
 import { createGalleryModalFoundation } from '/visual/modal-foundation-gallery.js';
+import { openSetupGuide } from '/assets/core/setup-guide.js?v=1';
 
 async function initializeAliasFilterExamples() {
   const forms = [...document.querySelectorAll('.visual-aliases-example .alias-editor-filter-toolbar, ' +
@@ -409,12 +410,57 @@ const view = ['control-states', 'table-overflow', 'mobile-table', 'gallery', 'wo
   'radio-directory-coverage', 'radio-directory-panel', 'admin-scan-lists',
   'scanner', 'tuner-spectrum', 'tuners', 'aliases', 'alias-modal', 'alias-export', 'scan-list-members', 'channels',
   'radio-directory', 'entity-details', 'call-matching', 'live-notice', 'live-filter', 'tuner-frequency-popover',
-  'spectrum-discovery', 'spectrum-search'].includes(parameters.get('view')) ?
+  'spectrum-discovery', 'spectrum-search', 'setup-guide'].includes(parameters.get('view')) ?
   parameters.get('view') : 'gallery';
 document.documentElement.dataset.theme = theme;
 const requestedHue = parameters.get('hue');
 applyThemeHue(requestedHue === null ? null : Number(requestedHue));
 document.body.dataset.galleryView = view;
+
+if (view === 'setup-guide') {
+  const example = document.querySelector('.visual-channels-example');
+  example.querySelectorAll('.ui-metric strong').forEach(value => { value.textContent = '0'; });
+  example.querySelector('.channel-selection-bar').remove();
+  const rows = example.querySelector('tbody');
+  rows.replaceChildren();
+  const empty = document.createElement('tr');
+  const cell = document.createElement('td');
+  cell.colSpan = 6;
+  cell.textContent = 'No channels match this view';
+  empty.append(cell);
+  rows.append(empty);
+  const node = (tag, className = '', text = null) => {
+    const element = document.createElement(tag);
+    element.className = className;
+    if (text !== null) element.textContent = String(text);
+    return element;
+  };
+  const action = (name, icon, primary = false) => {
+    const button = node('button', `ui-button ui-button-${primary ? 'primary' : 'secondary'}`);
+    button.type = 'button';
+    const glyph = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+    glyph.setAttribute('aria-hidden', 'true');
+    use.setAttribute('href', `#visual-icon-${icon}`);
+    glyph.append(use);
+    button.append(glyph, document.createTextNode(name));
+    return button;
+  };
+  const toolbar = example.querySelector('.channel-admin-toolbar');
+  const newChannel = action('New channel', 'plus', true);
+  const findSystems = action('Find Trunked Systems', 'scan-search');
+  toolbar.querySelector('.ui-button-primary').replaceWith(newChannel);
+  newChannel.after(findSystems);
+  const { openReadOnlyModal } = await createGalleryModalFoundation();
+  const introduction = openSetupGuide({ node, openReadOnlyModal }, {
+    title: 'Add your first channel', choices: [
+      { button: findSystems, description: 'Search for trunked radio systems your tuner can receive.' },
+      { button: newChannel, description: 'Set up a channel manually using a known frequency.' }
+    ]
+  });
+  await introduction.ready;
+  example.dataset.ready = 'true';
+}
 
 if (view === 'live-notice') {
   document.querySelector('.visual-live-example .channels-live-table').dataset.rowDensity =
