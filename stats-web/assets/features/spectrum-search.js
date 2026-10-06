@@ -1158,12 +1158,12 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       const syncAliasSummary = () => {
         const existing = lists.find((aliasList) => aliasList.id === Number(draft?.alias_list_id));
         aliasSummary.textContent = existing ? `Alias List: ${existing.name} · Existing` : draft ?
-          `Alias List: ${draft.new_alias_list_name || 'Name required'} · New` : 'Alias List unavailable';
+          `Alias List: ${draft.new_alias_list_name || 'Name required'}` : 'Alias List unavailable';
       };
       title.append(node('h4', '', systemLabel(entry.candidates[0])), aliasSummary);
       const customizePanel = node('div', 'spectrum-search-review-customize');
-      customizePanel.hidden = !requiresAliasChoice;
-      const customize = uiActionButton(requiresAliasChoice ? 'Choose Alias List' : 'Customize', '', () => {
+      customizePanel.hidden = !(requiresAliasChoice || draft && lists.length === 0);
+      const customize = uiActionButton(customizePanel.hidden ? 'Customize' : 'Done', '', () => {
         customizePanel.hidden = !customizePanel.hidden;
         customize.setAttribute('aria-expanded', String(!customizePanel.hidden));
         customize.textContent = customizePanel.hidden ? 'Customize' : 'Done';
@@ -1249,7 +1249,9 @@ export function openSpectrumSearchWizard(ui, context = {}) {
           modal.setDirty(true);
           syncAliasSummary();
         });
-        customizePanel.prepend(formField('Alias List name', name));
+        customizePanel.prepend(formField('New Alias List name', name,
+          'An existing compatible Alias List with this name will be used.'),
+        node('p', 'ui-field-hint', 'New Alias Lists use your Default listening list.'));
       }
       if (channelFields.childElementCount) customizePanel.append(channelFields);
       syncAliasSummary();
@@ -1261,7 +1263,18 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     stage.append(form);
     button('Back', showResults);
     button(`Add ${chosen.length} ${chosen.length === 1 ? 'channel' : 'channels'}`, () => {
-      if (!form.reportValidity()) return;
+      if (!form.checkValidity()) {
+        form.querySelectorAll('input:invalid, select:invalid, textarea:invalid').forEach((control) => {
+          const panel = control.closest('.spectrum-search-review-customize');
+          if (!panel) return;
+          panel.hidden = false;
+          const customize = panel.parentElement.querySelector('.spectrum-search-customize-action');
+          customize?.setAttribute('aria-expanded', 'true');
+          if (customize) customize.textContent = 'Done';
+        });
+        form.reportValidity();
+        return;
+      }
       try {
         mapEditors.forEach(({ map, field, draft }) => { draft.frequency_map = channelEditorFieldValue(map, field); });
       } catch (cause) { error(cause.message || 'Check the channel maps and try again.'); return; }

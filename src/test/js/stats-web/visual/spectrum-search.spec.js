@@ -100,8 +100,14 @@ async function install(page, state = {}) {
       revision: 1, preferences: { ...preferenceModule.defaults, appearance: { hue: null, theme: state.theme || 'light' } } }) });
     if (path === '/api/v1/spectrum-snap-presets') return route.fulfill({ contentType: 'application/json', body: JSON.stringify({
       revision: 1, country_code: 'US', country_label: 'United States', countries: [{ code: 'US', label: 'United States' }], scopes: [] }) });
-    if (path === '/api/v1/admin/radioreference') return state.directoryOffline ?
-      fail('Directory unavailable', 'unavailable', 503) : respond(state.directoryConfiguration || {});
+    if (path === '/api/v1/admin/radioreference') {
+      if (state.delayDirectoryConfiguration) await new Promise((resolve) => { state.releaseDirectory = resolve; });
+      return state.directoryOffline ? fail('Directory unavailable', 'unavailable', 503) :
+        respond(state.directoryConfiguration || {});
+    }
+    if (path === '/api/v1/admin/radioreference/countries') return respond({ items: [
+      { id: 1, name: 'United States', abbreviation: 'US' }, { id: 2, name: 'Canada', abbreviation: 'CA' }
+    ] });
     if (path === '/api/v1/admin/radioreference/states') return respond({ items: [{ id: 39, name: 'Ohio' }, { id: 42, name: 'Pennsylvania' }] });
     if (path === '/api/v1/admin/channels') return respond({ revision: 1, channels: [] });
     if (path === '/api/v1/admin/channels/protocols') return respond(protocols);
@@ -1076,7 +1082,6 @@ test('groups exact identities, saves channels stopped, and retries only failed a
   await dialog(page).getByRole('button', { name: 'Select all available' }).click();
   await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
   await expect(dialog(page).getByText('Alias List: County Dispatch · Existing', { exact: true })).toHaveCount(1);
-  await dialog(page).getByRole('button', { name: 'Customize' }).nth(1).click();
   await expect(dialog(page).getByLabel('New Alias List name for ABC00-234')).toHaveValue('Regional P25');
   await expect(dialog(page).getByRole('checkbox', { name: /Listen now|Auto-start channels/ })).toHaveCount(0);
   await expect(dialog(page).getByLabel('Start with')).toHaveCount(0);
@@ -1159,8 +1164,8 @@ test('failed-row review edits only unsaved channels', async ({ page }) => {
   await dialog(page).getByRole('button', { name: 'Review choices', exact: true }).click();
   await expect(dialog(page).getByRole('radio')).toHaveCount(0);
   await expect(dialog(page).getByText('Added', { exact: true })).toHaveCount(2);
-  await dialog(page).locator('.spectrum-search-review-system').filter({ hasText: 'Regional Services' })
-    .getByRole('button', { name: 'Customize' }).click();
+  await expect(dialog(page).locator('.spectrum-search-review-system').filter({ hasText: 'Regional Services' })
+    .getByRole('button', { name: 'Done' })).toBeVisible();
   await expect(dialog(page).getByRole('textbox', { name: /Channel name for/ })).toHaveCount(1);
   await dialog(page).getByLabel('Channel name for 860.0125 MHz').fill('My South Control');
   await dialog(page).getByLabel('New Alias List name for ABC00-234').fill('Regional listening');
@@ -1184,6 +1189,71 @@ test('review has no start controls and links to Channels after saving', async ({
   await expect(dialog(page)).toContainText('1 channel added.');
   await expect(dialog(page).getByRole('link', { name: 'Open Channels' })).toHaveAttribute('href', /view=channel-setup/);
   expect(state.requests.some((request) => request.path.endsWith('/start'))).toBe(false);
+});
+
+for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
+  test(`search review exposes Alias List creation and compatible reuse in ${theme}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    const state = await install(page, { theme });
+    await complete(page);
+    await dialog(page).getByRole('button', { name: 'Select all available' }).click();
+    await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
+    const existing = dialog(page).locator('.spectrum-search-review-system').filter({ hasText: 'County Public Safety' });
+    await expect(existing).toContainText('Alias List: County Dispatch · Existing');
+    const regional = dialog(page).locator('.spectrum-search-review-system').filter({ hasText: 'Regional Services' });
+    const name = regional.getByLabel('New Alias List name for ABC00-234');
+    await expect(name).toBeVisible();
+    await expect(regional).toContainText('An existing compatible Alias List with this name will be used.');
+    await name.fill('Regional existing');
+    await expect(regional).toContainText('Alias List: Regional existing');
+    await expect(regional).not.toContainText('· New');
+    await name.scrollIntoViewIfNeeded();
+    await dialog(page).screenshot({ path: testInfo.outputPath('alias-list-review.png') });
+    await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
+    await expect(dialog(page)).toContainText('3 channels added.');
+    const save = state.requests.find((request) => request.path.endsWith('/save'));
+    expect(save.body.alias_groups).toEqual([
+      { group_id: 'county', alias_list_id: 21, new_alias_list_name: 'County P25' },
+      { group_id: 'regional', alias_list_id: 0, new_alias_list_name: 'Regional existing' }
+    ]);
+  });
+}
+
+test('search review reveals an invalid Alias List choice when its panel was closed', async ({ page }) => {
+  const state = await install(page, { ambiguous: true });
+  await complete(page);
+  await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).check();
+  await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
+  await dialog(page).getByRole('button', { name: 'Done', exact: true }).click();
+  await expect(dialog(page).getByLabel('Alias List for BEE00-348')).toBeHidden();
+  await dialog(page).getByRole('button', { name: 'Add 1 channel', exact: true }).click();
+  await expect(dialog(page).getByLabel('Alias List for BEE00-348')).toBeVisible();
+  expect(state.requests.some((request) => request.path.endsWith('/save'))).toBe(false);
+});
+
+test('signed-in search offers its missing frequency lookup region directly', async ({ page }) => {
+  const state = await install(page, { directoryConfiguration: { account: { state: 'VALID_PREMIUM' } } });
+  await expect(dialog(page).getByLabel('RadioReference country')).toBeVisible();
+  await expect(dialog(page)).toContainText('P25 systems can match by on-air identity.');
+  await dialog(page).getByLabel('RadioReference country').selectOption('1');
+  await expect(dialog(page).getByLabel('RadioReference state or province')).toBeEnabled();
+  await expect(dialog(page).getByLabel('RadioReference state or province')).toHaveValue('');
+  await dialog(page).getByLabel('RadioReference state or province').selectOption('42');
+  await complete(page);
+  expect(state.requests.find((request) => request.path === searchPath && request.method === 'POST')
+    .body.radioreference_state_id).toBe(42);
+});
+
+test('search start waits for its saved frequency lookup region', async ({ page }) => {
+  const state = await install(page, { delayDirectoryConfiguration: true, directoryConfiguration: {
+    account: { state: 'VALID_PREMIUM' }, country_id: 1, state_id: 39 } });
+  await expect.poll(() => typeof state.releaseDirectory).toBe('function');
+  await dialog(page).getByRole('button', { name: 'Find signals', exact: true }).click();
+  expect(state.requests.some((request) => request.path === searchPath && request.method === 'POST')).toBe(false);
+  state.releaseDirectory();
+  await expect(dialog(page).getByRole('heading', { name: /channels? found$/ })).toBeVisible();
+  expect(state.requests.find((request) => request.path === searchPath && request.method === 'POST')
+    .body.radioreference_state_id).toBe(39);
 });
 
 test('requires a choice for ambiguous alias groups and preserves drafts after stale revision', async ({ page }) => {
@@ -1561,7 +1631,6 @@ test('delayed wide-directory names update review without replacing edited channe
   await complete(page);
   await dialog(page).getByRole('button', { name: 'Select all available' }).click();
   await dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true }).click();
-  await dialog(page).getByRole('button', { name: 'Customize', exact: true }).click();
   await dialog(page).getByLabel('Channel name for 451 MHz', { exact: true }).fill('My control');
   state.customCandidates[0] = { ...state.customCandidates[0], name: 'Directory North', system_name: 'Transit authority',
     site_name: 'North', radio_reference: { state: 'matched', match: { system_name: 'Transit authority', site_name: 'North',
@@ -1584,7 +1653,6 @@ test('wide DMR review submits the explicit channel map through the shared editor
   await complete(page);
   await dialog(page).getByRole('button', { name: 'Select all available' }).click();
   await dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true }).click();
-  await dialog(page).getByRole('button', { name: 'Customize', exact: true }).click();
   await expect(dialog(page)).toContainText('Unmapped channels can be followed only when the system broadcasts their frequencies.');
   await expect(dialog(page).locator('.channel-map-row')).toHaveCount(1);
   const mapFits = await dialog(page).locator('.spectrum-search-review-customize').evaluate((element) =>
