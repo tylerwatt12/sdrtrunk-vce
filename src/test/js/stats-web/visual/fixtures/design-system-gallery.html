@@ -1446,9 +1446,10 @@
           <div class="spectrum-discovery-stage">
             <h3>P25 details found</h3>
             <div class="ui-notice spectrum-discovery-status" role="status"><strong class="spectrum-discovery-status-heading">Ready to add</strong><p>The system, site, and signal setting stayed consistent.</p></div>
-            <details class="ui-section-disclosure ui-section-disclosure-flat spectrum-discovery-technical" open><summary class="ui-section-summary">Signal details</summary><div class="spectrum-discovery-summary">
-              <dl class="ui-fact-list"><dt>WACN (hex)</dt><dd>B0001</dd><dt>System ID (hex)</dt><dd>123</dd><dt>RFSS</dt><dd>1</dd><dt>Site ID</dt><dd>2</dd></dl>
-            </div><div class="ui-table-wrap"><table class="ui-data-table ui-data-table-quiet spectrum-discovery-probe-table"><caption class="visually-hidden">P25 modulation comparison</caption><thead><tr><th scope="col">Setting</th><th scope="col">Valid</th><th scope="col">Control</th><th scope="col">Rejected</th><th scope="col">Decode score</th></tr></thead><tbody><tr><th scope="row">C4FM</th><td>18</td><td>12</td><td>4</td><td>81%</td></tr><tr><th scope="row">CQPSK <span class="ui-pill ui-pill-success">Selected</span></th><td>52</td><td>41</td><td>1</td><td>99%</td></tr></tbody></table></div><p class="muted">Decode score compares valid control messages, rejected messages, lost synchronization and corrected bits. A low score can still confirm a system when its identity repeats consistently.</p></details>
+            <section class="ui-surface spectrum-discovery-system">
+              <div class="spectrum-discovery-system-heading"><p class="ui-record-title spectrum-discovery-system-title"><a href="https://www.radioreference.com/db/sid/123">Ohio MARCS-IP: Multi-Agency Radio Communications</a></p><button class="ui-button ui-button-secondary spectrum-discovery-details-action" type="button" data-visual-discovery-details>Details</button></div>
+              <div class="spectrum-discovery-system-facts"><dl class="ui-fact-list spectrum-discovery-summary"><dt>Radio type</dt><dd>P25 Phase 1</dd><dt>Site</dt><dd>Cuyahoga County / Greater Cleveland Simulcast</dd><dt>Modulation</dt><dd>CQPSK</dd></dl></div>
+            </section>
           </div>
           <div class="ui-action-row ui-modal-footer spectrum-discovery-actions"><button class="ui-button ui-button-secondary" type="button">Cancel</button><button class="ui-button ui-button-primary" type="button">Review channel</button></div>
         </div></div>

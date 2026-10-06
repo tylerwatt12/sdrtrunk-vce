@@ -1034,9 +1034,11 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       members.find((candidate) => candidate.radio_reference?.state === 'pending') ||
       members.find((candidate) => candidate.radio_reference);
     const result = lookup ? discoveryRadioReferenceResult(ui, lookup, binding.directoryResult) : null;
+    const returnDirectoryFocus = !result && binding.directoryHost.contains(document.activeElement);
     if (result !== binding.directoryResult) binding.directoryHost.replaceChildren(...(result ? [result] : []));
     binding.directoryResult = result;
     binding.directoryHost.hidden = !result;
+    if (returnDirectoryFocus) binding.title.querySelector('a')?.focus({ preventScroll: true });
     if (binding.identity) binding.identity.textContent = systemIdentityLabel({ candidates: members });
     if (binding.groupCheck) binding.groupCheck.setAttribute('aria-label', `Select all channels in ${title}`);
   };

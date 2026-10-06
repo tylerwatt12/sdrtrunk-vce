@@ -35,7 +35,6 @@ context.radioSystemLabel = context.systemLabels.systemIdentity;
 const functions = [
   'function radioSystemPrimaryName(row)', 'function radioSystemDisplayName(row)',
   'function identifierNumber(value)', 'function spectrumDiscoverySystemName(session, draft = null)',
-  "function spectrumDiscoveryIdentity(identity, systemName = '')",
   'function p25OverrideIdentityRow(profile, knownSystems = [])',
   'function p25OverrideDisplayName(profile, knownSystems = [])',
   "async function requestP25BandplanOverrides(method = 'GET', profiles = null)",
@@ -45,7 +44,8 @@ const functions = [
   'function callMatchingIdentitySummary(identity, destination = true)', 'function callMatchingCopySite(leg)'
 ];
 vm.runInContext(functions.map((signature) => functionSource(application, signature)).join('\n') + '\n' +
-  functionSource(spectrum, 'function spectrumSearchSystemName(candidate)'), context);
+  functionSource(spectrum, 'function spectrumSearchSystemName(candidate)') + '\n' +
+  functionSource(spectrum, 'function spectrumSearchIdentityFacts(candidate, hex)'), context);
 
 const known = [{ wacn: 0xbee00, system: 0x49f, system_name: 'GCRCN',
   radio_system_key: 'p25:bee00:49f', radio_system_entity_ref: { kind: 'radio_system', key: 'p25:bee00:49f' } }];
@@ -69,9 +69,9 @@ assert.equal(context.spectrumDiscoverySystemName({ review: { template: { system:
 assert.equal(context.spectrumDiscoverySystemName(session, { system: '' }), '',
   'Clearing the optional System field must not restore the suggested name.');
 assert.equal(context.spectrumDiscoverySystemName(session, { system: ' New name ' }), 'New name');
-assert.deepEqual(JSON.parse(JSON.stringify(context.spectrumDiscoveryIdentity(
-  { wacn: 0xbee00, system: 0x49f, rfss: 1, site: 2 }, 'GCRCN'))),
-[['System', 'GCRCN'], ['WACN', 'BEE00'], ['System ID', '49F'], ['RFSS', '1'], ['Site ID', '2']],
+assert.deepEqual(JSON.parse(JSON.stringify(context.spectrumSearchIdentityFacts(
+  { identity: { wacn: 0xbee00, system: 0x49f, rfss: 1, site: 2 } }, context.hex))),
+[['WACN', 'BEE00'], ['System ID', '49F'], ['RFSS', 1], ['Site ID', 2]],
 'Discovery detail facts retain all four native identity fields.');
 
 const foreignRadio = { source_value: 'v1-r-abcde-123-456', source_alias: 'Medic 4',

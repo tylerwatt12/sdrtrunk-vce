@@ -6,6 +6,19 @@ const root = resolve(__dirname, '../../../../..');
 const app = readFileSync(resolve(root, 'stats-web/assets/app.js'), 'utf8');
 const protocols = require(resolve(root, 'src/main/resources/channel-protocols.json'));
 
+const ohioSystem = 'Ohio MARCS-IP: Multi-Agency Radio Communications';
+const ohioSite = 'Cuyahoga County / Greater Cleveland Simulcast';
+
+function ohioDiscoveryFixture(theme) {
+  // Public system names with synthetic observations; no receiver is contacted.
+  return { theme, templateName: 'MARCS Cuyahoga control', templateSystem: ohioSystem, templateSite: ohioSite,
+    defaultAliasName: 'MARCS-IP', probeOverride: { identity: { wacn: 0xbee00, system: 0x348, rfss: 1, site: 27 } },
+    directoryResult: { state: 'matched', provenance: 'Directory-only provenance', match: {
+      system_name: ohioSystem, site_name: ohioSite, url: 'https://www.radioreference.com/db/sid/123',
+      site_url: 'https://www.radioreference.com/db/site/456',
+      channels: [{ frequency_hz: 851012500, primary_control: true }] } } };
+}
+
 function tuner() {
   return { id: 'idle-a', name: 'Test receiver', tuner_class: 'AIRSPY', status: 'ENABLED',
     available: true, operator_state: 'setup', channel_count: 0, frequency_hz: 851012500,
@@ -48,12 +61,12 @@ function snapshot(protocolId, state) {
     review: state.saved || (state.phase && state.phase !== 'ready') ? null : {
       revision: state.revision || 7, template: { protocol_id: protocolId, name: state.templateName || (isP25 ? 'Control' : analogName),
         system: state.templateSystem || (isP25 ? 'P25 B0001-123' : digital ? 'County Transit' : ''),
-        site: isP25 ? 'RFSS 1 Site 2' : digital ? 'North' : '', settings,
+        site: state.templateSite || (isP25 ? 'RFSS 1 Site 2' : digital ? 'North' : ''), settings,
         frequency_map: digital ? state.frequencyMap || [{ number: 1, downlink_hz: 851012500 }] : [] },
       alias_lists: state.ambiguous ? [{ id: 21, name: 'North aliases', matched: true },
         { id: 22, name: 'South aliases', matched: true }] :
         (state.singleMatch ? [{ id: 21, name: 'County aliases', matched: true }] : []),
-      suggested_alias_list_id: null, default_new_alias_list_name: isP25 ? 'P25 B0001-123' : analogName
+      suggested_alias_list_id: null, default_new_alias_list_name: state.defaultAliasName || (isP25 ? 'P25 B0001-123' : analogName)
     },
     saved: state.saved ? { configuration_id: 'channel-a', alias_list_id: 41,
       running: state.running === true, start_error: state.running ? null : 'Tuner capacity is in use.' } : null
@@ -248,8 +261,9 @@ async function install(page, state = {}) {
         }
         return respond(null, 204);
       }
-      if (state.expiredStatus) return route.fulfill({ status: 409, contentType: 'application/json',
-        body: JSON.stringify({ error: { code: 'discovery_conflict', message: 'Channel discovery expired; begin again' } }) });
+      if (state.expiredStatus) return route.fulfill({ status: state.expiredStatusCode || 409, contentType: 'application/json',
+        body: JSON.stringify({ error: { code: state.expiredStatusCode === 410 ? 'spectrum_discovery_expired' : 'discovery_conflict',
+          message: 'Channel discovery expired; begin again' } }) });
       if (state.failProbeStatusOnce) {
         state.failProbeStatusOnce = false;
         return route.fulfill({ status: 503, contentType: 'application/json',
@@ -306,6 +320,7 @@ async function install(page, state = {}) {
 }
 
 const wizard = (page) => page.locator('.spectrum-discovery-modal');
+const signalDetails = (page) => page.locator('.spectrum-discovery-detail-modal');
 const radioTypes = { 'p25-phase1': 'P25 radio system', dmr: 'DMR trunked system', nxdn: 'NXDN trunked system', am: 'AM radio', nbfm: 'FM two-way radio' };
 
 async function begin(page, protocolId = 'p25-phase1') {
@@ -525,7 +540,7 @@ test('manually expanded discovery lookup settings remain open after delayed save
 
 for (const [theme, viewport] of [['light', { width: 1280, height: 900 }],
   ['dark', { width: 390, height: 844 }]]) {
-  test(`discovery directory disclosure stays expanded through pending polls and shows only a matched system in ${theme}`,
+  test(`discovery pending directory stays expanded through polls before its matched system becomes the heading in ${theme}`,
     async ({ page }, testInfo) => {
       await page.clock.install();
       await page.setViewportSize(viewport);
@@ -536,6 +551,7 @@ for (const [theme, viewport] of [['light', { width: 1280, height: 900 }],
         .filter({ hasText: /^RadioReference$/ }) });
       await disclose(page, 'RadioReference');
       await expect(directory).toHaveAttribute('open', '');
+      await directory.locator('summary').focus();
       await expect(directory.locator('p')).toHaveText('Looking up the system name…');
       const directoryNode = await directory.elementHandle();
       const pendingNode = await directory.locator('p').elementHandle();
@@ -554,23 +570,24 @@ for (const [theme, viewport] of [['light', { width: 1280, height: 900 }],
       await directory.scrollIntoViewIfNeeded();
       await wizard(page).screenshot({ path: testInfo.outputPath('directory-expanded-loading.png') });
       state.phase = 'ready';
+      state.templateSystem = 'County Transit';
+      state.templateSite = 'North';
       state.directoryResult = { state: 'matched', provenance: 'Directory-only provenance', match: {
         system_name: 'County Transit', site_name: 'Directory-only North',
         url: 'https://www.radioreference.com/db/sid/123', site_url: 'https://www.radioreference.com/db/site/456',
         channels: [{ logical_channel_number: 3, frequency_hz: 851500000, primary_control: true }] } };
       await page.clock.fastForward(800);
       await expect(wizard(page).getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
-      await expect(directory).toHaveAttribute('open', '');
-      expect(await directory.evaluate((element, previous) => element === previous, directoryNode)).toBe(true);
-      await expect(directory.getByRole('link', { name: 'County Transit', exact: true }))
+      await expect(directory).toHaveCount(0);
+      const system = wizard(page).locator('.spectrum-discovery-system');
+      await expect(system.getByRole('link', { name: 'County Transit', exact: true }))
         .toHaveAttribute('href', 'https://www.radioreference.com/db/sid/123');
-      await expect(directory.locator('p')).toHaveText('County Transit');
-      await expect(directory.getByRole('link')).toHaveCount(1);
-      await expect(directory.locator('dl')).toHaveCount(0);
-      await expect(directory).not.toContainText('Directory-only');
-      await expect(directory).not.toContainText('851.5');
-      await expect(directory).not.toContainText('Primary control');
-      await directory.scrollIntoViewIfNeeded();
+      await expect(system.getByRole('link', { name: 'County Transit', exact: true })).toBeFocused();
+      await expect(system.getByRole('link')).toHaveCount(1);
+      await expect(system).not.toContainText('Directory-only');
+      await expect(system).not.toContainText('851.5');
+      await expect(system).not.toContainText('Primary control');
+      await system.scrollIntoViewIfNeeded();
       await wizard(page).screenshot({ path: testInfo.outputPath('directory-compact-match.png') });
     });
 }
@@ -591,6 +608,9 @@ test('delayed click-directory matching refreshes untouched fields while preservi
   const directory = wizard(page).locator('details').filter({ has: page.locator('summary').filter({ hasText: /^RadioReference$/ }) });
   const directoryNode = await directory.elementHandle();
   const pendingNode = await directory.locator('p').elementHandle();
+  const name = wizard(page).getByLabel('Channel name', { exact: true });
+  const nameNode = await name.elementHandle();
+  await name.focus();
   const polls = () => state.requests.filter(({ path, method }) =>
     path === '/api/v1/admin/spectrum-discovery/discovery-a' && method === 'GET').length;
   for (let update = 0; update < 2; update += 1) {
@@ -600,28 +620,83 @@ test('delayed click-directory matching refreshes untouched fields while preservi
     await expect(directory).toHaveAttribute('open', '');
     expect(await directory.evaluate((element, previous) => element === previous, directoryNode)).toBe(true);
     expect(await directory.locator('p').evaluate((element, previous) => element === previous, pendingNode)).toBe(true);
+    expect(await name.evaluate((element, previous) => element === previous, nameNode)).toBe(true);
+    await expect(name).toBeFocused();
   }
   state.templateName = 'Directory North';
   state.templateSystem = 'Transit authority';
   state.frequencyMap = [{ number: 1, downlink_hz: 851012500 }, { number: 3, downlink_hz: 851500000 }];
   state.directoryResult = { state: 'matched', match: { system_name: 'Transit authority', site_name: 'North',
+    url: 'https://www.radioreference.com/db/sid/123',
     channels: [{ logical_channel_number: 3, frequency_hz: 851500000 }] } };
   await page.clock.fastForward(800);
   await expect(wizard(page).getByLabel('System', { exact: true })).toHaveValue('Transit authority');
   await expect(wizard(page).getByLabel('Channel name', { exact: true })).toHaveValue('My control');
+  expect(await name.evaluate((element, previous) => element === previous, nameNode)).toBe(true);
+  await expect(name).toBeFocused();
   await expect(wizard(page).getByLabel('New Alias List name', { exact: true })).toHaveValue('My listening');
   await expect(manual.locator('input').nth(0)).toHaveValue('2');
   await expect(manual.locator('input').nth(1)).toHaveValue('851.25');
-  await expect(directory).toHaveAttribute('open', '');
-  expect(await directory.evaluate((element, previous) => element === previous, directoryNode)).toBe(true);
-  await expect(directory.locator('p')).toHaveText('Transit authority');
-  await expect(directory.locator('dl')).toHaveCount(0);
+  await expect(directory).toHaveCount(0);
+  await expect(wizard(page).getByRole('link', { name: 'Transit authority', exact: true })).toHaveCount(1);
   await wizard(page).getByRole('button', { name: 'Add and start listening', exact: true }).click();
   const saved = state.requests.find((request) => request.path.endsWith('/save'));
   expect(saved.body.name).toBe('My control');
   expect(saved.body.new_alias_list_name).toBe('My listening');
   expect(saved.body.frequency_map).toHaveLength(2);
 });
+
+test('Spectrum directory polls update focused signal details while preserving edited channel maps',
+  async ({ page }, testInfo) => {
+    await page.clock.install();
+    const state = { templateName: 'Decoded control', templateSystem: 'Decoded network',
+      directoryResult: { state: 'pending' } };
+    await install(page, state);
+    await begin(page, 'dmr');
+    await review(page, 'dmr');
+    const parent = wizard(page);
+    await parent.getByLabel('Channel name', { exact: true }).fill('My control');
+    await parent.getByLabel('New Alias List name', { exact: true }).fill('My listening');
+    await parent.getByRole('button', { name: 'Add mapping', exact: true }).click();
+    const manual = parent.locator('.channel-map-row').nth(1);
+    const mapNode = await manual.elementHandle();
+    await manual.locator('input').nth(0).fill('2');
+    await manual.locator('input').nth(1).fill('851.25');
+    const button = parent.getByRole('button', { name: 'Details', exact: true });
+    await button.click();
+    const child = signalDetails(page);
+    const childNode = await child.elementHandle();
+    const back = child.getByRole('button', { name: 'Back to channel', exact: true });
+    await back.focus();
+    const polls = () => state.requests.filter(request => request.path.endsWith('/discovery-a') && request.method === 'GET').length;
+    const before = polls();
+    await page.clock.fastForward(1600);
+    await expect.poll(polls).toBeGreaterThan(before);
+    await expect(back).toBeFocused();
+    expect(await child.evaluate((element, previous) => element === previous, childNode)).toBe(true);
+    await child.screenshot({ path: testInfo.outputPath('wizard-details-directory-pending.png') });
+    state.templateSystem = ohioSystem;
+    state.templateSite = ohioSite;
+    state.frequencyMap = [{ number: 1, downlink_hz: 851012500 }, { number: 3, downlink_hz: 851500000 }];
+    state.directoryResult = { state: 'matched', match: { system_name: ohioSystem, site_name: ohioSite,
+      url: 'https://www.radioreference.com/db/sid/123' } };
+    await page.clock.fastForward(800);
+    await expect(child.getByRole('group', { name: 'Channel', exact: true })).toContainText(ohioSystem);
+    await expect(child.getByRole('group', { name: 'Channel', exact: true })).toContainText(ohioSite);
+    await expect(back).toBeFocused();
+    expect(await child.evaluate((element, previous) => element === previous, childNode)).toBe(true);
+    await child.screenshot({ path: testInfo.outputPath('wizard-details-directory-matched.png') });
+    await page.keyboard.press('Escape');
+    await expect(child).toHaveCount(0);
+    await expect(button).toBeFocused();
+    await expect(parent.getByRole('link', { name: ohioSystem, exact: true })).toHaveCount(1);
+    await expect(parent.getByLabel('Channel name', { exact: true })).toHaveValue('My control');
+    await expect(parent.getByLabel('New Alias List name', { exact: true })).toHaveValue('My listening');
+    expect(await manual.evaluate((element, previous) => element === previous, mapNode)).toBe(true);
+    await expect(manual.locator('input').nth(0)).toHaveValue('2');
+    await expect(manual.locator('input').nth(1)).toHaveValue('851.25');
+    expect(state.requests.filter(request => request.path.endsWith('/discovery-a') && request.method === 'DELETE')).toHaveLength(0);
+  });
 
 for (const protocolId of ['dmr', 'nxdn']) {
   test(`click spectrum checks ${protocolId.toUpperCase()} identity and reviews detected trunked channels`, async ({ page }) => {
@@ -634,16 +709,15 @@ for (const protocolId of ['dmr', 'nxdn']) {
     await expect(wizard(page).getByRole('button', { name: 'Review channel', exact: true })).toHaveCount(0);
     state.phase = 'ready';
     state.directoryResult = { state: 'matched', match: { system_name: 'County Transit', site_name: 'North',
+      url: 'https://www.radioreference.com/db/sid/123',
       channels: [{ frequency_hz: 851012500, logical_channel_number: 1, primary_control: true }] } };
     await expect(wizard(page).getByRole('button', { name: 'Review channel', exact: true })).toBeVisible();
     await review(page, protocolId);
     await expect(wizard(page)).toContainText('Unmapped channels can be followed only when the system broadcasts their frequencies.');
     await expect(wizard(page).locator('.channel-map-row input').nth(1)).toHaveValue(/^851\.01250*$/);
-    await disclose(page, 'RadioReference');
-    const directory = wizard(page).locator('details').filter({ has: page.locator('summary').filter({ hasText: /^RadioReference$/ }) });
-    await expect(directory.locator('p')).toHaveText('County Transit');
-    await expect(directory.locator('dl')).toHaveCount(0);
-    await expect(directory).not.toContainText('Primary control');
+    await expect(wizard(page).getByRole('link', { name: 'County Transit', exact: true })).toHaveCount(1);
+    await expect(wizard(page).locator('summary').filter({ hasText: /^RadioReference$/ })).toHaveCount(0);
+    await expect(wizard(page)).not.toContainText('Primary control');
     await wizard(page).getByText('Unmapped channels can be followed only when the system broadcasts their frequencies.',
       { exact: false }).scrollIntoViewIfNeeded();
     const boundedMap = await wizard(page).evaluate((element) => {
@@ -1046,13 +1120,20 @@ test('the default P25 path uses plain language and waits for explicit review', a
   await expect(dialog.getByText('Ready to add', { exact: true })).toBeVisible();
   await expect(dialog.getByText('The system, site, and signal setting stayed consistent.', { exact: true })).toBeVisible();
   await expect(dialog.getByText('How does this work?', { exact: true })).toHaveCount(0);
-  const details = dialog.locator('details.spectrum-discovery-technical');
-  await expect(details).toHaveAttribute('open', '');
-  await expect(details.locator('summary')).toHaveText('Signal details');
-  await expect(details.getByRole('table')).toBeVisible();
+  await expect(dialog.locator('details.spectrum-discovery-technical')).toHaveCount(0);
+  await expect(dialog.getByRole('table')).toHaveCount(0);
   await expect(dialog.getByLabel('Channel name', { exact: true })).toHaveCount(0);
   await expect(dialog.getByRole('button', { name: 'Review channel', exact: true })).toBeVisible();
+  const detailsButton = dialog.getByRole('button', { name: 'Details', exact: true });
+  await detailsButton.click();
+  const details = signalDetails(page);
+  await expect(details.getByRole('heading', { name: 'Signal details · 851.012500 MHz', exact: true })).toBeVisible();
+  expect(await dialog.evaluate(element => element.closest('.modal-backdrop').inert)).toBe(true);
+  await expect(details.getByRole('table')).toBeVisible();
   await expect(details.getByRole('rowheader', { name: 'CQPSK Selected', exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(details).toHaveCount(0);
+  await expect(detailsButton).toBeFocused();
   expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(0);
   await review(page);
   await expect(dialog.getByLabel('Channel name', { exact: true })).toBeVisible();
@@ -1060,9 +1141,100 @@ test('the default P25 path uses plain language and waits for explicit review', a
   await expect(dialog.getByLabel('Site', { exact: true })).toBeHidden();
   await expect(dialog.locator('summary').filter({ hasText: /^Additional labels \(optional\)$/ })).toBeVisible();
   await expect(dialog.locator('summary').filter({ hasText: /^What is an Alias List\?$/ })).toBeVisible();
-  expect(await dialog.innerText()).not.toMatch(/C4FM|CQPSK|WACN|RFSS|SysID|NAC/);
+  expect(await dialog.innerText()).not.toMatch(/WACN|SysID|NAC/);
   await expect(dialog.getByLabel('New Alias List name', { exact: true })).toBeVisible();
 });
+
+for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
+  test(`Ohio Spectrum channel setup separates summary, details and labels in ${theme} at ${width}px`,
+    async ({ page }, testInfo) => {
+      await page.clock.install();
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+      await page.emulateMedia({ colorScheme: theme });
+      const state = ohioDiscoveryFixture(theme);
+      await install(page, state);
+      await begin(page);
+      const parent = wizard(page);
+      const system = parent.locator('.spectrum-discovery-system');
+      const systemNode = await system.elementHandle();
+      await expect(system.getByRole('link', { name: ohioSystem, exact: true }))
+        .toHaveAttribute('href', 'https://www.radioreference.com/db/sid/123');
+      await expect(parent.getByRole('link', { name: ohioSystem, exact: true })).toHaveCount(1);
+      await expect(system).toContainText(ohioSite);
+      await expect(parent.getByRole('table')).toHaveCount(0);
+      await expect(parent.locator('summary').filter({ hasText: /^(Signal details|RadioReference)$/ })).toHaveCount(0);
+      await expect(system).not.toContainText('Directory-only');
+      await expect(system).not.toContainText('Primary control');
+      expect(await parent.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+      await parent.screenshot({ path: testInfo.outputPath('ohio-wizard-ready.png') });
+
+      const detailsButton = parent.getByRole('button', { name: 'Details', exact: true });
+      await detailsButton.click();
+      const details = signalDetails(page);
+      expect(await parent.evaluate(element => element.closest('.modal-backdrop').inert)).toBe(true);
+      await expect(details.getByRole('heading', { name: 'Signal details · 851.012500 MHz', exact: true })).toBeVisible();
+      for (const label of ['Channel', 'On-air identity', 'Signal health', 'Signal setting comparison'])
+        await expect(details.getByRole('group', { name: label, exact: true })).toBeVisible();
+      await expect(details).toContainText(ohioSystem);
+      await expect(details).toContainText(ohioSite);
+      const wacn = details.locator('dd').filter({ hasText: /^BEE00$/ });
+      await expect(wacn).toHaveCount(1);
+      expect(await wacn.evaluate(element => {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        return new Set([...range.getClientRects()].map(rect => Math.round(rect.top))).size;
+      })).toBe(1);
+      expect(await details.evaluate(element => {
+        const bounds = element.getBoundingClientRect();
+        return bounds.left >= 0 && bounds.right <= innerWidth && element.scrollWidth <= element.clientWidth + 1;
+      })).toBe(true);
+      await details.screenshot({ path: testInfo.outputPath('ohio-wizard-details.png') });
+      await page.keyboard.press('Escape');
+      await expect(details).toHaveCount(0);
+      await expect(detailsButton).toBeFocused();
+      expect(await system.evaluate((element, previous) => element === previous, systemNode)).toBe(true);
+
+      await review(page);
+      await expect(parent.getByRole('group', { name: 'Channel', exact: true })).toBeVisible();
+      await expect(parent.getByRole('group', { name: 'Alias List', exact: true })).toBeVisible();
+      await expect(parent.getByRole('link', { name: ohioSystem, exact: true })).toHaveCount(1);
+      await expect(parent.getByRole('table')).toHaveCount(0);
+      expect(await parent.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+      await parent.screenshot({ path: testInfo.outputPath('ohio-wizard-review.png') });
+      await parent.getByLabel('Channel name', { exact: true }).fill('Cuyahoga control');
+      await parent.getByLabel('New Alias List name', { exact: true }).fill('MARCS Dispatch');
+      await disclose(page, 'Additional labels (optional)');
+      await parent.getByLabel('System', { exact: true }).fill('My MARCS system');
+      await parent.getByLabel('Site', { exact: true }).fill('My Cuyahoga site');
+      await parent.getByLabel('Site', { exact: true }).scrollIntoViewIfNeeded();
+      await parent.screenshot({ path: testInfo.outputPath('ohio-wizard-edited-labels.png') });
+      await parent.getByRole('button', { name: 'Details', exact: true }).click();
+      await expect(signalDetails(page)).toBeVisible();
+      if (theme === 'light' && width === 1280) {
+        const back = signalDetails(page).getByRole('button', { name: 'Back to channel', exact: true });
+        await back.focus();
+        const polls = () => state.requests.filter(request =>
+          request.path.endsWith('/discovery-a') && request.method === 'GET').length;
+        const before = polls();
+        const childNode = await signalDetails(page).elementHandle();
+        await page.clock.fastForward(11000);
+        await expect.poll(polls).toBeGreaterThan(before);
+        expect(await signalDetails(page).evaluate((element, previous) => element === previous, childNode)).toBe(true);
+        await expect(back).toBeFocused();
+      }
+      await page.keyboard.press('Escape');
+      await expect(parent.getByRole('button', { name: 'Details', exact: true })).toBeFocused();
+      await expect(parent.getByLabel('Channel name', { exact: true })).toHaveValue('Cuyahoga control');
+      await expect(parent.getByLabel('System', { exact: true })).toHaveValue('My MARCS system');
+      await expect(parent.getByLabel('Site', { exact: true })).toHaveValue('My Cuyahoga site');
+      await parent.getByRole('button', { name: 'Add and start listening', exact: true }).click();
+      await expect(parent.getByRole('heading', { name: 'Ready to listen', exact: true })).toBeVisible();
+      expect(state.requests.find(request => request.path.endsWith('/save')).body).toMatchObject({
+        name: 'Cuyahoga control', system: 'My MARCS system', site: 'My Cuyahoga site',
+        new_alias_list_name: 'MARCS Dispatch', alias_list_id: 0
+      });
+    });
+}
 
 test('P25 becoming ready preserves keyboard focus until the user reviews it', async ({ page }) => {
   const state = { phase: 'identifying' };
@@ -1086,13 +1258,17 @@ test('P25 becoming ready preserves keyboard focus until the user reviews it', as
 
 test('P25 polling retains Cancel focus and cancellation releases the probe', async ({ page }) => {
   const state = { phase: 'identifying' };
+  await page.clock.install();
   await install(page, state);
   await begin(page);
   const cancel = wizard(page).getByRole('button', { name: 'Cancel', exact: true });
   await expect(wizard(page).getByRole('heading', { name: 'Checking this radio system…', exact: true })).toBeVisible();
-  await expect(wizard(page).getByRole('table')).toBeHidden();
-  await disclose(page, 'Signal details');
-  const table = wizard(page).getByRole('table');
+  await expect(wizard(page).getByRole('table')).toHaveCount(0);
+  const detailsButton = wizard(page).getByRole('button', { name: 'Details', exact: true });
+  await detailsButton.click();
+  const details = signalDetails(page);
+  const detailsNode = await details.elementHandle();
+  const table = details.getByRole('table');
   await expect(table.getByRole('columnheader')).toHaveText([
     'Setting', 'Valid', 'Control', 'Rejected', 'Decode score'
   ]);
@@ -1101,17 +1277,25 @@ test('P25 polling retains Cancel focus and cancellation releases the probe', asy
   await expect(table.getByRole('rowheader', { name: 'C4FM', exact: true })).toBeVisible();
   await expect(table.getByRole('rowheader', { name: 'CQPSK', exact: true })).toBeVisible();
   await expect(wizard(page).getByText(/Message quality is the proportion of messages/)).toHaveCount(0);
-  await expect(cancel).toBeEnabled();
-  await cancel.focus();
-  await expect(cancel).toBeFocused();
+  const back = details.getByRole('button', { name: 'Back to channel', exact: true });
+  await back.focus();
   state.cqpskMetrics = { valid_messages: 53, valid_control_messages: 42 };
-  await page.waitForTimeout(900);
+  await page.clock.fastForward(900);
   await expect(table.locator('tbody tr').nth(1).getByRole('cell')).toHaveText(['53', '42', '1', '99%']);
+  await expect(back).toBeFocused();
+  expect(await details.evaluate((element, previous) => element === previous, detailsNode)).toBe(true);
+  await page.keyboard.press('Escape');
+  await expect(details).toHaveCount(0);
+  await expect(detailsButton).toBeFocused();
+  expect(state.requests.filter((request) => request.path.endsWith('/discovery-a') && request.method === 'DELETE'))
+    .toHaveLength(0);
+  await cancel.focus();
+  await page.clock.fastForward(900);
   await expect(cancel).toBeFocused();
   await cancel.click();
   await expect(wizard(page)).toHaveCount(0);
-  await expect.poll(() => state.requests.some((request) => request.path.endsWith('/discovery-a') &&
-    request.method === 'DELETE')).toBe(true);
+  await expect.poll(() => state.requests.filter((request) => request.path.endsWith('/discovery-a') &&
+    request.method === 'DELETE').length).toBe(1);
   await expect.poll(() => page.evaluate(() => window.discoveryProbeStates)).toEqual([true, false]);
 });
 
@@ -1321,22 +1505,28 @@ test('a delayed status from the previous radio type cannot replace a new signal 
   expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(0);
 });
 
-test('an expired session response requires a fresh check instead of leaving Add available', async ({ page }) => {
-  const state = {};
-  await page.clock.install();
-  await install(page, state);
-  await begin(page);
-  await review(page);
-  state.expiredStatus = true;
-  await page.clock.fastForward(11000);
-  const dialog = wizard(page);
-  await expect(dialog.getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
-  await expect(dialog.getByRole('button', { name: 'Add and start listening', exact: true })).toHaveCount(0);
-  state.expiredStatus = false;
-  await dialog.getByRole('button', { name: 'Try again', exact: true }).click();
-  await expect(dialog.getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
-  expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(0);
-});
+for (const expiredStatusCode of [409, 410]) {
+  test(`an expired session response ${expiredStatusCode} requires a fresh check instead of leaving Add available`, async ({ page }) => {
+    const state = { expiredStatusCode };
+    await page.clock.install();
+    await install(page, state);
+    await begin(page);
+    await review(page);
+    await wizard(page).getByRole('button', { name: 'Details', exact: true }).click();
+    await expect(signalDetails(page)).toBeVisible();
+    state.expiredStatus = true;
+    await page.clock.fastForward(11000);
+    const dialog = wizard(page);
+    await expect(signalDetails(page)).toHaveCount(0);
+    await expect(dialog.getByRole('heading', { name: 'We couldn’t identify this signal', exact: true })).toBeFocused();
+    await expect(dialog.getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Add and start listening', exact: true })).toHaveCount(0);
+    state.expiredStatus = false;
+    await dialog.getByRole('button', { name: 'Try again', exact: true }).click();
+    await expect(dialog.getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
+    expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(0);
+  });
+}
 
 test('a saved channel requiring a receiver restart never offers another Add or start attempt', async ({ page }) => {
   const state = { restartRequired: true };
@@ -1578,11 +1768,12 @@ for (const theme of ['light', 'dark']) {
       } };
       await install(page, state);
       await begin(page);
-      await disclose(page, 'Signal details');
       const dialog = wizard(page);
       await expect(dialog.getByRole('button', { name: 'Set up manually', exact: true })).toBeVisible();
-      await expect(dialog.getByRole('columnheader', { name: 'Decode score', exact: true })).toBeVisible();
-      const fits = await dialog.evaluate((element) => {
+      await dialog.getByRole('button', { name: 'Details', exact: true }).click();
+      const details = signalDetails(page);
+      await expect(details.getByRole('columnheader', { name: 'Decode score', exact: true })).toBeVisible();
+      const fits = await details.evaluate((element) => {
         const rect = element.getBoundingClientRect();
         return rect.left >= 0 && rect.right <= innerWidth && element.scrollWidth <= element.clientWidth + 1 &&
           [...element.querySelectorAll('.ui-modal-footer button')].every((button) => {
@@ -1591,6 +1782,9 @@ for (const theme of ['light', 'dark']) {
           });
       });
       expect(fits).toBe(true);
+      await details.screenshot({ path: test.info().outputPath(`weak-p25-details-${theme}-${width}.png`) });
+      await page.keyboard.press('Escape');
+      await expect(dialog.getByRole('button', { name: 'Details', exact: true })).toBeFocused();
       await dialog.screenshot({ path: test.info().outputPath(`weak-p25-${theme}-${width}.png`) });
     });
   }
@@ -1659,6 +1853,26 @@ test('configured or learned channel frequency blocks Add using receiver eligibil
   await expect(popover.getByRole('link', { name: 'County Control', exact: true }))
     .toHaveAttribute('href', /view=channel.*configuration_id=channel-a/);
   expect(state.requests.filter((request) => request.path.endsWith('/eligibility'))).toHaveLength(1);
+});
+
+test('Spectrum discovery gallery adopts its compact summary into the shared details stack', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/design-system.html?view=spectrum-discovery&theme=light');
+  const workspace = page.locator('.visual-spectrum-discovery-example .spectrum-discovery-workspace');
+  const workspaceNode = await workspace.elementHandle();
+  await expect(wizard(page).getByRole('table')).toHaveCount(0);
+  await expect(wizard(page).getByRole('link', { name: ohioSystem, exact: true })).toHaveCount(1);
+  await wizard(page).getByRole('button', { name: 'Details', exact: true }).click();
+  await expect(signalDetails(page)).toBeVisible();
+  expect(await wizard(page).evaluate(element => element.closest('.modal-backdrop').inert)).toBe(true);
+  await expect(signalDetails(page).getByRole('group', { name: 'On-air identity', exact: true })).toContainText('BEE00');
+  await signalDetails(page).screenshot({ path: testInfo.outputPath('gallery-wizard-details.png') });
+  await page.keyboard.press('Escape');
+  await expect(signalDetails(page)).toHaveCount(0);
+  await expect(wizard(page).getByRole('button', { name: 'Details', exact: true })).toBeFocused();
+  expect(await wizard(page).locator('.spectrum-discovery-workspace').evaluate((element, previous) => element === previous,
+    workspaceNode)).toBe(true);
+  await expect(wizard(page).getByRole('link', { name: ohioSystem, exact: true })).toHaveCount(1);
 });
 
 for (const [theme, width] of [['light', 1280], ['dark', 390]]) {

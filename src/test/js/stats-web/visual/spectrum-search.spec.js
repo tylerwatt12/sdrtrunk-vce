@@ -1804,6 +1804,9 @@ test('delayed wide-directory names update review without replacing edited channe
   const directory = dialog(page).locator('details').filter({ has: page.locator('summary').filter({ hasText: /^RadioReference$/ }) });
   const directoryNode = await directory.elementHandle();
   const pendingNode = await directory.locator('p').elementHandle();
+  const name = dialog(page).getByLabel('Channel name for 451 MHz', { exact: true });
+  const nameNode = await name.elementHandle();
+  await name.focus();
   const polls = () => state.requests.filter(({ path, method }) => path === `${searchPath}/search-a` && method === 'GET').length;
   for (let update = 0; update < 3; update += 1) {
     const before = polls();
@@ -1814,6 +1817,8 @@ test('delayed wide-directory names update review without replacing edited channe
     expect(await directory.evaluate((element, previous) => element === previous, directoryNode)).toBe(true);
     expect(await directory.locator('p').evaluate((element, previous) => element === previous, pendingNode)).toBe(true);
     await expect(directory.locator('p')).toHaveText('Looking up the system name…');
+    expect(await name.evaluate((element, previous) => element === previous, nameNode)).toBe(true);
+    await expect(name).toBeFocused();
   }
   state.customCandidates[0] = { ...state.customCandidates[0], name: 'Directory North', system_name: 'Transit authority',
     site_name: 'North', radio_reference: { state: 'matched', match: { system_name: 'Transit authority', site_name: 'North',
@@ -1823,6 +1828,8 @@ test('delayed wide-directory names update review without replacing edited channe
   await page.clock.fastForward(800);
   await expect(dialog(page).getByRole('heading', { name: 'Transit authority', exact: true })).toBeVisible();
   await expect(dialog(page).getByLabel('Channel name for 451 MHz', { exact: true })).toHaveValue('My control');
+  expect(await name.evaluate((element, previous) => element === previous, nameNode)).toBe(true);
+  await expect(name).toBeFocused();
   await expect(dialog(page).locator('.channel-map-row input').nth(0)).toHaveValue('3');
   await expect(directory).toHaveCount(0);
   await expect(dialog(page).getByRole('heading', { name: 'Transit authority', exact: true }).getByRole('link'))
@@ -2064,11 +2071,16 @@ test('verified system-name filtering keeps its pending sibling site and selectio
   const state = await install(page, { ...ohioResultsFixture({ pendingMarcs: true }) });
   await complete(page);
   await dialog(page).getByRole('checkbox', { name: 'Select MARCS Lake control', exact: true }).check();
+  const pending = dialog(page).locator('.spectrum-search-system-group').first().locator('summary')
+    .filter({ hasText: /^RadioReference$/ });
+  await pending.click();
+  await pending.focus();
   const candidate = state.customCandidates[0];
   state.customCandidates[0] = { ...candidate, system_name: ohioSystems.marcs,
     radio_reference: { state: 'matched', match: { system_name: ohioSystems.marcs,
       url: 'https://www.radioreference.com/db/sid/123' } } };
   await page.clock.fastForward(800);
+  await expect(dialog(page).getByRole('link', { name: ohioSystems.marcs, exact: true })).toBeFocused();
   const query = dialog(page).getByLabel('Search results', { exact: true });
   await query.fill(ohioSystems.marcs);
   await expect(dialog(page).locator('tbody tr:visible')).toHaveCount(2);

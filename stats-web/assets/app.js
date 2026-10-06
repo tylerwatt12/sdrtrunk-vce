@@ -31,8 +31,8 @@ import { createStreamingWorkspace } from './features/streaming.js?v=8';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=9';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=13';
 import { createRecordingsFeature } from './features/recordings.js?v=22';
-import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft } from './features/spectrum-search.js?v=22';
-import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult } from './features/discovery-radioreference.js?v=5';
+import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=23';
+import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl } from './features/discovery-radioreference.js?v=5';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createAudioDock } from './core/audio-dock.js?v=13';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=1';
@@ -13288,14 +13288,6 @@ function spectrumDiscoverySystemName(session, draft = null) {
     String(session?.review?.template?.system || '').trim();
 }
 
-function spectrumDiscoveryIdentity(identity, systemName = '') {
-  return identity ? [
-    ...(systemName ? [['System', systemName]] : []),
-    ['WACN', hex(identity.wacn, 5)], ['System ID', hex(identity.system, 3)],
-    ['RFSS', String(identity.rfss)], ['Site ID', String(identity.site)]
-  ] : [];
-}
-
 function spectrumDiscoveryManualChannel(selection, probe = {}) {
   const first = probe.c4fm || {};
   const second = probe.cqpsk || {};
@@ -13344,7 +13336,7 @@ function openSpectrumDiscoveryWizard(selection) {
   let restartRequired = false;
   let manualProbeReleased = false;
   let probeNodes = null;
-  let probeOverflow = null;
+  let signalDetails = null;
   const path = '/api/v1/admin/spectrum-discovery';
   const directory = createDiscoveryRadioReferenceContext({ node, uiSelect, uiSelectFrame, formField, uiActionButton, anchor, href },
     (url, options) => request(url, options));
@@ -13354,6 +13346,8 @@ function openSpectrumDiscoveryWizard(selection) {
   const sessionFacts = () => spectrumSearchIdentityFacts({ protocol_id: profile?.id,
     variant: session?.trunked_evidence?.variant, identity: session?.probe?.identity,
     trunked_evidence: session?.trunked_evidence }, hex);
+  const radioLabel = () => trunkedProtocol() ? spectrumSearchProtocolLabel({ protocol_id: profile?.id,
+    variant: session?.trunked_evidence?.variant }, protocols?.profiles) : protocolLabels[profile?.id];
   const sessionPath = () => `${path}/${encodeURIComponent(session.session_id)}`;
   const sessionNoLongerExists = (cause) => [404, 410].includes(Number(cause?.status)) ||
     ['discovery_expired', 'spectrum_discovery_expired'].includes(String(cause?.code || ''));
@@ -13418,7 +13412,13 @@ function openSpectrumDiscoveryWizard(selection) {
   });
   if (!modal) return null;
   window.addEventListener('pagehide', abandon);
-  const current = () => !closed && !abort.signal.aborted && activeReadOnlyModal === modal.state;
+  const current = () => {
+    if (closed || abort.signal.aborted) return false;
+    for (let active = activeReadOnlyModal; active; active = active.parent) {
+      if (active === modal.state) return true;
+    }
+    return false;
+  };
   const request = async (url, options = {}) => {
     if (modal.ready && !await modal.ready) throw new DOMException('Dialog dismissed', 'AbortError');
     if (!current()) throw new DOMException('Dialog dismissed', 'AbortError');
@@ -13431,22 +13431,58 @@ function openSpectrumDiscoveryWizard(selection) {
       pollTimer = window.setTimeout(() => void poll(), 750);
     }
   };
+  const refreshSystemSummary = (binding) => {
+    const directoryFocused = binding.directory.contains(document.activeElement);
+    const title = spectrumDiscoverySystemName(session, reviewDraft);
+    const label = title || (trunkedProtocol() ? 'Radio system' : 'Single-frequency channel');
+    const url = discoveryRadioReferenceSystemUrl(session);
+    const signature = JSON.stringify([label, url]);
+    if (binding.titleSignature !== signature) {
+      binding.summary.replaceChildren(url ? anchor(label, url) : document.createTextNode(label));
+      binding.titleSignature = signature;
+    }
+    const result = session.radio_reference?.state === 'matched' ? null :
+      discoveryRadioReferenceResult({ node, anchor, href }, session, binding.directory.firstElementChild);
+    if (result !== binding.directory.firstElementChild)
+      binding.directory.replaceChildren(...(result ? [result] : []));
+    binding.directory.hidden = !result;
+    if (!result && directoryFocused && url) binding.summary.querySelector('a')?.focus({ preventScroll: true });
+    const entries = [
+      ['Radio type', radioLabel()],
+      ['Site', (reviewDraft ? reviewDraft.site : session.review?.template?.site) || null],
+      ...(session.probe?.selected_modulation ? [['Modulation', session.probe.selected_modulation]] : [])
+    ].filter(([, value]) => value != null && value !== '');
+    const factSignature = JSON.stringify(entries);
+    if (binding.factSignature !== factSignature) {
+      binding.facts.replaceChildren(facts(entries));
+      binding.factSignature = factSignature;
+    }
+  };
+  const systemSummary = () => {
+    const card = node('section', 'ui-surface spectrum-discovery-system');
+    const heading = node('div', 'spectrum-discovery-system-heading');
+    const summary = node('p', 'ui-record-title spectrum-discovery-system-title');
+    heading.append(summary);
+    if (trunkedProtocol()) heading.append(uiActionButton('Details', '', () => showSignalDetails(),
+      'ui-button ui-button-secondary spectrum-discovery-details-action'));
+    const summaryFacts = node('div', 'spectrum-discovery-system-facts');
+    const directoryHost = node('div', 'spectrum-discovery-directory');
+    card.append(heading, summaryFacts, directoryHost);
+    const binding = { element: card, summary, facts: summaryFacts, directory: directoryHost };
+    refreshSystemSummary(binding);
+    return binding;
+  };
   const refreshReviewDirectory = () => {
     if (!reviewBinding || !session?.review) return;
     const template = session.review.template;
-    const result = discoveryRadioReferenceResult({ node, anchor, href }, session,
-      reviewBinding.directory.firstElementChild);
-    if (result !== reviewBinding.directory.firstElementChild)
-      reviewBinding.directory.replaceChildren(...(result ? [result] : []));
-    reviewBinding.directory.hidden = !result;
     ['name', 'system', 'site'].forEach((key) => {
       if (editedReviewFields.has(key)) return;
       const input = reviewBinding.form.querySelector(`[data-channel-path="${key}"]`);
       if (input) input.value = key === 'system' ? spectrumDiscoverySystemName(session) : template[key] || '';
       if (reviewDraft) reviewDraft[key] = input?.value || null;
     });
-    reviewBinding.summary.textContent = spectrumDiscoverySystemName(session, reviewDraft);
-    reviewBinding.summary.hidden = !reviewBinding.summary.textContent;
+    refreshSystemSummary(reviewBinding);
+    refreshSignalDetails();
     if (!editedReviewFields.has('new_alias_list_name') && session.review.default_new_alias_list_name) {
       reviewBinding.alias.value = session.review.default_new_alias_list_name;
       if (reviewDraft) reviewDraft.new_alias_list_name = reviewBinding.alias.value;
@@ -13466,8 +13502,7 @@ function openSpectrumDiscoveryWizard(selection) {
     }
   };
   const showStep = (index, label) => {
-    probeOverflow?.destroy();
-    probeOverflow = null;
+    signalDetails?.modal.close();
     activeStep = index;
     reviewBinding = null;
     probeNodes = null;
@@ -13498,6 +13533,7 @@ function openSpectrumDiscoveryWizard(selection) {
     directory.setBusy(value);
     actions.querySelectorAll('button').forEach((control) => { control.disabled = value; });
     stage.querySelectorAll('input[type="radio"]').forEach((control) => { control.disabled = value; });
+    stage.querySelectorAll('.spectrum-discovery-details-action').forEach((control) => { control.disabled = value; });
   };
   const showError = (error, copy = 'This step could not finish. Try again.') => {
     if (!current()) return;
@@ -13635,8 +13671,7 @@ function openSpectrumDiscoveryWizard(selection) {
       }
     } finally { if (current() && generation === operation) busy(false); }
   };
-  const technicalDetails = () => {
-    const identity = node('div', 'spectrum-discovery-summary');
+  const signalSettingComparison = () => {
     const table = node('table', 'ui-data-table ui-data-table-quiet spectrum-discovery-probe-table');
     const head = node('thead');
     const row = node('tr');
@@ -13647,7 +13682,7 @@ function openSpectrumDiscoveryWizard(selection) {
     });
     head.append(row);
     const body = node('tbody');
-    const nodes = { identity };
+    const nodes = {};
     [['c4fm', 'C4FM'], ['cqpsk', 'CQPSK']].forEach(([key, label]) => {
       const candidate = node('tr');
       const selected = uiPill('Selected', 'success');
@@ -13664,13 +13699,84 @@ function openSpectrumDiscoveryWizard(selection) {
     const wrap = node('div', 'ui-table-wrap');
     wrap.append(table);
     const tableActions = node('div', 'ui-table-actions');
-    probeOverflow = createTableOverflow({ wrapper: wrap, table, actionsHost: tableActions,
-      iconButton, signal: abort.signal, label: 'Signal details' });
-    const details = disclosure('Signal details', identity, tableActions, wrap, node('p', 'muted',
+    const section = node('fieldset', 'ui-form-section spectrum-discovery-comparison');
+    section.append(node('legend', '', 'Signal setting comparison'), tableActions, wrap, node('p', 'ui-field-hint',
       'Decode score compares valid control messages, rejected messages, lost synchronization and corrected bits. ' +
       'A low score can still confirm a system when its identity repeats consistently.'));
-    details.classList.add('spectrum-discovery-technical');
-    return { details, nodes };
+    const overflow = createTableOverflow({ wrapper: wrap, table, actionsHost: tableActions,
+      iconButton, signal: abort.signal, label: 'Signal setting comparison' });
+    return { section, nodes, overflow };
+  };
+  const refreshSignalDetails = () => {
+    if (!signalDetails || signalDetails.id !== session?.session_id) return;
+    const probe = session.probe || {};
+    const selected = probe[String(probe.selected_modulation || '').toLowerCase()] || session.trunked_evidence || {};
+    const entries = [
+      ['System', spectrumDiscoverySystemName(session, reviewDraft)],
+      ['Site', (reviewDraft ? reviewDraft.site : session.review?.template?.site) || null],
+      ['Frequency', `${(selection.frequencyHz / 1_000_000).toFixed(6)} MHz`],
+      ['Protocol', radioLabel()]
+    ].filter(([, value]) => value != null && value !== '');
+    const identity = sessionFacts().filter(([label]) => label !== 'Protocol');
+    const health = [
+      ['Modulation', probe.selected_modulation],
+      ['Decoder quality', selected.quality_pct == null ? null : `${Math.round(selected.quality_pct)}%`],
+      ['Valid control messages', selected.valid_control_messages],
+      ['Invalid control messages', selected.invalid_control_messages],
+      ['Last checked', selected.checked_at_ms ? new Date(selected.checked_at_ms).toLocaleTimeString() : null]
+    ].filter(([, value]) => value != null && value !== '');
+    const signature = JSON.stringify([entries, identity, health, session.state]);
+    if (signalDetails.signature !== signature) {
+      signalDetails.channel.replaceChildren(facts(entries));
+      signalDetails.identity.replaceChildren(facts(identity));
+      signalDetails.identitySection.hidden = identity.length === 0;
+      signalDetails.health.replaceChildren(...(health.length ? [facts(health)] :
+        [node('p', 'muted', session.state === 'identifying' ? 'Signal measurements are still being collected.' :
+          'Signal health is unavailable for this check.')]));
+      signalDetails.signature = signature;
+    }
+    if (signalDetails.comparison) {
+      [['c4fm', 'C4FM'], ['cqpsk', 'CQPSK']].forEach(([key, label]) => {
+        const candidate = probe[key] || {};
+        const binding = signalDetails.comparison[key];
+        binding.selected.hidden = probe.selected_modulation !== label;
+        const counts = [number(candidate.valid_messages || 0), number(candidate.valid_control_messages || 0),
+          number(candidate.invalid_control_messages || 0), `${Math.round(Number(candidate.quality_pct) || 0)}%`];
+        binding.counts.forEach((cell, index) => { if (cell.textContent !== counts[index]) cell.textContent = counts[index]; });
+      });
+    }
+  };
+  const showSignalDetails = async () => {
+    if (modal.ready && !await modal.ready) return;
+    if (!current() || activeReadOnlyModal !== modal.state || modal.state.isBusy() || !session || signalDetails) return;
+    const content = node('div', 'ui-editor-sections');
+    const section = (label) => {
+      const panel = node('fieldset', 'ui-form-section');
+      const body = node('div');
+      panel.append(node('legend', '', label), body);
+      content.append(panel);
+      return { panel, body };
+    };
+    const channel = section('Channel');
+    const identity = section('On-air identity');
+    const health = section('Signal health');
+    const comparison = profile.id === 'p25-phase1' ? signalSettingComparison() : null;
+    if (comparison) content.append(comparison.section);
+    const footer = node('footer', 'ui-modal-footer ui-action-row');
+    footer.append(uiActionButton('Back to channel', '', () => details.close(), 'ui-button ui-button-secondary'));
+    content.append(footer);
+    const id = session.session_id;
+    const details = openReadOnlyModal(`Signal details · ${(selection.frequencyHz / 1_000_000).toFixed(6)} MHz`, content, {
+      id: 'spectrum-discovery-signal', className: 'spectrum-search-detail-modal spectrum-discovery-detail-modal', stack: 'child',
+      cleanup: () => {
+        comparison?.overflow.destroy();
+        if (signalDetails?.id === id) signalDetails = null;
+      }
+    });
+    if (!details) { comparison?.overflow.destroy(); return; }
+    signalDetails = { id, modal: details, channel: channel.body, identity: identity.body,
+      identitySection: identity.panel, health: health.body, comparison: comparison?.nodes };
+    refreshSignalDetails();
   };
   const drawSetupStatus = () => {
     const p25 = profile.id === 'p25-phase1';
@@ -13684,28 +13790,16 @@ function openSpectrumDiscoveryWizard(selection) {
       const status = node('div', 'ui-notice spectrum-discovery-status');
       const heading = node('strong', 'spectrum-discovery-status-heading');
       const copy = node('p');
-      const systemName = node('p', 'ui-record-title');
       const elapsed = node('p', 'muted');
       status.setAttribute('role', 'status');
-      status.append(heading, systemName, copy, elapsed);
-      const technical = p25 ? technicalDetails() : { details: disclosure('Signal details'), nodes: {} };
-      const directoryHost = node('div');
-      probeNodes = { ...(technical?.nodes || {}), technical: technical?.details,
-        title, status, heading, systemName, copy, elapsed, directoryHost, phase: null };
-      stage.append(status);
-      if (digital) stage.append(technical.details);
-      stage.append(directoryHost);
+      status.append(heading, copy, elapsed);
+      const summary = systemSummary();
+      probeNodes = { title, status, heading, copy, elapsed, summary, phase: null };
+      stage.append(status, summary.element);
     }
     const nodes = probeNodes;
-    const directoryResult = discoveryRadioReferenceResult({ node, anchor, href }, session,
-      nodes.directoryHost.firstElementChild);
-    if (directoryResult !== nodes.directoryHost.firstElementChild)
-      nodes.directoryHost.replaceChildren(...(directoryResult ? [directoryResult] : []));
-    nodes.directoryHost.hidden = !directoryResult;
-    if (digital && !p25) nodes.technical.replaceChildren(node('summary', 'ui-section-summary', 'Signal details'),
-      facts(sessionFacts().map(([label, value]) => [label, String(value)])));
-    nodes.systemName.textContent = ready ? spectrumDiscoverySystemName(session, reviewDraft) : '';
-    nodes.systemName.hidden = !nodes.systemName.textContent;
+    refreshSystemSummary(nodes.summary);
+    refreshSignalDetails();
     nodes.title.textContent = ready ? (p25 ? 'P25 details found' : `${protocolLabels[profile.id]} details found`) :
       identifying ? (digital ? 'Checking this radio system…' : `Preparing ${protocolLabels[profile.id]}`) :
       digital ? 'We couldn’t identify this signal' : `${protocolLabels[profile.id]} setup interrupted`;
@@ -13720,21 +13814,13 @@ function openSpectrumDiscoveryWizard(selection) {
         'Your receiver is no longer ready for setup. Try again, or choose another radio type.';
     nodes.elapsed.hidden = !identifying;
     const probe = session.probe || session.digital_probe || {};
-    if (p25) {
-      [['c4fm', 'C4FM'], ['cqpsk', 'CQPSK']].forEach(([key, label]) => {
-        const candidate = probe[key] || {};
-        nodes[key].selected.hidden = probe.selected_modulation !== label;
-        const counts = [number(candidate.valid_messages || 0), number(candidate.valid_control_messages || 0),
-          number(candidate.invalid_control_messages || 0), `${Math.round(Number(candidate.quality_pct) || 0)}%`];
-        nodes[key].counts.forEach((cell, index) => { cell.textContent = counts[index]; });
-      });
-      nodes.identity.replaceChildren(...(probe.identity ? [facts(spectrumDiscoveryIdentity(probe.identity,
-        spectrumDiscoverySystemName(session, reviewDraft)))] : []));
-    }
     if (nodes.phase !== phase) {
+      if (phase === 'failed') {
+        signalDetails?.modal.close();
+        nodes.title.focus({ preventScroll: true });
+      }
       const wasIdentifying = nodes.phase === 'identifying';
       nodes.phase = phase;
-      if (ready && nodes.technical) nodes.technical.open = true;
       if (!(ready && wasIdentifying)) actions.replaceChildren();
       if (identifying) button('Cancel', () => modal.close());
       else if (ready) {
@@ -13772,7 +13858,7 @@ function openSpectrumDiscoveryWizard(selection) {
       } else drawSession();
     } catch (error) {
       if (!current() || generation !== operation || session?.session_id !== id) return;
-      if (directoryRefresh && activeStep === 2 && error.code !== 'discovery_conflict') {
+      if (directoryRefresh && activeStep === 2 && error.code !== 'discovery_conflict' && !sessionNoLongerExists(error)) {
         showError(error, 'Directory names could not be refreshed. You can continue with the on-air details.');
         if (!actions.querySelector('[data-directory-retry]')) {
           const retry = button('Retry directory lookup', () => { retry.remove(); void poll(); });
@@ -13780,8 +13866,9 @@ function openSpectrumDiscoveryWizard(selection) {
         }
         return;
       }
+      signalDetails?.modal.close();
       probeNodes = null;
-      if (error.code === 'discovery_conflict') {
+      if (error.code === 'discovery_conflict' || sessionNoLongerExists(error)) {
         session.state = 'failed';
         session.reason = error.message;
         drawSession();
@@ -13806,7 +13893,9 @@ function openSpectrumDiscoveryWizard(selection) {
       } catch (error) {
         if (!current() || generation !== operation || session?.session_id !== id) return;
         if (!modal.state.isBusy()) {
-          if (!session.saved && error.code === 'discovery_conflict') {
+          if (!session.saved && (error.code === 'discovery_conflict' || sessionNoLongerExists(error))) {
+            signalDetails?.modal.close();
+            probeNodes = null;
             session.state = 'failed';
             session.reason = error.message;
             drawSession();
@@ -13886,14 +13975,10 @@ function openSpectrumDiscoveryWizard(selection) {
     const template = review.template;
     const form = node('form', 'channel-editor-form spectrum-discovery-review');
     const values = reviewDraft || { system: spectrumDiscoverySystemName(session), site: template.site || '', name: template.name || '' };
-    const systemNameSummary = node('p', 'ui-record-title', spectrumDiscoverySystemName(session, reviewDraft));
-    systemNameSummary.hidden = !systemNameSummary.textContent;
-    stage.append(systemNameSummary);
-    const directoryResult = discoveryRadioReferenceResult({ node, anchor, href }, session);
-    const directoryHost = node('div');
-    if (directoryResult) directoryHost.append(directoryResult);
-    directoryHost.hidden = !directoryResult;
-    stage.append(directoryHost);
+    const system = systemSummary();
+    stage.append(system.element);
+    const channel = node('fieldset', 'ui-form-section spectrum-discovery-channel');
+    channel.append(node('legend', '', 'Channel'));
     const fields = (profile.sections || []).flatMap((section) => section.fields || []);
     const controls = {};
     ['name', 'system', 'site'].forEach((key) => {
@@ -13909,7 +13994,7 @@ function openSpectrumDiscoveryWizard(selection) {
     const optional = disclosure('Additional labels (optional)',
       node('p', 'ui-field-hint', 'System and site labels help organize your channels. You can keep the suggested labels.'), labels);
     optional.classList.add('spectrum-discovery-optional');
-    form.append(controls.name, optional);
+    channel.append(controls.name, optional);
     const mapFields = trunkedProtocol() && profile.id !== 'p25-phase1' ?
       fields.filter((field) => field.type === 'frequency_map') : [];
     mapFields.forEach((field) => {
@@ -13919,9 +14004,15 @@ function openSpectrumDiscoveryWizard(selection) {
       const preserveMap = () => { channelMapDraft = spectrumSearchMapDraft(control); modal.setDirty(true); };
       control.addEventListener('input', preserveMap);
       control.addEventListener('change', preserveMap);
-      form.append(formField(field.label, control, `${field.help || 'Enter the verified channel numbers and frequencies.'} ` +
+      channel.append(formField(field.label, control, `${field.help || 'Enter the verified channel numbers and frequencies.'} ` +
         'Unmapped channels can be followed only when the system broadcasts their frequencies.'));
     });
+    channel.append(facts([
+      ['Start automatically', 'On'],
+      ...(trunkedProtocol() ? [['Follow control frequency changes', 'On']] : [])
+    ]));
+    if (!trunkedProtocol()) channel.append(audioSummary());
+    form.append(channel);
 
     const lists = review.alias_lists || [];
     const p25 = trunkedProtocol();
@@ -13931,15 +14022,13 @@ function openSpectrumDiscoveryWizard(selection) {
     const previousAlias = reviewDraft ? (reviewDraft.alias_list_id === 0 ? 'new' : reviewDraft.alias_list_id ?? '') : null;
     let selected = previousAlias === '' ? '' : aliasOptions.some((option) => String(option.value) === String(previousAlias)) ? previousAlias :
       (review.suggested_alias_list_id || (lists.length === 1 ? lists[0].id : lists.length ? '' : 'new'));
-    const alias = node('section', 'ui-form-section spectrum-discovery-alias');
-    alias.append(node('h4', '', 'Alias List'));
+    const alias = node('fieldset', 'ui-form-section spectrum-discovery-alias');
+    alias.append(node('legend', '', 'Alias List'));
     let aliases = null;
     if (p25 && lists.length === 1) {
       alias.append(node('strong', '', `Use existing Alias List: ${lists[0].name}`),
         node('p', 'muted', 'This signal belongs to a system you’ve already added.'));
-    } else if (lists.length === 0) {
-      alias.append(node('strong', '', p25 ? 'Create an Alias List for this system' : 'Create an Alias List for this channel'));
-    } else {
+    } else if (lists.length > 0) {
       aliases = uiSelect(aliasOptions, selected, selected === '', 'Choose an Alias List');
       aliases.required = true;
       aliases.setAttribute('aria-label', 'Alias List');
@@ -13965,39 +14054,24 @@ function openSpectrumDiscoveryWizard(selection) {
     aliases?.addEventListener('change', syncAlias);
     syncAlias();
     alias.append(newField, defaults, disclosure('What is an Alias List?',
-      node('p', '', 'An Alias List stores names for radio groups and controls which groups you hear. These are called talkgroups on digital trunked systems. New lists use the usual listening defaults.'),
+      node('p', '', 'An Alias List names radio groups and controls which groups you hear. Digital radio groups are called talkgroups.'),
       node('p', '', 'Existing Alias Lists are offered only when the on-air system identity matches.')));
     form.append(alias);
-    const summary = facts([
-      ['Radio type', protocolLabels[profile.id]], ['Start automatically', 'On'],
-      ...(p25 ? [['Follow control frequency changes', 'On']] : [])
-    ]);
-    summary.classList.add('spectrum-discovery-summary');
-    form.append(summary);
-    if (!p25) {
-      const audio = audioSummary();
-      audio.classList.add('spectrum-discovery-summary');
-      form.append(audio);
-    } else {
-      form.append(disclosure('Technical details', facts([...sessionFacts().map(([label, value]) => [label, String(value)]),
-        ...(session.probe ? [['Modulation', session.probe.selected_modulation]] : [])]), node('p', 'ui-field-hint',
-        'The selected signal setting is saved for this channel. The app will also learn other control frequencies announced by this system.')));
-    }
     const updateReviewNames = (event) => {
       const key = event?.target?.dataset?.channelPath;
       if (['name', 'system', 'site'].includes(key)) editedReviewFields.add(key);
       modal.setDirty(true);
       try { reviewDraft = read(); } catch (_) { return; }
-      systemNameSummary.textContent = spectrumDiscoverySystemName(session, reviewDraft);
-      systemNameSummary.hidden = !systemNameSummary.textContent;
+      refreshSystemSummary(system);
+      refreshSignalDetails();
     };
     form.addEventListener('input', updateReviewNames);
     form.addEventListener('change', updateReviewNames);
     form.addEventListener('submit', (event) => event.preventDefault());
     stage.append(form);
-    reviewBinding = { form, directory: directoryHost, summary: systemNameSummary, alias: newName,
+    reviewBinding = Object.assign(system, { form, alias: newName,
       map: form.querySelector('[data-channel-type="frequency_map"]'), mapField: mapFields[0],
-      mapValues: JSON.stringify(template.frequency_map || session.trunked_evidence?.frequency_map || []) };
+      mapValues: JSON.stringify(template.frequency_map || session.trunked_evidence?.frequency_map || []) });
     scheduleDirectoryPoll();
     const read = () => ({
       ...Object.fromEntries(['system', 'site', 'name'].map((key) => [key,

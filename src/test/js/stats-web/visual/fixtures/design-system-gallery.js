@@ -416,6 +416,81 @@ const requestedHue = parameters.get('hue');
 applyThemeHue(requestedHue === null ? null : Number(requestedHue));
 document.body.dataset.galleryView = view;
 
+if (view === 'spectrum-discovery') {
+  const example = document.querySelector('.visual-spectrum-discovery-example');
+  const workspace = example.querySelector('.spectrum-discovery-workspace');
+  const button = workspace.querySelector('[data-visual-discovery-details]');
+  const node = (tag, className = '', text = null) => {
+    const element = document.createElement(tag);
+    element.className = className;
+    if (text !== null) element.textContent = String(text);
+    return element;
+  };
+  let foundation = null;
+  let parent = null;
+  button.addEventListener('click', async () => {
+    foundation ||= createGalleryModalFoundation();
+    const { openReadOnlyModal } = await foundation;
+    if (!parent) {
+      example.querySelector('.modal-backdrop').remove();
+      parent = openReadOnlyModal('Add a channel', workspace, {
+        id: 'visual-spectrum-discovery', className: 'channel-editor-modal spectrum-discovery-modal'
+      });
+    }
+    parent.focus(button);
+    const content = node('div', 'ui-editor-sections');
+    const section = (label, entries) => {
+      const panel = node('fieldset', 'ui-form-section');
+      const body = node('div');
+      const facts = node('dl', 'ui-fact-list spectrum-discovery-summary');
+      entries.forEach(([key, value]) => facts.append(node('dt', '', key), node('dd', '', value)));
+      body.append(facts);
+      panel.append(node('legend', '', label), body);
+      content.append(panel);
+    };
+    section('Channel', [['System', 'Ohio MARCS-IP: Multi-Agency Radio Communications'],
+      ['Site', 'Cuyahoga County / Greater Cleveland Simulcast'], ['Frequency', '851.012500 MHz'],
+      ['Protocol', 'P25 Phase 1']]);
+    section('On-air identity', [['WACN', 'BEE00'], ['System ID', '348'], ['RFSS', '1'], ['Site ID', '27']]);
+    section('Signal health', [['Modulation', 'CQPSK'], ['Decoder quality', '99%'],
+      ['Valid control messages', '41'], ['Invalid control messages', '1']]);
+    const comparison = node('fieldset', 'ui-form-section spectrum-discovery-comparison');
+    const wrap = node('div', 'ui-table-wrap');
+    const table = node('table', 'ui-data-table ui-data-table-quiet spectrum-discovery-probe-table');
+    const head = node('thead');
+    const header = node('tr');
+    ['Setting', 'Valid', 'Control', 'Rejected', 'Decode score'].forEach(label => {
+      const cell = node('th', '', label);
+      cell.scope = 'col';
+      header.append(cell);
+    });
+    head.append(header);
+    const body = node('tbody');
+    [['C4FM', '18', '12', '4', '81%'], ['CQPSK', '52', '41', '1', '99%']].forEach(([label, ...counts]) => {
+      const row = node('tr');
+      const name = node('th', '', label);
+      name.scope = 'row';
+      if (label === 'CQPSK') name.append(' ', node('span', 'ui-pill ui-pill-success', 'Selected'));
+      row.append(name, ...counts.map(value => node('td', '', value)));
+      body.append(row);
+    });
+    table.append(head, body);
+    wrap.append(table);
+    comparison.append(node('legend', '', 'Signal setting comparison'), wrap,
+      node('p', 'ui-field-hint', 'Decode score compares valid control messages, rejected messages, lost synchronization and corrected bits. A low score can still confirm a system when its identity repeats consistently.'));
+    content.append(comparison);
+    const footer = node('footer', 'ui-modal-footer ui-action-row');
+    const back = node('button', 'ui-button ui-button-secondary', 'Back to channel');
+    back.type = 'button';
+    footer.append(back);
+    content.append(footer);
+    const details = openReadOnlyModal('Signal details · 851.012500 MHz', content, {
+      id: 'visual-spectrum-discovery-signal', className: 'spectrum-search-detail-modal spectrum-discovery-detail-modal', stack: 'child'
+    });
+    back.addEventListener('click', () => details.close());
+  });
+}
+
 if (view === 'spectrum-search') {
   const example = document.querySelector('.visual-spectrum-search-example');
   const workspace = example.querySelector('.spectrum-search-workspace');

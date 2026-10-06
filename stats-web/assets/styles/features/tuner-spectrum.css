@@ -1464,6 +1464,7 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 .spectrum-discovery-option-copy,
 .spectrum-discovery-status,
 .spectrum-discovery-review,
+.spectrum-discovery-channel,
 .spectrum-discovery-alias {
   min-width: 0;
   display: grid;
@@ -1571,6 +1572,34 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 }
 
 .spectrum-discovery-probe-table {
+  min-width: 0;
+}
+
+.spectrum-discovery-system {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.spectrum-discovery-system-heading {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.spectrum-discovery-system-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.spectrum-discovery-details-action {
+  flex: 0 0 auto;
+}
+
+.spectrum-discovery-system-facts {
   min-width: 0;
 }
 
