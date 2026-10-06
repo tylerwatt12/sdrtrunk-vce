@@ -22,7 +22,7 @@ class StatsWebPresentationUiContractTest
     void keepsOnlyReceiverTimingInReceiverSettingsAndMovesRowPresentationToLive() throws Exception
     {
         String source = readText(APP_JAVASCRIPT);
-        String receiver = function(source, "async function renderAdminReceiverBehaviorSettings()");
+        String receiver = function(source, "async function renderAdminReceiverBehaviorSettings(target = content)");
         String live = function(source, "function openLivePresentationSettings(returnFocusSelector = null)");
 
         assertFalse(receiver.contains("Traffic-row idle delay"));
@@ -57,7 +57,7 @@ class StatsWebPresentationUiContractTest
         String channelNeighbors = function(source, "async function renderChannelNeighbors(channel, renderContext)");
         String channels = function(source, "async function renderModernChannelCatalog(renderContext)");
 
-        assertTrue(source.contains("const trigger = iconButton('icon-columns', 'Choose table columns'"));
+        assertTrue(source.contains("const trigger = iconButton('icon-columns', menuLabels.trigger || 'Choose table columns'"));
         assertTrue(source.contains("function setIconButton(button, iconId, label)"));
         assertTrue(source.contains("button.setAttribute('aria-label', label)"));
         assertTrue(source.contains("button.title = label"));
@@ -80,7 +80,7 @@ class StatsWebPresentationUiContractTest
         assertTrue(channels.contains("tableClass: 'channel-catalog-table'"));
         assertTrue(channels.contains("controller: tableController"));
         assertTrue(source.contains("function tableSection(title, rows, columns"));
-        assertTrue(source.contains("{ ...options, layoutMenuHost: actions }"));
+        assertTrue(source.contains("{ ...options, layoutMenuHost: actions,"));
     }
 
     @Test
@@ -108,14 +108,16 @@ class StatsWebPresentationUiContractTest
         String source = readText(APP_JAVASCRIPT);
         String defaults = readText(TABLE_DEFAULTS);
 
-        assertTrue(source.contains("import * as tableDefaults from './core/table-defaults.js?v=9'"));
+        assertTrue(source.matches("(?s).*import \\* as tableDefaults from '\\./core/table-defaults\\.js\\?v=\\d+';.*"));
         assertTrue(defaults.contains("'dashboard-receivers': { widths: {"));
         assertTrue(defaults.contains("name: 442"));
         assertTrue(defaults.contains("'live-events': { widths: {"));
-        assertTrue(defaults.contains("details: 864"));
+        assertTrue(defaults.contains("from: 220, to: 220"));
+        assertTrue(defaults.contains("details: 600"));
         assertTrue(defaults.contains("'live-messages': { widths: {"));
         assertTrue(defaults.contains("message: 1200"));
-        assertTrue(source.contains("const defaultLayout = tableDefaults.layout(tableType, declaredColumns)"));
+        assertTrue(source.contains("const tableDefaultLayout = tableDefaults.layout(tableType, declaredColumns)"));
+        assertTrue(source.contains("column_order: options.recordListOrder } : tableDefaultLayout"));
         assertTrue(source.contains("const storedLayout = options.layout || " +
             "activeUserPreferences().tables[tableType] || defaultLayout"));
     }
@@ -149,8 +151,8 @@ class StatsWebPresentationUiContractTest
         assertTrue(filters.contains("filterGroup('Call handling', 'alias-filter-group-behavior'"));
         assertTrue(filters.contains("filterGroup('Observed activity', 'alias-filter-group-observed'"));
         assertTrue(filters.contains("'alias-filter-primary'"));
-        assertTrue(filters.contains("advancedFilters.hidden = activeAdvanced.length === 0"));
-        assertTrue(filters.contains("advancedButton.setAttribute('aria-expanded'"));
+        assertTrue(filters.contains("createFilterDisclosure({"));
+        assertTrue(filters.contains("button: advancedButton, clearAction: clearFilters, initialExpanded: activeAdvanced.length > 0"));
         assertTrue(css.contains(".alias-editor-filter-toolbar .alias-date-filter"));
         assertTrue(css.contains("width: 100%;\n  min-width: 0;\n  box-sizing: border-box;"));
     }
@@ -162,8 +164,8 @@ class StatsWebPresentationUiContractTest
         String css = StatsWebStylesheetTestSupport.readAll();
         String detail = function(source, "function observedGroupIdentityDetail(row, selectedList)");
 
-        assertTrue(css.contains("grid-template-columns: repeat(auto-fill, minmax(min(100%, 170px), 1fr))"));
-        assertTrue(css.contains("background: var(--surface-2);\n  border: 1px solid var(--line);\n" +
+        assertTrue(css.contains("grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr))"));
+        assertTrue(css.contains("background: var(--surface);\n  border: 1px solid var(--line);\n" +
             "  border-radius: var(--radius-control);"));
         assertTrue(css.contains(".ui-metric-copy {\n  min-width: 0;"));
         assertTrue(css.contains(".ui-metric-copy > strong {"));

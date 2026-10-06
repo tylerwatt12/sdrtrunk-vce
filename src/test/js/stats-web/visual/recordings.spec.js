@@ -597,7 +597,7 @@ test('linked recording cards and details open canonical entity pages', async ({ 
   const card = page.locator('.recordings-call');
   await expect(card).toHaveCount(1);
   await expect(card.locator('.recordings-call-title')).toBeVisible();
-  const cardLabels = ['Metro Public Safety', 'North Ridge Channel', 'Fire Dispatch', 'Engine 4'];
+  const cardLabels = ['Metro Public Safety', 'North Ridge Channel', 'Fire Dispatch', 'ENG 4'];
   for (const [index, target] of linkedHrefs.entries()) {
     if (index === 1) {
       await expect(entityLink(card, target)).toHaveCount(0);
@@ -682,7 +682,7 @@ test('recording identities remain readable when references or radio access are a
   await openRecordings(page);
   let card = page.locator('.recordings-call');
   await expect(card).toContainText('Fire Dispatch');
-  await expect(card).toContainText('Engine 4');
+  await expect(card).toContainText('ENG 4');
   await expect(card.locator('a[href*="view="]')).toHaveCount(0);
   await card.locator('.recordings-call-info').click();
   let detail = page.getByRole('dialog', { name: 'Call details' });
@@ -692,7 +692,7 @@ test('recording identities remain readable when references or radio access are a
   await openRecordings(page, { call: linkedCall, radio: false });
   card = page.locator('.recordings-call');
   await expect(card).toContainText('Fire Dispatch');
-  await expect(card).toContainText('Engine 4');
+  await expect(card).toContainText('ENG 4');
   await expect(card.locator('a[href*="view="]')).toHaveCount(0);
   await card.locator('.recordings-call-info').click();
   detail = page.getByRole('dialog', { name: 'Call details' });
@@ -1055,7 +1055,7 @@ test('playback choices retain the selected call and continuation search', async 
 
 test('unfiltered calls keep repeated identities in different systems separate', async ({ page }) => {
   const other = { ...linkedCall, id: 18, system_key: 'p25:00002:002',
-    system_name: 'Other Metro Public Safety', source_alias: 'Other Engine',
+    system_name: 'Other Metro Public Safety', source_alias: 'Other Engine', source_ota_alias: null,
     radio_system_entity_ref: null, target_entity_ref: null, source_entity_ref: null,
     channel_name: 'Other channel', channel_id: 'other-channel', channel_entity_ref: null };
   await openRecordings(page, { calls: [linkedCall, other] });
@@ -1078,7 +1078,7 @@ for (const theme of ['light', 'dark']) {
     await expect(page.locator('.recordings-shared')).toBeEmpty();
     await expect(cards.first().locator('.recordings-call-title')).toContainText(calls[0].talkgroup_alias);
     await expect(cards.first()).toContainText('TG 1201');
-    await expect(cards.first()).toContainText(calls[0].source_alias);
+    await expect(cards.first()).toContainText(calls[0].source_ota_alias);
     await expect(cards.first()).toContainText(calls[0].system_name);
     await expect(cards.first()).toContainText(calls[0].site_name);
     for (const detail of [calls[0].talkgroup_description, calls[0].talkgroup_group, calls[0].channel_name, 'MHz']) {
@@ -1247,7 +1247,8 @@ test('displayed radio and talkgroup IDs with different home identities stay dist
 test('shared target descriptions and groups are available in info without cluttering the summary', async ({ page }) => {
   const first = { ...linkedCall, talkgroup_description: 'Regional response coordination',
     talkgroup_group: 'Emergency services' };
-  const second = { ...first, id: 18, source_id: 30915, source_alias: 'Engine 5', source_entity_ref: null };
+  const second = { ...first, id: 18, source_id: 30915, source_alias: 'Engine 5',
+    source_ota_alias: null, source_entity_ref: null };
   await openRecordings(page, { calls: [first, second] });
   const shared = page.locator('.recordings-shared');
   await expect(shared).toContainText('Fire Dispatch');

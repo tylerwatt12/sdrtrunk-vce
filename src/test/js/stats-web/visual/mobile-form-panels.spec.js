@@ -80,7 +80,7 @@ async function mockApplication(page, theme) {
 async function dockSize(page, state) {
   const handle = page.getByRole('button', { name: 'Change audio player size', exact: true });
   await handle.focus();
-  await handle.press('Home');
+  await handle.press(state === 'full' ? 'End' : 'Home');
   if (state === 'minimal') await handle.press('ArrowUp');
   await expect(page.locator('#audio-dock')).toHaveAttribute('data-state', state);
 }
@@ -203,19 +203,19 @@ test('P25 Events retains its single list through a short-screen orientation chan
   await page.keyboard.press('Escape');
   await expect(toggle).toBeFocused();
   await expect(page.locator('.network-visualizer-stage > .network-visualizer-events')).toHaveCount(1);
-  await page.setViewportSize({ width: 390, height: 844 });
-  await dockSize(page, 'minimal');
+  const startingHeight = 1400;
+  await page.setViewportSize({ width: 320, height: startingHeight });
+  await dockSize(page, 'full');
   await toggle.click();
-  // Keep the viewport above the compact media query while leaving too little
-  // room for one event. Derive the resize from the rendered list so changes to
-  // the player or toolbar height do not stop exercising this geometry branch.
-  await page.setViewportSize({ width: 320, height: 740 });
+  // The full player consumes enough room to exercise the geometry fallback
+  // above the short-viewport breakpoint. Derive the resize from the rendered
+  // list rather than assuming a fixed player or toolbar height.
   const inlineList = page.locator('.network-visualizer-stage .network-visualizer-event-list');
   await expect(inlineList).toBeVisible();
   const available = await inlineList.evaluate(element => ({ height: element.clientHeight,
     entryHeight: element.firstElementChild.getBoundingClientRect().height }));
   expect(available.height).toBeGreaterThanOrEqual(available.entryHeight);
-  const targetHeight = 740 - Math.ceil(available.height - available.entryHeight) - 2;
+  const targetHeight = startingHeight - Math.ceil(available.height - available.entryHeight) - 2;
   expect(targetHeight).toBeGreaterThan(640);
   await page.evaluate(() => {
     window.addEventListener('resize', () => {

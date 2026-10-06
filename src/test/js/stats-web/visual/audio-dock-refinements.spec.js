@@ -242,12 +242,12 @@ test('live Details keeps every label and disclosure state through active, paused
   state.feed.pending.push({ ...liveCall, target_description: 'County fire dispatch', source_description: 'Response team',
     vc_quality_pct: 98, vc_decoded_frames: 84, vc_missing_frames: 0, talker_alias: 'ENG 4' });
   await player(page).getByRole('button', { name: 'Listen live', exact: true }).click();
-  await expect(player(page)).toContainText('Engine 4');
+  await expect(player(page)).toContainText('ENG 4');
   expect(await labels(page)).toEqual(idleLabels);
   await disclosure(page, 'Identity & aliases', true);
   await disclosure(page, 'Voice quality', true);
   await player(page).getByRole('button', { name: 'Pause live audio', exact: true }).click();
-  await expect(player(page).locator('#audio-dock-panel')).toContainText('Engine 4');
+  await expect(player(page).locator('#audio-dock-panel')).toContainText('ENG 4');
   await player(page).getByRole('button', { name: 'Resume live audio', exact: true }).click();
   const identityHeading = player(page).locator('summary', { hasText: 'Identity & aliases' });
   await identityHeading.focus();

@@ -159,13 +159,16 @@ class StatsWebTrunkedChannelUiContractTest
         String source = source();
         String channelInfo = function(source, "async function renderTrunkedChannelInfo(channel, renderContext)");
         String radioSystemInfo = function(source, "function radioSystemInfoValue(row)");
+        String radioSystemFact = function(source, "function radioSystemInfoFact(row, includeIdentity = true)");
         String radioSystemIdentity = function(source, "function radioSystemIdentityValue(row)");
         String siteName = function(source, "function siteNameValue(row)");
         String groups = function(source, "async function channelTopGroupsSection(channel)");
         String frequencies = function(source, "function trunkedChannelFrequencyColumns()");
         assertTrue(channelInfo.contains("['Metadata Updates', channel.observation_count]"));
         assertTrue(channelInfo.contains("['Decoder', decoderDisplay(channel.decoder)]"));
-        assertTrue(channelInfo.contains("radioSystemInfoValue(channel)"));
+        assertTrue(channelInfo.contains("radioSystemInfoFact(channel, false)"));
+        assertTrue(radioSystemFact.contains("radioSystemInfoValue(row)"));
+        assertTrue(radioSystemFact.contains("radioSystemLink(row.radio_system_entity_ref"));
         assertTrue(radioSystemInfo.contains("radioSystemIdentityValue(row)"));
         assertTrue(radioSystemIdentity.contains("labeledBaseValue(hexadecimal, 'HEX')"));
         assertTrue(radioSystemIdentity.contains("labeledBaseValue(`${wacn}-${system}`, 'DEC')"));
@@ -200,7 +203,7 @@ class StatsWebTrunkedChannelUiContractTest
         assertTrue(display.contains("secondary: site && !sameSiteText(site, primary)"));
         assertTrue(renderer.contains("const display = channelDisplayParts(channel)"));
         assertTrue(renderer.contains("[display.secondary, protocolFamily(channel)"));
-        assertTrue(renderer.contains("pageHeader(channelValue(channel), subtitle)"));
+        assertTrue(renderer.contains("pageHeader(entityPageTitle('Site', channelValue(channel)), subtitle)"));
     }
 
     @Test

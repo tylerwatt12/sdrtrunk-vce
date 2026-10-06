@@ -95,7 +95,10 @@ async function openAudioApp(page, options = {}) {
   if (Number.isFinite(options.volume)) preferences.playback.volume = options.volume;
   const rows = options.calls || Array.from({ length: 30 }, (_, index) => ({ ...recording,
     id: 17 + index, start_ms: started + index * 60_000, end_ms: started + index * 60_000 + 42_000,
-    source_id: 30914 + index, source_alias: `Engine ${4 + index}` }));
+    source_id: 30914 + index, source_alias: `Engine ${4 + index}`, source_ota_alias: `ENG ${4 + index}`,
+    source_home_id: 30914 + index,
+    source_entity_ref: { kind: 'radio', radio_system_key: systemKey,
+      identity_key: `v1-r-00001-001-${30914 + index}` } }));
   const state = { requests: [], preferenceWrites: [], preferenceRevision: 1, feedRequests: 0, feedDelivered: false,
     feedCallsEnabled: options.feedCallsEnabled !== false, transcript: options.transcript || transcript,
     session: { configured: true, authenticated: options.authenticated !== false,

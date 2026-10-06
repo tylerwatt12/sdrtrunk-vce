@@ -90,11 +90,14 @@ export async function mountAudioDockGallery(parameters) {
     vc_repeated_frames: 0, vc_concealed_frames: 1, vc_missing_frames: 0,
     vc_fec_errors: 3, vc_fec_protected_bits: 11760
   };
+  const radioFields = (unit) => ({ source_id: 30910 + unit, source_alias: `Engine ${unit}`,
+    source_ota_alias: `ENG ${unit}`, source_home_id: 30910 + unit,
+    source_entity_ref: { ...sourceRef, identity_key: `v1-r-00001-001-${30910 + unit}` } });
   const recordingState = {
     current: empty ? null : currentRecording,
     queue: empty ? [] : [2, 3, 4].map((index) => ({ ...currentRecording, id: 16 + index,
-      source_id: 30910 + index, source_alias: `Engine ${index + 3}`, start_ms: started + index * 60_000 })),
-    history: empty ? [] : [{ ...currentRecording, id: 16, source_alias: 'Engine 3', start_ms: started - 60_000 }],
+      ...radioFields(index + 3), start_ms: started + index * 60_000 })),
+    history: empty ? [] : [{ ...currentRecording, id: 16, ...radioFields(3), start_ms: started - 60_000 }],
     playing: false, paused: !empty, stopped: empty, loading: false,
     status: empty ? 'Choose a recording to play' : 'Ready to play', currentTime: 8, duration: empty ? 0 : 42,
     volume: 0.7, canNext: !empty, canPrevious: !empty, clickMode: 'queue', continuation: false
@@ -102,7 +105,7 @@ export async function mountAudioDockGallery(parameters) {
   const liveState = {
     current: empty ? null : liveCall, displayCall: empty ? null : liveCall,
     queue: empty ? [] : [2, 3].map((index) => ({ ...liveCall, call_id: `gallery-live-${index}`,
-      source_alias: `Engine ${index + 3}`, started_at_ms: started + index * 60_000 })),
+      ...radioFields(index + 3), started_at_ms: started + index * 60_000 })),
     queuedCount: empty ? 0 : 2, stopped: false, paused: false, currentReady: !empty,
     lastCallReady: !empty, currentTime: 8, duration: empty ? 0 : 42, volume: 0.7,
     status: empty ? 'Waiting for the next matching call' : 'Listening',

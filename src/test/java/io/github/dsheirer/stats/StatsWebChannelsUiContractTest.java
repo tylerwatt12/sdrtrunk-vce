@@ -167,7 +167,7 @@ class StatsWebChannelsUiContractTest
         assertTrue(dependencies.contains("channelEditorVisibility(form)"));
         assertTrue(modal.contains("requestJson('/api/v1/admin/channels/protocols'"));
         assertFalse(modal.contains("prefetched?.protocols"));
-        assertTrue(modal.contains("channelRestoreProtocolDefaults(form, profile)"));
+        assertTrue(modal.contains("channelRestoreProtocolDefaults(form, editorProfile)"));
         assertTrue(modal.contains("Save & restart"));
         assertFalse(modal.contains("action: 'STOP'"));
         assertTrue(css.contains(".ui-toggle input:checked + .ui-toggle-track"));

@@ -152,12 +152,12 @@ test('an expanded queue leaves the last recording and pagination usable', async 
   await chooseRecording(page, 0, 'Continue from here');
   await fullControls(page);
   await selectPanel(page, 'Queue');
-  await expect(dock(page)).toContainText('Engine 5');
+  await expect(dock(page)).toContainText('ENG 5');
   const pager = page.getByRole('navigation', { name: 'Call result pages' });
   await pager.getByRole('button', { name: 'Next', exact: true }).scrollIntoViewIfNeeded();
   await pager.getByRole('button', { name: 'Next', exact: true }).click();
   await expect(pager).toContainText('Page 2');
-  await expect(page.locator('.recordings-call').last()).toContainText('Engine 33');
+  await expect(page.locator('.recordings-call').last()).toContainText('ENG 33');
   await expectReachableControls(dock(page));
 });
 
@@ -198,7 +198,7 @@ test('live and recording playback stop one another without clearing the recordin
     .toBe(0);
   await expect.poll(() => page.evaluate(() => window.audioTest.recordings.at(-1).action)).toBe('play');
   await selectPanel(page, 'Queue');
-  await expect(dock(page)).toContainText('Engine 5');
+  await expect(dock(page)).toContainText('ENG 5');
 });
 
 test('Listening controls keep keyboard focus and values while calls arrive and preferences change', async ({ page }) => {

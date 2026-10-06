@@ -154,7 +154,8 @@ test('audio dock gallery uses working production state controls and keyboard tab
   await dock.getByRole('tab', { name: 'Details', exact: true }).focus();
   await dock.getByRole('tab', { name: 'Details', exact: true }).press('ArrowRight');
   await expect(dock.getByRole('tab', { name: 'Queue', exact: true })).toBeFocused();
-  await expect(dock).toContainText('Engine 5');
+  await expect(dock).toContainText('ENG 5');
+  await expect(dock).toContainText('Radio 30915');
   await dock.getByRole('button', { name: 'Recordings', exact: true }).click();
   await dock.getByRole('button', { name: 'Play recording', exact: true }).click();
   await expect(dock.getByRole('button', { name: 'Pause recording', exact: true })).toBeVisible();

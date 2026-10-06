@@ -60,9 +60,9 @@ class StatsWebActivityFiltersUiContractTest
 
         assertTrue(activity.contains("activityFilterToolbar(activityContext, filters)"));
         assertTrue(toolbar.contains("aria-label', 'Filter retained activity'"));
-        assertTrue(toolbar.contains("'Apply'"));
-        assertTrue(toolbar.contains("'Clear all'"));
-        assertTrue(toolbar.contains("'More filters'"));
+        assertTrue(toolbar.contains("'Apply filters'"));
+        assertTrue(toolbar.contains("'Clear filters'"));
+        assertTrue(toolbar.contains("'Filters'"));
         assertTrue(toolbar.contains("'Event subtype'"));
         assertTrue(toolbar.contains("ACTIVITY_ACTION_INCLUDE_GRANTS"));
         assertTrue(toolbar.contains("'All actions (including grants)'"));

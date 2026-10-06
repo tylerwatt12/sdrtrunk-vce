@@ -129,12 +129,13 @@ for (const theme of ['light', 'dark']) {
       await expectBoxedFacts(systemInfo.locator(':scope > dl.ui-facts'),
         page.locator('.system-info-column .ui-metric').first());
       await expect(systemInfo.locator('dt')).toHaveText(['Radio System', 'Alias Lists', 'First Seen', 'Last Seen']);
-      await expect(page.getByRole('link', { name: aliasListName, exact: true }))
-        .toHaveAttribute('href', /view=aliases.*list=7/);
-      await systemInfo.getByRole('link', { name: aliasListName, exact: true }).focus();
-      await expect(systemInfo.getByRole('link', { name: aliasListName, exact: true })).toBeFocused();
-      await expect(page.getByRole('link', { name: 'North Simulcast', exact: true }))
+      await expect(systemInfo.locator('.alias-list-values')).toHaveText(aliasListName);
+      await expect(page.getByRole('link', { name: aliasListName, exact: true })).toHaveCount(0);
+      const channelLink = page.getByRole('link', { name: 'North Simulcast', exact: true });
+      await expect(channelLink)
         .toHaveAttribute('href', new RegExp(`view=channel.*configuration_id=${channelId}`));
+      await channelLink.focus();
+      await expect(channelLink).toBeFocused();
       await expectNoHorizontalOverflow(page);
       await page.evaluate(() => window.scrollTo(0, 0));
       await page.screenshot({ path: testInfo.outputPath(`radio-system-stat-cards-${theme}-${width}.png`),

@@ -115,16 +115,20 @@ class StatsWebRadioInformationArchitectureUiContractTest
         assertTrue(app.contains("['frequency-bands', 'Band Plans']"));
         assertTrue(app.contains("page.current_state"));
         assertFalse(app.contains("`${base}/current-state`"));
-        assertTrue(app.contains("Current Working Assignment"));
-        assertTrue(app.contains("Identity Evidence"));
+        assertTrue(app.contains("createAsyncSection('Current Working ID'"));
+        assertTrue(app.contains("['Confirmed By', semanticLabel(row.evidence)]"));
         assertTrue(app.contains("label: 'Last Working ID'"));
-        assertTrue(app.contains("relearned after every app start"));
+        assertTrue(app.contains("meaningful_only: true"));
+        assertTrue(app.contains("No foreign radios or different Working IDs to show."));
         assertFalse(app.contains("issiSubscriberFilterActions"));
         assertTrue(app.contains("ISSI Advertised Band Plans"));
-        assertTrue(app.contains("label: 'Observed On'"));
+        assertTrue(app.contains("label: 'Heard On'"));
         assertTrue(app.contains("View this system’s ISSI Band Plans"));
-        assertTrue(app.contains("not a list of radios online"));
-        assertTrue(app.contains("Snapshot Updated"));
-        assertTrue(app.contains("Last Assignment Confirmation"));
+        assertTrue(app.contains("section('ISSI Status', stateHost)"));
+        assertTrue(app.contains("['Last Updated', state?.snapshot_at_ms"));
+        assertTrue(app.contains("['Last Confirmed', state?.last_confirmation_ms"));
+        assertFalse(app.contains("not a list of radios online"));
+        assertFalse(app.contains("Snapshot Updated"));
+        assertFalse(app.contains("Last Assignment Confirmation"));
     }
 }

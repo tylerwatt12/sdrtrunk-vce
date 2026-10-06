@@ -1022,14 +1022,16 @@ test('refreshing in-use receivers updates compact frequency and width without sa
     .toContainText('Calls in progress will end and will not resume');
   state.tuners[0].center_frequency_hz = 856162500;
   state.tuners[0].usable_bandwidth_hz = 2350000;
+  const catalogRequests = () => state.requests.filter((request) => request.path === `${searchPath}/catalog`).length;
+  let expectedCatalogRequests = catalogRequests();
   for (const unavailable of [null, 0, 'not-a-frequency']) {
     state.tuners[1].center_frequency_hz = unavailable;
     await dialog(page).getByRole('button', { name: 'Refresh receivers', exact: true }).click();
+    await expect.poll(catalogRequests).toBe(++expectedCatalogRequests);
     await expect(cards.first()).toContainText('856.162500 MHz @ 2.35 MHz');
     await expect(cards.last()).toContainText('Frequency unavailable @ 9.00 MHz');
     await expect(cards.last()).not.toContainText('773.081250 MHz');
   }
-  expect(state.requests.filter((request) => request.path === `${searchPath}/catalog`)).toHaveLength(4);
   state.noIdle = false;
   await dialog(page).getByRole('button', { name: 'Refresh receivers', exact: true }).click();
   const receiver = dialog(page).getByLabel('Receiver', { exact: true });

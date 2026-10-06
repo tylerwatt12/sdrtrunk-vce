@@ -171,7 +171,10 @@ class StatsWebFrequencyActionsUiContractTest
         assertTrue(channels.contains("'Stop channels for this search?'"));
         assertTrue(search.contains("const browsePath = (id) => `/api/v1/admin/tuners/${encodeURIComponent(id)}/browse`"));
         assertTrue(search.contains("browse_lease_id: lease.lease_id"));
-        assertTrue(search.contains("radioreference_state_id: directory.stateId()"));
+        assertTrue(search.contains("await directory.load()"));
+        assertTrue(search.contains("const directoryStateId = directory.stateId()"));
+        assertTrue(search.contains("radioreference_state_id: directoryStateId"));
+        assertTrue(search.indexOf("await directory.load()") < search.indexOf("const directoryStateId = directory.stateId()"));
         String close = block(search, "const releaseForClose = async () =>");
         String afterJobRelease = block(close, "if (jobReleased)").replaceAll("\\s+", " ");
         assertTrue(close.contains("const jobReleased = await releaseJob({ bestEffort: true })"));

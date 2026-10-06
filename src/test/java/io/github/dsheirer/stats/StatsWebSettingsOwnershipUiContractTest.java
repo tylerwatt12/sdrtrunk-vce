@@ -20,7 +20,7 @@ class StatsWebSettingsOwnershipUiContractTest
     void separatesSharedTrafficTimingFromPersonalLivePresentation() throws Exception
     {
         String source = Files.readString(APP_JAVASCRIPT);
-        String receiver = function(source, "async function renderAdminReceiverBehaviorSettings()");
+        String receiver = function(source, "async function renderAdminReceiverBehaviorSettings(target = content)");
         String request = function(source, "async function requestReceiverSettings(method = 'GET', settings = null, revision = null)");
         String bandplanRequest = function(source,
             "async function requestP25BandplanOverrides(method = 'GET', profiles = null)");
@@ -33,7 +33,8 @@ class StatsWebSettingsOwnershipUiContractTest
         String admin = function(source, "async function renderAdmin()");
         String adminGroups = function(source, "function adminSettingsGroups()");
 
-        assertTrue(adminGroups.contains("id: 'live-timing', label: 'Live timing'"));
+        assertTrue(adminGroups.contains("id: 'display', label: 'Display settings'"));
+        assertTrue(admin.contains("renderAdminReceiverBehaviorSettings(display)"));
         assertTrue(adminGroups.contains("id: 'protocol-p25', label: 'P25 band plans'"));
         assertFalse(adminGroups.contains("id: 'activity', label: 'Activity history'"));
         assertFalse(adminGroups.contains("id: 'protocol-dmr'"));
@@ -42,17 +43,20 @@ class StatsWebSettingsOwnershipUiContractTest
         assertTrue(request.contains("headers['If-Match'] = `\"${revision}\"`"));
         assertTrue(bandplanRequest.contains("jsonDocumentFetch('/api/v1/admin/p25-bandplan-overrides'"));
         assertFalse(bandplanRequest.contains("requestJson("));
-        assertTrue(bandplanPage.contains("list.append(...documentValue.profiles.map(p25OverrideProfileCard))"));
-        assertTrue(bandplanPage.contains("const add = node('button', 'ui-button ui-button-secondary', " +
+        assertTrue(bandplanPage.contains("list.replaceChildren(...profiles.map((profile, index) =>"));
+        assertTrue(bandplanPage.contains("p25OverrideProfileCard(existing, knownSystems)"));
+        assertTrue(bandplanPage.contains("radioSystemLink(system.radio_system_entity_ref, displayName(profile))"));
+        assertTrue(bandplanPage.contains("const add = node('button', 'ui-button ui-button-primary', " +
             "'Add P25 override')"));
-        assertTrue(bandplanPage.contains("Some P25 trunked systems do not transmit their band plan."));
-        assertTrue(bandplanPage.contains("Add an override to define it manually."));
+        assertTrue(bandplanPage.contains("modal = openReadOnlyModal(existing ? `Edit P25 override"));
+        assertTrue(bandplanPage.contains("form.addEventListener('input', () => modal.setDirty(true))"));
         assertTrue(bandplanPage.contains("Site overrides take priority over system overrides."));
         assertFalse(source.contains("createP25Override"));
         assertFalse(source.contains("p25OverrideCreateRoute"));
         assertFalse(source.contains("clearP25OverrideCreateRoute"));
-        assertFalse(receiver.contains("section('Live timing', body)"));
-        assertTrue(receiver.contains("const panel = node('section', 'section ui-section')"));
+        assertTrue(receiver.contains("const panel = section('Live timing', body)"));
+        assertTrue(receiver.contains("panel.classList.add('ui-settings-panel')"));
+        assertTrue(receiver.contains("target.append(panel)"));
         assertTrue(receiver.contains("confirmed?.revision"));
         assertTrue(receiver.contains("error?.code === 'receiver_settings_conflict'"));
         assertTrue(receiver.contains("Live timing changed elsewhere. The latest saved value was loaded."));
@@ -68,7 +72,8 @@ class StatsWebSettingsOwnershipUiContractTest
         assertFalse(receiver.contains("live_detail_row_limit"));
 
         assertTrue(personal.contains("userPreferenceController.snapshot()"));
-        assertTrue(personal.contains("A read-only overview of every personal preference"));
+        assertTrue(personal.contains("Review and customize personal preferences for this account"));
+        assertTrue(personal.contains("openAppearanceSettings('#appearance-settings')"));
         assertTrue(personal.contains("userPreferenceSummaryCards(current)"));
         assertTrue(personal.contains("Reset All Personal Preferences"));
         assertTrue(personal.contains("openResetUserPreferences"));

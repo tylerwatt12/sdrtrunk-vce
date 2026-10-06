@@ -241,7 +241,7 @@ test('hidden recording playback advances time and automatically plays the queued
   await expect(dock(page)).toHaveAttribute('data-source', 'recordings');
   await expect(dock(page).getByRole('button', { name: 'Queue 0', exact: true })).toBeVisible();
   await expect(volume).toHaveValue('0.65');
-  await expect(dock(page)).toContainText('Engine 5');
+  await expect(dock(page)).toContainText('ENG 5');
 });
 
 test('live calls continue arriving and auto-advancing while hidden without changing listening or volume', async ({ page }) => {
@@ -309,7 +309,7 @@ test('super collapse keeps desktop page geometry unchanged and remains hidden th
   // for real results before measuring so page loading cannot imitate a dock
   // layout change when this case runs behind the complete visual suite.
   await expect(page.locator('.recordings-call')).toHaveCount(25);
-  await expect(page.locator('.recordings-call').last()).toContainText('Engine 28');
+  await expect(page.locator('.recordings-call').last()).toContainText('ENG 28');
   await expect(page.locator('#content')).toHaveAttribute('aria-busy', 'false');
   await size(page, 'full');
   const geometry = () => page.locator('.content').evaluate((content) => ({

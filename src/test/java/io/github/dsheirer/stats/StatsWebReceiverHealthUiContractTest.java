@@ -36,7 +36,7 @@ class StatsWebReceiverHealthUiContractTest
         assertTrue(routeAllowed.contains("ACCESS_CAPABILITIES.RECEIVER_HEALTH"));
         assertTrue(html.contains("id=\"receiver-health-indicator\""));
         assertTrue(html.contains("href=\"/?view=admin&amp;tab=health\" hidden"));
-        assertTrue(adminGroups.contains("id: 'health', label: 'Current status', capability: " +
+        assertTrue(adminGroups.contains("id: 'health', label: 'Receiver status', icon: 'health', capability: " +
             "ACCESS_CAPABILITIES.RECEIVER_HEALTH"));
         assertFalse(adminGroups.contains("id: 'activity', label: 'Activity history'"));
         assertTrue(desktopEnabled.contains("return this.authorized()"));
@@ -98,8 +98,9 @@ class StatsWebReceiverHealthUiContractTest
         assertTrue(page.contains("Live status is delayed. Showing the last update received."));
         assertTrue(page.contains("'Status out of date'"));
         assertFalse(page.contains("'Stale'"));
-        assertTrue(page.indexOf("receiverHealthHostResourceOverview(snapshot)") <
-            page.lastIndexOf("receiverHealthSection('current', 'Summary'"));
+        assertTrue(page.indexOf("receiverHealthSection('current', 'Receiver overview'") <
+            page.indexOf("receiverHealthHostResourceOverview(snapshot)"));
+        assertTrue(incident.contains("ui-section-disclosure"));
         assertFalse(incident.contains("incident.occurrence_id"));
         assertFalse(incident.contains("['Issue code'"));
         assertTrue(incident.contains("incident.severity"));
@@ -147,16 +148,18 @@ class StatsWebReceiverHealthUiContractTest
     }
 
     @Test
-    void expandsSummaryHealthSectionsByDefaultAndPaginatesResolvedAlertsFiveAtATime() throws Exception
+    void expandsCurrentHealthSectionsAndKeepsClearedIssuesCollapsedWithFiveRowPages() throws Exception
     {
         String source = readText(APP_JAVASCRIPT);
         String controller = block(source, "class ReceiverHealthController");
         String page = block(source, "function renderReceiverHealthPage(host, snapshot, stale, lastError)");
-        String section = block(source, "function receiverHealthSection(key, title, child, action = null)");
+        String section = block(source,
+            "function receiverHealthSection(key, title, child, action = null, summary = '', status = null)");
         String measurement = block(source, "function receiverHealthMeasurementGroup(group, index)");
         String resolvedPage = block(source,
             "function receiverHealthResolvedPage(incidents, sort, requestedPage)");
         String resolvedPager = block(source, "function receiverHealthResolvedPager(page, onPage)");
+        String sharedPager = readText(Path.of("stats-web", "assets", "core", "browsing-workflows.js"));
         String resolvedSection = block(source, "function receiverHealthResolvedSection(incidents)");
         String prune = block(source, "function receiverHealthPruneExpandedResolvedIncidents(incidents)");
         String focusedControl = block(source, "function receiverHealthFocusedControl(host)");
@@ -164,33 +167,35 @@ class StatsWebReceiverHealthUiContractTest
 
         assertTrue(source.contains("const RECEIVER_HEALTH_RESOLVED_PAGE_SIZE = 5;"));
         assertTrue(controller.contains("this.openHealthSections = new Set(['host-overview', 'current', " +
-            "'saved-activity', 'active', 'resolved'])"));
+            "'saved-activity', 'active'])"));
+        assertFalse(controller.contains("'active', 'resolved']"));
         assertFalse(controller.contains("this.openHealthSections = new Set(['resolved'])"));
         assertTrue(controller.contains("if (this.pageHost !== host)"));
         assertTrue(controller.contains("this.resolvedPage = 0"));
-        assertTrue(section.contains("node('section', 'section ui-section receiver-health-section')"));
-        assertTrue(section.contains("node('button', 'receiver-health-section-toggle', title)"));
+        assertTrue(section.contains("ui-section-collapsible receiver-health-section"));
+        assertTrue(section.contains("node('button', 'ui-disclosure-toggle receiver-health-section-toggle')"));
+        assertTrue(section.contains("copy.append(node('span', '', title))"));
         assertTrue(section.contains("toggle.setAttribute('aria-controls', body.id)"));
         assertTrue(section.contains("toggle.setAttribute('aria-expanded', String(expanded))"));
         assertTrue(section.contains("body.hidden = !expanded"));
         assertTrue(section.contains("openHealthSections.has(key)"));
         assertTrue(section.contains("openHealthSections.add(key)"));
         assertTrue(section.contains("openHealthSections.delete(key)"));
-        assertTrue(page.contains("receiverHealthSection('current', 'Summary'"));
+        assertTrue(page.contains("receiverHealthSection('current', 'Receiver overview'"));
         assertTrue(page.contains("receiverHealthSection('active', 'Issues needing attention'"));
-        assertTrue(page.contains("receiverHealthSection('measurements', 'Detailed measurements'"));
+        assertTrue(page.contains("diagnostics.setAttribute('aria-label', 'Receiver diagnostics')"));
         assertTrue(page.contains("snapshot.measurements.map(receiverHealthMeasurementGroup)"));
         assertTrue(measurement.contains("`measurement:${receiverHealthText(group.id, `${title}:${index}`)}`"));
-        assertTrue(measurement.contains("receiverHealthSection(key, title, body)"));
+        assertTrue(measurement.contains("receiverHealthSection(key, title, body, null"));
         assertTrue(resolvedPage.indexOf("receiverHealthSortedResolvedIncidents") <
             resolvedPage.indexOf("sorted.slice"));
         assertTrue(resolvedPage.contains("RECEIVER_HEALTH_RESOLVED_PAGE_SIZE"));
         assertTrue(resolvedPage.contains("Math.max(0, pageCount - 1)"));
         assertTrue(resolvedPager.contains("'Recently cleared issues'"));
-        assertTrue(resolvedPager.contains("'Previous'"));
-        assertTrue(resolvedPager.contains("'Next'"));
-        assertTrue(resolvedPager.contains("previous.disabled = page.page <= 0"));
-        assertTrue(resolvedPager.contains("next.disabled = !page.has_more"));
+        assertTrue(resolvedPager.contains("browsingWorkflows.createBrowsingPager({ node"));
+        assertTrue(sharedPager.contains("[['previous', 'Previous'], ['next', 'Next']]"));
+        assertTrue(resolvedPager.contains("previous: { enabled: page.page > 0"));
+        assertTrue(resolvedPager.contains("next: { enabled: page.has_more"));
         assertTrue(resolvedSection.contains("receiverHealthSection('resolved', 'Recently cleared'"));
         assertTrue(resolvedSection.contains("receiverHealthController.resolvedPage = page.page"));
         assertTrue(resolvedSection.contains("receiverHealthController.resolvedPage = 0"));
@@ -219,16 +224,16 @@ class StatsWebReceiverHealthUiContractTest
         assertFalse(css.contains(":root[data-theme=\"dark\"] .receiver-health-overview-state"));
         assertFalse(css.contains(":root[data-theme=\"dark\"] .receiver-health-measurement-row"));
         assertTrue(css.contains(".ui-pill-danger"));
-        assertTrue(css.contains("details.receiver-health-incident:not([open])"));
+        assertTrue(css.contains(".ui-section-disclosure[open] > .ui-section-summary"));
         assertTrue(css.contains(".receiver-health-resolved-select"));
-        assertTrue(css.contains(".receiver-health-section.collapsed > .section-title"));
+        assertTrue(css.contains(".ui-section-collapsible.collapsed > .ui-section-title"));
         assertTrue(css.contains(".receiver-health-section-body[hidden]"));
-        assertTrue(css.contains(".receiver-health-section-toggle[aria-expanded=\"true\"]::before"));
-        assertTrue(css.contains(".receiver-health-section-toggle:focus-visible"));
-        assertTrue(css.contains(".receiver-health-resolved-pager"));
+        assertTrue(css.contains(".ui-disclosure-toggle[aria-expanded=\"true\"]::before"));
+        assertTrue(css.contains(".ui-disclosure-toggle:focus-visible"));
+        assertTrue(css.contains(".ui-browse-pager"));
         assertTrue(css.contains(".receiver-health-resource-bars"));
-        assertTrue(css.contains(".receiver-health-resource-progress::-webkit-progress-value"));
-        assertTrue(css.contains(".receiver-health-resource-progress::-moz-progress-bar"));
+        assertTrue(css.contains(".ui-metric-progress::-webkit-progress-value"));
+        assertTrue(css.contains(".ui-metric-progress::-moz-progress-bar"));
     }
 
     private static String readText(Path path) throws Exception

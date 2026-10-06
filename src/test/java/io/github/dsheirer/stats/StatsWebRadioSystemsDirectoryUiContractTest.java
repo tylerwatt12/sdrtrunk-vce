@@ -71,7 +71,7 @@ class StatsWebRadioSystemsDirectoryUiContractTest
         assertTrue(systemCard.contains("ui-surface radio-directory-system-card"));
         assertTrue(systemCard.contains("uiIconTile('icon-trunked')"));
         assertTrue(channelCard.contains("ui-surface radio-directory-system-card radio-directory-conventional-card"));
-        assertTrue(channelCard.contains("uiIconTile('icon-conventional', 'blue')"));
+        assertTrue(channelCard.contains("uiIconTile('icon-conventional', 'secondary')"));
         assertTrue(app.contains("ui-button ui-button-secondary radio-directory-live-action"));
         assertTrue(liveState.contains("row.processing_state !== 'RUNNING'"));
         assertTrue(liveState.contains("muted radio-directory-live-state"));

@@ -69,6 +69,7 @@ class StatsWebDashboardUiContractTest
         String radio = function(source, "function dashboardActivityRadio(row)");
         String columns = declaration(source, "const dashboardActivityRadioColumns = [");
         String pager = function(source, "function dashboardActivityRadioPager(page, onOffset)");
+        String sharedPager = Files.readString(Path.of("stats-web", "assets", "core", "browsing-workflows.js"));
         String note = function(source, "function dashboardActivityRadioNote(page, actionLabel)");
         String failure = function(source, "function asyncSectionFailure(error, fallbackMessage, retry)");
 
@@ -123,8 +124,11 @@ class StatsWebDashboardUiContractTest
         assertTrue(radio.contains("entityReferenceAllowed(reference)"));
         assertTrue(radio.contains("entityTarget(reference, { channel: 'radios' })"));
         assertFalse(radio.contains("radioLink(row"));
-        assertTrue(pager.contains("node('button', 'ui-button ui-button-secondary', 'Previous')"));
-        assertTrue(pager.contains("node('button', 'ui-button ui-button-secondary', 'Next')"));
+        assertTrue(pager.contains("browsingWorkflows.createBrowsingPager({ node"));
+        assertTrue(sharedPager.contains("[['previous', 'Previous'], ['next', 'Next']]"));
+        assertTrue(sharedPager.contains("'ui-button ui-button-secondary'"));
+        assertTrue(pager.contains("previous: { enabled: page.offset > 0"));
+        assertTrue(pager.contains("next: { enabled: page.has_more"));
         assertTrue(pager.contains("page.has_more"));
         assertTrue(pager.contains("page.next_offset"));
         assertTrue(pager.contains("page.total_count"));

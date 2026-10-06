@@ -120,7 +120,7 @@ class StatsWebChannelPresenceUiContractTest
         String source = source();
         String radio = function(source, "async function renderRadio()");
         String channel = function(source, "async function renderTrunkedChannelInfo(channel, renderContext)");
-        String metricCard = function(source, "function metricCard(label, value, displayValue = undefined)");
+        String metricCard = function(source, "function metricCard(label, value, displayValue = undefined, options = {})");
 
         assertTrue(radio.contains("radioSystemCapability(radio, 'current_affiliations')"));
         assertTrue(radio.contains(
