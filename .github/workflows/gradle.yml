@@ -3,6 +3,8 @@ name: Main CI
 on:
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -37,6 +39,14 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
 
+      - name: Set up Python for release contracts
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Check Nightly preparation and publication guards
+        run: node src/test/js/release/nightly-workflow.test.js .github/workflows/nightly.yml
+
       - name: Run full check
         shell: bash
         run: >-
@@ -58,10 +68,10 @@ jobs:
       - name: Install the pinned Chromium browser
         run: npx playwright install chromium
       - name: Compare design-system screenshots
-        run: npm run test:web-visual
+        run: npm run test:web-visual -- --workers=2
       - name: Upload visual differences
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: web-design-system-visual-differences
           path: |

@@ -1,101 +1,318 @@
-# Package and publish the already-tested main branch after explicit approval.
+# Preparation is the default. Publication promotes the exact files from a successful preparation run.
 name: Nightly Release
-run-name: Publish approved Nightly from ${{ github.ref_name }}
+run-name: Nightly ${{ inputs.mode }} from ${{ github.ref_name }}
 
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: Prepare and test a candidate, or publish an approved candidate
+        required: true
+        type: choice
+        options: [prepare, publish]
+        default: prepare
+      candidate_run_id:
+        description: For publication, the successful preparation run ID shown in its summary
+        required: false
+        type: string
       confirm_publication:
-        description: I approve publishing the current main branch as the new Nightly
+        description: I approve publishing this exact prepared candidate as the new Nightly
         required: true
         type: boolean
         default: false
 
 concurrency:
-  group: nightly-${{ github.ref }}
-  # Publishing adds uniquely named ZIPs and replaces current-build metadata before moving the nightly tag. Let an
-  # in-flight publication finish so a newer push cannot interleave those operations.
-  cancel-in-progress: false
+  group: nightly-${{ inputs.mode }}-${{ github.ref }}
+  # Preparation can be replaced. A publication must finish before another one changes the rolling release.
+  cancel-in-progress: ${{ inputs.mode == 'prepare' }}
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
-  package-and-publish:
-    name: Package and publish nightly
-    if: ${{ github.ref == 'refs/heads/main' && inputs.confirm_publication }}
+  validate:
+    name: Validate requested operation
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    steps:
+      - name: Require an explicit publication choice
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM_PUBLICATION: ${{ inputs.confirm_publication }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+        run: |
+          if [[ "$MODE" == 'publish' ]]; then
+            test "$GITHUB_REF" = 'refs/heads/main'
+            test "$CONFIRM_PUBLICATION" = 'true'
+            [[ "$CANDIDATE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          else
+            test "$MODE" = 'prepare'
+            test "$CONFIRM_PUBLICATION" = 'false'
+            test -z "$CANDIDATE_RUN_ID"
+          fi
+
+  ci:
+    name: Test candidate
+    if: ${{ inputs.mode == 'prepare' }}
+    needs: validate
+    uses: ./.github/workflows/gradle.yml
+
+  package:
+    name: Package candidate
+    if: ${{ inputs.mode == 'prepare' }}
+    needs: [validate, ci]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       UPDATE_BUILD: ${{ github.run_id }}
-
     steps:
-      - name: Check out source
+      - name: Check out the tested commit
         uses: actions/checkout@v7
-
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - name: Set up JDK 25
         uses: actions/setup-java@v5
         with:
           java-version: '25'
           distribution: liberica
           java-package: jdk+fx
-
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
-
-      - name: Package releases
+      - name: Build and verify all six packages
         run: >-
           ./gradlew --no-configuration-cache clean runtimeZipAll
           -PprojectVersion=nightly -PupdateTrack=nightly -PupdateBuild=${UPDATE_BUILD}
-
-      - name: Refuse an out-of-order nightly publication
-        shell: bash
-        run: |
-          remote_manifest="$(mktemp)"
-          if curl --fail --silent --show-error --location \
-            https://github.com/tylerwatt12/sdrtrunk-vce/releases/download/nightly/update.properties \
-            --output "${remote_manifest}"
-          then
-            remote_track="$(sed -n 's/^track=//p' "${remote_manifest}")"
-            remote_build="$(sed -n 's/^build=//p' "${remote_manifest}")"
-            if [[ "${remote_track}" == "nightly" && "${remote_build}" =~ ^[0-9]+$ ]] &&
-              (( remote_build >= UPDATE_BUILD ))
-            then
-              echo "Refusing stale nightly build ${UPDATE_BUILD}; published build is ${remote_build}."
-              exit 1
-            fi
-          fi
-
-      - name: Create build information and updater manifest
+      - name: Record the exact candidate and file checksums
         shell: bash
         run: |
           nightly_version="nightly-${UPDATE_BUILD}-${GITHUB_SHA:0:7}"
           printf 'channel: nightly\nref: %s\ncommit: %s\nupdate-build: %s\nbuilt-at: %s\n' \
-            "$GITHUB_REF" \
-            "$GITHUB_SHA" \
-            "$UPDATE_BUILD" \
-            "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+            "$GITHUB_REF" "$GITHUB_SHA" "$UPDATE_BUILD" "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
             > build/image/build_info.txt
           printf 'format=2\ntrack=nightly\nbuild=%s\nversion=%s\nurl=%s\n' \
-            "$UPDATE_BUILD" \
-            "$nightly_version" \
+            "$UPDATE_BUILD" "$nightly_version" \
             'https://github.com/tylerwatt12/sdrtrunk-vce/releases/tag/nightly' \
             > build/image/update.properties
+          python3 - <<'PY'
+          import json, os, pathlib
+          pathlib.Path('build/image/candidate.json').write_text(json.dumps({
+              'format': 1, 'purpose': 'prepare', 'source_commit': os.environ['GITHUB_SHA'],
+              'source_ref': os.environ['GITHUB_REF'], 'run_id': os.environ['UPDATE_BUILD'],
+              'runtime': '25.0.1', 'channel': 'nightly'
+          }, indent=2) + '\n', encoding='utf-8')
+          PY
+          (cd build/image && sha256sum vce-*.zip build_info.txt update.properties candidate.json > SHA256SUMS)
+      - name: Save candidate files without publishing
+        uses: actions/upload-artifact@v7
+        with:
+          name: nightly-candidate-${{ github.run_id }}
+          path: build/image/*
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
 
-      - name: Add build artifacts to nightly release
+  smoke:
+    name: Native runtime smoke (${{ matrix.platform }})
+    if: ${{ inputs.mode == 'prepare' }}
+    needs: package
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-24.04, platform: linux64}
+          - {os: ubuntu-24.04-arm, platform: linux-arm64}
+          - {os: windows-2025, platform: win64}
+          - {os: windows-11-arm, platform: win-arm64}
+          - {os: macos-15-intel, platform: mac64}
+          - {os: macos-15, platform: mac-arm64}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - name: Check out smoke tests at the candidate commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up JDK 25 for the isolated test helper
+        uses: actions/setup-java@v5
+        with:
+          java-version: '25'
+          distribution: liberica
+      - name: Set up Python for native runtime checks
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Download the exact candidate files
+        uses: actions/download-artifact@v8
+        with:
+          name: nightly-candidate-${{ github.run_id }}
+          path: candidate
+      - name: Start the native package and exercise its migrator
+        shell: bash
+        run: >-
+          python tools/release/smoke-runtime.py
+          --archive "candidate/vce-${{ matrix.platform }}-${{ github.run_id }}.zip"
+          --work-dir "${{ runner.temp }}/nightly-runtime-smoke"
+          --expected-build "${{ github.run_id }}"
+          --expected-commit "${{ github.sha }}"
+      - name: Save runtime smoke evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: nightly-smoke-${{ matrix.platform }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/nightly-runtime-smoke/evidence
+          if-no-files-found: ignore
+          retention-days: 30
+
+  ready:
+    name: Candidate ready
+    if: ${{ inputs.mode == 'prepare' }}
+    needs: [validate, ci, package, smoke]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summarize preparation without changing the release
+        env:
+          CANDIDATE_COMMIT: ${{ github.sha }}
+          CANDIDATE_RUN_ID: ${{ github.run_id }}
+        run: |
+          {
+            echo '## Nightly candidate prepared'
+            echo "Commit: \`${CANDIDATE_COMMIT}\`"
+            echo "Preparation run ID: \`${CANDIDATE_RUN_ID}\`"
+            echo 'Full application checks, browser checks, visual checks, all six package checks, and all six native runtime checks passed.'
+            echo 'Candidate ZIPs and checksums are saved as workflow artifacts for 30 days. No release, update feed, or tag was changed.'
+            echo 'After reviewing and approving this exact candidate, run Nightly Release on main with mode=publish, this candidate_run_id, and confirm_publication=true.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    name: Publish approved candidate
+    if: ${{ inputs.mode == 'publish' && inputs.confirm_publication && github.ref == 'refs/heads/main' }}
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    env:
+      CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+    steps:
+      - name: Require the latest successful preparation of this exact commit
+        id: candidate
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const id = Number(process.env.CANDIDATE_RUN_ID);
+            if (!Number.isSafeInteger(id) || id <= 0) throw new Error('Invalid preparation run ID');
+            const repo = {...context.repo};
+            const {data: run} = await github.rest.actions.getWorkflowRun({...repo, run_id: id});
+            if (run.status !== 'completed' || run.conclusion !== 'success' ||
+                run.event !== 'workflow_dispatch' || run.path !== '.github/workflows/nightly.yml' ||
+                run.head_repository.full_name !== process.env.GITHUB_REPOSITORY || run.head_sha !== context.sha) {
+              throw new Error('Candidate must be a successful Nightly preparation of the current main commit');
+            }
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun,
+              {...repo, run_id: id, filter: 'latest', per_page: 100});
+            const required = ['Package candidate', 'Candidate ready', ...[
+              'linux64', 'linux-arm64', 'win64', 'win-arm64', 'mac64', 'mac-arm64'
+            ].map(platform => `Native runtime smoke (${platform})`)];
+            if (!required.every(name => jobs.some(job => job.name === name && job.conclusion === 'success')) ||
+                !jobs.some(job => job.name.endsWith('Main CI gate') && job.conclusion === 'success')) {
+              throw new Error('Candidate is missing a successful test, package, visual, or native runtime gate');
+            }
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts,
+              {...repo, run_id: id, per_page: 100});
+            const artifact = artifacts.find(item => item.name === `nightly-candidate-${id}`);
+            if (!artifact || artifact.expired) throw new Error('Candidate files expired or are unavailable; prepare again');
+            const newerRuns = await github.paginate(github.rest.actions.listWorkflowRuns,
+              {...repo, workflow_id: 'nightly.yml', event: 'workflow_dispatch', status: 'success',
+                head_sha: context.sha, per_page: 100});
+            for (const newer of newerRuns.filter(item => item.id > id)) {
+              const {data} = await github.rest.actions.listWorkflowRunArtifacts({...repo, run_id: newer.id, per_page: 100});
+              if (data.artifacts.some(item => item.name === `nightly-candidate-${newer.id}`)) {
+                throw new Error('A newer successful preparation exists for this commit; review that candidate instead');
+              }
+            }
+            core.setOutput('artifact-id', artifact.id);
+      - name: Check out the approved commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Download the prepared files without rebuilding
+        uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ steps.candidate.outputs.artifact-id }}
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: candidate
+          merge-multiple: true
+          digest-mismatch: error
+      - name: Verify candidate identity, exact file list, and every checksum
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib
+          root = pathlib.Path('candidate')
+          build = os.environ['CANDIDATE_RUN_ID']
+          expected = {f'vce-{platform}-{build}.zip' for platform in (
+              'linux64', 'linux-arm64', 'win64', 'win-arm64', 'mac64', 'mac-arm64')}
+          expected.update(('build_info.txt', 'update.properties', 'candidate.json'))
+          actual = {item.name for item in root.iterdir()}
+          if actual != expected | {'SHA256SUMS'}:
+              raise SystemExit('Candidate contains missing or unexpected files')
+          metadata = json.loads((root / 'candidate.json').read_text(encoding='utf-8'))
+          if metadata != {'format': 1, 'purpose': 'prepare', 'source_commit': os.environ['GITHUB_SHA'],
+                          'source_ref': metadata.get('source_ref'), 'run_id': build,
+                          'runtime': '25.0.1', 'channel': 'nightly'}:
+              raise SystemExit('Candidate identity does not match this publication')
+          checksums = {}
+          for line in (root / 'SHA256SUMS').read_text(encoding='utf-8').splitlines():
+              digest, name = line.split('  ', 1)
+              if name in checksums or name not in expected:
+                  raise SystemExit('Candidate checksums contain duplicate or unexpected files')
+              checksums[name] = digest
+          if set(checksums) != expected:
+              raise SystemExit('Candidate checksums are incomplete')
+          for name, digest in checksums.items():
+              with (root / name).open('rb') as handle:
+                  actual_digest = hashlib.file_digest(handle, 'sha256').hexdigest()
+              if actual_digest != digest:
+                  raise SystemExit(f'Candidate checksum failed: {name}')
+          PY
+      - name: Refuse changed main or an out-of-order publication
+        shell: bash
+        run: |
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+          remote_manifest="$(mktemp)"
+          status="$(curl --silent --show-error --location --output "$remote_manifest" --write-out '%{http_code}' \
+            https://github.com/tylerwatt12/sdrtrunk-vce/releases/download/nightly/update.properties)"
+          if [[ "$status" == '200' ]]; then
+            remote_track="$(sed -n 's/^track=//p' "$remote_manifest")"
+            remote_build="$(sed -n 's/^build=//p' "$remote_manifest")"
+            test "$remote_track" = 'nightly'
+            [[ "$remote_build" =~ ^[0-9]+$ ]]
+            if (( remote_build >= CANDIDATE_RUN_ID )); then
+              echo "Refusing build ${CANDIDATE_RUN_ID}; published build is ${remote_build}."
+              exit 1
+            fi
+          elif [[ "$status" != '404' ]]; then
+            echo "Cannot verify the current Nightly manifest (HTTP ${status})."
+            exit 1
+          fi
+      - name: Publish the approved candidate files
         uses: softprops/action-gh-release@v2
         with:
           tag_name: nightly
           target_commitish: ${{ github.sha }}
           name: SDRTrunk VCE Nightly
           prerelease: true
+          fail_on_unmatched_files: true
           body: |
             Rolling pre-release build from current `main`.
 
-            Current build: `${{ env.UPDATE_BUILD }}`
+            Current build: `${{ inputs.candidate_run_id }}`
 
-            Choose the platform ZIP ending in `-${{ env.UPDATE_BUILD }}.zip`. Older builds remain available below.
+            Choose the platform ZIP ending in `-${{ inputs.candidate_run_id }}.zip`. Older builds remain available below.
 
             Nightly builds contain the newest completed features and fixes and may change frequently. Back up the
             complete portable data folder before upgrading.
@@ -105,13 +322,14 @@ jobs:
             [database migration guide](https://github.com/tylerwatt12/sdrtrunk-vce/blob/main/docs/database-migration.md)
             for current behavior and upgrade guidance.
           files: |
-            build/image/*.zip
-            build/image/build_info.txt
-            build/image/update.properties
+            candidate/*.zip
+            candidate/build_info.txt
+            candidate/update.properties
+            candidate/candidate.json
+            candidate/SHA256SUMS
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Point nightly tag to this build
+      - name: Point only the rolling Nightly tag to the approved commit
         run: |
           git tag --force nightly "$GITHUB_SHA"
           git push --force origin refs/tags/nightly
