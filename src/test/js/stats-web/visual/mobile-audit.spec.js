@@ -51,10 +51,11 @@ for (const width of [320, 390, 430]) {
     await page.goto(`/app.html?view=channel-setup&channel=${configurationId}`);
     const dialog = page.getByRole('dialog', { name: `Edit ${longChannelName}` });
     await expect(dialog).toBeVisible();
+    await dialog.locator('details[data-channel-section="protocol"] > summary').click();
     const uplink = dialog.getByRole('spinbutton', { name: 'Uplink frequency in MHz' });
     await expect(uplink).toBeVisible();
     for (const element of [dialog.locator('.channel-editor-hero strong'),
-      dialog.getByLabel('Name', { exact: true }), uplink,
+      dialog.locator('details[data-channel-section="protocol"] > summary'), uplink,
       dialog.getByRole('button', { name: 'Add mapping' }),
       dialog.getByRole('button', { name: 'Save & restart' })]) {
       await expectWithin(element, dialog);

@@ -23251,6 +23251,35 @@ function channelEditorSectionNavigation(panels, plan) {
   return navigation;
 }
 
+function channelEditorSectionDisclosureLayout(stack, groupName) {
+  const mobile = window.matchMedia('(max-width: 720px)');
+  const disclosures = [...stack.querySelectorAll('details.channel-editor-section-disclosure')];
+  let selectedSection = 'general';
+  const sync = () => {
+    const focusedSection = document.activeElement?.closest('[data-channel-section]')?.dataset.channelSection;
+    const selected = disclosures.find((entry) => entry.dataset.channelSection ===
+      (focusedSection || selectedSection)) || disclosures[0];
+    disclosures.forEach((entry) => entry.removeAttribute('name'));
+    disclosures.forEach((entry) => {
+      entry.open = mobile.matches ? entry === selected :
+        entry.classList.contains('channel-editor-section-primary') || entry.open;
+      if (mobile.matches) entry.name = groupName;
+    });
+  };
+  const remember = (event) => {
+    if (mobile.matches && disclosures.includes(event.target) && event.target.open) {
+      selectedSection = event.target.dataset.channelSection;
+    }
+  };
+  stack.addEventListener('toggle', remember, true);
+  mobile.addEventListener('change', sync);
+  sync();
+  return () => {
+    stack.removeEventListener('toggle', remember, true);
+    mobile.removeEventListener('change', sync);
+  };
+}
+
 function channelEditorVisibility(form) {
   form.querySelectorAll('[data-visible-path]').forEach((wrapper) => {
     const source = form.querySelector(`[data-channel-path="${CSS.escape(wrapper.dataset.visiblePath)}"]`);
@@ -23672,12 +23701,13 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
   const editing = mode === 'edit';
   const loading = node('div', 'loading', editing ? 'Loading channel settings…' : 'Preparing channel editor…');
   let squelchTuner = null;
+  let removeSectionLayout = null;
   const modal = openReadOnlyModal(editing ? 'Edit Channel' : 'Create Channel', loading, {
     id: `${mode}-channel-${configurationId || 'new'}`, className: 'channel-editor-modal',
     returnFocusSelector: editing ?
       `tr[data-id="${CSS.escape(configurationId)}"] .channel-edit-button` :
       '.channel-admin-toolbar .ui-button-primary',
-    cleanup: () => squelchTuner?.close()
+    cleanup: () => { squelchTuner?.close(); removeSectionLayout?.(); }
   });
   if (!modal || (modal.ready && !await modal.ready)) return;
   try {
@@ -23705,6 +23735,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
 
     const draw = () => {
       squelchTuner?.close();
+      removeSectionLayout?.();
       squelchTuner = null;
       const form = node('form', 'channel-editor-form editor-workspace');
       form.dataset.uiDensity = 'comfortable';
@@ -23773,6 +23804,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
               channelRestoreProtocolDefaults(form, editorProfile);
               modal.setDirty(true);
             }, 'ui-button ui-button-secondary'));
+          if (sectionDefinition.id === 'protocol') panelHeader.classList.add('channel-editor-panel-header-actions');
           panel.append(panelHeader);
         }
         const grid = node('div', 'channel-editor-grid');
@@ -23878,19 +23910,16 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
           panel.append(squelchTuner.element);
         }
         panels.set(sectionDefinition.id, panel);
-        if (advanced) {
-          const disclosure = node('details',
-            'channel-editor-section-disclosure ui-section-disclosure');
-          disclosure.dataset.channelSection = sectionDefinition.id;
-          const summary = node('summary', 'channel-editor-section-summary ui-section-summary');
-          summary.id = labelId;
-          panel.setAttribute('aria-labelledby', labelId);
-          summary.append(node('span', '', sectionDefinition.label), node('small', 'muted', 'Optional'));
-          disclosure.append(summary, panel);
-          sectionNodes.push(disclosure);
-        } else {
-          sectionNodes.push(panel);
-        }
+        const disclosure = node('details', 'channel-editor-section-disclosure ui-section-disclosure' +
+          (advanced ? '' : ' channel-editor-section-primary'));
+        disclosure.dataset.channelSection = sectionDefinition.id;
+        const summary = node('summary', 'channel-editor-section-summary ui-section-summary');
+        summary.id = `${id}-summary`;
+        summary.append(node('span', '', sectionDefinition.label),
+          node('small', 'muted', advanced ? 'Optional' : ''));
+        if (advanced) panel.setAttribute('aria-labelledby', summary.id);
+        disclosure.append(summary, panel);
+        sectionNodes.push(disclosure);
       });
       const errors = node('div', 'channel-editor-message admin-form-message');
       errors.setAttribute('role', 'alert');
@@ -23940,6 +23969,8 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
       const sectionLayout = node('div', 'channel-editor-section-layout ui-editor-layout');
       const sectionStack = node('div', 'channel-editor-sections ui-editor-sections');
       sectionStack.append(...sectionNodes);
+      removeSectionLayout = channelEditorSectionDisclosureLayout(sectionStack,
+        `channel-editor-${mode}-${configurationId || 'new'}`);
       sectionLayout.append(channelEditorSectionNavigation(panels, sectionPlan), sectionStack);
       const footer = node('footer', 'channel-editor-footer ui-modal-footer ui-modal-footer-flush ui-action-row');
       footer.append(...[startStop, reset, node('span', 'channel-editor-footer-spacer ui-modal-footer-spacer'), cancel, save]
@@ -23970,7 +24001,11 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
         if (startStop) startStop.disabled = true;
         channelEditorDependencies(form);
       });
+      let firstInvalidField = null;
       form.addEventListener('invalid', (event) => {
+        if (firstInvalidField) return;
+        firstInvalidField = event.target;
+        window.setTimeout(() => { firstInvalidField = null; }, 0);
         const disclosure = event.target.closest?.('details.channel-editor-section-disclosure');
         if (disclosure) disclosure.open = true;
       }, true);
