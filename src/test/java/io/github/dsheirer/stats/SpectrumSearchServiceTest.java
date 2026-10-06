@@ -252,6 +252,48 @@ class SpectrumSearchServiceTest
     }
 
     @Test
+    void newListChoiceReusesASingleMatchingAliasListWithADifferentName() throws Exception
+    {
+        try(Fixture fixture = new Fixture(A, B))
+        {
+            fixture.channels.matchingAliasLists = List.of(
+                new ChannelAdministrationService.DiscoveryAliasList(21, "County Dispatch", true));
+            var completed = fixture.complete(fixture.open().jobId());
+            var saved = fixture.service.save(completed.jobId(), saveRequest(completed, Map.of()));
+
+            assertTrue(saved.candidates().stream().allMatch(SpectrumSearchService.Candidate::saved));
+            assertEquals(0, fixture.channels.createdAliases);
+            assertEquals(2, fixture.channels.definitions.size());
+            assertTrue(fixture.channels.definitions.stream().allMatch(definition -> definition.aliasListId() == 21));
+        }
+    }
+
+    @Test
+    void severalMatchingAliasListsNeedAnExplicitIdOrMatchingName() throws Exception
+    {
+        try(Fixture fixture = new Fixture(A))
+        {
+            fixture.channels.matchingAliasLists = List.of(
+                new ChannelAdministrationService.DiscoveryAliasList(21, "County Dispatch", true),
+                new ChannelAdministrationService.DiscoveryAliasList(22, "County Operations", true));
+            var completed = fixture.complete(fixture.open().jobId());
+            var unresolved = fixture.service.save(completed.jobId(), saveRequest(completed, Map.of()));
+            assertFalse(row(unresolved, A).saved());
+            assertEquals("Choose the matching Alias List for this system", row(unresolved, A).saveError());
+            assertTrue(fixture.channels.definitions.isEmpty());
+
+            var base = saveRequest(unresolved, Map.of());
+            var named = new SpectrumSearchService.SaveRequest(base.revision(), base.candidates(), List.of(
+                new SpectrumSearchService.AliasChoice(completed.aliasGroups().getFirst().groupId(), 0,
+                    " county operations ")));
+            var saved = fixture.service.save(completed.jobId(), named);
+            assertTrue(row(saved, A).saved());
+            assertEquals(22, row(saved, A).aliasListId());
+            assertEquals(0, fixture.channels.createdAliases);
+        }
+    }
+
+    @Test
     void staleRevisionAfterPartialSuccessMarksEveryUnattemptedRowForRetry() throws Exception
     {
         try(Fixture fixture = new Fixture(A, B, FAR))
@@ -831,6 +873,7 @@ class SpectrumSearchServiceTest
     {
         long revision = 1, failOnce, staleAt, publicationFailureAt, suspendedAt;
         int createdAliases;
+        List<ChannelAdministrationService.DiscoveryAliasList> matchingAliasLists;
         final Map<String,Long> aliases = new LinkedHashMap<>();
         final Map<Long,SpectrumSearchService.KnownChannel> knownFrequencies = new LinkedHashMap<>();
         final Map<P25SiteIdentity,SpectrumSearchService.KnownChannel> knownSites = new LinkedHashMap<>();
@@ -850,7 +893,8 @@ class SpectrumSearchServiceTest
                 null, alias != null ? alias : 0, new ChannelDefinition.Source(List.of(frequency), null, null, frequency, preferred, null),
                 Map.of("modulation", modulation, "learn_announced_control_channels", true), List.of(), List.of(), List.of(), List.of(), null);
             return new ChannelAdministrationService.DiscoveryReview(revision, template,
-                alias == null ? List.of() : List.of(new ChannelAdministrationService.DiscoveryAliasList(alias, "Test network", true)),
+                matchingAliasLists != null ? matchingAliasLists : alias == null ? List.of() :
+                    List.of(new ChannelAdministrationService.DiscoveryAliasList(alias, "Test network", true)),
                 alias, "Test network");
         }
         public ChannelAdministrationService.DiscoveryCreated create(ChannelDefinition definition, P25SiteIdentity identity,

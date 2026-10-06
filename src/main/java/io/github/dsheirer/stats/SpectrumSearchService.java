@@ -295,7 +295,7 @@ public final class SpectrumSearchService implements AutoCloseable
             Map<String,AliasChoice> choices = new LinkedHashMap<>();
             for(var choice: request.aliasGroups())
                 if(!job.groups.containsKey(choice.groupId()) || choices.putIfAbsent(choice.groupId(), choice) != null)
-                    throw new IllegalArgumentException("Choose listening settings once for each selected system");
+                    throw new IllegalArgumentException("Choose an Alias List once for each selected system");
             long revision = mChannels.revision();
             if(request.revision() != revision)
                 throw new ChannelAdministrationService.StaleRevisionException(request.revision(), revision);
@@ -323,9 +323,10 @@ public final class SpectrumSearchService implements AutoCloseable
                         review.defaultNewAliasListName();
                     if(aliasId == 0 && !review.aliasLists().isEmpty())
                     {
-                        aliasId = review.aliasLists().stream().filter(list -> aliasName != null &&
-                            aliasName.strip().equalsIgnoreCase(list.name())).mapToLong(
-                                ChannelAdministrationService.DiscoveryAliasList::id).findFirst().orElse(0);
+                        aliasId = review.aliasLists().size() == 1 ? review.aliasLists().getFirst().id() :
+                            review.aliasLists().stream().filter(list -> aliasName != null &&
+                                aliasName.strip().equalsIgnoreCase(list.name())).mapToLong(
+                                    ChannelAdministrationService.DiscoveryAliasList::id).findFirst().orElse(0);
                         if(aliasId == 0)
                             throw new IllegalArgumentException("Choose the matching Alias List for this system");
                     }
@@ -342,10 +343,10 @@ public final class SpectrumSearchService implements AutoCloseable
                 }
                 catch(ChannelAdministrationService.StaleRevisionException exception)
                 {
-                    row.saveError = "Saved choices changed. Review the listening settings and retry.";
+                    row.saveError = "Saved choices changed. Review the Alias Lists and retry.";
                     for(int pending = index + 1; pending < selected.size(); pending++)
                         if(selected.get(pending).saved == null) selected.get(pending).saveError =
-                            "Saved choices changed. Review the listening settings and retry.";
+                            "Saved choices changed. Review the Alias Lists and retry.";
                     break;
                 }
                 catch(ConfigurationManager.ConfigurationPublicationException exception)

@@ -560,7 +560,12 @@ public final class ChannelAdministrationService
             AliasConfigurationSnapshot aliases = mConfigurationManager.createDetachedAliasConfigurationSnapshot();
             boolean newList = definition.aliasListId() == 0;
             AliasListDefinition selected;
-            if(newList)
+            if(newList && (identity != null || evidence != null) && compatibleLists.size() == 1)
+            {
+                selected = requireAliasList(compatibleLists.getFirst().id());
+                newList = false;
+            }
+            else if(newList)
             {
                 String name = newAliasListName != null ? newAliasListName.strip() : "";
                 if(name.isBlank() || name.length() > AliasAdministrationService.MAX_ALIAS_LIST_NAME_LENGTH)

@@ -141,6 +141,39 @@ class TrunkedDiscoveryChannelPersistenceTest
     }
 
     @Test
+    void newListChoiceReusesTheSingleMatchingListDespiteADifferentProposedName() throws Exception
+    {
+        try(Fixture fixture = new Fixture(root))
+        {
+            int existingLists = new ConfigurationRepository(fixture.database).load().aliasListDefinitions().size();
+            for(String protocol: List.of("p25-phase1", "dmr", "nxdn"))
+            {
+                long frequency = "p25-phase1".equals(protocol) ? 770_000_000 :
+                    "dmr".equals(protocol) ? 450_000_000 : 452_000_000;
+                var first = matchingSiteEvidence(protocol, 3, frequency);
+                var review = fixture.channels.discoveryTrunkedReview(protocol, frequency, null, first);
+                var created = fixture.channels.createTrunkedDiscovered(review.template(), first,
+                    protocol + " Dispatch", review.revision(), false);
+
+                var nextSite = matchingSiteEvidence(protocol, 4, frequency + 1_000_000);
+                var next = fixture.channels.discoveryTrunkedReview(protocol, frequency + 1_000_000, null, nextSite);
+                assertEquals(1, next.aliasLists().size());
+                assertEquals(created.aliasListId(), next.aliasLists().getFirst().id());
+                var template = next.template();
+                var newListChoice = new ChannelDefinition(null, template.protocolId(), template.system(),
+                    template.site(), template.name(), null, 0, template.source(), template.settings(),
+                    template.frequencyMap(), List.of(), List.of(), List.of(), template.observed());
+                var reused = fixture.channels.createTrunkedDiscovered(newListChoice, nextSite,
+                    "New directory name", next.revision(), false);
+                assertEquals(created.aliasListId(), reused.aliasListId());
+            }
+            var disk = new ConfigurationRepository(fixture.database).load();
+            assertEquals(6, disk.channels().size());
+            assertEquals(existingLists + 3, disk.aliasListDefinitions().size());
+        }
+    }
+
+    @Test
     void retainedNativeHistoryRestoresSiteDedupAndAliasesAfterAdministrationRestart() throws Exception
     {
         try(Fixture fixture = new Fixture(root))
@@ -225,6 +258,25 @@ class TrunkedDiscoveryChannelPersistenceTest
             List.of(new ChannelDefinition.FrequencyMapEntry(1, frequency + 12_500, 0)), 100, 100, 25, 0, 1, "confirmed");
         assertTrue(evidence.verified(), "Test fixture must contain consistent native identity: " + nativeKey);
         return evidence;
+    }
+
+    private static TrunkedDiscoveryEvidence matchingSiteEvidence(String protocol, int site, long frequency)
+    {
+        if("p25-phase1".equals(protocol))
+        {
+            var nativeSite = new P25SiteIdentity(0xABCDE, 0x123, 2, site);
+            String key = RadioSystemKey.p25(nativeSite);
+            var identity = new TrunkedDiscoveryEvidence.Identity(nativeSite, key, key + ":2:" + site,
+                null, nativeSite.system(), nativeSite.site(), null, null, null, null, null);
+            return new TrunkedDiscoveryEvidence(protocol, "P25_PHASE_1", identity,
+                Map.of("modulation", "C4FM", "learn_announced_control_channels", true), List.of(),
+                100, 100, 25, 0, 1, "confirmed");
+        }
+        return "dmr".equals(protocol) ?
+            evidence(protocol, "TIER_III", "dmr:tier3:small:17", site, frequency,
+                Map.of("channel_mode", "TRUNKED")) :
+            evidence(protocol, "TYPE_C", "nxdn-c:regional:41", site, frequency,
+                Map.of("channel_mode", "TRUNKED", "transmission_mode", "M4800"));
     }
 
     private static ChannelDefinition edited(ChannelDefinition source, Map<String,Object> settings,

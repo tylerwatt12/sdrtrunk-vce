@@ -124,12 +124,12 @@ class SpectrumChannelCreationTest
             var next = fixture.channels.discoveryReview("p25-phase1", 852_012_500, "Tuner",
                 new P25SiteIdentity(0xBEE00, 0x123, 1, 3), "C4FM");
             assertEquals(saved.aliasListId(), next.suggestedAliasListId());
-            assertThrows(IllegalArgumentException.class, () -> fixture.channels.createDiscovered(
+            var reused = fixture.channels.createDiscovered(
                 withAlias(next.template(), 0), new P25SiteIdentity(0xBEE00, 0x123, 1, 3),
-                "Duplicate System List", next.revision()));
-            var reused = fixture.channels.createDiscovered(next.template(), new P25SiteIdentity(0xBEE00, 0x123, 1, 3),
-                null, next.revision());
+                "Duplicate System List", next.revision());
             assertEquals(saved.aliasListId(), reused.aliasListId());
+            assertEquals(disk.aliasListDefinitions().size(),
+                new ConfigurationRepository(fixture.database).load().aliasListDefinitions().size());
             assertTrue(fixture.channels.discoveryReview("p25-phase1", 853_012_500, "Tuner",
                 new P25SiteIdentity(0xBEE01, 0x123, 1, 3), "C4FM").aliasLists().isEmpty(),
                 "System ID alone must never match another WACN");
