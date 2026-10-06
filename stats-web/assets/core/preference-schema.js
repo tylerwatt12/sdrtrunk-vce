@@ -1,7 +1,7 @@
 'use strict';
 
   const defaults = Object.freeze({
-    version: 10,
+    version: 11,
     appearance: Object.freeze({ theme: 'light', hue: null }),
     page_titles: Object.freeze({ prepend_playing_call: false }),
     playback: Object.freeze({
@@ -20,6 +20,7 @@
       live_detail_row_limit: 200,
       show_only_active_trunked_channels: true,
       live_channel_sort: 'order_appeared',
+      live_row_density: 'normal',
       retain_last_call_on_idle_rows: false,
       clear_voice_quality_when_idle: false
     }),
@@ -126,7 +127,7 @@
   function validate(value) {
     exact(value, ['version', 'appearance', 'page_titles', 'playback', 'scanner', 'presentation', 'tuner',
       'health_alerts', 'tables'], 'preferences');
-    if (value.version !== 10) throw invalid('The user preference version is unsupported.');
+    if (value.version !== 11) throw invalid('The user preference version is unsupported.');
     exact(value.appearance, ['theme', 'hue'], 'appearance');
     exact(value.page_titles, ['prepend_playing_call'], 'page_titles');
     exact(value.playback, ['volume', 'selected_scan_list_ids', 'target_grouping',
@@ -134,7 +135,7 @@
     exact(value.scanner, ['detail_mode'], 'scanner');
     exact(value.presentation, ['source_name_display', 'show_encryption_details', 'show_control_decode_quality',
       'show_voice_decode_quality', 'decode_quality_display_mode', 'live_detail_row_limit',
-      'show_only_active_trunked_channels', 'live_channel_sort', 'retain_last_call_on_idle_rows',
+      'show_only_active_trunked_channels', 'live_channel_sort', 'live_row_density', 'retain_last_call_on_idle_rows',
       'clear_voice_quality_when_idle'], 'presentation');
     exact(value.tuner, ['floor_db', 'ceiling_db', 'waterfall_speed', 'snap_frequency', 'smooth_fft',
       'highlight_waterfall_channels', 'show_idle_channels', 'profile'], 'tuner');
@@ -155,7 +156,7 @@
     const ceiling = number(value.tuner.ceiling_db, -195, 0, 'tuner.ceiling_db', true);
     if (ceiling - floor < 5) throw invalid('The tuner display range is too small.');
     return {
-      version: 10,
+      version: 11,
       appearance: { theme: oneOf(value.appearance.theme, ['light', 'dark'], 'appearance.theme'),
         hue: value.appearance.hue === null ? null : number(value.appearance.hue, 0, 359, 'appearance.hue', true) },
       page_titles: { prepend_playing_call: bool(value.page_titles.prepend_playing_call,
@@ -186,6 +187,8 @@
           'presentation.show_only_active_trunked_channels'),
         live_channel_sort: oneOf(value.presentation.live_channel_sort,
           ['lcn', 'order_appeared', 'frequency'], 'presentation.live_channel_sort'),
+        live_row_density: oneOf(value.presentation.live_row_density,
+          ['normal', 'dense'], 'presentation.live_row_density'),
         retain_last_call_on_idle_rows: bool(value.presentation.retain_last_call_on_idle_rows,
           'presentation.retain_last_call_on_idle_rows'),
         clear_voice_quality_when_idle: bool(value.presentation.clear_voice_quality_when_idle,

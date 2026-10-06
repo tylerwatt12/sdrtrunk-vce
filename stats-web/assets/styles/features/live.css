@@ -376,6 +376,13 @@ body[data-view="live"] .channel-diagnostic-readouts {
   white-space: nowrap;
 }
 
+@media (min-width: 761px) {
+  .channels-live-table[data-row-density="dense"] tbody td:not(.empty) {
+    height: auto;
+    padding-block: var(--live-row-padding-dense);
+  }
+}
+
 .channels-live-table .live-alias-link:hover,
 .channels-live-table .live-channel-link:hover {
   text-decoration: underline;
@@ -1026,6 +1033,10 @@ body[data-view="live"] .channel-diagnostic-readouts {
 
   .channels-live-table tbody > tr:last-child {
     border-bottom: 0;
+  }
+
+  .channels-live-table[data-row-density="dense"] tbody > tr[data-id] {
+    padding-block: var(--space-1);
   }
 
   .channels-live-table tbody > tr:not([data-row-interactive]) {

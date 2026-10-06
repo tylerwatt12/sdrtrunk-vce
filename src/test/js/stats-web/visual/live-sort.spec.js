@@ -2,6 +2,7 @@
 
 const { expect, test } = require('@playwright/test');
 const path = require('node:path');
+const { writeFileSync } = require('node:fs');
 const { pathToFileURL } = require('node:url');
 
 let defaultPreferences;
@@ -28,7 +29,21 @@ const snapshot = {
     ] }]
 };
 
-async function openLive(page, theme = 'light', presentation = {}) {
+function densitySnapshot() {
+  return { revision: 1, tables: [{ ...snapshot.tables[0], title: 'County Public Safety',
+    system_name: 'County Public Safety', site_name: 'North Simulcast',
+    rows: Array.from({ length: 36 }, (_, index) => ({
+      key: `call-${index + 1}`, configuration_id: 'metro-north', lcn: index + 1,
+      frequency_hz: 851012500 + index * 25000, status: index === 3 ? 'ENCRYPTED' : 'CALL',
+      tags: ['VOICE'], activation_order: index + 1, decoder: 'P25_PHASE1', protocol: 'APCO25',
+      source_id: 30914 + index, source_alias: index === 0 ? 'Engine 4' : `Unit ${index + 1}`,
+      target_id: 1201 + index % 3, target_alias: ['Fire Dispatch', 'Police Dispatch', 'County Operations'][index % 3],
+      signal_dbfs: -58.2 - index / 10, vc_quality_pct: 92.4,
+      vc_decoded_frames: 120, vc_repeated_frames: 1, vc_concealed_frames: 0
+    })) }] };
+}
+
+async function openLive(page, theme = 'light', presentation = {}, liveSnapshot = snapshot) {
   let revision = 1;
   let preferences = structuredClone(defaultPreferences);
   preferences.appearance.theme = theme;
@@ -71,7 +86,7 @@ async function openLive(page, theme = 'light', presentation = {}) {
       });
       return Promise.resolve(new Response(stream, { status: 200 }));
     };
-  }, snapshot);
+  }, liveSnapshot);
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
@@ -302,6 +317,161 @@ async function expectReachable(control) {
       hitText: hit?.textContent?.slice(0, 80) };
   });
   expect(geometry.reachable, JSON.stringify(geometry)).toBe(true);
+}
+
+const liveTable = page => page.locator('.channels-live-table');
+const rowDensity = dialog => dialog.getByRole('combobox', { name: 'Row density', exact: true });
+
+async function densityGeometry(page) {
+  return liveTable(page).evaluate(table => {
+    const scroll = table.closest('.table-scroll');
+    const viewport = scroll.getBoundingClientRect();
+    const rows = [...table.querySelectorAll('tbody tr[data-id]')];
+    const height = rows[0].getBoundingClientRect().height;
+    const visible = rows.filter(row => {
+      const rect = row.getBoundingClientRect();
+      const x = Math.max(viewport.left + 1, Math.min(viewport.right - 1, rect.left + rect.width / 2));
+      return rect.top >= Math.max(0, viewport.top) && rect.bottom <= Math.min(innerHeight, viewport.bottom) &&
+        row.contains(document.elementFromPoint(x, rect.bottom - 1));
+    }).length;
+    const panes = Object.fromEntries(['.live-split', '.live-right-workspace', '.live-channels-section', '.live-details']
+      .map(selector => {
+        const element = document.querySelector(selector);
+        const rect = element.getBoundingClientRect();
+        return [selector, { x: rect.x, y: rect.y, width: rect.width, height: rect.height }];
+      }));
+    return { rowHeight: height, fullyVisibleRows: visible, bodyHeight: table.querySelector('tbody').getBoundingClientRect().height,
+      panes };
+  });
+}
+
+async function liveCallContents(page) {
+  return liveTable(page).evaluate(table => ({
+    columns: [...table.querySelectorAll('thead th')].map(cell => cell.dataset.column),
+    rows: [...table.querySelectorAll('tbody tr[data-id]')].map(row => ({
+      key: row.dataset.id, cells: [...row.querySelectorAll('td')].map(cell => cell.textContent)
+    }))
+  }));
+}
+
+for (const theme of ['light', 'dark']) {
+  for (const width of [1280, 390]) {
+    test(`Live row density compacts calls without changing content or selection in ${theme} at ${width}px`,
+      async ({ page }, testInfo) => {
+        await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+        const app = await openLive(page, theme, {}, densitySnapshot());
+        const table = liveTable(page);
+        await expect(table).toHaveAttribute('data-row-density', 'normal');
+        await expect(table.locator('tbody tr[data-id]')).toHaveCount(36);
+        await table.locator('tbody tr[data-id="call-2"] [data-column="status"]').click();
+        await expect(table.locator('tbody tr.selected')).toHaveAttribute('data-id', 'call-2');
+        if (width === 390) await expect(page.getByRole('button', { name: 'Expand live details', exact: true })).toBeVisible();
+        const contents = await liveCallContents(page);
+        const normal = await densityGeometry(page);
+        await page.screenshot({ path: testInfo.outputPath('live-normal.png') });
+        let dialog = await presentationDialog(page);
+        const density = rowDensity(dialog);
+        await expect(density).toHaveValue('normal');
+        await expect(density.locator('option')).toHaveText(['Normal', 'Dense']);
+        await expectReachable(density);
+        await density.selectOption('dense');
+        await density.focus();
+        await expect(density).toBeFocused();
+        await dialog.screenshot({ path: testInfo.outputPath('live-row-density-settings.png') });
+        await savePresentation(dialog);
+        await expect(table).toHaveAttribute('data-row-density', 'dense');
+        await expect(table.locator('tbody tr.selected')).toHaveAttribute('data-id', 'call-2');
+        expect(await liveCallContents(page)).toEqual(contents);
+        const dense = await densityGeometry(page);
+        expect(dense.rowHeight).toBeLessThan(normal.rowHeight);
+        expect(dense.bodyHeight).toBeLessThan(normal.bodyHeight);
+        if (width === 1280) expect(dense.fullyVisibleRows).toBeGreaterThan(normal.fullyVisibleRows);
+        else expect(dense.fullyVisibleRows).toBeGreaterThanOrEqual(normal.fullyVisibleRows);
+        if (width === 1280) expect(dense.panes).toEqual(normal.panes);
+        const geometryPath = testInfo.outputPath('row-density-geometry.json');
+        writeFileSync(geometryPath, JSON.stringify({ normal, dense }, null, 2));
+        await testInfo.attach('Row density geometry', { path: geometryPath, contentType: 'application/json' });
+        await page.screenshot({ path: testInfo.outputPath('live-dense.png') });
+        expect(app.preferences().presentation.live_row_density).toBe('dense');
+        expect(app.writes[0].version).toBe(11);
+        expect(app.preferences().presentation.source_name_display).toBe('both');
+        if (theme === 'light' && width === 1280) {
+          const dock = page.locator('#audio-dock');
+          const handle = dock.getByRole('button', { name: 'Change audio player size', exact: true });
+          for (const [key, size] of [['Home', 'collapsed'], ['ArrowUp', 'minimal'], ['End', 'full']]) {
+            await handle.press(key);
+            await expect(dock).toHaveAttribute('data-state', size);
+            await expect.poll(async () => (await densityGeometry(page)).panes).toEqual(dense.panes);
+          }
+        }
+        await page.goto('/app.html?view=live&channel=metro-north');
+        await expect(table).toHaveAttribute('data-row-density', 'dense');
+        expect(await liveCallContents(page)).toEqual(contents);
+        dialog = await presentationDialog(page);
+        await expect(rowDensity(dialog)).toHaveValue('dense');
+        expect(app.receiverWrites).toEqual([]);
+        if ((theme === 'light' && width === 1280) || (theme === 'dark' && width === 390)) {
+          await page.goto(`/design-system.html?view=live-notice&theme=${theme}&row-density=dense`);
+          await expect(liveTable(page)).toHaveAttribute('data-row-density', 'dense');
+          await page.screenshot({ path: testInfo.outputPath('gallery-live-dense.png') });
+        }
+      });
+  }
+}
+
+test('Live density keeps a failed draft, reloads a conflict and resets to Normal', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const app = await openLive(page, 'dark');
+  const dialog = await presentationDialog(page);
+  const density = rowDensity(dialog);
+  const save = dialog.getByRole('button', { name: 'Save Live Presentation', exact: true });
+  const message = dialog.locator('.admin-form-message');
+  await density.selectOption('dense');
+  app.failNextSave(500);
+  await save.click();
+  await expect(message).toHaveText('Unable to save user preferences.');
+  await expect(density).toHaveValue('dense');
+  await expect(density).toBeEnabled();
+  await expect(liveTable(page)).toHaveAttribute('data-row-density', 'normal');
+  expect(app.preferences().presentation.live_row_density).toBe('normal');
+  await expectReachable(density);
+  await dialog.screenshot({ path: testInfo.outputPath('live-row-density-failed-save.png') });
+  app.failNextSave(409, { live_row_density: 'normal', live_channel_sort: 'frequency' });
+  await save.click();
+  await expect(message).toHaveText('These settings changed in another session. The current saved values were loaded.');
+  await expect(density).toHaveValue('normal');
+  await expect(dialog.getByRole('combobox', { name: /^Sort calls by/ })).toHaveValue('frequency');
+  expect(app.writes).toEqual([]);
+  await density.selectOption('dense');
+  await savePresentation(dialog);
+  await expect(liveTable(page)).toHaveAttribute('data-row-density', 'dense');
+  expect(app.preferences().presentation.live_channel_sort).toBe('frequency');
+  await page.goto('/app.html?view=settings');
+  await expect(page.locator('.user-settings-summary')).toContainText('Row density');
+  await expect(page.locator('.user-settings-summary')).toContainText('Dense');
+  await page.getByRole('button', { name: 'Reset All Personal Preferences', exact: true }).click();
+  const reset = page.getByRole('dialog', { name: 'Reset personal preferences', exact: true });
+  await reset.getByRole('button', { name: 'Reset All Personal Preferences', exact: true }).click();
+  await expect(reset).toBeHidden();
+  await expect(page.locator('.user-settings-summary')).toContainText('Normal');
+  await page.goto('/app.html?view=live&channel=metro-north');
+  await expect(liveTable(page)).toHaveAttribute('data-row-density', 'normal');
+  await expect(rowDensity(await presentationDialog(page))).toHaveValue('normal');
+  expect(app.preferences().presentation.live_row_density).toBe('normal');
+  expect(app.receiverWrites).toEqual([]);
+});
+
+for (const [name, saved] of [['missing', undefined], ['invalid', 'compressed']]) {
+  test(`Live uses Normal for ${name} saved row density`, async ({ page }) => {
+    const app = await openLive(page, 'light', { live_row_density: saved });
+    await expect(liveTable(page)).toHaveAttribute('data-row-density', 'normal');
+    // An invalid saved document keeps the existing safe defaults until preferences can load again.
+    await expect(page.locator('#preference-status')).toBeVisible();
+    await expect(page.locator('#preference-status')).toContainText('My Settings are unavailable.');
+    await expectCallOrder(page, ['lcn-20', 'lcn-30', 'lcn-10']);
+    expect(app.writes).toEqual([]);
+    expect(app.receiverWrites).toEqual([]);
+  });
 }
 
 for (const theme of ['light', 'dark']) {

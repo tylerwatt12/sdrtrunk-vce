@@ -21,7 +21,7 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
                                  Scanner scanner, Presentation presentation, Tuner tuner,
                                  HealthAlerts healthAlerts, Map<String,TableLayout> tables)
 {
-    public static final int CURRENT_VERSION = 10;
+    public static final int CURRENT_VERSION = 11;
     public static final int MINIMUM_APPEARANCE_HUE = 0;
     public static final int MAXIMUM_APPEARANCE_HUE = 359;
     public static final int MAXIMUM_JSON_BYTES = 131_072;
@@ -80,7 +80,7 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
         return new WebUserPreferences(CURRENT_VERSION, new Appearance("light", null), new PageTitles(false),
             new Playback(1.0, List.of(), true, DEFAULT_TARGET_BURST_LIMIT), new Scanner("normal"),
             new Presentation(showEncryptionDetails, showControlDecodeQuality, showVoiceDecodeQuality,
-                decodeQualityDisplayMode, liveDetailRowLimit, true, false, false, "talker_alias", "order_appeared"),
+                decodeQualityDisplayMode, liveDetailRowLimit, true, false, false, "talker_alias", "order_appeared", "normal"),
             new Tuner(-140, 0, 1, true, true, false, false, "balanced"), new HealthAlerts(List.of()), Map.of());
     }
 
@@ -151,7 +151,7 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
                                boolean showVoiceDecodeQuality, String decodeQualityDisplayMode,
                                int liveDetailRowLimit, boolean showOnlyActiveTrunkedChannels,
                                boolean retainLastCallOnIdleRows, boolean clearVoiceQualityWhenIdle,
-                               String sourceNameDisplay, String liveChannelSort)
+                               String sourceNameDisplay, String liveChannelSort, String liveRowDensity)
     {
         public Presentation
         {
@@ -161,6 +161,7 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
                 Set.of("talker_alias", "source_alias", "both"));
             liveChannelSort = requireOneOf(liveChannelSort, "presentation.live_channel_sort",
                 Set.of("lcn", "order_appeared", "frequency"));
+            liveRowDensity = requireOneOf(liveRowDensity, "presentation.live_row_density", Set.of("normal", "dense"));
 
             if(liveDetailRowLimit < MINIMUM_LIVE_DETAIL_ROW_LIMIT ||
                 liveDetailRowLimit > MAXIMUM_LIVE_DETAIL_ROW_LIMIT)

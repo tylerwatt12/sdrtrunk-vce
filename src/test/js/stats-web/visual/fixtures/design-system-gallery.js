@@ -416,6 +416,11 @@ const requestedHue = parameters.get('hue');
 applyThemeHue(requestedHue === null ? null : Number(requestedHue));
 document.body.dataset.galleryView = view;
 
+if (view === 'live-notice') {
+  document.querySelector('.visual-live-example .channels-live-table').dataset.rowDensity =
+    parameters.get('row-density') === 'dense' ? 'dense' : 'normal';
+}
+
 if (view === 'spectrum-discovery') {
   const example = document.querySelector('.visual-spectrum-discovery-example');
   const workspace = example.querySelector('.spectrum-discovery-workspace');

@@ -69,24 +69,38 @@ class Format41To42DatabaseMigrationTest
                 assertEquals(definitions,schemaDefinitions(connection));
                 assertEquals(plannerStatistics,plannerStatistics(connection));
                 assertEquals(expected,tableContents(connection));
-                DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
+                List<DatabaseMigrationEffect> effects =
+                    new Format41To42DatabaseMigration().migrateAndReport(connection, false);
+                DatabaseFormatCatalog.stamp(connection, 42);
                 connection.commit();
-                assertEquals(1,report.steps().size());
-                assertEquals("format-41-to-42",report.steps().getFirst().id());
-                assertEquals(List.of(1L),report.steps().getFirst().effects().stream()
+                assertEquals(List.of(1L),effects.stream()
                     .map(DatabaseMigrationEffect::affectedRows).toList());
                 assertEquals(expected,tableContents(connection),"Every application row and allocator is preserved");
                 Map<String,String> remainingStatistics = new LinkedHashMap<>(plannerStatistics);
                 remainingStatistics.remove(TARGET_INDEX);
                 assertEquals(remainingStatistics,plannerStatistics(connection),
                     "Only the replaced index loses its derived planner estimate");
-                assertEquals(42,DatabaseFormatCatalog.requireCurrent(connection).version());
+                assertEquals(42,DatabaseFormatCatalog.inspect(connection).version());
+                assertEquals(DatabaseFormatCatalog.requireVersion(42).fingerprint(),
+                    SqliteSchemaValidator.fingerprint(connection));
                 Map<String,String> actual = schemaDefinitions(connection);
                 assertEquals(definitions.keySet(),actual.keySet(),"No table or additional index is introduced");
                 definitions.forEach((name,sql) -> assertEquals(name.equals("index:"+TARGET_INDEX) ?
                     normalizeSql(TARGET_SQL) : sql,actual.get(name),name));
                 assertEquals("ok",scalar(statement,"PRAGMA integrity_check"));
                 assertEquals("0",scalar(statement,"SELECT count(*) FROM pragma_foreign_key_check"));
+            }
+            try(Connection connection = open(candidate); Statement statement = connection.createStatement())
+            {
+                DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
+                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 42, report.steps().size());
+                assertEquals("format-42-to-43", report.steps().getFirst().id());
+                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
+                    DatabaseFormatCatalog.requireCurrent(connection).version());
+                assertEquals("0", scalar(statement, """
+                    SELECT count(*) FROM web_user WHERE json_extract(preferences_json, '$.version')<>11
+                        OR json_extract(preferences_json, '$.presentation.live_row_density') IS NOT 'normal'
+                    """));
             }
             SdrTrunkDatabaseStartup.validateGlobalDatabase(candidate);
             assertArrayEquals(bytes,Files.readAllBytes(source));
@@ -137,10 +151,15 @@ class Format41To42DatabaseMigrationTest
         try(Connection connection = open(database))
         {
             connection.setAutoCommit(false);
+            new Format41To42DatabaseMigration().migrate(connection);
+            DatabaseFormatCatalog.stamp(connection, 42);
+            connection.commit();
+            assertEquals(42,DatabaseFormatCatalog.inspect(connection).version());
+            assertEquals(before,tableContents(connection));
             DatabaseMigrationChain.migrate(connection);
             connection.commit();
-            assertEquals(42,DatabaseFormatCatalog.requireCurrent(connection).version());
-            assertEquals(before,tableContents(connection));
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
+                DatabaseFormatCatalog.requireCurrent(connection).version());
         }
     }
 
@@ -149,7 +168,7 @@ class Format41To42DatabaseMigrationTest
     {
         Path fresh = mTemporaryFolder.resolve("fresh.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(fresh);
-        Path migrated = Format42TestDatabase.create(mTemporaryFolder.resolve("migrated.sqlite"));
+        Path migrated = Format43TestDatabase.create(mTemporaryFolder.resolve("migrated.sqlite"));
         try(Connection current = open(migrated); Connection clean = open(fresh))
         {
             assertEquals(DatabaseFormatCatalog.current().fingerprint(),SqliteSchemaValidator.fingerprint(clean));

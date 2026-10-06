@@ -142,7 +142,7 @@ class Format31To32DatabaseMigrationTest
             long identityFacts = scalar(statement, "SELECT count(*) FROM trunked_logical_call_identity_bucket");
             DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspectForMigration(connection));
-            assertEquals("format-41-to-42", preflight.steps().getLast().id());
+            assertEquals("format-42-to-43", preflight.steps().getLast().id());
             assertEquals(aliases, new Format31To32DatabaseMigration().validateSource(connection)
                 .getFirst().affectedRows());
 
@@ -172,7 +172,8 @@ class Format31To32DatabaseMigrationTest
                 "AND name LIKE 'idx_receiver_activity_event_%'"));
             assertEquals(preferencesBefore, text(statement, """
                 SELECT group_concat(json_remove(json_set(preferences_json, '$.version', 8),
-                    '$.presentation.source_name_display', '$.presentation.live_channel_sort')) FROM web_user ORDER BY id
+                    '$.presentation.source_name_display', '$.presentation.live_channel_sort',
+                    '$.presentation.live_row_density')) FROM web_user ORDER BY id
                 """), "The downstream personal preference upgrades preserve all previous personal settings");
             assertEquals(aliases, scalar(statement, "SELECT count(*) FROM alias"));
             assertEquals(identities, scalar(statement, "SELECT count(*) FROM radio_system_identity_summary"));

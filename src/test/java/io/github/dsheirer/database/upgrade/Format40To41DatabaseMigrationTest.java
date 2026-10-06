@@ -118,7 +118,7 @@ class Format40To41DatabaseMigrationTest
     @Test
     void freshAndMigratedCurrentFormatHaveTheSameSchemaAndCurrentMigrationIsANoOp() throws Exception
     {
-        Path current = Format42TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
+        Path current = Format43TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
         Path fresh = mTemporaryFolder.resolve("fresh.sqlite");SdrTrunkDatabaseStartup.createGlobalDatabase(fresh);
         try(Connection connection = open(current); Connection freshConnection = open(fresh))
         {

@@ -85,6 +85,8 @@ class WebUserPreferencesHttpControllerTest
             assertEquals("light", initial.at("/preferences/appearance/theme").textValue());
             assertTrue(initial.at("/preferences/appearance/hue").isNull());
             assertTrue(initial.at("/preferences/playback/selected_scan_list_ids").isArray());
+            assertEquals(11, initial.at("/preferences/version").intValue());
+            assertEquals("normal", initial.at("/preferences/presentation/live_row_density").textValue());
 
             JsonNode replacement = initial.path("preferences").deepCopy();
             ((com.fasterxml.jackson.databind.node.ObjectNode)replacement.path("page_titles"))
@@ -92,6 +94,8 @@ class WebUserPreferencesHttpControllerTest
             ((com.fasterxml.jackson.databind.node.ObjectNode)replacement.path("appearance")).put("hue", 215);
             ((com.fasterxml.jackson.databind.node.ObjectNode)replacement.path("presentation"))
                 .put("source_name_display", "both");
+            ((com.fasterxml.jackson.databind.node.ObjectNode)replacement.path("presentation"))
+                .put("live_row_density", "dense");
             String replacementJson = MAPPER.writeValueAsString(replacement);
 
             assertEquals(403, send(client, request(origin)
@@ -135,6 +139,11 @@ class WebUserPreferencesHttpControllerTest
                 accessService.primaryAdmin().orElseThrow()).preferences().appearance().hue());
             assertEquals("both", new WebUserPreferencesService(database).get(
                 accessService.primaryAdmin().orElseThrow()).preferences().presentation().sourceNameDisplay());
+            assertEquals("dense", new WebUserPreferencesService(database).get(
+                accessService.primaryAdmin().orElseThrow()).preferences().presentation().liveRowDensity());
+            HttpResponse<String> reloaded = send(client, request(origin).header("Cookie", login.cookie()).GET());
+            assertEquals(200, reloaded.statusCode());
+            assertEquals("dense", MAPPER.readTree(reloaded.body()).at("/preferences/presentation/live_row_density").textValue());
 
             ((com.fasterxml.jackson.databind.node.ObjectNode)replacement.path("appearance")).putNull("hue");
             HttpResponse<String> restored = send(client, mutation(origin, login).header("If-Match", "\"2\"")

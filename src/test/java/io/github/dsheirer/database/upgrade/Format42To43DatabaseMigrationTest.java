@@ -27,19 +27,19 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-class Format35To36DatabaseMigrationTest
+class Format42To43DatabaseMigrationTest
 {
     @TempDir Path mTemporaryFolder;
 
     @Test
     void rejectsAnEarlierSourceAndLeavesACurrentDatabaseUnchanged() throws Exception
     {
-        Path earlier = Format34TestDatabase.create(mTemporaryFolder.resolve("wrong-source.sqlite"));
+        Path earlier = Format41TestDatabase.create(mTemporaryFolder.resolve("wrong-source.sqlite"));
         try(Connection connection = open(earlier); Statement statement = connection.createStatement())
         {
             Map<Long,Preference> before = preferences(statement);
-            assertThrows(SQLException.class, () -> new Format35To36DatabaseMigration().migrate(connection));
-            assertEquals(34, DatabaseFormatCatalog.inspect(connection).version());
+            assertThrows(SQLException.class, () -> new Format42To43DatabaseMigration().migrate(connection));
+            assertEquals(41, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(before, preferences(statement));
         }
         Path current = Format43TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
@@ -52,9 +52,9 @@ class Format35To36DatabaseMigrationTest
     }
 
     @Test
-    void preservesAllExistingPreferencesAndCredentialsWhileSelectingTheViewDefault() throws Exception
+    void preservesAllExistingPreferencesAndCredentialsWhileAddingNormalDensity() throws Exception
     {
-        Path database = Format35TestDatabase.create(mTemporaryFolder.resolve("format-35.sqlite"));
+        Path database = Format42TestDatabase.create(mTemporaryFolder.resolve("format-42.sqlite"));
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -72,24 +72,22 @@ class Format35To36DatabaseMigrationTest
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);
 
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 35, report.steps().size());
-            assertEquals("format-35-to-36", report.steps().getFirst().id());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 42, report.steps().size());
+            assertEquals("format-42-to-43", report.steps().getFirst().id());
             assertEquals(before.size(), report.steps().getFirst().effects().getFirst().affectedRows());
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
             assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+            assertEquals(fingerprint, SqliteSchemaValidator.fingerprint(connection), "Density changed the database schema");
             Map<Long,Preference> after = preferences(statement);
             assertEquals(before.keySet(), after.keySet());
             for(Map.Entry<Long,Preference> entry: before.entrySet())
             {
                 Preference prior = entry.getValue();
                 Preference current = after.get(entry.getKey());
-                assertEquals(migrateToCurrent(prior.json()), current.json());
-                assertEquals(prior.revision() + 2, current.revision());
+                assertEquals(expectedPreferences(prior.json()), new ObjectMapper().readTree(current.json()));
+                assertEquals(prior.revision() + 1, current.revision());
                 assertTrue(current.updatedAtMs() >= prior.updatedAtMs());
-                boolean activeOnly = new ObjectMapper().readTree(prior.json()).path("presentation")
-                    .path("show_only_active_trunked_channels").booleanValue();
-                assertEquals(activeOnly ? "order_appeared" : "lcn",
-                    WebUserPreferencesCodec.decode(current.json()).presentation().liveChannelSort());
+                assertEquals("normal", WebUserPreferencesCodec.decode(current.json()).presentation().liveRowDensity());
                 assertEquals(new ObjectMapper().readTree(prior.json()).path("presentation")
                     .path("source_name_display").textValue(),
                     WebUserPreferencesCodec.decode(current.json()).presentation().sourceNameDisplay());
@@ -109,20 +107,24 @@ class Format35To36DatabaseMigrationTest
             "preferences_revision=9223372036854775805",
             "preferences_revision=9223372036854775806"))
         {
-            Path database = Format35TestDatabase.create(mTemporaryFolder.resolve(
+            Path database = Format42TestDatabase.create(mTemporaryFolder.resolve(
                 "damaged-" + Math.abs(change.hashCode()) + ".sqlite"));
             try(Connection connection = open(database); Statement statement = connection.createStatement())
             {
                 Map<Long,byte[]> credentials = credentialDigests(statement);
                 String sibling = preferences(statement).get(2L).json();
                 String selected = preferences(statement).get(3L).json();
+                long selectedRevision = preferences(statement).get(3L).revision();
                 statement.executeUpdate("UPDATE web_user SET " + change + " WHERE id=3");
                 DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
                 assertTrue(report.steps().getFirst().effects().stream().anyMatch(effect ->
                     effect.kind() == DatabaseMigrationEffect.Kind.DEFAULT && effect.affectedRows() == 1));
-                assertEquals(change.startsWith("preferences_json=") ? Format43WebUserPreferencesCodec.defaults() :
-                    migrateToCurrent(selected), preferences(statement).get(3L).json());
-                assertEquals(migrateToCurrent(sibling),
+                Preference changed = preferences(statement).get(3L);
+                assertEquals(change.startsWith("preferences_json=") ? new ObjectMapper().readTree(Format43WebUserPreferencesCodec.defaults()) :
+                    expectedPreferences(selected), new ObjectMapper().readTree(changed.json()));
+                assertEquals(change.equals("preferences_revision=9223372036854775805") ? 1 :
+                    change.startsWith("preferences_revision=") ? 2 : selectedRevision + 2, changed.revision());
+                assertEquals(Format43WebUserPreferencesCodec.migrateFromFormat42(sibling),
                     preferences(statement).get(2L).json());
                 for(Map.Entry<Long,byte[]> credential: credentials.entrySet())
                 {
@@ -137,7 +139,7 @@ class Format35To36DatabaseMigrationTest
     @Test
     void rollbackLeavesTheSourceUnchangedAndIndependentCopiesMigrateIdentically() throws Exception
     {
-        Path source = Format35TestDatabase.create(mTemporaryFolder.resolve("source.sqlite"));
+        Path source = Format42TestDatabase.create(mTemporaryFolder.resolve("source.sqlite"));
         Map<Long,Preference> before;
         try(Connection connection = open(source); Statement statement = connection.createStatement())
         {
@@ -152,7 +154,7 @@ class Format35To36DatabaseMigrationTest
             {
                 connection.setAutoCommit(true);
             }
-            assertEquals(35, DatabaseFormatCatalog.inspect(connection).version());
+            assertEquals(42, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(before, preferences(statement));
         }
         byte[] unchangedSource = Files.readAllBytes(source);
@@ -165,9 +167,8 @@ class Format35To36DatabaseMigrationTest
                 for(Map.Entry<Long,Preference> entry: before.entrySet())
                 {
                     Preference current = preferences(statement).get(entry.getKey());
-                    assertEquals(migrateToCurrent(entry.getValue().json()),
-                        current.json());
-                    assertEquals(entry.getValue().revision() + 2, current.revision());
+                    assertEquals(expectedPreferences(entry.getValue().json()), new ObjectMapper().readTree(current.json()));
+                    assertEquals(entry.getValue().revision() + 1, current.revision());
                 }
                 assertEquals(DatabaseFormatCatalog.current().fingerprint(),
                     SqliteSchemaValidator.fingerprint(connection));
@@ -177,34 +178,37 @@ class Format35To36DatabaseMigrationTest
     }
 
     @Test
-    void frozenVersionTenValidatorAcceptsOnlySupportedSortMethods() throws Exception
+    void frozenVersionElevenValidatorRequiresDensityAndKeepsVersionTenStrict() throws Exception
     {
-        String defaults = Format36WebUserPreferencesCodec.defaults();
-        Format36WebUserPreferencesCodec.validate(defaults);
-        for(String sort: List.of("lcn", "frequency", "order_appeared"))
+        String legacy = Format36WebUserPreferencesCodec.defaults();
+        String defaults = Format43WebUserPreferencesCodec.defaults();
+        Format36WebUserPreferencesCodec.validate(legacy);
+        assertThrows(IOException.class, () -> Format36WebUserPreferencesCodec.validate(defaults));
+        assertThrows(IOException.class, () -> Format43WebUserPreferencesCodec.validate(legacy));
+        for(String density: List.of("normal", "dense"))
         {
-            Format36WebUserPreferencesCodec.validate(defaults.replace("order_appeared", sort));
+            Format43WebUserPreferencesCodec.validate(defaults.replace("\"live_row_density\":\"normal\"",
+                "\"live_row_density\":\"" + density + "\""));
         }
         for(String invalid: List.of("\"unknown\"", "null", "true", "5", "[]", "{}"))
         {
-            assertThrows(IOException.class, () -> Format36WebUserPreferencesCodec.validate(
-                defaults.replace("\"order_appeared\"", invalid)));
+            assertThrows(IOException.class, () -> Format43WebUserPreferencesCodec.validate(defaults.replace(
+                "\"live_row_density\":\"normal\"", "\"live_row_density\":" + invalid)));
         }
-        assertThrows(IOException.class, () -> Format36WebUserPreferencesCodec.validate(
-            defaults.replace(",\"live_channel_sort\":\"order_appeared\"", "")));
-        assertThrows(IOException.class, () -> Format36WebUserPreferencesCodec.validate(
-            defaults.replace("\"live_channel_sort\":\"order_appeared\"",
-                "\"live_channel_sort\":\"order_appeared\",\"live_channel_sort\":\"lcn\"")));
+        assertThrows(IOException.class, () -> Format43WebUserPreferencesCodec.validate(defaults.replace(
+            ",\"live_row_density\":\"normal\"", "")));
+        assertThrows(IOException.class, () -> Format43WebUserPreferencesCodec.validate(defaults.replace(
+            "\"live_row_density\":\"normal\"", "\"live_row_density\":\"normal\",\"live_row_density\":\"dense\"")));
     }
 
     @Test
-    void resetsOneCachedLayoutOnlyWhenTheAddedSortExceedsTheUnchangedBound() throws Exception
+    void resetsOneCachedLayoutOnlyWhenTheAddedDensityExceedsTheUnchangedBound() throws Exception
     {
-        Path database = Format35TestDatabase.create(mTemporaryFolder.resolve("full-preferences.sqlite"));
-        String source = fullVersionNineDocument();
-        Format35WebUserPreferencesCodec.validate(source);
+        Path database = Format42TestDatabase.create(mTemporaryFolder.resolve("full-preferences.sqlite"));
+        String source = fullVersionTenDocument();
+        Format36WebUserPreferencesCodec.validate(source);
         assertTrue(source.length() <= WebUserPreferences.MAXIMUM_JSON_BYTES);
-        assertTrue(source.length() + 36 > WebUserPreferences.MAXIMUM_JSON_BYTES);
+        assertTrue(source.length() + 28 > WebUserPreferences.MAXIMUM_JSON_BYTES);
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             try(var update = connection.prepareStatement("UPDATE web_user SET preferences_json=? WHERE id=3"))
@@ -223,7 +227,6 @@ class Format35To36DatabaseMigrationTest
             ObjectNode expected = (ObjectNode)mapper.readTree(source);
             expected.put("version", 11);
             ((ObjectNode)expected.get("presentation")).put("live_row_density", "normal");
-            ((ObjectNode)expected.get("presentation")).put("live_channel_sort", "order_appeared");
             ObjectNode tables = (ObjectNode)expected.get("tables");
             String last = null;
             for(var names = tables.fieldNames(); names.hasNext(); ) last = names.next();
@@ -232,7 +235,7 @@ class Format35To36DatabaseMigrationTest
             assertTrue(preferences(statement).get(3L).json().length() <= WebUserPreferences.MAXIMUM_JSON_BYTES);
             for(Map.Entry<Long,Preference> entry: before.entrySet())
             {
-                if(entry.getKey() != 3L) assertEquals(migrateToCurrent(
+                if(entry.getKey() != 3L) assertEquals(Format43WebUserPreferencesCodec.migrateFromFormat42(
                     entry.getValue().json()), preferences(statement).get(entry.getKey()).json());
                 assertTrue(MessageDigest.isEqual(credentials.get(entry.getKey()),
                     credentialDigests(statement).get(entry.getKey())), "Account or credential changed");
@@ -242,10 +245,18 @@ class Format35To36DatabaseMigrationTest
         }
     }
 
-    private static String fullVersionNineDocument() throws Exception
+    private static ObjectNode expectedPreferences(String source) throws Exception
+    {
+        ObjectNode expected = (ObjectNode)new ObjectMapper().readTree(source);
+        expected.put("version", 11);
+        ((ObjectNode)expected.get("presentation")).put("live_row_density", "normal");
+        return expected;
+    }
+
+    private static String fullVersionTenDocument() throws Exception
     {
         ObjectMapper mapper = new ObjectMapper();
-        ObjectNode document = (ObjectNode)mapper.readTree(Format35WebUserPreferencesCodec.defaults());
+        ObjectNode document = (ObjectNode)mapper.readTree(Format36WebUserPreferencesCodec.defaults());
         ObjectNode tables = (ObjectNode)document.get("tables");
         ArrayNode schema = null;
         ArrayNode order = null;
@@ -275,12 +286,6 @@ class Format35To36DatabaseMigrationTest
             order.set(order.size() - 1, mapper.getNodeFactory().textNode(shortened));
         }
         return document.toString();
-    }
-
-    private static String migrateToCurrent(String json) throws IOException
-    {
-        return Format43WebUserPreferencesCodec.migrateFromFormat42(
-            Format36WebUserPreferencesCodec.migrateFromFormat35(json));
     }
 
     private static Connection open(Path database) throws Exception

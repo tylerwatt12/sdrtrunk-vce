@@ -136,6 +136,10 @@ class DatabaseFormatCatalogTest
                     DatabaseFormatCatalog.requireCurrent(connection).version());
                 assertEquals(DatabaseFormatCatalog.current().fingerprint(),
                     SqliteSchemaValidator.fingerprint(connection));
+                assertEquals("0", scalar(connection, """
+                    SELECT count(*) FROM web_user WHERE json_extract(preferences_json, '$.version')<>11
+                        OR json_extract(preferences_json, '$.presentation.live_row_density') IS NOT 'normal'
+                    """), "Every registered fixture receives the current personal Live density default");
             }
             SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
         }
@@ -306,7 +310,7 @@ class DatabaseFormatCatalogTest
             assertEquals("format-38-to-39", plan.steps().getFirst().id());
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 38, report.steps().size());
-            assertEquals("format-41-to-42", report.steps().getLast().id());
+            assertEquals("format-42-to-43", report.steps().getLast().id());
             assertTrue(report.target().markerPresent());
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
         }
@@ -363,7 +367,7 @@ class DatabaseFormatCatalogTest
     @Test
     void exactMarkerlessCurrentFormatIsAdoptedWithoutChangingItsSchema() throws Exception
     {
-        Path database = Format42TestDatabase.create(mTemporaryFolder.resolve("markerless-current.sqlite"));
+        Path database = Format43TestDatabase.create(mTemporaryFolder.resolve("markerless-current.sqlite"));
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);

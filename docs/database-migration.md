@@ -80,7 +80,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -483,6 +483,20 @@ Formats 38 through 41 retain their exact frozen definitions, and normal startup 
 it. Fresh format 42 and migrated format 42 have the same schema. The added integer payload and background write
 cost are described in the SQLite Activity Database Guidelines.
 
+The format 42-to-43 step upgrades exact version-10 per-user browser preferences to version 11. It adds
+`presentation.live_row_density`, initially `normal` for every existing account. Users can save `normal` or `dense`
+independently of their other Live presentation settings. Each usable preference revision is incremented, while an
+invalid or exhausted revision is rebased without losing usable settings. All other personal choices, table layouts,
+accounts, credentials, receiver configuration, and retained history are preserved. Only malformed or oversized
+preference documents are defaulted for the affected user. If adding the choice exceeds the unchanged storage bound,
+only enough cached table layouts are removed to fit, with their exact count reported. Directly selected format-42
+sources receive the existing bounded component repairs; intermediate format-42 sources do not repeat them.
+
+This semantic-only step leaves every table and index definition unchanged. Formats 42 and 43 share a DDL fingerprint,
+so markerless files require an authoritative global format marker when their retained values cannot distinguish them.
+Version-10 preference validation and defaults remain frozen for older supported formats. Only the bundled adjacent
+Application Migrator applies the upgrade; normal startup validates and never rewrites older preferences or formats.
+
 ## Schema-Change Rule
 
 The optional Managed Recordings catalog is a separate SQLite file with its own adjacent format chain. Its format 2
@@ -493,7 +507,7 @@ counters, and adds no transcript rows. Catalog format 3 adds a constrained `tran
 transcript, marking calls with an existing transcript `complete` and other calls `pending`. Short calls stay pending;
 the background worker applies its configured minimum duration when selecting work. A failed call is retried only by
 an administrator action. Fresh format-3 catalogs use the same status default and index. The main application database
-is independently at format 42; transcript-catalog migrations do not change it. Recognized older catalogs are backed up
+is independently at format 43; transcript-catalog migrations do not change it. Recognized older catalogs are backed up
 and updated in one transaction at the pre-receiver setup boundary, with an optional SQLite-aware recovery snapshot
 before changes. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with
 Managed Recordings unavailable, so optional catalog trouble does not prevent ordinary receiving.

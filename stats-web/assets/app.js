@@ -1,5 +1,5 @@
 import * as routeFoundation from './core/routes.js?v=8';
-import * as preferenceSchema from './core/preference-schema.js?v=5';
+import * as preferenceSchema from './core/preference-schema.js?v=6';
 import { formatSourceName } from './core/source-names.js?v=1';
 import { Controller as UserPreferenceController } from './core/user-preferences.js';
 import * as tableLayouts from './core/table-layout.js';
@@ -442,6 +442,9 @@ function applyUserPreferenceSnapshot(snapshot) {
     sourceNamePresentationRenderer?.();
     audioDock.synchronize();
   }
+  document.querySelectorAll('.channels-live-table').forEach((table) => {
+    table.dataset.rowDensity = preferences.presentation.live_row_density;
+  });
   receiverHealthController.updateIndicator();
   receiverHealthController.updatePage();
 }
@@ -17704,6 +17707,7 @@ function liveChannelsSection(onSelectionChange) {
     wrapperClass: 'table-scroll', tableClass: 'channels-live-table ui-data-table-compact', mobileCards: true,
     layoutMenuHost: titleActions
   });
+  liveTable.querySelector('table').dataset.rowDensity = presentation.live_row_density;
   const host = node('div', 'channels-live');
   host.id = 'live-channel-table-panel';
   host.setAttribute('role', 'tabpanel');
@@ -27398,6 +27402,7 @@ function userPreferenceSummaryCards(preferences) {
       ['Source name display', sourceNameDisplayLabel(preferences.presentation.source_name_display)]
     ])),
     settingsCard('Live presentation', 'Changed from the presentation icon on the Live page.', settingsSummary([
+      ['Row density', preferences.presentation.live_row_density === 'dense' ? 'Dense' : 'Normal'],
       ['Show only active trunked channels', settingsEnabled(preferences.presentation.show_only_active_trunked_channels)],
       ['Sort calls by', ({ lcn: 'LCN', order_appeared: 'Order appeared', frequency: 'Frequency' })[
         liveChannelSortMethod(preferences.presentation)]],
@@ -27726,7 +27731,7 @@ function openStatusIconSettings(returnFocusSelector = null) {
 function openLivePresentationSettings(returnFocusSelector = null) {
   const snapshot = userPreferenceController.snapshot();
   if (!snapshot.loaded) return;
-  const current = snapshot.preferences.presentation;
+  let current = snapshot.preferences.presentation;
   const form = node('form', 'admin-form live-presentation-form');
   const message = node('div', 'admin-form-message');
   message.setAttribute('role', 'status');
@@ -27745,6 +27750,8 @@ function openLivePresentationSettings(returnFocusSelector = null) {
   const callSort = preferenceSelect('live-channel-sort', [
     ['lcn', 'LCN'], ['order_appeared', 'Order appeared'], ['frequency', 'Frequency']
   ], liveChannelSortMethod(current));
+  const rowDensity = preferenceSelect('live-row-density', [['normal', 'Normal'], ['dense', 'Dense']],
+    current.live_row_density);
   const retainLastCall = preferenceCheckbox('retain-last-call-on-idle', 'Retain the last call on idle rows',
     current.retain_last_call_on_idle_rows,
     'Keep the last source, target, alias, talker, encryption algorithm, and key ID visible after a row becomes idle.');
@@ -27773,11 +27780,13 @@ function openLivePresentationSettings(returnFocusSelector = null) {
   rowLimit.required = true;
   rowLimit.value = String(current.live_detail_row_limit);
   const apply = (presentation) => {
+    current = presentation;
     setUiToggle(encryption.input, presentation.show_encryption_details);
     setUiToggle(controlQuality.input, presentation.show_control_decode_quality);
     setUiToggle(voiceQuality.input, presentation.show_voice_decode_quality);
     setUiToggle(activeOnly.input, presentation.show_only_active_trunked_channels);
     callSort.value = liveChannelSortMethod(presentation);
+    rowDensity.value = presentation.live_row_density;
     setUiToggle(retainLastCall.input, presentation.retain_last_call_on_idle_rows);
     setUiToggle(clearIdleQuality.input, presentation.clear_voice_quality_when_idle);
     syncIdleRowOptions();
@@ -27796,6 +27805,7 @@ function openLivePresentationSettings(returnFocusSelector = null) {
   footer.append(message, actions);
   const presentationCard = settingsCard('Live details',
     'Choose how decoded activity is shown on the Live page.',
+    formField('Row density', rowDensity),
     activeOnly.control, formField('Sort calls by', callSort,
       'Active-only view defaults to Order appeared; showing idle rows defaults to LCN.'),
     node('p', 'ui-field-detail', 'Turn off “Show only active trunked channels” to use idle-row options.'),
@@ -27820,11 +27830,14 @@ function openLivePresentationSettings(returnFocusSelector = null) {
       live_detail_row_limit: Number(rowLimit.value),
       show_only_active_trunked_channels: activeOnly.input.checked,
       live_channel_sort: callSort.value,
+      live_row_density: rowDensity.value,
       retain_last_call_on_idle_rows: !activeOnly.input.checked && retainLastCall.input.checked,
       clear_voice_quality_when_idle: !activeOnly.input.checked && clearIdleQuality.input.checked
     };
     const controls = [activeOnly.input, retainLastCall.input, clearIdleQuality.input, encryption.input,
-      controlQuality.input, voiceQuality.input, callSort, qualityMode, rowLimit, save];
+      controlQuality.input, voiceQuality.input, callSort, rowDensity, qualityMode, rowLimit, save];
+    const densityOnly = Object.entries(submitted).every(([key, value]) =>
+      key === 'live_row_density' || value === current[key]);
     controls.forEach((control) => { control.disabled = true; });
     save.disabled = true;
     modal.setBusy(true);
@@ -27835,7 +27848,7 @@ function openLivePresentationSettings(returnFocusSelector = null) {
       }, false);
       modal.setDirty(false);
       modal.setBusy(false);
-      if (modal.close()) void render();
+      if (modal.close() && !densityOnly) void render();
     } catch (error) {
       if (error?.code === 'preference_session_changed') {
         modal.setDirty(false);

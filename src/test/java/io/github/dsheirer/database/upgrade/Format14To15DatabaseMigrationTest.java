@@ -100,7 +100,7 @@ class Format14To15DatabaseMigrationTest
             {
                 DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
                 assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
-                assertEquals("format-41-to-42", report.steps().getLast().id());
+                assertEquals("format-42-to-43", report.steps().getLast().id());
                 connection.commit();
             }
             catch(Exception exception)
@@ -822,6 +822,8 @@ class Format14To15DatabaseMigrationTest
             DatabaseFormatCatalog.stampForMigration(connection, 41);
             new Format41To42DatabaseMigration().migrateAndReport(connection, false);
             DatabaseFormatCatalog.stampForMigration(connection, 42);
+            new Format42To43DatabaseMigration().migrateAndReport(connection, false);
+            DatabaseFormatCatalog.stampForMigration(connection, 43);
             connection.commit();
 
             assertTrue(effect(effects, DatabaseMigrationEffect.Kind.DEFAULT,
@@ -2587,11 +2589,13 @@ class Format14To15DatabaseMigrationTest
         {
             Preference prior = entry.getValue();
             Preference current = after.get(entry.getKey());
-            assertEquals(Format36WebUserPreferencesCodec.migrateFromFormat35(Format35WebUserPreferencesCodec.migrateFromFormat34(
-                Format23WebUserPreferencesCodec.migrateToFormat31(
-                    Format22WebUserPreferencesCodec.migrateToFormat23(
-                        Format14WebUserPreferencesCodec.migrate(prior.json()))))), current.json());
-            assertEquals(prior.revision() + 5, current.revision());
+            assertEquals(Format43WebUserPreferencesCodec.migrateFromFormat42(
+                Format36WebUserPreferencesCodec.migrateFromFormat35(
+                    Format35WebUserPreferencesCodec.migrateFromFormat34(
+                        Format23WebUserPreferencesCodec.migrateToFormat31(
+                            Format22WebUserPreferencesCodec.migrateToFormat23(
+                                Format14WebUserPreferencesCodec.migrate(prior.json())))))), current.json());
+            assertEquals(prior.revision() + 6, current.revision());
             assertTrue(current.updatedAtMs() >= prior.updatedAtMs());
         }
     }

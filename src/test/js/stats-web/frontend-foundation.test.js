@@ -1710,7 +1710,7 @@ async function main() {
 
   const decodedDefaults = preferenceSchema.validate(JSON.parse(JSON.stringify(preferenceSchema.defaults)));
   assert.deepEqual(decodedDefaults, {
-    version: 10,
+    version: 11,
     appearance: { theme: 'light', hue: null },
     page_titles: { prepend_playing_call: false },
     playback: {
@@ -1721,7 +1721,8 @@ async function main() {
       source_name_display: 'talker_alias',
       show_encryption_details: true, show_control_decode_quality: true,
       show_voice_decode_quality: true, decode_quality_display_mode: 'percentage', live_detail_row_limit: 200,
-      show_only_active_trunked_channels: true, live_channel_sort: 'order_appeared', retain_last_call_on_idle_rows: false,
+      show_only_active_trunked_channels: true, live_channel_sort: 'order_appeared', live_row_density: 'normal',
+      retain_last_call_on_idle_rows: false,
       clear_voice_quality_when_idle: false
     },
     tuner: {
@@ -1768,6 +1769,16 @@ async function main() {
     const invalidSort = JSON.parse(JSON.stringify(decodedDefaults));
     invalidSort.presentation.live_channel_sort = sort;
     assert.throws(() => preferenceSchema.validate(invalidSort), /presentation.live_channel_sort/);
+  }
+  for (const density of ['normal', 'dense']) {
+    const profile = structuredClone(decodedDefaults);
+    profile.presentation.live_row_density = density;
+    assert.equal(preferenceSchema.validate(profile).presentation.live_row_density, density);
+  }
+  for (const density of ['compact', '', null, 1, undefined]) {
+    const profile = structuredClone(decodedDefaults);
+    profile.presentation.live_row_density = density;
+    assert.throws(() => preferenceSchema.validate(profile), /presentation.live_row_density/);
   }
   const upgradedAnonymousTables = vm.runInNewContext(
     `((value) => ${functionBinding(appSource, 'upgradeAnonymousTableLayouts')})({ sample: {

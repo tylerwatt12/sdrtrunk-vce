@@ -36,7 +36,7 @@ import java.util.Map;
 public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
-    public static final int CURRENT_VERSION = 42;
+    public static final int CURRENT_VERSION = 43;
     static final String RETIRED_TRUNKED_IDENTITY_BOUNDARY_KEY = "trunked_identity_metrics_started_at_ms";
     static final List<String> RETIRED_SUBSYSTEM_VERSION_KEYS = List.of(
         "alias_schema_version", "configuration_schema_version", "settings_schema_version", "icon_schema_version",
@@ -101,6 +101,7 @@ public final class DatabaseFormatCatalog
     private static final String FORMAT_40_FINGERPRINT = "c318b74d848a9beccb82600922e79fd6570c60e2d25762857194aa004a9c0f3c";
     private static final String FORMAT_41_FINGERPRINT = "5c979781c76d50bec5bcacfe972497b41e57e29a41f2d94672869c22dc72961e";
     private static final String FORMAT_42_FINGERPRINT = "7ea75507b7840b9f7f42a05f7d70062360e8cc74cd014565c80b426b6d9f6d0b";
+    private static final String FORMAT_43_FINGERPRINT = FORMAT_42_FINGERPRINT;
 
     private static final FormatDescriptor FORMAT_1 = descriptor(1, "alpha8-shared",
         "Shared Alpha 8, Alpha 9, and Alpha 10 database format", FORMAT_1_FINGERPRINT,
@@ -500,12 +501,22 @@ public final class DatabaseFormatCatalog
             "Preserve every retained row, identity relationship, and allocator unchanged",
             "Preserve every administrator-owned configuration, credential, and personal setting unchanged"));
 
+    private static final FormatDescriptor FORMAT_43 = new FormatDescriptor(43, "personal-live-row-density-v1",
+        "Personal Live row density", FORMAT_43_FINGERPRINT, Map.of(),
+        List.of("main format 43"),
+        "src/test/java/io/github/dsheirer/database/upgrade/Format43TestDatabase.java", List.of(
+            "Preserve usable personal preferences and add Normal Live row density with an incremented preference revision",
+            "Rebase unusable or exhausted preference revisions while preserving usable personal settings",
+            "Default only malformed or oversized preference documents and remove only necessary cached layouts at the storage bound",
+            "Preserve every administrator setting, credential, retained row, identity relationship, and allocator",
+            "Repair directly selected format-42 components with the existing bounded recovery policy"));
+
     private static final List<FormatDescriptor> FORMATS =
         List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7, FORMAT_8, FORMAT_9,
             FORMAT_10, FORMAT_11, FORMAT_12, FORMAT_13, FORMAT_14, FORMAT_15, FORMAT_16, FORMAT_17, FORMAT_18,
             FORMAT_19, FORMAT_20, FORMAT_21, FORMAT_22, FORMAT_23, FORMAT_24, FORMAT_25, FORMAT_26, FORMAT_27,
             FORMAT_28, FORMAT_29, FORMAT_30, FORMAT_31, FORMAT_32, FORMAT_33, FORMAT_34, FORMAT_35, FORMAT_36,
-            FORMAT_37, FORMAT_38, FORMAT_39, FORMAT_40, FORMAT_41, FORMAT_42);
+            FORMAT_37, FORMAT_38, FORMAT_39, FORMAT_40, FORMAT_41, FORMAT_42, FORMAT_43);
 
     private static final Map<Integer,FormatDescriptor> BY_VERSION = FORMATS.stream().collect(
         java.util.stream.Collectors.toUnmodifiableMap(FormatDescriptor::version, descriptor -> descriptor));
@@ -686,7 +697,7 @@ public final class DatabaseFormatCatalog
     /** Current catalog descriptor. */
     public static FormatDescriptor current()
     {
-        return FORMAT_42;
+        return FORMAT_43;
     }
 
     /** Ordered manifest used by completeness tests and migration UX. */
@@ -979,6 +990,7 @@ public final class DatabaseFormatCatalog
             case 31, 32, 33, 34 -> 8;
             case 35 -> 9;
             case 36, 37, 38, 39, 40, 41, 42 -> 10;
+            case 43 -> 11;
             default -> throw new IllegalArgumentException("No web preference version for database format " +
                 descriptor.version());
         };

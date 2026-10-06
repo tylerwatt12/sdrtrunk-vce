@@ -205,7 +205,7 @@ final class CurrentDatabaseAdministrativeRepair
     private static int preferenceDocumentVersion(Connection connection) throws SQLException
     {
         int databaseVersion = DatabaseFormatCatalog.inspectForMigration(connection).version();
-        return databaseVersion <= 30 ? 7 : databaseVersion <= 34 ? 8 : databaseVersion == 35 ? 9 :
+        return databaseVersion <= 30 ? 7 : databaseVersion <= 34 ? 8 : databaseVersion == 35 ? 9 : databaseVersion <= 42 ? 10 :
             WebUserPreferences.CURRENT_VERSION;
     }
 
@@ -703,6 +703,7 @@ final class CurrentDatabaseAdministrativeRepair
                 case 7 -> Format23WebUserPreferencesCodec.defaults();
                 case 8 -> Format31WebUserPreferencesCodec.defaults();
                 case 9 -> Format35WebUserPreferencesCodec.defaults();
+                case 10 -> Format36WebUserPreferencesCodec.defaults();
                 default -> WebUserPreferencesCodec.encode(WebUserPreferences.defaults());
             };
         }

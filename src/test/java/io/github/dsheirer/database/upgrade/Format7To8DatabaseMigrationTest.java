@@ -63,11 +63,12 @@ class Format7To8DatabaseMigrationTest
             assertEquals("format-7-to-8", report.steps().getFirst().id());
             assertEquals("3", scalar(connection, """
                 SELECT COUNT(*) FROM web_user
-                WHERE json_extract(preferences_json, '$.version')=10
+                WHERE json_extract(preferences_json, '$.version')=11
+                  AND json_extract(preferences_json, '$.presentation.live_row_density')='normal'
                   AND json_type(preferences_json, '$.health_alerts.disabled_codes')='array'
                   AND json_array_length(json_extract(preferences_json,
                       '$.health_alerts.disabled_codes'))=0
-                  AND preferences_revision=10
+                  AND preferences_revision=11
                 """));
             assertEquals(existingPreferencesBefore, existingPreferenceDigest(connection));
             assertEquals(securityBefore.replace(":operator:ADMIN:0:", ":operator:USER:0:"),
