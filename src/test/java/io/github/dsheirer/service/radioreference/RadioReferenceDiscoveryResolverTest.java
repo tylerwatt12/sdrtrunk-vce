@@ -190,6 +190,100 @@ class RadioReferenceDiscoveryResolverTest
     }
 
     @Test
+    void missingGlobalP25IndexUsesTheSelectedStateWithoutWeakeningIdentityChecks() throws Exception
+    {
+        FakeGateway gateway = new FakeGateway();
+        gateway.rows = List.of(row(2001, FREQUENCY));
+        gateway.systems.put(2001, p25(2001, 3001, "BEE00", "49F", 2, 12, FREQUENCY));
+        try(RadioReferenceDirectoryService directory = directory(gateway, Duration.ofSeconds(1)))
+        {
+            directory.login("test", "cleared-password".toCharArray());
+            RadioReferenceDiscoveryResolver resolver = new RadioReferenceDiscoveryResolver(directory);
+            assertEquals("no_match", resolver.resolve(null, P25).state());
+            assertEquals(0, gateway.searches.get());
+            assertTrue(resolver.resolve(10, P25).matched());
+            assertEquals(1, gateway.searches.get());
+            gateway.systems.put(2001, p25(2001, 3001, "BEE01", "49F", 2, 12, FREQUENCY));
+            assertEquals("no_match", resolver.resolve(10, P25).state());
+            gateway.systems.put(2001, p25(2001, 3001, "BEE00", "49F", 1, 12, FREQUENCY));
+            assertEquals("no_match", resolver.resolve(10, P25).state());
+            gateway.systems.put(2001, p25(2001, 3001, "BEE00", "49F", 2, 13, FREQUENCY));
+            assertEquals("no_match", resolver.resolve(10, P25).state());
+            gateway.systems.put(2001, p25(2001, 3001, "BEE00", "49F", 2, 12, FREQUENCY + 25_000));
+            assertEquals("no_match", resolver.resolve(10, P25).state());
+        }
+    }
+
+    @Test
+    void incompleteGlobalSiteIndexUsesTheRegionButPreservesAmbiguity() throws Exception
+    {
+        FakeGateway gateway = new FakeGateway();
+        gateway.p25Candidates = List.of(catalog(2000));
+        gateway.systems.put(2000, p25(2000, 3000, "BEE00", "49F", 2, 13, FREQUENCY));
+        gateway.rows = List.of(row(2001, FREQUENCY));
+        gateway.systems.put(2001, p25(2001, 3001, "BEE00", "49F", 2, 12, FREQUENCY));
+        try(RadioReferenceDirectoryService directory = directory(gateway, Duration.ofSeconds(1)))
+        {
+            directory.login("test", "cleared-password".toCharArray());
+            RadioReferenceDiscoveryResolver resolver = new RadioReferenceDiscoveryResolver(directory);
+            assertTrue(resolver.resolve(10, P25).matched());
+            assertEquals(List.of(2000, 2001), gateway.detailIds);
+            gateway.rows = List.of(row(2001, FREQUENCY), row(2002, FREQUENCY));
+            gateway.systems.put(2002, p25(2002, 3002, "BEE00", "49F", 2, 12, FREQUENCY));
+            assertEquals("ambiguous", resolver.resolve(10, P25).state());
+            gateway.p25Candidates = List.of(catalog(2001), catalog(2002));
+            int previousSearches = gateway.searches.get();
+            assertEquals("ambiguous", resolver.resolve(10, P25).state());
+            assertEquals(previousSearches, gateway.searches.get(), "a region must not hide a verified global ambiguity");
+        }
+    }
+
+    @Test
+    void failedOrIncompleteLookupNeverBecomesNoMatchOrARegionalFallback() throws Exception
+    {
+        FakeGateway gateway = new FakeGateway();
+        gateway.rows = List.of(row(2001, FREQUENCY));
+        gateway.systems.put(2001, p25(2001, 3001, "BEE00", "49F", 2, 12, FREQUENCY));
+        try(RadioReferenceDirectoryService directory = directory(gateway, Duration.ofSeconds(1)))
+        {
+            directory.login("test", "cleared-password".toCharArray());
+            RadioReferenceDiscoveryResolver resolver = new RadioReferenceDiscoveryResolver(directory);
+            gateway.failure = RadioReferenceGatewayException.Kind.HTTP_ERROR;
+            assertEquals("unavailable", resolver.resolve(10, P25).state());
+            assertEquals(0, gateway.searches.get());
+            gateway.failure = null;
+            gateway.p25Candidates = null;
+            assertEquals("unavailable", resolver.resolve(10, P25).state());
+            assertEquals(0, gateway.searches.get());
+            gateway.p25Candidates = List.of();
+            gateway.frequencyFailure = RadioReferenceGatewayException.Kind.TIMEOUT;
+            assertEquals("unavailable", resolver.resolve(10, P25).state());
+            gateway.frequencyFailure = null;
+            gateway.rows = null;
+            assertEquals("unavailable", resolver.resolve(10, P25).state());
+            gateway.p25Candidates = List.of(catalog(2001));
+            gateway.nullSites = true;
+            assertEquals("unavailable", resolver.resolve(10, P25).state());
+        }
+    }
+
+    @Test
+    void emptyGlobalP25FallbackStillSharesOneTotalDeadline() throws Exception
+    {
+        FakeGateway gateway = new FakeGateway();
+        gateway.rows = List.of(row(2001, FREQUENCY));
+        gateway.systems.put(2001, p25(2001, 3001, "BEE00", "49F", 2, 12, FREQUENCY));
+        gateway.delayMillis = 100;
+        try(RadioReferenceDirectoryService directory = directory(gateway, Duration.ofSeconds(1)))
+        {
+            directory.login("test", "cleared-password".toCharArray());
+            assertEquals(RadioReferenceDirectoryException.Code.TIMEOUT,
+                assertThrows(RadioReferenceDirectoryException.class, () -> directory.p25DiscoverySystems(
+                    0x49F, FREQUENCY, 10, system -> true, candidate -> true, Duration.ofMillis(150))).code());
+        }
+    }
+
+    @Test
     void sharedP25SystemIdAsksForStateOnlyWhenGlobalCandidatesExceedTheBound() throws Exception
     {
         FakeGateway gateway = new FakeGateway();
@@ -391,6 +485,8 @@ class RadioReferenceDiscoveryResolverTest
         volatile long delayMillis;
         volatile long siteDelayMillis;
         volatile RadioReferenceGatewayException.Kind failure;
+        volatile RadioReferenceGatewayException.Kind frequencyFailure;
+        volatile boolean nullSites;
         @Override public Account account() { return new Account("test", expiration); }
         @Override public List<Country> countries() { return List.of(); }
         @Override public CountryDirectory country(int id) { return null; }
@@ -401,6 +497,7 @@ class RadioReferenceDiscoveryResolverTest
         {
             searches.incrementAndGet();
             if(failure != null) throw new RadioReferenceGatewayException(failure);
+            if(frequencyFailure != null) throw new RadioReferenceGatewayException(frequencyFailure);
             try { if(delayMillis > 0) Thread.sleep(delayMillis); }
             catch(InterruptedException exception)
             {
@@ -430,6 +527,7 @@ class RadioReferenceDiscoveryResolverTest
         @Override public List<TrunkedSiteDetails> trunkedSiteDetails(int id) throws RadioReferenceGatewayException
         {
             siteIds.add(id);
+            if(nullSites) return null;
             try { if(siteDelayMillis > 0) Thread.sleep(siteDelayMillis); }
             catch(InterruptedException exception)
             {

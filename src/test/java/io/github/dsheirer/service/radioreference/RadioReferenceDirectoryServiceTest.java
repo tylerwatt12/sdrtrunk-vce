@@ -575,6 +575,117 @@ class RadioReferenceDirectoryServiceTest
     }
 
     @Test
+    void regionsRemainAvailableWhenTheDetailWorkerAndItsQueueAreFull() throws Exception
+    {
+        FakeGateway gateway = populatedGateway();
+        gateway.blockSites(false);
+        try(RadioReferenceDirectoryService service = new RadioReferenceDirectoryService(new FakeFactory(gateway),
+            1, 1, Duration.ofMillis(250), Duration.ofMillis(100), CLOCK))
+        {
+            service.login("user", "secret".toCharArray());
+            ExecutorService callers = Executors.newFixedThreadPool(2);
+            try
+            {
+                Future<?> active = callers.submit(() -> sites(service));
+                assertTrue(gateway.sitesEntered.await(1, TimeUnit.SECONDS));
+                Future<?> waiting = callers.submit(() -> sites(service));
+                waitFor(() -> service.runtimeStatus().waitingRequests() == 1);
+                assertEquals(Code.BUSY, assertThrows(RadioReferenceDirectoryException.class,
+                    () -> service.allTrunkedSites(2001)).code());
+                assertTimeoutPreemptively(Duration.ofMillis(500), () -> {
+                    assertEquals(2, service.states(1, "", 10).items().size());
+                    assertFalse(service.countries("", 10).items().isEmpty());
+                });
+                assertEquals(1, service.runtimeStatus().activeRequests());
+                gateway.releaseSites.countDown();
+                active.get(1, TimeUnit.SECONDS);
+                waiting.get(1, TimeUnit.SECONDS);
+            }
+            finally
+            {
+                gateway.releaseSites.countDown();
+                callers.shutdownNow();
+            }
+        }
+    }
+
+    @Test
+    void replacingTheSessionPurgesOldQueuedDetailsWhileAnUncooperativeCallRemainsBounded() throws Exception
+    {
+        FakeGateway gateway = populatedGateway();
+        gateway.blockSites(true);
+        try(RadioReferenceDirectoryService service = new RadioReferenceDirectoryService(new FakeFactory(gateway),
+            1, 1, Duration.ofSeconds(2), Duration.ofMillis(100), CLOCK))
+        {
+            service.login("user", "secret".toCharArray());
+            ExecutorService caller = Executors.newFixedThreadPool(3);
+            try
+            {
+                java.util.concurrent.Callable<Code> oldRequest = () -> {
+                    try { service.allTrunkedSites(2001); return null; }
+                    catch(RadioReferenceDirectoryException exception) { return exception.code(); }
+                };
+                Future<Code> result = caller.submit(oldRequest);
+                assertTrue(gateway.sitesEntered.await(1, TimeUnit.SECONDS));
+                Future<Code> queued = caller.submit(oldRequest);
+                waitFor(() -> service.runtimeStatus().waitingRequests() == 1);
+                assertTimeoutPreemptively(Duration.ofMillis(500), () ->
+                    assertEquals(AccountState.VALID_PREMIUM, service.login("replacement", "secret".toCharArray()).state()));
+                assertEquals(Code.NOT_AUTHENTICATED, result.get(1, TimeUnit.SECONDS));
+                assertEquals(Code.NOT_AUTHENTICATED, queued.get(1, TimeUnit.SECONDS));
+                assertEquals(0, service.runtimeStatus().waitingRequests());
+                assertEquals(1, service.runtimeStatus().activeRequests());
+                assertEquals(1, gateway.detailSiteCalls.get(), "the old queued request must never reach its gateway");
+                Future<?> replacement = caller.submit(() -> service.allTrunkedSites(2001));
+                waitFor(() -> service.runtimeStatus().waitingRequests() == 1);
+                gateway.releaseSites.countDown();
+                replacement.get(1, TimeUnit.SECONDS);
+                assertEquals(2, gateway.detailSiteCalls.get());
+                assertEquals(2, service.states(1, "", 10).items().size());
+            }
+            finally
+            {
+                gateway.releaseSites.countDown();
+                caller.shutdownNow();
+            }
+        }
+    }
+
+    @Test
+    void shutdownHasOneTotalWaitForBothUncooperativeRemoteWorkers() throws Exception
+    {
+        FakeGateway gateway = populatedGateway();
+        gateway.blockCountries(true);
+        gateway.blockSites(true);
+        RadioReferenceDirectoryService service = new RadioReferenceDirectoryService(new FakeFactory(gateway),
+            1, 1, Duration.ofSeconds(5), Duration.ofMillis(75), CLOCK);
+        ExecutorService callers = Executors.newFixedThreadPool(2);
+        try
+        {
+            service.login("user", "secret".toCharArray());
+            Future<?> regions = callers.submit(() -> countries(service));
+            Future<?> details = callers.submit(() -> sites(service));
+            assertTrue(gateway.countriesEntered.await(1, TimeUnit.SECONDS));
+            assertTrue(gateway.sitesEntered.await(1, TimeUnit.SECONDS));
+            assertEquals(2, service.runtimeStatus().activeRequests());
+            assertTimeoutPreemptively(Duration.ofMillis(400), service::close);
+            regions.get(500, TimeUnit.MILLISECONDS);
+            details.get(500, TimeUnit.MILLISECONDS);
+            assertFalse(service.runtimeStatus().remoteWorkerTerminated());
+            gateway.releaseCountries.countDown();
+            gateway.releaseSites.countDown();
+            waitFor(() -> service.runtimeStatus().remoteWorkerTerminated());
+        }
+        finally
+        {
+            gateway.releaseCountries.countDown();
+            gateway.releaseSites.countDown();
+            service.close();
+            callers.shutdownNow();
+        }
+    }
+
+    @Test
     void rejectsExcessWaitingRequestsWithoutStartingMoreRemoteWork() throws Exception
     {
         FakeGateway gateway = populatedGateway();
@@ -696,6 +807,16 @@ class RadioReferenceDirectoryServiceTest
         }
     }
 
+    private static void sites(RadioReferenceDirectoryService service)
+    {
+        try { service.allTrunkedSites(2001); }
+        catch(RadioReferenceDirectoryException exception)
+        {
+            if(exception.code() != Code.CLOSED && exception.code() != Code.NOT_AUTHENTICATED &&
+                exception.code() != Code.INTERRUPTED) throw new AssertionError(exception);
+        }
+    }
+
     private static RadioReferenceDirectoryService service(FakeFactory factory)
     {
         return new RadioReferenceDirectoryService(factory, 1, 4, Duration.ofSeconds(2),
@@ -801,13 +922,18 @@ class RadioReferenceDirectoryServiceTest
         private volatile boolean closed;
         private volatile boolean blockCountries;
         private volatile boolean ignoreCountryInterrupt;
+        private volatile boolean blockSites;
+        private volatile boolean ignoreSiteInterrupt;
         private final AtomicInteger stateCalls = new AtomicInteger();
         private final AtomicInteger countyCalls = new AtomicInteger();
         private final AtomicInteger modeCalls = new AtomicInteger();
         private final AtomicInteger siteCalls = new AtomicInteger();
+        private final AtomicInteger detailSiteCalls = new AtomicInteger();
         private final AtomicInteger categoryCalls = new AtomicInteger();
         private CountDownLatch countriesEntered = new CountDownLatch(1);
         private CountDownLatch releaseCountries = new CountDownLatch(0);
+        private CountDownLatch sitesEntered = new CountDownLatch(1);
+        private CountDownLatch releaseSites = new CountDownLatch(0);
 
         @Override
         public Account account() throws RadioReferenceGatewayException
@@ -929,9 +1055,34 @@ class RadioReferenceDirectoryServiceTest
         }
 
         @Override
-        public List<TrunkedSiteDetails> trunkedSiteDetails(int systemId)
+        public List<TrunkedSiteDetails> trunkedSiteDetails(int systemId) throws RadioReferenceGatewayException
         {
+            detailSiteCalls.incrementAndGet();
+            if(blockSites)
+            {
+                sitesEntered.countDown();
+                while(releaseSites.getCount() > 0)
+                {
+                    try { releaseSites.await(10, TimeUnit.MILLISECONDS); }
+                    catch(InterruptedException exception)
+                    {
+                        if(!ignoreSiteInterrupt)
+                        {
+                            Thread.currentThread().interrupt();
+                            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INTERRUPTED);
+                        }
+                    }
+                }
+            }
             return siteDetails;
+        }
+
+        private void blockSites(boolean ignoreInterrupt)
+        {
+            blockSites = true;
+            ignoreSiteInterrupt = ignoreInterrupt;
+            sitesEntered = new CountDownLatch(1);
+            releaseSites = new CountDownLatch(1);
         }
 
         @Override

@@ -349,7 +349,7 @@ for (const [theme, viewport] of [['light', { width: 1365, height: 900 }],
     await install(page, state);
     await page.evaluate(() => window.openDiscovery());
     await expect(wizard(page).getByLabel('RadioReference country')).toBeVisible();
-    await expect(wizard(page)).toContainText('P25 systems can match by on-air identity.');
+    await expect(wizard(page)).toContainText('Choose a country to look up nearby systems.');
     await wizard(page).getByLabel('RadioReference country').selectOption('1');
     await expect(wizard(page).getByLabel('RadioReference state or province')).toBeEnabled();
     await expect(wizard(page).getByLabel('RadioReference state or province')).toHaveValue('');

@@ -51,7 +51,8 @@ public final class RadioReferenceDiscoveryResolver
         {
             return match(identity, identity.p25() ?
                 mDirectory.p25DiscoverySystems(identity.system(), identity.frequencyHz(), stateId,
-                    system -> protocolMatches(identity, system) && networkMatches(identity, system)) :
+                    system -> protocolMatches(identity, system) && networkMatches(identity, system),
+                    candidate -> verifiesSite(identity, candidate)) :
                 mDirectory.discoverySystems(stateId, identity.frequencyHz(),
                     system -> protocolMatches(identity, system) && networkMatches(identity, system)));
         }
@@ -72,6 +73,15 @@ public final class RadioReferenceDiscoveryResolver
                     "RadioReference could not be reached. Review the decoded identity and retry later.");
             };
         }
+    }
+
+    private static boolean verifiesSite(Identity identity, DiscoverySystem candidate)
+    {
+        return switch(match(identity, List.of(candidate)).state())
+        {
+            case "matched", "ambiguous" -> true;
+            default -> false;
+        };
     }
 
     /** Pure matcher for deterministic tests and already loaded, bounded directory snapshots. */

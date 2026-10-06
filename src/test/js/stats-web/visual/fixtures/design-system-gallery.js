@@ -547,7 +547,6 @@ if (view === 'spectrum-search') {
   const workspace = example.querySelector('.spectrum-search-workspace');
   const rows = [...workspace.querySelectorAll('tbody tr')];
   const groups = [...workspace.querySelectorAll('.spectrum-search-system-group')];
-  const query = workspace.querySelector('[data-visual-search-query]');
   const count = workspace.querySelector('[data-visual-search-count]');
   const review = workspace.querySelector('[data-visual-search-review]');
   const rowCheck = row => row.querySelector('.spectrum-search-channel-check');
@@ -578,14 +577,6 @@ if (view === 'spectrum-search') {
   workspace.querySelector('[data-visual-search-select-all]').addEventListener('click', () => {
     rows.forEach(row => { if (!rowCheck(row).disabled) rowCheck(row).checked = true; });
     updateSelection();
-  });
-  query.addEventListener('input', () => {
-    const value = query.value.trim().toLowerCase();
-    rows.forEach(row => {
-      const system = row.closest('.spectrum-search-system-group').querySelector('.spectrum-search-system-identity').textContent;
-      row.hidden = !`${system} ${row.textContent} ${rowCheck(row).getAttribute('aria-label')}`.toLowerCase().includes(value);
-    });
-    groups.forEach(group => { group.hidden = [...group.querySelectorAll('tbody tr')].every(row => row.hidden); });
   });
   updateSelection();
 

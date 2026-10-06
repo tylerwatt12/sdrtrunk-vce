@@ -1760,7 +1760,7 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 .spectrum-search-results-toolbar {
   min-width: 0;
   display: grid;
-  grid-template-columns: auto minmax(220px, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
   gap: var(--space-3);
 }
@@ -1770,11 +1770,6 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   display: grid;
   align-self: center;
   gap: var(--space-1);
-}
-
-.spectrum-search-results-filter {
-  min-width: 0;
-  width: 100%;
 }
 
 .spectrum-search-system-list,
@@ -2077,10 +2072,6 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   .spectrum-search-results-toolbar {
     grid-template-columns: minmax(0, 1fr);
     justify-items: start;
-  }
-
-  .spectrum-search-results-filter {
-    grid-row: 2;
   }
 
   .spectrum-search-review-channel {

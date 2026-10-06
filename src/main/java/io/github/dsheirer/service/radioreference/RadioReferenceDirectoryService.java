@@ -45,7 +45,8 @@ import java.util.function.Predicate;
 /**
  * Bounded session and directory service for RadioReference.
  *
- * <p>Every remote operation runs on a dedicated, bounded executor and has one total caller deadline that includes
+ * <p>Short directory operations and slow detail operations use separate bounded executors, so a large system
+ * lookup cannot prevent region selection. Every operation has one total caller deadline that includes
  * queue time.  A timeout cancels the future and interrupts the worker, but cannot force an upstream library call that
  * ignores interruption to stop.  {@link #runtimeStatus()} exposes whether remote work remains.  Results are
  * request-local and are not cached or written to a database.</p>
@@ -77,6 +78,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     private final Object mSessionLock = new Object();
     private final RadioReferenceGatewayFactory mGatewayFactory;
     private final ThreadPoolExecutor mExecutor;
+    private final ThreadPoolExecutor mDetailExecutor;
     private final Set<Future<?>> mRequests = ConcurrentHashMap.newKeySet();
     private final int mMaximumRemoteConcurrency;
     private final int mMaximumWaitingRequests;
@@ -116,6 +118,9 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
             return thread;
         };
         mExecutor = new ThreadPoolExecutor(mMaximumRemoteConcurrency, mMaximumRemoteConcurrency, 0,
+            TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(mMaximumWaitingRequests), threadFactory,
+            new ThreadPoolExecutor.AbortPolicy());
+        mDetailExecutor = new ThreadPoolExecutor(mMaximumRemoteConcurrency, mMaximumRemoteConcurrency, 0,
             TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(mMaximumWaitingRequests), threadFactory,
             new ThreadPoolExecutor.AbortPolicy());
     }
@@ -265,8 +270,10 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
 
     public RuntimeStatus runtimeStatus()
     {
-        return new RuntimeStatus(mExecutor.getActiveCount(), mExecutor.getQueue().size(),
-            mMaximumRemoteConcurrency, mMaximumWaitingRequests, mClosed, mExecutor.isTerminated());
+        return new RuntimeStatus(mExecutor.getActiveCount() + mDetailExecutor.getActiveCount(),
+            mExecutor.getQueue().size() + mDetailExecutor.getQueue().size(),
+            mMaximumRemoteConcurrency * 2, mMaximumWaitingRequests * 2, mClosed,
+            mExecutor.isTerminated() && mDetailExecutor.isTerminated());
     }
 
     public void logout()
@@ -578,20 +585,37 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         {
             throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.INVALID_REQUEST);
         }
-        return invokePremium(gateway -> frequencyDiscoverySystems(gateway, stateId, frequencyHz, identityFilter),
+        return invokePremiumDetail(gateway -> frequencyDiscoverySystems(gateway, stateId, frequencyHz, identityFilter),
             deadlineNanos);
     }
 
-    /** Global P25 System ID lookup uses a state-frequency fallback only when the candidate set exceeds its bound. */
+    /** Global P25 System ID lookup can use a selected state-frequency fallback inside the same total deadline. */
     public List<DiscoverySystem> p25DiscoverySystems(int systemId, long frequencyHz, Integer fallbackStateId,
         Predicate<RadioReferenceGateway.TrunkedSystemDetails> identityFilter) throws RadioReferenceDirectoryException
     {
-        return p25DiscoverySystems(systemId, frequencyHz, fallbackStateId, identityFilter, DEFAULT_DETAIL_REQUEST_DEADLINE);
+        return p25DiscoverySystems(systemId, frequencyHz, fallbackStateId, identityFilter, candidate -> true,
+            DEFAULT_DETAIL_REQUEST_DEADLINE);
+    }
+
+    /** A fallback is needed only when no complete global candidate verifies the on-air site and frequency. */
+    public List<DiscoverySystem> p25DiscoverySystems(int systemId, long frequencyHz, Integer fallbackStateId,
+        Predicate<RadioReferenceGateway.TrunkedSystemDetails> identityFilter,
+        Predicate<DiscoverySystem> verifiedMatch) throws RadioReferenceDirectoryException
+    {
+        return p25DiscoverySystems(systemId, frequencyHz, fallbackStateId, identityFilter, verifiedMatch,
+            DEFAULT_DETAIL_REQUEST_DEADLINE);
     }
 
     List<DiscoverySystem> p25DiscoverySystems(int systemId, long frequencyHz, Integer fallbackStateId,
         Predicate<RadioReferenceGateway.TrunkedSystemDetails> identityFilter, Duration deadline)
         throws RadioReferenceDirectoryException
+    {
+        return p25DiscoverySystems(systemId, frequencyHz, fallbackStateId, identityFilter, candidate -> true, deadline);
+    }
+
+    List<DiscoverySystem> p25DiscoverySystems(int systemId, long frequencyHz, Integer fallbackStateId,
+        Predicate<RadioReferenceGateway.TrunkedSystemDetails> identityFilter,
+        Predicate<DiscoverySystem> verifiedMatch, Duration deadline) throws RadioReferenceDirectoryException
     {
         if(systemId < 0 || systemId > 0xFFF || frequencyHz <= 0 || frequencyHz > 100_000_000_000L)
         {
@@ -599,25 +623,27 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         }
         if(fallbackStateId != null) validateId(fallbackStateId);
         Objects.requireNonNull(identityFilter);
+        Objects.requireNonNull(verifiedMatch);
         long deadlineNanos = Math.min(positiveNanos(deadline, "deadline"), DEFAULT_DETAIL_REQUEST_DEADLINE.toNanos());
-        return invokePremium(gateway -> {
+        return invokePremiumDetail(gateway -> {
             try
             {
-                return p25SystemCandidates(gateway, systemId, identityFilter);
+                List<DiscoverySystem> global = p25SystemCandidates(gateway, systemId, identityFilter);
+                if(fallbackStateId == null || global.stream().anyMatch(verifiedMatch)) return global;
             }
             catch(RadioReferenceGatewayException exception)
             {
                 if(exception.kind() != RadioReferenceGatewayException.Kind.RESULT_SET_TOO_LARGE || fallbackStateId == null)
                     throw exception;
-                return frequencyDiscoverySystems(gateway, fallbackStateId, frequencyHz, identityFilter);
             }
+            return frequencyDiscoverySystems(gateway, fallbackStateId, frequencyHz, identityFilter);
         }, deadlineNanos);
     }
 
     private static List<DiscoverySystem> p25SystemCandidates(RadioReferenceGateway gateway, int systemId,
         Predicate<RadioReferenceGateway.TrunkedSystemDetails> identityFilter) throws RadioReferenceGatewayException
     {
-        List<RadioReferenceGateway.TrunkedSystem> candidates = gateway.p25SystemsBySystemId(systemId);
+        List<RadioReferenceGateway.TrunkedSystem> candidates = required(gateway.p25SystemsBySystemId(systemId));
         if(candidates != null && candidates.size() > MAXIMUM_REMOTE_ITEMS_SCANNED)
         {
             throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.RESULT_SET_TOO_LARGE);
@@ -638,7 +664,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         throws RadioReferenceGatewayException
     {
         List<RadioReferenceGateway.FrequencyResult> frequencies =
-            gateway.searchStateFrequencies(stateId, frequencyHz / 1_000_000.0);
+            required(gateway.searchStateFrequencies(stateId, frequencyHz / 1_000_000.0));
         if(frequencies != null && frequencies.size() > MAXIMUM_REMOTE_ITEMS_SCANNED)
         {
             throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.RESULT_SET_TOO_LARGE);
@@ -679,7 +705,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
                 throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
             }
             if(!identityFilter.test(system)) continue;
-            List<RadioReferenceGateway.TrunkedSiteDetails> sites = gateway.trunkedSiteDetails(systemId);
+            List<RadioReferenceGateway.TrunkedSiteDetails> sites = required(gateway.trunkedSiteDetails(systemId));
             if(sites != null && sites.size() > MAXIMUM_REMOTE_ITEMS_SCANNED)
             {
                 throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.RESULT_SET_TOO_LARGE);
@@ -723,7 +749,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
             throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.INVALID_REQUEST);
         }
 
-        FrequencyDetailSnapshot snapshot = invokePremium(gateway -> frequencyDetailSnapshot(gateway, systemId,
+        FrequencyDetailSnapshot snapshot = invokePremiumDetail(gateway -> frequencyDetailSnapshot(gateway, systemId,
             subCategoryId, agencyId, countyId), DEFAULT_DETAIL_REQUEST_DEADLINE.toNanos());
         Map<Integer,String> modes = new LinkedHashMap<>();
         snapshot.modes().stream().filter(Objects::nonNull)
@@ -747,7 +773,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         throws RadioReferenceDirectoryException
     {
         validateId(systemId);
-        RadioReferenceGateway.TrunkedSystemDetails details = invokePremium(
+        RadioReferenceGateway.TrunkedSystemDetails details = invokePremiumDetail(
             gateway -> gateway.trunkedSystemDetails(systemId), DEFAULT_DETAIL_REQUEST_DEADLINE.toNanos());
 
         if(details == null || details.id() != systemId)
@@ -771,7 +797,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         throws RadioReferenceDirectoryException
     {
         validateId(systemId);
-        List<RadioReferenceGateway.TrunkedSiteDetails> source = invokePremium(
+        List<RadioReferenceGateway.TrunkedSiteDetails> source = invokePremiumDetail(
             gateway -> gateway.trunkedSiteDetails(systemId), DEFAULT_DETAIL_REQUEST_DEADLINE.toNanos());
         enforceImportBound(source == null ? 0 : source.size());
 
@@ -868,7 +894,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         throws RadioReferenceDirectoryException
     {
         validateId(systemId);
-        List<RadioReferenceGateway.RemoteTalkgroupCategory> source = invokePremium(
+        List<RadioReferenceGateway.RemoteTalkgroupCategory> source = invokePremiumDetail(
             gateway -> gateway.talkgroupCategories(systemId), DEFAULT_DETAIL_REQUEST_DEADLINE.toNanos());
         enforceImportBound(source == null ? 0 : source.size());
         List<RadioReferenceGateway.RemoteTalkgroupCategory> categories = source == null ? new ArrayList<>() :
@@ -895,9 +921,9 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
             throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.INVALID_REQUEST);
         }
 
-        List<RadioReferenceGateway.FrequencyCategory> source = invokePremium(gateway ->
+        List<RadioReferenceGateway.FrequencyCategory> source = invokePremiumDetail(gateway ->
             ownerKind == RadioReferenceGateway.DetailKind.AGENCY ? gateway.agencyFrequencyCategories(ownerId) :
-                gateway.countyFrequencyCategories(ownerId));
+                gateway.countyFrequencyCategories(ownerId), mRequestDeadlineNanos);
         enforceImportBound(source == null ? 0 : source.size());
         List<RadioReferenceGateway.FrequencyCategory> categories = source == null ? new ArrayList<>() :
             source.stream().filter(Objects::nonNull)
@@ -957,7 +983,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     private List<RadioReferenceGateway.RemoteTalkgroup> loadTalkgroups(int systemId)
         throws RadioReferenceDirectoryException
     {
-        List<RadioReferenceGateway.RemoteTalkgroup> source = invokePremium(gateway -> gateway.talkgroups(systemId),
+        List<RadioReferenceGateway.RemoteTalkgroup> source = invokePremiumDetail(gateway -> gateway.talkgroups(systemId),
             DEFAULT_DETAIL_REQUEST_DEADLINE.toNanos());
         enforceImportBound(source == null ? 0 : source.size());
         return source == null ? List.of() : source.stream().filter(Objects::nonNull).toList();
@@ -966,8 +992,8 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     private List<RadioReferenceGateway.ConventionalFrequency> loadConventionalFrequencies(int subCategoryId)
         throws RadioReferenceDirectoryException
     {
-        List<RadioReferenceGateway.ConventionalFrequency> source = invokePremium(
-            gateway -> gateway.subcategoryFrequencies(subCategoryId));
+        List<RadioReferenceGateway.ConventionalFrequency> source = invokePremiumDetail(
+            gateway -> gateway.subcategoryFrequencies(subCategoryId), mRequestDeadlineNanos);
         enforceImportBound(source == null ? 0 : source.size());
         return source == null ? List.of() : source.stream().filter(Objects::nonNull).toList();
     }
@@ -1285,6 +1311,18 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     private <T> T invokePremium(GatewayRequest<T> request, long requestDeadlineNanos)
         throws RadioReferenceDirectoryException
     {
+        return invokePremium(request, requestDeadlineNanos, mExecutor);
+    }
+
+    private <T> T invokePremiumDetail(GatewayRequest<T> request, long requestDeadlineNanos)
+        throws RadioReferenceDirectoryException
+    {
+        return invokePremium(request, requestDeadlineNanos, mDetailExecutor);
+    }
+
+    private <T> T invokePremium(GatewayRequest<T> request, long requestDeadlineNanos, ThreadPoolExecutor executor)
+        throws RadioReferenceDirectoryException
+    {
         Session session;
 
         synchronized(mSessionLock)
@@ -1307,7 +1345,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
 
         try
         {
-            T result = invoke(() -> request.execute(session.gateway()), requestDeadlineNanos);
+            T result = invoke(() -> request.execute(session.gateway()), requestDeadlineNanos, executor, session);
 
             synchronized(mSessionLock)
             {
@@ -1365,6 +1403,18 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     private <T> T invoke(RemoteRequest<T> request, long requestDeadlineNanos)
         throws RadioReferenceDirectoryException
     {
+        return invoke(request, requestDeadlineNanos, mExecutor);
+    }
+
+    private <T> T invoke(RemoteRequest<T> request, long requestDeadlineNanos, ThreadPoolExecutor executor)
+        throws RadioReferenceDirectoryException
+    {
+        return invoke(request, requestDeadlineNanos, executor, null);
+    }
+
+    private <T> T invoke(RemoteRequest<T> request, long requestDeadlineNanos, ThreadPoolExecutor executor, Session session)
+        throws RadioReferenceDirectoryException
+    {
         if(mClosed)
         {
             throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.CLOSED);
@@ -1374,12 +1424,20 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
 
         try
         {
-            future = mExecutor.submit(request::execute);
-            mRequests.add(future);
-
-            if(mClosed)
+            synchronized(mSessionLock)
             {
-                cancel(future);
+                ensureOpen();
+                requireCurrentSession(session);
+                future = executor.submit(() -> {
+                    synchronized(mSessionLock)
+                    {
+                        ensureOpen();
+                        requireCurrentSession(session);
+                    }
+                    return request.execute();
+                });
+                mRequests.add(future);
+                if(session != null) session.requests().add(future);
             }
         }
         catch(RejectedExecutionException exception)
@@ -1406,12 +1464,19 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         }
         catch(CancellationException exception)
         {
+            synchronized(mSessionLock)
+            {
+                ensureOpen();
+                requireCurrentSession(session);
+            }
             throw new RadioReferenceDirectoryException(mClosed ?
                 RadioReferenceDirectoryException.Code.CLOSED :
                 RadioReferenceDirectoryException.Code.INTERRUPTED);
         }
         catch(ExecutionException exception)
         {
+            if(exception.getCause() instanceof RadioReferenceDirectoryException directoryException)
+                throw directoryException;
             if(exception.getCause() instanceof RadioReferenceGatewayException gatewayException)
             {
                 throw new RadioReferenceDirectoryException(directoryCode(gatewayException.kind()), gatewayException);
@@ -1422,7 +1487,15 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         finally
         {
             mRequests.remove(future);
+            if(session != null) session.requests().remove(future);
         }
+    }
+
+    /** Called while holding the session lock, both when queuing and before starting premium work. */
+    private void requireCurrentSession(Session session) throws RadioReferenceDirectoryException
+    {
+        if(session != null && mSession != session)
+            throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.NOT_AUTHENTICATED);
     }
 
     private void cancel(Future<?> future)
@@ -1432,9 +1505,11 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         if(future instanceof Runnable runnable)
         {
             mExecutor.remove(runnable);
+            mDetailExecutor.remove(runnable);
         }
 
         mExecutor.purge();
+        mDetailExecutor.purge();
     }
 
     private static <T> T required(T value) throws RadioReferenceGatewayException
@@ -1725,10 +1800,11 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         }
     }
 
-    private static void close(Session session)
+    private void close(Session session)
     {
         if(session != null)
         {
+            for(Future<?> request: session.requests()) cancel(request);
             close(session.gateway());
         }
     }
@@ -1779,7 +1855,8 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
             request.cancel(true);
         }
 
-        List<Runnable> neverStarted = mExecutor.shutdownNow();
+        List<Runnable> neverStarted = new ArrayList<>(mExecutor.shutdownNow());
+        neverStarted.addAll(mDetailExecutor.shutdownNow());
 
         for(Runnable runnable: neverStarted)
         {
@@ -1791,7 +1868,10 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
 
         try
         {
+            long started = System.nanoTime();
             mExecutor.awaitTermination(mShutdownWaitNanos, TimeUnit.NANOSECONDS);
+            long remaining = mShutdownWaitNanos - (System.nanoTime() - started);
+            if(remaining > 0) mDetailExecutor.awaitTermination(remaining, TimeUnit.NANOSECONDS);
         }
         catch(InterruptedException exception)
         {
@@ -1799,8 +1879,12 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         }
     }
 
-    private record Session(RadioReferenceGateway gateway, AccountStatus status)
+    private record Session(RadioReferenceGateway gateway, AccountStatus status, Set<Future<?>> requests)
     {
+        private Session(RadioReferenceGateway gateway, AccountStatus status)
+        {
+            this(gateway, status, ConcurrentHashMap.newKeySet());
+        }
     }
 
     private record LocationSnapshot(RadioReferenceGateway.CountryDirectory country,

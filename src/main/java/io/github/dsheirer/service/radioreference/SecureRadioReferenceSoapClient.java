@@ -15,11 +15,13 @@ import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 import io.github.dsheirer.rrapi.request.RequestEnvelope;
 import io.github.dsheirer.rrapi.response.Fault;
 import io.github.dsheirer.rrapi.response.GetApco25SystemsResponse;
+import io.github.dsheirer.rrapi.response.GetSitesResponse;
 import io.github.dsheirer.rrapi.response.ResponseBody;
 import io.github.dsheirer.rrapi.response.ResponseEnvelope;
 import io.github.dsheirer.rrapi.response.SearchFrequencyResponse;
 import io.github.dsheirer.rrapi.type.AuthorizationInformation;
 import java.io.IOException;
+import java.io.ByteArrayInputStream;
 import java.io.StringWriter;
 import java.math.BigDecimal;
 import java.net.URI;
@@ -43,6 +45,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import javax.net.ssl.SSLContext;
 import javax.xml.stream.XMLOutputFactory;
+import javax.xml.stream.XMLInputFactory;
+import javax.xml.stream.XMLStreamConstants;
+import javax.xml.stream.XMLStreamReader;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamWriter;
 
@@ -222,6 +227,10 @@ final class SecureRadioReferenceSoapClient implements AutoCloseable
             {
                 throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INVALID_RESPONSE);
             }
+
+            if(responseType == GetApco25SystemsResponse.class || responseType == SearchFrequencyResponse.class ||
+                responseType == GetSitesResponse.class)
+                requireArrayReturn(response.body());
 
             return responseType.cast(responseBody);
         }
@@ -436,6 +445,76 @@ final class SecureRadioReferenceSoapClient implements AutoCloseable
         }
 
         return mXmlMapper.readValue(xml, ResponseEnvelope.class);
+    }
+
+    /**
+     * The published SOAP contract returns an array in a required return part. An empty return is valid; a missing
+     * or nil return is not an empty search. Check the wire shape because the model maps all three to an empty list.
+     */
+    private static void requireArrayReturn(byte[] xml) throws RadioReferenceGatewayException
+    {
+        XMLStreamReader reader = null;
+        try
+        {
+            XMLInputFactory factory = XMLInputFactory.newFactory();
+            factory.setProperty(XMLInputFactory.SUPPORT_DTD, false);
+            factory.setProperty("javax.xml.stream.isSupportingExternalEntities", false);
+            reader = factory.createXMLStreamReader(new ByteArrayInputStream(xml));
+            int depth = 0;
+            int returns = 0;
+            int items = 0;
+            int declaredItems = -1;
+            boolean inBody = false;
+            boolean inReturn = false;
+            while(reader.hasNext())
+            {
+                int event = reader.next();
+                if(event == XMLStreamConstants.START_ELEMENT)
+                {
+                    depth++;
+                    if(depth == 2 && reader.getLocalName().equals("Body") &&
+                        SOAP_ENV_NAMESPACE.equals(reader.getNamespaceURI())) inBody = true;
+                    if(inBody && depth == 4 && reader.getLocalName().equals("return"))
+                    {
+                        returns++;
+                        inReturn = true;
+                        String nil = reader.getAttributeValue(XML_SCHEMA_INSTANCE_NAMESPACE, "nil");
+                        if("true".equalsIgnoreCase(nil) || "1".equals(nil)) throw invalidArrayReturn();
+                        String arrayType = reader.getAttributeValue("http://schemas.xmlsoap.org/soap/encoding/", "arrayType");
+                        if(arrayType != null)
+                        {
+                            var count = java.util.regex.Pattern.compile(".*\\[([0-9]+)]$").matcher(arrayType);
+                            if(!count.matches()) throw invalidArrayReturn();
+                            declaredItems = Integer.parseInt(count.group(1));
+                        }
+                    }
+                    else if(inReturn && depth == 5) items++;
+                }
+                else if(event == XMLStreamConstants.END_ELEMENT)
+                {
+                    if(depth == 4) inReturn = false;
+                    if(depth == 2) inBody = false;
+                    depth--;
+                }
+                else if(inReturn && depth == 4 && reader.isCharacters() && !reader.isWhiteSpace())
+                    throw invalidArrayReturn();
+            }
+            if(returns != 1 || declaredItems >= 0 && declaredItems != items) throw invalidArrayReturn();
+        }
+        catch(XMLStreamException | RuntimeException exception) { throw invalidArrayReturn(); }
+        finally
+        {
+            if(reader != null)
+            {
+                try { reader.close(); }
+                catch(XMLStreamException ignored) { }
+            }
+        }
+    }
+
+    private static RadioReferenceGatewayException invalidArrayReturn()
+    {
+        return new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INVALID_RESPONSE);
     }
 
     private static URI secureEndpoint(URI endpoint) throws RadioReferenceGatewayException

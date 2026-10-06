@@ -1,6 +1,6 @@
 import { systemName, systemIdentity } from '../core/system-labels.js?v=1';
 import { createTableOverflow } from '../core/table-overflow.js?v=1';
-import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl } from './discovery-radioreference.js?v=5';
+import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl } from './discovery-radioreference.js?v=6';
 
 export function spectrumSearchProtocolLabel(candidate, profiles = []) {
   const id = String(candidate?.protocol_id || '');
@@ -105,7 +105,6 @@ export function openSpectrumSearchWizard(ui, context = {}) {
   let reviewGroupBindings = [];
   let resultBindings = null;
   let detailBinding = null;
-  let resultQuery = '';
   let disposeBandPicker = () => {};
   const resultOverflows = new Set();
   const disposeResultOverflows = () => {
@@ -1006,13 +1005,6 @@ export function openSpectrumSearchWizard(ui, context = {}) {
   };
   const candidateDescription = (candidate) => [spectrumSearchProtocolLabel(candidate, protocols?.profiles),
     candidate.modulation].filter(Boolean).join(' · ');
-  const candidateSearchText = (candidate) => [candidateName(candidate), systemLabel(candidate), siteLabel(candidate),
-    candidateDescription(candidate),
-    identityText(candidate), candidate.known_channel?.name, channelMHz(candidate.frequency_hz),
-    ...(groupFor(candidate)?.alias_lists || []).map((aliasList) => aliasList.name),
-    ...candidates().filter((member) => spectrumSearchGroupKey(member) === spectrumSearchGroupKey(candidate))
-      .map((member) => systemLabel(member)),
-    ...Object.values(candidate.identity || {})].filter((value) => value != null).join(' ').toLowerCase();
   const groupRepresentative = (members) => members.find((candidate) =>
     candidate.radio_reference?.state === 'matched' && candidate.radio_reference.match?.system_name) ||
     members.find((candidate) => candidate.radio_reference?.state === 'pending') || members[0];
@@ -1119,13 +1111,12 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       binding.label.textContent = candidateDescription(candidate);
       binding.site.textContent = siteLabel(candidate);
       binding.check.setAttribute('aria-label', `Select ${candidateName(candidate)}`);
-      binding.text = candidateSearchText(candidate);
     });
     resultBindings.sections.forEach((binding) => {
       refreshGroupDirectory(binding);
     });
     refreshOpenDetails();
-    resultBindings.search.dispatchEvent(new Event('input'));
+    resultOverflows.forEach((overflow) => overflow.refresh());
     resultBindings.updateSelection();
   };
   const showResults = () => {
@@ -1133,18 +1124,11 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     show('results', 1, `${found} ${found === 1 ? 'channel' : 'channels'} found`);
     if (job.truncated_reason) stage.append(node('div', 'ui-notice ui-notice-warning',
       'This search reached its signal limit. Try a smaller range to check the remaining signals.'));
-    const search = node('input', 'ui-input');
-    search.type = 'search';
-    search.setAttribute('aria-label', 'Search results');
-    search.placeholder = 'Search channels, frequencies, or identities';
-    search.value = resultQuery;
     const toolbar = node('div', 'spectrum-search-results-toolbar');
     const heading = node('div', 'spectrum-search-results-heading');
     heading.append(node('strong', '', 'Grouped by trunked system'), node('span', 'muted'));
     const count = heading.lastChild;
-    const filter = formField('Search results', search);
-    filter.classList.add('spectrum-search-results-filter');
-    toolbar.append(heading, filter);
+    toolbar.append(heading);
     const rows = [];
     const sections = [];
     const review = button('Review selected', showReview, true);
@@ -1237,7 +1221,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
         details.setAttribute('aria-label', `Details for ${channelMHz(candidate.frequency_hz)} MHz`);
         cells[5].append(details);
         row.hidden = false;
-        const member = { candidate, row, check, label, site, text: candidateSearchText(candidate) };
+        const member = { candidate, row, check, label, site };
         members.push(member);
         rows.push(member);
         body.append(row);
@@ -1263,20 +1247,12 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       refreshGroupDirectory(binding);
       list.append(section);
     });
-    search.addEventListener('input', () => {
-      resultQuery = search.value;
-      const query = search.value.trim().toLowerCase();
-      rows.forEach(({ row, text }) => { row.hidden = !text.includes(query); });
-      sections.forEach(({ section, members }) => { section.hidden = members.every(({ row }) => row.hidden); });
-      resultOverflows.forEach((overflow) => overflow.refresh());
-    });
     selectAll.disabled = rows.every(({ check }) => check.disabled);
     stage.append(toolbar, found ? list : node('div', 'ui-empty-state',
       'No trunked control channels were identified. Try another band or a different receiver.'));
     resultOverflows.forEach((overflow) => overflow.refresh());
-    search.dispatchEvent(new Event('input'));
     updateSelection();
-    resultBindings = { rows, sections, search, updateSelection };
+    resultBindings = { rows, sections, updateSelection };
     scheduleDirectoryPoll();
   };
   const showReview = () => {

@@ -715,6 +715,109 @@ class RrapiRadioReferenceGatewayTransportTest
     }
 
     @Test
+    void discoveryArrayResponsesDistinguishValidEmptyResultsFromIncompleteReturns() throws Exception
+    {
+        String[] operations = {"getTrsBySysid", "searchStateFreq", "getTrsSites"};
+        String[] types = {"TrsListDef", "searchFreqResult", "TrsSite"};
+        for(int operation = 0; operation < operations.length; operation++)
+        {
+            List<String> returns = List.of(
+                "<return xsi:type=\"SOAP-ENC:Array\" SOAP-ENC:arrayType=\"tns:" + types[operation] + "[0]\"/>",
+                "<return/>",
+                "",
+                "<return xsi:nil=\"true\"/>",
+                "<return xsi:type=\"SOAP-ENC:Array\" SOAP-ENC:arrayType=\"tns:" + types[operation] + "[1]\"/>");
+            AtomicInteger requestIndex = new AtomicInteger();
+            int selectedOperation = operation;
+            try(TestHttpsServer server = new TestHttpsServer(exchange -> {
+                byte[] body = rpcArrayResponse(operations[selectedOperation], returns.get(requestIndex.getAndIncrement()))
+                    .getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200, body.length);
+                exchange.getResponseBody().write(body);
+                exchange.close();
+            });
+                SecureRadioReferenceSoapClient client = client(server.endpoint(), server.sslContext(),
+                    Duration.ofSeconds(2), 1024 * 1024))
+            {
+                RrapiRadioReferenceGateway gateway = new RrapiRadioReferenceGateway(client);
+                java.util.concurrent.Callable<List<?>> read = () -> switch(selectedOperation) {
+                    case 0 -> gateway.p25SystemsBySystemId(0x49F);
+                    case 1 -> gateway.searchStateFrequencies(10, 853.1625);
+                    default -> gateway.trunkedSiteDetails(2001);
+                };
+                assertEquals(List.of(), read.call());
+                assertEquals(List.of(), read.call(), "an untyped empty return is a valid empty array");
+                for(int malformed = 2; malformed < returns.size(); malformed++)
+                    assertEquals(RadioReferenceGatewayException.Kind.INVALID_RESPONSE,
+                        assertThrows(RadioReferenceGatewayException.class, read::call).kind());
+            }
+        }
+    }
+
+    @Test
+    void regionAndDetailReadsCanShareTheTransportWithoutWaitingOnEachOther() throws Exception
+    {
+        GetSitesResponse sites = new GetSitesResponse();
+        sites.setSites(List.of());
+        CountryInfo country = new CountryInfo();
+        country.setCountryId(1);
+        country.setName("Test Country");
+        country.setCountryCode("TC");
+        State state = new State();
+        state.setStateId(10);
+        state.setName("Test State");
+        country.setStates(List.of(state));
+        country.setAgencies(List.of());
+        GetCountryInfoResponse regions = new GetCountryInfoResponse();
+        regions.setCountryInfo(country);
+        byte[] siteResponse = response(sites).getBytes(StandardCharsets.UTF_8);
+        byte[] regionResponse = response(regions).getBytes(StandardCharsets.UTF_8);
+        AtomicInteger requests = new AtomicInteger();
+        CountDownLatch detailEntered = new CountDownLatch(1);
+        CountDownLatch releaseDetail = new CountDownLatch(1);
+        try(TestHttpsServer server = new TestHttpsServer(exchange -> {
+            boolean detail = requests.getAndIncrement() == 0;
+            try
+            {
+                if(detail)
+                {
+                    detailEntered.countDown();
+                    releaseDetail.await(3, TimeUnit.SECONDS);
+                }
+                byte[] body = detail ? siteResponse : regionResponse;
+                exchange.sendResponseHeaders(200, body.length);
+                exchange.getResponseBody().write(body);
+            }
+            catch(InterruptedException exception) { Thread.currentThread().interrupt(); }
+            finally { exchange.close(); }
+        }, 2);
+            SecureRadioReferenceSoapClient client = client(server.endpoint(), server.sslContext(),
+                Duration.ofSeconds(3), 1024 * 1024))
+        {
+            RrapiRadioReferenceGateway gateway = new RrapiRadioReferenceGateway(client);
+            ExecutorService caller = Executors.newSingleThreadExecutor();
+            try
+            {
+                Future<?> detail = caller.submit(() -> gateway.trunkedSiteDetails(2001));
+                assertTrue(detailEntered.await(1, TimeUnit.SECONDS));
+                assertEquals("Test State", gateway.country(1).states().getFirst().name());
+                assertFalse(detail.isDone());
+                releaseDetail.countDown();
+                assertEquals(List.of(), detail.get(1, TimeUnit.SECONDS));
+                gateway.close();
+                assertEquals(RadioReferenceGatewayException.Kind.UNAVAILABLE,
+                    assertThrows(RadioReferenceGatewayException.class, () -> gateway.country(1)).kind());
+            }
+            finally
+            {
+                releaseDetail.countDown();
+                gateway.close();
+                caller.shutdownNow();
+            }
+        }
+    }
+
+    @Test
     void closingAServiceDoesNotAbortAnInFlightRequest() throws Exception
     {
         UserInfo user = new UserInfo();
@@ -779,7 +882,23 @@ class RrapiRadioReferenceGatewayTransportTest
     {
         ResponseEnvelope envelope = new ResponseEnvelope();
         envelope.setResponseBody(body);
-        return envelope.toXmlString();
+        // The dependency's serializer omits namespaces; production SOAP envelopes include both bindings.
+        return envelope.toXmlString()
+            .replace("<Envelope>", "<Envelope xmlns=\"http://schemas.xmlsoap.org/soap/envelope/\">")
+            .replaceFirst("<([A-Za-z0-9]+Response)>",
+                "<$1 xmlns=\"http://api.radioreference.com/soap2\">");
+    }
+
+    private static String rpcArrayResponse(String operation, String returnedArray)
+    {
+        return """
+            <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"
+                xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                xmlns:SOAP-ENC="http://schemas.xmlsoap.org/soap/encoding/"
+                xmlns:tns="http://api.radioreference.com/soap2">
+              <SOAP-ENV:Body><tns:%sResponse>%s</tns:%sResponse></SOAP-ENV:Body>
+            </SOAP-ENV:Envelope>
+            """.formatted(operation, returnedArray, operation);
     }
 
     /** Production-shaped RPC/encoded response, including SOAP metadata attributes ignored by the data model. */
@@ -845,11 +964,17 @@ class RrapiRadioReferenceGatewayTransportTest
     private static final class TestHttpsServer implements AutoCloseable
     {
         private final HttpsServer mServer;
-        private final ExecutorService mExecutor = Executors.newSingleThreadExecutor();
+        private final ExecutorService mExecutor;
         private final SSLContext mSslContext;
 
         private TestHttpsServer(com.sun.net.httpserver.HttpHandler handler) throws Exception
         {
+            this(handler, 1);
+        }
+
+        private TestHttpsServer(com.sun.net.httpserver.HttpHandler handler, int concurrency) throws Exception
+        {
+            mExecutor = Executors.newFixedThreadPool(concurrency);
             mSslContext = testSslContext();
             mServer = HttpsServer.create(new InetSocketAddress("localhost", 0), 0);
             mServer.setHttpsConfigurator(new HttpsConfigurator(mSslContext));

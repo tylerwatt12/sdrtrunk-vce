@@ -70,7 +70,7 @@ export function createDiscoveryRadioReferenceContext(ui, request) {
               if (!stateId) element.open = true;
               enable(select, Boolean(states.length));
               status.textContent = states.length ?
-                'P25 systems can match by on-air identity. Choose a region for other frequency lookups.' :
+                'Choose your state or province to help match nearby systems.' :
                 'No states or provinces are available. Choose another country in RadioReference settings.';
             } catch (_) {
               if (generation !== regionLoad) return;
@@ -109,11 +109,11 @@ export function createDiscoveryRadioReferenceContext(ui, request) {
               stateId = null;
               select.value = '';
               enable(select, false);
-              status.textContent = 'Choose a country for frequency matching.';
+              status.textContent = 'Choose a country to look up nearby systems.';
             }
           });
           element.append(formField('Country', uiSelectFrame(country)), stateField);
-          status.textContent = 'P25 systems can match by on-air identity. Choose a country for other frequency lookups.';
+          status.textContent = 'Choose a country to look up nearby systems.';
         }
         const settings = node('p', 'ui-field-hint');
         settings.append(anchor('Save a default lookup region', href('radioreference')));
@@ -168,7 +168,7 @@ export function discoveryRadioReferenceResult(ui, value, existing = null) {
       login_required: 'Connect RadioReference to look up directory names.',
       premium_required: 'A Premium account is required for directory names.',
       identity_required: 'More consistent on-air identity is needed for a directory match.',
-      no_match: 'No directory system matched this on-air identity.',
+      no_match: 'No RadioReference site matches this system and frequency.',
       ambiguous: 'Multiple directory entries match. No directory names were applied.',
       unavailable: 'RadioReference is unavailable. The on-air result is still available.',
       pending: 'Looking up the system name…'

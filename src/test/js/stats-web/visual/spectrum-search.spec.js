@@ -653,10 +653,10 @@ test('uses one widest idle receiver and acquires its own browse session when sea
     .toHaveCount(6);
   await expect(dialog(page)).toContainText('WACN BEE00 · SysID 348 · 3 sites');
   await expect(dialog(page).getByRole('button', { name: /^Details for / })).toHaveCount(4);
-  await dialog(page).getByLabel('Search results', { exact: true }).fill('Regional Services');
-  await expect(dialog(page).locator('tbody tr:visible')).toHaveCount(1);
-  await dialog(page).getByLabel('Search results', { exact: true }).fill('840');
-  await expect(dialog(page).locator('tbody tr:visible')).toHaveCount(3);
+  await expect(dialog(page).getByRole('searchbox')).toHaveCount(0);
+  await expect(dialog(page).getByText('Search results', { exact: true })).toHaveCount(0);
+  await expect(dialog(page).locator('tbody tr:visible')).toHaveCount(4);
+  await expect(dialog(page).locator('.spectrum-search-system-group:visible')).toHaveCount(2);
 });
 
 test('uses only eligible receivers when a wider receiver is busy', async ({ page }) => {
@@ -1289,7 +1289,7 @@ test('search review reveals an invalid Alias List choice when its panel was clos
 test('signed-in search offers its missing frequency lookup region directly', async ({ page }) => {
   const state = await install(page, { directoryConfiguration: { account: { state: 'VALID_PREMIUM' } } });
   await expect(dialog(page).getByLabel('RadioReference country')).toBeVisible();
-  await expect(dialog(page)).toContainText('P25 systems can match by on-air identity.');
+  await expect(dialog(page)).toContainText('Choose a country to look up nearby systems.');
   await dialog(page).getByLabel('RadioReference country').selectOption('1');
   await expect(dialog(page).getByLabel('RadioReference state or province')).toBeEnabled();
   await expect(dialog(page).getByLabel('RadioReference state or province')).toHaveValue('');
@@ -1913,15 +1913,10 @@ for (const [theme, viewport] of [['light', { width: 1280, height: 900 }],
       await second.uncheck();
       await expect(allMarcs).toHaveJSProperty('indeterminate', true);
       await cleveland.check();
-      const query = dialog(page).getByLabel('Search results', { exact: true });
-      await query.fill('Parma');
-      await expect(dialog(page).locator('tbody tr:visible')).toHaveCount(1);
+      await expect(dialog(page).getByRole('searchbox')).toHaveCount(0);
+      await expect(dialog(page).getByText('Search results', { exact: true })).toHaveCount(0);
       await expect(dialog(page).getByRole('button', { name: 'Review 2 channels', exact: true })).toBeEnabled();
-      await dialog(page).screenshot({ path: testInfo.outputPath('ohio-results-parma.png') });
-      await query.fill('Cuyahoga');
-      await expect(dialog(page).locator('tbody tr:visible')).toHaveCount(1);
       await expect(first).toBeChecked();
-      await query.fill('');
       await expect(dialog(page).locator('tbody tr:visible')).toHaveCount(4);
       await expect(cleveland).toBeChecked();
       const details = dialog(page).getByRole('button', { name: 'Details for 773.08125 MHz', exact: true });
@@ -1986,7 +1981,7 @@ for (const [theme, viewport] of [['light', { width: 1280, height: 900 }],
 
 for (const [theme, viewport] of [['light', { width: 1280, height: 900 }],
   ['dark', { width: 390, height: 844 }]]) {
-  test(`search result directory polls preserve detail dialogs, filters and selection in ${theme}`,
+  test(`search result directory polls preserve detail dialogs, groups and selection in ${theme}`,
     async ({ page }, testInfo) => {
       await page.clock.install();
       await page.setViewportSize(viewport);
@@ -2001,15 +1996,15 @@ for (const [theme, viewport] of [['light', { width: 1280, height: 900 }],
       ], customAliasGroups: [{ group_id: 'digital', protocol_id: 'dmr', alias_lists: [], default_new_alias_list_name: 'Metro' },
         { group_id: 'other', protocol_id: 'dmr', alias_lists: [], default_new_alias_list_name: 'Regional' }] });
       await complete(page);
-      const query = dialog(page).getByLabel('Search results', { exact: true });
-      await query.fill('Metro');
+      await expect(dialog(page).getByRole('searchbox')).toHaveCount(0);
+      await expect(dialog(page).locator('tbody tr:visible')).toHaveCount(2);
       const selection = dialog(page).getByRole('checkbox', { name: 'Select Metro control', exact: true, includeHidden: true });
       await selection.check();
       const group = dialog(page).locator('.spectrum-search-system-group').filter({ has: page.locator('input[aria-label="Select Metro control"]') });
       const directory = group.locator('details').filter({ has: page.locator('summary').filter({ hasText: /^RadioReference$/ }) });
       await directory.locator('summary').click();
       const detailButton = group.getByRole('button', { name: 'Details for 451 MHz', exact: true, includeHidden: true });
-      const preserved = { parent: await dialog(page).elementHandle(), query: await query.elementHandle(),
+      const preserved = { parent: await dialog(page).elementHandle(), group: await group.elementHandle(),
         selection: await selection.elementHandle(), button: await detailButton.elementHandle(),
         directory: await directory.elementHandle(), pending: await directory.locator('p').elementHandle() };
       await detailButton.click();
@@ -2043,22 +2038,21 @@ for (const [theme, viewport] of [['light', { width: 1280, height: 900 }],
       await expect(directory).toHaveCount(0);
       await expect(signal).toBeVisible();
       expect(await signal.evaluate((element, previous) => element === previous, signalNode)).toBe(true);
-      for (const [locator, previous] of [[dialog(page), preserved.parent], [query, preserved.query],
+      for (const [locator, previous] of [[dialog(page), preserved.parent], [group, preserved.group],
         [selection, preserved.selection], [detailButton, preserved.button]]) {
         expect(await locator.evaluate((element, previous) => element === previous, previous)).toBe(true);
       }
-      await expect(query).toHaveValue('Metro');
       await expect(selection).toBeChecked();
       await expect(signal).toContainText('Directory-only North');
       await page.keyboard.press('Escape');
       await expect(signal).toHaveCount(0);
       await expect(detailButton).toBeFocused();
       expect(await dialog(page).evaluate((element) => element.closest('.modal-backdrop').inert)).toBe(false);
-      await expect(dialog(page).getByRole('checkbox', { name: 'Select Regional local', exact: true })).toBeHidden();
+      await expect(dialog(page).getByRole('checkbox', { name: 'Select Regional local', exact: true })).toBeVisible();
+      await expect(dialog(page).locator('tbody tr:visible')).toHaveCount(2);
       await expect(dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true })).toBeEnabled();
       await dialog(page).screenshot({ path: testInfo.outputPath('directory-compact-match.png') });
       expect(await dialog(page).evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
-      await query.fill(systemName);
       await expect(selection).toBeVisible();
       await detailButton.click();
       await expect(page.locator('.spectrum-search-detail-modal')).toContainText('Directory-only North');
@@ -2066,7 +2060,7 @@ for (const [theme, viewport] of [['light', { width: 1280, height: 900 }],
     });
 }
 
-test('verified system-name filtering keeps its pending sibling site and selection', async ({ page }) => {
+test('verified system names keep pending sibling sites and selection visible', async ({ page }) => {
   await page.clock.install();
   const state = await install(page, { ...ohioResultsFixture({ pendingMarcs: true }) });
   await complete(page);
@@ -2081,9 +2075,8 @@ test('verified system-name filtering keeps its pending sibling site and selectio
       url: 'https://www.radioreference.com/db/sid/123' } } };
   await page.clock.fastForward(800);
   await expect(dialog(page).getByRole('link', { name: ohioSystems.marcs, exact: true })).toBeFocused();
-  const query = dialog(page).getByLabel('Search results', { exact: true });
-  await query.fill(ohioSystems.marcs);
-  await expect(dialog(page).locator('tbody tr:visible')).toHaveCount(2);
+  await expect(dialog(page).getByRole('searchbox')).toHaveCount(0);
+  await expect(dialog(page).locator('tbody tr:visible')).toHaveCount(4);
   await expect(dialog(page).getByRole('checkbox', { name: 'Select MARCS Lake control', exact: true })).toBeChecked();
   await expect(dialog(page).getByRole('link', { name: ohioSystems.marcs, exact: true })).toHaveCount(1);
   await expect(dialog(page).getByText('RadioReference', { exact: true })).toHaveCount(0);
@@ -2109,18 +2102,16 @@ test('result details close when polling removes their channel and prune only tha
   await expect(dialog(page).getByText('RadioReference', { exact: true })).toHaveCount(1);
   await dialog(page).getByRole('checkbox', { name: 'Select MARCS Cuyahoga control', exact: true }).check();
   await dialog(page).getByRole('checkbox', { name: 'Select Cleveland control', exact: true }).check();
-  const query = dialog(page).getByLabel('Search results', { exact: true });
-  await query.fill('MARCS');
+  await expect(dialog(page).getByRole('searchbox')).toHaveCount(0);
   await dialog(page).getByRole('button', { name: 'Details for 773.08125 MHz', exact: true }).click();
   await expect(page.locator('.spectrum-search-detail-modal')).toBeVisible();
   state.customCandidates = state.customCandidates.filter((candidate) => candidate.candidate_id !== 'marcs-27');
   await page.clock.fastForward(800);
   await expect(page.locator('.spectrum-search-detail-modal')).toHaveCount(0);
   await expect(dialog(page).getByRole('heading', { name: '3 channels found', exact: true })).toBeFocused();
-  await expect(query).toHaveValue('MARCS');
+  await expect(dialog(page).locator('tbody tr:visible')).toHaveCount(3);
   await expect(dialog(page).getByRole('checkbox', { name: 'Select MARCS Cuyahoga control', exact: true })).toHaveCount(0);
   await expect(dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true })).toBeEnabled();
-  await query.fill('');
   await expect(dialog(page).getByRole('checkbox', { name: 'Select Cleveland control', exact: true })).toBeChecked();
   expect(savedSearchRequests(state).jobDeletes).toHaveLength(0);
   expect(savedSearchRequests(state).browseDeletes).toHaveLength(0);

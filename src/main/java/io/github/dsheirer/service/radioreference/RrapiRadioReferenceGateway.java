@@ -59,7 +59,7 @@ import java.util.Objects;
 final class RrapiRadioReferenceGateway implements RadioReferenceGateway
 {
     static final String APPLICATION_KEY = "88969092";
-    private SecureRadioReferenceSoapClient mClient;
+    private volatile SecureRadioReferenceSoapClient mClient;
     private Map<Integer,String> mSystemTypes;
 
     RrapiRadioReferenceGateway(String userName, char[] password) throws RadioReferenceGatewayException
