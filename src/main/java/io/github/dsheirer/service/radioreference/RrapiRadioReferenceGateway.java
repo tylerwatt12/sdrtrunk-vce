@@ -303,6 +303,19 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
     }
 
     @Override
+    public List<TrunkedSystem> p25SystemsBySystemId(int systemId) throws RadioReferenceGatewayException
+    {
+        try
+        {
+            return systems(client().p25SystemsBySystemId(systemId).getSystems());
+        }
+        catch(RuntimeException exception)
+        {
+            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
+        }
+    }
+
+    @Override
     public List<Mode> modes() throws RadioReferenceGatewayException
     {
         try

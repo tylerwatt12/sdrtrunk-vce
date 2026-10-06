@@ -44,6 +44,12 @@ public interface RadioReferenceGateway extends AutoCloseable
     List<FrequencyResult> searchStateFrequencies(int stateId, double frequencyMHz)
         throws RadioReferenceGatewayException;
 
+    /** Looks up catalog candidates by the on-air P25 System ID; candidates still require identity verification. */
+    default List<TrunkedSystem> p25SystemsBySystemId(int systemId) throws RadioReferenceGatewayException
+    {
+        return List.of();
+    }
+
     default List<Mode> modes() throws RadioReferenceGatewayException
     {
         return List.of();

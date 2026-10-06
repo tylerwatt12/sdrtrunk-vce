@@ -156,8 +156,10 @@ class RadioReferenceDiscoveryResolverTest
             assertEquals("login_required", resolver.resolve(10, P25).state());
             assertEquals(0, gateway.searches.get());
             directory.login("test", "cleared-password".toCharArray());
-            assertEquals("location_required", resolver.resolve(null, P25).state());
+            assertEquals("location_required", resolver.resolve(null,
+                new Identity("dmr", "tier3", FREQUENCY, null, 123, null, 12, 7, null)).state());
             assertEquals(0, gateway.searches.get());
+            assertTrue(gateway.p25SystemIds.isEmpty());
         }
         gateway.expiration = "01-01-2000";
         try(RadioReferenceDirectoryService directory = directory(gateway, Duration.ofSeconds(1)))
@@ -165,23 +167,83 @@ class RadioReferenceDiscoveryResolverTest
             directory.login("test", "cleared-password".toCharArray());
             assertEquals("premium_required", new RadioReferenceDiscoveryResolver(directory).resolve(10, P25).state());
             assertEquals(0, gateway.searches.get());
+            assertTrue(gateway.p25SystemIds.isEmpty());
         }
     }
 
     @Test
-    void authenticatedLookupUsesFrequencyLinkedCatalogIdsAndSkipsConventionalAndInexactRows() throws Exception
+    void p25LookupUsesOnAirSystemIdWithoutStateAndIgnoresConfiguredState() throws Exception
     {
         FakeGateway gateway = new FakeGateway();
-        gateway.rows = List.of(row(0, FREQUENCY), row(2002, FREQUENCY + 100_000),
-            row(2001, FREQUENCY), row(2001, FREQUENCY));
+        gateway.p25Candidates = List.of(catalog(0), catalog(2001), catalog(2001));
         gateway.systems.put(2001, p25(2001, 3001, "BEE00", "49F", 2, 12, FREQUENCY));
         try(RadioReferenceDirectoryService directory = directory(gateway, Duration.ofSeconds(1)))
         {
             directory.login("test", "cleared-password".toCharArray());
-            Result result = new RadioReferenceDiscoveryResolver(directory).resolve(10, P25);
-            assertTrue(result.matched());
+            RadioReferenceDiscoveryResolver resolver = new RadioReferenceDiscoveryResolver(directory);
+            assertTrue(resolver.resolve(null, P25).matched());
+            assertTrue(resolver.resolve(999, P25).matched());
+            assertEquals(List.of(2001, 2001), gateway.detailIds);
+            assertEquals(List.of(0x49F, 0x49F), gateway.p25SystemIds);
+            assertEquals(0, gateway.searches.get());
+        }
+    }
+
+    @Test
+    void sharedP25SystemIdAsksForStateOnlyWhenGlobalCandidatesExceedTheBound() throws Exception
+    {
+        FakeGateway gateway = new FakeGateway();
+        gateway.p25Candidates = java.util.stream.IntStream.rangeClosed(1, 9)
+            .mapToObj(RadioReferenceDiscoveryResolverTest::catalog).toList();
+        gateway.rows = List.of(row(2001, FREQUENCY));
+        gateway.systems.put(2001, p25(2001, 3001, "BEE00", "49F", 2, 12, FREQUENCY));
+        try(RadioReferenceDirectoryService directory = directory(gateway, Duration.ofSeconds(1)))
+        {
+            directory.login("test", "cleared-password".toCharArray());
+            RadioReferenceDiscoveryResolver resolver = new RadioReferenceDiscoveryResolver(directory);
+            assertEquals("location_required", resolver.resolve(null, P25).state());
+            assertTrue(gateway.detailIds.isEmpty());
+            assertEquals(0, gateway.searches.get());
+            assertTrue(resolver.resolve(10, P25).matched());
             assertEquals(List.of(2001), gateway.detailIds);
             assertEquals(1, gateway.searches.get());
+        }
+    }
+
+    @Test
+    void p25StateFallbackKeepsTheGlobalLookupDeadline() throws Exception
+    {
+        FakeGateway gateway = new FakeGateway();
+        gateway.p25Candidates = java.util.stream.IntStream.rangeClosed(1, 9)
+            .mapToObj(RadioReferenceDiscoveryResolverTest::catalog).toList();
+        gateway.rows = List.of(row(2001, FREQUENCY));
+        gateway.systems.put(2001, p25(2001, 3001, "BEE00", "49F", 2, 12, FREQUENCY));
+        gateway.delayMillis = 100;
+        try(RadioReferenceDirectoryService directory = directory(gateway, Duration.ofSeconds(1)))
+        {
+            directory.login("test", "cleared-password".toCharArray());
+            assertEquals(RadioReferenceDirectoryException.Code.TIMEOUT,
+                assertThrows(RadioReferenceDirectoryException.class, () -> directory.p25DiscoverySystems(
+                    0x49F, FREQUENCY, 10, system -> true, Duration.ofMillis(150))).code());
+        }
+    }
+
+    @Test
+    void nonP25LookupKeepsStateScopedFrequencySearch() throws Exception
+    {
+        FakeGateway gateway = new FakeGateway();
+        gateway.rows = List.of(row(0, FREQUENCY), row(2002, FREQUENCY + 100_000),
+            row(2001, FREQUENCY), row(2001, FREQUENCY));
+        gateway.systems.put(2001, system(2001, 3001, "DMR", "Tier III", "", "0x7B", 0, 12,
+            FREQUENCY, "7", 0));
+        Identity tier3 = new Identity("dmr", "tier3", FREQUENCY, null, 123, null, 12, 7, null);
+        try(RadioReferenceDirectoryService directory = directory(gateway, Duration.ofSeconds(1)))
+        {
+            directory.login("test", "cleared-password".toCharArray());
+            assertTrue(new RadioReferenceDiscoveryResolver(directory).resolve(10, tier3).matched());
+            assertEquals(List.of(2001), gateway.detailIds);
+            assertEquals(1, gateway.searches.get());
+            assertTrue(gateway.p25SystemIds.isEmpty());
         }
     }
 
@@ -211,7 +273,7 @@ class RadioReferenceDiscoveryResolverTest
     void skipsWrongNativeNetworksAndProtocolsBeforeLoadingTheirSiteCatalogs() throws Exception
     {
         FakeGateway gateway = new FakeGateway();
-        gateway.rows = List.of(row(2001, FREQUENCY), row(2002, FREQUENCY), row(2003, FREQUENCY));
+        gateway.p25Candidates = List.of(catalog(2001), catalog(2002), catalog(2003));
         gateway.systems.put(2001, p25(2001, 3001, "BEE01", "49F", 2, 12, FREQUENCY));
         gateway.systems.put(2002, system(2002, 3002, "Motorola", "Type II", "BEE00", "49F", 2, 12,
             FREQUENCY, "", 0));
@@ -243,9 +305,28 @@ class RadioReferenceDiscoveryResolverTest
     }
 
     @Test
+    void p25SystemLookupAndDetailsShareOneTotalDeadline() throws Exception
+    {
+        FakeGateway gateway = new FakeGateway();
+        gateway.p25Candidates = List.of(catalog(2001));
+        gateway.systems.put(2001, p25(2001, 3001, "BEE00", "49F", 2, 12, FREQUENCY));
+        gateway.delayMillis = 100;
+        gateway.siteDelayMillis = 100;
+        try(RadioReferenceDirectoryService directory = directory(gateway, Duration.ofSeconds(1)))
+        {
+            directory.login("test", "cleared-password".toCharArray());
+            assertEquals(RadioReferenceDirectoryException.Code.TIMEOUT,
+                assertThrows(RadioReferenceDirectoryException.class,
+                    () -> directory.p25DiscoverySystems(0x49F, FREQUENCY, null, system -> true, Duration.ofMillis(150))).code());
+        }
+    }
+
+    @Test
     void boundsCandidateSystemsAndSiteChannelsWithoutReturningPartialMatches() throws Exception
     {
         FakeGateway gateway = new FakeGateway();
+        gateway.p25Candidates = java.util.stream.IntStream.rangeClosed(1, 9)
+            .mapToObj(RadioReferenceDiscoveryResolverTest::catalog).toList();
         gateway.rows = java.util.stream.IntStream.rangeClosed(1, 9).mapToObj(id -> row(id, FREQUENCY)).toList();
         try(RadioReferenceDirectoryService directory = directory(gateway, Duration.ofSeconds(1)))
         {
@@ -253,7 +334,7 @@ class RadioReferenceDiscoveryResolverTest
             RadioReferenceDiscoveryResolver resolver = new RadioReferenceDiscoveryResolver(directory);
             assertEquals("ambiguous", resolver.resolve(10, P25).state());
             assertTrue(gateway.detailIds.isEmpty());
-            gateway.rows = List.of(row(2001, FREQUENCY));
+            gateway.p25Candidates = List.of(catalog(2001));
             DiscoverySystem candidate = p25(2001, 3001, "BEE00", "49F", 2, 12, FREQUENCY);
             TrunkedSiteDetails site = candidate.sites().getFirst();
             gateway.systems.put(2001, new DiscoverySystem(candidate.system(), List.of(new TrunkedSiteDetails(
@@ -286,6 +367,11 @@ class RadioReferenceDiscoveryResolverTest
                 List.of(alternate, control, control))));
     }
 
+    private static TrunkedSystem catalog(int rrSystem)
+    {
+        return new TrunkedSystem(rrSystem, "Untrusted catalog name", "", 1, 1, 1);
+    }
+
     private static FrequencyResult row(int rrSystem, long frequency)
     {
         return new FrequencyResult(frequency / 1_000_000.0, 0, "", "Untrusted description", "", "", "", "", "",
@@ -296,6 +382,8 @@ class RadioReferenceDiscoveryResolverTest
     {
         String expiration = "Never - Feed Provider";
         List<FrequencyResult> rows = List.of();
+        List<TrunkedSystem> p25Candidates = List.of();
+        final List<Integer> p25SystemIds = new ArrayList<>();
         final Map<Integer,DiscoverySystem> systems = new java.util.LinkedHashMap<>();
         final List<Integer> detailIds = new ArrayList<>();
         final List<Integer> siteIds = new ArrayList<>();
@@ -320,6 +408,19 @@ class RadioReferenceDiscoveryResolverTest
                 throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INTERRUPTED);
             }
             return rows;
+        }
+        @Override public List<TrunkedSystem> p25SystemsBySystemId(int systemId)
+            throws RadioReferenceGatewayException
+        {
+            p25SystemIds.add(systemId);
+            if(failure != null) throw new RadioReferenceGatewayException(failure);
+            try { if(delayMillis > 0) Thread.sleep(delayMillis); }
+            catch(InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+                throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INTERRUPTED);
+            }
+            return p25Candidates;
         }
         @Override public TrunkedSystemDetails trunkedSystemDetails(int id)
         {

@@ -43,14 +43,17 @@ public final class RadioReferenceDiscoveryResolver
         {
             return Result.manual("premium_required", "A current RadioReference premium subscription is required.");
         }
-        if(stateId == null || stateId <= 0)
+        if(!identity.p25() && (stateId == null || stateId <= 0))
         {
             return Result.manual("location_required", "Select a RadioReference state to identify this system.");
         }
         try
         {
-            return match(identity, mDirectory.discoverySystems(stateId, identity.frequencyHz(),
-                system -> protocolMatches(identity, system) && networkMatches(identity, system)));
+            return match(identity, identity.p25() ?
+                mDirectory.p25DiscoverySystems(identity.system(), identity.frequencyHz(), stateId,
+                    system -> protocolMatches(identity, system) && networkMatches(identity, system)) :
+                mDirectory.discoverySystems(stateId, identity.frequencyHz(),
+                    system -> protocolMatches(identity, system) && networkMatches(identity, system)));
         }
         catch(RadioReferenceDirectoryException exception)
         {
@@ -62,8 +65,9 @@ public final class RadioReferenceDiscoveryResolver
                     "A current RadioReference premium subscription is required.");
                 case INVALID_REQUEST -> Result.manual("location_required",
                     "Select a valid RadioReference state to identify this system.");
-                case RESULT_SET_TOO_LARGE -> Result.manual("ambiguous",
-                    "Too many RadioReference candidates; choose a system manually.");
+                case RESULT_SET_TOO_LARGE -> identity.p25() && stateId == null ?
+                    Result.manual("location_required", "Select a RadioReference state to narrow the system search.") :
+                    Result.manual("ambiguous", "Too many RadioReference candidates; choose a system manually.");
                 default -> Result.manual("unavailable",
                     "RadioReference could not be reached. Review the decoded identity and retry later.");
             };
@@ -121,7 +125,7 @@ public final class RadioReferenceDiscoveryResolver
         if(matches.isEmpty())
         {
             return Result.manual("no_match",
-                "No RadioReference site matches the decoded identity and frequency in this state.");
+                "No RadioReference site matches the decoded identity and frequency.");
         }
         return new Result("matched", "RadioReference system and site verified against the on-air identity.",
             matches.values().iterator().next(), PROVENANCE);

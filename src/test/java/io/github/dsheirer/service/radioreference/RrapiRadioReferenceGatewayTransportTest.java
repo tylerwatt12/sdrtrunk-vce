@@ -211,6 +211,64 @@ class RrapiRadioReferenceGatewayTransportTest
     }
 
     @Test
+    void p25SystemIdLookupUsesTypedHexIdentityAndMapsGlobalCatalogCandidates() throws Exception
+    {
+        List<String> requests = new ArrayList<>();
+        List<String> soapActions = new ArrayList<>();
+        String response = """
+            <?xml version="1.0" encoding="utf-8"?>
+            <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"
+                xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                xmlns:SOAP-ENC="http://schemas.xmlsoap.org/soap/encoding/"
+                xmlns:tns="http://api.radioreference.com/soap2">
+              <SOAP-ENV:Body>
+                <ns1:getTrsBySysidResponse xmlns:ns1="http://api.radioreference.com/soap2">
+                  <return xsi:type="SOAP-ENC:Array" SOAP-ENC:arrayType="tns:TrsListDef[1]">
+                    <item xsi:type="tns:TrsListDef">
+                      <sid xsi:type="xsd:int">2001</sid>
+                      <sName xsi:type="xsd:string">State P25</sName>
+                      <sType xsi:type="xsd:int">1</sType>
+                      <sFlavor xsi:type="xsd:int">2</sFlavor>
+                      <sVoice xsi:type="xsd:int">3</sVoice>
+                      <sCity xsi:type="xsd:string">Capital</sCity>
+                    </item>
+                  </return>
+                </ns1:getTrsBySysidResponse>
+              </SOAP-ENV:Body>
+            </SOAP-ENV:Envelope>
+            """;
+        try(TestHttpsServer server = new TestHttpsServer(exchange -> {
+            requests.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            soapActions.add(exchange.getRequestHeaders().getFirst("SOAPAction"));
+            byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "text/xml;charset=UTF-8");
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+            SecureRadioReferenceSoapClient client = client(server.endpoint(), server.sslContext(),
+                Duration.ofSeconds(2), 1024 * 1024);
+            RrapiRadioReferenceGateway gateway = new RrapiRadioReferenceGateway(client))
+        {
+            RadioReferenceGateway.TrunkedSystem candidate = gateway.p25SystemsBySystemId(0x49F).getFirst();
+            assertEquals(2001, candidate.id());
+            assertEquals("State P25", candidate.name());
+            assertEquals("Capital", candidate.city());
+            assertEquals(1, candidate.typeId());
+            gateway.p25SystemsBySystemId(0x00A);
+            assertThrows(RadioReferenceGatewayException.class, () -> gateway.p25SystemsBySystemId(0x1000));
+        }
+        assertEquals(2, requests.size());
+        assertTrue(requests.getFirst().contains("<sysid xsi:type=\"xsd:string\">49F</sysid>"));
+        assertTrue(requests.getLast().contains("<sysid xsi:type=\"xsd:string\">00A</sysid>"));
+        assertTrue(requests.getFirst().contains("xmlns:ns1=\"http://api.radioreference.com/soap2\""));
+        assertTrue(requests.getFirst().contains(">rpc</style>"));
+        assertFalse(requests.getFirst().contains("stid"));
+        assertEquals("http://api.radioreference.com/soap2#getTrsBySysid", soapActions.getFirst());
+    }
+
+    @Test
     void secureTransportMapsCompleteImportRowsAndUserFeeds() throws Exception
     {
         io.github.dsheirer.rrapi.type.RadioNetwork network = new io.github.dsheirer.rrapi.type.RadioNetwork();

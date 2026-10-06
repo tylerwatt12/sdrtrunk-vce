@@ -578,71 +578,134 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         {
             throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.INVALID_REQUEST);
         }
+        return invokePremium(gateway -> frequencyDiscoverySystems(gateway, stateId, frequencyHz, identityFilter),
+            deadlineNanos);
+    }
+
+    /** Global P25 System ID lookup uses a state-frequency fallback only when the candidate set exceeds its bound. */
+    public List<DiscoverySystem> p25DiscoverySystems(int systemId, long frequencyHz, Integer fallbackStateId,
+        Predicate<RadioReferenceGateway.TrunkedSystemDetails> identityFilter) throws RadioReferenceDirectoryException
+    {
+        return p25DiscoverySystems(systemId, frequencyHz, fallbackStateId, identityFilter, DEFAULT_DETAIL_REQUEST_DEADLINE);
+    }
+
+    List<DiscoverySystem> p25DiscoverySystems(int systemId, long frequencyHz, Integer fallbackStateId,
+        Predicate<RadioReferenceGateway.TrunkedSystemDetails> identityFilter, Duration deadline)
+        throws RadioReferenceDirectoryException
+    {
+        if(systemId < 0 || systemId > 0xFFF || frequencyHz <= 0 || frequencyHz > 100_000_000_000L)
+        {
+            throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.INVALID_REQUEST);
+        }
+        if(fallbackStateId != null) validateId(fallbackStateId);
+        Objects.requireNonNull(identityFilter);
+        long deadlineNanos = Math.min(positiveNanos(deadline, "deadline"), DEFAULT_DETAIL_REQUEST_DEADLINE.toNanos());
         return invokePremium(gateway -> {
-            List<RadioReferenceGateway.FrequencyResult> frequencies =
-                gateway.searchStateFrequencies(stateId, frequencyHz / 1_000_000.0);
-            if(frequencies != null && frequencies.size() > MAXIMUM_REMOTE_ITEMS_SCANNED)
+            try
+            {
+                return p25SystemCandidates(gateway, systemId, identityFilter);
+            }
+            catch(RadioReferenceGatewayException exception)
+            {
+                if(exception.kind() != RadioReferenceGatewayException.Kind.RESULT_SET_TOO_LARGE || fallbackStateId == null)
+                    throw exception;
+                return frequencyDiscoverySystems(gateway, fallbackStateId, frequencyHz, identityFilter);
+            }
+        }, deadlineNanos);
+    }
+
+    private static List<DiscoverySystem> p25SystemCandidates(RadioReferenceGateway gateway, int systemId,
+        Predicate<RadioReferenceGateway.TrunkedSystemDetails> identityFilter) throws RadioReferenceGatewayException
+    {
+        List<RadioReferenceGateway.TrunkedSystem> candidates = gateway.p25SystemsBySystemId(systemId);
+        if(candidates != null && candidates.size() > MAXIMUM_REMOTE_ITEMS_SCANNED)
+        {
+            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.RESULT_SET_TOO_LARGE);
+        }
+        Set<Integer> systemIds = new LinkedHashSet<>();
+        if(candidates != null)
+        {
+            for(RadioReferenceGateway.TrunkedSystem candidate: candidates)
+            {
+                if(candidate != null && candidate.id() > 0) systemIds.add(candidate.id());
+            }
+        }
+        return discoverySystemDetails(gateway, systemIds, identityFilter);
+    }
+
+    private static List<DiscoverySystem> frequencyDiscoverySystems(RadioReferenceGateway gateway, int stateId,
+        long frequencyHz, Predicate<RadioReferenceGateway.TrunkedSystemDetails> identityFilter)
+        throws RadioReferenceGatewayException
+    {
+        List<RadioReferenceGateway.FrequencyResult> frequencies =
+            gateway.searchStateFrequencies(stateId, frequencyHz / 1_000_000.0);
+        if(frequencies != null && frequencies.size() > MAXIMUM_REMOTE_ITEMS_SCANNED)
+        {
+            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.RESULT_SET_TOO_LARGE);
+        }
+        Set<Integer> systemIds = new LinkedHashSet<>();
+        if(frequencies != null)
+        {
+            for(RadioReferenceGateway.FrequencyResult frequency: frequencies)
+            {
+                if(frequency != null && frequency.systemId() > 0 && Double.isFinite(frequency.downlinkMHz()) &&
+                    Math.round(frequency.downlinkMHz() * 1_000_000.0) == frequencyHz)
+                {
+                    systemIds.add(frequency.systemId());
+                }
+            }
+        }
+        return discoverySystemDetails(gateway, systemIds, identityFilter);
+    }
+
+    private static List<DiscoverySystem> discoverySystemDetails(RadioReferenceGateway gateway, Set<Integer> systemIds,
+        Predicate<RadioReferenceGateway.TrunkedSystemDetails> identityFilter) throws RadioReferenceGatewayException
+    {
+        if(systemIds.size() > MAXIMUM_DISCOVERY_SYSTEMS)
+        {
+            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.RESULT_SET_TOO_LARGE);
+        }
+        List<DiscoverySystem> systems = new ArrayList<>();
+        long detailItems = 0;
+        for(int systemId: systemIds)
+        {
+            if(Thread.currentThread().isInterrupted())
+            {
+                throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INTERRUPTED);
+            }
+            RadioReferenceGateway.TrunkedSystemDetails system = gateway.trunkedSystemDetails(systemId);
+            if(system == null || system.id() != systemId)
+            {
+                throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
+            }
+            if(!identityFilter.test(system)) continue;
+            List<RadioReferenceGateway.TrunkedSiteDetails> sites = gateway.trunkedSiteDetails(systemId);
+            if(sites != null && sites.size() > MAXIMUM_REMOTE_ITEMS_SCANNED)
             {
                 throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.RESULT_SET_TOO_LARGE);
             }
-            Set<Integer> systemIds = new LinkedHashSet<>();
-            if(frequencies != null)
+            List<RadioReferenceGateway.TrunkedSiteDetails> verified = new ArrayList<>();
+            if(sites != null)
             {
-                for(RadioReferenceGateway.FrequencyResult frequency: frequencies)
+                for(RadioReferenceGateway.TrunkedSiteDetails site: sites)
                 {
-                    if(frequency != null && frequency.systemId() > 0 && Double.isFinite(frequency.downlinkMHz()) &&
-                        Math.round(frequency.downlinkMHz() * 1_000_000.0) == frequencyHz)
+                    if(site != null)
                     {
-                        systemIds.add(frequency.systemId());
-                    }
-                }
-            }
-            if(systemIds.size() > MAXIMUM_DISCOVERY_SYSTEMS)
-            {
-                throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.RESULT_SET_TOO_LARGE);
-            }
-            List<DiscoverySystem> systems = new ArrayList<>();
-            long detailItems = 0;
-            for(int systemId: systemIds)
-            {
-                if(Thread.currentThread().isInterrupted())
-                {
-                    throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INTERRUPTED);
-                }
-                RadioReferenceGateway.TrunkedSystemDetails system = gateway.trunkedSystemDetails(systemId);
-                if(system == null || system.id() != systemId)
-                {
-                    throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
-                }
-                if(!identityFilter.test(system)) continue;
-                List<RadioReferenceGateway.TrunkedSiteDetails> sites = gateway.trunkedSiteDetails(systemId);
-                if(sites != null && sites.size() > MAXIMUM_REMOTE_ITEMS_SCANNED)
-                {
-                    throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.RESULT_SET_TOO_LARGE);
-                }
-                List<RadioReferenceGateway.TrunkedSiteDetails> verified = new ArrayList<>();
-                if(sites != null)
-                {
-                    for(RadioReferenceGateway.TrunkedSiteDetails site: sites)
-                    {
-                        if(site != null)
+                        detailItems += 1L + site.channels().size();
+                        if(detailItems > MAXIMUM_REMOTE_ITEMS_SCANNED)
                         {
-                            detailItems += 1L + site.channels().size();
-                            if(detailItems > MAXIMUM_REMOTE_ITEMS_SCANNED)
-                            {
-                                throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.RESULT_SET_TOO_LARGE);
-                            }
-                            if(site.systemId() == systemId)
-                            {
-                                verified.add(site);
-                            }
+                            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.RESULT_SET_TOO_LARGE);
+                        }
+                        if(site.systemId() == systemId)
+                        {
+                            verified.add(site);
                         }
                     }
                 }
-                systems.add(new DiscoverySystem(system, verified));
             }
-            return List.copyOf(systems);
-        }, deadlineNanos);
+            systems.add(new DiscoverySystem(system, verified));
+        }
+        return List.copyOf(systems);
     }
 
     /**

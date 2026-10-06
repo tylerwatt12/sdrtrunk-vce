@@ -14,6 +14,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 import io.github.dsheirer.rrapi.request.RequestEnvelope;
 import io.github.dsheirer.rrapi.response.Fault;
+import io.github.dsheirer.rrapi.response.GetApco25SystemsResponse;
 import io.github.dsheirer.rrapi.response.ResponseBody;
 import io.github.dsheirer.rrapi.response.ResponseEnvelope;
 import io.github.dsheirer.rrapi.response.SearchFrequencyResponse;
@@ -68,9 +69,6 @@ final class SecureRadioReferenceSoapClient implements AutoCloseable
     private static final String XML_SCHEMA_INSTANCE_NAMESPACE = "http://www.w3.org/2001/XMLSchema-instance";
     private static final String RADIO_REFERENCE_PREFIX = "ns1";
     private static final String RADIO_REFERENCE_NAMESPACE = "http://api.radioreference.com/soap2";
-    private static final String SEARCH_STATE_FREQUENCY_ACTION =
-        RADIO_REFERENCE_NAMESPACE + "#searchStateFreq";
-
     private final Object mCredentialLock = new Object();
     private final URI mEndpoint;
     private final HttpClient mHttpClient;
@@ -146,6 +144,17 @@ final class SecureRadioReferenceSoapClient implements AutoCloseable
     {
         return executeEncoded(authorization -> stateFrequencyRequest(authorization, stateId, frequencyMHz),
             SearchFrequencyResponse.class, mRequestTimeout);
+    }
+
+    GetApco25SystemsResponse p25SystemsBySystemId(int systemId) throws RadioReferenceGatewayException
+    {
+        if(systemId < 0 || systemId > 0xFFF)
+        {
+            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.REQUEST_ENCODING);
+        }
+        return executeEncoded(authorization -> rpcRequest(authorization, "getTrsBySysid",
+            List.of(new RpcParameter("sysid", "string", String.format(java.util.Locale.ROOT, "%03X", systemId)))),
+            GetApco25SystemsResponse.class, mRequestTimeout);
     }
 
     private <T extends ResponseBody> T executeEncoded(RequestEncoder requestEncoder, Class<T> responseType,
@@ -247,7 +256,7 @@ final class SecureRadioReferenceSoapClient implements AutoCloseable
 
     /**
      * The dependency's document-style serializer emits an unbound operation prefix.  RadioReference accepts that
-     * legacy request but returns an empty frequency array.  Frequency search therefore uses the service's documented
+     * legacy request but may return an empty result array. Discovery searches therefore use the service's documented
      * RPC encoding explicitly, including bound namespaces and parameter types.
      */
     private static EncodedRequest stateFrequencyRequest(AuthorizationInformation authorization, int stateId,
@@ -258,6 +267,15 @@ final class SecureRadioReferenceSoapClient implements AutoCloseable
             throw new IOException("Invalid state-frequency search parameters");
         }
 
+        return rpcRequest(authorization, "searchStateFreq", List.of(
+            new RpcParameter("stid", "int", Integer.toString(stateId)),
+            new RpcParameter("freq", "decimal", BigDecimal.valueOf(frequencyMHz).stripTrailingZeros().toPlainString()),
+            new RpcParameter("tone", "string", "")));
+    }
+
+    private static EncodedRequest rpcRequest(AuthorizationInformation authorization, String operation,
+                                             List<RpcParameter> parameters) throws IOException
+    {
         StringWriter output = new StringWriter();
         XMLStreamWriter xml = null;
 
@@ -271,11 +289,11 @@ final class SecureRadioReferenceSoapClient implements AutoCloseable
             xml.writeNamespace(XML_SCHEMA_PREFIX, XML_SCHEMA_NAMESPACE);
             xml.writeNamespace(XML_SCHEMA_INSTANCE_PREFIX, XML_SCHEMA_INSTANCE_NAMESPACE);
             xml.writeStartElement(SOAP_ENV_PREFIX, "Body", SOAP_ENV_NAMESPACE);
-            xml.writeStartElement(RADIO_REFERENCE_PREFIX, "searchStateFreq", RADIO_REFERENCE_NAMESPACE);
-            writeTypedElement(xml, "stid", XML_SCHEMA_PREFIX + ":int", Integer.toString(stateId));
-            writeTypedElement(xml, "freq", XML_SCHEMA_PREFIX + ":decimal",
-                BigDecimal.valueOf(frequencyMHz).stripTrailingZeros().toPlainString());
-            writeTypedElement(xml, "tone", XML_SCHEMA_PREFIX + ":string", "");
+            xml.writeStartElement(RADIO_REFERENCE_PREFIX, operation, RADIO_REFERENCE_NAMESPACE);
+            for(RpcParameter parameter: parameters)
+            {
+                writeTypedElement(xml, parameter.name(), XML_SCHEMA_PREFIX + ":" + parameter.type(), parameter.value());
+            }
             xml.writeStartElement("authInfo");
             xml.writeAttribute(XML_SCHEMA_INSTANCE_PREFIX, XML_SCHEMA_INSTANCE_NAMESPACE, "type",
                 RADIO_REFERENCE_PREFIX + ":authInfo");
@@ -290,11 +308,11 @@ final class SecureRadioReferenceSoapClient implements AutoCloseable
             xml.writeEndElement();
             xml.writeEndDocument();
             xml.flush();
-            return new EncodedRequest(output.toString(), SEARCH_STATE_FREQUENCY_ACTION);
+            return new EncodedRequest(output.toString(), RADIO_REFERENCE_NAMESPACE + "#" + operation);
         }
         catch(XMLStreamException exception)
         {
-            throw new IOException("Unable to encode RadioReference frequency search", exception);
+            throw new IOException("Unable to encode RadioReference discovery search", exception);
         }
         finally
         {
@@ -311,6 +329,8 @@ final class SecureRadioReferenceSoapClient implements AutoCloseable
             }
         }
     }
+
+    private record RpcParameter(String name, String type, String value) { }
 
     private static void writeTypedElement(XMLStreamWriter xml, String name, String type, String value)
         throws XMLStreamException
