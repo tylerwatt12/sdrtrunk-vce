@@ -36,7 +36,7 @@ class SdrTrunkDatabaseDdlBoundaryTest
         "\\b(?:(?:SdrTrunkDatabaseSchema|DmrActivitySchema|TrunkedSiteSchema|" +
             "EncryptionKeyVaultSchema|TrunkedIdentitySchema|ReceiverActivitySchema)\\.create\\w*|" +
             "ReceiverActivitySchema\\.(?:rebuildCoveringActivityIndexes|rebuildHistoricalMemberEvidenceIndexes|" +
-                "rebuildStoredMemberChannelEvidence)|" +
+                "rebuildStoredMemberChannelEvidence|rebuildTargetIdentityForeignKeyIndex)|" +
             "Format(?:2|4|5)SchemaSql\\.create\\w*|ManagedRecordingSchema\\.ddlForFormat)\\s*\\(");
     private static final Pattern FRESH_SCHEMA_CALL = Pattern.compile(
         "\\bSdrTrunkDatabaseStartup(?:::|\\.)(?:createGlobalDatabase|createVaultDatabase)\\b");
@@ -94,6 +94,7 @@ class SdrTrunkDatabaseDdlBoundaryTest
         "java/io/github/dsheirer/database/upgrade/Format38To39DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format39To40DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format40To41DatabaseMigration.java",
+        "java/io/github/dsheirer/database/upgrade/Format41To42DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/ManagedRecordingCatalogMigrator.java");
     private static final Set<String> FRESH_DATABASE_CALLERS = Set.of(
         "java/io/github/dsheirer/database/SdrTrunkDatabaseBootstrap.java",

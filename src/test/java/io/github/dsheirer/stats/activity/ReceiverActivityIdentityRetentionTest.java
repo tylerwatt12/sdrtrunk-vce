@@ -35,7 +35,7 @@ class ReceiverActivityIdentityRetentionTest
             String plan = identityTaskPlan(connection);
             assertTrue(plan.contains("SEARCH child USING INDEX idx_receiver_activity_event_source_time " +
                 "(source_identity_summary_id=?)"), plan);
-            assertTrue(plan.contains("SEARCH child USING INDEX idx_receiver_activity_event_target_time " +
+            assertTrue(plan.contains("SEARCH child USING COVERING INDEX idx_receiver_activity_event_target_time " +
                 "(target_identity_summary_id=?)"), plan);
             assertTrue(plan.contains("SEARCH child USING COVERING INDEX idx_trunked_logical_identity_identity " +
                 "(identity_summary_id=? AND radio_system_id=?)"), plan);
@@ -62,16 +62,92 @@ class ReceiverActivityIdentityRetentionTest
         }
     }
 
+    @Test
+    void implicitTargetForeignKeyUsesCoveringIdentitySeekDespiteTiedSampledEstimates() throws Exception
+    {
+        for(boolean current: List.of(false,true))
+        {
+            try(Connection connection = open(current))
+            {
+                seed(connection);
+                //Approximate analysis can make a whole-system seek appear as selective as one target identity.
+                execute(connection,"""
+                    UPDATE sqlite_stat1 SET stat='1000000' ||
+                        CASE WHEN instr(stat,' ')>0 THEN substr(stat,instr(stat,' ')) ELSE '' END
+                    WHERE tbl='receiver_activity_event'
+                    """);
+                execute(connection,"""
+                    UPDATE sqlite_stat1 SET stat='1000000 1000 1 1 1'
+                    WHERE idx='idx_receiver_activity_event_system_action_time'
+                    """);
+                execute(connection,"UPDATE sqlite_stat1 SET stat='1000000 1000 1 1 1 1 1 1"+
+                    (current ? " 1" : "")+"' WHERE idx='idx_receiver_activity_event_target_time'");
+                execute(connection,"""
+                    UPDATE sqlite_stat1 SET stat='1000000 1000 1 1 1 1 1'
+                    WHERE idx='idx_receiver_activity_event_target_event_type_time'
+                    """);
+                execute(connection,"""
+                    UPDATE sqlite_stat1 SET stat='1000000 500 1 1 1 1 1'
+                    WHERE idx='idx_receiver_activity_event_source_time'
+                    """);
+                if(scalar(connection,"SELECT count(*) FROM sqlite_schema WHERE name='sqlite_stat4'")>0)
+                {
+                    execute(connection,"DELETE FROM sqlite_stat4");
+                }
+                execute(connection,"ANALYZE sqlite_schema");
+                String plan = queryPlan(connection,"DELETE FROM radio_system_identity_summary WHERE id=5");
+                if(current)
+                {
+                    assertTrue(plan.contains("SEARCH receiver_activity_event USING COVERING INDEX " +
+                        "idx_receiver_activity_event_target_time (target_identity_summary_id=?)"),plan);
+                    assertTrue(!plan.contains("idx_receiver_activity_event_system_action_time"),plan);
+                    ReceiverActivityRetention.runPass(connection,5_000,() -> 0);
+                    assertEquals(0,scalar(connection,"SELECT count(*) FROM radio_system_identity_summary WHERE id=5"));
+                    assertEquals(4,scalar(connection,"SELECT count(*) FROM radio_system_identity_summary WHERE id<=4"),
+                        "Current source, target, logical-call and member evidence still protects its identities");
+                    assertEquals(2_001,scalar(connection,"SELECT count(*) FROM receiver_activity_event"));
+                    assertEquals(0,scalar(connection,"SELECT count(*) FROM pragma_foreign_key_check"));
+                    String ordered = queryPlan(connection,"SELECT id FROM receiver_activity_event " +
+                        "INDEXED BY idx_receiver_activity_event_target_time WHERE target_identity_summary_id=2 " +
+                        "ORDER BY observed_at_ms DESC,id DESC LIMIT 20");
+                    assertTrue(!ordered.contains("USE TEMP B-TREE"),ordered);
+                }
+                else
+                {
+                    assertTrue(plan.contains("SEARCH receiver_activity_event USING INDEX " +
+                        "idx_receiver_activity_event_system_action_time (radio_system_id=?)"),plan);
+                }
+            }
+        }
+    }
+
     private static Connection open() throws Exception
+    {
+        return open(true);
+    }
+
+    private static Connection open(boolean current) throws Exception
     {
         Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:");
         execute(connection, "PRAGMA foreign_keys=ON");
         SdrTrunkDatabaseSchema.create(connection);
         SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
-        ReceiverActivitySchema.create(connection);
+        if(current) ReceiverActivitySchema.create(connection);
+        else ReceiverActivitySchema.createFormat41(connection);
         DmrActivitySchema.create(connection);
         TrunkedSiteSchema.create(connection);
         return connection;
+    }
+
+    private static String queryPlan(Connection connection, String sql) throws Exception
+    {
+        StringBuilder plan = new StringBuilder();
+        try(Statement statement = connection.createStatement();
+            ResultSet rows = statement.executeQuery("EXPLAIN QUERY PLAN "+sql))
+        {
+            while(rows.next()) plan.append(rows.getString("detail")).append('\n');
+        }
+        return plan.toString();
     }
 
     private static void seed(Connection connection) throws Exception

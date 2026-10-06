@@ -70,14 +70,11 @@ class Format40To41DatabaseMigrationTest
                 new Format40To41DatabaseMigration().migrate(connection);connection.rollback();
                 assertEquals(DatabaseFormatCatalog.requireVersion(40).fingerprint(),SqliteSchemaValidator.fingerprint(connection));
                 assertEquals(indexes,schemaDefinitions(connection));assertEquals(expected,tableContents(connection));
-                DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);connection.commit();
-                assertEquals(1,report.steps().size());
-                assertEquals("format-40-to-41",report.steps().getFirst().id());
-                assertEquals(List.of(2L),report.steps().getFirst().effects().stream()
-                    .map(DatabaseMigrationEffect::affectedRows).toList());
+                new Format40To41DatabaseMigration().migrate(connection);
+                DatabaseFormatCatalog.stamp(connection,41);connection.commit();
                 assertEquals(expected,tableContents(connection),"Only the format marker changes");
-                assertEquals(41,DatabaseFormatCatalog.requireCurrent(connection).version());
-                assertEquals(DatabaseFormatCatalog.current().fingerprint(),SqliteSchemaValidator.fingerprint(connection));
+                assertEquals(41,DatabaseFormatCatalog.inspect(connection).version());
+                assertEquals(DatabaseFormatCatalog.requireVersion(41).fingerprint(),SqliteSchemaValidator.fingerprint(connection));
                 Map<String,String> actual = schemaDefinitions(connection);
                 Set<String> names = new TreeSet<>(indexes.keySet());
                 ADDED.keySet().forEach(name -> names.add("index:"+name));
@@ -87,6 +84,7 @@ class Format40To41DatabaseMigrationTest
                 assertEquals("ok",scalar(statement,"PRAGMA integrity_check"));
                 assertEquals("0",scalar(statement,"SELECT count(*) FROM pragma_foreign_key_check"));
             }
+            try(Connection connection = open(candidate)) { DatabaseMigrationChain.migrate(connection); }
             SdrTrunkDatabaseStartup.validateGlobalDatabase(candidate);
             assertArrayEquals(bytes,Files.readAllBytes(source));
         }
@@ -118,9 +116,9 @@ class Format40To41DatabaseMigrationTest
     }
 
     @Test
-    void freshAndMigratedFormat41HaveTheSameSchemaAndCurrentMigrationIsANoOp() throws Exception
+    void freshAndMigratedCurrentFormatHaveTheSameSchemaAndCurrentMigrationIsANoOp() throws Exception
     {
-        Path current = Format41TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
+        Path current = Format42TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
         Path fresh = mTemporaryFolder.resolve("fresh.sqlite");SdrTrunkDatabaseStartup.createGlobalDatabase(fresh);
         try(Connection connection = open(current); Connection freshConnection = open(fresh))
         {

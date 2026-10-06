@@ -306,7 +306,7 @@ class DatabaseFormatCatalogTest
             assertEquals("format-38-to-39", plan.steps().getFirst().id());
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 38, report.steps().size());
-            assertEquals("format-40-to-41", report.steps().getLast().id());
+            assertEquals("format-41-to-42", report.steps().getLast().id());
             assertTrue(report.target().markerPresent());
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
         }
@@ -349,10 +349,10 @@ class DatabaseFormatCatalogTest
             assertEquals(40, detected.version());
             assertFalse(detected.markerPresent());
             DatabaseMigrationChain.PreflightReport plan = DatabaseMigrationChain.validateSource(connection, detected);
-            assertEquals(1, plan.steps().size());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 40, plan.steps().size());
             assertEquals("format-40-to-41", plan.steps().getFirst().id());
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
-            assertEquals(1, report.steps().size());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 40, report.steps().size());
             assertEquals("format-40-to-41", report.steps().getFirst().id());
             assertEquals(DatabaseFormatCatalog.requireVersion(40).fingerprint(), fingerprint);
             assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
@@ -363,7 +363,7 @@ class DatabaseFormatCatalogTest
     @Test
     void exactMarkerlessCurrentFormatIsAdoptedWithoutChangingItsSchema() throws Exception
     {
-        Path database = Format41TestDatabase.create(mTemporaryFolder.resolve("markerless-current.sqlite"));
+        Path database = Format42TestDatabase.create(mTemporaryFolder.resolve("markerless-current.sqlite"));
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);

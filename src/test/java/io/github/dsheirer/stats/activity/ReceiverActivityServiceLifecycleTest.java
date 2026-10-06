@@ -1949,7 +1949,7 @@ class ReceiverActivityServiceLifecycleTest
     }
 
     @Test
-    void lowersRetentionAndRunsMaintenanceWhileCollectionIsDisabled() throws Exception
+    void lowersRetentionWhileCollectionIsDisabledWithoutStartupCleanup() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
         SdrTrunkTestDatabase.create(database);
@@ -1994,18 +1994,19 @@ class ReceiverActivityServiceLifecycleTest
             service.receiveMaintenanceRequest(initialCheck);
             assertTrue(initialCheck.result().get(5, TimeUnit.SECONDS).checkOk());
             assertEquals(ReceiverActivityStatus.State.DISABLED, service.getStatus().state());
-            //Startup maintenance used the 30-day setting even though collection was disabled.
-            assertEquals(1, count(database, "receiver_activity_event"));
-            assertEquals(2, count(database, "trunked_site_snapshot"));
-            assertEquals(1, countProtocol(database, TrunkedSiteSchema.PROTOCOL_DMR));
-            assertEquals(1, countProtocol(database, TrunkedSiteSchema.PROTOCOL_NXDN));
+            //Startup and an explicit integrity check preserve history until scheduled or requested retention.
+            assertEquals(2, count(database, "receiver_activity_event"));
+            assertEquals(4, count(database, "trunked_site_snapshot"));
+            assertEquals(2, countProtocol(database, TrunkedSiteSchema.PROTOCOL_DMR));
+            assertEquals(2, countProtocol(database, TrunkedSiteSchema.PROTOCOL_NXDN));
 
             applicationPreference.setRetentionDays(1);
             service.preferenceUpdated(PreferenceType.APPLICATION);
 
-            long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
-            int remainingReceiverActivity = 1;
-            int remainingTrunked = 2;
+            //Allow the existing five-second catch-up interval and writer polling to elapse.
+            long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(10);
+            int remainingReceiverActivity = 2;
+            int remainingTrunked = 4;
 
             while((remainingReceiverActivity != 0 || remainingTrunked != 0) &&
                 System.currentTimeMillis() < deadline)

@@ -435,6 +435,46 @@ schedule. Their timings and storage estimates cannot be added to earlier migrati
 byte caps. The Application Migrator adds exactly these two indexes; every prior table/index definition, retained row,
 relationship and allocator is preserved. Formats 35, 36 and 37 remain frozen, and startup does not migrate them.
 
+### Covering target identity cleanup (format 42)
+
+SQLite generates its own child lookup when deleting an identity referenced by a composite foreign key. The explicit
+retention query's index hint does not govern that separate lookup. Approximate planner statistics can give a system
+and a target identity the same estimated event count, making a system-only index look competitive. The previous
+target/time cover includes target kind but lacks the system value needed to check the complete foreign key.
+
+Format 42 replaces that existing index, appending one integer after every previous ordering and payload column:
+
+```sql
+CREATE INDEX idx_receiver_activity_event_target_time
+ON receiver_activity_event(target_identity_summary_id, observed_at_ms, id, channel_id,
+    target_observed_local_id, target_observed_working_id, target_kind_code, radio_system_id)
+WHERE target_identity_summary_id IS NOT NULL;
+```
+
+The implicit check compares `target_identity_summary_id`, `radio_system_id` and `target_kind_code`. Its representative
+plan is `SEARCH receiver_activity_event USING COVERING INDEX idx_receiver_activity_event_target_time
+(target_identity_summary_id=?)`, including when sampled target and system estimates tie. The existing target/type
+cover lacks target kind, and system-first indexes cannot seek an identity within the system. Widening the existing
+target/time cover supplies all three foreign-key values without another index. Its identity/time/ID prefix still
+serves ordered Activity and historical Alias evidence without a temporary sorting tree. Source lookups and all
+other index definitions remain unchanged.
+
+There is still at most one entry per retained target-linked detailed event. Unattributed events remain outside the
+partial index; no additional observation, summary, relationship or descriptive text is stored. At R qualifying
+events per hour, maximum 365-day retention projects at most 8,760 × R entries. The extra integer's serialized width,
+record header and page occupancy determine the storage increase, so it is not a fixed byte cap. Insertions and late
+attribution maintain one larger existing index entry through the background writer rather than adding another
+index operation; retention and explicit clears remove those entries with their events. The migration rebuild cost
+scales with retained target-linked events. A separate fresh synthetic projection using the complete event-index
+set and 50,000 integer-only events added 112 KiB of database allocation and approximately 1.1% WAL. Six alternating
+insertion samples with 1,250-row transactions showed no measured slowdown. This sample does not establish a
+throughput guarantee or include the complete receiver queues, summary work and checkpoint schedule.
+Focused SQLite tests verify the implicit plan under tied estimates,
+unchanged event ordering, current-evidence protection, complete application-row and allocator preservation, and
+rollback/retry after an interrupted populated index build. These are correctness and query-plan checks, not a
+complete receiver throughput forecast. Only fresh current creation and the adjacent Application Migrator apply
+the replacement; formats 38 through 41 keep their frozen seven-column definition and startup remains validation-only.
+
 ### Identity retention lookup
 
 Format 37 adds `idx_trunked_logical_identity_identity(identity_summary_id, radio_system_id, identity_kind_code)`

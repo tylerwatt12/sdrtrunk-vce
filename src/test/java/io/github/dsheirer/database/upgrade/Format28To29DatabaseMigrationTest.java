@@ -40,7 +40,7 @@ class Format28To29DatabaseMigrationTest
                 DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
                 assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
                 assertEquals("format-28-to-29", report.steps().getFirst().id());
-                assertEquals("format-40-to-41", report.steps().getLast().id());
+                assertEquals("format-41-to-42", report.steps().getLast().id());
                 assertEquals(portable, scalar(statement,
                     "SELECT settings_json FROM application_settings WHERE key='portable_java_preferences_v1'"));
                 SetupProgress upgraded = SetupProgress.read(connection);

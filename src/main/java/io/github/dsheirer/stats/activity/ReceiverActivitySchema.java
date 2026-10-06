@@ -126,8 +126,30 @@ public class ReceiverActivitySchema
 
     public static void create(Connection connection) throws SQLException
     {
+        createFormat41(connection);
+        rebuildTargetIdentityForeignKeyIndex(connection);
+    }
+
+    /** Creates the exact format-41 activity schema before the target foreign-key covering replacement. */
+    public static void createFormat41(Connection connection) throws SQLException
+    {
         createFormat40(connection);
         createRemainingQueryLookupIndexes(connection);
+    }
+
+    /** Covers the complete target identity foreign key without changing the existing time/ID ordering. */
+    public static void rebuildTargetIdentityForeignKeyIndex(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DROP INDEX idx_receiver_activity_event_target_time");
+            statement.executeUpdate("""
+                CREATE INDEX idx_receiver_activity_event_target_time
+                ON receiver_activity_event(target_identity_summary_id, observed_at_ms, id, channel_id,
+                    target_observed_local_id, target_observed_working_id, target_kind_code, radio_system_id)
+                WHERE target_identity_summary_id IS NOT NULL
+                """);
+        }
     }
 
     /** Creates the exact main format-37 activity schema before later performance changes. */
@@ -389,7 +411,7 @@ public class ReceiverActivitySchema
                 "source_observed_local_id", "source_observed_working_id"));
         validateIndexColumns(connection, "idx_receiver_activity_event_target_time",
             List.of("target_identity_summary_id", "observed_at_ms", "id", "channel_id",
-                "target_observed_local_id", "target_observed_working_id", "target_kind_code"));
+                "target_observed_local_id", "target_observed_working_id", "target_kind_code", "radio_system_id"));
         validateIndexColumns(connection, "idx_receiver_activity_event_source_working_evidence",
             List.of("source_identity_summary_id", "channel_id", "source_observed_working_id"));
         validateIndexColumns(connection, "idx_receiver_activity_event_system_action_time",
