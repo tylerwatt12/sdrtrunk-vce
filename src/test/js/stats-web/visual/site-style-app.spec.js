@@ -156,3 +156,173 @@ for (const [name, viewport] of [
 }
 
 module.exports = { routes, administration };
+
+async function installRadioReferenceRegionApplication(page, theme, options = {}) {
+  const fixture = await installSiteStyleApplication(page, theme);
+  let configuration = { account: { state: options.signedOut ? 'SIGNED_OUT' : 'VALID_PREMIUM',
+    user_name: options.signedOut ? '' : 'fixture.operator' }, credentials_stored: !options.signedOut,
+  country_id: options.countryId ?? null, state_id: options.stateId ?? null };
+  const requests = [];
+  await page.route('**/api/v1/admin/radioreference**', async route => {
+    const request = route.request(), url = new URL(request.url()), endpoint = url.pathname;
+    requests.push({ endpoint, method: request.method(), body: request.postDataJSON() });
+    const respond = data => route.fulfill({ json: { data } });
+    if (endpoint === '/api/v1/admin/radioreference') return respond(configuration);
+    if (endpoint.endsWith('/session') && request.method() === 'PUT') {
+      configuration = { ...configuration, account: { state: 'VALID_PREMIUM', user_name: 'fixture.operator' },
+        credentials_stored: true };
+      return respond(configuration);
+    }
+    if (endpoint.endsWith('/countries')) return respond({ items: [
+      { id: 1, name: 'United States', abbreviation: 'US' },
+      { id: 2, name: 'Canada', abbreviation: 'CA' }
+    ] });
+    if (endpoint.endsWith('/states')) return respond({ items: url.searchParams.get('country_id') === '2' ?
+      [{ id: 57, name: 'Ontario' }] : [{ id: 39, name: 'Ohio' }, { id: 42, name: 'Pennsylvania' }] });
+    if (endpoint.endsWith('/location') && request.method() === 'PUT') {
+      if (options.save) return options.save(route, request.postDataJSON());
+      const location = request.postDataJSON();
+      configuration = { ...configuration, country_id: location.country_id, state_id: location.state_id };
+      return respond(configuration);
+    }
+    if (['/counties', '/bookmarks', '/system-preferences', '/browse/catalog'].some(suffix => endpoint.endsWith(suffix))) {
+      return respond({ items: [], total_count: 0 });
+    }
+    fixture.unexpected.push(`${request.method()} ${endpoint}`);
+    return route.fulfill({ status: 501, json: { error: { message: `Region fixture has no response for ${endpoint}` } } });
+  });
+  return { fixture, requests };
+}
+
+for (const [theme, viewport, signedOut] of [
+  ['light', { width: 1280, height: 900 }, true],
+  ['dark', { width: 390, height: 844 }, false]
+]) {
+  test(`RadioReference lookup region is offered after ${signedOut ? 'connection' : 'returning sign-in'} ${theme}`,
+    async ({ page }, testInfo) => {
+      await page.setViewportSize(viewport);
+      const { fixture, requests } = await installRadioReferenceRegionApplication(page, theme, { signedOut });
+      await page.goto('/app.html?view=radioreference');
+      if (signedOut) {
+        await expect(page.locator('.radioreference-region-form')).toHaveCount(0);
+        await page.getByLabel('Username', { exact: true }).fill('fixture.operator');
+        await page.getByLabel('Password', { exact: true }).fill('fixture-password');
+        await page.getByRole('button', { name: 'Connect RadioReference', exact: true }).click();
+      }
+      const region = page.locator('.radioreference-connected-page > .radioreference-region-form');
+      await expect(region).toBeVisible();
+      const state = region.getByLabel('State or region', { exact: true });
+      await expect(state).toBeEnabled();
+      await expect(state).toHaveValue('');
+      await expect(region.locator('.ui-select-frame')).toHaveCount(2);
+      const save = region.getByRole('button', { name: 'Save lookup region', exact: true });
+      await expect(save).toBeDisabled();
+      await state.selectOption('42');
+      await expect(save).toBeEnabled();
+      await expectSharedTypography(page);
+      await expectNoHorizontalOverflow(page);
+      await page.locator('#content').screenshot({ path: testInfo.outputPath('region-setup.png') });
+      await save.click();
+      await expect(region).toHaveCount(0);
+      await expect(page.getByRole('button', { name: 'RadioReference settings', exact: true })).toBeFocused();
+      await expect(page.locator('.radioreference-connected-page')).toContainText('Lookup region saved.');
+      expect(requests.filter(({ endpoint }) => endpoint.endsWith('/location'))).toEqual([
+        { endpoint: '/api/v1/admin/radioreference/location', method: 'PUT', body: { country_id: 1, state_id: 42 } }
+      ]);
+      await page.getByRole('button', { name: 'RadioReference settings', exact: true }).click();
+      const modal = page.getByRole('dialog', { name: 'RadioReference settings', exact: true });
+      await expect(modal.getByLabel('State or region', { exact: true })).toHaveValue('42');
+      await expect(modal.locator('.ui-modal-footer')).toBeVisible();
+      await expect(modal.getByRole('button', { name: 'Save lookup region', exact: true })).toBeDisabled();
+      await modal.getByRole('button', { name: 'Cancel', exact: true }).click();
+      await expect(modal).toHaveCount(0);
+      expect(fixture.unexpected).toEqual([]);
+      expect(fixture.pageErrors).toEqual([]);
+    });
+}
+
+test('RadioReference lookup region failed save preserves draft and blocks duplicate save or dismissal',
+  async ({ page }) => {
+    let releaseSave;
+    const saveGate = new Promise(resolve => { releaseSave = resolve; });
+    const { fixture, requests } = await installRadioReferenceRegionApplication(page, 'dark', {
+      save: async route => {
+        await saveGate;
+        return route.fulfill({ status: 503, json: { error: {
+          message: 'Lookup region could not be saved. Try again.'
+        } } });
+      }
+    });
+    await page.goto('/app.html?view=radioreference');
+    const inlineRegion = page.locator('.radioreference-connected-page > .radioreference-region-form');
+    await expect(inlineRegion.getByLabel('State or region', { exact: true })).toBeEnabled();
+    await inlineRegion.getByLabel('State or region', { exact: true }).selectOption('42');
+    await page.getByRole('button', { name: 'RadioReference settings', exact: true }).click();
+    const modal = page.getByRole('dialog', { name: 'RadioReference settings', exact: true });
+    const state = modal.getByLabel('State or region', { exact: true });
+    await expect(state).toHaveValue('42');
+    await modal.getByRole('button', { name: 'Save lookup region', exact: true }).click();
+    await expect(modal).toHaveAttribute('aria-busy', 'true');
+    await expect(state).toBeDisabled();
+    await modal.locator('.radioreference-account-details > summary').click();
+    await expect(modal.getByRole('button', { name: 'Update account', exact: true })).toBeDisabled();
+    await expect(modal.getByRole('button', { name: 'Log out and clear saved credentials', exact: true })).toBeDisabled();
+    await modal.locator('form.radioreference-account-form').evaluate(form =>
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+    await modal.locator('form.radioreference-region-form').evaluate(form =>
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+    await page.keyboard.press('Escape');
+    await expect(modal).toBeVisible();
+    expect(requests.filter(({ endpoint }) => endpoint.endsWith('/location'))).toHaveLength(1);
+    expect(requests.filter(({ endpoint }) => endpoint.endsWith('/session'))).toHaveLength(0);
+    releaseSave();
+    await expect(modal.getByRole('alert')).toHaveText('Lookup region could not be saved. Try again.');
+    await expect(state).toBeEnabled();
+    await expect(state).toHaveValue('42');
+    await expect(modal.getByRole('button', { name: 'Save lookup region', exact: true })).toBeEnabled();
+    await page.keyboard.press('Escape');
+    const confirmation = page.getByRole('alertdialog', { name: 'Discard unsaved changes', exact: true });
+    await expect(confirmation).toBeVisible();
+    await confirmation.getByRole('button', { name: 'Keep editing', exact: true }).click();
+    await expect(state).toHaveValue('42');
+    await expect(modal).toBeVisible();
+    await modal.getByLabel('Username', { exact: true }).fill('fixture.changed');
+    await modal.getByLabel('Password', { exact: true }).fill('fixture-new-password');
+    const remember = modal.getByRole('checkbox', { name: 'Remember credentials on this receiver', exact: true });
+    await remember.focus();
+    await remember.press('Space');
+    await expect(remember).not.toBeChecked();
+    await page.keyboard.press('Escape');
+    await confirmation.getByRole('button', { name: 'Discard changes', exact: true }).click();
+    await expect(modal).toHaveCount(0);
+    await expect(inlineRegion.getByLabel('State or region', { exact: true })).toBeEnabled();
+    await expect(inlineRegion.getByLabel('State or region', { exact: true })).toHaveValue('');
+    await page.getByRole('button', { name: 'RadioReference settings', exact: true }).click();
+    await expect(modal.getByLabel('State or region', { exact: true })).toHaveValue('');
+    await modal.locator('.radioreference-account-details > summary').click();
+    await expect(modal.getByLabel('Username', { exact: true })).toHaveValue('fixture.operator');
+    await expect(modal.getByLabel('Password', { exact: true })).toHaveValue('');
+    await expect(modal.getByRole('checkbox', { name: 'Remember credentials on this receiver', exact: true })).toBeChecked();
+    expect(fixture.unexpected).toEqual([]);
+    expect(fixture.pageErrors).toEqual([]);
+  });
+
+test('RadioReference lookup region saved state stays in settings and invalid state is offered again', async ({ page }) => {
+  const { fixture } = await installRadioReferenceRegionApplication(page, 'light', { countryId: 1, stateId: 39 });
+  await page.goto('/app.html?view=radioreference');
+  await expect(page.locator('.radioreference-connected-page')).toBeVisible();
+  await expect(page.locator('.radioreference-connected-page > .radioreference-region-form')).toHaveCount(0);
+  await page.getByRole('button', { name: 'RadioReference settings', exact: true }).click();
+  const modal = page.getByRole('dialog', { name: 'RadioReference settings', exact: true });
+  await expect(modal.getByLabel('State or region', { exact: true })).toHaveValue('39');
+  await modal.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(modal).toHaveCount(0);
+  expect(fixture.unexpected).toEqual([]);
+  expect(fixture.pageErrors).toEqual([]);
+  await installRadioReferenceRegionApplication(page, 'light', { countryId: 1, stateId: 999 });
+  await page.reload();
+  const inlineRegion = page.locator('.radioreference-connected-page > .radioreference-region-form');
+  await expect(inlineRegion).toBeVisible();
+  await expect(inlineRegion.getByLabel('State or region', { exact: true })).toHaveValue('');
+  await expect(inlineRegion.getByRole('button', { name: 'Save lookup region', exact: true })).toBeDisabled();
+});

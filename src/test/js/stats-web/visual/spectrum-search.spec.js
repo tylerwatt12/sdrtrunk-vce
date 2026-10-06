@@ -1196,7 +1196,7 @@ test('requires a choice for ambiguous alias groups and preserves drafts after st
   await dialog(page).getByLabel('Alias List for BEE00-348').selectOption('22');
   await dialog(page).getByLabel('Channel name for 773.08125 MHz').fill('My North Control');
   await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
-  await expect(dialog(page)).toContainText('Listening settings changed');
+  await expect(dialog(page)).toContainText('Saved choices changed');
   await expect(dialog(page).getByLabel('Channel name for 773.08125 MHz')).toHaveValue('My North Control');
   await expect(dialog(page).getByLabel('Alias List for BEE00-348')).toHaveValue('22');
   await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();

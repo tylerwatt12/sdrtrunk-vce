@@ -181,6 +181,16 @@ async function install(page, state = {}) {
       target_id: 'target-a', label: 'Test receiver', center_frequency_hz: 851012500,
       sample_rate_hz: 10000000
     }] : [] });
+    if (path === '/api/v1/admin/radioreference') {
+      if (state.delayDirectoryConfiguration) await new Promise((release) => { state.releaseDirectory = release; });
+      return respond(state.directoryConfiguration || { account: { state: 'SIGNED_OUT' } });
+    }
+    if (path === '/api/v1/admin/radioreference/countries') return respond({ items: [
+      { id: 1, name: 'United States', abbreviation: 'US' }, { id: 2, name: 'Canada', abbreviation: 'CA' }
+    ] });
+    if (path === '/api/v1/admin/radioreference/states') return respond({ items: [
+      { id: 39, name: 'Ohio' }, { id: 42, name: 'Pennsylvania' }
+    ] });
     if (path === '/api/v1/admin/channels/protocols') return respond(protocols);
     if (state.manualSetup && path === '/api/v1/admin/channels/options') return respond({
       revision: 7, tuners: ['Test receiver'], alias_lists: [{ id: 21, name: 'Default P25', family: 'P25' }]
@@ -295,13 +305,64 @@ async function disclose(page, label) {
   await wizard(page).locator('summary').filter({ hasText: new RegExp(`^${escaped}$`) }).click();
 }
 
+for (const [theme, viewport] of [['light', { width: 1365, height: 900 }],
+  ['dark', { width: 390, height: 844 }]]) {
+  test(`signed-in spectrum discovery offers a missing region directly in ${theme}`, async ({ page }, testInfo) => {
+    await page.setViewportSize(viewport);
+    const state = { theme, directoryConfiguration: { account: { state: 'VALID_PREMIUM' } } };
+    await install(page, state);
+    await page.evaluate(() => window.openDiscovery());
+    await expect(wizard(page).getByLabel('RadioReference country')).toBeVisible();
+    await expect(wizard(page)).toContainText('P25 systems can match by on-air identity.');
+    await wizard(page).getByLabel('RadioReference country').selectOption('1');
+    await expect(wizard(page).getByLabel('RadioReference state or province')).toBeEnabled();
+    await expect(wizard(page).getByLabel('RadioReference state or province')).toHaveValue('');
+    await wizard(page).getByLabel('RadioReference state or province').selectOption('42');
+    await wizard(page).getByLabel('RadioReference state or province').scrollIntoViewIfNeeded();
+    await wizard(page).screenshot({ path: testInfo.outputPath('region-selection.png') });
+    await wizard(page).getByRole('button', { name: 'Check signal', exact: true }).click();
+    await expect(wizard(page).getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
+    expect(state.requests.find((request) => request.path === '/api/v1/admin/spectrum-discovery' &&
+      request.method === 'POST').body.radioreference_state_id).toBe(42);
+  });
+}
+
+test('starting a signal check waits for the saved RadioReference region to load', async ({ page }) => {
+  const state = { delayDirectoryConfiguration: true, directoryConfiguration: {
+    account: { state: 'VALID_PREMIUM' }, country_id: 1, state_id: 39 } };
+  await install(page, state);
+  await page.evaluate(() => window.openDiscovery());
+  await expect.poll(() => typeof state.releaseDirectory).toBe('function');
+  await wizard(page).getByRole('button', { name: 'Check signal', exact: true }).click();
+  expect(state.requests.some((request) => request.path === '/api/v1/admin/spectrum-discovery' &&
+    request.method === 'POST')).toBe(false);
+  state.releaseDirectory();
+  await expect(wizard(page).getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
+  expect(state.requests.find((request) => request.path === '/api/v1/admin/spectrum-discovery' &&
+    request.method === 'POST').body.radioreference_state_id).toBe(39);
+});
+
+test('signed-out spectrum discovery keeps names optional and links to connection settings', async ({ page }) => {
+  const state = {};
+  await install(page, state);
+  await page.evaluate(() => window.openDiscovery());
+  await disclose(page, 'RadioReference names (optional)');
+  await expect(wizard(page).getByRole('link', { name: 'RadioReference settings', exact: true }))
+    .toHaveAttribute('href', /view=radioreference/);
+  await expect(wizard(page).getByLabel('RadioReference state or province')).toHaveCount(0);
+  await wizard(page).getByRole('button', { name: 'Check signal', exact: true }).click();
+  await expect(wizard(page).getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
+  expect(state.requests.find((request) => request.path === '/api/v1/admin/spectrum-discovery' &&
+    request.method === 'POST').body.radioreference_state_id).toBe(null);
+});
+
 test('delayed click-directory matching refreshes untouched fields while preserving edited names and maps', async ({ page }) => {
   const state = { directoryResult: { state: 'pending' }, templateName: 'Decoded control', templateSystem: 'Decoded network' };
   await install(page, state);
   await begin(page, 'dmr');
   await review(page, 'dmr');
   await wizard(page).getByLabel('Channel name', { exact: true }).fill('My control');
-  await wizard(page).getByLabel('New settings name', { exact: true }).fill('My listening');
+  await wizard(page).getByLabel('New Alias List name', { exact: true }).fill('My listening');
   await wizard(page).getByRole('button', { name: 'Add mapping', exact: true }).click();
   const manual = wizard(page).locator('.channel-map-row').nth(1);
   await manual.locator('input').nth(0).fill('2');
@@ -313,7 +374,7 @@ test('delayed click-directory matching refreshes untouched fields while preservi
     channels: [{ logical_channel_number: 3, frequency_hz: 851500000 }] } };
   await expect(wizard(page).getByLabel('System', { exact: true })).toHaveValue('Transit authority');
   await expect(wizard(page).getByLabel('Channel name', { exact: true })).toHaveValue('My control');
-  await expect(wizard(page).getByLabel('New settings name', { exact: true })).toHaveValue('My listening');
+  await expect(wizard(page).getByLabel('New Alias List name', { exact: true })).toHaveValue('My listening');
   await expect(manual.locator('input').nth(0)).toHaveValue('2');
   await expect(manual.locator('input').nth(1)).toHaveValue('851.25');
   await disclose(page, 'RadioReference');
@@ -740,7 +801,7 @@ test('the default P25 path uses plain language and waits for explicit review', a
   await expect(types.getByRole('radio')).toHaveCount(5);
   await expect(types.getByRole('radio', { name: 'P25 radio system', exact: true })).toBeChecked();
   await expect(dialog.getByText('Help me choose', { exact: true })).toHaveCount(0);
-  expect(await dialog.innerText()).not.toMatch(/C4FM|CQPSK|WACN|RFSS|SysID|NAC|Alias List/);
+  expect(await dialog.innerText()).not.toMatch(/C4FM|CQPSK|WACN|RFSS|SysID|NAC/);
   await dialog.getByRole('button', { name: 'Check signal', exact: true }).click();
   await expect(dialog.getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
   await expect(dialog.getByText('Ready to add', { exact: true })).toBeVisible();
@@ -759,8 +820,9 @@ test('the default P25 path uses plain language and waits for explicit review', a
   await expect(dialog.getByLabel('System', { exact: true })).toBeHidden();
   await expect(dialog.getByLabel('Site', { exact: true })).toBeHidden();
   await expect(dialog.locator('summary').filter({ hasText: /^Additional labels \(optional\)$/ })).toBeVisible();
-  await expect(dialog.locator('summary').filter({ hasText: /^What are these settings\?$/ })).toBeVisible();
-  expect(await dialog.innerText()).not.toMatch(/C4FM|CQPSK|WACN|RFSS|SysID|NAC|Alias List/);
+  await expect(dialog.locator('summary').filter({ hasText: /^What is an Alias List\?$/ })).toBeVisible();
+  expect(await dialog.innerText()).not.toMatch(/C4FM|CQPSK|WACN|RFSS|SysID|NAC/);
+  await expect(dialog.getByLabel('New Alias List name', { exact: true })).toBeVisible();
 });
 
 test('P25 becoming ready preserves keyboard focus until the user reviews it', async ({ page }) => {
@@ -1061,11 +1123,11 @@ test('ambiguous aliases require a choice; saved start failure retries without re
   await begin(page);
   await review(page);
   const dialog = wizard(page);
-  await expect(dialog.getByLabel('Names and listening settings', { exact: true })).toHaveValue('');
-  await expect(dialog.getByLabel('Names and listening settings', { exact: true }).locator('option[value="new"]')).toHaveCount(0);
+  await expect(dialog.getByLabel('Alias List', { exact: true })).toHaveValue('');
+  await expect(dialog.getByLabel('Alias List', { exact: true }).locator('option[value="new"]')).toHaveCount(0);
   await dialog.getByRole('button', { name: 'Add and start listening' }).click();
   expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(0);
-  await dialog.getByLabel('Names and listening settings', { exact: true }).selectOption('22');
+  await dialog.getByLabel('Alias List', { exact: true }).selectOption('22');
   await dialog.getByRole('button', { name: 'Add and start listening' }).click();
   await expect(dialog.getByRole('heading', { name: 'Channel added' })).toBeVisible();
   await expect(dialog).toContainText('Tuner capacity is in use.');
@@ -1081,15 +1143,15 @@ test('ambiguous aliases require a choice; saved start failure retries without re
     request.method === 'DELETE')).toBe(true);
 });
 
-test('one P25 identity match presents its listening settings without a choice and reuses them', async ({ page }) => {
+test('one P25 identity match presents its Alias List without a choice and reuses it', async ({ page }) => {
   const state = { singleMatch: true };
   await install(page, state);
   await begin(page);
   await review(page);
   const dialog = wizard(page);
   await expect(dialog).toContainText('County aliases');
-  await expect(dialog.getByRole('combobox', { name: 'Names and listening settings', exact: true })).toHaveCount(0);
-  await expect(dialog.getByLabel('New settings name', { exact: true })).toBeHidden();
+  await expect(dialog.getByRole('combobox', { name: 'Alias List', exact: true })).toHaveCount(0);
+  await expect(dialog.getByLabel('New Alias List name', { exact: true })).toBeHidden();
   await dialog.getByRole('button', { name: 'Add and start listening' }).click();
   await expect(dialog.getByRole('heading', { name: 'Ready to listen' })).toBeVisible();
   expect(state.requests.find((request) => request.path.endsWith('/save')).body.alias_list_id).toBe(21);
@@ -1102,11 +1164,11 @@ test('stale save refreshes choices and preserves the draft before an explicit re
   await review(page);
   const dialog = wizard(page);
   await dialog.getByLabel('Channel name', { exact: true }).fill('County Control');
-  await dialog.getByLabel('New settings name', { exact: true }).fill('County aliases');
+  await dialog.getByLabel('New Alias List name', { exact: true }).fill('County aliases');
   await dialog.getByRole('button', { name: 'Add and start listening' }).click();
-  await expect(dialog).toContainText('Your saved choices changed. Check the listening settings and try adding again.');
+  await expect(dialog).toContainText('Your saved choices changed. Check the Alias List and try adding again.');
   await expect(dialog.getByLabel('Channel name', { exact: true })).toHaveValue('County Control');
-  await expect(dialog.getByLabel('New settings name', { exact: true })).toHaveValue('County aliases');
+  await expect(dialog.getByLabel('New Alias List name', { exact: true })).toHaveValue('County aliases');
   expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(1);
   await dialog.getByRole('button', { name: 'Add and start listening' }).click();
   await expect(dialog.getByRole('heading', { name: 'Ready to listen' })).toBeVisible();
@@ -1123,7 +1185,7 @@ test('retrying a failed add preserves names and listening choices without adding
   await review(page);
   const dialog = wizard(page);
   await dialog.getByLabel('Channel name', { exact: true }).fill('County Control');
-  await dialog.getByLabel('New settings name', { exact: true }).fill('County listening');
+  await dialog.getByLabel('New Alias List name', { exact: true }).fill('County listening');
   await disclose(page, 'Additional labels (optional)');
   await dialog.getByLabel('System', { exact: true }).fill('County Radio');
   await dialog.getByLabel('Site', { exact: true }).fill('North');
@@ -1133,7 +1195,7 @@ test('retrying a failed add preserves names and listening choices without adding
   await expect(dialog.getByText('Could not add this channel. Try again.', { exact: true })).toBeHidden();
   await expect(dialog.getByRole('button', { name: 'Try adding again', exact: true })).toBeEnabled();
   await expect(dialog.getByLabel('Channel name', { exact: true })).toHaveValue('County Control');
-  await expect(dialog.getByLabel('New settings name', { exact: true })).toHaveValue('County listening');
+  await expect(dialog.getByLabel('New Alias List name', { exact: true })).toHaveValue('County listening');
   await expect(dialog.getByLabel('System', { exact: true })).toHaveValue('County Radio');
   await expect(dialog.getByLabel('Site', { exact: true })).toHaveValue('North');
   expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(1);
@@ -1153,13 +1215,13 @@ test('retrying a failed add preserves names and listening choices without adding
   expect(state.requests.filter((request) => request.path.endsWith('/start'))).toHaveLength(0);
 });
 
-test('going Back with no analog listening settings selected does not silently create new settings', async ({ page }) => {
+test('going Back with no analog Alias List selected does not silently create a new Alias List', async ({ page }) => {
   const state = { ambiguous: true };
   await install(page, state);
   await begin(page, 'am');
   await review(page, 'am');
   const dialog = wizard(page);
-  const choices = dialog.getByLabel('Names and listening settings', { exact: true });
+  const choices = dialog.getByLabel('Alias List', { exact: true });
   await expect(choices).toHaveValue('');
   await dialog.getByRole('button', { name: 'Back', exact: true }).click();
   await review(page, 'am');
@@ -1194,7 +1256,7 @@ test('FM defaults are unambiguous and edited audio settings survive review and B
   expect(await dialog.innerText()).toContain('25.0 kHz');
   expect(await dialog.innerText()).toContain('750 µs');
   await dialog.getByLabel('Channel name', { exact: true }).fill('County dispatch');
-  await dialog.getByLabel('New settings name', { exact: true }).fill('Dispatch listening');
+  await dialog.getByLabel('New Alias List name', { exact: true }).fill('Dispatch listening');
   await dialog.getByRole('button', { name: 'Back', exact: true }).click();
   await disclose(page, 'Adjust audio settings');
   await expect(bandwidth).toHaveValue('BW_25_0');
@@ -1202,7 +1264,7 @@ test('FM defaults are unambiguous and edited audio settings survive review and B
   await bandwidth.selectOption('BW_7_5');
   await review(page, 'nbfm');
   await expect(dialog.getByLabel('Channel name', { exact: true })).toHaveValue('County dispatch');
-  await expect(dialog.getByLabel('New settings name', { exact: true })).toHaveValue('Dispatch listening');
+  await expect(dialog.getByLabel('New Alias List name', { exact: true })).toHaveValue('Dispatch listening');
   const visibleReview = await dialog.innerText();
   expect(visibleReview).toContain('7.5 kHz');
   expect(visibleReview).toContain('750 µs');
@@ -1251,7 +1313,7 @@ for (const [protocolId, theme, width] of [['am', 'light', 1280], ['nbfm', 'dark'
     await expect(bandwidth).toBeVisible();
     await bandwidth.selectOption('BW_25_0');
     await review(page, protocolId);
-    await expect(dialog.getByLabel('New settings name', { exact: true })).toBeVisible();
+    await expect(dialog.getByLabel('New Alias List name', { exact: true })).toBeVisible();
     const bounds = await dialog.boundingBox();
     expect(bounds.x).toBeGreaterThanOrEqual(0);
     expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);

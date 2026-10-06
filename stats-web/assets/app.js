@@ -31,8 +31,8 @@ import { createStreamingWorkspace } from './features/streaming.js?v=8';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=9';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=12';
 import { createRecordingsFeature } from './features/recordings.js?v=20';
-import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft } from './features/spectrum-search.js?v=17';
-import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult } from './features/discovery-radioreference.js?v=1';
+import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft } from './features/spectrum-search.js?v=18';
+import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult } from './features/discovery-radioreference.js?v=2';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createAudioDock } from './core/audio-dock.js?v=11';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=1';
@@ -13434,7 +13434,7 @@ function openSpectrumDiscoveryWizard(selection) {
   const refreshReviewDirectory = () => {
     if (!reviewBinding || !session?.review) return;
     const template = session.review.template;
-    const result = discoveryRadioReferenceResult({ node, anchor, channelMHz }, session);
+    const result = discoveryRadioReferenceResult({ node, anchor, channelMHz, href }, session);
     reviewBinding.directory.replaceChildren(...(result ? [result] : []));
     reviewBinding.directory.hidden = !result;
     ['name', 'system', 'site'].forEach((key) => {
@@ -13591,6 +13591,7 @@ function openSpectrumDiscoveryWizard(selection) {
     const generation = ++operation;
     busy(true);
     try {
+      await directory.load();
       await cancelSession(false);
       if (!current() || generation !== operation) return;
       profile = protocols.profiles.find((candidate) => candidate.id === protocolId);
@@ -13692,7 +13693,7 @@ function openSpectrumDiscoveryWizard(selection) {
       stage.append(directoryHost);
     }
     const nodes = probeNodes;
-    const directoryResult = discoveryRadioReferenceResult({ node, anchor, channelMHz }, session);
+    const directoryResult = discoveryRadioReferenceResult({ node, anchor, channelMHz, href }, session);
     nodes.directoryHost.replaceChildren(...(directoryResult ? [directoryResult] : []));
     nodes.directoryHost.hidden = !directoryResult;
     if (digital && !p25) nodes.technical.replaceChildren(node('summary', 'ui-section-summary', 'Signal details'),
@@ -13882,7 +13883,7 @@ function openSpectrumDiscoveryWizard(selection) {
     const systemNameSummary = node('p', 'ui-record-title', spectrumDiscoverySystemName(session, reviewDraft));
     systemNameSummary.hidden = !systemNameSummary.textContent;
     stage.append(systemNameSummary);
-    const directoryResult = discoveryRadioReferenceResult({ node, anchor, channelMHz }, session);
+    const directoryResult = discoveryRadioReferenceResult({ node, anchor, channelMHz, href }, session);
     const directoryHost = node('div');
     if (directoryResult) directoryHost.append(directoryResult);
     directoryHost.hidden = !directoryResult;
@@ -13920,34 +13921,35 @@ function openSpectrumDiscoveryWizard(selection) {
     const p25 = trunkedProtocol();
     const allowNew = !p25 || lists.length === 0;
     const aliasOptions = [...lists.map((list) => ({ value: list.id, label: list.name })),
-      ...(allowNew ? [{ value: 'new', label: 'Create settings for this channel' }] : [])];
+      ...(allowNew ? [{ value: 'new', label: 'Create a new Alias List' }] : [])];
     const previousAlias = reviewDraft ? (reviewDraft.alias_list_id === 0 ? 'new' : reviewDraft.alias_list_id ?? '') : null;
     let selected = previousAlias === '' ? '' : aliasOptions.some((option) => String(option.value) === String(previousAlias)) ? previousAlias :
       (review.suggested_alias_list_id || (lists.length === 1 ? lists[0].id : lists.length ? '' : 'new'));
     const alias = node('section', 'ui-form-section spectrum-discovery-alias');
-    alias.append(node('h4', '', 'Names and listening settings'));
+    alias.append(node('h4', '', 'Alias List'));
     let aliases = null;
     if (p25 && lists.length === 1) {
-      alias.append(node('strong', '', `Use existing settings: ${lists[0].name}`),
+      alias.append(node('strong', '', `Use existing Alias List: ${lists[0].name}`),
         node('p', 'muted', 'This signal belongs to a system you’ve already added.'));
     } else if (lists.length === 0) {
-      alias.append(node('strong', '', p25 ? 'Create settings for this system' : 'Create settings for this channel'));
+      alias.append(node('strong', '', p25 ? 'Create an Alias List for this system' : 'Create an Alias List for this channel'));
     } else {
-      aliases = uiSelect(aliasOptions, selected, selected === '', 'Choose listening settings');
+      aliases = uiSelect(aliasOptions, selected, selected === '', 'Choose an Alias List');
       aliases.required = true;
-      aliases.setAttribute('aria-label', 'Names and listening settings');
-      alias.append(node('p', 'muted', p25 ? 'This system has more than one set of saved settings. Choose which to use.' :
-        'Reuse saved settings, or create a new set for this channel.'),
-      formField('Use settings', uiSelectFrame(aliases)));
+      aliases.setAttribute('aria-label', 'Alias List');
+      alias.append(node('p', 'muted', p25 ? 'This system has more than one Alias List. Choose which to use.' :
+        'Use an existing Alias List, or create one for this channel.'),
+      formField('Alias List', uiSelectFrame(aliases)));
     }
     const newName = node('input', 'ui-input');
     newName.type = 'text';
-    newName.setAttribute('aria-label', 'New settings name');
+    newName.setAttribute('aria-label', 'New Alias List name');
     newName.maxLength = 25;
     newName.value = reviewDraft?.new_alias_list_name || review.default_new_alias_list_name || '';
     newName.addEventListener('input', () => editedReviewFields.add('new_alias_list_name'));
-    const newField = formField('New settings name', newName);
-    const defaults = node('p', 'ui-field-hint', 'New channels will be included in your Default listening list.');
+    const newField = formField('New Alias List name', newName,
+      'An existing compatible Alias List with this name will be used.');
+    const defaults = node('p', 'ui-field-hint', 'New Alias Lists use your Default listening list.');
     const syncAlias = () => {
       if (aliases) selected = aliases.value;
       newField.hidden = selected !== 'new';
@@ -13956,9 +13958,9 @@ function openSpectrumDiscoveryWizard(selection) {
     };
     aliases?.addEventListener('change', syncAlias);
     syncAlias();
-    alias.append(newField, defaults, disclosure('What are these settings?',
+    alias.append(newField, defaults, disclosure('What is an Alias List?',
       node('p', '', 'An Alias List stores names for radio groups and controls which groups you hear. These are called talkgroups on digital trunked systems. New lists use the usual listening defaults.'),
-      node('p', '', 'Existing settings are offered only when the on-air system identity matches.')));
+      node('p', '', 'Existing Alias Lists are offered only when the on-air system identity matches.')));
     form.append(alias);
     const summary = facts([
       ['Radio type', protocolLabels[profile.id]], ['Start automatically', 'On'],
@@ -14038,7 +14040,7 @@ function openSpectrumDiscoveryWizard(selection) {
               session = refreshed;
               if (session.state === 'ready') {
                 showReview();
-                message.textContent = 'Your saved choices changed. Check the listening settings and try adding again.';
+                message.textContent = 'Your saved choices changed. Check the Alias List and try adding again.';
               } else drawSession();
             }
           } catch (refreshError) { showError(refreshError); }
@@ -14055,7 +14057,7 @@ function openSpectrumDiscoveryWizard(selection) {
     const status = node('div', `ui-notice spectrum-discovery-status${running ? '' : ' ui-notice-warning'}`);
     status.append(node('strong', 'spectrum-discovery-status-heading', running ? 'Your channel is running' :
       restartRequired ? 'Your channel is saved' : 'Listening couldn’t start'), node('p', '', running ?
-      'You’ll hear activity when someone transmits and your listening settings allow it.' :
+      'You’ll hear activity when someone transmits and your Alias List allows it.' :
       restartRequired ? 'Your channel was saved, but the receiver needs to restart before listening can start.' :
       'Your channel was added, but listening couldn’t start. You can try starting it again.'));
     stage.append(status);
@@ -14063,7 +14065,7 @@ function openSpectrumDiscoveryWizard(selection) {
       ['Channel', reviewDraft?.name || session.review?.template?.name || 'Saved channel'],
       ...(spectrumDiscoverySystemName(session, reviewDraft) ?
         [['System', spectrumDiscoverySystemName(session, reviewDraft)]] : []),
-      ['Radio type', protocolLabels[profile.id]], ['Names and listening settings', savedAliasName || 'Saved settings'],
+      ['Radio type', protocolLabels[profile.id]], ['Alias List', savedAliasName || 'Saved Alias List'],
       ['Status', running ? 'Running' : 'Saved']
     ]);
     summary.classList.add('spectrum-discovery-summary');
@@ -25531,40 +25533,128 @@ async function renderAdminRadioReferenceSettings() {
 
   const regionForm = node('form',
     'admin-form admin-settings-form settings-card settings-card-form radioreference-region-form');
-  const country = node('select');
-  const state = node('select');
+  const country = uiSelect([]);
+  const state = uiSelect([]);
+  country.setAttribute('aria-label', 'Country');
+  state.setAttribute('aria-label', 'State or region');
+  country.required = true;
+  state.required = true;
   country.disabled = true;
   state.disabled = true;
   replaceRadioReferenceOptions(country, [], null, 'Connect an account first');
   replaceRadioReferenceOptions(state, [], null, 'Choose a country first');
-  const regionMessage = node('div', 'admin-form-message');
+  const regionMessage = node('div', 'ui-status');
   regionMessage.setAttribute('role', 'status');
-  regionMessage.textContent = 'Choose the state used for exact-frequency searches.';
-  const saveRegion = node('button', 'ui-button ui-button-primary', 'Save Lookup Region');
+  const saveRegion = node('button', 'ui-button ui-button-primary', 'Save lookup region');
   saveRegion.type = 'submit';
   saveRegion.disabled = true;
-  const regionActions = node('div', 'admin-form-actions');
+  const regionActions = node('div', 'ui-action-row');
   regionActions.append(saveRegion);
+  const regionFooter = node('div', 'settings-form-footer');
+  regionFooter.append(regionMessage, regionActions);
+  const cancelRegion = node('button', 'ui-button ui-button-secondary', 'Cancel');
+  cancelRegion.type = 'button';
+  const regionSaved = node('div', 'admin-form-message');
+  regionSaved.setAttribute('role', 'status');
+  regionSaved.hidden = true;
+  workspace.append(regionSaved);
   regionForm.append(node('h3', 'admin-settings-form-title', 'Lookup region'),
-    node('p', 'settings-card-description', 'Choose the region used for exact-frequency spectrum lookups.'),
-    formField('Country', country), formField('State or region', state), regionMessage, regionActions);
+    node('p', 'settings-card-description',
+      'Choose a state or province for frequency lookups.'),
+    formField('Country', uiSelectFrame(country)), formField('State or region', uiSelectFrame(state)), regionFooter);
 
   gate.append(accountForm);
   let settingsModal = null;
-  settingsButton.addEventListener('click', () => {
+  let configuration = null;
+  let savedRegionValid = false;
+  let accountDirty = false;
+  let regionDirty = false;
+  let regionTouched = false;
+  let accountBusy = false;
+  let regionBusy = false;
+  const synchronizeModal = () => {
+    settingsModal?.setDirty(accountDirty || regionDirty);
+    settingsModal?.setBusy(accountBusy || regionBusy);
+    settingsButton.disabled = accountBusy || regionBusy;
+    connect.disabled = accountBusy || regionBusy;
+    signOut.disabled = accountBusy || regionBusy || configuration?.account?.state !== 'VALID_PREMIUM';
+    saveRegion.disabled = accountBusy || regionBusy || !regionDirty || !state.value || state.disabled ||
+      configuration?.account?.state !== 'VALID_PREMIUM';
+  };
+  const regionEdited = () => { regionTouched = true; };
+  regionForm.addEventListener('input', regionEdited, { capture: true });
+  regionForm.addEventListener('change', regionEdited, { capture: true });
+  const regionWorkflow = createFormWorkflow({ form: regionForm, submit: saveRegion,
+    feedback: regionMessage, ready: false,
+    changed: () => regionTouched &&
+      (Number(country.value) !== Number(configuration?.country_id) ||
+        Number(state.value) !== Number(configuration?.state_id)),
+    modal: {
+      setDirty: (value) => { regionDirty = value; synchronizeModal(); },
+      setBusy: (value) => { regionBusy = value; synchronizeModal(); }
+    }
+  });
+  const canSaveRegion = () => configuration?.account?.state === 'VALID_PREMIUM' &&
+    Boolean(country.value && state.value) && !state.disabled;
+  const setRegionFooter = (inModal) => {
+    if (inModal) {
+      regionForm.insertBefore(regionMessage, regionFooter);
+      regionFooter.className = 'ui-modal-footer ui-action-row';
+      regionFooter.replaceChildren(cancelRegion, saveRegion);
+    } else {
+      regionFooter.className = 'settings-form-footer';
+      regionActions.replaceChildren(saveRegion);
+      regionFooter.replaceChildren(regionMessage, regionActions);
+    }
+  };
+  const placeRegionForm = () => {
+    if (settingsModal) return;
+    setRegionFooter(false);
+    if (configuration?.account?.state === 'VALID_PREMIUM' && !savedRegionValid) {
+      workspaceHeader.after(regionForm);
+    } else regionForm.remove();
+  };
+  cancelRegion.addEventListener('click', () => settingsModal?.close());
+  settingsButton.addEventListener('click', async () => {
     const forms = node('div', 'radioreference-settings-stack');
     const accountDetails = node('details', 'radioreference-account-details ui-surface');
     const accountSummary = node('summary');
     accountSummary.append(node('strong', '', `Connected as ${userName.value || 'RadioReference account'}`),
       node('span', 'muted', 'Change account or sign out'));
-    accountDetails.append(accountSummary, accountForm);
-    forms.append(accountDetails, regionForm);
-    settingsModal = openReadOnlyModal('RadioReference settings', forms, {
+    accountDetails.append(accountSummary);
+    forms.append(accountDetails);
+    let presented = false;
+    const modal = openReadOnlyModal('RadioReference settings', forms, {
       id: 'radioreference-settings', className: 'radioreference-settings-modal',
       returnFocusSelector: '.radioreference-settings-trigger',
-      onClose: () => { gate.append(accountForm); settingsModal = null; }
+      onClose: () => {
+        if (settingsModal !== modal) return;
+        const discardDraft = presented && (accountDirty || regionDirty);
+        gate.append(accountForm);
+        settingsModal = null;
+        if (discardDraft) {
+          userName.value = configuration?.account?.user_name || configuration?.stored_user_name || '';
+          password.value = '';
+          setUiToggle(remember, configuration?.credentials_stored === true);
+          setAccountMessage(radioReferenceAccountMessage(configuration?.account));
+          accountDirty = false;
+          regionDirty = false;
+          regionTouched = false;
+          void loadRegions().catch(() => regionWorkflow.showFeedback('error',
+            'Lookup region could not be loaded. Reload this page and try again.'));
+        }
+        placeRegionForm();
+      }
     });
-    if (!settingsModal) gate.append(accountForm);
+    if (!modal) return;
+    settingsModal = modal;
+    if (!await modal.ready || settingsModal !== modal) return;
+    presented = true;
+    accountDetails.append(accountForm);
+    forms.append(regionForm);
+    setRegionFooter(true);
+    synchronizeModal();
+    modal.focus(state.disabled ? country : state);
   });
 
   const importWorkspace = createRadioReferenceImportWorkspace({
@@ -25575,8 +25665,6 @@ async function renderAdminRadioReferenceSettings() {
     mutationTimeoutMs: 65_000
   });
   workspace.append(importWorkspace.element);
-
-  let configuration = null;
 
   const updateAccount = (next, initializeUserName = false) => {
     configuration = next || configuration || {};
@@ -25594,7 +25682,9 @@ async function renderAdminRadioReferenceSettings() {
     connect.textContent = connected ? 'Update account' : 'Connect RadioReference';
     country.disabled = !connected;
     state.disabled = !connected || !country.value;
-    saveRegion.disabled = !connected || !state.value;
+    savedRegionValid = Number(configuration?.country_id) > 0 && Number(configuration?.state_id) > 0;
+    regionWorkflow.setReady(canSaveRegion());
+    placeRegionForm();
     importWorkspace.setConfiguration(configuration);
     loadingState.hidden = true;
     gate.hidden = connected;
@@ -25603,37 +25693,68 @@ async function renderAdminRadioReferenceSettings() {
     return connected;
   };
 
-  const loadStates = async (countryId, selectedStateId = null) => {
+  let regionLoadSequence = 0;
+  const loadStates = async (countryId, selectedStateId = null, sequence = ++regionLoadSequence) => {
     state.disabled = true;
-    saveRegion.disabled = true;
-    replaceRadioReferenceOptions(state, [], null, 'Loading states…');
+    regionWorkflow.setReady(false);
+    replaceRadioReferenceOptions(state, [], null, 'Loading states or regions…');
     const response = await requestJson(`/api/v1/admin/radioreference/states?country_id=${
       encodeURIComponent(countryId)}`, { csrf: false,
       timeoutMs: RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS });
-    const available = replaceRadioReferenceOptions(state, response?.items, selectedStateId, 'No states available');
-    state.disabled = !available;
-    saveRegion.disabled = !available;
+    if (sequence !== regionLoadSequence || country.value !== String(countryId) ||
+        configuration?.account?.state !== 'VALID_PREMIUM') return null;
+    const items = Array.isArray(response?.items) ? response.items : [];
+    const selected = items.some((item) => String(item.id) === String(selectedStateId)) ?
+      String(selectedStateId) : '';
+    state.replaceChildren(...uiSelect(items.map((item) => ({ value: item.id,
+      label: `${item.name}${item.abbreviation ? ` (${item.abbreviation})` : ''}` })), selected, true,
+    items.length ? 'Choose a state or region' : 'No states or regions available').children);
+    state.value = selected;
+    state.disabled = !items.length;
+    regionWorkflow.setReady(canSaveRegion());
+    return Boolean(selected);
   };
 
   const loadRegions = async () => {
-    const response = await requestJson('/api/v1/admin/radioreference/countries', { csrf: false,
-      timeoutMs: RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS });
-    const available = replaceRadioReferenceOptions(country, sortRadioReferenceCountries(response?.items),
-      configuration?.country_id, 'No countries available');
-    country.disabled = !available;
-    if (available) await loadStates(country.value, configuration?.state_id);
+    const sequence = ++regionLoadSequence;
+    country.disabled = true;
+    state.disabled = true;
+    regionWorkflow.setReady(false);
+    regionWorkflow.showFeedback('loading', 'Loading lookup region…');
+    try {
+      const response = await requestJson('/api/v1/admin/radioreference/countries', { csrf: false,
+        timeoutMs: RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS });
+      if (sequence !== regionLoadSequence || configuration?.account?.state !== 'VALID_PREMIUM') return;
+      const items = sortRadioReferenceCountries(response?.items);
+      const savedCountryAvailable = items.some((item) => String(item.id) === String(configuration?.country_id));
+      const available = replaceRadioReferenceOptions(country, items, configuration?.country_id,
+        'No countries available');
+      const savedStateAvailable = available && await loadStates(country.value,
+        savedCountryAvailable ? configuration?.state_id : null, sequence);
+      if (sequence !== regionLoadSequence || configuration?.account?.state !== 'VALID_PREMIUM') return;
+      country.disabled = !available;
+      savedRegionValid = savedCountryAvailable && savedStateAvailable;
+      regionWorkflow.setReady(canSaveRegion());
+      placeRegionForm();
+      regionWorkflow.showFeedback(available ? 'status' : 'error',
+        available ? '' : 'Countries could not be loaded. Reload this page and try again.');
+    } catch (error) {
+      if (sequence !== regionLoadSequence || configuration?.account?.state !== 'VALID_PREMIUM') return;
+      throw error;
+    }
   };
 
-  [accountForm, regionForm].forEach((form) => {
-    form.addEventListener('input', () => settingsModal?.setDirty(true));
-    form.addEventListener('change', () => settingsModal?.setDirty(true));
-  });
+  const accountEdited = () => { accountDirty = true; synchronizeModal(); };
+  accountForm.addEventListener('input', accountEdited);
+  accountForm.addEventListener('change', accountEdited);
 
   accountForm.addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (!accountForm.reportValidity() || connect.disabled) return;
+    if (accountBusy || regionBusy || !accountForm.reportValidity() || connect.disabled) return;
     connect.disabled = true;
     signOut.disabled = true;
+    accountBusy = true;
+    synchronizeModal();
     setAccountMessage('Connecting to RadioReference…');
     try {
       const next = await requestJson('/api/v1/admin/radioreference/session', {
@@ -25642,34 +25763,43 @@ async function renderAdminRadioReferenceSettings() {
       });
       radioReferenceDetailCache.clear();
       password.value = '';
-      settingsModal?.setDirty(false);
+      accountDirty = false;
+      synchronizeModal();
       if (updateAccount(next)) {
         importWorkspace.reload();
         try {
           await loadRegions();
         } catch (error) {
-          regionMessage.textContent = `Lookup region could not be loaded: ${error.message}`;
+          regionWorkflow.showFeedback('error',
+            'Lookup region could not be loaded. Reload this page and try again.');
         }
       }
     } catch (error) {
       password.value = '';
       setAccountMessage(error.message, true);
     } finally {
-      connect.disabled = false;
-      signOut.disabled = configuration?.account?.state === 'SIGNED_OUT';
+      accountBusy = false;
+      synchronizeModal();
     }
   });
 
   signOut.addEventListener('click', async () => {
-    if (signOut.disabled) return;
+    if (accountBusy || regionBusy || signOut.disabled) return;
     signOut.disabled = true;
     connect.disabled = true;
+    accountBusy = true;
+    synchronizeModal();
     setAccountMessage('Signing out of RadioReference…');
     try {
       const next = await requestJson('/api/v1/admin/radioreference/session', { method: 'DELETE' });
       radioReferenceDetailCache.clear();
       password.value = '';
       userName.value = '';
+      accountDirty = false;
+      regionDirty = false;
+      regionTouched = false;
+      ++regionLoadSequence;
+      settingsModal?.setBusy(false);
       settingsModal?.setDirty(false);
       closeReadOnlyModal(true);
       settingsModal = null;
@@ -25677,41 +25807,57 @@ async function renderAdminRadioReferenceSettings() {
       updateAccount(next);
       replaceRadioReferenceOptions(country, [], null, 'Connect an account first');
       replaceRadioReferenceOptions(state, [], null, 'Choose a country first');
-      regionMessage.textContent = 'Choose the state used for exact-frequency searches.';
+      regionSaved.hidden = true;
+      regionWorkflow.showFeedback('status', '');
     } catch (error) {
       setAccountMessage(error.message, true);
     } finally {
-      connect.disabled = false;
-      signOut.disabled = configuration?.account?.state !== 'VALID_PREMIUM';
+      accountBusy = false;
+      synchronizeModal();
     }
   });
 
   country.addEventListener('change', async () => {
-    regionMessage.textContent = 'Loading states…';
+    regionSaved.hidden = true;
+    regionWorkflow.showFeedback('loading', 'Loading states or regions…');
+    const loading = loadStates(country.value);
+    const sequence = regionLoadSequence;
     try {
-      await loadStates(country.value);
-      regionMessage.textContent = 'Save this state to use it for spectrum frequency searches.';
+      await loading;
+      if (sequence !== regionLoadSequence) return;
+      regionWorkflow.showFeedback('status', '');
     } catch (error) {
-      regionMessage.textContent = error.message;
+      if (sequence !== regionLoadSequence) return;
+      regionWorkflow.showFeedback('error',
+        'States or regions could not be loaded. Reload this page and try again.');
     }
+  });
+  state.addEventListener('change', () => {
+    regionSaved.hidden = true;
+    regionWorkflow.setReady(canSaveRegion());
   });
 
   regionForm.addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (!regionForm.reportValidity() || saveRegion.disabled) return;
-    saveRegion.disabled = true;
-    regionMessage.textContent = 'Saving RadioReference lookup region…';
-    try {
+    if (accountBusy || regionBusy) return;
+    const savedInline = !settingsModal;
+    await regionWorkflow.save(async () => {
       configuration = await requestJson('/api/v1/admin/radioreference/location', {
         method: 'PUT', body: { countryId: Number(country.value), stateId: Number(state.value) }
       });
-      settingsModal?.setDirty(false);
-      regionMessage.textContent = 'RadioReference lookup region saved.';
-    } catch (error) {
-      regionMessage.textContent = error.message;
-    } finally {
-      saveRegion.disabled = configuration?.account?.state !== 'VALID_PREMIUM' || !state.value;
-    }
+      savedRegionValid = Number(configuration?.country_id) > 0 && Number(configuration?.state_id) > 0;
+      importWorkspace.setConfiguration(configuration);
+    }, {
+      saving: 'Saving lookup region…', success: 'Lookup region saved.',
+      onSuccess: () => {
+        placeRegionForm();
+        if (savedInline) {
+          regionSaved.textContent = 'Lookup region saved.';
+          regionSaved.hidden = false;
+          settingsButton.focus({ preventScroll: true });
+        }
+      }
+    });
   });
 
   try {
@@ -25720,7 +25866,8 @@ async function renderAdminRadioReferenceSettings() {
       try {
         await loadRegions();
       } catch (error) {
-        regionMessage.textContent = `Lookup region could not be loaded: ${error.message}`;
+        regionWorkflow.showFeedback('error',
+          'Lookup region could not be loaded. Reload this page and try again.');
       }
     }
   } catch (error) {

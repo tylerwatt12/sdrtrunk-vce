@@ -1,6 +1,6 @@
 import { systemName, systemIdentity } from '../core/system-labels.js?v=1';
 import { createTableOverflow } from '../core/table-overflow.js?v=1';
-import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult } from './discovery-radioreference.js?v=1';
+import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult } from './discovery-radioreference.js?v=2';
 
 export function spectrumSearchSystemName(candidate) {
   const identity = candidate?.identity || candidate?.trunked_evidence?.identity;
@@ -787,6 +787,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     const operation = ++generation;
     setBusy(true);
     try {
+      await directory.load();
       await releaseJob();
       if (!current() || operation !== generation) return;
       const reusingPreparedReceiver = Boolean(lease?.lease_id && usedReceiverId === receiverId);
@@ -1369,7 +1370,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
         if (!job.restart_required) error('Some channels were added. Check each result before retrying.', cause);
       } else if (cause.code === 'stale_revision' && job?.phase === 'complete') {
         showReview();
-        error('Listening settings changed. Check the choices and try adding again.', cause);
+        error('Saved choices changed. Check the Alias Lists and try adding again.', cause);
       } else error('We couldn’t add your channels. Your choices are still here. Try again.', cause);
     } finally { if (current()) setBusy(false); }
   };

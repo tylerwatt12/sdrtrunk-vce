@@ -30,7 +30,7 @@ class StatsWebFrequencyActionsUiContractTest
         assertFalse(source.contains("function renderConfiguration()"));
         assertFalse(source.contains("focused migration"));
         assertFalse(source.contains("function comingSoonPanel"));
-        assertTrue(settings.contains("Choose the state used for exact-frequency searches."));
+        assertTrue(settings.contains("Choose a state or province for frequency lookups."));
         assertTrue(settings.contains("Log out and clear saved credentials"));
         assertTrue(html.contains("data-view=\"radioreference\" href=\"/?view=radioreference\""));
     }
