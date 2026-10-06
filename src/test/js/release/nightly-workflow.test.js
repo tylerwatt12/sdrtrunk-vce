@@ -6,7 +6,8 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
-const workflow = fs.readFileSync(process.argv[2] || '.github/workflows/nightly.yml', 'utf8');
+const workflow = fs.readFileSync(process.argv[2] || '.github/workflows/nightly.yml', 'utf8')
+  .replace(/\r\n/g, '\n');
 function step(name) {
   const marker = `      - name: ${name}\n`;
   const start = workflow.indexOf(marker);
