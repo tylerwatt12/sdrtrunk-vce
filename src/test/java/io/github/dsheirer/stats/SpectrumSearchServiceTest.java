@@ -86,6 +86,36 @@ class SpectrumSearchServiceTest
     }
 
     @Test
+    void confirmedServingCarrierReplacesTheEstimatedPeakForResultsAndDirectoryLookup() throws Exception
+    {
+        long estimatedFrequency = A + 1250;
+        var observed = evidence(estimatedFrequency, 1, "C4FM", true);
+        var previous = observed.c4fm();
+        var resolved = new P25DiscoveryProbe.ModeMetrics(previous.validMessages(), previous.validControlMessages(),
+            previous.invalidControlMessages(), previous.correctedBits(), previous.syncLossBits(),
+            previous.networkObservations(), previous.siteObservations(), previous.qualityPct(), previous.confirmed(),
+            previous.identity(), previous.reason(), A);
+        var status = new P25DiscoveryProbe.Status(observed.state(), observed.reason(), observed.targetId(),
+            observed.frequencyHz(), observed.startedAtMs(), observed.elapsedMs(), observed.timeoutMs(),
+            observed.droppedBuffers(), resolved, observed.cqpsk(), observed.signal(), observed.selectedModulation(),
+            observed.identity());
+        try(Fixture fixture = new Fixture(estimatedFrequency))
+        {
+            fixture.check = (lease, frequency, cancelled) -> status;
+            var completed = fixture.complete(fixture.open().jobId());
+            assertEquals(1, completed.candidates().size());
+            assertEquals(A, completed.candidates().getFirst().frequencyHz());
+            var proof = TrunkedDiscoveryEvidence.p25(status, 10000);
+            assertNotNull(proof);
+            assertEquals(A, SpectrumSearchService.directoryIdentity(proof, estimatedFrequency).frequencyHz());
+            assertEquals(0xBEE00, SpectrumSearchService.directoryIdentity(proof, estimatedFrequency).wacn());
+            assertEquals(0x348, SpectrumSearchService.directoryIdentity(proof, estimatedFrequency).system());
+            assertEquals(2, SpectrumSearchService.directoryIdentity(proof, estimatedFrequency).rfss());
+            assertEquals(1, SpectrumSearchService.directoryIdentity(proof, estimatedFrequency).site());
+        }
+    }
+
+    @Test
     void cancellationSignalAfterEmptyFirstPassPreventsLogicalSecondPassCompletion() throws Exception
     {
         try(Fixture fixture = new Fixture())

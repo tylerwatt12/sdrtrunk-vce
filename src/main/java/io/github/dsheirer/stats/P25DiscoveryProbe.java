@@ -47,8 +47,8 @@ public final class P25DiscoveryProbe implements AutoCloseable
 {
     static final long TIMEOUT_MILLISECONDS = 30_000;
     static final long MINIMUM_IDENTITY_SPAN_MILLISECONDS = 2_000;
-    //The required three fresh broadcasts must already span two seconds. Strong signals do not need another
-    //three seconds of idle dwell after proving the same serving identity in both decoder comparisons.
+    //The required three fresh broadcasts must already span two seconds. A confirmed serving carrier permits
+    //early completion; an unresolved carrier may use the remaining existing observation window.
     static final long MINIMUM_OBSERVATION_MILLISECONDS = MINIMUM_IDENTITY_SPAN_MILLISECONDS;
     static final int MINIMUM_IDENTITY_OBSERVATIONS = 3;
     static final int MINIMUM_CONTROL_MESSAGES = 20;
@@ -426,9 +426,9 @@ public final class P25DiscoveryProbe implements AutoCloseable
                             finish("failed", "The receiver dropped sample batches. Retry discovery.", null);
                             break;
                         }
-                        //Both modes have now consumed the same contiguous batch. Publish a strong result at this
-                        //boundary instead of waiting for the next UI-status tick. A weak signal can prove its
-                        //identity; ambiguous modulation or incomplete identity continues through the timeout.
+                        //Both modes have now consumed the same contiguous batch. Publish complete proof at this
+                        //boundary instead of waiting for the next UI-status tick. An unresolved carrier,
+                        //ambiguous modulation or incomplete identity continues through the timeout.
                         if(complete(Math.max(0, mClock.getAsLong() - mStartedAt), false,
                             sampleGeneration == mDroppedBuffers.get()))
                         {
@@ -470,7 +470,14 @@ public final class P25DiscoveryProbe implements AutoCloseable
             ModeMetrics c4fm = mC4fm.metrics();
             ModeMetrics cqpsk = mCqpsk.metrics();
             Modulation selected = select(c4fm, cqpsk);
-            if(contiguous && elapsed >= MINIMUM_OBSERVATION_MILLISECONDS && selected != null && mSignal.mCount > 0)
+            ModeMetrics mode = selected == Modulation.C4FM ? c4fm : cqpsk;
+            boolean carrierReady = selected != null && mode.servingControlFrequencyHz() != null &&
+                Math.abs(mode.servingControlFrequencyHz() - mFrequencyHz) <= 6250;
+            //Identity can arrive before the confirmed band plan needed to resolve the serving carrier. Keep
+            //receiving within this probe's existing deadline so directory matching need not use an FFT estimate.
+            //A site without usable carrier broadcasts still remains a verified identity at that deadline.
+            if(contiguous && elapsed >= MINIMUM_OBSERVATION_MILLISECONDS && selected != null && mSignal.mCount > 0 &&
+                (carrierReady || timeout))
             {
                 finish("ready", "A P25 control channel and site identity were confirmed.", selected);
                 return true;

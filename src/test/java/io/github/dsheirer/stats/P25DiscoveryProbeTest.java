@@ -219,7 +219,7 @@ class P25DiscoveryProbeTest
     }
 
     @Test
-    void weakSignalWithThirtyEightValidControlsWinsAndRemainsEligibleToSave() throws Exception
+    void weakSignalWithoutResolvedCarrierRemainsEligibleAtTheExistingDeadline() throws Exception
     {
         FakeSource source = new FakeSource();
         AtomicLong clock = new AtomicLong(1000);
@@ -246,8 +246,14 @@ class P25DiscoveryProbeTest
             P25DiscoveryProbe.Session session = probe.open("target", FREQUENCY);
             clock.set(3000);
             source.emit(samples(3000));
+            await(() -> session.status().elapsedMs() == 2000 && session.status().c4fm().confirmed());
+            assertEquals("running", session.status().state());
+            assertEquals(0, source.samplesStopped.get());
+            clock.set(1000 + P25DiscoveryProbe.TIMEOUT_MILLISECONDS);
             await(() -> session.status().state().equals("ready"));
             var status = session.status();
+            assertEquals(P25DiscoveryProbe.TIMEOUT_MILLISECONDS, status.elapsedMs());
+            assertNull(status.c4fm().servingControlFrequencyHz());
             assertEquals(38, status.c4fm().validControlMessages());
             assertEquals(169, status.c4fm().invalidControlMessages());
             assertEquals(3, Math.round(status.c4fm().qualityPct()));
@@ -259,6 +265,125 @@ class P25DiscoveryProbeTest
             assertTrue(proof.verified(), "The shared save path must not reapply a signal-quality threshold");
             assertEquals("C4FM", proof.settings().get("modulation"));
             assertEquals(0, source.closed.get(), "Review retains the tuner hold until save or cancellation");
+        }
+    }
+
+    @Test
+    void waitsForDelayedRepeatedServingCarrierAndCompletesBeforeTheDeadline() throws Exception
+    {
+        FakeSource source = new FakeSource();
+        AtomicLong clock = new AtomicLong(1000);
+        AtomicInteger batches = new AtomicInteger();
+        long estimatedFrequency = FREQUENCY + 1250;
+        try(P25DiscoveryProbe probe = new P25DiscoveryProbe((target, frequency) -> source,
+            (modulation, rate, messages) -> decoder(samples -> {
+                if(modulation == Modulation.C4FM)
+                {
+                    if(batches.incrementAndGet() == 1)
+                    {
+                        for(int x = 1; x <= 3; x++)
+                        {
+                            messages.receive(network(WACN, SYSTEM, NAC, x * 1000));
+                            messages.receive(site(SYSTEM, NAC, 2, 7, x * 1000));
+                        }
+                        for(int x = 0; x < 20; x++) messages.receive(other(4000 + x));
+                    }
+                    else
+                    {
+                        for(int x = 4; x <= 6; x++)
+                            messages.receive(resolvedSite(SYSTEM, NAC, 2, 7, x * 1000, FREQUENCY));
+                    }
+                }
+            }), clock::get))
+        {
+            P25DiscoveryProbe.Session session = probe.open("target", estimatedFrequency);
+            clock.set(3000);
+            source.emit(samples(3000));
+            await(() -> session.status().elapsedMs() == 2000 && session.status().c4fm().confirmed());
+            assertEquals("running", session.status().state());
+            assertNull(session.status().c4fm().servingControlFrequencyHz());
+            assertEquals(0, source.samplesStopped.get());
+
+            clock.set(7000);
+            source.emit(samples(7000));
+            await(() -> session.status().state().equals("ready"));
+            var status = session.status();
+            assertEquals(6000, status.elapsedMs());
+            assertEquals(estimatedFrequency, status.frequencyHz());
+            assertEquals(FREQUENCY, status.c4fm().servingControlFrequencyHz());
+            var proof = TrunkedDiscoveryEvidence.p25(status, 7000);
+            assertNotNull(proof);
+            assertEquals(FREQUENCY, proof.servingFrequencyHz());
+            assertEquals(1, source.samplesStopped.get());
+            assertEquals(0, source.closed.get(), "Review retains the receiver hold");
+        }
+    }
+
+    @Test
+    void carrierOutsideTheObservedSignalCannotFinishEarlyOrBecomeFrequencyProof() throws Exception
+    {
+        FakeSource source = new FakeSource();
+        AtomicLong clock = new AtomicLong(1000);
+        try(P25DiscoveryProbe probe = new P25DiscoveryProbe((target, frequency) -> source,
+            (modulation, rate, messages) -> decoder(samples -> {
+                if(modulation == Modulation.C4FM)
+                {
+                    for(int x = 1; x <= 3; x++)
+                    {
+                        messages.receive(network(WACN, SYSTEM, NAC, x * 1000));
+                        messages.receive(resolvedSite(SYSTEM, NAC, 2, 7, x * 1000, FREQUENCY + 12500));
+                    }
+                    for(int x = 0; x < 20; x++) messages.receive(other(4000 + x));
+                }
+            }), clock::get))
+        {
+            P25DiscoveryProbe.Session session = probe.open("target", FREQUENCY);
+            clock.set(3000);
+            source.emit(samples(3000));
+            await(() -> session.status().elapsedMs() == 2000 && session.status().c4fm().confirmed());
+            assertEquals("running", session.status().state());
+            clock.set(1000 + P25DiscoveryProbe.TIMEOUT_MILLISECONDS);
+            await(() -> session.status().state().equals("ready"));
+            var proof = TrunkedDiscoveryEvidence.p25(session.status(), 7000);
+            assertNotNull(proof);
+            assertTrue(proof.verified());
+            assertNull(proof.servingFrequencyHz());
+        }
+    }
+
+    @Test
+    void cancellationAndTunerInvalidationDuringCarrierWaitReleaseTheReceiver() throws Exception
+    {
+        for(boolean cancel: List.of(true, false))
+        {
+            FakeSource source = new FakeSource();
+            AtomicLong clock = new AtomicLong(1000);
+            try(P25DiscoveryProbe probe = new P25DiscoveryProbe((target, frequency) -> source,
+                (modulation, rate, messages) -> decoder(samples -> {
+                    if(modulation == Modulation.C4FM)
+                    {
+                        for(int x = 1; x <= 3; x++)
+                        {
+                            messages.receive(network(WACN, SYSTEM, NAC, x * 1000));
+                            messages.receive(site(SYSTEM, NAC, 2, 7, x * 1000));
+                        }
+                        for(int x = 0; x < 20; x++) messages.receive(other(4000 + x));
+                    }
+                }), clock::get))
+            {
+                P25DiscoveryProbe.Session session = probe.open("target", FREQUENCY);
+                clock.set(3000);
+                source.emit(samples(3000));
+                await(() -> session.status().elapsedMs() == 2000 && session.status().c4fm().confirmed());
+                assertEquals("running", session.status().state());
+                if(cancel) session.close();
+                else source.valid = false;
+                await(() -> session.status().state().equals(cancel ? "closed" : "failed"));
+                assertNull(session.status().identity());
+                assertNull(session.status().selectedModulation());
+                await(() -> source.closed.get() == 1);
+                assertEquals(1, source.samplesStopped.get());
+            }
         }
     }
 
@@ -306,7 +431,7 @@ class P25DiscoveryProbeTest
                     for(int x = 1; x <= 3; x++)
                     {
                         messages.receive(network(WACN, SYSTEM, NAC, x * 1000));
-                        messages.receive(site(SYSTEM, NAC, 2, 7, x * 1000));
+                        messages.receive(resolvedSite(SYSTEM, NAC, 2, 7, x * 1000, FREQUENCY));
                     }
                     for(int x = 0; x < 20; x++) messages.receive(other(4000 + x));
                 }
@@ -349,7 +474,7 @@ class P25DiscoveryProbeTest
                     for(int x = 1; x <= 3; x++)
                     {
                         messages.receive(network(WACN, SYSTEM, NAC, x * 1000));
-                        messages.receive(site(SYSTEM, NAC, 2, 7, x * 1000));
+                        messages.receive(resolvedSite(SYSTEM, NAC, 2, 7, x * 1000, FREQUENCY));
                     }
                     for(int x = 0; x < 20; x++) messages.receive(other(4000 + x));
                 }
@@ -570,7 +695,7 @@ class P25DiscoveryProbeTest
                     for(int x = 1; x <= 3; x++)
                     {
                         messages.receive(network(WACN, SYSTEM, NAC, x * 1000));
-                        messages.receive(site(SYSTEM, NAC, 2, 7, x * 1000));
+                        messages.receive(resolvedSite(SYSTEM, NAC, 2, 7, x * 1000, FREQUENCY));
                     }
                     for(int x = 0; x < 20; x++) messages.receive(other(4000 + x));
                 }
@@ -709,6 +834,14 @@ class P25DiscoveryProbeTest
         RFSSStatusBroadcast result = new RFSSStatusBroadcast(
             P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1, bits, nac, timestamp);
         result.setValid(true);
+        return result;
+    }
+
+    private static RFSSStatusBroadcast resolvedSite(int system, int nac, int rfss, int site, long timestamp,
+                                                   long frequency)
+    {
+        RFSSStatusBroadcast result = site(system, nac, rfss, site, timestamp);
+        result.getChannel().setFrequencyBand(new P25FrequencyBand(0, frequency, -30_000_000, 6250, 12500, 1));
         return result;
     }
 
