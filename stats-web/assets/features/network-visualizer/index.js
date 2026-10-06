@@ -8,7 +8,7 @@ import {
   buildP25Graph,
   groupedP25Events,
   mostActiveP25System
-} from './history.js?v=5';
+} from './history.js?v=6';
 import { createP25CameraCoordinator } from './camera.js?v=4';
 import { createP25Renderer } from './renderer.js?v=4';
 import {

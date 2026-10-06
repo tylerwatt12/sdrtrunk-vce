@@ -17,6 +17,16 @@ function p25ServingSystemKey(row, prefix = '') {
   return text(reference?.kind).toLowerCase() === 'radio' ? text(reference.radio_system_key) : '';
 }
 
+function parseP25RadioIdentifier(value) {
+  const match = /^([0-9a-f]{5})\.([0-9a-f]{3})\.([0-9]+)(?: \(Working ID ([0-9]+)\))?$/i.exec(text(value));
+  if (!match) return null;
+  const subscriberId = integer(match[3], 1, 0xFFFFFC);
+  const workingId = match[4] === undefined ? null : integer(match[4], 1, 0xFFFFFC);
+  if (subscriberId === null || match[4] !== undefined && workingId === null) return null;
+  return { canonical_identity: { wacn: parseInt(match[1], 16), system_id: parseInt(match[2], 16),
+    subscriber_id: subscriberId }, observed_working_id: workingId };
+}
+
 function formatP25RadioIdentifier(identity, { servingSystemKey = '', homeSystemName = '', workingId = null } = {}) {
   const wacn = integer(identity?.wacn, 0, 0xFFFFF);
   const systemId = integer(identity?.system_id, 0, 0xFFF);
@@ -33,4 +43,4 @@ function formatP25RadioIdentifier(identity, { servingSystemKey = '', homeSystemN
   return observedId !== null && observedId !== subscriberId ? `${label} (Working ID ${observedId})` : label;
 }
 
-export { formatP25RadioIdentifier, p25ServingSystemKey };
+export { formatP25RadioIdentifier, p25ServingSystemKey, parseP25RadioIdentifier };

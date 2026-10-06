@@ -1,6 +1,7 @@
 'use strict';
 
 import { systemName, systemIdentity } from '../../core/system-labels.js?v=1';
+import { formatP25RadioIdentifier, p25ServingSystemKey } from '../../core/radio-labels.js?v=3';
 
 const P25_HISTORY_ACTIONS = Object.freeze([
   'JOIN', 'LOGOUT', 'DENIAL', 'EMERGENCY', 'CHECK', 'PAGE', 'BUSY', 'QUEUED',
@@ -103,11 +104,28 @@ function groupLabel(row, key) {
     String(nativeId(key, row?.target_native_id ?? row?.target_id) ?? 'Talkgroup');
 }
 
+function radioAlias(row, role = 'source') {
+  return text(row?.[`${role}_alias_name`]) || text(row?.[`${role}_talker_alias`]);
+}
+
 function radioLabel(row, key, role = 'source') {
   const source = role === 'source';
-  return text(row?.[source ? 'source_alias_name' : 'target_alias_name']) ||
-    text(row?.[source ? 'source_talker_alias' : 'target_talker_alias']) ||
-    String(nativeId(key, source ? row?.source_native_id ?? row?.source_radio_id :
+  const alias = radioAlias(row, role);
+  if (alias) return alias;
+  const identity = row?.[`${role}_canonical_identity`] || {
+    wacn: row?.[`${role}_canonical_wacn`], system_id: row?.[`${role}_canonical_system_id`],
+    subscriber_id: row?.[`${role}_canonical_subscriber_id`]
+  };
+  if (formatP25RadioIdentifier(identity)) {
+    const homeKey = `p25:${Number(identity.wacn).toString(16).padStart(5, '0')}:` +
+      Number(identity.system_id).toString(16).padStart(3, '0');
+    return formatP25RadioIdentifier(identity, {
+      servingSystemKey: p25ServingSystemKey(row, role),
+      homeSystemName: text(row?.[`${role}_home_system_name`]) || systemName(homeKey),
+      workingId: row?.[`${role}_observed_working_id`] ?? row?.[`${role}_working_subscriber_id`]
+    });
+  }
+  return String(nativeId(key, source ? row?.source_native_id ?? row?.source_radio_id :
       row?.target_native_id ?? row?.target_id) ?? 'Radio');
 }
 
@@ -265,6 +283,7 @@ function ensureRadio(state, system, row, identityKey, role) {
     }
     const local = localPosition(key, 52, 145);
     radio = { key, identityKey, systemKey: system.key, label: radioLabel(row, identityKey, role),
+      labelIsAlias: Boolean(radioAlias(row, role)),
       nativeId: nativeId(identityKey, role === 'source' ? row.source_native_id ?? row.source_radio_id :
         row.target_native_id ?? row.target_id), x: system.x + local.x, y: system.y + local.y,
       z: system.z + local.z, lastAtMs: 0, visualGroupKey: '', activityGroupKey: '', affiliations: new Map(),
@@ -273,7 +292,10 @@ function ensureRadio(state, system, row, identityKey, role) {
     system.radioKeys.add(key);
   } else {
     const label = radioLabel(row, identityKey, role);
-    if (label && /^\d+$/.test(radio.label)) radio.label = label;
+    if (label && !radio.labelIsAlias) {
+      radio.label = label;
+      radio.labelIsAlias = Boolean(radioAlias(row, role));
+    }
   }
   radio.lastAtMs = Math.max(radio.lastAtMs, finite(row.observed_at_ms));
   return radio;

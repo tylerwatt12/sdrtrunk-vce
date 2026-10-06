@@ -1,6 +1,7 @@
 'use strict';
 
 import { systemLabel, systemName, systemIdentity } from '../core/system-labels.js?v=1';
+import { formatP25RadioIdentifier, parseP25RadioIdentifier, p25ServingSystemKey } from '../core/radio-labels.js?v=3';
 import { createTableOverflow } from '../core/table-overflow.js?v=1';
 
 const TILE_SIZE = 256;
@@ -60,6 +61,22 @@ function visibleTiles(center, zoom, width, height) {
   return tiles;
 }
 
+function mapRadioIdentifier(entity, servingSystem) {
+  const raw = String(entity.identifier || '');
+  const identity = { wacn: entity.home_wacn, system_id: entity.home_system_id, subscriber_id: entity.radio_id };
+  if (!formatP25RadioIdentifier(identity)) return raw;
+  const parsed = parseP25RadioIdentifier(raw);
+  const matchingText = parsed && Object.keys(identity).every((key) =>
+    Number(identity[key]) === parsed.canonical_identity[key]);
+  const homeKey = `p25:${Number(identity.wacn).toString(16).padStart(5, '0')}:` +
+    Number(identity.system_id).toString(16).padStart(3, '0');
+  return formatP25RadioIdentifier(identity, {
+    servingSystemKey: p25ServingSystemKey(entity) || p25ServingSystemKey(servingSystem) || servingSystem?.key || '',
+    homeSystemName: String(entity.home_system_name || '').trim() || systemName(entity.home_system) || systemName(homeKey),
+    workingId: entity.observed_working_id ?? (matchingText ? parsed.observed_working_id : null)
+  });
+}
+
 function normalizeSnapshot(value) {
   if (!value || !Array.isArray(value.entities)) throw new Error('The receiver returned an invalid map snapshot.');
   const entities = value.entities.slice(0, MAX_ENTITIES).flatMap((entity) => {
@@ -71,8 +88,12 @@ function normalizeSnapshot(value) {
         timestamp_ms: Number(position.timestamp_ms) || 0 })).reverse();
     if (!positions.length || typeof entity?.id !== 'string' || !entity.id) return [];
     const servingSystem = entity.serving_system || entity.system_identity;
-    return [{ id: entity.id, label: String(entity.label || entity.identifier || entity.id),
-      identifier: String(entity.identifier || ''), alias_list: String(entity.alias_list || ''),
+    const rawIdentifier = String(entity.identifier || '');
+    const identifier = mapRadioIdentifier(entity, servingSystem);
+    const rawLabel = String(entity.label || rawIdentifier || entity.id);
+    const label = rawLabel.trim() === rawIdentifier.trim() && identifier ? identifier : rawLabel;
+    return [{ id: entity.id, label, identifier, raw_identifier: rawIdentifier,
+      alias_list: String(entity.alias_list || ''),
       system: systemLabel(servingSystem) || systemLabel(entity),
       system_name: systemName(servingSystem) || systemName(entity),
       serving_system: servingSystem && typeof servingSystem === 'object' ? servingSystem : null,
@@ -495,9 +516,11 @@ function createListenMap({ node, iconGlyph, iconButton, fetchSnapshot, iconUrl,
     if (selected) {
       const latest = selected.positions.at(-1);
       const facts = node('dl', 'ui-facts listen-map-facts');
+      const identifier = node('span', '', selected.identifier || '—');
+      if (selected.raw_identifier !== selected.identifier) identifier.title = selected.raw_identifier;
       for (const [label, value] of [
         ...mapSystemFacts(selected, radioSystemLink),
-        ['Identifier', selected.identifier || '—'],
+        ['Identifier', identifier],
         ['Alias list', selected.alias_list || '—'],
         ['Position', `${latest.latitude.toFixed(5)}, ${latest.longitude.toFixed(5)}`],
         ['Heading', Number.isFinite(selected.heading) ? `${Math.round(selected.heading)}°` : '—'],

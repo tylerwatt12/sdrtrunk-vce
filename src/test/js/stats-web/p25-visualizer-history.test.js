@@ -121,6 +121,58 @@ async function main() {
   assert.equal(unknownSource.groups.size, 1);
   assert.equal(unknownSource.radios.size, 0, 'a source-less grant must not fabricate a subscriber radio');
 
+  const labelRow = row(60, 'EMERGENCY', {
+    radio_system_key: 'p25:bee00:123', source_alias_name: '', source_talker_alias: '',
+    source_identity_key: 'v1-r-bee00-123-7001',
+    source_canonical_identity: { wacn: 0xBEE00, system_id: 0x123, subscriber_id: 7001 },
+    source_observed_working_id: 7001
+  });
+  const displayedRadio = (overrides = {}) => {
+    const labelState = history.createP25HistoryState();
+    history.applyP25ActivityRows(labelState, [{ ...labelRow, ...overrides }], { initial: true });
+    const value = [...labelState.radios.values()][0];
+    assert.equal(value.identityKey, labelRow.source_identity_key, 'A display label cannot change radio identity.');
+    assert.equal(history.buildP25Graph(labelState, labelRow.radio_system_key).nodes
+      .find((entry) => entry.type === 'radio').label, value.label, 'Scene nodes use the shared radio label.');
+    assert.ok(history.groupedP25Events(labelState)[0].detail.includes(value.label),
+      'Visualizer event captions use the same radio presentation.');
+    return value.label;
+  };
+  assert.equal(displayedRadio(), '7001', 'Local visualizer radios omit home prefixes and equal Working IDs.');
+  assert.equal(displayedRadio({ source_alias_name: 'Engine 1' }), 'Engine 1', 'Configured aliases remain primary.');
+  assert.equal(displayedRadio({ source_observed_working_id: 501 }), '7001 (Working ID 501)');
+  assert.equal(displayedRadio({ source_canonical_identity: { wacn: 0xBEE00, system_id: 0x124, subscriber_id: 7001 },
+    source_home_system_name: 'County P25' }), 'County P25 · 7001', 'Foreign home names appear in graph labels.');
+  assert.equal(displayedRadio({ source_canonical_identity: { wacn: 0xBEE01, system_id: 0x123, subscriber_id: 7001 } }),
+    'BEE01.123.7001', 'A different WACN needs home context even when SysID and number match.');
+  assert.equal(displayedRadio({ source_canonical_identity: null, source_canonical_wacn: 0xBEE00,
+    source_canonical_system_id: 0x124, source_canonical_subscriber_id: 7001 }), 'BEE00.124.7001',
+    'The persisted Activity scalar identity fields use the same formatter as nested facts.');
+  assert.equal(displayedRadio({ source_canonical_identity: { wacn: null, system_id: 0x124, subscriber_id: 7001 } }),
+    '7001', 'Incomplete native facts preserve the existing observed-number fallback.');
+  const evolvingLabels = history.createP25HistoryState();
+  const foreignRow = { ...labelRow,
+    source_canonical_identity: { wacn: 0xBEE00, system_id: 0x124, subscriber_id: 7001 } };
+  history.applyP25ActivityRows(evolvingLabels, [foreignRow], { initial: true });
+  history.applyP25ActivityRows(evolvingLabels, [{ ...foreignRow, id: 61,
+    source_home_system_name: 'County P25' }], { initial: true });
+  assert.equal([...evolvingLabels.radios.values()][0].label, 'County P25 · 7001',
+    'An unnamed foreign label can acquire a known system name on a later observation.');
+  history.applyP25ActivityRows(evolvingLabels, [{ ...foreignRow, id: 62,
+    source_alias_name: 'Engine 1' }], { initial: true });
+  assert.equal([...evolvingLabels.radios.values()][0].label, 'Engine 1',
+    'A later configured alias can replace a formatted identity fallback.');
+  const targetLabels = history.createP25HistoryState();
+  history.applyP25ActivityRows(targetLabels, [row(63, 'DENIAL', {
+    radio_system_key: 'p25:bee00:123', source_identity_key: null,
+    target_identity_key: 'v1-r-bee00-123-7002', target_kind: 'radio', target_id: 7002,
+    target_alias_name: '', target_canonical_identity: {
+      wacn: 0xBEE00, system_id: 0x123, subscriber_id: 7002 }, target_observed_working_id: 7002,
+    source_home_system_name: 'Wrong source home'
+  })], { initial: true });
+  assert.equal([...targetLabels.radios.values()][0].label, '7002',
+    'Target radio activity uses its own home identity and hides an equal local Working ID.');
+
   const cloudRows = Array.from({ length: 220 }, (_, index) => row(100 + index, 'JOIN', {
     source_identity_key: `v1-r-${8_000 + index}`,
     source_radio_id: 8_000 + index,

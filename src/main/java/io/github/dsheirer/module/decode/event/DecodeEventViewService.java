@@ -16,7 +16,12 @@ import io.github.dsheirer.filter.FilterCatalog;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
+import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
+import io.github.dsheirer.identifier.radio.RadioIdentifier;
+import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.module.ProcessingChain;
+import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.Source;
@@ -24,6 +29,7 @@ import io.github.dsheirer.util.concurrent.BoundedMpscPairQueue;
 import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -385,7 +391,8 @@ public class DecodeEventViewService implements AutoCloseable
             from.identifiers(), from.aliases(), to.identifiers(), to.aliases(),
             descriptor != null ? bounded(descriptor.toString()) : null, frequency,
             event.hasTimeslot() ? event.getTimeslot() : null, bounded(event.getDetails()),
-            event.getProtocol() != null ? event.getProtocol().name() : null, observationEpoch);
+            event.getProtocol() != null ? event.getProtocol().name() : null,
+            from.party(), to.party(), observationEpoch);
     }
 
     private Parties parties(IdentifierCollection collection, Role role)
@@ -403,6 +410,7 @@ public class DecodeEventViewService implements AutoCloseable
         }
 
         LinkedHashSet<String> values = new LinkedHashSet<>();
+        LinkedHashMap<String,PartyIdentifier> party = new LinkedHashMap<>();
         LinkedHashSet<String> aliases = new LinkedHashSet<>();
         AliasList aliasList = mAliasModel != null ? mAliasModel.getAliasList(collection) : null;
 
@@ -420,7 +428,9 @@ public class DecodeEventViewService implements AutoCloseable
                 break;
             }
 
-            values.add(bounded(identifier.toString()));
+            String text = bounded(identifier.toString());
+            values.add(text);
+            party.putIfAbsent(text, partyIdentifier(identifier, text, radioMembers(identifier)));
 
             if(aliasList != null)
             {
@@ -439,7 +449,76 @@ public class DecodeEventViewService implements AutoCloseable
             }
         }
 
-        return new Parties(join(values), join(aliases));
+        return new Parties(join(values), join(aliases), List.copyOf(party.values()));
+    }
+
+    private static PartyIdentifier partyIdentifier(Identifier<?> identifier, String text,
+                                                    List<PartyIdentifier> radioMembers)
+    {
+        P25SubscriberIdentity subscriber = P25SubscriberIdentity.from(identifier);
+        PatchGroupIdentifier patch = identifier instanceof PatchGroupIdentifier value && value.getValue() != null ?
+            value : null;
+        return new PartyIdentifier(text,
+            identifier.getForm() != null ? identifier.getForm().name() : null,
+            identifier.getProtocol() != null ? identifier.getProtocol().name() : null,
+            subscriber != null ? new CanonicalRadioIdentity(subscriber.homeWacn(), subscriber.homeSystemId(),
+                subscriber.subscriberId()) : null,
+            identifier instanceof FullyQualifiedRadioIdentifier radio ? radio.getWorkingAddress() : null,
+            radioMembers, patch != null && patch.getValue().getPatchGroup() != null ?
+                bounded(patch.getValue().getPatchGroup().toString()) : null,
+            talkgroupMembers(identifier), patch != null &&
+                patch.getValue().getPatchedTalkgroupIdentifiers().size() > PARTY_MAXIMUM_IDENTIFIERS,
+            patch != null && patch.getValue().getPatchedRadioIdentifiers().size() > PARTY_MAXIMUM_IDENTIFIERS);
+    }
+
+    /** Patch text embeds real radio identifiers; detach only its direct, bounded radio members. */
+    private static List<PartyIdentifier> radioMembers(Identifier<?> identifier)
+    {
+        if(!(identifier instanceof PatchGroupIdentifier patch) || patch.getValue() == null)
+        {
+            return List.of();
+        }
+
+        LinkedHashMap<String,PartyIdentifier> members = new LinkedHashMap<>();
+        int examined = 0;
+        for(RadioIdentifier radio: patch.getValue().getPatchedRadioIdentifiers())
+        {
+            if(radio == null)
+            {
+                continue;
+            }
+            if(examined++ >= PARTY_MAXIMUM_IDENTIFIERS)
+            {
+                break;
+            }
+            String text = bounded(radio.toString());
+            members.putIfAbsent(text, partyIdentifier(radio, text, List.of()));
+        }
+        return List.copyOf(members.values());
+    }
+
+    private static List<String> talkgroupMembers(Identifier<?> identifier)
+    {
+        if(!(identifier instanceof PatchGroupIdentifier patch) || patch.getValue() == null)
+        {
+            return List.of();
+        }
+
+        LinkedHashSet<String> members = new LinkedHashSet<>();
+        int examined = 0;
+        for(TalkgroupIdentifier talkgroup: patch.getValue().getPatchedTalkgroupIdentifiers())
+        {
+            if(talkgroup == null)
+            {
+                continue;
+            }
+            if(examined++ >= PARTY_MAXIMUM_IDENTIFIERS)
+            {
+                break;
+            }
+            members.add(bounded(talkgroup.toString()));
+        }
+        return List.copyOf(members);
     }
 
     private static String eventId(IDecodeEvent event)
@@ -591,8 +670,27 @@ public class DecodeEventViewService implements AutoCloseable
                             String eventType, String eventLabel, String category, String fromIdentifiers,
                             String fromAliases, String toIdentifiers, String toAliases, String channel,
                             Long frequencyHz, Integer timeslot, String details, String protocol,
-                            long observationEpoch)
+                            List<PartyIdentifier> fromParty, List<PartyIdentifier> toParty, long observationEpoch)
     {
+        public EventView
+        {
+            fromParty = fromParty != null ? List.copyOf(fromParty.stream()
+                .limit(PARTY_MAXIMUM_IDENTIFIERS).toList()) : List.of();
+            toParty = toParty != null ? List.copyOf(toParty.stream()
+                .limit(PARTY_MAXIMUM_IDENTIFIERS).toList()) : List.of();
+        }
+
+        /** Source-compatible constructor for consumers that only carry raw party text. */
+        public EventView(String eventId, String configurationId, long timeStartMs, long durationMs,
+                         String eventType, String eventLabel, String category, String fromIdentifiers,
+                         String fromAliases, String toIdentifiers, String toAliases, String channel,
+                         Long frequencyHz, Integer timeslot, String details, String protocol, long observationEpoch)
+        {
+            this(eventId, configurationId, timeStartMs, durationMs, eventType, eventLabel, category,
+                fromIdentifiers, fromAliases, toIdentifiers, toAliases, channel, frequencyHz, timeslot, details,
+                protocol, List.of(), List.of(), observationEpoch);
+        }
+
         /** Internal transport boundary; it is not part of the browser event payload. */
         @JsonIgnore
         public long observationEpoch()
@@ -601,9 +699,47 @@ public class DecodeEventViewService implements AutoCloseable
         }
     }
 
-    private record Parties(String identifiers, String aliases)
+    /** Detached, typed party data so browser labels never infer identity from arbitrary decoder text. */
+    public record PartyIdentifier(String text, String form, String protocol,
+                                  CanonicalRadioIdentity canonicalIdentity, Integer observedWorkingId,
+                                  List<PartyIdentifier> radioMembers, String patchGroup,
+                                  List<String> talkgroupMembers, boolean talkgroupMembersTruncated,
+                                  boolean radioMembersTruncated)
     {
-        private static final Parties EMPTY = new Parties(null, null);
+        public PartyIdentifier
+        {
+            radioMembersTruncated |= radioMembers != null && radioMembers.size() > PARTY_MAXIMUM_IDENTIFIERS;
+            talkgroupMembersTruncated |= talkgroupMembers != null &&
+                talkgroupMembers.size() > PARTY_MAXIMUM_IDENTIFIERS;
+            radioMembers = radioMembers != null ? List.copyOf(radioMembers.stream()
+                .limit(PARTY_MAXIMUM_IDENTIFIERS).toList()) : List.of();
+            talkgroupMembers = talkgroupMembers != null ? List.copyOf(talkgroupMembers.stream()
+                .limit(PARTY_MAXIMUM_IDENTIFIERS).toList()) : List.of();
+        }
+
+        public PartyIdentifier(String text, String form, String protocol,
+                               CanonicalRadioIdentity canonicalIdentity, Integer observedWorkingId,
+                               List<PartyIdentifier> radioMembers)
+        {
+            this(text, form, protocol, canonicalIdentity, observedWorkingId, radioMembers,
+                null, List.of(), false, false);
+        }
+
+        public PartyIdentifier(String text, String form, String protocol,
+                               CanonicalRadioIdentity canonicalIdentity, Integer observedWorkingId)
+        {
+            this(text, form, protocol, canonicalIdentity, observedWorkingId, List.of(), null, List.of(), false, false);
+        }
+    }
+
+    /** Shares the canonical identity field names already used by Live and retained activity payloads. */
+    public record CanonicalRadioIdentity(int wacn, int systemId, int subscriberId)
+    {
+    }
+
+    private record Parties(String identifiers, String aliases, List<PartyIdentifier> party)
+    {
+        private static final Parties EMPTY = new Parties(null, null, List.of());
     }
 
 }

@@ -7,10 +7,20 @@ const { pathToFileURL } = require('node:url');
 async function main() {
   const modulePath = path.resolve(process.argv[2] ||
     path.resolve(__dirname, '../../../../stats-web/assets/core/radio-labels.js'));
-  const { formatP25RadioIdentifier, p25ServingSystemKey } = await import(pathToFileURL(modulePath).href);
+  const { formatP25RadioIdentifier, p25ServingSystemKey, parseP25RadioIdentifier } =
+    await import(pathToFileURL(modulePath).href);
   const home = { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 4_326_018 };
   const local = { servingSystemKey: 'p25:bee00:348', homeSystemName: 'Home System' };
   const foreign = { servingSystemKey: 'p25:bee00:349', homeSystemName: 'Home System' };
+  assert.deepEqual(parseP25RadioIdentifier('BEE00.348.4326018 (Working ID 501)'),
+    { canonical_identity: home, observed_working_id: 501 });
+  assert.deepEqual(parseP25RadioIdentifier('bee00.348.4326018'),
+    { canonical_identity: home, observed_working_id: null });
+  for (const invalid of ['12345', 'BEE00.348.0', 'BEE00.348.16777213',
+    'BEE00.348.4326018 (Working ID 0)', 'BEE00.348.4326018 (Working ID 501)x',
+    'ISSI 778240.840.4326018', '1(778240.840.4326018)']) {
+    assert.equal(parseP25RadioIdentifier(invalid), null);
+  }
 
   assert.equal(formatP25RadioIdentifier(home, local), '4326018');
   assert.equal(formatP25RadioIdentifier(home, { ...local, workingId: 4_326_018 }), '4326018',

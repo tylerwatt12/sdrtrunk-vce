@@ -138,6 +138,10 @@ assert.equal(behavior.liveDetailSelectionUnchanged(selected, { ...selected }), t
 assert.equal(behavior.liveDetailSelectionUnchanged(selected,
   { ...selected, transportKey: 'channel:852012500:', bindingFrequencyHz: 852012500 }), false);
 
+assert.equal(behavior.liveDetailSelectionUnchanged({ ...selected, radioSystemKey: 'p25:bee00:49f' },
+  { ...selected, radioSystemKey: 'p25:bee00:348' }), false,
+  'New receiving-system context must update the detail pane even when channel labels stay the same.');
+
 assert.deepEqual(JSON.parse(JSON.stringify(behavior.liveRequestedChannelMatch({
   table_id: 'site-32', configuration_id: 'trunked-channel', rows: []
 }, 'trunked-channel'))), { tableId: 'site-32', row: null },

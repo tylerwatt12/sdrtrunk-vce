@@ -68,6 +68,39 @@ async function main() {
     serving_system: { key: 'dmr:channel:channel-id', name: 'Conventional' } }),
   [['System', 'Conventional']], 'A saved channel scope does not become a radio-frequency identity');
   assert.equal(snapshot.entities[1].icon, 'no-icon');
+  const localEntity = {
+    id: 'local-radio', identifier: 'BEE00.49F.1872114 (Working ID 1872114)',
+    home_wacn: 0xBEE00, home_system_id: 0x49F, radio_id: 1872114,
+    serving_system: { key: 'p25:bee00:49f', name: 'GCRCN' },
+    home_system_name: 'GCRCN', positions: [{ latitude: 40, longitude: -99 }]
+  };
+  const normalizedRadio = (overrides = {}) => map.normalizeSnapshot({
+    entities: [{ ...localEntity, ...overrides }]
+  }).entities[0];
+  assert.equal(normalizedRadio().identifier, '1872114',
+    'A local map radio uses the number and omits an equal Working ID.');
+  assert.equal(normalizedRadio().label, '1872114', 'Raw radio fallback labels use the shared format.');
+  assert.equal(normalizedRadio().id, 'local-radio', 'Presentation cannot change a track key.');
+  assert.equal(normalizedRadio().raw_identifier, localEntity.identifier, 'The original identity remains inspectable.');
+  assert.equal(normalizedRadio({ label: 'NRL-MEDIC 3' }).label, 'NRL-MEDIC 3', 'Configured alias labels survive.');
+  assert.equal(normalizedRadio({ identifier: 'BEE00.49F.1872114 (Working ID 501)' }).identifier,
+    '1872114 (Working ID 501)', 'A different confirmed Working ID remains useful.');
+  assert.equal(normalizedRadio({ identifier: 'BEE01.49F.1872114 (Working ID 501)' }).identifier,
+    '1872114', 'Unrelated text cannot supply a Working ID for the numeric identity facts.');
+  assert.equal(normalizedRadio({ serving_system: { key: 'p25:bee00:4a2' } }).identifier,
+    'GCRCN · 1872114', 'Foreign map radios retain their friendly home-system name.');
+  assert.equal(normalizedRadio({ serving_system: { key: 'p25:bee01:49f' } }).identifier,
+    'GCRCN · 1872114', 'Both WACN and SysID must match before hiding the home context.');
+  assert.equal(normalizedRadio({ serving_system: { key: 'p25:bee00:4a2' }, home_system_name: '' }).identifier,
+    'BEE00.49F.1872114', 'Unnamed foreign radios retain the full identity.');
+  assert.equal(normalizedRadio({ serving_system: null }).identifier,
+    'GCRCN · 1872114', 'An unknown serving system must not imply a local radio.');
+  assert.equal(normalizedRadio({ radio_system_key: 'p25:bee00:4a2' }).identifier,
+    'GCRCN · 1872114', 'An explicit receiving system takes precedence over nested serving context.');
+  for (const missing of [null, undefined, '', false]) {
+    assert.equal(normalizedRadio({ home_wacn: missing }).identifier, localEntity.identifier,
+      'Incomplete native facts cannot reinterpret current or legacy radio text.');
+  }
   const cutoff = map.positionSignature(snapshot.entities[0].positions[0]);
   assert.equal(map.positionsAfterCutoff(snapshot.entities[0].positions, cutoff).length, 1,
     'Deleting a track resets its browser-session history at the last observed point');

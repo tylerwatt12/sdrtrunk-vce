@@ -8,7 +8,7 @@ import { createTableOverflow } from './core/table-overflow.js?v=1';
 import { Controller as PageTitleController } from './core/page-title.js?v=2';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
 import * as systemLabels from './core/system-labels.js?v=1';
-import { formatP25RadioIdentifier, p25ServingSystemKey } from './core/radio-labels.js?v=2';
+import { formatP25RadioIdentifier, p25ServingSystemKey } from './core/radio-labels.js?v=3';
 import * as pageLifecycle from './core/page-lifecycle.js';
 import { installIconHints } from './core/icon-hints.js?v=4';
 import { createFormWorkflow } from './core/form-workflows.js?v=1';
@@ -20,7 +20,7 @@ import {
   isReceiverHealthAlertEnabled
 } from './core/receiver-health-alerts.js?v=3';
 import * as radioSystemsDirectory from './features/radio-systems-directory.js';
-import { createListenMap } from './features/listen-map.js?v=5';
+import { createListenMap } from './features/listen-map.js?v=6';
 import { buildRadioResolvePlannerUrl } from './features/radioresolve-analysis.js?v=2';
 import {
   createAliasList,
@@ -30,14 +30,14 @@ import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from
 import { createStreamingWorkspace } from './features/streaming.js?v=8';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=9';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=13';
-import { createRecordingsFeature } from './features/recordings.js?v=22';
+import { createRecordingsFeature } from './features/recordings.js?v=23';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=23';
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl } from './features/discovery-radioreference.js?v=5';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createAudioDock } from './core/audio-dock.js?v=13';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=4';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
-import { WebCallPlayer } from './web-call-player.js?v=12';
+import { WebCallPlayer } from './web-call-player.js?v=13';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
@@ -12043,6 +12043,9 @@ function liveDetailSelection(tableValue, row, bindingRow = row) {
   const rowLabel = bindingTimeslot && !/\bTS\s*:?\s*\d+\b/i.test(rowLabelBase) ?
     `${rowLabelBase} · TS ${bindingTimeslot}` : rowLabelBase;
   const tableLabel = tableValue.title || tableValue.channel_name || tableValue.table_id;
+  const radioSystemKey = p25ServingSystemKey(resolvedRow, 'source') ||
+    p25ServingSystemKey(resolvedRow, 'target') ||
+    (tableValue?.table_id !== 'conventional' ? p25ServingSystemKey(tableValue) : '');
   return {
     kind,
     role,
@@ -12051,6 +12054,7 @@ function liveDetailSelection(tableValue, row, bindingRow = row) {
     transportKey: `${configurationId}:${bindingFrequencyHz || ''}:${bindingTimeslot || ''}`,
     rowKey: resolvedRow?.key || null,
     configurationId,
+    radioSystemKey,
     bindingFrequencyHz,
     bindingTimeslot,
     remote: tableValue?.remote_origin?.remote === true || row?.remote_origin?.remote === true,
@@ -12091,14 +12095,15 @@ function liveDetailSelectionAfterRowsChanged(tableValue, selection) {
 
 function liveDetailSelectionDelta(previous, next) {
   return {
-    logicalChanged: next?.logicalKey !== previous?.logicalKey || next?.remote !== previous?.remote,
+    logicalChanged: next?.logicalKey !== previous?.logicalKey || next?.remote !== previous?.remote ||
+      next?.radioSystemKey !== previous?.radioSystemKey,
     transportChanged: next?.transportKey !== previous?.transportKey
   };
 }
 
 function liveDetailSelectionUnchanged(previous, next) {
   return ['kind', 'role', 'logicalKey', 'transportKey', 'rowKey', 'configurationId',
-    'bindingFrequencyHz', 'bindingTimeslot', 'remote', 'label', 'channelLabel']
+    'bindingFrequencyHz', 'bindingTimeslot', 'radioSystemKey', 'remote', 'label', 'channelLabel']
     .every((field) => previous?.[field] === next?.[field]);
 }
 
@@ -12160,12 +12165,95 @@ function liveEventCategoryClass(value) {
   return LIVE_EVENT_CATEGORY_CLASSES[category] || LIVE_EVENT_CATEGORY_CLASSES.OTHER;
 }
 
+function liveEventCaptured(event, selection) {
+  return { ...event, radio_system_key: p25ServingSystemKey(event) || selection?.radioSystemKey || '' };
+}
+
+function liveEventRadioRow(event, identifier) {
+  if (String(identifier?.form || '').toUpperCase() !== 'RADIO') return null;
+  const row = { protocol: identifier.protocol || event?.protocol,
+    radio_system_key: p25ServingSystemKey(event), canonical_identity: identifier.canonical_identity,
+    observed_working_id: identifier.observed_working_id };
+  return p25CanonicalSubscriber(row) ? row : null;
+}
+
+function liveEventReplaceRadioText(event, value, party) {
+  let text = String(value || '');
+  const identifiers = party.flatMap((identifier) => [identifier,
+    ...(String(identifier?.form || '').toUpperCase() === 'PATCH_GROUP' && Array.isArray(identifier.radio_members) ?
+      identifier.radio_members : [])])
+    .filter((identifier) => liveEventRadioRow(event, identifier) && identifier.text)
+    .sort((left, right) => right.text.length - left.text.length);
+  for (const identifier of identifiers) {
+    const escaped = String(identifier.text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const token = new RegExp(`(^|[^a-zA-Z0-9_.])${escaped}(?=$|[^a-zA-Z0-9_.])`, 'g');
+    const row = liveEventRadioRow(event, identifier);
+    text = text.replace(token, (_match, boundary) => boundary +
+      radioIdentifierText(row, row.canonical_identity.subscriber_id));
+  }
+  return text;
+}
+
+function liveEventIdentifierText(event, identifier) {
+  const row = liveEventRadioRow(event, identifier);
+  if (row) return radioIdentifierText(row, row.canonical_identity.subscriber_id);
+  if (String(identifier?.form || '').toUpperCase() === 'PATCH_GROUP' && identifier.patch_group &&
+      Array.isArray(identifier.talkgroup_members) && Array.isArray(identifier.radio_members)) {
+    const groups = identifier.talkgroup_members.map(String);
+    const radios = identifier.radio_members.map((member) => {
+      const radio = liveEventRadioRow(event, member);
+      return radio ? radioIdentifierText(radio, radio.canonical_identity.subscriber_id) : String(member?.text || '');
+    }).filter(Boolean);
+    if (identifier.talkgroup_members_truncated) groups.push('…');
+    if (identifier.radio_members_truncated) radios.push('…');
+    return [`P:${identifier.patch_group}`, groups.length ? `[${groups.join(', ')}]` : '',
+      radios.length ? `[${radios.join(', ')}]` : ''].filter(Boolean).join(' ');
+  }
+  return liveEventReplaceRadioText(event, identifier?.text, [identifier]);
+}
+
+function liveEventPartyText(event, side) {
+  const party = event?.[`${side}_party`];
+  return Array.isArray(party) && party.length ? party.map((identifier) => liveEventIdentifierText(event, identifier))
+    .filter(Boolean).join(', ') : String(event?.[`${side}_identifiers`] || '');
+}
+
+function liveEventDetailsText(event) {
+  return liveEventReplaceRadioText(event, event?.details, [
+    ...(Array.isArray(event?.from_party) ? event.from_party : []),
+    ...(Array.isArray(event?.to_party) ? event.to_party : [])]);
+}
+
+function liveEventMatchesQuery(event, query) {
+  return !query || [event.event_label, event.event_type, event.from_aliases, event.from_identifiers,
+    event.to_aliases, event.to_identifiers, liveEventPartyText(event, 'from'), liveEventPartyText(event, 'to'),
+    event.channel, event.details, liveEventDetailsText(event)]
+    .some((value) => liveDetailText(value).includes(query));
+}
+
 function liveEventParty(event, side) {
   const aliases = event?.[`${side}_aliases`] || '';
-  const identifiers = event?.[`${side}_identifiers`] || '';
+  const identifiers = liveEventPartyText(event, side);
   const value = node('td', 'live-event-stack');
   if (aliases) value.append(node('strong', '', aliases));
-  if (identifiers) value.append(node(aliases ? 'small' : 'span', '', identifiers));
+  if (identifiers) {
+    const content = node(aliases ? 'small' : 'span', '');
+    const party = event?.[`${side}_party`];
+    if (Array.isArray(party) && party.length) {
+      party.forEach((identifier, index) => {
+        if (index) content.append(document.createTextNode(', '));
+        const row = liveEventRadioRow(event, identifier);
+        const text = liveEventIdentifierText(event, identifier);
+        const identity = row && p25CanonicalSubscriber(row);
+        const reference = identity && row.radio_system_key ? { kind: 'radio',
+          radio_system_key: row.radio_system_key,
+          identity_key: `v1-r-${hex(identity.wacn, 5).toLowerCase()}-${hex(identity.system_id, 3).toLowerCase()}-${identity.subscriber_id}` } : null;
+        content.append(row ? radioLink(row, identity.subscriber_id, text, reference) : document.createTextNode(text));
+      });
+    } else content.textContent = identifiers;
+    content.title = event?.[`${side}_identifiers`] || '';
+    value.append(content);
+  }
   return value;
 }
 
@@ -17134,7 +17222,7 @@ function liveEventsPanel(onCollapse) {
       return value;
     } },
     { id: 'details', label: 'Details', className: 'live-event-details', render: (event) => {
-      const value = node('span', '', event.details || '');
+      const value = node('span', '', liveEventDetailsText(event));
       if (event.details) value.title = event.details;
       return value;
     } }
@@ -17161,10 +17249,7 @@ function liveEventsPanel(onCollapse) {
 
   const eventMatches = (event) => {
     if (!filters.matchesLeaf(event.event_type)) return false;
-    const query = filters.query();
-    return !query || [event.event_label, event.event_type, event.from_aliases, event.from_identifiers,
-      event.to_aliases, event.to_identifiers, event.channel, event.details]
-      .some((value) => liveDetailText(value).includes(query));
+    return liveEventMatchesQuery(event, filters.query());
   };
 
   const renderEvents = () => {
@@ -17209,7 +17294,7 @@ function liveEventsPanel(onCollapse) {
   const addEvent = (event) => {
     if (!event?.event_id) return;
     if (!events.has(event.event_id)) order.unshift(event.event_id);
-    events.set(event.event_id, event);
+    events.set(event.event_id, liveEventCaptured(event, selection));
     while (order.length > liveDetailCaptureLimit()) {
       const removedId = order.pop();
       events.delete(removedId);
@@ -18338,7 +18423,7 @@ function saveP25VisualizerEventSettings(value) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=32');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=33');
   const visualizerModule = await p25VisualizerModulePromise;
   if (!renderIsCurrent(renderContext)) return;
   const visualizer = visualizerModule.createP25Visualizer({

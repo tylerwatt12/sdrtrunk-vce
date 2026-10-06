@@ -1,5 +1,5 @@
 import { systemLabel, systemName } from './core/system-labels.js?v=1';
-import { formatP25RadioIdentifier, p25ServingSystemKey } from './core/radio-labels.js?v=2';
+import { formatP25RadioIdentifier, p25ServingSystemKey } from './core/radio-labels.js?v=3';
 import { formatSourceName } from './core/source-names.js?v=1';
 
 export class WebCallPlayer {
@@ -1155,7 +1155,7 @@ export class WebCallPlayer {
     const homeName = String(call?.[`${prefix}_home_system_name`] || '').trim() ||
       systemName(homeKey);
     return formatP25RadioIdentifier(identity, {
-      servingSystemKey: p25ServingSystemKey(call), homeSystemName: homeName,
+      servingSystemKey: p25ServingSystemKey(call, prefix), homeSystemName: homeName,
       workingId: call?.[`${prefix}_observed_working_id`]
     });
   }

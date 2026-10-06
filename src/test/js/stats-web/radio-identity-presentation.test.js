@@ -129,11 +129,21 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('p25IdentityEvidenceLabel')}
   ${functionSource('liveIdentityFacts')}
   ${functionSource('liveIdentifierAliasValue')}
+  ${functionSource('liveEventCaptured')}
+  ${functionSource('liveEventRadioRow')}
+  ${functionSource('liveEventReplaceRadioText')}
+  ${functionSource('liveEventIdentifierText')}
+  ${functionSource('liveEventPartyText')}
+  ${functionSource('liveEventDetailsText')}
+  ${functionSource('liveDetailText')}
+  ${functionSource('liveEventMatchesQuery')}
   return { radioSystemLabel, trunkedSiteLabel, dashboardChannelContext,
     channelDirectoryRfIdentity, channelLocationIdentity, dmrChannelDetailRows,
     scannerNetworkSiteIdentity, observedGroupIdentityKey, radioIdentifierText, liveIdentityActionTitle,
     activityIdentifier, activitySourceAlias, activitySourceTalkerAlias, activityTargetAlias,
-    activityIdentitySuggestion, activityIdentityInitialSelection, liveIdentityFacts, liveIdentifierAliasValue };
+    activityIdentitySuggestion, activityIdentityInitialSelection, liveIdentityFacts, liveIdentifierAliasValue,
+    liveEventCaptured, liveEventRadioRow, liveEventIdentifierText, liveEventPartyText, liveEventDetailsText,
+    liveEventMatchesQuery };
 })()`, { URLSearchParams, systemLabels, ...radioLabels, ...sourceNames });
 
 assert.equal(behavior.radioIdentifierText({
@@ -473,6 +483,62 @@ assert.equal(behavior.liveIdentifierAliasValue({ ...liveTarget, target_entity_re
   'A target radio must never borrow the source radio serving scope.');
 assert.equal(behavior.liveIdentifierAliasValue({ ...liveSource, radio_system_key: 'p25:00001:047' }, 'source'),
   'County Radio · 4326018', 'Explicit receiving scope wins over a conflicting endpoint reference.');
+const eventRadio = { text: 'BEE00.348.4326018 (Working ID 4326018)', form: 'RADIO', protocol: 'APCO25',
+  canonical_identity: localRadio.canonical_identity, observed_working_id: 4326018 };
+const rawEvent = { protocol: 'APCO25', from_party: [eventRadio], from_identifiers: eventRadio.text,
+  to_party: [{ text: '91', form: 'TALKGROUP', protocol: 'APCO25' }, eventRadio],
+  to_identifiers: `91, ${eventRadio.text}`, details: `ACCEPTED UNIT REGISTRATION - UNIT ID:${eventRadio.text}` };
+const capturedEvent = behavior.liveEventCaptured(rawEvent, { radioSystemKey: 'p25:bee00:348' });
+assert.equal(behavior.liveEventPartyText(capturedEvent, 'from'), '4326018',
+  'Events use complete radio facts instead of displaying decoder-formatted text.');
+assert.equal(behavior.liveEventPartyText(capturedEvent, 'to'), '91, 4326018',
+  'Mixed talkgroup and radio parties retain the talkgroup unchanged.');
+assert.equal(behavior.liveEventDetailsText(capturedEvent), 'ACCEPTED UNIT REGISTRATION - UNIT ID:4326018');
+assert.equal(capturedEvent.details, rawEvent.details, 'Original decoder detail text remains available for inspection.');
+assert.equal(behavior.liveEventCaptured({ ...rawEvent, radio_system_key: 'p25:00001:047' },
+  { radioSystemKey: 'p25:bee00:348' }).radio_system_key, 'p25:00001:047');
+assert.equal(behavior.liveEventPartyText(behavior.liveEventCaptured(rawEvent, {}), 'from'),
+  'BEE00.348.4326018', 'Unknown serving scope retains the home prefix but omits an equal Working ID.');
+assert.equal(behavior.liveEventPartyText({ ...capturedEvent, from_party: [
+  { ...eventRadio, observed_working_id: 501 }] }, 'from'), '4326018 (Working ID 501)');
+assert.equal(behavior.liveEventPartyText({ ...capturedEvent, from_party: [
+  { ...eventRadio, form: 'TALKGROUP' }] }, 'from'), eventRadio.text,
+  'Dotted text and unrelated identifier types do not establish a radio identity.');
+assert.equal(behavior.liveEventPartyText({ ...capturedEvent, from_party: [
+  { ...eventRadio, canonical_identity: null }] }, 'from'), eventRadio.text);
+assert.equal(behavior.liveEventDetailsText({ ...capturedEvent, details: `${eventRadio.text}9` }),
+  `${eventRadio.text}9`, 'A known radio token cannot replace part of a longer token.');
+assert.equal(behavior.liveEventDetailsText({ ...capturedEvent, details: 'UNIT ID:BEE00.348.12345' }),
+  'UNIT ID:BEE00.348.12345', 'Only typed radio identifiers belonging to this event are rewritten.');
+assert.equal(behavior.liveEventPartyText({ ...rawEvent, from_party: undefined }, 'from'), eventRadio.text,
+  'The previous event contract remains readable without guessing identities from arbitrary strings.');
+assert.equal(behavior.liveEventPartyText({ ...rawEvent, from_party: [] }, 'from'), eventRadio.text,
+  'Legacy producers with an empty typed list still display their original party text.');
+assert.equal(behavior.liveEventDetailsText({ ...rawEvent, from_party: {}, to_party: null }), rawEvent.details);
+const immutableScope = behavior.liveEventCaptured(rawEvent, { radioSystemKey: 'p25:bee00:348' });
+assert.equal(behavior.liveEventPartyText(immutableScope, 'from'), '4326018',
+  'A captured event retains its receiving system independently of later table changes.');
+const patchRadio = { ...eventRadio, observed_working_id: 501,
+  text: 'BEE00.348.4326018 (Working ID 501)' };
+const patchText = `P:91 [92] [${eventRadio.text}, ${patchRadio.text}]`;
+const patchEvent = { ...capturedEvent, from_party: [], from_identifiers: '',
+  to_party: [{ form: 'PATCH_GROUP', text: patchText, radio_members: [eventRadio, patchRadio] }],
+  to_identifiers: patchText, details: `PATCH ADDED: ${patchText}` };
+assert.equal(behavior.liveEventPartyText(patchEvent, 'to'), 'P:91 [92] [4326018, 4326018 (Working ID 501)]',
+  'Known radio members inside a patch use the same local/Working ID rule without changing talkgroups.');
+assert.equal(behavior.liveEventDetailsText(patchEvent), 'PATCH ADDED: P:91 [92] [4326018, 4326018 (Working ID 501)]');
+assert.equal(behavior.liveEventPartyText({ ...patchEvent, to_party: [{ form: 'TALKGROUP', text: patchText,
+  radio_members: [eventRadio] }] }, 'to'), patchText,
+  'Only an actual typed patch establishes radio members.');
+const structuredPatch = { ...patchEvent.to_party[0], patch_group: '91', talkgroup_members: ['92'],
+  text: `P:91 [92] [${eventRadio.text.slice(0, 17)}` };
+assert.equal(behavior.liveEventPartyText({ ...patchEvent, to_party: [structuredPatch] }, 'to'),
+  'P:91 [92] [4326018, 4326018 (Working ID 501)]',
+  'Structured patch members stay complete even when the bounded raw diagnostic text ends mid-radio.');
+assert.equal(behavior.liveEventPartyText({ ...patchEvent, to_party: [{ ...structuredPatch,
+  talkgroup_members_truncated: true, radio_members_truncated: true }] }, 'to'),
+  'P:91 [92, …] [4326018, 4326018 (Working ID 501), …]',
+  'A capped member list ends after a whole identity and marks the omitted members.');
 const pickerContext = { radioSystemKey: localRadio.radio_system_key };
 const suggestion = behavior.activityIdentitySuggestion({ ...localRadio, native_id: 4326018,
   identity_key: 'v1-r-bee00-348-4326018', alias_name: 'Engine 42' }, 'radio', pickerContext);
@@ -481,6 +547,15 @@ assert.equal(suggestion.key, 'v1-r-bee00-348-4326018', 'Short labels preserve th
 assert.equal(behavior.activityIdentityInitialSelection(suggestion.key, 'radio', pickerContext).label,
   'Radio 4326018', 'A saved local filter should not regain the redundant system prefix.');
 systemLabels.rememberSystemNames([{ radio_system_key: 'p25:bee00:348', system_name: 'County Radio' }]);
+const foreignEvent = { ...capturedEvent, radio_system_key: 'p25:00001:047' };
+assert.equal(behavior.liveEventPartyText(foreignEvent, 'from'), 'County Radio · 4326018');
+assert.equal(behavior.liveEventPartyText({ ...patchEvent, radio_system_key: foreignEvent.radio_system_key }, 'to'),
+  'P:91 [92] [County Radio · 4326018, County Radio · 4326018 (Working ID 501)]');
+assert.equal(behavior.liveEventMatchesQuery(foreignEvent, 'county radio'), true,
+  'Event search includes friendly home names shown to the user.');
+assert.equal(behavior.liveEventMatchesQuery(foreignEvent, 'bee00.348.4326018'), true,
+  'The original full address remains searchable.');
+assert.equal(behavior.liveEventMatchesQuery(capturedEvent, '4326018'), true);
 assert.equal(behavior.activityIdentityInitialSelection(suggestion.key, 'radio',
   { radioSystemKey: 'p25:00001:047' }).label, 'Radio County Radio · 4326018');
 

@@ -3,6 +3,11 @@
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const vm = require('vm');
+const path = require('path');
+const radioLabelsSource = fs.readFileSync(path.resolve(__dirname,
+  '../../../../stats-web/assets/core/radio-labels.js'), 'utf8');
+const radioLabels = vm.runInNewContext(radioLabelsSource.replace(/^export .*;$/m, '') +
+  '\n({p25ServingSystemKey});');
 
 const applicationPath = process.argv[2];
 assert.ok(applicationPath, 'The app.js path is required.');
@@ -81,6 +86,7 @@ function hasAncestorClass(root, target, className) {
 let lastModalBody = null;
 let modalOpenCount = 0;
 const context = {
+  ...radioLabels,
   activeReadOnlyModal: null,
   frequency: (value) => (Number(value) / 1_000_000).toFixed(5),
   node: (tag, className = '', text = '') => new RuntimeNode(tag, className, text),
@@ -358,6 +364,21 @@ const directlyRotated = context.liveDetailSelectionAfterRowsChanged({
 }, controlA);
 assert.equal(directlyRotated.logicalKey, controlA.logicalKey);
 assert.equal(directlyRotated.transportKey, controlB.transportKey);
+
+const scopedSite = { ...site, radio_system_key: 'p25:bee00:49f' };
+const scopedControl = context.liveDetailSelection(scopedSite, currentRow);
+assert.equal(scopedControl.radioSystemKey, 'p25:bee00:49f');
+const changedSystemControl = context.liveDetailSelection({ ...scopedSite, radio_system_key: 'p25:bee00:348' }, currentRow);
+assert.deepEqual(JSON.parse(JSON.stringify(context.liveDetailSelectionDelta(scopedControl, changedSystemControl))), {
+  logicalChanged: true, transportChanged: false
+}, 'A receiving-system change clears captured events even when the channel frequency stays the same.');
+const conventionalAggregate = { ...scopedSite, table_id: 'conventional' };
+assert.equal(context.liveDetailSelection(conventionalAggregate, currentRow).radioSystemKey, '',
+  'A conventional channel must not inherit a system from the combined conventional table.');
+const conventionalSource = { ...currentRow, source_entity_ref: { kind: 'radio', radio_system_key: 'p25:bee00:348' },
+  source_home_system_entity_ref: { kind: 'radio_system', radio_system_key: 'p25:00001:047' } };
+assert.equal(context.liveDetailSelection(conventionalAggregate, conventionalSource).radioSystemKey, 'p25:bee00:348',
+  'A conventional row can use its verified receiving scope, without borrowing its radio home system.');
 
 // Traffic and conventional rows remain exact even if legacy display tags suggest control activity.
 const voice = context.liveDetailSelection(site, {

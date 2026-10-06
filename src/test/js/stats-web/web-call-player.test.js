@@ -378,6 +378,22 @@ async function main() {
       'Dispatch · Home System · 2115288', 'A matching SysID alone does not establish local ownership.');
     assert.equal(labels.targetLabel({ ...equalWorkingTarget,
       playback_target: { kind: 'radio', radio_system_key: 'p25:bee00:348' } }), 'Dispatch · 2115288');
+    assert.equal(labels.targetLabel({ ...equalWorkingTarget,
+      target_entity_ref: { kind: 'radio', radio_system_key: 'p25:bee00:348',
+        identity_key: 'v1-r-bee00-348-2115288' } }), 'Dispatch · 2115288',
+      'Target radio links can supply missing receiving scope without a repeated local prefix.');
+    assert.equal(labels.callLabel({
+      protocol: 'P25', target_form: 'TALKGROUP', target_id: 91,
+      source_form: 'RADIO', source_id: 2_115_288,
+      source_canonical_identity: equalWorkingTarget.target_canonical_identity,
+      source_observed_working_id: 2_115_288,
+      source_entity_ref: { kind: 'radio', radio_system_key: 'p25:bee00:348',
+        identity_key: 'v1-r-bee00-348-2115288' }
+    }), 'TGID 91 ← 2115288', 'Source playback labels share the endpoint receiving scope rule.');
+    assert.equal(labels.targetLabel({ ...equalWorkingTarget,
+      radio_system_key: 'p25:bee00:349',
+      target_entity_ref: { kind: 'radio', radio_system_key: 'p25:bee00:348' } }),
+      'Dispatch · BEE00.348.2115288', 'Explicit receiving scope wins over an endpoint link.');
     assert.equal(labels.targetLabel({ ...foreignNamedRadio,
       playback_target: { kind: 'radio', radio_system_key: 'p25:bee00:348' } }),
       'Dispatch · Home System · 2115288', 'The call receiving system takes precedence over playback context.');
