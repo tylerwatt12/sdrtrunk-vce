@@ -11,7 +11,6 @@ import java.util.concurrent.Executor;
 import java.util.prefs.AbstractPreferences;
 import java.util.prefs.Preferences;
 import javax.swing.JButton;
-import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JPasswordField;
 import javax.swing.JTextArea;
@@ -123,14 +122,15 @@ class SetupRadioReferenceRegionTest
         assertEquals(List.of(2, 2), harness.requestedCountries);
     }
 
-    @Test void savedLocationSurvivesFailureAndSkippingAnIncompleteEdit() throws Exception
+    @Test void savedLocationSurvivesFailureAndAnIncompleteEdit() throws Exception
     {
         Harness harness = new Harness(1, 10);
         harness.preferences.setPreferredCountyId(100);
         harness.failCountries = true;
         harness.connect();
         harness.worker.runNext();
-        onEdt(() -> harness.region.save(harness.preferences));
+        onEdt(() -> assertTrue(SetupWizard.saveRadioReferenceAccount(new JTextField("updated account"),
+            new JPasswordField("example-password"), harness.region, harness.preferences)));
         assertEquals(100, harness.preferences.getPreferredCountyId());
         onEdt(() -> {
             harness.failCountries = false;
@@ -145,9 +145,12 @@ class SetupRadioReferenceRegionTest
         harness.worker.runNext();
         onEdt(() -> {
             assertTrue(harness.retry().isVisible());
-            harness.later().doClick();
-            harness.region.save(harness.preferences);
-            assertTrue(harness.region.deferred());
+            JPasswordField password = new JPasswordField("replacement-password");
+            assertThrows(IllegalArgumentException.class, () -> SetupWizard.saveRadioReferenceAccount(
+                new JTextField("another account"), password, harness.region, harness.preferences));
+            assertEquals("updated account", harness.preferences.getUserName());
+            assertEquals("example-password", harness.preferences.getPassword());
+            assertEquals("replacement-password", new String(password.getPassword()));
         });
         assertEquals(1, harness.preferences.getPreferredCountryId());
         assertEquals(10, harness.preferences.getPreferredStateId());
@@ -181,22 +184,76 @@ class SetupRadioReferenceRegionTest
         });
     }
 
-    @Test void incompleteLocationKeepsTheAccountDraftAndExplicitSkipCanSaveIt() throws Exception
+    @Test void missingLocationRejectsAccountSaveAndKeepsTheDraft() throws Exception
     {
         Harness harness = new Harness(-1, -1);
         onEdt(() -> {
             JTextField username = new JTextField("account");
             JPasswordField password = new JPasswordField("example-password");
-            assertThrows(IllegalArgumentException.class, () ->
+            harness.region.disconnected(true);
+            var failure = assertThrows(IllegalArgumentException.class, () ->
                 SetupWizard.saveRadioReferenceAccount(username, password, harness.region, harness.preferences));
+            assertEquals("Choose a country and state or province, or choose Set up later.", failure.getMessage());
             assertNull(harness.preferences.getUserName());
             assertEquals("example-password", new String(password.getPassword()));
-            harness.region.disconnected(true);
-            harness.later().doClick();
-            assertTrue(SetupWizard.saveRadioReferenceAccount(username, password, harness.region, harness.preferences));
-            assertEquals("account", harness.preferences.getUserName());
             assertEquals(-1, harness.preferences.getPreferredCountryId());
             assertEquals(-1, harness.preferences.getPreferredStateId());
+        });
+    }
+
+    @Test void failedStateLookupRejectsAccountSaveAndDoesNotStorePartialLocation() throws Exception
+    {
+        Harness harness = new Harness(-1, -1);
+        harness.connect();
+        harness.worker.runNext();
+        onEdt(() -> {
+            harness.failStates = true;
+            harness.country().setSelectedItem(CA);
+        });
+        harness.worker.runNext();
+        onEdt(() -> {
+            JPasswordField password = new JPasswordField("example-password");
+            assertThrows(IllegalArgumentException.class, () -> SetupWizard.saveRadioReferenceAccount(
+                new JTextField("account"), password, harness.region, harness.preferences));
+            assertNull(harness.preferences.getUserName());
+            assertEquals("example-password", new String(password.getPassword()));
+            assertEquals(-1, harness.preferences.getPreferredCountryId());
+            assertEquals(-1, harness.preferences.getPreferredStateId());
+        });
+    }
+
+    @Test void loadingLocationDoesNotSaveTheAccountOrClearItsDraft() throws Exception
+    {
+        Harness harness = new Harness(-1, -1);
+        harness.connect();
+        onEdt(() -> {
+            JPasswordField password = new JPasswordField("example-password");
+            assertThrows(IllegalArgumentException.class, () -> SetupWizard.saveRadioReferenceAccount(
+                new JTextField("account"), password, harness.region, harness.preferences));
+            assertNull(harness.preferences.getUserName());
+            assertEquals("example-password", new String(password.getPassword()));
+            assertEquals(-1, harness.preferences.getPreferredCountryId());
+            assertEquals(-1, harness.preferences.getPreferredStateId());
+        });
+    }
+
+    @Test void missingAccountKeepsTheLocationDraftAndDoesNotSavePreferences() throws Exception
+    {
+        Harness harness = new Harness(-1, -1);
+        harness.connect();
+        harness.worker.runNext();
+        onEdt(() -> harness.country().setSelectedItem(CA));
+        harness.worker.runNext();
+        onEdt(() -> {
+            harness.state().setSelectedItem(ON);
+            JPasswordField password = new JPasswordField("example-password");
+            assertThrows(IllegalArgumentException.class, () -> SetupWizard.saveRadioReferenceAccount(
+                new JTextField(""), password, harness.region, harness.preferences));
+            assertEquals("example-password", new String(password.getPassword()));
+            assertEquals(-1, harness.preferences.getPreferredCountryId());
+            assertEquals(-1, harness.preferences.getPreferredStateId());
+            assertEquals(2, selected(harness.country()));
+            assertEquals(20, selected(harness.state()));
         });
     }
 
@@ -214,12 +271,12 @@ class SetupRadioReferenceRegionTest
     {
         Harness harness = new Harness(-1, -1);
         harness.connect();
+        harness.worker.runNext();
         onEdt(() -> {
             harness.region.setSetupEnabled(false);
-            assertFalse(harness.later().isEnabled());
-            harness.region.setSetupEnabled(true);
-            assertTrue(harness.later().isEnabled());
             assertFalse(harness.country().isEnabled());
+            harness.region.setSetupEnabled(true);
+            assertTrue(harness.country().isEnabled());
             assertFalse(harness.state().isEnabled());
         });
     }
@@ -276,7 +333,6 @@ class SetupRadioReferenceRegionTest
         @SuppressWarnings("unchecked") JComboBox<DirectoryOption> state() { return (JComboBox<DirectoryOption>)component("State or province"); }
         JButton retry() { return (JButton)descendants(region).stream().filter(c -> c instanceof JButton button &&
             "Retry location lookup".equals(button.getText())).findFirst().orElseThrow(); }
-        JCheckBox later() { return (JCheckBox)java.util.Arrays.stream(region.getComponents()).filter(c -> c instanceof JCheckBox).findFirst().orElseThrow(); }
         JTextArea status() { return (JTextArea)descendants(region).stream().filter(c -> c instanceof JTextArea).reduce((a, b) -> b).orElseThrow(); }
         Component component(String name)
         {

@@ -13,14 +13,13 @@ import javax.swing.DefaultComboBoxModel;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
-import javax.swing.JCheckBox;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JPanel;
 import javax.swing.JTextArea;
 import javax.swing.SwingUtilities;
 
-/** Optional setup location, using the same country/state identifiers as the RadioReference browser. */
+/** Required setup location, using the same country/state identifiers as the RadioReference browser. */
 final class SetupRadioReferenceRegion extends JPanel implements AutoCloseable
 {
     interface Directory
@@ -36,10 +35,8 @@ final class SetupRadioReferenceRegion extends JPanel implements AutoCloseable
     private final JComboBox<DirectoryOption> state = selector("State or province");
     private final JTextArea status = WizardStyles.prose("");
     private final JButton retry = WizardStyles.secondary(new JButton("Retry location lookup"));
-    private final JCheckBox later = new JCheckBox("Choose a location later");
     private final JPanel feedback = new JPanel();
     private final Component retryGap = Box.createVerticalStrut(12);
-    private final Component feedbackGap = Box.createVerticalStrut(12);
     private Directory directory;
     private boolean changing;
     private boolean countriesReady;
@@ -71,12 +68,6 @@ final class SetupRadioReferenceRegion extends JPanel implements AutoCloseable
         retry.addActionListener(event -> retryAction.run());
         feedback.add(retry);
         add(feedback);
-        add(feedbackGap);
-        later.setOpaque(false);
-        later.setAlignmentX(Component.LEFT_ALIGNMENT);
-        WizardStyles.bodyFont(later, Font.PLAIN);
-        later.addActionListener(event -> refreshControls());
-        add(later);
         resetOptions(country, countryId > 0 ? "Saved country" : "Choose a country", countryId);
         resetOptions(state, stateId > 0 ? "Saved state or province" : "Choose a state or province", stateId);
         disconnected(false);
@@ -132,7 +123,7 @@ final class SetupRadioReferenceRegion extends JPanel implements AutoCloseable
         countriesReady = false;
         statesReady = false;
         retry.setVisible(false);
-        status.setText(premiumUnavailable ? "Premium access is needed to choose a location. You can choose it later." :
+        status.setText(premiumUnavailable ? "" :
             "Test your connection to load countries and states or provinces.");
         refreshControls();
     }
@@ -150,12 +141,12 @@ final class SetupRadioReferenceRegion extends JPanel implements AutoCloseable
             else
             {
                 resetOptions(state, "Choose a state or province", -1);
-                status.setText(options.isEmpty() ? "No countries were returned. Retry, or choose a location later." : "");
+                status.setText(options.isEmpty() ? "No countries were returned. Retry, or choose Set up later." : "");
                 retryAction = this::loadCountries;
                 retry.setVisible(options.isEmpty());
                 refreshControls();
             }
-        }, "Countries could not be loaded. Retry, or choose a location later.", this::loadCountries);
+        }, "Countries could not be loaded. Retry, or choose Set up later.", this::loadCountries);
     }
 
     private void loadStates(int countryId, int preferredState)
@@ -175,11 +166,11 @@ final class SetupRadioReferenceRegion extends JPanel implements AutoCloseable
         load("Loading states and provinces…", () -> source.states(countryId), options -> {
             statesReady = true;
             setOptions(state, "Choose a state or province", options, preferredState);
-            status.setText(options.isEmpty() ? "No states or provinces were returned. Retry, or choose a location later." : "");
+            status.setText(options.isEmpty() ? "No states or provinces were returned. Retry, or choose Set up later." : "");
             retryAction = () -> loadStates(countryId, preferredState);
             retry.setVisible(options.isEmpty());
             refreshControls();
-        }, "States and provinces could not be loaded. Retry, or choose a location later.",
+        }, "States and provinces could not be loaded. Retry, or choose Set up later.",
             () -> loadStates(countryId, preferredState));
     }
 
@@ -241,10 +232,9 @@ final class SetupRadioReferenceRegion extends JPanel implements AutoCloseable
 
     void save(RadioReferencePreference preferences)
     {
-        if(later.isSelected()) return;
         if(!edited && savedCountry > 0 && savedState > 0) return;
         if(!countriesReady || !statesReady || loading || selected(country) <= 0 || selected(state) <= 0)
-            throw new IllegalArgumentException("Choose a country and state or province, or choose a location later.");
+            throw new IllegalArgumentException("Choose a country and state or province, or choose Set up later.");
         int countryId = selected(country);
         int stateId = selected(state);
         if(countryId != preferences.getPreferredCountryId() || stateId != preferences.getPreferredStateId())
@@ -259,8 +249,6 @@ final class SetupRadioReferenceRegion extends JPanel implements AutoCloseable
         edited = false;
     }
 
-    boolean deferred() { return later.isSelected(); }
-
     void setSetupEnabled(boolean available)
     {
         enabled = available;
@@ -271,12 +259,10 @@ final class SetupRadioReferenceRegion extends JPanel implements AutoCloseable
     {
         boolean hasMessage = !status.getText().isBlank();
         feedback.setVisible(hasMessage);
-        feedbackGap.setVisible(hasMessage);
         retryGap.setVisible(retry.isVisible());
-        country.setEnabled(enabled && !later.isSelected() && countriesReady);
-        state.setEnabled(enabled && !later.isSelected() && statesReady && !loading);
-        retry.setEnabled(enabled && !later.isSelected() && !loading);
-        later.setEnabled(enabled);
+        country.setEnabled(enabled && countriesReady);
+        state.setEnabled(enabled && statesReady && !loading);
+        retry.setEnabled(enabled && !loading);
     }
 
     @Override public Dimension getMaximumSize() { return new Dimension(Integer.MAX_VALUE, getPreferredSize().height); }

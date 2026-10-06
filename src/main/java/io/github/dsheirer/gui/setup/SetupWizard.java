@@ -918,6 +918,7 @@ public final class SetupWizard extends JDialog
     {
         var rr = preferences.getRadioReferencePreference();
         paragraph("Save your RadioReference account to look up radio systems and import channels.");
+        JPanel account = stack();
         JPanel verification = new JPanel(new BorderLayout()) {
             public Dimension getMaximumSize() { return new Dimension(Integer.MAX_VALUE,getPreferredSize().height); }
         };
@@ -926,9 +927,11 @@ public final class SetupWizard extends JDialog
         if(rrVerified) showRadioReferenceResult(verification, rrPremium);
         else verification.add(text(present(rr.getUserName()) && present(rr.getPassword()) ?
             "Saved account. Test the connection to check access." : "No account saved."));
-        append(verification); append(Box.createVerticalStrut(20));
-        JTextField username = field("RadioReference username", rr.getUserName() == null ? "" : rr.getUserName());
-        JPasswordField secret = password("Password (leave blank to keep the saved password)");
+        addTo(account, verification);
+        JTextField username = new JTextField(rr.getUserName() == null ? "" : rr.getUserName(), 28);
+        labelled(account, "RadioReference username", username, 16);
+        JPasswordField secret = new JPasswordField(28);
+        labelled(account, "Password (leave blank to keep the saved password)", secret, 16);
         SetupRadioReferenceRegion region = new SetupRadioReferenceRegion(rr.getPreferredCountryId(),
             rr.getPreferredStateId(), worker);
         rrSetupRegion = region;
@@ -940,7 +943,7 @@ public final class SetupWizard extends JDialog
             public void changedUpdate(javax.swing.event.DocumentEvent e) { changed(); }
         };
         username.getDocument().addDocumentListener(edited); secret.getDocument().addDocumentListener(edited);
-        button("Test connection", () -> {
+        JButton testConnection = action("Test connection", () -> {
             rrVerified=false;
             disconnectRadioReferenceSetup(region);
             verification.removeAll(); verification.add(text("Checking account access…")); verification.revalidate(); verification.repaint();
@@ -974,13 +977,16 @@ public final class SetupWizard extends JDialog
                 else region.disconnected(true);
             });
         });
-        append(region); append(Box.createVerticalStrut(8));
+        testConnection.setAlignmentX(Component.LEFT_ALIGNMENT);
+        account.add(testConnection);
+        append(new WizardSection("Account", account));
+        append(Box.createVerticalStrut(12));
+        append(new WizardSection("Location", region)); append(Box.createVerticalStrut(8));
         defer("Set up later");
         accept = () -> {
             boolean verified = rrVerified;
             boolean changed = saveRadioReferenceAccount(username, secret, region, rr);
             rrVerified = verified;
-            if(region.deferred()) { deferCurrent(); return; }
             if(changed) progress.set(step, COMPLETE); completeAndContinue();
         };
     }
@@ -1028,7 +1034,7 @@ public final class SetupWizard extends JDialog
         verification.add(new WizardNotice(premium ? "Connection verified: premium access available" :
             "Connection verified: premium access unavailable", premium ?
             "Your account is ready to look up radio systems and import channels." :
-            "Channel imports and location lookup need a premium subscription. Check your subscription or choose a location later.",
+            "Channel imports and location lookup need a premium subscription. Check your subscription, or choose Set up later.",
             premium ? WizardNotice.Tone.SUCCESS : WizardNotice.Tone.WARNING));
         verification.revalidate(); verification.repaint(); page.revalidate();
     }
@@ -1522,11 +1528,15 @@ public final class SetupWizard extends JDialog
     private JPasswordField password(String caption) { JPasswordField field=new JPasswordField(28); labelled(caption,field); return field; }
     private void labelled(String caption,JComponent field)
     {
+        labelled(page, caption, field, 20);
+    }
+    private void labelled(JPanel owner,String caption,JComponent field,int spacing)
+    {
         JLabel label=new JLabel(caption); label.setLabelFor(field); WizardStyles.bodyFont(label,Font.BOLD);
-        append(label); append(Box.createVerticalStrut(8));
+        label.setAlignmentX(Component.LEFT_ALIGNMENT); owner.add(label); owner.add(Box.createVerticalStrut(8));
         field.getAccessibleContext().setAccessibleName(caption);
         if(!(field instanceof JSpinner)) { WizardStyles.bodyFont(field,Font.PLAIN); field.setMaximumSize(new Dimension(560,40)); }
-        append(field); append(Box.createVerticalStrut(20));
+        field.setAlignmentX(Component.LEFT_ALIGNMENT); owner.add(field); owner.add(Box.createVerticalStrut(spacing));
     }
     private JRadioButton card(ButtonGroup group,String caption,String description,boolean selected)
     {
