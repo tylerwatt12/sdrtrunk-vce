@@ -21,7 +21,7 @@ class HeadlessReceiverLifecycleContractTest
     @Test
     void headlessStartupAndShutdownAreIndependentOfTheDesktopEventLoop() throws Exception
     {
-        String source = Files.readString(APPLICATION);
+        String source = Files.readString(APPLICATION).replace("\r\n", "\n");
         String headlessStartup = source.substring(source.indexOf("if(!mGuiAvailable)\n        {\n            mLog.info(\"starting main application headless\")"),
             source.indexOf("private void startPostLaunchExperience()"));
         String shutdown = source.substring(source.indexOf("private synchronized void processShutdown(boolean releaseDataRootLock)"),
@@ -56,7 +56,7 @@ class HeadlessReceiverLifecycleContractTest
         assertTrue(shutdown.indexOf("mStatsWebServerService.close()") <
             shutdown.indexOf("channelProcessingManager.close()"));
         assertTrue(shutdown.contains("mShutdownProcessed = false;"));
-        String webService = Files.readString(WEB_SERVICE);
+        String webService = Files.readString(WEB_SERVICE).replace("\r\n", "\n");
         String webClose = webService.substring(webService.indexOf("public synchronized void close()"),
             webService.indexOf("static final class MultiplexOutput"));
         assertTrue(webClose.indexOf("mTunerSettingsService.close()") < webClose.indexOf("mClosed = true"));
