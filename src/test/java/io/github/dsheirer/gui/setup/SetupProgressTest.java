@@ -83,4 +83,44 @@ class SetupProgressTest
         assertThrows(SQLException.class, () -> SetupProgress.decode(legacy.encodeLegacy()));
         assertThrows(SQLException.class, () -> SetupProgress.decodeLegacy(legacy.encode()));
     }
+
+    @Test void copiedProfileSkipsItsExplicitRecordingChoiceAndKeepsTheSelectedMode() throws Exception
+    {
+        for(RecordingMode mode: RecordingMode.values())
+        {
+            SetupProgress imported = new SetupProgress(false, true);
+            SetupReadiness.carryOverRecordingChoice(imported, mode);
+            assertEquals(CARRIED_OVER, imported.get(SetupStep.RECORDINGS));
+            assertEquals(SetupStep.HARDWARE, imported.next(SetupStep.ACTIVITY));
+            SetupProgress restored = SetupProgress.decode(imported.encode());
+            assertEquals(CARRIED_OVER, restored.get(SetupStep.RECORDINGS));
+            assertEquals(mode == RecordingMode.MANAGED, SetupWizard.selectManagedByDefault(restored, mode),
+                "Manually revisiting Recordings must retain the imported selection");
+        }
+    }
+
+    @Test void missingImportedChoiceAndFreshProfilesStillNeedRecordingReview()
+    {
+        SetupProgress imported = new SetupProgress(false, true);
+        SetupReadiness.carryOverRecordingChoice(imported, null);
+        assertEquals(PENDING, imported.get(SetupStep.RECORDINGS));
+        assertEquals(SetupStep.RECORDINGS, imported.next(SetupStep.ACTIVITY));
+
+        SetupProgress fresh = new SetupProgress(false, false);
+        SetupReadiness.carryOverRecordingChoice(fresh, RecordingMode.CLASSIC);
+        assertEquals(PENDING, fresh.get(SetupStep.RECORDINGS));
+        assertTrue(SetupWizard.selectManagedByDefault(fresh, RecordingMode.CLASSIC));
+    }
+
+    @Test void recordingCarryOverPreservesExistingReviewAndCompletionStates()
+    {
+        for(SetupProgress.State state: new SetupProgress.State[]{NEEDS_ATTENTION, DEFERRED, COMPLETE, CARRIED_OVER})
+        {
+            SetupProgress imported = new SetupProgress(false, true);
+            imported.set(SetupStep.RECORDINGS, state);
+            SetupReadiness.carryOverRecordingChoice(imported, RecordingMode.MANAGED);
+            SetupReadiness.carryOverRecordingChoice(imported, null);
+            assertEquals(state, imported.get(SetupStep.RECORDINGS));
+        }
+    }
 }

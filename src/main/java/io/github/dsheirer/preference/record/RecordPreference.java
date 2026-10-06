@@ -47,7 +47,7 @@ public class RecordPreference extends Preference
     public static final long MAX_TRANSCRIPTION_MIN_DURATION_MS = 600_000;
     private static final RecordFormat DEFAULT_RECORD_FORMAT = RecordFormat.MP3;
     private static final Logger mLog = LoggerFactory.getLogger(RecordPreference.class);
-    private Preferences mPreferences = Preferences.userNodeForPackage(RecordPreference.class);
+    private final Preferences mPreferences;
     private RecordFormat mAudioRecordFormat;
     private volatile RecordingMode mRecordingMode;
     private volatile Integer mManagedRetentionDays;
@@ -59,7 +59,13 @@ public class RecordPreference extends Preference
      */
     public RecordPreference(Listener<PreferenceType> updateListener)
     {
+        this(updateListener, Preferences.userNodeForPackage(RecordPreference.class));
+    }
+
+    RecordPreference(Listener<PreferenceType> updateListener, Preferences preferences)
+    {
         super(updateListener);
+        mPreferences = preferences;
     }
 
     @Override
@@ -138,6 +144,21 @@ public class RecordPreference extends Preference
         }
 
         return mode;
+    }
+
+    /** The explicitly saved choice, or null when only the default applies or the saved value is invalid. */
+    public RecordingMode getConfiguredRecordingMode()
+    {
+        String saved = mPreferences.get(PREFERENCE_KEY_RECORDING_MODE, null);
+        if(saved == null) return null;
+        try
+        {
+            return RecordingMode.valueOf(saved);
+        }
+        catch(IllegalArgumentException exception)
+        {
+            return null;
+        }
     }
 
     /** Changes the destination of calls completed after this update. */

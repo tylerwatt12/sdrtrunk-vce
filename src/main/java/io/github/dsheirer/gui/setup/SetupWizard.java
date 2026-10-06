@@ -437,6 +437,8 @@ public final class SetupWizard extends JDialog
         var rr = preferences.getRadioReferencePreference();
         ready(SetupStep.RADIO_REFERENCE, rr.isStoreCredentials() && present(rr.getUserName()) && present(rr.getPassword()));
         if(progress.isImported() || progress.isComplete()) ready(SetupStep.ACTIVITY, true);
+        SetupReadiness.carryOverRecordingChoice(progress,
+            preferences.getRecordPreference().getConfiguredRecordingMode());
         ready(SetupStep.CALIBRATION, CalibrationManager.getInstance(preferences).isCalibrated());
         //Hardware inventory is deliberately never persisted or inferred from configuration.
         if(progress.get(SetupStep.HARDWARE) != DEFERRED) progress.set(SetupStep.HARDWARE, PENDING);
