@@ -931,7 +931,7 @@ public final class SetupWizard extends JDialog
         JTextField username = new JTextField(rr.getUserName() == null ? "" : rr.getUserName(), 28);
         labelled(account, "RadioReference username", username, 16);
         JPasswordField secret = new JPasswordField(28);
-        labelled(account, "Password (leave blank to keep the saved password)", secret, 16);
+        labelled(account, "Password", secret, 16);
         SetupRadioReferenceRegion region = new SetupRadioReferenceRegion(rr.getPreferredCountryId(),
             rr.getPreferredStateId(), worker);
         rrSetupRegion = region;
