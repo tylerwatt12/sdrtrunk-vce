@@ -1775,8 +1775,7 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   gap: var(--space-1);
 }
 
-.spectrum-search-group-table td:nth-child(3),
-.spectrum-search-group-table td:nth-child(4) {
+.spectrum-search-group-table td:nth-child(3) {
   white-space: nowrap;
 }
 

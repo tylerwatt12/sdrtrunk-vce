@@ -1367,6 +1367,23 @@ test('search lookup country failure retries account settings and recovers its re
     .body.radioreference_state_id).toBe(39);
 });
 
+test('manually expanded search lookup settings remain open after delayed saved-region configuration', async ({ page }) => {
+  const state = await install(page, { delayDirectoryConfiguration: true, directoryConfiguration: {
+    account: { state: 'VALID_PREMIUM' }, country_id: 1, state_id: 39 } });
+  await expect.poll(() => typeof state.releaseDirectory).toBe('function');
+  const lookup = dialog(page).locator('details').filter({ has: page.locator('summary')
+    .filter({ hasText: /^RadioReference names \(optional\)$/ }) });
+  await lookup.locator('summary').click();
+  const lookupNode = await lookup.elementHandle();
+  await expect(lookup).toHaveAttribute('open', '');
+  await expect(lookup).toContainText('Loading RadioReference settings…');
+  state.releaseDirectory();
+  await expect(lookup.getByLabel('RadioReference state or province')).toBeEnabled();
+  await expect(lookup.getByLabel('RadioReference state or province')).toHaveValue('39');
+  await expect(lookup).toHaveAttribute('open', '');
+  expect(await lookup.evaluate((element, previous) => element === previous, lookupNode)).toBe(true);
+});
+
 test('requires a choice for ambiguous alias groups and preserves drafts after stale revision', async ({ page }) => {
   const state = await install(page, { ambiguous: true, staleOnce: true });
   await complete(page);
@@ -1695,7 +1712,10 @@ test('mixed DMR and NXDN sites retain protocol identities and only verified RR n
   await dialog(page).getByText('RadioReference', { exact: true }).first().click();
   await expect(dialog(page).getByRole('link', { name: 'County Transit', exact: true })).toHaveAttribute('href',
     'https://www.radioreference.com/db/sid/123');
-  await expect(dialog(page)).toContainText('451 MHz · Primary control');
+  const directory = dialog(page).locator('details').filter({ has: page.locator('summary').filter({ hasText: /^RadioReference$/ }) }).first();
+  await expect(directory.locator('p')).toHaveText('County Transit');
+  await expect(directory.locator('dl')).toHaveCount(0);
+  await expect(directory).not.toContainText('Primary control');
   await dialog(page).getByText('RadioReference', { exact: true }).nth(1).click();
   await expect(dialog(page)).toContainText('No directory names were applied');
 });
@@ -1734,6 +1754,7 @@ test('forced dismissal during search creation releases the returned job before i
 });
 
 test('delayed wide-directory names update review without replacing edited channel names', async ({ page }) => {
+  await page.clock.install();
   const state = await install(page, { customCandidates: [{ candidate_id: 'digital', frequency_hz: 451000000,
     protocol_id: 'dmr', name: 'Decoded control', system_name: 'Decoded network', alias_group_id: 'digital',
     radio_reference: { state: 'pending' }, trunked_evidence: { identity: {
@@ -1743,15 +1764,130 @@ test('delayed wide-directory names update review without replacing edited channe
   await dialog(page).getByRole('button', { name: 'Select all available' }).click();
   await dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true }).click();
   await dialog(page).getByLabel('Channel name for 451 MHz', { exact: true }).fill('My control');
+  await dialog(page).getByText('RadioReference', { exact: true }).click();
+  const directory = dialog(page).locator('details').filter({ has: page.locator('summary').filter({ hasText: /^RadioReference$/ }) });
+  const directoryNode = await directory.elementHandle();
+  const pendingNode = await directory.locator('p').elementHandle();
+  const polls = () => state.requests.filter(({ path, method }) => path === `${searchPath}/search-a` && method === 'GET').length;
+  for (let update = 0; update < 3; update += 1) {
+    const before = polls();
+    state.customCandidates[0].radio_reference.message = `Raw directory stage ${update}`;
+    await page.clock.fastForward(800);
+    await expect.poll(polls).toBeGreaterThan(before);
+    await expect(directory).toHaveAttribute('open', '');
+    expect(await directory.evaluate((element, previous) => element === previous, directoryNode)).toBe(true);
+    expect(await directory.locator('p').evaluate((element, previous) => element === previous, pendingNode)).toBe(true);
+    await expect(directory.locator('p')).toHaveText('Looking up the system name…');
+  }
   state.customCandidates[0] = { ...state.customCandidates[0], name: 'Directory North', system_name: 'Transit authority',
     site_name: 'North', radio_reference: { state: 'matched', match: { system_name: 'Transit authority', site_name: 'North',
       channels: [{ logical_channel_number: 3, frequency_hz: 451500000 }] } }, trunked_evidence: {
       ...state.customCandidates[0].trunked_evidence, frequency_map: [{ number: 3, downlink_hz: 451500000 }] } };
+  await page.clock.fastForward(800);
   await expect(dialog(page).getByRole('heading', { name: 'Transit authority', exact: true })).toBeVisible();
   await expect(dialog(page).getByLabel('Channel name for 451 MHz', { exact: true })).toHaveValue('My control');
   await expect(dialog(page).locator('.channel-map-row input').nth(0)).toHaveValue('3');
-  await dialog(page).getByText('RadioReference', { exact: true }).click();
-  await expect(dialog(page)).toContainText('451.5 MHz');
+  await expect(directory).toHaveAttribute('open', '');
+  expect(await directory.evaluate((element, previous) => element === previous, directoryNode)).toBe(true);
+  await expect(directory.locator('p')).toHaveText('Transit authority');
+  await expect(directory.locator('dl')).toHaveCount(0);
+});
+
+for (const [theme, viewport] of [['light', { width: 1280, height: 900 }],
+  ['dark', { width: 390, height: 844 }]]) {
+  test(`search result directory polls preserve disclosures, filters and selection in ${theme}`,
+    async ({ page }, testInfo) => {
+      await page.clock.install();
+      await page.setViewportSize(viewport);
+      const systemName = theme === 'dark' ? 'Ohio MARCS-IP: Multi-Agency Radio Communications' : 'County Transit';
+      const state = await install(page, { theme, customCandidates: [
+        { candidate_id: 'digital', frequency_hz: 451000000, protocol_id: 'dmr', name: 'Metro control',
+          system_name: 'Decoded network', alias_group_id: 'digital', radio_reference: { state: 'pending' },
+          trunked_evidence: { identity: { radio_system_key: 'dmr:tier3:small:12', network: 12, site: 3 } } },
+        { candidate_id: 'local', frequency_hz: 452000000, protocol_id: 'dmr', name: 'Regional local',
+          system_name: 'Other network', alias_group_id: 'other', trunked_evidence: {
+            identity: { radio_system_key: 'dmr:tier3:small:13', network: 13, site: 4 } } }
+      ], customAliasGroups: [{ group_id: 'digital', protocol_id: 'dmr', alias_lists: [], default_new_alias_list_name: 'Metro' },
+        { group_id: 'other', protocol_id: 'dmr', alias_lists: [], default_new_alias_list_name: 'Regional' }] });
+      await complete(page);
+      const query = dialog(page).getByLabel('Search results', { exact: true });
+      await query.fill('Metro');
+      const selection = dialog(page).getByRole('checkbox', { name: 'Select Metro control', exact: true });
+      await selection.check();
+      const row = dialog(page).locator('tbody tr').filter({ has: page.getByRole('checkbox',
+        { name: 'Select Metro control', exact: true }) });
+      const signal = row.locator('details').filter({ has: page.locator('summary').filter({ hasText: /^Signal details$/ }) });
+      await signal.locator('summary').click();
+      const directory = row.locator('details').filter({ has: page.locator('summary').filter({ hasText: /^RadioReference$/ }) });
+      await directory.locator('summary').click();
+      const preserved = {
+        query: await query.elementHandle(), selection: await selection.elementHandle(),
+        signal: await signal.elementHandle(), directory: await directory.elementHandle(),
+        pending: await directory.locator('p').elementHandle()
+      };
+      const polls = () => state.requests.filter(({ path, method }) => path === `${searchPath}/search-a` && method === 'GET').length;
+      for (let update = 0; update < 2; update += 1) {
+        const before = polls();
+        state.customCandidates[0].radio_reference.message = `Raw directory stage ${update}`;
+        await page.clock.fastForward(800);
+        await expect.poll(polls).toBeGreaterThan(before);
+        await expect(directory).toHaveAttribute('open', '');
+        await expect(signal).toHaveAttribute('open', '');
+        expect(await directory.evaluate((element, previous) => element === previous, preserved.directory)).toBe(true);
+        expect(await directory.locator('p').evaluate((element, previous) => element === previous, preserved.pending)).toBe(true);
+        await expect(directory.locator('p')).toHaveText('Looking up the system name…');
+      }
+      await directory.scrollIntoViewIfNeeded();
+      await dialog(page).screenshot({ path: testInfo.outputPath('directory-expanded-loading.png') });
+      state.customCandidates[0] = { ...state.customCandidates[0], system_name: systemName,
+        site_name: 'Directory-only North', radio_reference: { state: 'matched', provenance: 'Directory-only provenance',
+          match: { system_name: systemName, site_name: 'Directory-only North',
+            url: 'https://www.radioreference.com/db/sid/123', site_url: 'https://www.radioreference.com/db/site/456',
+            channels: [{ frequency_hz: 451500000, logical_channel_number: 3, primary_control: true }] } } };
+      await page.clock.fastForward(800);
+      await expect(directory.getByRole('link', { name: systemName, exact: true }))
+        .toHaveAttribute('href', 'https://www.radioreference.com/db/sid/123');
+      await expect(directory.locator('p')).toHaveText(systemName);
+      await expect(directory.locator('dl')).toHaveCount(0);
+      await expect(directory.getByRole('link')).toHaveCount(1);
+      await expect(directory).not.toContainText('Directory-only');
+      await expect(directory).not.toContainText('451.5');
+      await expect(directory).not.toContainText('Primary control');
+      await expect(directory).toHaveAttribute('open', '');
+      await expect(signal).toHaveAttribute('open', '');
+      await expect(query).toHaveValue('Metro');
+      await expect(selection).toBeChecked();
+      for (const [locator, previous] of [[directory, preserved.directory], [signal, preserved.signal],
+        [query, preserved.query], [selection, preserved.selection]]) {
+        expect(await locator.evaluate((element, previous) => element === previous, previous)).toBe(true);
+      }
+      await expect(dialog(page).getByRole('checkbox', { name: 'Select Regional local', exact: true })).toBeHidden();
+      await expect(dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true })).toBeEnabled();
+      await directory.scrollIntoViewIfNeeded();
+      await dialog(page).screenshot({ path: testInfo.outputPath('directory-compact-match.png') });
+      expect(await dialog(page).evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+      const bounds = await directory.evaluate(element => ({ scrollWidth: element.scrollWidth,
+        clientWidth: element.clientWidth, whiteSpace: getComputedStyle(element.querySelector('p')).whiteSpace }));
+      expect(bounds.scrollWidth, JSON.stringify(bounds)).toBeLessThanOrEqual(bounds.clientWidth + 1);
+      await query.fill(systemName);
+      await expect(selection).toBeVisible();
+    });
+}
+
+test('search start failure restores the saved region control after its pending initial load', async ({ page }) => {
+  const state = await install(page, { delayDirectoryStates: true, failSearchCreateOnce: true,
+    directoryConfiguration: { account: { state: 'VALID_PREMIUM' }, country_id: 1, state_id: 39 } });
+  await expect.poll(() => typeof state.releaseDirectoryStates).toBe('function');
+  await dialog(page).getByText('RadioReference names (optional)', { exact: true }).click();
+  await dialog(page).getByRole('button', { name: 'Find signals', exact: true }).click();
+  state.releaseDirectoryStates();
+  await expect(dialog(page)).toContainText('We couldn’t start the search.');
+  const region = dialog(page).getByLabel('RadioReference state or province');
+  await expect(region).toBeEnabled();
+  await expect(region).toHaveValue('39');
+  await complete(page);
+  expect(state.requests.filter(({ path, method }) => path === searchPath && method === 'POST')
+    .map(({ body }) => body.radioreference_state_id)).toEqual([39, 39]);
 });
 
 test('wide DMR review submits the explicit channel map through the shared editor', async ({ page }) => {

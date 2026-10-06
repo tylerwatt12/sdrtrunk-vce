@@ -31,8 +31,8 @@ import { createStreamingWorkspace } from './features/streaming.js?v=8';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=9';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=12';
 import { createRecordingsFeature } from './features/recordings.js?v=20';
-import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft } from './features/spectrum-search.js?v=20';
-import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult } from './features/discovery-radioreference.js?v=3';
+import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft } from './features/spectrum-search.js?v=21';
+import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult } from './features/discovery-radioreference.js?v=4';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createAudioDock } from './core/audio-dock.js?v=11';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=1';
@@ -13434,8 +13434,10 @@ function openSpectrumDiscoveryWizard(selection) {
   const refreshReviewDirectory = () => {
     if (!reviewBinding || !session?.review) return;
     const template = session.review.template;
-    const result = discoveryRadioReferenceResult({ node, anchor, channelMHz, href }, session);
-    reviewBinding.directory.replaceChildren(...(result ? [result] : []));
+    const result = discoveryRadioReferenceResult({ node, anchor, href }, session,
+      reviewBinding.directory.firstElementChild);
+    if (result !== reviewBinding.directory.firstElementChild)
+      reviewBinding.directory.replaceChildren(...(result ? [result] : []));
     reviewBinding.directory.hidden = !result;
     ['name', 'system', 'site'].forEach((key) => {
       if (editedReviewFields.has(key)) return;
@@ -13493,6 +13495,7 @@ function openSpectrumDiscoveryWizard(selection) {
   };
   const busy = (value) => {
     modal.setBusy(value);
+    directory.setBusy(value);
     actions.querySelectorAll('button').forEach((control) => { control.disabled = value; });
     stage.querySelectorAll('input[type="radio"]').forEach((control) => { control.disabled = value; });
   };
@@ -13592,6 +13595,7 @@ function openSpectrumDiscoveryWizard(selection) {
     busy(true);
     try {
       await directory.load();
+      const directoryStateId = directory.stateId();
       await cancelSession(false);
       if (!current() || generation !== operation) return;
       profile = protocols.profiles.find((candidate) => candidate.id === protocolId);
@@ -13604,7 +13608,7 @@ function openSpectrumDiscoveryWizard(selection) {
       const opening = requestJson(path, { method: 'POST', page: false, body: {
         tuner_id: selection.tunerId, frequency_hz: selection.frequencyHz,
         protocol_id: protocolId, browse_lease_id: selection.browseLeaseId || null,
-        radioreference_state_id: directory.stateId()
+        radioreference_state_id: directoryStateId
       } }).then(async (created) => {
         if (current() && generation === operation) return created;
         if (created?.session_id) session = created;
@@ -13693,8 +13697,10 @@ function openSpectrumDiscoveryWizard(selection) {
       stage.append(directoryHost);
     }
     const nodes = probeNodes;
-    const directoryResult = discoveryRadioReferenceResult({ node, anchor, channelMHz, href }, session);
-    nodes.directoryHost.replaceChildren(...(directoryResult ? [directoryResult] : []));
+    const directoryResult = discoveryRadioReferenceResult({ node, anchor, href }, session,
+      nodes.directoryHost.firstElementChild);
+    if (directoryResult !== nodes.directoryHost.firstElementChild)
+      nodes.directoryHost.replaceChildren(...(directoryResult ? [directoryResult] : []));
     nodes.directoryHost.hidden = !directoryResult;
     if (digital && !p25) nodes.technical.replaceChildren(node('summary', 'ui-section-summary', 'Signal details'),
       facts(sessionFacts().map(([label, value]) => [label, String(value)])));
@@ -13883,7 +13889,7 @@ function openSpectrumDiscoveryWizard(selection) {
     const systemNameSummary = node('p', 'ui-record-title', spectrumDiscoverySystemName(session, reviewDraft));
     systemNameSummary.hidden = !systemNameSummary.textContent;
     stage.append(systemNameSummary);
-    const directoryResult = discoveryRadioReferenceResult({ node, anchor, channelMHz, href }, session);
+    const directoryResult = discoveryRadioReferenceResult({ node, anchor, href }, session);
     const directoryHost = node('div');
     if (directoryResult) directoryHost.append(directoryResult);
     directoryHost.hidden = !directoryResult;

@@ -35,7 +35,9 @@ async function main() {
   assert.equal(spectrumSearchSystemName({ ...dmr, system_name: 'Transit' }), 'Transit');
 
   const node = (tag, className, text = '') => ({ tag, className, children: [text],
-    append(...children) { this.children.push(...children); } });
+    get firstElementChild() { return this.children.find((child) => child?.tag); },
+    append(...children) { this.children.push(...children); },
+    replaceChildren(...children) { this.children = children; } });
   const ui = { node, anchor: (label, url) => ({ label, url }), channelMHz: (value) => String(value / 1e6) };
   const rendered = discoveryRadioReferenceResult(ui, { radio_reference: { state: 'ambiguous',
     match: { system_name: 'Incorrect borrowed name' } } });
@@ -45,8 +47,27 @@ async function main() {
     system_name: 'Transit', url: 'https://example.invalid/redirect', site_name: 'North',
     channels: [{ logical_channel_number: 5, frequency_hz: 451000000, primary_control: true }] } } });
   assert.doesNotMatch(JSON.stringify(malicious), /example.invalid/);
-  assert.match(JSON.stringify(malicious), /Channel 5/);
-  assert.match(JSON.stringify(malicious), /451 MHz/);
+  assert.match(JSON.stringify(malicious), /Transit/);
+  assert.doesNotMatch(JSON.stringify(malicious), /North|Channel 5|451 MHz/);
+  const pending = discoveryRadioReferenceResult(ui, { radio_reference: { state: 'pending',
+    message: 'Checking RadioReference system and site identity' } });
+  pending.open = true;
+  const loadingCopy = pending.children;
+  assert.equal(discoveryRadioReferenceResult(ui, { radio_reference: { state: 'pending',
+    message: 'Another backend phase' } }, pending), pending);
+  assert.equal(pending.children, loadingCopy, 'Repeated pending polls must leave the visible content alone.');
+  assert.match(JSON.stringify(pending), /Looking up the system name/);
+  assert.doesNotMatch(JSON.stringify(pending), /Checking RadioReference|Another backend/);
+  const summary = pending.firstElementChild;
+  const matched = discoveryRadioReferenceResult(ui, { radio_reference: { state: 'matched',
+    provenance: 'radioreference-exact-frequency-and-on-air-identity', match: {
+      system_name: 'Transit', url: 'https://www.radioreference.com/db/sid/1', site_name: 'North',
+      channels: [{ frequency_hz: 451000000 }] } } }, pending);
+  assert.equal(matched, pending);
+  assert.equal(matched.open, true, 'A completed match must preserve the expanded section.');
+  assert.equal(matched.firstElementChild, summary);
+  assert.match(JSON.stringify(matched), /Transit|radioreference.com/);
+  assert.doesNotMatch(JSON.stringify(matched), /North|Channel|451|exact-frequency/);
   console.log('Trunked discovery UI contracts passed.');
 }
 
