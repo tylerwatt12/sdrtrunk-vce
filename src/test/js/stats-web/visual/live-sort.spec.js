@@ -36,8 +36,9 @@ function densitySnapshot() {
       key: `call-${index + 1}`, configuration_id: 'metro-north', lcn: index + 1,
       frequency_hz: 851012500 + index * 25000, status: index === 3 ? 'ENCRYPTED' : 'CALL',
       tags: ['VOICE'], activation_order: index + 1, decoder: 'P25_PHASE1', protocol: 'APCO25',
-      source_id: 30914 + index, source_alias: index === 0 ? 'Engine 4' : `Unit ${index + 1}`,
-      target_id: 1201 + index % 3, target_alias: ['Fire Dispatch', 'Police Dispatch', 'County Operations'][index % 3],
+      source_id: 30914 + index, source_alias: index === 0 ? 'Emergency Management Operations Supervisor — Engine 4' : `Unit ${index + 1}`,
+      target_id: 1201 + index % 3, target_alias: index === 0 ? 'County Fire and Emergency Medical Services Dispatch' :
+        ['Fire Dispatch', 'Police Dispatch', 'County Operations'][index % 3],
       signal_dbfs: -58.2 - index / 10, vc_quality_pct: 92.4,
       vc_decoded_frames: 120, vc_repeated_frames: 1, vc_concealed_frames: 0
     })) }] };
@@ -328,6 +329,14 @@ async function densityGeometry(page) {
     const viewport = scroll.getBoundingClientRect();
     const rows = [...table.querySelectorAll('tbody tr[data-id]')];
     const height = rows[0].getBoundingClientRect().height;
+    const rowStyle = getComputedStyle(rows[0]);
+    const cells = [...rows[0].querySelectorAll('td')].filter(cell => cell.getClientRects().length);
+    const cellPadding = cells.map(cell => {
+      const style = getComputedStyle(cell);
+      return { column: cell.dataset.column, top: Number.parseFloat(style.paddingTop),
+        bottom: Number.parseFloat(style.paddingBottom) };
+    });
+    const lineHeight = Math.max(...cells.map(cell => Number.parseFloat(getComputedStyle(cell).lineHeight)));
     const visible = rows.filter(row => {
       const rect = row.getBoundingClientRect();
       const x = Math.max(viewport.left + 1, Math.min(viewport.right - 1, rect.left + rect.width / 2));
@@ -341,7 +350,8 @@ async function densityGeometry(page) {
         return [selector, { x: rect.x, y: rect.y, width: rect.width, height: rect.height }];
       }));
     return { rowHeight: height, fullyVisibleRows: visible, bodyHeight: table.querySelector('tbody').getBoundingClientRect().height,
-      panes };
+      rowPadding: { top: Number.parseFloat(rowStyle.paddingTop), bottom: Number.parseFloat(rowStyle.paddingBottom) },
+      rowGap: rowStyle.rowGap, cellPadding, maximumLineHeight: lineHeight, panes };
   });
 }
 
@@ -352,6 +362,39 @@ async function liveCallContents(page) {
       key: row.dataset.id, cells: [...row.querySelectorAll('td')].map(cell => cell.textContent)
     }))
   }));
+}
+
+async function liveCellTypography(page) {
+  return liveTable(page).evaluate(table => [...table.querySelectorAll('tbody tr[data-id]')].map(row => ({
+    key: row.dataset.id, cells: [...row.querySelectorAll('td')].map(cell => {
+      const style = getComputedStyle(cell);
+      return { column: cell.dataset.column, family: style.fontFamily, size: style.fontSize,
+        weight: style.fontWeight, lineHeight: style.lineHeight };
+    })
+  })));
+}
+
+async function expectNoVerticalGlyphClipping(page) {
+  const clipped = await liveTable(page).evaluate(table => {
+    const result = [];
+    for (const cell of table.querySelectorAll('tbody tr[data-id] td')) {
+      if (!cell.getClientRects().length) continue;
+      const bounds = cell.getBoundingClientRect();
+      const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const text = walker.currentNode;
+        if (!text.textContent.trim() || text.parentElement.closest('.visually-hidden, [hidden]')) continue;
+        const range = document.createRange();
+        range.selectNodeContents(text);
+        if ([...range.getClientRects()].some(rect => rect.height &&
+          (rect.top < bounds.top - 1 || rect.bottom > bounds.bottom + 1))) {
+          result.push({ row: cell.closest('tr').dataset.id, column: cell.dataset.column, text: text.textContent });
+        }
+      }
+    }
+    return result;
+  });
+  expect(clipped, 'Dense rows must retain room for the unchanged text glyphs').toEqual([]);
 }
 
 for (const theme of ['light', 'dark']) {
@@ -367,7 +410,9 @@ for (const theme of ['light', 'dark']) {
         await expect(table.locator('tbody tr.selected')).toHaveAttribute('data-id', 'call-2');
         if (width === 390) await expect(page.getByRole('button', { name: 'Expand live details', exact: true })).toBeVisible();
         const contents = await liveCallContents(page);
+        const typography = await liveCellTypography(page);
         const normal = await densityGeometry(page);
+        await expectNoVerticalGlyphClipping(page);
         await page.screenshot({ path: testInfo.outputPath('live-normal.png') });
         let dialog = await presentationDialog(page);
         const density = rowDensity(dialog);
@@ -382,14 +427,22 @@ for (const theme of ['light', 'dark']) {
         await expect(table).toHaveAttribute('data-row-density', 'dense');
         await expect(table.locator('tbody tr.selected')).toHaveAttribute('data-id', 'call-2');
         expect(await liveCallContents(page)).toEqual(contents);
+        expect(await liveCellTypography(page)).toEqual(typography);
         const dense = await densityGeometry(page);
+        expect(dense.cellPadding.every(cell => cell.top === 0 && cell.bottom === 0)).toBe(true);
+        if (width === 1280) expect(dense.rowHeight).toBeLessThanOrEqual(dense.maximumLineHeight + 1);
+        else {
+          expect(dense.rowPadding).toEqual({ top: 0, bottom: 0 });
+          expect(dense.rowGap).toBe('0px');
+        }
+        await expectNoVerticalGlyphClipping(page);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
         expect(dense.rowHeight).toBeLessThan(normal.rowHeight);
         expect(dense.bodyHeight).toBeLessThan(normal.bodyHeight);
-        if (width === 1280) expect(dense.fullyVisibleRows).toBeGreaterThan(normal.fullyVisibleRows);
-        else expect(dense.fullyVisibleRows).toBeGreaterThanOrEqual(normal.fullyVisibleRows);
+        expect(dense.fullyVisibleRows).toBeGreaterThan(normal.fullyVisibleRows);
         if (width === 1280) expect(dense.panes).toEqual(normal.panes);
         const geometryPath = testInfo.outputPath('row-density-geometry.json');
-        writeFileSync(geometryPath, JSON.stringify({ normal, dense }, null, 2));
+        writeFileSync(geometryPath, JSON.stringify({ normal, dense, unchangedTypography: typography[0].cells }, null, 2));
         await testInfo.attach('Row density geometry', { path: geometryPath, contentType: 'application/json' });
         await page.screenshot({ path: testInfo.outputPath('live-dense.png') });
         expect(app.preferences().presentation.live_row_density).toBe('dense');

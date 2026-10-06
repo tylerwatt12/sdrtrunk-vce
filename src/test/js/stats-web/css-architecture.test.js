@@ -11,7 +11,7 @@ const entryStylesheet = path.resolve(process.argv[2]
 const EXPECTED_ENTRY_MANIFEST = [
   '@layer reset, tokens, components, compositions, features, utilities;',
   '@import url("./styles/base.css?v=2") layer(reset);',
-  '@import url("./styles/tokens.css?v=25") layer(tokens);',
+  '@import url("./styles/tokens.css?v=26") layer(tokens);',
   '@import url("./styles/components/semantic-text.css?v=3") layer(components);',
   '@import url("./styles/components/controls.css?v=32") layer(components);',
   '@import url("./styles/components/audio-controls.css?v=6") layer(components);',
@@ -27,7 +27,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/about.css?v=1") layer(features);',
   '@import url("./styles/features/channels.css?v=21") layer(features);',
   '@import url("./styles/features/entity-details.css?v=12") layer(features);',
-  '@import url("./styles/features/live.css?v=19") layer(features);',
+  '@import url("./styles/features/live.css?v=20") layer(features);',
   '@import url("./styles/features/radio-directory.css?v=8") layer(features);',
   '@import url("./styles/features/tuner-spectrum.css?v=29") layer(features);',
   '@import url("./styles/features/tuners.css?v=11") layer(features);',

@@ -379,7 +379,7 @@ body[data-view="live"] .channel-diagnostic-readouts {
 @media (min-width: 761px) {
   .channels-live-table[data-row-density="dense"] tbody td:not(.empty) {
     height: auto;
-    padding-block: var(--live-row-padding-dense);
+    padding-block: var(--live-row-spacing-dense);
   }
 }
 
@@ -1036,7 +1036,8 @@ body[data-view="live"] .channel-diagnostic-readouts {
   }
 
   .channels-live-table[data-row-density="dense"] tbody > tr[data-id] {
-    padding-block: var(--space-1);
+    padding-block: var(--live-row-spacing-dense);
+    row-gap: var(--live-row-spacing-dense);
   }
 
   .channels-live-table tbody > tr:not([data-row-interactive]) {
@@ -1105,6 +1106,10 @@ body[data-view="live"] .channel-diagnostic-readouts {
     padding: var(--space-1) var(--space-2);
     border-radius: var(--radius-compact);
     font-weight: var(--font-weight-control);
+  }
+
+  .channels-live-table[data-row-density="dense"] td[data-column="status"] {
+    padding-block: var(--live-row-spacing-dense);
   }
 
   .channels-live-table td[data-column="tags"] {
