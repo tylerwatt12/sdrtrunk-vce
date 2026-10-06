@@ -79,6 +79,9 @@ class JavaShellCleanupUiContractTest
         assertFalse(wizard.contains("Screenshots:"));
         assertTrue(directoryEditor.contains("setFitToWidth(true)"));
         assertTrue(wizard.contains("openWebAfterSetup"));
+        String application = Files.readString(ROOT.resolve("SDRTrunk.java"));
+        assertTrue(application.contains("openWebInterface(false, DesktopHandoffDestination.CHANNEL_SETUP)"));
+        assertTrue(application.contains("openWebInterface(true, DesktopHandoffDestination.DASHBOARD)"));
     }
 
     @Test

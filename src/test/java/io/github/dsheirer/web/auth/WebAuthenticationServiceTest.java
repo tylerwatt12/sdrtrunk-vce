@@ -114,34 +114,56 @@ class WebAuthenticationServiceTest
         try
         {
             assertTrue(authenticationService.armDesktopAdministratorHandoff());
-            Optional<WebAccessSession> first = authenticationService.redeemDesktopAdministratorHandoff(null);
+            Optional<WebAuthenticationService.DesktopHandoffResult> first =
+                authenticationService.redeemDesktopAdministratorHandoff(null);
             assertTrue(first.isPresent());
-            assertTrue(first.orElseThrow().account().primaryAdmin());
+            assertTrue(first.orElseThrow().session().account().primaryAdmin());
+            assertEquals(WebAuthenticationService.DesktopHandoffDestination.DASHBOARD,
+                first.orElseThrow().destination());
             assertTrue(authenticationService.redeemDesktopAdministratorHandoff(null).isEmpty());
 
-            assertTrue(authenticationService.armDesktopAdministratorHandoff());
+            assertTrue(authenticationService.armDesktopAdministratorHandoff(
+                WebAuthenticationService.DesktopHandoffDestination.CHANNEL_SETUP));
             clock.advance(Duration.ofSeconds(30));
             assertTrue(authenticationService.redeemDesktopAdministratorHandoff(null).isEmpty());
 
-            assertTrue(authenticationService.armDesktopAdministratorHandoff());
+            assertTrue(authenticationService.armDesktopAdministratorHandoff(
+                WebAuthenticationService.DesktopHandoffDestination.CHANNEL_SETUP));
             clock.advance(Duration.ofMillis(-1));
             assertTrue(authenticationService.redeemDesktopAdministratorHandoff(null).isEmpty());
             clock.advance(Duration.ofMillis(1));
 
-            assertTrue(authenticationService.armDesktopAdministratorHandoff());
-            CompletableFuture<Optional<WebAccessSession>> left = CompletableFuture.supplyAsync(
+            assertTrue(authenticationService.armDesktopAdministratorHandoff(
+                WebAuthenticationService.DesktopHandoffDestination.CHANNEL_SETUP));
+            CompletableFuture<Optional<WebAuthenticationService.DesktopHandoffResult>> left =
+                CompletableFuture.supplyAsync(
                 () -> authenticationService.redeemDesktopAdministratorHandoff(null));
-            CompletableFuture<Optional<WebAccessSession>> right = CompletableFuture.supplyAsync(
+            CompletableFuture<Optional<WebAuthenticationService.DesktopHandoffResult>> right =
+                CompletableFuture.supplyAsync(
                 () -> authenticationService.redeemDesktopAdministratorHandoff(null));
-            assertEquals(1, List.of(left.get(), right.get()).stream().filter(Optional::isPresent).count());
+            List<Optional<WebAuthenticationService.DesktopHandoffResult>> redemptions = List.of(left.get(), right.get());
+            assertEquals(1, redemptions.stream().filter(Optional::isPresent).count());
+            assertEquals(WebAuthenticationService.DesktopHandoffDestination.CHANNEL_SETUP,
+                redemptions.stream().flatMap(Optional::stream).findFirst().orElseThrow().destination());
 
-            assertTrue(authenticationService.armDesktopAdministratorHandoff());
+            assertTrue(authenticationService.armDesktopAdministratorHandoff(
+                WebAuthenticationService.DesktopHandoffDestination.CHANNEL_SETUP));
             accessService.provisionOrResetPrimaryAdmin("replacement admin password".toCharArray());
             assertTrue(authenticationService.redeemDesktopAdministratorHandoff(null).isEmpty());
 
-            assertTrue(authenticationService.armDesktopAdministratorHandoff());
+            assertTrue(authenticationService.armDesktopAdministratorHandoff(
+                WebAuthenticationService.DesktopHandoffDestination.CHANNEL_SETUP));
             authenticationService.invalidateAllSessions();
             assertTrue(authenticationService.redeemDesktopAdministratorHandoff(null).isEmpty());
+
+            assertTrue(authenticationService.armDesktopAdministratorHandoff(
+                WebAuthenticationService.DesktopHandoffDestination.CHANNEL_SETUP));
+            authenticationService.cancelDesktopAdministratorHandoff();
+            assertTrue(authenticationService.redeemDesktopAdministratorHandoff(null).isEmpty());
+            assertTrue(authenticationService.armDesktopAdministratorHandoff());
+            assertEquals(WebAuthenticationService.DesktopHandoffDestination.DASHBOARD,
+                authenticationService.redeemDesktopAdministratorHandoff(null).orElseThrow().destination(),
+                "a canceled setup handoff must not change a later ordinary Web-button destination");
         }
         finally
         {

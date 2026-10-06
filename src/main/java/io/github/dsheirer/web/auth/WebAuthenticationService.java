@@ -131,14 +131,21 @@ public final class WebAuthenticationService implements AutoCloseable
     /** Arms one short-lived administrator sign-in for the local desktop Web button. */
     public synchronized boolean armDesktopAdministratorHandoff()
     {
+        return armDesktopAdministratorHandoff(DesktopHandoffDestination.DASHBOARD);
+    }
+
+    /** The desktop chooses from fixed destinations; the browser cannot supply a redirect location. */
+    public synchronized boolean armDesktopAdministratorHandoff(DesktopHandoffDestination destination)
+    {
+        Objects.requireNonNull(destination, "Desktop handoff destination cannot be null");
         WebAccessAccount account = !mClosed.get() ? mAccessService.primaryAdmin().orElse(null) : null;
         mDesktopHandoff = account != null ?
-            new DesktopHandoff(account, mClock.millis()) : null;
+            new DesktopHandoff(account, mClock.millis(), destination) : null;
         return account != null;
     }
 
     /** Consumes the pending desktop sign-in before creating an ordinary browser session. */
-    public synchronized Optional<WebAccessSession> redeemDesktopAdministratorHandoff(String existingSessionId)
+    public synchronized Optional<DesktopHandoffResult> redeemDesktopAdministratorHandoff(String existingSessionId)
     {
         DesktopHandoff handoff = mDesktopHandoff;
         mDesktopHandoff = null;
@@ -160,7 +167,7 @@ public final class WebAuthenticationService implements AutoCloseable
             return Optional.empty();
         }
 
-        return session;
+        return session.map(created -> new DesktopHandoffResult(created, handoff.destination()));
     }
 
     public synchronized void cancelDesktopAdministratorHandoff()
@@ -346,7 +353,22 @@ public final class WebAuthenticationService implements AutoCloseable
         }
     }
 
-    private record DesktopHandoff(WebAccessAccount account, long armedAt)
+    public enum DesktopHandoffDestination
+    {
+        DASHBOARD,
+        CHANNEL_SETUP
+    }
+
+    public record DesktopHandoffResult(WebAccessSession session, DesktopHandoffDestination destination)
+    {
+        public DesktopHandoffResult
+        {
+            Objects.requireNonNull(session, "Desktop handoff session cannot be null");
+            Objects.requireNonNull(destination, "Desktop handoff destination cannot be null");
+        }
+    }
+
+    private record DesktopHandoff(WebAccessAccount account, long armedAt, DesktopHandoffDestination destination)
     {
     }
 

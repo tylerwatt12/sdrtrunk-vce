@@ -218,16 +218,22 @@ public final class WebSessionHttpController
 
         WebRequestSecurity.CookieLookup existing = mSecurity.sessionCookie(exchange);
         String existingSessionId = existing.valid() ? existing.sessionId() : null;
-        Optional<WebAccessSession> session =
+        Optional<WebAuthenticationService.DesktopHandoffResult> handoff =
             mAuthenticationService.redeemDesktopAdministratorHandoff(existingSessionId);
 
-        if(session.isEmpty())
+        if(handoff.isEmpty())
         {
             redirect(exchange, "/");
             return;
         }
 
-        deliverSessionResponse(exchange, session.get(), existingSessionId, "/");
+        WebAuthenticationService.DesktopHandoffResult result = handoff.get();
+        String destination = switch(result.destination())
+        {
+            case DASHBOARD -> "/";
+            case CHANNEL_SETUP -> "/?view=channel-setup";
+        };
+        deliverSessionResponse(exchange, result.session(), existingSessionId, destination);
     }
 
     /** Retires the prior session only after the replacement session reaches the browser. */

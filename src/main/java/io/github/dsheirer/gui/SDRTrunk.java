@@ -74,6 +74,7 @@ import io.github.dsheirer.util.ThreadPool;
 import io.github.dsheirer.web.network.WebNetworkAddressDiscovery;
 import io.github.dsheirer.stats.WebServerRuntimeState;
 import io.github.dsheirer.vector.calibrate.CalibrationManager;
+import io.github.dsheirer.web.auth.WebAuthenticationService.DesktopHandoffDestination;
 import io.github.dsheirer.web.http.EmbeddedHttpServerPolicy;
 import java.awt.Desktop;
 import java.awt.Dimension;
@@ -422,7 +423,7 @@ public class SDRTrunk
                 }
                 if(mOpenWebAfterSetup)
                 {
-                    openWebInterface(false);
+                    openWebInterface(false, DesktopHandoffDestination.CHANNEL_SETUP);
                 }
             });
         }
@@ -1341,10 +1342,10 @@ public class SDRTrunk
 
     private void openWebInterface()
     {
-        openWebInterface(true);
+        openWebInterface(true, DesktopHandoffDestination.DASHBOARD);
     }
 
-    private void openWebInterface(boolean showFeedback)
+    private void openWebInterface(boolean showFeedback, DesktopHandoffDestination destination)
     {
         if(!mUserPreferences.getApplicationPreference().isStatsWebServerEnabled())
         {
@@ -1370,7 +1371,7 @@ public class SDRTrunk
                 throw new IOException("Desktop browser integration is unavailable");
             }
 
-            URI handoffUri = mStatsWebServerService.createDesktopAdministratorHandoffUri();
+            URI handoffUri = mStatsWebServerService.createDesktopAdministratorHandoffUri(destination);
 
             if(handoffUri == null)
             {

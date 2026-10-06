@@ -331,6 +331,19 @@ class WebAccessControllersTest
     @Test
     void desktopHandoffCreatesOneNormalAdministratorSession() throws Exception
     {
+        assertDesktopHandoff(WebAuthenticationService.DesktopHandoffDestination.DASHBOARD, "/");
+    }
+
+    @Test
+    void setupHandoffOpensChannelsWithoutAllowingBrowserControlledRedirects() throws Exception
+    {
+        assertDesktopHandoff(WebAuthenticationService.DesktopHandoffDestination.CHANNEL_SETUP,
+            "/?view=channel-setup");
+    }
+
+    private void assertDesktopHandoff(WebAuthenticationService.DesktopHandoffDestination destination,
+                                     String expectedLocation) throws Exception
+    {
         Path database = mTemporaryDirectory.resolve("desktop-handoff.sqlite");
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
@@ -355,7 +368,9 @@ class WebAccessControllersTest
         {
             URI origin = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
             HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
-            assertTrue(authenticationService.armDesktopAdministratorHandoff());
+            assertTrue(destination == WebAuthenticationService.DesktopHandoffDestination.DASHBOARD ?
+                authenticationService.armDesktopAdministratorHandoff() :
+                authenticationService.armDesktopAdministratorHandoff(destination));
             assertTrue(WebRequestSecurity.isLoopbackHost("127.0.0.1:" + server.getAddress().getPort(),
                 server.getAddress().getPort()));
             assertFalse(WebRequestSecurity.isLoopbackHost("attacker.example:" + server.getAddress().getPort(),
@@ -366,6 +381,16 @@ class WebAccessControllersTest
                 request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH +
                     "?target=https%3A%2F%2Fattacker.example").GET());
             assertEquals(400, arbitraryRedirect.statusCode());
+            HttpResponse<String> browserSelectedChannels = send(client,
+                request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH +
+                    "?view=channel-setup").GET());
+            assertEquals(400, browserSelectedChannels.statusCode());
+            HttpResponse<String> foreignOrigin = send(client,
+                request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH)
+                    .header("Origin", "https://attacker.example").GET());
+            assertEquals(403, foreignOrigin.statusCode());
+            assertEquals(0, authenticationService.getActiveSessionCount(),
+                "rejected requests must not redeem the pending desktop sign-in");
             for(String retiredPath : new String[]{"/channels", "/channels/" + configurationId, "/aliases",
                 "/aliases/12/41", "/streaming",
                 "/p25-bandplan-overrides/BEE00/49F/01/01/" + configurationId})
@@ -380,7 +405,7 @@ class WebAccessControllersTest
             HttpResponse<String> handoff = send(client,
                 request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH).GET());
             assertEquals(303, handoff.statusCode());
-            assertEquals("/", handoff.headers().firstValue("Location").orElseThrow());
+            assertEquals(expectedLocation, handoff.headers().firstValue("Location").orElseThrow());
             String setCookie = handoff.headers().firstValue("Set-Cookie").orElseThrow();
             assertTrue(setCookie.contains("HttpOnly"));
             assertTrue(setCookie.contains("SameSite=Strict"));

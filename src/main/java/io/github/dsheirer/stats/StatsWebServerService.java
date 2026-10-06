@@ -1325,10 +1325,17 @@ public class StatsWebServerService implements AutoCloseable
     /** Arms the one-use local administrator sign-in opened by the desktop Web button. */
     public synchronized URI createDesktopAdministratorHandoffUri()
     {
+        return createDesktopAdministratorHandoffUri(WebAuthenticationService.DesktopHandoffDestination.DASHBOARD);
+    }
+
+    /** Arms the same local sign-in with a fixed destination selected by the application. */
+    public synchronized URI createDesktopAdministratorHandoffUri(
+        WebAuthenticationService.DesktopHandoffDestination destination)
+    {
         StatsWebNavigationState navigation = getNavigationState();
 
         if(!navigation.running() || mWebAuthenticationService == null ||
-            !mWebAuthenticationService.armDesktopAdministratorHandoff())
+            !mWebAuthenticationService.armDesktopAdministratorHandoff(destination))
         {
             return null;
         }

@@ -30,6 +30,7 @@ import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
 import io.github.dsheirer.preference.application.WebCertificateMode;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
+import io.github.dsheirer.web.auth.WebAuthenticationService;
 import io.github.dsheirer.web.http.WebSessionHttpController;
 import io.github.dsheirer.web.http.CallMatchingHttpController;
 import io.github.dsheirer.web.http.ApplicationLogHttpController;
@@ -505,6 +506,20 @@ class StatsWebServerServiceLifecycleTest
             assertEquals("/", handoff.headers().firstValue("Location").orElseThrow());
             String setCookie = handoff.headers().firstValue("Set-Cookie").orElseThrow();
             String cookie = setCookie.substring(0, setCookie.indexOf(';'));
+            assertAuthenticated(client, initialOrigin, cookie, true);
+            assertAliasRoutes(client, initialOrigin, cookie, aliasListId);
+
+            URI setupHandoffUri = service.createDesktopAdministratorHandoffUri(
+                WebAuthenticationService.DesktopHandoffDestination.CHANNEL_SETUP);
+            assertEquals(handoffUri, setupHandoffUri,
+                "the setup destination must be held on the server rather than exposed in the handoff URL");
+            HttpResponse<String> setupHandoff = client.send(HttpRequest.newBuilder(setupHandoffUri)
+                .timeout(Duration.ofSeconds(10)).header("Cookie", cookie).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+            assertEquals(303, setupHandoff.statusCode());
+            assertEquals("/?view=channel-setup", setupHandoff.headers().firstValue("Location").orElseThrow());
+            setCookie = setupHandoff.headers().firstValue("Set-Cookie").orElseThrow();
+            cookie = setCookie.substring(0, setCookie.indexOf(';'));
             assertAuthenticated(client, initialOrigin, cookie, true);
             assertAliasRoutes(client, initialOrigin, cookie, aliasListId);
 
