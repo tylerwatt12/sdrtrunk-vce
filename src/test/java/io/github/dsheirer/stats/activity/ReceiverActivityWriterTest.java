@@ -23,7 +23,7 @@ import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -466,86 +466,63 @@ class ReceiverActivityWriterTest
     }
 
     @Test
-    void startupBacklogUsesOnePassAndLiveObservationsAreWrittenBeforeItDrains() throws Exception
+    void startupWritesObservationsBeforeAnyRetentionEvenWhenPersistedCleanupIsOverdue() throws Exception
     {
         Path database = createDatabase(mTemporaryFolder.resolve("startup-retention.sqlite"));
         insertConfiguredChannel(database);
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
         {
-            statement.execute("PRAGMA foreign_keys=ON");
+            seedExpiredActivity(statement, 5_000, 1);
+            ReceiverActivitySchema.updateStatus(connection, "last_retention_cleanup_ms", "1");
+            ReceiverActivitySchema.updateStatus(connection, "last_maintenance_ms", "123");
+            statement.executeUpdate("CREATE TABLE test_retention_write_order(written_records INTEGER NOT NULL)");
             statement.executeUpdate("""
-                INSERT INTO receiver_channel(id, configuration_id, first_seen_ms, last_seen_ms)
-                VALUES (1, '%s', 1, 1)
-                """.formatted(CONFIGURATION_ID));
-            statement.executeUpdate("""
-                WITH RECURSIVE n(value) AS (VALUES(1) UNION ALL SELECT value + 1 FROM n WHERE value < 5000)
-                INSERT INTO receiver_activity_event(channel_id, observed_at_ms, action_code)
-                SELECT 1, value, 4 FROM n
+                CREATE TRIGGER test_retention_after_write AFTER DELETE ON receiver_activity_event
+                BEGIN
+                    INSERT INTO test_retention_write_order VALUES (
+                        coalesce((SELECT CAST(value AS INTEGER) FROM statistics_status
+                            WHERE key='records_written'), 0));
+                END
                 """);
         }
 
         ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 200, 100, 0);
-        writer.start();
-        long now = System.currentTimeMillis();
-        for(int index = 0; index < 100; index++)
-        {
-            writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, now + index));
-        }
-
-        //Windows CI can spend more than five seconds on the bounded startup retention pass before it reaches the
-        //already-queued live observations.  This test verifies ordering, not a host-specific SQLite latency target.
-        awaitWritten(writer, 100, 30);
-        assertEquals(100, writer.getWrittenRecords());
-        assertEquals(ReceiverActivityStatus.State.RUNNING, writer.getStatus().state());
-        writer.close();
-
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
-        {
-            assertTrue(scalar(connection,
-                "SELECT count(*) FROM receiver_activity_event WHERE observed_at_ms < 10000") > 0,
-                "startup must not drain a large expired backlog before serving the live queue");
-        }
-    }
-
-    @Test
-    void deferredStartupOptimizationStillWritesObservationsAndDoesNotRetryEveryBatch() throws Exception
-    {
-        Path database = createDatabase(mTemporaryFolder.resolve("startup-optimization.sqlite"));
-        insertConfiguredChannel(database);
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
-            Statement statement = connection.createStatement())
-        {
-            statement.execute("PRAGMA foreign_keys=ON");
-            statement.executeUpdate("""
-                INSERT INTO receiver_channel(id, configuration_id, first_seen_ms, last_seen_ms)
-                VALUES (1, '%s', 1, 1)
-                """.formatted(CONFIGURATION_ID));
-            statement.executeUpdate("""
-                WITH RECURSIVE n(value) AS (VALUES(1) UNION ALL SELECT value+1 FROM n WHERE value<5000)
-                INSERT INTO receiver_activity_event(channel_id, observed_at_ms, action_code)
-                SELECT 1, %d+value, 4 FROM n
-                """.formatted(System.currentTimeMillis()));
-        }
-
-        AtomicInteger clockReads = new AtomicInteger();
-        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 64, 1, 0, 25, 5000,
-            ReceiverActivityMaintenanceTest.expiredClock(clockReads));
         try
         {
             writer.start();
-            for(int index = 0; index < 50; index++)
+            awaitState(writer, ReceiverActivityStatus.State.RUNNING);
+            try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
             {
-                assertTrue(writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT,
-                    System.currentTimeMillis() + index)));
+                assertEquals(5_000, scalar(connection, "SELECT count(*) FROM receiver_activity_event"),
+                    "an initially idle writer must not run startup retention");
             }
-            awaitWritten(writer, 50, 30);
-            assertTrue(clockReads.get() > 1, "startup optimization must actually reach its deadline callback");
-            int attemptedClockReads = clockReads.get();
-            assertTrue(writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, System.currentTimeMillis())));
-            awaitWritten(writer, 51);
-            assertEquals(attemptedClockReads, clockReads.get(), "deferred optimization must yield until its next schedule");
-            assertEquals(ReceiverActivityStatus.State.RUNNING, writer.getStatus().state());
+            long now = System.currentTimeMillis();
+            for(int index = 0; index < 100; index++)
+            {
+                assertTrue(writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, now + index)));
+            }
+            awaitWritten(writer, 100, 30);
+            try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+            {
+                assertEquals(5_000, scalar(connection,
+                    "SELECT count(*) FROM receiver_activity_event WHERE observed_at_ms < 10000"));
+                assertEquals(1, ReceiverActivitySchema.readStatusLong(connection, "last_retention_cleanup_ms"));
+                assertEquals(123, ReceiverActivitySchema.readStatusLong(connection, "last_maintenance_ms"));
+                assertEquals(0, scalar(connection, "SELECT count(*) FROM test_retention_write_order"));
+            }
+
+            //Make the existing hourly timer due without a production clock seam or a one-hour test wait.
+            setLastRetentionCleanup(writer, System.currentTimeMillis() - TimeUnit.HOURS.toMillis(1) - 1_000);
+            awaitRetentionCleanup(database);
+            try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+            {
+                assertTrue(scalar(connection, "SELECT count(*) FROM test_retention_write_order") > 0);
+                assertTrue(scalar(connection, "SELECT min(written_records) FROM test_retention_write_order") >= 100,
+                    "routine expiry must begin only after the first observations have committed");
+                assertEquals(123, ReceiverActivitySchema.readStatusLong(connection, "last_maintenance_ms"),
+                    "scheduled retention must not become automatic optimization");
+            }
             assertEquals(0, writer.getDroppedRecords());
             assertNull(writer.getStatus().lastError());
         }
@@ -553,9 +530,128 @@ class ReceiverActivityWriterTest
         {
             writer.close();
         }
+    }
+
+    @Test
+    void scheduledRetentionKeepsHourlyAndFiveSecondCatchupAndSkipsShutdownCleanup() throws Exception
+    {
+        Path database = createDatabase(mTemporaryFolder.resolve("scheduled-retention.sqlite"));
+        insertConfiguredChannel(database);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true);
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA foreign_keys=ON");
+            seedExpiredActivity(statement, 5_000, 1);
+            ReceiverActivitySchema.updateStatus(connection, "last_maintenance_ms", "123");
+            setWriterRunning(writer, true);
+            setLastRetentionCleanup(writer, System.currentTimeMillis());
+            runScheduledRetention(writer, connection);
+            assertEquals(5_000, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
+
+            setLastRetentionCleanup(writer, System.currentTimeMillis() - TimeUnit.HOURS.toMillis(1) - 1_000);
+            runScheduledRetention(writer, connection);
+            long afterHourly = scalar(connection, "SELECT count(*) FROM receiver_activity_event");
+            assertTrue(afterHourly < 5_000 && afterHourly >= 4_000, "an hourly pass must stay bounded");
+            runScheduledRetention(writer, connection);
+            assertEquals(afterHourly, scalar(connection, "SELECT count(*) FROM receiver_activity_event"),
+                "a backlog must wait before its next pass");
+
+            setLastRetentionCleanup(writer, System.currentTimeMillis() - TimeUnit.SECONDS.toMillis(6));
+            runScheduledRetention(writer, connection);
+            long afterCatchup = scalar(connection, "SELECT count(*) FROM receiver_activity_event");
+            assertTrue(afterCatchup < afterHourly && afterCatchup >= afterHourly - 1_000,
+                "the five-second backlog schedule must continue expiry without waiting another hour");
+            assertEquals(123, ReceiverActivitySchema.readStatusLong(connection, "last_maintenance_ms"));
+            assertEquals(0, scalar(connection, """
+                SELECT count(*) FROM sqlite_stat1 WHERE idx='idx_receiver_activity_event_channel_time'
+                """), "scheduled retention must leave eligible planner statistics untouched");
+
+            setWriterRunning(writer, false);
+            setLastRetentionCleanup(writer, 0);
+            runScheduledRetention(writer, connection);
+            assertEquals(afterCatchup, scalar(connection, "SELECT count(*) FROM receiver_activity_event"),
+                "shutdown must finish observations without starting routine housekeeping");
+        }
+        finally
+        {
+            setWriterRunning(writer, false);
+        }
+    }
+
+    @Test
+    void reducingRetentionKeepsPromptCatchupWithoutStartupMaintenance() throws Exception
+    {
+        Path database = createDatabase(mTemporaryFolder.resolve("reduced-retention.sqlite"));
+        insertConfiguredChannel(database);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true);
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            seedExpiredActivity(statement, 50, System.currentTimeMillis() - TimeUnit.DAYS.toMillis(2));
+            statement.executeUpdate("INSERT INTO receiver_activity_event(channel_id, observed_at_ms, action_code) " +
+                "VALUES (1, " + System.currentTimeMillis() + ", 4)");
+            setWriterRunning(writer, true);
+            setLastRetentionCleanup(writer, System.currentTimeMillis() - TimeUnit.SECONDS.toMillis(6));
+            runScheduledRetention(writer, connection);
+            assertEquals(51, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
+
+            writer.setRetentionDays(1);
+            runScheduledRetention(writer, connection);
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
+            assertEquals(1, ReceiverActivitySchema.readStatusLong(connection, "retention_days"));
+        }
+        finally
+        {
+            setWriterRunning(writer, false);
+        }
+    }
+
+    private static void seedExpiredActivity(Statement statement, int rows, long observedAt) throws Exception
+    {
+        statement.executeUpdate("""
+            INSERT INTO receiver_channel(id, configuration_id, first_seen_ms, last_seen_ms)
+            VALUES (1, '%s', 1, 1)
+            """.formatted(CONFIGURATION_ID));
+        statement.executeUpdate("""
+            WITH RECURSIVE n(value) AS (VALUES(1) UNION ALL SELECT value+1 FROM n WHERE value<%d)
+            INSERT INTO receiver_activity_event(channel_id, observed_at_ms, action_code)
+            SELECT 1, %d+value, 4 FROM n
+            """.formatted(rows, observedAt));
+    }
+
+    private static void setLastRetentionCleanup(ReceiverActivityWriter writer, long time) throws Exception
+    {
+        var field = ReceiverActivityWriter.class.getDeclaredField("mLastRetentionCleanup");
+        field.setAccessible(true);
+        field.setLong(writer, time);
+    }
+
+    private static void setWriterRunning(ReceiverActivityWriter writer, boolean running) throws Exception
+    {
+        var field = ReceiverActivityWriter.class.getDeclaredField("mRunning");
+        field.setAccessible(true);
+        ((AtomicBoolean)field.get(writer)).set(running);
+    }
+
+    private static void runScheduledRetention(ReceiverActivityWriter writer, Connection connection) throws Exception
+    {
+        var method = ReceiverActivityWriter.class.getDeclaredMethod("runScheduledRetention", Connection.class);
+        method.setAccessible(true);
+        method.invoke(writer, connection);
+    }
+
+    private static void awaitRetentionCleanup(Path database) throws Exception
+    {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            assertEquals(5_051, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
+            while(ReceiverActivitySchema.readStatusLong(connection, "last_retention_cleanup_ms") <= 1 &&
+                System.nanoTime() < deadline)
+            {
+                Thread.sleep(10);
+            }
+            assertTrue(ReceiverActivitySchema.readStatusLong(connection, "last_retention_cleanup_ms") > 1);
         }
     }
 

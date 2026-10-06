@@ -61,7 +61,6 @@ class ReceiverActivityWriter implements AutoCloseable
     private static final long FORCED_SHUTDOWN_WAIT_MILLISECONDS = 1000;
     private static final long RETENTION_CLEANUP_INTERVAL_MILLISECONDS = TimeUnit.HOURS.toMillis(1);
     private static final long RETENTION_BACKLOG_RETRY_MILLISECONDS = TimeUnit.SECONDS.toMillis(5);
-    private static final long MAINTENANCE_INTERVAL_MILLISECONDS = TimeUnit.DAYS.toMillis(1);
     private static final long RESOLVED_CALL_RETENTION_MILLISECONDS = TimeUnit.HOURS.toMillis(24);
     private static final int MAXIMUM_RESOLVED_CALLS = 65_536;
 
@@ -71,7 +70,6 @@ class ReceiverActivityWriter implements AutoCloseable
     private final long mBatchCollectionMilliseconds;
     private final int mDatabaseBusyTimeoutMilliseconds;
     private final long mGracefulDrainMilliseconds;
-    private final LongSupplier mMaintenanceNanoTime;
     private final ConcurrentLinkedQueue<MaintenanceCommand> mMaintenanceQueue = new ConcurrentLinkedQueue<>();
     /* Owned exclusively by the background writer; receiver producers never inspect cleanup plans. */
     private final Deque<StatsDatabaseMaintenanceRequest> mDeletionJobs = new ArrayDeque<>();
@@ -106,7 +104,6 @@ class ReceiverActivityWriter implements AutoCloseable
     private volatile int mRetentionDays;
     private volatile boolean mDetailedEventHistoryEnabled;
     private volatile long mLastRetentionCleanup;
-    private volatile long mLastMaintenance;
     private volatile ReceiverActivityStatus.State mState = ReceiverActivityStatus.State.STOPPED;
     private volatile String mLastError;
 
@@ -132,21 +129,12 @@ class ReceiverActivityWriter implements AutoCloseable
                          int batchSize, long batchCollectionMilliseconds, int databaseBusyTimeoutMilliseconds,
                          long gracefulDrainMilliseconds)
     {
-        this(databasePath, retentionDays, detailedEventHistoryEnabled, queueCapacity, batchSize,
-            batchCollectionMilliseconds, databaseBusyTimeoutMilliseconds, gracefulDrainMilliseconds, System::nanoTime);
-    }
-
-    ReceiverActivityWriter(Path databasePath, int retentionDays, boolean detailedEventHistoryEnabled, int queueCapacity,
-                         int batchSize, long batchCollectionMilliseconds, int databaseBusyTimeoutMilliseconds,
-                         long gracefulDrainMilliseconds, LongSupplier maintenanceNanoTime)
-    {
         mDatabasePath = databasePath;
         mQueue = new ArrayBlockingQueue<>(Math.max(1, queueCapacity));
         mBatchSize = Math.max(1, batchSize);
         mBatchCollectionMilliseconds = Math.max(0, batchCollectionMilliseconds);
         mDatabaseBusyTimeoutMilliseconds = Math.max(1, databaseBusyTimeoutMilliseconds);
         mGracefulDrainMilliseconds = Math.max(0, gracefulDrainMilliseconds);
-        mMaintenanceNanoTime = java.util.Objects.requireNonNull(maintenanceNanoTime);
         setRetentionDays(retentionDays);
         setDetailedEventHistoryEnabled(detailedEventHistoryEnabled);
     }
@@ -455,7 +443,8 @@ class ReceiverActivityWriter implements AutoCloseable
         try(Connection connection = openConnection())
         {
             restoreStatus(connection);
-            runMaintenanceWithRetry(connection);
+            //Start observations immediately; the first routine retention pass is one hour after writer startup.
+            mLastRetentionCleanup = System.currentTimeMillis();
 
             updateStatusWithRetry(connection, "database_path", mDatabasePath.toString());
 
@@ -480,7 +469,7 @@ class ReceiverActivityWriter implements AutoCloseable
                 if(command != null && nextSequence > command.observationBarrierSequence())
                 {
                     processNextMaintenanceCommand(connection);
-                    runScheduledMaintenance(connection);
+                    runScheduledRetention(connection);
                     continue;
                 }
 
@@ -565,7 +554,7 @@ class ReceiverActivityWriter implements AutoCloseable
 
                 persistObservationDropsIfChanged(connection);
                 processDeletionPass(connection);
-                runScheduledMaintenance(connection);
+                runScheduledRetention(connection);
             }
 
             if(!batch.isEmpty())
@@ -684,20 +673,17 @@ class ReceiverActivityWriter implements AutoCloseable
         }
     }
 
-    private void runScheduledMaintenance(Connection connection) throws SQLException, InterruptedException
+    private void runScheduledRetention(Connection connection) throws SQLException, InterruptedException
     {
+        if(!mRunning.get())
+        {
+            return; //Shutdown drains observations and explicit commands without starting routine cleanup.
+        }
         long now = System.currentTimeMillis();
         boolean scheduled = now - mLastRetentionCleanup >= RETENTION_CLEANUP_INTERVAL_MILLISECONDS;
         boolean backlogDue = mRetentionCleanupRequested.get() &&
             now - mLastRetentionCleanup >= RETENTION_BACKLOG_RETRY_MILLISECONDS;
-        boolean maintenanceDue = now - mLastMaintenance >= MAINTENANCE_INTERVAL_MILLISECONDS;
-
-        if(maintenanceDue)
-        {
-            mRetentionCleanupRequested.getAndSet(false);
-            runMaintenanceWithRetry(connection);
-        }
-        else if(scheduled || backlogDue)
+        if(scheduled || backlogDue)
         {
             mRetentionCleanupRequested.getAndSet(false);
             cleanupRetentionWithRetry(connection);
@@ -735,7 +721,6 @@ class ReceiverActivityWriter implements AutoCloseable
                     request.operation() == ReceiverActivityMaintenance.Operation.SHRINK)
                 {
                     mLastRetentionCleanup = System.currentTimeMillis();
-                    mLastMaintenance = System.currentTimeMillis();
                 }
                 else if(request.operation() == ReceiverActivityMaintenance.Operation.RESET_STATS)
                 {
@@ -988,38 +973,6 @@ class ReceiverActivityWriter implements AutoCloseable
             try
             {
                 ReceiverActivitySchema.updateStatus(connection, key, value);
-                return;
-            }
-            catch(SQLException e)
-            {
-                if(!isDatabaseBusy(e) || !pauseBeforeDatabaseBusyRetry())
-                {
-                    throw e;
-                }
-            }
-        }
-    }
-
-    private void runMaintenanceWithRetry(Connection connection) throws SQLException, InterruptedException
-    {
-        while(true)
-        {
-            try
-            {
-                ReceiverActivityMaintenance.AutomaticResult result =
-                    ReceiverActivityMaintenance.runAutomaticMaintenancePass(connection, mRetentionDays,
-                        mMaintenanceNanoTime);
-                if(result.moreWorkLikely())
-                {
-                    mRetentionCleanupRequested.set(true);
-                }
-                mLastRetentionCleanup = System.currentTimeMillis();
-                //An optional optimization timeout is an attempted daily pass, not a reason to retry every batch.
-                mLastMaintenance = System.currentTimeMillis();
-                if(result.optimizationDeferred())
-                {
-                    mLog.debug("Automatic statistics optimization deferred to keep observations moving");
-                }
                 return;
             }
             catch(SQLException e)
