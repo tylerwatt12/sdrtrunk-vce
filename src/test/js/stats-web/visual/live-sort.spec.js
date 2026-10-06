@@ -404,6 +404,12 @@ async function expectNoVerticalGlyphClipping(page) {
   expect(clipped, 'Dense rows must retain room for the unchanged text glyphs').toEqual([]);
 }
 
+async function expectRebuiltColumnChooser(chooser, previousId) {
+  await expect(chooser).not.toHaveAttribute('id', previousId);
+  await expect(chooser).toBeVisible();
+  await expect(chooser.locator(':focus')).toHaveCount(1);
+}
+
 for (const { theme, width } of [{ theme: 'light', width: 1280 }, { theme: 'dark', width: 390 }]) {
   test(`Live column visibility and table reset preserve dense rows in ${theme} at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
@@ -424,15 +430,22 @@ for (const { theme, width } of [{ theme: 'light', width: 1280 }, { theme: 'dark'
     await section.getByRole('button', { name: 'Choose table columns', exact: true }).click();
     const chooser = page.getByRole('dialog', { name: 'Table columns', exact: true });
     const visibility = chooser.getByRole('checkbox', { name: 'Show Frequency MHz column', exact: true });
+    let chooserId = await chooser.getAttribute('id');
     await visibility.uncheck();
     await expect(table.locator('thead th[data-column="frequency"]')).toHaveCount(0);
+    await expectRebuiltColumnChooser(chooser, chooserId);
     await expectDenseSelection();
+    chooserId = await chooser.getAttribute('id');
     await visibility.check();
     await expect(table.locator('thead th[data-column="frequency"]')).toHaveCount(1);
+    await expectRebuiltColumnChooser(chooser, chooserId);
     await expectDenseSelection();
     expect(await liveCallContents(page)).toEqual(contents);
+    chooserId = await chooser.getAttribute('id');
     await chooser.getByRole('button', { name: 'Reset this table', exact: true }).click();
     await expect.poll(() => app.preferences().tables['live-channels']).toBeUndefined();
+    // Saving reaches the fixture before the replacement table and popover regain focus.
+    await expectRebuiltColumnChooser(chooser, chooserId);
     await expectDenseSelection();
     expect(await liveCallContents(page)).toEqual(contents);
     expect(app.receiverWrites).toEqual([]);
@@ -441,6 +454,90 @@ for (const { theme, width } of [{ theme: 'light', width: 1280 }, { theme: 'dark'
     await page.screenshot({ path: test.info().outputPath('live-dense-column-reset.png') });
   });
 }
+
+test('Escape during a pending Live table reset keeps the rebuilt chooser closed', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const app = await openLive(page, 'dark', { live_row_density: 'dense' }, densitySnapshot());
+  const table = liveTable(page);
+  await expect(table.locator('tbody tr[data-id]')).toHaveCount(36);
+  await table.locator('tbody tr[data-id="call-2"] [data-column="status"]').click();
+  const section = page.locator('.live-channels-section');
+  await section.getByRole('button', { name: 'Choose table columns', exact: true }).click();
+  const chooser = page.getByRole('dialog', { name: 'Table columns', exact: true });
+  const visibility = chooser.getByRole('checkbox', { name: 'Show Frequency MHz column', exact: true });
+  const chooserId = await chooser.getAttribute('id');
+  await visibility.uncheck();
+  await expectRebuiltColumnChooser(chooser, chooserId);
+
+  let releaseReset;
+  let receiveReset;
+  const resetHeld = new Promise(resolve => { releaseReset = resolve; });
+  const resetReceived = new Promise(resolve => { receiveReset = resolve; });
+  await page.route('**/api/v1/me/preferences', async route => {
+    if (route.request().method() === 'PUT' &&
+        !Object.hasOwn(route.request().postDataJSON().tables, 'live-channels')) {
+      receiveReset();
+      await resetHeld;
+    }
+    await route.fallback();
+  });
+  try {
+    const reset = chooser.getByRole('button', { name: 'Reset this table', exact: true });
+    await reset.click();
+    await resetReceived;
+    await expect(reset).toBeDisabled();
+    await page.keyboard.press('Escape');
+    await expect(chooser).toBeHidden();
+    releaseReset();
+    await expect.poll(() => app.preferences().tables['live-channels']).toBeUndefined();
+    await expect(section.locator('.table-layout-reset')).toBeEnabled();
+    await expect(chooser).toBeHidden();
+    await expect(table.locator('thead th[data-column="frequency"]')).toHaveCount(1);
+    await expect(table).toHaveAttribute('data-row-density', 'dense');
+    await expect(table.locator('tbody tr[data-id]')).toHaveCount(36);
+    await expect(table.locator('tbody tr.selected')).toHaveAttribute('data-id', 'call-2');
+    expect(app.receiverWrites).toEqual([]);
+  } finally {
+    releaseReset();
+  }
+});
+
+test('Escape before a reset chooser reopens keeps it closed', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const app = await openLive(page, 'dark', { live_row_density: 'dense' }, densitySnapshot());
+  const table = liveTable(page);
+  await expect(table.locator('tbody tr[data-id]')).toHaveCount(36);
+  await table.locator('tbody tr[data-id="call-2"] [data-column="status"]').click();
+  const section = page.locator('.live-channels-section');
+  await section.getByRole('button', { name: 'Choose table columns', exact: true }).click();
+  const chooser = page.getByRole('dialog', { name: 'Table columns', exact: true });
+  const chooserId = await chooser.getAttribute('id');
+  await chooser.getByRole('checkbox', { name: 'Show Frequency MHz column', exact: true }).uncheck();
+  await expectRebuiltColumnChooser(chooser, chooserId);
+  await page.evaluate(() => {
+    const requestFrame = window.requestAnimationFrame.bind(window);
+    window.requestAnimationFrame = (callback) => {
+      if (callback.toString().includes('panel.showPopover()')) {
+        window.fixtureReleaseLayoutReopen = () => new Promise(resolve => requestFrame(time => {
+          callback(time);
+          resolve();
+        }));
+        return requestFrame(() => {});
+      }
+      return requestFrame(callback);
+    };
+  });
+  await chooser.getByRole('button', { name: 'Reset this table', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => typeof window.fixtureReleaseLayoutReopen)).toBe('function');
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => window.fixtureReleaseLayoutReopen());
+  await expect(chooser).toBeHidden();
+  await expect(table.locator('thead th[data-column="frequency"]')).toHaveCount(1);
+  await expect(table).toHaveAttribute('data-row-density', 'dense');
+  await expect(table.locator('tbody tr[data-id]')).toHaveCount(36);
+  await expect(table.locator('tbody tr.selected')).toHaveAttribute('data-id', 'call-2');
+  expect(app.receiverWrites).toEqual([]);
+});
 
 for (const theme of ['light', 'dark']) {
   for (const width of [1280, 390]) {

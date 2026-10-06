@@ -3427,23 +3427,47 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
       }
     });
     const dropdownCleanup = bindAnchoredDropdown(trigger, panel, activeRenderController?.signal);
+    let reopenFrame = null;
+    let reopenPending = false;
+    let reopenListeners = null;
+    const renderSignal = activeRenderController?.signal;
+    const cancelPendingReopen = () => {
+      reopenPending = false;
+      if (reopenFrame !== null) window.cancelAnimationFrame(reopenFrame);
+      reopenFrame = null;
+      reopenListeners?.abort();
+      reopenListeners = null;
+      renderSignal?.removeEventListener('abort', cancelPendingReopen);
+    };
     tableController.layoutMenuCleanup = () => {
+      cancelPendingReopen();
       dropdownCleanup();
       chooser.remove();
     };
     options.layoutMenuHost.append(chooser);
-    if (options.layoutMenuOpen) window.requestAnimationFrame(() => {
-      if (!panel.isConnected || typeof panel.showPopover !== 'function') return;
-      panel.showPopover();
-      const controls = [...panel.querySelectorAll('[data-layout-focus-key]')];
-      const requested = options.layoutMenuFocus;
-      const focusTarget = controls.find((control) => !control.disabled &&
-        control.dataset.layoutFocusKey === requested?.key) ||
-        controls.find((control) => !control.disabled && requested?.columnId &&
-          control.dataset.layoutColumnId === requested.columnId) ||
-        controls.find((control) => !control.disabled);
-      if (focusTarget instanceof HTMLElement) focusTarget.focus();
-    });
+    if (options.layoutMenuOpen && !renderSignal?.aborted) {
+      reopenPending = true;
+      reopenListeners = new AbortController();
+      window.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') cancelPendingReopen();
+      }, { capture: true, signal: reopenListeners.signal });
+      renderSignal?.addEventListener('abort', cancelPendingReopen, { once: true });
+      reopenFrame = window.requestAnimationFrame(() => {
+        const reopen = reopenPending;
+        reopenFrame = null;
+        cancelPendingReopen();
+        if (!reopen || !panel.isConnected || typeof panel.showPopover !== 'function') return;
+        panel.showPopover();
+        const controls = [...panel.querySelectorAll('[data-layout-focus-key]')];
+        const requested = options.layoutMenuFocus;
+        const focusTarget = controls.find((control) => !control.disabled &&
+          control.dataset.layoutFocusKey === requested?.key) ||
+          controls.find((control) => !control.disabled && requested?.columnId &&
+            control.dataset.layoutColumnId === requested.columnId) ||
+          controls.find((control) => !control.disabled);
+        if (focusTarget instanceof HTMLElement) focusTarget.focus();
+      });
+    }
   }
   wrapper.append(element);
   const applyWidths = () => {
