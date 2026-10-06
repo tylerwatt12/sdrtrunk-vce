@@ -12,7 +12,7 @@ import { formatP25RadioIdentifier, p25ServingSystemKey } from './core/radio-labe
 import * as pageLifecycle from './core/page-lifecycle.js';
 import { installIconHints } from './core/icon-hints.js?v=4';
 import { createFormWorkflow } from './core/form-workflows.js?v=1';
-import { createChannelSetupGuide } from './features/channel-setup-guide.js?v=2';
+import { createChannelSetupGuide } from './features/channel-setup-guide.js?v=3';
 import { applyThemeHue } from './core/theme.js?v=1';
 import * as browsingWorkflows from './core/browsing-workflows.js?v=1';
 import {
@@ -714,6 +714,7 @@ function anonymousAccessSession() {
     configured: false,
     authenticated: false,
     username: null,
+    guideDismissalScope: null,
     tier: 'PUBLIC',
     primary: false,
     csrfToken: null,
@@ -729,6 +730,8 @@ function normalizedAccessSession(value) {
     configured: value?.configured === true,
     authenticated,
     username: authenticated ? String(value.username || '').trim() : null,
+    guideDismissalScope: authenticated && typeof value.guide_dismissal_scope === 'string' ?
+      value.guide_dismissal_scope.trim() || null : null,
     tier: authenticated ? accessTierFromWire(value?.tier) || 'PUBLIC' : 'PUBLIC',
     primary: authenticated && value?.primary === true,
     csrfToken: authenticated && typeof value.csrf_token === 'string' ? value.csrf_token : null,
@@ -23172,6 +23175,7 @@ async function renderModernChannelCatalog(renderContext) {
       }), 'ui-button ui-button-secondary') : null;
     if (findSystemsButton) toolbar.append(findSystemsButton);
     const setupGuide = createChannelSetupGuide({ ui: { node, openReadOnlyModal }, account: accessSession.username,
+      dismissalScope: accessSession.guideDismissalScope,
       channels: () => state.catalog.channels,
       isCurrent: () => renderIsCurrent(renderContext) && wrapper.isConnected,
       canPresent: () => !activeReadOnlyModal,

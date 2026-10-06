@@ -141,6 +141,7 @@ class WebAccessControllersTest
             assertEquals(200, anonymousSession.statusCode());
             assertTrue(anonymous.get("configured").booleanValue());
             assertFalse(anonymous.get("authenticated").booleanValue());
+            assertFalse(anonymous.has("guide_dismissal_scope"));
             assertEquals("public", anonymous.get("tier").textValue());
             assertFalse(anonymous.at("/capabilities/dashboard").booleanValue());
             assertTrue(anonymous.at("/capabilities/web-access").booleanValue());
@@ -153,6 +154,7 @@ class WebAccessControllersTest
                 .GET());
             assertEquals(200, staleSession.statusCode());
             assertFalse(data(staleSession).get("authenticated").booleanValue());
+            assertFalse(data(staleSession).has("guide_dismissal_scope"));
             assertTrue(staleSession.headers().firstValue("Set-Cookie").orElse("").contains("Max-Age=0"));
 
             HttpResponse<String> anonymousProtected = send(client, request(origin, "/protected").GET());
@@ -187,6 +189,10 @@ class WebAccessControllersTest
             assertEquals("admin", authenticatedSession.get("tier").textValue());
             assertEquals("admin", authenticatedSession.get("username").textValue());
             assertTrue(authenticatedSession.get("primary").booleanValue());
+            var primaryAccount = accessService.primaryAdmin().orElseThrow();
+            String guideScope = "account-" + primaryAccount.id() + "-" + primaryAccount.createdAtEpochMillis();
+            assertEquals(guideScope, authenticatedSession.get("guide_dismissal_scope").textValue());
+            assertEquals(guideScope, admin.body().get("guide_dismissal_scope").textValue());
             assertEquals(admin.csrfToken(), authenticatedSession.get("csrf_token").textValue());
             assertTrue(authenticatedSession.at("/capabilities/admin-users").booleanValue());
             assertFalse(authenticatedSession.has("expires_at_epoch_millis"));
@@ -231,6 +237,7 @@ class WebAccessControllersTest
                 .POST(HttpRequest.BodyPublishers.ofString(createBody)));
             assertEquals(201, created.statusCode());
             assertEquals("listener", data(created).get("username").textValue());
+            assertFalse(data(created).has("guide_dismissal_scope"));
             assertEquals("user", data(created).get("tier").textValue());
             assertTrue(data(created).has("password_changed_at_epoch_millis"));
             assertFalse(data(created).has("passwordChangedAtEpochMillis"));
@@ -303,6 +310,8 @@ class WebAccessControllersTest
                 .header("Cookie", listener.cookieHeader()).GET()).statusCode());
             Login replacementLogin = login(client, origin, "listener", replacementPassword);
             assertEquals("user", replacementLogin.body().get("tier").textValue());
+            assertEquals(listenerSession.get("guide_dismissal_scope").textValue(),
+                replacementLogin.body().get("guide_dismissal_scope").textValue());
 
             HttpResponse<String> primaryMutation = send(client,
                 mutation(origin, "/api/v1/admin/users/admin", admin)

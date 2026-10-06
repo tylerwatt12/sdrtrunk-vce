@@ -14,7 +14,10 @@ async function main() {
     assert.equal(hasUsableSetupTuner(catalog), false, 'Unknown, busy, and recording tuners cannot trigger setup.');
   }
   assert.equal(hasUsableSetupTuner({ tuners: [{ eligible: true, source_type: 'receiver' }] }), true);
-  assert.notEqual(channelSetupGuideStorageKey('admin'), channelSetupGuideStorageKey('operator'));
+  assert.notEqual(channelSetupGuideStorageKey('admin', 'account-1-100'), channelSetupGuideStorageKey('operator', 'account-1-100'));
+  assert.notEqual(channelSetupGuideStorageKey('admin', 'account-1-100'), channelSetupGuideStorageKey('admin', 'account-1-200'),
+    'A fresh installation with the same username must have its own dismissal.');
+  assert.equal(channelSetupGuideStorageKey('admin'), null, 'Unknown account scope must not read an older persistent dismissal.');
 
   let loads = 0;
   let current = true;
@@ -22,7 +25,7 @@ async function main() {
   let resolveTuners;
   const storage = { getItem: () => null };
   const config = { ui: { openReadOnlyModal: () => assert.fail('A stale or invalid state must not present a guide.') },
-    account: 'async-test', channels: () => catalogChannels, isCurrent: () => current,
+    account: 'async-test', dismissalScope: 'account-1-100', channels: () => catalogChannels, isCurrent: () => current,
     canPresent: () => true, storage, newChannelButton: {}, findSystemsButton: {},
     loadTuners: () => { loads++; return new Promise(resolve => { resolveTuners = resolve; }); } };
   const guide = createChannelSetupGuide(config);
@@ -46,6 +49,15 @@ async function main() {
   }
   await createChannelSetupGuide({ ...config, channels: () => [], storage: { getItem: () => '1' },
     loadTuners: () => assert.fail('Remembered dismissal must prevent the tuner request.') }).refresh();
+  const oldKey = channelSetupGuideStorageKey(config.account, config.dismissalScope);
+  let freshLoads = 0;
+  await createChannelSetupGuide({ ...config, channels: () => [], dismissalScope: 'account-1-200',
+    storage: { getItem: key => key === oldKey || key === `sdrtrunk-vce-channel-setup-guide-dismissed:${config.account}` ? '1' : null },
+    loadTuners: async () => { freshLoads++; return { tuners: [] }; } }).refresh();
+  assert.equal(freshLoads, 1, 'Old-install and legacy username-only dismissals must not suppress readiness checks.');
+  await createChannelSetupGuide({ ...config, channels: () => [], dismissalScope: null,
+    storage: { getItem: () => assert.fail('Without a known account scope, persistent dismissal must not be consulted.') },
+    loadTuners: async () => ({ tuners: [] }) }).refresh();
   await createChannelSetupGuide({ ...config, channels: () => [], findSystemsButton: null,
     loadTuners: () => assert.fail('Unavailable search access must prevent the tuner request.') }).refresh();
   await createChannelSetupGuide({ ...config, channels: () => [],

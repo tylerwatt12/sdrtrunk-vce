@@ -350,6 +350,7 @@ public final class WebSessionHttpController
         {
             response.put("username", account.username());
             response.put("primary", account.primaryAdmin());
+            response.put("guide_dismissal_scope", "account-" + account.id() + "-" + account.createdAtEpochMillis());
             response.put("csrfToken", session.csrfToken());
         }
         return response;

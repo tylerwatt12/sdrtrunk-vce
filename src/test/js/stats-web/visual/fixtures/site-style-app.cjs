@@ -276,6 +276,7 @@ async function installSiteStyleApplication(page, theme = 'light') {
     if (p === '/api/v1/me/preferences') return route.fulfill({ json: { revision: 1, preferences } });
     if (p === '/api/v1/auth/session') return respond({ configured: true, authenticated: true,
       username: 'fixture-admin', tier: 'admin', primary: true, csrf_token: 'fixture-csrf',
+      guide_dismissal_scope: state.guideDismissalScope ?? 'account-1-100',
       capabilities: Object.fromEntries(policies.map(({ id }) => [id, true])) });
     if (p === '/api/v1/status') return respond({ stats_logging: { summary_configured: true,
       summary_active: true, detailed_history_configured: true, detailed_history_active: true },

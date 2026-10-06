@@ -165,12 +165,14 @@ public final class WebAccessService
             {
                 long id = mUsers.insert(verifier, AccessTier.ADMIN, true,
                     WebUserPreferencesCodec.encode(initialPreferences));
-                replacement = storedAccount(id, verifier, AccessTier.ADMIN, true);
+                replacement = storedAccount(id, verifier, AccessTier.ADMIN, true,
+                    verifier.passwordChangedAtEpochMillis());
             }
             else
             {
                 mUsers.replaceVerifier(existing.account().id(), existing.account().authRevision(), verifier);
-                replacement = storedAccount(existing.account().id(), verifier, AccessTier.ADMIN, true);
+                replacement = storedAccount(existing.account().id(), verifier, AccessTier.ADMIN, true,
+                    existing.account().createdAtEpochMillis());
             }
 
             mSnapshot = withAccount(current, replacement);
@@ -209,7 +211,8 @@ public final class WebAccessService
             WebPasswordVerifier verifier = mPasswordHasher.createVerifier(normalized, copy, 1);
             long id = mUsers.insert(verifier, AccessTier.USER, false,
                 WebUserPreferencesCodec.encode(WebUserPreferences.defaults()));
-            WebUserRepository.StoredAccount created = storedAccount(id, verifier, AccessTier.USER, false);
+            WebUserRepository.StoredAccount created = storedAccount(id, verifier, AccessTier.USER, false,
+                verifier.passwordChangedAtEpochMillis());
             mSnapshot = withAccount(current, created);
             return created.account();
         }
@@ -232,7 +235,7 @@ public final class WebAccessService
             WebPasswordVerifier verifier = mPasswordHasher.createVerifier(normalized, copy, revision);
             mUsers.replaceVerifier(existing.account().id(), existing.account().authRevision(), verifier);
             WebUserRepository.StoredAccount updated = storedAccount(existing.account().id(), verifier,
-                existing.account().tier(), false);
+                existing.account().tier(), false, existing.account().createdAtEpochMillis());
             mSnapshot = withAccount(mSnapshot, updated);
             return updated.account();
         }
@@ -402,10 +405,11 @@ public final class WebAccessService
     }
 
     private static WebUserRepository.StoredAccount storedAccount(long id, WebPasswordVerifier verifier,
-                                                                 AccessTier tier, boolean primary)
+                                                                 AccessTier tier, boolean primary,
+                                                                 long createdAtEpochMillis)
     {
         WebAccessAccount account = new WebAccessAccount(id, verifier.username(), tier,
-            verifier.passwordChangedAtEpochMillis(), verifier.authRevision(), primary);
+            createdAtEpochMillis, verifier.passwordChangedAtEpochMillis(), verifier.authRevision(), primary);
         return new WebUserRepository.StoredAccount(account, verifier);
     }
 

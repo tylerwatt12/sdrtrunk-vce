@@ -7,6 +7,7 @@ const eligibleTuner = { ...operatorTuner({ spectrum_target_id: 'target-a', spect
 const guide = page => page.getByRole('dialog', { name: 'Add your first channel', exact: true });
 const toolbarAction = (page, name) => page.locator('.channel-admin-toolbar').getByRole('button', { name, exact: true });
 const actionNames = ['Find Trunked Systems', 'New channel'];
+const dismissalKey = 'sdrtrunk-vce-channel-setup-guide-dismissed:v2:fixture-admin:account-1-100';
 
 async function expectWithinViewport(locator, viewport) {
   await expect.poll(async () => {
@@ -160,13 +161,38 @@ test('setup guide keeps keyboard focus and remembers dismissal after reload', as
   expect(fixture.pageErrors).toEqual([]);
 });
 
+test('a new install with the same username shows guidance despite an old install dismissal', async ({ page }) => {
+  const { fixture } = await openChannels(page);
+  await expect(guide(page)).toBeVisible();
+  await guide(page).getByRole('button', { name: 'Dismiss setup guide', exact: true }).click();
+  expect(await page.evaluate(key => localStorage.getItem(key), dismissalKey)).toBe('1');
+  fixture.guideDismissalScope = 'account-1-200';
+  await page.reload();
+  await expect(guide(page)).toBeVisible();
+  await expectSpotlightsFollowToolbar(page);
+  await page.screenshot({ path: test.info().outputPath('first-channel-guide-new-install.png') });
+  await page.keyboard.press('Escape');
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Channels', exact: true }).first()).toBeVisible();
+  await expect(guide(page)).toHaveCount(0);
+  expect(fixture.pageErrors).toEqual([]);
+});
+
+test('the old username-only dismissal does not hide first-install guidance', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('sdrtrunk-vce-channel-setup-guide-dismissed:fixture-admin', '1'));
+  const { fixture } = await openChannels(page);
+  await expect(guide(page)).toBeVisible();
+  await expectSpotlightsFollowToolbar(page);
+  expect(fixture.pageErrors).toEqual([]);
+});
+
 test('clicking the dimmed page dismisses the guide without activating its background', async ({ page }) => {
   const { fixture } = await openChannels(page);
   await expect(guide(page)).toBeVisible();
   await page.mouse.click(8, 80);
   await expect(guide(page)).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Channels', exact: true }).first()).toBeVisible();
-  expect(await page.evaluate(() => localStorage.getItem('sdrtrunk-vce-channel-setup-guide-dismissed:fixture-admin'))).toBe('1');
+  expect(await page.evaluate(key => localStorage.getItem(key), dismissalKey)).toBe('1');
   for (const name of actionNames) await expect(toolbarAction(page, name)).toBeVisible();
   expect(fixture.pageErrors).toEqual([]);
 });
@@ -224,7 +250,7 @@ test('tuner readiness changes automatically remove and restore guidance without 
   await page.clock.fastForward(5100);
   await expect(guide(page)).toHaveCount(0);
   await expect(page.locator('.channel-admin-toolbar').getByRole('button', { name: 'New channel', exact: true })).toBeVisible();
-  expect(await page.evaluate(() => localStorage.getItem('sdrtrunk-vce-channel-setup-guide-dismissed:fixture-admin'))).toBeNull();
+  expect(await page.evaluate(key => localStorage.getItem(key), dismissalKey)).toBeNull();
   state.tuners = [eligibleTuner];
   await page.clock.fastForward(5100);
   await expect(guide(page)).toBeVisible();
@@ -248,7 +274,7 @@ test('adding a channel removes the guide automatically', async ({ page }) => {
   await page.clock.fastForward(5100);
   await expect(guide(page)).toHaveCount(0);
   await expect(page.locator('.channel-catalog-table tr[data-id="new-channel"]')).toBeVisible();
-  expect(await page.evaluate(() => localStorage.getItem('sdrtrunk-vce-channel-setup-guide-dismissed:fixture-admin'))).toBeNull();
+  expect(await page.evaluate(key => localStorage.getItem(key), dismissalKey)).toBeNull();
   expect(fixture.pageErrors).toEqual([]);
 });
 
@@ -263,6 +289,6 @@ test('a pending tuner readiness lookup cannot open guidance after navigation', a
   state.releaseCatalog();
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await expect(guide(page)).toHaveCount(0);
-  expect(await page.evaluate(() => localStorage.getItem('sdrtrunk-vce-channel-setup-guide-dismissed:fixture-admin'))).toBeNull();
+  expect(await page.evaluate(key => localStorage.getItem(key), dismissalKey)).toBeNull();
   expect(fixture.pageErrors).toEqual([]);
 });

@@ -7,6 +7,7 @@ package io.github.dsheirer.web.auth;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -15,9 +16,13 @@ import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.web.settings.WebUserPreferences;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.security.SecureRandom;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -83,6 +88,48 @@ class WebAccessServiceTest
         assertEquals(reset, restarted.deleteUser("user.one"));
         assertTrue(restarted.authenticate("user.one", replacementPassword).isEmpty());
         assertThrows(IllegalArgumentException.class, () -> restarted.deleteUser("admin"));
+    }
+
+    @Test
+    void preservesAccountCreationAcrossPasswordRecoveryRestartAndPolicyChanges() throws Exception
+    {
+        Path database = database();
+        long createdAt = 1_700_000_000_000L;
+        long recoveredAt = createdAt + 60_000;
+        WebAccessService initial = serviceAt(database, createdAt);
+        WebAccessAccount primary = initial.provisionOrResetPrimaryAdmin("primary admin password".toCharArray());
+        WebAccessAccount ordinary = initial.createUser("listener", "ordinary user password".toCharArray());
+        assertEquals(createdAt, primary.createdAtEpochMillis());
+        assertEquals(createdAt, ordinary.createdAtEpochMillis());
+
+        WebAccessService recovery = serviceAt(database, recoveredAt);
+        WebAccessAccount resetPrimary = recovery.provisionOrResetPrimaryAdmin("replacement admin password".toCharArray());
+        WebAccessAccount resetOrdinary = recovery.resetUserPassword("listener", "replacement user password".toCharArray());
+        assertEquals(primary.createdAtEpochMillis(), resetPrimary.createdAtEpochMillis());
+        assertEquals(ordinary.createdAtEpochMillis(), resetOrdinary.createdAtEpochMillis());
+        assertEquals(recoveredAt, resetPrimary.passwordChangedAtEpochMillis());
+        assertEquals(recoveredAt, resetOrdinary.passwordChangedAtEpochMillis());
+        assertEquals(2, resetPrimary.authRevision());
+        assertEquals(2, resetOrdinary.authRevision());
+
+        recovery.setCapabilityTier(WebCapability.DASHBOARD_VIEW, AccessTier.ADMIN);
+        WebAccessService restarted = new WebAccessService(database);
+        assertEquals(resetPrimary, restarted.primaryAdmin().orElseThrow());
+        assertEquals(resetOrdinary, restarted.account("listener").orElseThrow());
+
+        Path newInstall = mTemporaryFolder.resolve("new-install.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(newInstall);
+        WebAccessAccount newPrimary = serviceAt(newInstall, recoveredAt)
+            .provisionOrResetPrimaryAdmin("primary admin password".toCharArray());
+        assertEquals(primary.id(), newPrimary.id());
+        assertEquals(primary.username(), newPrimary.username());
+        assertNotEquals(primary.createdAtEpochMillis(), newPrimary.createdAtEpochMillis());
+
+        restarted.deleteUser("listener");
+        WebAccessAccount recreated = serviceAt(database, recoveredAt)
+            .createUser("listener", "ordinary user password".toCharArray());
+        assertEquals(ordinary.username(), recreated.username());
+        assertNotEquals(ordinary.createdAtEpochMillis(), recreated.createdAtEpochMillis());
     }
 
     @Test
@@ -223,6 +270,13 @@ class WebAccessServiceTest
         Path database = mTemporaryFolder.resolve("sdrtrunk.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         return database;
+    }
+
+    private static WebAccessService serviceAt(Path database, long epochMillis) throws Exception
+    {
+        return new WebAccessService(new WebUserRepository(database), new WebAccessPolicyRepository(database),
+            new Pbkdf2PasswordHasher(WebPasswordVerifier.MINIMUM_ITERATIONS, new SecureRandom(),
+                Clock.fixed(Instant.ofEpochMilli(epochMillis), ZoneOffset.UTC)));
     }
 
     private static String verifierAlgorithm(Path database, String username) throws Exception

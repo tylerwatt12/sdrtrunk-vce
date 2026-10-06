@@ -1,25 +1,29 @@
 import { openSetupGuide } from '../core/setup-guide.js?v=2';
 
 const dismissedInMemory = new Set();
-export const channelSetupGuideStorageKey = (account) =>
-  `sdrtrunk-vce-channel-setup-guide-dismissed:${encodeURIComponent(account || 'anonymous')}`;
+export const channelSetupGuideStorageKey = (account, dismissalScope) =>
+  typeof dismissalScope === 'string' && dismissalScope.trim() ?
+    `sdrtrunk-vce-channel-setup-guide-dismissed:v2:${encodeURIComponent(account || 'anonymous')}:${encodeURIComponent(dismissalScope)}` : null;
 
 export function hasUsableSetupTuner(catalog) {
   return Array.isArray(catalog?.tuners) && catalog.tuners.some((tuner) =>
     tuner?.eligible === true && tuner.source_type === 'receiver');
 }
 
-export function createChannelSetupGuide({ ui, account, channels, isCurrent, canPresent, loadTuners,
+export function createChannelSetupGuide({ ui, account, dismissalScope, channels, isCurrent, canPresent, loadTuners,
   newChannelButton, findSystemsButton, storage }) {
-  const key = channelSetupGuideStorageKey(account);
+  const key = channelSetupGuideStorageKey(account, dismissalScope);
+  const memoryKey = key ?? `session:${account || 'anonymous'}`;
   let guide = null;
   let checking = false;
   const dismissed = () => {
-    if (dismissedInMemory.has(key)) return true;
+    if (dismissedInMemory.has(memoryKey)) return true;
+    if (!key) return false;
     try { return (storage ?? globalThis.localStorage)?.getItem(key) === '1'; } catch (_) { return false; }
   };
   const remember = () => {
-    dismissedInMemory.add(key);
+    dismissedInMemory.add(memoryKey);
+    if (!key) return;
     try { (storage ?? globalThis.localStorage)?.setItem(key, '1'); }
     catch (_) { /* Keep this browser session usable without storage. */ }
   };

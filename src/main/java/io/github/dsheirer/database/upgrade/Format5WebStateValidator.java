@@ -348,6 +348,7 @@ public final class Format5WebStateValidator
                 resultSet.getInt("password_derived_key_bits"), Base64.getEncoder().encodeToString(salt),
                 Base64.getEncoder().encodeToString(hash), passwordChangedAt, authRevision);
             new WebAccessAccount(id, username, tier,
+                allowRepairableBookkeeping ? 1 : resultSet.getLong("created_at_ms"),
                 verifier.passwordChangedAtEpochMillis(), verifier.authRevision(),
                 primaryValue == 1);
         }

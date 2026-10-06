@@ -37,7 +37,7 @@ final class WebUserRepository
             PreparedStatement statement = connection.prepareStatement("""
                 SELECT id, username, tier, primary_admin, credential_version, password_algorithm,
                        password_iterations, password_derived_key_bits, password_salt, password_hash,
-                       password_changed_at_ms, auth_revision
+                       password_changed_at_ms, auth_revision, created_at_ms
                 FROM web_user
                 ORDER BY primary_admin DESC, username
                 """); ResultSet resultSet = statement.executeQuery())
@@ -70,7 +70,8 @@ final class WebUserRepository
                     throw new SQLException("Persisted web password verifier is invalid", exception);
                 }
                 WebAccessAccount account = new WebAccessAccount(resultSet.getLong("id"), username, tier,
-                    verifier.passwordChangedAtEpochMillis(), verifier.authRevision(), primary);
+                    resultSet.getLong("created_at_ms"), verifier.passwordChangedAtEpochMillis(),
+                    verifier.authRevision(), primary);
                 accounts.add(new StoredAccount(account, verifier));
             }
         }
