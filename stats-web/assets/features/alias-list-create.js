@@ -1,4 +1,4 @@
-import { ALIAS_LIST_NAME_MAX_LENGTH } from './discovery-radioreference.js?v=7';
+import { ALIAS_LIST_NAME_MAX_LENGTH } from './discovery-radioreference.js?v=8';
 
 let creatorSequence = 0;
 

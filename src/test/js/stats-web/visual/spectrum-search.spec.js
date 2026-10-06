@@ -362,7 +362,7 @@ async function complete(page) {
   await expect(dialog(page).getByRole('heading', { name: /channels? found$/ })).toBeVisible();
 }
 
-const importYes = 'Yes, import aliases so I can see the names of the talkgroups';
+const importYes = 'Yes, import talkgroup names';
 const importNo = "No, I'll import these later";
 
 async function expectStepWordsFit(modal) {

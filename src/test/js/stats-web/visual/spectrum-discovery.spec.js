@@ -356,7 +356,7 @@ async function review(page, protocolId = 'p25-phase1') {
   await expect(wizard(page).getByRole('heading', { name: 'Name your channel', exact: true })).toBeVisible();
 }
 
-const importYes = 'Yes, import aliases so I can see the names of the talkgroups';
+const importYes = 'Yes, import talkgroup names';
 const importNo = "No, I'll import these later";
 
 async function expectStepWordsFit(modal) {

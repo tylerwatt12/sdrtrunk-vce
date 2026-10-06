@@ -215,7 +215,7 @@ export function discoveryAliasImportChoice(ui, targets, selected = true) {
   choices.setAttribute('aria-label', 'Import talkgroups');
   let wantsImport = matched && selected;
   [
-    [true, 'Yes, import aliases so I can see the names of the talkgroups'],
+    [true, 'Yes, import talkgroup names'],
     [false, "No, I'll import these later"]
   ].forEach(([value, label]) => {
     const option = node('label', 'ui-choice-card spectrum-discovery-protocol-option');
