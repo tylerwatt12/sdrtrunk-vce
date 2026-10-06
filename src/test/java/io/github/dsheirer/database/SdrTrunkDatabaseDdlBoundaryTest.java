@@ -63,6 +63,7 @@ class SdrTrunkDatabaseDdlBoundaryTest
         "java/io/github/dsheirer/database/upgrade/Format25To26DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format26To27DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format31To32DatabaseMigration.java",
+        "java/io/github/dsheirer/database/upgrade/Format43To44DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/ManagedRecordingCatalogMigrator.java",
         "java/io/github/dsheirer/database/upgrade/Format5SchemaSql.java");
     private static final Set<String> CREATION_ORCHESTRATORS = Set.of(
@@ -95,6 +96,7 @@ class SdrTrunkDatabaseDdlBoundaryTest
         "java/io/github/dsheirer/database/upgrade/Format39To40DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format40To41DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format41To42DatabaseMigration.java",
+        "java/io/github/dsheirer/database/upgrade/Format43To44DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/ManagedRecordingCatalogMigrator.java");
     private static final Set<String> FRESH_DATABASE_CALLERS = Set.of(
         "java/io/github/dsheirer/database/SdrTrunkDatabaseBootstrap.java",

@@ -162,7 +162,7 @@ class SdrTrunkDatabaseStartupTest
                 "INSERT INTO application_icons(key,icons_json,updated_at_ms) VALUES ('icons', '[]', 1)",
                 "INSERT INTO alias_list(id,name,family) VALUES (-1,'Bad ID','P25')",
                 "INSERT INTO alias_list(name,family) VALUES ('','P25')",
-                "INSERT INTO alias_list(name,family) VALUES ('This Alias List Name Is Too Long','P25')",
+                "INSERT INTO alias_list(name,family) VALUES ('" + "A".repeat(129) + "','P25')",
                 "INSERT INTO alias_list(name,family,unmatched_talkgroup_record_enabled) VALUES ('Bad flag','P25',0.5)",
                 "INSERT INTO scan_list(sort_order,name,published,is_default) VALUES (0.5,'Bad order',1,0)",
                 "INSERT INTO scan_list(sort_order,name,published,is_default) VALUES (1,'Bad flag',0.5,0)",
@@ -228,6 +228,7 @@ class SdrTrunkDatabaseStartupTest
                 assertThrows(java.sql.SQLException.class, () -> statement.executeUpdate(sql), sql);
             }
 
+            statement.executeUpdate("INSERT INTO alias_list(name,family) VALUES ('" + "A".repeat(128) + "','P25')");
             statement.executeUpdate("""
                 INSERT INTO alias(alias_list_id,name,color,stream_as_talkgroup,record_enabled,
                     matcher_type,protocol,min_value,max_value)
