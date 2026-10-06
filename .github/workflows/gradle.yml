@@ -52,6 +52,17 @@ jobs:
         run: >-
           ./gradlew --no-configuration-cache clean check
           -PprojectVersion=local-dev -PupdateTrack=none -PupdateBuild=0
+      - name: Save Gradle failure reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: main-ci-gradle-failure-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build/test-results/test
+            build/reports/tests/test
+            build/reports/problems/problems-report.html
+          if-no-files-found: ignore
+          retention-days: 14
 
   visual:
     name: Web design-system visual contract

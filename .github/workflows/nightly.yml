@@ -307,6 +307,7 @@ jobs:
           name: SDRTrunk VCE Nightly
           prerelease: true
           fail_on_unmatched_files: true
+          preserve_order: true
           body: |
             Rolling pre-release build from current `main`.
 
@@ -324,9 +325,9 @@ jobs:
           files: |
             candidate/*.zip
             candidate/build_info.txt
-            candidate/update.properties
             candidate/candidate.json
             candidate/SHA256SUMS
+            candidate/update.properties
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Point only the rolling Nightly tag to the approved commit
