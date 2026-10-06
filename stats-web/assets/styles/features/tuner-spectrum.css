@@ -1578,6 +1578,10 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   width: min(var(--modal-size-large), 96vw);
 }
 
+.read-only-modal.spectrum-search-detail-modal {
+  width: min(var(--modal-size-medium), 96vw);
+}
+
 .spectrum-search-form {
   min-width: 0;
   display: grid;
@@ -1763,7 +1767,7 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-3);
   background: var(--surface-2);
   border-bottom: 1px solid var(--line);
 }
@@ -1775,18 +1779,26 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   gap: var(--space-1);
 }
 
-.spectrum-search-group-table td:nth-child(3) {
+.spectrum-search-group-table {
+  table-layout: fixed;
+}
+
+.spectrum-search-column-selection { width: 42px; }
+.spectrum-search-column-channel { width: 180px; }
+.spectrum-search-column-signal { width: 104px; }
+.spectrum-search-column-quality { width: 80px; }
+.spectrum-search-column-details { width: 120px; }
+
+.spectrum-search-group-table td:nth-child(4),
+.spectrum-search-group-table td:nth-child(5) {
   white-space: nowrap;
 }
 
-.spectrum-search-channel-choice {
-  min-width: 0;
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-3);
+.spectrum-search-group-table td:first-child {
+  vertical-align: middle;
 }
 
-.spectrum-search-results .identity-summary {
+.spectrum-search-group-table .identity-summary {
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -1804,10 +1816,13 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   margin: 0;
 }
 
-.spectrum-search-health {
+.spectrum-search-system-directory {
   min-width: 0;
-  display: grid;
-  gap: var(--space-1);
+  padding: 0 var(--space-3) var(--space-3);
+}
+
+.spectrum-search-system-directory[hidden] {
+  display: none;
 }
 
 .spectrum-search-review-form {
@@ -2047,20 +2062,8 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
     grid-column: 1 / -1;
   }
 
-  .spectrum-search-channel-choice {
-    position: relative;
-    display: block;
-    padding-right: calc(var(--control-height-compact) + var(--space-2));
-  }
-
   .spectrum-search-group-table tbody td:first-child {
-    align-items: start;
-  }
-
-  .spectrum-search-channel-check {
-    position: absolute;
-    top: 0;
-    right: 0;
+    justify-content: flex-start;
   }
 
 }

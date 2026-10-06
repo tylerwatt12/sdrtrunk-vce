@@ -13,6 +13,45 @@ const bandCheckbox = (page, label) => dialog(page).getByRole('checkbox', { name:
 const bandsTrigger = (page) => dialog(page).locator('.spectrum-search-band-trigger');
 const bandsMenu = (page) => dialog(page).locator('.spectrum-search-band-popover');
 
+const ohioSystems = {
+  marcs: 'Ohio MARCS-IP: Multi-Agency Radio Communications',
+  cleveland: 'Greater Cleveland Radio Communications Network',
+  parma: 'Parma / Parma Heights / Brooklyn / Brooklyn Heights'
+};
+
+function ohioResultsFixture({ pendingMarcs = false } = {}) {
+  // Real system names with synthetic signal observations; no receiver is contacted.
+  const systems = [
+    ['marcs', 0x348, 'Cuyahoga County', 'MARCS Cuyahoga control', 773081250, 1, 27],
+    ['marcs', 0x348, 'Lake County', 'MARCS Lake control', 773831250, 2, 1],
+    ['cleveland', 0x14c, 'Cleveland Simulcast', 'Cleveland control', 851012500, 1, 3],
+    ['parma', 0x2dd, 'Parma Simulcast', 'Parma control', 856012500, 1, 4]
+  ];
+  return {
+    customCandidates: systems.map(([group, system, site, name, frequency, rfss, siteId], index) => ({
+      candidate_id: `${group}-${siteId}`, frequency_hz: frequency, protocol_id: 'p25-phase1', variant: 'P25_PHASE_1',
+      name, system_name: pendingMarcs && group === 'marcs' ? 'P25 BEE00-348' : ohioSystems[group],
+      site_name: site, identity: { wacn: 0xbee00, system, rfss, site: siteId },
+      modulation: index === 0 ? 'C4FM' : 'CQPSK', alias_group_id: group,
+      selectable: true, saved: false, running: false, strength_dbfs: -35.2 - index * 7,
+      health: { quality_pct: 99 - index, valid_messages: 54, valid_control_messages: 41,
+        invalid_control_messages: 1, checked_at_ms: 1790878800000 },
+      radio_reference: pendingMarcs && group === 'marcs' ? { state: 'pending' } : {
+        state: 'matched', match: { system_name: ohioSystems[group], site_name: site,
+          url: `https://www.radioreference.com/db/sid/${123 + Object.keys(ohioSystems).indexOf(group)}`,
+          channels: [{ frequency_hz: frequency, primary_control: true }] }
+      }
+    })),
+    customAliasGroups: Object.keys(ohioSystems).map((group, index) => ({
+      group_id: group, protocol_id: 'p25-phase1', wacn: 0xbee00, system: systems.find((item) => item[0] === group)[1],
+      alias_lists: index === 0 ? [{ id: 21, name: 'MARCS Dispatch' }] : [],
+      suggested_alias_list_id: null, default_new_alias_list_name: {
+        marcs: 'MARCS-IP', cleveland: 'GCRCN', parma: 'Parma Public Safety'
+      }[group]
+    }))
+  };
+}
+
 async function openBands(page) {
   if (!await bandsMenu(page).evaluate((element) => element.matches(':popover-open'))) await bandsTrigger(page).click();
   await expect(bandsTrigger(page)).toHaveAttribute('aria-expanded', 'true');
@@ -609,11 +648,11 @@ test('uses one widest idle receiver and acquires its own browse session when sea
   await expect(dialog(page).getByRole('checkbox', { name: 'Select Saved East' })).toBeDisabled();
   await expect(dialog(page).getByRole('link', { name: 'Existing East Control' })).toHaveAttribute('href', /configuration_id=/);
   await expect(dialog(page).locator('.spectrum-search-group-table').first().locator('thead th'))
-    .toHaveText(['Channel', 'Site', 'Signal', 'Health']);
+    .toHaveText(['', 'Channel', 'Site', 'Signal', 'Quality', 'Details']);
   await expect(dialog(page).locator('.spectrum-search-group-table').first().locator('tbody tr').first().locator('td'))
-    .toHaveCount(4);
+    .toHaveCount(6);
   await expect(dialog(page)).toContainText('WACN BEE00 · SysID 348 · 3 sites');
-  await expect(dialog(page).getByText('Signal details', { exact: true })).toHaveCount(4);
+  await expect(dialog(page).getByRole('button', { name: /^Details for / })).toHaveCount(4);
   await dialog(page).getByLabel('Search results', { exact: true }).fill('Regional Services');
   await expect(dialog(page).locator('tbody tr:visible')).toHaveCount(1);
   await dialog(page).getByLabel('Search results', { exact: true }).fill('840');
@@ -1709,14 +1748,11 @@ test('mixed DMR and NXDN sites retain protocol identities and only verified RR n
   await expect(dialog(page)).toContainText('DMR Tier III');
   await expect(dialog(page)).toContainText('NXDN Type-C');
   await expect(dialog(page).getByText('Wrong system', { exact: true })).toHaveCount(0);
-  await dialog(page).getByText('RadioReference', { exact: true }).first().click();
   await expect(dialog(page).getByRole('link', { name: 'County Transit', exact: true })).toHaveAttribute('href',
     'https://www.radioreference.com/db/sid/123');
-  const directory = dialog(page).locator('details').filter({ has: page.locator('summary').filter({ hasText: /^RadioReference$/ }) }).first();
-  await expect(directory.locator('p')).toHaveText('County Transit');
-  await expect(directory.locator('dl')).toHaveCount(0);
-  await expect(directory).not.toContainText('Primary control');
-  await dialog(page).getByText('RadioReference', { exact: true }).nth(1).click();
+  await expect(dialog(page).getByRole('link', { name: 'County Transit', exact: true })).toHaveCount(1);
+  await expect(dialog(page)).not.toContainText('Primary control');
+  await dialog(page).getByText('RadioReference', { exact: true }).click();
   await expect(dialog(page)).toContainText('No directory names were applied');
 });
 
@@ -1781,25 +1817,173 @@ test('delayed wide-directory names update review without replacing edited channe
   }
   state.customCandidates[0] = { ...state.customCandidates[0], name: 'Directory North', system_name: 'Transit authority',
     site_name: 'North', radio_reference: { state: 'matched', match: { system_name: 'Transit authority', site_name: 'North',
+      url: 'https://www.radioreference.com/db/sid/123',
       channels: [{ logical_channel_number: 3, frequency_hz: 451500000 }] } }, trunked_evidence: {
       ...state.customCandidates[0].trunked_evidence, frequency_map: [{ number: 3, downlink_hz: 451500000 }] } };
   await page.clock.fastForward(800);
   await expect(dialog(page).getByRole('heading', { name: 'Transit authority', exact: true })).toBeVisible();
   await expect(dialog(page).getByLabel('Channel name for 451 MHz', { exact: true })).toHaveValue('My control');
   await expect(dialog(page).locator('.channel-map-row input').nth(0)).toHaveValue('3');
-  await expect(directory).toHaveAttribute('open', '');
-  expect(await directory.evaluate((element, previous) => element === previous, directoryNode)).toBe(true);
-  await expect(directory.locator('p')).toHaveText('Transit authority');
-  await expect(directory.locator('dl')).toHaveCount(0);
+  await expect(directory).toHaveCount(0);
+  await expect(dialog(page).getByRole('heading', { name: 'Transit authority', exact: true }).getByRole('link'))
+    .toHaveAttribute('href', 'https://www.radioreference.com/db/sid/123');
 });
 
 for (const [theme, viewport] of [['light', { width: 1280, height: 900 }],
+  ['dark', { width: 1280, height: 900 }], ['light', { width: 390, height: 844 }],
   ['dark', { width: 390, height: 844 }]]) {
-  test(`search result directory polls preserve disclosures, filters and selection in ${theme}`,
+  test(`Ohio trunked results align selections and keep details separate in ${theme} at ${viewport.width}px`,
+    async ({ page }, testInfo) => {
+      await page.setViewportSize(viewport);
+      const state = await install(page, { theme, ...ohioResultsFixture() });
+      await complete(page);
+      await expect(dialog(page).getByRole('heading', { name: '4 channels found', exact: true })).toBeVisible();
+      const groups = dialog(page).locator('.spectrum-search-system-group');
+      await expect(groups).toHaveCount(3);
+      await expect(dialog(page)).not.toContainText('P25_PHASE_1');
+      const checkShapes = await groups.locator('input[type="checkbox"]').evaluateAll((checks) => checks.map((check) => {
+        const bounds = check.getBoundingClientRect();
+        return { width: bounds.width, height: bounds.height };
+      }));
+      checkShapes.forEach((bounds) => {
+        expect(bounds.width).toBe(bounds.height);
+        expect(bounds.width).toBeGreaterThanOrEqual(16);
+      });
+      for (const name of Object.values(ohioSystems)) {
+        await expect(dialog(page).getByRole('link', { name, exact: true })).toHaveCount(1);
+      }
+      const tables = dialog(page).locator('.spectrum-search-group-table');
+      for (const table of await tables.all()) {
+        await expect(table.locator('thead th')).toHaveText(['', 'Channel', 'Site', 'Signal', 'Quality', 'Details']);
+        if (viewport.width > 900) {
+          await expect(table.getByRole('columnheader').first()).toHaveAccessibleName('Select channels');
+        }
+        for (const row of await table.locator('tbody tr').all()) {
+          await expect(row.locator('td')).toHaveCount(6);
+          await expect(row.locator('td').first().getByRole('checkbox')).toHaveCount(1);
+          const detailsAction = row.getByRole('button', { name: /^Details for / });
+          await expect(detailsAction).toHaveText('Details');
+          const captionLines = await detailsAction.evaluate((element) => {
+            const text = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+            const tops = new Set();
+            while (text.nextNode()) {
+              if (!text.currentNode.textContent.trim()) continue;
+              const range = document.createRange(); range.selectNodeContents(text.currentNode);
+              [...range.getClientRects()].forEach((rect) => tops.add(Math.round(rect.top)));
+            }
+            return tops.size;
+          });
+          expect(captionLines).toBe(1);
+          await expect(row.locator('details')).toHaveCount(0);
+          if (viewport.width > 900) expect((await row.boundingBox()).height).toBeLessThanOrEqual(100);
+        }
+      }
+      if (viewport.width > 900) {
+        const widths = await tables.evaluateAll((elements) => elements.map((table) =>
+          [...table.querySelectorAll('thead th')].map((cell) => cell.getBoundingClientRect().width)));
+        for (const actual of widths.slice(1)) actual.forEach((width, column) =>
+          expect(Math.abs(width - widths[0][column])).toBeLessThanOrEqual(1));
+        const aligned = await groups.evaluateAll((elements) => elements.map((group) => ({
+          group: group.querySelector('header input[type="checkbox"]').getBoundingClientRect().left,
+          rows: [...group.querySelectorAll('tbody input[type="checkbox"]')]
+            .map((check) => check.getBoundingClientRect().left)
+        })));
+        aligned.forEach((group) => group.rows.forEach((left) =>
+          expect(Math.abs(left - group.group)).toBeLessThanOrEqual(2)));
+      }
+      expect(await dialog(page).evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+      await dialog(page).screenshot({ path: testInfo.outputPath('ohio-results.png') });
+      const first = dialog(page).getByRole('checkbox', { name: 'Select MARCS Cuyahoga control', exact: true });
+      const second = dialog(page).getByRole('checkbox', { name: 'Select MARCS Lake control', exact: true });
+      const cleveland = dialog(page).getByRole('checkbox', { name: 'Select Cleveland control', exact: true });
+      const allMarcs = dialog(page).getByRole('checkbox', { name: `Select all channels in ${ohioSystems.marcs}`, exact: true });
+      await first.check();
+      await expect(allMarcs).toHaveJSProperty('indeterminate', true);
+      await allMarcs.check();
+      await expect(first).toBeChecked();
+      await expect(second).toBeChecked();
+      await expect(allMarcs).toHaveJSProperty('indeterminate', false);
+      await second.uncheck();
+      await expect(allMarcs).toHaveJSProperty('indeterminate', true);
+      await cleveland.check();
+      const query = dialog(page).getByLabel('Search results', { exact: true });
+      await query.fill('Parma');
+      await expect(dialog(page).locator('tbody tr:visible')).toHaveCount(1);
+      await expect(dialog(page).getByRole('button', { name: 'Review 2 channels', exact: true })).toBeEnabled();
+      await dialog(page).screenshot({ path: testInfo.outputPath('ohio-results-parma.png') });
+      await query.fill('Cuyahoga');
+      await expect(dialog(page).locator('tbody tr:visible')).toHaveCount(1);
+      await expect(first).toBeChecked();
+      await query.fill('');
+      await expect(dialog(page).locator('tbody tr:visible')).toHaveCount(4);
+      await expect(cleveland).toBeChecked();
+      const details = dialog(page).getByRole('button', { name: 'Details for 773.08125 MHz', exact: true });
+      const parent = await dialog(page).elementHandle();
+      const row = details.locator('xpath=ancestor::tr');
+      const before = await row.boundingBox();
+      await details.click();
+      const signal = page.locator('.spectrum-search-detail-modal');
+      await expect(signal.getByRole('heading', { name: 'Signal details · 773.08125 MHz', exact: true })).toBeVisible();
+      await expect(signal.getByRole('group', { name: 'Channel', exact: true })).toBeVisible();
+      await expect(signal.getByRole('group', { name: 'On-air identity', exact: true })).toBeVisible();
+      await expect(signal.getByRole('group', { name: 'Signal health', exact: true })).toBeVisible();
+      await expect(signal).toContainText(ohioSystems.marcs);
+      await expect(signal).toContainText('Cuyahoga County');
+      await expect(signal).toContainText('BEE00');
+      expect(await signal.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+      const wacnLines = await signal.getByText('BEE00', { exact: true }).evaluate((element) => {
+        const range = document.createRange(); range.selectNodeContents(element);
+        return range.getClientRects().length;
+      });
+      expect(wacnLines).toBe(1);
+      await signal.screenshot({ path: testInfo.outputPath('ohio-signal-details.png') });
+      await page.keyboard.press('Escape');
+      await expect(signal).toHaveCount(0);
+      await expect(details).toBeFocused();
+      expect(await dialog(page).evaluate((element, previous) => element === previous, parent)).toBe(true);
+      expect((await row.boundingBox()).height).toBe(before.height);
+      await expect(first).toBeChecked();
+      await expect(cleveland).toBeChecked();
+      await dialog(page).getByRole('button', { name: 'Review 2 channels', exact: true }).click();
+      await expect(dialog(page).getByLabel('Channel name for 773.08125 MHz', { exact: true })).toHaveValue('MARCS Cuyahoga control');
+      await expect(dialog(page).getByLabel('Channel name for 851.0125 MHz', { exact: true })).toHaveValue('Cleveland control');
+      await expect(dialog(page).getByLabel('Channel name for 773.83125 MHz', { exact: true })).toHaveCount(0);
+      for (const name of [ohioSystems.marcs, ohioSystems.cleveland]) {
+        await expect(dialog(page).getByRole('link', { name, exact: true })).toHaveCount(1);
+      }
+      const marcsReview = dialog(page).locator('.spectrum-search-review-system').filter({
+        has: page.getByRole('heading', { name: ohioSystems.marcs, exact: true })
+      });
+      const reviewAppearance = await marcsReview.locator('h4').evaluate((title) => {
+        const style = getComputedStyle(title);
+        return { marginBlockStart: style.marginBlockStart, marginBlockEnd: style.marginBlockEnd,
+          fontSize: style.fontSize, fontWeight: style.fontWeight,
+          headerHeight: title.closest('header').getBoundingClientRect().height };
+      });
+      if (viewport.width > 900) expect(reviewAppearance.headerHeight).toBeLessThanOrEqual(80);
+      await testInfo.attach('Review header spacing', {
+        body: JSON.stringify(reviewAppearance), contentType: 'application/json'
+      });
+      await marcsReview.getByRole('button', { name: 'Customize', exact: true }).click();
+      const identity = marcsReview.locator('details').filter({ has: page.locator('summary').filter({ hasText: /^System identity$/ }) });
+      await identity.locator('summary').click();
+      await expect(identity).toHaveAttribute('open', '');
+      await expect(identity).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+      await expect(dialog(page).getByText('RadioReference', { exact: true })).toHaveCount(0);
+      await dialog(page).screenshot({ path: testInfo.outputPath('ohio-review-customize.png') });
+      await dialog(page).getByRole('button', { name: 'Add 2 channels', exact: true }).click();
+      const save = state.requests.find((request) => request.path.endsWith('/save'));
+      expect(save.body.candidates.map((candidate) => candidate.candidate_id)).toEqual(['marcs-27', 'cleveland-3']);
+    });
+}
+
+for (const [theme, viewport] of [['light', { width: 1280, height: 900 }],
+  ['dark', { width: 390, height: 844 }]]) {
+  test(`search result directory polls preserve detail dialogs, filters and selection in ${theme}`,
     async ({ page }, testInfo) => {
       await page.clock.install();
       await page.setViewportSize(viewport);
-      const systemName = theme === 'dark' ? 'Ohio MARCS-IP: Multi-Agency Radio Communications' : 'County Transit';
+      const systemName = theme === 'dark' ? ohioSystems.marcs : 'County Transit';
       const state = await install(page, { theme, customCandidates: [
         { candidate_id: 'digital', frequency_hz: 451000000, protocol_id: 'dmr', name: 'Metro control',
           system_name: 'Decoded network', alias_group_id: 'digital', radio_reference: { state: 'pending' },
@@ -1812,19 +1996,21 @@ for (const [theme, viewport] of [['light', { width: 1280, height: 900 }],
       await complete(page);
       const query = dialog(page).getByLabel('Search results', { exact: true });
       await query.fill('Metro');
-      const selection = dialog(page).getByRole('checkbox', { name: 'Select Metro control', exact: true });
+      const selection = dialog(page).getByRole('checkbox', { name: 'Select Metro control', exact: true, includeHidden: true });
       await selection.check();
-      const row = dialog(page).locator('tbody tr').filter({ has: page.getByRole('checkbox',
-        { name: 'Select Metro control', exact: true }) });
-      const signal = row.locator('details').filter({ has: page.locator('summary').filter({ hasText: /^Signal details$/ }) });
-      await signal.locator('summary').click();
-      const directory = row.locator('details').filter({ has: page.locator('summary').filter({ hasText: /^RadioReference$/ }) });
+      const group = dialog(page).locator('.spectrum-search-system-group').filter({ has: page.locator('input[aria-label="Select Metro control"]') });
+      const directory = group.locator('details').filter({ has: page.locator('summary').filter({ hasText: /^RadioReference$/ }) });
       await directory.locator('summary').click();
-      const preserved = {
-        query: await query.elementHandle(), selection: await selection.elementHandle(),
-        signal: await signal.elementHandle(), directory: await directory.elementHandle(),
-        pending: await directory.locator('p').elementHandle()
-      };
+      const detailButton = group.getByRole('button', { name: 'Details for 451 MHz', exact: true, includeHidden: true });
+      const preserved = { parent: await dialog(page).elementHandle(), query: await query.elementHandle(),
+        selection: await selection.elementHandle(), button: await detailButton.elementHandle(),
+        directory: await directory.elementHandle(), pending: await directory.locator('p').elementHandle() };
+      await detailButton.click();
+      const signal = page.locator('.spectrum-search-detail-modal');
+      await expect(signal).toBeVisible();
+      await expect(signal.getByRole('heading', { name: 'Signal details · 451 MHz', exact: true })).toBeVisible();
+      const signalNode = await signal.elementHandle();
+      expect(await dialog(page).evaluate((element) => element.closest('.modal-backdrop').inert)).toBe(true);
       const polls = () => state.requests.filter(({ path, method }) => path === `${searchPath}/search-a` && method === 'GET').length;
       for (let update = 0; update < 2; update += 1) {
         const before = polls();
@@ -1832,47 +2018,124 @@ for (const [theme, viewport] of [['light', { width: 1280, height: 900 }],
         await page.clock.fastForward(800);
         await expect.poll(polls).toBeGreaterThan(before);
         await expect(directory).toHaveAttribute('open', '');
-        await expect(signal).toHaveAttribute('open', '');
         expect(await directory.evaluate((element, previous) => element === previous, preserved.directory)).toBe(true);
         expect(await directory.locator('p').evaluate((element, previous) => element === previous, preserved.pending)).toBe(true);
         await expect(directory.locator('p')).toHaveText('Looking up the system name…');
+        expect(await signal.evaluate((element, previous) => element === previous, signalNode)).toBe(true);
       }
-      await directory.scrollIntoViewIfNeeded();
-      await dialog(page).screenshot({ path: testInfo.outputPath('directory-expanded-loading.png') });
+      await signal.screenshot({ path: testInfo.outputPath('signal-details-pending.png') });
       state.customCandidates[0] = { ...state.customCandidates[0], system_name: systemName,
         site_name: 'Directory-only North', radio_reference: { state: 'matched', provenance: 'Directory-only provenance',
           match: { system_name: systemName, site_name: 'Directory-only North',
             url: 'https://www.radioreference.com/db/sid/123', site_url: 'https://www.radioreference.com/db/site/456',
             channels: [{ frequency_hz: 451500000, logical_channel_number: 3, primary_control: true }] } } };
       await page.clock.fastForward(800);
-      await expect(directory.getByRole('link', { name: systemName, exact: true }))
+      await expect(group.getByRole('link', { name: systemName, exact: true, includeHidden: true }))
         .toHaveAttribute('href', 'https://www.radioreference.com/db/sid/123');
-      await expect(directory.locator('p')).toHaveText(systemName);
-      await expect(directory.locator('dl')).toHaveCount(0);
-      await expect(directory.getByRole('link')).toHaveCount(1);
-      await expect(directory).not.toContainText('Directory-only');
-      await expect(directory).not.toContainText('451.5');
-      await expect(directory).not.toContainText('Primary control');
-      await expect(directory).toHaveAttribute('open', '');
-      await expect(signal).toHaveAttribute('open', '');
-      await expect(query).toHaveValue('Metro');
-      await expect(selection).toBeChecked();
-      for (const [locator, previous] of [[directory, preserved.directory], [signal, preserved.signal],
-        [query, preserved.query], [selection, preserved.selection]]) {
+      await expect(group.getByRole('link', { name: systemName, exact: true, includeHidden: true })).toHaveCount(1);
+      await expect(directory).toHaveCount(0);
+      await expect(signal).toBeVisible();
+      expect(await signal.evaluate((element, previous) => element === previous, signalNode)).toBe(true);
+      for (const [locator, previous] of [[dialog(page), preserved.parent], [query, preserved.query],
+        [selection, preserved.selection], [detailButton, preserved.button]]) {
         expect(await locator.evaluate((element, previous) => element === previous, previous)).toBe(true);
       }
+      await expect(query).toHaveValue('Metro');
+      await expect(selection).toBeChecked();
+      await expect(signal).toContainText('Directory-only North');
+      await page.keyboard.press('Escape');
+      await expect(signal).toHaveCount(0);
+      await expect(detailButton).toBeFocused();
+      expect(await dialog(page).evaluate((element) => element.closest('.modal-backdrop').inert)).toBe(false);
       await expect(dialog(page).getByRole('checkbox', { name: 'Select Regional local', exact: true })).toBeHidden();
       await expect(dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true })).toBeEnabled();
-      await directory.scrollIntoViewIfNeeded();
       await dialog(page).screenshot({ path: testInfo.outputPath('directory-compact-match.png') });
       expect(await dialog(page).evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
-      const bounds = await directory.evaluate(element => ({ scrollWidth: element.scrollWidth,
-        clientWidth: element.clientWidth, whiteSpace: getComputedStyle(element.querySelector('p')).whiteSpace }));
-      expect(bounds.scrollWidth, JSON.stringify(bounds)).toBeLessThanOrEqual(bounds.clientWidth + 1);
       await query.fill(systemName);
       await expect(selection).toBeVisible();
+      await detailButton.click();
+      await expect(page.locator('.spectrum-search-detail-modal')).toContainText('Directory-only North');
+      await page.keyboard.press('Escape');
     });
 }
+
+test('verified system-name filtering keeps its pending sibling site and selection', async ({ page }) => {
+  await page.clock.install();
+  const state = await install(page, { ...ohioResultsFixture({ pendingMarcs: true }) });
+  await complete(page);
+  await dialog(page).getByRole('checkbox', { name: 'Select MARCS Lake control', exact: true }).check();
+  const candidate = state.customCandidates[0];
+  state.customCandidates[0] = { ...candidate, system_name: ohioSystems.marcs,
+    radio_reference: { state: 'matched', match: { system_name: ohioSystems.marcs,
+      url: 'https://www.radioreference.com/db/sid/123' } } };
+  await page.clock.fastForward(800);
+  const query = dialog(page).getByLabel('Search results', { exact: true });
+  await query.fill(ohioSystems.marcs);
+  await expect(dialog(page).locator('tbody tr:visible')).toHaveCount(2);
+  await expect(dialog(page).getByRole('checkbox', { name: 'Select MARCS Lake control', exact: true })).toBeChecked();
+  await expect(dialog(page).getByRole('link', { name: ohioSystems.marcs, exact: true })).toHaveCount(1);
+  await expect(dialog(page).getByText('RadioReference', { exact: true })).toHaveCount(0);
+  await expect(dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true })).toBeEnabled();
+  await dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true }).click();
+  const heading = dialog(page).getByRole('heading', { name: ohioSystems.marcs, exact: true });
+  await expect(heading.getByRole('link')).toHaveAttribute('href', 'https://www.radioreference.com/db/sid/123');
+  await expect(dialog(page).getByRole('link', { name: ohioSystems.marcs, exact: true })).toHaveCount(1);
+  await expect(dialog(page).getByText('RadioReference', { exact: true })).toHaveCount(0);
+  const headingNode = await heading.elementHandle();
+  const polls = () => state.requests.filter(({ path, method }) => path === `${searchPath}/search-a` && method === 'GET').length;
+  const before = polls();
+  await page.clock.fastForward(800);
+  await expect.poll(polls).toBeGreaterThan(before);
+  expect(await heading.evaluate((element, previous) => element === previous, headingNode)).toBe(true);
+  await expect(heading.getByRole('link')).toHaveAttribute('href', 'https://www.radioreference.com/db/sid/123');
+});
+
+test('result details close when polling removes their channel and prune only that selection', async ({ page }) => {
+  await page.clock.install();
+  const state = await install(page, { ...ohioResultsFixture({ pendingMarcs: true }) });
+  await complete(page);
+  await expect(dialog(page).getByText('RadioReference', { exact: true })).toHaveCount(1);
+  await dialog(page).getByRole('checkbox', { name: 'Select MARCS Cuyahoga control', exact: true }).check();
+  await dialog(page).getByRole('checkbox', { name: 'Select Cleveland control', exact: true }).check();
+  const query = dialog(page).getByLabel('Search results', { exact: true });
+  await query.fill('MARCS');
+  await dialog(page).getByRole('button', { name: 'Details for 773.08125 MHz', exact: true }).click();
+  await expect(page.locator('.spectrum-search-detail-modal')).toBeVisible();
+  state.customCandidates = state.customCandidates.filter((candidate) => candidate.candidate_id !== 'marcs-27');
+  await page.clock.fastForward(800);
+  await expect(page.locator('.spectrum-search-detail-modal')).toHaveCount(0);
+  await expect(dialog(page).getByRole('heading', { name: '3 channels found', exact: true })).toBeFocused();
+  await expect(query).toHaveValue('MARCS');
+  await expect(dialog(page).getByRole('checkbox', { name: 'Select MARCS Cuyahoga control', exact: true })).toHaveCount(0);
+  await expect(dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true })).toBeEnabled();
+  await query.fill('');
+  await expect(dialog(page).getByRole('checkbox', { name: 'Select Cleveland control', exact: true })).toBeChecked();
+  expect(savedSearchRequests(state).jobDeletes).toHaveLength(0);
+  expect(savedSearchRequests(state).browseDeletes).toHaveLength(0);
+});
+
+test('expired polling closes result details before guarded search cleanup and restores parent focus', async ({ page }) => {
+  await page.clock.install();
+  const state = await install(page, { ...ohioResultsFixture({ pendingMarcs: true }), requireJobRelease: true });
+  await complete(page);
+  await dialog(page).getByRole('checkbox', { name: 'Select MARCS Cuyahoga control', exact: true }).check();
+  await dialog(page).getByRole('button', { name: 'Details for 773.08125 MHz', exact: true }).click();
+  await expect(page.locator('.spectrum-search-detail-modal')).toBeVisible();
+  state.expired = true;
+  state.failNextJobDelete = true;
+  await page.clock.fastForward(800);
+  await expect(page.locator('.spectrum-search-detail-modal')).toHaveCount(0);
+  await expect(dialog(page).getByRole('heading', { name: 'This search expired', exact: true })).toBeFocused();
+  await expect.poll(() => savedSearchRequests(state).jobDeletes.length).toBe(1);
+  expect(savedSearchRequests(state).browseDeletes).toHaveLength(0);
+  expect(savedSearchRequests(state).saves).toHaveLength(0);
+  await dialog(page).getByRole('button', { name: 'Start a new search', exact: true }).click();
+  await expect(dialog(page).getByRole('heading', { name: 'Choose where to look', exact: true })).toBeFocused();
+  const { jobDeletes, browseDeletes } = savedSearchRequests(state);
+  expect(jobDeletes).toHaveLength(2);
+  expect(browseDeletes).toHaveLength(1);
+  expect(state.requests.indexOf(browseDeletes[0])).toBeGreaterThan(state.requests.indexOf(jobDeletes[1]));
+});
 
 test('search start failure restores the saved region control after its pending initial load', async ({ page }) => {
   const state = await install(page, { delayDirectoryStates: true, failSearchCreateOnce: true,
@@ -1964,11 +2227,14 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
     state.phase = 'complete';
     await expect(dialog(page).getByRole('heading', { name: /channels? found$/ })).toBeVisible();
     await expect(dialog(page)).toHaveScreenshot(`spectrum-search-results-${theme}-${width}.png`);
-    const details = dialog(page).locator('tbody tr').first().getByText('Signal details', { exact: true });
+    const details = dialog(page).locator('tbody tr').first().getByRole('button', { name: /^Details for / });
     await details.click();
-    await details.scrollIntoViewIfNeeded();
-    await expect(dialog(page)).toHaveScreenshot(`spectrum-search-signal-details-${theme}-${width}.png`);
-    await details.click();
+    const signalDetails = page.locator('.spectrum-search-detail-modal');
+    await expect(signalDetails).toBeVisible();
+    await expect(signalDetails).toHaveScreenshot(`spectrum-search-signal-details-${theme}-${width}.png`);
+    await page.keyboard.press('Escape');
+    await expect(signalDetails).toHaveCount(0);
+    await expect(details).toBeFocused();
     await dialog(page).getByRole('button', { name: 'Select all available' }).click();
     await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
     await expect(dialog(page).getByRole('checkbox', { name: /Listen now|Auto-start channels/ })).toHaveCount(0);

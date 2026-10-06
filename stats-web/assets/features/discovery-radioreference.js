@@ -141,6 +141,15 @@ export function createDiscoveryRadioReferenceContext(ui, request) {
 
 const renderedDirectoryResults = new WeakMap();
 
+export function discoveryRadioReferenceSystemUrl(value) {
+  const result = value?.radio_reference;
+  if (result?.state !== 'matched') return null;
+  try {
+    const parsed = new URL(result.match?.url);
+    return parsed.protocol === 'https:' && /(^|\.)radioreference\.com$/i.test(parsed.hostname) ? parsed.href : null;
+  } catch (_) { return null; }
+}
+
 export function discoveryRadioReferenceResult(ui, value, existing = null) {
   const result = value?.radio_reference;
   if (!result) return null;
@@ -148,13 +157,7 @@ export function discoveryRadioReferenceResult(ui, value, existing = null) {
   const details = existing || node('details', 'ui-section-disclosure ui-section-disclosure-flat');
   if (!existing) details.append(node('summary', 'ui-section-summary', 'RadioReference'));
   const match = result.state === 'matched' ? result.match : null;
-  const allowedLink = (url) => {
-    try {
-      const parsed = new URL(url);
-      return parsed.protocol === 'https:' && /(^|\.)radioreference\.com$/i.test(parsed.hostname) ? parsed.href : null;
-    } catch (_) { return null; }
-  };
-  const systemUrl = match ? allowedLink(match.url) : null;
+  const systemUrl = discoveryRadioReferenceSystemUrl(value);
   const signature = JSON.stringify(match ? [match.system_name, systemUrl] : [result.state]);
   if (renderedDirectoryResults.get(details) === signature) return details;
   renderedDirectoryResults.set(details, signature);

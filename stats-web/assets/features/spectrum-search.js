@@ -1,6 +1,22 @@
 import { systemName, systemIdentity } from '../core/system-labels.js?v=1';
 import { createTableOverflow } from '../core/table-overflow.js?v=1';
-import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult } from './discovery-radioreference.js?v=4';
+import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl } from './discovery-radioreference.js?v=5';
+
+export function spectrumSearchProtocolLabel(candidate, profiles = []) {
+  const id = String(candidate?.protocol_id || '');
+  const known = { p25phase1: 'P25 Phase 1', p25phase2: 'P25 Phase 2', p25: 'P25', dmr: 'DMR', nxdn: 'NXDN' };
+  const label = profiles.find((profile) => profile.id === id)?.label ||
+    known[id.toLowerCase().replace(/[^a-z0-9]/g, '')] || id.toUpperCase() || 'Digital';
+  const normalized = (value) => String(value).toLowerCase().replace(/[^a-z0-9]/g, '');
+  const variant = candidate?.variant;
+  const variants = { typec: 'Type-C', typed: 'Type-D', tieriii: 'Tier III',
+    hyteratieriii: 'Hytera Tier III', capacitymax: 'Capacity Max', capacityplus: 'Capacity Plus',
+    connectplus: 'Connect Plus' };
+  const variantLabel = known[normalized(variant)] || variants[normalized(variant)] ||
+    String(variant || '').replace(/_/g, ' ');
+  if (!variant || normalized(label).includes(normalized(variantLabel))) return label;
+  return normalized(variantLabel).startsWith(normalized(label)) ? variantLabel : `${label} ${variantLabel}`;
+}
 
 export function spectrumSearchSystemName(candidate) {
   const identity = candidate?.identity || candidate?.trunked_evidence?.identity;
@@ -21,7 +37,7 @@ export function spectrumSearchIdentityFacts(candidate, hex) {
   if (!identity) return [];
   if (identity.wacn != null) return [['WACN', hex(identity.wacn, 5)], ['System ID', hex(identity.system, 3)],
     ['RFSS', identity.rfss], ['Site ID', identity.site]];
-  return [['Protocol', candidate.protocol_id?.toUpperCase()], ['Variant', candidate.variant],
+  return [['Protocol', spectrumSearchProtocolLabel(candidate)],
     ['Network', identity.network], ['System ID', identity.system], ['Site ID', identity.site],
     ['Model', identity.model], ['Location category', identity.category], ['Integrator', identity.integrator],
     ['RAN', identity.ran], ['Color code', identity.color_code]]
@@ -86,7 +102,9 @@ export function openSpectrumSearchWizard(ui, context = {}) {
   let currentStep = '';
   let receiverChooser = null;
   let reviewBindings = [];
+  let reviewGroupBindings = [];
   let resultBindings = null;
+  let detailBinding = null;
   let resultQuery = '';
   let disposeBandPicker = () => {};
   const resultOverflows = new Set();
@@ -275,6 +293,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     feedback.replaceChildren();
   };
   const show = (next, index, title) => {
+    detailBinding?.modal.close();
     disposeBandPicker();
     disposeBandPicker = () => {};
     disposeResultOverflows();
@@ -282,6 +301,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     currentStep = next;
     receiverChooser = null;
     reviewBindings = [];
+    reviewGroupBindings = [];
     resultBindings = null;
     steps.hidden = next === 'saved';
     const labels = next === 'progress' ? ['Bands', 'Find channels', 'Review & add'] :
@@ -324,12 +344,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     reviewBindings.forEach((binding) => {
       const candidate = candidates().find((value) => value.candidate_id === binding.id);
       if (!candidate) return;
-      binding.title.textContent = systemLabel(candidate);
       binding.site.textContent = siteLabel(candidate);
-      const result = discoveryRadioReferenceResult(ui, candidate, binding.directoryResult);
-      if (result !== binding.directoryResult) binding.directory.replaceChildren(...(result ? [result] : []));
-      binding.directoryResult = result;
-      binding.directory.hidden = !result;
       if (!binding.draft.name_edited) {
         binding.draft.name = candidateName(candidate);
         binding.name.textContent = binding.draft.name;
@@ -344,12 +359,14 @@ export function openSpectrumSearchWizard(ui, context = {}) {
         binding.editor.map = updated;
       }
     });
+    reviewGroupBindings.forEach((binding) => refreshGroupDirectory(binding));
   };
   const identityFacts = (candidate) => spectrumSearchIdentityFacts(candidate, hex);
   const identityText = (candidate) => identityFacts(candidate).map(([label, value]) => `${label} ${value}`).join(' · ') ||
     'Identity unavailable';
   const candidateName = (candidate) => candidate.name || candidate.site_name || `${channelMHz(candidate.frequency_hz)} MHz`;
-  const systemLabel = (candidate) => spectrumSearchSystemName(candidate) || systemIdentity({ ...candidate,
+  const systemLabel = (candidate) => (candidate.radio_reference?.state === 'matched' &&
+    candidate.radio_reference.match?.system_name) || spectrumSearchSystemName(candidate) || systemIdentity({ ...candidate,
     radio_system_key: candidate.radio_system_key || candidate.trunked_evidence?.identity?.radio_system_key }) ||
     (candidate.identity ? `P25 ${hex(candidate.identity.wacn, 5)}-${hex(candidate.identity.system, 3)}` :
       `${String(candidate.protocol_id || 'Digital').toUpperCase()} system`);
@@ -987,12 +1004,96 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       identityText(candidate);
     return `${label} · ${count} ${count === 1 ? 'site' : 'sites'}`;
   };
-  const candidateDescription = (candidate) => [candidateName(candidate),
-    candidate.variant || candidate.protocol_id?.toUpperCase(), candidate.modulation].filter(Boolean).join(' · ');
-  const candidateSearchText = (candidate) => [candidateName(candidate), systemLabel(candidate),
+  const candidateDescription = (candidate) => [spectrumSearchProtocolLabel(candidate, protocols?.profiles),
+    candidate.modulation].filter(Boolean).join(' · ');
+  const candidateSearchText = (candidate) => [candidateName(candidate), systemLabel(candidate), siteLabel(candidate),
+    candidateDescription(candidate),
     identityText(candidate), candidate.known_channel?.name, channelMHz(candidate.frequency_hz),
     ...(groupFor(candidate)?.alias_lists || []).map((aliasList) => aliasList.name),
+    ...candidates().filter((member) => spectrumSearchGroupKey(member) === spectrumSearchGroupKey(candidate))
+      .map((member) => systemLabel(member)),
     ...Object.values(candidate.identity || {})].filter((value) => value != null).join(' ').toLowerCase();
+  const groupRepresentative = (members) => members.find((candidate) =>
+    candidate.radio_reference?.state === 'matched' && candidate.radio_reference.match?.system_name) ||
+    members.find((candidate) => candidate.radio_reference?.state === 'pending') || members[0];
+  const refreshGroupDirectory = (binding) => {
+    const members = binding.candidateIds.map((id) => candidates().find((candidate) => candidate.candidate_id === id))
+      .filter(Boolean);
+    if (!members.length) return;
+    const observed = candidates().filter((candidate) =>
+      spectrumSearchGroupKey(candidate) === spectrumSearchGroupKey(members[0]));
+    const representative = groupRepresentative(observed);
+    const title = systemLabel(representative);
+    const url = discoveryRadioReferenceSystemUrl(representative);
+    const signature = JSON.stringify([title, url]);
+    if (binding.titleSignature !== signature) {
+      binding.title.replaceChildren(url ? anchor(title, url) : document.createTextNode(title));
+      binding.titleSignature = signature;
+    }
+    const lookup = representative.radio_reference?.state === 'matched' ? null :
+      members.find((candidate) => candidate.radio_reference?.state === 'pending') ||
+      members.find((candidate) => candidate.radio_reference);
+    const result = lookup ? discoveryRadioReferenceResult(ui, lookup, binding.directoryResult) : null;
+    if (result !== binding.directoryResult) binding.directoryHost.replaceChildren(...(result ? [result] : []));
+    binding.directoryResult = result;
+    binding.directoryHost.hidden = !result;
+    if (binding.identity) binding.identity.textContent = systemIdentityLabel({ candidates: members });
+    if (binding.groupCheck) binding.groupCheck.setAttribute('aria-label', `Select all channels in ${title}`);
+  };
+  const refreshOpenDetails = () => {
+    if (!detailBinding) return;
+    const candidate = candidates().find((candidate) => candidate.candidate_id === detailBinding.id);
+    if (!candidate) return;
+    const health = candidate.health || {};
+    const identity = identityFacts(candidate).filter(([label]) => label !== 'Protocol');
+    const entries = [
+      ['System', systemLabel(candidate)], ['Site', siteLabel(candidate)],
+      ['Protocol', spectrumSearchProtocolLabel(candidate, protocols?.profiles)]
+    ];
+    const signal = [
+      ['Signal', candidate.strength_dbfs == null ? null : `${Number(candidate.strength_dbfs).toFixed(1)} dBFS`],
+      ['Modulation', candidate.modulation],
+      ['Decoder quality', health.quality_pct == null ? null : `${Math.round(health.quality_pct)}%`],
+      ['Valid control messages', health.valid_control_messages],
+      ['Invalid control messages', health.invalid_control_messages],
+      ['Last checked', health.checked_at_ms ? new Date(health.checked_at_ms).toLocaleTimeString() : 'During this search']
+    ];
+    const signature = JSON.stringify([entries, identity, signal]);
+    if (detailBinding.signature !== signature) {
+      detailBinding.system.replaceChildren(factList(entries));
+      detailBinding.identity.replaceChildren(factList(identity));
+      detailBinding.identitySection.hidden = identity.length === 0;
+      detailBinding.signal.replaceChildren(factList(signal));
+      detailBinding.signature = signature;
+    }
+  };
+  const showCandidateDetails = (id) => {
+    const candidate = candidates().find((value) => value.candidate_id === id);
+    if (!candidate) return;
+    const content = node('div', 'ui-editor-sections');
+    const section = (label) => {
+      const panel = node('fieldset', 'ui-form-section');
+      const body = node('div');
+      panel.append(node('legend', '', label), body);
+      content.append(panel);
+      return { panel, body };
+    };
+    const system = section('Channel');
+    const identity = section('On-air identity');
+    const signal = section('Signal health');
+    const footer = node('footer', 'ui-modal-footer ui-action-row');
+    const back = uiActionButton('Back to channels', '', () => details.close(), 'ui-button ui-button-secondary');
+    footer.append(back);
+    content.append(footer);
+    const details = openReadOnlyModal(`Signal details · ${channelMHz(candidate.frequency_hz)} MHz`, content, {
+      id: 'spectrum-search-signal', className: 'spectrum-search-detail-modal', stack: 'child',
+      cleanup: () => { if (detailBinding?.id === id) detailBinding = null; }
+    });
+    if (!details) return;
+    detailBinding = { id, modal: details, system: system.body, identity: identity.body,
+      identitySection: identity.panel, signal: signal.body };
+    refreshOpenDetails();
+  };
   const refreshResultsDirectory = () => {
     if (!resultBindings) return;
     const latest = new Map(candidates().map((candidate) => [candidate.candidate_id, candidate]));
@@ -1017,21 +1118,11 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       binding.site.textContent = siteLabel(candidate);
       binding.check.setAttribute('aria-label', `Select ${candidateName(candidate)}`);
       binding.text = candidateSearchText(candidate);
-      const result = discoveryRadioReferenceResult(ui, candidate, binding.directoryResult);
-      if (result !== binding.directoryResult) {
-        if (binding.directoryResult) {
-          if (result) binding.directoryResult.replaceWith(result);
-          else binding.directoryResult.remove();
-        } else if (result) binding.directoryHost.append(result);
-      }
-      binding.directoryResult = result;
     });
     resultBindings.sections.forEach((binding) => {
-      const first = binding.members[0].candidate;
-      binding.title.textContent = systemLabel(first);
-      binding.identity.textContent = systemIdentityLabel({ candidates: binding.members.map((member) => member.candidate) });
-      binding.groupCheck.setAttribute('aria-label', `Select all channels in ${systemLabel(first)}`);
+      refreshGroupDirectory(binding);
     });
+    refreshOpenDetails();
     resultBindings.search.dispatchEvent(new Event('input'));
     resultBindings.updateSelection();
   };
@@ -1093,16 +1184,21 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       sectionHeader.append(groupCheck, identity, tableActions);
       const wrapper = node('div', 'ui-table-wrap');
       const table = node('table', 'ui-data-table ui-data-table-quiet ui-mobile-cards spectrum-search-group-table');
+      const columns = node('colgroup');
+      ['selection', 'channel', 'site', 'signal', 'quality', 'details'].forEach((name) =>
+        columns.append(node('col', `spectrum-search-column-${name}`)));
       const head = node('tr');
-      ['Channel', 'Site', 'Signal', 'Health'].forEach((label) => {
-        const cell = node('th', '', label); cell.scope = 'col'; head.append(cell);
+      ['', 'Channel', 'Site', 'Signal', 'Quality', 'Details'].forEach((label) => {
+        const cell = node('th', '', label); cell.scope = 'col';
+        if (!label) cell.setAttribute('aria-label', 'Select channels');
+        head.append(cell);
       });
       const thead = node('thead'); thead.append(head);
       const body = node('tbody');
       const members = [];
       entry.candidates.forEach((candidate) => {
         const row = node('tr');
-        const cells = ['Channel', 'Site', 'Signal', 'Health'].map((label) => {
+        const cells = ['', 'Channel', 'Site', 'Signal', 'Quality', 'Details'].map((label) => {
           const cell = node('td'); cell.dataset.label = label; row.append(cell); return cell;
         });
         const check = node('input', 'ui-selection-check spectrum-search-channel-check');
@@ -1125,30 +1221,21 @@ export function openSpectrumSearchWizard(ui, context = {}) {
           channel.append(uiPill('Already added'), link ? anchor(known.name || 'Open channel', link) :
             node('span', 'muted', known.name || 'Known channel'));
         } else if (check.disabled) channel.append(node('span', 'muted', candidate.reason || 'Unavailable to add'));
-        const channelChoice = node('div', 'spectrum-search-channel-choice');
-        channelChoice.append(check, channel);
-        cells[0].append(channelChoice);
+        cells[0].append(check);
+        cells[1].append(channel);
         const site = node('span', '', siteLabel(candidate));
-        cells[1].append(site);
+        cells[2].append(site);
         const strength = Number.isFinite(Number(candidate.strength_dbfs)) && candidate.strength_dbfs != null ?
           `${Number(candidate.strength_dbfs).toFixed(1)} dBFS` : '—';
-        cells[2].append(node('span', '', strength));
+        cells[3].append(node('span', '', strength));
         const health = candidate.health || {};
-        const healthCell = node('div', 'spectrum-search-health');
-        healthCell.append(node('strong', '', health.quality_pct == null ? '—' : `${Math.round(health.quality_pct)}%`),
-          disclosure('Signal details', factList([
-            ...identityFacts(candidate), ['Modulation', candidate.modulation],
-            ['Decoder quality', health.quality_pct == null ? null : `${Math.round(health.quality_pct)}%`],
-            ['Valid control messages', health.valid_control_messages],
-            ['Invalid control messages', health.invalid_control_messages],
-            ['Last checked', health.checked_at_ms ? new Date(health.checked_at_ms).toLocaleTimeString() : 'During this search']
-          ])));
-        const directoryResult = discoveryRadioReferenceResult(ui, candidate);
-        if (directoryResult) healthCell.append(directoryResult);
-        cells[3].append(healthCell);
+        cells[4].append(node('strong', '', health.quality_pct == null ? '—' : `${Math.round(health.quality_pct)}%`));
+        const details = uiActionButton('Details', '', () => showCandidateDetails(candidate.candidate_id),
+          'ui-button ui-button-secondary');
+        details.setAttribute('aria-label', `Details for ${channelMHz(candidate.frequency_hz)} MHz`);
+        cells[5].append(details);
         row.hidden = false;
-        const member = { candidate, row, check, label, site, directoryHost: healthCell,
-          directoryResult, text: candidateSearchText(candidate) };
+        const member = { candidate, row, check, label, site, text: candidateSearchText(candidate) };
         members.push(member);
         rows.push(member);
         body.append(row);
@@ -1161,13 +1248,17 @@ export function openSpectrumSearchWizard(ui, context = {}) {
         });
         updateSelection();
       });
-      table.append(thead, body);
+      table.append(columns, thead, body);
       wrapper.append(table);
-      section.append(sectionHeader, wrapper);
+      const directoryHost = node('div', 'spectrum-search-system-directory');
+      section.append(sectionHeader, directoryHost, wrapper);
       const overflow = createTableOverflow({ wrapper, table, actionsHost: tableActions, iconButton,
         signal: abort.signal, label: `${systemLabel(entry.candidates[0])} search results` });
       resultOverflows.add(overflow);
-      sections.push({ section, groupCheck, members, title: groupTitle, identity: groupIdentity });
+      const binding = { section, groupCheck, members, title: groupTitle, identity: groupIdentity, directoryHost,
+        candidateIds: entry.candidates.map((candidate) => candidate.candidate_id) };
+      sections.push(binding);
+      refreshGroupDirectory(binding);
       list.append(section);
     });
     search.addEventListener('input', () => {
@@ -1196,13 +1287,15 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     const mapEditors = [];
 
     groupedCandidates(chosen).forEach((entry) => {
+      const representative = groupRepresentative(candidates().filter((candidate) =>
+        spectrumSearchGroupKey(candidate) === entry.key));
       const group = entry.aliasGroup;
       const lists = group?.alias_lists || [];
       const draft = group ? groups.get(group.group_id) || {
         alias_list_id: group.suggested_alias_list_id ||
           (lists.length === 1 ? lists[0].id : lists.length ? '' : 0),
         new_alias_list_name: group.default_new_alias_list_name ||
-          systemLabel(entry.candidates[0])
+          systemLabel(representative)
       } : null;
       if (draft) {
         if (lists.length === 1) draft.alias_list_id = lists[0].id;
@@ -1220,7 +1313,8 @@ export function openSpectrumSearchWizard(ui, context = {}) {
         aliasSummary.textContent = existing ? `Alias List: ${existing.name} · Existing` : draft ?
           `Alias List: ${draft.new_alias_list_name || 'Name required'}` : 'Alias List unavailable';
       };
-      title.append(node('h4', '', systemLabel(entry.candidates[0])), aliasSummary);
+      const groupTitle = node('h4', 'ui-record-title', systemLabel(representative));
+      title.append(groupTitle, aliasSummary);
       const customizePanel = node('div', 'spectrum-search-review-customize');
       customizePanel.hidden = !(requiresAliasChoice || draft && lists.length === 0);
       const customize = uiActionButton(customizePanel.hidden ? 'Customize' : 'Done', '', () => {
@@ -1232,9 +1326,15 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       sectionHeader.append(title, customize);
       const rows = node('div', 'spectrum-search-review-channel-list');
       const channelFields = node('div', 'channel-editor-grid spectrum-search-channel-fields');
+      const directoryHost = node('div');
+      customizePanel.append(directoryHost);
+      const groupBinding = { title: groupTitle, directoryHost,
+        candidateIds: entry.candidates.map((candidate) => candidate.candidate_id) };
+      reviewGroupBindings.push(groupBinding);
+      refreshGroupDirectory(groupBinding);
       entry.candidates.forEach((candidate) => {
         const channelDraft = drafts.get(candidate.candidate_id) || { name: candidateName(candidate) };
-        const binding = { id: candidate.candidate_id, draft: channelDraft, title: title.querySelector('h4') };
+        const binding = { id: candidate.candidate_id, draft: channelDraft };
         drafts.set(candidate.candidate_id, channelDraft);
         const row = node('div', 'spectrum-search-review-channel');
         const frequency = node('span'); frequency.dataset.label = 'Frequency';
@@ -1243,13 +1343,6 @@ export function openSpectrumSearchWizard(ui, context = {}) {
         const name = node('span', '', channelDraft.name); name.dataset.label = 'Channel name';
         row.append(frequency, site, name);
         Object.assign(binding, { site, name });
-        const directoryHost = node('div');
-        const directoryResult = discoveryRadioReferenceResult(ui, candidate);
-        if (directoryResult) directoryHost.append(directoryResult);
-        directoryHost.hidden = !directoryResult;
-        binding.directory = directoryHost;
-        binding.directoryResult = directoryResult;
-        customizePanel.append(directoryHost);
         reviewBindings.push(binding);
         if (candidate.saved || candidate.known_channel) row.append(uiPill(candidate.saved ? 'Added' : 'Already added',
           candidate.saved ? 'success' : 'neutral'));

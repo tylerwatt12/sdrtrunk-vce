@@ -416,6 +416,106 @@ const requestedHue = parameters.get('hue');
 applyThemeHue(requestedHue === null ? null : Number(requestedHue));
 document.body.dataset.galleryView = view;
 
+if (view === 'spectrum-search') {
+  const example = document.querySelector('.visual-spectrum-search-example');
+  const workspace = example.querySelector('.spectrum-search-workspace');
+  const rows = [...workspace.querySelectorAll('tbody tr')];
+  const groups = [...workspace.querySelectorAll('.spectrum-search-system-group')];
+  const query = workspace.querySelector('[data-visual-search-query]');
+  const count = workspace.querySelector('[data-visual-search-count]');
+  const review = workspace.querySelector('[data-visual-search-review]');
+  const rowCheck = row => row.querySelector('.spectrum-search-channel-check');
+  const updateSelection = () => {
+    const selected = rows.filter(row => rowCheck(row).checked).length;
+    count.textContent = `${selected} selected`;
+    review.textContent = selected ? `Review ${selected} ${selected === 1 ? 'channel' : 'channels'}` : 'Review selected';
+    review.disabled = selected === 0;
+    groups.forEach(group => {
+      const available = [...group.querySelectorAll('.spectrum-search-channel-check')].filter(check => !check.disabled);
+      const chosen = available.filter(check => check.checked).length;
+      const check = group.querySelector('.spectrum-search-system-header > input');
+      check.checked = available.length > 0 && chosen === available.length;
+      check.indeterminate = chosen > 0 && chosen < available.length;
+      check.disabled = available.length === 0;
+    });
+  };
+  rows.forEach(row => rowCheck(row).addEventListener('change', updateSelection));
+  groups.forEach(group => {
+    const check = group.querySelector('.spectrum-search-system-header > input');
+    check.addEventListener('change', () => {
+      group.querySelectorAll('.spectrum-search-channel-check').forEach(rowCheck => {
+        if (!rowCheck.disabled) rowCheck.checked = check.checked;
+      });
+      updateSelection();
+    });
+  });
+  workspace.querySelector('[data-visual-search-select-all]').addEventListener('click', () => {
+    rows.forEach(row => { if (!rowCheck(row).disabled) rowCheck(row).checked = true; });
+    updateSelection();
+  });
+  query.addEventListener('input', () => {
+    const value = query.value.trim().toLowerCase();
+    rows.forEach(row => {
+      const system = row.closest('.spectrum-search-system-group').querySelector('.spectrum-search-system-identity').textContent;
+      row.hidden = !`${system} ${row.textContent} ${rowCheck(row).getAttribute('aria-label')}`.toLowerCase().includes(value);
+    });
+    groups.forEach(group => { group.hidden = [...group.querySelectorAll('tbody tr')].every(row => row.hidden); });
+  });
+  updateSelection();
+
+  const node = (tag, className = '', text = null) => {
+    const element = document.createElement(tag);
+    element.className = className;
+    if (text !== null) element.textContent = String(text);
+    return element;
+  };
+  let foundation = null;
+  let parent = null;
+  rows.forEach(row => row.querySelector('[data-label="Details"] button').addEventListener('click', async event => {
+    const button = event.currentTarget;
+    foundation ||= createGalleryModalFoundation();
+    const { openReadOnlyModal } = await foundation;
+    if (!parent) {
+      example.querySelector('.modal-backdrop').remove();
+      parent = openReadOnlyModal('Find Trunked Systems', workspace, {
+        id: 'visual-spectrum-search', className: 'channel-editor-modal spectrum-search-modal'
+      });
+    }
+    parent.focus(button);
+    const cells = [...row.querySelectorAll('td')];
+    const group = row.closest('.spectrum-search-system-group');
+    const frequency = row.querySelector('.identity-summary-primary').textContent;
+    const [protocol, modulation] = row.querySelector('.identity-summary > .muted').textContent.split(' · ');
+    const identity = group.querySelector('.spectrum-search-system-identity > .muted').textContent;
+    const content = node('div', 'ui-editor-sections');
+    const section = (label, entries) => {
+      const panel = node('fieldset', 'ui-form-section');
+      const body = node('div');
+      const facts = node('dl', 'ui-fact-list');
+      entries.forEach(([key, value]) => facts.append(node('dt', '', key), node('dd', '', value)));
+      body.append(facts);
+      panel.append(node('legend', '', label), body);
+      content.append(panel);
+    };
+    section('Channel', [['System', group.querySelector('.spectrum-search-system-identity > strong').textContent],
+      ['Site', cells[2].textContent], ['Protocol', protocol]]);
+    section('On-air identity', [['WACN', identity.match(/WACN (\w+)/)?.[1] || '—'],
+      ['System ID', identity.match(/SysID (\w+)/)?.[1] || '—']]);
+    section('Signal health', [['Signal', cells[3].textContent], ['Modulation', modulation],
+      ['Decoder quality', cells[4].textContent], ['Valid control messages', '41'],
+      ['Invalid control messages', '1'], ['Last checked', 'During this search']]);
+    const footer = node('footer', 'ui-modal-footer ui-action-row');
+    const back = node('button', 'ui-button ui-button-secondary', 'Back to channels');
+    back.type = 'button';
+    footer.append(back);
+    content.append(footer);
+    const details = openReadOnlyModal(`Signal details · ${frequency}`, content, {
+      id: 'visual-spectrum-search-signal', className: 'spectrum-search-detail-modal', stack: 'child'
+    });
+    back.addEventListener('click', () => details.close());
+  }));
+}
+
 if (view === 'table-overflow') {
   const iconButton = (iconId, text, className) => {
     const button = document.createElement('button');

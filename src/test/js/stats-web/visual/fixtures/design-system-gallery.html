@@ -1461,25 +1461,46 @@
       <header class="modal-header"><h2 id="visual-spectrum-search-title">Find Trunked Systems</h2><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Close"><svg aria-hidden="true"><use href="#visual-icon-close"></use></svg></button></header>
       <div class="modal-content"><div class="spectrum-discovery-workspace spectrum-search-workspace editor-workspace">
         <div class="spectrum-discovery-context"><strong>Wide receiver</strong><p class="muted">773.081250 MHz @ 9.00 MHz</p></div>
-        <ol class="spectrum-discovery-progress" aria-label="Find Trunked Systems steps"><li aria-current="step"><span class="ui-pill ui-pill-blue">1</span><span>Bands</span></li><li><span class="ui-pill ui-pill-neutral">2</span><span>Select channels</span></li><li><span class="ui-pill ui-pill-neutral">3</span><span>Review &amp; add</span></li></ol>
-        <div class="spectrum-discovery-stage"><h3>Choose where to look</h3>
-          <form class="spectrum-search-form">
-            <label class="ui-field"><span class="ui-field-label">Receiver</span><div class="ui-select-frame"><select class="ui-select" aria-label="Receiver"><option>Wide receiver · 773.081250 MHz @ 9.00 MHz</option><option>Small receiver · 852.400000 MHz @ 2.20 MHz</option></select><svg aria-hidden="true"><use href="#visual-icon-chevron"></use></svg></div></label>
-            <fieldset class="spectrum-search-band-field"><legend class="ui-field-label" id="visual-spectrum-search-band-label">Bands</legend>
-              <div class="ui-select-frame spectrum-search-band-frame"><button class="ui-select spectrum-search-band-trigger" type="button" aria-labelledby="visual-spectrum-search-band-label visual-spectrum-search-band-summary" aria-haspopup="dialog" aria-expanded="false"><span class="spectrum-search-band-summary" id="visual-spectrum-search-band-summary">700 MHz, 800 MHz</span></button><svg aria-hidden="true"><use href="#visual-icon-chevron"></use></svg></div>
-              <div class="ui-popover spectrum-search-band-popover" popover role="dialog" aria-labelledby="visual-spectrum-search-band-label">
-                <label class="ui-choice-card spectrum-search-band-option"><input class="ui-selection-check" type="checkbox"><span class="spectrum-search-band-option-copy"><strong>VHF high</strong><small class="ui-field-detail">138–174 MHz</small></span></label>
-                <label class="ui-choice-card spectrum-search-band-option"><input class="ui-selection-check" type="checkbox"><span class="spectrum-search-band-option-copy"><strong>UHF</strong><small class="ui-field-detail">406–470 MHz</small></span></label>
-                <label class="ui-choice-card spectrum-search-band-option"><input class="ui-selection-check" type="checkbox" checked><span class="spectrum-search-band-option-copy"><strong>700 MHz</strong><small class="ui-field-detail">769–775 MHz</small></span></label>
-                <label class="ui-choice-card spectrum-search-band-option"><input class="ui-selection-check" type="checkbox" checked><span class="spectrum-search-band-option-copy"><strong>800 MHz</strong><small class="ui-field-detail">851–869 MHz</small></span></label>
-                <label class="ui-choice-card spectrum-search-band-option"><input class="ui-selection-check" type="checkbox"><span class="spectrum-search-band-option-copy"><strong>Custom range</strong><small class="ui-field-detail">Enter a start and end frequency</small></span></label>
-              </div>
-            </fieldset>
-            <p class="ui-field-hint">Choose one or more bands. Maximum search span: 150 MHz.</p>
-            <div class="ui-notice">The receiver scans each band, then checks promising signals.</div>
-          </form>
+        <ol class="spectrum-discovery-progress" aria-label="Find Trunked Systems steps"><li><span class="ui-pill ui-pill-success">✓</span><span>Bands</span></li><li aria-current="step"><span class="ui-pill ui-pill-blue">2</span><span>Select channels</span></li><li><span class="ui-pill ui-pill-neutral">3</span><span>Review &amp; add</span></li></ol>
+        <div class="spectrum-discovery-stage"><h3>4 channels found</h3>
+          <div class="spectrum-search-results-toolbar">
+            <div class="spectrum-search-results-heading"><strong>Grouped by trunked system</strong><span class="muted" data-visual-search-count>1 selected</span></div>
+            <label class="ui-field spectrum-search-results-filter"><span class="ui-field-label">Search results</span><input class="ui-input" type="search" aria-label="Search results" placeholder="Search channels, frequencies, or identities" data-visual-search-query></label>
+            <button class="ui-button ui-button-secondary" type="button" data-visual-search-select-all>Select all available</button>
+          </div>
+          <div class="spectrum-search-system-list">
+            <section class="ui-surface spectrum-search-system-group">
+              <header class="spectrum-search-system-header">
+                <input class="ui-selection-check" type="checkbox" aria-label="Select all channels in Ohio MARCS-IP: Multi-Agency Radio Communications">
+                <div class="spectrum-search-system-identity"><strong><a href="https://www.radioreference.com/db/sid/6643">Ohio MARCS-IP: Multi-Agency Radio Communications</a></strong><span class="muted">WACN BEE00 · SysID 348 · 3 sites</span></div>
+                <div class="ui-section-actions"><span class="ui-pill ui-pill-success">Stable identity</span></div>
+              </header>
+              <div class="ui-table-wrap"><table class="ui-data-table ui-data-table-quiet ui-mobile-cards spectrum-search-group-table">
+                <colgroup><col class="spectrum-search-column-selection"><col class="spectrum-search-column-channel"><col class="spectrum-search-column-site"><col class="spectrum-search-column-signal"><col class="spectrum-search-column-quality"><col class="spectrum-search-column-details"></colgroup>
+                <thead><tr><th scope="col" aria-label="Select channels"></th><th scope="col">Channel</th><th scope="col">Site</th><th scope="col">Signal</th><th scope="col">Quality</th><th scope="col">Details</th></tr></thead>
+                <tbody>
+                  <tr><td data-label=""><input class="ui-selection-check spectrum-search-channel-check" type="checkbox" aria-label="Select County North" checked></td><td data-label="Channel"><div class="identity-summary"><strong class="identity-summary-primary">773.08125 MHz</strong><span class="muted">P25 Phase 1 · C4FM</span></div></td><td data-label="Site"><span>County North Simulcast</span></td><td data-label="Signal"><span>−35.2 dBFS</span></td><td data-label="Quality"><strong>99%</strong></td><td data-label="Details"><button class="ui-button ui-button-secondary" type="button" aria-label="Details for 773.08125 MHz">Details</button></td></tr>
+                  <tr><td data-label=""><input class="ui-selection-check spectrum-search-channel-check" type="checkbox" aria-label="Select County Central"></td><td data-label="Channel"><div class="identity-summary"><strong class="identity-summary-primary">772.45625 MHz</strong><span class="muted">P25 Phase 1 · CQPSK</span></div></td><td data-label="Site"><span>County Central</span></td><td data-label="Signal"><span>−47.8 dBFS</span></td><td data-label="Quality"><strong>96%</strong></td><td data-label="Details"><button class="ui-button ui-button-secondary" type="button" aria-label="Details for 772.45625 MHz">Details</button></td></tr>
+                  <tr><td data-label=""><input class="ui-selection-check spectrum-search-channel-check" type="checkbox" aria-label="Select County South" disabled></td><td data-label="Channel"><div class="identity-summary"><strong class="identity-summary-primary">774.00625 MHz</strong><span class="muted">P25 Phase 1 · C4FM</span><span class="ui-pill ui-pill-neutral">Already added</span><a href="#county-south">County South Control</a></div></td><td data-label="Site"><span>County South</span></td><td data-label="Signal"><span>−69.1 dBFS</span></td><td data-label="Quality"><strong>87%</strong></td><td data-label="Details"><button class="ui-button ui-button-secondary" type="button" aria-label="Details for 774.00625 MHz">Details</button></td></tr>
+                </tbody>
+              </table></div>
+            </section>
+            <section class="ui-surface spectrum-search-system-group">
+              <header class="spectrum-search-system-header">
+                <input class="ui-selection-check" type="checkbox" aria-label="Select all channels in Regional Emergency Services and Public Safety Communications Network">
+                <div class="spectrum-search-system-identity"><strong>Regional Emergency Services and Public Safety Communications Network</strong><span class="muted">WACN ABC00 · SysID 234 · 1 site</span></div>
+                <div class="ui-section-actions"><span class="ui-pill ui-pill-success">Stable identity</span></div>
+              </header>
+              <div class="spectrum-search-system-directory"><details class="ui-section-disclosure ui-section-disclosure-flat"><summary class="ui-section-summary">RadioReference</summary><p class="muted">Looking up the system name…</p></details></div>
+              <div class="ui-table-wrap"><table class="ui-data-table ui-data-table-quiet ui-mobile-cards spectrum-search-group-table">
+                <colgroup><col class="spectrum-search-column-selection"><col class="spectrum-search-column-channel"><col class="spectrum-search-column-site"><col class="spectrum-search-column-signal"><col class="spectrum-search-column-quality"><col class="spectrum-search-column-details"></colgroup>
+                <thead><tr><th scope="col" aria-label="Select channels"></th><th scope="col">Channel</th><th scope="col">Site</th><th scope="col">Signal</th><th scope="col">Quality</th><th scope="col">Details</th></tr></thead>
+                <tbody><tr><td data-label=""><input class="ui-selection-check spectrum-search-channel-check" type="checkbox" aria-label="Select Regional North"></td><td data-label="Channel"><div class="identity-summary"><strong class="identity-summary-primary">771.10625 MHz</strong><span class="muted">P25 Phase 1 · C4FM</span></div></td><td data-label="Site"><span>Regional North</span></td><td data-label="Signal"><span>−52.4 dBFS</span></td><td data-label="Quality"><strong>93%</strong></td><td data-label="Details"><button class="ui-button ui-button-secondary" type="button" aria-label="Details for 771.10625 MHz">Details</button></td></tr></tbody>
+              </table></div>
+            </section>
+          </div>
         </div>
-        <div class="ui-action-row ui-modal-footer spectrum-discovery-actions"><button class="ui-button ui-button-secondary" type="button">Cancel</button><button class="ui-button ui-button-primary" type="button">Find signals</button></div>
+        <div class="ui-action-row ui-modal-footer spectrum-discovery-actions"><button class="ui-button ui-button-secondary" type="button">Search another band</button><button class="ui-button ui-button-primary" type="button" data-visual-search-review>Review 1 channel</button></div>
       </div></div>
     </section></div>
   </div>

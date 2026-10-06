@@ -836,6 +836,7 @@
 .ui-selection-check {
   width: 18px;
   height: 18px;
+  flex: 0 0 18px;
   display: grid;
   place-content: center;
   margin: 0;

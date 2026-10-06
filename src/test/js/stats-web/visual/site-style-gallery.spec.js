@@ -14,6 +14,34 @@ test('style matrix includes every registered gallery composition', () => {
     .toEqual([...galleryViews].sort());
 });
 
+test('trunked results gallery keeps selection and filtering when shared signal details open', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/design-system.html?view=spectrum-search&theme=light');
+  const search = page.locator('.spectrum-search-modal');
+  const allMarcs = search.getByRole('checkbox', { name: 'Select all channels in Ohio MARCS-IP: Multi-Agency Radio Communications', exact: true });
+  await expect(allMarcs).toHaveJSProperty('indeterminate', true);
+  await allMarcs.check();
+  await expect(search.getByRole('checkbox', { name: 'Select County Central', exact: true })).toBeChecked();
+  const query = search.getByLabel('Search results', { exact: true });
+  await query.fill('Regional');
+  await expect(search.locator('tbody tr:visible')).toHaveCount(1);
+  await expect(search.getByRole('button', { name: 'Review 2 channels', exact: true })).toBeEnabled();
+  await query.fill('');
+  const workspace = await search.locator('.spectrum-search-workspace').elementHandle();
+  const details = search.getByRole('button', { name: 'Details for 773.08125 MHz', exact: true });
+  await details.click();
+  const child = page.locator('.spectrum-search-detail-modal');
+  await expect(child.getByRole('heading', { name: 'Signal details · 773.08125 MHz', exact: true })).toBeVisible();
+  expect(await search.evaluate((element) => element.closest('.modal-backdrop').inert)).toBe(true);
+  await child.screenshot({ path: testInfo.outputPath('gallery-signal-details.png') });
+  await page.keyboard.press('Escape');
+  await expect(child).toHaveCount(0);
+  await expect(details).toBeFocused();
+  expect(await search.locator('.spectrum-search-workspace').evaluate((element, previous) => element === previous, workspace)).toBe(true);
+  await expect(search.getByRole('checkbox', { name: 'Select County North', exact: true })).toBeChecked();
+  await expect(search.getByRole('checkbox', { name: 'Select County Central', exact: true })).toBeChecked();
+});
+
 for (const view of galleryViews) {
   for (const presentation of presentations) {
     test(`gallery ${view} ${presentation.name}`, async ({ page }) => {

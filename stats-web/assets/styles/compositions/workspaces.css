@@ -863,6 +863,7 @@
 }
 
 .ui-section-disclosure-flat {
+  background: transparent;
   border: 0;
   border-top: 1px solid var(--line);
   border-radius: 0;
