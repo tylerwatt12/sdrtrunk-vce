@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.alias.AliasAdministrationServiceTestSupport;
@@ -25,6 +26,7 @@ import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
+import io.github.dsheirer.stats.DiscoveryAliasImportService;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService.BoundedPage;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.ConventionalFrequency;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.RemoteTalkgroup;
@@ -42,6 +44,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.junit.jupiter.api.io.TempDir;
 
 class RadioReferenceImportServiceTest
@@ -331,6 +334,177 @@ class RadioReferenceImportServiceTest
     }
 
     @Test
+    void discoveryImportsFullTalkgroupCatalogAccuratelyAndFreshRetryPreservesLocalPolicy() throws Exception
+    {
+        try(Fixture fixture = new Fixture(mTemporaryFolder))
+        {
+            long listId = fixture.aliases.createAliasList("County public safety names", AliasListFamily.P25,
+                fixture.aliases.currentRevision()).aliasListId();
+            fixture.directory.talkgroups.clear();
+            fixture.directory.talkgroups.addAll(List.of(
+                new RemoteTalkgroup(10, 101, "Fire Dispatch", "Primary fire dispatch", "D", 0, 50, List.of()),
+                new RemoteTalkgroup(11, 65535, "Operations – East", "Eastern operations", "D", 0, 50, List.of()),
+                new RemoteTalkgroup(12, 102, "Secure Ops", "Secure operations", "D", 2, 50, List.of()),
+                new RemoteTalkgroup(13, 103, "", "Unnamed talkgroup", "D", 0, 999, List.of())));
+            var matched = new RadioReferenceDiscoveryResolver.Result("matched", "",
+                new RadioReferenceDiscoveryResolver.Match(10, 20, "County P25", "Central", List.of(), "", ""),
+                "radioreference");
+            var helper = new DiscoveryAliasImportService(fixture.importer);
+            var batch = new DiscoveryAliasImportService.Batch();
+            batch.register(listId, "County public safety names", "County P25", matched);
+            helper.retain("discovery", batch);
+            var imported = helper.importAliases("discovery", listId);
+            assertTrue(imported.complete());
+            assertEquals(4, imported.targets().getFirst().added());
+            assertEquals(1, fixture.directory.catalogReads);
+            var rows = fixture.aliases.transferSnapshot(listId).aliases();
+            assertEquals(4, rows.size());
+            Map<Integer,AliasAdministrationService.AliasEntry> byTalkgroup = rows.stream().collect(
+                java.util.stream.Collectors.toMap(entry ->
+                    ((io.github.dsheirer.alias.id.talkgroup.Talkgroup)entry.alias().getMatchIdentifier()).getValue(),
+                    entry -> entry));
+            assertEquals("Fire Dispatch", byTalkgroup.get(101).alias().getName());
+            assertEquals("Primary fire dispatch", byTalkgroup.get(101).alias().getDescription());
+            assertEquals("Public Safety", byTalkgroup.get(101).alias().getGroup());
+            assertEquals("Operations – East", byTalkgroup.get(65535).alias().getName());
+            assertEquals("103", byTalkgroup.get(103).alias().getName());
+            assertEquals(null, byTalkgroup.get(103).alias().getGroup());
+            assertFalse(byTalkgroup.get(102).alias().isRecordable());
+            assertTrue(byTalkgroup.get(102).scanListIds().isEmpty());
+            assertTrue(byTalkgroup.get(102).alias().getBroadcastChannels().isEmpty());
+            Alias original = byTalkgroup.get(101).alias();
+            Alias styled = AliasFactory.copyOf(original);
+            styled.setColor(0x345678);
+            styled.setRecordable(false);
+            fixture.aliases.replaceAlias(original.getId(), styled, java.util.Set.of(), fixture.aliases.currentRevision());
+            fixture.directory.talkgroups.set(0, new RemoteTalkgroup(10, 101, "Fire Dispatch Updated",
+                "Primary fire dispatch updated", "D", 0, 50, List.of()));
+            // A completed response retry must not fetch again or overwrite later user changes.
+            assertEquals(imported, helper.importAliases("discovery", listId));
+            assertEquals(1, fixture.directory.catalogReads);
+            assertEquals("Fire Dispatch", fixture.aliases.getAlias(original.getId()).alias().getName());
+
+            // A new revision-bound retry after an uncertain prior apply matches IDs instead of duplicating aliases.
+            var freshHelper = new DiscoveryAliasImportService(fixture.importer);
+            var freshBatch = new DiscoveryAliasImportService.Batch();
+            freshBatch.register(listId, "County public safety names", "County P25", matched);
+            freshHelper.retain("recovered", freshBatch);
+            var refreshed = freshHelper.importAliases("recovered", listId);
+            assertTrue(refreshed.complete());
+            assertEquals(0, refreshed.targets().getFirst().added());
+            assertEquals(1, refreshed.targets().getFirst().updated());
+            assertEquals(3, refreshed.targets().getFirst().unchanged());
+            assertEquals(4, fixture.aliases.transferSnapshot(listId).aliases().size());
+            var current = fixture.aliases.getAlias(original.getId());
+            assertEquals("Fire Dispatch Updated", current.alias().getName());
+            assertEquals("Primary fire dispatch updated", current.alias().getDescription());
+            assertEquals(0x345678, current.alias().getColor());
+            assertFalse(current.alias().isRecordable());
+            assertTrue(current.scanListIds().isEmpty());
+
+            long incompatible = fixture.aliases.createAliasList("DMR destination", AliasListFamily.DMR,
+                fixture.aliases.currentRevision()).aliasListId();
+            var wrongBatch = new DiscoveryAliasImportService.Batch();
+            wrongBatch.register(incompatible, "DMR destination", "County P25", matched);
+            freshHelper.retain("wrong-family", wrongBatch);
+            assertEquals("failed", freshHelper.importAliases("wrong-family", incompatible).targets().getFirst().state());
+            assertTrue(fixture.aliases.transferSnapshot(incompatible).aliases().isEmpty());
+        }
+    }
+
+    @Test
+    @EnabledIfEnvironmentVariable(named = "VCE_DISCOVERY_REAL_DATA", matches = ".+")
+    void capturedPublicRadioReferenceTalkgroupsImportAccuratelyInAnIsolatedDatabase() throws Exception
+    {
+        ObjectMapper mapper = new ObjectMapper();
+        var source = mapper.readTree(Path.of(System.getenv("VCE_DISCOVERY_REAL_DATA")).toFile());
+        var talkgroups = source.required("talkgroups");
+        assertEquals(28, talkgroups.size(), "The local evidence fixture is the captured 28-row catalog");
+        int systemId = source.required("system_id").intValue();
+        String systemName = source.required("system_name").textValue();
+        try(Fixture fixture = new Fixture(mTemporaryFolder))
+        {
+            fixture.directory.system = new TrunkedSystemDetails(systemId, systemName, "", "Project 25",
+                "Phase II", "Digital", String.format("%05X", source.required("wacn").intValue()),
+                String.format("%03X", source.required("system").intValue()));
+            fixture.directory.talkgroups.clear();
+            fixture.directory.categories.clear();
+            Map<String,Integer> categoryIds = new java.util.LinkedHashMap<>();
+            int index = 0;
+            for(var row: talkgroups)
+            {
+                String category = row.required("category_name").textValue();
+                int categoryId = categoryIds.computeIfAbsent(category, ignored -> categoryIds.size() + 1);
+                String mode = row.required("mode").textValue();
+                fixture.directory.talkgroups.add(new RemoteTalkgroup(++index, row.required("value").intValue(),
+                    row.required("alpha_tag").textValue(), row.required("description").textValue(), mode,
+                    mode.endsWith("E") ? 2 : 0, categoryId, List.of()));
+            }
+            categoryIds.forEach((name, id) -> fixture.directory.categories.add(
+                new RemoteTalkgroupCategory(id, systemId, name)));
+            long listId = fixture.aliases.createAliasList(systemName, AliasListFamily.P25,
+                fixture.aliases.currentRevision()).aliasListId();
+            var match = new RadioReferenceDiscoveryResolver.Result("matched", "",
+                new RadioReferenceDiscoveryResolver.Match(systemId, 0, systemName, "", List.of(), "", ""),
+                "radioreference");
+            var helper = new DiscoveryAliasImportService(fixture.importer);
+            var batch = new DiscoveryAliasImportService.Batch();
+            batch.register(listId, systemName, systemName, match);
+            helper.retain("real-data-wizard", batch);
+            var result = helper.importAliases("real-data-wizard", listId);
+            assertTrue(result.complete());
+            assertEquals(28, result.targets().getFirst().added());
+            var imported = fixture.aliases.transferSnapshot(listId).aliases();
+            Map<Integer,AliasAdministrationService.AliasEntry> byTalkgroup = imported.stream().collect(
+                java.util.stream.Collectors.toMap(entry ->
+                    ((io.github.dsheirer.alias.id.talkgroup.Talkgroup)entry.alias().getMatchIdentifier()).getValue(),
+                    entry -> entry));
+            assertEquals(28, byTalkgroup.size());
+            int encrypted = 0;
+            for(var expected: talkgroups)
+            {
+                var actual = byTalkgroup.get(expected.required("value").intValue());
+                assertEquals(expected.required("alpha_tag").textValue(), actual.alias().getName());
+                assertEquals(expected.required("description").textValue(), actual.alias().getDescription());
+                assertEquals(expected.required("category_name").textValue(), actual.alias().getGroup());
+                assertEquals(listId, actual.alias().getAliasListId());
+                if(expected.required("mode").textValue().endsWith("E"))
+                {
+                    encrypted++;
+                    assertFalse(actual.alias().isRecordable());
+                    assertTrue(actual.scanListIds().isEmpty());
+                    assertTrue(actual.alias().getBroadcastChannels().isEmpty());
+                }
+            }
+            assertEquals(2, encrypted);
+            assertEquals(result, helper.importAliases("real-data-wizard", listId));
+            // Simulate reconstructing an import after an uncertain earlier response, without the success cache.
+            var recovered = new DiscoveryAliasImportService(fixture.importer);
+            var retry = new DiscoveryAliasImportService.Batch();
+            retry.register(listId, systemName, systemName, match);
+            recovered.retain("real-data-retry", retry);
+            var repeated = recovered.importAliases("real-data-retry", listId);
+            assertTrue(repeated.complete());
+            assertEquals(0, repeated.targets().getFirst().added());
+            assertEquals(0, repeated.targets().getFirst().updated());
+            assertEquals(28, repeated.targets().getFirst().unchanged());
+            var after = fixture.aliases.transferSnapshot(listId).aliases();
+            assertEquals(imported.stream().map(entry -> entry.alias().getId()).toList(),
+                after.stream().map(entry -> entry.alias().getId()).toList());
+            String report = System.getenv("VCE_DISCOVERY_REAL_DATA_REPORT");
+            if(report != null && !report.isBlank())
+            {
+                mapper.writerWithDefaultPrettyPrinter().writeValue(Path.of(report).toFile(), Map.of(
+                    "system_id", systemId, "talkgroups_verified", 28, "names_verified", 28,
+                    "descriptions_verified", 28, "categories_verified", 28,
+                    "fully_encrypted_with_audio_record_stream_disabled", encrypted,
+                    "retry_added", repeated.targets().getFirst().added(), "retry_unchanged", 28,
+                    "isolated_database", true));
+            }
+        }
+    }
+
+    @Test
     void conventionalPreviewUsesAnExplicitCompatibleAliasListAndRejectsOtherFamilies() throws Exception
     {
         try(Fixture fixture = new Fixture(mTemporaryFolder))
@@ -439,8 +613,8 @@ class RadioReferenceImportServiceTest
         private final List<RemoteTalkgroup> talkgroups = new ArrayList<>(List.of(
             new RemoteTalkgroup(1, 101, "Dispatch", "Primary dispatch", "D", 0, 50, List.of()),
             new RemoteTalkgroup(2, 102, "Encrypted", "Encrypted operations", "D", 2, 50, List.of())));
-        private final List<RemoteTalkgroupCategory> categories =
-            List.of(new RemoteTalkgroupCategory(50, 10, "Public Safety"));
+        private final List<RemoteTalkgroupCategory> categories = new ArrayList<>(
+            List.of(new RemoteTalkgroupCategory(50, 10, "Public Safety")));
         private List<ConventionalFrequency> conventional = List.of();
         private int catalogReads;
         private int categoryReads;

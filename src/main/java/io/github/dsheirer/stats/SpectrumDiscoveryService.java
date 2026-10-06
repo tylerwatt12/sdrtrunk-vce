@@ -34,6 +34,8 @@ public final class SpectrumDiscoveryService implements AutoCloseable
     private final P25DiscoveryProbe mProbe;
     private final DigitalTrunkedDiscoveryProbe mDigitalProbe;
     private volatile io.github.dsheirer.service.radioreference.RadioReferenceDiscoveryResolver mDirectory;
+    private DiscoveryAliasImportService mAliasImporter = new DiscoveryAliasImportService(
+        (io.github.dsheirer.service.radioreference.RadioReferenceImportService)null);
     private final java.util.concurrent.ExecutorService mDirectoryWorker = SpectrumSearchService.directoryWorker("click-discovery-directory");
     private final ScheduledFuture<?> mExpiry;
     private Wizard mWizard;
@@ -52,6 +54,11 @@ public final class SpectrumDiscoveryService implements AutoCloseable
     }
 
     public void setRadioReferenceResolver(io.github.dsheirer.service.radioreference.RadioReferenceDiscoveryResolver resolver) { mDirectory = resolver; }
+    public void setAliasImporter(io.github.dsheirer.service.radioreference.RadioReferenceImportService importer)
+    { mAliasImporter = new DiscoveryAliasImportService(importer); }
+
+    public DiscoveryAliasImportService.Result importAliases(String id, long aliasListId)
+    { return mAliasImporter.importAliases(id, aliasListId); }
 
     public synchronized Eligibility eligibility(String tunerId, long frequencyHz)
     {
@@ -149,8 +156,20 @@ public final class SpectrumDiscoveryService implements AutoCloseable
             throw new IllegalArgumentException("The selected bandwidth extends outside the usable receiver window");
         wizard.saved = saveEvidence != null ? mChannels.createTrunkedDiscovered(definition,saveEvidence,request.newAliasListName(),request.revision(),true) :
             mChannels.createDiscovered(definition, identity, request.newAliasListName(), request.revision());
+        if(wizard.saved.aliasListCreated())
+        {
+            wizard.aliasImport.register(wizard.saved.aliasListId(), savedAliasListName(request.newAliasListName(), definition),
+                definition.system(), wizard.directory);
+            mAliasImporter.retain(wizard.id, wizard.aliasImport);
+        }
         wizard.close();
         return startSaved(wizard);
+    }
+
+    static String savedAliasListName(String requestedName, ChannelDefinition definition)
+    {
+        return requestedName != null ? requestedName.strip() :
+            ChannelAdministrationService.discoveryAliasListName(definition.system(), definition.name());
     }
 
     static String eligibilityReason(List<Object> matches)
@@ -246,16 +265,30 @@ public final class SpectrumDiscoveryService implements AutoCloseable
             wizard.evidence != null ? mChannels.discoveryTrunkedReview(wizard.protocolId,wizard.frequencyHz,wizard.tuner.getPreferredName(),wizard.evidence) :
             mChannels.discoveryReview(wizard.protocolId, wizard.frequencyHz, wizard.tuner.getPreferredName(),
                 siteIdentity(probe), probe != null ? probe.selectedModulation() : null) : null;
-        if(review != null && wizard.directory.match() != null)
-        {
-            var template = review.template(); var match = wizard.directory.match();
-            template = new ChannelDefinition(null,template.protocolId(),match.systemName(),match.siteName(),match.siteName(),null,template.aliasListId(),template.source(),template.settings(),template.frequencyMap(),template.eventLogs(),template.recorders(),template.auxiliaryDecoders(),template.observed());
-            review = new ChannelAdministrationService.DiscoveryReview(review.revision(),template,review.aliasLists(),review.suggestedAliasListId(),review.defaultNewAliasListName());
-        }
+        review = directoryReview(review, wizard.directory);
         return new Snapshot(wizard.id, state, reason, wizard.protocolId, wizard.tunerId, wizard.targetId,
             wizard.frequencyHz, wizard.expiresAt, probe, review, wizard.saved != null ?
                 new Saved(wizard.saved.configurationId(), wizard.saved.aliasListId(), wizard.running,
-                    wizard.startError) : null, digital, wizard.evidence, wizard.directory);
+                    wizard.startError) : null, digital, wizard.evidence, wizard.directory, wizard.aliasImport.snapshot());
+    }
+
+    static ChannelAdministrationService.DiscoveryReview directoryReview(
+        ChannelAdministrationService.DiscoveryReview review,
+        io.github.dsheirer.service.radioreference.RadioReferenceDiscoveryResolver.Result directory)
+    {
+        if(review == null || directory == null || directory.match() == null) return review;
+        var template = review.template();
+        var match = directory.match();
+        String system = match.systemName() != null && !match.systemName().isBlank() ?
+            match.systemName() : template.system();
+        String site = match.siteName() != null && !match.siteName().isBlank() ? match.siteName() : template.site();
+        template = new ChannelDefinition(null, template.protocolId(), system, site,
+            site != null && !site.isBlank() ? site : template.name(), null, template.aliasListId(), template.source(),
+            template.settings(), template.frequencyMap(), template.eventLogs(), template.recorders(),
+            template.auxiliaryDecoders(), template.observed());
+        return new ChannelAdministrationService.DiscoveryReview(review.revision(), template, review.aliasLists(),
+            review.suggestedAliasListId(), ChannelAdministrationService.discoveryAliasListName(system,
+                review.defaultNewAliasListName()));
     }
 
     private void resolveDirectory(Wizard wizard)
@@ -308,6 +341,7 @@ public final class SpectrumDiscoveryService implements AutoCloseable
         mProbe.close();
         mDigitalProbe.close();
         mDirectoryWorker.shutdownNow();
+        mAliasImporter.clear();
     }
 
     public synchronized void closeActiveSession()
@@ -337,6 +371,7 @@ public final class SpectrumDiscoveryService implements AutoCloseable
         io.github.dsheirer.service.radioreference.RadioReferenceDiscoveryResolver.Result directory = io.github.dsheirer.service.radioreference.RadioReferenceDiscoveryResolver.Result.manual();
         TunerSettingsService.ProbeHold hold;
         ChannelAdministrationService.DiscoveryCreated saved;
+        final DiscoveryAliasImportService.Batch aliasImport = new DiscoveryAliasImportService.Batch();
         boolean running;
         String startError;
         Wizard(String tunerId, String targetId, long frequencyHz, String protocolId, String browseLeaseId, Tuner tuner)
@@ -374,5 +409,15 @@ public final class SpectrumDiscoveryService implements AutoCloseable
     public record Snapshot(String sessionId, String state, String reason, String protocolId, String tunerId,
                            String targetId, long frequencyHz, long expiresAtMs, P25DiscoveryProbe.Status probe,
                            ChannelAdministrationService.DiscoveryReview review, Saved saved, DigitalTrunkedDiscoveryProbe.Status digitalProbe,
-                           TrunkedDiscoveryEvidence trunkedEvidence, io.github.dsheirer.service.radioreference.RadioReferenceDiscoveryResolver.Result radioReference) {}
+                           TrunkedDiscoveryEvidence trunkedEvidence, io.github.dsheirer.service.radioreference.RadioReferenceDiscoveryResolver.Result radioReference,
+                           DiscoveryAliasImportService.Result aliasImport)
+    {
+        public Snapshot(String sessionId, String state, String reason, String protocolId, String tunerId,
+                        String targetId, long frequencyHz, long expiresAtMs, P25DiscoveryProbe.Status probe,
+                        ChannelAdministrationService.DiscoveryReview review, Saved saved,
+                        DigitalTrunkedDiscoveryProbe.Status digitalProbe, TrunkedDiscoveryEvidence trunkedEvidence,
+                        io.github.dsheirer.service.radioreference.RadioReferenceDiscoveryResolver.Result radioReference)
+        { this(sessionId, state, reason, protocolId, tunerId, targetId, frequencyHz, expiresAtMs, probe, review, saved,
+            digitalProbe, trunkedEvidence, radioReference, DiscoveryAliasImportService.Result.EMPTY); }
+    }
 }

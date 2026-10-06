@@ -94,7 +94,57 @@ class SpectrumChannelCreationTest
             var next = fixture.channels.discoveryReview("p25-phase1", 852_012_500, "Tuner",
                 new P25SiteIdentity(0xBEE00, 0x123, 1, 3), "CQPSK");
             assertEquals(system, next.template().system());
-            assertEquals("P25 BEE00-123", next.defaultNewAliasListName());
+            assertEquals("Countywide Regional Public Safety Radio System", next.defaultNewAliasListName());
+        }
+    }
+
+    @Test void omittedNewListNameUsesTheSavedSystemAndReusesItAcrossSites() throws Exception
+    {
+        try(Fixture fixture = fixture())
+        {
+            P25SiteIdentity identity = new P25SiteIdentity(0xBEE00, 0x123, 1, 2);
+            var review = fixture.channels.discoveryReview("p25-phase1", 851_012_500, "Tuner", identity, "C4FM");
+            var template = review.template();
+            String system = "Countywide Regional Public Safety Radio System";
+            var named = new ChannelDefinition(null, template.protocolId(), system, "North", "North control",
+                null, 0, template.source(), template.settings(), List.of(), List.of(), List.of(), List.of(),
+                ChannelDefinition.Observed.EMPTY);
+            var saved = fixture.channels.createDiscovered(named, identity, null, review.revision(), false);
+            assertTrue(saved.aliasListCreated());
+            var first = new ConfigurationRepository(fixture.database).load();
+            assertEquals("Countywide Regional Public Safety Radio System", first.aliasListDefinitions().stream()
+                .filter(list -> list.getId() == saved.aliasListId()).findFirst().orElseThrow().getName());
+            assertEquals(system, first.channels().getFirst().getSystem());
+            P25SiteIdentity second = new P25SiteIdentity(0xBEE00, 0x123, 1, 3);
+            var next = fixture.channels.discoveryReview("p25-phase1", 852_012_500, "Tuner", second, "C4FM");
+            var reused = fixture.channels.createDiscovered(withAlias(next.template(), 0), second, null,
+                next.revision(), false);
+            assertFalse(reused.aliasListCreated());
+            assertEquals(saved.aliasListId(), reused.aliasListId());
+            assertEquals(first.aliasListDefinitions().size(),
+                new ConfigurationRepository(fixture.database).load().aliasListDefinitions().size());
+        }
+    }
+
+    @Test void generatedFriendlyNamesRespectTheExistingLengthLimitWithoutSplittingUnicode() throws Exception
+    {
+        assertEquals("Countywide Regional Public Safety Radio System", ChannelAdministrationService.discoveryAliasListName(
+            "  Countywide Regional Public Safety Radio System  ", "P25 BEE00-123"));
+        assertEquals("Metropolitan Emergency Communications Network", ChannelAdministrationService.discoveryAliasListName(
+            "Metropolitan Emergency Communications Network", "P25 BEE00-49F"));
+        assertEquals("x".repeat(127), ChannelAdministrationService.discoveryAliasListName(
+            "x".repeat(127) + "🚒 dispatch", "P25 BEE00-49F"));
+        assertEquals("x".repeat(127), ChannelAdministrationService.discoveryAliasListName(
+            "x".repeat(127) + " dispatch", "P25 BEE00-49F"));
+        assertEquals("County 🚒 Dispatch", ChannelAdministrationService.discoveryAliasListName(
+            " County 🚒 Dispatch ", "P25 BEE00-49F"));
+        assertEquals("Analog Channels", ChannelAdministrationService.discoveryAliasListName(null, "Analog Channels"));
+        try(Fixture fixture = fixture())
+        {
+            var review = fixture.channels.discoveryReview("am", 118_100_000, "Tuner", null, null);
+            assertThrows(IllegalArgumentException.class, () -> fixture.channels.createDiscovered(
+                withAlias(review.template(), 0), null, "x".repeat(129), review.revision(), false),
+                "explicit names retain validation rather than being silently shortened");
         }
     }
 
@@ -106,6 +156,7 @@ class SpectrumChannelCreationTest
             var review = fixture.channels.discoveryReview("p25-phase1", 851_012_500, "Tuner", identity, "CQPSK");
             assertTrue(review.aliasLists().isEmpty());
             var saved = fixture.channels.createDiscovered(review.template(), identity, "County P25", review.revision());
+            assertTrue(saved.aliasListCreated());
             var disk = new ConfigurationRepository(fixture.database).load();
             var channel = disk.channels().getFirst();
             assertEquals(identity, channel.getP25SiteIdentity());
@@ -127,6 +178,7 @@ class SpectrumChannelCreationTest
             var reused = fixture.channels.createDiscovered(
                 withAlias(next.template(), 0), new P25SiteIdentity(0xBEE00, 0x123, 1, 3),
                 "Duplicate System List", next.revision());
+            assertFalse(reused.aliasListCreated());
             assertEquals(saved.aliasListId(), reused.aliasListId());
             assertEquals(disk.aliasListDefinitions().size(),
                 new ConfigurationRepository(fixture.database).load().aliasListDefinitions().size());
@@ -148,6 +200,7 @@ class SpectrumChannelCreationTest
             var next = fixture.channels.discoveryReview("nbfm", 155_100_000, "Tuner", null, null);
             var reused = fixture.channels.createDiscovered(withAlias(next.template(), 0), null,
                 "aviation", next.revision());
+            assertFalse(reused.aliasListCreated(), "same-name reuse must not be reported as a new list");
             var later = new ConfigurationRepository(fixture.database).load();
             assertEquals(2, later.channels().size());
             assertEquals(saved.aliasListId(), reused.aliasListId());

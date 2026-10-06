@@ -67,6 +67,22 @@ class SpectrumSearchHttpControllerTest
     }
 
     @Test
+    void aliasImportAcceptsOnlyAPositiveListIdAndNeverBrowserProvidedSystemIdentity() throws Exception
+    {
+        try(Fixture fixture = new Fixture())
+        {
+            String path = JOB + "/aliases/import";
+            assertEquals(405, fixture.send(path, "GET", null).statusCode());
+            for(String body: new String[]{"{}", "[]", "{\"alias_list_id\":0}", "{\"alias_list_id\":-1}",
+                "{\"alias_list_id\":1.5}", "{\"alias_list_id\":true}", "{\"alias_list_id\":9007199254740992}",
+                "{\"alias_list_id\":1,\"system_id\":10}", "{\"alias_list_id\":1,\"alias_list_id\":2}"})
+                assertEquals(400, fixture.send(path, "POST", body).statusCode(), body);
+            assertEquals(400, fixture.send(path + "?system_id=10", "POST", "{\"alias_list_id\":1}").statusCode());
+            assertEquals(503, fixture.send(path, "POST", "{\"alias_list_id\":1}").statusCode());
+        }
+    }
+
+    @Test
     void saveAcceptsOnlyBoundedEditsAndExplicitStartupFlags() throws Exception
     {
         try(Fixture fixture = new Fixture())
@@ -81,13 +97,15 @@ class SpectrumSearchHttpControllerTest
                 valid.replace("\"candidate_id\":\"candidate\"", "\"candidate_id\":null"),
                 valid.replace("\"candidate_id\":\"candidate\"", "\"candidate_id\":\"candidate\",\"identity\":{\"wacn\":1}"),
                 valid.replace("\"alias_list_id\":0", "\"alias_list_id\":-1"),
-                valid.replace("\"Test network\"", "\"" + "x".repeat(26) + "\""),
+                valid.replace("\"Test network\"", "\"" + "x".repeat(129) + "\""),
                 valid.replace("\"Site\"", "\"" + "x".repeat(257) + "\""),
                 valid.replace("\"group_id\":\"group\"", "\"group_id\":\"group\",\"unknown\":true")
             };
             for(String body: invalid) assertEquals(400, fixture.send(JOB + "/save", "POST", body).statusCode(), body);
             // A valid edit reaches the intentional null backend sentinel, which returns the generic availability error.
             assertEquals(503, fixture.send(JOB + "/save", "POST", valid).statusCode());
+            assertEquals(503, fixture.send(JOB + "/save", "POST",
+                valid.replace("\"Test network\"", "\"" + "x".repeat(128) + "\"")).statusCode());
         }
     }
 

@@ -5,6 +5,8 @@ const { pathToFileURL } = require('node:url');
 const root = resolve(__dirname, '../../../../..');
 const app = readFileSync(resolve(root, 'stats-web/assets/app.js'), 'utf8');
 const protocols = require(resolve(root, 'src/main/resources/channel-protocols.json'));
+const realDirectory = process.env.VCE_DISCOVERY_REAL_DATA ?
+  JSON.parse(readFileSync(process.env.VCE_DISCOVERY_REAL_DATA, 'utf8')) : null;
 
 const ohioSystem = 'Ohio MARCS-IP: Multi-Agency Radio Communications';
 const ohioSite = 'Cuyahoga County / Greater Cleveland Simulcast';
@@ -44,6 +46,7 @@ function snapshot(protocolId, state) {
     tuner_id: 'idle-a', target_id: 'target-a', frequency_hz: state.frequencyHz || 851012500,
     expires_at_ms: Date.now() + 30000,
     radio_reference: state.directoryResult,
+    alias_import: state.aliasImports,
     digital_probe: digital ? { state: state.phase || 'ready', elapsed_ms: 1200, timeout_ms: 10000 } : null,
     trunked_evidence: digital ? { variant: protocolId === 'dmr' ? 'Tier III' : 'Type-C', identity: {
       radio_system_key: protocolId === 'dmr' ? 'dmr:tier3:small:12' : 'nxdn-c:local:12',
@@ -294,7 +297,24 @@ async function install(page, state = {}) {
       }
       state.saved = true;
       state.running = state.failStart !== true;
+      const createsList = body.alias_list_id === 0 && !state.sameNameReuse &&
+        ['p25-phase1', 'dmr', 'nxdn'].includes(state.protocolId);
+      state.aliasImports = { targets: createsList ? [{ alias_list_id: 41,
+        alias_list_name: body.new_alias_list_name, system_id: state.directoryResult?.state === 'matched' ? 123 : null,
+        system_name: state.directoryResult?.match?.system_name || body.system,
+        state: state.directoryResult?.state === 'matched' ? 'pending' : 'unavailable',
+        added: 0, updated: 0, unchanged: 0, message: 'Import these talkgroups later.' }] : [], complete: !createsList };
       return respond(snapshot(state.protocolId, state));
+    }
+    if (path.endsWith('/aliases/import')) {
+      expect(body).toEqual({ alias_list_id: 41 });
+      if (state.delayImport) await new Promise((release) => { state.releaseImport = release; });
+      const failed = state.failImportOnce === true;
+      state.failImportOnce = false;
+      state.aliasImports = { targets: state.aliasImports.targets.map((target) => ({ ...target,
+        state: failed ? 'failed' : 'imported', added: failed ? 0 : state.importCount || 73, updated: 0, unchanged: 0,
+        message: failed ? 'RadioReference could not load these talkgroups. Try again.' : null })), complete: !failed };
+      return respond(state.aliasImports);
     }
     if (path.endsWith('/start')) {
       state.running = true;
@@ -308,15 +328,15 @@ async function install(page, state = {}) {
   await expect(page.getByRole('heading', { name: 'Tuner Spectrum', exact: true })).toBeVisible();
   if (browseWillFail) await expect(page.getByRole('button', { name: 'Retry browsing', exact: true })).toBeVisible();
   else await expect(page.locator('.spectrum-browse-center')).toContainText('0851.01250MHz');
-  await page.evaluate(async () => {
+  await page.evaluate(async (frequencyHz) => {
     window.discoveryApi = await import(document.querySelector('script[type="module"][src*="/assets/app.js"]').src);
     window.discoveryProbeStates = [];
     window.openDiscovery = () => window.discoveryApi.openSpectrumDiscoveryWizard({
-      tunerId: 'idle-a', tunerName: 'Test receiver', targetId: 'target-a', frequencyHz: 851012500,
+      tunerId: 'idle-a', tunerName: 'Test receiver', targetId: 'target-a', frequencyHz,
       browseLeaseId: 'browse-a',
       setProbeActive: (active) => window.discoveryProbeStates.push(active)
     });
-  });
+  }, state.discoveryFrequencyHz || 851012500);
 }
 
 const wizard = (page) => page.locator('.spectrum-discovery-modal');
@@ -334,6 +354,158 @@ async function review(page, protocolId = 'p25-phase1') {
   await wizard(page).getByRole('button', { name: ['p25-phase1', 'dmr', 'nxdn'].includes(protocolId) ? 'Review channel' : 'Continue',
     exact: true }).click();
   await expect(wizard(page).getByRole('heading', { name: 'Name your channel', exact: true })).toBeVisible();
+}
+
+const importYes = 'Yes, import aliases so I can see the names of the talkgroups';
+const importNo = "No, I'll import these later";
+
+async function expectStepWordsFit(modal) {
+  expect(await modal.evaluate((element) => [...element.querySelectorAll('.spectrum-discovery-progress li > span:last-child')]
+    .every((label) => [...label.textContent.matchAll(/\S+/g)].every((word) => {
+      const range = document.createRange();
+      range.setStart(label.firstChild, word.index);
+      range.setEnd(label.firstChild, word.index + word[0].length);
+      return range.getClientRects().length <= 1;
+    })))).toBe(true);
+}
+
+async function addDiscovery(page, importChoice = importNo) {
+  const modal = wizard(page);
+  const continueButton = modal.getByRole('button', { name: 'Continue', exact: true });
+  if (await continueButton.count()) {
+    await continueButton.click();
+    if (!await modal.getByRole('radio', { name: importChoice, exact: true }).count()) return;
+  }
+  const choice = modal.getByRole('radio', { name: importChoice, exact: true });
+  if (await choice.count()) await choice.check();
+  await modal.getByRole('button', { name: 'Add and start listening', exact: true }).click();
+}
+
+for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
+  test(`discovery import choice has explicit Yes and No in ${theme} at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    const state = ohioDiscoveryFixture(theme);
+    await install(page, state);
+    await begin(page);
+    await review(page);
+    await wizard(page).getByRole('button', { name: 'Continue', exact: true }).click();
+    await expect(wizard(page).getByRole('heading', {
+      name: /^Do you want to import talkgroups into your Alias Lists?\?$/ })).toBeVisible();
+    await expect(wizard(page).getByRole('radio')).toHaveCount(2);
+    await expect(wizard(page).getByRole('radio', { name: importYes, exact: true })).toBeChecked();
+    await expect(wizard(page).locator('.spectrum-discovery-review dl dd').first()).toHaveText(ohioSystem);
+    await expect(wizard(page).getByRole('button', { name: 'Back', exact: true })).toBeVisible();
+    expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(0);
+    const fits = await wizard(page).evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      const footer = element.querySelector('.spectrum-discovery-actions').getBoundingClientRect();
+      return element.scrollWidth <= element.clientWidth + 1 && bounds.left >= 0 && bounds.right <= innerWidth &&
+        footer.bottom <= innerHeight;
+    });
+    expect(fits).toBe(true);
+    await wizard(page).screenshot({ animations: 'disabled', path: testInfo.outputPath(`import-choice-${theme}-${width}.png`) });
+    await wizard(page).getByRole('radio', { name: importNo, exact: true }).check();
+    await addDiscovery(page);
+    await expect(wizard(page).getByRole('heading', { name: 'Ready to listen', exact: true })).toBeVisible();
+    expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(0);
+  });
+}
+
+test('discovery Yes imports talkgroups after adding and retries an import failure without adding again', async ({ page }) => {
+  const state = { ...ohioDiscoveryFixture('light'), failImportOnce: true };
+  await install(page, state);
+  await begin(page);
+  await review(page);
+  await addDiscovery(page, importYes);
+  const retry = wizard(page).getByRole('button', { name: 'Retry talkgroup imports', exact: true });
+  await expect(retry).toBeEnabled();
+  expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(1);
+  await retry.click();
+  await expect(retry).toHaveCount(0);
+  await expect(wizard(page)).toContainText('73 added, 0 updated, 0 unchanged.');
+  expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import')).map(({ body }) => body))
+    .toEqual([{ alias_list_id: 41 }, { alias_list_id: 41 }]);
+  expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(1);
+});
+
+test('discovery keeps an explicit No choice after Back and never retries imports after a publication failure', async ({ page }) => {
+  const state = { ...ohioDiscoveryFixture('light'), restartRequired: true };
+  await install(page, state);
+  await begin(page);
+  await review(page);
+  await wizard(page).getByRole('button', { name: 'Continue', exact: true }).click();
+  await wizard(page).getByRole('radio', { name: importNo, exact: true }).check();
+  await wizard(page).getByRole('button', { name: 'Back', exact: true }).click();
+  await wizard(page).getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(wizard(page).getByRole('radio', { name: importNo, exact: true })).toBeChecked();
+  await wizard(page).getByRole('radio', { name: importYes, exact: true }).check();
+  await addDiscovery(page, importYes);
+  await expect(wizard(page)).toContainText('Your channel was saved, but the receiver needs to restart');
+  await expect(wizard(page).getByRole('button', { name: 'Retry talkgroup imports', exact: true })).toHaveCount(0);
+  expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(0);
+});
+
+test('discovery imports only lists actually created and offers No when no directory system matches', async ({ page }) => {
+  const state = { ...ohioDiscoveryFixture('light'), sameNameReuse: true };
+  await install(page, state);
+  await begin(page);
+  await review(page);
+  await addDiscovery(page, importYes);
+  await expect(wizard(page).getByRole('heading', { name: 'Ready to listen', exact: true })).toBeVisible();
+  expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(0);
+  await wizard(page).getByRole('button', { name: 'Done', exact: true }).click();
+  state.saved = false;
+  state.directoryResult = { state: 'no_match' };
+  await begin(page);
+  await review(page);
+  await wizard(page).getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(wizard(page).getByRole('radio', { name: importYes, exact: true })).toBeDisabled();
+  await expect(wizard(page).getByRole('radio', { name: importNo, exact: true })).toBeChecked();
+});
+
+for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
+  test(`real directory replay discovery review import and completion in ${theme} at ${width}px`, async ({ page }, testInfo) => {
+    test.skip(!realDirectory, 'Set VCE_DISCOVERY_REAL_DATA to an independently verified directory capture.');
+    await page.setViewportSize({ width, height: 900 });
+    const state = { theme, discoveryFrequencyHz: realDirectory.frequencies_hz[0],
+      templateName: 'Lorain County control', templateSystem: realDirectory.system_name,
+      templateSite: 'Lorain County Simulcast', defaultAliasName: realDirectory.system_name,
+      importCount: realDirectory.talkgroups.length,
+      probeOverride: { identity: { wacn: realDirectory.wacn, system: realDirectory.system,
+        rfss: realDirectory.rfss, site: realDirectory.site } },
+      directoryResult: { state: 'matched', match: { system_name: realDirectory.system_name,
+        site_name: 'Lorain County Simulcast', url: realDirectory.source_url,
+        channels: realDirectory.frequencies_hz.map((frequency_hz) => ({ frequency_hz, primary_control: true })) } } };
+    await install(page, state);
+    await begin(page);
+    await review(page);
+    await expect(wizard(page).getByLabel('New Alias List name', { exact: true })).toHaveValue(realDirectory.system_name);
+    await wizard(page).getByLabel('New Alias List name', { exact: true }).scrollIntoViewIfNeeded();
+    const capture = async (stage) => {
+      const fits = await wizard(page).evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        const actions = element.querySelector('.spectrum-discovery-actions').getBoundingClientRect();
+        return element.scrollWidth <= element.clientWidth + 1 && bounds.left >= 0 && bounds.right <= innerWidth &&
+          actions.bottom <= innerHeight;
+      });
+      expect(fits).toBe(true);
+      await expectStepWordsFit(wizard(page));
+      const name = `real-discovery-${stage}-${theme}-${width}.png`;
+      await wizard(page).screenshot({ animations: 'disabled', path: process.env.VCE_DISCOVERY_SCREENSHOTS ?
+        resolve(process.env.VCE_DISCOVERY_SCREENSHOTS, name) : testInfo.outputPath(name) });
+    };
+    await capture('review');
+    await wizard(page).getByRole('button', { name: 'Continue', exact: true }).click();
+    await expect(wizard(page).locator('.spectrum-discovery-review dl dd').first()).toHaveText(realDirectory.system_name);
+    await expect(wizard(page).getByRole('button', { name: 'Back', exact: true })).toBeVisible();
+    await capture('import-choice');
+    await addDiscovery(page, importYes);
+    await expect(wizard(page)).toContainText(`${realDirectory.talkgroups.length} added, 0 updated, 0 unchanged.`);
+    await capture('completion');
+    expect(state.requests.find(({ path }) => path.endsWith('/save')).body)
+      .toMatchObject({ system: realDirectory.system_name, new_alias_list_name: realDirectory.system_name });
+    expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(1);
+  });
 }
 
 async function disclose(page, label) {
@@ -592,6 +764,71 @@ for (const [theme, viewport] of [['light', { width: 1280, height: 900 }],
     });
 }
 
+test('discovery Alias List follows the System label while Channel name and custom alias edits remain independent', async ({ page }) => {
+  const state = { ...ohioDiscoveryFixture('light'), defaultAliasName: 'P25 BEE00-348' };
+  await install(page, state);
+  await begin(page);
+  await review(page);
+  const alias = wizard(page).getByLabel('New Alias List name', { exact: true });
+  await expect(alias).toHaveAttribute('maxlength', '128');
+  await expect(alias).toHaveValue(ohioSystem);
+  await wizard(page).getByLabel('Channel name', { exact: true }).fill('My control channel');
+  await expect(alias).toHaveValue(ohioSystem);
+  await disclose(page, 'Additional labels (optional)');
+  const system = wizard(page).getByLabel('System', { exact: true });
+  await system.fill(`${'A'.repeat(127)}📻 regional`);
+  await expect(alias).toHaveValue('A'.repeat(127));
+  await system.fill(`${'A'.repeat(126)}📻 regional`);
+  await expect(alias).toHaveValue(`${'A'.repeat(126)}📻`);
+  await alias.fill('My listening list');
+  await system.fill('Another system label');
+  await expect(alias).toHaveValue('My listening list');
+});
+
+test('late discovery directory naming refreshes an untouched Alias List without replacing its input', async ({ page }) => {
+  await page.clock.install();
+  const state = { directoryResult: { state: 'pending' }, templateName: 'Decoded control',
+    templateSystem: 'Decoded network', defaultAliasName: 'DMR 851.012500' };
+  await install(page, state);
+  await begin(page, 'dmr');
+  await review(page, 'dmr');
+  const alias = wizard(page).getByLabel('New Alias List name', { exact: true });
+  await expect(alias).toHaveValue('Decoded network');
+  const original = await alias.elementHandle();
+  await alias.focus();
+  state.templateSystem = ohioSystem;
+  state.defaultAliasName = ohioSystem;
+  state.directoryResult = { state: 'matched', match: { system_name: ohioSystem, site_name: 'North',
+    url: 'https://www.radioreference.com/db/sid/123' } };
+  await page.clock.fastForward(800);
+  await expect(alias).toHaveValue(ohioSystem);
+  expect(await alias.evaluate((element, previous) => element === previous, original)).toBe(true);
+  await expect(alias).toBeFocused();
+  await disclose(page, 'Additional labels (optional)');
+  await expect(wizard(page).getByLabel('System', { exact: true })).toHaveValue(ohioSystem);
+});
+
+test('late discovery directory naming preserves an edited System and Alias List', async ({ page }) => {
+  await page.clock.install();
+  const state = { directoryResult: { state: 'pending' }, templateSystem: 'Decoded network' };
+  await install(page, state);
+  await begin(page, 'dmr');
+  await review(page, 'dmr');
+  await disclose(page, 'Additional labels (optional)');
+  const system = wizard(page).getByLabel('System', { exact: true });
+  const alias = wizard(page).getByLabel('New Alias List name', { exact: true });
+  await system.fill('My transit system');
+  await expect(alias).toHaveValue('My transit system');
+  await alias.fill('My transit listeners');
+  state.templateSystem = ohioSystem;
+  state.defaultAliasName = ohioSystem;
+  state.directoryResult = { state: 'matched', match: { system_name: ohioSystem, site_name: 'North',
+    url: 'https://www.radioreference.com/db/sid/123' } };
+  await page.clock.fastForward(800);
+  await expect(system).toHaveValue('My transit system');
+  await expect(alias).toHaveValue('My transit listeners');
+});
+
 test('delayed click-directory matching refreshes untouched fields while preserving edited names and maps', async ({ page }) => {
   await page.clock.install();
   const state = { directoryResult: { state: 'pending' }, templateName: 'Decoded control', templateSystem: 'Decoded network' };
@@ -639,7 +876,7 @@ test('delayed click-directory matching refreshes untouched fields while preservi
   await expect(manual.locator('input').nth(1)).toHaveValue('851.25');
   await expect(directory).toHaveCount(0);
   await expect(wizard(page).getByRole('link', { name: 'Transit authority', exact: true })).toHaveCount(1);
-  await wizard(page).getByRole('button', { name: 'Add and start listening', exact: true }).click();
+  await addDiscovery(page);
   const saved = state.requests.find((request) => request.path.endsWith('/save'));
   expect(saved.body.name).toBe('My control');
   expect(saved.body.new_alias_list_name).toBe('My listening');
@@ -730,7 +967,7 @@ for (const protocolId of ['dmr', 'nxdn']) {
     });
     expect(boundedMap).toBe(true);
     await expect(wizard(page)).toHaveScreenshot(`spectrum-discovery-${protocolId}-${theme}.png`);
-    await wizard(page).getByRole('button', { name: 'Add and start listening', exact: true }).click();
+    await addDiscovery(page);
     const saved = state.requests.find((request) => request.path.endsWith('/save'));
     expect(saved.body.settings.channel_mode).toBe('TRUNKED');
     expect(saved.body.frequency_map).toEqual([{ number: 1, downlink_hz: 851012500, uplink_hz: 0 }]);
@@ -1227,7 +1464,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
       await expect(parent.getByLabel('Channel name', { exact: true })).toHaveValue('Cuyahoga control');
       await expect(parent.getByLabel('System', { exact: true })).toHaveValue('My MARCS system');
       await expect(parent.getByLabel('Site', { exact: true })).toHaveValue('My Cuyahoga site');
-      await parent.getByRole('button', { name: 'Add and start listening', exact: true }).click();
+      await addDiscovery(page);
       await expect(parent.getByRole('heading', { name: 'Ready to listen', exact: true })).toBeVisible();
       expect(state.requests.find(request => request.path.endsWith('/save')).body).toMatchObject({
         name: 'Cuyahoga control', system: 'My MARCS system', site: 'My Cuyahoga site',
@@ -1471,7 +1708,7 @@ test('a setup that expires during review cannot add a channel and can retry sign
   await expect(dialog.getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
   await expect(dialog.getByLabel('Channel name', { exact: true })).toHaveCount(0);
   await review(page);
-  await expect(dialog.getByRole('button', { name: 'Add and start listening', exact: true })).toBeEnabled();
+  await expect(dialog.getByRole('button', { name: 'Continue', exact: true })).toBeEnabled();
   expect(state.requests.filter((request) => request.path === '/api/v1/admin/spectrum-discovery' &&
     request.method === 'POST')).toHaveLength(2);
 });
@@ -1537,7 +1774,7 @@ test('a saved channel requiring a receiver restart never offers another Add or s
   await begin(page);
   await review(page);
   const dialog = wizard(page);
-  await dialog.getByRole('button', { name: 'Add and start listening', exact: true }).click();
+  await addDiscovery(page);
   await expect(dialog.getByRole('heading', { name: 'Channel added', exact: true })).toBeVisible();
   await expect(dialog).toContainText('Your channel was saved, but the receiver needs to restart');
   await expect(dialog.getByRole('button', { name: 'Try adding again', exact: true })).toHaveCount(0);
@@ -1557,10 +1794,10 @@ test('ambiguous aliases require a choice; saved start failure retries without re
   const dialog = wizard(page);
   await expect(dialog.getByLabel('Alias List', { exact: true })).toHaveValue('');
   await expect(dialog.getByLabel('Alias List', { exact: true }).locator('option[value="new"]')).toHaveCount(0);
-  await dialog.getByRole('button', { name: 'Add and start listening' }).click();
+  await addDiscovery(page);
   expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(0);
   await dialog.getByLabel('Alias List', { exact: true }).selectOption('22');
-  await dialog.getByRole('button', { name: 'Add and start listening' }).click();
+  await addDiscovery(page);
   await expect(dialog.getByRole('heading', { name: 'Channel added' })).toBeVisible();
   await expect(dialog).toContainText('Tuner capacity is in use.');
   await dialog.getByRole('button', { name: 'Try starting again' }).click();
@@ -1584,7 +1821,7 @@ test('one P25 identity match presents its Alias List without a choice and reuses
   await expect(dialog).toContainText('County aliases');
   await expect(dialog.getByRole('combobox', { name: 'Alias List', exact: true })).toHaveCount(0);
   await expect(dialog.getByLabel('New Alias List name', { exact: true })).toBeHidden();
-  await dialog.getByRole('button', { name: 'Add and start listening' }).click();
+  await addDiscovery(page);
   await expect(dialog.getByRole('heading', { name: 'Ready to listen' })).toBeVisible();
   expect(state.requests.find((request) => request.path.endsWith('/save')).body.alias_list_id).toBe(21);
 });
@@ -1597,12 +1834,12 @@ test('stale save refreshes choices and preserves the draft before an explicit re
   const dialog = wizard(page);
   await dialog.getByLabel('Channel name', { exact: true }).fill('County Control');
   await dialog.getByLabel('New Alias List name', { exact: true }).fill('County aliases');
-  await dialog.getByRole('button', { name: 'Add and start listening' }).click();
+  await addDiscovery(page);
   await expect(dialog).toContainText('Your saved choices changed. Check the Alias List and try adding again.');
   await expect(dialog.getByLabel('Channel name', { exact: true })).toHaveValue('County Control');
   await expect(dialog.getByLabel('New Alias List name', { exact: true })).toHaveValue('County aliases');
   expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(1);
-  await dialog.getByRole('button', { name: 'Add and start listening' }).click();
+  await addDiscovery(page);
   await expect(dialog.getByRole('heading', { name: 'Ready to listen' })).toBeVisible();
   const saves = state.requests.filter((request) => request.path.endsWith('/save'));
   expect(saves.map((request) => request.body.revision)).toEqual([7, 8]);
@@ -1621,17 +1858,18 @@ test('retrying a failed add preserves names and listening choices without adding
   await disclose(page, 'Additional labels (optional)');
   await dialog.getByLabel('System', { exact: true }).fill('County Radio');
   await dialog.getByLabel('Site', { exact: true }).fill('North');
-  await dialog.getByRole('button', { name: 'Add and start listening', exact: true }).click();
+  await addDiscovery(page);
   await expect(dialog.getByText('We couldn’t add your channel. Your choices are still here. Try again.', { exact: true }))
     .toBeVisible();
   await expect(dialog.getByText('Could not add this channel. Try again.', { exact: true })).toBeHidden();
   await expect(dialog.getByRole('button', { name: 'Try adding again', exact: true })).toBeEnabled();
+  await dialog.getByRole('button', { name: 'Back', exact: true }).click();
   await expect(dialog.getByLabel('Channel name', { exact: true })).toHaveValue('County Control');
   await expect(dialog.getByLabel('New Alias List name', { exact: true })).toHaveValue('County listening');
   await expect(dialog.getByLabel('System', { exact: true })).toHaveValue('County Radio');
   await expect(dialog.getByLabel('Site', { exact: true })).toHaveValue('North');
   expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(1);
-  await dialog.getByRole('button', { name: 'Try adding again', exact: true }).click();
+  await addDiscovery(page);
   await expect(dialog.getByRole('heading', { name: 'Ready to listen', exact: true })).toBeVisible();
   await expect(dialog).toContainText('County Control');
   await expect(dialog).toContainText('Test receiver');
@@ -1658,10 +1896,10 @@ test('going Back with no analog Alias List selected does not silently create a n
   await dialog.getByRole('button', { name: 'Back', exact: true }).click();
   await review(page, 'am');
   await expect(choices).toHaveValue('');
-  await dialog.getByRole('button', { name: 'Add and start listening', exact: true }).click();
+  await addDiscovery(page);
   expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(0);
   await choices.selectOption('21');
-  await dialog.getByRole('button', { name: 'Add and start listening', exact: true }).click();
+  await addDiscovery(page);
   await expect(dialog.getByRole('heading', { name: 'Ready to listen', exact: true })).toBeVisible();
   expect(state.requests.find((request) => request.path.endsWith('/save')).body.alias_list_id).toBe(21);
 });
@@ -1701,7 +1939,7 @@ test('FM defaults are unambiguous and edited audio settings survive review and B
   expect(visibleReview).toContain('7.5 kHz');
   expect(visibleReview).toContain('750 µs');
   expect(visibleReview).not.toContain('25.0 kHz');
-  await dialog.getByRole('button', { name: 'Add and start listening', exact: true }).click();
+  await addDiscovery(page);
   await expect(dialog.getByRole('heading', { name: 'Ready to listen', exact: true })).toBeVisible();
   await expect(dialog).toContainText('County dispatch');
   await expect(dialog).toContainText('FM two-way radio');
@@ -1721,7 +1959,7 @@ for (const protocolId of ['am', 'nbfm']) {
     await expect(dialog.locator('summary').filter({ hasText: /^Adjust audio settings$/ }).locator('..'))
       .toHaveJSProperty('open', false);
     await review(page, protocolId);
-    await dialog.getByRole('button', { name: 'Add and start listening', exact: true }).click();
+    await addDiscovery(page);
     await expect(dialog.getByRole('heading', { name: 'Ready to listen', exact: true })).toBeVisible();
     const save = state.requests.find((request) => request.path.endsWith('/save')).body;
     expect(save.settings).toEqual(snapshot(protocolId, {}).review.template.settings);
@@ -1750,7 +1988,7 @@ for (const [protocolId, theme, width] of [['am', 'light', 1280], ['nbfm', 'dark'
     expect(bounds.x).toBeGreaterThanOrEqual(0);
     expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
     await expect(dialog).toHaveScreenshot(`spectrum-discovery-${protocolId}-${theme}.png`);
-    await dialog.getByRole('button', { name: 'Add and start listening' }).click();
+    await addDiscovery(page);
     await expect(dialog.getByRole('heading', { name: 'Ready to listen' })).toBeVisible();
     const save = state.requests.find((request) => request.path.endsWith('/save')).body;
     expect(save.settings.bandwidth).toBe('BW_25_0');

@@ -3,6 +3,7 @@ package io.github.dsheirer.web.http;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.sun.net.httpserver.HttpExchange;
+import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.stats.SpectrumSearchService;
@@ -73,6 +74,13 @@ public final class SpectrumSearchHttpController
             if(!path.startsWith(PATH + "/")) { WebHttpSupport.notFound(exchange); return; }
             String[] parts = path.substring(PATH.length() + 1).split("/", -1);
             String id = UUID.fromString(parts[0]).toString();
+            if(parts.length == 3 && "aliases".equals(parts[1]) && "import".equals(parts[2]))
+            {
+                if(!method(exchange, "POST")) return;
+                JsonNode body = WebHttpSupport.readJsonObject(exchange, Set.of("alias_list_id"));
+                sendData(exchange, 200, mService.importAliases(id, integer(body, "alias_list_id", true)));
+                return;
+            }
             if(parts.length == 1)
             {
                 noBody(exchange);
@@ -107,7 +115,8 @@ public final class SpectrumSearchHttpController
                 {
                     fields(group, Set.of("group_id", "alias_list_id", "new_alias_list_name"));
                     groups.add(new SpectrumSearchService.AliasChoice(WebHttpSupport.requiredText(group, "group_id", 80),
-                        integer(group, "alias_list_id", false), text(group, "new_alias_list_name", 25)));
+                        integer(group, "alias_list_id", false),
+                        text(group, "new_alias_list_name", AliasAdministrationService.MAX_ALIAS_LIST_NAME_LENGTH)));
                 }
                 sendData(exchange, 200, mService.save(id,
                     new SpectrumSearchService.SaveRequest(integer(body, "revision", false), candidates, groups)));

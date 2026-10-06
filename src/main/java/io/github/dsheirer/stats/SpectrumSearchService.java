@@ -47,6 +47,8 @@ public final class SpectrumSearchService implements AutoCloseable
     private boolean mAllProtocols;
     private TrunkedProbeCheck mTrunkedCheck;
     private volatile RadioReferenceDiscoveryResolver mDirectory;
+    private DiscoveryAliasImportService mAliasImporter = new DiscoveryAliasImportService(
+        (io.github.dsheirer.service.radioreference.RadioReferenceImportService)null);
     private final ExecutorService mDirectoryWorker = directoryWorker("discovery-directory");
     private final LongSupplier mClock;
     private final Supplier<Catalog> mCatalog;
@@ -136,6 +138,11 @@ public final class SpectrumSearchService implements AutoCloseable
 
     public Catalog catalog() { return mCatalog.get(); }
     public void setRadioReferenceResolver(RadioReferenceDiscoveryResolver resolver) { mDirectory = resolver; }
+    public void setAliasImporter(io.github.dsheirer.service.radioreference.RadioReferenceImportService importer)
+    { mAliasImporter = new DiscoveryAliasImportService(importer); }
+
+    public DiscoveryAliasImportService.Result importAliases(String id, long aliasListId)
+    { return mAliasImporter.importAliases(id, aliasListId); }
 
     public Snapshot open(String tunerId, String browseLeaseId, List<Range> ranges, long dwellMs)
     { return open(tunerId,browseLeaseId,ranges,dwellMs,null); }
@@ -320,7 +327,7 @@ public final class SpectrumSearchService implements AutoCloseable
                     long aliasId = job.aliasIds.getOrDefault(row.groupId(), choice != null ? choice.aliasListId() :
                         review.suggestedAliasListId() != null ? review.suggestedAliasListId() : 0L);
                     String aliasName = choice != null && choice.newAliasListName() != null ? choice.newAliasListName() :
-                        review.defaultNewAliasListName();
+                        ChannelAdministrationService.discoveryAliasListName(row.systemName(), review.defaultNewAliasListName());
                     if(aliasId == 0 && !review.aliasLists().isEmpty())
                     {
                         aliasId = review.aliasLists().size() == 1 ? review.aliasLists().getFirst().id() :
@@ -335,7 +342,15 @@ public final class SpectrumSearchService implements AutoCloseable
                     ChannelDefinition definition = new ChannelDefinition(null, row.evidence.protocolId(), row.systemName(),
                         row.siteName(), name, null, aliasId, template.source(), template.settings(),
                         saveEvidence.frequencyMap(), List.of(), List.of(), List.of(), ChannelDefinition.Observed.EMPTY);
+                    RadioReferenceDiscoveryResolver.Result aliasDirectory = DiscoveryAliasImportService.groupDirectory(
+                        job.rows.values().stream().filter(member -> member.groupId().equals(row.groupId()))
+                            .map(member -> member.directory).toList());
                     row.saved = mChannels.createTrunked(definition, saveEvidence, aliasName, revision, edit.autoStart());
+                    if(row.saved.aliasListCreated())
+                    {
+                        job.aliasImport.register(row.saved.aliasListId(), aliasName, definition.system(), aliasDirectory);
+                        mAliasImporter.retain(job.id, job.aliasImport);
+                    }
                     row.savedName = name;
                     row.autoStart = edit.autoStart();
                     job.aliasIds.put(row.groupId(), row.saved.aliasListId());
@@ -443,7 +458,8 @@ public final class SpectrumSearchService implements AutoCloseable
             if(groups.containsKey(row.groupId())) continue;
             groups.put(row.groupId(), new AliasGroup(row.groupId(), row.identity != null ? row.identity.wacn() : 0, row.identity != null ? row.identity.system() : 0,
                 review.aliasLists(), job.aliasIds.getOrDefault(row.groupId(), review.suggestedAliasListId()),
-                review.defaultNewAliasListName(), row.evidence.protocolId(), row.systemName()));
+                ChannelAdministrationService.discoveryAliasListName(row.systemName(), review.defaultNewAliasListName()),
+                row.evidence.protocolId(), row.systemName()));
         }
         synchronized(mLock) { job.groups = groups; }
     }
@@ -473,7 +489,7 @@ public final class SpectrumSearchService implements AutoCloseable
     {
         synchronized(mLock) { mClosed = true; }
         try { closeActiveSession(); }
-        finally { mExpiry.shutdownNow(); mDirectoryWorker.shutdownNow(); }
+        finally { mExpiry.shutdownNow(); mDirectoryWorker.shutdownNow(); mAliasImporter.clear(); }
     }
     private void expire()
     {
@@ -582,7 +598,8 @@ public final class SpectrumSearchService implements AutoCloseable
             row.autoStart, row.running, row.saveError, row.startError, row.evidence.protocolId(), row.evidence.variant(), row.evidence, row.directory)).toList() : List.of();
         return new Snapshot(job.id, job.tunerId, job.lease.targetId(), job.phase, job.reason, job.truncatedReason, job.restartRequired, job.revision,
             job.expiresAt, new Progress(job.completedWindows, job.windows.size() * 2, job.currentFrequency,
-                job.checkedSignals, job.totalSignals), rows, complete ? List.copyOf(job.groups.values()) : List.of());
+                job.checkedSignals, job.totalSignals), rows, complete ? List.copyOf(job.groups.values()) : List.of(),
+            job.aliasImport.snapshot());
     }
 
     static List<Long> windows(List<Range> ranges, long usable, long minimum, long maximum)
@@ -814,6 +831,7 @@ public final class SpectrumSearchService implements AutoCloseable
         final Object cleanupLock = new Object();
         final Map<String,Row> rows = new LinkedHashMap<>();
         final Map<String,Long> aliasIds = new LinkedHashMap<>();
+        final DiscoveryAliasImportService.Batch aliasImport = new DiscoveryAliasImportService.Batch();
         Map<String,AliasGroup> groups = new LinkedHashMap<>();
         List<Long> windows = List.of();
         Thread worker;
@@ -886,7 +904,15 @@ public final class SpectrumSearchService implements AutoCloseable
                              Long suggestedAliasListId, String defaultNewAliasListName, String protocolId, String systemName) { }
     public record Progress(int completed, int total, Long currentFrequencyHz, int checked, int totalSignals) { }
     public record Snapshot(String jobId, String tunerId, String targetId, String phase, String reason, String truncatedReason, boolean restartRequired, long revision,
-                           long expiresAtMs, Progress progress, List<Candidate> candidates, List<AliasGroup> aliasGroups) { }
+                           long expiresAtMs, Progress progress, List<Candidate> candidates, List<AliasGroup> aliasGroups,
+                           DiscoveryAliasImportService.Result aliasImport)
+    {
+        public Snapshot(String jobId, String tunerId, String targetId, String phase, String reason, String truncatedReason,
+                        boolean restartRequired, long revision, long expiresAtMs, Progress progress,
+                        List<Candidate> candidates, List<AliasGroup> aliasGroups)
+        { this(jobId, tunerId, targetId, phase, reason, truncatedReason, restartRequired, revision, expiresAtMs,
+            progress, candidates, aliasGroups, DiscoveryAliasImportService.Result.EMPTY); }
+    }
     public record SaveCandidate(String candidateId, String name, boolean autoStart, List<ChannelDefinition.FrequencyMapEntry> frequencyMap)
     {
         public SaveCandidate { frequencyMap = List.copyOf(frequencyMap != null ? frequencyMap : List.of()); }

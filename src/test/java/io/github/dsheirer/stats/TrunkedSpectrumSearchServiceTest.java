@@ -98,6 +98,42 @@ class TrunkedSpectrumSearchServiceTest
         }
     }
 
+    @Test void onlyActuallyCreatedListsRegisterOnceAndTheirImportResultSurvivesReceiverRelease() throws Exception
+    {
+        var lease = new Lease(true,A,B); var channels = new Channels();
+        channels.createsAliasList = true;
+        try(var service = service(lease,channels,(l,f,c) -> evidence("dmr","TIER_III","dmr:tier3:tiny:341",f == A ? 7 : 8,f)))
+        {
+            var found = complete(service,service.open("recording","browse",RANGE,750).jobId());
+            var saved = service.save(found.jobId(),new SpectrumSearchService.SaveRequest(found.revision(),
+                found.candidates().stream().map(row -> new SpectrumSearchService.SaveCandidate(row.candidateId(),"Site",false)).toList(),
+                List.of(new SpectrumSearchService.AliasChoice(found.aliasGroups().getFirst().groupId(),0,"County aliases"))));
+            assertEquals(2, saved.candidates().size());
+            assertTrue(saved.candidates().stream().allMatch(SpectrumSearchService.Candidate::saved));
+            assertEquals(1, saved.aliasImport().targets().size());
+            assertEquals("County aliases", saved.aliasImport().targets().getFirst().aliasListName());
+            assertEquals("unavailable", saved.aliasImport().targets().getFirst().state());
+            service.cancel(saved.jobId());
+            assertEquals(1, lease.closes.get());
+            assertThrows(SpectrumSearchService.SearchExpiredException.class, () -> service.status(saved.jobId()));
+            assertEquals(saved.aliasImport(), service.importAliases(saved.jobId(), 1));
+            assertThrows(IllegalArgumentException.class, () -> service.importAliases(saved.jobId(), 2));
+        }
+
+        var reusedLease = new Lease(true,A); var reused = new Channels();
+        // An id=0 request may reuse a named/compatible list. The actual create result is authoritative.
+        try(var service = service(reusedLease,reused,(l,f,c) -> evidence("dmr","TIER_III","dmr:tier3:tiny:341",7,f)))
+        {
+            var found = complete(service,service.open("recording","browse",RANGE,750).jobId());
+            var row = found.candidates().getFirst();
+            var saved = service.save(found.jobId(),new SpectrumSearchService.SaveRequest(found.revision(),
+                List.of(new SpectrumSearchService.SaveCandidate(row.candidateId(),"Site",false)),
+                List.of(new SpectrumSearchService.AliasChoice(row.aliasGroupId(),0,"Existing aliases"))));
+            assertTrue(saved.aliasImport().targets().isEmpty());
+            assertThrows(IllegalStateException.class, () -> service.importAliases(saved.jobId(), 1));
+        }
+    }
+
     private static SpectrumSearchService service(Lease lease,Channels channels,SpectrumSearchService.TrunkedProbeCheck check)
     { return new SpectrumSearchService(channels,(id,browse) -> lease,check,System::currentTimeMillis,() -> new SpectrumSearchService.Catalog(List.of(),null,List.of(),null),true); }
     private static SpectrumSearchService.Snapshot complete(SpectrumSearchService service,String id) throws Exception
@@ -131,7 +167,7 @@ class TrunkedSpectrumSearchServiceTest
     }
     private static class Channels implements SpectrumSearchService.Channels
     {
-        long revision = 1; ChannelDefinition saved;
+        long revision = 1; ChannelDefinition saved; boolean createsAliasList;
         List<ChannelAdministrationService.DiscoveryAliasList> aliasLists = List.of();
         public long revision() { return revision; } public SpectrumSearchService.KnownChannel known(long frequency) { return null; }
         public ChannelAdministrationService.DiscoveryReview review(long frequency,String preferred,io.github.dsheirer.module.decode.p25.P25SiteIdentity identity,String modulation) { throw new AssertionError(); }
@@ -143,7 +179,7 @@ class TrunkedSpectrumSearchServiceTest
         }
         public ChannelAdministrationService.DiscoveryCreated create(ChannelDefinition definition,io.github.dsheirer.module.decode.p25.P25SiteIdentity identity,String alias,long revision,boolean auto) { throw new AssertionError(); }
         public ChannelAdministrationService.DiscoveryCreated createTrunked(ChannelDefinition definition,TrunkedDiscoveryEvidence evidence,String alias,long expected,boolean auto)
-        { assertEquals(revision,expected); saved = definition; revision++; return new ChannelAdministrationService.DiscoveryCreated("saved",definition.aliasListId() != 0 ? definition.aliasListId() : 1); }
+        { assertEquals(revision,expected); saved = definition; revision++; return new ChannelAdministrationService.DiscoveryCreated("saved",definition.aliasListId() != 0 ? definition.aliasListId() : 1, createsAliasList && definition.aliasListId() == 0); }
         public ChannelAdministrationService.LifecycleResult start(String id,String tuner,Tuner runtime,boolean handoff) { throw new AssertionError(); }
     }
 }

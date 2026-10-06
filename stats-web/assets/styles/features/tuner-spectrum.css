@@ -1516,6 +1516,10 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   list-style: none;
 }
 
+.spectrum-discovery-progress[data-step-count="4"] {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .spectrum-discovery-progress > li {
   min-width: 0;
   display: flex;
@@ -2091,5 +2095,11 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 @media (max-width: 380px) {
   .spectrum-browse-status {
     font-size: 0;
+  }
+}
+
+@media (max-width: 560px) {
+  .spectrum-discovery-progress[data-step-count="4"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

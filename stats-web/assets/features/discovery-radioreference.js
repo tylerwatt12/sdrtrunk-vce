@@ -189,3 +189,88 @@ export function discoveryRadioReferenceResult(ui, value, existing = null) {
   else details.append(...children);
   return details;
 }
+
+
+export const ALIAS_LIST_NAME_MAX_LENGTH = 128;
+
+export function discoveryAliasListName(system, fallback = '') {
+  const value = String(system || '').trim() || String(fallback || '').trim();
+  let bounded = value.slice(0, ALIAS_LIST_NAME_MAX_LENGTH);
+  if (bounded.length < value.length && /[\uD800-\uDBFF]$/.test(bounded)) bounded = bounded.slice(0, -1);
+  return bounded.trim();
+}
+
+export function discoveryAliasImportChoice(ui, targets, selected = true) {
+  const { node } = ui;
+  const matched = targets.some((target) => target.matched);
+  const element = node('div', 'spectrum-discovery-review');
+  element.append(node('p', 'muted', 'Import all talkgroups from each matched RadioReference system into its new Alias List.'));
+  targets.forEach((target) => {
+    const lists = node('dl', 'ui-fact-list');
+    lists.append(node('dt', '', 'Alias List'), node('dd', '', target.name), node('dt', '', 'System'),
+      node('dd', '', target.matched ? target.systemName : 'No RadioReference match. Import these talkgroups later.'));
+    element.append(lists);
+  });
+  const choices = node('fieldset', 'spectrum-discovery-protocols');
+  choices.setAttribute('aria-label', 'Import talkgroups');
+  let wantsImport = matched && selected;
+  [
+    [true, 'Yes, import aliases so I can see the names of the talkgroups'],
+    [false, "No, I'll import these later"]
+  ].forEach(([value, label]) => {
+    const option = node('label', 'ui-choice-card spectrum-discovery-protocol-option');
+    const radio = node('input', 'ui-choice-radio');
+    radio.type = 'radio'; radio.name = 'discovery-import-talkgroups'; radio.value = String(value);
+    radio.checked = wantsImport === value;
+    radio.disabled = value && !matched;
+    if (radio.disabled) radio.dataset.importUnavailable = 'true';
+    radio.setAttribute('aria-label', label);
+    radio.addEventListener('change', () => { wantsImport = value; });
+    option.append(radio, node('strong', '', label));
+    choices.append(option);
+  });
+  element.append(choices);
+  if (!matched) element.append(node('p', 'ui-field-hint',
+    'A RadioReference match and Premium account are needed to import talkgroups. Your channels can still be added.'));
+  return { element, wantsImport: () => wantsImport };
+}
+
+export function discoveryAliasImportResults(ui, result) {
+  const { node } = ui;
+  const element = node('section', 'ui-form-section spectrum-discovery-review');
+  element.append(node('h4', '', 'Talkgroup imports'));
+  (result?.targets || []).forEach((target) => {
+    const row = node('div', 'ui-notice' + (target.state === 'imported' ? ' ui-notice-success' :
+      ['failed', 'unavailable', 'restart_required'].includes(target.state) ? ' ui-notice-warning' : ''));
+    row.append(node('strong', '', target.alias_list_name || target.system_name || 'Alias List'));
+    const text = target.state === 'imported' ?
+      target.message || `${target.added} added, ${target.updated} updated, ${target.unchanged} unchanged.` :
+      target.state === 'importing' ? 'Importing all system talkgroups…' :
+      target.state === 'pending' ? 'Waiting to import talkgroups.' : target.message || 'Import these talkgroups later.';
+    row.append(node('p', '', text));
+    element.append(row);
+  });
+  return element;
+}
+
+export async function importDiscoveryAliases(request, url, initial, onProgress, current = () => true) {
+  let result = initial || { targets: [], complete: true };
+  const ids = result.targets.filter((target) => !['imported', 'unavailable', 'restart_required'].includes(target.state))
+    .map((target) => target.alias_list_id);
+  for (const id of ids) {
+    if (!current()) break;
+    if (result.targets.find((target) => target.alias_list_id === id)?.state === 'restart_required') continue;
+    result = { ...result, targets: result.targets.map((target) => target.alias_list_id === id ?
+      { ...target, state: 'importing' } : target) };
+    onProgress(result);
+    try {
+      result = await request(url, { method: 'POST', body: { alias_list_id: id }, timeoutMs: 90_000 });
+    } catch (cause) {
+      if (!current()) break;
+      result = { ...result, complete: false, targets: result.targets.map((target) => target.alias_list_id === id ?
+        { ...target, state: 'failed', message: cause.message || 'Talkgroups could not be imported. Try again.' } : target) };
+    }
+    if (current()) onProgress(result);
+  }
+  return result;
+}

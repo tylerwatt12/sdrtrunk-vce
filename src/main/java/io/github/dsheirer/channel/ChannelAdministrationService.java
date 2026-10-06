@@ -306,9 +306,7 @@ public final class ChannelAdministrationService
                 new ChannelDefinition.Source(List.of(frequencyHz), null, null,
                     identity != null ? frequencyHz : null, preferredTuner, null), settings,
                 List.of(), List.of(), List.of(), List.of(), ChannelDefinition.Observed.EMPTY);
-            String newListName = identity != null ? system : "Analog Channels";
-            if(newListName.length() > AliasAdministrationService.MAX_ALIAS_LIST_NAME_LENGTH)
-                newListName = String.format("P25 %05X-%03X", identity.wacn(), identity.system());
+            String newListName = discoveryAliasListName(system, "Analog Channels");
             return new DiscoveryReview(revision(), template, lists, suggested, newListName);
         });
     }
@@ -348,9 +346,8 @@ public final class ChannelAdministrationService
                 new ChannelDefinition.Source(List.of(frequencyHz), null, null, frequencyHz, preferredTuner, null),
                 discoveryTrunkedSettings(profile, Map.of(), evidence), evidence.frequencyMap(),
                 List.of(), List.of(), List.of(), ChannelDefinition.Observed.EMPTY);
-            String newListName = evidence.identity().radioSystemKey() != null &&
-                system.length() <= AliasAdministrationService.MAX_ALIAS_LIST_NAME_LENGTH ?
-                system : String.format(java.util.Locale.ROOT, "%s %.6f", profile.label(), frequencyHz / 1_000_000.0);
+            String newListName = discoveryAliasListName(system,
+                String.format(java.util.Locale.ROOT, "%s %.6f", profile.label(), frequencyHz / 1_000_000.0));
             return new DiscoveryReview(revision(), template, lists, suggested, newListName);
         });
     }
@@ -567,9 +564,11 @@ public final class ChannelAdministrationService
             }
             else if(newList)
             {
-                String name = newAliasListName != null ? newAliasListName.strip() : "";
+                String name = newAliasListName != null ? newAliasListName.strip() :
+                    discoveryAliasListName(definition.system(), definition.name());
                 if(name.isBlank() || name.length() > AliasAdministrationService.MAX_ALIAS_LIST_NAME_LENGTH)
-                    throw new IllegalArgumentException("Alias List name must contain between 1 and 25 characters");
+                    throw new IllegalArgumentException("Alias List name must contain between 1 and " +
+                        AliasAdministrationService.MAX_ALIAS_LIST_NAME_LENGTH + " characters");
                 AliasListDefinition existing = aliases.definitions().stream()
                     .filter(list -> name.equalsIgnoreCase(list.getName())).findFirst().orElse(null);
                 if(existing != null)
@@ -651,7 +650,7 @@ public final class ChannelAdministrationService
             if(evidence != null && identity == null)
                 mDiscoveredTrunkedIdentities.put(created.getConfigurationId(),
                     savedDiscoveryIdentity(created, evidence));
-            return new DiscoveryCreated(created.getConfigurationId(), selected.getId());
+            return new DiscoveryCreated(created.getConfigurationId(), selected.getId(), newList);
         })));
     }
 
@@ -659,7 +658,21 @@ public final class ChannelAdministrationService
     public record DiscoveryAliasList(long id, String name, boolean matched) {}
     public record DiscoveryReview(long revision, ChannelDefinition template, List<DiscoveryAliasList> aliasLists,
                                   Long suggestedAliasListId, String defaultNewAliasListName) {}
-    public record DiscoveryCreated(String configurationId, long aliasListId) {}
+    public record DiscoveryCreated(String configurationId, long aliasListId, boolean aliasListCreated)
+    {
+        public DiscoveryCreated(String configurationId, long aliasListId) { this(configurationId, aliasListId, false); }
+    }
+
+    /** Shorten only generated suggestions; explicitly supplied names keep the ordinary validation contract. */
+    public static String discoveryAliasListName(String system, String fallback)
+    {
+        String name = system != null && !system.isBlank() ? system.strip() :
+            fallback != null && !fallback.isBlank() ? fallback.strip() : "Channels";
+        int end = Math.min(name.length(), AliasAdministrationService.MAX_ALIAS_LIST_NAME_LENGTH);
+        if(end < name.length() && Character.isHighSurrogate(name.charAt(end - 1)) &&
+            Character.isLowSurrogate(name.charAt(end))) end--;
+        return name.substring(0, end).stripTrailing();
+    }
 
     public MutationResult update(String configurationId, ChannelDefinition definition, long expectedRevision)
     {

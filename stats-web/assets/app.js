@@ -26,14 +26,14 @@ import { buildRadioResolvePlannerUrl } from './features/radioresolve-analysis.js
 import {
   createAliasList,
   createAliasListPopupTrigger as buildAliasListPopupTrigger
-} from './features/alias-list-create.js?v=3';
+} from './features/alias-list-create.js?v=4';
 import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=22';
 import { createStreamingWorkspace } from './features/streaming.js?v=8';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=9';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=13';
 import { createRecordingsFeature } from './features/recordings.js?v=23';
-import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=25';
-import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl } from './features/discovery-radioreference.js?v=6';
+import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=26';
+import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=7';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createAudioDock } from './core/audio-dock.js?v=13';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=4';
@@ -4766,7 +4766,7 @@ function openAliasListCreateModal() {
   const form = node('form', 'alias-editor-form alias-list-form editor-workspace');
   const name = aliasTextInput('name');
   name.required = true;
-  name.maxLength = 25;
+  name.maxLength = ALIAS_LIST_NAME_MAX_LENGTH;
   const family = aliasSelect('family', Object.entries(ALIAS_LIST_FAMILY_LABELS)
     .map(([value, label]) => ({ value: value.toLowerCase(), label })), 'p25');
   const errorHost = node('div', 'alias-form-message');
@@ -13651,6 +13651,8 @@ function openSpectrumDiscoveryWizard(selection) {
   let activeStep = -1;
   const editedReviewFields = new Set();
   let savedAliasName = '';
+  let wantsAliasImport = true;
+  let aliasImportResult = null;
   let restartRequired = false;
   let manualProbeReleased = false;
   let probeNodes = null;
@@ -13801,8 +13803,9 @@ function openSpectrumDiscoveryWizard(selection) {
     });
     refreshSystemSummary(reviewBinding);
     refreshSignalDetails();
-    if (!editedReviewFields.has('new_alias_list_name') && session.review.default_new_alias_list_name) {
-      reviewBinding.alias.value = session.review.default_new_alias_list_name;
+    if (!editedReviewFields.has('new_alias_list_name')) {
+      reviewBinding.alias.value = discoveryAliasListName(
+        reviewBinding.form.querySelector('[data-channel-path=\"system\"]').value, session.review.default_new_alias_list_name);
       if (reviewDraft) reviewDraft.new_alias_list_name = reviewBinding.alias.value;
     }
     if (reviewBinding.map && !channelMapDraft) {
@@ -13824,9 +13827,12 @@ function openSpectrumDiscoveryWizard(selection) {
     activeStep = index;
     reviewBinding = null;
     probeNodes = null;
-    steps.hidden = index === 3;
-    steps.replaceChildren(...['Signal', !profile || trunkedProtocol() ? 'Check signal' : 'Audio', 'Review']
-      .map((text, position) => {
+    steps.hidden = index === 4;
+    const labels = ['Signal', !profile || trunkedProtocol() ? 'Check signal' : 'Audio', 'Review',
+      ...(index >= 2 && trunkedProtocol() && (reviewDraft?.alias_list_id === 0 ||
+        !reviewDraft && session?.review?.alias_lists?.length === 0 || index === 3) ? ['Talkgroups'] : [])];
+    steps.dataset.stepCount = String(labels.length);
+    steps.replaceChildren(...labels.map((text, position) => {
         const item = node('li');
         item.append(uiPill(position < index ? '✓' : String(position + 1),
           position === index ? 'blue' : position < index ? 'success' : 'neutral'), node('span', '', text));
@@ -13850,7 +13856,7 @@ function openSpectrumDiscoveryWizard(selection) {
     modal.setBusy(value);
     directory.setBusy(value);
     actions.querySelectorAll('button').forEach((control) => { control.disabled = value; });
-    stage.querySelectorAll('input[type="radio"]').forEach((control) => { control.disabled = value; });
+    stage.querySelectorAll('input[type="radio"]').forEach((control) => { control.disabled = value || control.dataset.importUnavailable === 'true'; });
     stage.querySelectorAll('.spectrum-discovery-details-action').forEach((control) => { control.disabled = value; });
   };
   const showError = (error, copy = 'This step could not finish. Try again.') => {
@@ -13980,6 +13986,8 @@ function openSpectrumDiscoveryWizard(selection) {
       channelMapDraft = null;
       editedReviewFields.clear();
       restartRequired = false;
+      wantsAliasImport = true;
+      aliasImportResult = null;
       modal.setDirty(false);
       drawSession();
     } catch (error) {
@@ -14359,8 +14367,8 @@ function openSpectrumDiscoveryWizard(selection) {
     const newName = node('input', 'ui-input');
     newName.type = 'text';
     newName.setAttribute('aria-label', 'New Alias List name');
-    newName.maxLength = 25;
-    newName.value = reviewDraft?.new_alias_list_name || review.default_new_alias_list_name || '';
+    newName.maxLength = ALIAS_LIST_NAME_MAX_LENGTH;
+    newName.value = reviewDraft?.new_alias_list_name ?? discoveryAliasListName(values.system, review.default_new_alias_list_name);
     newName.addEventListener('input', () => editedReviewFields.add('new_alias_list_name'));
     const newField = formField('New Alias List name', newName,
       'An existing compatible Alias List with this name will be used.');
@@ -14380,6 +14388,8 @@ function openSpectrumDiscoveryWizard(selection) {
     const updateReviewNames = (event) => {
       const key = event?.target?.dataset?.channelPath;
       if (['name', 'system', 'site'].includes(key)) editedReviewFields.add(key);
+      if (key === 'system' && !editedReviewFields.has('new_alias_list_name'))
+        newName.value = discoveryAliasListName(event.target.value, review.default_new_alias_list_name);
       modal.setDirty(true);
       try { reviewDraft = read(); } catch (_) { return; }
       refreshSystemSummary(system);
@@ -14409,7 +14419,8 @@ function openSpectrumDiscoveryWizard(selection) {
       }
       if (p25) drawSetupStatus(); else showSettings();
     });
-    const add = button('Add and start listening', async () => {
+    let add;
+    const saveChannel = async () => {
       if (!valid(form)) return;
       busy(true);
       try {
@@ -14420,7 +14431,9 @@ function openSpectrumDiscoveryWizard(selection) {
         if (!current()) return;
         modal.setDirty(false);
         selection.onSaved?.(session);
-        showComplete();
+        aliasImportResult = session.alias_import;
+        if (wantsAliasImport && aliasImportResult?.targets?.length) await runAliasImports();
+        else showComplete();
       } catch (error) {
         if (!current()) return;
         if (error.code === 'channel_saved_restart_required') {
@@ -14449,11 +14462,41 @@ function openSpectrumDiscoveryWizard(selection) {
           add.textContent = 'Try adding again';
         }
       } finally { if (current()) busy(false); }
-    }, true);
+    };
+    const addAction = () => {
+      if (!valid(form)) return;
+      reviewDraft = read();
+      if (trunkedProtocol() && selected === 'new') {
+        showStep(3, 'Do you want to import talkgroups into your Alias List?');
+        const choice = discoveryAliasImportChoice({ node }, [{ name: reviewDraft.new_alias_list_name,
+          systemName: spectrumDiscoverySystemName(session, reviewDraft), matched: session.radio_reference?.state === 'matched' }],
+          wantsAliasImport);
+        stage.append(choice.element);
+        button('Back', () => { wantsAliasImport = choice.wantsImport(); showReview(); });
+        add = button('Add and start listening', () => { wantsAliasImport = choice.wantsImport(); void saveChannel(); }, true);
+      } else { wantsAliasImport = false; void saveChannel(); }
+    };
+    add = button(trunkedProtocol() && selected === 'new' ? 'Continue' : 'Add and start listening', addAction, true);
+    aliases?.addEventListener('change', () => {
+      add.textContent = trunkedProtocol() && selected === 'new' ? 'Continue' : 'Add and start listening';
+    });
+  };
+  const runAliasImports = async () => {
+    if (restartRequired) { showComplete(); return; }
+    busy(true);
+    try {
+      aliasImportResult = await importDiscoveryAliases(request, `${sessionPath()}/aliases/import`, aliasImportResult, (result) => {
+        aliasImportResult = result;
+        if (result.targets.some((target) => target.state === 'restart_required')) restartRequired = true;
+        showStep(3, 'Importing talkgroups');
+        stage.append(discoveryAliasImportResults({ node }, result));
+      }, current);
+      if (current()) showComplete();
+    } finally { if (current()) busy(false); }
   };
   const showComplete = () => {
     const running = session.saved?.running === true;
-    showStep(3, running ? 'Ready to listen' : 'Channel added');
+    showStep(4, running ? 'Ready to listen' : 'Channel added');
     const status = node('div', `ui-notice spectrum-discovery-status${running ? '' : ' ui-notice-warning'}`);
     status.append(node('strong', 'spectrum-discovery-status-heading', running ? 'Your channel is running' :
       restartRequired ? 'Your channel is saved' : 'Listening couldn’t start'), node('p', '', running ?
@@ -14470,6 +14513,11 @@ function openSpectrumDiscoveryWizard(selection) {
     ]);
     summary.classList.add('spectrum-discovery-summary');
     stage.append(summary);
+    if (wantsAliasImport && aliasImportResult?.targets?.length) {
+      stage.append(discoveryAliasImportResults({ node }, aliasImportResult));
+      if (!restartRequired && aliasImportResult.targets.some((target) => target.state === 'failed' || target.state === 'pending'))
+        button('Retry talkgroup imports', () => void runAliasImports());
+    }
     if (!running) {
       if (session.saved?.start_error) stage.append(disclosure('Error details', node('p', 'muted', session.saved.start_error)));
       if (!restartRequired) button('Try starting again', async () => {

@@ -6,6 +6,8 @@ const root = resolve(__dirname, '../../../../..');
 const searchPath = '/api/v1/admin/spectrum-search';
 const configurationId = '7f408d02-7c20-44b2-97ce-f6202b24b0f7';
 const protocols = require(resolve(root, 'src/main/resources/channel-protocols.json'));
+const realDirectory = process.env.VCE_DISCOVERY_REAL_DATA ?
+  JSON.parse(readFileSync(process.env.VCE_DISCOVERY_REAL_DATA, 'utf8')) : null;
 const dialog = (page) => page.locator('.spectrum-search-modal');
 const bandLabels = ['VHF high · 138–174 MHz', 'UHF · 406–470 MHz', '700 MHz · 769–775 MHz',
   '800 MHz · 851–869 MHz', 'Custom range'];
@@ -94,17 +96,20 @@ function snapshot(state) {
     reason: state.reason || null,
     expires_at_ms: 1790880600000, restart_required: Boolean(state.restartRequired), truncated_reason: state.truncated ? 'Candidate limit reached' : null,
     progress: { completed: 2, total: 4, current_frequency_hz: 773000000, checked: 1, total_signals: 4,
-      ...(state.progress || {}) }, candidates: state.empty ? [] : state.customCandidates || candidates,
+      ...(state.progress || {}) }, candidates: state.empty ? [] : state.customCandidates ?
+      state.customCandidates.map((candidate) => ({ ...candidate, ...(state.ledger?.[candidate.candidate_id] || {}) })) : candidates,
     alias_groups: state.customAliasGroups || [{ group_id: 'county', wacn: 0xbee00, system: 0x348,
       alias_lists: state.ambiguous ? [{ id: 21, name: 'County Dispatch' }, { id: 22, name: 'County Operations' }] :
         [{ id: 21, name: 'County Dispatch' }], suggested_alias_list_id: null, default_new_alias_list_name: 'County P25' },
     { group_id: 'regional', wacn: 0xabc00, system: 0x234, alias_lists: [], suggested_alias_list_id: null,
-      default_new_alias_list_name: 'Regional P25' }] };
+      default_new_alias_list_name: 'Regional P25' }], alias_import: state.aliasImports };
 }
 
 async function install(page, state = {}) {
   state.requests = [];
   state.ledger = {};
+  state.createdListByGroup = new Map();
+  state.aliasImports = { targets: [], complete: true };
   state.identificationActive = false;
   state.tuners = state.recording ? [{ ...tuner('capture-a', 2000000), name: 'Trunked capture',
     tuner_class: 'RECORDING', source_type: 'recording', fixed_window: true, center_frequency_hz: 451000000, frequency_hz: undefined,
@@ -301,13 +306,40 @@ async function install(page, state = {}) {
           state.failCandidateOnce = null;
           state.ledger[candidate.candidate_id] = { saved: false, save_error: 'This channel could not be added. Retry.' };
         } else {
+          const candidateRow = snapshot(state).candidates.find((row) => row.candidate_id === candidate.candidate_id);
+          const group = body.alias_groups.find((group) => group.group_id === candidateRow.alias_group_id);
+          const aliasListId = group.alias_list_id || state.createdListByGroup.get(group.group_id) ||
+            41 + state.createdListByGroup.size;
+          if (!group.alias_list_id && !state.createdListByGroup.has(group.group_id)) {
+            state.createdListByGroup.set(group.group_id, aliasListId);
+            const matched = candidateRow.radio_reference?.state === 'matched';
+            state.aliasImports.targets.push({ alias_list_id: aliasListId,
+              alias_list_name: group.new_alias_list_name, system_id: matched ? 123 + aliasListId : null,
+              system_name: candidateRow.system_name, state: matched ? 'pending' : 'unavailable',
+              added: 0, updated: 0, unchanged: 0, message: matched ? null : 'Import these talkgroups later.' });
+          }
+          state.aliasImports.complete = state.aliasImports.targets.every((target) =>
+            ['imported', 'unavailable'].includes(target.state));
           state.ledger[candidate.candidate_id] = { saved: true, name: candidate.name, configuration_id: configurationId,
-            alias_list_id: candidate.candidate_id === 'regional' ? 42 : 21, auto_start: candidate.auto_start };
+            alias_list_id: aliasListId, auto_start: candidate.auto_start };
           if (state.publicationFailure) state.restartRequired = true;
         }
       }
       if (state.restartRequired) return fail('Channel saved, restart required', 'channel_saved_restart_required');
       return respond(snapshot(state));
+    }
+    if (path.endsWith('/aliases/import')) {
+      expect(state.aliasImports.targets.some((target) => target.alias_list_id === body.alias_list_id)).toBe(true);
+      if (state.delayImport) await new Promise((resolve) => { state.releaseImport = resolve; });
+      const failed = state.failImportAliasOnce === body.alias_list_id;
+      if (failed) state.failImportAliasOnce = null;
+      state.aliasImports.targets = state.aliasImports.targets.map((target) =>
+        target.alias_list_id === body.alias_list_id ? { ...target, state: failed ? 'failed' : 'imported',
+          added: failed ? 0 : state.importCount || 73, updated: 0, unchanged: 0,
+          message: failed ? 'RadioReference could not load these talkgroups. Try again.' : null } : target);
+      state.aliasImports.complete = state.aliasImports.targets.every((target) =>
+        ['imported', 'unavailable'].includes(target.state));
+      return respond(state.aliasImports);
     }
     return respond({});
   });
@@ -330,6 +362,32 @@ async function complete(page) {
   await expect(dialog(page).getByRole('heading', { name: /channels? found$/ })).toBeVisible();
 }
 
+const importYes = 'Yes, import aliases so I can see the names of the talkgroups';
+const importNo = "No, I'll import these later";
+
+async function expectStepWordsFit(modal) {
+  expect(await modal.evaluate((element) => [...element.querySelectorAll('.spectrum-discovery-progress li > span:last-child')]
+    .every((label) => [...label.textContent.matchAll(/\S+/g)].every((word) => {
+      const range = document.createRange();
+      range.setStart(label.firstChild, word.index);
+      range.setEnd(label.firstChild, word.index + word[0].length);
+      return range.getClientRects().length <= 1;
+    })))).toBe(true);
+}
+
+async function addChannels(page, count, importChoice = importNo) {
+  const continueButton = dialog(page).getByRole('button', { name: 'Continue', exact: true });
+  if (await continueButton.count()) {
+    await continueButton.click();
+    if (!await dialog(page).getByRole('radio', { name: importChoice, exact: true }).count()) return;
+  }
+  const choice = dialog(page).getByRole('radio', { name: importChoice, exact: true });
+  if (await choice.count()) await choice.check();
+  const add = count === undefined ? dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }) :
+    dialog(page).getByRole('button', { name: `Add ${count} ${count === 1 ? 'channel' : 'channels'}`, exact: true });
+  await add.click();
+}
+
 async function borrowedReview(page, options = {}) {
   const state = await install(page, { noIdle: true, requireJobRelease: true, ...options });
   await dialog(page).getByRole('button', { name: 'Stop channels and use: Small receiver', exact: true }).click();
@@ -348,10 +406,185 @@ const savedSearchRequests = (state) => ({
   browseDeletes: state.requests.filter((request) => request.path.endsWith('/browse') && request.method === 'DELETE')
 });
 
+function importSearchFixture(options = {}) {
+  const fixture = ohioResultsFixture();
+  fixture.customAliasGroups = fixture.customAliasGroups.map((group) => ({ ...group, alias_lists: [] }));
+  return { ...fixture, ...options };
+}
+
+async function reviewAllImportChannels(page) {
+  await complete(page);
+  await dialog(page).getByRole('button', { name: 'Select all available', exact: true }).click();
+  await dialog(page).getByRole('button', { name: 'Review 4 channels', exact: true }).click();
+  await dialog(page).getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(dialog(page).getByRole('heading', {
+    name: /^Do you want to import talkgroups into your Alias Lists?\?$/ })).toBeVisible();
+}
+
+for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
+  test(`search import choice lists each new system once in ${theme} at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    const state = await install(page, importSearchFixture({ theme }));
+    await reviewAllImportChannels(page);
+    await expect(dialog(page).getByRole('radio')).toHaveCount(2);
+    await expect(dialog(page).getByRole('radio', { name: importYes, exact: true })).toBeChecked();
+    await expect(dialog(page).locator('.spectrum-discovery-review dl')).toHaveCount(3);
+    for (const [index, name] of Object.values(ohioSystems).entries())
+      await expect(dialog(page).locator('.spectrum-discovery-review dl').nth(index).locator('dd').first()).toHaveText(name);
+    await expect(dialog(page).getByRole('button', { name: 'Back', exact: true })).toBeVisible();
+    expect(savedSearchRequests(state).saves).toHaveLength(0);
+    const fits = await dialog(page).evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      const footer = element.querySelector('.spectrum-discovery-actions').getBoundingClientRect();
+      return element.scrollWidth <= element.clientWidth + 1 && bounds.left >= 0 && bounds.right <= innerWidth &&
+        footer.bottom <= innerHeight;
+    });
+    expect(fits).toBe(true);
+    await dialog(page).screenshot({ animations: 'disabled', path: testInfo.outputPath(`import-choice-${theme}-${width}.png`) });
+    await addChannels(page, 4, importNo);
+    await expect(dialog(page)).toContainText('4 channels added.');
+    expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(0);
+  });
+}
+
+test('search imports once per new Alias List after releasing the receiver and retries only the failed list', async ({ page }) => {
+  const state = await install(page, importSearchFixture({ failImportAliasOnce: 42 }));
+  await reviewAllImportChannels(page);
+  await dialog(page).getByRole('radio', { name: importYes, exact: true }).check();
+  await dialog(page).getByRole('button', { name: 'Add 4 channels', exact: true }).click();
+  await expect(dialog(page).getByRole('button', { name: 'Retry talkgroup imports', exact: true })).toBeEnabled();
+  const imports = () => state.requests.filter(({ path }) => path.endsWith('/aliases/import'));
+  expect(imports().map(({ body }) => body.alias_list_id)).toEqual([41, 42, 43]);
+  expect(savedSearchRequests(state).saves).toHaveLength(1);
+  expect(savedSearchRequests(state).jobDeletes).toHaveLength(1);
+  expect(state.requests.indexOf(savedSearchRequests(state).jobDeletes[0])).toBeLessThan(
+    state.requests.indexOf(imports()[0]));
+  await dialog(page).getByRole('button', { name: 'Retry talkgroup imports', exact: true }).click();
+  await expect(dialog(page).getByRole('button', { name: 'Retry talkgroup imports', exact: true })).toHaveCount(0);
+  await expect(dialog(page)).toContainText('73 added, 0 updated, 0 unchanged.');
+  expect(imports().map(({ body }) => body.alias_list_id)).toEqual([41, 42, 43, 42]);
+  expect(savedSearchRequests(state).saves).toHaveLength(1);
+  await expect.poll(() => savedSearchRequests(state).jobDeletes.length).toBe(1);
+  expect(savedSearchRequests(state).browseDeletes).toHaveLength(1);
+});
+
+test('search keeps an explicit No choice after Back and Continue', async ({ page }) => {
+  const state = await install(page, importSearchFixture());
+  await reviewAllImportChannels(page);
+  await dialog(page).getByRole('radio', { name: importNo, exact: true }).check();
+  await dialog(page).getByRole('button', { name: 'Back', exact: true }).click();
+  await dialog(page).getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(dialog(page).getByRole('radio', { name: importNo, exact: true })).toBeChecked();
+  await addChannels(page, 4);
+  await expect(dialog(page)).toContainText('4 channels added.');
+  expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(0);
+});
+
+test('search import stays busy until the detached import finishes and never submits channels twice', async ({ page }) => {
+  const state = await install(page, importSearchFixture({ delayImport: true }));
+  await reviewAllImportChannels(page);
+  await addChannels(page, 4, importYes);
+  await expect.poll(() => typeof state.releaseImport).toBe('function');
+  await expect(dialog(page).getByRole('heading', { name: 'Importing talkgroups', exact: true })).toBeVisible();
+  await expect(dialog(page).getByRole('button', { name: 'Close Find Trunked Systems', exact: true })).toBeDisabled();
+  await page.keyboard.press('Escape');
+  await expect(dialog(page)).toBeVisible();
+  expect(savedSearchRequests(state).saves).toHaveLength(1);
+  expect(savedSearchRequests(state).jobDeletes).toHaveLength(1);
+  state.delayImport = false;
+  state.releaseImport();
+  await expect(dialog(page).getByRole('heading', { name: 'Your channel results', exact: true })).toBeVisible();
+  await expect(dialog(page).getByRole('button', { name: 'Done', exact: true })).toBeEnabled();
+  expect(savedSearchRequests(state).saves).toHaveLength(1);
+  expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(3);
+});
+
+test('search publication restart suppresses a prior failed import retry without importing again', async ({ page }) => {
+  const state = await install(page, importSearchFixture({ failCandidateOnce: 'cleveland-3', failImportAliasOnce: 41 }));
+  await reviewAllImportChannels(page);
+  await addChannels(page, 4, importYes);
+  await expect(dialog(page).getByRole('button', { name: 'Retry talkgroup imports', exact: true })).toBeEnabled();
+  const imports = () => state.requests.filter(({ path }) => path.endsWith('/aliases/import'));
+  expect(imports()).toHaveLength(2);
+  state.publicationFailure = true;
+  await dialog(page).getByRole('button', { name: 'Retry adding Cleveland control', exact: true }).click();
+  await expect(dialog(page)).toContainText('Restart VCE before opening these channels');
+  await expect(dialog(page).getByRole('button', { name: 'Retry talkgroup imports', exact: true })).toHaveCount(0);
+  expect(imports()).toHaveLength(2);
+});
+
+test('search skips the import step for existing Alias Lists and disables Yes without a trusted match', async ({ page }) => {
+  const state = await install(page);
+  await complete(page);
+  await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).check();
+  await dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true }).click();
+  await expect(dialog(page).getByRole('button', { name: 'Continue', exact: true })).toHaveCount(0);
+  await expect(dialog(page).getByRole('button', { name: 'Add 1 channel', exact: true })).toBeVisible();
+  await dialog(page).getByRole('button', { name: 'Back', exact: true }).click();
+  await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).uncheck();
+  await dialog(page).getByRole('checkbox', { name: 'Select Regional South', exact: true }).check();
+  await dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true }).click();
+  await dialog(page).getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(dialog(page).getByRole('radio', { name: importYes, exact: true })).toBeDisabled();
+  await expect(dialog(page).getByRole('radio', { name: importNo, exact: true })).toBeChecked();
+  await addChannels(page, 1);
+  await expect(dialog(page)).toContainText('1 channel added.');
+  expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(0);
+});
+
+for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
+  test(`real directory replay search review import and completion in ${theme} at ${width}px`, async ({ page }, testInfo) => {
+    test.skip(!realDirectory, 'Set VCE_DISCOVERY_REAL_DATA to an independently verified directory capture.');
+    await page.setViewportSize({ width, height: 900 });
+    const frequency = realDirectory.frequencies_hz[0];
+    const state = await install(page, { theme, importCount: realDirectory.talkgroups.length,
+      customCandidates: [{ candidate_id: 'lorain', frequency_hz: frequency, protocol_id: 'p25-phase1',
+        name: 'Lorain County control', system_name: realDirectory.system_name, site_name: 'Lorain County Simulcast',
+        identity: { wacn: realDirectory.wacn, system: realDirectory.system, rfss: realDirectory.rfss, site: realDirectory.site },
+        alias_group_id: 'lorain', selectable: true, saved: false, running: false, modulation: 'CQPSK',
+        strength_dbfs: -35.2, health: { quality_pct: 99, valid_messages: 54, valid_control_messages: 41,
+          invalid_control_messages: 1, checked_at_ms: 1790878800000 },
+        radio_reference: { state: 'matched', match: { system_name: realDirectory.system_name,
+          site_name: 'Lorain County Simulcast', url: realDirectory.source_url,
+          channels: realDirectory.frequencies_hz.map((frequency_hz) => ({ frequency_hz, primary_control: true })) } } }],
+      customAliasGroups: [{ group_id: 'lorain', protocol_id: 'p25-phase1', wacn: realDirectory.wacn,
+        system: realDirectory.system, alias_lists: [], suggested_alias_list_id: null,
+        default_new_alias_list_name: realDirectory.system_name }] });
+    await complete(page);
+    await dialog(page).getByRole('button', { name: 'Select all available', exact: true }).click();
+    await dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true }).click();
+    await expect(dialog(page).getByLabel('New Alias List name for 00001-047', { exact: true }))
+      .toHaveValue(realDirectory.system_name);
+    const capture = async (stage) => {
+      const fits = await dialog(page).evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        const actions = element.querySelector('.spectrum-discovery-actions').getBoundingClientRect();
+        return element.scrollWidth <= element.clientWidth + 1 && bounds.left >= 0 && bounds.right <= innerWidth &&
+          actions.bottom <= innerHeight;
+      });
+      expect(fits).toBe(true);
+      await expectStepWordsFit(dialog(page));
+      const name = `real-search-${stage}-${theme}-${width}.png`;
+      await dialog(page).screenshot({ animations: 'disabled', path: process.env.VCE_DISCOVERY_SCREENSHOTS ?
+        resolve(process.env.VCE_DISCOVERY_SCREENSHOTS, name) : testInfo.outputPath(name) });
+    };
+    await capture('review');
+    await dialog(page).getByRole('button', { name: 'Continue', exact: true }).click();
+    await expect(dialog(page).locator('.spectrum-discovery-review dl dd').first()).toHaveText(realDirectory.system_name);
+    await expect(dialog(page).getByRole('button', { name: 'Back', exact: true })).toBeVisible();
+    await capture('import-choice');
+    await addChannels(page, 1, importYes);
+    await expect(dialog(page)).toContainText(`${realDirectory.talkgroups.length} added, 0 updated, 0 unchanged.`);
+    await capture('completion');
+    expect(savedSearchRequests(state).saves[0].body.alias_groups[0].new_alias_list_name).toBe(realDirectory.system_name);
+    expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(1);
+  });
+}
+
 test('saved search closes identification before resuming and retains its committed results', async ({ page }) => {
   await page.clock.install();
   const state = await borrowedReview(page);
-  await dialog(page).getByRole('button', { name: 'Add 1 channel', exact: true }).click();
+  await addChannels(page, 1);
   await expect(dialog(page)).toContainText('1 channel added.');
   await expect.poll(() => savedSearchRequests(state).browseDeletes.length).toBe(1);
   const { saves, jobDeletes, browseDeletes } = savedSearchRequests(state);
@@ -364,7 +597,8 @@ test('saved search closes identification before resuming and retains its committ
   await expect(dialog(page).getByRole('button', { name: 'Done', exact: true })).toBeEnabled();
   const readsAfterCleanup = state.requests.length;
   await page.clock.fastForward(22000);
-  expect(state.requests.length).toBe(readsAfterCleanup);
+  expect(state.requests.slice(readsAfterCleanup).filter(({ path }) =>
+    path.startsWith(searchPath) || path.endsWith('/browse'))).toEqual([]);
   await expect(dialog(page)).toContainText('1 channel added.');
   await dialog(page).getByRole('button', { name: 'Done', exact: true }).click();
   await expect(dialog(page)).toHaveCount(0);
@@ -376,7 +610,7 @@ test('saved search closes identification before resuming and retains its committ
 test('saved search cleanup failure retries identification before any receiver release', async ({ page }) => {
   const state = await borrowedReview(page);
   state.failNextJobDelete = true;
-  await dialog(page).getByRole('button', { name: 'Add 1 channel', exact: true }).click();
+  await addChannels(page, 1);
   await expect(dialog(page)).toContainText('This receiver could not resume its channels yet');
   expect(savedSearchRequests(state).browseDeletes).toHaveLength(0);
   await dialog(page).getByRole('button', { name: 'Try resuming channels', exact: true }).click();
@@ -390,7 +624,7 @@ test('saved search cleanup failure retries identification before any receiver re
 
 test('saved search repeated resume retries do not create or release identification again', async ({ page }) => {
   const state = await borrowedReview(page, { failBrowseDeleteCount: 2 });
-  await dialog(page).getByRole('button', { name: 'Add 1 channel', exact: true }).click();
+  await addChannels(page, 1);
   const retry = dialog(page).getByRole('button', { name: 'Try resuming channels', exact: true });
   await expect(retry).toBeEnabled();
   await retry.evaluate((element) => { element.click(); element.click(); });
@@ -406,7 +640,7 @@ test('saved search repeated resume retries do not create or release identificati
 
 test('partially saved search keeps identification until remaining selected rows are committed', async ({ page }) => {
   const state = await borrowedReview(page, { twoSelected: true, failCandidateOnce: 'central' });
-  await dialog(page).getByRole('button', { name: 'Add 2 channels', exact: true }).click();
+  await addChannels(page, 2);
   const retry = dialog(page).getByRole('button', { name: 'Retry adding County Central', exact: true });
   await expect(retry).toBeEnabled();
   expect(savedSearchRequests(state).jobDeletes).toHaveLength(0);
@@ -423,7 +657,7 @@ test('partially saved search keeps identification until remaining selected rows 
 
 test('saved search handles an already resumed receiver reply without adding the channel again', async ({ page }) => {
   const state = await borrowedReview(page, { failBrowseDeleteAfterResume: true });
-  await dialog(page).getByRole('button', { name: 'Add 1 channel', exact: true }).click();
+  await addChannels(page, 1);
   await expect(dialog(page)).toContainText('This receiver could not resume its channels yet');
   expect(state.receiverResumed).toBe(true);
   await dialog(page).getByRole('button', { name: 'Try resuming channels', exact: true }).click();
@@ -441,7 +675,7 @@ test('saved search ignores a late receiver renewal error after successful resume
   state.failBrowseRenewAfterDelay = true;
   await page.clock.fastForward(10100);
   await expect.poll(() => Boolean(state.releaseBrowseRenew)).toBe(true);
-  await dialog(page).getByRole('button', { name: 'Add 1 channel', exact: true }).click();
+  await addChannels(page, 1);
   await expect.poll(() => savedSearchRequests(state).browseDeletes.length).toBe(1);
   state.releaseBrowseRenew();
   await page.clock.fastForward(1000);
@@ -459,7 +693,7 @@ for (const failure of [false, true]) {
     state.failJobStatusAfterDelay = failure;
     await page.clock.fastForward(10100);
     await expect.poll(() => Boolean(state.releaseJobStatus)).toBe(true);
-    await dialog(page).getByRole('button', { name: 'Add 1 channel', exact: true }).click();
+    await addChannels(page, 1);
     await expect.poll(() => savedSearchRequests(state).browseDeletes.length).toBe(1);
     state.releaseJobStatus();
     await page.clock.fastForward(1000);
@@ -472,7 +706,7 @@ for (const failure of [false, true]) {
 
 test('saved search forced dismissal during a pending save waits for commit and identification cleanup before resume', async ({ page }) => {
   const state = await borrowedReview(page, { delaySave: true, delayNextJobDelete: true });
-  await dialog(page).getByRole('button', { name: 'Add 1 channel', exact: true }).click();
+  await addChannels(page, 1);
   await expect.poll(() => Boolean(state.releaseSave)).toBe(true);
   await expect(dialog(page).getByRole('button', { name: 'Close Find Trunked Systems', exact: true })).toBeDisabled();
   await page.evaluate(async () => {
@@ -494,7 +728,7 @@ test('saved search forced dismissal during a pending save waits for commit and i
 
 test('saved search defers navigation while identification cleanup is pending and releases each resource once', async ({ page }) => {
   const state = await borrowedReview(page, { delayNextJobDelete: true });
-  await dialog(page).getByRole('button', { name: 'Add 1 channel', exact: true }).click();
+  await addChannels(page, 1);
   await expect(dialog(page)).toContainText('1 channel added.');
   await expect.poll(() => Boolean(state.releaseJobDelete)).toBe(true);
   await expect(dialog(page).getByRole('button', { name: 'Done', exact: true })).toBeDisabled();
@@ -527,7 +761,7 @@ test('pagehide retries failed search cleanup before releasing its borrowed recei
 
 test('pagehide waits for a pending channel commit before ordered identification and receiver release', async ({ page }) => {
   const state = await borrowedReview(page, { delaySave: true });
-  await dialog(page).getByRole('button', { name: 'Add 1 channel', exact: true }).click();
+  await addChannels(page, 1);
   await expect.poll(() => Boolean(state.releaseSave)).toBe(true);
   await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide')));
   expect(savedSearchRequests(state).jobDeletes).toHaveLength(0);
@@ -1183,16 +1417,16 @@ test('groups exact identities, saves channels stopped, and retries only failed a
   await dialog(page).getByRole('button', { name: 'Select all available' }).click();
   await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
   await expect(dialog(page).getByText('Alias List: County Dispatch · Existing', { exact: true })).toHaveCount(1);
-  await expect(dialog(page).getByLabel('New Alias List name for ABC00-234')).toHaveValue('Regional P25');
+  await expect(dialog(page).getByLabel('New Alias List name for ABC00-234')).toHaveValue('Regional Services');
   await expect(dialog(page).getByRole('checkbox', { name: /Listen now|Auto-start channels/ })).toHaveCount(0);
   await expect(dialog(page).getByLabel('Start with')).toHaveCount(0);
-  await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
+  await addChannels(page);
   await expect(dialog(page).getByRole('heading', { name: 'Your channel results' })).toBeVisible();
   await expect(dialog(page).getByText('Added', { exact: true })).toHaveCount(2);
   await expect(dialog(page).getByText('Could not add', { exact: true })).toHaveCount(1);
   const save = state.requests.find((request) => request.path.endsWith('/save'));
-  expect(save.body.alias_groups).toEqual([{ group_id: 'county', alias_list_id: 21, new_alias_list_name: 'County P25' },
-    { group_id: 'regional', alias_list_id: 0, new_alias_list_name: 'Regional P25' }]);
+  expect(save.body.alias_groups).toEqual([{ group_id: 'county', alias_list_id: 21, new_alias_list_name: 'County Public Safety' },
+    { group_id: 'regional', alias_list_id: 0, new_alias_list_name: 'Regional Services' }]);
   expect(save.body.candidates.every((candidate) => candidate.auto_start === false)).toBe(true);
   expect(state.requests.some((request) => request.path.endsWith('/start'))).toBe(false);
   await dialog(page).getByRole('button', { name: 'Retry adding Regional South' }).click();
@@ -1208,7 +1442,7 @@ test('a duplicate created during review remains non-retryable and points to Chan
   await complete(page);
   await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).check();
   await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
-  await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
+  await addChannels(page);
   await expect(dialog(page)).toContainText('1 channel was already in Channels.');
   await expect(dialog(page).getByRole('link', { name: 'Open Channels' })).toHaveAttribute('href', /view=channel-setup/);
   await expect(dialog(page).getByRole('button', { name: /Retry adding/ })).toHaveCount(0);
@@ -1220,7 +1454,7 @@ test('a committed channel with failed publication requires restart without anoth
   await complete(page);
   await dialog(page).getByRole('button', { name: 'Select all available' }).click();
   await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
-  await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
+  await addChannels(page);
   await expect(dialog(page)).toContainText('Restart VCE before opening these channels');
   await expect(dialog(page).getByText('Added', { exact: true })).toHaveCount(1);
   await expect(dialog(page).getByText('Not added', { exact: true })).toHaveCount(2);
@@ -1236,7 +1470,7 @@ test('a definitive saved-restart error locks the flow even if ledger recovery fa
   await complete(page);
   await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).check();
   await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
-  await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
+  await addChannels(page);
   await expect(dialog(page)).toContainText('Restart VCE before opening these channels');
   await expect(dialog(page).getByText('Status unavailable', { exact: true })).toHaveCount(1);
   await expect(dialog(page).getByRole('button', { name: /Retry|Review choices|Add selected/ })).toHaveCount(0);
@@ -1261,7 +1495,7 @@ test('failed-row review edits only unsaved channels', async ({ page }) => {
   await complete(page);
   await dialog(page).getByRole('button', { name: 'Select all available' }).click();
   await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
-  await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
+  await addChannels(page);
   await dialog(page).getByRole('button', { name: 'Review choices', exact: true }).click();
   await expect(dialog(page).getByRole('radio')).toHaveCount(0);
   await expect(dialog(page).getByText('Added', { exact: true })).toHaveCount(2);
@@ -1270,7 +1504,7 @@ test('failed-row review edits only unsaved channels', async ({ page }) => {
   await expect(dialog(page).getByRole('textbox', { name: /Channel name for/ })).toHaveCount(1);
   await dialog(page).getByLabel('Channel name for 860.0125 MHz').fill('My South Control');
   await dialog(page).getByLabel('New Alias List name for ABC00-234').fill('Regional listening');
-  await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
+  await addChannels(page);
   await expect(dialog(page)).toContainText('3 channels added.');
   const saves = state.requests.filter((request) => request.path.endsWith('/save'));
   expect(saves.at(-1).body.candidates).toEqual([{ candidate_id: 'regional', name: 'My South Control', auto_start: false }]);
@@ -1286,7 +1520,7 @@ test('review has no start controls and links to Channels after saving', async ({
   await expect(dialog(page).getByLabel('Start with')).toHaveCount(0);
   await dialog(page).getByRole('button', { name: 'Back', exact: true }).click();
   await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
-  await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
+  await addChannels(page);
   await expect(dialog(page)).toContainText('1 channel added.');
   await expect(dialog(page).getByRole('link', { name: 'Open Channels' })).toHaveAttribute('href', /view=channel-setup/);
   expect(state.requests.some((request) => request.path.endsWith('/start'))).toBe(false);
@@ -1310,11 +1544,11 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     await expect(regional).not.toContainText('· New');
     await name.scrollIntoViewIfNeeded();
     await dialog(page).screenshot({ path: testInfo.outputPath('alias-list-review.png') });
-    await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
+    await addChannels(page);
     await expect(dialog(page)).toContainText('3 channels added.');
     const save = state.requests.find((request) => request.path.endsWith('/save'));
     expect(save.body.alias_groups).toEqual([
-      { group_id: 'county', alias_list_id: 21, new_alias_list_name: 'County P25' },
+      { group_id: 'county', alias_list_id: 21, new_alias_list_name: 'County Public Safety' },
       { group_id: 'regional', alias_list_id: 0, new_alias_list_name: 'Regional existing' }
     ]);
   });
@@ -1327,7 +1561,7 @@ test('search review reveals an invalid Alias List choice when its panel was clos
   await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
   await dialog(page).getByRole('button', { name: 'Done', exact: true }).click();
   await expect(dialog(page).getByLabel('Alias List for BEE00-348')).toBeHidden();
-  await dialog(page).getByRole('button', { name: 'Add 1 channel', exact: true }).click();
+  await addChannels(page, 1);
   await expect(dialog(page).getByLabel('Alias List for BEE00-348')).toBeVisible();
   expect(state.requests.some((request) => request.path.endsWith('/save'))).toBe(false);
 });
@@ -1474,15 +1708,15 @@ test('requires a choice for ambiguous alias groups and preserves drafts after st
   await complete(page);
   await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).check();
   await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
-  await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
+  await addChannels(page);
   expect(state.requests.some((request) => request.path.endsWith('/save'))).toBe(false);
   await dialog(page).getByLabel('Alias List for BEE00-348').selectOption('22');
   await dialog(page).getByLabel('Channel name for 773.08125 MHz').fill('My North Control');
-  await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
+  await addChannels(page);
   await expect(dialog(page)).toContainText('Saved choices changed');
   await expect(dialog(page).getByLabel('Channel name for 773.08125 MHz')).toHaveValue('My North Control');
   await expect(dialog(page).getByLabel('Alias List for BEE00-348')).toHaveValue('22');
-  await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
+  await addChannels(page);
   await expect(dialog(page)).toContainText('1 channel added.');
   expect(state.requests.filter((request) => request.path.endsWith('/save')).at(-1).body.revision).toBe(8);
 });
@@ -1493,7 +1727,7 @@ test('an expired search requires fresh evidence and does not save stale choices'
   await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).check();
   await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
   state.expired = true;
-  await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
+  await addChannels(page);
   await expect(dialog(page).getByRole('heading', { name: 'This search expired' })).toBeVisible();
   await dialog(page).getByRole('button', { name: 'Start a new search' }).click();
   await expect(dialog(page).getByRole('heading', { name: 'Choose where to look' })).toBeVisible();
@@ -1505,7 +1739,7 @@ test('renews the browse lease while a save is pending', async ({ page }) => {
   await complete(page);
   await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).check();
   await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
-  await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
+  await addChannels(page);
   await expect.poll(() => Boolean(state.releaseSave)).toBe(true);
   await page.clock.fastForward(11000);
   await expect.poll(() => state.requests.some((request) => request.path === '/api/v1/admin/tuners/idle-b/browse' && Boolean(request.body.lease_id))).toBe(true);
@@ -1622,7 +1856,7 @@ test('saving restores a borrowed tuner as soon as it finishes', async ({ page })
   await complete(page);
   await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).check();
   await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
-  await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
+  await addChannels(page);
   await expect(dialog(page)).toContainText('1 channel added.');
 
   const saveIndex = state.requests.findIndex((request) => request.path.endsWith('/save'));
@@ -1647,7 +1881,7 @@ test('a release conflict keeps ownership until retry resumes the borrowed tuner'
   await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).check();
   await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
   state.failNextBrowseDeleteConflict = true;
-  await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
+  await addChannels(page);
 
   await expect(dialog(page)).toContainText('This receiver could not resume its channels yet');
   const retry = dialog(page).getByRole('button', { name: 'Try resuming channels', exact: true });
@@ -1835,6 +2069,75 @@ test('forced dismissal during search creation releases the returned job before i
   expect(leaseDelete).toBeGreaterThan(jobDelete);
 });
 
+function aliasNamingFixture() {
+  return { customCandidates: [{ candidate_id: 'digital', frequency_hz: 451000000,
+    protocol_id: 'dmr', name: 'Decoded control', system_name: 'Decoded network', alias_group_id: 'digital',
+    radio_reference: { state: 'pending' }, trunked_evidence: { identity: {
+      radio_system_key: 'dmr:tier3:small:12', network: 12, site: 3 }, frequency_map: [] } }],
+  customAliasGroups: [{ group_id: 'digital', protocol_id: 'dmr', system_name: 'Decoded network',
+    alias_lists: [], default_new_alias_list_name: 'DMR 451.000000' }] };
+}
+
+function resolveAliasNamingFixture(state, systemName) {
+  state.customCandidates[0] = { ...state.customCandidates[0], name: 'Directory North', system_name: systemName,
+    site_name: 'North', radio_reference: { state: 'matched', match: { system_name: systemName, site_name: 'North',
+      url: 'https://www.radioreference.com/db/sid/123' } } };
+  state.customAliasGroups[0] = { ...state.customAliasGroups[0], system_name: systemName,
+    default_new_alias_list_name: systemName };
+}
+
+test('search Alias List defaults use the resolved System name and bound Unicode names without splitting a surrogate', async ({ page }) => {
+  await page.clock.install();
+  const fixture = aliasNamingFixture();
+  resolveAliasNamingFixture(fixture, `${'A'.repeat(127)}📻 regional`);
+  const state = await install(page, fixture);
+  await complete(page);
+  await dialog(page).getByRole('button', { name: 'Select all available', exact: true }).click();
+  await dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true }).click();
+  const alias = dialog(page).getByRole('textbox', { name: /^New Alias List name for / });
+  await expect(alias).toHaveAttribute('maxlength', '128');
+  await expect(alias).toHaveValue('A'.repeat(127));
+  await expect(dialog(page)).toContainText(`Alias List: ${'A'.repeat(127)}`);
+  await dialog(page).getByLabel('Channel name for 451 MHz', { exact: true }).fill('My control channel');
+  await expect(alias).toHaveValue('A'.repeat(127));
+});
+
+test('late search directory naming updates an untouched Alias List and its visible summary', async ({ page }) => {
+  await page.clock.install();
+  const state = await install(page, aliasNamingFixture());
+  await complete(page);
+  await dialog(page).getByRole('button', { name: 'Select all available', exact: true }).click();
+  await dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true }).click();
+  const alias = dialog(page).getByRole('textbox', { name: /^New Alias List name for / });
+  await expect(alias).toHaveValue('Decoded network');
+  const original = await alias.elementHandle();
+  await alias.focus();
+  resolveAliasNamingFixture(state, ohioSystems.marcs);
+  await page.clock.fastForward(800);
+  await expect(alias).toHaveValue(ohioSystems.marcs);
+  await expect(dialog(page)).toContainText(`Alias List: ${ohioSystems.marcs}`);
+  expect(await alias.evaluate((element, previous) => element === previous, original)).toBe(true);
+  await expect(alias).toBeFocused();
+});
+
+test('late search directory naming preserves a custom Alias List across polling and Back review', async ({ page }) => {
+  await page.clock.install();
+  const state = await install(page, aliasNamingFixture());
+  await complete(page);
+  await dialog(page).getByRole('button', { name: 'Select all available', exact: true }).click();
+  await dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true }).click();
+  const alias = dialog(page).getByRole('textbox', { name: /^New Alias List name for / });
+  await alias.fill('My transit listeners');
+  resolveAliasNamingFixture(state, ohioSystems.marcs);
+  await page.clock.fastForward(800);
+  await expect(alias).toHaveValue('My transit listeners');
+  await expect(dialog(page)).toContainText('Alias List: My transit listeners');
+  await dialog(page).getByRole('button', { name: 'Back', exact: true }).click();
+  await dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true }).click();
+  await expect(alias).toHaveValue('My transit listeners');
+  await expect(dialog(page)).toContainText('Alias List: My transit listeners');
+});
+
 test('delayed wide-directory names update review without replacing edited channel names', async ({ page }) => {
   await page.clock.install();
   const state = await install(page, { customCandidates: [{ candidate_id: 'digital', frequency_hz: 451000000,
@@ -2019,7 +2322,7 @@ for (const [theme, viewport] of [['light', { width: 1280, height: 900 }],
       await expect(identity).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
       await expect(dialog(page).getByText('RadioReference', { exact: true })).toHaveCount(0);
       await dialog(page).screenshot({ path: testInfo.outputPath('ohio-review-customize.png') });
-      await dialog(page).getByRole('button', { name: 'Add 2 channels', exact: true }).click();
+      await addChannels(page, 2);
       const save = state.requests.find((request) => request.path.endsWith('/save'));
       expect(save.body.candidates.map((candidate) => candidate.candidate_id)).toEqual(['marcs-27', 'cleveland-3']);
     });
@@ -2234,7 +2537,7 @@ test('wide DMR review submits the explicit channel map through the shared editor
   const added = dialog(page).locator('.channel-map-row').nth(1);
   await added.locator('input').nth(0).fill('2');
   await added.locator('input').nth(1).fill('451.25');
-  await dialog(page).getByRole('button', { name: 'Add 1 channel', exact: true }).click();
+  await addChannels(page, 1);
   const saved = state.requests.find((request) => request.path.endsWith('/save'));
   expect(saved.body.candidates[0].frequency_map).toEqual([
     { number: 1, downlink_hz: 451000000, uplink_hz: 0 }, { number: 2, downlink_hz: 451250000, uplink_hz: 0 } ]);
@@ -2296,9 +2599,9 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
     expect(geometry.width).toBeLessThanOrEqual(width);
     expect(geometry.bottom).toBeLessThanOrEqual(900);
     expect(geometry.scroll).toBeGreaterThan(0);
-    await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).focus();
-    await expect(dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ })).toBeFocused();
-    await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
+    await dialog(page).getByRole('button', { name: /^Add \d+ channels?$|^Continue$/ }).focus();
+    await expect(dialog(page).getByRole('button', { name: /^Add \d+ channels?$|^Continue$/ })).toBeFocused();
+    await addChannels(page);
     await expect(dialog(page).getByRole('heading', { name: 'Your channel results' })).toBeVisible();
     await expect(dialog(page)).toHaveScreenshot(`spectrum-search-saved-${theme}-${width}.png`);
   });
@@ -2315,7 +2618,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
     await alias.press('Enter');
     await alias.selectOption('22');
     await expect(alias).toHaveValue('22');
-    await dialog(page).getByRole('button', { name: /^Add \d+ channels?$/ }).click();
+    await addChannels(page);
     await expect(dialog(page)).toContainText('Restart VCE before opening these channels');
     await expect(dialog(page)).toHaveScreenshot(`spectrum-search-restart-${theme}-${width}.png`);
     expect(state.requests.some((request) => request.path.endsWith('/start'))).toBe(false);

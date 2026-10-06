@@ -7,6 +7,10 @@ import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.channel.ChannelDefinition;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService;
+import io.github.dsheirer.service.radioreference.RadioReferenceDiscoveryResolver;
+import io.github.dsheirer.service.radioreference.RadioReferenceGateway;
+import io.github.dsheirer.service.radioreference.RadioReferenceGatewayException;
 import io.github.dsheirer.source.tuner.Tuner;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -229,6 +233,60 @@ class SpectrumSearchServiceTest
             assertEquals("Friendly network", completed.candidates().getFirst().systemName());
             assertTrue(fixture.lease.valid());
             assertEquals(0, fixture.channels.definitions.size());
+        }
+    }
+
+    @Test
+    void lateDirectoryNameRefreshesTheGeneratedGroupAndDefaultSaveName() throws Exception
+    {
+        NamingGateway gateway = new NamingGateway();
+        try(RadioReferenceDirectoryService directory = new RadioReferenceDirectoryService((user, password) -> gateway);
+            Fixture fixture = new Fixture(A))
+        {
+            directory.login("test", "cleared-password".toCharArray());
+            fixture.directory = new RadioReferenceDiscoveryResolver(directory);
+            fixture.channels.systemName = "Countywide Regional Public Safety Radio System";
+            var opened = fixture.open();
+            assertTrue(gateway.entered.await(2, TimeUnit.SECONDS));
+            var initial = fixture.complete(opened.jobId());
+            assertEquals(fixture.channels.systemName, initial.aliasGroups().getFirst().defaultNewAliasListName(),
+                "a known friendly name remains the default while the directory lookup is pending");
+            gateway.release.countDown();
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+            SpectrumSearchService.Snapshot resolved;
+            do
+            {
+                resolved = fixture.service.status(opened.jobId());
+                if(resolved.candidates().getFirst().radioReference().matched()) break;
+                Thread.sleep(5);
+            } while(System.nanoTime() < deadline);
+            assertTrue(resolved.candidates().getFirst().radioReference().matched());
+            assertEquals(gateway.systemName, resolved.aliasGroups().getFirst().defaultNewAliasListName());
+            var row = resolved.candidates().getFirst();
+            fixture.service.save(opened.jobId(), new SpectrumSearchService.SaveRequest(resolved.revision(),
+                List.of(new SpectrumSearchService.SaveCandidate(row.candidateId(), row.name(), false)), List.of()));
+            assertEquals(List.of(gateway.systemName), fixture.channels.aliasNames,
+                "omitting the explicit alias choice uses the latest human system name at save time");
+        }
+        finally
+        {
+            gateway.release.countDown();
+        }
+    }
+
+    @Test
+    void anExplicitNewListNameIsPreservedInsteadOfReplacedByTheGeneratedSystemName() throws Exception
+    {
+        try(Fixture fixture = new Fixture(A))
+        {
+            fixture.channels.systemName = "Metropolitan Emergency Communications Network";
+            var opened = fixture.open();
+            var completed = fixture.complete(opened.jobId());
+            var row = completed.candidates().getFirst();
+            fixture.service.save(opened.jobId(), new SpectrumSearchService.SaveRequest(completed.revision(),
+                List.of(new SpectrumSearchService.SaveCandidate(row.candidateId(), row.name(), false)),
+                List.of(new SpectrumSearchService.AliasChoice(row.aliasGroupId(), 0, "Custom regional aliases"))));
+            assertEquals(List.of("Custom regional aliases"), fixture.channels.aliasNames);
         }
     }
 
@@ -806,6 +864,7 @@ class SpectrumSearchServiceTest
         SpectrumSearchService.ProbeCheck check = (lease, frequency, cancelled) -> evidence(frequency,
             frequency == A ? 1 : frequency == B ? 2 : 3, "C4FM", true);
         SpectrumSearchService service;
+        RadioReferenceDiscoveryResolver directory;
         long dwellMs = 750;
         Fixture(long... frequencies) { lease = new FakeLease(frequencies); }
         SpectrumSearchService.Snapshot open()
@@ -815,6 +874,7 @@ class SpectrumSearchServiceTest
             if(service == null) service = new SpectrumSearchService(channels, (tuner, browse) -> lease,
                 (lease, frequency, cancelled) -> check.check(lease, frequency, cancelled), clock::get,
                 () -> new SpectrumSearchService.Catalog(List.of(), null, List.of(), null));
+            service.setRadioReferenceResolver(directory);
             return service.open("test-receiver", "test-browse", ranges, dwellMs);
         }
         SpectrumSearchService.Snapshot complete(String id) throws Exception
@@ -903,6 +963,7 @@ class SpectrumSearchServiceTest
     {
         long revision = 1, failOnce, staleAt, publicationFailureAt, suspendedAt;
         int createdAliases;
+        String systemName = "Friendly network";
         List<ChannelAdministrationService.DiscoveryAliasList> matchingAliasLists;
         final Map<String,Long> aliases = new LinkedHashMap<>();
         final Map<Long,SpectrumSearchService.KnownChannel> knownFrequencies = new LinkedHashMap<>();
@@ -910,6 +971,7 @@ class SpectrumSearchServiceTest
         final List<ChannelDefinition> definitions = new ArrayList<>();
         final List<P25SiteIdentity> identities = new ArrayList<>();
         final List<String> starts = new ArrayList<>();
+        final List<String> aliasNames = new ArrayList<>();
         CountDownLatch createEntered, createRelease;
         public long revision() { return revision; }
         public SpectrumSearchService.KnownChannel known(long frequency) { return knownFrequencies.get(frequency); }
@@ -919,7 +981,7 @@ class SpectrumSearchServiceTest
             P25SiteIdentity identity, String modulation)
         {
             Long alias = aliases.get(key(identity));
-            var template = new ChannelDefinition(null, "p25-phase1", "Friendly network", "Site " + identity.site(), "Probe",
+            var template = new ChannelDefinition(null, "p25-phase1", systemName, "Site " + identity.site(), "Probe",
                 null, alias != null ? alias : 0, new ChannelDefinition.Source(List.of(frequency), null, null, frequency, preferred, null),
                 Map.of("modulation", modulation, "learn_announced_control_channels", true), List.of(), List.of(), List.of(), List.of(), null);
             return new ChannelAdministrationService.DiscoveryReview(revision, template,
@@ -942,6 +1004,7 @@ class SpectrumSearchServiceTest
             assertEquals(revision, expected);
             long aliasId = definition.aliasListId();
             if(aliasId == 0) { aliasId = 100 + ++createdAliases; aliases.put(key(identity), aliasId); }
+            aliasNames.add(aliasName);
             definitions.add(definition); identities.add(identity); revision++;
             if(frequency == publicationFailureAt) throw new ConfigurationManager.ConfigurationPublicationException(
                 "Committed but not published", new IllegalStateException("Test publication failure"),
@@ -954,5 +1017,42 @@ class SpectrumSearchServiceTest
             starts.add(id);
             return new ChannelAdministrationService.LifecycleResult(id, true, ChannelAdministrationService.ProcessingState.RUNNING, null);
         }
+    }
+
+    private static final class NamingGateway implements RadioReferenceGateway
+    {
+        final String systemName = "Metropolitan Emergency Communications Network";
+        final CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+        public Account account() { return new Account("test", "01-01-2070"); }
+        public List<Country> countries() { return List.of(); }
+        public CountryDirectory country(int id) { return null; }
+        public StateDirectory state(int id) { return null; }
+        public CountyDirectory county(int id) { return null; }
+        public List<FrequencyResult> searchStateFrequencies(int state, double frequency) { return List.of(); }
+        public List<TrunkedSystem> p25SystemsBySystemId(int system)
+        {
+            return List.of(new TrunkedSystem(2001, systemName, "", 0, 0, 0));
+        }
+        public TrunkedSystemDetails trunkedSystemDetails(int id) throws RadioReferenceGatewayException
+        {
+            entered.countDown();
+            try
+            {
+                if(!release.await(3, TimeUnit.SECONDS))
+                    throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.TIMEOUT);
+            }
+            catch(InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+                throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INTERRUPTED);
+            }
+            return new TrunkedSystemDetails(id, systemName, "", "Project 25", "Phase I", "", "BEE00", "348");
+        }
+        public List<TrunkedSiteDetails> trunkedSiteDetails(int id)
+        {
+            return List.of(new TrunkedSiteDetails(3001, id, 1, "North", 0, 0, 2, "348", 0,
+                "C4FM", false, List.of(new TrunkedSiteChannel(A, 0, "", "", "", true, false))));
+        }
+        public void close() { release.countDown(); }
     }
 }

@@ -404,6 +404,8 @@ public class StatsWebServerService implements AutoCloseable
             new RadioReferenceDiscoveryResolver(mRadioReferenceDirectoryService);
         if(mSpectrumDiscoveryService != null) mSpectrumDiscoveryService.setRadioReferenceResolver(discoveryDirectory);
         if(mSpectrumSearchService != null) mSpectrumSearchService.setRadioReferenceResolver(discoveryDirectory);
+        if(mSpectrumDiscoveryService != null) mSpectrumDiscoveryService.setAliasImporter(mRadioReferenceImportService);
+        if(mSpectrumSearchService != null) mSpectrumSearchService.setAliasImporter(mRadioReferenceImportService);
         if(mChannelAdministrationService != null)
             mChannelAdministrationService.setRetainedDiscoveryIdentityProvider(mDatabase::retainedDiscoveryIdentities);
         mLiveService = new StatsLiveService(channelProcessingManager, mEntityCatalog,
@@ -928,13 +930,13 @@ public class StatsWebServerService implements AutoCloseable
                 WebCapability.ADMIN_CHANNELS, channelController::handle));
             if(mSpectrumDiscoveryService != null)
                 server.createContext(SpectrumDiscoveryHttpController.PATH, mWebRequestSecurity.protectApi(
-                    WebCapability.ADMIN_CHANNELS, new SpectrumDiscoveryHttpController(mSpectrumDiscoveryService,
-                        mDatabase::enrichSystemNames)::handle));
+                    WebCapability.ADMIN_CHANNELS, protectDiscoveryAliasImports(new SpectrumDiscoveryHttpController(
+                        mSpectrumDiscoveryService, mDatabase::enrichSystemNames)::handle)));
             if(mSpectrumSearchService != null)
                 server.createContext(SpectrumSearchHttpController.PATH, mWebRequestSecurity.protectApi(
                     WebCapability.ADMIN_CHANNELS, mWebRequestSecurity.protect(WebCapability.ADMIN_TUNERS,
-                        new SpectrumSearchHttpController(mSpectrumSearchService,
-                            mDatabase::enrichSystemNames)::handle)));
+                        protectDiscoveryAliasImports(new SpectrumSearchHttpController(mSpectrumSearchService,
+                            mDatabase::enrichSystemNames)::handle))));
         }
 
         RadioReferenceHttpController radioReferenceController = new RadioReferenceHttpController(
@@ -1037,6 +1039,19 @@ public class StatsWebServerService implements AutoCloseable
         server.createContext("/api", StatsWebServerService::handleApiNotFound);
         server.createContext("/live", StatsWebServerService::handleApiNotFound);
         server.createContext("/", exchange -> handleStatic(exchange, assetRoot, webClientRevision));
+    }
+
+    private HttpHandler protectDiscoveryAliasImports(HttpHandler handler)
+    { return protectDiscoveryAliasImports(mWebRequestSecurity, handler); }
+
+    static HttpHandler protectDiscoveryAliasImports(WebRequestSecurity security, HttpHandler handler)
+    {
+        HttpHandler imports = security.protect(WebCapability.ADMIN_SETTINGS,
+            security.protect(WebCapability.ADMIN_ALIASES, handler));
+        return exchange -> {
+            if(exchange.getRequestURI().getPath().endsWith("/aliases/import")) imports.handle(exchange);
+            else handler.handle(exchange);
+        };
     }
 
     private void ensureAuthenticationServices() throws IOException, SQLException

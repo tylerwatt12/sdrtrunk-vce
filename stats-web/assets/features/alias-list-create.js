@@ -1,3 +1,5 @@
+import { ALIAS_LIST_NAME_MAX_LENGTH } from './discovery-radioreference.js?v=7';
+
 let creatorSequence = 0;
 
 function normalizedFamily(value) {
@@ -45,7 +47,7 @@ export function createAliasListPopupTrigger(dependencies, options) {
     const form = node('form', 'admin-form');
     const name = node('input', 'ui-input');
     name.type = 'text';
-    name.maxLength = 25;
+    name.maxLength = ALIAS_LIST_NAME_MAX_LENGTH;
     name.autocomplete = 'off';
     const nameField = node('label', 'ui-field');
     nameField.append(node('span', 'ui-field-label', 'Name'), name);

@@ -64,6 +64,22 @@ class SpectrumDiscoveryHttpControllerTest
     }
 
     @Test
+    void aliasImportAcceptsOnlyAPositiveListIdAndNeverBrowserProvidedSystemIdentity() throws Exception
+    {
+        try(Fixture fixture = new Fixture())
+        {
+            String path = SESSION + "/aliases/import";
+            assertEquals(405, fixture.send(path, "GET", null).statusCode());
+            for(String body: new String[]{"{}", "[]", "{\"alias_list_id\":0}", "{\"alias_list_id\":-1}",
+                "{\"alias_list_id\":1.5}", "{\"alias_list_id\":true}", "{\"alias_list_id\":9007199254740992}",
+                "{\"alias_list_id\":1,\"system_id\":10}", "{\"alias_list_id\":1,\"alias_list_id\":2}"})
+                assertEquals(400, fixture.send(path, "POST", body).statusCode(), body);
+            assertEquals(400, fixture.send(path + "?system_id=10", "POST", "{\"alias_list_id\":1}").statusCode());
+            assertEquals(503, fixture.send(path, "POST", "{\"alias_list_id\":1}").statusCode());
+        }
+    }
+
+    @Test
     void rejectsAmbiguousEligibilityQueriesAndSessionQueryParameters() throws Exception
     {
         try(Fixture fixture = new Fixture())
@@ -114,12 +130,14 @@ class SpectrumDiscoveryHttpControllerTest
                 valid.replace("\"C4FM\"", "[\"C4FM\"]"),
                 valid.replace("\"C4FM\"", "{\"nested\":true}"),
                 valid.replace("\"settings\":{\"modulation\":\"C4FM\"}", "\"settings\":[]"),
-                valid.replace("\"Test list\"", "\"" + "x".repeat(26) + "\""),
+                valid.replace("\"Test list\"", "\"" + "x".repeat(129) + "\""),
                 valid.replace("\"Test site\"", "\"\""),
                 valid.replace("}", ",\"unknown\":true}")
             };
             for(String body: bodies)
                 assertEquals(400, fixture.send(SESSION + "/save", "POST", body).statusCode(), body);
+            assertEquals(503, fixture.send(SESSION + "/save", "POST",
+                valid.replace("\"Test list\"", "\"" + "x".repeat(128) + "\"")).statusCode());
         }
     }
 
