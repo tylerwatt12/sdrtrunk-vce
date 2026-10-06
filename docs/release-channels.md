@@ -17,8 +17,10 @@ than the numbered Alpha line.
 
 Because Nightly is a rolling release, it does not require a version-matched What's New document. Its GitHub release
 body stays evergreen, but every publication requires a manual approval after the pending changes and test results have
-been reviewed. Use the documentation bundled with the downloaded build and read the Application Migrator's preflight
-and completion reports before replacing existing data.
+been reviewed. Use the documentation bundled with the downloaded build. To bring settings from an older VCE
+installation, start VCE and choose **Copy a previous VCE installation / data folder** in its Setup Wizard. Review the
+import plan and completion report; the built-in import and upgrade runs automatically without a separate program or
+download.
 
 Nightly moves receiver administration into the website, including Channels, Tuners, Streaming, and RadioReference.
 The local receiver window still opens the website and provides setup, database import, file access, and debug

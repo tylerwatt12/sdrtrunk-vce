@@ -34,7 +34,8 @@ receiver data before installing or upgrading.
   queue, where optional Conversation Mode can regroup calls that are already waiting.
 - **Portable setup:** Each VCE installation keeps its own database, settings, tuners, JMBE library, logs, recordings,
   statistics, and web files. It does not rely on the sdrtrunk in the userprofile, so you can rest assured it will not overwrite files from previous versions of sdrtrunk
-- **Safe importing and upgrades:** VCE allows you to import an existing SDRTrunk XML playlist, or migrate to a new version from a previous VCE database with the built-in Application Migrator.
+- **Safe importing and upgrades:** The main application's Setup Wizard can import an SDRTrunk XML playlist or copy
+  settings from a previous VCE installation. Its built-in import and upgrade handles the database automatically.
 - **Clear channel types:** Conventional P25, DMR, and NXDN are kept separate from trunked systems, while one
   conventional analog Alias-list family serves both AM and NBFM channels.
 - **Responsive desktop and mobile listening:** One browser interface adapts its navigation, Live activity, scanner,
@@ -98,8 +99,8 @@ The easiest way to switch is:
 
 1. Leave regular SDRTrunk where it is.
 2. Extract VCE.
-3. Start VCE and choose **Use Found XML** or **Choose XML…**.
-4. Review the imported channels and file locations.
+3. Start VCE. In the Setup Wizard, choose **Import legacy XML** and select your playlist.
+4. Choose **Import XML**, then review the imported channels and file locations.
 5. Keep the old installation until VCE has been tested.
 
 VCE normally finds:
@@ -127,7 +128,7 @@ After importing:
 
 - Check that P25 and DMR channels have the correct Conventional or Trunked type.
 - Check tuner assignments and auto-start channels.
-- Set up JMBE under **Preferences > Decoder > JMBE Audio Library** if needed.
+- If JMBE needs attention later, use the main window's **Settings > Decoder > JMBE Audio Library**.
 - Check recording, event-log, screenshot, and streaming folders.
 - Back up the new VCE data folder.
 
@@ -146,12 +147,13 @@ Recommended update steps:
 1. Close the old VCE version.
 2. Back up its complete data folder.
 3. Extract the new version into a new empty folder.
-4. Start it and choose **Migrate Existing**.
-5. Select the old app or data folder if VCE does not find it automatically.
-6. Check your channels, tuners, JMBE library, file locations, web settings, and auto-start behavior.
+4. Use **Start VCE**. In the Setup Wizard, choose **Copy a previous VCE installation / data folder**.
+5. Choose a nearby installation or browse to the old installation or data folder, then select **Review import**.
+6. Review what will be copied and choose **Confirm import**.
+7. Check your channels, tuners, JMBE library, file locations, web settings, and auto-start behavior before finishing setup.
 
-The Application Migrator copies the setup, updates a separate copy of the database, and checks it before the new
-version starts. Within a recognized older database it works component by component: valid channels,
+VCE's built-in import copies the setup, upgrades a separate copy of the database, and checks it before receiving
+starts. No separate program or download is needed. Within a recognized older database it works component by component: valid channels,
 aliases, accounts, and providers can still migrate when an unrelated row is unusable. Safe defaults and skipped rows
 are listed with counts in the completion report. The old installation is left unchanged, making it easy to go back.
 

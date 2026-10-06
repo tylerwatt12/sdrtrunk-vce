@@ -25,9 +25,12 @@ portable data from an earlier sdrtrunk-vce build. The unified Setup Wizard offer
 
 Source-selection controls appear only for the selected import option. Start fresh does not require a file or folder;
 nearby installations are offered with the folder option, and older XML playlists with the XML option.
+For a previous VCE installation, choose its folder, select **Review import**, then **Confirm import** after checking
+the plan. The main application's Setup Wizard runs the built-in import and upgrade automatically; no separate
+program or download is needed.
 
 The wizard's fixed sequence is Starting point, Administrator, Web access, Digital audio, RadioReference,
-Statistics & history, Your radios, Optimize decoding, and Review & finish. Every step remains visible. Valid imported
+Statistics & history, Recordings, Your radios, Optimize decoding, and Review & finish. Every step remains visible. Valid imported
 settings are marked **Carried over** and skipped by Continue; click a completed step to review or edit it. Deferred
 and failed steps are not shown as successful. Exit preserves accepted settings, but never saves password drafts.
 
@@ -73,10 +76,11 @@ Use **Help → Setup Wizard…** to reopen setup after an explicit restart confi
 When explicitly reopened with an existing profile, the same Starting point page offers **Keep my current settings**,
 **Replace settings from a SQLite database**, and **Import a legacy XML playlist**. No extra step is inserted. Merely
 selecting an option or returning with Back never imports or replaces data; each import has a separate preview and
-confirmation. Fresh-start and folder-copy choices remain exclusive to new installations. Imports are no longer in
-the File menu. After an import completes, Starting point becomes a results review for that session.
+confirmation. Fresh-start and folder-copy choices remain exclusive to new installations. **File → Import SQLite
+Database…** also restarts into the same wizard's database-replacement flow. After an import completes, Starting point
+becomes a results review for that session.
 
-The bundled Application Migrator is the only supported release database-migration entry point. An upgrade of the
+The wizard uses the bundled Application Migrator, the only supported release database-migration entry point. An upgrade of the
 current profile uses one transaction before receiving starts. The recovery-backup checkbox defaults to on and saves
 one timestamped SQLite-aware snapshot before changes; skipping it uses the same conversion and final checks. A
 failure before commit rolls back the transaction. After commit, the optional backup remains for manual recovery.
@@ -172,8 +176,8 @@ deterministic prior-format fixture, and tests. The bundled chain retains those s
 a verified older Alpha or Nightly database does not require sequential installation of skipped builds.
 Ordinary application services remain validation-only.
 
-When startup recognizes an older format, it offers the Application Migrator. The wizard may already be visible,
-but the main receiver window and receiving have not started. With the profile locked, the migrator takes the optional
+When startup recognizes an older format, the Setup Wizard offers to update the saved settings using the bundled
+Application Migrator. The main receiver window and receiving have not started. With the profile locked, the migrator takes the optional
 backup under `data/database/backups`, applies all required adjacent steps to the existing database in one transaction,
 checks the exact final schema and bounded configuration, then commits. It avoids repeated copies, full-history scans,
 and compaction. If conversion or validation fails before commit, the transaction rolls back and setup offers retry.
