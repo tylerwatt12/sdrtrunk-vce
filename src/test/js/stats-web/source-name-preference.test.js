@@ -160,12 +160,15 @@ function modalHarness(createFormWorkflow, scenario = {}) {
 async function main() {
   const { formatSourceName } = await import(pathToFileURL(path.join(path.dirname(applicationPath),
     'core/source-names.js')).href);
+  const { p25ServingSystemKey } = await import(pathToFileURL(path.join(path.dirname(applicationPath),
+    'core/radio-labels.js')).href);
   const { createFormWorkflow } = await import(pathToFileURL(path.join(path.dirname(applicationPath),
     'core/form-workflows.js')).href);
   let mode = 'talker_alias';
   const context = {
     activeUserPreferences: () => ({ presentation: { source_name_display: mode } }),
     formatSourceName,
+    p25ServingSystemKey,
     scannerDetailMode: 'normal',
     scannerMatchedScanLists: () => '',
     liveIdentityActionLink: (row, kind, text) => ({ row, kind, text })

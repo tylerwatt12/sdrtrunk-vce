@@ -1474,7 +1474,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(events.contains("layoutMenuHost: eventColumnsHost"));
         assertTrue(messages.contains("layoutMenuHost: columnsHost"));
         assertTrue(events.contains("'live-details-tabs ui-segmented'"));
-        assertTrue(events.contains("'live-details-tab ui-segmented-option'"));
+        assertTrue(events.contains("'live-details-tab ui-segmented-option ui-segmented-option-icon'"));
         assertTrue(events.contains("button.setAttribute('role', 'tab')"));
         assertTrue(events.contains("button.setAttribute('aria-controls', `live-details-${id}-panel`)"));
         assertTrue(events.contains("livePickerNavigationIndex(event.key, buttons.indexOf(button), buttons.length)"));
@@ -1502,7 +1502,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(filters.contains("'ui-button ui-button-primary', 'Done'"));
         assertTrue(html.contains("id=\"icon-columns\""));
         assertTrue(html.contains("id=\"icon-live-presentation\""));
-        assertTrue(events.contains("['events', 'messages', 'channel']"));
+        assertTrue(events.contains("{ id: 'events', label: 'Events', icon: 'icon-scan-lists' }"));
+        assertTrue(events.contains("{ id: 'messages', label: 'Messages', icon: 'icon-messages' }"));
+        assertTrue(events.contains("{ id: 'channel', label: 'Channel', icon: 'icon-channel' }"));
         assertTrue(events.contains("liveMessagesPane()"));
         assertTrue(events.contains("liveChannelPane()"));
         assertTrue(events.contains("liveConnection('decode_events', parameters)"));
