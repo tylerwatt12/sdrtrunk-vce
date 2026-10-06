@@ -221,7 +221,8 @@ class TrunkedDiscoveryChannelPersistenceTest
             var first = evidence("dmr", "CAPACITY_PLUS", null, 3, 450_000_000,
                 Map.of("channel_mode", "TRUNKED"));
             var review = fixture.channels.discoveryTrunkedReview("dmr", 450_000_000, null, first);
-            fixture.channels.createTrunkedDiscovered(review.template(), first, "Local DMR", review.revision(), false);
+            var firstSaved = fixture.channels.createTrunkedDiscovered(
+                review.template(), first, review.defaultNewAliasListName(), review.revision(), false);
             var another = evidence("dmr", "CAPACITY_PLUS", null, 3, 452_000_000,
                 Map.of("channel_mode", "TRUNKED"));
             assertNull(fixture.channels.discoveryTrunkedSiteMatch(another));
@@ -229,6 +230,10 @@ class TrunkedDiscoveryChannelPersistenceTest
             assertTrue(anotherReview.aliasLists().isEmpty());
             assertNotEquals(review.defaultNewAliasListName(),anotherReview.defaultNewAliasListName(),
                 "Frequency-scoped systems need distinct default Alias List names");
+            var anotherSaved = fixture.channels.createTrunkedDiscovered(
+                anotherReview.template(), another, anotherReview.defaultNewAliasListName(), anotherReview.revision(), false);
+            assertNotEquals(firstSaved.aliasListId(), anotherSaved.aliasListId(),
+                "Accepting both suggested names must keep unrelated systems' Aliases separate");
             var conventional = evidence("dmr", "CAPACITY_PLUS", null, 3, 454_000_000,
                 Map.of("channel_mode", "CONVENTIONAL"));
             assertThrows(IllegalArgumentException.class, () ->

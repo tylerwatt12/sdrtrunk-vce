@@ -346,7 +346,9 @@ public final class ChannelAdministrationService
                 new ChannelDefinition.Source(List.of(frequencyHz), null, null, frequencyHz, preferredTuner, null),
                 discoveryTrunkedSettings(profile, Map.of(), evidence), evidence.frequencyMap(),
                 List.of(), List.of(), List.of(), ChannelDefinition.Observed.EMPTY);
-            String newListName = discoveryAliasListName(system,
+            // Without a native system identity, the frequency distinguishes otherwise identically named systems.
+            String newListName = discoveryAliasListName(
+                evidence.identity().radioSystemKey() != null || !known.isEmpty() ? system : null,
                 String.format(java.util.Locale.ROOT, "%s %.6f", profile.label(), frequencyHz / 1_000_000.0));
             return new DiscoveryReview(revision(), template, lists, suggested, newListName);
         });
