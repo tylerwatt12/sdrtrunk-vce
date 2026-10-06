@@ -300,14 +300,21 @@ for (const surface of ['fft', 'waterfall']) {
     try {
       const canvas = plot(page, surface);
       const gesture = await beginDrag(page, canvas);
+      const feedback = page.locator('.spectrum-browse-feedback');
+      await expect(feedback).toBeHidden();
       await moveDrag(page, gesture, 0.55);
       await expectTuneCount(state, 1);
+      await expect(feedback).toBeHidden();
+      expect(await canvas.boundingBox()).toEqual(gesture.bounds);
       await expect(canvas).toHaveClass(/dragging/);
       await moveDrag(page, gesture, 0.5);
       await moveDrag(page, gesture, 0.45);
       const finalDeltaHz = await moveDrag(page, gesture, 0.4);
       await settle(page);
       expect(state.tunes).toHaveLength(1);
+      await expect(feedback).toBeHidden();
+      expect(await canvas.boundingBox()).toEqual(gesture.bounds);
+      if (surface === 'waterfall') await page.screenshot({ path: test.info().outputPath('quiet-waterfall-retune.png') });
       await page.mouse.up();
       await state.release(0);
       await expectTuneCount(state, 2);
@@ -316,6 +323,8 @@ for (const surface of ['fft', 'waterfall']) {
       await settle(page);
       expect(state.tunes).toHaveLength(2);
       await expect(page.locator('.spectrum-browse-center')).toContainText('0853.01250MHz');
+      await expect(feedback).toBeHidden();
+      expect(await canvas.boundingBox()).toEqual(gesture.bounds);
     } finally { state.releaseAll(); }
   });
 }

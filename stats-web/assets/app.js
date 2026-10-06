@@ -18851,7 +18851,6 @@ async function renderTunerSpectrum() {
       centerControl?.previewFrequency(frequencyHz / 1_000_000);
       centerHost.inert = true;
       takeControl.disabled = resumeChannels.disabled = true;
-      setBrowseMessage(`Tuning to ${channelMHz(frequencyHz)} MHz`);
     },
     applied: (renewed) => {
       if (disposed || !renewed || lease?.lease_id !== renewed.lease_id) return;
