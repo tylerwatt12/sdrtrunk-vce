@@ -8,7 +8,7 @@ import { createTableOverflow } from './core/table-overflow.js?v=1';
 import { Controller as PageTitleController } from './core/page-title.js?v=2';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
 import * as systemLabels from './core/system-labels.js?v=1';
-import { formatP25RadioIdentifier, p25ServingSystemKey } from './core/radio-labels.js?v=1';
+import { formatP25RadioIdentifier, p25ServingSystemKey } from './core/radio-labels.js?v=2';
 import * as pageLifecycle from './core/page-lifecycle.js';
 import { installIconHints } from './core/icon-hints.js?v=3';
 import { createFormWorkflow } from './core/form-workflows.js?v=1';
@@ -30,14 +30,14 @@ import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from
 import { createStreamingWorkspace } from './features/streaming.js?v=8';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=9';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=12';
-import { createRecordingsFeature } from './features/recordings.js?v=20';
+import { createRecordingsFeature } from './features/recordings.js?v=21';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft } from './features/spectrum-search.js?v=21';
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult } from './features/discovery-radioreference.js?v=4';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createAudioDock } from './core/audio-dock.js?v=11';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=1';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
-import { WebCallPlayer } from './web-call-player.js?v=10';
+import { WebCallPlayer } from './web-call-player.js?v=11';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
@@ -1655,7 +1655,7 @@ function radioIdentifierText(row, value, prefix = radioIdentityPrefix(row, value
   const homeName = row?.[prefix ? `${prefix}_home_system_name` : 'home_system_name'] ||
     systemLabels.systemName(homeKey);
   return formatP25RadioIdentifier(canonical, {
-    servingSystemKey: p25ServingSystemKey(row),
+    servingSystemKey: p25ServingSystemKey(row, prefix),
     homeSystemName: homeName,
     workingId: workingSubscriberId(row, prefix)
   });
@@ -17385,6 +17385,7 @@ function liveIdentityRenderKey(row, kind) {
     kind === 'source' ? sourceNameDisplayMode() : null,
     row?.[`${kind}_canonical_identity`], row?.[`${kind}_working_subscriber_id`],
     row?.[`${kind}_observed_working_id`], row?.[`${kind}_identity_source`],
+    p25ServingSystemKey(row, kind), row?.[`${kind}_home_system_name`], row?.[`${kind}_home_system_entity_ref`],
     row?.decoder, row?.tags, row?.entity_ref, row?.channel_kind, row?.channel_name
   ]);
 }

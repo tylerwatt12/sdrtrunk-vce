@@ -59,6 +59,7 @@ const behavior = vm.runInNewContext(`(() => {
   const ACCESS_CAPABILITIES = { RADIO: 'radio' };
   function entityRefHref(reference) { return reference?.href || ''; }
   function radioSystemContextLink() { return 'Receiving system'; }
+  function liveIdentityActionLink(_row, _kind, label) { return label; }
   function identitySummaryValue(primary, secondary, target) { return {primary, secondary, target}; }
   function keyValues(values) { return {values, classList: {add() {}}}; }
   function node(tag, className, textContent) {
@@ -127,11 +128,12 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('liveIdentityActionTitle')}
   ${functionSource('p25IdentityEvidenceLabel')}
   ${functionSource('liveIdentityFacts')}
+  ${functionSource('liveIdentifierAliasValue')}
   return { radioSystemLabel, trunkedSiteLabel, dashboardChannelContext,
     channelDirectoryRfIdentity, channelLocationIdentity, dmrChannelDetailRows,
     scannerNetworkSiteIdentity, observedGroupIdentityKey, radioIdentifierText, liveIdentityActionTitle,
     activityIdentifier, activitySourceAlias, activitySourceTalkerAlias, activityTargetAlias,
-    activityIdentitySuggestion, activityIdentityInitialSelection, liveIdentityFacts };
+    activityIdentitySuggestion, activityIdentityInitialSelection, liveIdentityFacts, liveIdentifierAliasValue };
 })()`, { URLSearchParams, systemLabels, ...radioLabels, ...sourceNames });
 
 assert.equal(behavior.radioIdentifierText({
@@ -448,6 +450,29 @@ const prefixedLocal = { protocol: 'P25', radio_system_key: localRadio.radio_syst
   source_observed_working_id: 4326018 };
 assert.equal(behavior.activityIdentifier(prefixedLocal, 4326018, 'radio', null, false, 'source'), '4326018');
 assert.equal(dock.sourceId(prefixedLocal), '4326018', 'The shared audio dock follows the table display rule.');
+const liveSource = { protocol: 'P25', source_id: 4326018, source_form: 'RADIO',
+  source_canonical_identity: localRadio.canonical_identity, source_observed_working_id: 4326018,
+  source_home_system_name: 'County Radio',
+  source_entity_ref: { kind: 'radio', radio_system_key: 'p25:bee00:348',
+    identity_key: 'v1-r-bee00-348-4326018' } };
+assert.equal(behavior.liveIdentifierAliasValue(liveSource, 'source'), '4326018',
+  'Actual Live rows carry serving scope in the source drilldown, not in a direct row field.');
+assert.equal(behavior.liveIdentifierAliasValue({ ...liveSource,
+  source_canonical_identity: { ...localRadio.canonical_identity, system_id: 0x349 } }, 'source'),
+  'County Radio · 4326018', 'A foreign radio keeps home context despite the same numeric ID.');
+assert.equal(behavior.liveIdentifierAliasValue({ ...liveSource, source_observed_working_id: 501 }, 'source'),
+  '4326018 (Working ID 501)');
+assert.equal(behavior.liveIdentifierAliasValue({ ...liveSource, source_entity_ref: null }, 'source'),
+  'County Radio · 4326018', 'Retained rows without safe navigation must not inherit the current table scope.');
+const liveTarget = { protocol: 'P25', target_id: 4326018, target_form: 'RADIO',
+  target_canonical_identity: localRadio.canonical_identity, target_home_system_name: 'County Radio',
+  target_entity_ref: liveSource.source_entity_ref };
+assert.equal(behavior.liveIdentifierAliasValue(liveTarget, 'target'), '4326018');
+assert.equal(behavior.liveIdentifierAliasValue({ ...liveTarget, target_entity_ref: null,
+  source_entity_ref: liveSource.source_entity_ref }, 'target'), 'County Radio · 4326018',
+  'A target radio must never borrow the source radio serving scope.');
+assert.equal(behavior.liveIdentifierAliasValue({ ...liveSource, radio_system_key: 'p25:00001:047' }, 'source'),
+  'County Radio · 4326018', 'Explicit receiving scope wins over a conflicting endpoint reference.');
 const pickerContext = { radioSystemKey: localRadio.radio_system_key };
 const suggestion = behavior.activityIdentitySuggestion({ ...localRadio, native_id: 4326018,
   identity_key: 'v1-r-bee00-348-4326018', alias_name: 'Engine 42' }, 'radio', pickerContext);

@@ -1,6 +1,6 @@
 import { createDualRange } from '../core/dual-range.js?v=1';
 import { systemLabel, systemName } from '../core/system-labels.js?v=1';
-import { formatP25RadioIdentifier } from '../core/radio-labels.js?v=1';
+import { formatP25RadioIdentifier } from '../core/radio-labels.js?v=2';
 import { formatSourceName } from '../core/source-names.js?v=1';
 
 const CALLS = '/api/v1/recordings/calls';

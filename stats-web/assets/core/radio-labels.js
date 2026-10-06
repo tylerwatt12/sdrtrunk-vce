@@ -9,8 +9,12 @@ function text(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function p25ServingSystemKey(row) {
-  return text(row?.radio_system_key) || text(row?.system_key) || text(row?.playback_target?.radio_system_key);
+function p25ServingSystemKey(row, prefix = '') {
+  const explicit = text(row?.radio_system_key) || text(row?.system_key) ||
+    text(row?.playback_target?.radio_system_key);
+  if (explicit) return explicit;
+  const reference = prefix ? row?.[`${prefix}_entity_ref`] : null;
+  return text(reference?.kind).toLowerCase() === 'radio' ? text(reference.radio_system_key) : '';
 }
 
 function formatP25RadioIdentifier(identity, { servingSystemKey = '', homeSystemName = '', workingId = null } = {}) {

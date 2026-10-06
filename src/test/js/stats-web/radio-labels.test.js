@@ -69,6 +69,22 @@ async function main() {
     'Recording rows retain their explicit receiving system.');
   assert.equal(p25ServingSystemKey({ home_system_key: 'p25:bee00:348', system_name: 'Home System' }), '');
   assert.equal(p25ServingSystemKey(null), '');
+  const sourceRef = { kind: 'radio', radio_system_key: 'p25:bee00:348' };
+  const targetRef = { kind: 'radio', radio_system_key: 'p25:bee00:349' };
+  const references = { source_entity_ref: sourceRef, target_entity_ref: targetRef };
+  assert.equal(p25ServingSystemKey(references, 'source'), sourceRef.radio_system_key);
+  assert.equal(p25ServingSystemKey(references, 'target'), targetRef.radio_system_key);
+  assert.equal(p25ServingSystemKey(references), '', 'There is no generic endpoint-scope fallback.');
+  assert.equal(p25ServingSystemKey({ source_entity_ref: sourceRef }, 'target'), '',
+    'Source scope must not be borrowed by a target.');
+  assert.equal(p25ServingSystemKey({ source_entity_ref: { ...sourceRef, kind: 'talkgroup' } }, 'source'), '');
+  assert.equal(p25ServingSystemKey({ source_entity_ref: { ...sourceRef, radio_system_key: ' ' } }, 'source'), '');
+  assert.equal(p25ServingSystemKey({ ...references, radio_system_key: 'p25:00001:047' }, 'source'),
+    'p25:00001:047', 'Explicit row scope remains authoritative.');
+  assert.equal(p25ServingSystemKey({ ...references, playback_target: { radio_system_key: 'p25:00001:047' } },
+    'source'), 'p25:00001:047');
+  assert.equal(p25ServingSystemKey({ source_home_system_entity_ref: sourceRef }, 'source'), '',
+    'Home-system context cannot substitute for a receiving system.');
   console.log('P25 radio labels: local scope, foreign names, Working IDs and incomplete identities passed.');
 }
 

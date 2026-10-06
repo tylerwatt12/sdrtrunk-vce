@@ -7,6 +7,10 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.resolve(process.argv[2] ||
   path.resolve(__dirname, '../../../../stats-web/assets/app.js')), 'utf8');
+const radioLabelsSource = fs.readFileSync(path.resolve(__dirname,
+  '../../../../stats-web/assets/core/radio-labels.js'), 'utf8');
+const radioLabels = vm.runInNewContext(radioLabelsSource.replace(/^export .*;$/m, '') +
+  '\n({p25ServingSystemKey});');
 
 function closingBrace(start) {
   let depth = 0;
@@ -71,7 +75,7 @@ const behavior = vm.runInNewContext(`(() => {
     liveShowRowRemoteOrigin,
     liveIdentityType, liveIdentityLabel,
     rowGroupIdentityKind, groupIdentityLabel, activityTargetKind };
-})()`);
+})()`, radioLabels);
 
 const preferences = {
   show_only_active_trunked_channels: true,
@@ -118,6 +122,15 @@ assert.equal(behavior.liveIdentityRenderKey(sourceIdentity, 'source'),
   'Signal and decode updates must not replace an unchanged source cell');
 assert.notEqual(behavior.liveIdentityRenderKey(sourceIdentity, 'source'),
   behavior.liveIdentityRenderKey({ ...sourceIdentity, source_id: '1202' }, 'source'));
+for (const change of [
+  { radio_system_key: 'p25:bee00:49f' },
+  { source_home_system_name: 'County Radio' },
+  { source_home_system_entity_ref: { kind: 'radio_system', radio_system_key: 'p25:bee00:49f' } }
+]) {
+  assert.notEqual(behavior.liveIdentityRenderKey(sourceIdentity, 'source'),
+    behavior.liveIdentityRenderKey({ ...sourceIdentity, ...change }, 'source'),
+    'Serving scope and home-system details must refresh the displayed identity cell.');
+}
 const selected = { kind: 'CONTROL', role: 'CURRENT_CONTROL', logicalKey: 'CONTROL:channel',
   transportKey: 'channel:851012500:', rowKey: 'control', configurationId: 'channel',
   bindingFrequencyHz: 851012500, bindingTimeslot: null, label: 'Site', channelLabel: 'Site · LCN 1' };
