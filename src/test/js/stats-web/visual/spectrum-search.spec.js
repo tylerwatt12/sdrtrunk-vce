@@ -105,10 +105,26 @@ async function install(page, state = {}) {
       return state.directoryOffline ? fail('Directory unavailable', 'unavailable', 503) :
         respond(state.directoryConfiguration || {});
     }
-    if (path === '/api/v1/admin/radioreference/countries') return respond({ items: [
-      { id: 1, name: 'United States', abbreviation: 'US' }, { id: 2, name: 'Canada', abbreviation: 'CA' }
-    ] });
-    if (path === '/api/v1/admin/radioreference/states') return respond({ items: [{ id: 39, name: 'Ohio' }, { id: 42, name: 'Pennsylvania' }] });
+    if (path === '/api/v1/admin/radioreference/countries') {
+      if (state.failDirectoryCountriesCount > 0) {
+        state.failDirectoryCountriesCount -= 1;
+        return fail('Countries temporarily unavailable');
+      }
+      return respond({ items: [
+        { id: 1, name: 'United States', abbreviation: 'US' }, { id: 2, name: 'Canada', abbreviation: 'CA' }
+      ] });
+    }
+    if (path === '/api/v1/admin/radioreference/states') {
+      if (state.delayDirectoryStates) {
+        state.delayDirectoryStates = false;
+        await new Promise((release) => { state.releaseDirectoryStates = release; });
+      }
+      if (state.failDirectoryStatesCount > 0) {
+        state.failDirectoryStatesCount -= 1;
+        return fail('States temporarily unavailable');
+      }
+      return respond({ items: [{ id: 39, name: 'Ohio' }, { id: 42, name: 'Pennsylvania' }] });
+    }
     if (path === '/api/v1/admin/channels') return respond({ revision: 1, channels: [] });
     if (path === '/api/v1/admin/channels/protocols') return respond(protocols);
     if (path === '/api/v1/admin/channels/options') return respond({ alias_lists: [] });
@@ -1245,14 +1261,109 @@ test('signed-in search offers its missing frequency lookup region directly', asy
 });
 
 test('search start waits for its saved frequency lookup region', async ({ page }) => {
+  await page.clock.install();
   const state = await install(page, { delayDirectoryConfiguration: true, directoryConfiguration: {
     account: { state: 'VALID_PREMIUM' }, country_id: 1, state_id: 39 } });
   await expect.poll(() => typeof state.releaseDirectory).toBe('function');
   await dialog(page).getByRole('button', { name: 'Find signals', exact: true }).click();
+  await page.clock.fastForward(6000);
   expect(state.requests.some((request) => request.path === searchPath && request.method === 'POST')).toBe(false);
   state.releaseDirectory();
   await expect(dialog(page).getByRole('heading', { name: /channels? found$/ })).toBeVisible();
   expect(state.requests.find((request) => request.path === searchPath && request.method === 'POST')
+    .body.radioreference_state_id).toBe(39);
+});
+
+test('search lookup regions wait beyond five seconds and preserve the saved state at start', async ({ page }) => {
+  await page.clock.install();
+  const state = await install(page, { delayDirectoryStates: true, directoryConfiguration: {
+    account: { state: 'VALID_PREMIUM' }, country_id: 1, state_id: 39 } });
+  await expect.poll(() => typeof state.releaseDirectoryStates).toBe('function');
+  await dialog(page).getByText('RadioReference names (optional)', { exact: true }).click();
+  await expect(dialog(page)).toContainText('Loading states and provinces…');
+  await page.clock.fastForward(6000);
+  await expect(dialog(page).getByRole('button', { name: 'Retry loading regions', exact: true })).toBeHidden();
+  await dialog(page).getByRole('button', { name: 'Find signals', exact: true }).click();
+  expect(state.requests.some(({ path, method }) => path === searchPath && method === 'POST')).toBe(false);
+  state.releaseDirectoryStates();
+  await expect(dialog(page).getByRole('heading', { name: /channels? found$/ })).toBeVisible();
+  expect(state.requests.find(({ path, method }) => path === searchPath && method === 'POST')
+    .body.radioreference_state_id).toBe(39);
+});
+
+for (const [theme, viewport] of [['light', { width: 1365, height: 900 }],
+  ['dark', { width: 390, height: 844 }]]) {
+  test(`search lookup region failure can retry in ${theme}`, async ({ page }, testInfo) => {
+    await page.setViewportSize(viewport);
+    const state = await install(page, { theme, failDirectoryStatesCount: 1,
+      directoryConfiguration: { account: { state: 'VALID_PREMIUM' } } });
+    await expect(dialog(page).getByLabel('RadioReference country')).toBeVisible();
+    await dialog(page).getByLabel('RadioReference country').selectOption('1');
+    await expect(dialog(page)).toContainText(
+      'States and provinces could not be loaded. Retry, or continue without frequency matching.');
+    const retry = dialog(page).getByRole('button', { name: 'Retry loading regions', exact: true });
+    await expect(retry).toBeVisible();
+    await expect(dialog(page).getByLabel('RadioReference state or province')).toBeDisabled();
+    await retry.scrollIntoViewIfNeeded();
+    await dialog(page).screenshot({ path: testInfo.outputPath('region-load-failure.png') });
+    await retry.click();
+    const region = dialog(page).getByLabel('RadioReference state or province');
+    await expect(region).toBeEnabled();
+    await expect(region).toHaveValue('');
+    await expect(retry).toBeHidden();
+    await region.selectOption('42');
+    await region.scrollIntoViewIfNeeded();
+    await dialog(page).screenshot({ path: testInfo.outputPath('region-load-recovered.png') });
+    await complete(page);
+    expect(state.requests.filter(({ path }) => path === '/api/v1/admin/radioreference/states')).toHaveLength(2);
+    expect(state.requests.find(({ path, method }) => path === searchPath && method === 'POST')
+      .body.radioreference_state_id).toBe(42);
+  });
+}
+
+test('search lookup region list failure keeps the saved state in the start payload', async ({ page }) => {
+  const state = await install(page, { failDirectoryStatesCount: 1, directoryConfiguration: {
+    account: { state: 'VALID_PREMIUM' }, country_id: 1, state_id: 39 } });
+  await expect(dialog(page)).toContainText('Your saved lookup region will be used.');
+  await expect(dialog(page).getByLabel('RadioReference state or province')).toHaveValue('39');
+  await expect(dialog(page).getByRole('button', { name: 'Retry loading regions', exact: true })).toBeVisible();
+  await complete(page);
+  expect(state.requests.find(({ path, method }) => path === searchPath && method === 'POST')
+    .body.radioreference_state_id).toBe(39);
+});
+
+test('search start waits for a pending region retry', async ({ page }) => {
+  await page.clock.install();
+  const state = await install(page, { failDirectoryStatesCount: 1, directoryConfiguration: {
+    account: { state: 'VALID_PREMIUM' }, country_id: 1, state_id: 39 } });
+  await expect(dialog(page)).toContainText('Your saved lookup region will be used.');
+  state.delayDirectoryStates = true;
+  await dialog(page).getByRole('button', { name: 'Retry loading regions', exact: true }).click();
+  await expect.poll(() => typeof state.releaseDirectoryStates).toBe('function');
+  await dialog(page).getByRole('button', { name: 'Find signals', exact: true }).click();
+  await page.clock.fastForward(1000);
+  expect(state.requests.some(({ path, method }) => path === searchPath && method === 'POST')).toBe(false);
+  state.releaseDirectoryStates();
+  await expect(dialog(page).getByRole('heading', { name: /channels? found$/ })).toBeVisible();
+  expect(state.requests.filter(({ path }) => path === '/api/v1/admin/radioreference/states')).toHaveLength(2);
+  expect(state.requests.find(({ path, method }) => path === searchPath && method === 'POST')
+    .body.radioreference_state_id).toBe(39);
+});
+
+test('search lookup country failure retries account settings and recovers its region choices', async ({ page }) => {
+  const state = await install(page, { failDirectoryCountriesCount: 1,
+    directoryConfiguration: { account: { state: 'VALID_PREMIUM' } } });
+  await expect(dialog(page)).toContainText('Lookup regions could not be loaded. Retry, or continue without choosing a lookup region.');
+  await dialog(page).getByRole('button', { name: 'Retry loading regions', exact: true }).click();
+  await expect(dialog(page).getByLabel('RadioReference country')).toBeVisible();
+  await dialog(page).getByLabel('RadioReference country').selectOption('1');
+  const region = dialog(page).getByLabel('RadioReference state or province');
+  await expect(region).toBeEnabled();
+  await region.selectOption('39');
+  await complete(page);
+  expect(state.requests.filter(({ path }) => path === '/api/v1/admin/radioreference')).toHaveLength(2);
+  expect(state.requests.filter(({ path }) => path === '/api/v1/admin/radioreference/countries')).toHaveLength(2);
+  expect(state.requests.find(({ path, method }) => path === searchPath && method === 'POST')
     .body.radioreference_state_id).toBe(39);
 });
 
@@ -1557,7 +1668,7 @@ test('recording tuners check only their fixed WAV window with directory state pr
 test('directory network failure leaves local signal discovery available', async ({ page }) => {
   const state = await install(page, { directoryOffline: true });
   await dialog(page).getByText('RadioReference names (optional)', { exact: true }).click();
-  await expect(dialog(page)).toContainText('Directory names are unavailable. Signal discovery can continue.');
+  await expect(dialog(page)).toContainText('Lookup regions could not be loaded. Retry, or continue without choosing a lookup region.');
   await complete(page);
   expect(state.requests.find((request) => request.path === searchPath && request.method === 'POST')
     .body.radioreference_state_id).toBe(null);

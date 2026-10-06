@@ -1,6 +1,6 @@
 import { systemName, systemIdentity } from '../core/system-labels.js?v=1';
 import { createTableOverflow } from '../core/table-overflow.js?v=1';
-import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult } from './discovery-radioreference.js?v=2';
+import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult } from './discovery-radioreference.js?v=3';
 
 export function spectrumSearchSystemName(candidate) {
   const identity = candidate?.identity || candidate?.trunked_evidence?.identity;

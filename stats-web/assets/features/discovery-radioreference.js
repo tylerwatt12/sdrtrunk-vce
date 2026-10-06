@@ -1,19 +1,29 @@
 const API = '/api/v1/admin/radioreference';
+const DIRECTORY_TIMEOUT_MS = 15_000;
 
 export function createDiscoveryRadioReferenceContext(ui, request) {
-  const { node, uiSelect, uiSelectFrame, formField, anchor, href } = ui;
+  const { node, uiSelect, uiSelectFrame, formField, uiActionButton, anchor, href } = ui;
   const element = node('details', 'ui-section-disclosure ui-section-disclosure-flat');
   element.append(node('summary', 'ui-section-summary', 'RadioReference names (optional)'));
   const status = node('p', 'ui-field-hint', 'Loading RadioReference settings…');
-  element.append(status);
+  let retryLoad = null;
+  const retry = uiActionButton('Retry loading regions', '', () => {
+    retry.hidden = true;
+    void retryLoad?.();
+  }, 'ui-button ui-button-secondary');
+  retry.hidden = true;
+  element.append(status, retry);
   let stateId = null;
   let loading = null;
+  let regionLoading = null;
   const rows = (document) => Array.isArray(document) ? document : document?.items || document?.rows || [];
   const load = () => {
     if (loading) return loading;
+    retry.hidden = true;
+    status.textContent = 'Loading RadioReference settings…';
     loading = (async () => {
       try {
-        const configuration = await request(API, { csrf: false, timeoutMs: 5000 });
+        const configuration = await request(API, { csrf: false, timeoutMs: DIRECTORY_TIMEOUT_MS });
         const stored = Number(configuration?.state_id);
         stateId = Number.isSafeInteger(stored) && stored > 0 ? stored : null;
         if (configuration?.account?.state !== 'VALID_PREMIUM') {
@@ -28,38 +38,54 @@ export function createDiscoveryRadioReferenceContext(ui, request) {
         select.addEventListener('change', () => { stateId = Number(select.value) || null; });
         const stateField = formField('State or province', uiSelectFrame(select));
         let regionLoad = 0;
-        const loadStates = async (countryId, selectedState = null) => {
-          const generation = ++regionLoad;
-          stateId = null;
-          select.disabled = true;
-          status.textContent = 'Loading states and provinces…';
-          try {
-            const states = rows(await request(`${API}/states?country_id=${encodeURIComponent(countryId)}`,
-              { csrf: false, timeoutMs: 5000 }));
-            if (generation !== regionLoad) return;
-            select.replaceChildren(node('option', '', 'Skip frequency matching'), ...states.map((state) => {
-              const option = node('option', '', state.name);
-              option.value = String(state.id);
-              return option;
-            }));
-            select.firstChild.value = '';
-            select.value = states.some((state) => Number(state.id) === selectedState) ? String(selectedState) : '';
-            stateId = Number(select.value) || null;
-            if (!stateId) element.open = true;
-            select.disabled = !states.length;
-            status.textContent = states.length ?
-              'P25 systems can match by on-air identity. Choose a region for other frequency lookups.' :
-              'No states or provinces are available. Choose another country in RadioReference settings.';
-          } catch (_) {
-            if (generation !== regionLoad) return;
-            status.textContent = 'States and provinces could not be loaded. Signal discovery can continue.';
-          }
+        const loadStates = (countryId, selectedState = null) => {
+          regionLoading = (async () => {
+            const generation = ++regionLoad;
+            stateId = null;
+            retry.hidden = true;
+            select.disabled = true;
+            status.textContent = 'Loading states and provinces…';
+            try {
+              const states = rows(await request(`${API}/states?country_id=${encodeURIComponent(countryId)}`,
+                { csrf: false, timeoutMs: DIRECTORY_TIMEOUT_MS }));
+              if (generation !== regionLoad) return;
+              select.replaceChildren(node('option', '', 'Skip frequency matching'), ...states.map((state) => {
+                const option = node('option', '', state.name);
+                option.value = String(state.id);
+                return option;
+              }));
+              select.firstChild.value = '';
+              select.value = states.some((state) => Number(state.id) === selectedState) ? String(selectedState) : '';
+              stateId = Number(select.value) || null;
+              if (!stateId) element.open = true;
+              select.disabled = !states.length;
+              status.textContent = states.length ?
+                'P25 systems can match by on-air identity. Choose a region for other frequency lookups.' :
+                'No states or provinces are available. Choose another country in RadioReference settings.';
+            } catch (_) {
+              if (generation !== regionLoad) return;
+              stateId = selectedState;
+              if (selectedState) {
+                const saved = node('option', '', 'Saved lookup region');
+                saved.value = String(selectedState);
+                select.replaceChildren(saved);
+              }
+              status.textContent = selectedState ?
+                'States and provinces could not be loaded. Your saved lookup region will be used.' :
+                'States and provinces could not be loaded. Retry, or continue without frequency matching.';
+              retryLoad = () => loadStates(countryId, selectedState);
+              retry.hidden = false;
+              element.open = true;
+            }
+          })();
+          return regionLoading;
         };
         if (configuration.country_id) {
           element.append(stateField);
           await loadStates(configuration.country_id, stateId);
         } else {
-          const countries = rows(await request(`${API}/countries`, { csrf: false, timeoutMs: 5000 }));
+          const countries = rows(await request(`${API}/countries`,
+            { csrf: false, timeoutMs: DIRECTORY_TIMEOUT_MS }));
           const country = uiSelect([{ value: '', label: 'Choose a country' },
             ...countries.map((value) => ({ value: value.id, label: value.name }))]);
           country.setAttribute('aria-label', 'RadioReference country');
@@ -67,6 +93,8 @@ export function createDiscoveryRadioReferenceContext(ui, request) {
             if (country.value) void loadStates(country.value);
             else {
               regionLoad += 1;
+              regionLoading = null;
+              retry.hidden = true;
               stateId = null;
               select.value = '';
               select.disabled = true;
@@ -80,12 +108,24 @@ export function createDiscoveryRadioReferenceContext(ui, request) {
         settings.append(anchor('Save a default lookup region', href('radioreference')));
         element.append(settings);
       } catch (_) {
-        status.textContent = 'Directory names are unavailable. Signal discovery can continue.';
+        loading = null;
+        retryLoad = load;
+        retry.hidden = false;
+        element.open = true;
+        status.textContent = 'Lookup regions could not be loaded. Retry, or continue without choosing a lookup region.';
       }
     })();
     return loading;
   };
-  return { element, load, stateId: () => stateId };
+  const ready = async () => {
+    await load();
+    let pending;
+    do {
+      pending = regionLoading;
+      if (pending) await pending;
+    } while (pending !== regionLoading);
+  };
+  return { element, load: ready, stateId: () => stateId };
 }
 
 export function discoveryRadioReferenceResult(ui, value) {

@@ -185,12 +185,28 @@ async function install(page, state = {}) {
       if (state.delayDirectoryConfiguration) await new Promise((release) => { state.releaseDirectory = release; });
       return respond(state.directoryConfiguration || { account: { state: 'SIGNED_OUT' } });
     }
-    if (path === '/api/v1/admin/radioreference/countries') return respond({ items: [
-      { id: 1, name: 'United States', abbreviation: 'US' }, { id: 2, name: 'Canada', abbreviation: 'CA' }
-    ] });
-    if (path === '/api/v1/admin/radioreference/states') return respond({ items: [
-      { id: 39, name: 'Ohio' }, { id: 42, name: 'Pennsylvania' }
-    ] });
+    if (path === '/api/v1/admin/radioreference/countries') {
+      if (state.failDirectoryCountriesCount > 0) {
+        state.failDirectoryCountriesCount -= 1;
+        return route.fulfill({ status: 503, contentType: 'application/json',
+          body: JSON.stringify({ error: { code: 'unavailable', message: 'Countries temporarily unavailable.' } }) });
+      }
+      return respond({ items: [
+        { id: 1, name: 'United States', abbreviation: 'US' }, { id: 2, name: 'Canada', abbreviation: 'CA' }
+      ] });
+    }
+    if (path === '/api/v1/admin/radioreference/states') {
+      if (state.delayDirectoryStates) {
+        state.delayDirectoryStates = false;
+        await new Promise((release) => { state.releaseDirectoryStates = release; });
+      }
+      if (state.failDirectoryStatesCount > 0) {
+        state.failDirectoryStatesCount -= 1;
+        return route.fulfill({ status: 503, contentType: 'application/json',
+          body: JSON.stringify({ error: { code: 'unavailable', message: 'States temporarily unavailable.' } }) });
+      }
+      return respond({ items: [{ id: 39, name: 'Ohio' }, { id: 42, name: 'Pennsylvania' }] });
+    }
     if (path === '/api/v1/admin/channels/protocols') return respond(protocols);
     if (state.manualSetup && path === '/api/v1/admin/channels/options') return respond({
       revision: 7, tuners: ['Test receiver'], alias_lists: [{ id: 21, name: 'Default P25', family: 'P25' }]
@@ -328,18 +344,126 @@ for (const [theme, viewport] of [['light', { width: 1365, height: 900 }],
 }
 
 test('starting a signal check waits for the saved RadioReference region to load', async ({ page }) => {
+  await page.clock.install();
   const state = { delayDirectoryConfiguration: true, directoryConfiguration: {
     account: { state: 'VALID_PREMIUM' }, country_id: 1, state_id: 39 } };
   await install(page, state);
   await page.evaluate(() => window.openDiscovery());
   await expect.poll(() => typeof state.releaseDirectory).toBe('function');
   await wizard(page).getByRole('button', { name: 'Check signal', exact: true }).click();
+  await page.clock.fastForward(6000);
   expect(state.requests.some((request) => request.path === '/api/v1/admin/spectrum-discovery' &&
     request.method === 'POST')).toBe(false);
   state.releaseDirectory();
   await expect(wizard(page).getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
   expect(state.requests.find((request) => request.path === '/api/v1/admin/spectrum-discovery' &&
     request.method === 'POST').body.radioreference_state_id).toBe(39);
+});
+
+test('discovery lookup regions wait beyond five seconds and preserve the saved state at start', async ({ page }) => {
+  await page.clock.install();
+  const state = { delayDirectoryStates: true, directoryConfiguration: {
+    account: { state: 'VALID_PREMIUM' }, country_id: 1, state_id: 39 } };
+  await install(page, state);
+  await page.evaluate(() => window.openDiscovery());
+  await expect.poll(() => typeof state.releaseDirectoryStates).toBe('function');
+  await disclose(page, 'RadioReference names (optional)');
+  await expect(wizard(page)).toContainText('Loading states and provinces…');
+  await page.clock.fastForward(6000);
+  await expect(wizard(page).getByRole('button', { name: 'Retry loading regions', exact: true })).toBeHidden();
+  await wizard(page).getByRole('button', { name: 'Check signal', exact: true }).click();
+  expect(state.requests.some(({ path, method }) => path === '/api/v1/admin/spectrum-discovery' && method === 'POST')).toBe(false);
+  state.releaseDirectoryStates();
+  await expect(wizard(page).getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
+  expect(state.requests.find(({ path, method }) => path === '/api/v1/admin/spectrum-discovery' && method === 'POST')
+    .body.radioreference_state_id).toBe(39);
+});
+
+for (const [theme, viewport] of [['light', { width: 1365, height: 900 }],
+  ['dark', { width: 390, height: 844 }]]) {
+  test(`discovery lookup region failure can retry in ${theme}`, async ({ page }, testInfo) => {
+    await page.setViewportSize(viewport);
+    const state = { theme, failDirectoryStatesCount: 1,
+      directoryConfiguration: { account: { state: 'VALID_PREMIUM' } } };
+    await install(page, state);
+    await page.evaluate(() => window.openDiscovery());
+    await expect(wizard(page).getByLabel('RadioReference country')).toBeVisible();
+    await wizard(page).getByLabel('RadioReference country').selectOption('1');
+    await expect(wizard(page)).toContainText(
+      'States and provinces could not be loaded. Retry, or continue without frequency matching.');
+    const retry = wizard(page).getByRole('button', { name: 'Retry loading regions', exact: true });
+    await expect(retry).toBeVisible();
+    await expect(wizard(page).getByLabel('RadioReference state or province')).toBeDisabled();
+    await retry.scrollIntoViewIfNeeded();
+    await wizard(page).screenshot({ path: testInfo.outputPath('region-load-failure.png') });
+    await retry.click();
+    const region = wizard(page).getByLabel('RadioReference state or province');
+    await expect(region).toBeEnabled();
+    await expect(region).toHaveValue('');
+    await expect(retry).toBeHidden();
+    await region.selectOption('42');
+    await region.scrollIntoViewIfNeeded();
+    await wizard(page).screenshot({ path: testInfo.outputPath('region-load-recovered.png') });
+    await wizard(page).getByRole('button', { name: 'Check signal', exact: true }).click();
+    await expect(wizard(page).getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
+    expect(state.requests.filter(({ path }) => path === '/api/v1/admin/radioreference/states')).toHaveLength(2);
+    expect(state.requests.find(({ path, method }) => path === '/api/v1/admin/spectrum-discovery' && method === 'POST')
+      .body.radioreference_state_id).toBe(42);
+  });
+}
+
+test('discovery lookup region list failure keeps the saved state in the start payload', async ({ page }) => {
+  const state = { failDirectoryStatesCount: 1, directoryConfiguration: {
+    account: { state: 'VALID_PREMIUM' }, country_id: 1, state_id: 39 } };
+  await install(page, state);
+  await page.evaluate(() => window.openDiscovery());
+  await expect(wizard(page)).toContainText('Your saved lookup region will be used.');
+  await expect(wizard(page).getByLabel('RadioReference state or province')).toHaveValue('39');
+  await expect(wizard(page).getByRole('button', { name: 'Retry loading regions', exact: true })).toBeVisible();
+  await wizard(page).getByRole('button', { name: 'Check signal', exact: true }).click();
+  await expect(wizard(page).getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
+  expect(state.requests.find(({ path, method }) => path === '/api/v1/admin/spectrum-discovery' && method === 'POST')
+    .body.radioreference_state_id).toBe(39);
+});
+
+test('discovery start waits for a pending region retry', async ({ page }) => {
+  await page.clock.install();
+  const state = { failDirectoryStatesCount: 1, directoryConfiguration: {
+    account: { state: 'VALID_PREMIUM' }, country_id: 1, state_id: 39 } };
+  await install(page, state);
+  await page.evaluate(() => window.openDiscovery());
+  await expect(wizard(page)).toContainText('Your saved lookup region will be used.');
+  state.delayDirectoryStates = true;
+  await wizard(page).getByRole('button', { name: 'Retry loading regions', exact: true }).click();
+  await expect.poll(() => typeof state.releaseDirectoryStates).toBe('function');
+  await wizard(page).getByRole('button', { name: 'Check signal', exact: true }).click();
+  await page.clock.fastForward(1000);
+  expect(state.requests.some(({ path, method }) => path === '/api/v1/admin/spectrum-discovery' && method === 'POST')).toBe(false);
+  state.releaseDirectoryStates();
+  await expect(wizard(page).getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
+  expect(state.requests.filter(({ path }) => path === '/api/v1/admin/radioreference/states')).toHaveLength(2);
+  expect(state.requests.find(({ path, method }) => path === '/api/v1/admin/spectrum-discovery' && method === 'POST')
+    .body.radioreference_state_id).toBe(39);
+});
+
+test('discovery lookup country failure retries account settings and recovers its region choices', async ({ page }) => {
+  const state = { failDirectoryCountriesCount: 1,
+    directoryConfiguration: { account: { state: 'VALID_PREMIUM' } } };
+  await install(page, state);
+  await page.evaluate(() => window.openDiscovery());
+  await expect(wizard(page)).toContainText('Lookup regions could not be loaded. Retry, or continue without choosing a lookup region.');
+  await wizard(page).getByRole('button', { name: 'Retry loading regions', exact: true }).click();
+  await expect(wizard(page).getByLabel('RadioReference country')).toBeVisible();
+  await wizard(page).getByLabel('RadioReference country').selectOption('1');
+  const region = wizard(page).getByLabel('RadioReference state or province');
+  await expect(region).toBeEnabled();
+  await region.selectOption('39');
+  await wizard(page).getByRole('button', { name: 'Check signal', exact: true }).click();
+  await expect(wizard(page).getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
+  expect(state.requests.filter(({ path }) => path === '/api/v1/admin/radioreference')).toHaveLength(2);
+  expect(state.requests.filter(({ path }) => path === '/api/v1/admin/radioreference/countries')).toHaveLength(2);
+  expect(state.requests.find(({ path, method }) => path === '/api/v1/admin/spectrum-discovery' && method === 'POST')
+    .body.radioreference_state_id).toBe(39);
 });
 
 test('signed-out spectrum discovery keeps names optional and links to connection settings', async ({ page }) => {

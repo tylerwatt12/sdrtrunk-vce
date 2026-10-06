@@ -31,8 +31,8 @@ import { createStreamingWorkspace } from './features/streaming.js?v=8';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=9';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=12';
 import { createRecordingsFeature } from './features/recordings.js?v=20';
-import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft } from './features/spectrum-search.js?v=19';
-import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult } from './features/discovery-radioreference.js?v=2';
+import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft } from './features/spectrum-search.js?v=20';
+import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult } from './features/discovery-radioreference.js?v=3';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createAudioDock } from './core/audio-dock.js?v=11';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=1';
@@ -13346,7 +13346,7 @@ function openSpectrumDiscoveryWizard(selection) {
   let probeNodes = null;
   let probeOverflow = null;
   const path = '/api/v1/admin/spectrum-discovery';
-  const directory = createDiscoveryRadioReferenceContext({ node, uiSelect, uiSelectFrame, formField, anchor, href },
+  const directory = createDiscoveryRadioReferenceContext({ node, uiSelect, uiSelectFrame, formField, uiActionButton, anchor, href },
     (url, options) => request(url, options));
   const protocolLabels = { 'p25-phase1': 'P25 radio system', dmr: 'DMR trunked system',
     nxdn: 'NXDN trunked system', am: 'AM radio', nbfm: 'FM two-way radio' };
