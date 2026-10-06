@@ -50,6 +50,7 @@ import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -271,8 +272,21 @@ class RemoteConnectivityServiceTest
             assertEquals(defaultP25, eastRemote.getAliasListId());
             assertTrue(westRemote.isAutoStart());
             assertTrue(eastRemote.isAutoStart());
-            host.remote.updateFeed(host.remote.snapshot().revision(), eastPair.senderId(),
+            long feedRevision = host.remote.snapshot().revision();
+            host.remote.updateFeed(feedRevision, eastPair.senderId(),
                 eastControl.getConfigurationId(), new UpdateFeedRequest(eastRemote.getName(), defaultP25, false));
+            long savedFeedRevision = host.remote.snapshot().revision();
+            assertThrows(RemoteLinkAdministrationService.StaleRevisionException.class,
+                () -> host.remote.updateFeed(feedRevision, eastPair.senderId(),
+                    eastControl.getConfigurationId(), new UpdateFeedRequest("Stale edit", defaultP25, true)));
+            assertEquals(savedFeedRevision, host.remote.snapshot().revision(),
+                "an old remote settings revision must not be retried or advance the revision");
+            Channel savedEast = host.configuration.getChannelModel().getChannels().stream().filter(channel ->
+                eastRemote.getConfigurationId().equals(channel.getConfigurationId())).findFirst().orElseThrow();
+            assertEquals(eastRemote.getName(), savedEast.getName(),
+                "an old remote settings revision must not rename the host channel");
+            assertFalse(savedEast.isAutoStart(),
+                "an old remote settings revision must not re-enable the host channel");
             host.remote.updateSender(host.remote.snapshot().revision(), eastPair.senderId(),
                 new UpdateSenderRequest("East receiver", null));
             assertTrue(host.remote.snapshot().senders().stream().filter(sender ->

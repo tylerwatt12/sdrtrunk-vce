@@ -776,14 +776,35 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
     private void updateRemoteChannel(Channel channel, String name, long aliasListId, boolean enabled)
     {
         if(name == null || name.isBlank()) throw new IllegalArgumentException("Channel name is required");
-        ChannelDefinition current = mChannels.get(channel.getConfigurationId()).channel();
-        ChannelDefinition updated = new ChannelDefinition(current.configurationId(), current.protocolId(),
-            current.system(), current.site(), name, current.radioResolveId(), aliasListId, current.source(),
-            current.settings(), current.frequencyMap(), current.eventLogs(), current.recorders(),
-            current.auxiliaryDecoders(), current.observed());
-        mChannels.update(channel.getConfigurationId(), updated, mChannels.currentRevision());
-        mChannels.setAutoStart(List.of(channel.getConfigurationId()), enabled, mChannels.currentRevision());
+        retryChannelMutation(() -> {
+            var entry = mChannels.get(channel.getConfigurationId());
+            ChannelDefinition current = entry.channel();
+            ChannelDefinition updated = new ChannelDefinition(current.configurationId(), current.protocolId(),
+                current.system(), current.site(), name, current.radioResolveId(), aliasListId, current.source(),
+                current.settings(), current.frequencyMap(), current.eventLogs(), current.recorders(),
+                current.auxiliaryDecoders(), current.observed());
+            mChannels.update(channel.getConfigurationId(), updated, entry.revision());
+        });
+        retryChannelMutation(() -> mChannels.setAutoStart(List.of(channel.getConfigurationId()), enabled,
+            mChannels.currentRevision()));
         mChannels.setProcessing(List.of(channel.getConfigurationId()), enabled);
+    }
+
+    /** Automatic channel learning can advance the shared revision during these internal settings edits. */
+    static void retryChannelMutation(Runnable mutation)
+    {
+        for(int attempt = 0; ; attempt++)
+        {
+            try
+            {
+                mutation.run();
+                return;
+            }
+            catch(ChannelAdministrationService.StaleRevisionException conflict)
+            {
+                if(attempt >= 2) throw conflict;
+            }
+        }
     }
 
     private synchronized void refreshListener()

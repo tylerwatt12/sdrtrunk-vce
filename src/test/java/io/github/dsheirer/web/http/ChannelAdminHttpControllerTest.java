@@ -337,15 +337,23 @@ class ChannelAdminHttpControllerTest
             assertEquals(ChannelAdministrationService.ProcessingState.RUNNING,
                 channels.get(channelId).processingState());
 
-            String invalidUpdate = """
+            String invalidUpdateTemplate = """
                 {"revision":%d,"protocol_id":"p25-phase1","system":"County","site":"Remote",
                  "name":"Changed Source","alias_list_id":%d,"source":%s,
                  "settings":{},"frequency_map":[],"event_logs":[],"recorders":[],
                  "auxiliary_decoders":[]}
-                """.formatted(revision, aliasListId,
+                """;
+            HttpResponse<String> rejected = null;
+            for(int attempt = 0; attempt < 3; attempt++)
+            {
+                revision = channels.currentRevision();
+                String invalidUpdate = invalidUpdateTemplate.formatted(revision, aliasListId,
                     source.replace(senderId, "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff"));
-            HttpResponse<String> rejected = sendJson(client,
-                origin.resolve(ChannelAdminHttpController.PATH + "/" + channelId), "PUT", invalidUpdate);
+                rejected = sendJson(client, origin.resolve(ChannelAdminHttpController.PATH + "/" + channelId),
+                    "PUT", invalidUpdate);
+                // Processing-start notifications may finish after the initial revision was read.
+                if(rejected.statusCode() != 409) break;
+            }
             assertEquals(400, rejected.statusCode(), rejected.body());
             assertTrue(rejected.body().contains("Remote channel source cannot be changed"));
             assertEquals(revision, channels.currentRevision());
