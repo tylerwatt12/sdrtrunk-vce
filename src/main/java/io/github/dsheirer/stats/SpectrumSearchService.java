@@ -319,10 +319,16 @@ public final class SpectrumSearchService implements AutoCloseable
                     AliasChoice choice = choices.get(row.groupId());
                     long aliasId = job.aliasIds.getOrDefault(row.groupId(), choice != null ? choice.aliasListId() :
                         review.suggestedAliasListId() != null ? review.suggestedAliasListId() : 0L);
-                    if(aliasId == 0 && !review.aliasLists().isEmpty())
-                        throw new IllegalArgumentException("Choose the matching listening settings for this system");
                     String aliasName = choice != null && choice.newAliasListName() != null ? choice.newAliasListName() :
                         review.defaultNewAliasListName();
+                    if(aliasId == 0 && !review.aliasLists().isEmpty())
+                    {
+                        aliasId = review.aliasLists().stream().filter(list -> aliasName != null &&
+                            aliasName.strip().equalsIgnoreCase(list.name())).mapToLong(
+                                ChannelAdministrationService.DiscoveryAliasList::id).findFirst().orElse(0);
+                        if(aliasId == 0)
+                            throw new IllegalArgumentException("Choose the matching Alias List for this system");
+                    }
                     var template = review.template();
                     TrunkedDiscoveryEvidence saveEvidence = row.evidence.withManualFrequencyMap(edit.frequencyMap());
                     ChannelDefinition definition = new ChannelDefinition(null, row.evidence.protocolId(), row.systemName(),

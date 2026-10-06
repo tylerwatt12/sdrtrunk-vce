@@ -562,27 +562,43 @@ public final class ChannelAdministrationService
             AliasListDefinition selected;
             if(newList)
             {
-                if((identity != null || evidence != null) && !compatibleLists.isEmpty())
-                    throw new IllegalArgumentException(identity != null ? "Use an Alias List matching this P25 system" :
-                        "Use an Alias List matching this trunked system");
                 String name = newAliasListName != null ? newAliasListName.strip() : "";
                 if(name.isBlank() || name.length() > AliasAdministrationService.MAX_ALIAS_LIST_NAME_LENGTH)
                     throw new IllegalArgumentException("Alias List name must contain between 1 and 25 characters");
-                if(aliases.definitions().stream().anyMatch(list -> name.equalsIgnoreCase(list.getName())))
-                    throw new IllegalArgumentException("An Alias List with this name already exists");
-                selected = new AliasListDefinition(name, profile.aliasFamily());
-                selected.setId(mConfigurationManager.nextAliasListIds(aliases.definitions().stream()
-                    .map(AliasListDefinition::getId).toList(), 1).getFirst());
-                List<AliasListDefinition> definitions = new ArrayList<>(aliases.definitions());
-                definitions.add(selected);
-                ScanListConfiguration scans = aliases.scanLists();
-                Set<Long> defaultMembership = Set.of(scans.defaultScanList().getId());
-                Map<Long,Set<Long>> unmatched = new HashMap<>(scans.unmatchedAliasListMemberships());
-                Map<Long,Set<Long>> newAliases = new HashMap<>(scans.newAliasListMemberships());
-                unmatched.put(selected.getId(), defaultMembership);
-                newAliases.put(selected.getId(), defaultMembership);
-                aliases = new AliasConfigurationSnapshot(definitions, aliases.aliases(),
-                    new ScanListConfiguration(scans.scanLists(), scans.aliasMemberships(), unmatched, newAliases));
+                AliasListDefinition existing = aliases.definitions().stream()
+                    .filter(list -> name.equalsIgnoreCase(list.getName())).findFirst().orElse(null);
+                if(existing != null)
+                {
+                    boolean matchesSystem = compatibleLists.stream().anyMatch(list -> list.id() == existing.getId());
+                    boolean assignedToTrunked = mConfigurationManager.getChannelModel().getChannels().stream()
+                        .anyMatch(channel -> channel.getAliasListId() == existing.getId() &&
+                            ChannelConfigurationPolicy.requireChannelKind(channel) ==
+                                ChannelConfigurationPolicy.ChannelKind.TRUNKED);
+                    if(existing.getFamily() != profile.aliasFamily() ||
+                        (identity != null || evidence != null) && assignedToTrunked && !matchesSystem)
+                        throw new IllegalArgumentException("Choose a compatible Alias List for this system");
+                    selected = requireAliasList(existing.getId());
+                    newList = false;
+                }
+                else
+                {
+                    if((identity != null || evidence != null) && !compatibleLists.isEmpty())
+                        throw new IllegalArgumentException(identity != null ? "Use an Alias List matching this P25 system" :
+                            "Use an Alias List matching this trunked system");
+                    selected = new AliasListDefinition(name, profile.aliasFamily());
+                    selected.setId(mConfigurationManager.nextAliasListIds(aliases.definitions().stream()
+                        .map(AliasListDefinition::getId).toList(), 1).getFirst());
+                    List<AliasListDefinition> definitions = new ArrayList<>(aliases.definitions());
+                    definitions.add(selected);
+                    ScanListConfiguration scans = aliases.scanLists();
+                    Set<Long> defaultMembership = Set.of(scans.defaultScanList().getId());
+                    Map<Long,Set<Long>> unmatched = new HashMap<>(scans.unmatchedAliasListMemberships());
+                    Map<Long,Set<Long>> newAliases = new HashMap<>(scans.newAliasListMemberships());
+                    unmatched.put(selected.getId(), defaultMembership);
+                    newAliases.put(selected.getId(), defaultMembership);
+                    aliases = new AliasConfigurationSnapshot(definitions, aliases.aliases(),
+                        new ScanListConfiguration(scans.scanLists(), scans.aliasMemberships(), unmatched, newAliases));
+                }
             }
             else
             {

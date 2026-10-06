@@ -3,6 +3,8 @@ package io.github.dsheirer.configuration;
 
 import static org.junit.jupiter.api.Assertions.*;
 import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.alias.AliasAdministrationServiceTestSupport;
+import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.channel.ChannelAdministrationServiceTestSupport;
 import io.github.dsheirer.channel.ChannelDefinition;
@@ -144,14 +146,74 @@ class SpectrumChannelCreationTest
             var disk = new ConfigurationRepository(fixture.database).load();
             var scans = disk.scanListConfiguration();
             var next = fixture.channels.discoveryReview("nbfm", 155_100_000, "Tuner", null, null);
-            var reused = fixture.channels.createDiscovered(withAlias(next.template(), saved.aliasListId()), null,
-                null, next.revision());
+            var reused = fixture.channels.createDiscovered(withAlias(next.template(), 0), null,
+                "aviation", next.revision());
             var later = new ConfigurationRepository(fixture.database).load();
             assertEquals(2, later.channels().size());
             assertEquals(saved.aliasListId(), reused.aliasListId());
             assertEquals(scans.newAliasListMemberships(), later.scanListConfiguration().newAliasListMemberships());
             assertNull(later.channels().getLast().getP25SiteIdentity());
             assertEquals(2, later.channels().getLast().getAutoStartOrder());
+        }
+    }
+
+    @Test void existingAliasListNameReusesOneListAcrossP25SitesAndKeepsListeningDefaults() throws Exception
+    {
+        try(Fixture fixture = fixture())
+        {
+            P25SiteIdentity first = new P25SiteIdentity(0xBEE00, 0x123, 1, 2);
+            var review = fixture.channels.discoveryReview("p25-phase1", 851_012_500, "Tuner", first, "C4FM");
+            var saved = fixture.channels.createDiscovered(review.template(), first, "County P25",
+                review.revision(), false);
+            var before = new ConfigurationRepository(fixture.database).load();
+            P25SiteIdentity second = new P25SiteIdentity(0xBEE00, 0x123, 1, 3);
+            var next = fixture.channels.discoveryReview("p25-phase1", 852_012_500, "Tuner", second, "C4FM");
+            var reused = fixture.channels.createDiscovered(withAlias(next.template(), 0), second,
+                " county p25 ", next.revision(), false);
+            var after = new ConfigurationRepository(fixture.database).load();
+            assertEquals(saved.aliasListId(), reused.aliasListId());
+            assertEquals(before.aliasListDefinitions().size(), after.aliasListDefinitions().size());
+            assertEquals(before.scanListConfiguration().newAliasListMemberships(),
+                after.scanListConfiguration().newAliasListMemberships());
+            assertEquals(before.scanListConfiguration().unmatchedAliasListMemberships(),
+                after.scanListConfiguration().unmatchedAliasListMemberships());
+            assertEquals(2, after.channels().size());
+
+            P25SiteIdentity other = new P25SiteIdentity(0xBEE01, 0x123, 1, 4);
+            var incompatible = fixture.channels.discoveryReview("p25-phase1", 853_012_500, "Tuner", other, "C4FM");
+            assertThrows(IllegalArgumentException.class, () -> fixture.channels.createDiscovered(
+                withAlias(incompatible.template(), 0), other, "County P25", incompatible.revision(), false));
+            assertEquals(2, new ConfigurationRepository(fixture.database).load().channels().size());
+        }
+    }
+
+    @Test void existingConventionalAliasListCanReceiveAFirstP25SiteButWrongProtocolCannot() throws Exception
+    {
+        try(Fixture fixture = fixture())
+        {
+            var aliases = AliasAdministrationServiceTestSupport.create(fixture.manager);
+            long existingId = aliases.createAliasList("County P25", AliasListFamily.P25).aliasListId();
+            aliases.createAliasList("Analog", AliasListFamily.NBFM);
+            var conventional = fixture.channels.template("p25-conventional");
+            fixture.channels.create(new ChannelDefinition(null, conventional.protocolId(), null, null,
+                "Dispatch", null, existingId,
+                new ChannelDefinition.Source(List.of(155_100_000L), null, null, null, null, null),
+                conventional.settings(), List.of(), List.of(), List.of(), List.of(), ChannelDefinition.Observed.EMPTY),
+                fixture.channels.currentRevision());
+            P25SiteIdentity identity = new P25SiteIdentity(0xBEE00, 0x123, 1, 2);
+            var review = fixture.channels.discoveryReview("p25-phase1", 851_012_500, "Tuner", identity, "C4FM");
+            assertTrue(review.aliasLists().isEmpty());
+            assertThrows(IllegalArgumentException.class, () -> fixture.channels.createDiscovered(
+                review.template(), identity, "Analog", review.revision(), false));
+            var before = new ConfigurationRepository(fixture.database).load();
+            var saved = fixture.channels.createDiscovered(review.template(), identity, "County P25",
+                review.revision(), false);
+            var disk = new ConfigurationRepository(fixture.database).load();
+            assertEquals(existingId, saved.aliasListId());
+            assertEquals(before.aliasListDefinitions().size(), disk.aliasListDefinitions().size());
+            assertEquals(1, disk.aliasListDefinitions().stream()
+                .filter(list -> "County P25".equalsIgnoreCase(list.getName())).count());
+            assertEquals(2, disk.channels().size());
         }
     }
 

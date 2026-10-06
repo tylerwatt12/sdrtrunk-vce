@@ -119,11 +119,20 @@ class TrunkedDiscoveryChannelPersistenceTest
             assertEquals(created.aliasListId(), next.suggestedAliasListId());
             assertEquals(1, next.aliasLists().size());
             assertEquals("Network 17", next.aliasLists().getFirst().name());
-            fixture.channels.createTrunkedDiscovered(next.template(), nextSite, null, next.revision(), false);
+            var nextTemplate = next.template();
+            var namedListChoice = new ChannelDefinition(null, nextTemplate.protocolId(), nextTemplate.system(),
+                nextTemplate.site(), nextTemplate.name(), null, 0, nextTemplate.source(), nextTemplate.settings(),
+                nextTemplate.frequencyMap(), List.of(), List.of(), List.of(), nextTemplate.observed());
+            var reused = fixture.channels.createTrunkedDiscovered(namedListChoice, nextSite, "network 17",
+                next.revision(), false);
+            assertEquals(created.aliasListId(), reused.aliasListId());
 
             var unrelated = evidence("dmr", "TIER_III", "dmr:tier3:small:18", 3, 454_000_000,
                 Map.of("channel_mode", "TRUNKED"));
             assertTrue(fixture.channels.discoveryTrunkedReview("dmr", 454_000_000, null, unrelated).aliasLists().isEmpty());
+            var unrelatedReview = fixture.channels.discoveryTrunkedReview("dmr", 454_000_000, null, unrelated);
+            assertThrows(IllegalArgumentException.class, () -> fixture.channels.createTrunkedDiscovered(
+                unrelatedReview.template(), unrelated, "Network 17", unrelatedReview.revision(), false));
             var duplicate = fixture.channels.discoveryTrunkedReview("dmr", 456_000_000, null, first);
             assertThrows(IllegalStateException.class, () -> fixture.channels.createTrunkedDiscovered(
                 duplicate.template(), first, null, duplicate.revision(), false));
