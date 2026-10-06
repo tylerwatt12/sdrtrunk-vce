@@ -14,13 +14,16 @@ function harness() {
   const events = [];
   const tables = new Map();
   const context = {
-    Uint8Array, DataView, TextDecoder, Blob, DecompressionStream, AbortController,
+    Uint8Array, DataView, TextDecoder, Blob, DecompressionStream, AbortController, queueMicrotask,
     LIVE_MULTIPLEX_HEADER_BYTES: 16, LIVE_MULTIPLEX_MAGIC: 0x534c4d58,
     LIVE_MULTIPLEX_VERSION: 2, LIVE_MULTIPLEX_MAXIMUM_BYTES: 16 * 1024 * 1024,
+    LIVE_MULTIPLEX_READY_TIMEOUT_MS: 10_000, LIVE_MULTIPLEX_LIVENESS_TIMEOUT_MS: 25_000,
     LIVE_MULTIPLEX_DECODER: new TextDecoder(),
     LIVE_MULTIPLEX_TOPICS: { 0: 'control', 1: 'channel_activity', 5: 'tuner_diagnostics' },
     window: { setTimeout, clearTimeout, setInterval, clearInterval },
     invokeLiveSubscriber: (target, method, ...args) => target[method]?.(...args),
+    invokeLiveListener: (callback, ...args) => callback(...args),
+    snakeCasePayload: (value) => value,
     decodeDiagnosticFrame: (bytes) => ({ bytes }),
     liveChannelActivityTables: tables, liveChannelActivityRevision: 0,
     liveChannelActivityNeedsResync: false,
@@ -36,6 +39,61 @@ function harness() {
   mux.subscribers.set('channel_activity', new Set([{ onEvent: (name, data) => events.push({ name, data }) }]));
   mux.subscribers.set('tuner_diagnostics', new Set([{ onFrame: (frame) => events.push(frame) }]));
   return { context, mux, events, tables };
+}
+
+async function flushMicrotasks() {
+  for (let count = 0; count < 20; count += 1) await Promise.resolve();
+}
+
+function controlHarness() {
+  const h = harness();
+  const timers = new Map();
+  let timerId = 0;
+  let now = 0;
+  Object.assign(h.context.window, {
+    setTimeout(callback, delay) {
+      const id = ++timerId;
+      timers.set(id, { callback, at: now + delay, delay });
+      return id;
+    },
+    clearTimeout(id) { timers.delete(id); }
+  });
+  h.mux.subscribers.clear();
+  h.mux.ready = true;
+  h.mux.clientId = 'control-fixture';
+  h.mux.controller = new AbortController();
+  h.mux.ensureConnected = () => {};
+  Object.assign(h.context, {
+    liveMultiplexer: h.mux,
+    document: { hidden: false, addEventListener() {}, removeEventListener() {} },
+    liveChannelActivitySource: null, liveChannelActivityState: 'connecting',
+    liveChannelActivitySubscribers: new Set(), liveConnections: new Set(), pageConnections: new Set()
+  });
+  vm.runInContext(source.slice(source.indexOf('function liveConnection('),
+    source.indexOf('let liveChannelActivitySource')), h.context);
+  vm.runInContext(source.slice(source.indexOf('function synchronizeLiveChannelActivitySource'),
+    source.indexOf('const DIAGNOSTIC_FRAME_MAGIC')), h.context);
+  h.clock = {
+    timers,
+    async next() {
+      const entry = [...timers.entries()].sort((left, right) => left[1].at - right[1].at)[0];
+      if (!entry) return null;
+      timers.delete(entry[0]);
+      now = entry[1].at;
+      entry[1].callback();
+      await flushMicrotasks();
+      return entry[1].delay;
+    }
+  };
+  h.receive = (event, data, topic = 1) => h.mux.consume(envelope(topic, 1,
+    Buffer.from(JSON.stringify({ event, data }))));
+  return h;
+}
+
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((accept, fail) => { resolve = accept; reject = fail; });
+  return { promise, resolve, reject };
 }
 
 function envelope(topic, kind, raw, compressed = false, inflatedBytes = raw.length) {
@@ -105,6 +163,289 @@ test('row deltas preserve unchanged aliases, update metadata, remove rows and ho
   assert.equal(merged.table.rows[1].source_alias, 'Engine 1');
   assert.deepEqual(baseline.rows.map((row) => row.key), ['first', 'old']);
 });
+
+test('changed complete table metadata clears removed optional fields while row-only deltas retain metadata', () => {
+  const { context } = harness();
+  const row = { key: 'one', source_alias: 'Dispatch' };
+  const baseline = { table_id: 'site', title: 'North', configuration_id: 'configuration',
+    site: { nac: 123 }, radio_system_key: 'system', entity_ref: { kind: 'channel', key: 'channel' },
+    remote_origin: { remote: true }, rows: [row] };
+  const unchanged = context.mergeLiveChannelActivityDelta({ table_id: 'site', rows: [] }, baseline).table;
+  assert.deepEqual(JSON.parse(JSON.stringify(unchanged)), baseline);
+  const metadata = { table_id: 'site', title: 'North updated', rows_total: 1 };
+  const cleared = context.mergeLiveChannelActivityDelta({ table_id: 'site', table: metadata,
+    rows: [], removed_row_keys: [] }, baseline).table;
+  assert.deepEqual(JSON.parse(JSON.stringify(cleared)), { ...metadata, rows: [row] });
+  assert.equal(cleared.rows[0], row);
+  assert.equal(baseline.site.nac, 123);
+});
+
+for (const failure of [Object.assign(new Error('Unavailable'), { status: 503 }),
+  Object.assign(new Error('Timed out'), { code: 'request_timeout' })]) {
+  test(`activity subscriptions recover exactly after ${failure.status || failure.code} despite healthy heartbeats`, async (t) => {
+    const h = controlHarness();
+    t.after(() => h.mux.stop());
+    const requests = [];
+    const observed = [];
+    h.context.requestJson = async (_path, options) => {
+      requests.push(options.body);
+      if (requests.length === 2) throw failure;
+      const revision = requests.length === 1 ? 10 : 12;
+      await h.receive('snapshot', { revision, tables: [{ table_id: 'site', title: 'North',
+        rows: [{ key: 'one', value: revision, ...(revision === 12 ? { source_alias: 'Dispatch' } : {}) }] }] });
+      return {};
+    };
+    h.context.subscribeLiveChannelActivity({}, { markers: true });
+    await flushMicrotasks();
+    await h.clock.next();
+    assert.equal(h.context.liveChannelActivityRevision, 10);
+    h.context.subscribeLiveChannelActivity({ snapshot: (value) => observed.push(value) });
+    await h.clock.next();
+    assert.equal(h.context.liveChannelActivityNeedsResync, true);
+    assert.equal(h.context.liveChannelActivityState, 'error');
+    await h.receive('heartbeat', {}, 0);
+    await h.receive('activity_delta', { table_id: 'site', operation: 'upsert', base_revision: 10,
+      revision: 11, rows: [{ key: 'one', value: 11 }], removed_row_keys: [] });
+    assert.ok(h.mux.lastFrameAt > 0);
+    assert.equal(h.context.liveChannelActivityRevision, 10);
+    assert.equal(requests.length, 2);
+    assert.equal(await h.clock.next(), 500);
+    assert.equal(requests.length, 3);
+    assert.deepEqual(JSON.parse(JSON.stringify(requests[2].subscriptions.channel_activity)), { delta: true });
+    assert.equal(h.context.liveChannelActivityNeedsResync, false);
+    assert.equal(h.context.liveChannelActivityState, 'open');
+    assert.equal(observed.length, 1);
+    const expected = { table_id: 'site', title: 'North', rows: [{ key: 'one', value: 13,
+      source_alias: 'Dispatch' }] };
+    await h.receive('activity_delta', { table_id: 'site', operation: 'upsert', base_revision: 12,
+      revision: 13, rows: expected.rows, removed_row_keys: [] });
+    assert.deepEqual(JSON.parse(JSON.stringify(h.tables.get('site'))), expected);
+    assert.equal(h.context.liveChannelActivityRevision, 13);
+    assert.equal(h.clock.timers.size, 0);
+  });
+}
+
+test('repeated control failures back off to ten seconds and retry the latest desired subscription', async (t) => {
+  const h = controlHarness();
+  t.after(() => h.mux.stop());
+  const requests = [];
+  h.context.requestJson = async (_path, options) => {
+    requests.push(options.body);
+    throw Object.assign(new Error('Unavailable'), { status: 503 });
+  };
+  const subscription = h.mux.subscribe('channel_activity', { selection: 'first' });
+  assert.equal(await h.clock.next(), 20);
+  subscription.update({ selection: 'latest' });
+  assert.equal(h.clock.timers.size, 1, 'new desired values cannot bypass the retry backoff');
+  const delays = [];
+  for (let count = 0; count < 10; count += 1) delays.push(await h.clock.next());
+  assert.deepEqual(delays.slice(0, 3), [500, 850, 1445]);
+  assert.equal(delays.at(-1), 10_000);
+  assert.ok(delays.every((delay) => delay >= 500 && delay <= 10_000));
+  assert.ok(requests.slice(1).every((request) => request.subscriptions.channel_activity.selection === 'latest'));
+  assert.equal(h.clock.timers.size, 1);
+});
+
+test('closing the final subscriber cancels a queued retry and releases the stream', async () => {
+  const h = controlHarness();
+  let requests = 0;
+  h.context.requestJson = async () => {
+    requests += 1;
+    throw Object.assign(new Error('Unavailable'), { status: 503 });
+  };
+  const streamController = h.mux.controller;
+  const subscription = h.mux.subscribe('channel_activity');
+  await h.clock.next();
+  assert.notEqual(h.mux.controlRetryTimer, null);
+  await subscription.close();
+  assert.equal(streamController.signal.aborted, true);
+  assert.equal(h.mux.ready, false);
+  assert.equal(h.clock.timers.size, 0);
+  assert.equal(await h.clock.next(), null);
+  assert.equal(requests, 1);
+});
+
+test('closing one topic waits for successful latest control while other topics remain active', async (t) => {
+  const h = controlHarness();
+  t.after(() => h.mux.stop());
+  const requests = [];
+  h.context.requestJson = async (_path, options) => {
+    requests.push(options.body);
+    if (requests.length < 3) throw Object.assign(new Error('Unavailable'), { status: 503 });
+    return {};
+  };
+  h.mux.subscribe('channel_activity');
+  const diagnostic = h.mux.subscribe('tuner_diagnostics');
+  await h.clock.next();
+  let released = false;
+  const closing = diagnostic.close().then(() => { released = true; });
+  await h.clock.next();
+  assert.equal(released, false);
+  await h.clock.next();
+  await closing;
+  assert.deepEqual(Object.keys(requests.at(-1).subscriptions), ['channel_activity']);
+  assert.equal(h.mux.hasSubscribers(), true);
+  assert.equal(h.mux.ready, true);
+});
+
+for (const oldResult of ['success', 'failure']) {
+  test(`stale control ${oldResult} cannot settle or cancel control for a new connection`, async (t) => {
+    const h = controlHarness();
+    t.after(() => h.mux.stop());
+    const previous = deferred();
+    const current = deferred();
+    const requests = [];
+    h.context.requestJson = (_path, options) => {
+      requests.push(options);
+      return requests.length === 1 ? previous.promise : current.promise;
+    };
+    h.mux.subscribe('channel_activity');
+    await h.clock.next();
+    h.mux.stop();
+    assert.equal(requests[0].signal.aborted, true);
+    h.mux.controller = new AbortController();
+    h.mux.clientId = 'replacement-fixture';
+    h.mux.ready = true;
+    const desired = h.mux.queueControl(true);
+    await h.clock.next();
+    const currentController = h.mux.controlController;
+    let applied = false;
+    const waiting = h.mux.waitForControlRevision(desired).then((delivered) => { applied = delivered; });
+    if (oldResult === 'success') previous.resolve({});
+    else previous.reject(Object.assign(new Error('Old failure'), { status: 503 }));
+    await flushMicrotasks();
+    assert.equal(applied, false);
+    assert.equal(h.mux.controlController, currentController);
+    assert.equal(h.mux.controlInFlight, true);
+    assert.equal(h.clock.timers.size, 0);
+    assert.equal(h.mux.controlAppliedRevision, 0);
+    current.resolve({});
+    await waiting;
+    assert.equal(applied, true);
+    assert.equal(h.mux.controlAppliedRevision, desired);
+  });
+}
+
+test('stream disconnect aborts pending control before the replacement connection becomes ready', async (t) => {
+  const h = controlHarness();
+  t.after(() => h.mux.stop());
+  const reading = deferred();
+  const previous = deferred();
+  const requests = [];
+  h.context.randomLiveClientId = () => 'stream-fixture';
+  h.context.fetch = async () => ({ ok: true, status: 200, body: { getReader: () => ({
+    read: () => reading.promise, cancel: () => Promise.resolve()
+  }) } });
+  h.context.requestJson = (_path, options) => {
+    requests.push(options);
+    return requests.length === 1 ? previous.promise : Promise.resolve({});
+  };
+  h.mux.controller = null;
+  h.mux.ready = false;
+  h.mux.subscribe('channel_activity');
+  const connecting = h.mux.connect();
+  await flushMicrotasks();
+  await h.receive('ready', { client_id: 'stream-fixture' }, 0);
+  await h.clock.next();
+  reading.resolve({ done: true });
+  await connecting;
+  assert.equal(requests[0].signal.aborted, true);
+  assert.equal(h.mux.controlInFlight, false);
+  assert.equal(h.mux.controlController, null);
+  assert.equal(h.mux.controlRetryTimer, null);
+  h.mux.controller = new AbortController();
+  h.mux.clientId = 'replacement-fixture';
+  h.mux.attempt += 1;
+  await h.receive('ready', { client_id: 'replacement-fixture' }, 0);
+  await h.clock.next();
+  const applied = h.mux.controlAppliedRevision;
+  previous.resolve({});
+  await flushMicrotasks();
+  assert.equal(h.mux.controlAppliedRevision, applied);
+  assert.equal(h.mux.controlInFlight, false);
+});
+
+test('missing control session reconnects while other permanent client errors do not loop', async (t) => {
+  for (const status of [400, 404]) {
+    const h = controlHarness();
+    t.after(() => h.mux.stop());
+    h.context.requestJson = async () => { throw Object.assign(new Error('Rejected'), { status }); };
+    h.mux.subscribe('channel_activity');
+    const applied = h.mux.waitForControlRevision(h.mux.controlDesiredRevision);
+    await h.clock.next();
+    assert.equal(await applied, false);
+    assert.equal(h.clock.timers.size, 0);
+    assert.equal(h.mux.attempt, status === 404 ? 1 : 0);
+    assert.equal(h.mux.ready, status !== 404);
+  }
+});
+
+for (const status of [401, 403]) {
+  test(`an in-flight authorization failure ${status} releases a closing final subscriber`, async (t) => {
+    const h = controlHarness();
+    t.after(() => h.mux.stop());
+    const pending = deferred();
+    h.context.refreshAccessSession = async () => {};
+    h.context.requestJson = () => pending.promise;
+    const controller = h.mux.controller;
+    const subscription = h.mux.subscribe('channel_activity');
+    await h.clock.next();
+    assert.equal(h.mux.controlInFlight, true);
+    const closing = subscription.close();
+    pending.reject(Object.assign(new Error('Unauthorized'), { status }));
+    await flushMicrotasks();
+    await closing;
+    assert.equal(controller.signal.aborted, true);
+    assert.equal(h.mux.ready, false);
+    assert.equal(h.mux.controlWaiters.length, 0);
+    assert.equal(h.clock.timers.size, 0);
+  });
+
+  test(`closing the final subscriber after authorization failure ${status} releases the stream`, async (t) => {
+    const h = controlHarness();
+    t.after(() => h.mux.stop());
+    h.context.refreshAccessSession = async () => {};
+    let requests = 0;
+    h.context.requestJson = async () => {
+      requests += 1;
+      throw Object.assign(new Error('Unauthorized'), { status });
+    };
+    const subscription = h.mux.subscribe('channel_activity');
+    await h.clock.next();
+    assert.equal(h.mux.authorizationBlocked, true);
+    assert.equal(h.mux.ready, true);
+    await subscription.close();
+    assert.equal(h.mux.ready, false);
+    assert.equal(h.mux.controller, null);
+    assert.equal(h.mux.hasSubscribers(), false);
+    assert.equal(h.mux.controlWaiters.length, 0);
+    assert.equal(h.clock.timers.size, 0);
+    assert.equal(requests, 1);
+  });
+
+  test(`authorization failure ${status} waits for confirmed access refresh without retrying`, async (t) => {
+    const h = controlHarness();
+    t.after(() => h.mux.stop());
+    let refreshes = 0;
+    let requests = 0;
+    h.context.refreshAccessSession = async () => { refreshes += 1; };
+    h.context.requestJson = async () => {
+      requests += 1;
+      throw Object.assign(new Error('Unauthorized'), { status });
+    };
+    const subscription = h.mux.subscribe('channel_activity');
+    await h.clock.next();
+    subscription.update({ changed: true });
+    assert.equal(h.mux.authorizationBlocked, true);
+    assert.equal(h.clock.timers.size, 0);
+    assert.equal(refreshes, 1);
+    assert.equal(requests, 1);
+    const attempt = h.mux.attempt;
+    h.mux.confirmedAccessRefresh();
+    assert.equal(h.mux.authorizationBlocked, false);
+    assert.equal(h.mux.attempt, attempt + 1);
+  });
+}
 
 test('invalid delta baselines/orders are rejected rather than silently dropping rows', () => {
   const { context } = harness();

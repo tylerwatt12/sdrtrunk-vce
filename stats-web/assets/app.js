@@ -35,7 +35,7 @@ import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMa
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl } from './features/discovery-radioreference.js?v=5';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createAudioDock } from './core/audio-dock.js?v=13';
-import { createApplicationLogWorkspace } from './core/application-log.js?v=3';
+import { createApplicationLogWorkspace } from './core/application-log.js?v=4';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=12';
 
@@ -9423,6 +9423,9 @@ class LiveMultiplexer {
     this.pending = new Uint8Array(0);
     this.reconnectTimer = null;
     this.controlTimer = null;
+    this.controlRetryTimer = null;
+    this.controlRetryDelay = 500;
+    this.controlController = null;
     this.controlInFlight = false;
     this.controlPending = false;
     this.controlRevision = 0;
@@ -9545,6 +9548,7 @@ class LiveMultiplexer {
       if (attemptReader) void attemptReader.cancel().catch(() => {});
       controller.abort();
       if (this.controller === controller) {
+        this.cancelControl();
         this.controller = null;
         this.reader = null;
         this.ready = false;
@@ -9648,7 +9652,8 @@ class LiveMultiplexer {
   queueControl(immediate = false) {
     const desiredRevision = ++this.controlDesiredRevision;
     this.controlPending = true;
-    if (!this.ready || this.controlInFlight) return desiredRevision;
+    if (!this.ready || this.controlInFlight || this.controlRetryTimer !== null ||
+        this.authorizationBlocked) return desiredRevision;
     if (this.controlTimer !== null) window.clearTimeout(this.controlTimer);
     this.controlTimer = window.setTimeout(() => {
       this.controlTimer = null;
@@ -9658,10 +9663,17 @@ class LiveMultiplexer {
   }
 
   async sendControl() {
-    if (!this.ready || this.controlInFlight || !this.clientId) return;
+    if (!this.ready || this.controlInFlight || !this.clientId || this.authorizationBlocked) return;
+    if (this.controlTimer !== null) window.clearTimeout(this.controlTimer);
+    this.controlTimer = null;
     this.controlPending = false;
     this.controlInFlight = true;
+    const controller = new AbortController();
+    this.controlController = controller;
+    const controlAttempt = this.attempt;
     const controlClientId = this.clientId;
+    const current = () => this.controlController === controller && this.attempt === controlAttempt &&
+      this.ready && this.clientId === controlClientId;
     const revision = ++this.controlRevision;
     const desiredRevision = this.controlDesiredRevision;
     const subscriptions = {};
@@ -9673,29 +9685,59 @@ class LiveMultiplexer {
         method: 'POST',
         body: { client_id: controlClientId, revision, subscriptions },
         page: false,
+        signal: controller.signal,
         timeoutMs: 5_000
       });
+      if (!current()) return;
+      this.controlRetryDelay = 500;
       this.controlAppliedRevision = Math.max(this.controlAppliedRevision, desiredRevision);
       this.settleControlWaiters(desiredRevision, true);
       this.authorizationRecoveryUsed = false;
       this.authorizationBlocked = false;
     } catch (error) {
-      this.settleControlWaiters(desiredRevision, false);
-      if (this.ready && this.clientId === controlClientId) {
+      if (current()) {
         this.dispatchError(error);
+        if (!current()) return;
         if (error?.status === 401 || error?.status === 403) {
+          this.settleControlWaiters(desiredRevision, false);
           this.authorizationBlocked = true;
+          if (!this.hasSubscribers()) {
+            this.stop();
+            return;
+          }
           if (!this.authorizationRecoveryUsed) {
             this.authorizationRecoveryUsed = true;
             await refreshAccessSession(false);
           }
         } else if (error?.status === 404) {
+          this.settleControlWaiters(desiredRevision, false);
           this.restart();
+        } else if (!error?.status || error.status < 400 || error.status === 408 ||
+            error.status === 429 || error.status >= 500) {
+          if (!this.hasSubscribers()) this.stop();
+          else {
+            // Retry the current desired subscriptions even while stream heartbeats remain healthy.
+            this.controlPending = true;
+            this.controlRetryTimer = window.setTimeout(() => {
+              this.controlRetryTimer = null;
+              if (this.attempt === controlAttempt && this.ready && this.clientId === controlClientId) {
+                void this.sendControl();
+              }
+            }, this.controlRetryDelay);
+            this.controlRetryDelay = Math.min(10_000, Math.round(this.controlRetryDelay * 1.7));
+          }
+        } else {
+          this.settleControlWaiters(desiredRevision, false);
         }
       }
     } finally {
-      this.controlInFlight = false;
-      if (this.controlPending) this.queueControl(true);
+      if (this.controlController === controller) {
+        this.controlController = null;
+        this.controlInFlight = false;
+        if (this.controlPending && this.controlRetryTimer === null && !this.authorizationBlocked) {
+          this.queueControl(true);
+        }
+      }
     }
   }
 
@@ -9714,6 +9756,10 @@ class LiveMultiplexer {
   }
 
   closeIfIdle(revision = this.controlDesiredRevision) {
+    if (!this.hasSubscribers() && (this.controlRetryTimer !== null || this.authorizationBlocked)) {
+      this.stop();
+      return Promise.resolve();
+    }
     if (!this.ready || !this.clientId) {
       if (!this.hasSubscribers()) this.stop();
       return Promise.resolve();
@@ -9730,11 +9776,8 @@ class LiveMultiplexer {
     this.ready = false;
     this.clientId = null;
     if (this.reconnectTimer !== null) window.clearTimeout(this.reconnectTimer);
-    if (this.controlTimer !== null) window.clearTimeout(this.controlTimer);
     this.reconnectTimer = null;
-    this.controlTimer = null;
-    this.controlPending = false;
-    this.settleControlWaiters(Number.MAX_SAFE_INTEGER, false);
+    this.cancelControl();
     this.controller?.abort();
     this.controller = null;
     const reader = this.reader;
@@ -9742,6 +9785,19 @@ class LiveMultiplexer {
     if (reader) void reader.cancel().catch(() => {});
     this.pending = new Uint8Array(0);
     this.lastFrameAt = 0;
+  }
+
+  cancelControl() {
+    if (this.controlTimer !== null) window.clearTimeout(this.controlTimer);
+    if (this.controlRetryTimer !== null) window.clearTimeout(this.controlRetryTimer);
+    this.controlTimer = null;
+    this.controlRetryTimer = null;
+    this.controlRetryDelay = 500;
+    this.controlController?.abort();
+    this.controlController = null;
+    this.controlInFlight = false;
+    this.controlPending = false;
+    this.settleControlWaiters(Number.MAX_SAFE_INTEGER, false);
   }
 
   restart() {
@@ -9999,7 +10055,7 @@ function mergeLiveChannelActivityDelta(update, currentTable) {
     });
   }
   return { ...update, table_id: id,
-    table: { ...currentTable, ...update.table, table_id: id, rows: orderedRows } };
+    table: { ...(update.table === undefined ? currentTable : update.table), table_id: id, rows: orderedRows } };
 }
 
 function reportLiveChannelActivityGap(detail, reconnect = false) {
@@ -10030,6 +10086,10 @@ function synchronizeLiveChannelActivitySource() {
     source.addEventListener('snapshot', (event) => {
       try {
         applyLiveChannelActivitySnapshot(JSON.parse(event.data));
+        if (!liveChannelActivityNeedsResync && liveChannelActivityState === 'error') {
+          liveChannelActivityState = 'open';
+          liveChannelActivitySubscribers.forEach((target) => invokeLiveSubscriber(target, 'open'));
+        }
       } catch (error) {
         //Ignore a malformed optional live update and retain the last complete snapshot.
       }

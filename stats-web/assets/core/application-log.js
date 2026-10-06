@@ -132,6 +132,7 @@ export function createApplicationLogWorkspace(deps) {
   let timer = null;
   let activeRequest = null;
   let requestSequence = 0;
+  let resumeInterruptedRefresh = false;
   let retainedNotice = '';
   const entryNodes = new Map();
   const objectUrls = new Set();
@@ -270,7 +271,12 @@ export function createApplicationLogWorkspace(deps) {
   }
 
   async function refresh() {
-    if (disposed || denied || activeRequest || document.hidden) return;
+    if (disposed || denied || activeRequest) return;
+    if (document.hidden) {
+      resumeInterruptedRefresh = true;
+      return;
+    }
+    resumeInterruptedRefresh = false;
     stopTimer();
     const controller = new AbortController();
     activeRequest = controller;
@@ -389,6 +395,7 @@ export function createApplicationLogWorkspace(deps) {
   });
   pause.addEventListener('click', () => {
     paused = !paused;
+    resumeInterruptedRefresh = false;
     stopTimer();
     cancelRequest();
     syncState();
@@ -396,14 +403,21 @@ export function createApplicationLogWorkspace(deps) {
   });
   const synchronizeVisibility = () => {
     stopTimer();
-    if (document.hidden) cancelRequest();
-    else if (!paused && savedLog.value === 'current') void refresh();
+    if (document.hidden) {
+      resumeInterruptedRefresh ||= Boolean(activeRequest);
+      cancelRequest();
+    } else {
+      const interrupted = resumeInterruptedRefresh;
+      resumeInterruptedRefresh = false;
+      if (savedLog.value === 'current' ? !paused : interrupted) void refresh();
+    }
   };
   document.addEventListener('visibilitychange', synchronizeVisibility);
   refreshButton.addEventListener('click', () => void refresh());
   savedLog.addEventListener('change', () => {
     stopTimer();
     cancelRequest();
+    resumeInterruptedRefresh = false;
     snapshot = null;
     disconnected = false;
     unavailable = false;

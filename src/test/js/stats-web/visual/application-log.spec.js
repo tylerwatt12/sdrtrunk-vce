@@ -49,6 +49,7 @@ async function openLog(page, options = {}) {
       state.requests.push(Object.fromEntries(url.searchParams));
       if (state.failure) return route.fulfill({ status: state.failure, json: {
         error: { status: state.failure, message: 'Application log unavailable' } } });
+      if (options.logResponse) return data(await options.logResponse(url.searchParams.get('log'), state));
       return data(url.searchParams.get('log') === 'previous' ? state.previous : state.snapshot);
     }
     if (pathname === '/api/v1/receiver-health') return data({ summary: { severity: 'healthy',
@@ -126,6 +127,55 @@ test('compact log deltas upsert stack traces, preserve copy text, and stop hidde
   await expect.poll(() => requests.length).toBeGreaterThan(count);
 });
 
+test('an interrupted previous-log load resumes once and discards its stale response', async ({ page }) => {
+  let release;
+  const blocked = new Promise((resolve) => { release = resolve; });
+  let previousRequests = 0;
+  const archived = (message) => documentFor([entry('archive', 'INFO', message)], {
+    log: 'previous', file_name: '20261001_sdrtrunk_app.log' });
+  const state = await openLog(page, { previous: archived('Latest archived message'),
+    logResponse: async (log, value) => {
+      if (log !== 'previous') return value.snapshot;
+      if (++previousRequests === 1) {
+        await blocked;
+        return archived('Stale archived message');
+      }
+      return value.previous;
+    } });
+  const rows = page.locator('.application-log-entry');
+  await expect(rows).toHaveCount(4);
+  await page.getByLabel('Saved log', { exact: true }).selectOption('previous');
+  await expect.poll(() => previousRequests).toBe(1);
+  await expect(rows).toHaveCount(0);
+  const setHidden = async (hidden) => page.evaluate((value) => {
+    Object.defineProperty(document, 'hidden', { configurable: true, value });
+    document.dispatchEvent(new Event('visibilitychange'));
+  }, hidden);
+  await setHidden(true);
+  const interruptedRequests = state.requests.length;
+  await page.waitForTimeout(100);
+  expect(state.requests).toHaveLength(interruptedRequests);
+  await setHidden(false);
+  await expect(rows).toHaveCount(1);
+  await expect(rows).toContainText('Latest archived message');
+  expect(previousRequests).toBe(2);
+  expect(state.requests.at(-1)).toEqual({ log: 'previous', compact: 'true' });
+  release();
+  await page.waitForTimeout(100);
+  await expect(rows).toContainText('Latest archived message');
+  await expect(rows).not.toContainText('Stale archived message');
+  await setHidden(true);
+  await setHidden(false);
+  const loadedRequests = state.requests.length;
+  await page.waitForTimeout(2_200);
+  expect(state.requests).toHaveLength(loadedRequests);
+  expect(previousRequests).toBe(2);
+  state.previous = archived('Manually refreshed archived message');
+  await page.getByRole('button', { name: 'Refresh application log' }).click();
+  await expect(rows).toContainText('Manually refreshed archived message');
+  expect(previousRequests).toBe(3);
+});
+
 test('pause freezes rows, resume sends the last cursor, disconnect retains rows, and access loss removes them', async ({ page }) => {
   const state = await openLog(page);
   await expect(page.locator('.application-log-entry')).toHaveCount(4);
@@ -137,7 +187,7 @@ test('pause freezes rows, resume sends the last cursor, disconnect retains rows,
   await expect(page.locator('.application-log-entry')).toHaveCount(4);
   await page.getByRole('button', { name: 'Resume log updates' }).click();
   await expect(page.locator('.application-log-entry')).toHaveCount(5);
-  expect(state.requests.at(-1)).toEqual({ log: 'current', after: '4' });
+  expect(state.requests.at(-1)).toEqual({ log: 'current', compact: 'true', after: '4' });
   const retained = state.snapshot;
   state.snapshot = documentFor([], { available: false });
   await page.getByRole('button', { name: 'Refresh application log' }).click();
@@ -163,7 +213,7 @@ test('previous-log empty state, rotation notice, bounded window and expand detai
   await expect(page.locator('.application-log-workspace')).toContainText('No previous application log is available.');
   await expect(page.locator('.application-log-state')).toHaveText('Saved log');
   await expect(page.getByRole('button', { name: 'Pause log updates' })).toBeDisabled();
-  expect(state.requests.at(-1)).toEqual({ log: 'previous' });
+  expect(state.requests.at(-1)).toEqual({ log: 'previous', compact: 'true' });
   await expect(page.getByRole('button', { name: 'Download shown', exact: true })).toBeDisabled();
   state.snapshot = documentFor([entry('rotated', 'ERROR', 'Changed file', 'Full stack trace')], {
     truncated: true, gap: true, change_reason: 'rotation' });

@@ -18,12 +18,17 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityEvent;
+import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivitySnapshot;
+import io.github.dsheirer.sample.Listener;
+import io.github.dsheirer.web.http.ApiHttpResponse;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.AbstractList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
@@ -31,6 +36,163 @@ import org.junit.jupiter.api.Test;
 /** Regression coverage for the hard live-state bounds exposed to browser subscribers. */
 class StatsLiveServiceBoundsTest
 {
+    @Test
+    void oversizedMetadataUsesTheSameBoundedFallbackForInitialAndNavigationSnapshots() throws Exception
+    {
+        TestChannelActivitySource source = maximumMetadataSource();
+        AtomicReference<WebEntityNavigationCatalog.Snapshot> loaded =
+            new AtomicReference<>(WebEntityNavigationCatalog.Snapshot.empty());
+        WebEntityNavigationCatalog catalog = new WebEntityNavigationCatalog(loaded::get, 60_000L);
+        catalog.refreshNow();
+        StatsLiveService service = StatsLiveService.fromActivitySource(source, catalog);
+        try
+        {
+            service.start();
+            byte[] initial = service.encodedSnapshot();
+            var document = new ObjectMapper().readTree(initial);
+            assertTrue(initial.length <= StatsLiveService.MAXIMUM_SYSTEM_SNAPSHOT_BYTES);
+            assertTrue(document.path("metadata_truncated").asBoolean());
+            assertEquals(StatsLiveService.MAXIMUM_LIVE_TABLES, document.path("tables_included").asInt());
+            assertTrue(document.path("identifiers_omitted").asLong() > 0);
+            try(StatsLiveEventHub.Subscription subscription = service.subscribeChannelActivity(true))
+            {
+                source.publish(maximumMetadataTable("metadata-0", List.of()));
+                StatsLiveEventHub.LiveEvent initialized = subscription.poll(3, TimeUnit.SECONDS);
+                assertNotNull(initialized);
+                assertEquals("activity_delta", initialized.name(), "initialize the worker before refreshing navigation");
+                String configurationId = "728d2d66-de4e-476b-a696-919f32dd4d12";
+                loaded.set(WebEntityNavigationCatalog.Snapshot.of(List.of(new WebEntityNavigationCatalog.Channel(
+                    configurationId, WebEntityRef.channel(configurationId), null, 0, 0, null, null))));
+                catalog.refreshNow();
+                StatsLiveEventHub.LiveEvent refresh = subscription.poll(3, TimeUnit.SECONDS);
+                assertNotNull(refresh);
+                assertEquals("activity_resync", refresh.name());
+                Map<String,Object> bounded = map((Map<String,Object>)refresh.data(), "snapshot");
+                assertBoundedMetadataSnapshot(bounded, source.snapshot().revision());
+                assertEquals(document.path("identifiers_omitted").asLong(),
+                    ((Number)bounded.get("identifiers_omitted")).longValue());
+
+                source.publish(activity("metadata-0", List.of(activityRow("after-navigation"))));
+                StatsLiveEventHub.LiveEvent update = subscription.poll(3, TimeUnit.SECONDS);
+                assertNotNull(update, "navigation fallback must leave the observer available for later activity");
+                assertEquals("activity_delta", update.name());
+                assertEquals("after-navigation", rows(map((Map<String,Object>)update.baseline().data(), "table"))
+                    .getFirst().get("key"));
+                assertEquals(0, service.projectionFailures());
+            }
+        }
+        finally { service.close(); }
+    }
+
+    @Test
+    void realObserverOverflowRecoversOversizedMetadataAndContinuesPublishing() throws Exception
+    {
+        TestChannelActivitySource source = maximumMetadataSource();
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        List<String> blockedTags = new AbstractList<>()
+        {
+            @Override public int size() { return 1; }
+            @Override public String get(int index)
+            {
+                entered.countDown();
+                try { release.await(5, TimeUnit.SECONDS); }
+                catch(InterruptedException exception) { Thread.currentThread().interrupt(); }
+                return "VOICE";
+            }
+        };
+        StatsLiveService service = StatsLiveService.fromActivitySource(source, null);
+        try
+        {
+            service.start();
+            try(StatsLiveEventHub.Subscription subscription = service.subscribeChannelActivity(true))
+            {
+                source.publish(maximumMetadataTable("metadata-0",
+                    List.of(activityRow("blocked", null, blockedTags, null))));
+                assertTrue(entered.await(3, TimeUnit.SECONDS));
+                for(int index = 0; index < 400; index++)
+                    source.publish(maximumMetadataTable("metadata-0", List.of(activityRow("row-" + index))));
+                assertTrue(service.droppedProjectionEvents() > 0, "the real bounded handoff must overflow");
+                release.countDown();
+                Map<String,Object> recovered = null;
+                for(int index = 0; index < 3 && recovered == null; index++)
+                {
+                    StatsLiveEventHub.LiveEvent event = subscription.poll(3, TimeUnit.SECONDS);
+                    assertNotNull(event);
+                    if("activity_resync".equals(event.name()))
+                        recovered = map((Map<String,Object>)event.data(), "snapshot");
+                }
+                assertNotNull(recovered);
+                assertBoundedMetadataSnapshot(recovered, source.snapshot().revision());
+                source.publish(activity("metadata-0", List.of(activityRow("after-overflow"))));
+                StatsLiveEventHub.LiveEvent update = subscription.poll(3, TimeUnit.SECONDS);
+                assertNotNull(update, "overflow recovery must leave the observer available for later activity");
+                assertEquals("activity_delta", update.name());
+                assertEquals("after-overflow", rows(map((Map<String,Object>)update.baseline().data(), "table"))
+                    .getFirst().get("key"));
+                assertEquals(0, service.projectionFailures());
+            }
+        }
+        finally { release.countDown(); service.close(); }
+    }
+
+    @Test
+    void invalidInitialProjectionRetriesAtABoundedRateAndRecoversFromCurrentData() throws Exception
+    {
+        CountDownLatch failed = new CountDownLatch(1);
+        AtomicInteger attempts = new AtomicInteger();
+        List<String> invalidTags = new AbstractList<>()
+        {
+            @Override public int size() { return 1; }
+            @Override public String get(int index)
+            {
+                attempts.incrementAndGet();
+                failed.countDown();
+                throw new IllegalStateException("invalid optional observer data");
+            }
+        };
+        AtomicReference<ChannelActivityModel.SnapshotSet> current = new AtomicReference<>(
+            new ChannelActivityModel.SnapshotSet(1, List.of(activity("site",
+                List.of(activityRow("invalid", null, invalidTags, null))).snapshot())));
+        AtomicReference<Listener<ChannelActivityEvent>> listener = new AtomicReference<>();
+        StatsLiveService.ActivitySource source = new StatsLiveService.ActivitySource()
+        {
+            @Override public ChannelActivityModel.SnapshotSet snapshot() { return current.get(); }
+            @Override public void addListener(Listener<ChannelActivityEvent> target) { listener.set(target); }
+            @Override public void removeListener(Listener<ChannelActivityEvent> target) { listener.compareAndSet(target, null); }
+        };
+        StatsLiveService service = StatsLiveService.fromActivitySource(source, null);
+        try
+        {
+            service.start();
+            try(StatsLiveEventHub.Subscription subscription = service.subscribeChannelActivity(true))
+            {
+                assertTrue(failed.await(3, TimeUnit.SECONDS));
+                ChannelActivityEvent valid = activity("site", List.of(activityRow("valid")));
+                for(int index = 0; index < 200; index++) listener.get().receive(valid);
+                assertNull(subscription.poll(200, TimeUnit.MILLISECONDS));
+                assertTrue(attempts.get() <= 2, "producer unparks must not retry invalid snapshots at producer cadence");
+                current.set(new ChannelActivityModel.SnapshotSet(2, List.of(valid.snapshot())));
+                listener.get().receive(new ChannelActivityEvent(valid.operation(), valid.snapshot(), 2));
+                StatsLiveEventHub.LiveEvent resync = subscription.poll(3, TimeUnit.SECONDS);
+                assertNotNull(resync);
+                assertEquals("activity_resync", resync.name());
+                assertEquals("valid", rows(tables(map((Map<String,Object>)resync.data(), "snapshot"))
+                    .getFirst()).getFirst().get("key"));
+                ChannelActivityEvent later = activity("site", List.of(activityRow("later")));
+                current.set(new ChannelActivityModel.SnapshotSet(3, List.of(later.snapshot())));
+                listener.get().receive(new ChannelActivityEvent(later.operation(), later.snapshot(), 3));
+                StatsLiveEventHub.LiveEvent update = subscription.poll(3, TimeUnit.SECONDS);
+                assertNotNull(update);
+                assertEquals("activity_delta", update.name());
+                assertEquals("later", rows(map((Map<String,Object>)update.baseline().data(), "table"))
+                    .getFirst().get("key"));
+                assertTrue(service.projectionFailures() > 0);
+            }
+        }
+        finally { service.close(); }
+    }
+
     @Test
     void registrationRaceRetainsEveryTableInTheSharedBaseline() throws Exception
     {
@@ -871,6 +1033,47 @@ class StatsLiveServiceBoundsTest
         {
             service.close();
         }
+    }
+
+    private static TestChannelActivitySource maximumMetadataSource()
+    {
+        TestChannelActivitySource source = new TestChannelActivitySource();
+        for(int index = 0; index < StatsLiveService.MAXIMUM_LIVE_TABLES; index++)
+            source.publish(maximumMetadataTable("metadata-" + index, List.of()));
+        return source;
+    }
+
+    private static ChannelActivityEvent maximumMetadataTable(String tableId, List<ChannelActivitySnapshot.Row> rows)
+    {
+        List<ChannelActivitySnapshot.IdentifierField> identifiers = IntStream.range(0, 16)
+            .mapToObj(index -> new ChannelActivitySnapshot.IdentifierField("g".repeat(256), "l".repeat(256),
+                "v".repeat(256))).toList();
+        return new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT,
+            new ChannelActivitySnapshot(tableId, "Live", "System", "Site", "Control", null,
+                true, true, identifiers, rows));
+    }
+
+    private static void assertBoundedMetadataSnapshot(Map<String,Object> snapshot, long revision) throws Exception
+    {
+        assertTrue(ApiHttpResponse.encodePayload(StatsApiV1Payload.present(snapshot)).length <=
+            StatsLiveService.MAXIMUM_SYSTEM_SNAPSHOT_BYTES - 64);
+        assertEquals(revision, ((Number)snapshot.get("revision")).longValue());
+        assertEquals(StatsLiveService.MAXIMUM_LIVE_TABLES, snapshot.get("tables_included"));
+        assertEquals(0, snapshot.get("tables_omitted_at_least"));
+        assertEquals(true, snapshot.get("truncated"));
+        assertEquals(true, snapshot.get("metadata_truncated"));
+        long omitted = 0;
+        for(Map<String,Object> table: tables(snapshot))
+        {
+            int included = ((List<?>)table.get("identifiers")).size();
+            assertTrue(included < 16);
+            assertEquals(16, table.get("identifiers_total"));
+            assertEquals(included, table.get("identifiers_included"));
+            assertEquals(16L - included, table.get("identifiers_omitted"));
+            assertEquals(true, table.get("identifiers_truncated"));
+            omitted += 16L - included;
+        }
+        assertEquals(omitted, snapshot.get("identifiers_omitted"));
     }
 
     private static ChannelActivityEvent activity(String tableId, List<ChannelActivitySnapshot.Row> rows)

@@ -1239,6 +1239,7 @@ public class StatsWebServerService implements AutoCloseable
         transport.put("shared_frame_encodes", LiveMultiplexFrame.encodingCount());
         transport.put("shared_frame_compressions", LiveMultiplexFrame.compressionCount());
         transport.put("activity_projection_drops", mLiveService.droppedProjectionEvents());
+        transport.put("activity_projection_failures", mLiveService.projectionFailures());
         transport.put("activity_ingress_drops", mLiveService.droppedActivityIngressEvents());
         server.put("live_transport", Map.copyOf(transport));
         status.put("server", server);

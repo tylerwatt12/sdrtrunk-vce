@@ -48,12 +48,14 @@ final class StatsLiveService implements AutoCloseable
     private static final int MAXIMUM_LIVE_TAG_LENGTH = 64;
     private static final int MAXIMUM_LIVE_ALIAS_REFERENCES = 8;
     private static final int MAXIMUM_ROW_SYSTEM_SCOPES = MAXIMUM_TOTAL_LIVE_ROWS * 2;
+    private static final long PROJECTION_FAILURE_RETRY_NANOS = 1_000_000_000L;
     private final ActivitySource mActivitySource;
     private final WebEntityNavigationCatalog mNavigationCatalog;
     private final RemoteOriginLookup mRemoteOriginLookup;
     private final StatsLiveEventHub mChannelActivityHub =
         new StatsLiveEventHub(MAXIMUM_LIVE_SUBSCRIBERS, LIVE_SUBSCRIBER_QUEUE_CAPACITY);
     private final AtomicLong mDroppedProjectionEvents = new AtomicLong();
+    private final AtomicLong mProjectionFailures = new AtomicLong();
     private final AtomicLong mRunGeneration = new AtomicLong();
     private final Object mLifecycleLock = new Object();
     private final Object mEncodedSnapshotLock = new Object();
@@ -125,7 +127,14 @@ final class StatsLiveService implements AutoCloseable
                 // Register before capturing the baseline: notifications arriving afterward are already queued.
                 // The lifecycle lock prevents a browser subscriber from observing a partially initialized run.
                 mActivitySource.addListener(run.mListener);
-                run.mInitialSnapshot = currentSnapshotSet();
+                try
+                {
+                    run.mInitialSnapshot = currentSnapshotSet();
+                }
+                catch(RuntimeException exception)
+                {
+                    projectionFailed(run);
+                }
                 worker.start();
             }
         }
@@ -222,44 +231,57 @@ final class StatsLiveService implements AutoCloseable
 
     private void projectionLoop(ProjectionRun run)
     {
-        // Seed one shared baseline before processing ordered notifications. Browser snapshots can be newer than
-        // this baseline; revision checks let those viewers skip the already-covered notifications safely.
-        rebuildBaseline(run, run.mInitialSnapshot);
-        run.mInitialSnapshot = null;
         while(isCurrentRun(run))
         {
-            ChannelActivityEvent event = run.mPendingActivity.poll();
-
-            if(run.mResyncRequired.getAndSet(false))
+            long retryDelay = run.mRecoveryRetryAfterNanos - System.nanoTime();
+            if(run.mRecoveryRetryAfterNanos != 0 && retryDelay > 0)
             {
-                for(int count = 0; count < run.mPendingActivity.capacity(); count++)
-                {
-                    if(run.mPendingActivity.poll() == null) break;
-                }
-                rebuildBaseline(run, currentSnapshotSet());
-                publishAuthoritativeResync(run);
+                // Producers can unpark this thread, but cannot advance the deadline for retrying invalid data.
+                LockSupport.parkNanos(this, Math.min(retryDelay, 100_000_000L));
                 continue;
             }
-
-            if(event == null)
+            try
             {
-                publishNavigationRefreshIfNeeded(run);
-                LockSupport.parkNanos(this, 100_000_000L);
+                // Seed one shared baseline before processing ordered notifications. Browser snapshots can be
+                // newer than this baseline; revision checks skip already-covered notifications safely.
+                if(run.mInitialSnapshot != null)
+                {
+                    rebuildBaseline(run, run.mInitialSnapshot);
+                    run.mInitialSnapshot = null;
+                }
+                ChannelActivityEvent event = run.mPendingActivity.poll();
+                if(run.mResyncRequired.getAndSet(false))
+                {
+                    for(int count = 0; count < run.mPendingActivity.capacity(); count++)
+                    {
+                        if(run.mPendingActivity.poll() == null) break;
+                    }
+                    rebuildBaseline(run, currentSnapshotSet());
+                    publishAuthoritativeResync(run);
+                    continue;
+                }
+                if(event == null)
+                {
+                    publishNavigationRefreshIfNeeded(run);
+                    LockSupport.parkNanos(this, 100_000_000L);
+                }
+                else projectAndPublish(run, event);
             }
-            else
+            catch(RuntimeException exception)
             {
-                try
-                {
-                    projectAndPublish(run, event);
-                }
-                catch(RuntimeException exception)
-                {
-                    //One malformed optional projection is discarded. The worker remains available for the next
-                    //authoritative snapshot and never pushes the failure back onto a receiver callback.
-                    run.mResyncRequired.set(true);
-                }
+                // Initial projection, recovery and navigation are observer work too. Keep the shared worker
+                // available, release a bad startup snapshot, and rebuild from current data after a bounded retry.
+                projectionFailed(run);
             }
         }
+    }
+
+    private void projectionFailed(ProjectionRun run)
+    {
+        mProjectionFailures.incrementAndGet();
+        run.mInitialSnapshot = null;
+        run.mResyncRequired.set(true);
+        run.mRecoveryRetryAfterNanos = System.nanoTime() + PROJECTION_FAILURE_RETRY_NANOS;
     }
 
     private void projectAndPublish(ProjectionRun run, ChannelActivityEvent event)
@@ -503,6 +525,11 @@ final class StatsLiveService implements AutoCloseable
         return mDroppedProjectionEvents.get();
     }
 
+    long projectionFailures()
+    {
+        return mProjectionFailures.get();
+    }
+
     long droppedActivityIngressEvents()
     {
         return mActivitySource.droppedIngressCount();
@@ -514,45 +541,93 @@ final class StatsLiveService implements AutoCloseable
             mRowSystemScopeState);
     }
 
-    /** Recovery and navigation refreshes obey the same byte budget as initial snapshots. */
+    /** Initial, recovery and navigation snapshots share one byte budget, including a metadata-only fallback. */
     private Map<String,Object> boundedSnapshot(ChannelActivityModel.SnapshotSet source, int maximumRows,
                                                WebEntityNavigationCatalog.Snapshot navigation,
                                                RemoteOriginLookup.OriginSnapshot origins, RowSystemScopeState scopes)
     {
-        int low = 0;
-        int high = maximumRows;
-        Map<String,Object> best = null;
         try
         {
             Map<String,Object> full = snapshot(source, maximumRows, navigation, origins, scopes);
-            if(ApiHttpResponse.encodePayload(StatsApiV1Payload.present(full)).length <=
-                MAXIMUM_SYSTEM_SNAPSHOT_BYTES - 64)
-            {
-                return full;
-            }
-            high = maximumRows - 1;
-            while(low <= high)
+            if(snapshotFits(full)) return full;
+            Map<String,Object> metadata = snapshot(source, 0, navigation, origins, scopes);
+            boolean metadataFits = snapshotFits(metadata);
+            int low = 1;
+            int high = maximumRows - 1;
+            Map<String,Object> best = metadataFits ? metadata : null;
+            while(metadataFits && low <= high)
             {
                 int limit = low + (high - low) / 2;
                 Map<String,Object> candidate = snapshot(source, limit, navigation, origins, scopes);
-                if(ApiHttpResponse.encodePayload(StatsApiV1Payload.present(candidate)).length <=
-                    MAXIMUM_SYSTEM_SNAPSHOT_BYTES - 64)
+                if(snapshotFits(candidate))
                 {
                     best = candidate;
                     low = limit + 1;
                 }
                 else high = limit - 1;
             }
+            if(best != null) return best;
+
+            // Even zero rows can exceed the budget when many tables carry long learned identifiers. Keep every
+            // table if possible, explicitly report omitted identifiers, and retain the largest fitting prefix.
+            low = 0;
+            high = MAXIMUM_LIVE_IDENTIFIERS - 1;
+            while(low <= high)
+            {
+                int limit = low + (high - low) / 2;
+                Map<String,Object> candidate = snapshot(source, 0, MAXIMUM_LIVE_TABLES, limit,
+                    navigation, origins, scopes);
+                if(snapshotFits(candidate))
+                {
+                    best = candidate;
+                    low = limit + 1;
+                }
+                else high = limit - 1;
+            }
+            if(best != null) return best;
+
+            // Pathological table labels/references must not make the shared observer unavailable either. The
+            // ordinary omission counts expose the bounded table prefix, including an empty snapshot if needed.
+            low = 0;
+            high = Math.min(source.tables().size(), MAXIMUM_LIVE_TABLES) - 1;
+            while(low <= high)
+            {
+                int limit = low + (high - low) / 2;
+                Map<String,Object> candidate = snapshot(source, 0, limit, 0, navigation, origins, scopes);
+                if(snapshotFits(candidate))
+                {
+                    best = candidate;
+                    low = limit + 1;
+                }
+                else high = limit - 1;
+            }
+            if(best != null) return best;
         }
         catch(IOException exception)
         {
             throw new IllegalStateException("Live snapshot encoding failed", exception);
         }
-        if(best == null) throw new IllegalStateException("Live metadata exceeds its snapshot byte budget");
-        return best;
+        throw new IllegalStateException("Live snapshot envelope exceeds its byte budget");
+    }
+
+    private static boolean snapshotFits(Map<String,Object> snapshot) throws IOException
+    {
+        // Leave room for the enclosing multiplex event object, which has the same bounded payload contract.
+        return ApiHttpResponse.encodePayload(StatsApiV1Payload.present(snapshot)).length <=
+            MAXIMUM_SYSTEM_SNAPSHOT_BYTES - 64;
     }
 
     private Map<String,Object> snapshot(ChannelActivityModel.SnapshotSet source, int maximumRows,
+                                        WebEntityNavigationCatalog.Snapshot navigation,
+                                        RemoteOriginLookup.OriginSnapshot remoteOrigins,
+                                        RowSystemScopeState rowSystemScopes)
+    {
+        return snapshot(source, maximumRows, MAXIMUM_LIVE_TABLES, MAXIMUM_LIVE_IDENTIFIERS,
+            navigation, remoteOrigins, rowSystemScopes);
+    }
+
+    private Map<String,Object> snapshot(ChannelActivityModel.SnapshotSet source, int maximumRows,
+                                        int maximumTables, int maximumIdentifiers,
                                         WebEntityNavigationCatalog.Snapshot navigation,
                                         RemoteOriginLookup.OriginSnapshot remoteOrigins,
                                         RowSystemScopeState rowSystemScopes)
@@ -564,7 +639,8 @@ final class StatsLiveService implements AutoCloseable
         List<Map<String,Object>> tables = new ArrayList<>(Math.min(snapshots.size(), MAXIMUM_LIVE_TABLES));
         int rowsIncluded = 0;
         long rowsTotal = snapshots.stream().mapToLong(table -> table.rows().size()).sum();
-        int tableCount = Math.min(snapshots.size(), MAXIMUM_LIVE_TABLES);
+        int tableCount = Math.min(snapshots.size(), maximumTables);
+        long identifiersOmitted = 0;
 
         for(int index = 0; index < tableCount; index++)
         {
@@ -573,6 +649,20 @@ final class StatsLiveService implements AutoCloseable
             int rowLimit = Math.min(MAXIMUM_ROWS_PER_TABLE, available);
             Map<String,Object> projected = activityTable(table, rowLimit, navigation, remoteOrigins,
                 rowSystemScopes);
+            if(maximumIdentifiers < MAXIMUM_LIVE_IDENTIFIERS)
+            {
+                LinkedHashMap<String,Object> bounded = new LinkedHashMap<>(projected);
+                List<?> identifiers = (List<?>)projected.get("identifiers");
+                int included = Math.min(identifiers.size(), maximumIdentifiers);
+                long omitted = Math.max(0L, (long)table.identifiers().size() - included);
+                bounded.put("identifiers", List.copyOf(identifiers.subList(0, included)));
+                bounded.put("identifiers_total", table.identifiers().size());
+                bounded.put("identifiers_included", included);
+                bounded.put("identifiers_omitted", omitted);
+                bounded.put("identifiers_truncated", omitted > 0);
+                identifiersOmitted += omitted;
+                projected = Map.copyOf(bounded);
+            }
             tables.add(projected);
             int included = projected.get("rows") instanceof List<?> rows ? rows.size() : 0;
             rowsIncluded += included;
@@ -589,7 +679,12 @@ final class StatsLiveService implements AutoCloseable
         response.put("rows_total", rowsTotal);
         response.put("rows_included", rowsIncluded);
         response.put("rows_omitted", Math.max(0L, rowsTotal - rowsIncluded));
-        response.put("truncated", snapshots.size() > tableCount || rowsTotal > rowsIncluded);
+        response.put("truncated", snapshots.size() > tableCount || rowsTotal > rowsIncluded || identifiersOmitted > 0);
+        if(maximumIdentifiers < MAXIMUM_LIVE_IDENTIFIERS)
+        {
+            response.put("metadata_truncated", identifiersOmitted > 0 || snapshots.size() > tableCount);
+            response.put("identifiers_omitted", identifiersOmitted);
+        }
         response.put("revision", source.revision());
         return Map.copyOf(response);
     }
@@ -654,47 +749,10 @@ final class StatsLiveService implements AutoCloseable
                 return cached;
             }
 
-            int low = 0;
-            int high = MAXIMUM_TOTAL_LIVE_ROWS - 1;
-            Map<String,Object> bestProjection = snapshot(source, MAXIMUM_TOTAL_LIVE_ROWS, navigation,
+            Map<String,Object> bestProjection = boundedSnapshot(source, MAXIMUM_TOTAL_LIVE_ROWS, navigation,
                 remoteOrigins, rowSystemScopes);
             JsonNode bestDocument = StatsApiV1Payload.present(bestProjection);
             byte[] best = ApiHttpResponse.encodePayload(bestDocument);
-            if(best.length <= MAXIMUM_SYSTEM_SNAPSHOT_BYTES)
-            {
-                high = -1;
-            }
-            else
-            {
-                best = null;
-                bestDocument = null;
-                bestProjection = null;
-            }
-
-            while(low <= high)
-            {
-                int candidateLimit = low + (high - low) / 2;
-                Map<String,Object> projection = snapshot(source, candidateLimit, navigation, remoteOrigins, rowSystemScopes);
-                JsonNode document = StatsApiV1Payload.present(projection);
-                byte[] candidate = ApiHttpResponse.encodePayload(document);
-
-                if(candidate.length <= MAXIMUM_SYSTEM_SNAPSHOT_BYTES)
-                {
-                    best = candidate;
-                    bestDocument = document;
-                    bestProjection = projection;
-                    low = candidateLimit + 1;
-                }
-                else
-                {
-                    high = candidateLimit - 1;
-                }
-            }
-
-            if(best == null)
-            {
-                throw new IOException("Live channel-activity metadata exceeds the snapshot byte budget");
-            }
 
             EncodedSnapshot encoded = new EncodedSnapshot(generation, source.revision(), navigation,
                 remoteOrigins, best, LiveMultiplexFrame.json(1, "snapshot", bestDocument),
@@ -1204,6 +1262,7 @@ final class StatsLiveService implements AutoCloseable
         private final LinkedHashMap<String,ChannelActivitySnapshot> mSourceTables = new LinkedHashMap<>();
         private final LinkedHashMap<String,Map<String,Object>> mMarkerTables = new LinkedHashMap<>();
         private long mPublishedRevision;
+        private long mRecoveryRetryAfterNanos;
         private final AtomicBoolean mResyncRequired = new AtomicBoolean();
         private final Listener<ChannelActivityEvent> mListener = event -> receiveChannelActivity(this, event);
         private volatile WebEntityNavigationCatalog.Snapshot mPublishedNavigation;
