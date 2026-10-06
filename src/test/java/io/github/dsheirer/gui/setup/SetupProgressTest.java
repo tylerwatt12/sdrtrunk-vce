@@ -8,6 +8,65 @@ import static io.github.dsheirer.gui.setup.SetupProgress.State.*;
 
 class SetupProgressTest
 {
+    @Test void radioReferenceIsCarriedOverOnlyWithAnAccountAndCompleteLocation()
+    {
+        for(boolean imported: new boolean[]{false, true})
+        {
+            SetupProgress progress = new SetupProgress(false, imported);
+            progress.set(SetupStep.JMBE, COMPLETE);
+            SetupReadiness.prepareRadioReference(progress, true, 2, 20);
+            assertEquals(imported ? CARRIED_OVER : COMPLETE, progress.get(SetupStep.RADIO_REFERENCE));
+            assertEquals(SetupStep.ACTIVITY, progress.next(SetupStep.JMBE));
+            for(int[] missing: new int[][]{{-1, 10}, {1, -1}})
+            {
+                SetupReadiness.prepareRadioReference(progress, true, missing[0], missing[1]);
+                assertEquals(PENDING, progress.get(SetupStep.RADIO_REFERENCE));
+                assertEquals(SetupStep.RADIO_REFERENCE, progress.next(SetupStep.JMBE));
+            }
+            SetupReadiness.prepareRadioReference(progress, false, 1, 10);
+            assertEquals(PENDING, progress.get(SetupStep.RADIO_REFERENCE));
+            for(SetupProgress.State state: new SetupProgress.State[]{NEEDS_ATTENTION, DEFERRED})
+            {
+                progress.set(SetupStep.RADIO_REFERENCE, state);
+                SetupReadiness.prepareRadioReference(progress, true, 1, 10);
+                assertEquals(state, progress.get(SetupStep.RADIO_REFERENCE));
+            }
+        }
+    }
+
+    @Test void completedProfileUpgradeOffersMissingLocationWithoutAddingRoutineLaunchWork()
+    {
+        SetupProgress progress = new SetupProgress(true, false);
+        SetupReadiness.prepareRadioReference(progress, true, -1, -1);
+        assertEquals(SetupStep.RADIO_REFERENCE,
+            SetupReadiness.nextStep(progress, SetupStep.SOURCE, true, false, false, true));
+        assertEquals(SetupStep.REVIEW,
+            SetupReadiness.nextStep(progress, SetupStep.SOURCE, true, false, false, false));
+        progress.set(SetupStep.RADIO_REFERENCE, DEFERRED);
+        assertEquals(SetupStep.REVIEW,
+            SetupReadiness.nextStep(progress, SetupStep.SOURCE, true, false, false, true));
+        progress.set(SetupStep.RADIO_REFERENCE, PENDING);
+        SetupReadiness.prepareRadioReference(progress, true, 2, 20);
+        assertEquals(SetupStep.REVIEW,
+            SetupReadiness.nextStep(progress, SetupStep.SOURCE, true, false, false, true));
+    }
+
+    @Test void committedMigrationReopensAnOldDeferralButANewLocationSkipStillWorks()
+    {
+        SetupProgress progress = new SetupProgress(true, false);
+        progress.set(SetupStep.RADIO_REFERENCE, DEFERRED);
+        SetupReadiness.prepareMigratedRadioReferenceLocation(progress, 1, -1);
+        SetupReadiness.prepareRadioReference(progress, true, 1, -1);
+        assertEquals(SetupStep.RADIO_REFERENCE,
+            SetupReadiness.nextStep(progress, SetupStep.SOURCE, true, false, false, true));
+        progress.set(SetupStep.RADIO_REFERENCE, DEFERRED);
+        //Back/Continue navigation does not rerun source initialization or reset this explicit choice.
+        assertEquals(SetupStep.REVIEW,
+            SetupReadiness.nextStep(progress, SetupStep.SOURCE, true, false, false, true));
+        SetupReadiness.prepareMigratedRadioReferenceLocation(progress, 1, 10);
+        assertEquals(DEFERRED, progress.get(SetupStep.RADIO_REFERENCE));
+    }
+
     @Test void fixedLineageAndOnlyValidCompletionIsSkipped()
     {
         assertEquals(10, SetupStep.values().length);

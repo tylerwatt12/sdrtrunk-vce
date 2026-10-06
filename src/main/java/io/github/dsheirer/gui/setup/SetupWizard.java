@@ -22,6 +22,7 @@ import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
 import io.github.dsheirer.preference.application.WebCertificateMode;
 import io.github.dsheirer.preference.record.RecordingMode;
+import io.github.dsheirer.preference.radioreference.RadioReferencePreference;
 import io.github.dsheirer.preference.portable.SqlitePreferencesFactory;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService;
 import io.github.dsheirer.source.tuner.TunerHardwareDiscovery;
@@ -96,6 +97,8 @@ public final class SetupWizard extends JDialog
     private boolean webAdjusted;
     private boolean rrVerified;
     private boolean rrPremium;
+    private RadioReferenceDirectoryService rrSetupService;
+    private SetupRadioReferenceRegion rrSetupRegion;
     private boolean administratorConfigured;
     private boolean vaultDeferred;
     private boolean editJmbe;
@@ -143,6 +146,7 @@ public final class SetupWizard extends JDialog
             wizard.setVisible(true);
         });
         SetupWizard wizard = holder[0];
+        wizard.closeRadioReferenceSetup();
         wizard.worker.shutdown();
         SwingUtilities.invokeAndWait(() -> { wizard.refresh.stop(); wizard.dispose(); });
         return wizard.finished && server.getRuntimeState().running();
@@ -220,6 +224,7 @@ public final class SetupWizard extends JDialog
         }
         finally
         {
+            wizard.closeRadioReferenceSetup();
             wizard.worker.shutdown();
             SwingUtilities.invokeAndWait(() -> { wizard.refresh.stop(); wizard.stopCountdown(); wizard.dispose(); });
             if(!wizard.finished && wizard.ownsLock && wizard.lock != null) wizard.lock.close();
@@ -376,6 +381,12 @@ public final class SetupWizard extends JDialog
         SqlitePreferencesFactory.install(database);
         preferences = new UserPreferences();
         progress = SetupProgress.read(database);
+        if(sourceCommitted)
+        {
+            var rr = preferences.getRadioReferencePreference();
+            SetupReadiness.prepareMigratedRadioReferenceLocation(progress,
+                rr.getPreferredCountryId(), rr.getPreferredStateId());
+        }
         firstRunGuideEligible = !progress.isComplete();
         limitedVisit = progress.isComplete() && !forced;
         if(newPreferences) preferences.getApplicationPreference().setStatsLoggingEnabled(true);
@@ -392,7 +403,8 @@ public final class SetupWizard extends JDialog
         revalidateSettings();
         if(limitedVisit)
         {
-            if(progress.get(SetupStep.RADIO_REFERENCE) == PENDING) progress.set(SetupStep.RADIO_REFERENCE, DEFERRED);
+            if(!sourceCommitted && progress.get(SetupStep.RADIO_REFERENCE) == PENDING)
+                progress.set(SetupStep.RADIO_REFERENCE, DEFERRED);
             progress.set(SetupStep.HARDWARE, DEFERRED);
         }
         if(preferences.getVoiceDecryptionModulePreference().getModuleManager().isLoaded())
@@ -435,7 +447,9 @@ public final class SetupWizard extends JDialog
         Path library = preferences.getJmbeLibraryPreference().getPathJmbeLibrary();
         ready(SetupStep.JMBE, library != null && JmbeLibraryMetadata.isSupported(library));
         var rr = preferences.getRadioReferencePreference();
-        ready(SetupStep.RADIO_REFERENCE, rr.isStoreCredentials() && present(rr.getUserName()) && present(rr.getPassword()));
+        SetupReadiness.prepareRadioReference(progress,
+            rr.isStoreCredentials() && present(rr.getUserName()) && present(rr.getPassword()),
+            rr.getPreferredCountryId(), rr.getPreferredStateId());
         if(progress.isImported() || progress.isComplete()) ready(SetupStep.ACTIVITY, true);
         SetupReadiness.carryOverRecordingChoice(progress,
             preferences.getRecordPreference().getConfiguredRecordingMode());
@@ -470,6 +484,7 @@ public final class SetupWizard extends JDialog
     private void showPage(SetupStep id)
     {
         if(busy) return;
+        closeRadioReferenceSetup();
         if(managedRecordingCatalogNeedsUpgrade) id = SetupStep.SOURCE;
         stopCountdown();
         certificateGuideVisible = false;
@@ -902,7 +917,7 @@ public final class SetupWizard extends JDialog
     private void radioReferencePage()
     {
         var rr = preferences.getRadioReferencePreference();
-        paragraph("Have a RadioReference account? Save it here to look up radio systems and import channels. You can also do this later.");
+        paragraph("Save your RadioReference account to look up radio systems and import channels.");
         JPanel verification = new JPanel(new BorderLayout()) {
             public Dimension getMaximumSize() { return new Dimension(Integer.MAX_VALUE,getPreferredSize().height); }
         };
@@ -910,13 +925,16 @@ public final class SetupWizard extends JDialog
         verification.getAccessibleContext().setAccessibleName("RadioReference connection status");
         if(rrVerified) showRadioReferenceResult(verification, rrPremium);
         else verification.add(text(present(rr.getUserName()) && present(rr.getPassword()) ?
-            (progress.get(step) == CARRIED_OVER ? "Carried over" : "Stored credentials") + " — connection not tested in this session." : "No complete stored credentials."));
+            "Saved account. Test the connection to check access." : "No account saved."));
         append(verification); append(Box.createVerticalStrut(20));
         JTextField username = field("RadioReference username", rr.getUserName() == null ? "" : rr.getUserName());
-        JPasswordField secret = password("Password (leave blank to retain the stored password)");
+        JPasswordField secret = password("Password (leave blank to keep the saved password)");
+        SetupRadioReferenceRegion region = new SetupRadioReferenceRegion(rr.getPreferredCountryId(),
+            rr.getPreferredStateId(), worker);
+        rrSetupRegion = region;
         javax.swing.event.DocumentListener edited = new javax.swing.event.DocumentListener()
         {
-            private void changed() { rrVerified=false; verification.removeAll(); verification.add(text("Edited credentials — connection not verified.")); verification.revalidate(); verification.repaint(); }
+            private void changed() { rrVerified=false; disconnectRadioReferenceSetup(region); verification.removeAll(); verification.add(text("Account details changed. Test the connection again.")); verification.revalidate(); verification.repaint(); }
             public void insertUpdate(javax.swing.event.DocumentEvent e) { changed(); }
             public void removeUpdate(javax.swing.event.DocumentEvent e) { changed(); }
             public void changedUpdate(javax.swing.event.DocumentEvent e) { changed(); }
@@ -924,36 +942,83 @@ public final class SetupWizard extends JDialog
         username.getDocument().addDocumentListener(edited); secret.getDocument().addDocumentListener(edited);
         button("Test connection", () -> {
             rrVerified=false;
-            verification.removeAll(); verification.add(text("Connection not verified yet.")); verification.revalidate(); verification.repaint();
+            disconnectRadioReferenceSetup(region);
+            verification.removeAll(); verification.add(text("Checking account access…")); verification.revalidate(); verification.repaint();
             String name = username.getText().trim();
             char[] entered = secret.getPassword();
             char[] credential = entered.length > 0 ? entered : (rr.getPassword() == null ? new char[0] : rr.getPassword().toCharArray());
             job("Testing RadioReference connection…", null, () -> {
-                try(RadioReferenceDirectoryService service = new RadioReferenceDirectoryService())
+                RadioReferenceDirectoryService service = new RadioReferenceDirectoryService();
+                try
                 {
                     var result = service.login(name, credential);
-                    if(!result.authenticated()) throw new IllegalArgumentException("Connection not verified. Check credentials, subscription and connection, then retry.");
-                    return result.premium();
+                    if(!result.authenticated()) throw new IllegalArgumentException("Connection not verified. Check your account details and internet connection, then retry.");
+                    return service;
                 }
+                catch(Exception | LinkageError failure) { service.close(); throw failure; }
                 finally { Arrays.fill(credential,'\0'); }
-            }, premium -> showRadioReferenceResult(verification, premium));
+            }, service -> {
+                rrSetupService = service;
+                boolean premium = service.status().premium();
+                showRadioReferenceResult(verification, premium);
+                if(premium) region.connected(new SetupRadioReferenceRegion.Directory() {
+                    public List<RadioReferenceDirectoryService.DirectoryOption> countries() throws Exception
+                    {
+                        return service.countries("", RadioReferenceDirectoryService.MAXIMUM_RESULT_LIMIT).items();
+                    }
+                    public List<RadioReferenceDirectoryService.DirectoryOption> states(int countryId) throws Exception
+                    {
+                        return service.states(countryId, "", RadioReferenceDirectoryService.MAXIMUM_RESULT_LIMIT).items();
+                    }
+                });
+                else region.disconnected(true);
+            });
         });
+        append(region); append(Box.createVerticalStrut(8));
         defer("Set up later");
         accept = () -> {
             boolean verified = rrVerified;
-            char[] entered = secret.getPassword(); secret.setText("");
-            try
-            {
-                if(username.getText().isBlank() || entered.length == 0 && !present(rr.getPassword()))
-                    throw new IllegalArgumentException("Enter both username and password, or choose Set up later.");
-                boolean changed = !username.getText().trim().equals(rr.getUserName()) || entered.length > 0 || !rr.isStoreCredentials();
-                rr.setUserName(username.getText().trim());
-                if(entered.length > 0) rr.setPassword(new String(entered));
-                rr.setStoreCredentials(true); rrVerified = verified;
-                if(changed) progress.set(step, COMPLETE); completeAndContinue();
-            }
-            finally { Arrays.fill(entered,'\0'); }
+            boolean changed = saveRadioReferenceAccount(username, secret, region, rr);
+            rrVerified = verified;
+            if(region.deferred()) { deferCurrent(); return; }
+            if(changed) progress.set(step, COMPLETE); completeAndContinue();
         };
+    }
+
+    /** Save a validated location before clearing the password field invalidates its lookup session. */
+    static boolean saveRadioReferenceAccount(JTextField username, JPasswordField secret,
+                                              SetupRadioReferenceRegion region, RadioReferencePreference rr)
+    {
+        char[] entered = secret.getPassword();
+        try
+        {
+            if(username.getText().isBlank() || entered.length == 0 && !present(rr.getPassword()))
+                throw new IllegalArgumentException("Enter both username and password, or choose Set up later.");
+            region.save(rr);
+            boolean changed = !username.getText().trim().equals(rr.getUserName()) || entered.length > 0 || !rr.isStoreCredentials();
+            rr.setUserName(username.getText().trim());
+            if(entered.length > 0) rr.setPassword(new String(entered));
+            rr.setStoreCredentials(true);
+            secret.setText("");
+            return changed;
+        }
+        finally { Arrays.fill(entered,'\0'); }
+    }
+
+    private void disconnectRadioReferenceSetup(SetupRadioReferenceRegion region)
+    {
+        region.disconnected(false);
+        RadioReferenceDirectoryService service = rrSetupService;
+        rrSetupService = null;
+        if(service != null) worker.execute(service::close);
+    }
+
+    private void closeRadioReferenceSetup()
+    {
+        if(rrSetupRegion != null) { rrSetupRegion.close(); rrSetupRegion = null; }
+        RadioReferenceDirectoryService service = rrSetupService;
+        rrSetupService = null;
+        if(service != null) worker.execute(service::close);
     }
 
     private void showRadioReferenceResult(JPanel verification, boolean premium)
@@ -963,7 +1028,7 @@ public final class SetupWizard extends JDialog
         verification.add(new WizardNotice(premium ? "Connection verified: premium access available" :
             "Connection verified: premium access unavailable", premium ?
             "Your account is ready to look up radio systems and import channels." :
-            "You signed in successfully, but subscriber-only imports need a premium subscription. Check your subscription or continue setup.",
+            "Channel imports and location lookup need a premium subscription. Check your subscription or choose a location later.",
             premium ? WizardNotice.Tone.SUCCESS : WizardNotice.Tone.WARNING));
         verification.revalidate(); verification.repaint(); page.revalidate();
     }
@@ -1316,7 +1381,7 @@ public final class SetupWizard extends JDialog
     private String safeFailure(Throwable failure)
     {
         //Remote/subprocess exceptions may contain passwords, request URLs or provider responses.
-        if(step==SetupStep.RADIO_REFERENCE) return "RadioReference connection failed. Check credentials, subscription and connection, then retry or set up later.";
+        if(step==SetupStep.RADIO_REFERENCE) return "RadioReference connection failed. Check your account details and internet connection, then retry or choose Set up later.";
         if(step==SetupStep.JMBE) return "Digital voice setup couldn’t finish. Check your internet connection or the JMBE file you selected, then try again. Any working library is still safe. You can also set this up later.";
         if(step==SetupStep.ADMINISTRATOR) return "Administrator setup failed. Check the current password and password rules, then retry.";
         if(step==SetupStep.REVIEW) return "Web access couldn’t start. Another application may be using this port, or the security settings may need attention. Return to Web access, check the port and try again.";
@@ -1339,16 +1404,8 @@ public final class SetupWizard extends JDialog
     }
     private SetupStep nextStep()
     {
-        if(!limitedVisit) return progress.next(step);
-        //A previously configured installation returns only for newly required work, not every optional page.
-        for(SetupStep candidate: List.of(SetupStep.ADMINISTRATOR, SetupStep.WEB, SetupStep.JMBE, SetupStep.CALIBRATION))
-        {
-            if(candidate.ordinal() <= step.ordinal() || progress.isDone(candidate)) continue;
-            if(candidate == SetupStep.JMBE && !jmbeNeeded()) continue;
-            if(candidate == SetupStep.CALIBRATION && preferences.getVectorCalibrationPreference().isHideCalibrationDialog()) continue;
-            return candidate;
-        }
-        return SetupStep.REVIEW;
+        return SetupReadiness.nextStep(progress, step, limitedVisit, jmbeNeeded(),
+            !preferences.getVectorCalibrationPreference().isHideCalibrationDialog(), sourceCommitted);
     }
     private void deferCurrent() { progress.set(step,DEFERRED); if(persist()) showPage(nextStep()); }
     private void defer(String caption) { WizardStyles.quiet(button(caption,this::deferCurrent)); }
@@ -1421,6 +1478,7 @@ public final class SetupWizard extends JDialog
     }
     private static void enableTree(Component component,boolean enabled)
     {
+        if(component instanceof SetupRadioReferenceRegion region) { region.setSetupEnabled(enabled); return; }
         component.setEnabled(enabled);
         if(component instanceof Container container) for(Component child:container.getComponents()) enableTree(child,enabled);
     }
