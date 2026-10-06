@@ -1109,18 +1109,64 @@ test('keyboard band choices combine presets with a custom range and preserve the
   await expect(maximum).toHaveValue('484');
 });
 
+for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
+  test(`scan progress shows current work and completed signals in ${theme} at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.clock.install();
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    const state = await install(page, { theme, phase: 'scanning' });
+    await dialog(page).getByRole('button', { name: 'Find signals', exact: true }).click();
+    const loading = dialog(page).locator('.ui-feedback-loading[role="status"]');
+    await expect(loading).toBeVisible();
+    await expect(loading).toContainText('Searching selected bands');
+    await expect(loading).toContainText('2 of 4 band sections searched · 773 MHz');
+    await expect(loading).not.toContainText('Checking 773 MHz');
+    await expect(loading).not.toContainText('Each signal can take up to 30 seconds.');
+    expect(await loading.evaluate((element) => getComputedStyle(element, '::before').animationName))
+      .toBe('ui-feedback-spin');
+    await dialog(page).screenshot({ path: testInfo.outputPath('searching-progress.png') });
+
+    state.phase = 'checking';
+    state.progress = { checked: 5, total_signals: 15, current_frequency_hz: 853612500 };
+    await page.clock.fastForward(800);
+    await expect(loading).toContainText('Checking 853.6125 MHz');
+    await expect(loading).toContainText('5 of 15 signals checked');
+    await expect(loading).toContainText('Each signal can take up to 30 seconds.');
+    expect(await loading.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+    await dialog(page).screenshot({ path: testInfo.outputPath('checking-progress.png') });
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    expect(await loading.evaluate((element) => getComputedStyle(element, '::before').animationName)).toBe('none');
+
+    state.progress.current_frequency_hz = 0;
+    await page.clock.fastForward(800);
+    await expect(loading).toContainText('Checking signals');
+    await expect(loading).not.toContainText('0 MHz');
+    state.phase = 'failed';
+    state.empty = true;
+    await page.clock.fastForward(800);
+    await expect(dialog(page).getByRole('heading', { name: 'Search stopped', exact: true })).toBeVisible();
+    await expect(loading).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+}
+
 test('hides partial results, retries polling and discards the job before releasing its receiver', async ({ page }) => {
   const state = await install(page, { phase: 'scanning', failPollOnce: true });
   await dialog(page).getByRole('button', { name: 'Find signals', exact: true }).click();
   await expect(dialog(page).getByRole('heading', { name: 'Find signals', exact: true })).toBeVisible();
   await expect(dialog(page).getByRole('checkbox')).toHaveCount(0);
   await expect(dialog(page).getByRole('button', { name: 'Retry connection' })).toBeVisible();
+  await expect(dialog(page).locator('.ui-feedback-loading')).toHaveCount(0);
+  await expect(dialog(page).getByText('Last reported progress', { exact: true })).toBeVisible();
   state.phase = 'checking';
   await dialog(page).getByRole('button', { name: 'Retry connection' }).click();
   await expect(dialog(page).getByRole('heading', { name: 'Check signals', exact: true })).toBeVisible();
   await expect(dialog(page).getByRole('checkbox')).toHaveCount(0);
+  await expect(dialog(page).locator('.ui-feedback-loading')).toBeVisible();
   state.phase = 'complete';
   await expect(dialog(page).getByRole('heading', { name: /channels? found$/ })).toBeVisible();
+  await expect(dialog(page).locator('.ui-feedback-loading')).toHaveCount(0);
   await dialog(page).getByRole('button', { name: 'Close Find Trunked Systems' }).click();
   await expect(dialog(page)).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Find Trunked Systems', exact: true })).toBeEnabled();

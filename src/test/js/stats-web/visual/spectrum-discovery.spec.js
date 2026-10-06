@@ -1256,7 +1256,7 @@ test('P25 becoming ready preserves keyboard focus until the user reviews it', as
   expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(0);
 });
 
-test('P25 polling retains Cancel focus and cancellation releases the probe', async ({ page }) => {
+test('P25 polling retains Cancel focus and cancellation releases the probe', async ({ page }, testInfo) => {
   const state = { phase: 'identifying' };
   await page.clock.install();
   await install(page, state);
@@ -1264,6 +1264,9 @@ test('P25 polling retains Cancel focus and cancellation releases the probe', asy
   const cancel = wizard(page).getByRole('button', { name: 'Cancel', exact: true });
   await expect(wizard(page).getByRole('heading', { name: 'Checking this radio system…', exact: true })).toBeVisible();
   await expect(wizard(page).getByRole('table')).toHaveCount(0);
+  await expect(wizard(page).locator('.ui-feedback-loading')).toHaveText('Reading the signal');
+  await expect(wizard(page).getByText('1s elapsed · This can take up to 15s.', { exact: true })).toBeVisible();
+  await wizard(page).screenshot({ path: testInfo.outputPath('single-signal-progress.png') });
   const detailsButton = wizard(page).getByRole('button', { name: 'Details', exact: true });
   await detailsButton.click();
   const details = signalDetails(page);

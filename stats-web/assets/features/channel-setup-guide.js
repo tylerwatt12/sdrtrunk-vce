@@ -1,4 +1,4 @@
-import { openSetupGuide } from '../core/setup-guide.js?v=1';
+import { openSetupGuide } from '../core/setup-guide.js?v=2';
 
 const dismissedInMemory = new Set();
 export const channelSetupGuideStorageKey = (account) =>
@@ -35,8 +35,8 @@ export function createChannelSetupGuide({ ui, account, channels, isCurrent, canP
       if (!isCurrent() || !empty() || !hasUsableSetupTuner(tuners)) { close(); return; }
       if (guide || dismissed() || !canPresent()) return;
       guide = openSetupGuide(ui, { title: 'Add your first channel', onDismiss: remember, choices: [
-        { button: findSystemsButton, description: 'Search for trunked radio systems your tuner can receive.' },
-        { button: newChannelButton, description: 'Set up a channel manually using a known frequency.' }
+        { button: newChannelButton, description: 'Set up a channel manually using a known frequency.' },
+        { button: findSystemsButton, description: 'Search for trunked radio systems your tuner can receive.' }
       ] });
     } catch (_) {
       // The ordinary channel actions remain available when tuner readiness is unknown.

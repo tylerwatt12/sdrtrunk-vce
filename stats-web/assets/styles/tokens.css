@@ -227,6 +227,7 @@
   --shadow-selected: none;
   --shadow-modal: 0 18px 54px rgb(0 0 0 / 38%);
   --modal-backdrop: rgb(9 18 27 / 66%);
+  --setup-guide-outline-width: 2px;
   --modal-backdrop-strong: rgb(9 18 27 / 90%);
   --modal-content-padding: var(--space-4);
   --modal-viewport-gap: 22px;

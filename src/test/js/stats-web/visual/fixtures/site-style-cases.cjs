@@ -18,7 +18,7 @@ const gallerySelector = (view) => ({
   'live-notice': '.visual-live-example',
   'spectrum-discovery': '.visual-spectrum-discovery-example .spectrum-discovery-modal',
   'spectrum-search': '.visual-spectrum-search-example .spectrum-search-modal',
-  'setup-guide': '.ui-setup-guide'
+  'setup-guide': 'body'
 }[view] || `.visual-${view}-example`);
 const presentations = [
   { name: 'light-desktop', theme: 'light', viewport: { width: 1280, height: 900 } },

@@ -7,7 +7,7 @@ import { mountAudioDockGallery } from '/visual/audio-dock-gallery.js';
 import { createFormWorkflow } from '/assets/core/form-workflows.js';
 import { createBrowsingPager, createFilterDisclosure, pageRangeText, scanListAvailabilityPill } from '/assets/core/browsing-workflows.js';
 import { createGalleryModalFoundation } from '/visual/modal-foundation-gallery.js';
-import { openSetupGuide } from '/assets/core/setup-guide.js?v=1';
+import { openSetupGuide } from '/assets/core/setup-guide.js?v=2';
 
 async function initializeAliasFilterExamples() {
   const forms = [...document.querySelectorAll('.visual-aliases-example .alias-editor-filter-toolbar, ' +
@@ -454,8 +454,8 @@ if (view === 'setup-guide') {
   const { openReadOnlyModal } = await createGalleryModalFoundation();
   const introduction = openSetupGuide({ node, openReadOnlyModal }, {
     title: 'Add your first channel', choices: [
-      { button: findSystems, description: 'Search for trunked radio systems your tuner can receive.' },
-      { button: newChannel, description: 'Set up a channel manually using a known frequency.' }
+      { button: newChannel, description: 'Set up a channel manually using a known frequency.' },
+      { button: findSystems, description: 'Search for trunked radio systems your tuner can receive.' }
     ]
   });
   await introduction.ready;

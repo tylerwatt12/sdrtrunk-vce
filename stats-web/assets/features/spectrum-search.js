@@ -896,31 +896,38 @@ export function openSpectrumSearchWizard(ui, context = {}) {
   const drawProgress = () => {
     if (!progressNodes) {
       show('progress', 1, job.phase === 'checking' ? 'Check signals' : 'Find signals');
-      const notice = node('div', 'ui-notice spectrum-discovery-status');
+      const notice = node('div', 'ui-feedback ui-feedback-loading');
       notice.setAttribute('role', 'status');
+      const status = node('div', 'spectrum-discovery-status');
+      const details = node('div', 'spectrum-discovery-status');
       const heading = node('strong');
       const copy = node('p');
       const count = node('p', 'muted');
-      notice.append(heading, copy, count);
-      stage.append(notice, node('p', 'ui-field-hint', 'Nothing is saved during the search. Stop at any time to return to Channels.'));
+      details.append(heading, count, copy);
+      notice.append(details);
+      status.append(notice);
+      stage.append(status, node('p', 'ui-field-hint', 'Nothing is saved during the search. Stop at any time to return to Channels.'));
       button('Stop search', () => modal.close());
-      progressNodes = { title: stage.querySelector('h3'), heading, copy, count };
+      progressNodes = { title: stage.querySelector('h3'), notice, heading, copy, count };
     }
     const checking = job.phase === 'checking';
     progressNodes.title.textContent = checking ? 'Check signals' : 'Find signals';
-    progressNodes.heading.textContent = checking ? 'Reading trunked control signals' : 'Looking for signal peaks';
-    progressNodes.copy.textContent = checking ? 'We’re checking the system, site, and signal settings for each candidate.' :
-      'The receiver is moving through your selected bands.';
     const progress = job.progress || {};
     const currentCenter = Number(progress.current_frequency_hz);
+    const hasFrequency = Number.isFinite(currentCenter) && currentCenter > 0;
+    progressNodes.notice.classList.add('ui-feedback-loading');
+    progressNodes.heading.textContent = checking ? (hasFrequency ?
+      `Checking ${channelMHz(currentCenter)} MHz` : 'Checking signals') : 'Searching selected bands';
+    progressNodes.copy.textContent = checking ? 'Each signal can take up to 30 seconds.' : '';
+    progressNodes.copy.hidden = !checking;
     if (!checking && lease?.lease_id && receiverId === usedReceiverId &&
         Number.isFinite(currentCenter) && currentCenter > 0)
       updateReceiverMeasurements({ id: usedReceiverId, frequency_hz: currentCenter }, usedReceiverId);
     updateContext();
     if (checking) void refreshCheckingMeasurements();
     progressNodes.count.textContent = checking ? `${progress.checked || 0} of ${progress.total_signals || 0} signals checked` :
-      `${progress.completed || 0} of ${progress.total || 0} receiver windows searched${progress.current_frequency_hz ?
-        ` · ${channelMHz(progress.current_frequency_hz)} MHz` : ''}`;
+      `${progress.completed || 0} of ${progress.total || 0} band sections searched${hasFrequency ?
+        ` · ${channelMHz(currentCenter)} MHz` : ''}`;
     pollTimer = window.setTimeout(() => void poll(), 750);
   };
   const poll = async () => {
@@ -953,6 +960,11 @@ export function openSpectrumSearchWizard(ui, context = {}) {
           retry.dataset.directoryRetry = 'true';
         }
         return;
+      }
+      if (progressNodes) {
+        progressNodes.notice.classList.remove('ui-feedback-loading');
+        progressNodes.heading.textContent = 'Last reported progress';
+        progressNodes.copy.hidden = true;
       }
       error('We lost the connection during the search. Retry to check its progress, or stop.', cause);
       actions.replaceChildren();

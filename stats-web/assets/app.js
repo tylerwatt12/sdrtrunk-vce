@@ -12,7 +12,7 @@ import { formatP25RadioIdentifier, p25ServingSystemKey } from './core/radio-labe
 import * as pageLifecycle from './core/page-lifecycle.js';
 import { installIconHints } from './core/icon-hints.js?v=4';
 import { createFormWorkflow } from './core/form-workflows.js?v=1';
-import { createChannelSetupGuide } from './features/channel-setup-guide.js?v=1';
+import { createChannelSetupGuide } from './features/channel-setup-guide.js?v=2';
 import { applyThemeHue } from './core/theme.js?v=1';
 import * as browsingWorkflows from './core/browsing-workflows.js?v=1';
 import {
@@ -32,7 +32,7 @@ import { createStreamingWorkspace } from './features/streaming.js?v=8';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=9';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=13';
 import { createRecordingsFeature } from './features/recordings.js?v=23';
-import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=24';
+import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=25';
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl } from './features/discovery-radioreference.js?v=6';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createAudioDock } from './core/audio-dock.js?v=13';
@@ -2221,10 +2221,10 @@ function openReadOnlyModal(title, body, options = {}) {
     if (closed) options.onDismiss?.();
     return closed;
   };
-  const focusable = () => [...dialog.querySelectorAll(
+  const focusable = () => [...new Set([...dialog.querySelectorAll(
     'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), ' +
-    '[tabindex]:not([tabindex="-1"])')]
-    .filter((element) => !element.hidden && element.getClientRects().length > 0);
+    '[tabindex]:not([tabindex="-1"])'), ...(options.focusTargets || [])])]
+    .filter((element) => !element.hidden && !element.disabled && element.getClientRects().length > 0);
   const keydown = (event) => {
     if (activeReadOnlyModal !== modalState) return;
     if (event.key === 'Escape') {
@@ -2241,7 +2241,14 @@ function openReadOnlyModal(title, body, options = {}) {
     }
     const first = values[0];
     const last = values[values.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
+    if (options.focusTargets) {
+      // A spotlight owns controls that remain in the page, outside the dialog's DOM order.
+      event.preventDefault();
+      const current = values.indexOf(document.activeElement);
+      const next = current < 0 ? (event.shiftKey ? values.length - 1 : 0) :
+        (current + (event.shiftKey ? -1 : 1) + values.length) % values.length;
+      values[next].focus({ preventScroll: true });
+    } else if (event.shiftKey && document.activeElement === first) {
       event.preventDefault();
       last.focus();
     } else if (!event.shiftKey && document.activeElement === last) {
@@ -2252,20 +2259,22 @@ function openReadOnlyModal(title, body, options = {}) {
   close.addEventListener('click', dismiss);
   let backdropPointerId = null;
   let backdropRelease = false;
+  const backdropSurface = (target) => target === backdrop ||
+    (target instanceof Element && target.hasAttribute('data-modal-dismiss-surface'));
   const resetBackdropGesture = () => {
     backdropPointerId = null;
     backdropRelease = false;
   };
   backdrop.addEventListener('pointerdown', (event) => {
-    backdropPointerId = event.isPrimary && event.button === 0 && event.target === backdrop ? event.pointerId : null;
+    backdropPointerId = event.isPrimary && event.button === 0 && backdropSurface(event.target) ? event.pointerId : null;
     backdropRelease = false;
   });
   backdrop.addEventListener('pointerup', (event) => {
-    backdropRelease = event.pointerId === backdropPointerId && event.target === backdrop;
+    backdropRelease = event.pointerId === backdropPointerId && backdropSurface(event.target);
   });
   backdrop.addEventListener('pointercancel', resetBackdropGesture);
   backdrop.addEventListener('click', (event) => {
-    const shouldDismiss = backdropRelease && event.target === backdrop;
+    const shouldDismiss = backdropRelease && backdropSurface(event.target);
     resetBackdropGesture();
     if (shouldDismiss) dismiss();
   });
@@ -2299,7 +2308,7 @@ function openReadOnlyModal(title, body, options = {}) {
     }
     activeReadOnlyModal = modalState;
     document.addEventListener('keydown', keydown);
-    document.body.classList.add('modal-open');
+    if (options.lockScroll !== false) document.body.classList.add('modal-open');
     document.body.append(backdrop);
     close.focus();
     resolveReady(true);
@@ -14097,7 +14106,7 @@ function openSpectrumDiscoveryWizard(selection) {
       showStep(1, 'Checking this radio system…');
       const title = stage.querySelector('h3');
       const status = node('div', 'ui-notice spectrum-discovery-status');
-      const heading = node('strong', 'spectrum-discovery-status-heading');
+      const heading = node('strong');
       const copy = node('p');
       const elapsed = node('p', 'muted');
       status.setAttribute('role', 'status');
@@ -14113,6 +14122,8 @@ function openSpectrumDiscoveryWizard(selection) {
       identifying ? (digital ? 'Checking this radio system…' : `Preparing ${protocolLabels[profile.id]}`) :
       digital ? 'We couldn’t identify this signal' : `${protocolLabels[profile.id]} setup interrupted`;
     nodes.status.classList.toggle('ui-notice-warning', phase === 'failed');
+    nodes.heading.classList.toggle('ui-feedback', identifying);
+    nodes.heading.classList.toggle('ui-feedback-loading', identifying);
     nodes.heading.textContent = ready ? 'Ready to add' : identifying ?
       (digital ? 'Reading the signal' : 'Preparing the channel') : 'Nothing has been added';
     nodes.copy.textContent = ready ? (digital ? 'The system, site, and signal setting stayed consistent.' :
