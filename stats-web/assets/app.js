@@ -3027,6 +3027,9 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
   String(options.tableClass || '').split(/\s+/).filter(Boolean)
     .forEach((className) => element.classList.add(className));
   element.dataset.tableType = tableType;
+  if (element.classList.contains('channels-live-table')) {
+    element.dataset.rowDensity = activeUserPreferences().presentation.live_row_density;
+  }
   if (options.recordList) {
     element.classList.add('ui-record-list');
     const customFieldOrder = layout.column_order.some((id, index) =>
@@ -9883,6 +9886,7 @@ function liveConnection(topic, parameters = {}, pageScoped = true) {
 }
 
 let liveChannelActivitySource = null;
+let liveChannelActivitySubscriptionId = null;
 let liveChannelActivityState = 'connecting';
 const liveChannelActivitySubscribers = new Set();
 const liveChannelActivityTables = new Map();
@@ -10069,6 +10073,7 @@ function synchronizeLiveChannelActivitySource() {
     if (liveChannelActivitySource) {
       const source = liveChannelActivitySource;
       liveChannelActivitySource = null;
+      liveChannelActivitySubscriptionId = null;
       liveChannelActivityState = 'connecting';
       source.close();
       liveConnections.delete(source);
@@ -10076,7 +10081,9 @@ function synchronizeLiveChannelActivitySource() {
     return;
   }
 
-  const parameters = { delta: true };
+  // A rebuilt view has no delta baseline, even when the server coalesces its close/open controls.
+  if (!liveChannelActivitySource) liveChannelActivitySubscriptionId = randomLiveClientId();
+  const parameters = { delta: true, subscription_id: liveChannelActivitySubscriptionId };
   if ([...liveChannelActivitySubscribers].every((subscriber) => subscriber.markers)) parameters.markers = true;
   if (liveChannelActivitySource?.update(parameters)) liveChannelActivityNeedsResync = true;
   if (!liveChannelActivitySource) {
@@ -17913,7 +17920,6 @@ function liveChannelsSection(onSelectionChange) {
     wrapperClass: 'table-scroll', tableClass: 'channels-live-table ui-data-table-compact', mobileCards: true,
     layoutMenuHost: titleActions
   });
-  liveTable.querySelector('table').dataset.rowDensity = presentation.live_row_density;
   const host = node('div', 'channels-live');
   host.id = 'live-channel-table-panel';
   host.setAttribute('role', 'tabpanel');

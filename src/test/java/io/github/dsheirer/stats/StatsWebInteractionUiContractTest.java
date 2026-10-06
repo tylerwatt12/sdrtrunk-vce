@@ -1810,7 +1810,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("subscribeLiveChannelActivity({"));
         assertTrue(systems.contains("subscribeLiveChannelActivity({"));
         assertTrue(activity.contains("liveConnection('channel_activity', parameters, false)"));
-        assertTrue(activity.contains("const parameters = { delta: true }"));
+        assertTrue(activity.contains("const parameters = { delta: true, subscription_id: liveChannelActivitySubscriptionId }"));
         assertTrue(activity.contains("if ([...liveChannelActivitySubscribers].every((subscriber) => subscriber.markers)) parameters.markers = true"));
         assertTrue(activity.contains("liveChannelActivityTables"));
         assertTrue(subscribeActivity.contains("invokeLiveSubscriber(subscriber, 'snapshot'"));

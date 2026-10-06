@@ -1649,12 +1649,18 @@ public class StatsWebServerService implements AutoCloseable
         switch(name)
         {
             case "channel_activity" -> {
-                if(parameters.size() > 2)
+                if(parameters.size() > 3)
                 {
                     throw new StatsApiException(400, "Channel activity options are invalid");
                 }
                 parameters.fields().forEachRemaining(field -> {
-                    if(!Set.of("delta", "markers").contains(field.getKey()) || !field.getValue().isBoolean())
+                    if("subscription_id".equals(field.getKey()))
+                    {
+                        // A recreated browser consumer needs a fresh baseline even when its display options match.
+                        // This incarnation remains part of the requested topic signature used by reconcile().
+                        UUID.fromString(requiredMultiplexText(parameters, "subscription_id"));
+                    }
+                    else if(!Set.of("delta", "markers").contains(field.getKey()) || !field.getValue().isBoolean())
                         throw new StatsApiException(400, "Channel activity options are invalid");
                 });
             }

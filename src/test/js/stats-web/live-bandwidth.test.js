@@ -13,6 +13,7 @@ const source = fs.readFileSync(process.argv[2] || path.resolve(__dirname,
 function harness() {
   const events = [];
   const tables = new Map();
+  let subscriptionId = 0;
   const context = {
     Uint8Array, DataView, TextDecoder, Blob, DecompressionStream, AbortController, queueMicrotask,
     LIVE_MULTIPLEX_HEADER_BYTES: 16, LIVE_MULTIPLEX_MAGIC: 0x534c4d58,
@@ -24,9 +25,10 @@ function harness() {
     invokeLiveSubscriber: (target, method, ...args) => target[method]?.(...args),
     invokeLiveListener: (callback, ...args) => callback(...args),
     snakeCasePayload: (value) => value,
+    randomLiveClientId: () => `00000000-0000-4000-8000-${String(++subscriptionId).padStart(12, '0')}`,
     decodeDiagnosticFrame: (bytes) => ({ bytes }),
     liveChannelActivityTables: tables, liveChannelActivityRevision: 0,
-    liveChannelActivityNeedsResync: false,
+    liveChannelActivityNeedsResync: false, liveChannelActivitySubscriptionId: null,
     liveChannelActivitySubscribers: new Set([{ snapshot: (data) => events.push(data) }]),
     liveMultiplexer: { restart() {} }
   };
@@ -88,6 +90,25 @@ function controlHarness() {
   h.receive = (event, data, topic = 1) => h.mux.consume(envelope(topic, 1,
     Buffer.from(JSON.stringify({ event, data }))));
   return h;
+}
+
+function installRetainedActivityServer(h) {
+  let active = null;
+  const requests = [];
+  h.context.requestJson = async (_path, options) => {
+    requests.push(options.body);
+    const wanted = JSON.stringify(options.body.subscriptions.channel_activity || null);
+    // The server retains an existing topic when its complete parameters are unchanged.
+    if (wanted !== active) {
+      active = wanted;
+      if (options.body.subscriptions.channel_activity) {
+        await h.receive('snapshot', { revision: 10, tables: [{ table_id: 'site', title: 'North',
+          rows: [{ key: 'one', source_alias: 'Dispatch', value: 10 }] }] });
+      }
+    }
+    return {};
+  };
+  return requests;
 }
 
 function deferred() {
@@ -180,6 +201,109 @@ test('changed complete table metadata clears removed optional fields while row-o
   assert.equal(baseline.site.nac, 123);
 });
 
+test('rebuilding Live after a preference save reacquires a baseline without interrupting another multiplex topic', async (t) => {
+  const h = controlHarness();
+  t.after(() => h.mux.stop());
+  const requests = installRetainedActivityServer(h);
+  const diagnostics = [];
+  h.mux.subscribe('tuner_diagnostics', {}, { onFrame: (frame) => diagnostics.push(frame) });
+  Object.assign(h.context, { pageObservers: new Map(), pageTimers: new Set() });
+  vm.runInContext(source.slice(source.indexOf('function closePageConnections()'),
+    source.indexOf("window.addEventListener('beforeunload'")), h.context);
+  h.context.subscribeLiveChannelActivity();
+  await flushMicrotasks();
+  await h.clock.next();
+  assert.equal(h.context.liveChannelActivityRevision, 10);
+  const streamController = h.mux.controller;
+  const attempt = h.mux.attempt;
+  const rebuiltSnapshots = [];
+  // Non-density preference saves call render(), which closes and rebuilds these connections in one turn.
+  h.context.closePageConnections();
+  h.context.subscribeLiveChannelActivity({ snapshot: (value) => rebuiltSnapshots.push(value) });
+  await flushMicrotasks();
+  await h.clock.next();
+  assert.equal(rebuiltSnapshots.length, 1, 'a retained server topic must send a baseline to the rebuilt view');
+  assert.deepEqual(JSON.parse(JSON.stringify(rebuiltSnapshots[0].tables)), [
+    { table_id: 'site', title: 'North', rows: [{ key: 'one', source_alias: 'Dispatch', value: 10 }] }
+  ]);
+  assert.notEqual(requests[0].subscriptions.channel_activity.subscription_id,
+    requests.at(-1).subscriptions.channel_activity.subscription_id);
+  await h.receive('activity_delta', { table_id: 'site', operation: 'upsert', base_revision: 10,
+    revision: 11, rows: [{ key: 'one', source_alias: 'Dispatch', value: 11 }], removed_row_keys: [] });
+  assert.equal(h.tables.get('site').rows[0].value, 11);
+  assert.equal(h.context.liveChannelActivityNeedsResync, false);
+  await h.mux.consume(envelope(5, 2, Uint8Array.of(1, 2, 3)));
+  assert.equal(diagnostics.length, 1);
+  assert.equal(h.mux.attempt, attempt);
+  assert.equal(h.mux.controller, streamController);
+  assert.equal(streamController.signal.aborted, false);
+});
+
+test('activity reentry after accepted teardown gets a new baseline even before the server applies that teardown', async (t) => {
+  const h = controlHarness();
+  t.after(() => h.mux.stop());
+  const requests = [];
+  let active = null;
+  h.context.requestJson = async (_path, options) => {
+    requests.push(options.body);
+    const wanted = options.body.subscriptions.channel_activity;
+    // An empty desired topic is accepted immediately, but the stream owner has not applied it yet.
+    if (wanted && JSON.stringify(wanted) !== active) {
+      active = JSON.stringify(wanted);
+      await h.receive('snapshot', { revision: 10, tables: [{ table_id: 'site', rows: [{ key: 'one' }] }] });
+    }
+    return {};
+  };
+  h.mux.subscribe('tuner_diagnostics');
+  const first = h.context.subscribeLiveChannelActivity();
+  await flushMicrotasks();
+  await h.clock.next();
+  const streamController = h.mux.controller;
+  const firstId = requests[0].subscriptions.channel_activity.subscription_id;
+  first.close();
+  await h.clock.next();
+  assert.equal(requests.at(-1).subscriptions.channel_activity, undefined);
+  assert.equal(h.context.liveChannelActivitySource, null);
+  assert.equal(h.context.liveChannelActivitySubscriptionId, null);
+  assert.equal(h.tables.size, 0);
+  const snapshots = [];
+  h.context.subscribeLiveChannelActivity({ snapshot: (value) => snapshots.push(value) });
+  await flushMicrotasks();
+  await h.clock.next();
+  assert.notEqual(requests.at(-1).subscriptions.channel_activity.subscription_id, firstId);
+  assert.equal(snapshots.length, 1);
+  assert.equal(h.tables.get('site').rows[0].key, 'one');
+  assert.equal(h.context.liveChannelActivityNeedsResync, false);
+  assert.equal(h.mux.controller, streamController);
+  assert.equal(streamController.signal.aborted, false);
+});
+
+test('activity incarnation stays stable while sharing the same source and steady deltas require no new control', async (t) => {
+  const h = controlHarness();
+  t.after(() => h.mux.stop());
+  const requests = installRetainedActivityServer(h);
+  const first = h.context.subscribeLiveChannelActivity();
+  await flushMicrotasks();
+  await h.clock.next();
+  const initialId = requests[0].subscriptions.channel_activity.subscription_id;
+  const snapshots = [];
+  const second = h.context.subscribeLiveChannelActivity({ snapshot: (value) => snapshots.push(value) });
+  assert.equal(snapshots.length, 1);
+  first.close();
+  await h.receive('activity_delta', { table_id: 'site', operation: 'upsert', base_revision: 10,
+    revision: 11, rows: [{ key: 'one', value: 11 }], removed_row_keys: [] });
+  assert.equal(h.context.liveChannelActivitySubscriptionId, initialId);
+  assert.equal(h.tables.get('site').rows[0].value, 11);
+  assert.equal(requests.length, 1);
+  assert.equal(h.clock.timers.size, 0);
+  second.close();
+  await h.clock.next();
+  assert.equal(h.context.liveChannelActivitySource, null);
+  assert.equal(h.context.liveChannelActivitySubscriptionId, null);
+  assert.equal(h.tables.size, 0);
+  assert.equal(h.mux.ready, false);
+});
+
 for (const failure of [Object.assign(new Error('Unavailable'), { status: 503 }),
   Object.assign(new Error('Timed out'), { code: 'request_timeout' })]) {
   test(`activity subscriptions recover exactly after ${failure.status || failure.code} despite healthy heartbeats`, async (t) => {
@@ -211,7 +335,9 @@ for (const failure of [Object.assign(new Error('Unavailable'), { status: 503 }),
     assert.equal(requests.length, 2);
     assert.equal(await h.clock.next(), 500);
     assert.equal(requests.length, 3);
-    assert.deepEqual(JSON.parse(JSON.stringify(requests[2].subscriptions.channel_activity)), { delta: true });
+    assert.deepEqual(JSON.parse(JSON.stringify(requests[2].subscriptions.channel_activity)), {
+      delta: true, subscription_id: requests[0].subscriptions.channel_activity.subscription_id
+    });
     assert.equal(h.context.liveChannelActivityNeedsResync, false);
     assert.equal(h.context.liveChannelActivityState, 'open');
     assert.equal(observed.length, 1);
@@ -491,14 +617,20 @@ test('marker subscriptions upgrade to full rows before sharing a cached baseline
   vm.runInContext(source.slice(source.indexOf('function synchronizeLiveChannelActivitySource'),
     source.indexOf('const DIAGNOSTIC_FRAME_MAGIC')), context);
   const marker = context.subscribeLiveChannelActivity({}, { markers: true });
-  assert.deepEqual(JSON.parse(JSON.stringify(parameters.at(-1))), { delta: true, markers: true });
+  const subscriptionId = parameters.at(-1).subscription_id;
+  assert.ok(subscriptionId);
+  assert.deepEqual(JSON.parse(JSON.stringify(parameters.at(-1))), {
+    delta: true, subscription_id: subscriptionId, markers: true
+  });
   context.applyLiveChannelActivitySnapshot({ revision: 10, tables: [{ table_id: 'site', rows: [] }] });
   const full = context.subscribeLiveChannelActivity({ snapshot: (data) => snapshots.push(data) });
-  assert.deepEqual(JSON.parse(JSON.stringify(parameters.at(-1))), { delta: true });
+  assert.deepEqual(JSON.parse(JSON.stringify(parameters.at(-1))), { delta: true, subscription_id: subscriptionId });
   assert.equal(context.liveChannelActivityNeedsResync, true);
   assert.equal(snapshots.length, 0);
   full.close();
-  assert.deepEqual(JSON.parse(JSON.stringify(parameters.at(-1))), { delta: true, markers: true });
+  assert.deepEqual(JSON.parse(JSON.stringify(parameters.at(-1))), {
+    delta: true, subscription_id: subscriptionId, markers: true
+  });
   marker.close();
   assert.equal(context.liveChannelActivitySource, null);
   assert.equal(context.pageConnections.size, 0);

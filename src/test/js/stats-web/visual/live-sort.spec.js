@@ -57,6 +57,7 @@ async function openLive(page, theme = 'light', presentation = {}, liveSnapshot =
   await page.addInitScript((liveSnapshot) => {
     const originalFetch = window.fetch.bind(window);
     const encoder = new TextEncoder();
+    let activityParameters = null;
     const frame = (topic, event, data) => {
       const payload = encoder.encode(JSON.stringify({ event, data }));
       const bytes = new Uint8Array(16 + payload.length);
@@ -73,11 +74,17 @@ async function openLive(page, theme = 'light', presentation = {}, liveSnapshot =
       const url = new URL(typeof input === 'string' ? input : input.url, location.href);
       if (url.pathname === '/api/v1/live/multiplex/control') {
         const body = JSON.parse(options?.body || '{}');
-        if (body.subscriptions?.channel_activity) window.fixtureSendLiveSnapshot?.();
+        const requested = body.subscriptions?.channel_activity;
+        const nextParameters = requested ? JSON.stringify(requested) : null;
+        if (nextParameters !== activityParameters) {
+          activityParameters = nextParameters;
+          if (requested) window.fixtureSendLiveSnapshot?.();
+        }
         return Promise.resolve(new Response(JSON.stringify({ data: { accepted: true } }),
           { status: 200, headers: { 'Content-Type': 'application/json' } }));
       }
       if (url.pathname !== '/api/v1/live/multiplex') return originalFetch(input, options);
+      activityParameters = null;
       const stream = new ReadableStream({
         start(controller) {
           window.fixtureSendLiveSnapshot = () => controller.enqueue(frame(1, 'snapshot', liveSnapshot));
@@ -395,6 +402,44 @@ async function expectNoVerticalGlyphClipping(page) {
     return result;
   });
   expect(clipped, 'Dense rows must retain room for the unchanged text glyphs').toEqual([]);
+}
+
+for (const { theme, width } of [{ theme: 'light', width: 1280 }, { theme: 'dark', width: 390 }]) {
+  test(`Live column visibility and table reset preserve dense rows in ${theme} at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    const app = await openLive(page, theme, { live_row_density: 'dense' }, densitySnapshot());
+    const table = liveTable(page);
+    await expect(table).toHaveAttribute('data-row-density', 'dense');
+    await expect(table.locator('tbody tr[data-id]')).toHaveCount(36);
+    await table.locator('tbody tr[data-id="call-2"] [data-column="status"]').click();
+    const contents = await liveCallContents(page);
+    const expectDenseSelection = async () => {
+      await expect(table).toHaveAttribute('data-row-density', 'dense');
+      await expect(table.locator('tbody tr[data-id]')).toHaveCount(36);
+      await expect(table.locator('tbody tr.selected')).toHaveAttribute('data-id', 'call-2');
+      expect((await densityGeometry(page)).cellPadding.every((cell) => cell.top === 0 && cell.bottom === 0)).toBe(true);
+      expect(app.preferences().presentation.live_row_density).toBe('dense');
+    };
+    const section = page.locator('.live-channels-section');
+    await section.getByRole('button', { name: 'Choose table columns', exact: true }).click();
+    const chooser = page.getByRole('dialog', { name: 'Table columns', exact: true });
+    const visibility = chooser.getByRole('checkbox', { name: 'Show Frequency MHz column', exact: true });
+    await visibility.uncheck();
+    await expect(table.locator('thead th[data-column="frequency"]')).toHaveCount(0);
+    await expectDenseSelection();
+    await visibility.check();
+    await expect(table.locator('thead th[data-column="frequency"]')).toHaveCount(1);
+    await expectDenseSelection();
+    expect(await liveCallContents(page)).toEqual(contents);
+    await chooser.getByRole('button', { name: 'Reset this table', exact: true }).click();
+    await expect.poll(() => app.preferences().tables['live-channels']).toBeUndefined();
+    await expectDenseSelection();
+    expect(await liveCallContents(page)).toEqual(contents);
+    expect(app.receiverWrites).toEqual([]);
+    await page.keyboard.press('Escape');
+    await expect(chooser).toBeHidden();
+    await page.screenshot({ path: test.info().outputPath('live-dense-column-reset.png') });
+  });
 }
 
 for (const theme of ['light', 'dark']) {

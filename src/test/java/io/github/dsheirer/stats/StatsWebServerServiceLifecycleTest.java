@@ -8,6 +8,10 @@ package io.github.dsheirer.stats;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -33,6 +37,8 @@ import io.github.dsheirer.web.http.WebRequestSecurity;
 import io.github.dsheirer.web.tls.TlsMaterial;
 import io.github.dsheirer.web.tls.WebTlsMaterialService;
 import java.net.InetAddress;
+import java.io.OutputStream;
+import java.lang.reflect.InvocationTargetException;
 import java.net.ServerSocket;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -44,6 +50,7 @@ import java.security.KeyStore;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
@@ -56,6 +63,99 @@ class StatsWebServerServiceLifecycleTest
 
     @TempDir
     Path mTemporaryDirectory;
+
+    @Test
+    void activitySubscriptionIncarnationsRefreshBaselinesWithoutReopeningUnchangedConsumers() throws Exception
+    {
+        Path dataRoot = mTemporaryDirectory.resolve("activity-incarnation-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Path assets = Files.createDirectories(mTemporaryDirectory.resolve("activity-incarnation-assets"));
+        Files.writeString(assets.resolve("index.html"), "<!doctype html><title>test</title>");
+        String previousAssetOverride = System.getProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY);
+        System.setProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY, assets.toString());
+        TestUserPreferences preferences = new TestUserPreferences(
+            new TestApplicationPreference(0, false, false, true), new TestDirectoryPreference(dataRoot));
+        try(StatsWebServerService service = new StatsWebServerService(preferences))
+        {
+            assertTrue(service.getRuntimeState().running(), service.getRuntimeState().statusMessage());
+            var validate = StatsWebServerService.class.getDeclaredMethod("validateMultiplexSubscription",
+                String.class, JsonNode.class);
+            validate.setAccessible(true);
+            JsonNode first = OBJECT_MAPPER.readTree("""
+                {"delta":true,"markers":true,"subscription_id":"00000000-0000-0000-0000-000000000001"}
+                """);
+            JsonNode second = OBJECT_MAPPER.readTree("""
+                {"delta":true,"markers":true,"subscription_id":"00000000-0000-0000-0000-000000000002"}
+                """);
+            validate.invoke(service, "channel_activity", OBJECT_MAPPER.readTree("{\"delta\":true}"));
+            validate.invoke(service, "channel_activity", first);
+            for(String invalid: List.of("{\"subscription_id\":\"not-a-uuid\"}",
+                "{\"subscription_id\":false}", "{\"subscription_id\":null}", "{\"subscription_id\":\"\"}",
+                "{\"delta\":\"true\"}", "{\"unknown\":true}"))
+            {
+                InvocationTargetException failure = assertThrows(InvocationTargetException.class,
+                    () -> validate.invoke(service, "channel_activity", OBJECT_MAPPER.readTree(invalid)));
+                assertTrue(failure.getCause() instanceof IllegalArgumentException ||
+                    failure.getCause() instanceof StatsApiException);
+            }
+
+            Class<?> clientType = Class.forName(StatsWebServerService.class.getName() + "$MultiplexClient");
+            var clientConstructor = clientType.getDeclaredConstructor(StatsWebServerService.class,
+                String.class, com.sun.net.httpserver.HttpExchange.class);
+            clientConstructor.setAccessible(true);
+            Class<?> configurationType = Class.forName(StatsWebServerService.class.getName() + "$MultiplexConfiguration");
+            var configurationConstructor = configurationType.getDeclaredConstructor(long.class, Map.class);
+            configurationConstructor.setAccessible(true);
+            var configure = clientType.getDeclaredMethod("configure", configurationType);
+            configure.setAccessible(true);
+            var reconcile = clientType.getDeclaredMethod("reconcile", StatsWebServerService.MultiplexOutput.class);
+            reconcile.setAccessible(true);
+            var activity = clientType.getDeclaredField("mChannelActivity");
+            activity.setAccessible(true);
+            var poll = StatsWebServerService.MultiplexOutput.class.getDeclaredMethod("pollPending");
+            poll.setAccessible(true);
+
+            // Drive the real reconcile path without a network writer. A fresh browser incarnation must replace
+            // the logical activity subscription and queue an authoritative snapshot, regardless of option equality.
+            try(AutoCloseable consumer = (AutoCloseable)clientConstructor.newInstance(service,
+                    "00000000-0000-0000-0000-000000000003", null);
+                StatsWebServerService.MultiplexOutput output =
+                    new StatsWebServerService.MultiplexOutput(OutputStream.nullOutputStream()))
+            {
+                configure.invoke(consumer, configurationConstructor.newInstance(1L, Map.of("channel_activity", first)));
+                assertEquals(true, reconcile.invoke(consumer, output));
+                StatsLiveEventHub.Subscription original = (StatsLiveEventHub.Subscription)activity.get(consumer);
+                assertNotNull(original);
+                byte[] initial = (byte[])poll.invoke(output);
+                assertNotNull(initial);
+                assertEquals("snapshot", OBJECT_MAPPER.readTree(Arrays.copyOfRange(initial,
+                    LiveMultiplexFrame.HEADER_BYTES, initial.length)).path("event").textValue());
+
+                configure.invoke(consumer, configurationConstructor.newInstance(2L,
+                    Map.of("channel_activity", first.deepCopy())));
+                assertEquals(false, reconcile.invoke(consumer, output));
+                assertSame(original, activity.get(consumer));
+                assertFalse(original.isClosed());
+                assertNull(poll.invoke(output), "an unchanged incarnation must not add snapshot bandwidth");
+
+                configure.invoke(consumer, configurationConstructor.newInstance(3L, Map.of("channel_activity", second)));
+                assertEquals(true, reconcile.invoke(consumer, output));
+                assertTrue(original.isClosed());
+                assertNotSame(original, activity.get(consumer));
+                byte[] replacement = (byte[])poll.invoke(output);
+                assertNotNull(replacement);
+                assertEquals("snapshot", OBJECT_MAPPER.readTree(Arrays.copyOfRange(replacement,
+                    LiveMultiplexFrame.HEADER_BYTES, replacement.length)).path("event").textValue());
+            }
+        }
+        finally
+        {
+            if(previousAssetOverride == null) System.clearProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY);
+            else System.setProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY, previousAssetOverride);
+        }
+    }
 
     @Test
     void servesWebBrandingAssetsWithBrowserMediaTypes()
