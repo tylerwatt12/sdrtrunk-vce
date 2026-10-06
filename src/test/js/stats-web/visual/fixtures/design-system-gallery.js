@@ -61,7 +61,7 @@ document.querySelectorAll('.visual-duration-range').forEach((host) => {
   const control = createDualRange({ node, label: disabled ? 'Call length (disabled)' : 'Call length',
     min: 0, max: 120, step: 0.5, lower: disabled ? 10 : 0, upper: disabled ? 60 : 120,
     disabled, format: (value, endpoint) => endpoint === 'upper' && value === 120 ?
-      'Any length' : `${value} sec` });
+      'Any length' : `${value}s` });
   host.append(control.field);
 });
 

@@ -348,9 +348,9 @@ test('call length steps from sub-second to whole seconds with a thirty-second-pl
   const lower = page.getByRole('slider', { name: 'Call length: Minimum', exact: true });
   const upper = page.getByRole('slider', { name: 'Call length: Maximum', exact: true });
   await expect(lower).toHaveValue('0');
-  await expect(lower).toHaveAttribute('aria-valuetext', '<1 second');
+  await expect(lower).toHaveAttribute('aria-valuetext', '<1s');
   await expect(upper).toHaveValue('30');
-  await expect(upper).toHaveAttribute('aria-valuetext', '30 seconds+');
+  await expect(upper).toHaveAttribute('aria-valuetext', '30s+');
   await expect(page.locator('.ui-dual-range-field')).toHaveScreenshot('recordings-duration-defaults-desktop.png', componentScreenshot);
   await page.getByRole('button', { name: 'Search', exact: true }).click();
   expect(state.requestedFilters.at(-1)).not.toHaveProperty('min_duration_ms');
@@ -359,7 +359,7 @@ test('call length steps from sub-second to whole seconds with a thirty-second-pl
   await lower.focus();
   await lower.press('ArrowRight');
   await expect(lower).toHaveValue('1');
-  await expect(lower).toHaveAttribute('aria-valuetext', '1 second');
+  await expect(lower).toHaveAttribute('aria-valuetext', '1s');
   await upper.focus();
   await upper.press('Home');
   await expect(upper).toHaveValue('1');
@@ -382,7 +382,7 @@ test('call length steps from sub-second to whole seconds with a thirty-second-pl
   await page.getByRole('button', { name: /^Filters/ }).click();
   await expect(page.getByRole('slider', { name: 'Call length: Minimum', exact: true })).toHaveValue('0');
   await expect(page.getByRole('slider', { name: 'Call length: Maximum', exact: true }))
-    .toHaveAttribute('aria-valuetext', '30 seconds+');
+    .toHaveAttribute('aria-valuetext', '30s+');
 });
 
 test('numeric talkgroups can be selected in Find a call and the dedicated filter', async ({ page }) => {
@@ -495,18 +495,18 @@ test.describe('touch call length', () => {
     await expect(upper).toHaveValue('20');
     await lower.press('Home');
     await upper.press('Home');
-    await expect(upper).toHaveAttribute('aria-valuetext', '<1 second');
+    await expect(upper).toHaveAttribute('aria-valuetext', '<1s');
     await dialog.getByRole('button', { name: 'Apply filters' }).click();
     expect(state.requestedFilters.at(-1)).toHaveProperty('max_duration_ms', '999');
     expect(state.requestedFilters.at(-1)).not.toHaveProperty('min_duration_ms');
     await page.getByRole('button', { name: /^Filters/ }).click();
     await expect(upper).toHaveValue('0');
-    await expect(upper).toHaveAttribute('aria-valuetext', '<1 second');
+    await expect(upper).toHaveAttribute('aria-valuetext', '<1s');
     await dialog.getByRole('button', { name: 'Clear filters' }).click();
     await page.getByRole('button', { name: /^Filters/ }).click();
     await expect(dialog.getByRole('slider', { name: 'Call length: Minimum', exact: true })).toHaveValue('0');
     await expect(dialog.getByRole('slider', { name: 'Call length: Maximum', exact: true }))
-      .toHaveAttribute('aria-valuetext', '30 seconds+');
+      .toHaveAttribute('aria-valuetext', '30s+');
   });
 });
 

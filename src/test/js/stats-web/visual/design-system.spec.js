@@ -30,7 +30,7 @@ for (const [, theme, viewport] of galleryCases) {
     await minimum.focus();
     await minimum.press('ArrowRight');
     await expect(minimum).toHaveValue('0.5');
-    await expect(minimum).toHaveAttribute('aria-valuetext', '0.5 sec');
+    await expect(minimum).toHaveAttribute('aria-valuetext', '0.5s');
     // A focused handle must stay transparent above the other handle and rail,
     // including when the range sits inside the shared administration form.
     for (const handle of [minimum, maximum]) {
@@ -1549,6 +1549,61 @@ test('live-notice-dark-desktop', async ({ page }) => {
   await page.goto('/design-system.html?theme=dark&view=live-notice');
   await expect(page.locator('body')).toHaveScreenshot('live-notice-dark-desktop.png');
 });
+
+for (const theme of ['light', 'dark']) {
+  for (const width of [1280, 390]) {
+    test(`Live details icon tabs preserve shared states and hints ${theme} ${width}`, async ({ page }) => {
+      await page.setViewportSize({ width, height: width === 1280 ? 800 : 844 });
+      await page.goto(`/design-system.html?theme=${theme}&view=live-notice`);
+      const tabs = page.getByRole('tablist', { name: 'Live details', exact: true });
+      for (const [label, glyph] of [['Events', 'scan-lists'], ['Messages', 'messages'], ['Channel', 'channel']]) {
+        const tab = tabs.getByRole('tab', { name: label, exact: true });
+        await expect(tab).toBeVisible();
+        await expect(tab).toHaveClass(/ui-segmented-option-icon/);
+        await expect(tab).toHaveAttribute('title', label);
+        await expect(tab).toHaveText('');
+        await expect(tab.locator('svg')).toHaveCSS('width', '18px');
+        await expect(tab.locator('use')).toHaveAttribute('href', `#visual-icon-${glyph}`);
+        const box = await tab.boundingBox();
+        expect(Math.round(box.width)).toBe(36);
+        expect(Math.round(box.height)).toBe(36);
+      }
+      const events = tabs.getByRole('tab', { name: 'Events', exact: true });
+      const messages = tabs.getByRole('tab', { name: 'Messages', exact: true });
+      const hint = page.locator('.ui-icon-hint');
+      await expect(events).toHaveAttribute('aria-selected', 'true');
+      const selectedAppearance = await events.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return { background: style.backgroundColor, color: style.color, shadow: style.boxShadow };
+      });
+      await messages.hover();
+      await expect(hint).toBeVisible();
+      await expect(hint).toHaveText('Messages');
+      await expect(messages).toHaveAttribute('aria-selected', 'false');
+      await page.mouse.move(0, 0);
+      await expect(hint).toBeHidden();
+      await events.click();
+      await expect(hint).toBeHidden();
+      await page.mouse.move(0, 0);
+      await page.keyboard.press('Tab');
+      await page.keyboard.press('Shift+Tab');
+      await expect(events).toBeFocused();
+      await expect(events).toHaveCSS('outline-style', 'solid');
+      await expect(hint).toBeVisible();
+      await expect(hint).toHaveText('Events');
+      await page.keyboard.press('Escape');
+      await expect(hint).toBeHidden();
+      await messages.click();
+      await expect(messages).toHaveAttribute('aria-selected', 'true');
+      await expect(messages).toHaveAttribute('tabindex', '0');
+      await expect(events).toHaveAttribute('aria-selected', 'false');
+      await expect(events).toHaveAttribute('tabindex', '-1');
+      await expect(messages).toHaveCSS('background-color', selectedAppearance.background);
+      await expect(messages).toHaveCSS('color', selectedAppearance.color);
+      await expect(messages).toHaveCSS('box-shadow', selectedAppearance.shadow);
+    });
+  }
+}
 
 test('Live selected-view actions use compact icons with shared hints', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });

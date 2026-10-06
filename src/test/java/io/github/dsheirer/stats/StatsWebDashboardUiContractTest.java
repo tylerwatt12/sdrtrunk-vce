@@ -42,14 +42,14 @@ class StatsWebDashboardUiContractTest
         assertFalse(dashboard.contains("'Monitored Coverage'"));
         assertFalse(dashboard.contains("'Recent Channels'"));
         assertFalse(dashboard.contains("dashboard.recent_channels"));
-        assertTrue(dashboard.contains("'Logical Call Totals · Last 24 Hours'"));
-        assertTrue(dashboard.contains("'Call Activity · Last 24 Hours'"));
-        assertTrue(dashboard.contains("'Logical Calls by Conventional Channel · Last 24 Hours'"));
+        assertTrue(dashboard.contains("'Logical Call Totals · Last 24h'"));
+        assertTrue(dashboard.contains("'Call Activity · Last 24h'"));
+        assertTrue(dashboard.contains("'Logical Calls by Conventional Channel · Last 24h'"));
         assertTrue(dashboard.contains("dashboard.source_activity_24h"));
         assertTrue(dashboard.contains("dashboard.top_destinations"));
         assertTrue(dashboard.contains("dashboard.top_sources"));
-        assertTrue(dashboard.contains("'Top Destinations · Last 24 Hours'"));
-        assertTrue(dashboard.contains("'Top Sources · Last 24 Hours'"));
+        assertTrue(dashboard.contains("'Top Destinations · Last 24h'"));
+        assertTrue(dashboard.contains("'Top Sources · Last 24h'"));
         assertFalse(dashboard.contains("'Busiest Call Sources"));
         assertFalse(dashboard.contains("recentTrunkedSites"));
         assertFalse(dashboard.contains("topTalkgroups"));
@@ -72,7 +72,7 @@ class StatsWebDashboardUiContractTest
         String note = function(source, "function dashboardActivityRadioNote(page, actionLabel)");
         String failure = function(source, "function asyncSectionFailure(error, fallbackMessage, retry)");
 
-        assertTrue(source.contains("['6h', '6 hours'], ['24h', '24 hours'], ['7d', '7 days']"));
+        assertTrue(source.contains("['6h', '6h'], ['24h', '24h'], ['7d', '7d']"));
         assertTrue(source.contains("series.field !== 'continue_observation_count'"));
         assertTrue(source.contains("{ action: 'GRANT', label: 'Grant', color: 'var(--chart-grant)' }"));
         assertTrue(actionRows.contains("row.action !== 'CONTINUE'"));
@@ -237,7 +237,7 @@ class StatsWebDashboardUiContractTest
         String source = Files.readString(APP_JAVASCRIPT);
         String coverage = function(source, "function dashboardCoverage(activity)");
         assertTrue(coverage.contains("'Metric availability'"));
-        assertTrue(coverage.contains("'Full 24 hours'"));
+        assertTrue(coverage.contains("'Full 24h'"));
         assertTrue(coverage.contains("'Partial history'"));
         assertTrue(coverage.contains("'Not collected'"));
         assertFalse(coverage.contains("Collection coverage"));

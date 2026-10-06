@@ -102,6 +102,7 @@
 }
 
 .ui-button svg,
+.ui-segmented-option-icon svg,
 .ui-pill svg,
 .ui-icon-tile svg,
 .ui-summary-card svg,
@@ -755,6 +756,19 @@
   font-weight: var(--font-weight-control);
   line-height: var(--line-height-control);
   cursor: pointer;
+}
+
+.ui-segmented-option-icon {
+  width: var(--control-height-compact);
+  min-width: var(--control-height-compact);
+  height: var(--control-height-compact);
+  padding: 0;
+  flex: 0 0 auto;
+}
+
+.ui-segmented-option-icon svg {
+  width: var(--icon-glyph-size);
+  height: var(--icon-glyph-size);
 }
 
 .ui-segmented-option.active,

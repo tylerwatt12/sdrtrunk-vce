@@ -28,11 +28,13 @@ const snapshot = {
     ] }]
 };
 
-async function openLive(page, theme = 'light') {
+async function openLive(page, theme = 'light', presentation = {}) {
   let revision = 1;
   let preferences = structuredClone(defaultPreferences);
   preferences.appearance.theme = theme;
   preferences.presentation.source_name_display = 'both';
+  Object.assign(preferences.presentation, presentation);
+  let nextSaveFailure = null;
   const writes = [];
   const reads = [];
   const receiverWrites = [];
@@ -76,10 +78,20 @@ async function openLive(page, theme = 'light') {
     if (pathname === '/api/v1/auth/session') {
       await route.fulfill({ json: { data: { configured: true, authenticated: true,
         username: 'operator', tier: 'admin', primary: true,
-        capabilities: { live: true, radio: true, 'call-audio': true } } } });
+        capabilities: { live: true, radio: true, 'call-audio': true, 'user-settings': true } } } });
     } else if (pathname === '/api/v1/me/preferences') {
       if (request.method() === 'PUT') {
         expect(request.headers()['if-match']).toBe(`"${revision}"`);
+        if (nextSaveFailure) {
+          const failure = nextSaveFailure;
+          nextSaveFailure = null;
+          if (failure.presentation) {
+            Object.assign(preferences.presentation, failure.presentation);
+            revision += 1;
+          }
+          await route.fulfill({ status: failure.status, json: { error: { message: 'Unable to save preferences.' } } });
+          return;
+        }
         preferences = request.postDataJSON();
         writes.push(structuredClone(preferences));
         revision += 1;
@@ -93,7 +105,8 @@ async function openLive(page, theme = 'light') {
     }
   });
   await page.goto('/app.html?view=live&channel=metro-north');
-  return { writes, reads, receiverWrites, preferences: () => preferences };
+  return { writes, reads, receiverWrites, preferences: () => preferences,
+    failNextSave: (status, presentation = null) => { nextSaveFailure = { status, presentation }; } };
 }
 
 async function presentationDialog(page) {
@@ -115,6 +128,109 @@ async function expectCallOrder(page, keys) {
     .evaluateAll((rows) => rows.map((row) => row.dataset.id))).toEqual(keys);
   await expect(table.locator('thead th button')).toHaveCount(0);
 }
+
+const idleRowOptionLabels = ['Retain the last call on idle rows', 'Clear voice quality when a row becomes idle'];
+
+async function expectIdleRowOptions(dialog, disabled, checked = false) {
+  for (const label of idleRowOptionLabels) {
+    const input = dialog.getByRole('checkbox', { name: label, exact: true });
+    if (disabled) await expect(input).toBeDisabled();
+    else await expect(input).toBeEnabled();
+    if (checked) await expect(input).toBeChecked();
+    else await expect(input).not.toBeChecked();
+    await expect(input.locator('..').locator('.ui-toggle-state')).toHaveText(checked ? 'On' : 'Off');
+    if (disabled) await expect(input.locator('..')).toHaveCSS('opacity', '0.48');
+  }
+}
+
+test('Live idle-row options require visible idle rows on load, toggle, save and personal reset', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const app = await openLive(page, 'light', {
+    show_only_active_trunked_channels: true,
+    retain_last_call_on_idle_rows: true,
+    clear_voice_quality_when_idle: true
+  });
+  let dialog = await presentationDialog(page);
+  const activeOnly = () => dialog.getByRole('checkbox', { name: 'Show only active trunked channels', exact: true });
+  await expectIdleRowOptions(dialog, true);
+  await dialog.screenshot({ path: test.info().outputPath('live-idle-options-light-desktop.png') });
+  expect(app.writes).toEqual([]);
+  await expect(dialog.getByText('Turn off “Show only active trunked channels” to use idle-row options.',
+    { exact: true })).toBeVisible();
+  await activeOnly().press('Space');
+  await expectIdleRowOptions(dialog, false);
+  for (const label of idleRowOptionLabels) await dialog.getByRole('checkbox', { name: label, exact: true }).press('Space');
+  await expectIdleRowOptions(dialog, false, true);
+  await activeOnly().press('Space');
+  await expectIdleRowOptions(dialog, true);
+  await activeOnly().press('Space');
+  await expectIdleRowOptions(dialog, false);
+  for (const label of idleRowOptionLabels) await dialog.getByRole('checkbox', { name: label, exact: true }).press('Space');
+  await savePresentation(dialog);
+  expect(app.preferences().presentation).toMatchObject({
+    show_only_active_trunked_channels: false, retain_last_call_on_idle_rows: true,
+    clear_voice_quality_when_idle: true
+  });
+  dialog = await presentationDialog(page);
+  await expectIdleRowOptions(dialog, false, true);
+  await activeOnly().press('Space');
+  await expectIdleRowOptions(dialog, true);
+  // Disabled inputs can still hold stale browser state; submitted preferences must enforce the dependency.
+  for (const label of idleRowOptionLabels) {
+    await dialog.getByRole('checkbox', { name: label, exact: true }).evaluate((input) => { input.checked = true; });
+  }
+  await savePresentation(dialog);
+  expect(app.preferences().presentation).toMatchObject({
+    show_only_active_trunked_channels: true, retain_last_call_on_idle_rows: false,
+    clear_voice_quality_when_idle: false
+  });
+
+  await page.goto('/app.html?view=settings');
+  await page.getByRole('button', { name: 'Reset All Personal Preferences', exact: true }).press('Enter');
+  const resetDialog = page.getByRole('dialog', { name: 'Reset personal preferences', exact: true });
+  await resetDialog.getByRole('button', { name: 'Reset All Personal Preferences', exact: true }).click();
+  await expect(resetDialog).toBeHidden();
+  await page.goto('/app.html?view=live&channel=metro-north');
+  dialog = await presentationDialog(page);
+  await expect(activeOnly()).toBeChecked();
+  await expectIdleRowOptions(dialog, true);
+  expect(app.receiverWrites).toEqual([]);
+});
+
+test('Live idle-row options stay disabled after save failures and follow reloaded preferences', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const app = await openLive(page, 'dark');
+  const dialog = await presentationDialog(page);
+  const save = dialog.getByRole('button', { name: 'Save Live Presentation', exact: true });
+  const message = dialog.locator('.admin-form-message');
+  await expectIdleRowOptions(dialog, true);
+  await dialog.screenshot({ path: test.info().outputPath('live-idle-options-dark-phone.png') });
+  app.failNextSave(500);
+  await save.click();
+  await expect(message).toHaveText('Unable to save user preferences.');
+  await expect(save).toBeEnabled();
+  await expectIdleRowOptions(dialog, true);
+  await expect(dialog.getByRole('checkbox', { name: 'Show only active trunked channels', exact: true })).toBeEnabled();
+
+  app.failNextSave(409, {
+    show_only_active_trunked_channels: false, retain_last_call_on_idle_rows: true,
+    clear_voice_quality_when_idle: true
+  });
+  await save.click();
+  await expect(message).toHaveText('These settings changed in another session. The current saved values were loaded.');
+  await expect(save).toBeEnabled();
+  await expectIdleRowOptions(dialog, false, true);
+
+  app.failNextSave(409, {
+    show_only_active_trunked_channels: true, retain_last_call_on_idle_rows: true,
+    clear_voice_quality_when_idle: true
+  });
+  await save.click();
+  await expect(save).toBeEnabled();
+  await expectIdleRowOptions(dialog, true);
+  expect(app.writes).toEqual([]);
+  expect(app.receiverWrites).toEqual([]);
+});
 
 test('Live presentation switches sort defaults and saves explicit sorting through rerenders', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });

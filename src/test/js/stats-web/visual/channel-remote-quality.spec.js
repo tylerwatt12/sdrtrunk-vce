@@ -88,14 +88,14 @@ test('remote channel Quality keeps decode history without RF signal presentation
   await expect(quality.locator('.signal-history-overview .ui-metric')).toHaveCount(2);
   expect(requests.qualityRequests()).toBe(1);
   expect(requests.requestedRanges()).toEqual(['1h']);
-  await expect(quality.getByRole('button', { name: '1 hour' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(quality.getByRole('button', { name: '1h' })).toHaveAttribute('aria-pressed', 'true');
   await expect(quality.getByRole('link', { name: /Export/ })).toHaveAttribute('href', /range=1h/);
   await expect(quality).toHaveScreenshot('remote-channel-quality-light.png');
 
   await quality.locator('.decode-chart .chart-hover-surface').hover();
   await expect(quality.getByRole('tooltip')).toContainText('Decode health:');
   await expect(quality.getByRole('tooltip')).not.toContainText('signal');
-  await quality.getByRole('button', { name: '6 hours' }).click();
+  await quality.getByRole('button', { name: '6h' }).click();
   await expect(quality.getByRole('link', { name: /Export/ })).toHaveAttribute('href', /range=6h/);
   await expect.poll(requests.qualityRequests).toBe(2);
   expect(requests.requestedRanges()).toEqual(['1h', '6h']);

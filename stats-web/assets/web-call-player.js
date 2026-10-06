@@ -1238,7 +1238,7 @@ export class WebCallPlayer {
     if (call.decoder) details.push(String(call.decoder));
     if (call.encrypted) details.push('Encrypted');
     const duration = Number(call.duration_ms);
-    if (Number.isFinite(duration) && duration > 0) details.push(`${(duration / 1000).toFixed(1)} sec`);
+    if (Number.isFinite(duration) && duration > 0) details.push(`${(duration / 1000).toFixed(1)}s`);
     const names = (call._matchedScanListIds || []).map((id) => this.scanListById.get(String(id))?.name)
       .filter(Boolean);
     if (names.length) details.push(names.join(', '));

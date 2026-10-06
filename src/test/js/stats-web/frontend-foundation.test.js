@@ -659,8 +659,10 @@ async function main() {
   assert.match(livePresentationSource, /const submitted = \{/);
   assert.match(livePresentationSource, /preferences\.presentation = \{ \.\.\.preferences\.presentation, \.\.\.submitted \};/);
   assert.match(livePresentationSource, /show_only_active_trunked_channels: activeOnly\.input\.checked/);
-  assert.match(livePresentationSource, /retain_last_call_on_idle_rows: retainLastCall\.input\.checked/);
-  assert.match(livePresentationSource, /clear_voice_quality_when_idle: clearIdleQuality\.input\.checked/);
+  assert.match(livePresentationSource,
+    /retain_last_call_on_idle_rows: !activeOnly\.input\.checked && retainLastCall\.input\.checked/);
+  assert.match(livePresentationSource,
+    /clear_voice_quality_when_idle: !activeOnly\.input\.checked && clearIdleQuality\.input\.checked/);
   assert.match(livePresentationSource,
     /Show encryption algorithm and key ID[\s\S]*reported in received signaling\.[\s\S]*A key ID is not encryption key material\./,
     'Live presentation copy must distinguish received key IDs from encryption key material');

@@ -75,8 +75,8 @@ function createP25Visualizer(dependencies = {}) {
   const scopeControls = node('div', 'network-visualizer-choice-group');
   scopeControls.setAttribute('role', 'group');
   scopeControls.setAttribute('aria-label', 'History scope');
-  const oneHour = textButton(node, '1 hour');
-  const day = textButton(node, '24 hours');
+  const oneHour = textButton(node, '1h');
+  const day = textButton(node, '24h');
   oneHour.setAttribute('aria-pressed', 'true');
   day.setAttribute('aria-pressed', 'false');
   scopeControls.append(oneHour, day);
@@ -434,7 +434,7 @@ function createP25Visualizer(dependencies = {}) {
     renderer?.setData({ nodes: [], links: [] }, { animate: false });
     back.hidden = true;
     scopeTitle.textContent = 'P25 radio systems';
-    setEmpty(`Loading ${historyHours === 1 ? 'one hour' : '24 hours'} of saved P25 activity…`,
+    setEmpty(`Loading ${historyHours}h of saved P25 activity…`,
       routineP25ActivityEnabled(eventSettings) ? 'Including saved calls and grants.' :
         'Routine calls and grants are off in Visualizer settings.');
     setStatus('Loading saved activity', 'stale');
@@ -464,7 +464,7 @@ function createP25Visualizer(dependencies = {}) {
         if (watermarkId === null) watermarkId = Number(page.watermark_id) || 0;
         const capacity = Math.max(0, MAX_SEED_ROWS - processed);
         if (page.rows.length > capacity || page.has_more && processed + page.rows.length >= MAX_SEED_ROWS) {
-          throw new Error('This history scope contains too much noteworthy activity to load safely. Choose 1 hour.');
+          throw new Error('This history scope contains too much noteworthy activity to load safely. Choose 1h.');
         }
         const rows = page.rows.slice(0, capacity);
         seedRows.push(...rows);

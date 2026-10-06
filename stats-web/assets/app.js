@@ -10,7 +10,7 @@ import { href as entityRefHref } from './core/entity-ref.js?v=1';
 import * as systemLabels from './core/system-labels.js?v=1';
 import { formatP25RadioIdentifier, p25ServingSystemKey } from './core/radio-labels.js?v=2';
 import * as pageLifecycle from './core/page-lifecycle.js';
-import { installIconHints } from './core/icon-hints.js?v=3';
+import { installIconHints } from './core/icon-hints.js?v=4';
 import { createFormWorkflow } from './core/form-workflows.js?v=1';
 import { applyThemeHue } from './core/theme.js?v=1';
 import * as browsingWorkflows from './core/browsing-workflows.js?v=1';
@@ -29,15 +29,15 @@ import {
 import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=22';
 import { createStreamingWorkspace } from './features/streaming.js?v=8';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=9';
-import { createRemoteLinksWorkspace } from './features/remote-links.js?v=12';
-import { createRecordingsFeature } from './features/recordings.js?v=21';
+import { createRemoteLinksWorkspace } from './features/remote-links.js?v=13';
+import { createRecordingsFeature } from './features/recordings.js?v=22';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft } from './features/spectrum-search.js?v=21';
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult } from './features/discovery-radioreference.js?v=4';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
-import { createAudioDock } from './core/audio-dock.js?v=11';
+import { createAudioDock } from './core/audio-dock.js?v=12';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=1';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
-import { WebCallPlayer } from './web-call-player.js?v=11';
+import { WebCallPlayer } from './web-call-player.js?v=12';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
@@ -91,11 +91,11 @@ const ACTIVITY_ROUTE_KEYS = Object.freeze([
 ]);
 const ACTIVITY_LOG_RANGES = Object.freeze([
   { value: 'all', label: 'All retained activity', milliseconds: 0 },
-  { value: '1h', label: 'Last hour', milliseconds: 60 * 60 * 1000 },
-  { value: '6h', label: 'Last 6 hours', milliseconds: 6 * 60 * 60 * 1000 },
-  { value: '24h', label: 'Last 24 hours', milliseconds: 24 * 60 * 60 * 1000 },
-  { value: '7d', label: 'Last 7 days', milliseconds: 7 * 24 * 60 * 60 * 1000 },
-  { value: '30d', label: 'Last 30 days', milliseconds: 30 * 24 * 60 * 60 * 1000 },
+  { value: '1h', label: 'Last 1h', milliseconds: 60 * 60 * 1000 },
+  { value: '6h', label: 'Last 6h', milliseconds: 6 * 60 * 60 * 1000 },
+  { value: '24h', label: 'Last 24h', milliseconds: 24 * 60 * 60 * 1000 },
+  { value: '7d', label: 'Last 7d', milliseconds: 7 * 24 * 60 * 60 * 1000 },
+  { value: '30d', label: 'Last 30d', milliseconds: 30 * 24 * 60 * 60 * 1000 },
   { value: 'custom', label: 'Custom dates', milliseconds: 0 }
 ]);
 const ACTIVITY_ACTION_VALUES = Object.freeze([
@@ -162,7 +162,7 @@ const ACCESS_CAPABILITIES = Object.freeze({
   ADMIN_ACCESS: 'admin-access'
 });
 const SIGNAL_RANGES = Object.freeze([
-  ['1h', '1 hour'], ['6h', '6 hours'], ['24h', '24 hours'], ['7d', '7 days'], ['30d', '30 days']
+  ['1h', '1h'], ['6h', '6h'], ['24h', '24h'], ['7d', '7d'], ['30d', '30d']
 ]);
 const ACTIVITY_RANGES = Object.freeze([
   ['6h', '6h'], ['24h', '24h'], ['7d', '7d'], ['30d', '30d']
@@ -234,7 +234,7 @@ const DASHBOARD_ACTIVITY_SERIES = Object.freeze([
     }))
 ]);
 const DASHBOARD_ACTIVITY_RANGES = Object.freeze([
-  ['6h', '6 hours'], ['24h', '24 hours'], ['7d', '7 days']
+  ['6h', '6h'], ['24h', '24h'], ['7d', '7d']
 ]);
 const CALL_METRIC_GUIDE = Object.freeze([
   ['Logical Calls', 'Calls emitted after accepted matching copies are combined. Copies without enough matching evidence remain separate.'],
@@ -7993,7 +7993,7 @@ function dashboardCoverage(activity) {
       const row = reported.find((candidate) => dashboardChannelKind(candidate) === channelKind);
       if (!row) return;
       const status = String(row.status || 'UNKNOWN').toUpperCase();
-      const statusLabel = status === 'COLLECTED' ? 'Full 24 hours' :
+      const statusLabel = status === 'COLLECTED' ? 'Full 24h' :
         status === 'PARTIAL' ? 'Partial history' :
           status === 'NOT_COLLECTED' ? 'Not collected' : 'Unknown';
       const line = node('span', 'dashboard-coverage-entry');
@@ -8240,10 +8240,10 @@ function percentNumber(value) {
 function elapsedLabel(timestamp, now = Date.now()) {
   const elapsed = Math.max(0, now - Number(timestamp || 0));
   if (!timestamp) return 'No samples';
-  if (elapsed < 60_000) return `${Math.max(1, Math.round(elapsed / 1000))} sec ago`;
-  if (elapsed < 3_600_000) return `${Math.round(elapsed / 60_000)} min ago`;
-  if (elapsed < 86_400_000) return `${Math.round(elapsed / 3_600_000)} hr ago`;
-  return `${Math.round(elapsed / 86_400_000)} days ago`;
+  if (elapsed < 60_000) return `${Math.max(1, Math.round(elapsed / 1000))}s ago`;
+  if (elapsed < 3_600_000) return `${Math.round(elapsed / 60_000)}m ago`;
+  if (elapsed < 86_400_000) return `${Math.round(elapsed / 3_600_000)}h ago`;
+  return `${Math.round(elapsed / 86_400_000)}d ago`;
 }
 
 function signalChannelState(channel, now = Date.now()) {
@@ -8666,10 +8666,10 @@ async function channelSignalHistorySection(channel) {
       }
       const charts = node('div', 'quality-chart-stack');
       if (!decodeOnly) {
-        charts.append(qualityChartPanel('Signal Strength', '30-second average and observed range · dBFS',
+        charts.append(qualityChartPanel('Signal Strength', '30s average and observed range · dBFS',
           qualityHistoryChart(qualitySite, response, 'signal', sharedSignalDomain([qualitySite]))));
       }
-      charts.append(qualityChartPanel('Decode Quality', '30-second rolling successful-frame rate · percent',
+      charts.append(qualityChartPanel('Decode Quality', '30s rolling successful-frame rate · percent',
         qualityHistoryChart(qualitySite, response, 'decode', { minimum: 0, maximum: 100 }, decodeOnly)));
       if (decodeOnly) {
         host.append(node('p', 'ui-section-note',
@@ -10381,11 +10381,11 @@ function scannerRelativeAge(timestamp) {
   if (!Number.isFinite(value) || value <= 0) return 'Time unavailable';
   const seconds = Math.max(0, Math.floor((Date.now() - value) / 1000));
   if (seconds < 5) return 'Just now';
-  if (seconds < 60) return `${seconds} seconds ago`;
+  if (seconds < 60) return `${seconds}s ago`;
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+  if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
-  return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  return `${hours}h ago`;
 }
 
 function scannerChannelMetadata(configurationId) {
@@ -10481,7 +10481,7 @@ function scannerFrequency(call) {
 
 function scannerDuration(milliseconds) {
   const value = Number(milliseconds);
-  return Number.isFinite(value) && value > 0 ? `${(value / 1000).toFixed(1)} sec` : '';
+  return Number.isFinite(value) && value > 0 ? `${(value / 1000).toFixed(1)}s` : '';
 }
 
 function scannerDetailLevel() {
@@ -11793,7 +11793,7 @@ async function renderDashboard() {
     return;
   }
 
-  content.append(dashboardSummarySection('Logical Call Totals · Last 24 Hours', [
+  content.append(dashboardSummarySection('Logical Call Totals · Last 24h', [
     [dashboardMetricLabel(callActivity, 'logical_call_count', 'Logical Calls'),
       callTotals.logical_call_count, dashboardMetricDisplay(callActivity, 'logical_call_count')],
     [dashboardMetricLabel(callActivity, 'recorded_logical_call_count', 'Recorded'),
@@ -11803,15 +11803,15 @@ async function renderDashboard() {
       callTotals.stream_submitted_logical_call_count,
       dashboardMetricDisplay(callActivity, 'stream_submitted_logical_call_count')]
   ]));
-  content.append(section('Call Activity · Last 24 Hours', dashboardCallActivityChart(callActivity)));
+  content.append(section('Call Activity · Last 24h', dashboardCallActivityChart(callActivity)));
   const sourceRows = Array.isArray(dashboard.source_activity_24h) ? dashboard.source_activity_24h :
     dashboard.source_activity_24h?.rows || [];
-  content.append(tableSection('Logical Calls by Conventional Channel · Last 24 Hours', sourceRows,
+  content.append(tableSection('Logical Calls by Conventional Channel · Last 24h', sourceRows,
     dashboardCallSourceColumns, 'No call activity recorded', { type: 'dashboard-call-sources' }));
-  const destinations = tableSection('Top Destinations · Last 24 Hours', dashboard.top_destinations || [],
+  const destinations = tableSection('Top Destinations · Last 24h', dashboard.top_destinations || [],
     dashboardIdentityColumns('Destination'), 'No call destinations recorded',
     { type: 'dashboard-destinations' });
-  const sources = tableSection('Top Sources · Last 24 Hours', dashboard.top_sources || [],
+  const sources = tableSection('Top Sources · Last 24h', dashboard.top_sources || [],
     dashboardIdentityColumns('Source'), 'No call sources recorded', { type: 'dashboard-sources' });
   content.append(node('div', 'split dashboard-identity-split'));
   content.lastChild.append(destinations, sources);
@@ -11942,8 +11942,8 @@ function liveChannelStateMatchesSelection(selection, subscriptionId, source) {
 
 function liveEventDuration(value) {
   const milliseconds = Math.max(0, Number(value) || 0);
-  if (milliseconds < 1000) return `${milliseconds} ms`;
-  return `${(milliseconds / 1000).toFixed(milliseconds < 10000 ? 1 : 0)} s`;
+  if (milliseconds < 1000) return `${milliseconds}ms`;
+  return `${(milliseconds / 1000).toFixed(milliseconds < 10000 ? 1 : 0)}s`;
 }
 
 function liveEventCategoryClass(value) {
@@ -12633,7 +12633,7 @@ function liveChannelPane() {
     updateDiagnosticReadouts(signalDiagnostic.readouts, [
       ['Center', centerFrequencyHz ? `${frequency(centerFrequencyHz)} MHz` : '—'],
       ['Peak', Number.isFinite(signalPeak) ? `${signalPeak.toFixed(1)} dB` : '—'],
-      ['Latency', Number.isFinite(signalLatencyMs) ? `${Math.round(signalLatencyMs)} ms` : '—']
+      ['Latency', Number.isFinite(signalLatencyMs) ? `${Math.round(signalLatencyMs)}ms` : '—']
     ]);
     updateDiagnosticReadouts(symbolDiagnostic.readouts, [
       ['Decoder', state?.decoder_profile || state?.protocol || '—']
@@ -13749,7 +13749,7 @@ function openSpectrumDiscoveryWizard(selection) {
     if (identifying) {
       const limit = Math.ceil(Number(probe.timeout_ms || 30000) / 1000);
       const seconds = Math.min(limit, Math.floor(Number(probe.elapsed_ms || 0) / 1000));
-      nodes.elapsed.textContent = `${seconds} seconds elapsed · This can take up to ${limit} seconds.`;
+      nodes.elapsed.textContent = `${seconds}s elapsed · This can take up to ${limit}s.`;
       pollTimer = window.setTimeout(() => void poll(), 750);
     } else if (phase === 'failed' && session.reason) {
       message.replaceChildren(disclosure('Error details', node('p', 'muted', session.reason)));
@@ -15219,7 +15219,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
       ['Rate', Number.isFinite(fps) ? `${fps.toFixed(1)} fps` : '—'],
       ['Dropped', number(droppedFrames)],
       ['Generation', generation >= 0 ? number(generation) : '—'],
-      ['Latency', Number.isFinite(latencyMs) ? `${Math.round(latencyMs)} ms` : '—']
+      ['Latency', Number.isFinite(latencyMs) ? `${Math.round(latencyMs)}ms` : '—']
     ];
     updateDiagnosticReadouts(readouts, [values[2], values[4], values[8],
       ['Best SNR', bestSnr ? `${bestSnr.snr.toFixed(1)} dB` : '—']]);
@@ -17019,9 +17019,13 @@ function liveEventsPanel(onCollapse) {
       sync();
     }
   };
-  ['events', 'messages', 'channel'].forEach((id) => {
-    const button = node('button', 'live-details-tab ui-segmented-option', id[0].toUpperCase() + id.slice(1));
-    button.type = 'button';
+  [
+    { id: 'events', label: 'Events', icon: 'icon-scan-lists' },
+    { id: 'messages', label: 'Messages', icon: 'icon-messages' },
+    { id: 'channel', label: 'Channel', icon: 'icon-channel' }
+  ].forEach(({ id, label, icon }) => {
+    const button = iconButton(icon, label,
+      'live-details-tab ui-segmented-option ui-segmented-option-icon');
     button.id = `live-details-${id}-tab`;
     button.setAttribute('role', 'tab');
     button.setAttribute('aria-controls', `live-details-${id}-panel`);
@@ -18044,7 +18048,7 @@ function saveP25VisualizerEventSettings(value) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=31');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=32');
   const visualizerModule = await p25VisualizerModulePromise;
   if (!renderIsCurrent(renderContext)) return;
   const visualizer = visualizerModule.createP25Visualizer({
@@ -19668,7 +19672,7 @@ function p25ChannelDetailRows(channel) {
     ['Broadcast Clock', dateTime(channel.broadcast_clock_ms)],
     ['Data', yesNoKnown(channel.data_service)], ['Data Access', channel.data_access],
     ['Working Unit ID Lease Time', channel.wuid_lease_minutes == null ? '' :
-      `${number(channel.wuid_lease_minutes)} minutes`],
+      `${number(channel.wuid_lease_minutes)}m`],
     ['Unit registration over control channel', yesNoKnown(channel.registration_service)],
     ['TDMA', yesNoKnown(channel.tdma)], ['u-Slots', channel.micro_slots == null ? '' : number(channel.micro_slots)],
     ['Voice', yesNoKnown(channel.voice_service)]
@@ -19727,7 +19731,7 @@ function nxdnChannelDetailRows(channel) {
     ['Services', (channel.services || []).map(semanticLabel).join(', ')],
     ['Failure Call Timer', Object.hasOwn(channel, 'failure_call_timer_seconds') ?
       (channel.failure_call_timer_seconds == null ? 'Unspecified' :
-        `${number(channel.failure_call_timer_seconds)} seconds`) : '']
+        `${number(channel.failure_call_timer_seconds)}s`) : '']
   );
   return rows;
 }
@@ -23643,7 +23647,7 @@ function channelSquelchTuner(profile, channel, entry, advancedFields) {
         setState(closed ? 'Closed' : 'Open', closed ? 'neutral' : 'success');
         rawNoise.textContent = Number(values[0]).toFixed(4);
         evidence.textContent = `${Math.round(values[3])} of ${Math.round(closed ? values[4] : values[5])}`;
-        timing.textContent = `open ${Math.round(values[4]) * 10} ms · close ${Math.round(values[5]) * 10} ms`;
+        timing.textContent = `open ${Math.round(values[4]) * 10}ms · close ${Math.round(values[5]) * 10}ms`;
       },
       onError: () => setState('Reconnecting', 'warning')
     });
@@ -24285,8 +24289,8 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
     const rangeControl = node('label', 'alias-coverage-field ui-field');
     rangeControl.append(node('span', 'ui-field-label', 'Recent period'));
     const rangeSelect = uiSelect([
-      { value: '1h', label: 'Last hour' }, { value: '24h', label: 'Last day' },
-      { value: '7d', label: 'Last week' }, { value: '30d', label: 'Last 30 days' }
+      { value: '1h', label: 'Last 1h' }, { value: '24h', label: 'Last 1d' },
+      { value: '7d', label: 'Last 7d' }, { value: '30d', label: 'Last 30d' }
     ], selectedRange);
     rangeSelect.addEventListener('change', () => navigateCoverage(currentHref({ range: rangeSelect.value, offset: null })));
     rangeControl.append(uiSelectFrame(rangeSelect));
@@ -27632,15 +27636,24 @@ function openLivePresentationSettings(returnFocusSelector = null) {
   const callSort = preferenceSelect('live-channel-sort', [
     ['lcn', 'LCN'], ['order_appeared', 'Order appeared'], ['frequency', 'Frequency']
   ], liveChannelSortMethod(current));
-  activeOnly.input.addEventListener('change', () => {
-    callSort.value = activeOnly.input.checked ? 'order_appeared' : 'lcn';
-  });
   const retainLastCall = preferenceCheckbox('retain-last-call-on-idle', 'Retain the last call on idle rows',
     current.retain_last_call_on_idle_rows,
     'Keep the last source, target, alias, talker, encryption algorithm, and key ID visible after a row becomes idle.');
   const clearIdleQuality = preferenceCheckbox('clear-idle-voice-quality',
     'Clear voice quality when a row becomes idle', current.clear_voice_quality_when_idle,
     'Hide the completed call\'s voice-quality result after its row becomes idle.');
+  const syncIdleRowOptions = () => {
+    const disabled = activeOnly.input.checked;
+    [retainLastCall.input, clearIdleQuality.input].forEach((input) => {
+      if (disabled) setUiToggle(input, false);
+      input.disabled = disabled;
+    });
+  };
+  activeOnly.input.addEventListener('change', () => {
+    callSort.value = activeOnly.input.checked ? 'order_appeared' : 'lcn';
+    syncIdleRowOptions();
+  });
+  syncIdleRowOptions();
   const qualityMode = preferenceSelect('quality-mode', [['percentage', 'Percentage'], ['detailed', 'Detailed counters']],
     current.decode_quality_display_mode);
   const rowLimit = node('input');
@@ -27658,6 +27671,7 @@ function openLivePresentationSettings(returnFocusSelector = null) {
     callSort.value = liveChannelSortMethod(presentation);
     setUiToggle(retainLastCall.input, presentation.retain_last_call_on_idle_rows);
     setUiToggle(clearIdleQuality.input, presentation.clear_voice_quality_when_idle);
+    syncIdleRowOptions();
     qualityMode.value = presentation.decode_quality_display_mode;
     rowLimit.value = String(presentation.live_detail_row_limit);
   };
@@ -27675,6 +27689,7 @@ function openLivePresentationSettings(returnFocusSelector = null) {
     'Choose how decoded activity is shown on the Live page.',
     activeOnly.control, formField('Sort calls by', callSort,
       'Active-only view defaults to Order appeared; showing idle rows defaults to LCN.'),
+    node('p', 'ui-field-detail', 'Turn off “Show only active trunked channels” to use idle-row options.'),
     retainLastCall.control, clearIdleQuality.control,
     encryption.control, controlQuality.control, voiceQuality.control, fields);
   form.append(node('p', 'live-presentation-intro',
@@ -27696,8 +27711,8 @@ function openLivePresentationSettings(returnFocusSelector = null) {
       live_detail_row_limit: Number(rowLimit.value),
       show_only_active_trunked_channels: activeOnly.input.checked,
       live_channel_sort: callSort.value,
-      retain_last_call_on_idle_rows: retainLastCall.input.checked,
-      clear_voice_quality_when_idle: clearIdleQuality.input.checked
+      retain_last_call_on_idle_rows: !activeOnly.input.checked && retainLastCall.input.checked,
+      clear_voice_quality_when_idle: !activeOnly.input.checked && clearIdleQuality.input.checked
     };
     const controls = [activeOnly.input, retainLastCall.input, clearIdleQuality.input, encryption.input,
       controlQuality.input, voiceQuality.input, callSort, qualityMode, rowLimit, save];
@@ -27732,6 +27747,7 @@ function openLivePresentationSettings(returnFocusSelector = null) {
     } finally {
       modal.setBusy(false);
       controls.forEach((control) => { control.disabled = false; });
+      syncIdleRowOptions();
     }
   });
 }
@@ -29711,7 +29727,7 @@ function callMatchingCount(value) {
 function callMatchingDuration(value) {
   const milliseconds = Number(value);
   if (!Number.isFinite(milliseconds) || milliseconds < 0) return '—';
-  return milliseconds < 1000 ? `${number(milliseconds)} ms` : `${(milliseconds / 1000).toFixed(1)} s`;
+  return milliseconds < 1000 ? `${number(milliseconds)}ms` : `${(milliseconds / 1000).toFixed(1)}s`;
 }
 
 function callMatchingPercent(value, digits = 1) {
@@ -29974,7 +29990,7 @@ function callMatchingComparison(decision, signal) {
       copy.audio_truncated ? 'Audio truncated' : ''].filter(Boolean).join(' · ') || 'None'],
     ['Timing', (copy) => measurement(callMatchingDuration(copy.duration_milliseconds),
       copy.overlap && copy.copy_index !== winner?.copy_index ?
-        `starts ${callMatchingCount(Math.abs(copy.overlap.start_offset_from_selected_milliseconds))} ms ` +
+        `starts ${callMatchingCount(Math.abs(copy.overlap.start_offset_from_selected_milliseconds))}ms ` +
         `${Number(copy.overlap.start_offset_from_selected_milliseconds) < 0 ? 'earlier' : 'later'}` : 'selected copy')]
   ];
   rows.forEach(([label, render]) => {

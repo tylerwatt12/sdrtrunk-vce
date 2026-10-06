@@ -1422,8 +1422,8 @@ export function createRecordingsFeature(deps) {
     const queryField = autocompleteFilter('q', 'Find a call', '',
       'System, site, talkgroup, radio, or channel');
     queryField.classList.add('recordings-query-field');
-    const range = select(node, [['24h', 'Past 24 hours'], ['7d', 'Past 7 days'], ['30d', 'Past 30 days'],
-      ['10y', 'Past 10 years'], ['custom', 'Custom dates']], 'Date & time');
+    const range = select(node, [['24h', 'Past 24h'], ['7d', 'Past 7d'], ['30d', 'Past 30d'],
+      ['10y', 'Past 10y'], ['custom', 'Custom dates']], 'Date & time');
     range.value = search.range || '24h';
     const from = textInput('', 'datetime-local');
     const to = textInput('', 'datetime-local');
@@ -1453,7 +1453,7 @@ export function createRecordingsFeature(deps) {
       min: 0, max: durationCeiling, step: 1,
       lower: minimumSeconds, upper: maximumSeconds,
       format: (seconds, endpoint) => endpoint === 'upper' && seconds === durationCeiling ?
-        '30 seconds+' : seconds === 0 ? '<1 second' : `${seconds} ${seconds === 1 ? 'second' : 'seconds'}` });
+        '30s+' : seconds === 0 ? '<1s' : `${seconds}s` });
     callDuration.field.classList.add('recordings-field');
     const frequencyInput = textInput('MHz', 'number');
     frequencyInput.step = '0.0001';

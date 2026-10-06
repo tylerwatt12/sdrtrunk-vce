@@ -323,10 +323,10 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   transport.setAttribute('role', 'group');
   transport.setAttribute('aria-label', 'Audio controls');
   const previous = command('Previous recording', 'previous', () => void recordings.previous());
-  const rewind = command('Back 10 seconds', 'rewind', () => recordings.skipSeconds(-10));
+  const rewind = command('Back 10s', 'rewind', () => recordings.skipSeconds(-10));
   const replay = command('Replay last call', 'replay', () => void getLivePlayer()?.replayLastCall());
   const play = command('Play audio', 'play', toggle, true);
-  const forward = command('Forward 10 seconds', 'forward', () => recordings.skipSeconds(10));
+  const forward = command('Forward 10s', 'forward', () => recordings.skipSeconds(10));
   const skip = command('Next call', 'skip', next);
   const stop = command('Stop recording', 'stop', () => recordings.stop());
   transport.append(previous, rewind, replay, play, forward, skip, stop);
@@ -424,7 +424,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       ['Target', title(call), call.target_entity_ref], ['Target ID', targetId(call), call.target_entity_ref],
       ['Source', sourceName(call), call.source_entity_ref], ['Source ID', sourceId(call), call.source_entity_ref],
       ['System', systemLabel(call), call.radio_system_entity_ref], ['Channel', call.channel, call.entity_ref],
-      ['Started', date(call)], ['Duration', call.duration_ms !== undefined ? `${Number(call.duration_ms) / 1000} sec` : null],
+      ['Started', date(call)], ['Duration', call.duration_ms !== undefined ? `${Number(call.duration_ms) / 1000}s` : null],
       ['Scan lists', (liveState.scanLists || []).filter((item) => (call._matchedScanListIds || call.scan_list_ids || [])
         .map(String).includes(String(item.id))).map((item) => item.name).join(', ')]
     ], options));
@@ -487,7 +487,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       const copy = node('div', 'audio-dock-copy');
       copy.append(node('span', 'audio-dock-meta', index === 0 && playingCall ? state().stopped ? 'Last played' : state().paused ? 'Paused' : 'Now playing' : 'Up next'),
         node('strong', '', String(title(call))), node('span', 'audio-dock-meta', subtitle(call)),
-        node('span', 'audio-dock-meta', [date(call), call.duration_ms ? `${Number(call.duration_ms) / 1000} sec` : ''].filter(Boolean).join(' · ')));
+        node('span', 'audio-dock-meta', [date(call), call.duration_ms ? `${Number(call.duration_ms) / 1000}s` : ''].filter(Boolean).join(' · ')));
       if (source === 'live') {
         const frequency = Number(call.frequency_hz);
         const names = (liveState.scanLists || []).filter((item) => (call._matchedScanListIds || call.scan_list_ids || [])

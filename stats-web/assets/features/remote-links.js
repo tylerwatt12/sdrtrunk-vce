@@ -167,7 +167,7 @@ export function createRemoteLinksWorkspace(deps) {
         stateKey(feed.state) === 'REMOVED' ? 'No longer advertised by the sender.' :
           'Setting up a local channel.'));
     if (feed.lag_milliseconds != null) detail.append(node('span', 'muted',
-      `${Math.max(0, Number(feed.lag_milliseconds))} ms link delay · ${feed.sequence_gap_count || 0} sequence gaps`));
+      `${Math.max(0, Number(feed.lag_milliseconds))}ms link delay · ${feed.sequence_gap_count || 0} sequence gaps`));
     if (feed.status_message) detail.append(node('span', statusTone(feed.state) === 'danger' ?
       'ui-status-danger' : 'muted', feed.status_message));
     card.append(header, detail);
