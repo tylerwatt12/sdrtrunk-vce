@@ -40,7 +40,7 @@ class SetupStartupBoundaryTest
             assertFalse(wizard.contains(forbidden),forbidden);
     }
 
-    @Test void hardwareSkipOnlyExistsAsAnAcknowledgedScanCancellation() throws Exception
+    @Test void manualHardwareScanSkipRequiresAcknowledgedCancellation() throws Exception
     {
         String wizard = Files.readString(Path.of("src/main/java/io/github/dsheirer/gui/setup/SetupWizard.java"));
         String hardware = wizard.substring(wizard.indexOf("private void hardwarePage()"), wizard.indexOf("private void calibrationPage()"));

@@ -440,8 +440,7 @@ public final class SetupWizard extends JDialog
         SetupReadiness.carryOverRecordingChoice(progress,
             preferences.getRecordPreference().getConfiguredRecordingMode());
         ready(SetupStep.CALIBRATION, CalibrationManager.getInstance(preferences).isCalibrated());
-        //Hardware inventory is deliberately never persisted or inferred from configuration.
-        if(progress.get(SetupStep.HARDWARE) != DEFERRED) progress.set(SetupStep.HARDWARE, PENDING);
+        SetupReadiness.prepareHardwareDiscovery(progress);
     }
 
     private void ready(SetupStep id, boolean valid)

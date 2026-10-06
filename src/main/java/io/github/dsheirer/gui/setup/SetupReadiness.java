@@ -31,6 +31,20 @@ public final class SetupReadiness
         }
     }
 
+    /** Import review does not need another inventory scan; normal launch still discovers connected radios. */
+    static void prepareHardwareDiscovery(SetupProgress progress)
+    {
+        if(progress.isImported())
+        {
+            if(progress.get(SetupStep.HARDWARE) == SetupProgress.State.PENDING)
+                progress.set(SetupStep.HARDWARE, SetupProgress.State.DEFERRED);
+        }
+        else if(progress.get(SetupStep.HARDWARE) != SetupProgress.State.DEFERRED)
+        {
+            progress.set(SetupStep.HARDWARE, SetupProgress.State.PENDING);
+        }
+    }
+
     public static boolean requiresJmbe(String decoderType)
     {
         if(decoderType == null) return false;

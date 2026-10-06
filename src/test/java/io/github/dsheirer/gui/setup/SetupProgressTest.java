@@ -123,4 +123,41 @@ class SetupProgressTest
             assertEquals(state, imported.get(SetupStep.RECORDINGS));
         }
     }
+
+    @Test void copiedProfileSkipsRadioDiscoveryWhenAdvancingAndAfterRestart() throws Exception
+    {
+        SetupProgress imported = new SetupProgress(false, true);
+        for(SetupStep step: SetupStep.values())
+            if(step.ordinal() < SetupStep.HARDWARE.ordinal()) imported.set(step, CARRIED_OVER);
+        SetupReadiness.prepareHardwareDiscovery(imported);
+        assertEquals(DEFERRED, imported.get(SetupStep.HARDWARE));
+        assertEquals(SetupStep.CALIBRATION, imported.next(SetupStep.RECORDINGS));
+        SetupProgress restored = SetupProgress.decode(imported.encode());
+        SetupReadiness.prepareHardwareDiscovery(restored);
+        assertEquals(DEFERRED, restored.get(SetupStep.HARDWARE));
+        assertEquals(SetupStep.CALIBRATION, restored.resumeAt());
+        assertFalse(restored.isComplete(), "Import still requires destination review");
+    }
+
+    @Test void freshSetupStillVisitsRadioDiscoveryUnlessItWasExplicitlySkipped()
+    {
+        SetupProgress fresh = new SetupProgress(false, false);
+        SetupReadiness.prepareHardwareDiscovery(fresh);
+        assertEquals(PENDING, fresh.get(SetupStep.HARDWARE));
+        assertEquals(SetupStep.HARDWARE, fresh.next(SetupStep.RECORDINGS));
+        fresh.set(SetupStep.HARDWARE, DEFERRED);
+        SetupReadiness.prepareHardwareDiscovery(fresh);
+        assertEquals(SetupStep.CALIBRATION, fresh.next(SetupStep.RECORDINGS));
+    }
+
+    @Test void importedRadioDiscoveryRetainsExplicitAttentionAndFinishedStates()
+    {
+        for(SetupProgress.State state: new SetupProgress.State[]{NEEDS_ATTENTION, DEFERRED, COMPLETE, CARRIED_OVER})
+        {
+            SetupProgress imported = new SetupProgress(false, true);
+            imported.set(SetupStep.HARDWARE, state);
+            SetupReadiness.prepareHardwareDiscovery(imported);
+            assertEquals(state, imported.get(SetupStep.HARDWARE));
+        }
+    }
 }
