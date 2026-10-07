@@ -78,11 +78,17 @@ public class CapacityMaxTalkerAliasContinuation extends CapacityPlusVoiceChannel
     {
         if(mTalkerAliasIdentifier == null)
         {
-            String alias = new String(getMessage().get(ALIAS_START, ALIAS_END).getBytes()).trim();
+            String alias = getAliasFragment().trim();
             mTalkerAliasIdentifier = DmrTalkerAliasIdentifier.create(alias);
         }
 
         return mTalkerAliasIdentifier;
+    }
+
+    /** Fixed-width fragment; trim only after the complete alias has been assembled. */
+    public String getAliasFragment()
+    {
+        return new String(getMessage().get(ALIAS_START, ALIAS_END).getBytes());
     }
 
     @Override

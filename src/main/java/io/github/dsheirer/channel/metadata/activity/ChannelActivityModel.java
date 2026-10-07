@@ -34,6 +34,8 @@ import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
@@ -97,8 +99,6 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
     private static final int PROTOCOL_SITE_METADATA = 8;
     private static final int TRUNKED_TRAFFIC = 9;
     private static final int TRUNKED_CURRENT_CONTROL = 10;
-    private static final int TRAFFIC_ENCRYPTION = 11;
-    private static final int TRAFFIC_TALKER_ALIAS = 12;
     private static final int CONFIGURATION_CHANGED = 13;
 
     private final AliasModel mAliasModel;
@@ -922,6 +922,17 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
             identifiers, eventType, 0);
     }
 
+    public void p25TrafficGrant(Channel parentChannel, Channel trafficChannel, IChannelDescriptor descriptor,
+                                IdentifierCollection identifiers, DecodeEventType eventType,
+                                long callStart, long observedAt)
+    {
+        if(isP25TrunkedControlParent(parentChannel))
+        {
+            trunkedTrafficEvent(parentChannel, trafficChannel, descriptor, getTimeslot(descriptor),
+                identifiers, eventType, 0, callStart, observedAt);
+        }
+    }
+
     /**
      * Publishes a DMR or NXDN trunked call event into the shared Systems activity model. DMR requires explicit trunked
      * configuration; NXDN can still be promoted by positively identified metadata or traffic-manager activity.
@@ -939,21 +950,32 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
                                     IdentifierCollection identifiers, DecodeEventType eventType,
                                     long controlFrequency)
     {
-        if(parentChannel == null || channelDescriptor == null ||
-            channelDescriptor.getDownlinkFrequency() <= 0)
-        {
-            return;
-        }
-
-        offer(TRUNKED_TRAFFIC, parentChannel, trafficChannel, channelDescriptor, timeslot, identifiers, eventType,
-            controlFrequency);
+        trunkedTrafficEvent(parentChannel, trafficChannel, channelDescriptor, timeslot, identifiers, eventType,
+            controlFrequency, 0, 0);
     }
 
-    private void processTrunkedTrafficEvent(Channel parentChannel, Channel trafficChannel,
-                                            IChannelDescriptor channelDescriptor, Integer timeslot,
-                                            IdentifierCollection identifiers, DecodeEventType eventType,
-                                            long controlFrequency)
+    /** Captures current call facts in the existing bounded ingress; timestamps reject obsolete call observations. */
+    public void trunkedTrafficEvent(Channel parentChannel, Channel trafficChannel,
+                                    IChannelDescriptor channelDescriptor, Integer timeslot,
+                                    IdentifierCollection identifiers, DecodeEventType eventType,
+                                    long controlFrequency, long callStart, long observedAt)
     {
+        if(!mClosed && parentChannel != null && channelDescriptor != null &&
+            channelDescriptor.getDownlinkFrequency() > 0)
+        {
+            recordOffer(TRUNKED_TRAFFIC, mIngress.offerTraffic(TRUNKED_TRAFFIC, parentChannel, trafficChannel,
+                channelDescriptor, timeslot, identifiers, eventType, controlFrequency, callStart, observedAt));
+        }
+    }
+
+    private void processTrunkedTrafficEvent(ChannelActivityIngressQueue.Entry entry)
+    {
+        Channel parentChannel = (Channel)entry.first();
+        Channel trafficChannel = (Channel)entry.second();
+        IChannelDescriptor channelDescriptor = (IChannelDescriptor)entry.third();
+        Integer timeslot = entry.metadataTimeslot();
+        DecodeEventType eventType = (DecodeEventType)entry.fourth();
+        long controlFrequency = entry.value();
         if(!isTrunkingCapableParent(parentChannel) || ChannelTag.fromService(eventType) == null)
         {
             return;
@@ -969,6 +991,11 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
             return;
         }
 
+        ChannelActivityRow previous = session.traffic(channelDescriptor.getDownlinkFrequency(), normalizedTimeslot);
+        if(previous != null && previous.isOlderTrafficObservation(entry.callStart(), entry.observedAt()))
+        {
+            return;
+        }
         removeConventionalRows(parentChannel);
         expireTrafficRows(session, table, parentChannel);
         if(controlFrequency > 0)
@@ -984,7 +1011,11 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         ChannelActivityRow row = session.traffic(trafficChannel, channelDescriptor, normalizedTimeslot);
         rememberRow(table, row);
         clearTrafficGrantAgeOut(row);
-        boolean newCall = row.getState() == State.IDLE || isTargetChanged(row, identifiers);
+        Identifier<?> source = entry.metadataSource();
+        Identifier<?> target = entry.metadataTarget();
+        boolean newCall = row.getState() == State.IDLE || row.startsNewTrafficCall(entry.callStart()) ||
+            isParticipantChanged(row.getSource(), source, parentChannel) ||
+            isParticipantChanged(row.getTarget(), target, parentChannel);
         boolean wasEncrypted = !newCall && row.getState() == State.ENCRYPTED;
 
         if(newCall)
@@ -994,7 +1025,8 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         }
 
         row.setDecoder(getDecoder(rowChannel));
-        updateCallDetails(row, identifiers, rowChannel);
+        updateCallDetails(row, source, target, entry.metadataTalkerAlias(), entry.metadataEncryption(), rowChannel);
+        row.observeTrafficCall(entry.callStart(), entry.observedAt());
         ChannelTag serviceTag = ChannelTag.fromService(eventType);
 
         if(serviceTag != null)
@@ -1042,104 +1074,6 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         {
             updateCurrentControl(session, table, parentChannel, frequency);
         }
-    }
-
-    public void p25TrafficEncryptionDetails(Channel parentChannel, IChannelDescriptor channelDescriptor,
-                                            IdentifierCollection identifiers, DecodeEventType eventType)
-    {
-        if(parentChannel == null || channelDescriptor == null ||
-            channelDescriptor.getDownlinkFrequency() <= 0)
-        {
-            return;
-        }
-
-        offer(TRAFFIC_ENCRYPTION, parentChannel, channelDescriptor, identifiers, eventType, null, null, 0);
-    }
-
-    private void processTrafficEncryptionDetails(Channel parentChannel, IChannelDescriptor channelDescriptor,
-                                                 IdentifierCollection identifiers, DecodeEventType eventType)
-    {
-        if(!isP25TrunkedControlParent(parentChannel))
-        {
-            return;
-        }
-
-        long frequency = channelDescriptor.getDownlinkFrequency();
-        Integer timeslot = getTimeslot(channelDescriptor);
-        String encryptionDetails = VoiceEncryptionDisplay.format(identifiers);
-
-        if(encryptionDetails == null)
-        {
-            return;
-        }
-
-        SiteActivitySession session = mSiteSessions.get(parentChannel);
-        ChannelActivityTableState table = session != null ? session.getTableState() : null;
-
-        if(table == null)
-        {
-            return;
-        }
-
-        ChannelActivityRow row = session.traffic(frequency, timeslot);
-
-        if(row == null || !isTrafficState(row.getState()))
-        {
-            return;
-        }
-
-        if(encryptionDetails.equals(row.getEncryptionDetails()) && row.getState() == State.ENCRYPTED)
-        {
-            return;
-        }
-
-        row.setEncryptionDetails(encryptionDetails);
-        row.setState(State.ENCRYPTED);
-        table.refresh(row);
-    }
-
-    /**
-     * Applies a talker alias decoded after the initial traffic grant to the active Live row.
-     */
-    public void p25TrafficTalkerAlias(Channel parentChannel, IChannelDescriptor channelDescriptor,
-                                      Identifier<?> talkerAlias)
-    {
-        if(parentChannel == null || channelDescriptor == null ||
-            channelDescriptor.getDownlinkFrequency() <= 0 || talkerAlias == null)
-        {
-            return;
-        }
-
-        offer(TRAFFIC_TALKER_ALIAS, parentChannel, channelDescriptor, talkerAlias, null, null, null, 0);
-    }
-
-    private void processTrafficTalkerAlias(Channel parentChannel, IChannelDescriptor channelDescriptor,
-                                           Identifier<?> talkerAlias)
-    {
-        if(!isP25TrunkedControlParent(parentChannel) || talkerAlias.getForm() != Form.TALKER_ALIAS)
-        {
-            return;
-        }
-
-        long frequency = channelDescriptor.getDownlinkFrequency();
-        Integer timeslot = getTimeslot(channelDescriptor);
-        SiteActivitySession session = mSiteSessions.get(parentChannel);
-        ChannelActivityTableState table = session != null ? session.getTableState() : null;
-
-        if(table == null)
-        {
-            return;
-        }
-
-        ChannelActivityRow row = session.traffic(frequency, timeslot);
-
-        if(row == null || !isTrafficState(row.getState()) || talkerAlias.equals(row.getTalkerAlias()))
-        {
-            return;
-        }
-
-        row.setTalkerAlias(talkerAlias);
-        table.refresh(row);
     }
 
     public void channelConfigurationChanged(Channel channel)
@@ -1303,49 +1237,42 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         return !resolved.isEmpty() ? resolved : list(observedAliases);
     }
 
-    private boolean isTargetChanged(ChannelActivityRow row, IdentifierCollection identifiers)
+    private boolean isParticipantChanged(Identifier<?> current, Identifier<?> observed, Channel channel)
     {
-        if(row != null && identifiers != null)
+        if(current == null || observed == null || current.equals(observed))
         {
-            Identifier<?> target = identifiers.getToIdentifier();
-            return target != null && row.getTarget() != null && !target.equals(row.getTarget());
+            return false;
         }
-
-        return false;
+        ResolvedRadioIdentity first = ResolvedRadioIdentity.from(current);
+        ResolvedRadioIdentity second = ResolvedRadioIdentity.from(observed);
+        SiteIdentity serving = mSiteIdentities.get(channel);
+        String systemKey = serving != null && serving.wacn() != null && serving.system() != null ?
+            RadioSystemKey.p25(serving.wacn(), serving.system()) :
+            channel != null ? RadioSystemKey.p25(channel.getP25SiteIdentity()) : null;
+        return first == null || second == null || !first.matchesWithinScope(second, systemKey);
     }
 
-    private void updateCallDetails(ChannelActivityRow row, IdentifierCollection identifiers, Channel channel)
+    private void updateCallDetails(ChannelActivityRow row, Identifier<?> source, Identifier<?> target,
+                                    Identifier<?> talkerAlias, Identifier<?> encryption, Channel channel)
     {
-        if(identifiers != null)
+        if(source != null)
         {
-            Identifier<?> source = identifiers.getFromIdentifier();
-            Identifier<?> target = identifiers.getToIdentifier();
-            Identifier<?> talkerAlias = identifiers.getIdentifier(IdentifierClass.USER, Form.TALKER_ALIAS, Role.FROM);
-            boolean targetChanged = target != null && row.getTarget() != null && !target.equals(row.getTarget());
-
-            if(target != null)
-            {
-                row.setTarget(target);
-                row.setTargetAliases(getAliases(target, identifiers, channel));
-            }
-
-            if(source != null && (row.getSource() == null || targetChanged))
-            {
-                row.setSource(source);
-                row.setSourceAliases(getAliases(source, identifiers, channel));
-            }
-
-            if(talkerAlias != null)
-            {
-                row.setTalkerAlias(talkerAlias);
-            }
-
-            String encryptionDetails = VoiceEncryptionDisplay.format(identifiers);
-
-            if(encryptionDetails != null)
-            {
-                row.setEncryptionDetails(encryptionDetails);
-            }
+            row.setSource(source);
+            row.setSourceAliases(getAliases(source, null, channel));
+        }
+        if(target != null)
+        {
+            row.setTarget(target);
+            row.setTargetAliases(getAliases(target, null, channel));
+        }
+        if(talkerAlias != null && source != null)
+        {
+            row.setTalkerAlias(talkerAlias);
+        }
+        String encryptionDetails = VoiceEncryptionDisplay.format(encryption);
+        if(encryptionDetails != null)
+        {
+            row.setEncryptionDetails(encryptionDetails);
         }
     }
 
@@ -2320,15 +2247,8 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
             case P25_CURRENT_CONTROL -> processP25CurrentControl((Channel)entry.first(), entry.value());
             case SITE_METADATA -> processSiteMetadata((SiteMetadataEvent)entry.first());
             case PROTOCOL_SITE_METADATA -> processProtocolSiteMetadata((ProtocolSiteMetadataEvent)entry.first());
-            case TRUNKED_TRAFFIC -> processTrunkedTrafficEvent((Channel)entry.first(), (Channel)entry.second(),
-                (IChannelDescriptor)entry.third(), (Integer)entry.fourth(), (IdentifierCollection)entry.fifth(),
-                (DecodeEventType)entry.sixth(), entry.value());
+            case TRUNKED_TRAFFIC -> processTrunkedTrafficEvent(entry);
             case TRUNKED_CURRENT_CONTROL -> processTrunkedCurrentControl((Channel)entry.first(), entry.value());
-            case TRAFFIC_ENCRYPTION -> processTrafficEncryptionDetails((Channel)entry.first(),
-                (IChannelDescriptor)entry.second(), (IdentifierCollection)entry.third(),
-                (DecodeEventType)entry.fourth());
-            case TRAFFIC_TALKER_ALIAS -> processTrafficTalkerAlias((Channel)entry.first(),
-                (IChannelDescriptor)entry.second(), (Identifier<?>)entry.third());
             case CONFIGURATION_CHANGED -> processChannelConfigurationChanged((Channel)entry.first());
             default -> mLog.warn("Ignoring unknown channel activity operation [{}]", entry.operation());
         }

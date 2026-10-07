@@ -23,7 +23,10 @@ import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
+import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -97,6 +100,38 @@ public abstract class ChannelEventTracker<T extends DecodeEvent>
             mic.update(identifier);
             getEvent().setIdentifierCollection(mic);
         }
+    }
+
+    /**
+     * Merges newly known facts for this call without losing established participants or encrypted status. Source
+     * aliases belong to the source radio; an alias from an earlier source must not survive source enrichment.
+     */
+    public void mergeIdentifiers(IdentifierCollection latest)
+    {
+        MutableIdentifierCollection merged = new MutableIdentifierCollection(
+            getEvent().getIdentifierCollection().getIdentifiers());
+        Identifier source = latest.getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM);
+
+        if(source != null && !source.equals(merged.getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM)))
+        {
+            merged.remove(IdentifierClass.USER, Form.TALKER_ALIAS, Role.FROM);
+        }
+
+        for(Identifier identifier: latest.getIdentifiers())
+        {
+            Identifier previous = merged.getIdentifier(identifier.getIdentifierClass(), identifier.getForm(),
+                identifier.getRole());
+
+            if(identifier instanceof EncryptionKeyIdentifier key && !key.isEncrypted() &&
+                previous instanceof EncryptionKeyIdentifier established && established.isEncrypted())
+            {
+                continue;
+            }
+
+            merged.update(identifier);
+        }
+
+        getEvent().setIdentifierCollection(merged);
     }
 
     /**

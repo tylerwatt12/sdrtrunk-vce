@@ -317,7 +317,7 @@ class ReceiverActivityMapper
         boolean dmr = decoderType == DecoderType.DMR;
         boolean nxdn = decoderType == DecoderType.NXDN;
 
-        if(!winnerSource.trafficChannel() || (!p25 && !dmr && !nxdn))
+        if(!winnerSource.isTrunked() || (!p25 && !dmr && !nxdn))
         {
             return null;
         }
@@ -508,7 +508,7 @@ class ReceiverActivityMapper
         IdentifierFacts facts = IdentifierFacts.from(identifiers);
         CallLegSource callLegSource = snapshot.callLegSource() != null ? snapshot.callLegSource() : CallLegSource.UNKNOWN;
         DecoderType sourceDecoder = callLegSource.decoderType();
-        if(callLegSource.trafficChannel())
+        if(!callLegSource.isConventional())
         {
             return null;
         }

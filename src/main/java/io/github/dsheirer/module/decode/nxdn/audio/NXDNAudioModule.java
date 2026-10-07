@@ -19,6 +19,7 @@
 package io.github.dsheirer.module.decode.nxdn.audio;
 
 import io.github.dsheirer.alias.AliasList;
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.codec.mbe.AmbeAudioModule;
 import io.github.dsheirer.audio.codec.mbe.VoiceFrame;
@@ -70,8 +71,7 @@ public class NXDNAudioModule extends AmbeAudioModule
         new NXDNCallSequenceRecorder.EncryptionContextTracker();
     private final VoiceEncryptionKeyResolver mKeyResolver;
     private final VoiceFrameDecryptorFactory mDecryptorFactory;
-    private boolean mEncryptedCall = false;
-    private boolean mEncryptedCallStateEstablished = false;
+    private CallEncryptionState mEncryptionState = CallEncryptionState.UNKNOWN;
     private AudioCodec mAudioCodec;
     private VoiceFrameDecryptor mDecryptor;
     private Structure mPreviousSACCHStructure;
@@ -133,14 +133,14 @@ public class NXDNAudioModule extends AmbeAudioModule
         {
             observeVoiceActivity(audio.getTimestamp());
 
-            if(mEncryptedCall)
+            if(mEncryptionState.isKnown())
             {
-                markCurrentCallEncrypted(audio.getTimestamp());
+                setCurrentCallEncryptionState(mEncryptionState, audio.getTimestamp());
             }
 
             if(hasAudioCodec())
             {
-                if(mEncryptedCallStateEstablished)
+                if(mEncryptionState.isKnown())
                 {
                     processAudio(audio);
                 }
@@ -327,11 +327,11 @@ public class NXDNAudioModule extends AmbeAudioModule
                     updateDecryptor(marker);
                 }
 
-                if(!mEncryptedCall || mDecryptor != null)
+                if(!mEncryptionState.isEncrypted() || mDecryptor != null)
                 {
                     try
                     {
-                        byte[] decodedFrame = mEncryptedCall ? mDecryptor.decrypt(frame) : frame;
+                        byte[] decodedFrame = mEncryptionState.isEncrypted() ? mDecryptor.decrypt(frame) : frame;
                         IAudioWithMetadata audioWithMetadata =
                             getAudioCodec().getAudioWithMetadata(decodedFrame);
                         float[] generatedAudio = mGain.apply(audioWithMetadata.getAudio());
@@ -407,14 +407,14 @@ public class NXDNAudioModule extends AmbeAudioModule
     private void processEncryption(EncryptionKey encryptionKey, long timestamp)
     {
         mEncryptionContextTracker.update(encryptionKey);
-        mEncryptedCall = encryptionKey != null && encryptionKey.isEncrypted();
-        mEncryptedCallStateEstablished = encryptionKey != null;
+        mEncryptionState = encryptionKey != null ? CallEncryptionState.fromEncrypted(encryptionKey.isEncrypted()) :
+            CallEncryptionState.UNKNOWN;
 
-        if(mEncryptedCall && getCurrentAudioCall() != null)
+        if(mEncryptionState.isKnown() && getCurrentAudioCall() != null)
         {
-            markCurrentCallEncrypted(timestamp);
+            setCurrentCallEncryptionState(mEncryptionState, timestamp);
         }
-        else
+        if(!mEncryptionState.isEncrypted())
         {
             mDecryptor = null;
         }
@@ -439,8 +439,7 @@ public class NXDNAudioModule extends AmbeAudioModule
 
     private void resetEncryptionState()
     {
-        mEncryptedCall = false;
-        mEncryptedCallStateEstablished = false;
+        mEncryptionState = CallEncryptionState.UNKNOWN;
         mAudioCodec = null;
         mDecryptor = null;
         mPreviousSACCHStructure = null;

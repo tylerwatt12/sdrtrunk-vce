@@ -302,18 +302,21 @@ public class IdentifierCollection
             return from;
         }
 
-        List<Identifier> identifiers = getIdentifiers(Form.TELEPHONE_NUMBER);
-
-        if(!identifiers.isEmpty())
+        Identifier fallback = null;
+        for(Identifier identifier: mIdentifiers)
         {
-            return identifiers.get(0);
+            if(identifier.getForm() == Form.TELEPHONE_NUMBER)
+            {
+                return identifier;
+            }
+            if(fallback == null && identifier.getRole() == Role.FROM)
+            {
+                fallback = identifier;
+            }
         }
-
-        List<Identifier> fromIdentifiers = getIdentifiers(Role.FROM);
-
-        if(!fromIdentifiers.isEmpty())
+        if(fallback != null)
         {
-            return fromIdentifiers.get(0);
+            return fallback;
         }
 
         return null;
@@ -345,11 +348,9 @@ public class IdentifierCollection
             return to;
         }
 
-        List<Identifier> toIdentifiers = getIdentifiers(Role.TO);
-
-        for(Identifier identifier: toIdentifiers)
+        for(Identifier identifier: mIdentifiers)
         {
-            if(identifier.getForm() != Form.ENCRYPTION_KEY)
+            if(identifier.getRole() == Role.TO && identifier.getForm() != Form.ENCRYPTION_KEY)
             {
                 return identifier;
             }

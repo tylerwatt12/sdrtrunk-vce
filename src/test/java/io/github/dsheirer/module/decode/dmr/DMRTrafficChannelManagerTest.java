@@ -17,6 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.audio.AbstractAudioModule;
 import io.github.dsheirer.audio.call.AudioCallEvent;
 import io.github.dsheirer.audio.call.AudioCallEventType;
@@ -38,6 +39,7 @@ import io.github.dsheirer.module.decode.dmr.identifier.DMRRadio;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRTalkgroup;
 import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.dmr.message.data.csbk.Opcode;
+import io.github.dsheirer.module.decode.dmr.message.data.lc.full.GroupVoiceChannelUser;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
@@ -901,6 +903,60 @@ class DMRTrafficChannelManagerTest
         assertTrue(attributionSubscriber.events.get(0).sourceBecameKnown());
         assertEquals(101, attributionSubscriber.events.get(0).sourceRadioId());
         assertTrue(attributionSubscriber.events.get(1).encryptionBecameKnown());
+    }
+
+    @Test
+    void standardTrunkedParentReportsControlRfVoiceWithoutAllocatingOrCountingTwice()
+    {
+        Channel parent = new Channel("Tier III control RF", Channel.ChannelType.STANDARD);
+        DecodeConfigDMR config = new DecodeConfigDMR();
+        config.setChannelMode(DMRChannelMode.TRUNKED);
+        config.setTrafficChannelPoolSize(0);
+        config.setIgnoreCRCChecksums(true);
+        parent.setDecodeConfiguration(config);
+        DMRTrafficChannelManager manager = new DMRTrafficChannelManager(parent);
+        EventBus eventBus = new EventBus();
+        manager.setInterModuleEventBus(eventBus);
+        manager.setCurrentControlFrequency(451_012_500L, parent);
+        DMRTier3Channel carrier = channel(12, 2, 451_012_500L);
+        MutableIdentifierCollection targetOnly = new MutableIdentifierCollection();
+        targetOnly.update(DMRTalkgroup.create(91));
+        DMRDecoderState state = new DMRDecoderState(parent, 2, manager);
+        state.setCurrentCallEvent(DMRDecodeEvent.builder(DecodeEventType.CALL_GROUP, 1_000L)
+            .channel(carrier).identifiers(targetOnly).timeslot(2).build());
+        CallStartSubscriber starts = new CallStartSubscriber();
+        AttributionSubscriber attributions = new AttributionSubscriber();
+        StartRequestSubscriber allocations = new StartRequestSubscriber();
+        MyEventBus.getGlobalEventBus().register(starts);
+        MyEventBus.getGlobalEventBus().register(attributions);
+        eventBus.register(allocations);
+
+        try
+        {
+            manager.processChannelGrant(carrier, targetOnly,
+                Opcode.MOTOROLA_CAPMAX_CHANNEL_UPDATE_OPEN_MODE, 1_000L, false);
+            for(int options : List.of(0, 0, 0x40, 0x40))
+            {
+                CorrectedBinaryMessage bits = new CorrectedBinaryMessage(72);
+                bits.load(16, 8, options);
+                bits.load(24, 24, 91);
+                bits.load(48, 24, 101);
+                state.receive(new GroupVoiceChannelUser(bits, options == 0 ? 1_100L : 1_200L, 2));
+            }
+        }
+        finally
+        {
+            eventBus.unregister(allocations);
+            MyEventBus.getGlobalEventBus().unregister(attributions);
+            MyEventBus.getGlobalEventBus().unregister(starts);
+        }
+
+        assertEquals(1, starts.events.size());
+        assertNull(starts.events.getFirst().sourceRadioId());
+        assertEquals(2, attributions.events.size());
+        assertEquals(101, attributions.events.getFirst().sourceRadioId());
+        assertTrue(attributions.events.getLast().encryptionBecameKnown());
+        assertEquals(List.of(), allocations.requests);
     }
 
     @Test

@@ -29,7 +29,9 @@ import io.github.dsheirer.controller.channel.IChannelEventProvider;
 import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
 import io.github.dsheirer.controller.channel.event.PostChannelModuleEventRequest;
 import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.Role;
@@ -52,7 +54,6 @@ import io.github.dsheirer.module.decode.nxdn.layer3.call.DataCallAssignment;
 import io.github.dsheirer.module.decode.nxdn.layer3.call.VoiceCall;
 import io.github.dsheirer.module.decode.nxdn.layer3.call.VoiceCallAssignment;
 import io.github.dsheirer.module.decode.nxdn.layer3.call.VoiceCallAssignmentDuplicateTraffic;
-import io.github.dsheirer.module.decode.nxdn.layer3.type.AudioCodec;
 import io.github.dsheirer.module.decode.nxdn.layer3.type.CallTimer;
 import io.github.dsheirer.module.decode.nxdn.layer3.type.CallType;
 import io.github.dsheirer.module.decode.nxdn.layer3.type.ChannelAccessInformation;
@@ -295,9 +296,14 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
 
     private void broadcast(DecodeEvent decodeEvent, boolean publishActivity)
     {
+        broadcast(decodeEvent, publishActivity, Math.max(decodeEvent.getTimeStart(), decodeEvent.getTimeEnd()));
+    }
+
+    private void broadcast(DecodeEvent decodeEvent, boolean publishActivity, long observedAt)
+    {
         if(publishActivity)
         {
-            publishChannelActivity(decodeEvent);
+            publishChannelActivity(decodeEvent, observedAt);
         }
 
         if(mDecodeEventListener != null)
@@ -316,7 +322,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
         }
     }
 
-    private void publishChannelActivity(DecodeEvent decodeEvent)
+    private void publishChannelActivity(DecodeEvent decodeEvent, long observedAt)
     {
         if(!mTrunkedActivityObserved || mChannelActivityModel == null || decodeEvent == null ||
             decodeEvent.getChannelDescriptor() == null)
@@ -333,7 +339,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
         Channel trafficChannel = mAllocatedTrafficChannelMap.get(frequency);
         mChannelActivityModel.trunkedTrafficEvent(mParentChannel, trafficChannel,
             decodeEvent.getChannelDescriptor(), null, decodeEvent.getIdentifierCollection(), decodeEvent.getEventType(),
-            getCurrentControlFrequency());
+            getCurrentControlFrequency(), decodeEvent.getTimeStart(), observedAt);
     }
 
     /**
@@ -415,12 +421,17 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
             {
                 NXDNChannelEventTracker tracker = getTrackerRemoveIfStale(channel.getDownlinkFrequency(), timestamp);
                 MutableIdentifierCollection ic = new MutableIdentifierCollection(identifiers);
+                mTalkerAliasManager.enrichMutable(ic);
                 if(tracker != null)
                 {
                     if(tracker.isSameCallCheckingToAndFrom(ic, timestamp))
                     {
+                        tracker.mergeIdentifiers(ic);
+                        if(eventType == DecodeEventType.DATA_CALL_ENCRYPTED)
+                        {
+                            tracker.getEvent().setDecodeEventType(eventType);
+                        }
                         tracker.updateDurationControl(timestamp);
-                        broadcast(tracker);
                     }
                     else
                     {
@@ -462,7 +473,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
                     }
                 }
 
-                broadcast(tracker);
+                broadcast(tracker.getEvent(), true, timestamp);
             }
             finally
             {
@@ -554,11 +565,13 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
             NXDNChannelEventTracker tracker = getTrackerRemoveIfStale(frequency, timestamp);
             IdentifierCollection context = new IdentifierCollection(List.of(radio, talkerAlias));
 
-            if(tracker != null)
+            Identifier trackedRadio = tracker != null ? tracker.getEvent().getIdentifierCollection()
+                .getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM) : null;
+            if(tracker != null && (trackedRadio == null || trackedRadio.equals(radio)))
             {
-                tracker.addIdentifierIfMissing(talkerAlias);
+                tracker.mergeIdentifiers(context);
                 context = new IdentifierCollection(tracker.getEvent().getIdentifierCollection().getIdentifiers());
-                broadcast(tracker);
+                broadcast(tracker.getEvent(), true, timestamp);
             }
 
             getTalkerAliasManager().update(radio, talkerAlias);
@@ -703,7 +716,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
         {
             NXDNChannelEventTracker tracker = getTrackerRemoveIfStale(frequency, timestamp);
             MutableIdentifierCollection ic = new MutableIdentifierCollection(identifiers);
-            mTalkerAliasManager.enrich(ic);
+            mTalkerAliasManager.enrichMutable(ic);
             DecodeEventType eventType = getType(callType, encryption);
             TrunkedCallStartTracker.ObservationResult callObservation = isLogicalVoiceChannel(channel) ?
                 mCallStartTracker.observeWithAttribution(mParentChannel, Protocol.NXDN, channel, null, ic,
@@ -727,6 +740,11 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
             {
                 if(tracker.isSameCallCheckingToAndFrom(ic, timestamp))
                 {
+                    tracker.mergeIdentifiers(ic);
+                    if(encryption.isEncrypted())
+                    {
+                        tracker.getEvent().setDecodeEventType(eventType);
+                    }
                     tracker.updateDurationControl(timestamp);
                 }
                 else
@@ -736,21 +754,16 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
                 }
             }
 
-            if(tracker == null)
+            boolean newTracker = tracker == null;
+            if(newTracker)
             {
                 tracker = createTracker(eventType, ic, channel, timestamp);
-                AudioCodec audioCodec = vco.getCodec();
-                TransmissionMode mode = vco.getTransmissionMode();
+            }
 
-                if(encryption.isEncrypted())
-                {
-                    tracker.addDetails(VoiceEncryptionDisplay.format(encryption) + " TIMER:" + callTimer + " " +
-                        audioCodec + " " + mode);
-                }
-                else
-                {
-                    tracker.addDetails("TIMER:" + callTimer + " " + audioCodec + " " + mode);
-                }
+            if(newTracker || encryption.isEncrypted())
+            {
+                tracker.setDetails((encryption.isEncrypted() ? VoiceEncryptionDisplay.format(encryption) + " " : "") +
+                    "TIMER:" + callTimer + " " + vco.getCodec() + " " + vco.getTransmissionMode());
             }
 
             boolean needsAllocation = !tracker.isTrafficChannelAllocated() && channel != null && channel.isValid() &&
@@ -782,7 +795,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
                 }
             }
 
-            broadcast(tracker);
+            broadcast(tracker.getEvent(), true, timestamp);
         }
         finally
         {

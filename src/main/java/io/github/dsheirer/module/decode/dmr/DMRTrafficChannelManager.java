@@ -970,6 +970,12 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
 
     private void publishChannelActivity(IDecodeEvent decodeEvent)
     {
+        publishChannelActivity(decodeEvent, decodeEvent != null ?
+            Math.max(decodeEvent.getTimeStart(), decodeEvent.getTimeEnd()) : 0L);
+    }
+
+    private void publishChannelActivity(IDecodeEvent decodeEvent, long observedAt)
+    {
         if(!mTrunkedActivityObserved || mChannelActivityModel == null || decodeEvent == null ||
             decodeEvent.getChannelDescriptor() == null)
         {
@@ -983,7 +989,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
             decodeEvent.getChannelDescriptor() instanceof DMRChannel dmrChannel ? dmrChannel.getTimeslot() : null;
         mChannelActivityModel.trunkedTrafficEvent(mParentChannel, trafficChannel,
             decodeEvent.getChannelDescriptor(), timeslot, decodeEvent.getIdentifierCollection(),
-            decodeEvent.getEventType(), getCurrentControlFrequency());
+            decodeEvent.getEventType(), getCurrentControlFrequency(), decodeEvent.getTimeStart(), observedAt);
     }
 
     /**
@@ -994,6 +1000,13 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
      */
     public void receiveTrafficChannelEvent(IDecodeEvent trafficChannelEvent)
     {
+        receiveTrafficChannelEvent(trafficChannelEvent, trafficChannelEvent != null ?
+            Math.max(trafficChannelEvent.getTimeStart(), trafficChannelEvent.getTimeEnd()) : 0L);
+    }
+
+    /** Receives the observation time separately from voice duration for late identifier/alias updates. */
+    public void receiveTrafficChannelEvent(IDecodeEvent trafficChannelEvent, long observedAt)
+    {
         if(mTrunkingEnabled && trafficChannelEvent != null &&
             trafficChannelEvent.getEventType() != null &&
             trafficChannelEvent.getEventType().isVoiceCallEvent())
@@ -1001,7 +1014,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
             Integer timeslot = trafficChannelEvent.hasTimeslot() ? trafficChannelEvent.getTimeslot() :
                 trafficChannelEvent.getChannelDescriptor() instanceof DMRChannel dmrChannel ?
                     dmrChannel.getTimeslot() : null;
-            long timestamp = Math.max(trafficChannelEvent.getTimeStart(), trafficChannelEvent.getTimeEnd());
+            long timestamp = observedAt;
             TrunkedCallStartTracker.ObservationResult observation = mCallStartTracker.enrichActiveCall(
                 mParentChannel, Protocol.DMR, trafficChannelEvent.getChannelDescriptor(), timeslot,
                 trafficChannelEvent.getIdentifierCollection(), trafficChannelEvent.getEventType(), timestamp,
@@ -1013,7 +1026,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
             }
         }
 
-        publishChannelActivity(trafficChannelEvent);
+        publishChannelActivity(trafficChannelEvent, observedAt);
     }
 
     /**
@@ -1092,7 +1105,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
                 if((mAllocatedChannelFrequencyMap.get(downlinkFrequency) == mParentChannel ||
                     currentControlFrequency) && !isPendingRestFrequency(downlinkFrequency))
                 {
-                    publishChannelActivity(channel, identifierCollection, decodeEventType);
+                    publishChannelActivity(channel, identifierCollection, decodeEventType, timestamp);
                 }
             }
             else
@@ -1316,7 +1329,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     }
 
     private void publishChannelActivity(DMRChannel channel, IdentifierCollection identifiers,
-                                        DecodeEventType eventType)
+                                        DecodeEventType eventType, long timestamp)
     {
         if(mChannelActivityModel == null || channel == null)
         {
@@ -1326,7 +1339,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
         Channel allocated = mAllocatedChannelFrequencyMap.get(channel.getDownlinkFrequency());
         Channel trafficChannel = allocated != null && allocated.isTrafficChannel() ? allocated : null;
         mChannelActivityModel.trunkedTrafficEvent(mParentChannel, trafficChannel, channel, channel.getTimeslot(),
-            identifiers, eventType, getCurrentControlFrequency());
+            identifiers, eventType, getCurrentControlFrequency(), 0L, timestamp);
     }
 
 

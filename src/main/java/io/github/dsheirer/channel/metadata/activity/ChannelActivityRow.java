@@ -44,6 +44,24 @@ public class ChannelActivityRow
 {
     private static final AtomicLong ACTIVATION_SEQUENCE = new AtomicLong();
 
+    boolean isOlderTrafficObservation(long callStart, long observedAt)
+    {
+        return callStart > 0 && mTrafficCallStart > 0 && callStart < mTrafficCallStart ||
+            observedAt > 0 && observedAt < mTrafficObservedAt;
+    }
+
+    boolean startsNewTrafficCall(long callStart)
+    {
+        return callStart > 0 && mTrafficCallStart > 0 && callStart > mTrafficCallStart &&
+            callStart >= mTrafficObservedAt;
+    }
+
+    void observeTrafficCall(long callStart, long observedAt)
+    {
+        mTrafficCallStart = Math.max(mTrafficCallStart, callStart);
+        mTrafficObservedAt = Math.max(mTrafficObservedAt, observedAt);
+    }
+
     public enum Role
     {
         CONVENTIONAL,
@@ -83,6 +101,8 @@ public class ChannelActivityRow
     private String mCallsign;
     private Integer mTimeslot;
     private Identifier<?> mSource;
+    private long mTrafficCallStart;
+    private long mTrafficObservedAt;
     private List<Alias> mSourceAliases = Collections.emptyList();
     private Identifier<?> mTalkerAlias;
     private Identifier<?> mTarget;
@@ -733,6 +753,8 @@ public class ChannelActivityRow
         copy.mLcn = mLcn;
         copy.mCallsign = mCallsign;
         copy.mSource = mSource;
+        copy.mTrafficCallStart = mTrafficCallStart;
+        copy.mTrafficObservedAt = mTrafficObservedAt;
         copy.mSourceAliases = List.copyOf(mSourceAliases);
         copy.mTalkerAlias = mTalkerAlias;
         copy.mTarget = mTarget;

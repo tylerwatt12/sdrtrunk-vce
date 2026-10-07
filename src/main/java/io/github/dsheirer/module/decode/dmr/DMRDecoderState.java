@@ -138,6 +138,12 @@ public class DMRDecoderState extends TimeslotDecoderState
     private final DMRTrafficChannelManager mTrafficChannelEventManager;
     private DecodeEvent mCurrentCallEvent;
     private boolean mCurrentCallEncrypted;
+    private String mCapacityMaxAliasBase;
+    private String mCapacityMaxAliasContinuation;
+    private int mCapacityMaxAliasLength;
+    private DmrTalkerAliasIdentifier mPendingTalkerAlias;
+    private DmrTalkerAliasIdentifier mReportedTalkerAlias;
+    private RadioIdentifier mReportedTalkerAliasRadio;
     private boolean mIgnoreCRCChecksums;
     private final boolean mTrunkingEnabled;
     private DMRDecoderState mSisterDecoderState;
@@ -244,11 +250,18 @@ public class DMRDecoderState extends TimeslotDecoderState
     @Override
     protected void broadcast(IDecodeEvent event)
     {
+        broadcast(event, Math.max(event.getTimeStart(), event.getTimeEnd()));
+    }
+
+    private void broadcast(IDecodeEvent event, long observedAt)
+    {
         super.broadcast(event);
 
-        if(mOperationalMode.get().channel().isTrafficChannel() && mTrafficChannelEventManager != null)
+        if(mTrunkingEnabled && mTrafficChannelEventManager != null &&
+            (mOperationalMode.get().channel().isTrafficChannel() ||
+                (event.getEventType() != null && event.getEventType().isVoiceCallEvent())))
         {
-            mTrafficChannelEventManager.receiveTrafficChannelEvent(event);
+            mTrafficChannelEventManager.receiveTrafficChannelEvent(event, observedAt);
         }
     }
 
@@ -1636,69 +1649,26 @@ public class DMRDecoderState extends TimeslotDecoderState
             case FULL_CAPACITY_MAX_TALKER_ALIAS:
                 if(message instanceof CapacityMaxTalkerAlias alias)
                 {
-                    //If we have a talker alias identifier, append this value.
-                    Identifier existing = getIdentifierCollection()
-                        .getIdentifier(IdentifierClass.USER, Form.TALKER_ALIAS, Role.FROM);
-                    DmrTalkerAliasIdentifier baseAlias = alias.getTalkerAliasIdentifier();
-                    boolean newBaseAlias = !(existing instanceof DmrTalkerAliasIdentifier talkerAlias) ||
-                        !talkerAlias.equals(baseAlias);
-
-                    if(existing instanceof DmrTalkerAliasIdentifier talkerAlias &&
-                            !talkerAlias.equals(baseAlias) &&
-                            !talkerAlias.getValue().contains(baseAlias.getValue()))
+                    if(alias.getLength() > 0 && alias.getLength() <= 13)
                     {
-                        //Concatenate the existing talker alias fragment with the base alias value.
-                        DmrTalkerAliasIdentifier updated = DmrTalkerAliasIdentifier
-                                .create(baseAlias.getValue() + talkerAlias.getValue());
-                        getIdentifierCollection().update(updated);
-
-                        processTalkerAlias(updated, message.getTimestamp());
-                    }
-                    else
-                    {
-                        getIdentifierCollection().update(baseAlias);
-
-                        //The base message carries up to six characters.  Short aliases are complete without a
-                        //continuation, so publish the first observation now and suppress repeated base messages.
-                        if(alias.getLength() <= 6 && newBaseAlias)
+                        String base = alias.getAliasFragment();
+                        if(mCapacityMaxAliasBase != null && (!mCapacityMaxAliasBase.equals(base) ||
+                            mCapacityMaxAliasLength != alias.getLength()))
                         {
-                            processTalkerAlias(baseAlias, message.getTimestamp());
+                            mCapacityMaxAliasContinuation = null;
+                            mPendingTalkerAlias = null;
                         }
-                    }
-
-                    if(mCurrentCallEvent != null)
-                    {
-                        broadcast(mCurrentCallEvent);
+                        mCapacityMaxAliasBase = base;
+                        mCapacityMaxAliasLength = alias.getLength();
+                        completeCapacityMaxAlias(message.getTimestamp());
                     }
                 }
                 break;
             case FULL_CAPACITY_MAX_TALKER_ALIAS_CONTINUATION:
                 if(message instanceof CapacityMaxTalkerAliasContinuation alias)
                 {
-                    //If we have a talker alias identifier, append this value.
-                    Identifier existing = getIdentifierCollection().getIdentifier(IdentifierClass.USER, Form.TALKER_ALIAS, Role.FROM);
-
-                    if(existing instanceof DmrTalkerAliasIdentifier talkerAlias &&
-                            !talkerAlias.equals(alias.getTalkerAliasIdentifier()) &&
-                            !talkerAlias.getValue().contains(alias.getTalkerAliasIdentifier().getValue()))
-                    {
-                        //Concatenate the existing talker alias value with the updated continuation fragment.
-                        DmrTalkerAliasIdentifier updated = DmrTalkerAliasIdentifier.create(talkerAlias.getValue() +
-                                alias.getTalkerAliasIdentifier().getValue());
-                        getIdentifierCollection().update(updated);
-
-                        processTalkerAlias(updated, message.getTimestamp());
-                    }
-                    else
-                    {
-                        //Temporarily place the continuation fragment alias into the identifier collection.
-                        getIdentifierCollection().update(alias.getTalkerAliasIdentifier());
-                    }
-
-                    if(mCurrentCallEvent != null)
-                    {
-                        broadcast(mCurrentCallEvent);
-                    }
+                    mCapacityMaxAliasContinuation = alias.getAliasFragment();
+                    completeCapacityMaxAlias(message.getTimestamp());
                 }
                 break;
             case FULL_CAPACITY_PLUS_WIDE_AREA_VOICE_CHANNEL_USER:
@@ -1807,8 +1777,7 @@ public class DMRDecoderState extends TimeslotDecoderState
             case FULL_STANDARD_TALKER_ALIAS_COMPLETE:
                 if(message instanceof TalkerAliasComplete tac && tac.hasTalkerAliasIdentifier())
                 {
-                    getIdentifierCollection().update(tac.getTalkerAliasIdentifier());
-                    processTalkerAlias(tac.getTalkerAliasIdentifier(), message.getTimestamp());
+                    completeTalkerAlias(tac.getTalkerAliasIdentifier(), message.getTimestamp());
                 }
                 break;
             default:
@@ -1816,14 +1785,59 @@ public class DMRDecoderState extends TimeslotDecoderState
         }
     }
 
-    private void processTalkerAlias(DmrTalkerAliasIdentifier alias, long timestamp)
+    private void completeCapacityMaxAlias(long timestamp)
     {
-        Identifier from = getIdentifierCollection().getFromIdentifier();
-
-        if(mTrafficChannelEventManager != null && from instanceof RadioIdentifier radio)
+        if(mCapacityMaxAliasBase != null && (mCapacityMaxAliasLength <= 6 ||
+            mCapacityMaxAliasContinuation != null))
         {
-            mTrafficChannelEventManager.processTalkerAlias(getCurrentChannel(), alias, radio,
+            String assembled = mCapacityMaxAliasBase +
+                (mCapacityMaxAliasContinuation != null ? mCapacityMaxAliasContinuation : "");
+            if(assembled.length() >= mCapacityMaxAliasLength)
+            {
+                completeTalkerAlias(DmrTalkerAliasIdentifier.create(
+                    assembled.substring(0, mCapacityMaxAliasLength).trim()), timestamp);
+            }
+        }
+    }
+
+    /** Keeps only a complete alias; a same-call radio learned later can finish its attribution. */
+    private void completeTalkerAlias(DmrTalkerAliasIdentifier alias, long timestamp)
+    {
+        Identifier source = getIdentifierCollection().getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM);
+        if(mCurrentCallEvent == null &&
+            (!(source instanceof RadioIdentifier radio) || positive(radio.getValue()) == null))
+        {
+            clearTalkerAliasState();
+            return;
+        }
+        if(alias.getValue().isBlank() || (alias.equals(mReportedTalkerAlias) &&
+            mReportedTalkerAliasRadio.equals(source)))
+        {
+            return;
+        }
+
+        getIdentifierCollection().update(alias);
+        mPendingTalkerAlias = alias;
+        if(mCurrentCallEvent != null)
+        {
+            mCurrentCallEvent.setIdentifierCollection(getIdentifierCollection().copyOf());
+            broadcast(mCurrentCallEvent, timestamp);
+        }
+        reportPendingTalkerAlias(timestamp);
+    }
+
+    private void reportPendingTalkerAlias(long timestamp)
+    {
+        Identifier from = getIdentifierCollection().getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM);
+
+        if(mPendingTalkerAlias != null && mTrafficChannelEventManager != null &&
+            from instanceof RadioIdentifier radio && positive(radio.getValue()) != null)
+        {
+            mTrafficChannelEventManager.processTalkerAlias(getCurrentChannel(), mPendingTalkerAlias, radio,
                 getIdentifierCollection().copyOf(), timestamp);
+            mReportedTalkerAlias = mPendingTalkerAlias;
+            mReportedTalkerAliasRadio = radio;
+            mPendingTalkerAlias = null;
         }
     }
 
@@ -1920,6 +1934,7 @@ public class DMRDecoderState extends TimeslotDecoderState
         }
 
         broadcast(mCurrentCallEvent);
+        reportPendingTalkerAlias(timestamp);
 
         if(type == DecodeEventType.CALL_GROUP_ENCRYPTED || type == DecodeEventType.CALL_UNIT_TO_UNIT_ENCRYPTED)
         {
@@ -1978,8 +1993,19 @@ public class DMRDecoderState extends TimeslotDecoderState
         }
 
         mCurrentCallEncrypted = false;
+        clearTalkerAliasState();
         getIdentifierCollection().remove(IdentifierClass.USER, Form.TALKER_ALIAS, Role.FROM);
         getIdentifierCollection().remove(IdentifierClass.USER, Form.TONE, Role.FROM);
+    }
+
+    private void clearTalkerAliasState()
+    {
+        mCapacityMaxAliasBase = null;
+        mCapacityMaxAliasContinuation = null;
+        mCapacityMaxAliasLength = 0;
+        mPendingTalkerAlias = null;
+        mReportedTalkerAlias = null;
+        mReportedTalkerAliasRadio = null;
     }
 
     /**
@@ -2050,7 +2076,8 @@ public class DMRDecoderState extends TimeslotDecoderState
             return false;
         }
 
-        return identityChanged(previous.getFromIdentifier(), current.getFromIdentifier()) ||
+        return identityChanged(previous.getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM),
+            current.getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM)) ||
             identityChanged(previous.getToIdentifier(), current.getToIdentifier());
     }
 

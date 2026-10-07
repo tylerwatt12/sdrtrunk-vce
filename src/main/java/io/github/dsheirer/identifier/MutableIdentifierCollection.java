@@ -193,7 +193,7 @@ public class MutableIdentifierCollection extends IdentifierCollection implements
      */
     public void update(Identifier identifier)
     {
-        if(identifier != null)
+        if(identifier != null && identifier.isValid())
         {
             Identifier existing = getIdentifier(identifier.getIdentifierClass(),
                 identifier.getForm(), identifier.getRole());
@@ -227,7 +227,7 @@ public class MutableIdentifierCollection extends IdentifierCollection implements
      */
     public void silentUpdate(Identifier identifier)
     {
-        if(identifier != null)
+        if(identifier != null && identifier.isValid())
         {
             Identifier existing = getIdentifier(identifier.getIdentifierClass(), identifier.getForm(), identifier.getRole());
 

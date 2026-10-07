@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.audio.call.AudioCallEvent;
 import io.github.dsheirer.audio.call.AudioCallEventType;
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.module.decode.dmr.message.data.header.VoiceHeader;
 import io.github.dsheirer.module.decode.dmr.message.data.lc.full.GroupVoiceChannelUser;
@@ -79,6 +80,155 @@ class DMRAudioModuleTest
         assertEquals(1_000L, completed.snapshot().startTimestamp());
         assertEquals(2_000L, completed.snapshot().lastActivityTimestamp());
         assertFalse(mEvents.stream().anyMatch(event -> event.eventType() == AudioCallEventType.AUDIO_FRAME));
+    }
+
+    @Test
+    void clearSignalingCompletesMetadataOnlyCallWithoutCodec()
+    {
+        mAudioModule.receive(clearVoiceHeader(1_000L));
+        mAudioModule.receive(voice(1_200L));
+        mAudioModule.receive(terminator(2_000L));
+
+        assertEquals(CallEncryptionState.CLEAR, completedEvents().getFirst().snapshot().encryptionState());
+        assertFalse(mEvents.stream().anyMatch(event -> event.eventType() == AudioCallEventType.AUDIO_FRAME));
+    }
+
+    @Test
+    void standaloneSignalingWaitsForVoiceAndPublishesBothKnownStatesWithoutCodec()
+    {
+        for(boolean encrypted: new boolean[]{false, true})
+        {
+            mEvents.clear();
+            mAudioModule.receive(voiceChannelUser(900L, encrypted, TIMESLOT));
+            assertTrue(mEvents.isEmpty(), "Link control alone must not create an audio call");
+            mAudioModule.receive(voice(1_000L));
+            mAudioModule.receive(terminator(2_000L));
+
+            assertEquals(CallEncryptionState.fromEncrypted(encrypted),
+                completedEvents().getFirst().snapshot().encryptionState());
+            assertEquals(1_000L, completedEvents().getFirst().snapshot().startTimestamp());
+        }
+    }
+
+    @Test
+    void lateClearLinkControlEnrichesTheExistingCallWithoutDuplicatingIt()
+    {
+        mAudioModule.receive(voice(1_000L));
+        assertEquals(CallEncryptionState.UNKNOWN, mEvents.getLast().snapshot().encryptionState());
+        mAudioModule.receive(voiceChannelUser(1_200L, false, TIMESLOT));
+        assertEquals(CallEncryptionState.CLEAR, mEvents.getLast().snapshot().encryptionState());
+        mAudioModule.receive(voiceChannelUser(1_400L, false, TIMESLOT));
+        mAudioModule.receive(terminator(2_000L));
+
+        assertEquals(1, completedEvents().size());
+        assertEquals(CallEncryptionState.CLEAR, completedEvents().getFirst().snapshot().encryptionState());
+        assertEquals(1_000L, completedEvents().getFirst().snapshot().startTimestamp());
+    }
+
+    @Test
+    void contradictoryValidSignalingRemainsUnknownEvenAfterAnotherClearObservation()
+    {
+        mAudioModule.receive(clearVoiceHeader(1_000L));
+        mAudioModule.receive(voiceChannelUser(1_200L, true, TIMESLOT));
+        assertEquals(CallEncryptionState.UNKNOWN, mEvents.getLast().snapshot().encryptionState());
+        mAudioModule.receive(voiceChannelUser(1_400L, false, TIMESLOT));
+        mAudioModule.receive(voice(1_600L));
+        mAudioModule.receive(terminator(2_000L));
+
+        assertEquals(1, completedEvents().size());
+        assertEquals(CallEncryptionState.UNKNOWN, completedEvents().getFirst().snapshot().encryptionState());
+    }
+
+    @Test
+    void contradictoryLinkControlDoesNotSwitchTheEstablishedAudioDecision()
+    {
+        for(boolean encrypted: new boolean[]{false, true})
+        {
+            DMRAudioModule module = new DMRAudioModule(new UserPreferences(), AliasList.empty("conflict"), TIMESLOT)
+            {
+                @Override
+                protected boolean hasAudioCodec()
+                {
+                    return true;
+                }
+
+                @Override
+                public IAudioCodec getAudioCodec()
+                {
+                    return new TestAudioCodec();
+                }
+            };
+            List<AudioCallEvent> events = new ArrayList<>();
+            module.setAudioCallEventListener(events::add);
+
+            try
+            {
+                module.receive(voiceHeader(1_000L, encrypted));
+                module.receive(voiceChannelUser(1_200L, !encrypted, TIMESLOT));
+                module.receive(voice(1_400L));
+                module.receive(terminator(2_000L));
+
+                assertEquals(!encrypted, events.stream().anyMatch(event -> event.eventType() == AudioCallEventType.AUDIO_FRAME),
+                    "Repeated contradictory LC must not change the established audio decoding decision");
+                assertEquals(CallEncryptionState.UNKNOWN, events.stream()
+                    .filter(event -> event.eventType() == AudioCallEventType.CALL_COMPLETED).findFirst().orElseThrow()
+                    .snapshot().encryptionState());
+            }
+            finally
+            {
+                module.dispose();
+            }
+        }
+    }
+
+    @Test
+    void missingInvalidAndOtherSlotSignalingNeverAssertClear()
+    {
+        GroupVoiceChannelUser invalid = voiceChannelUser(900L, false, TIMESLOT);
+        invalid.setValid(false);
+        mAudioModule.receive(invalid);
+        mAudioModule.receive(voiceChannelUser(950L, false, 2));
+        mAudioModule.receive(voice(1_000L));
+        mAudioModule.receive(terminator(2_000L));
+
+        assertEquals(CallEncryptionState.UNKNOWN, completedEvents().getFirst().snapshot().encryptionState());
+    }
+
+    @Test
+    void invalidLateLinkControlDoesNotExtendAnEstablishedCall()
+    {
+        mAudioModule.receive(clearVoiceHeader(1_000L));
+        GroupVoiceChannelUser invalid = voiceChannelUser(5_000L, true, TIMESLOT);
+        invalid.setValid(false);
+        mAudioModule.receive(invalid);
+        mAudioModule.receive(terminator(2_000L));
+
+        assertEquals(CallEncryptionState.CLEAR, completedEvents().getFirst().snapshot().encryptionState());
+        assertEquals(2_000L, completedEvents().getFirst().snapshot().lastActivityTimestamp());
+    }
+
+    @Test
+    void directModePlaybackAssumptionDoesNotAssertClearWithoutDecodedAudio()
+    {
+        mAudioModule.receive(new VoiceAMessage(DMRSyncPattern.DIRECT_VOICE_TIMESLOT_1,
+            new CorrectedBinaryMessage(288), null, 1_000L, TIMESLOT));
+        mAudioModule.receive(terminator(2_000L));
+
+        assertEquals(CallEncryptionState.UNKNOWN, completedEvents().getFirst().snapshot().encryptionState());
+    }
+
+    @Test
+    void completedCallsDoNotLeakKnownEncryptionStateIntoTheNextCall()
+    {
+        mAudioModule.receive(clearVoiceHeader(1_000L));
+        mAudioModule.receive(terminator(2_000L));
+        mAudioModule.receive(voice(3_000L));
+        mAudioModule.receive(terminator(4_000L));
+        mAudioModule.receive(encryptedVoiceHeader(5_000L));
+        mAudioModule.receive(terminator(6_000L));
+
+        assertEquals(List.of(CallEncryptionState.CLEAR, CallEncryptionState.UNKNOWN, CallEncryptionState.ENCRYPTED),
+            completedEvents().stream().map(event -> event.snapshot().encryptionState()).toList());
     }
 
     @Test
@@ -209,6 +359,12 @@ class DMRAudioModuleTest
 
     private static VoiceHeader voiceHeader(long timestamp, boolean encrypted)
     {
+        return new VoiceHeader(DMRSyncPattern.BASE_STATION_DATA, new CorrectedBinaryMessage(288),
+            null, null, timestamp, TIMESLOT, voiceChannelUser(timestamp, encrypted, TIMESLOT));
+    }
+
+    private static GroupVoiceChannelUser voiceChannelUser(long timestamp, boolean encrypted, int timeslot)
+    {
         CorrectedBinaryMessage linkControlBits = new CorrectedBinaryMessage(72);
 
         if(encrypted)
@@ -218,9 +374,7 @@ class DMRAudioModuleTest
 
         linkControlBits.load(24, 24, 91);
         linkControlBits.load(48, 24, 1_234_567);
-        GroupVoiceChannelUser linkControl = new GroupVoiceChannelUser(linkControlBits, timestamp, TIMESLOT);
-        return new VoiceHeader(DMRSyncPattern.BASE_STATION_DATA, new CorrectedBinaryMessage(288),
-            null, null, timestamp, TIMESLOT, linkControl);
+        return new GroupVoiceChannelUser(linkControlBits, timestamp, timeslot);
     }
 
     private static final class TestAudioCodec implements IAudioCodec

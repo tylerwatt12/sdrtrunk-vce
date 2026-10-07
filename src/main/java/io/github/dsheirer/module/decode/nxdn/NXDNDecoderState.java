@@ -352,14 +352,24 @@ public class NXDNDecoderState extends DecoderState
 
                     mIdleDuringCallCount = 0;
 
-                    if(!mTrunkingEnabled)
+                    if(vc.getDestination().isValid() && identityChanged(
+                        getIdentifierCollection().getToIdentifier(), vc.getDestination()))
                     {
-                        //Conventional calls do not share a persistent trunked destination. Remove prior call identity
-                        //so a group-to-private or private-to-group transition cannot inherit the old target.
+                        //A new target cannot inherit the previous call's source or alias, including group/private
+                        //transitions. Incomplete repeated headers retain participants already known for this call.
                         getIdentifierCollection().remove(IdentifierClass.USER);
                     }
 
+                    if(vc.getSource().isValid() && !vc.getSource().equals(getIdentifierCollection().getIdentifier(
+                        IdentifierClass.USER, Form.RADIO, Role.FROM)))
+                    {
+                        getIdentifierCollection().remove(IdentifierClass.USER, Form.TALKER_ALIAS, Role.FROM);
+                    }
                     getIdentifierCollection().update(vc.getIdentifiers());
+                    if(hasTrafficChannelManager())
+                    {
+                        mTrafficChannelManager.getTalkerAliasManager().enrichMutable(getIdentifierCollection());
+                    }
                     mEncryptedCallStateDetermined = true;
                     boolean encrypted = vc.getEncryptionKeyIdentifier().isEncrypted();
 
@@ -829,8 +839,10 @@ public class NXDNDecoderState extends DecoderState
                     event = DecoderStateEvent.Event.CONTINUATION;
                     var radio = getIdentifierCollection().getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM);
 
-                    if(radio instanceof RadioIdentifier ri)
+                    if(radio instanceof RadioIdentifier ri && tac.getTalkerAlias() != null &&
+                        tac.getTalkerAlias().getValue() != null && !tac.getTalkerAlias().getValue().isBlank())
                     {
+                        getIdentifierCollection().update(tac.getTalkerAlias());
                         if(hasTrafficChannelManager())
                         {
                             mTrafficChannelManager.processTalkerAlias(getCurrentChannel(), tac.getTalkerAlias(), ri,
@@ -1010,11 +1022,6 @@ public class NXDNDecoderState extends DecoderState
         MutableIdentifierCollection identifiers =
             new MutableIdentifierCollection(getIdentifierCollection().getIdentifiers());
 
-        if(hasTrafficChannelManager())
-        {
-            mTrafficChannelManager.getTalkerAliasManager().enrichMutable(identifiers);
-        }
-
         if(mCurrentConventionalCallEvent != null &&
             callIdentityChanged(mCurrentConventionalCallEvent.getIdentifierCollection(), identifiers))
         {
@@ -1055,6 +1062,7 @@ public class NXDNDecoderState extends DecoderState
     {
         if(!mTrunkingEnabled && mCurrentConventionalCallEvent != null)
         {
+            mCurrentConventionalCallEvent.setIdentifierCollection(getIdentifierCollection().copyOf());
             mCurrentConventionalCallEvent.end(timestamp);
             broadcast(mCurrentConventionalCallEvent);
         }

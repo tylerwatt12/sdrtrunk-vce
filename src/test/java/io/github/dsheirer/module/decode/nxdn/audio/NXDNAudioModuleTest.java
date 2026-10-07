@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.audio.call.AudioCallEvent;
 import io.github.dsheirer.audio.call.AudioCallEventType;
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.module.decode.nxdn.layer2.LICH;
 import io.github.dsheirer.module.decode.nxdn.layer3.NXDNMessageType;
@@ -77,6 +78,99 @@ class NXDNAudioModuleTest
         assertEquals(1_000L, completed.snapshot().startTimestamp());
         assertEquals(2_000L, completed.snapshot().lastActivityTimestamp());
         assertFalse(mEvents.stream().anyMatch(event -> event.eventType() == AudioCallEventType.AUDIO_FRAME));
+    }
+
+    @Test
+    void clearVoiceSignalingCompletesMetadataOnlyCallWithoutCodec()
+    {
+        mAudioModule.receive(voiceCall(1_000L, 101, 202, LICH.RTCH_OUTBOUND_SUPER_VOICE_VOICE));
+        mAudioModule.receive(transmissionRelease(2_000L));
+
+        assertEquals(CallEncryptionState.CLEAR, completedEvents().getFirst().snapshot().encryptionState());
+        assertFalse(mEvents.stream().anyMatch(event -> event.eventType() == AudioCallEventType.AUDIO_FRAME));
+    }
+
+    @Test
+    void typeDSignalingBeforeAudioPublishesBothKnownStatesWithoutCreatingAnEarlyCall()
+    {
+        for(boolean encrypted: new boolean[]{false, true})
+        {
+            mEvents.clear();
+            mAudioModule.receive(callInfo(900L, encrypted));
+            assertTrue(mEvents.isEmpty(), "Call information alone must not create an audio call");
+            mAudioModule.receive(audio(1_000L, LICH.RTCH_2_OUTBOUND_SUPER_VOICE_VOICE));
+            mAudioModule.receive(transmissionRelease(2_000L));
+
+            assertEquals(CallEncryptionState.fromEncrypted(encrypted),
+                completedEvents().getFirst().snapshot().encryptionState());
+            assertEquals(1_000L, completedEvents().getFirst().snapshot().startTimestamp());
+        }
+    }
+
+    @Test
+    void lateClearTypeDSignalingEnrichesTheExistingCallWithoutDuplicatingIt()
+    {
+        mAudioModule.receive(audio(1_000L, LICH.RTCH_2_OUTBOUND_SUPER_VOICE_VOICE));
+        assertEquals(CallEncryptionState.UNKNOWN, mEvents.getLast().snapshot().encryptionState());
+        mAudioModule.receive(callInfo(1_200L));
+        assertEquals(CallEncryptionState.CLEAR, mEvents.getLast().snapshot().encryptionState());
+        mAudioModule.receive(callInfo(1_400L));
+        mAudioModule.receive(transmissionRelease(2_000L));
+
+        assertEquals(1, completedEvents().size());
+        assertEquals(CallEncryptionState.CLEAR, completedEvents().getFirst().snapshot().encryptionState());
+        assertEquals(1_000L, completedEvents().getFirst().snapshot().startTimestamp());
+    }
+
+    @Test
+    void contradictoryPeriodicVoiceSignalingRemainsUnknownAfterAnotherClearObservation()
+    {
+        mAudioModule.receive(voiceCall(1_000L, 101, 202, LICH.RTCH_OUTBOUND_SUPER_VOICE_VOICE));
+        mAudioModule.receive(encryptedVoiceCall(1_200L));
+        assertEquals(CallEncryptionState.UNKNOWN, mEvents.getLast().snapshot().encryptionState());
+        mAudioModule.receive(voiceCall(1_400L, 101, 202, LICH.RTCH_OUTBOUND_SUPER_VOICE_VOICE));
+        mAudioModule.receive(audio(1_600L, LICH.RTCH_OUTBOUND_SUPER_VOICE_VOICE));
+        mAudioModule.receive(transmissionRelease(2_000L));
+
+        assertEquals(1, completedEvents().size());
+        assertEquals(CallEncryptionState.UNKNOWN, completedEvents().getFirst().snapshot().encryptionState());
+    }
+
+    @Test
+    void missingOrInvalidSignalingNeverAssertsClear()
+    {
+        VoiceCall invalid = voiceCall(900L, 101, 202, LICH.RTCH_OUTBOUND_SUPER_VOICE_VOICE);
+        invalid.setValid(false);
+        mAudioModule.receive(invalid);
+        mAudioModule.receive(audio(1_000L, LICH.RTCH_OUTBOUND_SUPER_VOICE_VOICE));
+        mAudioModule.receive(transmissionRelease(2_000L));
+
+        assertEquals(CallEncryptionState.UNKNOWN, completedEvents().getFirst().snapshot().encryptionState());
+    }
+
+    @Test
+    void completedCallsDoNotLeakKnownEncryptionStateIntoTheNextCall()
+    {
+        mAudioModule.receive(voiceCall(1_000L, 101, 202, LICH.RTCH_OUTBOUND_SUPER_VOICE_VOICE));
+        mAudioModule.receive(transmissionRelease(2_000L));
+        mAudioModule.receive(audio(3_000L, LICH.RTCH_OUTBOUND_SUPER_VOICE_VOICE));
+        mAudioModule.receive(transmissionRelease(4_000L));
+        mAudioModule.receive(encryptedVoiceCall(5_000L));
+        mAudioModule.receive(transmissionRelease(6_000L));
+
+        assertEquals(List.of(CallEncryptionState.CLEAR, CallEncryptionState.UNKNOWN, CallEncryptionState.ENCRYPTED),
+            completedEvents().stream().map(event -> event.snapshot().encryptionState()).toList());
+    }
+
+    @Test
+    void resetDiscardsSignalingThatArrivedBeforeVoice()
+    {
+        mAudioModule.receive(callInfo(900L));
+        mAudioModule.reset();
+        mAudioModule.receive(audio(1_000L, LICH.RTCH_2_OUTBOUND_SUPER_VOICE_VOICE));
+        mAudioModule.receive(transmissionRelease(2_000L));
+
+        assertEquals(CallEncryptionState.UNKNOWN, completedEvents().getFirst().snapshot().encryptionState());
     }
 
     @Test
@@ -232,7 +326,18 @@ class NXDNAudioModuleTest
 
     private static CallInfo callInfo(long timestamp)
     {
-        return new CallInfo(new CorrectedBinaryMessage(32), timestamp,
+        return callInfo(timestamp, false);
+    }
+
+    private static CallInfo callInfo(long timestamp, boolean encrypted)
+    {
+        CorrectedBinaryMessage message = new CorrectedBinaryMessage(32);
+        if(encrypted)
+        {
+            message.load(16, 2, 1);
+            message.load(18, 6, 7);
+        }
+        return new CallInfo(message, timestamp,
             NXDNMessageType.TYPE_D_SCCH_OUT_INFO_1_CALL_INFO, 3,
             LICH.RTCH_2_OUTBOUND_SUPER_VOICE_VOICE);
     }

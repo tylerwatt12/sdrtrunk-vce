@@ -950,6 +950,93 @@ class P25TrafficChannelManagerTest
         }
     }
 
+    @Test
+    void phaseTwoDataPublishesBothSlotsAndAllocatesTheSharedCarrierOnce()
+    {
+        Channel parent = new Channel("Control", Channel.ChannelType.STANDARD);
+        DecodeConfigP25Phase2 config = new DecodeConfigP25Phase2();
+        config.setTrafficChannelPoolSize(1);
+        parent.setDecodeConfiguration(config);
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(parent);
+        StartRequestSubscriber subscriber = new StartRequestSubscriber();
+        EventBus eventBus = new EventBus();
+        eventBus.register(subscriber);
+        manager.setInterModuleEventBus(eventBus);
+        APCO25Channel channel = dataChannel(manager);
+        List<Integer> slots = new java.util.ArrayList<>();
+        manager.addDecodeEventListener(event -> {
+            slots.add(event.getTimeslot());
+            assertEquals(event.getTimeslot(), ((APCO25Channel)event.getChannelDescriptor()).getTimeslot());
+        });
+
+        manager.processP2DataChannel(channel, 1_000L);
+        assertEquals(List.of(1, 2), slots);
+        assertEquals(1, subscriber.requests.size());
+        manager.processP2DataChannel(channel, 1_100L);
+        assertEquals(List.of(1, 2, 1, 2), slots);
+        assertEquals(1, subscriber.requests.size(), "Two data slots share one carrier allocation");
+    }
+
+    @Test
+    void ignoredPhaseTwoDataStillPublishesBothSlotsWithoutAllocation()
+    {
+        Channel parent = new Channel("Control", Channel.ChannelType.STANDARD);
+        DecodeConfigP25Phase2 config = new DecodeConfigP25Phase2();
+        config.setTrafficChannelPoolSize(1);
+        config.setIgnoreDataCalls(true);
+        parent.setDecodeConfiguration(config);
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(parent);
+        StartRequestSubscriber subscriber = new StartRequestSubscriber();
+        EventBus eventBus = new EventBus();
+        eventBus.register(subscriber);
+        manager.setInterModuleEventBus(eventBus);
+        List<Integer> slots = new java.util.ArrayList<>();
+        manager.addDecodeEventListener(event -> slots.add(event.getTimeslot()));
+
+        manager.processP2DataChannel(dataChannel(manager), 1_000L);
+        assertEquals(List.of(1, 2), slots);
+        assertTrue(subscriber.requests.isEmpty());
+    }
+
+    @Test
+    void phaseTwoDataRollsBothLongLivedTrackersOverTogether() throws Exception
+    {
+        Channel parent = new Channel("Control", Channel.ChannelType.STANDARD);
+        DecodeConfigP25Phase2 config = new DecodeConfigP25Phase2();
+        config.setTrafficChannelPoolSize(0);
+        parent.setDecodeConfiguration(config);
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(parent);
+        manager.setInterModuleEventBus(new EventBus());
+        APCO25Channel channel = dataChannel(manager);
+        List<Integer> slots = new java.util.ArrayList<>();
+        manager.addDecodeEventListener(event -> slots.add(event.getTimeslot()));
+        manager.processP2DataChannel(channel, 1_000L);
+        P25TrafficChannelEventTracker first = trafficTrackers(manager, 1).get(channel.getDownlinkFrequency());
+        P25TrafficChannelEventTracker second = trafficTrackers(manager, 2).get(channel.getDownlinkFrequency());
+
+        for(long timestamp = 2_000L; timestamp <= 18_000L; timestamp += 1_000L)
+        {
+            slots.clear();
+            manager.processP2DataChannel(channel, timestamp);
+            assertEquals(List.of(1, 2), slots);
+        }
+
+        assertNotSame(first, trafficTrackers(manager, 1).get(channel.getDownlinkFrequency()));
+        assertNotSame(second, trafficTrackers(manager, 2).get(channel.getDownlinkFrequency()));
+        assertEquals(18_000L, trafficTrackers(manager, 1).get(channel.getDownlinkFrequency()).getEvent().getTimeStart());
+        assertEquals(18_000L, trafficTrackers(manager, 2).get(channel.getDownlinkFrequency()).getEvent().getTimeStart());
+    }
+
+    private static APCO25Channel dataChannel(P25TrafficChannelManager manager)
+    {
+        IFrequencyBand band = band(0, 851_000_000L, 12_500L, 2);
+        manager.processFrequencyBand(band);
+        manager.processFrequencyBand(band);
+        APCO25Channel channel = APCO25Channel.create(0, 0);
+        channel.setFrequencyBand(band);
+        return channel;
+    }
+
     @SuppressWarnings("unchecked")
     private static Map<Integer,IFrequencyBand> frequencyBands(P25TrafficChannelManager manager) throws Exception
     {

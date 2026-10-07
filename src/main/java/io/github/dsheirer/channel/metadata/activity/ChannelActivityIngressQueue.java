@@ -6,6 +6,13 @@
 package io.github.dsheirer.channel.metadata.activity;
 
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.channel.IChannelDescriptor;
+import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.identifier.Form;
+import io.github.dsheirer.identifier.IdentifierClass;
+import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.channel.metadata.ChannelMetadata;
 import io.github.dsheirer.channel.metadata.ChannelMetadataField;
 import io.github.dsheirer.channel.state.State;
@@ -57,112 +64,117 @@ final class ChannelActivityIngressQueue
     boolean offer(int operation, boolean lifecycle, Object first, Object second, Object third,
                   Object fourth, Object fifth, Object sixth, long value)
     {
-        if(!lifecycle && !reserveRegularSlot())
+        Cell cell = claim(lifecycle);
+        if(cell == null)
         {
             return false;
         }
+        cell.mOperation = operation;
+        cell.mFirst = first;
+        cell.mSecond = second;
+        cell.mThird = third;
+        cell.mFourth = fourth;
+        cell.mFifth = fifth;
+        cell.mSixth = sixth;
+        cell.mValue = value;
+        publish(cell);
+        return true;
+    }
 
+    /** Copies fixed identity references only after claiming a bounded slot; mutable collections never escape. */
+    boolean offerTraffic(int operation, Channel parent, Channel traffic, IChannelDescriptor descriptor,
+                         Integer timeslot, IdentifierCollection identifiers, DecodeEventType eventType,
+                         long controlFrequency, long callStart, long observedAt)
+    {
+        Cell cell = claim(false);
+        if(cell == null)
+        {
+            return false;
+        }
+        cell.mOperation = operation;
+        cell.mFirst = parent;
+        cell.mSecond = traffic;
+        cell.mThird = descriptor;
+        cell.mFourth = eventType;
+        cell.mValue = controlFrequency;
+        cell.mCallStart = callStart;
+        cell.mObservedAt = observedAt;
+        cell.mMetadataTimeslot = timeslot;
+        Identifier<?> source = identifiers != null ? identifiers.getFromIdentifier() : null;
+        cell.mMetadataSource = source != null && source.getForm() != Form.TALKER_ALIAS && source.isValid() ?
+            source : null;
+        Identifier<?> target = identifiers != null ? identifiers.getToIdentifier() : null;
+        cell.mMetadataTarget = target != null && target.isValid() ? target : null;
+        cell.mMetadataTalkerAlias = identifiers != null ?
+            identifiers.getIdentifier(IdentifierClass.USER, Form.TALKER_ALIAS, Role.FROM) : null;
+        cell.mMetadataEncryption = identifiers != null ? identifiers.getEncryptionIdentifier() : null;
+        publish(cell);
+        return true;
+    }
+
+    /** Captures the same fixed participant fields for conventional metadata, without producer projection. */
+    boolean offerMetadata(int operation, ChannelMetadata metadata, ChannelMetadataField field)
+    {
+        if(metadata == null)
+        {
+            return false;
+        }
+        Cell cell = claim(false);
+        if(cell == null)
+        {
+            return false;
+        }
+        FrequencyConfigurationIdentifier frequency = metadata.getFrequencyConfigurationIdentifier();
+        ChannelStateIdentifier state = metadata.getChannelStateIdentifier();
+        cell.mOperation = operation;
+        cell.mMetadata = metadata;
+        cell.mMetadataField = field;
+        cell.mMetadataFrequency = frequency != null && frequency.getValue() != null ? frequency.getValue() : 0L;
+        cell.mMetadataTimeslot = metadata.hasTimeslot() ? metadata.getTimeslot() : null;
+        cell.mMetadataState = state != null ? state.getValue() : State.IDLE;
+        cell.mMetadataDecoder = metadata.getDecoderTypeConfigurationIdentifier();
+        cell.mMetadataSource = metadata.getFromIdentifier();
+        cell.mMetadataSourceAliases = metadata.getFromIdentifierAliases();
+        cell.mMetadataTalkerAlias = metadata.getTalkerAliasIdentifier();
+        cell.mMetadataTarget = metadata.getToIdentifier();
+        cell.mMetadataTargetAliases = metadata.getToIdentifierAliases();
+        cell.mMetadataEncryption = metadata.getEncryptionIdentifier();
+        publish(cell);
+        return true;
+    }
+
+    private Cell claim(boolean lifecycle)
+    {
+        if(!lifecycle && !reserveRegularSlot())
+        {
+            return null;
+        }
         long sequence = mProducerSequence.get();
-
         for(int attempt = 0; attempt < MAXIMUM_OFFER_ATTEMPTS; attempt++)
         {
             Cell cell = mCells[(int)sequence & mMask];
             long difference = cell.mSequence.get() - sequence;
-
-            if(difference == 0)
+            if(difference == 0 && mProducerSequence.compareAndSet(sequence, sequence + 1))
             {
-                if(mProducerSequence.compareAndSet(sequence, sequence + 1))
-                {
-                    cell.mOperation = operation;
-                    cell.mLifecycle = lifecycle;
-                    cell.mFirst = first;
-                    cell.mSecond = second;
-                    cell.mThird = third;
-                    cell.mFourth = fourth;
-                    cell.mFifth = fifth;
-                    cell.mSixth = sixth;
-                    cell.mValue = value;
-                    cell.mSequence.lazySet(sequence + 1);
-                    return true;
-                }
+                cell.mLifecycle = lifecycle;
+                return cell;
             }
-            else if(difference < 0)
+            if(difference < 0)
             {
-                if(!lifecycle)
-                {
-                    mRegularCount.decrementAndGet();
-                }
-
-                return false;
+                break;
             }
-
             sequence = mProducerSequence.get();
         }
-
         if(!lifecycle)
         {
             mRegularCount.decrementAndGet();
         }
-
-        return false;
+        return null;
     }
 
-    /**
-     * Offers an immutable-by-reference metadata observation without allocating on the producer thread.  A regular
-     * slot is reserved before any metadata is read, so a saturated queue rejects the observation without doing
-     * projection work.  The claimed cell is published only after every field has been copied, giving the consumer a
-     * coherent view even when the mutable {@link ChannelMetadata} advances before the worker drains this entry.
-     */
-    boolean offerMetadata(int operation, ChannelMetadata metadata, ChannelMetadataField field)
+    private static void publish(Cell cell)
     {
-        if(metadata == null || !reserveRegularSlot())
-        {
-            return false;
-        }
-
-        long sequence = mProducerSequence.get();
-
-        for(int attempt = 0; attempt < MAXIMUM_OFFER_ATTEMPTS; attempt++)
-        {
-            Cell cell = mCells[(int)sequence & mMask];
-            long difference = cell.mSequence.get() - sequence;
-
-            if(difference == 0)
-            {
-                if(mProducerSequence.compareAndSet(sequence, sequence + 1))
-                {
-                    FrequencyConfigurationIdentifier frequency = metadata.getFrequencyConfigurationIdentifier();
-                    ChannelStateIdentifier state = metadata.getChannelStateIdentifier();
-                    cell.mOperation = operation;
-                    cell.mLifecycle = false;
-                    cell.mMetadata = metadata;
-                    cell.mMetadataField = field;
-                    cell.mMetadataFrequency = frequency != null && frequency.getValue() != null ?
-                        frequency.getValue() : 0L;
-                    cell.mMetadataTimeslot = metadata.hasTimeslot() ? metadata.getTimeslot() : null;
-                    cell.mMetadataState = state != null ? state.getValue() : State.IDLE;
-                    cell.mMetadataDecoder = metadata.getDecoderTypeConfigurationIdentifier();
-                    cell.mMetadataSource = metadata.getFromIdentifier();
-                    cell.mMetadataSourceAliases = metadata.getFromIdentifierAliases();
-                    cell.mMetadataTalkerAlias = metadata.getTalkerAliasIdentifier();
-                    cell.mMetadataTarget = metadata.getToIdentifier();
-                    cell.mMetadataTargetAliases = metadata.getToIdentifierAliases();
-                    cell.mMetadataEncryption = metadata.getEncryptionIdentifier();
-                    cell.mSequence.lazySet(sequence + 1);
-                    return true;
-                }
-            }
-            else if(difference < 0)
-            {
-                mRegularCount.decrementAndGet();
-                return false;
-            }
-
-            sequence = mProducerSequence.get();
-        }
-
-        mRegularCount.decrementAndGet();
-        return false;
+        cell.mSequence.lazySet(cell.mSequence.get() + 1);
     }
 
     private boolean reserveRegularSlot()
@@ -201,7 +213,7 @@ final class ChannelActivityIngressQueue
             cell.mFourth, cell.mFifth, cell.mSixth, cell.mValue, cell.mMetadata, cell.mMetadataField,
             cell.mMetadataFrequency, cell.mMetadataTimeslot, cell.mMetadataState, cell.mMetadataDecoder,
             cell.mMetadataSource, cell.mMetadataSourceAliases, cell.mMetadataTalkerAlias, cell.mMetadataTarget,
-            cell.mMetadataTargetAliases, cell.mMetadataEncryption);
+            cell.mMetadataTargetAliases, cell.mMetadataEncryption, cell.mCallStart, cell.mObservedAt);
         cell.mFirst = null;
         cell.mSecond = null;
         cell.mThird = null;
@@ -219,6 +231,8 @@ final class ChannelActivityIngressQueue
         cell.mMetadataTarget = null;
         cell.mMetadataTargetAliases = null;
         cell.mMetadataEncryption = null;
+        cell.mCallStart = 0;
+        cell.mObservedAt = 0;
 
         if(!cell.mLifecycle)
         {
@@ -254,7 +268,7 @@ final class ChannelActivityIngressQueue
                  long metadataFrequency, Integer metadataTimeslot, State metadataState,
                  DecoderTypeConfigurationIdentifier metadataDecoder, Identifier<?> metadataSource,
                  List<Alias> metadataSourceAliases, Identifier<?> metadataTalkerAlias, Identifier<?> metadataTarget,
-                 List<Alias> metadataTargetAliases, Identifier<?> metadataEncryption)
+                 List<Alias> metadataTargetAliases, Identifier<?> metadataEncryption, long callStart, long observedAt)
     {
     }
 
@@ -270,6 +284,8 @@ final class ChannelActivityIngressQueue
         private Object mFifth;
         private Object mSixth;
         private long mValue;
+        private long mCallStart;
+        private long mObservedAt;
         private ChannelMetadata mMetadata;
         private ChannelMetadataField mMetadataField;
         private long mMetadataFrequency;

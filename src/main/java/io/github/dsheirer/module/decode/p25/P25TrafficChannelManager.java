@@ -491,7 +491,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             {
                 tracker.addIdentifierIfMissing(alias);
                 tracker.updateDurationTraffic(timestamp);
-                broadcast(tracker);
+                broadcast(tracker, timestamp);
             }
         }
         finally
@@ -533,7 +533,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 }
                 tracker.addIdentifierIfMissing(alias);
                 tracker.updateDurationTraffic(timestamp);
-                broadcast(tracker);
+                broadcast(tracker, timestamp);
             }
         }
         finally
@@ -901,14 +901,19 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      */
     public void broadcast(P25TrafficChannelEventTracker tracker)
     {
+        P25ChannelGrantEvent event = tracker.getEvent();
+        broadcast(tracker, Math.max(event.getTimeStart(), event.getTimeEnd()));
+    }
+
+    private void broadcast(P25TrafficChannelEventTracker tracker, long observedAt)
+    {
         broadcast(tracker.getEvent());
         P25ConventionalCallUpdateEvent conventionalUpdate = tracker.conventionalCallUpdate();
         if(conventionalUpdate != null)
         {
             MyEventBus.getGlobalEventBus().post(conventionalUpdate);
         }
-        notifyActivityEncryptionDetails(tracker);
-        notifyActivityTalkerAlias(tracker);
+        notifyActivityCallFacts(tracker, observedAt);
     }
 
     /**
@@ -1116,7 +1121,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
                     if(sameCall && tracker.updateDurationControl(timestamp))
                     {
-                        broadcast(tracker);
+                        broadcast(tracker, timestamp);
                     }
                 }
             }
@@ -1148,7 +1153,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             if(tracker != null && tracker.completeTraffic(timestamp))
             {
                 completed = true;
-                broadcast(tracker);
+                broadcast(tracker, timestamp);
                 P25EncryptionConfirmationTracker.complete(tracker.getEvent(), timestamp);
             }
         }
@@ -1184,7 +1189,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             if(tracker != null && tracker.isStarted() && tracker.completeTraffic(timestamp))
             {
                 completed = true;
-                broadcast(tracker);
+                broadcast(tracker, timestamp);
                 P25EncryptionConfirmationTracker.complete(tracker.getEvent(), timestamp);
             }
         }
@@ -1233,7 +1238,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
                 tracker.addIdentifierIfMissing(identifier);
                 tracker.updateDurationTraffic(timestamp);
-                broadcast(tracker);
+                broadcast(tracker, timestamp);
             }
         }
         finally
@@ -1265,74 +1270,49 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
         try
         {
-            P25TrafficChannelEventTracker trackerTS1 = getTrackerRemoveIfStale(channel.getDownlinkFrequency(),
-                    TimeslotMessage.TIMESLOT_1, timestamp);
-
-            if(trackerTS1 != null && trackerTS1.exceedsMaxTDMADataDuration())
+            for(int timeslot = TimeslotMessage.TIMESLOT_1; timeslot <= TimeslotMessage.TIMESLOT_2; timeslot++)
             {
-                removeTracker(frequency, TimeslotMessage.TIMESLOT_1);
-                trackerTS1 = null;
-            }
+                P25TrafficChannelEventTracker tracker = getTrackerRemoveIfStale(frequency, timeslot, timestamp);
 
-            if(trackerTS1 == null)
-            {
-                P25ChannelGrantEvent continuationGrantEvent = P25ChannelGrantEvent.builder(DecodeEventType.DATA_CALL,
-                                timestamp, new DataServiceOptions(0))
-                        .channelDescriptor(channel)
+                if(tracker != null && tracker.exceedsMaxTDMADataDuration())
+                {
+                    removeTracker(frequency, timeslot);
+                    tracker = null;
+                }
+
+                if(tracker == null)
+                {
+                    P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(DecodeEventType.DATA_CALL, timestamp,
+                            new DataServiceOptions(0))
+                        .channelDescriptor(channel.decorateAs(timeslot))
                         .details("TDMA PHASE 2 DATA CHANNEL ACTIVE")
                         .identifiers(new IdentifierCollection())
-                        .timeslot(TimeslotMessage.TIMESLOT_1)
+                        .timeslot(timeslot)
                         .build();
-
-                trackerTS1 = createTracker(continuationGrantEvent, frequency, TimeslotMessage.TIMESLOT_1);
-            }
-
-            //update the ending timestamp so that the duration value is correctly calculated
-            trackerTS1.updateDurationTraffic(timestamp);
-            broadcast(trackerTS1);
-
-            //Even though we have a tracked event, the initial channel grant may have been rejected.  Check to
-            // see if there is a traffic channel allocated.  If not, allocate one and update the event description.
-            if(mGrantAllocationEnabled && !mAllocatedTrafficChannelMap.containsKey(frequency) && !mIgnoreDataCalls &&
-                    (getCurrentControlFrequency() != frequency))
-            {
-                Channel trafficChannel = mAvailablePhase2TrafficChannelQueue.poll();
-
-                if(trafficChannel != null)
-                {
-                    requestTrafficChannelStart(trafficChannel, channel, new IdentifierCollection(), timestamp);
+                    tracker = createTracker(event, frequency, timeslot);
                 }
-                else
+
+                tracker.updateDurationTraffic(timestamp);
+
+                //Both slots share one carrier. Retry its allocation once, independently of slot notifications.
+                if(timeslot == TimeslotMessage.TIMESLOT_1 && mGrantAllocationEnabled &&
+                    !mAllocatedTrafficChannelMap.containsKey(frequency) && !mIgnoreDataCalls &&
+                    getCurrentControlFrequency() != frequency)
                 {
-                    trackerTS1.setDetails(MAX_TRAFFIC_CHANNELS_EXCEEDED);
+                    Channel trafficChannel = mAvailablePhase2TrafficChannelQueue.poll();
+
+                    if(trafficChannel != null)
+                    {
+                        requestTrafficChannelStart(trafficChannel, channel, new IdentifierCollection(), timestamp);
+                    }
+                    else
+                    {
+                        tracker.setDetails(MAX_TRAFFIC_CHANNELS_EXCEEDED);
+                    }
                 }
+
+                broadcast(tracker, timestamp);
             }
-
-            P25TrafficChannelEventTracker trackerTS2 = getTrackerRemoveIfStale(channel.getDownlinkFrequency(),
-                    TimeslotMessage.TIMESLOT_2, timestamp);
-
-            if(trackerTS2 != null && trackerTS2.exceedsMaxTDMADataDuration())
-            {
-                removeTracker(frequency, TimeslotMessage.TIMESLOT_2);
-                trackerTS2 = null;
-            }
-
-            if(trackerTS2 == null)
-            {
-                P25ChannelGrantEvent continuationGrantEvent = P25ChannelGrantEvent.builder(DecodeEventType.DATA_CALL,
-                                timestamp, new DataServiceOptions(0))
-                        .channelDescriptor(channel)
-                        .details("TDMA PHASE 2 DATA CHANNEL ACTIVE")
-                        .identifiers(new IdentifierCollection())
-                        .timeslot(TimeslotMessage.TIMESLOT_2)
-                        .build();
-
-                trackerTS2 = createTracker(continuationGrantEvent, frequency, TimeslotMessage.TIMESLOT_2);
-            }
-
-            //update the ending timestamp so that the duration value is correctly calculated
-            trackerTS2.updateDurationTraffic(timestamp);
-            broadcast(trackerTS1);
         }
         finally
         {
@@ -1366,7 +1346,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             if(tracker != null)
             {
                 tracker.updateDurationTraffic(timestamp);
-                broadcast(tracker);
+                broadcast(tracker, timestamp);
             }
         }
         finally
@@ -1412,7 +1392,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 tracker.addDetailsIfMissing(additionalDetails);
                 tracker.addChannelDescriptorIfMissing(channelDescriptor);
                 observeP2PushToTalk(tracker, macOpcode, ic, timestamp);
-                broadcast(tracker);
+                broadcast(tracker, timestamp);
                 return tracker.getEvent().getChannelDescriptor();
             }
 
@@ -1427,7 +1407,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
             tracker = createTracker(callEvent, frequency, timeslot);
             observeP2PushToTalk(tracker, macOpcode, ic, timestamp);
-            broadcast(tracker);
+            broadcast(tracker, timestamp);
             return null;
         }
         finally
@@ -1613,7 +1593,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             }
 
             P25EncryptionConfirmationTracker.observe(tracker.getEvent(), eki, timestamp);
-            broadcast(tracker);
+            broadcast(tracker, timestamp);
         }
         finally
         {
@@ -1684,7 +1664,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 }
 
                 tracker.updateDurationTraffic(timestamp);
-                broadcast(tracker);
+                broadcast(tracker, timestamp);
             }
         }
         finally
@@ -1765,7 +1745,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             if(changed)
             {
                 tracker.getEvent().setIdentifierCollection(tracked);
-                broadcast(tracker);
+                broadcast(tracker, timestamp);
             }
 
             return accepted.isEmpty() ? Collections.emptyList() : List.copyOf(accepted);
@@ -1858,7 +1838,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 }
 
                 tracker.updateDurationTraffic(timestamp);
-                broadcast(tracker);
+                broadcast(tracker, timestamp);
             }
             else
             {
@@ -1880,7 +1860,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                             .build();
 
                     tracker = createTrafficTracker(callEvent, frequency, TimeslotMessage.TIMESLOT_1);
-                    broadcast(tracker);
+                    broadcast(tracker, timestamp);
                 }
             }
         }
@@ -1925,7 +1905,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
                 tracker.updateDurationTraffic(timestamp);
                 tracker.addDetailsIfMissing(additionalDetails);
-                broadcast(tracker);
+                broadcast(tracker, timestamp);
                 return;
             }
 
@@ -1938,7 +1918,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                     .build();
 
             tracker = createTrafficTracker(callEvent, frequency, TimeslotMessage.TIMESLOT_1);
-            broadcast(tracker);
+            broadcast(tracker, timestamp);
         }
         finally
         {
@@ -1979,7 +1959,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 // updates are ignored.
                 if(tracker.updateDurationControl(timestamp))
                 {
-                    broadcast(tracker);
+                    broadcast(tracker, timestamp);
                 }
             }
             else
@@ -2015,7 +1995,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             if(tracker != null && tracker.isStarted() && tracker.completeTraffic(timestamp))
             {
                 completed = true;
-                broadcast(tracker);
+                broadcast(tracker, timestamp);
                 P25EncryptionConfirmationTracker.complete(tracker.getEvent(), timestamp);
             }
         }
@@ -2040,7 +2020,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         {
             Channel trafficChannel = mAllocatedTrafficChannelMap.get(channel.getDownlinkFrequency());
             mChannelActivityModel.p25TrafficGrant(mParentChannel, trafficChannel, channel,
-                identifiers, eventType);
+                identifiers, eventType, continuation ? 0 : timestamp, timestamp);
         }
     }
 
@@ -2056,30 +2036,18 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             band.getDownlinkFrequency(channel.getValue().getDownlinkChannelNumber()) == channel.getDownlinkFrequency();
     }
 
-    private void notifyActivityEncryptionDetails(P25TrafficChannelEventTracker tracker)
+    private void notifyActivityCallFacts(P25TrafficChannelEventTracker tracker, long observedAt)
     {
         P25ChannelGrantEvent event = tracker != null ? tracker.getEvent() : null;
         IdentifierCollection identifiers = event != null ? event.getIdentifierCollection() : null;
 
         if(mChannelActivityModel != null && event != null &&
-            event.getChannelDescriptor() instanceof APCO25Channel channel &&
-            identifiers != null && identifiers.getEncryptionIdentifier() != null)
+            event.getChannelDescriptor() instanceof APCO25Channel channel && identifiers != null)
         {
-            mChannelActivityModel.p25TrafficEncryptionDetails(mParentChannel, channel, identifiers, event.getEventType());
-        }
-    }
-
-    private void notifyActivityTalkerAlias(P25TrafficChannelEventTracker tracker)
-    {
-        P25ChannelGrantEvent event = tracker != null ? tracker.getEvent() : null;
-        IdentifierCollection identifiers = event != null ? event.getIdentifierCollection() : null;
-        Identifier talkerAlias = identifiers != null ?
-            identifiers.getIdentifier(IdentifierClass.USER, Form.TALKER_ALIAS, Role.FROM) : null;
-
-        if(mChannelActivityModel != null && event != null &&
-            event.getChannelDescriptor() instanceof APCO25Channel channel && talkerAlias != null)
-        {
-            mChannelActivityModel.p25TrafficTalkerAlias(mParentChannel, channel, talkerAlias);
+            Channel trafficChannel = mAllocatedTrafficChannelMap.get(channel.getDownlinkFrequency());
+            mChannelActivityModel.trunkedTrafficEvent(mParentChannel, trafficChannel, channel,
+                channel.isTDMAChannel() ? channel.getTimeslot() : null,
+                identifiers, event.getEventType(), 0, event.getTimeStart(), observedAt);
         }
     }
 
@@ -2462,7 +2430,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 tracker.setDetails(PHASE_1_ENCRYPTED_CALL_IGNORED);
             }
 
-            broadcast(tracker);
+            broadcast(tracker, timestamp);
 
             //Even though we have a tracked event, the initial channel grant may have been rejected.  Check to see if there
             //is a traffic channel allocated.  If not, allocate one and update the event description.
@@ -2482,7 +2450,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                         tracker.setDetails("PHASE 1 CHANNEL GRANT " + (serviceOptions != null ? serviceOptions : ""));
                     }
                     tracker.addChannelDescriptorIfMissing(apco25Channel);
-                    broadcast(tracker);
+                    broadcast(tracker, timestamp);
 
                     requestTrafficChannelStart(trafficChannel, apco25Channel, ic, timestamp);
                 }
@@ -2505,7 +2473,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                         .identifiers(ic)
                         .build();
                 tracker = createControlTracker(event, frequency, TimeslotMessage.TIMESLOT_1);
-                broadcast(tracker);
+                broadcast(tracker, timestamp);
             }
 
             return;
@@ -2539,7 +2507,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             requestTrafficChannelStart(trafficChannel, apco25Channel, ic, timestamp);
         }
 
-        broadcast(tracker);
+        broadcast(tracker, timestamp);
     }
 
     /**
@@ -2590,7 +2558,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                     .build();
 
                 tracker = createControlTracker(continuationGrantEvent, frequency, timeslot);
-                broadcast(tracker);
+                broadcast(tracker, timestamp);
             }
 
             //update the ending timestamp so that the duration value is correctly calculated
@@ -2607,7 +2575,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 tracker.setDetails(PHASE_2_ENCRYPTED_CALL_IGNORED);
             }
 
-            broadcast(tracker);
+            broadcast(tracker, timestamp);
 
             //Even though we have a tracked event, the initial channel grant may have been rejected.  Check to see if there
             //is a traffic channel allocated.  If not, allocate one and update the event description.
@@ -2620,7 +2588,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 {
                     tracker.setDetails("PHASE 2 CHANNEL GRANT " + (serviceOptions != null ? serviceOptions : ""));
                     tracker.addChannelDescriptorIfMissing(apco25Channel);
-                    broadcast(tracker);
+                    broadcast(tracker, timestamp);
                     requestTrafficChannelStart(trafficChannel, apco25Channel, ic, timestamp);
                 }
                 else
@@ -2642,7 +2610,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 .build();
 
             tracker = createControlTracker(event, frequency, TimeslotMessage.TIMESLOT_1);
-            broadcast(tracker);
+            broadcast(tracker, timestamp);
             return;
         }
 
@@ -2677,7 +2645,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             }
         }
 
-        broadcast(tracker);
+        broadcast(tracker, timestamp);
     }
 
     /**
