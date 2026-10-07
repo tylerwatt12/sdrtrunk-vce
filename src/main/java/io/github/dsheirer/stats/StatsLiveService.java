@@ -246,7 +246,7 @@ final class StatsLiveService implements AutoCloseable
                 // newer than this baseline; revision checks skip already-covered notifications safely.
                 if(run.mInitialSnapshot != null)
                 {
-                    rebuildBaseline(run, run.mInitialSnapshot);
+                    rebuildBaseline(run, run.mInitialSnapshot, run.mPublishedNavigation, run.mPublishedRemoteOrigins);
                     run.mInitialSnapshot = null;
                 }
                 ChannelActivityEvent event = run.mPendingActivity.poll();
@@ -256,8 +256,7 @@ final class StatsLiveService implements AutoCloseable
                     {
                         if(run.mPendingActivity.poll() == null) break;
                     }
-                    rebuildBaseline(run, currentSnapshotSet());
-                    publishAuthoritativeResync(run);
+                    publishAuthoritativeResync(run, navigationSnapshot(), remoteOriginSnapshot());
                     continue;
                 }
                 if(event == null)
@@ -286,13 +285,13 @@ final class StatsLiveService implements AutoCloseable
 
     private void projectAndPublish(ProjectionRun run, ChannelActivityEvent event)
     {
+        publishNavigationRefreshIfNeeded(run);
         if(event.revision() > 0 && event.revision() <= run.mPublishedRevision)
         {
             return;
         }
-        publishNavigationRefreshIfNeeded(run);
-        WebEntityNavigationCatalog.Snapshot navigation = navigationSnapshot();
-        RemoteOriginLookup.OriginSnapshot remoteOrigins = remoteOriginSnapshot();
+        WebEntityNavigationCatalog.Snapshot navigation = run.mPublishedNavigation;
+        RemoteOriginLookup.OriginSnapshot remoteOrigins = run.mPublishedRemoteOrigins;
         PreparedActivityEvent prepared = prepare(event, navigation, remoteOrigins, run.mRowSystemScopes,
             run.mSourceTables.get(event.snapshot().tableId()), run.mProjectedTables.get(event.snapshot().tableId()));
 
@@ -330,8 +329,6 @@ final class StatsLiveService implements AutoCloseable
             }
 
             mEncodedChannelActivitySnapshot = null;
-            run.mPublishedNavigation = navigation;
-            run.mPublishedRemoteOrigins = remoteOrigins;
             StatsLiveEventHub.LiveEvent complete = new StatsLiveEventHub.LiveEvent("activity_table", Map.copyOf(update));
             mChannelActivityHub.publish(complete);
             mChannelActivityHub.publish(new StatsLiveEventHub.LiveEvent("activity_delta", delta, complete));
@@ -362,13 +359,13 @@ final class StatsLiveService implements AutoCloseable
         }
     }
 
-    private void rebuildBaseline(ProjectionRun run, ChannelActivityModel.SnapshotSet source)
+    private void rebuildBaseline(ProjectionRun run, ChannelActivityModel.SnapshotSet source,
+                                 WebEntityNavigationCatalog.Snapshot navigation,
+                                 RemoteOriginLookup.OriginSnapshot origins)
     {
         run.mProjectedTables.clear();
         run.mSourceTables.clear();
         run.mMarkerTables.clear();
-        WebEntityNavigationCatalog.Snapshot navigation = navigationSnapshot();
-        RemoteOriginLookup.OriginSnapshot origins = remoteOriginSnapshot();
         source.tables().stream().filter(StatsLiveService::isVisibleLiveTable).limit(MAXIMUM_LIVE_TABLES)
             .forEach(table -> {
                 run.mSourceTables.put(table.tableId(), table);
@@ -382,8 +379,12 @@ final class StatsLiveService implements AutoCloseable
         run.mPublishedRemoteOrigins = origins;
     }
 
-    private void publishAuthoritativeResync(ProjectionRun run)
+    private void publishAuthoritativeResync(ProjectionRun run, WebEntityNavigationCatalog.Snapshot navigation,
+                                            RemoteOriginLookup.OriginSnapshot origins)
     {
+        // Sample activity after the navigation/origin references and retain those exact references. A catalog
+        // change during projection stays visible to the next refresh instead of being silently adopted.
+        rebuildBaseline(run, currentSnapshotSet(), navigation, origins);
         Map<String,Object> authoritative = boundedSnapshot(new ChannelActivityModel.SnapshotSet(run.mPublishedRevision,
             List.copyOf(run.mSourceTables.values())), MAXIMUM_TOTAL_LIVE_ROWS, run.mPublishedNavigation,
             run.mPublishedRemoteOrigins, run.mRowSystemScopes);
@@ -492,27 +493,7 @@ final class StatsLiveService implements AutoCloseable
             return;
         }
 
-        ChannelActivityModel.SnapshotSet source = new ChannelActivityModel.SnapshotSet(run.mPublishedRevision,
-            List.copyOf(run.mSourceTables.values()));
-        Map<String,Object> authoritative = boundedSnapshot(source, MAXIMUM_TOTAL_LIVE_ROWS, navigation, remoteOrigins,
-            run.mRowSystemScopes);
-
-        synchronized(mLifecycleLock)
-        {
-            if(isCurrentRun(run) && (run.mPublishedNavigation != navigation ||
-                run.mPublishedRemoteOrigins != remoteOrigins))
-            {
-                mEncodedChannelActivitySnapshot = null;
-                run.mPublishedNavigation = navigation;
-                run.mPublishedRemoteOrigins = remoteOrigins;
-                mChannelActivityHub.publish("activity_resync", Map.of("snapshot", authoritative));
-                mChannelActivityHub.publish(new StatsLiveEventHub.LiveEvent("activity_resync",
-                    Map.of("snapshot", markerSnapshot(authoritative)), null, true));
-                run.mProjectedTables.replaceAll((id, old) -> activityTable(run.mSourceTables.get(id),
-                    MAXIMUM_ROWS_PER_TABLE, navigation, remoteOrigins, run.mRowSystemScopes));
-                run.mProjectedTables.forEach((id, table) -> run.mMarkerTables.put(id, markerTable(table, null, null)));
-            }
-        }
+        publishAuthoritativeResync(run, navigation, remoteOrigins);
     }
 
     private boolean isCurrentRun(ProjectionRun run)
