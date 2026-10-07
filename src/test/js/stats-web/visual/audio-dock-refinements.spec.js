@@ -325,14 +325,15 @@ test('disclosure choices remain separate by source and survive tab and size chan
 });
 
 for (const viewport of [{ width: 320, height: 740 }, { width: 844, height: 390 }]) {
-  test(`Listening setting sections retain actions and focus at ${viewport.width}×${viewport.height}`, async ({ page }) => {
+  test(`Scan Lists and Settings retain actions and focus at ${viewport.width}×${viewport.height}`, async ({ page }) => {
     await page.setViewportSize(viewport);
     const state = await openApp(page);
     await size(page, 'full');
-    await panel(page, 'Listening');
-    for (const name of ['Scan Lists', 'Avoid List', 'Call grouping', 'Target rotation', 'Page title']) {
-      await expect(player(page).getByRole('heading', { name, exact: true })).toHaveCount(1);
-    }
+    await panel(page, 'Scan Lists');
+    await expect(player(page).getByRole('heading', { name: 'Avoid List', exact: true })).toHaveCount(1);
+    await expect(player(page).getByRole('checkbox', { name: 'Group calls by target', exact: true })).toHaveCount(0);
+    await expect(player(page).getByRole('spinbutton', { name: 'Calls per target', exact: true })).toHaveCount(0);
+    await expect(player(page).getByRole('checkbox', { name: 'Playing call in page title', exact: true })).toHaveCount(0);
     const scan = player(page).getByRole('checkbox', { name: /County Fire and Emergency Medical Services/ });
     await scan.check();
     await expect(scan).toBeFocused();
@@ -340,9 +341,9 @@ for (const viewport of [{ width: 320, height: 740 }, { width: 844, height: 390 }
     await expect(scan).toBeFocused();
     await scan.check();
     await expect(scan).toBeFocused();
+    await panel(page, 'Settings');
+    await expect(scan).toHaveCount(0);
     const grouping = player(page).getByRole('checkbox', { name: 'Group calls by target', exact: true });
-    await expect(player(page).locator('section').filter({ has: page.getByRole('heading', { name: 'Call grouping', exact: true }) })
-      .getByRole('checkbox', { name: 'Group calls by target', exact: true })).toHaveCount(1);
     // Use the visible shared toggle, as a person would, rather than clicking its
     // visually hidden one-pixel checkbox.
     const groupingTrack = grouping.locator('..').locator('.ui-toggle-track');
@@ -353,15 +354,11 @@ for (const viewport of [{ width: 320, height: 740 }, { width: 844, height: 390 }
     await expect.poll(() => player(page).evaluate((element) => element.scrollTop)).toBe(0);
     await expectReachable(handle(page));
     const burst = player(page).getByRole('spinbutton', { name: 'Calls per target', exact: true });
-    await expect(player(page).locator('section').filter({ has: page.getByRole('heading', { name: 'Target rotation', exact: true }) })
-      .getByRole('spinbutton', { name: 'Calls per target', exact: true })).toHaveCount(1);
     await burst.fill('7');
     await burst.dispatchEvent('change');
     await expect(burst).toBeFocused();
     await expect(burst).toHaveValue('7');
     const prepend = player(page).getByRole('checkbox', { name: 'Playing call in page title', exact: true });
-    await expect(player(page).locator('section').filter({ has: page.getByRole('heading', { name: 'Page title', exact: true }) })
-      .getByRole('checkbox', { name: 'Playing call in page title', exact: true })).toHaveCount(1);
     await burst.focus();
     await page.keyboard.press('Tab');
     await expect(prepend).toBeFocused();
@@ -383,6 +380,7 @@ for (const viewport of [{ width: 320, height: 740 }, { width: 844, height: 390 }
     await expect(burst).toBeFocused();
     await expect(burst).toHaveValue('7');
     await player(page).getByRole('button', { name: 'Avoid', exact: true }).click();
+    await panel(page, 'Scan Lists');
     const remove = player(page).getByRole('button', { name: 'Remove Fire Dispatch from avoid list', exact: true });
     await expect(remove).toBeVisible();
     await expectReachable(remove);

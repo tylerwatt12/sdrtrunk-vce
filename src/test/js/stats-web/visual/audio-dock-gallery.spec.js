@@ -63,6 +63,16 @@ for (const theme of ['light', 'dark']) {
             await expect(dock.locator('.audio-dock-title')).toHaveText('Fire Dispatch');
             await expect(dock.getByRole('button', { name: 'Change audio player size' }))
               .toHaveAttribute('aria-expanded', 'true');
+            if (state === 'full') {
+              await expect(dock.locator('.audio-dock-description')).toHaveText(source === 'live' ?
+                'Live dispatch and tactical fire calls' : 'County fire dispatch and incident response operations');
+              await expect(dock.locator('.audio-dock-system')).toHaveText('Metro Public Safety');
+              await expect(dock.locator('.audio-dock-now .audio-dock-meta').first()).toContainText('North Ridge Channel');
+              await expect(dock.locator('.audio-dock-now .audio-dock-meta').first()).not.toContainText('Metro Public Safety');
+            } else {
+              await expect(dock.locator('.audio-dock-description')).toBeHidden();
+              await expect(dock.locator('.audio-dock-system')).toBeHidden();
+            }
           }
           if (device === 'desktop') {
             const close = dock.getByRole('button', { name: 'Hide audio player', exact: true });
@@ -74,13 +84,20 @@ for (const theme of ['light', 'dark']) {
             await expect(dock.getByRole('button', { name: 'Show audio player', exact: true })).toBeHidden();
           }
           await expect(dock).toHaveScreenshot(`${source}-${state}-${theme}-${device}.png`);
+          if (source === 'live' && state === 'full') {
+            for (const [name, key] of [['Scan Lists', 'scan-lists'], ['Settings', 'settings']]) {
+              await dock.getByRole('tab', { name, exact: true }).click();
+              expect(await dock.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+              await expect(dock).toHaveScreenshot(`live-${key}-${theme}-${device}.png`);
+            }
+          }
         });
       }
     }
   }
 }
 
-for (const [source, panel] of [['live', 'queue'], ['live', 'listening'],
+for (const [source, panel] of [['live', 'queue'], ['live', 'listening'], ['live', 'settings'],
   ['recordings', 'queue'], ['recordings', 'transcript']]) {
   for (const theme of ['light', 'dark']) {
     test(`audio dock long ${source} ${panel} ${theme} 320px`, async ({ page }) => {
@@ -95,7 +112,6 @@ for (const [source, panel] of [['live', 'queue'], ['live', 'listening'],
       const bottom = await finalChild.evaluate((element) => element.getBoundingClientRect().bottom);
       const scrollerBottom = await scroller.evaluate((element) => element.getBoundingClientRect().bottom);
       expect(bottom).toBeLessThanOrEqual(scrollerBottom + 1);
-      if (panel === 'listening') await expect(dock).toHaveScreenshot(`listening-preferences-${theme}-320.png`);
     });
   }
 }
@@ -105,6 +121,8 @@ for (const source of ['live', 'recordings']) {
     await page.setViewportSize({ width: 390, height: 844 });
     const dock = await openGallery(page, { source, panel: 'queue', fixture: 'empty' });
     await expect(dock).toContainText('Queue is empty.');
+    await expect(dock.locator('.audio-dock-description')).toBeHidden();
+    await expect(dock.locator('.audio-dock-system')).toBeHidden();
     await expect(dock.getByRole('button', { name: 'Clear queue', exact: true })).toBeDisabled();
     await expect(dock.getByRole('button', { name: 'Next call', exact: true })).toBeDisabled();
     await expect(dock).toHaveScreenshot(`empty-${source}-mobile.png`);
@@ -119,6 +137,7 @@ test('audio dock restricted source remains visible and disabled', async ({ page 
   await expect.poll(() => picker.evaluate((element) => element.selectedOptions[0]?.label)).toBe('Live');
   await expect(picker.locator('option[value="recordings"]')).toBeDisabled();
   await expect(picker.locator('option[value="live"]')).toBeEnabled();
+  await expect(dock.locator('.audio-dock-description')).toBeHidden();
   await expect(dock).toHaveScreenshot('restricted-source-dark-320.png');
 });
 
@@ -156,7 +175,19 @@ test('audio dock gallery uses working production state controls and keyboard tab
   await expect(dock.getByRole('tab', { name: 'Queue', exact: true })).toBeFocused();
   await expect(dock).toContainText('ENG 5');
   await expect(dock).toContainText('Radio 30915');
+  await dock.getByRole('tab', { name: 'Queue', exact: true }).press('ArrowRight');
+  await expect(dock.getByRole('tab', { name: 'Scan Lists', exact: true })).toBeFocused();
+  await dock.getByRole('tab', { name: 'Scan Lists', exact: true }).press('ArrowRight');
+  await expect(dock.getByRole('tab', { name: 'Settings', exact: true })).toBeFocused();
+  await expect(dock.getByRole('checkbox', { name: 'Group calls by target', exact: true })).toHaveCount(1);
+  await dock.getByRole('tab', { name: 'Settings', exact: true }).press('Home');
+  await expect(dock.getByRole('tab', { name: 'Details', exact: true })).toBeFocused();
+  await dock.getByRole('tab', { name: 'Details', exact: true }).press('End');
+  await expect(dock.getByRole('tab', { name: 'Settings', exact: true })).toBeFocused();
   await dock.getByRole('button', { name: 'Recordings', exact: true }).click();
+  await expect(dock.getByRole('tab', { name: 'Scan Lists', exact: true })).toHaveCount(0);
+  await expect(dock.getByRole('tab', { name: 'Settings', exact: true })).toHaveCount(0);
+  await expect(dock.getByRole('tab', { name: 'Details', exact: true })).toHaveAttribute('aria-selected', 'true');
   await dock.getByRole('button', { name: 'Play recording', exact: true }).click();
   await expect(dock.getByRole('button', { name: 'Pause recording', exact: true })).toBeVisible();
   const slider = dock.getByRole('slider', { name: 'Recording position', exact: true });

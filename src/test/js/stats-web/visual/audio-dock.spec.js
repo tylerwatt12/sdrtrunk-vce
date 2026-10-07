@@ -60,7 +60,7 @@ for (const viewport of [{ width: 320, height: 740 }, { width: 390, height: 844 }
     await fullControls(page);
     await player.getByRole('button', { name: 'Listen live', exact: true }).click();
     await expect(player.getByRole('button', { name: 'Hold', exact: true })).toBeEnabled();
-    for (const panel of ['Details', 'Queue', 'Listening']) {
+    for (const panel of ['Details', 'Queue', 'Scan Lists', 'Settings']) {
       await selectPanel(page, panel);
       await expectReachableControls(player);
     }
@@ -84,6 +84,8 @@ for (const viewport of [{ width: 320, height: 740 }, { width: 390, height: 844 }
     }
     await chooseRecording(page);
     await fullControls(page);
+    await expect(player.getByRole('tab', { name: 'Scan Lists', exact: true })).toHaveCount(0);
+    await expect(player.getByRole('tab', { name: 'Settings', exact: true })).toHaveCount(0);
     for (const panel of ['Details', 'Transcript', 'Queue']) {
       await selectPanel(page, panel);
       await expectReachableControls(player);
@@ -201,15 +203,16 @@ test('live and recording playback stop one another without clearing the recordin
   await expect(dock(page)).toContainText('ENG 5');
 });
 
-test('Listening controls keep keyboard focus and values while calls arrive and preferences change', async ({ page }) => {
+test('Scan Lists and Settings keep keyboard focus and values while calls arrive and preferences change', async ({ page }) => {
   const state = await openAudioApp(page, { feedCallsEnabled: false });
   await fullControls(page);
-  await selectPanel(page, 'Listening');
+  await selectPanel(page, 'Scan Lists');
   const scanList = dock(page).getByRole('checkbox', { name: /County Fire and Emergency Medical Services/ });
   await scanList.check();
   await expect(scanList).toBeFocused();
   await expect(scanList).toBeChecked();
   await dock(page).getByRole('button', { name: 'Listen live', exact: true }).click();
+  await selectPanel(page, 'Settings');
   const burst = dock(page).getByRole('spinbutton', { name: 'Calls per target' });
   await burst.focus();
   state.feedCallsEnabled = true;

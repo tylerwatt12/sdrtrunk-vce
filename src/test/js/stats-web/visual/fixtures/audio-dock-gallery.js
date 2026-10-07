@@ -63,7 +63,8 @@ export async function mountAudioDockGallery(parameters) {
     system_name: 'Metro Public Safety', channel_id: channelRef.key, channel_name: 'North Ridge Channel',
     talkgroup_id: 1201, talkgroup_alias: long ?
       'Metropolitan Emergency Communications County Public Safety Dispatch' : 'Fire Dispatch',
-    talkgroup_description: 'County fire dispatch and incident response operations', talkgroup_group: 'Fire',
+    group_description: 'County fire dispatch and incident response operations' +
+      (long ? ' across metropolitan dispatch, tactical response and mutual-aid channels' : ''), talkgroup_group: 'Fire',
     source_id: 30914, source_alias: 'Engine 4', source_description: 'Fire engine response crew',
     source_group: 'Field units', source_ota_alias: 'ENG 4',
     source_home_wacn: 1, source_home_system_id: 1, source_home_id: 30914,
@@ -81,7 +82,8 @@ export async function mountAudioDockGallery(parameters) {
   const liveCall = {
     ...currentRecording, call_id: 'gallery-live-1', started_at_ms: started,
     target_id: 1201, target_alias: currentRecording.talkgroup_alias, target_form: 'TALKGROUP',
-    source_form: 'RADIO', target_description: currentRecording.talkgroup_description,
+    source_form: 'RADIO', target_description: fixture === 'restricted' ? currentRecording.talkgroup_alias :
+      'Live dispatch and tactical fire calls' + (long ? ' for county departments and regional mutual-aid crews' : ''),
     target_group: 'Fire', system: currentRecording.system_name, channel: currentRecording.channel_name,
     site: 'North Ridge', decoder: 'P25 Phase 2', protocol: 'APCO25_PHASE2',
     playback_target: { label: currentRecording.talkgroup_alias, kind: 'talkgroup' },
@@ -196,7 +198,7 @@ export async function mountAudioDockGallery(parameters) {
   if (size !== 'minimal') handle.dispatchEvent(new KeyboardEvent('keydown', {
     key: size === 'collapsed' ? 'Home' : 'End', bubbles: true }));
   const panel = parameters.get('audioPanel');
-  if (size === 'full' && panel) clickNamed(panel[0].toUpperCase() + panel.slice(1));
+  if (size === 'full' && panel) clickNamed(panel === 'listening' ? 'Scan Lists' : panel[0].toUpperCase() + panel.slice(1));
   if (parameters.get('audioHidden') === 'true') clickNamed('Hide audio player');
   document.querySelector('.visual-audio-dock-example').dataset.ready = 'true';
 }

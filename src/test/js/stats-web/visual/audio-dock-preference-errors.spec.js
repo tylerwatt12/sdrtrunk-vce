@@ -27,7 +27,7 @@ test('Page title save failures retain previous values and offer a working retry 
   const dock = page.locator('#audio-dock');
   const handle = dock.getByRole('button', { name: 'Change audio player size', exact: true });
   await handle.press('End');
-  await dock.getByRole('tab', { name: 'Listening', exact: true }).click();
+  await dock.getByRole('tab', { name: 'Settings', exact: true }).click();
   const setting = dock.getByRole('checkbox', { name: 'Playing call in page title', exact: true });
   const previous = await setting.isChecked();
   await setting.locator('..').locator('.ui-toggle-track').click();

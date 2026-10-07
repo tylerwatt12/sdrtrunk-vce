@@ -253,7 +253,7 @@ test('live calls continue arriving and auto-advancing while hidden without chang
     await route.fulfill({ json: { data: { cursor: String(feed.requests), reset: false, calls: feed.pending.splice(0) } } });
   });
   await size(page, 'full');
-  await dock(page).getByRole('tab', { name: 'Listening', exact: true }).click();
+  await dock(page).getByRole('tab', { name: 'Scan Lists', exact: true }).click();
   await dock(page).getByRole('checkbox', { name: /County Fire and Emergency Medical Services/ }).check();
   feed.pending.push(liveCall);
   await dock(page).getByRole('button', { name: 'Listen live', exact: true }).click();
@@ -284,7 +284,7 @@ test('live calls continue arriving and auto-advancing while hidden without chang
   await expect(dock(page)).toContainText('Engine 5');
   await expect(dock(page).getByRole('button', { name: 'Pause live audio', exact: true })).toBeVisible();
   await expect(dock(page).getByRole('slider', { name: 'Volume', exact: true })).toHaveValue('0.65');
-  await expect(dock(page).getByRole('tab', { name: 'Listening', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(dock(page).getByRole('tab', { name: 'Scan Lists', exact: true })).toHaveAttribute('aria-selected', 'true');
   await expect(dock(page).getByRole('checkbox', { name: /County Fire and Emergency Medical Services/ })).toBeChecked();
   expect(state.preferenceWrites.length).toBe(before.writes);
 });
