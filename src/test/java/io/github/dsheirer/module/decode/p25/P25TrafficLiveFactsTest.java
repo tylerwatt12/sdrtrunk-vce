@@ -10,32 +10,41 @@ package io.github.dsheirer.module.decode.p25;
 
 import com.google.common.eventbus.EventBus;
 import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityRow;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
+import io.github.dsheirer.module.decode.p25.phase1.P25P1DataUnitID;
+import io.github.dsheirer.module.decode.p25.phase1.P25P1DecoderState;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25FrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.Opcode;
+import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.UnitToUnitVoiceChannelGrantUpdate;
 import io.github.dsheirer.module.decode.p25.phase2.DecodeConfigP25Phase2;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacOpcode;
 import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
 import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
 import io.github.dsheirer.source.config.SourceConfigTuner;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class P25TrafficLiveFactsTest
@@ -56,6 +65,82 @@ class P25TrafficLiveFactsTest
     void phaseTwoSecondSlotLateTrafficRadioUpdatesLiveAlongsideDecodeEvents() throws Exception
     {
         verifiesLiveParticipants(true, 2);
+    }
+
+    @Test
+    void phaseOneStartedCallAbbreviatedUpdateRetainsQualifiedParticipantsInLive() throws Exception
+    {
+        Channel parent = new Channel("Control", Channel.ChannelType.STANDARD);
+        parent.setSystem("Test system");
+        parent.setSite("Test site");
+        parent.setP25SiteIdentity(new P25SiteIdentity(0xBEE00, 0x123, 1, 1));
+        DecodeConfigP25Phase1 config = new DecodeConfigP25Phase1();
+        config.setTrafficChannelPoolSize(0);
+        parent.setDecodeConfiguration(config);
+        SourceConfigTuner source = new SourceConfigTuner();
+        source.setFrequency(852_000_000L);
+        parent.setSourceConfiguration(source);
+
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(parent);
+        manager.setInterModuleEventBus(new EventBus());
+        P25P1DecoderState decoder = new P25P1DecoderState(parent, manager);
+        P25FrequencyBand band = new P25FrequencyBand(0, 851_000_000L, -45_000_000L,
+            6_250L, 12_500, 1);
+        manager.processFrequencyBand(band);
+        manager.processFrequencyBand(band);
+        APCO25Channel carrier = APCO25Channel.create(0, 1);
+        carrier.setFrequencyBand(band);
+        APCO25FullyQualifiedRadioIdentifier from = APCO25FullyQualifiedRadioIdentifier
+            .createFromWithWorkingAddress(101, 0xBEE01, 0x124, 777);
+        APCO25FullyQualifiedRadioIdentifier to = APCO25FullyQualifiedRadioIdentifier
+            .createToWithWorkingAddress(202, 0xBEE02, 0x125, 888);
+        IdentifierCollection qualified = new IdentifierCollection(List.of(from, to));
+        List<IDecodeEvent> events = new ArrayList<>();
+        manager.addDecodeEventListener(events::add);
+
+        try(ChannelActivityModel live = new ChannelActivityModel(new AliasModel(), new NowPlayingPreference(t -> {})))
+        {
+            manager.setChannelActivityModel(live);
+            live.channelStarted(parent, List.of());
+            manager.processP1ControlDirectedChannelGrant(carrier, VoiceServiceOptions.createUnencrypted(), qualified,
+                Opcode.OSP_UNIT_TO_UNIT_VOICE_CHANNEL_GRANT, 1_000L);
+            manager.processP1TrafficCurrentUser(carrier.getDownlinkFrequency(), carrier,
+                DecodeEventType.CALL_UNIT_TO_UNIT, VoiceServiceOptions.createUnencrypted(), qualified, 1_100L, null);
+            awaitIdle(live);
+            ChannelActivityRow row = trafficRow(live);
+            assertSame(from, row.getSource());
+            assertSame(to, row.getTarget());
+
+            Field trackers = P25TrafficChannelManager.class.getDeclaredField("mTS1ChannelGrantEventMap");
+            trackers.setAccessible(true);
+            P25TrafficChannelEventTracker tracker = (P25TrafficChannelEventTracker)
+                ((Map<?, ?>)trackers.get(manager)).get(carrier.getDownlinkFrequency());
+            assertTrue(tracker.isStarted());
+            events.clear();
+
+            //A decoded abbreviated update must preserve identities learned on traffic even without a WUID cache.
+            CorrectedBinaryMessage bits = new CorrectedBinaryMessage(96);
+            bits.load(2, 6, Opcode.OSP_UNIT_TO_UNIT_VOICE_CHANNEL_GRANT_UPDATE.getCode());
+            bits.load(16, 4, 0);
+            bits.load(20, 12, 1);
+            bits.load(32, 24, 202);
+            bits.load(56, 24, 101);
+            UnitToUnitVoiceChannelGrantUpdate update = new UnitToUnitVoiceChannelGrantUpdate(
+                P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1, bits, 0x123, 1_200L);
+            update.getChannel().setFrequencyBand(band);
+            decoder.receive(update);
+            awaitIdle(live);
+
+            assertSame(from, row.getSource(), "Live must retain the foreign source identity and working address");
+            assertSame(to, row.getTarget(), "Live must retain the foreign target identity and working address");
+            assertSame(from, tracker.getEvent().getIdentifierCollection().getFromIdentifier());
+            assertSame(to, tracker.getEvent().getIdentifierCollection().getToIdentifier());
+            assertTrue(events.isEmpty(), "Started traffic must not need a second DecodeEvent to restore Live");
+            assertEquals(1_000L, tracker.getEvent().getTimeStart());
+            assertEquals(1_100L, tracker.getEvent().getTimeEnd(),
+                "The newer control observation must not extend the traffic duration");
+            assertEquals(100L, tracker.getEvent().getDuration());
+        }
     }
 
     private void verifiesLiveParticipants(boolean phaseTwo, int timeslot) throws Exception

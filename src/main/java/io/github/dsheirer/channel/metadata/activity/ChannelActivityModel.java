@@ -34,6 +34,7 @@ import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.identifier.IdentifierClass;
@@ -1025,7 +1026,8 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         }
 
         row.setDecoder(getDecoder(rowChannel));
-        updateCallDetails(row, source, target, entry.metadataTalkerAlias(), entry.metadataEncryption(), rowChannel);
+        updateCallDetails(row, source, target, entry.metadataTalkerAlias(), entry.metadataEncryption(),
+            rowChannel, parentChannel);
         row.observeTrafficCall(entry.callStart(), entry.observedAt());
         ChannelTag serviceTag = ChannelTag.fromService(eventType);
 
@@ -1252,16 +1254,32 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         return first == null || second == null || !first.matchesWithinScope(second, systemKey);
     }
 
+    /** A compatible abbreviated observation cannot erase the identity or working address already known this call. */
+    private Identifier<?> preferKnownParticipant(Identifier<?> known, Identifier<?> observed, Channel channel)
+    {
+        if(known instanceof FullyQualifiedRadioIdentifier qualified &&
+            !isParticipantChanged(known, observed, channel) &&
+            (!(observed instanceof FullyQualifiedRadioIdentifier latest) ||
+                qualified.getWorkingAddress() != null && latest.getWorkingAddress() == null))
+        {
+            return known;
+        }
+        return observed;
+    }
+
     private void updateCallDetails(ChannelActivityRow row, Identifier<?> source, Identifier<?> target,
-                                    Identifier<?> talkerAlias, Identifier<?> encryption, Channel channel)
+                                    Identifier<?> talkerAlias, Identifier<?> encryption, Channel channel,
+                                    Channel servingChannel)
     {
         if(source != null)
         {
+            source = preferKnownParticipant(row.getSource(), source, servingChannel);
             row.setSource(source);
             row.setSourceAliases(getAliases(source, null, channel));
         }
         if(target != null)
         {
+            target = preferKnownParticipant(row.getTarget(), target, servingChannel);
             row.setTarget(target);
             row.setTargetAliases(getAliases(target, null, channel));
         }

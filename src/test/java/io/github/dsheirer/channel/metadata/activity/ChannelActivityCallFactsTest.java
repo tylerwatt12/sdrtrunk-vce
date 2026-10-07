@@ -9,6 +9,7 @@ import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.alias.id.AliasID;
+import io.github.dsheirer.alias.id.radio.P25Subscriber;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.channel.IChannelDescriptor;
@@ -20,6 +21,7 @@ import io.github.dsheirer.identifier.alias.DmrTalkerAliasIdentifier;
 import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.encryption.EncryptionKey;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
+import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.dmr.channel.DMRAbsoluteChannel;
@@ -43,6 +45,7 @@ import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25FrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase2.DecodeConfigP25Phase2;
+import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.source.config.SourceConfigTuner;
@@ -203,6 +206,122 @@ class ChannelActivityCallFactsTest
                 assertNull(f.row(1).getTalkerAlias());
                 assertNull(f.row(1).getEncryptionDetails());
                 assertEquals(State.CALL, f.row(1).getState());
+            }
+        }
+    }
+
+    @Test
+    void abbreviatedRepeatsRetainQualifiedSourceTargetAndCanonicalAliasesUntilANewCall() throws Exception
+    {
+        for(Variant variant: List.of(Variant.P25_PHASE1, Variant.P25_PHASE2))
+        {
+            try(Fixture f = new Fixture(variant))
+            {
+                f.aliases.replaceCommittedConfiguration(List.of(f.definition), List.of(
+                    f.alias("Local source", 11, new Radio(Protocol.APCO25, 101)),
+                    f.alias("Local target", 12, new Radio(Protocol.APCO25, 202)),
+                    f.alias("Roaming source", 13, new P25Subscriber(0xBEE01, 0x124, 900)),
+                    f.alias("Roaming target", 14, new P25Subscriber(0xBEE01, 0x124, 901))));
+                var source = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(101, 0xBEE01, 0x124, 900);
+                var target = APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(202, 0xBEE01, 0x124, 901);
+                Identifier<?> talker = f.talker("Roaming portable");
+                f.observe(1, 1_000, 1_000, true, source, target, talker, f.encryption());
+
+                f.observe(1, 1_000, 1_100, false, f.radio(101), APCO25RadioIdentifier.createTo(202));
+                assertSame(source, f.row(1).getSource());
+                assertSame(target, f.row(1).getTarget());
+                assertEquals("Roaming source", f.row(1).getSourceAliases().getFirst().getName());
+                assertEquals("Roaming target", f.row(1).getTargetAliases().getFirst().getName());
+                assertSame(talker, f.row(1).getTalkerAlias());
+                assertNotNull(f.row(1).getEncryptionDetails());
+                assertEquals(State.ENCRYPTED, f.row(1).getState());
+
+                Identifier<?> nextSource = f.radio(101);
+                Identifier<?> nextTarget = APCO25RadioIdentifier.createTo(202);
+                f.observe(1, 1_200, 1_200, false, nextSource, nextTarget);
+                assertSame(nextSource, f.row(1).getSource(), "A new call cannot inherit the old qualified source");
+                assertSame(nextTarget, f.row(1).getTarget(), "A new call cannot inherit the old qualified target");
+                assertEquals("Local source", f.row(1).getSourceAliases().getFirst().getName());
+                assertEquals("Local target", f.row(1).getTargetAliases().getFirst().getName());
+                assertNull(f.row(1).getTalkerAlias());
+                assertNull(f.row(1).getEncryptionDetails());
+                assertEquals(State.CALL, f.row(1).getState());
+            }
+        }
+    }
+
+    @Test
+    void identityOnlyRepeatsRetainKnownWorkingAddressesButNewExplicitAddressesRemainUsable() throws Exception
+    {
+        for(Variant variant: List.of(Variant.P25_PHASE1, Variant.P25_PHASE2))
+        {
+            try(Fixture f = new Fixture(variant))
+            {
+                f.aliases.replaceCommittedConfiguration(List.of(f.definition), List.of(
+                    f.alias("Roaming source", 11, new P25Subscriber(0xBEE01, 0x124, 900)),
+                    f.alias("Roaming target", 12, new P25Subscriber(0xBEE01, 0x124, 901))));
+                var source = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(101, 0xBEE01, 0x124, 900);
+                var target = APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(202, 0xBEE01, 0x124, 901);
+                f.observe(1, 1_000, 1_000, false, source, target);
+
+                f.observe(1, 1_000, 1_100, false,
+                    APCO25FullyQualifiedRadioIdentifier.createFrom(0, 0xBEE01, 0x124, 900),
+                    APCO25FullyQualifiedRadioIdentifier.createTo(0, 0xBEE01, 0x124, 901));
+                assertSame(source, f.row(1).getSource());
+                assertSame(target, f.row(1).getTarget());
+                assertEquals(101, source.getWorkingAddress());
+                assertEquals(202, target.getWorkingAddress());
+                assertEquals("Roaming source", f.row(1).getSourceAliases().getFirst().getName());
+                assertEquals("Roaming target", f.row(1).getTargetAliases().getFirst().getName());
+
+                var latestSource = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(303, 0xBEE01, 0x124, 900);
+                var latestTarget = APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(404, 0xBEE01, 0x124, 901);
+                f.observe(1, 1_000, 1_200, false, latestSource, latestTarget);
+                assertSame(latestSource, f.row(1).getSource(), "A new explicit working address must not be frozen out");
+                assertSame(latestTarget, f.row(1).getTarget(), "A new explicit working address must not be frozen out");
+            }
+        }
+    }
+
+    @Test
+    void canonicalHomeRepeatsUseTheParentsLearnedServingIdentityForAnAllocatedTrafficChild() throws Exception
+    {
+        for(Variant variant: List.of(Variant.P25_PHASE1, Variant.P25_PHASE2))
+        {
+            try(Fixture f = new Fixture(variant))
+            {
+                f.parent.setP25SiteIdentity(null);
+                f.aliases.replaceCommittedConfiguration(List.of(f.definition), List.of(
+                    f.alias("Canonical home source", 11, new P25Subscriber(0xBEE02, 0x321, 101)),
+                    f.alias("Canonical home target", 12, new P25Subscriber(0xBEE02, 0x321, 202))));
+                var site = new P25NetworkConfigurationSnapshot(
+                    variant == Variant.P25_PHASE1 ? "P25_PHASE_1" : "P25_PHASE_2",
+                    new P25NetworkConfigurationSnapshot.Network(0xBEE02, 0x321, 0x343, null),
+                    new P25NetworkConfigurationSnapshot.CurrentSite(0x321, 0x343, 1, 1, null, true),
+                    List.of(), List.of(), List.of(), List.of(), List.of(), null, List.of());
+                f.model.receiveSiteMetadata(new SiteMetadataEvent(f.parent, site, 900));
+                f.idle();
+
+                Channel traffic = new Channel("Allocated traffic", Channel.ChannelType.TRAFFIC);
+                traffic.setDecodeConfiguration(f.parent.getDecodeConfiguration());
+                traffic.setAliasListId(f.definition.getId());
+                traffic.setAliasListName(f.definition.getName());
+                assertNull(traffic.getP25SiteIdentity());
+                var source = APCO25FullyQualifiedRadioIdentifier.createFrom(0, 0xBEE02, 0x321, 101);
+                var target = APCO25FullyQualifiedRadioIdentifier.createTo(0, 0xBEE02, 0x321, 202);
+                f.model.trunkedTrafficEvent(f.parent, traffic, f.channel(1), variant.tdma ? 1 : null,
+                    new IdentifierCollection(List.of(source, target)), DecodeEventType.CALL_UNIT_TO_UNIT,
+                    0, 1_000, 1_000);
+                f.idle();
+
+                f.model.trunkedTrafficEvent(f.parent, traffic, f.channel(1), variant.tdma ? 1 : null,
+                    new IdentifierCollection(List.of(f.radio(101), APCO25RadioIdentifier.createTo(202))),
+                    DecodeEventType.CALL_UNIT_TO_UNIT, 0, 1_000, 1_100);
+                f.idle();
+                assertSame(source, f.row(1).getSource());
+                assertSame(target, f.row(1).getTarget());
+                assertEquals("Canonical home source", f.row(1).getSourceAliases().getFirst().getName());
+                assertEquals("Canonical home target", f.row(1).getTargetAliases().getFirst().getName());
             }
         }
     }
