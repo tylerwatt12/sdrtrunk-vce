@@ -26,6 +26,37 @@ class ResolvedRadioIdentityTest
     }
 
     @Test
+    void homeSystemContextMatchesCanonicalAndNativeAddressInBothDirections()
+    {
+        var permanent = ResolvedRadioIdentity.from(APCO25FullyQualifiedRadioIdentifier.createFrom(
+            10_900_077, 0xBEE00, 0x123, 10_900_077));
+        var local = ResolvedRadioIdentity.from(APCO25RadioIdentifier.createFrom(10_900_077));
+        assertTrue(permanent.matchesWithinScope(local, "p25:bee00:123"));
+        assertTrue(local.matchesWithinScope(permanent, "p25:bee00:123"));
+        assertNull(permanent.observedWorkingId(), "A home-system address is not a Working-ID assignment");
+        assertFalse(permanent.matchesWithinScope(local, "p25:bee01:123"));
+        assertFalse(permanent.matchesWithinScope(local, "p25:bee00:124"));
+        assertFalse(permanent.matchesWithinScope(local, null));
+        assertFalse(permanent.matchesWithinScope(local, "not-a-system"));
+        assertFalse(permanent.matchesWithinScope(ResolvedRadioIdentity.from(
+            APCO25RadioIdentifier.createFrom(10_900_078)), "p25:bee00:123"));
+    }
+
+    @Test
+    void servingSystemDoesNotOverrideAnExplicitDifferentWorkingAddressOrKnownHome()
+    {
+        var qualified = ResolvedRadioIdentity.from(APCO25FullyQualifiedRadioIdentifier
+            .createFromWithWorkingAddress(501, 0xABCDE, 0x123, 777));
+        assertFalse(qualified.matchesWithinScope(ResolvedRadioIdentity.from(
+            APCO25RadioIdentifier.createFrom(777)), "p25:abcde:123"));
+        assertTrue(qualified.matchesWithinScope(ResolvedRadioIdentity.from(
+            APCO25RadioIdentifier.createFrom(501)), "p25:abcde:123"));
+        assertFalse(qualified.matchesWithinScope(ResolvedRadioIdentity.from(
+            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(501, 0xABCDE, 0x124, 777)),
+            "p25:abcde:123"));
+    }
+
+    @Test
     void explicitOrConfirmedWorkingAddressCanMatchALocalObservationWithinItsScope()
     {
         var qualified = APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(501, 0xABCDE,

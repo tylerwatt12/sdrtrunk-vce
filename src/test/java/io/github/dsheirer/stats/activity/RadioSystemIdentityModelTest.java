@@ -619,6 +619,247 @@ class RadioSystemIdentityModelTest
     }
 
     @Test
+    void ordinaryHomeRadioAndQualifiedAliasRetainOneOwnerWithoutInventingCanonicalEvidence() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            insertChannel(connection, P25_A, "TRUNKED", "P25_PHASE1", 1, "P25 A", correlation(1));
+            record(connection, p25Presence(P25_A, 1_000, 10_900_077,
+                ReceiverActivityRecords.P25Identity.ORDINARY, false));
+            long owner = scalar(connection, "SELECT id FROM radio_system_identity_summary WHERE identity_id=10900077");
+            assertEquals(1, scalar(connection, """
+                SELECT COUNT(*) FROM radio_system_identity_summary WHERE id=%d
+                  AND home_wacn=0xBEE00 AND home_system_id=0x3A9 AND p25_subscriber_identity_id IS NULL
+                """.formatted(owner)));
+            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM p25_subscriber_identity"));
+            assertEquals("v1-r-bee00-3a9-10900077", text(connection,
+                "SELECT source_identity_key FROM receiver_activity_event_resolved"));
+            assertTrue(ReceiverActivitySchema.recordResolvedLogicalCall(connection,
+                p25Call(P25_A, 81, 1_000, 0xBEE00, 0x3A9, null, 10_900_077)));
+
+            ReceiverActivitySchema.updateTalkerAlias(connection,
+                new ReceiverActivityRecords.TalkerAliasUpdate(1_100, 1_000, P25_A, "APCO25", 0xBEE00, 0x3A9,
+                    null, ReceiverActivityRecords.P25Identity.fullyQualifiedRadio(0xBEE00, 0x3A9, 10_900_077),
+                    "SYNTHETIC HOME UNIT", TrunkedIdentityDomain.STANDARD, "p25:bee00:3a9"));
+            assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM radio_system_identity_summary WHERE identity_id=10900077"));
+            assertEquals(owner, scalar(connection, "SELECT id FROM radio_system_identity_summary WHERE identity_id=10900077"));
+            assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM radio_system_identity_summary WHERE id=" + owner +
+                " AND p25_subscriber_identity_id IS NOT NULL AND logical_call_count=1"));
+            assertEquals("SYNTHETIC HOME UNIT", text(connection,
+                "SELECT last_talker_alias FROM radio_system_identity_summary WHERE id=" + owner));
+            assertEquals(owner, scalar(connection, "SELECT source_identity_summary_id FROM receiver_activity_event"));
+            assertEquals(owner, scalar(connection, "SELECT radio_identity_id FROM trunked_radio_group_summary"));
+
+            assertTrue(ReceiverActivitySchema.recordResolvedLogicalCall(connection,
+                p25Call(P25_A, 82, 1_200, 0xBEE00, 0x3A9, null, 10_900_077)));
+            assertEquals(2, scalar(connection,
+                "SELECT logical_call_count FROM radio_system_identity_summary WHERE id=" + owner));
+            ReceiverActivitySchema.validate(connection);
+        }
+    }
+
+    @Test
+    void sameBatchQualificationAttachesCanonicalEvidenceAndPreservesQueuedSignalingCounts() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            insertChannel(connection, P25_A, "TRUNKED", "P25_PHASE1", 1, "P25 A", correlation(1));
+            ReceiverActivityRecords.P25Identity ordinary = ReceiverActivityRecords.P25Identity.ORDINARY;
+            ReceiverActivityRecords.P25Identity qualified =
+                ReceiverActivityRecords.P25Identity.fullyQualifiedRadio(0xBEE00, 0x3A9, 10_900_077);
+            ReceiverActivitySchema.recordActivityBatch(connection, List.of(
+                p25RadioRegistration(1_000, ordinary), p25RadioRegistration(1_100, ordinary),
+                p25RadioRegistration(1_200, qualified), p25RadioRegistration(1_300, qualified),
+                p25RadioRegistration(1_400, ordinary)), true);
+            assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM radio_system_identity_summary WHERE identity_kind_code=2"));
+            assertEquals(5, scalar(connection, """
+                SELECT register_count FROM radio_system_identity_summary WHERE identity_kind_code=2
+                  AND home_wacn=0xBEE00 AND home_system_id=0x3A9 AND identity_id=10900077
+                  AND p25_subscriber_identity_id IS NOT NULL
+                """));
+            assertEquals(5, scalar(connection, "SELECT COUNT(*) FROM receiver_activity_event WHERE source_identity_summary_id IS NOT NULL"));
+            assertEquals(1_400, scalar(connection, "SELECT last_seen_ms FROM radio_system_identity_summary WHERE identity_kind_code=2"));
+            ReceiverActivitySchema.validate(connection);
+        }
+    }
+
+    @Test
+    void ordinarySourceAndSameHomeQualifiedDestinationCreditOneCallAndOutputWithBothRoles() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            insertChannel(connection, P25_A, "TRUNKED", "P25_PHASE1", 1, "P25 A", correlation(1));
+            ReceiverActivityRecords.ResolvedLogicalCall call = new ReceiverActivityRecords.ResolvedLogicalCall(
+                new io.github.dsheirer.audio.call.LogicalCallId(8, 94), 1_000, P25_A, "APCO25",
+                TrunkedIdentityDomain.STANDARD, 0xBEE00, 0x3A9, 10_900_077, "RADIO", List.of(),
+                10_900_077, true, 0x84, 123,
+                ReceiverActivityRecords.P25Identity.fullyQualifiedRadio(0xBEE00, 0x3A9, 10_900_077),
+                ReceiverActivityRecords.P25Identity.ORDINARY, List.of(), List.of(), "p25:bee00:3a9");
+            assertTrue(ReceiverActivitySchema.recordResolvedLogicalCall(connection, call));
+            assertTrue(ReceiverActivitySchema.applyLogicalCallOutput(connection,
+                new ReceiverActivityRecords.LogicalCallOutput(call, ReceiverActivityRecords.CallOutput.RECORDED)));
+            assertTrue(ReceiverActivitySchema.applyLogicalCallOutput(connection,
+                new ReceiverActivityRecords.LogicalCallOutput(call, ReceiverActivityRecords.CallOutput.STREAMED)));
+            assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM radio_system_identity_summary WHERE identity_kind_code=2"));
+            assertEquals(1, scalar(connection, """
+                SELECT COUNT(*) FROM radio_system_identity_summary WHERE identity_kind_code=2
+                  AND logical_call_count=1 AND source_logical_call_count=1 AND target_logical_call_count=1
+                  AND encrypted_logical_call_count=1 AND recorded_output_count=1 AND streamed_output_count=1
+                  AND p25_subscriber_identity_id IS NOT NULL
+                """));
+            assertEquals(2, scalar(connection, """
+                SELECT COUNT(*) FROM trunked_logical_call_identity_bucket
+                WHERE identity_kind_code=2 AND logical_call_count=1 AND encrypted_logical_call_count=1
+                  AND recorded_output_count=1 AND streamed_output_count=1
+                """));
+            assertEquals(1, scalar(connection, "SELECT logical_call_count FROM trunked_logical_call_bucket"));
+            ReceiverActivitySchema.validate(connection);
+        }
+    }
+
+    @Test
+    void qualifiedHomeRadioWithDifferentWorkingAddressDoesNotOwnAnotherOrdinaryRadio() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            insertChannel(connection, P25_A, "TRUNKED", "P25_PHASE1", 1, "P25 A", correlation(1));
+            record(connection, p25Presence(P25_A, 1_000, 123,
+                ReceiverActivityRecords.P25Identity.ORDINARY, false));
+            record(connection, p25Presence(P25_A, 1_100, 123,
+                ReceiverActivityRecords.P25Identity.fullyQualifiedRadio(0xBEE00, 0x3A9, 9_001), false));
+            assertEquals(2, scalar(connection, "SELECT COUNT(*) FROM radio_system_identity_summary WHERE identity_kind_code=2"));
+            assertEquals(1, scalar(connection, """
+                SELECT COUNT(*) FROM radio_system_identity_summary
+                WHERE identity_kind_code=2 AND identity_id=123 AND p25_subscriber_identity_id IS NULL
+                """));
+            assertEquals(9_001, scalar(connection, """
+                SELECT identity.identity_id FROM trunked_radio_channel_presence presence
+                JOIN radio_system_identity_summary identity ON identity.id=presence.radio_identity_id
+                WHERE presence.observed_working_id=123
+                """));
+            ReceiverActivitySchema.validate(connection);
+        }
+    }
+
+    @Test
+    void ambiguousLegacyPastIsRetainedWhileNewHomeObservationsShareOneOwner() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            insertChannel(connection, P25_A, "TRUNKED", "P25_PHASE1", 1, "P25 A", correlation(1));
+            record(connection, p25Presence(P25_A, 1_000, 123,
+                ReceiverActivityRecords.P25Identity.ORDINARY, false));
+            long localOwner = scalar(connection, "SELECT id FROM radio_system_identity_summary WHERE identity_id=123");
+            execute(connection, "UPDATE radio_system_identity_summary SET home_wacn=-1,home_system_id=-1 WHERE id=" + localOwner);
+            //No assignment-history row: retained decoded working-address evidence is sufficient to refuse a guess.
+            record(connection, p25Presence(P25_A, 1_100, 123,
+                ReceiverActivityRecords.P25Identity.fullyQualifiedRadio(0xABCDE, 0x321, 9_001), false));
+            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM p25_wuid_assignment_observation_summary"));
+            connection.setAutoCommit(false);
+            assertEquals(new ReceiverActivitySchema.HomeRadioConsolidation(0, 0, 1),
+                ReceiverActivitySchema.consolidateP25HomeRadioIdentities(connection));
+            connection.commit();
+            connection.setAutoCommit(true);
+
+            assertTrue(ReceiverActivitySchema.recordResolvedLogicalCall(connection,
+                p25Call(P25_A, 83, 1_200, 0xBEE00, 0x3A9, null, 123)));
+            long homeOwner = scalar(connection, """
+                SELECT id FROM radio_system_identity_summary WHERE identity_kind_code=2
+                  AND home_wacn=0xBEE00 AND home_system_id=0x3A9 AND identity_id=123
+                """);
+            assertNotEquals(localOwner, homeOwner);
+            ReceiverActivitySchema.updateTalkerAlias(connection,
+                new ReceiverActivityRecords.TalkerAliasUpdate(1_250, 1_200, P25_A, "APCO25", 0xBEE00, 0x3A9,
+                    null, ReceiverActivityRecords.P25Identity.fullyQualifiedRadio(0xBEE00, 0x3A9, 123),
+                    "SYNTHETIC NEW HOME UNIT", TrunkedIdentityDomain.STANDARD, "p25:bee00:3a9"));
+            record(connection, p25Presence(P25_A, 1_300, 123,
+                ReceiverActivityRecords.P25Identity.ORDINARY, true));
+            assertEquals(1, scalar(connection, """
+                SELECT COUNT(*) FROM radio_system_identity_summary
+                WHERE id=%d AND home_wacn=-1 AND home_system_id=-1 AND logical_call_count=0
+                  AND last_seen_ms=1000 AND p25_subscriber_identity_id IS NULL
+                """.formatted(localOwner)));
+            assertEquals(1, scalar(connection, """
+                SELECT COUNT(*) FROM radio_system_identity_summary WHERE identity_kind_code=2
+                  AND home_wacn=0xBEE00 AND home_system_id=0x3A9 AND identity_id=123
+                  AND logical_call_count=1 AND p25_subscriber_identity_id IS NOT NULL
+                  AND last_talker_alias='SYNTHETIC NEW HOME UNIT'
+                """));
+            assertEquals(3, scalar(connection, "SELECT COUNT(*) FROM radio_system_identity_summary WHERE identity_kind_code=2"));
+            assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM trunked_radio_channel_presence_clear WHERE radio_identity_id=" + homeOwner));
+            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM trunked_radio_channel_presence_clear WHERE radio_identity_id=" + localOwner));
+            assertEquals("v1-r-x-x-123", text(connection, "SELECT source_identity_key FROM receiver_activity_event_resolved WHERE source_identity_summary_id=" + localOwner));
+            assertEquals("v1-r-bee00-3a9-123", text(connection, "SELECT source_identity_key FROM receiver_activity_event_resolved WHERE source_identity_summary_id=" + homeOwner));
+            ReceiverActivitySchema.validate(connection);
+        }
+    }
+
+    @Test
+    void consolidationPreservesEncryptionMetadataWhenNewerAliasOwnerHasNone() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            insertChannel(connection, P25_A, "TRUNKED", "P25_PHASE1", 1, "P25 A", correlation(1));
+            record(connection, p25Presence(P25_A, 1_000, 10_900_077,
+                ReceiverActivityRecords.P25Identity.ORDINARY, false));
+            long localOwner = scalar(connection, "SELECT id FROM radio_system_identity_summary WHERE identity_id=10900077");
+            execute(connection, """
+                UPDATE radio_system_identity_summary SET home_wacn=-1,home_system_id=-1,
+                    last_encryption_algorithm_id=132,last_encryption_key_id=77 WHERE id=%d
+                """.formatted(localOwner));
+            ReceiverActivitySchema.updateTalkerAlias(connection,
+                new ReceiverActivityRecords.TalkerAliasUpdate(1_200, 1_000, P25_A, "APCO25", 0xBEE00, 0x3A9,
+                    null, ReceiverActivityRecords.P25Identity.fullyQualifiedRadio(0xBEE00, 0x3A9, 10_900_077),
+                    "SYNTHETIC LATER ALIAS", TrunkedIdentityDomain.STANDARD, "p25:bee00:3a9"));
+            long qualifiedOwner = scalar(connection, """
+                SELECT id FROM radio_system_identity_summary WHERE identity_id=10900077
+                  AND p25_subscriber_identity_id IS NOT NULL
+                """);
+            connection.setAutoCommit(false);
+            assertEquals(new ReceiverActivitySchema.HomeRadioConsolidation(0, 1, 0),
+                ReceiverActivitySchema.consolidateP25HomeRadioIdentities(connection));
+            connection.commit();
+            assertEquals(1, scalar(connection, """
+                SELECT COUNT(*) FROM radio_system_identity_summary WHERE id=%d
+                  AND first_seen_ms=1000 AND last_seen_ms=1200
+                  AND last_talker_alias='SYNTHETIC LATER ALIAS' AND last_talker_alias_seen_ms=1200
+                  AND last_encryption_algorithm_id=132 AND last_encryption_key_id=77
+                """.formatted(qualifiedOwner)));
+            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM radio_system_identity_summary WHERE id=" + localOwner));
+            assertEquals(qualifiedOwner, scalar(connection, "SELECT source_identity_summary_id FROM receiver_activity_event"));
+            assertEquals(qualifiedOwner, scalar(connection, "SELECT radio_identity_id FROM trunked_radio_group_summary"));
+            ReceiverActivitySchema.validate(connection);
+        }
+    }
+
+    @Test
+    void sameNumberOnRemoteHomeWithoutWorkingProofDoesNotBlockLocalPromotion() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            insertChannel(connection, P25_A, "TRUNKED", "P25_PHASE1", 1, "P25 A", correlation(1));
+            record(connection, p25Presence(P25_A, 1_000, 123,
+                ReceiverActivityRecords.P25Identity.ORDINARY, false));
+            long owner = scalar(connection, "SELECT id FROM radio_system_identity_summary WHERE identity_id=123");
+            execute(connection, "UPDATE radio_system_identity_summary SET home_wacn=-1,home_system_id=-1 WHERE id=" + owner);
+            ReceiverActivitySchema.updateTalkerAlias(connection,
+                new ReceiverActivityRecords.TalkerAliasUpdate(1_100, 1_000, P25_A, "APCO25", 0xBEE00, 0x3A9,
+                    null, ReceiverActivityRecords.P25Identity.fullyQualifiedRadio(0xABCDE, 0x321, 123),
+                    "SYNTHETIC REMOTE UNIT", TrunkedIdentityDomain.STANDARD, "p25:bee00:3a9"));
+            connection.setAutoCommit(false);
+            assertEquals(new ReceiverActivitySchema.HomeRadioConsolidation(1, 0, 0),
+                ReceiverActivitySchema.consolidateP25HomeRadioIdentities(connection));
+            connection.commit();
+            assertEquals(1, scalar(connection, """
+                SELECT COUNT(*) FROM radio_system_identity_summary WHERE id=%d
+                  AND home_wacn=0xBEE00 AND home_system_id=0x3A9 AND p25_subscriber_identity_id IS NULL
+                """.formatted(owner)));
+            assertEquals(2, scalar(connection, "SELECT COUNT(*) FROM radio_system_identity_summary WHERE identity_kind_code=2"));
+            ReceiverActivitySchema.validate(connection);
+        }
+    }
+
+    @Test
     void p25PrivateDestinationPersistsCanonicalHomeAndEventLocalEvidence() throws Exception
     {
         try(Connection connection = open())
@@ -780,10 +1021,15 @@ class RadioSystemIdentityModelTest
                 FROM trunked_radio_channel_presence presence
                 JOIN radio_system_identity_summary identity ON identity.id=presence.radio_identity_id
                 """));
-            assertEquals(-1, scalar(connection, """
+            assertEquals(0xBEE00, scalar(connection, """
                 SELECT identity.home_wacn
                 FROM trunked_radio_channel_presence presence
                 JOIN radio_system_identity_summary identity ON identity.id=presence.radio_identity_id
+                """));
+            assertEquals(1, scalar(connection, """
+                SELECT COUNT(*) FROM trunked_radio_channel_presence presence
+                JOIN radio_system_identity_summary identity ON identity.id=presence.radio_identity_id
+                WHERE identity.home_system_id=0x3A9 AND identity.p25_subscriber_identity_id IS NULL
                 """));
             assertEquals(0, scalar(connection,
                 "SELECT COUNT(*) FROM p25_wuid_assignment_observation_summary"));
@@ -868,7 +1114,7 @@ class RadioSystemIdentityModelTest
             assertEquals(1, scalar(connection, """
                 SELECT source_logical_call_count
                 FROM radio_system_identity_summary
-                WHERE home_wacn=-1 AND home_system_id=-1 AND identity_id=123
+                WHERE home_wacn=0xBEE00 AND home_system_id=0x3A9 AND identity_id=123
                   AND p25_subscriber_identity_id IS NULL
                 """));
             ReceiverActivitySchema.validate(connection);
@@ -1631,6 +1877,16 @@ class RadioSystemIdentityModelTest
             TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.UNKNOWN, identity, List.of(), null,
             workingId, null, new ReceiverActivityRecords.P25WuidObservation(0xBEE00, 0x3A9, workingId,
                 subscriber, observedAt + 270L * 60_000L, evidence));
+    }
+
+    private static ReceiverActivityRecords.ActivityEvent p25RadioRegistration(long timestamp,
+                                                                              ReceiverActivityRecords.P25Identity identity)
+    {
+        return new ReceiverActivityRecords.ActivityEvent(timestamp, P25_A,
+            ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25", ReceiverActivityRecords.Action.REGISTER,
+            "REGISTER", "10900077", null, null, List.of(), 851_012_500L, "0-1", 1,
+            false, null, null, 0xBEE00, 0x3A9, null, null, null, null, false, null, null,
+            TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.UNKNOWN, identity, List.of(), null);
     }
 
     private static ReceiverActivityRecords.ActivityEvent conventional(String configurationId, long frequency,

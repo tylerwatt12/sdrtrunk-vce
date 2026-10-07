@@ -19,6 +19,7 @@ import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.IncompleteIdentifier;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.dcs.DCSIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
@@ -91,13 +92,19 @@ record ManagedRecordingMetadata(long startMs, long endMs, long durationMs, long 
             sites.add(winningSite);
         }
 
+        String recordedSystemKey = systemKey(protocol, source, winningSite, sites);
+        sourceIdentity = recordingRadioOwner(sourceIdentity, sourceIdentifier, sourceId, recordedSystemKey);
+        targetIdentity = recordingRadioOwner(targetIdentity, unwrapPatch(targetIdentifier), targetId, recordedSystemKey);
+
         Set<ManagedRecordingCatalog.Member> members = new LinkedHashSet<>();
         for(CallLegSummary leg : call.callLegSummaries())
         {
+            String memberSystemKey = systemKey(protocol, leg.source(), site(leg.source().p25SiteIdentity()), Set.of());
             for(CallLegSummary.P25IdentityObservation member : leg.p25PatchMemberIdentities())
             {
                 if(member.form() == Form.TALKGROUP || member.form() == Form.RADIO)
                 {
+                    member = recordingRadioOwner(member, null, member.observedLocalId(), memberSystemKey);
                     members.add(new ManagedRecordingCatalog.Member(member.form() == Form.TALKGROUP ?
                         "talkgroup" : "radio", member.observedLocalId(), member.homeWacn(),
                         member.homeSystemId(), member.homeIdentityId()));
@@ -117,7 +124,7 @@ record ManagedRecordingMetadata(long startMs, long endMs, long durationMs, long 
         ToneFact tone = tone(identifiers);
         return new ManagedRecordingMetadata(snapshot.startTimestamp(), snapshot.lastActivityTimestamp(),
             Math.max(0L, call.getDuration()), sizeBytes, relativePath,
-            systemKey(protocol, source, winningSite, sites),
+            recordedSystemKey,
             source != null ? source.channelConfigurationId() : null,
             source != null ? source.aliasListId() : 0L,
             ManagedRecordingCatalog.protocolCode(protocol), callType, voiceType, sourceId,
@@ -133,6 +140,23 @@ record ManagedRecordingMetadata(long startMs, long endMs, long durationMs, long 
             integer(identifiers, Form.NETWORK_ACCESS_CODE), tone != null ? tone.kind() : null,
             tone != null ? tone.value() : null, winningSite,
             List.copyOf(sites), List.copyOf(members));
+    }
+
+    /** Catalog ownership follows the same native-home radio key as the directory, without changing decoder facts. */
+    private static CallLegSummary.P25IdentityObservation recordingRadioOwner(
+        CallLegSummary.P25IdentityObservation identity, Identifier<?> identifier, Integer observedId, String systemKey)
+    {
+        Form form = identity != null ? identity.form() : identifier != null ? identifier.getForm() : null;
+        if(form != Form.RADIO || identifier instanceof IncompleteIdentifier ||
+            identity != null && (identity.homeWacn() != null || identity.homeSystemId() != null ||
+                identity.homeIdentityId() != null) || !RadioSystemKey.isP25Native(systemKey) || observedId == null ||
+            observedId < 1 || observedId > 0xFFFFFC)
+        {
+            return identity;
+        }
+        //These fields identify this recording's native owner; no canonical subscriber row or Working ID is invented.
+        return new CallLegSummary.P25IdentityObservation(Form.RADIO, observedId,
+            Integer.parseInt(systemKey, 4, 9, 16), Integer.parseInt(systemKey, 10, 13, 16), observedId, null);
     }
 
     private static String systemKey(Protocol protocol, CallLegSource source,

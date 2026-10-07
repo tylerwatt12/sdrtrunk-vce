@@ -60,6 +60,18 @@ public class ReceiverActivitySchema
     public static final int IDENTITY_KIND_TALKGROUP = 1;
     public static final int IDENTITY_KIND_RADIO = 2;
     public static final int IDENTITY_KIND_PATCH_GROUP = 3;
+
+    /** Migration-only repair; all ownership changes commit or roll back with the caller's migration transaction. */
+    public static HomeRadioConsolidation consolidateP25HomeRadioIdentities(Connection connection) throws SQLException
+    {
+        return P25HomeRadioIdentityConsolidation.consolidate(connection);
+    }
+
+    public record HomeRadioConsolidation(long promotedIdentities, long mergedIdentities,
+                                         long skippedAmbiguousIdentities)
+    {
+    }
+
     private static final long HOUR_MILLISECONDS = 3_600_000L;
     private static final long QUALITY_BUCKET_MILLISECONDS = 10_000L;
     private static final int NULL_TIMESLOT = -1;
@@ -91,6 +103,72 @@ public class ReceiverActivitySchema
     private static final List<ReceiverActivityCodes.EventTypeCode> PRE_FORMAT_26_EVENT_TYPES = EVENT_TYPES.stream()
         .filter(eventType -> eventType.code() <= FORMAT_25_MAXIMUM_EVENT_TYPE_CODE)
         .toList();
+    /** Frozen format-45 code/name mapping; future catalog additions or enum renames cannot change its signature. */
+    private static final String FORMAT_45_DECODE_EVENT_TYPE_CASE = """
+        CASE a.event_type_code
+        WHEN 1 THEN 'AFFILIATE'
+        WHEN 2 THEN 'ANNOUNCEMENT'
+        WHEN 3 THEN 'ACKNOWLEDGE'
+        WHEN 4 THEN 'AUTOMATIC_REGISTRATION_SERVICE'
+        WHEN 5 THEN 'CALL'
+        WHEN 6 THEN 'CALL_ENCRYPTED'
+        WHEN 7 THEN 'CALL_GROUP'
+        WHEN 8 THEN 'CALL_GROUP_ENCRYPTED'
+        WHEN 9 THEN 'CALL_PATCH_GROUP'
+        WHEN 10 THEN 'CALL_PATCH_GROUP_ENCRYPTED'
+        WHEN 11 THEN 'CALL_ALERT'
+        WHEN 12 THEN 'CALL_DETECT'
+        WHEN 13 THEN 'CALL_IN_PROGRESS'
+        WHEN 14 THEN 'CALL_DO_NOT_MONITOR'
+        WHEN 15 THEN 'CALL_END'
+        WHEN 16 THEN 'CALL_INTERCONNECT'
+        WHEN 17 THEN 'CALL_INTERCONNECT_ENCRYPTED'
+        WHEN 18 THEN 'CALL_UNIQUE_ID'
+        WHEN 19 THEN 'CALL_UNIT_TO_UNIT'
+        WHEN 20 THEN 'CALL_UNIT_TO_UNIT_ENCRYPTED'
+        WHEN 21 THEN 'CALL_NO_TUNER'
+        WHEN 22 THEN 'CALL_TIMEOUT'
+        WHEN 23 THEN 'CELLOCATOR'
+        WHEN 24 THEN 'COMMAND'
+        WHEN 25 THEN 'DATA_CALL'
+        WHEN 26 THEN 'DATA_CALL_ENCRYPTED'
+        WHEN 27 THEN 'DATA_PACKET'
+        WHEN 28 THEN 'DEREGISTER'
+        WHEN 29 THEN 'DYNAMIC_REGROUP'
+        WHEN 30 THEN 'EMERGENCY'
+        WHEN 31 THEN 'FUNCTION'
+        WHEN 32 THEN 'GPS'
+        WHEN 33 THEN 'ICMP_PACKET'
+        WHEN 34 THEN 'ID_ANI'
+        WHEN 35 THEN 'ID_UNIQUE'
+        WHEN 36 THEN 'IP_PACKET'
+        WHEN 37 THEN 'LRRP'
+        WHEN 38 THEN 'NOTIFICATION'
+        WHEN 39 THEN 'PAGE'
+        WHEN 40 THEN 'QUERY'
+        WHEN 41 THEN 'RADIO_CHECK'
+        WHEN 42 THEN 'RADIO_REGISTRATION_SERVICE'
+        WHEN 43 THEN 'REGISTER'
+        WHEN 44 THEN 'REGISTER_ESN'
+        WHEN 45 THEN 'REQUEST'
+        WHEN 46 THEN 'RESPONSE'
+        WHEN 47 THEN 'RESPONSE_PACKET'
+        WHEN 48 THEN 'SDM'
+        WHEN 49 THEN 'SMS'
+        WHEN 50 THEN 'STATION_ID'
+        WHEN 51 THEN 'STATUS'
+        WHEN 52 THEN 'TEXT_MESSAGE'
+        WHEN 53 THEN 'UDP_PACKET'
+        WHEN 54 THEN 'UNKNOWN_PACKET'
+        WHEN 55 THEN 'XCMP'
+        WHEN 56 THEN 'UNKNOWN'
+        WHEN 57 THEN 'DENIAL'
+        WHEN 58 THEN 'RADIO_UNINHIBIT'
+        WHEN 59 THEN 'RADIO_INHIBIT'
+        WHEN 60 THEN 'RADIO_UNINHIBIT_ACK'
+        WHEN 61 THEN 'RADIO_INHIBIT_ACK'
+        ELSE NULL END
+        """.strip().replace('\n', ' ');
     private static final String ACTION_CODES = ACTIONS.stream()
         .map(action -> Integer.toString(action.code()))
         .collect(Collectors.joining(", "));
@@ -126,8 +204,25 @@ public class ReceiverActivitySchema
 
     public static void create(Connection connection) throws SQLException
     {
+        createFormat42(connection);
+        rebuildP25HomeIdentityKeyView(connection);
+    }
+
+    /** Creates the frozen format-42 activity schema before receiving-home radio keys in format 45. */
+    public static void createFormat42(Connection connection) throws SQLException
+    {
         createFormat41(connection);
         rebuildTargetIdentityForeignKeyIndex(connection);
+    }
+
+    /** Uses stored home keys for new native owners while retaining exact x/x keys for uncertain old local history. */
+    public static void rebuildP25HomeIdentityKeyView(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DROP VIEW receiver_activity_event_resolved");
+            statement.executeUpdate(createFormat45ResolvedViewSql());
+        }
     }
 
     /** Creates the exact format-41 activity schema before the target foreign-key covering replacement. */
@@ -353,7 +448,7 @@ public class ReceiverActivitySchema
             new SqliteSchemaValidator.Definition("table", "p25_site_call_identity_bucket",
                 createP25SiteCallIdentityBucketSql()),
             new SqliteSchemaValidator.Definition("view", "receiver_activity_event_resolved",
-                createResolvedViewSql(true))));
+                createFormat45ResolvedViewSql())));
         SqliteSchemaValidator.validateDefinitions(connection, exactDefinitions);
         validateRequiredForeignKeys(connection);
         validatePositiveMetadataTimestamp(connection, CONVENTIONAL_CALL_OUTPUT_METRICS_STARTED_AT_KEY);
@@ -5596,6 +5691,24 @@ public class ReceiverActivitySchema
     private static String createResolvedViewSql(List<ReceiverActivityCodes.EventTypeCode> eventTypes,
         boolean canonicalP25Subscribers)
     {
+        return createResolvedViewSql(eventTypes, canonicalP25Subscribers, false);
+    }
+
+    private static String createResolvedViewSql(List<ReceiverActivityCodes.EventTypeCode> eventTypes,
+        boolean canonicalP25Subscribers, boolean storedHomeKeys)
+    {
+        return createResolvedViewSql(canonicalP25Subscribers, storedHomeKeys,
+            decodeEventTypeCase("a.event_type_code", eventTypes));
+    }
+
+    private static String createFormat45ResolvedViewSql()
+    {
+        return createResolvedViewSql(true, true, FORMAT_45_DECODE_EVENT_TYPE_CASE);
+    }
+
+    private static String createResolvedViewSql(boolean canonicalP25Subscribers, boolean storedHomeKeys,
+                                                String eventTypeCase)
+    {
         return """
             CREATE VIEW IF NOT EXISTS receiver_activity_event_resolved AS
             SELECT
@@ -5663,11 +5776,11 @@ public class ReceiverActivitySchema
             """.formatted(
             receiverKindCase(receiverKindSql("configured.channel_kind", "configured.decoder_type")),
             protocolCase(protocolSql("configured.decoder_type")),
-            actionCase("a.action_code"), decodeEventTypeCase("a.event_type_code", eventTypes),
+            actionCase("a.action_code"), eventTypeCase,
             canonicalP25Subscribers ? "\n                a.source_observed_working_id," +
                 "\n                a.target_observed_working_id," : "",
-            radioSystemIdentityKeySql("source_identity", canonicalP25Subscribers),
-            radioSystemIdentityKeySql("target_identity", canonicalP25Subscribers),
+            radioSystemIdentityKeySql("source_identity", canonicalP25Subscribers && !storedHomeKeys),
+            radioSystemIdentityKeySql("target_identity", canonicalP25Subscribers && !storedHomeKeys),
             targetKindCase("a.target_kind_code"),
             receiverKindSql("configured.channel_kind", "configured.decoder_type"),
             protocolSql("configured.decoder_type"));

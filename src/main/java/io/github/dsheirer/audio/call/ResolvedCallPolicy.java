@@ -31,10 +31,12 @@ import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
+import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityEligibility;
+import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.Collection;
 import java.util.LinkedHashSet;
@@ -349,6 +351,26 @@ public record ResolvedCallPolicy(boolean recordAudio, boolean destinationRecordE
             }
 
             return localAddress > 0 && localAddress == other.localAddress;
+        }
+
+        /** Radio destinations use the same native-home evidence as sources; unknown roaming addresses stay distinct. */
+        public boolean matches(DestinationIdentity other, String servingSystemKey)
+        {
+            if(matches(other))
+            {
+                return true;
+            }
+            return other != null && protocol == Protocol.APCO25 && other.protocol == protocol &&
+                kind == Form.RADIO && other.kind == kind && radioIdentity().matchesWithinScope(
+                    other.radioIdentity(), servingSystemKey);
+        }
+
+        private ResolvedRadioIdentity radioIdentity()
+        {
+            return new ResolvedRadioIdentity(protocol, localAddress > 0 ? localAddress : null,
+                qualifier != null && qualifier.networkId() != null ? new P25SubscriberIdentity(
+                    qualifier.networkId(), qualifier.systemId(), canonicalIdentity) : null,
+                qualifier != null ? ResolvedRadioIdentity.Evidence.DIRECT : ResolvedRadioIdentity.Evidence.UNRESOLVED);
         }
 
         private static Protocol normalizeProtocol(Protocol protocol)

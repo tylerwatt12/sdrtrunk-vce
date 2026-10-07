@@ -46,6 +46,52 @@ class StatsAliasResolver
     private static final List<String> DMR_PROTOCOLS = List.of("DMR");
     private static final List<String> NXDN_PROTOCOLS = List.of("NXDN");
 
+    /** A confirmed home-system subscriber can retain ordinary radio-number aliases after qualification. */
+    static boolean homeSystemRadio(Map<String,Object> row, String prefix)
+    {
+        Integer wacn = integer(row.get(prefix + "canonical_wacn"));
+        Integer system = integer(row.get(prefix + "canonical_system_id"));
+        if(prefix.isEmpty())
+        {
+            if(wacn == null) wacn = integer(row.get("home_wacn"));
+            if(system == null) system = integer(row.get("home_system_id"));
+            if(wacn == null) wacn = integer(row.get("radio_canonical_wacn"));
+            if(system == null) system = integer(row.get("radio_canonical_system_id"));
+        }
+        String serving = string(row.get("radio_system_key"));
+        return wacn != null && system != null && serving != null &&
+            serving.equals(String.format(Locale.ROOT, "p25:%05x:%03x", wacn, system));
+    }
+
+    private static boolean localRadioFallback(Map<String,Object> row, String subscriberColumn,
+                                               String identifierColumn, String prefix)
+    {
+        Integer subscriber = integer(row.get(prefix + "canonical_subscriber_id"));
+        if(prefix.isEmpty() && subscriber == null)
+        {
+            subscriber = integer(row.get("radio_canonical_subscriber_id"));
+            if(subscriber == null) subscriber = integer(row.get("canonical_identity_id"));
+            if(subscriber == null) subscriber = integer(row.get("identity_id"));
+            if(subscriber == null) subscriber = integer(row.get("native_id"));
+        }
+        return positiveLong(row.get(subscriberColumn)) == null || homeSystemRadio(row, prefix) &&
+            Objects.equals(integer(row.get(identifierColumn)), subscriber);
+    }
+
+    private static String radioFallbackColumn(Map<String,Object> row, String subscriberColumn,
+                                              String identifierColumn, String workingColumn, String prefix)
+    {
+        if(positiveLong(row.get(subscriberColumn)) == null) return identifierColumn;
+        if(workingColumn != null && integer(row.get(workingColumn)) != null) return workingColumn;
+        return localRadioFallback(row, subscriberColumn, identifierColumn, prefix) ? identifierColumn : null;
+    }
+
+    static String homeSystemSql(String summary, String system)
+    {
+        return system + ".system_key=printf('p25:%05x:%03x'," + summary + ".home_wacn," +
+            summary + ".home_system_id)";
+    }
+
     void enrichTalkgroups(Connection connection, List<Map<String,Object>> rows) throws SQLException
     {
         enrichTalkgroups(connection, rows, "talkgroup_id", "alias_");
@@ -275,7 +321,8 @@ class StatsAliasResolver
             }
             else
             {
-                String fallbackColumn = radio && p25SubscriberIdentityId != null ? observedWorkingColumn :
+                String fallbackColumn = radio ? radioFallbackColumn(row, p25SubscriberIdentityColumn,
+                    identifierColumn, observedWorkingColumn, prefix.startsWith("source_") ? "source_" : "target_") :
                     identifierColumn;
                 if(fallbackColumn != null)
                 {
@@ -303,9 +350,9 @@ class StatsAliasResolver
     }
 
     /**
-     * Resolves a P25 radio shown at system scope. A permanent subscriber Alias has precedence. Once a row carries
-     * that canonical foreign key, ordinary radio-number fallback is allowed only for a separately retained explicit
-     * Working ID; the permanent subscriber number itself is never treated as a local radio address.
+     * Resolves a P25 radio shown at system scope. A permanent subscriber Alias has precedence. A confirmed
+     * home-system subscriber retains its matching local radio Alias; visiting subscribers require an explicit
+     * Working ID for local fallback.
      */
     private void enrichP25SystemRadios(Connection connection, List<Map<String,Object>> rows,
                                        Map<String,Set<Long>> aliasLists, String identifierColumn,
@@ -314,7 +361,7 @@ class StatsAliasResolver
         RuleIndex local = index(loadRules(connection, RuleType.RADIO, P25_PROTOCOLS,
             ruleTargets(rows, row -> systemAliasLists(row, aliasLists),
                 source(identifierColumn,
-                    row -> positiveLong(row.get("p25_subscriber_identity_id")) == null),
+                    row -> localRadioFallback(row, "p25_subscriber_identity_id", identifierColumn, "")),
                 source(workingIdColumn,
                     row -> positiveLong(row.get("p25_subscriber_identity_id")) != null))));
         P25SubscriberRuleIndex canonical = loadP25SubscriberRules(connection,
@@ -329,8 +376,9 @@ class StatsAliasResolver
                 aliasLists.getOrDefault(systemKey, Set.of()) : Set.of();
             Rule best = p25SubscriberIdentityId != null ?
                 canonical.best(p25SubscriberIdentityId, systemAliasLists) : null;
-            Integer fallback = integer(row.get(p25SubscriberIdentityId != null ?
-                workingIdColumn : identifierColumn));
+            String fallbackColumn = radioFallbackColumn(row, "p25_subscriber_identity_id",
+                identifierColumn, workingIdColumn, "");
+            Integer fallback = fallbackColumn != null ? integer(row.get(fallbackColumn)) : null;
             if(best == null && fallback != null)
             {
                 best = local.best(fallback, systemAliasLists);
@@ -425,7 +473,8 @@ class StatsAliasResolver
                         best = rules.best(local, true);
                     }
                 }
-                else if(best == null && p25SubscriberIdentityId == null)
+                else if(best == null && (p25SubscriberIdentityId == null ||
+                    localRadioFallback(row, "p25_subscriber_identity_id", "identity_id", "")))
                 {
                     String systemKey = string(row.get("radio_system_key"));
                     Set<Long> aliasLists = systemKey != null ?
@@ -440,7 +489,8 @@ class StatsAliasResolver
                 {
                     best = p25Subscribers.best(p25SubscriberIdentityId, aliasListId);
                 }
-                if(best == null && p25SubscriberIdentityId == null)
+                if(best == null && (p25SubscriberIdentityId == null ||
+                    localRadioFallback(row, "p25_subscriber_identity_id", "identity_id", "")))
                 {
                     best = aliasListId != null ? rules.best(identifier, aliasListId) : null;
                 }
@@ -497,14 +547,16 @@ class StatsAliasResolver
                     else
                     {
                         winner = resolver.resolveSystemConsensus(string(row.get("radio_system_key")),
-                            ruleKind, identifier, p25SubscriberIdentityId);
+                            ruleKind, identifier, p25SubscriberIdentityId,
+                            localRadioFallback(row, "p25_subscriber_identity_id", "identity_id", ""));
                     }
                 }
                 else
                 {
                     Long aliasListId = positiveLong(row.get("alias_list_id"));
                     winner = aliasListId != null ? resolver.resolvePreferred(protocol, ruleKind, aliasListId,
-                        identifier, p25SubscriberIdentityId) : null;
+                        identifier, p25SubscriberIdentityId,
+                        localRadioFallback(row, "p25_subscriber_identity_id", "identity_id", "")) : null;
                 }
 
                 if(winner != null)
@@ -706,7 +758,8 @@ class StatsAliasResolver
         requireBoundedRows(rows);
         RuleIndex local = index(loadRules(connection, RuleType.RADIO, P25_PROTOCOLS,
             ruleTargets(rows, StatsAliasResolver::assignedAliasList,
-                source(identifierColumn, row -> positiveLong(row.get("p25_subscriber_identity_id")) == null),
+                source(identifierColumn,
+                    row -> localRadioFallback(row, "p25_subscriber_identity_id", identifierColumn, "")),
                 source("observed_working_id",
                     row -> positiveLong(row.get("p25_subscriber_identity_id")) != null))));
         P25SubscriberRuleIndex canonical = loadP25SubscriberRules(connection,
@@ -724,8 +777,9 @@ class StatsAliasResolver
             }
             else
             {
-                String fallbackColumn = p25SubscriberIdentityId != null ? "observed_working_id" : identifierColumn;
-                enrichByAssignedAliasList(row, local, fallbackColumn, prefix);
+                String fallbackColumn = radioFallbackColumn(row, "p25_subscriber_identity_id",
+                    identifierColumn, "observed_working_id", "");
+                if(fallbackColumn != null) enrichByAssignedAliasList(row, local, fallbackColumn, prefix);
             }
         }
     }
@@ -798,7 +852,8 @@ class StatsAliasResolver
                 if(evidence.isEmpty())
                 {
                     Set<Long> aliasLists = aliasListsBySystem.getOrDefault(systemKey, Set.of());
-                    if(identifier != null && subscriberIdentityId == null)
+                    if(identifier != null && (subscriberIdentityId == null ||
+                        localRadioFallback(row, "p25_subscriber_identity_id", identifierColumn, "")))
                     {
                         p25Targets.add(aliasLists, identifier);
                     }
@@ -855,7 +910,8 @@ class StatsAliasResolver
                         aliasListsBySystem.getOrDefault(systemKey, Set.of())) :
                         p25Subscribers.best(subscriberIdentityId, evidence, false);
                 }
-                if(best == null && (subscriberIdentityId == null || !evidence.isEmpty()))
+                if(best == null && (subscriberIdentityId == null || !evidence.isEmpty() ||
+                    localRadioFallback(row, "p25_subscriber_identity_id", identifierColumn, "")))
                 {
                     best = identifier == null ? null : evidence.isEmpty() ? p25.best(identifier,
                         aliasListsBySystem.getOrDefault(systemKey, Set.of())) : p25.best(evidence, false);
@@ -973,11 +1029,11 @@ class StatsAliasResolver
             index(loadRules(connection, RuleType.RADIO, P25_PROTOCOLS,
                 ruleTargets(rows, StatsAliasResolver::assignedAliasList,
                     source("source_radio_id", row -> protocolCode(row) == 1 &&
-                        positiveLong(row.get("source_p25_subscriber_identity_id")) == null),
+                        localRadioFallback(row, "source_p25_subscriber_identity_id", "source_radio_id", "source_")),
                     source("source_observed_working_id", row -> protocolCode(row) == 1 &&
                         positiveLong(row.get("source_p25_subscriber_identity_id")) != null),
                     source("target_id", row -> protocolCode(row) == 1 && radioTarget.test(row) &&
-                        positiveLong(row.get("target_p25_subscriber_identity_id")) == null),
+                        localRadioFallback(row, "target_p25_subscriber_identity_id", "target_id", "target_")),
                     source("target_observed_working_id", row -> protocolCode(row) == 1 &&
                         radioTarget.test(row) &&
                         positiveLong(row.get("target_p25_subscriber_identity_id")) != null)))),
@@ -1060,7 +1116,8 @@ class StatsAliasResolver
             {
                 Integer identifier = integer(row.get("identity_id"));
                 if(identifier == null || Integer.valueOf(2).equals(integer(row.get("identity_kind_code"))) &&
-                    positiveLong(row.get("p25_subscriber_identity_id")) != null)
+                    positiveLong(row.get("p25_subscriber_identity_id")) != null &&
+                    !localRadioFallback(row, "p25_subscriber_identity_id", "identity_id", ""))
                 {
                     continue;
                 }
@@ -1141,8 +1198,8 @@ class StatsAliasResolver
 
     /**
      * Loads only channel-owned local-address evidence for the bounded canonical P25 identities in this response.
-     * The canonical home identity is never used as an Alias lookup value when a receiver observed a different local
-     * address on a site. Compact call/member/presence/affiliation facts are authoritative when present; retained
+     * Ordinary radio evidence remains valid when the subscriber is confirmed on its home system with the same
+     * radio number. A different home identity or local address still requires explicit Working-ID evidence. Compact call/member/presence/affiliation facts are authoritative when present; retained
      * detailed events are an index-backed fallback for signaling-only or legacy identities. This keeps a common
      * groups page from revisiting every retained event for identities already represented by compact facts.
      */
@@ -1225,41 +1282,62 @@ class StatsAliasResolver
                     SELECT bucket.identity_summary_id, bucket.channel_id,
                         CASE WHEN summary.identity_kind_code = 2
                                   AND summary.p25_subscriber_identity_id IS NOT NULL
+                                  AND (NOT (system.system_key=printf('p25:%%05x:%%03x',
+                                      summary.home_wacn,summary.home_system_id))
+                                      OR bucket.observed_local_id<>summary.identity_id)
                              THEN bucket.observed_working_id ELSE bucket.observed_local_id END AS observed_local_id
                     FROM requested
                     CROSS JOIN p25_site_call_identity_bucket bucket
                         INDEXED BY idx_p25_site_call_identity_identity
                       ON bucket.identity_summary_id = requested.identity_summary_id
                     JOIN radio_system_identity_summary summary ON summary.id = bucket.identity_summary_id
+                    JOIN radio_system system ON system.id = summary.radio_system_id
                     WHERE CASE WHEN summary.identity_kind_code = 2
                                       AND summary.p25_subscriber_identity_id IS NOT NULL
+                                  AND (NOT (system.system_key=printf('p25:%%05x:%%03x',
+                                      summary.home_wacn,summary.home_system_id))
+                                      OR bucket.observed_local_id<>summary.identity_id)
                                THEN bucket.observed_working_id ELSE bucket.observed_local_id END > 0
                     UNION
                     %s
                     UNION
                     SELECT presence.radio_identity_id, presence.channel_id,
                         CASE WHEN summary.p25_subscriber_identity_id IS NOT NULL
+                             AND (NOT (system.system_key=printf('p25:%%05x:%%03x',
+                                      summary.home_wacn,summary.home_system_id))
+                                      OR presence.observed_local_id<>summary.identity_id)
                              THEN presence.observed_working_id ELSE presence.observed_local_id END
                     FROM requested
                     CROSS JOIN radio_system_identity_summary summary
                       ON summary.id = requested.identity_summary_id
+                    CROSS JOIN radio_system system ON system.id = summary.radio_system_id
                     CROSS JOIN trunked_radio_channel_presence presence
                       ON presence.radio_system_id = summary.radio_system_id
                      AND presence.radio_identity_id = requested.identity_summary_id
                     WHERE CASE WHEN summary.p25_subscriber_identity_id IS NOT NULL
+                             AND (NOT (system.system_key=printf('p25:%%05x:%%03x',
+                                      summary.home_wacn,summary.home_system_id))
+                                      OR presence.observed_local_id<>summary.identity_id)
                                THEN presence.observed_working_id ELSE presence.observed_local_id END > 0
                     UNION
                     SELECT affiliation.radio_identity_id, affiliation.channel_id,
                         CASE WHEN summary.p25_subscriber_identity_id IS NOT NULL
+                             AND (NOT (system.system_key=printf('p25:%%05x:%%03x',
+                                      summary.home_wacn,summary.home_system_id))
+                                      OR affiliation.radio_observed_local_id<>summary.identity_id)
                              THEN affiliation.radio_observed_working_id
                              ELSE affiliation.radio_observed_local_id END
                     FROM requested
                     CROSS JOIN radio_system_identity_summary summary
                       ON summary.id = requested.identity_summary_id
+                    CROSS JOIN radio_system system ON system.id = summary.radio_system_id
                     CROSS JOIN trunked_radio_affiliation affiliation
                       ON affiliation.radio_system_id = summary.radio_system_id
                      AND affiliation.radio_identity_id = requested.identity_summary_id
                     WHERE CASE WHEN summary.p25_subscriber_identity_id IS NOT NULL
+                             AND (NOT (system.system_key=printf('p25:%%05x:%%03x',
+                                      summary.home_wacn,summary.home_system_id))
+                                      OR affiliation.radio_observed_local_id<>summary.identity_id)
                                THEN affiliation.radio_observed_working_id
                                ELSE affiliation.radio_observed_local_id END > 0
                     UNION
@@ -1268,6 +1346,7 @@ class StatsAliasResolver
                     FROM requested
                     CROSS JOIN radio_system_identity_summary summary
                       ON summary.id = requested.identity_summary_id
+                    CROSS JOIN radio_system system ON system.id = summary.radio_system_id
                     CROSS JOIN trunked_radio_affiliation affiliation
                         INDEXED BY idx_trunked_radio_affiliation_talkgroup
                       ON affiliation.radio_system_id = summary.radio_system_id
@@ -1280,6 +1359,14 @@ class StatsAliasResolver
                         SELECT 1 FROM compact_evidence
                         WHERE compact_evidence.identity_summary_id = requested.identity_summary_id
                     )
+                ), home_source_fallback AS MATERIALIZED (
+                    SELECT summary.id AS identity_summary_id, summary.identity_id
+                    FROM detail_fallback
+                    CROSS JOIN radio_system_identity_summary summary NOT INDEXED
+                      ON summary.id=detail_fallback.identity_summary_id
+                    CROSS JOIN radio_system system ON system.id=summary.radio_system_id
+                    WHERE summary.identity_kind_code=2 AND summary.p25_subscriber_identity_id IS NOT NULL
+                      AND summary.home_wacn=system.p25_wacn AND summary.home_system_id=system.p25_system_id
                 ), local_evidence AS (
                     SELECT identity_summary_id, channel_id, observed_local_id
                     FROM compact_evidence
@@ -1289,14 +1376,21 @@ class StatsAliasResolver
                     SELECT event.target_identity_summary_id, event.channel_id,
                         CASE WHEN event.target_kind_code = 2
                                   AND summary.p25_subscriber_identity_id IS NOT NULL
+                                  AND (NOT (system.system_key=printf('p25:%%05x:%%03x',
+                                      summary.home_wacn,summary.home_system_id))
+                                      OR event.target_observed_local_id<>summary.identity_id)
                              THEN event.target_observed_working_id ELSE event.target_observed_local_id END
                     FROM detail_fallback
                     CROSS JOIN receiver_activity_event event
                         INDEXED BY idx_receiver_activity_event_target_time
                       ON event.target_identity_summary_id = detail_fallback.identity_summary_id
                     JOIN radio_system_identity_summary summary ON summary.id = event.target_identity_summary_id
+                    JOIN radio_system system ON system.id = summary.radio_system_id
                     WHERE CASE WHEN event.target_kind_code = 2
                                       AND summary.p25_subscriber_identity_id IS NOT NULL
+                                  AND (NOT (system.system_key=printf('p25:%%05x:%%03x',
+                                      summary.home_wacn,summary.home_system_id))
+                                      OR event.target_observed_local_id<>summary.identity_id)
                                THEN event.target_observed_working_id ELSE event.target_observed_local_id END > 0
                 )
                 SELECT DISTINCT local_evidence.identity_summary_id, config.alias_list_id,
@@ -1351,13 +1445,20 @@ class StatsAliasResolver
             return """
                 SELECT event.source_identity_summary_id, event.channel_id,
                     CASE WHEN summary.p25_subscriber_identity_id IS NOT NULL
+                             AND (NOT (system.system_key=printf('p25:%05x:%03x',
+                                      summary.home_wacn,summary.home_system_id))
+                                      OR event.source_observed_local_id<>summary.identity_id)
                          THEN event.source_observed_working_id ELSE event.source_observed_local_id END
                 FROM detail_fallback
                 CROSS JOIN receiver_activity_event event
                     INDEXED BY idx_receiver_activity_event_source_time
                   ON event.source_identity_summary_id = detail_fallback.identity_summary_id
                 JOIN radio_system_identity_summary summary ON summary.id = event.source_identity_summary_id
+                JOIN radio_system system ON system.id = summary.radio_system_id
                 WHERE CASE WHEN summary.p25_subscriber_identity_id IS NOT NULL
+                             AND (NOT (system.system_key=printf('p25:%05x:%03x',
+                                      summary.home_wacn,summary.home_system_id))
+                                      OR event.source_observed_local_id<>summary.identity_id)
                            THEN event.source_observed_working_id ELSE event.source_observed_local_id END > 0
                 """;
         }
@@ -1372,6 +1473,14 @@ class StatsAliasResolver
                 INDEXED BY idx_receiver_activity_event_source_identity_address
               ON event.source_identity_summary_id = detail_fallback.identity_summary_id
             WHERE summary.p25_subscriber_identity_id IS NULL AND event.source_observed_local_id > 0
+            UNION
+            SELECT event.source_identity_summary_id, event.channel_id, event.source_observed_local_id
+            FROM home_source_fallback owner
+            CROSS JOIN receiver_activity_event event
+                INDEXED BY idx_receiver_activity_event_source_identity_address
+              ON event.source_identity_summary_id=owner.identity_summary_id
+             AND event.source_observed_local_id=owner.identity_id
+            WHERE event.source_observed_local_id>0
             UNION
             SELECT event.source_identity_summary_id, event.channel_id, event.source_observed_working_id
             FROM detail_fallback
@@ -1914,11 +2023,11 @@ class StatsAliasResolver
 
         private Long resolveSystemConsensus(String systemKey, int kind, int identifier) throws SQLException
         {
-            return resolveSystemConsensus(systemKey, kind, identifier, null);
+            return resolveSystemConsensus(systemKey, kind, identifier, null, false);
         }
 
         private Long resolveSystemConsensus(String systemKey, int kind, int identifier,
-                                            Long p25SubscriberIdentityId) throws SQLException
+                                            Long p25SubscriberIdentityId, boolean localHomeIdentity) throws SQLException
         {
             if(systemKey == null)
             {
@@ -1954,7 +2063,7 @@ class StatsAliasResolver
                     {
                         assignedCount++;
                         Long candidate = resolvePreferred(1, kind, resultSet.getLong(1), identifier,
-                            p25SubscriberIdentityId);
+                            p25SubscriberIdentityId, localHomeIdentity);
                         if(candidate == null || winner != null && !winner.equals(candidate))
                         {
                             return null;

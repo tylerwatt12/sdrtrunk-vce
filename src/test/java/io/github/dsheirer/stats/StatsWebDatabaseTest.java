@@ -102,6 +102,95 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void homeSubscriberEnrichmentKeepsOneOwnerAcrossDirectoriesRoutesActivityAndChannelAliases() throws Exception
+    {
+        seedActivityFilterRows();
+        Map<String,Object> provisional = map(mDatabase.radio(RADIO_SYSTEM_KEY,p25LocalRadioKey(202)),"radio");
+        String receivingKey = p25IdentityKey(RadioSystemIdentityKey.KIND_RADIO,202);
+        assertEquals(receivingKey,provisional.get("identity_key"));
+        assertNull(provisional.get("p25_subscriber_identity_id"));
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO p25_subscriber_identity(id,home_wacn,home_system_id,subscriber_id) " +
+                "VALUES(9901,0xBEE00,0x49F,202)");
+            statement.executeUpdate("UPDATE radio_system_identity_summary SET p25_subscriber_identity_id=9901," +
+                "last_talker_alias='Home OTA',last_talker_alias_seen_ms=13000 WHERE id=7102");
+            statement.executeUpdate("INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,value) " +
+                "VALUES(9901,71,'Home Unit','RADIO_ID','APCO25',202)");
+            statement.executeUpdate("INSERT INTO trunked_radio_group_summary(radio_system_id,radio_identity_id," +
+                "group_identity_id,group_kind_code,first_seen_ms,last_seen_ms,logical_call_count) " +
+                "VALUES(71,7102,7101,1,1000,13000,3)");
+            statement.executeUpdate("INSERT INTO p25_learned_site(learned_site_id,radio_system_id,rfss,site," +
+                "first_seen_ms,last_seen_ms) VALUES(9901,71,1,2,1000,13000)");
+            statement.executeUpdate("INSERT INTO p25_site_call_identity_bucket(radio_system_id,channel_id," +
+                "learned_site_id,bucket_start_ms,identity_role_code,identity_kind_code,identity_summary_id," +
+                "observed_local_id,last_observed_at_ms,observed_call_count) " +
+                "VALUES(71,71,9901,0,2,2,7102,202,13000,3)");
+        }
+        String local = p25LocalRadioKey(202);
+        String full = p25IdentityKey(RadioSystemIdentityKey.KIND_RADIO, 202);
+        Map<String,Object> localDetail = map(mDatabase.radio(RADIO_SYSTEM_KEY, local), "radio");
+        Map<String,Object> fullDetail = map(mDatabase.radio(RADIO_SYSTEM_KEY, full), "radio");
+        assertEquals(receivingKey,localDetail.get("identity_key"));
+        assertEquals(provisional.get("identity_summary_id"),localDetail.get("identity_summary_id"));
+        assertEquals(7102, number(localDetail.get("identity_summary_id")));
+        assertEquals(localDetail.get("identity_summary_id"), fullDetail.get("identity_summary_id"));
+        assertEquals("Home OTA", localDetail.get("last_talker_alias"));
+        assertEquals("Home Unit", localDetail.get("alias_name"));
+        Map<String,Object> systemRadio = rows(mDatabase.radioSystemRadios(RADIO_SYSTEM_KEY,
+            request("/?q=home%20unit&limit=1"))).getFirst();
+        assertEquals(7102, number(systemRadio.get("identity_summary_id")));
+        Map<String,Object> relation = rows(mDatabase.radioSystemRelationships(RADIO_SYSTEM_KEY,
+            request("/?group_identity_key=" + p25IdentityKey(1,101)))).getFirst();
+        assertEquals(7102, number(relation.get("radio_identity_summary_id")));
+        assertEquals("Home OTA", relation.get("last_talker_alias"));
+        assertEquals("Home Unit", relation.get("radio_alias_name"));
+        Map<String,Object> activity = mDatabase.activity(request("/?radio_system_key=" + RADIO_SYSTEM_KEY +
+            "&radio_identity_key=" + local + "&from_ms=9000&to_ms=15001&hide_grants=false&limit=20"));
+        assertEquals(activityTimes(activity), activityTimes(mDatabase.activity(request("/?radio_system_key=" +
+            RADIO_SYSTEM_KEY + "&radio_identity_key=" + full +
+            "&from_ms=9000&to_ms=15001&hide_grants=false&limit=20"))));
+        assertTrue(rows(activity).stream().anyMatch(row -> "Home Unit".equals(row.get("source_alias_name"))));
+        Map<String,Object> channel = rows(mDatabase.channelRadios(P25_CHANNEL_A,
+            request("/?q=home%20unit&limit=1"))).getFirst();
+        assertEquals(7102, number(channel.get("identity_summary_id")));
+        assertEquals("Home Unit", channel.get("alias_name"));
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO alias(id,alias_list_id,name,matcher_type) " +
+                "VALUES(9902,71,'Canonical Home Unit','P25_SUBSCRIBER_IDENTITY')");
+            statement.executeUpdate("INSERT INTO alias_p25_subscriber_identity(alias_id,p25_subscriber_identity_id) " +
+                "VALUES(9902,9901)");
+        }
+        Map<String,Object> namedCanonical = rows(mDatabase.channelRadios(P25_CHANNEL_A,
+            request("/?q=canonical%20home%20unit&sort=alias&limit=1"))).getFirst();
+        assertEquals("Canonical Home Unit",namedCanonical.get("alias_name"));
+    }
+
+    @Test
+    void provisionalHomeAndRetainedUnknownHistoryHaveSeparateExactRoutes() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_kind_code," +
+                "home_wacn,home_system_id,identity_id,first_seen_ms,last_seen_ms,logical_call_count) " +
+                "VALUES(9903,71,2,-1,-1,202,1000,2000,1)");
+        }
+        String home = p25IdentityKey(2,202);
+        String unknown = p25LocalRadioKey(202);
+        List<Map<String,Object>> directory = rows(mDatabase.radioSystemRadios(RADIO_SYSTEM_KEY,
+            request("/?q=202&limit=20")));
+        assertEquals(2,directory.size());
+        assertEquals(java.util.Set.of(home,unknown),directory.stream()
+            .map(row -> String.valueOf(row.get("identity_key"))).collect(java.util.stream.Collectors.toSet()));
+        assertEquals(7102,number(map(mDatabase.radio(RADIO_SYSTEM_KEY,home),"radio").get("identity_summary_id")));
+        assertEquals(9903,number(map(mDatabase.radio(RADIO_SYSTEM_KEY,unknown),"radio").get("identity_summary_id")));
+    }
+
+    @Test
     void formatsKnownAndUnknownMfids()
     {
         assertEquals("Motorola (0x90)", StatsWebDatabase.mfidDisplay(0x90));
@@ -928,7 +1017,7 @@ class StatsWebDatabaseTest
         assertEquals(Map.of("kind", "talkgroup", "radio_system_key", RADIO_SYSTEM_KEY,
             "identity_key", "v1-g-bee00-49f-101"), talkgroup.get("entity_ref"));
         assertEquals(Map.of("kind", "radio", "radio_system_key", RADIO_SYSTEM_KEY,
-            "identity_key", "v1-r-x-x-202"), radio.get("entity_ref"));
+            "identity_key", "v1-r-bee00-49f-202"), radio.get("entity_ref"));
     }
 
     @Test
@@ -1015,7 +1104,7 @@ class StatsWebDatabaseTest
         assertEquals("Shared P25", radio.get("system_name"));
         assertFalse(radio.containsKey("last_group_identity_id"));
         assertEquals(Map.of("kind", "radio", "radio_system_key", RADIO_SYSTEM_KEY,
-            "identity_key", identityKey),
+            "identity_key", p25IdentityKey(RadioSystemIdentityKey.KIND_RADIO,202)),
             radio.get("entity_ref"));
     }
 

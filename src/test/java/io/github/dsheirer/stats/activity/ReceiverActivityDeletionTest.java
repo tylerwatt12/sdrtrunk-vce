@@ -121,6 +121,32 @@ class ReceiverActivityDeletionTest
     }
 
     @Test
+    void localRadioRouteResolvesHomeOwnerAndRetainsAmbiguousLegacyOwnership() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            execute(connection,"INSERT INTO radio_system(id,system_key,protocol_code,p25_wacn,p25_system_id," +
+                "first_seen_ms,last_seen_ms) VALUES(1,'p25:abcde:123',1,0xABCDE,0x123,1000,1000)");
+            execute(connection,"INSERT INTO p25_subscriber_identity(id,home_wacn,home_system_id,subscriber_id) " +
+                "VALUES(1,0xABCDE,0x123,321),(2,0xABCDE,0x124,321)");
+            execute(connection,"INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_kind_code," +
+                "home_wacn,home_system_id,identity_id,first_seen_ms,last_seen_ms,p25_subscriber_identity_id) " +
+                "VALUES(1,1,2,0xABCDE,0x123,321,1000,1000,1),(2,1,2,0xABCDE,0x124,321,1000,1000,2)," +
+                "(3,1,2,-1,-1,321,1000,1000,NULL)");
+            assertEquals(3L,RadioSystemIdentityLookup.find(connection,1,2,-1,-1,321));
+            assertTrue(ReceiverActivityDeletion.delete(connection,
+                new Identity("p25:abcde:123","v1-r-x-x-321",IdentityKind.RADIO)).found());
+            assertEquals(1L,RadioSystemIdentityLookup.find(connection,1,2,-1,-1,321));
+            assertEquals(1L,RadioSystemIdentityLookup.find(connection,1,2,0xABCDE,0x123,321));
+            assertEquals(2L,RadioSystemIdentityLookup.find(connection,1,2,0xABCDE,0x124,321));
+            assertTrue(ReceiverActivityDeletion.delete(connection,
+                new Identity("p25:abcde:123","v1-r-x-x-321",IdentityKind.RADIO)).found());
+            assertEquals(1,count(connection,"radio_system_identity_summary"));
+            assertEquals(null,RadioSystemIdentityLookup.find(connection,1,2,-1,-1,321));
+        }
+    }
+
+    @Test
     void radioIdentityDeletionCannotCrossSystemsAndCascadesItsDetail() throws Exception
     {
         try(Connection connection = open())

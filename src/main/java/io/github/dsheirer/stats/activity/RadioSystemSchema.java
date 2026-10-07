@@ -116,7 +116,8 @@ final class RadioSystemSchema
 
         private void rememberIdentity(long radioSystemId, Identity identity, long summaryId)
         {
-            mIdentities.put(IdentityKey.from(radioSystemId, identity), new IdentityDelta(summaryId));
+            mIdentities.put(IdentityKey.from(radioSystemId, identity),
+                new IdentityDelta(summaryId, identity.stableCanonicalSubscriber()));
         }
 
         void flush(Connection connection) throws SQLException
@@ -991,9 +992,8 @@ final class RadioSystemSchema
             batch.flushIdentities(connection);
         }
 
-        Identity sourceIdentity = resolvedIdentity(connection, radioSystem, TrunkedIdentityPolicy.IDENTITY_KIND_RADIO,
-            integer(activity.sourceRadioId()), activity.p25SourceIdentity(),
-            activity.observedAtEpochMilliseconds());
+        Identity sourceIdentity = identity(radioSystem, TrunkedIdentityPolicy.IDENTITY_KIND_RADIO,
+            integer(activity.sourceRadioId()), activity.p25SourceIdentity());
         List<Identity> destinations = destinationIdentities(connection, radioSystem, activity.targetId(), activity.targetKind(),
             activity.patchMemberTalkgroupIds(), activity.p25TargetIdentity(), activity.p25PatchMemberIdentities(),
             activity.observedAtEpochMilliseconds());
@@ -1193,8 +1193,8 @@ final class RadioSystemSchema
         Integer matchLocalId = update.radioIdentity().isStableFullyQualified() ? explicitWorkingId :
             positive(update.radioId());
 
-        Identity radio = identity(radioSystem, TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, update.radioId(),
-            update.radioIdentity());
+        Identity radio = identity(radioSystem, TrunkedIdentityPolicy.IDENTITY_KIND_RADIO,
+            update.radioId(), update.radioIdentity());
         if(radio == null)
         {
             return;
@@ -1230,12 +1230,6 @@ final class RadioSystemSchema
             return;
         }
 
-        radio = resolvedIdentity(connection, radioSystem, TrunkedIdentityPolicy.IDENTITY_KIND_RADIO,
-            update.radioId(), update.radioIdentity(), activity.observedAtEpochMilliseconds());
-        if(radio == null)
-        {
-            return;
-        }
         upsertIdentity(connection, radioSystem, radio, activity.observedAtEpochMilliseconds(),
             null, IdentityCounts.NONE, null, null, null, null, null);
         long radioIdentityId = identitySummaryId(connection, radioSystem.radioSystemId(), radio);
@@ -1486,8 +1480,8 @@ final class RadioSystemSchema
             call.destinationId() > 0 ? Integer.toString(call.destinationId()) : null, call.destinationKind(),
             call.patchMemberTalkgroupIds(), call.p25TargetIdentity(), call.p25PatchMemberIdentities(),
             call.callStartEpochMilliseconds());
-        Identity sourceIdentity = resolvedIdentity(connection, radioSystem, TrunkedIdentityPolicy.IDENTITY_KIND_RADIO,
-            call.sourceRadioId(), call.p25SourceIdentity(), call.callStartEpochMilliseconds());
+        Identity sourceIdentity = identity(radioSystem, TrunkedIdentityPolicy.IDENTITY_KIND_RADIO,
+            call.sourceRadioId(), call.p25SourceIdentity());
         int encrypted = call.encrypted() ? 1 : 0;
 
         for(Identity destination: destinations)
@@ -1528,8 +1522,8 @@ final class RadioSystemSchema
             call.destinationId() > 0 ? Integer.toString(call.destinationId()) : null, call.destinationKind(),
             call.patchMemberTalkgroupIds(), call.p25TargetIdentity(), call.p25PatchMemberIdentities(),
             call.callStartEpochMilliseconds());
-        Identity sourceIdentity = resolvedIdentity(connection, radioSystem, TrunkedIdentityPolicy.IDENTITY_KIND_RADIO,
-            call.sourceRadioId(), call.p25SourceIdentity(), call.callStartEpochMilliseconds());
+        Identity sourceIdentity = identity(radioSystem, TrunkedIdentityPolicy.IDENTITY_KIND_RADIO,
+            call.sourceRadioId(), call.p25SourceIdentity());
 
         for(Identity destination: destinations)
         {
@@ -1563,9 +1557,8 @@ final class RadioSystemSchema
             attribution.destinationId() > 0 ? Integer.toString(attribution.destinationId()) : null,
             attribution.destinationKind(), attribution.patchMemberTalkgroupIds(),
             ReceiverActivityRecords.P25Identity.UNKNOWN, List.of(), attribution.callStartEpochMilliseconds());
-        Identity sourceIdentity = resolvedIdentity(connection, radioSystem, TrunkedIdentityPolicy.IDENTITY_KIND_RADIO,
-            attribution.sourceRadioId(), ReceiverActivityRecords.P25Identity.UNKNOWN,
-            attribution.callStartEpochMilliseconds());
+        Identity sourceIdentity = identity(radioSystem, TrunkedIdentityPolicy.IDENTITY_KIND_RADIO,
+            attribution.sourceRadioId(), ReceiverActivityRecords.P25Identity.UNKNOWN);
         boolean enrichDestination = attribution.destinationBecameKnown() ||
             attribution.encryptionBecameKnown() || attribution.hasEncryptionDetails();
         boolean enrichSource = attribution.sourceBecameKnown() ||
@@ -1656,8 +1649,8 @@ final class RadioSystemSchema
 
         RadioSystem radioSystem = ensureRadioSystem(connection, channelId, callStart, identityDomain,
             p25Wacn, p25SystemId, radioSystemKey);
-        Identity radio = resolvedIdentity(connection, radioSystem, TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, radioId,
-            p25RadioIdentity, observedAt);
+        Identity radio = identity(radioSystem, TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, radioId,
+            p25RadioIdentity);
 
         if(radioSystem == null ||
             (radioSystem.protocolCode() != TrunkedIdentityPolicy.PROTOCOL_P25 &&
@@ -2350,8 +2343,14 @@ final class RadioSystemSchema
             IdentityDelta delta = batch.identity(radioSystemId, identity);
             if(delta != null)
             {
-                delta.observe(observedAt, action);
-                return delta.mSummaryId > 0;
+                if(!identity.stableCanonicalSubscriber() || delta.mStableCanonicalSubscriber)
+                {
+                    delta.observe(observedAt, action);
+                    return delta.mSummaryId > 0;
+                }
+                //Sharing a serving-home key must not discard its first explicit canonical qualification or the
+                //ordinary counter deltas already waiting in this bounded writer batch.
+                batch.flushIdentities(connection);
             }
         }
 
@@ -2669,8 +2668,7 @@ final class RadioSystemSchema
         Integer kind = TrunkedIdentityPolicy.identityKindCode(targetKind);
         Map<String,Identity> identities = new LinkedHashMap<>();
 
-        Identity target = resolvedIdentity(connection, radioSystem, kind, localTarget, p25TargetIdentity,
-            observedAt);
+        Identity target = identity(radioSystem, kind, localTarget, p25TargetIdentity);
         if(target != null)
         {
             mergeIdentity(identities, target);
@@ -2728,13 +2726,6 @@ final class RadioSystemSchema
     }
 
     /** Builds an identity only from evidence carried by this observation; retained WUID history is never authority. */
-    private static Identity resolvedIdentity(Connection connection, RadioSystem radioSystem, Integer kindCode,
-                                             Integer localId, ReceiverActivityRecords.P25Identity p25Identity,
-                                             long observedAt)
-    {
-        return identity(radioSystem, kindCode, localId, p25Identity);
-    }
-
     private static Identity identity(RadioSystem radioSystem, Integer kindCode, Integer localId,
                                      ReceiverActivityRecords.P25Identity p25Identity)
     {
@@ -2775,7 +2766,6 @@ final class RadioSystemSchema
             }
             canonicalId = localId;
             if(radioSystem.protocolCode() == TrunkedIdentityPolicy.PROTOCOL_P25 &&
-                kindCode != TrunkedIdentityPolicy.IDENTITY_KIND_RADIO &&
                 radioSystem.p25Wacn() != null && radioSystem.p25SystemId() != null)
             {
                 homeWacn = radioSystem.p25Wacn();
@@ -2814,8 +2804,7 @@ final class RadioSystemSchema
                                                ReceiverActivityRecords.P25Identity p25Identity,
                                                long observedAt) throws SQLException
     {
-        Identity identity = resolvedIdentity(connection, radioSystem, kindCode, observedLocalId, p25Identity,
-            observedAt);
+        Identity identity = identity(radioSystem, kindCode, observedLocalId, p25Identity);
         long summaryId = identitySummaryId(connection, radioSystem != null ? radioSystem.radioSystemId() : 0,
             identity);
         return summaryId > 0 ? new IdentityReference(summaryId, identity.kindCode(), identity.localId(),
@@ -3547,13 +3536,15 @@ final class RadioSystemSchema
     private static final class IdentityDelta
     {
         private final long mSummaryId;
+        private final boolean mStableCanonicalSubscriber;
         private final int[] mActionCounts = new int[ACTIONS.size()];
         private long mFirstSeen;
         private long mLastSeen;
 
-        private IdentityDelta(long summaryId)
+        private IdentityDelta(long summaryId, boolean stableCanonicalSubscriber)
         {
             mSummaryId = summaryId;
+            mStableCanonicalSubscriber = stableCanonicalSubscriber;
         }
 
         private void observe(long observedAt, ReceiverActivityRecords.Action action)

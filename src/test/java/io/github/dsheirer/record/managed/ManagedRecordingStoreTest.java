@@ -18,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog.Member;
+import io.github.dsheirer.record.managed.ManagedRecordingCatalog.IdentityNameMatch;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog.SearchFilter;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog.SearchPage;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog.Site;
@@ -680,6 +681,70 @@ class ManagedRecordingStoreTest
                         details.contains("idx_recording_call_target_time"), details);
                 }
             }
+        }
+    }
+
+    @Test
+    void otaNameScopeUsesStoredHomeAcrossRolesAndPagesWithoutBorrowingAnUnknownOwner() throws Exception
+    {
+        Path db = temporary.resolve("home-name.sqlite");
+        Path root = temporary.resolve("home-name-audio");
+        String system = "p25:00001:001";
+        int radio = 10_900_077;
+        try(ManagedRecordingStore store = new ManagedRecordingStore(db, root))
+        {
+            store.insert(metadata(1000, system, "ordinary.mp3", radio, 1001,
+                ManagedRecordingCatalog.CALL_GROUP, null, List.of(), List.of()));
+            store.insert(metadata(2000, system, "working.mp3", 555, 1001,
+                ManagedRecordingCatalog.CALL_GROUP, null, List.of(), List.of()));
+            store.insert(metadata(3000, system, "foreign.mp3", radio, 1001,
+                ManagedRecordingCatalog.CALL_GROUP, null, List.of(), List.of()));
+            store.insert(metadata(4000, system, "direct.mp3", 999, 555,
+                ManagedRecordingCatalog.CALL_DIRECT, null, List.of(), List.of()));
+            store.insert(metadata(5000, system, "patch.mp3", 999, 1002,
+                ManagedRecordingCatalog.CALL_PATCH, null, List.of(),
+                List.of(new Member("radio", 777, 1, 1, radio))));
+            store.insert(metadata(6000, "p25:00002:002", "different-system.mp3", radio, 1001,
+                ManagedRecordingCatalog.CALL_GROUP, null, List.of(), List.of()));
+            Site site = new Site(1, 1, 1, 1);
+            store.insert(metadata(7000, null, "legacy-site.mp3", 555, 1001,
+                ManagedRecordingCatalog.CALL_GROUP, site, List.of(site), List.of()));
+            try(var connection = DriverManager.getConnection("jdbc:sqlite:" + db);
+                var statement = connection.createStatement())
+            {
+                statement.executeUpdate("UPDATE recording_call SET source_home_wacn=1,source_home_system=1," +
+                    "source_home_id=" + radio + " WHERE start_ms IN(2000,6000,7000)");
+                statement.executeUpdate("UPDATE recording_call SET source_home_wacn=2,source_home_system=2," +
+                    "source_home_id=" + radio + " WHERE start_ms=3000");
+                statement.executeUpdate("UPDATE recording_call SET target_home_wacn=1,target_home_system=1," +
+                    "target_home_id=" + radio + " WHERE start_ms=4000");
+            }
+            IdentityNameMatch home = new IdentityNameMatch(radio, system, 1, 1, false);
+            SearchFilter firstFilter = SearchFilter.builder().fromMs(0L).toMs(8000L)
+                .identityNameMatches(List.of(home)).limit(2).build();
+            SearchPage first = store.search(firstFilter);
+            assertEquals(List.of(7000L, 5000L), first.calls().stream().map(call -> call.startMs()).toList());
+            assertNotNull(first.nextCursor());
+            SearchPage second = store.search(SearchFilter.builder().fromMs(0L).toMs(8000L)
+                .identityNameMatches(List.of(home)).limit(2).cursor(first.nextCursor()).build());
+            assertEquals(List.of(4000L, 2000L), second.calls().stream().map(call -> call.startMs()).toList());
+            assertNull(second.nextCursor());
+            assertEquals(List.of(3000L), store.search(SearchFilter.builder().fromMs(0L).toMs(8000L)
+                .identityNameMatches(List.of(new IdentityNameMatch(radio, system, 2, 2, false))).build())
+                .calls().stream().map(call -> call.startMs()).toList());
+            assertEquals(List.of(1000L), store.search(SearchFilter.builder().fromMs(0L).toMs(8000L)
+                .identityNameMatches(List.of(new IdentityNameMatch(radio, system, -1, -1, true))).build())
+                .calls().stream().map(call -> call.startMs()).toList());
+            for(ManagedRecordingStore.CandidateQuery branch: store.singleIdentityCandidateQueries(firstFilter))
+            {
+                String details = plan(db, branch);
+                assertTrue(details.contains(branch.sql().contains("c.system_id IS NULL") ?
+                    "SEARCH c USING INDEX idx_recording_call_time" :
+                    "SEARCH c USING INDEX idx_recording_call_system_time"), details);
+                assertFalse(details.contains("USE TEMP B-TREE"), details);
+            }
+            assertThrows(IllegalArgumentException.class,
+                () -> new IdentityNameMatch(radio, system, 2, 2, true));
         }
     }
 

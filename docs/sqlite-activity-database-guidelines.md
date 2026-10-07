@@ -117,6 +117,23 @@ referenced by the radio directory, Working-ID observation history, or an Alias. 
 `(home_wacn, home_system_id, subscriber_id)` index; reverse Alias and directory lookups use
 `idx_alias_p25_subscriber_identity` and the partial `idx_radio_system_identity_p25_subscriber` index.
 
+Format 45 gives matching home-system observations one radio-summary owner. Number-only P25 observations use the
+receiving WACN/System as their storage scope while remaining unqualified until real subscriber evidence arrives.
+Learning that same home tuple and subscriber number enriches the existing row. The migration consolidates existing
+safe duplicates and their references; conflicting retained foreign Working-ID evidence is kept unresolved rather
+than attributed by number. There is no new table, index, event type or mapping layer, and no whole-history scan in
+normal receiver processing. New ordinary observations always use the receiving-home key, while unresolved old
+history retains its own local key. Both are reached through existing indexed lookups. The existing resolved Activity
+view exposes the actual stored owner key, independently of whether explicit subscriber proof has arrived.
+Consolidation preserves accepted historical aggregate credits. Individual old logical-call keys are not retained,
+so the migration cannot subtract overlapping source/target credits safely; system and site totals stay unchanged.
+New logical calls credit a shared source/target radio owner once.
+
+Configured local-ID aliases remain usable after a home-system row gains its canonical reference: same-system,
+same-number ordinary evidence is valid alongside explicit Working-ID evidence. Foreign-home subscriber alias
+lookups still require their actual observed Working ID. Readers, deletion and recording labels use the same scoped
+identity lookup, including old local links, so display labels never decide database ownership.
+
 `p25_wuid_assignment_observation_summary` keeps one bounded aggregate for each observed
 `(radio_system_id, working_id, p25_subscriber_identity_id)` relationship. It records first and last observation,
 registration and affiliation counts, last evidence, and nullable saved-channel provenance. It never claims that a

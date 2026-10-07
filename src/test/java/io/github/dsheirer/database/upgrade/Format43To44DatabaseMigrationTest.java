@@ -50,7 +50,7 @@ class Format43To44DatabaseMigrationTest
             assertTrue(before.get("alias_list_new_alias_scan_list_membership").rows() > 0);
             assertTrue(before.get("sqlite_stat1").rows() > 0);
             connection.setAutoCommit(false);
-            var report = DatabaseMigrationChain.migrate(connection);
+            var report = migrateTo44(connection);
             connection.commit();
             assertEquals(1, report.steps().size());
             assertEquals("format-43-to-44", report.steps().getFirst().id());
@@ -60,12 +60,13 @@ class Format43To44DatabaseMigrationTest
             assertEquals(schema.keySet(), after.keySet());
             schema.forEach((object, sql) -> assertEquals(object.equals("table:alias_list") ?
                 sql.replace("BETWEEN 1 AND 25", "BETWEEN 1 AND 128") : sql, after.get(object), object));
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
-            assertEquals(44, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.requireVersion(44).fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+            assertEquals(44, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals("ok", scalar(connection, "PRAGMA integrity_check"));
             assertEquals("0", scalar(connection, "SELECT count(*) FROM pragma_foreign_key_check"));
         }
-        SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
+        assertThrows(SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(database),
+            "Runtime must refuse the now-historical format 44 without upgrading it");
     }
 
     @Test
@@ -90,7 +91,7 @@ class Format43To44DatabaseMigrationTest
                 Map<String,TableContents> before = tableContents(connection);
                 statement.execute("PRAGMA foreign_keys=OFF");
                 connection.setAutoCommit(false);
-                DatabaseMigrationChain.migrate(connection);
+                migrateTo44(connection);
                 connection.commit();
                 assertEquals(before, tableContents(connection));
                 assertEquals(sequencePresent ? "1" : "0", scalar(connection,
@@ -99,7 +100,7 @@ class Format43To44DatabaseMigrationTest
                 {
                     assertEquals("0", scalar(connection, "SELECT seq FROM sqlite_sequence WHERE name='alias_list'"));
                 }
-                assertEquals(44, DatabaseFormatCatalog.requireCurrent(connection).version());
+                assertEquals(44, DatabaseFormatCatalog.inspect(connection).version());
             }
         }
     }
@@ -125,7 +126,7 @@ class Format43To44DatabaseMigrationTest
             assertFalse(CurrentDatabaseBestEffortRepair.inspect(connection).requiresRepair(),
                 "Current-format repair would alter a supported longer name");
             assertEquals(name, scalar(connection, "SELECT name FROM alias_list ORDER BY id DESC LIMIT 1"));
-            assertEquals(44, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(44, DatabaseFormatCatalog.inspect(connection).version());
         }
     }
 
@@ -150,10 +151,10 @@ class Format43To44DatabaseMigrationTest
             assertEquals(schema, schemaDefinitions(connection));
             assertEquals("0", scalar(connection, "PRAGMA legacy_alter_table"));
             assertEquals("0", scalar(connection, "PRAGMA ignore_check_constraints"));
-            DatabaseMigrationChain.migrate(connection);
+            migrateTo44(connection);
             connection.commit();
             assertEquals(contents, tableContents(connection));
-            assertEquals(44, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(44, DatabaseFormatCatalog.inspect(connection).version());
         }
         assertArrayEquals(sourceBytes, Files.readAllBytes(source), "Selected source changed during the retry");
         Path retry = mTemporaryFolder.resolve("retry.sqlite");
@@ -161,9 +162,9 @@ class Format43To44DatabaseMigrationTest
         try(Connection connection = open(retry))
         {
             connection.setAutoCommit(false);
-            DatabaseMigrationChain.migrate(connection);
+            migrateTo44(connection);
             connection.commit();
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+            assertEquals(DatabaseFormatCatalog.requireVersion(44).fingerprint(), SqliteSchemaValidator.fingerprint(connection));
         }
     }
 
@@ -174,7 +175,7 @@ class Format43To44DatabaseMigrationTest
         byte[] before = Files.readAllBytes(old);
         assertThrows(SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(old));
         assertArrayEquals(before, Files.readAllBytes(old));
-        Path current = Format44TestDatabase.create(mTemporaryFolder.resolve("current44.sqlite"));
+        Path current = CurrentFormatTestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
         before = Files.readAllBytes(current);
         try(Connection connection = open(current))
         {
@@ -214,7 +215,7 @@ class Format43To44DatabaseMigrationTest
             statement.executeUpdate("UPDATE alias_list SET name=' ' WHERE id=" + id);
             statement.execute("PRAGMA ignore_check_constraints=OFF");
             connection.setAutoCommit(false);
-            var report = DatabaseMigrationChain.migrate(connection);
+            var report = migrateTo44(connection);
             connection.commit();
             assertEquals("Recovered Alias List " + id,
                 scalar(connection, "SELECT name FROM alias_list WHERE id=" + id));
@@ -224,8 +225,19 @@ class Format43To44DatabaseMigrationTest
                 .findFirst().orElseThrow();
             assertEquals(DatabaseMigrationEffect.Kind.DEFAULT, nameRepair.kind());
             assertEquals(1, nameRepair.affectedRows());
-            assertEquals(44, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(44, DatabaseFormatCatalog.inspect(connection).version());
         }
+    }
+
+    /** Freeze this historical adjacent-step contract independently of the current target format. */
+    private static DatabaseMigrationChain.MigrationReport migrateTo44(Connection connection) throws SQLException
+    {
+        var source = DatabaseFormatCatalog.inspectForMigration(connection);
+        var step = new Format43To44DatabaseMigration();
+        var effects = step.migrateAndReport(connection);
+        var target = DatabaseFormatCatalog.stampForMigration(connection, 44);
+        return new DatabaseMigrationChain.MigrationReport(source, target, List.of(
+            new DatabaseMigrationChain.StepReport(step.id(), step.description(), 43, 44, effects)));
     }
 
     private static Connection failBeforeDrop(Connection target)

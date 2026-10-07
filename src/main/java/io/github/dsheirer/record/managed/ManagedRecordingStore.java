@@ -12,6 +12,7 @@ package io.github.dsheirer.record.managed;
 
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog.MaintenanceResult;
+import io.github.dsheirer.record.managed.ManagedRecordingCatalog.IdentityNameMatch;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog.Member;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog.RecordingCall;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog.SearchFilter;
@@ -412,7 +413,7 @@ final class ManagedRecordingStore implements AutoCloseable
         Objects.requireNonNull(filter);
         try(Connection connection = openReader())
         {
-            if(filter.transcript != null)
+            if(filter.transcript != null || !filter.identityNameMatches.isEmpty())
             {
                 long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
                 org.sqlite.ProgressHandler.setHandler(connection, 10000, new org.sqlite.ProgressHandler()
@@ -763,6 +764,27 @@ final class ManagedRecordingStore implements AutoCloseable
 
     private List<CandidateQuery> singleIdentityCandidateQueries(SearchFilter filter, List<Integer> anyIds)
     {
+        if(!filter.identityNameMatches.isEmpty())
+        {
+            List<CandidateQuery> queries = new ArrayList<>();
+            for(IdentityNameMatch match: filter.identityNameMatches)
+            {
+                if(match.systemKey() == null)
+                {
+                    queries.add(candidateQuery(filter, "recording_call c INDEXED BY idx_recording_call_source_time",
+                        "c.source_id=?", List.of(match.identityId()), "c.start_ms", "c.id"));
+                    queries.add(candidateQuery(filter, "recording_call c INDEXED BY idx_recording_call_target_time",
+                        "c.target_id=?", List.of(match.identityId()), "c.start_ms", "c.id"));
+                    queries.add(patchCandidateQuery(filter, match.identityId(), 1));
+                    queries.add(patchCandidateQuery(filter, match.identityId(), 2));
+                }
+                else
+                {
+                    queries.addAll(nameIdentityCandidateQueries(filter, match));
+                }
+            }
+            return List.copyOf(queries);
+        }
         boolean talkgroup = filter.talkgroupId != null;
         boolean radio = filter.sourceId != null;
         boolean any = !anyIds.isEmpty();
@@ -791,6 +813,64 @@ final class ManagedRecordingStore implements AutoCloseable
             queries.add(patchCandidateQuery(filter, id, 2));
         }
         return List.copyOf(queries);
+    }
+
+    private List<CandidateQuery> nameIdentityCandidateQueries(SearchFilter filter, IdentityNameMatch match)
+    {
+        List<Object> values = new ArrayList<>();
+        String source = nameRadioValue(match, "c.source_id", "c.source_home_wacn",
+            "c.source_home_system", "c.source_home_id", values);
+        String target = nameRadioValue(match, "c.target_id", "c.target_home_wacn",
+            "c.target_home_system", "c.target_home_id", values);
+        String member = nameRadioValue(match, "member.local_id", "nullif(member.home_wacn,-1)",
+            "nullif(member.home_system,-1)", "nullif(member.home_id,-1)", values);
+        String radio = "(" + source + " OR (c.call_type=3 AND " + target + ") OR " +
+            "EXISTS(SELECT 1 FROM recording_patch_member member WHERE member.call_id=c.id " +
+            "AND member.kind=2 AND " + member + "))";
+        List<CandidateQuery> queries = new ArrayList<>(2);
+        List<Object> parameters = new ArrayList<>();
+        parameters.add(match.systemKey());
+        parameters.addAll(values);
+        boolean p25 = RadioSystemKey.isP25Native(match.systemKey());
+        queries.add(candidateQuery(filter, "recording_call c INDEXED BY idx_recording_call_system_time",
+            "c.system_id=(SELECT id FROM recording_system WHERE system_key=?) AND " +
+                (p25 ? "c.protocol IN(1,2) AND " : "") + radio, parameters, "c.start_ms", "c.id"));
+        if(p25)
+        {
+            //The system/time index excludes NULL; legacy captured-site proofs use the bounded ordered time index.
+            List<String> conditions = new ArrayList<>();
+            parameters = new ArrayList<>();
+            conditions.add("c.system_id IS NULL");
+            addSystemPredicate(conditions, parameters, match.systemKey(),
+                "c.system_id=(SELECT id FROM recording_system WHERE system_key=?)");
+            conditions.add(radio);
+            parameters.addAll(values);
+            queries.add(candidateQuery(filter, "recording_call c INDEXED BY idx_recording_call_time",
+                String.join(" AND ", conditions), parameters, "c.start_ms", "c.id"));
+        }
+        return List.copyOf(queries);
+    }
+
+    /** Home metadata represents the permanent subscriber; its local ID may be a different Working ID. */
+    private static String nameRadioValue(IdentityNameMatch match, String localId, String homeWacn,
+                                         String homeSystem, String homeId, List<Object> parameters)
+    {
+        List<String> choices = new ArrayList<>();
+        if(match.homeWacn() >= 0)
+        {
+            choices.add("(" + homeWacn + "=? AND " + homeSystem + "=? AND coalesce(" +
+                homeId + "," + localId + ")=?)");
+            parameters.add(match.homeWacn());
+            parameters.add(match.homeSystemId());
+            parameters.add(match.identityId());
+        }
+        if(match.includeNullHome())
+        {
+            choices.add("(" + homeWacn + " IS NULL AND " + homeSystem + " IS NULL AND " +
+                homeId + " IS NULL AND " + localId + "=?)");
+            parameters.add(match.identityId());
+        }
+        return choices.isEmpty() ? "0" : "(" + String.join(" OR ", choices) + ")";
     }
 
     private CandidateQuery patchCandidateQuery(SearchFilter filter, int id, int kind)

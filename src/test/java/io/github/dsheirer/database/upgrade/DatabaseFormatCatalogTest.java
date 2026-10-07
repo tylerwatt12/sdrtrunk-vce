@@ -310,7 +310,7 @@ class DatabaseFormatCatalogTest
             assertEquals("format-38-to-39", plan.steps().getFirst().id());
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 38, report.steps().size());
-            assertEquals("format-43-to-44", report.steps().getLast().id());
+            assertEquals(CurrentFormatTestDatabase.lastMigrationStepId(), report.steps().getLast().id());
             assertTrue(report.target().markerPresent());
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
         }
@@ -367,7 +367,7 @@ class DatabaseFormatCatalogTest
     @Test
     void exactMarkerlessCurrentFormatIsAdoptedWithoutChangingItsSchema() throws Exception
     {
-        Path database = Format44TestDatabase.create(mTemporaryFolder.resolve("markerless-current.sqlite"));
+        Path database = CurrentFormatTestDatabase.create(mTemporaryFolder.resolve("markerless-current.sqlite"));
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);

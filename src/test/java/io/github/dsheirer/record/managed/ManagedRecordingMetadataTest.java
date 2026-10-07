@@ -26,6 +26,9 @@ import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import java.util.ArrayList;
 import java.util.List;
@@ -95,15 +98,94 @@ class ManagedRecordingMetadataTest
             metadata(DecoderType.P25_PHASE1, null, SITE, null, List.of()).systemKey());
     }
 
+    @Test
+    void nativeSourceAndPrivateTargetUseCapturedRecordingOwnerWithoutInventingWorkingIds()
+    {
+        for(DecoderType decoder: List.of(DecoderType.P25_PHASE1, DecoderType.P25_PHASE2))
+        {
+            var source = APCO25RadioIdentifier.createFrom(10_900_077);
+            var target = APCO25RadioIdentifier.createTo(10_900_078);
+            var metadata = metadata(decoder, TRUNKED, SITE, "p25:12345:678", List.of(),
+                new IdentifierCollection(List.of(source, target)));
+            assertEquals(10_900_077, metadata.sourceId());
+            assertEquals(0x12345, metadata.sourceHomeWacn());
+            assertEquals(0x678, metadata.sourceHomeSystem());
+            assertEquals(10_900_077, metadata.sourceHomeId());
+            assertEquals(10_900_078, metadata.targetId());
+            assertEquals(0x12345, metadata.targetHomeWacn());
+            assertEquals(0x678, metadata.targetHomeSystem());
+            assertEquals(10_900_078, metadata.targetHomeId());
+        }
+    }
+
+    @Test
+    void qualifiedForeignRecordingOwnersPreserveCanonicalAndLocalNumbers()
+    {
+        var source = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(501,
+            0xABCDE, 0x321, 777);
+        var target = APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(502,
+            0xABCDF, 0x322, 778);
+        var metadata = metadata(DecoderType.P25_PHASE1, TRUNKED, SITE, "p25:bee00:49f", List.of(),
+            new IdentifierCollection(List.of(source, target)));
+        assertEquals(501, metadata.sourceId());
+        assertEquals(0xABCDE, metadata.sourceHomeWacn());
+        assertEquals(0x321, metadata.sourceHomeSystem());
+        assertEquals(777, metadata.sourceHomeId());
+        assertEquals(502, metadata.targetId());
+        assertEquals(0xABCDF, metadata.targetHomeWacn());
+        assertEquals(0x322, metadata.targetHomeSystem());
+        assertEquals(778, metadata.targetHomeId());
+    }
+
+    @Test
+    void unknownOrAmbiguousRecordingScopeDoesNotGuessANativeHome()
+    {
+        var identifiers = new IdentifierCollection(List.of(APCO25RadioIdentifier.createFrom(501),
+            APCO25RadioIdentifier.createTo(502)));
+        var unknown = metadata(DecoderType.P25_PHASE1, TRUNKED, null, null, List.of(), identifiers);
+        var ambiguous = metadata(DecoderType.P25_PHASE1, TRUNKED, null, null,
+            List.of(SITE, new P25SiteIdentity(0xABCDE, 0x321, 1, 2)), identifiers);
+        for(var metadata: List.of(unknown, ambiguous))
+        {
+            assertNull(metadata.sourceHomeWacn());
+            assertNull(metadata.sourceHomeSystem());
+            assertNull(metadata.sourceHomeId());
+            assertNull(metadata.targetHomeWacn());
+            assertNull(metadata.targetHomeSystem());
+            assertNull(metadata.targetHomeId());
+        }
+    }
+
+    @Test
+    void nativeRadioPatchMemberUsesItsRecordedLegOwner()
+    {
+        var patch = APCO25PatchGroup.create(10_003);
+        patch.getValue().addPatchedRadio(APCO25RadioIdentifier.createTo(501));
+        var metadata = metadata(DecoderType.P25_PHASE1, TRUNKED, SITE, "p25:bee00:49f", List.of(),
+            new IdentifierCollection(List.of(APCO25RadioIdentifier.createFrom(502), patch)));
+        assertEquals(List.of(new ManagedRecordingCatalog.Member("radio", 501, 0xBEE00, 0x49F, 501)),
+            metadata.patchMembers());
+        assertNull(metadata.targetHomeWacn(), "Ordinary group ownership is unchanged");
+    }
+
     private static ManagedRecordingMetadata metadata(DecoderType decoder,
                                                      ChannelConfigurationPolicy.ChannelKind kind,
                                                      P25SiteIdentity winnerSite, String existingKey,
                                                      List<P25SiteIdentity> otherSites)
     {
+        return metadata(decoder, kind, winnerSite, existingKey, otherSites, new IdentifierCollection());
+    }
+
+    private static ManagedRecordingMetadata metadata(DecoderType decoder,
+                                                     ChannelConfigurationPolicy.ChannelKind kind,
+                                                     P25SiteIdentity winnerSite, String existingKey,
+                                                     List<P25SiteIdentity> otherSites,
+                                                     IdentifierCollection identifiers)
+    {
         CallLegSource source = source(decoder, kind, winnerSite, existingKey);
         AudioCallId callId = new AudioCallId(1L, 1L, 0);
         AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null,
-            new IdentifierCollection(), Set.of(), 1_000L, 2_000L, 1, 1L, 1_000L, 2_000L,
+            identifiers, Set.of(), 1_000L, 2_000L, 1, 1L, 1_000L, 2_000L,
             false, true, CallEncryptionState.CLEAR, false, null, VoiceCallQuality.EMPTY,
             CallLegId.from(callId), source, null);
         CompletedAudioCall single = new CompletedAudioCall(snapshot, List.of(new float[160]));

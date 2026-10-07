@@ -101,7 +101,7 @@ class Format14To15DatabaseMigrationTest
             {
                 DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
                 assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
-                assertEquals("format-43-to-44", report.steps().getLast().id());
+                assertEquals(CurrentFormatTestDatabase.lastMigrationStepId(), report.steps().getLast().id());
                 connection.commit();
             }
             catch(Exception exception)
@@ -773,64 +773,7 @@ class Format14To15DatabaseMigrationTest
             List<DatabaseMigrationEffect> effects =
                 new Format14To15DatabaseMigration().migrateAndReport(connection);
             DatabaseFormatCatalog.stampForMigration(connection, 15);
-            new Format15To16DatabaseMigration().migrate(connection);
-            DatabaseFormatCatalog.stampForMigration(connection, 16);
-            new Format16To17DatabaseMigration().migrate(connection);
-            DatabaseFormatCatalog.stampForMigration(connection, 17);
-            new Format17To18DatabaseMigration().migrate(connection);
-            DatabaseFormatCatalog.stampForMigration(connection, 18);
-            new Format18To19DatabaseMigration().migrate(connection);
-            DatabaseFormatCatalog.stampForMigration(connection, 19);
-            new Format19To20DatabaseMigration().migrate(connection);
-            DatabaseFormatCatalog.stampForMigration(connection, 20);
-            new Format20To21DatabaseMigration().migrate(connection);
-            DatabaseFormatCatalog.stampForMigration(connection, 21);
-            new Format21To22DatabaseMigration().migrate(connection);
-            DatabaseFormatCatalog.stampForMigration(connection, 22);
-            new Format22To23DatabaseMigration().migrate(connection);
-            DatabaseFormatCatalog.stampForMigration(connection, 23);
-            new Format23To24DatabaseMigration().migrate(connection);
-            DatabaseFormatCatalog.stampForMigration(connection, 24);
-            new Format24To25DatabaseMigration().migrate(connection);
-            DatabaseFormatCatalog.stampForMigration(connection, 25);
-            new Format25To26DatabaseMigration().migrateAndReport(connection, false);
-            DatabaseFormatCatalog.stampForMigration(connection, 26);
-            new Format26To27DatabaseMigration().migrateAndReport(connection, false);
-            DatabaseFormatCatalog.stampForMigration(connection, 27);
-            new Format27To28DatabaseMigration().migrateAndReport(connection, false);
-            DatabaseFormatCatalog.stampForMigration(connection, 28);
-            new Format28To29DatabaseMigration().migrateAndReport(connection, false);
-            DatabaseFormatCatalog.stampForMigration(connection, 29);
-            new Format29To30DatabaseMigration().migrateAndReport(connection, false);
-            DatabaseFormatCatalog.stampForMigration(connection, 30);
-            new Format30To31DatabaseMigration().migrateAndReport(connection, false);
-            DatabaseFormatCatalog.stampForMigration(connection, 31);
-            new Format31To32DatabaseMigration().migrateAndReport(connection, false);
-            DatabaseFormatCatalog.stampForMigration(connection, 32);
-            new Format32To33DatabaseMigration().migrateAndReport(connection, false);
-            DatabaseFormatCatalog.stampForMigration(connection, 33);
-            new Format33To34DatabaseMigration().migrateAndReport(connection, false);
-            DatabaseFormatCatalog.stampForMigration(connection, 34);
-            new Format34To35DatabaseMigration().migrateAndReport(connection, false);
-            DatabaseFormatCatalog.stampForMigration(connection, 35);
-            new Format35To36DatabaseMigration().migrateAndReport(connection, false);
-            DatabaseFormatCatalog.stampForMigration(connection, 36);
-            new Format36To37DatabaseMigration().migrate(connection);
-            DatabaseFormatCatalog.stampForMigration(connection, 37);
-            new Format37To38DatabaseMigration().migrateAndReport(connection, false);
-            DatabaseFormatCatalog.stampForMigration(connection, 38);
-            new Format38To39DatabaseMigration().migrateAndReport(connection, false);
-            DatabaseFormatCatalog.stampForMigration(connection, 39);
-            new Format39To40DatabaseMigration().migrateAndReport(connection, false);
-            DatabaseFormatCatalog.stampForMigration(connection, 40);
-            new Format40To41DatabaseMigration().migrateAndReport(connection, false);
-            DatabaseFormatCatalog.stampForMigration(connection, 41);
-            new Format41To42DatabaseMigration().migrateAndReport(connection, false);
-            DatabaseFormatCatalog.stampForMigration(connection, 42);
-            new Format42To43DatabaseMigration().migrateAndReport(connection, false);
-            DatabaseFormatCatalog.stampForMigration(connection, 43);
-            new Format43To44DatabaseMigration().migrateAndReport(connection, false);
-            DatabaseFormatCatalog.stampForMigration(connection, 44);
+            DatabaseMigrationChain.migrate(connection);
             connection.commit();
 
             assertTrue(effect(effects, DatabaseMigrationEffect.Kind.DEFAULT,

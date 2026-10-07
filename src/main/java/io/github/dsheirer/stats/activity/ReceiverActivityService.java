@@ -1638,8 +1638,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     private boolean shouldLogTalkerAlias(ReceiverActivityRecords.TalkerAliasUpdate update)
     {
         long now = System.currentTimeMillis();
-        String key = String.join("|", "talker-alias", update.configurationId(),
-            talkerAliasRadioKey(update), update.talkerAlias(), update.identityDomain().name());
+        String key = talkerAliasDedupeKey(update);
 
         synchronized(mRecentDedupeKeys)
         {
@@ -1647,6 +1646,13 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
             Long previous = mRecentDedupeKeys.put(key, now);
             return previous == null;
         }
+    }
+
+    static String talkerAliasDedupeKey(ReceiverActivityRecords.TalkerAliasUpdate update)
+    {
+        return String.join("|", "talker-alias", update.configurationId(),
+            String.valueOf(update.radioSystemKey()), Long.toString(update.callStartEpochMilliseconds()),
+            talkerAliasRadioKey(update), update.talkerAlias(), update.identityDomain().name());
     }
 
     private static String talkerAliasRadioKey(ReceiverActivityRecords.TalkerAliasUpdate update)

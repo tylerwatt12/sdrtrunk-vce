@@ -26,8 +26,12 @@ import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
+import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
+import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
+import io.github.dsheirer.protocol.Protocol;
 import java.util.ArrayList;
-import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -40,7 +44,7 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class TalkerAliasManager
 {
-    private Map<Integer,TalkerAliasIdentifier> mAliasMap = new ConcurrentHashMap<>();
+    private final Map<AliasKey,TalkerAliasIdentifier> mAliasMap = new ConcurrentHashMap<>();
 
     /**
      * Updates the alias for the
@@ -49,9 +53,16 @@ public class TalkerAliasManager
      */
     public void update(RadioIdentifier identifier, TalkerAliasIdentifier alias)
     {
-        if(identifier.getRole() == Role.FROM)
+        update(identifier, alias, null);
+    }
+
+    /** Captures a native P25 address in the transmitting call's serving scope, never a numeric roaming shortcut. */
+    public void update(RadioIdentifier identifier, TalkerAliasIdentifier alias, String servingSystemKey)
+    {
+        AliasKey key = aliasKey(identifier, servingSystemKey);
+        if(identifier != null && identifier.getRole() == Role.FROM && alias != null && key != null)
         {
-            mAliasMap.put(identifier.getValue(), alias);
+            mAliasMap.put(key, alias);
         }
     }
 
@@ -62,7 +73,13 @@ public class TalkerAliasManager
      */
     public boolean hasAlias(RadioIdentifier radioIdentifier)
     {
-        return mAliasMap.containsKey(radioIdentifier.getValue());
+        return hasAlias(radioIdentifier, null);
+    }
+
+    public boolean hasAlias(RadioIdentifier radioIdentifier, String servingSystemKey)
+    {
+        AliasKey key = aliasKey(radioIdentifier, servingSystemKey);
+        return key != null && mAliasMap.containsKey(key);
     }
 
     /**
@@ -72,10 +89,15 @@ public class TalkerAliasManager
      * @param originalIC to enrich
      * @return an enriched or stale-alias-cleaned collection, or the original when no change is required.
      */
-    public synchronized IdentifierCollection enrich(IdentifierCollection originalIC)
+    public IdentifierCollection enrich(IdentifierCollection originalIC)
+    {
+        return enrich(originalIC, null);
+    }
+
+    public IdentifierCollection enrich(IdentifierCollection originalIC, String servingSystemKey)
     {
         Identifier fromRadio = originalIC.getFromIdentifier();
-        TalkerAliasIdentifier alias = fromRadio instanceof RadioIdentifier rid ? mAliasMap.get(rid.getValue()) : null;
+        TalkerAliasIdentifier alias = fromRadio instanceof RadioIdentifier rid ? lookup(rid, servingSystemKey) : null;
         Identifier existingAlias = originalIC.getIdentifier(IdentifierClass.USER, Form.TALKER_ALIAS, Role.FROM);
 
         if(alias == null && existingAlias == null)
@@ -100,14 +122,28 @@ public class TalkerAliasManager
      * matching alias, and insert the alias into the mutable identifier collection argument.
      * @param mic to enrich
      */
-    public synchronized void enrichMutable(MutableIdentifierCollection mic)
+    public void enrichMutable(MutableIdentifierCollection mic)
+    {
+        enrichMutable(mic, null);
+    }
+
+    public void enrichMutable(MutableIdentifierCollection mic, String servingSystemKey)
+    {
+        enrichMutable(mic, RadioSystemKey.isP25Native(servingSystemKey) ?
+            Integer.parseInt(servingSystemKey, 4, 9, 16) : -1, RadioSystemKey.isP25Native(servingSystemKey) ?
+            Integer.parseInt(servingSystemKey, 10, 13, 16) : -1);
+    }
+
+    /** Avoids key formatting on decoder callbacks that already have validated serving-system fields. */
+    public void enrichMutable(MutableIdentifierCollection mic, int servingWacn, int servingSystem)
     {
         Identifier fromRadio = mic.getFromIdentifier();
         mic.remove(IdentifierClass.USER, Form.TALKER_ALIAS, Role.FROM);
 
         if(fromRadio instanceof RadioIdentifier rid)
         {
-            TalkerAliasIdentifier alias = mAliasMap.get(rid.getValue());
+            AliasKey key = aliasKey(rid, servingWacn, servingSystem);
+            TalkerAliasIdentifier alias = key != null ? mAliasMap.get(key) : null;
 
             if(alias != null)
             {
@@ -120,17 +156,18 @@ public class TalkerAliasManager
      * Creates a summary listing of talker aliases
      * @return summary.
      */
-    public synchronized String getAliasSummary()
+    public String getAliasSummary()
     {
         StringBuilder sb = new StringBuilder();
         sb.append("Active System Radio Aliases\n");
         sb.append("  Radio\tTalker Alias (TA-)\n");
-        List<Integer> radios = new ArrayList<>(mAliasMap.keySet());
+        List<AliasKey> radios = new ArrayList<>(mAliasMap.keySet());
 
         if(!radios.isEmpty())
         {
-            Collections.sort(radios);
-            for(Integer radio : radios)
+            radios.sort(Comparator.comparing(AliasKey::protocol).thenComparingInt(AliasKey::homeWacn)
+                .thenComparingInt(AliasKey::homeSystem).thenComparingInt(AliasKey::radio));
+            for(AliasKey radio : radios)
             {
                 sb.append("  ").append(radio);
                 sb.append("\t").append(mAliasMap.get(radio));
@@ -143,5 +180,50 @@ public class TalkerAliasManager
         }
 
         return sb.toString();
+    }
+
+    private TalkerAliasIdentifier lookup(RadioIdentifier radio, String servingSystemKey)
+    {
+        AliasKey key = aliasKey(radio, servingSystemKey);
+        return key != null ? mAliasMap.get(key) : null;
+    }
+
+    /** One cache key for a home-system subscriber and its native address; visiting subscriber tuples remain exact. */
+    private static AliasKey aliasKey(RadioIdentifier radio, String servingSystemKey)
+    {
+        boolean scoped = RadioSystemKey.isP25Native(servingSystemKey);
+        return aliasKey(radio, scoped ? Integer.parseInt(servingSystemKey, 4, 9, 16) : -1,
+            scoped ? Integer.parseInt(servingSystemKey, 10, 13, 16) : -1);
+    }
+
+    private static AliasKey aliasKey(RadioIdentifier radio, int servingWacn, int servingSystem)
+    {
+        if(radio == null || radio.getProtocol() == null || !radio.isValid()) return null;
+        Protocol protocol = radio.getProtocol() == Protocol.APCO25_PHASE2 ? Protocol.APCO25 : radio.getProtocol();
+        if(protocol == Protocol.APCO25)
+        {
+            if(radio instanceof FullyQualifiedRadioIdentifier)
+            {
+                P25SubscriberIdentity subscriber = P25SubscriberIdentity.from(radio);
+                return subscriber != null ? new AliasKey(protocol, subscriber.homeWacn(),
+                    subscriber.homeSystemId(), subscriber.subscriberId()) : null;
+            }
+            if(radio.getValue() < 1 || radio.getValue() > 0xFFFFFC) return null;
+            if(servingWacn >= 0 && servingWacn <= 0xFFFFF && servingSystem >= 0 && servingSystem <= 0xFFF)
+            {
+                return new AliasKey(protocol, servingWacn, servingSystem, radio.getValue());
+            }
+        }
+        return new AliasKey(protocol, -1, -1, radio.getValue());
+    }
+
+    private record AliasKey(Protocol protocol, int homeWacn, int homeSystem, int radio)
+    {
+        @Override
+        public String toString()
+        {
+            return homeWacn >= 0 ? new P25SubscriberIdentity(homeWacn, homeSystem, radio).display() :
+                Integer.toString(radio);
+        }
     }
 }

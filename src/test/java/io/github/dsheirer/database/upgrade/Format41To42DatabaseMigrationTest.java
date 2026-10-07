@@ -168,7 +168,7 @@ class Format41To42DatabaseMigrationTest
     {
         Path fresh = mTemporaryFolder.resolve("fresh.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(fresh);
-        Path migrated = Format44TestDatabase.create(mTemporaryFolder.resolve("migrated.sqlite"));
+        Path migrated = CurrentFormatTestDatabase.create(mTemporaryFolder.resolve("migrated.sqlite"));
         try(Connection current = open(migrated); Connection clean = open(fresh))
         {
             assertEquals(DatabaseFormatCatalog.current().fingerprint(),SqliteSchemaValidator.fingerprint(clean));

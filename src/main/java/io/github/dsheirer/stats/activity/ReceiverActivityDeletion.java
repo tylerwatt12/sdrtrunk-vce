@@ -275,24 +275,9 @@ final class ReceiverActivityDeletion
         long systemId = systemId(connection, target.radioSystemKey());
         if(systemId == 0) return Result.missing();
 
-        long summaryId = 0;
-        try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT id FROM radio_system_identity_summary
-            WHERE radio_system_id = ? AND identity_kind_code = ? AND home_wacn = ?
-              AND home_system_id = ? AND identity_id = ?
-            """))
-        {
-            statement.setLong(1, systemId);
-            statement.setInt(2, parsed.kindCode());
-            statement.setInt(3, parsed.homeWacn());
-            statement.setInt(4, parsed.homeSystemId());
-            statement.setInt(5, parsed.identityId());
-            try(ResultSet rows = statement.executeQuery())
-            {
-                if(rows.next()) summaryId = rows.getLong(1);
-            }
-        }
-
+        Long resolvedId = RadioSystemIdentityLookup.find(connection, systemId, parsed.kindCode(),
+            parsed.homeWacn(), parsed.homeSystemId(), parsed.identityId());
+        long summaryId = resolvedId != null ? resolvedId : 0;
         if(summaryId == 0) return Result.missing();
         return Result.deleted(execute(connection,
             "DELETE FROM radio_system_identity_summary WHERE id = ? AND radio_system_id = ? AND identity_kind_code = ?",

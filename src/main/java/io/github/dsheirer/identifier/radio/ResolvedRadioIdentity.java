@@ -6,6 +6,7 @@ package io.github.dsheirer.identifier.radio;
 
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.protocol.Protocol;
 
 /**
@@ -67,5 +68,29 @@ public record ResolvedRadioIdentity(Protocol protocol, Integer observedWorkingId
             return subscriber.equals(other.subscriber);
         }
         return observedWorkingId != null && observedWorkingId.equals(other.observedWorkingId);
+    }
+
+    /**
+     * A canonical subscriber on its own home system uses its subscriber number as the native radio address.
+     * The serving key must come from this call, rather than current receiver configuration. This does not infer a
+     * roaming Working-ID assignment, and two explicit, conflicting identities always remain distinct.
+     */
+    public boolean matchesWithinScope(ResolvedRadioIdentity other, String servingSystemKey)
+    {
+        if(matchesWithinScope(other))
+        {
+            return true;
+        }
+        if(other == null || protocol != other.protocol || !RadioSystemKey.isP25Native(servingSystemKey) ||
+            (subscriber != null) == (other.subscriber != null))
+        {
+            return false;
+        }
+        ResolvedRadioIdentity qualified = subscriber != null ? this : other;
+        ResolvedRadioIdentity local = subscriber == null ? this : other;
+        return qualified.observedWorkingId == null && local.observedWorkingId != null &&
+            qualified.subscriber.subscriberId() == local.observedWorkingId &&
+            qualified.subscriber.homeWacn() == Integer.parseInt(servingSystemKey, 4, 9, 16) &&
+            qualified.subscriber.homeSystemId() == Integer.parseInt(servingSystemKey, 10, 13, 16);
     }
 }

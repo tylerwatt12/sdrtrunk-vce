@@ -104,6 +104,11 @@ class ResolvedCallPolicyTest
 
         assertEquals(0, identityOnly.localAddress());
         assertFalse(identityOnly.matches(ordinary));
+        assertTrue(identityOnly.matches(ordinary, "p25:abcde:321"));
+        assertTrue(ordinary.matches(identityOnly, "p25:abcde:321"));
+        assertFalse(identityOnly.matches(ordinary, "p25:abcde:322"));
+        assertFalse(identityOnly.matches(ordinary, "p25:abcdf:321"));
+        assertFalse(identityOnly.matches(ordinary, null));
         assertEquals(9_001, equalWorking.localAddress());
         assertTrue(equalWorking.matches(ordinary));
     }

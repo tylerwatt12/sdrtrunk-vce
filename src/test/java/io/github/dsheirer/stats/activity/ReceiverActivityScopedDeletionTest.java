@@ -245,6 +245,33 @@ class ReceiverActivityScopedDeletionTest
     }
 
     @Test
+    void localAndQualifiedHomeRoutesPreviewAndDeleteTheSameConsolidatedOwner() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            p25Site(connection);
+            execute(connection,"INSERT INTO p25_subscriber_identity(id,home_wacn,home_system_id,subscriber_id) " +
+                "VALUES(1,0xABCDE,0x123,321),(2,0xABCDE,0x124,321)");
+            execute(connection,"INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_kind_code," +
+                "home_wacn,home_system_id,identity_id,first_seen_ms,last_seen_ms,p25_subscriber_identity_id) " +
+                "VALUES(1,1,2,0xABCDE,0x123,321,1000,1000,1),(2,1,2,0xABCDE,0x124,321,1000,1000,2)");
+            execute(connection,"INSERT INTO receiver_activity_event(channel_id,radio_system_id,observed_at_ms," +
+                "action_code,source_identity_summary_id) VALUES(1,1,1000,4,1),(1,1,1000,4,2)");
+            ScopedData local = new ScopedData("radio_system",SYSTEM,null,null,"radios","v1-r-x-x-321",
+                List.of("events","summary"));
+            ScopedData full = new ScopedData("radio_system",SYSTEM,null,null,"radios","v1-r-abcde-123-321",
+                List.of("events","summary"));
+            assertEquals(2,ReceiverActivityMaintenance.preview(connection,local).rowsTotal());
+            assertEquals(ReceiverActivityMaintenance.preview(connection,local).countsByPart(),
+                ReceiverActivityMaintenance.preview(connection,full).countsByPart());
+            ReceiverActivityDeletion.delete(connection,local);
+            assertEquals(1,count(connection,"radio_system_identity_summary"));
+            assertEquals(1,count(connection,"receiver_activity_event"));
+            assertEquals(1,count(connection,"receiver_activity_event WHERE source_identity_summary_id=2"));
+        }
+    }
+
+    @Test
     void largeIdentityCascadeIsAvailableForBatchedCleanup() throws Exception
     {
         try(Connection connection = open())

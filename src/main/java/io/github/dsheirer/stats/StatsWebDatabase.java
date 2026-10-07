@@ -183,10 +183,8 @@ class StatsWebDatabase
     private static final int IDENTITY_KIND_PATCH_GROUP = ReceiverActivitySchema.IDENTITY_KIND_PATCH_GROUP;
     private static final String IDENTITY_KEY_SQL = "'v1-' || CASE %1$s.identity_kind_code " +
         "WHEN 1 THEN 'g' WHEN 2 THEN 'r' WHEN 3 THEN 'p' END || '-' || " +
-        "CASE WHEN %1$s.home_wacn = -1 OR (%1$s.identity_kind_code = 2 AND " +
-        "%1$s.p25_subscriber_identity_id IS NULL) THEN 'x' ELSE printf('%%05x', %1$s.home_wacn) END || '-' || " +
-        "CASE WHEN %1$s.home_system_id = -1 OR (%1$s.identity_kind_code = 2 AND " +
-        "%1$s.p25_subscriber_identity_id IS NULL) THEN 'x' ELSE printf('%%03x', %1$s.home_system_id) END || '-' || " +
+        "CASE WHEN %1$s.home_wacn = -1 THEN 'x' ELSE printf('%%05x', %1$s.home_wacn) END || '-' || " +
+        "CASE WHEN %1$s.home_system_id = -1 THEN 'x' ELSE printf('%%03x', %1$s.home_system_id) END || '-' || " +
         "%1$s.identity_id";
     /** Protocol-native identity stored on the radio-system row, never inferred from one of its site snapshots. */
     private static final String RADIO_SYSTEM_IDENTITY_PROJECTION_SQL = """
@@ -411,8 +409,10 @@ class StatsWebDatabase
     private static final String CONVENTIONAL_ACTIVITY_ACTION_SQL = activityActionAggregateSql(
         "conventional_activity_bucket", "idx_conventional_bucket_dashboard_time");
     private static final String P25_CHANNEL_RADIO_ALIAS_IDENTIFIER_SQL =
-        "CASE WHEN grouped.p25_subscriber_identity_id IS NOT NULL " +
-            "THEN grouped.observed_working_id ELSE grouped.observed_local_id END";
+        "CASE WHEN grouped.p25_subscriber_identity_id IS NULL THEN grouped.observed_local_id " +
+            "WHEN grouped.observed_working_id IS NOT NULL THEN grouped.observed_working_id " +
+            "WHEN grouped.home_system_radio=1 AND grouped.observed_local_id=grouped.canonical_subscriber_id " +
+            "THEN grouped.observed_local_id END";
     private static final String ACTIVITY_PROJECTION_SQL = """
         SELECT activity.id, activity.channel_id, activity.configuration_id,
             activity.observed_at_ms, activity.channel_kind,
@@ -4623,8 +4623,8 @@ class StatsWebDatabase
 
     /**
      * Site patch telemetry stores protocol-local identifiers. Talkgroup and patch-group identifiers belong to the
-     * serving P25 system, but a local radio address can be a temporary WUID and must remain system-scoped until a
-     * qualified subscriber mapping is observed.
+     * serving P25 system. Radio links identify the provisional receiving-system owner; they do not claim a
+     * qualified subscriber mapping.
      */
     private static void putP25IdentityReference(Map<String,Object> row, int identityKind, String identifierField)
     {
@@ -4645,10 +4645,7 @@ class StatsWebDatabase
 
         try
         {
-            boolean localRadio = identityKind == IDENTITY_KIND_RADIO;
-            String identityKey = RadioSystemIdentityKey.format(identityKind,
-                localRadio ? RadioSystemIdentityKey.NO_HOME : wacn,
-                localRadio ? RadioSystemIdentityKey.NO_HOME : systemId, identifier);
+            String identityKey = RadioSystemIdentityKey.format(identityKind, wacn, systemId, identifier);
             WebEntityRef reference = switch(identityKind)
             {
                 case IDENTITY_KIND_TALKGROUP -> WebEntityRef.talkgroup(radioSystemKey, identityKey);
@@ -6036,6 +6033,9 @@ class StatsWebDatabase
             groupedSql = """
                 SELECT summary.id AS identity_summary_id, summary.identity_id AS native_id,
                     summary.p25_subscriber_identity_id,
+                    serving.p25_wacn AS wacn, serving.p25_system_id AS system_id,
+                    CASE WHEN summary.home_wacn=serving.p25_wacn AND
+                        summary.home_system_id=serving.p25_system_id THEN 1 ELSE 0 END AS home_system_radio,
                     canonical_subscriber.home_wacn AS canonical_wacn,
                     canonical_subscriber.home_system_id AS canonical_system_id,
                     canonical_subscriber.subscriber_id AS canonical_subscriber_id,
@@ -6068,6 +6068,7 @@ class StatsWebDatabase
                 JOIN radio_system_identity_summary summary
                   ON summary.id = bucket.identity_summary_id
                  AND summary.radio_system_id = bucket.radio_system_id
+                JOIN radio_system serving ON serving.id=summary.radio_system_id
                 LEFT JOIN p25_subscriber_identity canonical_subscriber
                   ON canonical_subscriber.id = summary.p25_subscriber_identity_id
                 WHERE bucket.radio_system_id = ? AND bucket.channel_id = ?
@@ -6084,6 +6085,9 @@ class StatsWebDatabase
                     summary.identity_id AS observed_local_id,
                     NULL AS observed_working_id,
                     summary.p25_subscriber_identity_id,
+                    serving.p25_wacn AS wacn, serving.p25_system_id AS system_id,
+                    CASE WHEN summary.home_wacn=serving.p25_wacn AND
+                        summary.home_system_id=serving.p25_system_id THEN 1 ELSE 0 END AS home_system_radio,
                     canonical_subscriber.home_wacn AS canonical_wacn,
                     canonical_subscriber.home_system_id AS canonical_system_id,
                     canonical_subscriber.subscriber_id AS canonical_subscriber_id,
@@ -6101,6 +6105,7 @@ class StatsWebDatabase
                 JOIN radio_system_identity_summary summary
                   ON summary.id = bucket.identity_summary_id
                  AND summary.radio_system_id = bucket.radio_system_id
+                JOIN radio_system serving ON serving.id=summary.radio_system_id
                 LEFT JOIN p25_subscriber_identity canonical_subscriber
                   ON canonical_subscriber.id = summary.p25_subscriber_identity_id
                 WHERE bucket.radio_system_id = ? AND summary.identity_kind_code = 2
@@ -6479,7 +6484,9 @@ class StatsWebDatabase
                                             List<Map<String,Object>> rows) throws SQLException
     {
         rows.forEach(row -> row.put("alias_lookup_id",
-            protocol == StatsApiProtocol.P25 && row.get("p25_subscriber_identity_id") != null ?
+            protocol == StatsApiProtocol.P25 && row.get("p25_subscriber_identity_id") != null &&
+                !(StatsAliasResolver.homeSystemRadio(row, "") &&
+                    java.util.Objects.equals(row.get("observed_local_id"), row.get("canonical_subscriber_id"))) ?
                 row.get("observed_working_id") : row.get("observed_local_id") != null ?
                     row.get("observed_local_id") : row.get("native_id")));
         if(protocol == StatsApiProtocol.P25)
@@ -7543,38 +7550,8 @@ class StatsWebDatabase
     private static Long findIdentitySummaryId(Connection connection, long radioSystemId,
                                                RadioSystemIdentityKey.Identity identity) throws SQLException
     {
-        List<Map<String,Object>> rows;
-        if(identity.kindCode() == IDENTITY_KIND_RADIO && !identity.hasHome())
-        {
-            rows = queryRows(connection, """
-                SELECT id
-                FROM radio_system_identity_summary
-                WHERE radio_system_id = ? AND identity_kind_code = 2 AND identity_id = ?
-                  AND p25_subscriber_identity_id IS NULL
-                ORDER BY last_seen_ms DESC, id
-                LIMIT 1
-                """, radioSystemId, identity.identityId());
-        }
-        else if(identity.kindCode() == IDENTITY_KIND_RADIO)
-        {
-            rows = queryRows(connection, """
-                SELECT id
-                FROM radio_system_identity_summary
-                WHERE radio_system_id = ? AND identity_kind_code = 2
-                  AND home_wacn = ? AND home_system_id = ? AND identity_id = ?
-                """, radioSystemId, identity.homeWacn(), identity.homeSystemId(), identity.identityId());
-        }
-        else
-        {
-            rows = queryRows(connection, """
-                SELECT id
-                FROM radio_system_identity_summary
-                WHERE radio_system_id = ? AND identity_kind_code = ?
-                  AND home_wacn = ? AND home_system_id = ? AND identity_id = ?
-                """, radioSystemId, identity.kindCode(), identity.homeWacn(), identity.homeSystemId(),
-                identity.identityId());
-        }
-        return rows.isEmpty() ? null : number(rows.getFirst().get("id"));
+        return io.github.dsheirer.stats.activity.RadioSystemIdentityLookup.find(connection, radioSystemId,
+            identity.kindCode(), identity.homeWacn(), identity.homeSystemId(), identity.identityId());
     }
 
     private static boolean validIdentity(Map<String,Object> radioSystem, int identityKind, int identifier)
@@ -8020,7 +7997,7 @@ class StatsWebDatabase
             case NXDN -> "'NXDN'";
             default -> throw new IllegalArgumentException("Analog channels do not have identity directories");
         };
-        return """
+        String local = """
             (SELECT alias.%s
              FROM %s identifier
              JOIN alias ON alias.id = identifier.alias_id
@@ -8032,6 +8009,17 @@ class StatsWebDatabase
              LIMIT 1)
             """.formatted(aliasColumn, identifierTable, protocols, configured.aliasListId(), identifierColumn,
             identifierColumn, aliasWinnerOrder()).strip();
+        if(configured.protocol() == StatsApiProtocol.P25 && "alias_radio".equals(identifierTable) &&
+            P25_CHANNEL_RADIO_ALIAS_IDENTIFIER_SQL.equals(identifierColumn))
+        {
+            String canonical = " FROM alias_p25_subscriber_identity matched JOIN alias " +
+                "ON alias.id=matched.alias_id WHERE matched.p25_subscriber_identity_id=" +
+                "grouped.p25_subscriber_identity_id AND alias.alias_list_id=" + configured.aliasListId() +
+                " AND alias.matcher_type='P25_SUBSCRIBER_IDENTITY'";
+            return "CASE WHEN EXISTS(SELECT 1" + canonical + ") THEN (SELECT alias." + aliasColumn +
+                canonical + " ORDER BY alias.id DESC LIMIT 1) ELSE " + local + " END";
+        }
+        return local;
     }
 
     private static void addChannelIdentitySearch(StringBuilder sql, List<Object> parameters, String search,

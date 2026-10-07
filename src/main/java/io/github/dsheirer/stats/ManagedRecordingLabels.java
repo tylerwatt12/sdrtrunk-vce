@@ -10,6 +10,8 @@ import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.record.managed.ManagedRecordingCatalog.IdentityNameMatch;
+import io.github.dsheirer.stats.activity.RadioSystemIdentityLookup;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -71,10 +73,13 @@ final class ManagedRecordingLabels
             Map<String,AliasLabels> aliases = new HashMap<>();
             Map<String,String> talkerAliases = new HashMap<>();
             Map<String,SystemScope> systems = new HashMap<>();
-            Map<String,Boolean> knownIdentities = new HashMap<>();
+            Map<String,String> knownIdentities = new HashMap<>();
             StatsSystemNameResolver systemNames = new StatsSystemNameResolver(connection);
             for(Map<String,Object> call: result)
             {
+                String protocol = string(call.get("protocol"));
+                String recordedSystem = recordedSystemKey(call, protocol);
+                put(call, "system_key", recordedSystem);
                 String channelId = string(call.get("channel_id"));
                 ChannelLabels channel = channelId != null ? channels.computeIfAbsent(channelId,
                     key -> channel(connection, key)) : null;
@@ -97,7 +102,6 @@ final class ManagedRecordingLabels
 
                 Long aliasListId = channel != null && channel.aliasListId() != null ? channel.aliasListId() :
                     nullableNumber(call.get("alias_list_id"));
-                String protocol = string(call.get("protocol"));
                 Integer targetId = integer(call.get("talkgroup_id"));
                 Integer sourceId = integer(call.get("source_id"));
                 Integer destinationRadioId = integer(call.get("destination_radio_id"));
@@ -113,7 +117,8 @@ final class ManagedRecordingLabels
                         put(call, "group_group", label.group());
                     }
                 }
-                if(aliasListId != null && sourceId != null && sourceId > 0)
+                if(aliasListId != null && sourceId != null && sourceId > 0 &&
+                    localRadioAliasEligible(call, "source", sourceId, recordedSystem, protocol))
                 {
                     String key = aliasListId + ":r:" + protocol + ':' + sourceId;
                     AliasLabels label = aliases.computeIfAbsent(key,
@@ -125,7 +130,8 @@ final class ManagedRecordingLabels
                         put(call, "source_group", label.group());
                     }
                 }
-                if(aliasListId != null && destinationRadioId != null && destinationRadioId > 0)
+                if(aliasListId != null && destinationRadioId != null && destinationRadioId > 0 &&
+                    localRadioAliasEligible(call, "target", destinationRadioId, recordedSystem, protocol))
                 {
                     String key = aliasListId + ":r:" + protocol + ':' + destinationRadioId;
                     AliasLabels label = aliases.computeIfAbsent(key,
@@ -164,17 +170,20 @@ final class ManagedRecordingLabels
                                 integer(call.get("target_home_wacn")), integer(call.get("target_home_system_id")),
                                 integer(call.get("target_home_id"))));
                         }
-                        decoratePatchMembers(connection, call, system, knownIdentities);
+                        decoratePatchMembers(connection, call, system, knownIdentities, talkerAliases);
                     }
                 }
-                if(systemKey != null && sourceId != null && sourceId > 0)
+                if(system != null && protocolMatches(system.protocolCode(), protocol))
                 {
-                    Integer homeWacn = integer(call.get("source_home_wacn"));
-                    Integer homeSystem = integer(call.get("source_home_system_id"));
-                    String key = systemKey + ':' + sourceId + ':' + homeWacn + ':' + homeSystem;
-                    String ota = talkerAliases.computeIfAbsent(key,
-                        ignored -> latestTalkerAlias(connection, systemKey, sourceId, homeWacn, homeSystem));
-                    put(call, "source_ota_alias", ota);
+                    put(call, "source_ota_alias", cachedTalkerAlias(connection, system, talkerAliases, sourceId,
+                        integer(call.get("source_home_wacn")), integer(call.get("source_home_system_id")),
+                        integer(call.get("source_home_id"))));
+                    if("DIRECT".equals(string(call.get("call_type"))))
+                    {
+                        put(call, "destination_radio_ota_alias", cachedTalkerAlias(connection, system,
+                            talkerAliases, integer(call.get("target_id")), integer(call.get("target_home_wacn")),
+                            integer(call.get("target_home_system_id")), integer(call.get("target_home_id"))));
+                    }
                 }
             }
             for(int index = 0; index < result.size(); index++)
@@ -206,7 +215,7 @@ final class ManagedRecordingLabels
     }
 
     private static void decoratePatchMembers(Connection connection, Map<String,Object> call, SystemScope system,
-                                             Map<String,Boolean> knownIdentities)
+                                             Map<String,String> knownIdentities, Map<String,String> talkerAliases)
     {
         if(!(call.get("patch_members") instanceof List<?> members) || members.isEmpty())
         {
@@ -234,6 +243,12 @@ final class ManagedRecordingLabels
                 WebEntityRef.put(copy, identityReference(connection, system, knownIdentities, kind,
                     integer(copy.get("id")), integer(copy.get("home_wacn")),
                     integer(copy.get("home_system_id")), integer(copy.get("home_identity_id"))));
+                if(kind == RadioSystemIdentityKey.KIND_RADIO)
+                {
+                    put(copy, "ota_alias", cachedTalkerAlias(connection, system, talkerAliases,
+                        integer(copy.get("id")), integer(copy.get("home_wacn")),
+                        integer(copy.get("home_system_id")), integer(copy.get("home_identity_id"))));
+                }
             }
             decorated.add(copy);
         }
@@ -251,10 +266,47 @@ final class ManagedRecordingLabels
         };
     }
 
+    /** A legacy recording's captured winner, or unanimous captured sites, may establish its receiving system. */
+    private static String recordedSystemKey(Map<String,Object> call, String protocol)
+    {
+        String stored = string(call.get("system_key"));
+        if(stored != null || !("APCO25".equals(protocol) || "APCO25_PHASE2".equals(protocol))) return stored;
+        Integer wacn = integer(call.get("wacn"));
+        Integer system = integer(call.get("system_id"));
+        if(wacn != null && system != null) return RadioSystemKey.p25(wacn, system);
+        String candidate = null;
+        if(call.get("also_received_on") instanceof List<?> sites)
+        {
+            for(Object value: sites)
+            {
+                if(!(value instanceof Map<?,?> site) || !(site.get("wacn") instanceof Number home) ||
+                    !(site.get("system_id") instanceof Number id)) return null;
+                String key = RadioSystemKey.p25(home.intValue(), id.intValue());
+                if(key == null || candidate != null && !candidate.equals(key)) return null;
+                candidate = key;
+            }
+        }
+        return candidate;
+    }
+
+    /** Old catalog rows cannot prove an equal-number foreign Working ID; retain only supported local fallback. */
+    private static boolean localRadioAliasEligible(Map<String,Object> call, String prefix, int localId,
+                                                    String receivingSystem, String protocol)
+    {
+        if(!RadioSystemKey.isP25Native(receivingSystem) ||
+            !("APCO25".equals(protocol) || "APCO25_PHASE2".equals(protocol))) return true;
+        Integer homeWacn = integer(call.get(prefix + "_home_wacn"));
+        Integer homeSystem = integer(call.get(prefix + "_home_system_id"));
+        Integer homeId = integer(call.get(prefix + "_home_id"));
+        if(homeWacn == null || homeSystem == null || homeId == null || homeId != localId) return true;
+        String home = RadioSystemKey.p25(homeWacn, homeSystem);
+        return home == null || home.equals(receivingSystem);
+    }
+
     private static SystemScope system(Connection connection, String key)
     {
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT protocol_code,p25_wacn,p25_system_id FROM radio_system WHERE system_key=?
+            SELECT id,protocol_code,p25_wacn,p25_system_id FROM radio_system WHERE system_key=?
             """))
         {
             statement.setString(1, key);
@@ -262,7 +314,7 @@ final class ManagedRecordingLabels
             {
                 if(row.next())
                 {
-                    return new SystemScope(key, row.getInt("protocol_code"),
+                    return new SystemScope(row.getLong("id"), key, row.getInt("protocol_code"),
                         row.getObject("p25_wacn") != null ? row.getInt("p25_wacn") : null,
                         row.getObject("p25_system_id") != null ? row.getInt("p25_system_id") : null,
                         WebEntityRef.radioSystem(key));
@@ -277,14 +329,16 @@ final class ManagedRecordingLabels
     }
 
     private static WebEntityRef identityReference(Connection connection, SystemScope system,
-                                                   Map<String,Boolean> knownIdentities, int kind, Integer localId,
+                                                   Map<String,String> knownIdentities, int kind, Integer localId,
                                                    Integer homeWacn, Integer homeSystemId, Integer homeId)
     {
-        if(localId == null || localId <= 0)
+        boolean completeHome = system.protocolCode() == 1 && homeWacn != null && homeSystemId != null &&
+            homeId != null && homeId > 0;
+        if((localId == null || localId <= 0) && !completeHome)
         {
             return null;
         }
-        int canonicalId = localId;
+        int canonicalId = localId != null ? localId : homeId;
         int canonicalWacn = RadioSystemIdentityKey.NO_HOME;
         int canonicalSystem = RadioSystemIdentityKey.NO_HOME;
         if(system.protocolCode() == 1)
@@ -301,8 +355,11 @@ final class ManagedRecordingLabels
             }
             else if(system.p25Wacn() != null && system.p25SystemId() != null)
             {
-                canonicalWacn = system.p25Wacn();
-                canonicalSystem = system.p25SystemId();
+                if(kind != RadioSystemIdentityKey.KIND_RADIO)
+                {
+                    canonicalWacn = system.p25Wacn();
+                    canonicalSystem = system.p25SystemId();
+                }
             }
             else
             {
@@ -321,16 +378,17 @@ final class ManagedRecordingLabels
             int lookupId = canonicalId;
             int lookupWacn = canonicalWacn;
             int lookupSystem = canonicalSystem;
-            if(!knownIdentities.computeIfAbsent(cacheKey, ignored -> identityExists(connection, system.key(),
-                kind, lookupWacn, lookupSystem, lookupId)))
+            String resolvedKey = knownIdentities.computeIfAbsent(cacheKey, ignored -> identityKey(connection,
+                system, kind, lookupWacn, lookupSystem, lookupId));
+            if(resolvedKey == null)
             {
                 return null;
             }
             return switch(kind)
             {
-                case RadioSystemIdentityKey.KIND_TALKGROUP -> WebEntityRef.talkgroup(system.key(), identityKey);
-                case RadioSystemIdentityKey.KIND_PATCH_GROUP -> WebEntityRef.patchGroup(system.key(), identityKey);
-                case RadioSystemIdentityKey.KIND_RADIO -> WebEntityRef.radio(system.key(), identityKey);
+                case RadioSystemIdentityKey.KIND_TALKGROUP -> WebEntityRef.talkgroup(system.key(), resolvedKey);
+                case RadioSystemIdentityKey.KIND_PATCH_GROUP -> WebEntityRef.patchGroup(system.key(), resolvedKey);
+                case RadioSystemIdentityKey.KIND_RADIO -> WebEntityRef.radio(system.key(), resolvedKey);
                 default -> null;
             };
         }
@@ -340,30 +398,32 @@ final class ManagedRecordingLabels
         }
     }
 
-    private static boolean identityExists(Connection connection, String systemKey, int kind, int homeWacn,
-                                          int homeSystemId, int identityId)
+    private static String identityKey(Connection connection, SystemScope system, int kind, int homeWacn,
+                                      int homeSystemId, int identityId)
     {
-        try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT 1 FROM radio_system_identity_summary identity
-            JOIN radio_system system ON system.id=identity.radio_system_id
-            WHERE system.system_key=? AND identity.identity_kind_code=?
-              AND identity.home_wacn=? AND identity.home_system_id=? AND identity.identity_id=?
-            LIMIT 1
-            """))
+        try
         {
-            statement.setString(1, systemKey);
-            statement.setInt(2, kind);
-            statement.setInt(3, homeWacn);
-            statement.setInt(4, homeSystemId);
-            statement.setInt(5, identityId);
-            try(ResultSet rows = statement.executeQuery())
+            Long summaryId = RadioSystemIdentityLookup.find(connection, system.id(), kind,
+                homeWacn, homeSystemId, identityId);
+            if(summaryId == null) return null;
+            try(PreparedStatement statement = connection.prepareStatement("""
+                SELECT home_wacn,home_system_id,identity_id FROM radio_system_identity_summary
+                WHERE id=? AND radio_system_id=? AND identity_kind_code=?
+                """))
             {
-                return rows.next();
+                statement.setLong(1, summaryId);
+                statement.setLong(2, system.id());
+                statement.setInt(3, kind);
+                try(ResultSet rows = statement.executeQuery())
+                {
+                    return rows.next() ? RadioSystemIdentityKey.format(kind, rows.getInt("home_wacn"),
+                        rows.getInt("home_system_id"), rows.getInt("identity_id")) : null;
+                }
             }
         }
-        catch(SQLException ignored)
+        catch(SQLException | IllegalArgumentException ignored)
         {
-            return false;
+            return null;
         }
     }
 
@@ -573,7 +633,8 @@ final class ManagedRecordingLabels
                       AND lower(recent.last_talker_alias) LIKE ? ESCAPE '\\'
                     ) WHERE identity_id IS NOT NULL LIMIT ?
                     """.formatted(recordedRadio, recordedOnly ?
-                        ", summary.home_wacn, summary.home_system_id, system.p25_wacn, system.p25_system_id" : "")))
+                        ", summary.home_wacn, summary.home_system_id, summary.radio_system_id, " +
+                        "summary.p25_subscriber_identity_id, system.p25_wacn, system.p25_system_id" : "")))
                 {
                     int offset = bindRecordingScope(statement, recordedOnly, systemKey);
                     statement.setString(offset + 1, systemKey);
@@ -583,9 +644,11 @@ final class ManagedRecordingLabels
                     {
                         while(rows.next())
                         {
-                            result.add(suggestion("radio", Integer.toString(rows.getInt("identity_id")),
-                                rows.getString("last_talker_alias"), "Latest over-the-air name",
-                                systemKey));
+                            String name = rows.getString("last_talker_alias");
+                            Map<String,Object> item = suggestion("radio", Integer.toString(rows.getInt("identity_id")),
+                                name, "Latest over-the-air name", systemKey);
+                            item.put("name_query", name);
+                            result.add(item);
                         }
                     }
                 }
@@ -732,25 +795,24 @@ final class ManagedRecordingLabels
         String scope = selectedRecordingSystemPredicate();
         String candidates = recordingCallCandidates("(SELECT system_key FROM recording_scope)",
             "(SELECT wacn FROM recording_scope)", "(SELECT sysid FROM recording_scope)");
-        String homes = "coalesce(nullif(member.home_id,-1),member.local_id)=recent.identity_id " +
-            "AND coalesce(nullif(member.home_wacn,-1),recent.p25_wacn,-1)=recent.home_wacn " +
-            "AND coalesce(nullif(member.home_system,-1),recent.p25_system_id,-1)=recent.home_system_id";
+        String homes = recordedOtaHome("member.local_id", "nullif(member.home_wacn,-1)",
+            "nullif(member.home_system,-1)", "nullif(member.home_id,-1)");
         // Most OTA identities use their local ID. Probe those indexes before resolving different home IDs.
         String indexed = "SELECT local_id FROM (" +
-            "SELECT c.source_id AS local_id FROM recordings.recording_call c " +
+            "SELECT coalesce(c.source_home_id,nullif(c.source_id,0)) AS local_id FROM recordings.recording_call c " +
             "WHERE c.source_id=recent.identity_id AND " + recordedOtaRole("c.source", scope) + " UNION ALL " +
-            "SELECT c.target_id AS local_id FROM recordings.recording_call c " +
+            "SELECT coalesce(c.target_home_id,nullif(c.target_id,0)) AS local_id FROM recordings.recording_call c " +
             "WHERE c.target_id=recent.identity_id AND c.call_type=3 AND " +
             recordedOtaRole("c.target", scope) + " UNION ALL " +
-            "SELECT member.local_id FROM recordings.recording_patch_member member " +
+            "SELECT coalesce(nullif(member.home_id,-1),nullif(member.local_id,0)) FROM recordings.recording_patch_member member " +
             "JOIN recordings.recording_call c ON c.id=member.call_id WHERE member.kind=2 " +
             "AND member.local_id=recent.identity_id AND " + scope + " AND " + homes + ") LIMIT 1";
         String homeMapping = "SELECT local_id FROM (" +
-            "SELECT c.source_id AS local_id FROM (" + candidates + ") c WHERE " +
+            "SELECT coalesce(c.source_home_id,nullif(c.source_id,0)) AS local_id FROM (" + candidates + ") c WHERE " +
             recordedOtaRole("c.source", "1") + " UNION ALL " +
-            "SELECT c.target_id AS local_id FROM (" + candidates + ") c WHERE c.call_type=3 AND " +
+            "SELECT coalesce(c.target_home_id,nullif(c.target_id,0)) AS local_id FROM (" + candidates + ") c WHERE c.call_type=3 AND " +
             recordedOtaRole("c.target", "1") + " UNION ALL " +
-            "SELECT member.local_id FROM (" + candidates + ") c " +
+            "SELECT coalesce(nullif(member.home_id,-1),nullif(member.local_id,0)) FROM (" + candidates + ") c " +
             "JOIN recordings.recording_patch_member member ON member.call_id=c.id " +
             "WHERE member.kind=2 AND " + homes + ") LIMIT 1";
         return "coalesce((" + indexed + "),(" + homeMapping + "))";
@@ -758,9 +820,25 @@ final class ManagedRecordingLabels
 
     private static String recordedOtaRole(String identity, String scope)
     {
-        return scope + " AND coalesce(" + identity + "_home_id," + identity + "_id)=recent.identity_id " +
-            "AND coalesce(" + identity + "_home_wacn,recent.p25_wacn,-1)=recent.home_wacn " +
-            "AND coalesce(" + identity + "_home_system,recent.p25_system_id,-1)=recent.home_system_id";
+        return scope + " AND " + recordedOtaHome(identity + "_id", identity + "_home_wacn",
+            identity + "_home_system", identity + "_home_id");
+    }
+
+    /** Historical null-home metadata follows the same legacy-first owner rule as recording labels and routes. */
+    private static String recordedOtaHome(String localId, String homeWacn, String homeSystem, String homeId)
+    {
+        String explicit = "(" + homeWacn + " IS NOT NULL AND " + homeSystem + " IS NOT NULL AND " +
+            "coalesce(" + homeId + "," + localId + ")=recent.identity_id AND " +
+            homeWacn + "=recent.home_wacn AND " + homeSystem + "=recent.home_system_id)";
+        String legacy = "(recent.home_wacn=-1 AND recent.home_system_id=-1 AND " +
+            "recent.p25_subscriber_identity_id IS NULL)";
+        String serving = "(recent.home_wacn=recent.p25_wacn AND recent.home_system_id=recent.p25_system_id " +
+            "AND NOT EXISTS(SELECT 1 FROM radio_system_identity_summary legacy " +
+            "WHERE legacy.radio_system_id=recent.radio_system_id AND legacy.identity_kind_code=2 " +
+            "AND legacy.home_wacn=-1 AND legacy.home_system_id=-1 AND legacy.identity_id=recent.identity_id " +
+            "AND legacy.p25_subscriber_identity_id IS NULL))";
+        return "(" + explicit + " OR (" + homeWacn + " IS NULL AND " + homeSystem + " IS NULL AND " +
+            homeId + " IS NULL AND " + localId + "=recent.identity_id AND (" + legacy + " OR " + serving + ")))";
     }
 
     /** Resolves a free-text name to raw numeric identities without searching the large call catalog by label. */
@@ -771,6 +849,13 @@ final class ManagedRecordingLabels
 
     List<Integer> matchingIdentityIds(String query, String systemKey, int maximum)
     {
+        return matchingIdentityNames(query, systemKey, maximum).stream()
+            .map(IdentityNameMatch::identityId).distinct().toList();
+    }
+
+    /** OTA names retain their exact owner instead of reducing a permanent identity to an ambiguous decimal ID. */
+    List<IdentityNameMatch> matchingIdentityNames(String query, String systemKey, int maximum)
+    {
         if(query == null || query.isBlank() || !Files.isRegularFile(mDatabasePath))
         {
             return List.of();
@@ -778,6 +863,7 @@ final class ManagedRecordingLabels
         String pattern = '%' + query.toLowerCase(Locale.ROOT).replace("\\", "\\\\")
             .replace("%", "\\%").replace("_", "\\_") + '%';
         Set<Integer> ids = new LinkedHashSet<>();
+        Set<IdentityNameMatch> matches = new LinkedHashSet<>();
         try(Connection connection = open())
         {
             try(PreparedStatement statement = connection.prepareStatement("""
@@ -826,35 +912,44 @@ final class ManagedRecordingLabels
                     }
                 }
             }
-            if(ids.size() <= maximum)
+            ids.forEach(id -> matches.add(new IdentityNameMatch(id, null, null, null, false)));
+            if(matches.size() <= maximum)
             {
-                String otaSql = systemKey != null ? """
-                    SELECT summary.identity_id FROM radio_system_identity_summary summary
+                String otaSql = """
+                    SELECT summary.identity_id,summary.home_wacn,summary.home_system_id,
+                        summary.p25_subscriber_identity_id,system.system_key,
+                        NOT EXISTS(SELECT 1 FROM radio_system_identity_summary legacy
+                            WHERE legacy.radio_system_id=summary.radio_system_id AND legacy.identity_kind_code=2
+                              AND legacy.home_wacn=-1 AND legacy.home_system_id=-1
+                              AND legacy.identity_id=summary.identity_id
+                              AND legacy.p25_subscriber_identity_id IS NULL) AS no_legacy
+                    FROM radio_system_identity_summary summary
                     JOIN radio_system system ON system.id=summary.radio_system_id
-                    WHERE system.system_key=? AND summary.identity_kind_code=2
+                    WHERE summary.identity_kind_code=2
                       AND summary.last_talker_alias IS NOT NULL
+                      AND (? IS NULL OR system.system_key=?)
                       AND lower(summary.last_talker_alias) LIKE ? ESCAPE '\\'
-                    LIMIT ?
-                    """ : """
-                    SELECT identity_id FROM radio_system_identity_summary
-                    WHERE identity_kind_code=2 AND last_talker_alias IS NOT NULL
-                      AND lower(last_talker_alias) LIKE ? ESCAPE '\\'
                     LIMIT ?
                     """;
                 try(PreparedStatement statement = connection.prepareStatement(otaSql))
                 {
-                    int parameter = 1;
-                    if(systemKey != null)
-                    {
-                        statement.setString(parameter++, systemKey);
-                    }
-                    statement.setString(parameter++, pattern);
-                    statement.setInt(parameter, maximum + 1);
+                    statement.setString(1, systemKey);
+                    statement.setString(2, systemKey);
+                    statement.setString(3, pattern);
+                    statement.setInt(4, maximum + 1);
                     try(ResultSet rows = statement.executeQuery())
                     {
                         while(rows.next())
                         {
-                            ids.add(rows.getInt(1));
+                            int homeWacn = rows.getInt("home_wacn");
+                            int homeSystem = rows.getInt("home_system_id");
+                            String owner = rows.getString("system_key");
+                            boolean legacy = homeWacn == -1 && homeSystem == -1 &&
+                                rows.getObject("p25_subscriber_identity_id") == null;
+                            boolean serving = owner.equals(String.format(Locale.ROOT,
+                                "p25:%05x:%03x", homeWacn, homeSystem)) && rows.getBoolean("no_legacy");
+                            matches.add(new IdentityNameMatch(rows.getInt("identity_id"), owner,
+                                homeWacn, homeSystem, legacy || serving));
                         }
                     }
                 }
@@ -864,12 +959,12 @@ final class ManagedRecordingLabels
         {
             return List.of();
         }
-        if(ids.size() > maximum)
+        if(matches.size() > maximum)
         {
             throw new StatsApiException(422, "search_too_broad",
                 "Too many identities match. Add a system or use a more specific name.");
         }
-        return List.copyOf(ids);
+        return List.copyOf(matches);
     }
 
     private static Map<String,Object> suggestion(String kind, String id, String label, String detail,
@@ -967,33 +1062,46 @@ final class ManagedRecordingLabels
         }
     }
 
-    private static String latestTalkerAlias(Connection connection, String systemKey, int radioId,
-                                            Integer homeWacn, Integer homeSystem)
+    private static String latestTalkerAlias(Connection connection, SystemScope system, int radioId,
+                                            Integer homeWacn, Integer homeSystem, Integer homeId)
     {
-        String sql = """
-            SELECT summary.last_talker_alias
-            FROM radio_system_identity_summary summary
-            JOIN radio_system system ON system.id=summary.radio_system_id
-            WHERE system.system_key=? AND summary.identity_kind_code=2 AND summary.identity_id=?
-              AND summary.last_talker_alias IS NOT NULL
-            """ + " AND summary.home_wacn=? AND summary.home_system_id=? " + """
-            ORDER BY summary.last_talker_alias_seen_ms DESC LIMIT 1
-            """;
-        try(PreparedStatement statement = connection.prepareStatement(sql))
+        boolean explicitHome = homeWacn != null || homeSystem != null || homeId != null;
+        if(explicitHome && (system.protocolCode() != 1 || homeWacn == null || homeSystem == null)) return null;
+        try
         {
-            statement.setString(1, systemKey);
-            statement.setInt(2, radioId);
-            statement.setInt(3, homeWacn != null ? homeWacn : -1);
-            statement.setInt(4, homeSystem != null ? homeSystem : -1);
-            try(ResultSet rows = statement.executeQuery())
+            Long summaryId = RadioSystemIdentityLookup.find(connection, system.id(),
+                RadioSystemIdentityKey.KIND_RADIO, homeWacn != null ? homeWacn : RadioSystemIdentityKey.NO_HOME,
+                homeSystem != null ? homeSystem : RadioSystemIdentityKey.NO_HOME, homeId != null ? homeId : radioId);
+            if(summaryId == null) return null;
+            try(PreparedStatement statement = connection.prepareStatement("""
+                SELECT last_talker_alias FROM radio_system_identity_summary
+                WHERE id=? AND radio_system_id=? AND identity_kind_code=2
+                """))
             {
-                return rows.next() ? rows.getString(1) : null;
+                statement.setLong(1, summaryId);
+                statement.setLong(2, system.id());
+                try(ResultSet rows = statement.executeQuery())
+                {
+                    return rows.next() ? rows.getString(1) : null;
+                }
             }
         }
         catch(SQLException ignored)
         {
             return null;
         }
+    }
+
+    private static String cachedTalkerAlias(Connection connection, SystemScope system, Map<String,String> cache,
+                                            Integer radioId, Integer homeWacn, Integer homeSystem, Integer homeId)
+    {
+        Integer lookupId = radioId != null && radioId > 0 ? radioId :
+            system.protocolCode() == 1 && homeWacn != null && homeSystem != null && homeId != null && homeId > 0 ?
+                homeId : null;
+        if(lookupId == null) return null;
+        String key = system.key() + ':' + lookupId + ':' + homeWacn + ':' + homeSystem + ':' + homeId;
+        return cache.computeIfAbsent(key,
+            ignored -> latestTalkerAlias(connection, system, lookupId, homeWacn, homeSystem, homeId));
     }
 
     private static void put(Map<String,Object> row, String key, String value)
@@ -1022,6 +1130,6 @@ final class ManagedRecordingLabels
     private record ChannelLabels(String name, String systemName, String siteName, Long aliasListId,
                                  String systemKey) {}
     private record AliasLabels(String name, String description, String group) {}
-    private record SystemScope(String key, int protocolCode, Integer p25Wacn, Integer p25SystemId,
+    private record SystemScope(long id, String key, int protocolCode, Integer p25Wacn, Integer p25SystemId,
                                WebEntityRef.KeyRef reference) {}
 }

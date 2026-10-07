@@ -180,7 +180,10 @@ final class StatsIdentitySearch
             .append("CASE WHEN system.protocol_code=1 THEN 'APCO25_PHASE2' END) AND ")
             .append(aliasMatch("summary.identity_id", ranged)).append(" AND ").append(assigned)
             .append(" AND ").append(matchedAlias())
-            .append(" AND (system.protocol_code<>1 OR NOT (")
+            .append(" AND (system.protocol_code<>1 OR ")
+            .append(kind == 2 ? "(summary.p25_subscriber_identity_id IS NULL OR " +
+                StatsAliasResolver.homeSystemSql("summary", "system") + ") AND " : "")
+            .append("NOT (")
             .append(p25ProjectedEvidencePresent(kind)).append(")))");
         for(LocalEvidenceSource source: compactSources(kind))
         {
@@ -197,7 +200,24 @@ final class StatsIdentitySearch
     private static void appendLocalAliasSearch(StringBuilder sql, String matcher, LocalEvidenceSource source,
                                                boolean ranged, String requiredAbsent)
     {
+        boolean radio = matcher.startsWith("RADIO_ID");
+        appendLocalAliasSearchBranch(sql,matcher,source,ranged,requiredAbsent,radio,false);
+        if(radio && !source.from().startsWith("activity_event_identity_member"))
+        {
+            appendLocalAliasSearchBranch(sql,matcher,source,ranged,requiredAbsent,true,true);
+        }
+    }
+
+    private static void appendLocalAliasSearchBranch(StringBuilder sql, String matcher, LocalEvidenceSource source,
+        boolean ranged, String requiredAbsent, boolean radio, boolean workingEvidence)
+    {
         sql.append(" OR (system.protocol_code=1");
+        if(radio)
+        {
+            sql.append(workingEvidence ? " AND summary.p25_subscriber_identity_id IS NOT NULL" :
+                " AND (summary.p25_subscriber_identity_id IS NULL OR " +
+                    StatsAliasResolver.homeSystemSql("summary","system") + ")");
+        }
         if(requiredAbsent != null)
         {
             sql.append(" AND NOT (").append(requiredAbsent).append(')');
@@ -219,6 +239,12 @@ final class StatsIdentitySearch
         if(source.systemId() != null)
         {
             sql.append(" AND ").append(source.systemId()).append("=system.id");
+        }
+        if(radio)
+        {
+            sql.append(" AND ").append(workingEvidence ?
+                source.observedId().replace("observed_local_id","observed_working_id") + "=" + source.observedId() :
+                "(summary.p25_subscriber_identity_id IS NULL OR " + source.observedId() + "=summary.identity_id)");
         }
         sql.append("))");
     }
@@ -247,12 +273,12 @@ final class StatsIdentitySearch
         List<String> compact = new ArrayList<>();
         for(LocalEvidenceSource source: compactSources(kind))
         {
-            compact.add(localEvidenceExists(source));
+            compact.add(localEvidenceExists(source, kind));
         }
         List<String> detail = new ArrayList<>();
         for(LocalEvidenceSource source: detailSources())
         {
-            detail.add(localEvidenceExists(source));
+            detail.add(localEvidenceExists(source, kind));
         }
         return String.join(" OR ", compact) + " OR (NOT (" +
             p25RawCompactEvidencePresent(kind) + ") AND (" + String.join(" OR ", detail) + "))";
@@ -265,7 +291,8 @@ final class StatsIdentitySearch
         {
             clauses.add("EXISTS (SELECT 1 FROM " + source.from() + " WHERE " +
                 source.summaryId() + "=summary.id AND " + source.observedId() + ">0" +
-                (source.systemId() == null ? "" : " AND " + source.systemId() + "=system.id") + ")");
+                (source.systemId() == null ? "" : " AND " + source.systemId() + "=system.id") +
+                (kind == 2 ? " AND " + radioLocalEvidence(source) : "") + ")");
         }
         return String.join(" OR ", clauses);
     }
@@ -308,7 +335,7 @@ final class StatsIdentitySearch
                 "evidence.channel_id", "evidence.target_observed_local_id", null));
     }
 
-    private static String localEvidenceExists(LocalEvidenceSource source)
+    private static String localEvidenceExists(LocalEvidenceSource source, int kind)
     {
         return "EXISTS (SELECT 1 FROM " + source.from() + " CROSS JOIN receiver_channel observed_channel ON " +
             "observed_channel.id=" + source.channelId() + " CROSS JOIN configuration_channel observed_config ON " +
@@ -316,7 +343,17 @@ final class StatsIdentitySearch
             source.summaryId() + "=summary.id AND " + source.observedId() + ">0 AND " +
             "observed_channel.radio_system_id=system.id AND " +
             (source.systemId() == null ? "" : source.systemId() + "=system.id AND ") +
-            "observed_config.alias_list_id IS NOT NULL)";
+            "observed_config.alias_list_id IS NOT NULL" +
+            (kind == 2 ? " AND " + radioLocalEvidence(source) : "") + ")";
+    }
+
+    private static String radioLocalEvidence(LocalEvidenceSource source)
+    {
+        String working = source.observedId().replace("observed_local_id", "observed_working_id");
+        return "(summary.p25_subscriber_identity_id IS NULL OR (" +
+            StatsAliasResolver.homeSystemSql("summary", "system") + " AND " + source.observedId() +
+            "=summary.identity_id)" + (source.from().startsWith("activity_event_identity_member") ? "" :
+                " OR " + working + "=" + source.observedId()) + ")";
     }
 
     private static String aliasMatch(String observedId, boolean ranged)

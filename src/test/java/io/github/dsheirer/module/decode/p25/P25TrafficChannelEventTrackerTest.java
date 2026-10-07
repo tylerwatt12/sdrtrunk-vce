@@ -115,6 +115,45 @@ class P25TrafficChannelEventTrackerTest
     }
 
     @Test
+    void nativeHomeIdentityEnrichmentKeepsOneCallAndSurvivesAbbreviatedUpdates()
+    {
+        RadioIdentifier local = APCO25RadioIdentifier.createFrom(10_900_077);
+        RadioIdentifier permanent = APCO25FullyQualifiedRadioIdentifier.createFrom(10_900_077,
+            0xBEE00, 0x123, 10_900_077);
+        P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, START, null)
+            .identifiers(identifiers(1201, local)).build();
+        P25TrafficChannelEventTracker tracked = new P25TrafficChannelEventTracker(event, "p25:bee00:123");
+
+        assertTrue(tracked.isSameCallCheckingToAndFrom(identifiers(1201, permanent), START + 75));
+        assertFalse(tracked.isDifferentTalker(permanent));
+        tracked.addIdentifierIfMissing(permanent);
+        tracked.addIdentifierIfMissing(local);
+        assertSame(permanent, event.getIdentifierCollection().getFromIdentifier());
+        assertTrue(tracked.isSameCallCheckingToAndFrom(identifiers(1201, local), START + 100));
+        assertEquals(START, event.getTimeStart());
+        assertTrue(tracked.isDifferentTalker(APCO25FullyQualifiedRadioIdentifier.createFrom(
+            10_900_077, 0xBEE00, 0x124, 10_900_077)));
+    }
+
+    @Test
+    void eventScopeCannotBeReplacedByALaterTrackerOrInferredAfterAnUnknownStart()
+    {
+        P25ChannelGrantEvent known = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, START, null)
+            .identifiers(identifiers(1201, APCO25RadioIdentifier.createFrom(501))).build();
+        new P25TrafficChannelEventTracker(known, "p25:bee00:123");
+        var rebound = new P25TrafficChannelEventTracker(known, "p25:bee00:124");
+        assertEquals("p25:bee00:123", known.getRadioSystemKey());
+        assertEquals("p25:bee00:123", rebound.getRadioSystemKey());
+
+        P25ChannelGrantEvent unknown = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, START, null)
+            .identifiers(identifiers(1201, APCO25RadioIdentifier.createFrom(501))).build();
+        new P25TrafficChannelEventTracker(unknown);
+        var late = new P25TrafficChannelEventTracker(unknown, "p25:bee00:123");
+        assertEquals(null, unknown.getRadioSystemKey());
+        assertEquals(null, late.getRadioSystemKey());
+    }
+
+    @Test
     void localAddressMismatchAndUnknownZeroRemainSeparate()
     {
         P25TrafficChannelEventTracker tracker = tracker(1201, APCO25RadioIdentifier.createFrom(1234567));

@@ -327,8 +327,10 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      */
     public void enrichMutableIdentifiers(MutableIdentifierCollection identifiers, long timestamp)
     {
-        mWuidAssignmentRegistry.enrich(servingSiteIdentity(), identifiers, timestamp);
-        mTalkerAliasManager.enrichMutable(identifiers);
+        P25SiteIdentity servingIdentity = servingSiteIdentity();
+        mWuidAssignmentRegistry.enrich(servingIdentity, identifiers, timestamp);
+        mTalkerAliasManager.enrichMutable(identifiers, servingIdentity != null ? servingIdentity.wacn() : -1,
+            servingIdentity != null ? servingIdentity.system() : -1);
     }
 
     /**
@@ -462,6 +464,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         {
             P25TrafficChannelEventTracker tracker = getTracker(frequency, timeslot);
             boolean matchesTrackedCall = tracker != null && identifiers != null &&
+                timestamp >= tracker.getEvent().getTimeStart() &&
                 tracker.isSameCallCheckingToOnly(identifiers, timestamp);
 
             if(matchesTrackedCall)
@@ -469,12 +472,12 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 Identifier trackedSource = tracker.getEvent().getIdentifierCollection().getFromIdentifier();
 
                 if(trackedSource instanceof RadioIdentifier trackedRadio && radio != null &&
-                    !radioMatches(radio, trackedRadio))
+                    !radioMatches(radio, trackedRadio, tracker.getRadioSystemKey()))
                 {
                     return;
                 }
 
-                if(trackedSource == null)
+                if(trackedSource == null || radio instanceof FullyQualifiedRadioIdentifier)
                 {
                     tracker.addIdentifierIfMissing(radio);
                 }
@@ -511,16 +514,23 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         {
             P25TrafficChannelEventTracker tracker = getTracker(frequency, timeslot);
 
-            if(tracker == null || tracker.isComplete() || tracker.isStale(timestamp))
+            if(tracker == null || tracker.isComplete() || tracker.isStale(timestamp) ||
+                timestamp < tracker.getEvent().getTimeStart())
             {
                 return;
             }
 
             IdentifierCollection tracked = tracker.getEvent().getIdentifierCollection();
 
-            if(radioMatches(radio, tracked.getFromIdentifier()) &&
+            if(radioMatches(radio, tracked.getFromIdentifier(), tracker.getRadioSystemKey()) &&
                 talkgroupMatches(talkgroup, tracked.getToIdentifier()))
             {
+                //Carry accepted canonical identity into subsequent call snapshots. An abbreviated update must not
+                //erase it, and a canonical-only home observation never invents a separate Working-ID assignment.
+                if(radio instanceof FullyQualifiedRadioIdentifier)
+                {
+                    tracker.addIdentifierIfMissing(radio);
+                }
                 tracker.addIdentifierIfMissing(alias);
                 tracker.updateDurationTraffic(timestamp);
                 broadcast(tracker);
@@ -532,10 +542,10 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         }
     }
 
-    private static boolean radioMatches(RadioIdentifier authoritative, Identifier tracked)
+    private static boolean radioMatches(RadioIdentifier authoritative, Identifier tracked, String servingSystemKey)
     {
         ResolvedRadioIdentity identity = ResolvedRadioIdentity.from(authoritative);
-        return identity != null && identity.matchesWithinScope(ResolvedRadioIdentity.from(tracked));
+        return identity != null && identity.matchesWithinScope(ResolvedRadioIdentity.from(tracked), servingSystemKey);
     }
 
     private static boolean talkgroupMatches(Identifier authoritative, Identifier tracked)
@@ -563,7 +573,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             return;
         }
 
-        mTalkerAliasManager.update(radio, alias);
+        mTalkerAliasManager.update(radio, alias, callIdentity != null ? callIdentity.radioSystemKey() : null);
         IdentifierCollection context = identifiers != null ?
             new IdentifierCollection(identifiers.getIdentifiers()) : new IdentifierCollection();
         context.setTimeslot(identifiers != null ? identifiers.getTimeslot() : 0);
@@ -594,7 +604,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             Identifier trackedSource = tracked != null ? tracked.getFromIdentifier() : null;
             Identifier trackedTarget = tracked != null ? tracked.getToIdentifier() : null;
             boolean sourceConflict = trackedSource instanceof RadioIdentifier trackedRadio &&
-                !radioMatches(radio, trackedRadio);
+                !radioMatches(radio, trackedRadio, tracker.getRadioSystemKey());
             boolean targetConflict = talkgroup != null && !talkgroupMatches(talkgroup, trackedTarget);
             if(sourceConflict || targetConflict)
             {
@@ -992,15 +1002,15 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      */
     private P25TrafficChannelEventTracker createTracker(P25ChannelGrantEvent event, long frequency, int timeslot)
     {
+        String servingSystemKey = RadioSystemKey.p25(servingSiteIdentity());
         IdentifierCollection identifiers = event.getIdentifierCollection();
         if(identifiers != null)
         {
             IdentifierCollection enriched = mWuidAssignmentRegistry.enrich(servingSiteIdentity(), identifiers,
                 event.getTimeStart());
-            event.setIdentifierCollection(mTalkerAliasManager.enrich(enriched));
+            event.setIdentifierCollection(mTalkerAliasManager.enrich(enriched, servingSystemKey));
         }
-        P25TrafficChannelEventTracker tracker = new P25TrafficChannelEventTracker(event,
-            RadioSystemKey.p25(mParentChannel != null ? mParentChannel.getP25SiteIdentity() : null));
+        P25TrafficChannelEventTracker tracker = new P25TrafficChannelEventTracker(event, servingSystemKey);
         addTracker(tracker, frequency, timeslot);
         return tracker;
     }

@@ -610,11 +610,9 @@ final class ReceiverActivityScopedDeletion
         {
             ReceiverActivityDeletion.ParsedIdentity identity = ReceiverActivityDeletion.parseIdentity(
                 new Identity(target.sourceKey(), key, radio ? IdentityKind.RADIO : IdentityKind.TALKGROUP));
-            summaryId = scalar(plan.connection, """
-                SELECT id FROM radio_system_identity_summary WHERE radio_system_id=? AND identity_kind_code=?
-                    AND home_wacn=? AND home_system_id=? AND identity_id=?
-                """, List.of(scope.systemId, kind, identity.homeWacn(), identity.homeSystemId(),
-                identity.identityId()));
+            Long resolvedId = RadioSystemIdentityLookup.find(plan.connection, scope.systemId, kind,
+                identity.homeWacn(), identity.homeSystemId(), identity.identityId());
+            summaryId = resolvedId != null ? resolvedId : 0;
             predicate = "id=?";
             args = List.of(summaryId);
         }

@@ -416,23 +416,23 @@ final class ManagedRecordingsHttpController
                 {
                     throw new StatsApiException(429, "search_busy", "Too many recording searches are active");
                 }
-                List<Integer> ids;
+                List<ManagedRecordingCatalog.IdentityNameMatch> identities;
                 try
                 {
-                    ids = mLabels.matchingIdentityIds(query, request.text("system_key"),
+                    identities = mLabels.matchingIdentityNames(query, request.text("system_key"),
                         MAXIMUM_SEARCH_IDENTITIES);
                 }
                 finally
                 {
                     LABEL_LOOKUPS.release();
                 }
-                if(ids.isEmpty())
+                if(identities.isEmpty())
                 {
                     request.requireFullyConsumed();
                     ApiHttpResponse.sendData(exchange, 200, Map.of("calls", List.of()));
                     return;
                 }
-                filter.anyIdentityIds(ids);
+                filter.identityNameMatches(identities);
             }
         }
         request.requireFullyConsumed();
@@ -477,12 +477,20 @@ final class ManagedRecordingsHttpController
     {
         for(String field: List.of("group_alias", "group_description", "group_group", "source_alias",
             "source_description", "source_group", "source_ota_alias", "destination_radio_alias",
-            "destination_radio_description", "destination_radio_group"))
+            "destination_radio_description", "destination_radio_group", "destination_radio_ota_alias"))
         {
             Object value = row.get(field);
             if(value instanceof String text && text.toLowerCase(Locale.ROOT).contains(lowercaseQuery))
             {
                 return true;
+            }
+        }
+        if(row.get("patch_members") instanceof List<?> members)
+        {
+            for(Object member: members)
+            {
+                if(member instanceof Map<?,?> values && values.get("ota_alias") instanceof String text &&
+                    text.toLowerCase(Locale.ROOT).contains(lowercaseQuery)) return true;
             }
         }
         return false;

@@ -74,8 +74,8 @@ public class P25TrafficChannelEventTracker
     public P25TrafficChannelEventTracker(P25ChannelGrantEvent event, String radioSystemKey)
     {
         mEvent = event;
-        mRadioSystemKey = radioSystemKey != null ? RadioSystemKey.nativeFor(Protocol.APCO25,
-            TrunkedIdentityDomain.STANDARD, radioSystemKey) : null;
+        mRadioSystemKey = event.captureRadioSystemKey(radioSystemKey != null ?
+            RadioSystemKey.nativeFor(Protocol.APCO25, TrunkedIdentityDomain.STANDARD, radioSystemKey) : null);
         mLastObservationTimestamp = event.getTimeStart();
     }
 
@@ -317,7 +317,7 @@ public class P25TrafficChannelEventTracker
      * Match those representations by their observed local address only when one home identity is unavailable. Two
      * known home identities remain authoritative, and patch/non-P25 identifiers retain their existing equality.
      */
-    private static boolean matchesCallIdentifier(Identifier first, Identifier second)
+    private boolean matchesCallIdentifier(Identifier first, Identifier second)
     {
         if(first == null || second == null)
         {
@@ -339,7 +339,8 @@ public class P25TrafficChannelEventTracker
         if(first instanceof RadioIdentifier firstRadio && second instanceof RadioIdentifier secondRadio)
         {
             ResolvedRadioIdentity firstIdentity = ResolvedRadioIdentity.from(firstRadio);
-            return firstIdentity != null && firstIdentity.matchesWithinScope(ResolvedRadioIdentity.from(secondRadio));
+            return firstIdentity != null && firstIdentity.matchesWithinScope(ResolvedRadioIdentity.from(secondRadio),
+                mRadioSystemKey);
         }
 
         if(first instanceof TalkgroupIdentifier firstGroup && second instanceof TalkgroupIdentifier secondGroup)

@@ -402,6 +402,93 @@ class ManagedRecordingsHttpControllerTest
     }
 
     @Test
+    void otaNameSearchRetainsHomeOwnershipDifferentWorkingIdsAndPaging() throws Exception
+    {
+        String system = "p25:00001:001";
+        int radio = 10_900_077;
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO radio_system(id,system_key,protocol_code,address_domain_code," +
+                "p25_wacn,p25_system_id,first_seen_ms,last_seen_ms) VALUES(501,'" + system +
+                "',1,0,1,1,1000,2000)");
+            statement.executeUpdate("INSERT INTO radio_system_identity_summary(radio_system_id,identity_kind_code," +
+                "home_wacn,home_system_id,identity_id,first_seen_ms,last_seen_ms,last_talker_alias," +
+                "last_talker_alias_seen_ms) VALUES(501,2,1,1," + radio +
+                ",1000,2000,'Home OTA',2000),(501,2,2,2," + radio +
+                ",1000,2000,'Foreign OTA',2000),(501,2,-1,-1," + radio +
+                ",1000,2000,'Legacy OTA',2000)");
+        }
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("managed-recordings.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO recording_system(id,system_key) VALUES(501,'" + system +
+                "'),(502,'p25:00002:002')");
+            statement.executeUpdate("UPDATE recording_call SET system_id=501,source_id=" + radio + " WHERE id=1");
+            statement.executeUpdate("INSERT INTO recording_call(id,start_ms,end_ms,duration_ms,relative_path," +
+                "size_bytes,system_id,protocol,call_type,voice_type,source_id,source_home_wacn," +
+                "source_home_system,source_home_id,target_id) VALUES" +
+                "(2,2000,3000,1000,'working.mp3',5,501,1,1,1,555,1,1," + radio + ",1001)," +
+                "(3,2000,3000,1000,'foreign.mp3',5,501,1,1,1," + radio + ",2,2," + radio + ",1001)," +
+                "(4,2000,3000,1000,'native.mp3',5,501,1,1,1," + radio + ",1,1," + radio + ",1001)," +
+                "(5,2000,3000,1000,'other-system.mp3',5,502,1,1,1," + radio + ",1,1," + radio + ",1001)");
+            statement.executeUpdate("INSERT INTO recording_site(id,wacn,system_id,rfss,site_id) VALUES(501,1,1,1,1)");
+            statement.executeUpdate("INSERT INTO recording_call(id,start_ms,end_ms,duration_ms,relative_path," +
+                "size_bytes,protocol,call_type,voice_type,source_id,source_home_wacn,source_home_system," +
+                "source_home_id,target_id,winner_site_id) VALUES" +
+                "(6,2000,3000,1000,'legacy-site.mp3',5,1,1,1,555,1,1," + radio + ",1001,501)");
+        }
+        String base = ManagedRecordingsHttpController.BROWSE_PATH + "/calls?from_ms=0&to_ms=5000";
+        HttpResponse<String> response = send(request(base + "&q=Home%20OTA&limit=1").GET());
+        assertEquals(200, response.statusCode(), response.body());
+        assertEquals(6L, json(response).at("/data/calls/0/id").longValue());
+        String cursor = json(response).at("/data/next_cursor").textValue();
+        response = send(request(base + "&q=Home%20OTA&limit=1&cursor=" + cursor).GET());
+        assertEquals(4L, json(response).at("/data/calls/0/id").longValue());
+        cursor = json(response).at("/data/next_cursor").textValue();
+        response = send(request(base + "&q=Home%20OTA&limit=1&cursor=" + cursor).GET());
+        assertEquals(2L, json(response).at("/data/calls/0/id").longValue());
+        assertFalse(json(response).at("/data").has("next_cursor"));
+        assertEquals(3L, json(send(request(base + "&q=Foreign%20OTA").GET()))
+            .at("/data/calls/0/id").longValue());
+        assertEquals(1L, json(send(request(base + "&q=Legacy%20OTA").GET()))
+            .at("/data/calls/0/id").longValue());
+        assertEquals(3, json(send(request(base + "&system_key=" + system + "&q=" + radio).GET()))
+            .at("/data/calls").size(), "numeric search must retain its raw-address behavior");
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("managed-recordings.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO recording_call(id,start_ms,end_ms,duration_ms,relative_path," +
+                "size_bytes,system_id,protocol,call_type,voice_type,source_id,target_id," +
+                "target_home_wacn,target_home_system,target_home_id) VALUES" +
+                "(8,2000,3000,1000,'direct.mp3',5,501,1,3,1,999,555,1,1," + radio + ")," +
+                "(9,2000,3000,1000,'patch.mp3',5,501,1,2,1,999,1002,NULL,NULL,NULL)");
+            statement.executeUpdate("INSERT INTO recording_patch_member(call_id,kind,local_id,home_wacn," +
+                "home_system,home_id,start_ms) VALUES(9,2,777,1,1," + radio + ",2000)");
+        }
+        response = send(request(base + "&q=Home%20OTA").GET());
+        assertEquals(200, response.statusCode(), response.body());
+        assertEquals(5, json(response).at("/data/calls").size());
+        assertEquals("Home OTA", json(response).at("/data/calls/0/patch_members/0/ota_alias").textValue());
+        assertEquals("Home OTA", json(response).at("/data/calls/1/destination_radio_ota_alias").textValue());
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("managed-recordings.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO recording_call(id,start_ms,end_ms,duration_ms,relative_path," +
+                "size_bytes,system_id,protocol,call_type,voice_type,source_id,source_home_wacn," +
+                "source_home_system,source_home_id,target_id) VALUES" +
+                "(10,2000,3000,1000,'canonical-only.mp3',5,501,1,1,1,NULL,1,1," + radio + ",1001)");
+        }
+        response = send(request(base + "&q=Home%20OTA").GET());
+        assertEquals(200, response.statusCode(), response.body());
+        assertEquals(6, json(response).at("/data/calls").size());
+        assertEquals(10L, json(response).at("/data/calls/0/id").longValue());
+        assertEquals("Home OTA", json(response).at("/data/calls/0/source_ota_alias").textValue());
+        assertTrue(json(response).at("/data/calls/0/source_entity_ref").isObject());
+        assertFalse(json(response).at("/data/calls/0").has("source_id"));
+    }
+
+    @Test
     void chosenAliasAndBroadRangeKeepCurrentLabelScopeAcrossSystems() throws Exception
     {
         Path mainDatabase = mDirectory.resolve("main.sqlite");

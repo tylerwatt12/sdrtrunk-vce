@@ -11,8 +11,9 @@ import java.util.Locale;
  * Canonical, URL-safe identity tuple used by storage, web navigation and playback controls.
  *
  * <p>The radio-system key scopes this value externally. A canonical P25 subscriber carries its home WACN and
- * System ID; an unresolved P25 working address remains local to the serving system and uses the {@code x-x}
- * sentinel, as do channel-scoped DMR and NXDN identities. Database surrogate IDs are deliberately excluded.</p>
+ * System ID. An ordinary P25 radio owner uses the proven serving WACN and System ID without claiming a decoded
+ * canonical subscriber or Working-ID assignment. Uncertain retained local history and channel-scoped DMR/NXDN
+ * identities use the {@code x-x} sentinel. Database surrogate IDs are deliberately excluded.</p>
  */
 public final class RadioSystemIdentityKey
 {

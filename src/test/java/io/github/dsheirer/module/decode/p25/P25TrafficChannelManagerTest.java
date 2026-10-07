@@ -629,6 +629,97 @@ class P25TrafficChannelManagerTest
     }
 
     @Test
+    void acceptsCanonicalHomeAliasForOrdinaryPhaseOneAndTwoCalls() throws Exception
+    {
+        for(int timeslot: List.of(TimeslotMessage.TIMESLOT_1, TimeslotMessage.TIMESLOT_2))
+        {
+            long frequency = 851_012_500L;
+            int talkgroup = 10_003;
+            Channel parent = new Channel("Control");
+            parent.setDecodeConfiguration(new DecodeConfigP25Phase1());
+            //Current receiver metadata may have changed; only the immutable call scope is authoritative.
+            parent.setP25SiteIdentity(new P25SiteIdentity(0xABCDE, 0x124, 1, 2));
+            P25TrafficChannelManager manager = new P25TrafficChannelManager(parent);
+            RadioIdentifier local = APCO25RadioIdentifier.createFrom(10_900_077);
+            APCO25FullyQualifiedRadioIdentifier canonical = APCO25FullyQualifiedRadioIdentifier.createFrom(
+                10_900_077, 0xBEE00, 0x123, 10_900_077);
+            P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, 1_000L, null)
+                .identifiers(identifiers(talkgroup, local)).build();
+            P25TrafficChannelEventTracker tracker = new P25TrafficChannelEventTracker(event, "p25:bee00:123");
+            tracker.updateDurationTraffic(1_050L);
+            trafficTrackers(manager, timeslot).put(frequency, tracker);
+            P25TalkerAliasIdentifier alias = P25TalkerAliasIdentifier.create("UNIT 77");
+            TalkerAliasSubscriber subscriber = new TalkerAliasSubscriber();
+            MyEventBus.getGlobalEventBus().register(subscriber);
+            try
+            {
+                if(timeslot == TimeslotMessage.TIMESLOT_1)
+                {
+                    manager.processP1MotorolaTalkerAlias(frequency, canonical, APCO25Talkgroup.create(talkgroup),
+                        alias, identifiers(talkgroup, canonical), 1_100L);
+                }
+                else
+                {
+                    manager.processP2MotorolaTalkerAlias(frequency, timeslot, canonical,
+                        APCO25Talkgroup.create(talkgroup), alias, identifiers(talkgroup, canonical), 1_100L);
+                }
+            }
+            finally
+            {
+                MyEventBus.getGlobalEventBus().unregister(subscriber);
+            }
+            assertTrue(event.getIdentifierCollection().hasIdentifier(alias));
+            assertSame(canonical, event.getIdentifierCollection().getFromIdentifier());
+            assertNull(canonical.getWorkingAddress());
+            assertNotNull(subscriber.event.get());
+            assertEquals("p25:bee00:123", subscriber.event.get().radioSystemKey());
+            assertEquals(1_000L, subscriber.event.get().callStartEpochMilliseconds());
+            tracker.addIdentifierIfMissing(local);
+            assertSame(canonical, event.getIdentifierCollection().getFromIdentifier());
+            assertEquals(1_000L, event.getTimeStart());
+        }
+    }
+
+    @Test
+    void homeAliasStillRejectsOtherSystemTalkgroupAndCallGeneration() throws Exception
+    {
+        for(String rejection: List.of("other-home", "other-talkgroup", "early", "stale", "complete"))
+        {
+            long frequency = 851_012_500L;
+            int talkgroup = 10_003;
+            Channel parent = new Channel("Control");
+            parent.setDecodeConfiguration(new DecodeConfigP25Phase1());
+            P25TrafficChannelManager manager = new P25TrafficChannelManager(parent);
+            RadioIdentifier local = APCO25RadioIdentifier.createFrom(10_900_077);
+            RadioIdentifier canonical = APCO25FullyQualifiedRadioIdentifier.createFrom(10_900_077,
+                0xBEE00, rejection.equals("other-home") ? 0x124 : 0x123, 10_900_077);
+            P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, 1_000L, null)
+                .identifiers(identifiers(talkgroup, local)).build();
+            P25TrafficChannelEventTracker tracker = new P25TrafficChannelEventTracker(event, "p25:bee00:123");
+            tracker.updateDurationTraffic(1_050L);
+            if(rejection.equals("complete")) tracker.completeTraffic(1_075L);
+            trafficTrackers(manager).put(frequency, tracker);
+            P25TalkerAliasIdentifier alias = P25TalkerAliasIdentifier.create("UNIT 77");
+            TalkerAliasSubscriber subscriber = new TalkerAliasSubscriber();
+            MyEventBus.getGlobalEventBus().register(subscriber);
+            try
+            {
+                manager.processP1MotorolaTalkerAlias(frequency, canonical,
+                    APCO25Talkgroup.create(rejection.equals("other-talkgroup") ? talkgroup + 1 : talkgroup),
+                    alias, identifiers(talkgroup, canonical), rejection.equals("early") ? 999L :
+                        rejection.equals("stale") ? 4_000L : 1_100L);
+            }
+            finally
+            {
+                MyEventBus.getGlobalEventBus().unregister(subscriber);
+            }
+            assertFalse(event.getIdentifierCollection().hasIdentifier(alias), rejection);
+            assertSame(local, event.getIdentifierCollection().getFromIdentifier(), rejection);
+            assertNull(subscriber.event.get(), rejection);
+        }
+    }
+
+    @Test
     void doesNotAttachAliasWhenCanonicalSubscribersShareAWorkingAddress() throws Exception
     {
         long frequency = 851_012_500L;

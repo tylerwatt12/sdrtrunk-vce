@@ -272,7 +272,7 @@ class ManagedRecordingSuggestionsTest
     }
 
     @Test
-    void latestOtaNamesRequireRecordedCanonicalHomeIdentityAndSubmitTheLocalRadioId() throws Exception
+    void latestOtaNamesRequireRecordedCanonicalHomeIdentityAndSubmitTheScopedName() throws Exception
     {
         call(1, 1, 1, 700, 1, 1, 401, 1001);
         catalog("UPDATE recording_call SET source_home_wacn=2,source_home_system=2," +
@@ -287,11 +287,49 @@ class ManagedRecordingSuggestionsTest
         List<Map<String,Object>> rows = suggestions("Fixture OTA", "radio", SYSTEM_A, 20);
         assertEquals(1, rows.size());
         assertEquals("Fixture OTA Engine", rows.getFirst().get("label"));
-        assertEquals("401", rows.getFirst().get("id"));
+        assertEquals("900", rows.getFirst().get("id"));
+        assertEquals("Fixture OTA Engine", rows.getFirst().get("name_query"));
         main("UPDATE radio_system_identity_summary SET last_talker_alias='Current Engine OTA'," +
             "last_talker_alias_seen_ms=7000,last_seen_ms=7000 WHERE identity_id=900 AND home_wacn=2");
         assertTrue(suggestions("Fixture OTA", "radio", SYSTEM_A, 20).isEmpty());
         assertEquals(Set.of("Current Engine OTA"), labels("Current Engine", "radio", SYSTEM_A, 20));
+        catalog("UPDATE recording_call SET source_id=NULL WHERE id=1");
+        Map<String,Object> canonicalOnly = suggestions("Current Engine", "radio", SYSTEM_A, 20).getFirst();
+        assertEquals("900", canonicalOnly.get("id"));
+        assertEquals("Current Engine OTA", canonicalOnly.get("name_query"));
+        catalog("UPDATE recording_call SET source_id=0 WHERE id=1");
+        assertEquals("900", suggestions("Current Engine", "radio", SYSTEM_A, 20).getFirst().get("id"));
+    }
+
+    @Test
+    void nullHomeOtaSuggestionsKeepAmbiguousLegacyOwnershipAndExplicitHomeRemainsExact() throws Exception
+    {
+        int radio = 10_900_077;
+        main("INSERT INTO radio_system_identity_summary(radio_system_id,identity_kind_code," +
+            "home_wacn,home_system_id,identity_id,first_seen_ms,last_seen_ms,last_talker_alias," +
+            "last_talker_alias_seen_ms) VALUES(501,2,1,1," + radio +
+            ",1000,4000,'Home Radio OTA',4000)");
+        call(1, 1, 1, 700, 1, 1, radio, 1001);
+        assertEquals(Set.of("Home Radio OTA"), labels("Radio OTA", "radio", SYSTEM_A, 20));
+
+        main("INSERT INTO radio_system_identity_summary(radio_system_id,identity_kind_code," +
+            "home_wacn,home_system_id,identity_id,first_seen_ms,last_seen_ms,last_talker_alias," +
+            "last_talker_alias_seen_ms) VALUES(501,2,-1,-1," + radio +
+            ",1000,5000,'Legacy Radio OTA',5000)");
+        assertEquals(Set.of("Legacy Radio OTA"), labels("Radio OTA", "radio", SYSTEM_A, 20));
+        catalog("UPDATE recording_call SET source_home_wacn=1 WHERE id=1");
+        assertTrue(suggestions("Radio OTA", "radio", SYSTEM_A, 20).isEmpty(),
+            "incomplete home metadata cannot borrow either owner's OTA name");
+        catalog("UPDATE recording_call SET source_home_system=1,source_home_id=" + radio + " WHERE id=1");
+        assertEquals(Set.of("Home Radio OTA"), labels("Radio OTA", "radio", SYSTEM_A, 20));
+
+        call(2, 1, 1, 700, 1, 2, 999, 1002);
+        catalog("INSERT INTO recording_patch_member(call_id,kind,local_id,home_wacn,home_system," +
+            "home_id,start_ms) VALUES(2,2," + radio + ",-1,-1,-1,1000)");
+        assertEquals(Set.of("Legacy Radio OTA", "Home Radio OTA"),
+            labels("Radio OTA", "radio", SYSTEM_A, 20));
+        catalog("DELETE FROM recording_call WHERE id=1");
+        assertEquals(Set.of("Legacy Radio OTA"), labels("Radio OTA", "radio", SYSTEM_A, 20));
     }
 
     @Test

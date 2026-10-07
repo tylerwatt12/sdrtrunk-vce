@@ -270,6 +270,73 @@ class StatsAliasResolverTest
     }
 
     @Test
+    void homeCanonicalRadioRetainsOrdinaryAliasWhileForeignSubscriberRequiresWorkingEvidence() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("home-canonical-alias.sqlite");
+        createDatabase(database);
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            clearFactoryAliasLists(statement);
+            statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES(1,'Home','P25')");
+            statement.executeUpdate("INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,value) " +
+                "VALUES(1,1,'Home Unit','RADIO_ID','APCO25',501)");
+            insertP25Channel(statement,77,P25_CONFIGURATION_ID,P25_RADIORESOLVE_ID,1);
+            statement.executeUpdate("INSERT INTO p25_subscriber_identity(id,home_wacn,home_system_id,subscriber_id) " +
+                "VALUES(91,0xBEE00,0x348,501)");
+            statement.executeUpdate("INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_kind_code," +
+                "home_wacn,home_system_id,identity_id,first_seen_ms,last_seen_ms,p25_subscriber_identity_id) " +
+                "VALUES(999,77,2,0xBEE00,0x348,501,1,2,91)");
+            statement.executeUpdate("INSERT INTO receiver_activity_event(channel_id,radio_system_id,observed_at_ms," +
+                "action_code,source_identity_summary_id,source_observed_local_id) VALUES(77,77,2,12,999,501)");
+            StatsAliasResolver resolver = new StatsAliasResolver();
+            Map<String,Object> home = p25Row();
+            home.put("radio_id",501);
+            home.put("p25_subscriber_identity_id",91L);
+            home.put("canonical_wacn",0xBEE00);
+            home.put("canonical_system_id",0x348);
+            home.put("canonical_subscriber_id",501);
+            resolver.enrichRadios(connection,rows(home));
+            assertEquals("Home Unit",home.get("alias_name"));
+            Map<String,Object> evidence = new LinkedHashMap<>(home);
+            evidence.put("identity_summary_id",999L);
+            evidence.put("identity_id",501);
+            evidence.put("identity_kind_code",2);
+            evidence.put("protocol_code",1);
+            evidence.put("topology","TRUNKED");
+            evidence.remove("alias_name");
+            resolver.enrichCanonicalSystemRadios(connection,rows(evidence),"identity_summary_id","identity_id","alias_");
+            assertEquals("Home Unit",evidence.get("alias_name"),
+                "Ordinary detailed history remains local evidence after home qualification without a Working ID");
+            String homePlan = queryPlan(connection,StatsAliasResolver.p25LocalEvidenceSql(1),999L,
+                StatsAliasResolver.MAX_RULE_LOOKUP_PAIRS + 1);
+            assertTrue(homePlan.contains("source_identity_summary_id=? AND source_observed_local_id=?"),homePlan);
+            resolver.resolveEvidenceAliasesForMigration(connection,rows(evidence));
+            assertEquals(1L,evidence.get("resolved_alias_id"));
+            Map<String,Object> foreign = new LinkedHashMap<>(home);
+            foreign.remove("alias_name");
+            foreign.put("canonical_system_id",0x349);
+            resolver.enrichRadios(connection,rows(foreign));
+            assertNull(foreign.get("alias_name"));
+            foreign.put("observed_working_id",501);
+            resolver.enrichRadios(connection,rows(foreign));
+            assertEquals("Home Unit",foreign.get("alias_name"));
+            Map<String,Object> activity = activityRow("APCO25",1,1,501,700,1);
+            activity.put("radio_system_key",P25_SYSTEM_KEY);
+            activity.put("source_p25_subscriber_identity_id",91L);
+            activity.put("source_canonical_wacn",0xBEE00);
+            activity.put("source_canonical_system_id",0x348);
+            activity.put("source_canonical_subscriber_id",501);
+            resolver.enrichActivity(connection,rows(activity));
+            assertEquals("Home Unit",activity.get("source_alias_name"));
+            activity.remove("source_alias_name");
+            activity.put("source_canonical_subscriber_id",502);
+            resolver.enrichActivity(connection,rows(activity));
+            assertNull(activity.get("source_alias_name"),"Home system alone does not prove a different radio number");
+        }
+    }
+
+    @Test
     void explicitCanonicalSubscriberForeignKeyWinsWithoutInferringLegacyHomeFields() throws Exception
     {
         Path database = mTemporaryFolder.resolve("canonical-p25-alias.sqlite");

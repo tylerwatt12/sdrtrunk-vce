@@ -27,6 +27,8 @@ import io.github.dsheirer.protocol.Protocol;
 public class P25ChannelGrantEvent extends P25DecodeEvent
 {
     private ServiceOptions mServiceOptions;
+    private String mRadioSystemKey;
+    private boolean mRadioSystemKeyCaptured;
 
     public P25ChannelGrantEvent(DecodeEventType decodeEventType, long timestamp)
     {
@@ -66,6 +68,22 @@ public class P25ChannelGrantEvent extends P25DecodeEvent
     public boolean hasServiceOptions()
     {
         return mServiceOptions != null;
+    }
+
+    /** Serving-system ownership captured by the first physical-call tracker, including an unknown initial scope. */
+    String captureRadioSystemKey(String radioSystemKey)
+    {
+        if(!mRadioSystemKeyCaptured)
+        {
+            mRadioSystemKey = radioSystemKey;
+            mRadioSystemKeyCaptured = true;
+        }
+        return mRadioSystemKey;
+    }
+
+    public String getRadioSystemKey()
+    {
+        return mRadioSystemKey;
     }
 
     /**

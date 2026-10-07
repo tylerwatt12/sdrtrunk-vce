@@ -11,6 +11,7 @@
 package io.github.dsheirer.record.managed;
 
 import io.github.dsheirer.audio.call.CompletedAudioCall;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.protocol.Protocol;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -683,6 +684,29 @@ public final class ManagedRecordingCatalog implements AutoCloseable
     {
     }
 
+    /** A raw Alias number or an OTA owner scoped to its receiving system and stored home tuple. */
+    public record IdentityNameMatch(int identityId, String systemKey, Integer homeWacn,
+                                    Integer homeSystemId, boolean includeNullHome)
+    {
+        public IdentityNameMatch
+        {
+            if(identityId < 0 || (systemKey == null) != (homeWacn == null && homeSystemId == null) ||
+                systemKey != null && (identityId < 1 || systemKey.isBlank() || homeWacn == null || homeSystemId == null ||
+                    !((homeWacn == -1 && homeSystemId == -1) ||
+                        (homeWacn >= 0 && homeWacn <= 0xFFFFF && homeSystemId >= 0 && homeSystemId <= 0xFFF))))
+            {
+                throw new IllegalArgumentException("Invalid recording name identity scope");
+            }
+            if(homeWacn != null && homeWacn >= 0 &&
+                (!RadioSystemKey.isP25Native(systemKey) || includeNullHome &&
+                    (Integer.parseInt(systemKey.substring(4, 9), 16) != homeWacn ||
+                        Integer.parseInt(systemKey.substring(10), 16) != homeSystemId)))
+            {
+                throw new IllegalArgumentException("Unqualified recording metadata requires its receiving home");
+            }
+        }
+    }
+
     /** Search parameters are immutable, and every query is constrained to a bounded time window and page size. */
     public static final class SearchFilter
     {
@@ -707,6 +731,7 @@ public final class ManagedRecordingCatalog implements AutoCloseable
         public final Integer sourceMax;
         public final Integer anyIdentityId;
         public final List<Integer> anyIdentityIds;
+        public final List<IdentityNameMatch> identityNameMatches;
         public final Long frequencyHz;
         public final String protocol;
         public final String callType;
@@ -753,6 +778,14 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             {
                 throw new IllegalArgumentException("Too many or invalid recording identity search IDs");
             }
+            identityNameMatches = builder.identityNameMatches != null ?
+                List.copyOf(builder.identityNameMatches) : List.of();
+            if(identityNameMatches.size() > 200 || !identityNameMatches.isEmpty() &&
+                (anyIdentityId != null || !anyIdentityIds.isEmpty() || talkgroupId != null ||
+                    talkgroupMin != null || sourceId != null || sourceMin != null))
+            {
+                throw new IllegalArgumentException("Too many or conflicting recording name identities");
+            }
             frequencyHz = builder.frequencyHz;
             protocol = builder.protocol;
             callType = builder.callType;
@@ -779,6 +812,7 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             private Integer wacn, systemId, rfss, siteId, talkgroupId, talkgroupMin, talkgroupMax,
                 sourceId, sourceMin, sourceMax, anyIdentityId;
             private List<Integer> anyIdentityIds;
+            private List<IdentityNameMatch> identityNameMatches;
             private boolean sortAscending;
             private int limit = DEFAULT_PAGE_SIZE;
 
@@ -801,6 +835,7 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             public Builder sourceMax(Integer value) { sourceMax = value; return this; }
             public Builder anyIdentityId(Integer value) { anyIdentityId = value; return this; }
             public Builder anyIdentityIds(List<Integer> value) { anyIdentityIds = value; return this; }
+            public Builder identityNameMatches(List<IdentityNameMatch> value) { identityNameMatches = value; return this; }
             public Builder frequencyHz(Long value) { frequencyHz = value; return this; }
             public Builder protocol(String value) { protocol = value; return this; }
             public Builder callType(String value) { callType = value; return this; }

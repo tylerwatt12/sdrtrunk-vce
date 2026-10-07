@@ -8,6 +8,7 @@ package io.github.dsheirer.stats.activity;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.controller.channel.Channel;
@@ -21,6 +22,9 @@ import io.github.dsheirer.module.decode.dmr.DMRConventionalCallEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.nxdn.NXDNConventionalCallEvent;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
+import io.github.dsheirer.module.decode.p25.P25ChannelGrantEvent;
+import io.github.dsheirer.module.decode.p25.P25TrafficChannelEventTracker;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.P25SignalingEvent;
 import io.github.dsheirer.module.decode.p25.P25SignalingSemantics;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
@@ -28,6 +32,8 @@ import io.github.dsheirer.module.decode.p25.P25RadioPresence;
 import io.github.dsheirer.module.decode.p25.P25WuidAssignmentRegistry;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25IncompleteRadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
@@ -183,6 +189,89 @@ class ReceiverActivityMapperTest
 
         assertEquals(831_102, record.radioId());
         assertEquals(831_102, record.p25RadioIdentity().homeIdentityId());
+    }
+
+    @Test
+    void repeatedActivityPreservesNewSourceAndTargetIdentityEvidence()
+    {
+        Channel channel = new Channel("P25", Channel.ChannelType.STANDARD);
+        channel.setConfigurationId(CONFIGURATION_ID);
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        DecodeEvent event = new DecodeEvent(DecodeEventType.CALL_UNIT_TO_UNIT, 1_000L);
+        event.setProtocol(Protocol.APCO25);
+        var source = APCO25RadioIdentifier.createFrom(10_900_077);
+        var target = APCO25RadioIdentifier.createTo(10_900_078);
+        event.setIdentifierCollection(new MutableIdentifierCollection(List.of(source, target)));
+        ReceiverActivityMapper mapper = new ReceiverActivityMapper();
+        var ordinary = mapper.map(channel, event);
+        assertEquals(ordinary.dedupeKey(), mapper.map(channel, event).dedupeKey());
+
+        var canonicalSource = APCO25FullyQualifiedRadioIdentifier.createFrom(10_900_077,
+            0xBEE00, 0x123, 10_900_077);
+        event.setIdentifierCollection(new MutableIdentifierCollection(List.of(canonicalSource, target)));
+        var sourceEnriched = mapper.map(channel, event);
+        assertEquals(ordinary.sourceRadioId(), sourceEnriched.sourceRadioId());
+        assertNotEquals(ordinary.dedupeKey(), sourceEnriched.dedupeKey());
+        assertEquals(sourceEnriched.dedupeKey(), mapper.map(channel, event).dedupeKey());
+
+        var canonicalTarget = APCO25FullyQualifiedRadioIdentifier.createTo(10_900_078,
+            0xBEE00, 0x123, 10_900_078);
+        event.setIdentifierCollection(new MutableIdentifierCollection(List.of(canonicalSource, canonicalTarget)));
+        var targetEnriched = mapper.map(channel, event);
+        assertEquals(ordinary.targetId(), targetEnriched.targetId());
+        assertNotEquals(sourceEnriched.dedupeKey(), targetEnriched.dedupeKey());
+
+        var assigned = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(10_900_077,
+            0xBEE00, 0x123, 10_900_077);
+        event.setIdentifierCollection(new MutableIdentifierCollection(List.of(assigned, canonicalTarget)));
+        var explicitWorking = mapper.map(channel, event);
+        assertNotEquals(targetEnriched.dedupeKey(), explicitWorking.dedupeKey());
+        assertEquals(10_900_077, explicitWorking.sourceObservedWorkingId());
+        assertEquals(ordinary.countedCall(), explicitWorking.countedCall());
+    }
+
+    @Test
+    void repeatedTalkerAliasesRemainDistinctAcrossCallAndServingSystemGenerations()
+    {
+        ReceiverActivityMapper mapper = new ReceiverActivityMapper();
+        var radio = APCO25FullyQualifiedRadioIdentifier.createFrom(10_900_077,
+            0xBEE00, 0x123, 10_900_077);
+        var first = mapper.map(new TrunkedTalkerAliasEvent(CONFIGURATION_ID, DecoderType.P25_PHASE1,
+            Protocol.APCO25, radio, "UNIT 77", List.of(radio), TrunkedIdentityDomain.STANDARD,
+            1_100L, 1_000L, "p25:bee00:123"));
+        var repeat = mapper.map(new TrunkedTalkerAliasEvent(CONFIGURATION_ID, DecoderType.P25_PHASE1,
+            Protocol.APCO25, radio, "UNIT 77", List.of(radio), TrunkedIdentityDomain.STANDARD,
+            1_200L, 1_000L, "p25:bee00:123"));
+        var nextCall = mapper.map(new TrunkedTalkerAliasEvent(CONFIGURATION_ID, DecoderType.P25_PHASE1,
+            Protocol.APCO25, radio, "UNIT 77", List.of(radio), TrunkedIdentityDomain.STANDARD,
+            2_100L, 2_000L, "p25:bee00:123"));
+        var anotherSystem = mapper.map(new TrunkedTalkerAliasEvent(CONFIGURATION_ID, DecoderType.P25_PHASE1,
+            Protocol.APCO25, radio, "UNIT 77", List.of(radio), TrunkedIdentityDomain.STANDARD,
+            1_100L, 1_000L, "p25:bee00:124"));
+        assertEquals(ReceiverActivityService.talkerAliasDedupeKey(first),
+            ReceiverActivityService.talkerAliasDedupeKey(repeat));
+        assertNotEquals(ReceiverActivityService.talkerAliasDedupeKey(first),
+            ReceiverActivityService.talkerAliasDedupeKey(nextCall));
+        assertNotEquals(ReceiverActivityService.talkerAliasDedupeKey(first),
+            ReceiverActivityService.talkerAliasDedupeKey(anotherSystem));
+    }
+
+    @Test
+    void queuedCallActivityKeepsItsCapturedServingSystemAfterTheReceiverChanges()
+    {
+        Channel channel = new Channel("P25", Channel.ChannelType.STANDARD);
+        channel.setConfigurationId(CONFIGURATION_ID);
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        channel.setP25SiteIdentity(new P25SiteIdentity(0xBEE00, 0x123, 1, 2));
+        P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, 1_000L, null)
+            .identifiers(new MutableIdentifierCollection(List.of(APCO25RadioIdentifier.createFrom(10_900_077),
+                APCO25Talkgroup.create(10_003)))).build();
+        new P25TrafficChannelEventTracker(event, "p25:bee00:123");
+        channel.setP25SiteIdentity(new P25SiteIdentity(0xABCDE, 0x321, 3, 4));
+        var record = new ReceiverActivityMapper().map(channel, event);
+        assertEquals("p25:bee00:123", record.radioSystemKey());
+        assertEquals("10900077", record.sourceRadioId());
+        assertEquals(ReceiverActivityRecords.P25IdentityState.ORDINARY, record.p25SourceIdentity().state());
     }
 
     @Test

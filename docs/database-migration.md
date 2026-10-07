@@ -80,7 +80,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -507,6 +507,30 @@ component repair and validation; they do not repeat prior component repair. All 
 their exact 25-character definition. Only the bundled adjacent Application Migrator changes an existing table;
 normal startup refuses format 43 without mutation, and fresh and migrated format-44 schemas match exactly.
 
+The format 44-to-45 step consolidates home-system P25 radio identities. A number-only observation is keyed within
+its receiving WACN and System ID. A fully qualified radio with that same home system and subscriber number uses the
+same summary owner; only qualified evidence attaches the normalized subscriber reference. Different home systems
+and different subscriber numbers keep their own identities. The step rebuilds the existing resolved Activity view
+to expose the stored owner key consistently; it adds no table, column, index or relationship layer.
+
+The migration moves safely scoped older unresolved rows to that receiving-system key and physically consolidates
+matching duplicate summaries. It preserves detailed source and target Activity, logical-call and site buckets,
+talkgroup relationships, current state, names and allocator high-water marks. Colliding aggregate keys combine their
+previously accepted credits, and the latest state is retained before the duplicate is removed. Historical aggregates
+do not retain individual logical-call keys, so overlapping old source/target credits cannot be reconstructed; system
+and site totals remain unchanged. Future calls credit the shared owner once. Rows with conflicting retained foreign Working-ID
+evidence remain unresolved, with their count reported; the migration does not assign ambiguous old history to a
+subscriber. New observations use the receiving-home owner, while retained unresolved history keeps its distinct
+local key and remains accessible without borrowing the new owner's identity or name.
+Preflight declares the policy without scanning history; the transaction reports exact rekey, merge and unresolved
+counts. Failure rolls back the step and permits retry.
+
+All ID writers use the shared ownership rule, and Activity coalescing preserves new source and target identity
+facts. Directory, talkgroup, Activity, recording-label and deletion paths resolve the same owner, including older
+local links after consolidation. Ordinary home-system labels omit redundant fully qualified context; differing home
+systems or observed Working IDs retain their distinguishing details. The resolved-view change gives format 45 its
+own exact DDL fingerprint. Historical format 44 remains frozen and startup continues to validate without migration.
+
 ## Schema-Change Rule
 
 The optional Managed Recordings catalog is a separate SQLite file with its own adjacent format chain. Its format 2
@@ -517,7 +541,7 @@ counters, and adds no transcript rows. Catalog format 3 adds a constrained `tran
 transcript, marking calls with an existing transcript `complete` and other calls `pending`. Short calls stay pending;
 the background worker applies its configured minimum duration when selecting work. A failed call is retried only by
 an administrator action. Fresh format-3 catalogs use the same status default and index. The main application database
-is independently at format 44; transcript-catalog migrations do not change it. Recognized older catalogs are backed up
+is independently at format 45; transcript-catalog migrations do not change it. Recognized older catalogs are backed up
 and updated in one transaction at the pre-receiver setup boundary, with an optional SQLite-aware recovery snapshot
 before changes. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with
 Managed Recordings unavailable, so optional catalog trouble does not prevent ordinary receiving.

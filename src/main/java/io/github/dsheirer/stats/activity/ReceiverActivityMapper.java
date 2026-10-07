@@ -566,7 +566,8 @@ class ReceiverActivityMapper
     private ReceiverActivityRecords.ActivityEvent map(Channel channel, IDecodeEvent event,
                                                      ReceiverActivityRecords.Action actionOverride)
     {
-        return map(channel, event, actionOverride, null);
+        return map(channel, event, actionOverride,
+            event instanceof P25ChannelGrantEvent grant ? grant.getRadioSystemKey() : null);
     }
 
     private ReceiverActivityRecords.ActivityEvent map(Channel channel, IDecodeEvent event,
@@ -707,7 +708,15 @@ class ReceiverActivityMapper
                 safe(sourceRadioId),
                 safe(targetId),
                 safe(targetKind),
+                identityDedupeKey(p25SourceIdentity),
+                identityDedupeKey(p25TargetIdentity),
+                safe(sourceObservedWorkingId),
+                safe(targetObservedWorkingId),
+                safe(radioSystemKey),
+                safe(facts.wacn()),
+                safe(facts.systemId()),
                 safe(facts.patchMemberTalkgroupIds()),
+                safe(facts.p25PatchMemberIdentities()),
                 safe(metricsAlgorithmId),
                 safe(metricsKeyId),
                 receiverKind == ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_ANALOG &&
@@ -726,6 +735,14 @@ class ReceiverActivityMapper
             p25SourceIdentity,
             facts.p25PatchMemberIdentities(), radioSystemKey, sourceObservedWorkingId,
             targetObservedWorkingId, p25WuidObservation);
+    }
+
+    /** Identity enrichment is a meaningful observation even when the displayed radio number is unchanged. */
+    private static String identityDedupeKey(ReceiverActivityRecords.P25Identity identity)
+    {
+        return identity.isStableFullyQualified() ?
+            identity.homeWacn() + "." + identity.homeSystemId() + "." + identity.homeIdentityId() :
+            identity.state().name();
     }
 
     static boolean isTypedCallOwnedObservation(Channel channel, IDecodeEvent event)

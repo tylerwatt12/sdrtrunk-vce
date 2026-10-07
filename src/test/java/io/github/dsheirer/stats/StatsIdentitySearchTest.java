@@ -44,17 +44,17 @@ class StatsIdentitySearchTest
                     "group_name TEXT,matcher_type TEXT,protocol TEXT,value INTEGER,min_value INTEGER,max_value INTEGER)",
                 "CREATE TABLE alias_p25_subscriber_identity(alias_id INTEGER,p25_subscriber_identity_id INTEGER)",
                 "CREATE TABLE p25_site_call_identity_bucket(identity_summary_id INTEGER,channel_id INTEGER," +
-                    "observed_local_id INTEGER)",
+                    "observed_local_id INTEGER,observed_working_id INTEGER)",
                 "CREATE TABLE receiver_activity_event(id INTEGER PRIMARY KEY,channel_id INTEGER," +
-                    "source_identity_summary_id INTEGER,source_observed_local_id INTEGER," +
-                    "target_identity_summary_id INTEGER,target_observed_local_id INTEGER)",
+                    "source_identity_summary_id INTEGER,source_observed_local_id INTEGER,source_observed_working_id INTEGER," +
+                    "target_identity_summary_id INTEGER,target_observed_local_id INTEGER,target_observed_working_id INTEGER)",
                 "CREATE TABLE activity_event_identity_member(event_id INTEGER,identity_summary_id INTEGER," +
                     "observed_local_id INTEGER,channel_id INTEGER NOT NULL)",
                 "CREATE TABLE trunked_radio_channel_presence(radio_system_id INTEGER,radio_identity_id INTEGER," +
-                    "channel_id INTEGER,observed_local_id INTEGER,PRIMARY KEY(radio_system_id,radio_identity_id))",
+                    "channel_id INTEGER,observed_local_id INTEGER,observed_working_id INTEGER,PRIMARY KEY(radio_system_id,radio_identity_id))",
                 "CREATE TABLE trunked_radio_affiliation(radio_system_id INTEGER,radio_identity_id INTEGER," +
                     "talkgroup_identity_id INTEGER,channel_id INTEGER,radio_observed_local_id INTEGER," +
-                    "talkgroup_observed_local_id INTEGER,PRIMARY KEY(radio_system_id,radio_identity_id))",
+                    "talkgroup_observed_local_id INTEGER,radio_observed_working_id INTEGER,PRIMARY KEY(radio_system_id,radio_identity_id))",
                 "CREATE INDEX idx_alias_radio_value ON alias(protocol,value,alias_list_id)",
                 "CREATE INDEX idx_alias_radio_range ON alias(protocol,min_value,max_value,alias_list_id)",
                 "CREATE INDEX idx_alias_talkgroup_value ON alias(protocol,value,alias_list_id)",
@@ -122,13 +122,13 @@ class StatsIdentitySearchTest
                     (11,10,'Dispatch Fleet',NULL,NULL,'TALKGROUP_RANGE','APCO25',NULL,203,204);
                 """);
             statement.executeUpdate("INSERT INTO alias_p25_subscriber_identity VALUES (7,10)");
-            statement.executeUpdate("INSERT INTO trunked_radio_channel_presence VALUES " +
+            statement.executeUpdate("INSERT INTO trunked_radio_channel_presence(radio_system_id,radio_identity_id,channel_id,observed_local_id) VALUES " +
                 "(1,1003,1,555),(1,1010,2,555)");
-            statement.executeUpdate("INSERT INTO receiver_activity_event VALUES " +
+            statement.executeUpdate("INSERT INTO receiver_activity_event(id,channel_id,source_identity_summary_id,source_observed_local_id,target_identity_summary_id,target_observed_local_id) VALUES " +
                 "(1,1,1004,666,NULL,NULL),(2,1,1005,666,NULL,NULL)," +
                 "(3,1,NULL,NULL,NULL,NULL),(4,1,NULL,NULL,1009,777)");
             statement.executeUpdate("INSERT INTO activity_event_identity_member VALUES (3,1008,888,1)");
-            statement.executeUpdate("INSERT INTO p25_site_call_identity_bucket VALUES (1005,99,999)");
+            statement.executeUpdate("INSERT INTO p25_site_call_identity_bucket(identity_summary_id,channel_id,observed_local_id) VALUES (1005,99,999)");
         }
     }
 
@@ -176,6 +176,21 @@ class StatsIdentitySearchTest
             detail.contains("SCAN receiver_activity_event")), () -> "Evidence must remain identity indexed: " + plan);
         assertEquals(9, query.parameters().size(),
             "Two native forms, two system-name sets, OTA and three Alias fields are bound once after the owner");
+    }
+
+    @Test
+    void canonicalEnrichmentKeepsHomeAliasSearchAndDoesNotBorrowForeignLocalLabels() throws Exception
+    {
+        try(Statement statement = mConnection.createStatement())
+        {
+            statement.executeUpdate("UPDATE radio_system_identity_summary SET p25_subscriber_identity_id=11 WHERE id=1001");
+        }
+        assertEquals(List.of(1001L),search(1,"engine twelve","RADIO_ID"));
+        try(Statement statement = mConnection.createStatement())
+        {
+            statement.executeUpdate("UPDATE radio_system_identity_summary SET home_system_id=2 WHERE id=1001");
+        }
+        assertEquals(List.of(),search(1,"engine twelve","RADIO_ID"));
     }
 
     @Test

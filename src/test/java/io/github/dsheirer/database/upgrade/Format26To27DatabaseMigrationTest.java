@@ -76,7 +76,7 @@ class Format26To27DatabaseMigrationTest
 
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 26, report.steps().size());
             assertEquals("format-26-to-27", report.steps().getFirst().id());
-            assertEquals("format-43-to-44", report.steps().getLast().id());
+            assertEquals(CurrentFormatTestDatabase.lastMigrationStepId(), report.steps().getLast().id());
             assertEffect(report.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.TRANSFORM,
                 "ordinary administrator accounts", 1);
             Map<String,AccountSnapshot> after = accounts(statement);
@@ -174,7 +174,7 @@ class Format26To27DatabaseMigrationTest
     @Test
     void currentFormatStartupDoesNotRewriteAccounts() throws Exception
     {
-        Path database = Format44TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
+        Path database = CurrentFormatTestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
         Map<String,AccountSnapshot> accountsBefore;
         Map<String,byte[]> verifierDigestsBefore;
         long sequenceBefore;

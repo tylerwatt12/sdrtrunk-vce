@@ -50,6 +50,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -279,7 +280,7 @@ class AudioCallCoordinatorTest
     }
 
     @Test
-    void identityOnlyCanonicalSourceDoesNotMatchAnOrdinaryLocalRadio() throws Exception
+    void canonicalHomeSourceAndOrdinaryNativeRadioResolveToOneCall() throws Exception
     {
         AliasList aliasList = aliasList(723);
         List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
@@ -292,7 +293,7 @@ class AudioCallCoordinatorTest
         try
         {
             Leg first = leg(16, aliasList, wacn, system, 26, 207, talkgroup, sharedNumber,
-                2_000, 5_000, GOOD_QUALITY, true, Set.of());
+                2_000, 5_000, DAMAGED_QUALITY, true, Set.of());
             Leg second = leg(17, aliasList, wacn, system, 27, 208, talkgroup, sharedNumber,
                 2_050, 5_050, GOOD_QUALITY, true, Set.of());
             IdentifierCollection canonical = new IdentifierCollection(List.of(
@@ -304,12 +305,95 @@ class AudioCallCoordinatorTest
             emitLeg(coordinator, first, fingerprints(36), canonical);
             emitLeg(coordinator, second, fingerprints(36), ordinary);
 
+            await(() -> resolved.size() == 1);
+            assertEquals(2, resolved.getFirst().receiverLegCount());
+            assertEquals(second.callId(), resolved.getFirst().snapshot().callId(),
+                "The ordinary leg's better audio stays selected while canonical identity is promoted");
+            var radio = (APCO25FullyQualifiedRadioIdentifier)
+                resolved.getFirst().snapshot().identifierCollection().getFromIdentifier();
+            assertEquals(sharedNumber, radio.getRadio());
+            assertNull(radio.getWorkingAddress());
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
+    void foreignCanonicalSourceCannotBorrowTheSameNativeRadioNumber() throws Exception
+    {
+        AliasList aliasList = aliasList(1723);
+        List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = coordinator(resolved, null, null, null);
+        int wacn = 0xABCDE;
+        int system = 0x125;
+        int talkgroup = 9_103;
+        int sharedNumber = 7_779;
+        try
+        {
+            Leg first = leg(116, aliasList, wacn, system, 26, 207, talkgroup, sharedNumber,
+                2_000, 5_000, GOOD_QUALITY, true, Set.of());
+            Leg second = leg(117, aliasList, wacn, system, 27, 208, talkgroup, sharedNumber,
+                2_050, 5_050, GOOD_QUALITY, true, Set.of());
+            IdentifierCollection canonical = new IdentifierCollection(List.of(APCO25Talkgroup.create(talkgroup),
+                APCO25FullyQualifiedRadioIdentifier.createFrom(sharedNumber, wacn, system + 1, sharedNumber)));
+            IdentifierCollection ordinary = new IdentifierCollection(List.of(APCO25Talkgroup.create(talkgroup),
+                APCO25RadioIdentifier.createFrom(sharedNumber)));
+            emitLeg(coordinator, first, fingerprints(36), canonical);
+            emitLeg(coordinator, second, fingerprints(36), ordinary);
             await(() -> resolved.size() == 2);
             assertTrue(resolved.stream().allMatch(call -> call.receiverLegCount() == 1));
         }
         finally
         {
             coordinator.dispose();
+        }
+    }
+
+    @Test
+    void canonicalPrivateDestinationMatchesNativeRadioOnlyOnItsOwnHomeSystem() throws Exception
+    {
+        for(boolean homeSystem: List.of(true, false))
+        {
+            AliasList aliasList = aliasList(1724);
+            List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+            AudioCallCoordinator coordinator = coordinator(resolved, null, null, null);
+            int wacn = 0xABCDE;
+            int system = 0x125;
+            int destination = 7_779;
+            int source = 7_780;
+            try
+            {
+                Leg first = leg(118, aliasList, wacn, system, 26, 207, destination, source,
+                    2_000, 5_000, GOOD_QUALITY, true, Set.of());
+                Leg second = leg(119, aliasList, wacn, system, 27, 208, destination, source,
+                    2_050, 5_050, GOOD_QUALITY, true, Set.of());
+                IdentifierCollection canonical = new IdentifierCollection(List.of(
+                    APCO25FullyQualifiedRadioIdentifier.createTo(destination, wacn,
+                        homeSystem ? system : system + 1, destination), APCO25RadioIdentifier.createFrom(source)));
+                IdentifierCollection ordinary = new IdentifierCollection(List.of(
+                    APCO25RadioIdentifier.createTo(destination), APCO25RadioIdentifier.createFrom(source)));
+                emitLeg(coordinator, first, fingerprints(36), canonical);
+                emitLeg(coordinator, second, fingerprints(36), ordinary);
+                await(() -> resolved.size() == (homeSystem ? 1 : 2));
+                if(homeSystem)
+                {
+                    assertEquals(2, resolved.getFirst().receiverLegCount());
+                    var radio = (APCO25FullyQualifiedRadioIdentifier)
+                        resolved.getFirst().snapshot().identifierCollection().getToIdentifier();
+                    assertEquals(destination, radio.getRadio());
+                    assertNull(radio.getWorkingAddress());
+                }
+                else
+                {
+                    assertTrue(resolved.stream().allMatch(call -> call.receiverLegCount() == 1));
+                }
+            }
+            finally
+            {
+                coordinator.dispose();
+            }
         }
     }
 
