@@ -3,7 +3,7 @@ import * as preferenceSchema from './core/preference-schema.js?v=7';
 import { formatSourceName } from './core/source-names.js?v=1';
 import { Controller as UserPreferenceController } from './core/user-preferences.js';
 import * as tableLayouts from './core/table-layout.js';
-import * as tableDefaults from './core/table-defaults.js?v=15';
+import * as tableDefaults from './core/table-defaults.js?v=16';
 import { createTableOverflow } from './core/table-overflow.js?v=1';
 import { Controller as PageTitleController } from './core/page-title.js?v=2';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
@@ -12061,8 +12061,14 @@ async function renderDashboard() {
   content.lastChild.append(destinations, sources);
 }
 
-const LIVE_DETAIL_SELECTION_KINDS = Object.freeze({ CONTROL: 'CONTROL', EXACT: 'EXACT' });
+const LIVE_DETAIL_SELECTION_KINDS = Object.freeze({ CONTROL: 'CONTROL', EXACT: 'EXACT', CONVENTIONAL: 'CONVENTIONAL' });
 const LIVE_DETAIL_CONTROL_ROLES = new Set(['CONFIGURED_CONTROL', 'CURRENT_CONTROL', 'ALTERNATE_CONTROL']);
+
+function liveDetailViewSelection(tableValue, rowSelection) {
+  if (rowSelection || tableValue?.table_id !== 'conventional') return rowSelection;
+  return { kind: LIVE_DETAIL_SELECTION_KINDS.CONVENTIONAL, logicalKey: 'CONVENTIONAL',
+    transportKey: 'CONVENTIONAL', label: 'All running Conventional channels' };
+}
 
 function liveDetailSelection(tableValue, row, bindingRow = row) {
   const configurationId = row?.configuration_id || tableValue?.configuration_id;
@@ -12143,17 +12149,23 @@ function liveDetailSelectionUnchanged(previous, next) {
 }
 
 function liveMessageTransportChanged(previous, next) {
-  return String(previous?.configurationId || '') !== String(next?.configurationId || '') ||
+  return previous?.kind !== next?.kind ||
+    String(previous?.configurationId || '') !== String(next?.configurationId || '') ||
     Number(previous?.bindingFrequencyHz || 0) !== Number(next?.bindingFrequencyHz || 0);
 }
 
 function liveMessageSourceMatchesSelection(selection, subscriptionId, source) {
+  if (selection?.kind === LIVE_DETAIL_SELECTION_KINDS.CONVENTIONAL) {
+    return liveConventionalScopeMatchesSelection(subscriptionId, source);
+  }
+  if (source?.scope === 'CONVENTIONAL') return false;
   return String(source?.configuration_id || '') === String(selection?.configurationId || '') &&
     String(source?.subscription_id || '') === String(subscriptionId || '') &&
     Number(source?.frequency_hz || 0) === Number(selection?.bindingFrequencyHz || 0);
 }
 
 function liveDetailTransportParameters(selection, includeTimeslot = false) {
+  if (selection?.kind === LIVE_DETAIL_SELECTION_KINDS.CONVENTIONAL) return { scope: 'conventional' };
   if (!selection?.configurationId || !selection?.bindingFrequencyHz) return null;
   const parameters = {
     configuration_id: selection.configurationId,
@@ -12164,6 +12176,9 @@ function liveDetailTransportParameters(selection, includeTimeslot = false) {
 }
 
 function liveEventMatchesSelection(selection, event) {
+  if (selection?.kind === LIVE_DETAIL_SELECTION_KINDS.CONVENTIONAL) {
+    return Boolean(event?.configuration_id) && Number(event?.source_frequency_hz || event?.frequency_hz) > 0;
+  }
   if (String(event?.configuration_id || '') !== String(selection?.configurationId || '')) return false;
   if (selection?.kind !== LIVE_DETAIL_SELECTION_KINDS.EXACT) return true;
   if (Number(event?.frequency_hz || 0) !== Number(selection?.bindingFrequencyHz || 0)) return false;
@@ -12171,7 +12186,19 @@ function liveEventMatchesSelection(selection, event) {
     Number(event?.timeslot || 0) === Number(selection.bindingTimeslot);
 }
 
+function liveMessageMatchesSelection(selection, message) {
+  if (selection?.kind === LIVE_DETAIL_SELECTION_KINDS.CONVENTIONAL) {
+    return Boolean(message?.configuration_id) && Number(message?.frequency_hz) > 0;
+  }
+  return String(message?.configuration_id || '') === String(selection?.configurationId || '') &&
+    Number(message?.frequency_hz || 0) === Number(selection?.bindingFrequencyHz || 0);
+}
+
 function liveEventScopeMatchesSelection(selection, subscriptionId, source) {
+  if (selection?.kind === LIVE_DETAIL_SELECTION_KINDS.CONVENTIONAL) {
+    return liveConventionalScopeMatchesSelection(subscriptionId, source);
+  }
+  if (source?.scope === 'CONVENTIONAL') return false;
   if (String(source?.configuration_id || '') !== String(selection?.configurationId || '')) return false;
   if (String(source?.subscription_id || '') !== String(subscriptionId || '')) return false;
   const exact = selection?.kind === LIVE_DETAIL_SELECTION_KINDS.EXACT;
@@ -12180,6 +12207,50 @@ function liveEventScopeMatchesSelection(selection, subscriptionId, source) {
   const sourceFrequencyHz = Number(source?.frequency_hz) || null;
   const sourceTimeslot = Number(source?.timeslot) || null;
   return sourceFrequencyHz === expectedFrequencyHz && sourceTimeslot === expectedTimeslot;
+}
+
+function liveConventionalScopeMatchesSelection(subscriptionId, source) {
+  return source?.scope === 'CONVENTIONAL' && !source.configuration_id &&
+    !Number(source.frequency_hz) && !Number(source.timeslot) &&
+    String(source.subscription_id || '') === String(subscriptionId || '');
+}
+
+function liveDetailCapturedRowKey(value, idField) {
+  return `${value?.configuration_id || ''}:${value?.[idField] || ''}`;
+}
+
+function liveDetailCaptureRow(values, order, value, idField, timeField, limit) {
+  if (!value?.[idField]) return false;
+  const key = liveDetailCapturedRowKey(value, idField);
+  const previous = values.get(key);
+  values.set(key, value);
+  const timestamp = Number(value[timeField]) || 0;
+  if (!previous || (Number(previous[timeField]) || 0) !== timestamp) {
+    if (previous) order.splice(order.indexOf(key), 1);
+    let lower = 0;
+    let upper = order.length;
+    while (lower < upper) {
+      const middle = Math.floor((lower + upper) / 2);
+      const other = values.get(order[middle]);
+      const otherTimestamp = Number(other?.[timeField]) || 0;
+      if (otherTimestamp > timestamp || (otherTimestamp === timestamp && order[middle] < key)) lower = middle + 1;
+      else upper = middle;
+    }
+    order.splice(lower, 0, key);
+  }
+  while (order.length > limit) values.delete(order.pop());
+  return true;
+}
+
+function liveDetailOrigin(value, label = value?.channel_name,
+    frequencyHz = value?.source_frequency_hz || value?.frequency_hz) {
+  const content = node('span', 'live-event-stack');
+  if (label) content.append(node('strong', '', label));
+  const detail = [frequencyHz ? `${frequency(frequencyHz)} MHz` : '',
+    value?.timeslot == null ? '' : `TS ${value.timeslot}`].filter(Boolean).join(' · ');
+  if (detail) content.append(node(label ? 'small' : 'span', '', detail));
+  content.title = [label, detail].filter(Boolean).join(' · ');
+  return content;
 }
 
 function liveChannelStateMatchesSelection(selection, subscriptionId, source) {
@@ -12262,7 +12333,9 @@ function liveEventDetailsText(event) {
 function liveEventMatchesQuery(event, query) {
   return !query || [event.event_label, event.event_type, event.from_aliases, event.from_identifiers,
     event.to_aliases, event.to_identifiers, liveEventPartyText(event, 'from'), liveEventPartyText(event, 'to'),
-    event.channel, event.details, liveEventDetailsText(event)]
+    event.channel, event.channel_name, event.frequency_hz ? frequency(event.frequency_hz) : '',
+    event.source_frequency_hz ? frequency(event.source_frequency_hz) : '',
+    event.details, liveEventDetailsText(event)]
     .some((value) => liveDetailText(value).includes(query));
 }
 
@@ -12722,6 +12795,8 @@ function liveMessagesPane() {
       if (text) value.title = exactDateTime(message.timestamp_ms);
       return value;
     } },
+    { id: 'channel', label: 'Channel', className: 'live-event-stack',
+      render: (message) => liveDetailOrigin(message) },
     { id: 'context', label: 'Context', render: (message) => [
       message.protocol,
       timeslotLabel(message.timeslot)
@@ -12732,7 +12807,7 @@ function liveMessagesPane() {
       return value;
     } }
   ], 'Select a live row above', {
-    type: 'live-messages', sortable: false, rowKey: (message) => message.message_id,
+    type: 'live-messages', sortable: false, rowKey: (message) => liveDetailCapturedRowKey(message, 'message_id'),
     rowClass: (message) => message.valid ? '' : 'message-invalid',
     wrapperClass: 'live-messages-scroll', tableClass: 'live-messages-table ui-data-table-compact',
     layoutMenuHost: columnsHost
@@ -12744,7 +12819,8 @@ function liveMessagesPane() {
     if (!filters.matchesTimeslot(message.timeslot)) return false;
     if (!filters.matchesValidity(message.valid)) return false;
     const query = filters.query();
-    return !query || [message.text, message.protocol, message.filter_label]
+    return !query || [message.text, message.protocol, message.filter_label, message.channel_name,
+      message.frequency_hz ? frequency(message.frequency_hz) : '']
       .some((value) => liveDetailText(value).includes(query));
   };
 
@@ -12753,7 +12829,8 @@ function liveMessagesPane() {
     const rows = order.map((id) => messages.get(id)).filter((message) => message && matches(message))
       .slice(0, liveDetailMatchingRowLimit());
     messagesTable.tableController.setEmptyText(!selection ? 'Select a live row above' :
-      (selection.bindingFrequencyHz ? 'No matching messages have appeared in this view' :
+      (selection.kind === LIVE_DETAIL_SELECTION_KINDS.CONVENTIONAL || selection.bindingFrequencyHz ?
+        'No matching messages have appeared in this view' :
         'Select an active channel'));
     messagesTable.tableController.replaceRows(selection ? rows : []);
   };
@@ -12778,6 +12855,7 @@ function liveMessagesPane() {
   const clearSession = () => {
     messages.clear();
     order.length = 0;
+    messagesTable.tableController.replaceRows([]);
     missed = 0;
     updateGapNotice();
     scheduleRender();
@@ -12793,21 +12871,15 @@ function liveMessagesPane() {
     stream = null;
   };
   const addMessage = (message) => {
-    if (!message?.message_id) return;
-    if (!messages.has(message.message_id)) order.unshift(message.message_id);
-    messages.set(message.message_id, message);
-    while (order.length > liveDetailCaptureLimit()) {
-      const removedId = order.pop();
-      messages.delete(removedId);
-    }
+    if (!liveDetailCaptureRow(messages, order, message, 'message_id', 'timestamp_ms', liveDetailCaptureLimit())) return;
     scheduleRender();
   };
   const addGap = (value) => {
     missed += Math.max(1, Math.trunc(Number(value?.dropped) || 1));
     updateGapNotice();
   };
-  const shouldRun = () => active && !collapsed && !document.hidden && selection?.configurationId &&
-    selection?.bindingFrequencyHz;
+  const shouldRun = () => active && !collapsed && !document.hidden &&
+    Boolean(liveDetailTransportParameters(selection));
   const sync = () => {
     if (!shouldRun()) {
       closeStream();
@@ -12821,7 +12893,9 @@ function liveMessagesPane() {
     transportReady = false;
     stream = liveConnection('decode_messages', parameters);
     stream.addEventListener('decode_message', (event) => {
-      if (epoch === streamEpoch && transportReady) addMessage(JSON.parse(event.data));
+      if (epoch !== streamEpoch || !transportReady) return;
+      const value = JSON.parse(event.data);
+      if (liveMessageMatchesSelection(selection, value)) addMessage(value);
     });
     stream.addEventListener('live_gap', (event) => {
       if (epoch === streamEpoch && transportReady) addGap(JSON.parse(event.data));
@@ -17298,21 +17372,18 @@ function liveEventsPanel(onCollapse) {
     } },
     { id: 'from', label: 'From', render: (event) => liveEventParty(event, 'from') },
     { id: 'to', label: 'To', render: (event) => liveEventParty(event, 'to') },
-    { id: 'channel', label: 'Channel', className: 'live-event-stack', render: (event) => {
-      const value = node('span', 'live-event-stack');
-      if (event.channel) value.append(node('strong', '', event.channel));
-      const detail = [event.frequency_hz ? `${frequency(event.frequency_hz)} MHz` : '',
-        event.timeslot == null ? '' : `TS ${event.timeslot}`].filter(Boolean).join(' · ');
-      if (detail) value.append(node(event.channel ? 'small' : 'span', '', detail));
-      return value;
-    } },
+    { id: 'channel', label: 'Channel', className: 'live-event-stack', render: (event) =>
+      liveDetailOrigin(event, selection?.kind === LIVE_DETAIL_SELECTION_KINDS.CONVENTIONAL ?
+        event.channel_name || event.channel : event.channel,
+      selection?.kind === LIVE_DETAIL_SELECTION_KINDS.CONVENTIONAL ?
+        event.source_frequency_hz || event.frequency_hz : event.frequency_hz) },
     { id: 'details', label: 'Details', className: 'live-event-details', render: (event) => {
       const value = node('span', '', liveEventDetailsText(event));
       if (event.details) value.title = event.details;
       return value;
     } }
   ], 'Select a live row above', {
-    type: 'live-events', sortable: false, rowKey: (event) => event.event_id,
+    type: 'live-events', sortable: false, rowKey: (event) => liveDetailCapturedRowKey(event, 'event_id'),
     rowClass: (event) => liveEventCategoryClass(event.category),
     wrapperClass: 'live-events-scroll', tableClass: 'live-events-table ui-data-table-compact',
     layoutMenuHost: eventColumnsHost
@@ -17377,19 +17448,15 @@ function liveEventsPanel(onCollapse) {
   };
 
   const addEvent = (event) => {
-    if (!event?.event_id) return;
-    if (!events.has(event.event_id)) order.unshift(event.event_id);
-    events.set(event.event_id, liveEventCaptured(event, selection));
-    while (order.length > liveDetailCaptureLimit()) {
-      const removedId = order.pop();
-      events.delete(removedId);
-    }
+    if (!liveDetailCaptureRow(events, order, liveEventCaptured(event, selection),
+        'event_id', 'time_start_ms', liveDetailCaptureLimit())) return;
     scheduleRender();
   };
 
   const clearSession = () => {
     events.clear();
     order.length = 0;
+    eventsTable.tableController.replaceRows([]);
     missed = 0;
     updateGapNotice();
     scheduleRender();
@@ -17400,7 +17467,8 @@ function liveEventsPanel(onCollapse) {
     updateGapNotice();
   };
 
-  const shouldRun = () => eventsActive && !collapsed && selection?.configurationId;
+  const shouldRun = () => eventsActive && !collapsed && !document.hidden &&
+    (selection?.kind === LIVE_DETAIL_SELECTION_KINDS.CONVENTIONAL || selection?.configurationId);
 
   const sync = () => {
     if (!shouldRun()) {
@@ -17410,7 +17478,8 @@ function liveEventsPanel(onCollapse) {
     if (stream) return;
     const epoch = ++streamEpoch;
     const subscriptionId = randomLiveClientId();
-    const parameters = { configuration_id: selection.configurationId };
+    const parameters = selection.kind === LIVE_DETAIL_SELECTION_KINDS.CONVENTIONAL ?
+      { scope: 'conventional' } : { configuration_id: selection.configurationId };
     if (selection.kind === LIVE_DETAIL_SELECTION_KINDS.EXACT && selection.bindingFrequencyHz) {
       parameters.frequency_hz = selection.bindingFrequencyHz;
       if (selection.bindingTimeslot) parameters.timeslot = selection.bindingTimeslot;
@@ -17438,7 +17507,7 @@ function liveEventsPanel(onCollapse) {
 
   const select = (nextSelection) => {
     messagesController.select(nextSelection);
-    channelController.select(nextSelection);
+    channelController.select(nextSelection?.kind === LIVE_DETAIL_SELECTION_KINDS.CONVENTIONAL ? null : nextSelection);
     const { logicalChanged } = liveDetailSelectionDelta(selection, nextSelection);
     selection = nextSelection;
     if (logicalChanged) {
@@ -17530,6 +17599,8 @@ function liveEventsPanel(onCollapse) {
     if (!collapsePreferenceExplicit) setCollapsed(event.matches);
   };
   collapseMedia.addEventListener('change', synchronizeResponsiveCollapse);
+  const onVisibilityChange = () => sync();
+  document.addEventListener('visibilitychange', onVisibilityChange);
   pause.addEventListener('click', () => {
     paused = !paused;
     setIconButton(pause, paused ? 'icon-play' : 'icon-pause',
@@ -17552,6 +17623,7 @@ function liveEventsPanel(onCollapse) {
       events.clear();
       order.length = 0;
       collapseMedia.removeEventListener('change', synchronizeResponsiveCollapse);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       filters.close();
       messagesController.close();
       channelController.close();
@@ -18059,6 +18131,11 @@ function liveChannelsSection(onSelectionChange) {
   const titleActions = node('div', 'section-title-actions ui-section-actions live-channels-title-actions');
   const selectedViewActions = node('div', 'live-selected-view-actions');
   titleActions.append(connection, selectedViewActions);
+  const clearRowSelection = iconButton('icon-close', 'Clear channel selection',
+    'ui-button ui-button-secondary ui-icon-button section-title-icon');
+  clearRowSelection.hidden = true;
+  clearRowSelection.addEventListener('click', () => clearSelection());
+  titleActions.append(clearRowSelection);
   const pickerActions = node('div', 'section-title-actions ui-section-actions live-picker-actions');
   const presentationSettings = iconButton('icon-live-presentation', 'Live presentation settings',
     'ui-button ui-button-secondary ui-icon-button section-title-icon live-presentation-settings');
@@ -18224,10 +18301,11 @@ function liveChannelsSection(onSelectionChange) {
   });
 
   const clearSelection = () => {
-    if (!selection) return;
+    const hadSelection = Boolean(selection);
     selection = null;
-    liveTable.tableController.render();
-    onSelectionChange(null);
+    clearRowSelection.hidden = true;
+    if (hadSelection) liveTable.tableController.render();
+    onSelectionChange(liveDetailViewSelection(tables.get(activeTableId), null));
   };
 
   selectRow = (value, row, renderSelection = true) => {
@@ -18235,6 +18313,7 @@ function liveChannelsSection(onSelectionChange) {
     const nextSelection = liveDetailRowSelection(value, row);
     if (!nextSelection || liveDetailSelectionUnchanged(selection, nextSelection)) return;
     selection = nextSelection;
+    clearRowSelection.hidden = value.table_id !== 'conventional';
     if (renderSelection) liveTable.tableController.render();
     onSelectionChange(selection);
   };
@@ -18242,8 +18321,8 @@ function liveChannelsSection(onSelectionChange) {
   const showTable = (tableId, closeMobilePicker = false) => {
     const value = tables.get(tableId);
     if (!value) return;
-    clearSelection();
     activeTableId = tableId;
+    clearSelection();
     liveChannelActivityActiveTableId = tableId;
     storeLiveUiState({ active_channel_table_id: tableId });
     const displayed = { ...value, rows: livePresentedTableRows(value, presentation) };
@@ -18416,8 +18495,8 @@ function liveChannelsSection(onSelectionChange) {
     tabNodes.delete(tableId);
     updatePickerSummary();
     if (activeTableId === tableId) {
-      clearSelection();
       activeTableId = null;
+      clearSelection();
       const next = tables.has('conventional') ? 'conventional' : tables.keys().next().value;
       if (next) showTable(next);
       else {

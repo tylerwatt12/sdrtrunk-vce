@@ -262,6 +262,7 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
       return Promise.resolve(new Response(new ReadableStream({ start(controller) {
         controller.enqueue(frame(0, 'ready', { client_id: url.searchParams.get('client_id') }));
         window.fixtureSendLiveSnapshot = (next = snapshotValue) => controller.enqueue(frame(1, 'snapshot', next));
+        window.fixtureSendLiveFrame = (topic, event, data) => controller.enqueue(frame(topic, event, data));
         window.fixtureSendLiveSnapshot();
       } }), { status: 200 }));
     };

@@ -216,7 +216,7 @@ const TABLE_DEFAULTS = Object.freeze({
     time: 92, duration: 78, event: 181, from: 220, to: 220,
     channel: 260, details: 600
   }, grow: ['from', 'to', 'channel', 'details'] },
-  'live-messages': { widths: { time: 95, context: 110, message: 1200 } },
+  'live-messages': { widths: { time: 95, channel: 220, context: 110, message: 1200 } },
   'alias-editor-source-breakdown': { widths: {
     source: 230, 'source-calls': 100, 'source-signaling': 110, 'last-seen': 166
   } },

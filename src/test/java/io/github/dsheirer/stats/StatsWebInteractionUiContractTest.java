@@ -1528,8 +1528,11 @@ class StatsWebInteractionUiContractTest
         assertTrue(source.contains("event?.timeslot"));
         assertTrue(events.contains("liveDetailSelectionDelta(selection, nextSelection)"));
         assertFalse(events.contains("filters.resetForSelection"));
-        assertTrue(events.contains("if (!events.has(event.event_id)) order.unshift(event.event_id)"));
-        assertTrue(events.contains("while (order.length > liveDetailCaptureLimit())"));
+        assertTrue(events.contains("liveDetailCaptureRow(events, order, liveEventCaptured(event, selection),"));
+        String capture = function(source,
+            "function liveDetailCaptureRow(values, order, value, idField, timeField, limit)");
+        assertTrue(capture.contains("liveDetailCapturedRowKey(value, idField)"));
+        assertTrue(capture.contains("while (order.length > limit) values.delete(order.pop())"));
         assertTrue(events.contains("stream.addEventListener('live_gap'"));
         assertTrue(events.contains("stream.addEventListener('source_change'"));
         assertTrue(events.contains("filters.setCatalog(source?.filter_catalog)"));
@@ -1545,7 +1548,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(events.contains("node('strong', 'live-event-duration-value', text)"));
         assertTrue(messages.contains("liveConnection('decode_messages', parameters)"));
         assertTrue(messages.contains("stream.addEventListener('decode_message'"));
-        assertTrue(messages.contains("active && !collapsed && !document.hidden && selection?.configurationId"));
+        assertTrue(messages.contains("active && !collapsed && !document.hidden &&"));
+        assertTrue(messages.contains("Boolean(liveDetailTransportParameters(selection))"));
         assertTrue(messages.contains("type: 'live-messages'"));
         assertTrue(messages.contains("messagesTable.tableController.replaceRows"));
         assertTrue(messages.contains("actions.append(columnsHost, filters.element)"));
@@ -2069,14 +2073,17 @@ class StatsWebInteractionUiContractTest
 
         assertTrue(events.contains("iconButton('icon-pause', 'Pause live details'"));
         assertFalse(events.contains("const connection = badge('Waiting'"));
-        assertTrue(events.contains("eventsActive && !collapsed && selection?.configurationId"));
+        assertTrue(events.contains("eventsActive && !collapsed && !document.hidden &&"));
+        assertTrue(events.contains("selection?.kind === LIVE_DETAIL_SELECTION_KINDS.CONVENTIONAL || selection?.configurationId"));
         assertTrue(events.contains("eventsActive = nextEventsActive"));
-        assertFalse(events.contains("document.addEventListener('visibilitychange'"));
+        assertTrue(events.contains("document.addEventListener('visibilitychange', onVisibilityChange)"));
+        assertTrue(events.contains("document.removeEventListener('visibilitychange', onVisibilityChange)"));
         assertTrue(events.contains("setIconButton(pause, paused ? 'icon-play' : 'icon-pause'"));
         assertTrue(events.contains("messagesController.setPaused(paused)"));
         assertTrue(events.contains("channelController.setPaused(paused)"));
         assertTrue(events.contains("if (!paused) scheduleRender()"));
-        assertTrue(messages.contains("active && !collapsed && !document.hidden && selection?.configurationId"));
+        assertTrue(messages.contains("active && !collapsed && !document.hidden &&"));
+        assertTrue(messages.contains("Boolean(liveDetailTransportParameters(selection))"));
         assertTrue(messages.contains("document.addEventListener('visibilitychange', onVisibilityChange)"));
         assertTrue(messages.contains("document.removeEventListener('visibilitychange', onVisibilityChange)"));
         assertTrue(messages.contains("const onVisibilityChange = () => sync()"));

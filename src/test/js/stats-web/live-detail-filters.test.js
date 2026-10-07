@@ -119,15 +119,21 @@ const context = {
 };
 vm.createContext(context);
 vm.runInContext([
-  "const LIVE_DETAIL_SELECTION_KINDS = Object.freeze({ CONTROL: 'CONTROL', EXACT: 'EXACT' });",
+  "const LIVE_DETAIL_SELECTION_KINDS = Object.freeze({ CONTROL: 'CONTROL', EXACT: 'EXACT', CONVENTIONAL: 'CONVENTIONAL' });",
   "const LIVE_DETAIL_CONTROL_ROLES = new Set(['CONFIGURED_CONTROL', 'CURRENT_CONTROL', 'ALTERNATE_CONTROL']);",
   functionSource('function liveDetailSelection(tableValue, row, bindingRow = row)'),
+  functionSource('function liveDetailViewSelection(tableValue, rowSelection)'),
+  functionSource('function liveDetailTransportParameters(selection, includeTimeslot = false)'),
+  functionSource('function liveConventionalScopeMatchesSelection(subscriptionId, source)'),
+  functionSource('function liveDetailCapturedRowKey(value, idField)'),
+  functionSource('function liveDetailCaptureRow(values, order, value, idField, timeField, limit)'),
   functionSource('function liveCurrentControlRow(tableValue)'),
   functionSource('function liveDetailRowSelection(tableValue, row)'),
   functionSource('function liveDetailSelectionAfterRowsChanged(tableValue, selection)'),
   functionSource('function liveDetailSelectionDelta(previous, next)'),
   functionSource('function liveMessageTransportChanged(previous, next)'),
   functionSource('function liveMessageSourceMatchesSelection(selection, subscriptionId, source)'),
+  functionSource('function liveMessageMatchesSelection(selection, message)'),
   functionSource('function liveEventMatchesSelection(selection, event)'),
   functionSource('function liveEventScopeMatchesSelection(selection, subscriptionId, source)'),
   functionSource('function liveChannelStateMatchesSelection(selection, subscriptionId, source)'),
@@ -495,4 +501,53 @@ assert.equal(context.liveChannelStateMatchesSelection(voice, subscriptionId, {
 assert.equal(context.liveChannelStateMatchesSelection(conventional, subscriptionId, {
   configuration_id: 'other-channel-config', frequency_hz: 155_730_000,
   subscription_id: subscriptionId
+}), false);
+
+// Conventional without a row selects a bounded combined feed; Channel still needs an exact row.
+const combined = context.liveDetailViewSelection({ table_id: 'conventional' }, null);
+assert.equal(combined.kind, 'CONVENTIONAL');
+assert.equal(combined.configurationId, undefined);
+assert.deepEqual(JSON.parse(JSON.stringify(context.liveDetailTransportParameters(combined))), { scope: 'conventional' });
+assert.strictEqual(context.liveDetailViewSelection({ table_id: 'conventional' }, conventional), conventional);
+assert.equal(context.liveDetailViewSelection(site, null), null);
+assert.equal(context.liveMessageTransportChanged(combined, conventional), true);
+const combinedSource = { scope: 'CONVENTIONAL', subscription_id: subscriptionId };
+for (const checker of [context.liveMessageSourceMatchesSelection, context.liveEventScopeMatchesSelection]) {
+  assert.equal(checker(combined, subscriptionId, combinedSource), true);
+  assert.equal(checker(combined, 'new-subscription', combinedSource), false);
+  assert.equal(checker(combined, subscriptionId, { ...combinedSource, scope: 'CHANNEL' }), false);
+  assert.equal(checker(combined, subscriptionId, { ...combinedSource, configuration_id: 'unexpected' }), false);
+  assert.equal(checker(combined, subscriptionId, { ...combinedSource, frequency_hz: 155_730_000 }), false);
+  assert.equal(checker(conventional, subscriptionId, combinedSource), false);
+}
+assert.equal(context.liveEventMatchesSelection(combined, { configuration_id: 'source-a', frequency_hz: 155_730_000 }), true);
+assert.equal(context.liveEventMatchesSelection(combined, { frequency_hz: 155_730_000 }), false);
+
+// Replaying sources in any order retains the newest combined rows. IDs from different origins never collide.
+for (const [idField, timeField] of [['event_id', 'time_start_ms'], ['message_id', 'timestamp_ms']]) {
+  const values = new Map(), order = [];
+  const capture = (source, id, timestamp, text = '') => context.liveDetailCaptureRow(values, order,
+    { configuration_id: source, [idField]: id, [timeField]: timestamp, text }, idField, timeField, 3);
+  capture('source-a', 'shared', 100);
+  capture('source-b', 'shared', 300);
+  capture('source-a', 'middle', 200);
+  capture('source-b', 'old', 50);
+  assert.deepEqual(order, ['source-b:shared', 'source-a:middle', 'source-a:shared']);
+  assert.equal(values.size, 3);
+  capture('source-a', 'shared', 100, 'updated');
+  assert.equal(values.get('source-a:shared').text, 'updated');
+  assert.equal(order.length, 3);
+  capture('source-a', 'shared', 400);
+  assert.deepEqual(order, ['source-a:shared', 'source-b:shared', 'source-a:middle']);
+  assert.equal(context.liveDetailCaptureRow(values, order, {}, idField, timeField, 3), false);
+}
+assert.equal(context.liveEventMatchesSelection(combined, { configuration_id: 'source-a', source_frequency_hz: 155_730_000 }), true);
+assert.equal(context.liveMessageMatchesSelection(conventional, {
+  configuration_id: 'channel-config', frequency_hz: 155_730_000, timeslot: 2
+}), true);
+assert.equal(context.liveMessageMatchesSelection(conventional, {
+  configuration_id: 'different-channel', frequency_hz: 155_730_000
+}), false);
+assert.equal(context.liveMessageMatchesSelection(conventional, {
+  configuration_id: 'channel-config', frequency_hz: 155_740_000
 }), false);
