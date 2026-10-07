@@ -3,6 +3,7 @@ package io.github.dsheirer.gui.setup;
 import com.formdev.flatlaf.FlatLightLaf;
 import com.formdev.flatlaf.FlatDarkLaf;
 import io.github.dsheirer.gui.ApplicationIcon;
+import io.github.dsheirer.gui.ScrollMorePanel;
 import io.github.dsheirer.gui.theme.Theme;
 import jiconfont.icons.font_awesome.FontAwesome;
 import jiconfont.swing.IconFontSwing;
@@ -293,7 +294,7 @@ public final class SetupWizard extends JDialog
         JScrollPane scroll = new JScrollPane(page);
         scroll.setBorder(BorderFactory.createEmptyBorder());
         scroll.getVerticalScrollBar().setUnitIncrement(18);
-        body.add(scroll, BorderLayout.CENTER);
+        body.add(new ScrollMorePanel(scroll), BorderLayout.CENTER);
         JPanel footer = new JPanel();
         footer.setLayout(new BoxLayout(footer, BoxLayout.Y_AXIS));
         footer.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1,0,0,0,WizardStyles.border()),new EmptyBorder(16,0,0,0)));

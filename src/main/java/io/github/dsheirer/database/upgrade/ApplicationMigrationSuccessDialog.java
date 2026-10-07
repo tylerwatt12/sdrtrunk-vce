@@ -12,6 +12,7 @@
 package io.github.dsheirer.database.upgrade;
 
 import io.github.dsheirer.gui.ApplicationIcon;
+import io.github.dsheirer.gui.ScrollMorePanel;
 import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Dialog;
@@ -207,7 +208,7 @@ public final class ApplicationMigrationSuccessDialog
             message.setCaretPosition(0);
             JScrollPane scrollPane = new JScrollPane(message);
             scrollPane.setPreferredSize(new Dimension(690, 300));
-            add(scrollPane, BorderLayout.CENTER);
+            add(new ScrollMorePanel(scrollPane), BorderLayout.CENTER);
 
             mController = new CountdownController(report, seconds, clipboardWriter, acceptAction);
             mOkButton.addActionListener(event -> mController.accept());
