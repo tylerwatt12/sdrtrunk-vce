@@ -431,7 +431,8 @@ async function pageHeading(renderer, response) {
   assert.equal((await pageHeading('renderRadio', radio)).title, 'Radio: 42');
   assert.equal((await pageHeading('renderRadio', { protocol: 'P25', radio_system_key: 'p25:bee00:348', native_id: 130001,
     canonical_identity: { wacn: 0xbee00, system_id: 0x348, subscriber_id: 9601699 },
-    working_subscriber_id: 130001 })).title, 'Radio: 9601699 (Working ID 130001)',
+    home_system_name: 'County Radio', working_subscriber_id: 130001 })).title,
+    'Radio: County Radio · 9601699 (Working ID 130001)',
   'Local P25 radio headings retain the permanent number and a different Working ID');
   assert.equal((await pageHeading('renderRadio', { protocol: 'NXDN',
     address_domain: 'nxdn_type_d', native_id: (12 << 11) | 34 })).title, 'Radio: 12-0034');
@@ -443,11 +444,19 @@ const localRadio = {
   observed_working_id: 4326018
 };
 assert.equal(behavior.radioIdentifierText(localRadio, 4326018), '4326018');
+for (const observed_working_id of [true, false, [], [501], {}, '', ' ']) {
+  assert.equal(behavior.radioIdentifierText({ ...localRadio, observed_working_id }, 4326018), '4326018',
+    'Invalid typed Working ID fields must not create a different radio display.');
+}
+assert.equal(behavior.radioIdentifierText({ ...localRadio, radio_system_key: '',
+  entity_ref: { kind: 'radio', radio_system_key: localRadio.radio_system_key,
+    identity_key: 'v1-r-bee00-348-4326018' } }, 4326018), '4326018',
+  'Radio detail navigation context uses the same compact local display.');
 assert.equal(behavior.radioIdentifierText({ protocol: 'P25', radio_system_key: localRadio.radio_system_key },
   4326018), behavior.radioIdentifierText(localRadio, 4326018),
   'Complete registration and ordinary local activity should display the same radio number.');
 assert.equal(behavior.radioIdentifierText({ ...localRadio, observed_working_id: 12345 }, 12345),
-  '4326018 (Working ID 12345)');
+  'BEE00.348.4326018 (Working ID 12345)');
 const foreignRadio = { ...localRadio, radio_system_key: 'p25:00001:047', home_system_name: 'County Radio' };
 assert.equal(behavior.radioIdentifierText(foreignRadio, 4326018), 'County Radio · 4326018',
   'Foreign radios retain their home system even when the numeric IDs match.');
@@ -471,7 +480,7 @@ assert.equal(behavior.liveIdentifierAliasValue({ ...liveSource,
   source_canonical_identity: { ...localRadio.canonical_identity, system_id: 0x349 } }, 'source'),
   'County Radio · 4326018', 'A foreign radio keeps home context despite the same numeric ID.');
 assert.equal(behavior.liveIdentifierAliasValue({ ...liveSource, source_observed_working_id: 501 }, 'source'),
-  '4326018 (Working ID 501)');
+  'County Radio · 4326018 (Working ID 501)');
 assert.equal(behavior.liveIdentifierAliasValue({ ...liveSource, source_entity_ref: null }, 'source'),
   'County Radio · 4326018', 'Retained rows without safe navigation must not inherit the current table scope.');
 const liveTarget = { protocol: 'P25', target_id: 4326018, target_form: 'RADIO',
@@ -500,7 +509,7 @@ assert.equal(behavior.liveEventCaptured({ ...rawEvent, radio_system_key: 'p25:00
 assert.equal(behavior.liveEventPartyText(behavior.liveEventCaptured(rawEvent, {}), 'from'),
   'BEE00.348.4326018', 'Unknown serving scope retains the home prefix but omits an equal Working ID.');
 assert.equal(behavior.liveEventPartyText({ ...capturedEvent, from_party: [
-  { ...eventRadio, observed_working_id: 501 }] }, 'from'), '4326018 (Working ID 501)');
+  { ...eventRadio, observed_working_id: 501 }] }, 'from'), 'BEE00.348.4326018 (Working ID 501)');
 assert.equal(behavior.liveEventPartyText({ ...capturedEvent, from_party: [
   { ...eventRadio, form: 'TALKGROUP' }] }, 'from'), eventRadio.text,
   'Dotted text and unrelated identifier types do not establish a radio identity.');
@@ -524,20 +533,20 @@ const patchText = `P:91 [92] [${eventRadio.text}, ${patchRadio.text}]`;
 const patchEvent = { ...capturedEvent, from_party: [], from_identifiers: '',
   to_party: [{ form: 'PATCH_GROUP', text: patchText, radio_members: [eventRadio, patchRadio] }],
   to_identifiers: patchText, details: `PATCH ADDED: ${patchText}` };
-assert.equal(behavior.liveEventPartyText(patchEvent, 'to'), 'P:91 [92] [4326018, 4326018 (Working ID 501)]',
+assert.equal(behavior.liveEventPartyText(patchEvent, 'to'), 'P:91 [92] [4326018, BEE00.348.4326018 (Working ID 501)]',
   'Known radio members inside a patch use the same local/Working ID rule without changing talkgroups.');
-assert.equal(behavior.liveEventDetailsText(patchEvent), 'PATCH ADDED: P:91 [92] [4326018, 4326018 (Working ID 501)]');
+assert.equal(behavior.liveEventDetailsText(patchEvent), 'PATCH ADDED: P:91 [92] [4326018, BEE00.348.4326018 (Working ID 501)]');
 assert.equal(behavior.liveEventPartyText({ ...patchEvent, to_party: [{ form: 'TALKGROUP', text: patchText,
   radio_members: [eventRadio] }] }, 'to'), patchText,
   'Only an actual typed patch establishes radio members.');
 const structuredPatch = { ...patchEvent.to_party[0], patch_group: '91', talkgroup_members: ['92'],
   text: `P:91 [92] [${eventRadio.text.slice(0, 17)}` };
 assert.equal(behavior.liveEventPartyText({ ...patchEvent, to_party: [structuredPatch] }, 'to'),
-  'P:91 [92] [4326018, 4326018 (Working ID 501)]',
+  'P:91 [92] [4326018, BEE00.348.4326018 (Working ID 501)]',
   'Structured patch members stay complete even when the bounded raw diagnostic text ends mid-radio.');
 assert.equal(behavior.liveEventPartyText({ ...patchEvent, to_party: [{ ...structuredPatch,
   talkgroup_members_truncated: true, radio_members_truncated: true }] }, 'to'),
-  'P:91 [92, …] [4326018, 4326018 (Working ID 501), …]',
+  'P:91 [92, …] [4326018, BEE00.348.4326018 (Working ID 501), …]',
   'A capped member list ends after a whole identity and marks the omitted members.');
 const pickerContext = { radioSystemKey: localRadio.radio_system_key };
 const suggestion = behavior.activityIdentitySuggestion({ ...localRadio, native_id: 4326018,

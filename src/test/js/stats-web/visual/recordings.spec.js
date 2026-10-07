@@ -437,6 +437,80 @@ test('raw numeric identities keep the selected system friendly name', async ({ p
   expect(state.requestedFilters.at(-1)).toMatchObject({ system_key: systemKey, talkgroup_id: '7', radio_id: '8' });
 });
 
+test('OTA recording suggestions preserve the name and owner when raw IDs are absent or different', async ({ page }) => {
+  for (const scenario of [
+    { rawId: null, home: '00001-001', homeId: 777, homeWacn: 1, homeSystem: 1,
+      seeds: ['dispatch range', 'unit'], filters: { talkgroup_min: '1200', talkgroup_max: '1299', radio_id: '401' } },
+    { rawId: 0, home: '00001-001', homeId: 777, homeWacn: 1, homeSystem: 1, dedicated: true,
+      seeds: ['dispatch', 'unit range'], filters: { talkgroup_id: '1201', radio_min: '400', radio_max: '499' } },
+    { rawId: 401, home: '00002-002', homeId: 777, homeWacn: 2, homeSystem: 2,
+      seeds: ['dispatch', 'unit range'], filters: { talkgroup_id: '1201', radio_min: '400', radio_max: '499' } }
+  ]) {
+    const radioHref = `/?view=radio&radio_system_key=p25%3A00001%3A001&identity_key=v1-r-${scenario.home}-777`;
+    const recorded = { ...linkedCall, source_id: scenario.rawId, source_alias: null,
+      source_ota_alias: 'Subscriber OTA', source_home_wacn: scenario.homeWacn,
+      source_home_system_id: scenario.homeSystem, source_home_id: scenario.homeId,
+      source_entity_ref: { kind: 'radio', radio_system_key: systemKey,
+        identity_key: `v1-r-${scenario.home}-777` } };
+    const choices = {
+      metro: { kind: 'system', id: systemKey, system_key: systemKey, label: 'Metro Public Safety' },
+      'dispatch range': { kind: 'talkgroup_range', id: '1200-1299', min_id: 1200, max_id: 1299,
+        label: 'Dispatch range', system_key: systemKey },
+      dispatch: { kind: 'talkgroup', id: 1201, label: 'Configured Dispatch', system_key: systemKey },
+      'unit range': { kind: 'radio_range', id: '400-499', min_id: 400, max_id: 499,
+        label: 'Unit range', system_key: systemKey },
+      unit: { kind: 'radio', id: 401, label: 'Configured Unit', system_key: systemKey },
+      subscriber: { kind: 'radio', id: 777, label: 'Subscriber OTA', name_query: 'Subscriber OTA',
+        system_key: systemKey, system_name: 'Metro Public Safety', alias_list_id: 700 }
+    };
+    const state = await openRecordings(page, { call: recorded,
+      suggestions: (q) => choices[q] ? [choices[q]] : [] });
+    const query = page.getByRole('combobox', { name: 'Find a call' });
+    const choose = async (input, popup, term) => {
+      await input.fill(term);
+      await expect(page.locator(popup).getByRole('option')).toHaveCount(1);
+      await input.press('ArrowDown');
+      await input.press('Enter');
+    };
+    for (const term of ['metro', ...scenario.seeds]) {
+      await choose(query, '#recordings-options-q', term);
+    }
+    await page.getByRole('button', { name: 'Search', exact: true }).click();
+    await expect.poll(() => state.requestedFilters.at(-1)).toMatchObject(scenario.filters);
+
+    if (scenario.dedicated) {
+      await page.getByRole('button', { name: /^Filters/ }).click();
+      await choose(page.getByRole('combobox', { name: 'Radio ID', exact: true }),
+        '#recordings-options-radio_id', 'subscriber');
+    } else {
+      await choose(query, '#recordings-options-q', 'subscriber');
+      await expect(query).toHaveValue('Subscriber OTA');
+    }
+    expect(state.suggestionRequests.at(-1)).toMatchObject({ q: 'subscriber', system_key: systemKey });
+    await page.getByRole('button', { name: 'Search', exact: true }).click();
+    await expect.poll(() => state.requestedFilters.at(-1))
+      .toMatchObject({ q: 'Subscriber OTA', system_key: systemKey });
+    for (const key of ['talkgroup_id', 'talkgroup_min', 'talkgroup_max', 'radio_id',
+      'radio_min', 'radio_max', 'alias_list_id']) {
+      expect(state.requestedFilters.at(-1)).not.toHaveProperty(key);
+    }
+    const chips = page.locator('.recordings-selected-filters');
+    await expect(chips).not.toContainText('Configured Dispatch');
+    await expect(chips).not.toContainText('Dispatch range');
+    await expect(chips).not.toContainText('Configured Unit');
+    await expect(chips).not.toContainText('Unit range');
+    await expect(entityLink(page.locator('.recordings-call'), radioHref).first()).toContainText('Subscriber OTA');
+    await page.locator('.recordings-call-info').click();
+    const detail = page.getByRole('dialog', { name: 'Call details' });
+    const source = entityLink(detail, radioHref).first();
+    await expect(source).toContainText('Subscriber OTA');
+    await expect(source).toContainText('777');
+    if (scenario.rawId === 401) await expect(source).toContainText('Working ID 401');
+    else await expect(source).not.toContainText('Working ID');
+    await page.keyboard.press('Escape');
+  }
+});
+
 test('named site suggestions use channel names and preserve their hidden site tuple', async ({ page }) => {
   const recordedSite = { kind: 'site', id: channelId, channel_id: channelId,
     label: 'North Ridge Channel', detail: 'Metro Public Safety · North Ridge · RFSS 1 · Site 2',
@@ -676,6 +750,55 @@ test('direct destination and patch member facts link to their identities', async
   await expect(entityLink(detail,
     '/?view=group-identity&radio_system_key=p25%3A00001%3A001&identity_key=v1-g-00001-001-1202').first())
     .toContainText('Fireground');
+});
+
+test('destination and patch radio names show OTA names and preserve configured alias precedence', async ({ page }) => {
+  const destinationHref = '/?view=radio&radio_system_key=p25%3A00001%3A001&identity_key=v1-r-00002-002-777';
+  const direct = { ...linkedCall, call_type: 'DIRECT', talkgroup_id: null, talkgroup_alias: null,
+    destination_radio_id: 401, destination_radio_alias: null, destination_radio_ota_alias: 'Destination OTA',
+    target_home_wacn: 2, target_home_system_id: 2, target_home_id: 777,
+    target_entity_ref: { kind: 'radio', radio_system_key: systemKey, identity_key: 'v1-r-00002-002-777' } };
+  await openRecordings(page, { call: direct });
+  await expect(entityLink(page.locator('.recordings-call'), destinationHref).first())
+    .toContainText('Direct to Destination OTA');
+  await page.locator('.recordings-call-info').click();
+  let detail = page.getByRole('dialog', { name: 'Call details' });
+  await expect(entityLink(detail, destinationHref).first()).toContainText('Direct to Destination OTA');
+
+  await openRecordings(page, { call: { ...direct, destination_radio_alias: 'Configured Destination' } });
+  await expect(entityLink(page.locator('.recordings-call'), destinationHref).first())
+    .toContainText('Direct to Configured Destination');
+  await expect(page.locator('.recordings-call-title')).not.toContainText('Destination OTA');
+
+  const memberHref = '/?view=radio&radio_system_key=p25%3A00001%3A001&identity_key=v1-r-00002-002-777';
+  const configuredMemberHref = '/?view=radio&radio_system_key=p25%3A00001%3A001&identity_key=v1-r-00002-002-778';
+  const patch = { ...linkedCall, call_type: 'PATCH', talkgroup_alias: 'Dispatch Patch',
+    patch_members: [
+      { kind: 'radio', id: 401, alias: null, ota_alias: 'Member OTA', home_wacn: 2,
+        home_system_id: 2, home_identity_id: 777,
+        entity_ref: { kind: 'radio', radio_system_key: systemKey, identity_key: 'v1-r-00002-002-777' } },
+      { kind: 'radio', id: 402, alias: 'Configured Member', ota_alias: 'Other OTA', home_wacn: 2,
+        home_system_id: 2, home_identity_id: 778,
+        entity_ref: { kind: 'radio', radio_system_key: systemKey, identity_key: 'v1-r-00002-002-778' } }
+    ] };
+  await openRecordings(page, { call: patch });
+  await page.locator('.recordings-call-info').click();
+  detail = page.getByRole('dialog', { name: 'Call details' });
+  const identities = detail.locator('details').filter({ has: page.locator('summary', {
+    hasText: /^Source & target identities$/ }) });
+  await identities.locator('summary').click();
+  await expect(entityLink(identities, memberHref)).toBeVisible();
+  await expect(entityLink(identities, memberHref)).toContainText('Member OTA');
+  await expect(entityLink(identities, memberHref)).toContainText('401');
+  await expect(entityLink(identities, configuredMemberHref)).toContainText('Configured Member');
+  await expect(identities).not.toContainText('Other OTA');
+  const memberDetails = detail.locator('details').filter({ has: page.locator('summary', {
+    hasText: /^Patch member identities$/ }) });
+  await memberDetails.locator('summary').click();
+  await expect(memberDetails.locator('dt').filter({ hasText: /^Member 1 alias$/ }).locator('+ dd'))
+    .toContainText('Member OTA');
+  await expect(memberDetails.locator('dt').filter({ hasText: /^Member 2 alias$/ }).locator('+ dd'))
+    .toContainText('Configured Member');
 });
 
 test('recording identities remain readable when references or radio access are absent', async ({ page }) => {

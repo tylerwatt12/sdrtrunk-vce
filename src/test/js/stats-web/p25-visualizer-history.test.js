@@ -140,7 +140,7 @@ async function main() {
   };
   assert.equal(displayedRadio(), '7001', 'Local visualizer radios omit home prefixes and equal Working IDs.');
   assert.equal(displayedRadio({ source_alias_name: 'Engine 1' }), 'Engine 1', 'Configured aliases remain primary.');
-  assert.equal(displayedRadio({ source_observed_working_id: 501 }), '7001 (Working ID 501)');
+  assert.equal(displayedRadio({ source_observed_working_id: 501 }), 'BEE00.123.7001 (Working ID 501)');
   assert.equal(displayedRadio({ source_canonical_identity: { wacn: 0xBEE00, system_id: 0x124, subscriber_id: 7001 },
     source_home_system_name: 'County P25' }), 'County P25 · 7001', 'Foreign home names appear in graph labels.');
   assert.equal(displayedRadio({ source_canonical_identity: { wacn: 0xBEE01, system_id: 0x123, subscriber_id: 7001 } }),

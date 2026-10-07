@@ -8,7 +8,7 @@ import { createTableOverflow } from './core/table-overflow.js?v=1';
 import { Controller as PageTitleController } from './core/page-title.js?v=2';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
 import * as systemLabels from './core/system-labels.js?v=1';
-import { formatP25RadioIdentifier, p25ServingSystemKey } from './core/radio-labels.js?v=3';
+import { formatP25RadioIdentifier, p25ServingSystemKey } from './core/radio-labels.js?v=4';
 import * as pageLifecycle from './core/page-lifecycle.js';
 import { installIconHints } from './core/icon-hints.js?v=4';
 import { createFormWorkflow } from './core/form-workflows.js?v=1';
@@ -21,7 +21,7 @@ import {
   isReceiverHealthAlertEnabled
 } from './core/receiver-health-alerts.js?v=3';
 import * as radioSystemsDirectory from './features/radio-systems-directory.js';
-import { createListenMap } from './features/listen-map.js?v=6';
+import { createListenMap } from './features/listen-map.js?v=7';
 import { buildRadioResolvePlannerUrl } from './features/radioresolve-analysis.js?v=2';
 import {
   createAliasList,
@@ -31,14 +31,14 @@ import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from
 import { createStreamingWorkspace } from './features/streaming.js?v=8';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=9';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=13';
-import { createRecordingsFeature } from './features/recordings.js?v=23';
+import { createRecordingsFeature } from './features/recordings.js?v=25';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=27';
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=8';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createAudioDock } from './core/audio-dock.js?v=13';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=4';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
-import { WebCallPlayer } from './web-call-player.js?v=13';
+import { WebCallPlayer } from './web-call-player.js?v=14';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
@@ -1648,6 +1648,8 @@ function workingSubscriberId(row, prefix = '') {
     row?.[`${prefix}_working_subscriber_id`], row?.[`${prefix}_observed_working_id`]
   ] : [row?.working_subscriber_id, row?.observed_working_id];
   for (const candidate of candidates) {
+    if (typeof candidate !== 'number' && typeof candidate !== 'string' ||
+        typeof candidate === 'string' && !candidate.trim()) continue;
     const numeric = Number(candidate);
     if (Number.isInteger(numeric) && numeric >= 1 && numeric <= 0xFFFFFC) return numeric;
   }
@@ -18519,7 +18521,7 @@ function saveP25VisualizerEventSettings(value) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=33');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=34');
   const visualizerModule = await p25VisualizerModulePromise;
   if (!renderIsCurrent(renderContext)) return;
   const visualizer = visualizerModule.createP25Visualizer({
@@ -19863,12 +19865,11 @@ async function renderGroupIdentity() {
 }
 
 function issiAssignmentIsOrdinaryLocal(row, servingKey) {
-  const serving = /^p25:([0-9a-f]{1,5}):([0-9a-f]{1,3})$/i.exec(String(servingKey || ''));
   const canonical = row ? p25CanonicalSubscriber({ ...row, protocol: 'p25' }) : null;
-  const working = row?.observed_working_id;
-  return Boolean(serving && canonical && working !== null && working !== undefined && working !== '' &&
-    Number(working) === canonical.subscriber_id && parseInt(serving[1], 16) === canonical.wacn &&
-    parseInt(serving[2], 16) === canonical.system_id);
+  const working = workingSubscriberId(row);
+  return Boolean(canonical && working !== null && formatP25RadioIdentifier(canonical, {
+    servingSystemKey: servingKey, workingId: working
+  }) === String(canonical.subscriber_id));
 }
 
 function radioCurrentAssignmentSection(radio, renderContext) {
@@ -19970,6 +19971,7 @@ async function renderRadio() {
   const radio = response;
   const tab = route.get('tab') || 'info';
   const permanentIdentity = p25CanonicalSubscriber(radio);
+  const workingId = workingSubscriberId(radio);
   const formattedId = radioIdentifierText(radio, radio.native_id);
   const title = entityPageTitle('Radio', aliasLabel(radio),
     normalizedSiteText(radio.last_talker_alias) || formattedId);
@@ -20015,8 +20017,8 @@ async function renderRadio() {
           canonical_identity: permanentIdentity, home_radio_system_key: homeKey })]);
       }
     }
-    if (permanentIdentity && workingSubscriberId(radio) !== null) {
-      identityValues.push(['Last Observed Working ID', identifierNumber(workingSubscriberId(radio))]);
+    if (permanentIdentity && workingId !== null && workingId !== permanentIdentity.subscriber_id) {
+      identityValues.push(['Last Observed Working ID', identifierNumber(workingId)]);
     }
     if (radioSystemCapability(radio, 'talker_aliases')) {
       identityValues.push(['Talker Alias', radio.last_talker_alias]);
@@ -20053,7 +20055,7 @@ async function renderRadio() {
       ['Last Observed', dateTime(radio.last_seen_ms)]
     ])), section('Collected Signaling Observations', fragment(
       signalingMetrics(signalingCounts(radio)), activityMetricGuide())));
-    if (p25CanonicalSubscriber(radio)) {
+    if (permanentIdentity && formattedId !== String(permanentIdentity.subscriber_id)) {
       blocks.unshift(radioCurrentAssignmentSection(radio, renderContext));
     }
     infoColumn.append(...blocks);

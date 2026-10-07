@@ -398,7 +398,7 @@ async function main() {
       playback_target: { kind: 'radio', radio_system_key: 'p25:bee00:348' } }),
       'Dispatch · Home System · 2115288', 'The call receiving system takes precedence over playback context.');
     assert.equal(labels.callLabel({ ...localRadioTarget, target_alias: '', target_observed_working_id: 501 }),
-      '2115288 (Working ID 501)');
+      'BEE00.348.2115288 (Working ID 501)');
     assert.equal(labels.canonicalRadioLabel({ ...foreignNamedRadio, radio_system_key: '',
       target_home_system_name: 'Home System' }, 'target'), 'Home System · 2115288',
       'Missing receiving scope should keep home system context even when the Working ID matches.');

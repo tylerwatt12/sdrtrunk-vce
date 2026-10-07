@@ -1,6 +1,6 @@
 import { createDualRange } from '../core/dual-range.js?v=1';
 import { systemLabel, systemName } from '../core/system-labels.js?v=1';
-import { formatP25RadioIdentifier } from '../core/radio-labels.js?v=3';
+import { formatP25RadioIdentifier } from '../core/radio-labels.js?v=4';
 import { formatSourceName } from '../core/source-names.js?v=1';
 
 const CALLS = '/api/v1/recordings/calls';
@@ -24,6 +24,16 @@ function queryPath(root, values = {}) {
     if (value !== '' && value !== null && value !== undefined) query.set(key, String(value));
   });
   return query.size ? `${root}?${query}` : root;
+}
+
+export function recordingSuggestionFilters(filters, suggestion) {
+  const next = { ...filters };
+  if (!suggestion?.name_query) return next;
+  for (const key of ['radio_id', 'radio_min', 'radio_max', 'talkgroup_id',
+    'talkgroup_min', 'talkgroup_max', 'alias_list_id']) next[key] = '';
+  next.q = String(suggestion.name_query);
+  if (suggestion.system_key) next.system_key = String(suggestion.system_key);
+  return next;
 }
 
 function value(row, ...names) {
@@ -57,7 +67,7 @@ function label(row) {
   const group = value(row, 'talkgroup_alias', 'group_alias', 'talkgroup_name');
   const groupId = value(row, 'talkgroup_id', 'group_id');
   const destination = value(row, 'destination_radio_id');
-  const destinationAlias = value(row, 'destination_radio_alias');
+  const destinationAlias = value(row, 'destination_radio_alias', 'destination_radio_ota_alias');
   const channel = value(row, 'channel_name', 'analog_channel_name');
   if (['NBFM', 'AM'].includes(value(row, 'protocol'))) return channel || 'Recorded channel';
   return group || (groupId !== null ? `Talkgroup ${groupId}` :
@@ -253,6 +263,25 @@ export function createRecordingsFeature(deps) {
 
   function applySuggestion(key, suggestion) {
     selectedSuggestions.get(key)?.appliedKeys?.forEach((applied) => { search[applied] = ''; });
+    if (suggestion.name_query) {
+      const sameSystem = search.system_key === String(suggestion.system_key);
+      const existingSystem = selectedSuggestions.get('system_key');
+      Object.assign(search, recordingSuggestionFilters(search, suggestion));
+      for (const identityKey of ['radio_id', 'talkgroup_id']) {
+        selectedSuggestions.delete(identityKey);
+        const input = searchInputs.get(identityKey);
+        if (input && identityKey !== key) input.value = '';
+      }
+      selectedSuggestions.set(key, { ...suggestion, appliedKeys: ['q'] });
+      const queryInput = searchInputs.get('q');
+      if (queryInput) queryInput.value = search.q;
+      if (suggestion.system_key && (!sameSystem || !existingSystem || suggestion.system_name)) {
+        selectedSuggestions.set('system_key', {
+        kind: 'system', id: suggestion.system_key, label: systemLabel(suggestion)
+        });
+      }
+      return;
+    }
     if (key === 'site') {
       const hasNumericSite = value(suggestion, 'rfss', 'rfss_id') !== null &&
         value(suggestion, 'site_id') !== null;
@@ -737,7 +766,7 @@ export function createRecordingsFeature(deps) {
     const list = node('span', '');
     members.forEach((member) => {
       const id = typeof member === 'object' ? value(member, 'id', 'talkgroup_id') : member;
-      const name = typeof member === 'object' ? value(member, 'alias', 'name') : null;
+      const name = typeof member === 'object' ? value(member, 'alias', 'name', 'ota_alias') : null;
       if (id === null && !name) return;
       if (list.childNodes.length) list.append(', ');
       const text = name ? `${name}${id !== null ? ` · ${id}` : ''}` : String(id);
@@ -778,7 +807,7 @@ export function createRecordingsFeature(deps) {
         [`${group} group`, value(row, 'talkgroup_group', 'group_group')],
         [`${group} description`, value(row, 'talkgroup_description', 'group_description')],
         ['Destination Radio ID', value(row, 'destination_radio_id'), 'target_entity_ref'],
-        ['Destination alias', value(row, 'destination_radio_alias'), 'target_entity_ref'],
+        ['Destination alias', value(row, 'destination_radio_alias', 'destination_radio_ota_alias'), 'target_entity_ref'],
         ['Destination group', value(row, 'destination_radio_group')],
         ['Destination description', value(row, 'destination_radio_description')], ['Patch members', patchMembers(row)]
       ]],
@@ -828,7 +857,7 @@ export function createRecordingsFeature(deps) {
       const prefix = `Member ${index + 1}`;
       return [[`${prefix} kind`, prettify(value(member, 'kind'))],
         [`${prefix} ID`, value(member, 'id', 'talkgroup_id'), member.entity_ref],
-        [`${prefix} alias`, value(member, 'alias', 'name'), member.entity_ref],
+        [`${prefix} alias`, value(member, 'alias', 'name', 'ota_alias'), member.entity_ref],
         [`${prefix} home system name`, value(member, 'home_system_name') || systemName(member.home_system),
           member.home_system?.entity_ref],
         [`${prefix} home WACN`, hexIdentity(value(member, 'home_wacn'), 5)],
@@ -1118,7 +1147,11 @@ export function createRecordingsFeature(deps) {
     for (const [key, suggestion] of selectedSuggestions) {
       if (!search[key] && !suggestion.appliedKeys?.some((applied) => search[applied])) continue;
       const remove = button(node, `${suggestion.label || suggestion.id} ×`, () => {
-        suggestion.appliedKeys?.forEach((applied) => { search[applied] = ''; });
+        suggestion.appliedKeys?.forEach((applied) => {
+          search[applied] = '';
+          const appliedInput = searchInputs.get(applied);
+          if (appliedInput) appliedInput.value = '';
+        });
         search[key] = '';
         selectedSuggestions.delete(key);
         const input = searchInputs.get(key);
@@ -1299,8 +1332,8 @@ export function createRecordingsFeature(deps) {
           channel: 'channel_id' }[suggestion.kind];
         if (matching) {
           applySuggestion(matching, suggestion);
-          input.value = '';
-          search.q = '';
+          input.value = suggestion.name_query || '';
+          search.q = suggestion.name_query || '';
           const matchingInput = searchInputs.get(matching);
           if (matchingInput) matchingInput.value = String(suggestion.label || suggestion.id || '');
           drawSelectedFilters();
@@ -1317,8 +1350,21 @@ export function createRecordingsFeature(deps) {
       input.focus();
     };
     input.addEventListener('input', () => {
+      if (key === 'q') {
+        for (const [selectedKey, suggestion] of selectedSuggestions) {
+          if (suggestion.name_query) {
+            selectedSuggestions.delete(selectedKey);
+            const selectedInput = searchInputs.get(selectedKey);
+            if (selectedInput && selectedKey !== key) selectedInput.value = '';
+          }
+        }
+      }
       search[key] = input.value.trim();
-      selectedSuggestions.get(key)?.appliedKeys?.forEach((applied) => { search[applied] = ''; });
+      selectedSuggestions.get(key)?.appliedKeys?.forEach((applied) => {
+        search[applied] = '';
+        const appliedInput = searchInputs.get(applied);
+        if (appliedInput) appliedInput.value = '';
+      });
       selectedSuggestions.delete(key);
       window.clearTimeout(timer);
       const request = ++generation;

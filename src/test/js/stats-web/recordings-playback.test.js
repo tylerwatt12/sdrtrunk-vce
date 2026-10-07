@@ -67,7 +67,38 @@ async function main() {
     .replace(/from '\.\.\/core\/system-labels\.js\?v=\d+'/, `from '${labelsUrl}'`)
     .replace(/from '\.\.\/core\/radio-labels\.js\?v=\d+'/, `from '${radioLabelsUrl}'`)
     .replace(/from '\.\.\/core\/source-names\.js\?v=\d+'/, `from '${sourceNamesUrl}'`);
-  const { createRecordingsFeature } = await import(`data:text/javascript;base64,${Buffer.from(executable).toString('base64')}`);
+  const { createRecordingsFeature, recordingSuggestionFilters } = await import(
+    `data:text/javascript;base64,${Buffer.from(executable).toString('base64')}`);
+  const previousFilters = Object.freeze({ q: 'Previous name', system_key: 'p25:00002:002',
+    radio_id: '401', talkgroup_id: '1201', radio_min: '400', radio_max: '500',
+    talkgroup_min: '1200', talkgroup_max: '1300', alias_list_id: '7',
+    channel_id: 'channel-7', wacn: '1', sysid: '1', rfss: '1', site_id: '3',
+    from_ms: '1000', to_ms: '9000', min_duration_ms: '500', transcript: 'arrival',
+    protocol: 'APCO25', voice_type: 'CLEAR' });
+  for (const id of [null, 0, '401', '777']) {
+    const suggestion = Object.freeze({ kind: 'radio', id, label: 'Foreign OTA %_401',
+      name_query: 'Foreign OTA %_401', system_key: 'p25:00001:001' });
+    const selected = recordingSuggestionFilters(previousFilters, suggestion);
+    assert.deepEqual(selected, { ...previousFilters, q: 'Foreign OTA %_401',
+      system_key: 'p25:00001:001', radio_id: '', talkgroup_id: '',
+      radio_min: '', radio_max: '', talkgroup_min: '', talkgroup_max: '', alias_list_id: '' },
+    'OTA selection must search its exact name in the receiving system without stale raw identity constraints');
+    assert.notEqual(selected, previousFilters, 'Selecting a suggestion must return independent filter state');
+    assert.equal(previousFilters.radio_id, '401', 'Selecting a foreign subscriber must preserve the prior input object');
+    assert.equal(suggestion.id, id, 'Missing, zero, and canonical IDs must not be rewritten into Working IDs');
+  }
+  for (const suggestion of [
+    { kind: 'radio', id: '401', label: '401', system_key: 'p25:00001:001' },
+    { kind: 'radio', id: '401', label: 'Local configured Alias', alias_list_id: 7 },
+    { kind: 'talkgroup', id: '1201', label: 'Fire Dispatch' },
+    { kind: 'radio_range', id: '400-500', min_id: 400, max_id: 500, label: 'Field radios' },
+    { kind: 'talkgroup_range', id: '1200-1300', min_id: 1200, max_id: 1300, label: 'Fire groups' }
+  ]) {
+    const selected = recordingSuggestionFilters(previousFilters, Object.freeze(suggestion));
+    assert.deepEqual(selected, previousFilters,
+      'Numeric and configured suggestions must retain the existing numeric selection path');
+    assert.notEqual(selected, previousFilters, 'Unchanged suggestion filters still return a shallow copy');
+  }
   const originalAudio = global.Audio;
   const audios = [];
   global.Audio = class extends AudioFixture { constructor() { super(); audios.push(this); } };
@@ -342,7 +373,7 @@ async function main() {
     sourceMode = 'talker_alias';
     assert.equal(primaryFact({ ...namedSource, source_ota_alias: '' }, 'Source'), 'Engine 4 · Radio 1863924');
     assert.equal(primaryFact({ ...localRadio, source_home_id: 12345 }, 'Source'),
-      'Radio 12345 (Working ID 1863924)', 'A different observed Working ID remains useful');
+      'Radio BEE00.348.12345 (Working ID 1863924)', 'A different observed Working ID retains home context');
     const foreignRadio = { ...localRadio, source_home_system_id: 0x4A2 };
     assert.equal(primaryFact({ ...foreignRadio, source_home_system_name: 'Home Network' }, 'Source'),
       'Radio Home Network · 1863924', 'Foreign recording radios use their friendly home system name');
@@ -358,6 +389,28 @@ async function main() {
       destination_radio_id: 71, target_home_wacn: 0xBEE00, target_home_system_id: 0x4A2, target_home_id: 12345 };
     assert.equal(primaryFact(directRadio, 'Target'), 'Direct to Radio Home Network · 12345 (Working ID 71)',
       'Direct call destinations follow the same permanent and Working ID display rule');
+    assert.equal(primaryFact({ ...directRadio, destination_radio_ota_alias: 'Foreign destination OTA' }, 'Target'),
+      'Direct to Foreign destination OTA', 'Direct destinations show their OTA name when no configured Alias exists');
+    assert.equal(primaryFact({ ...directRadio, destination_radio_alias: 'Configured destination',
+      destination_radio_ota_alias: 'Foreign destination OTA' }, 'Target'), 'Direct to Configured destination',
+    'Direct destination configured Aliases retain precedence over OTA names');
+    const memberFacts = (members) => {
+      sharing.renderDetails(details, { ...richCall, patch_members: members });
+      return descendants(details).filter((element) => element.tagName === 'dl').flatMap((list) =>
+        list.children.filter((element) => element.tagName === 'dt').map((term) => ({
+          name: term.textContent, detail: text(list.children[list.children.indexOf(term) + 1]).trim()
+        })));
+    };
+    const otaMember = { kind: 'radio', id: 401, ota_alias: 'Foreign member OTA',
+      home_wacn: 2, home_system_id: 2, home_identity_id: 777, entity_ref: { key: 'member' } };
+    const otaMemberFacts = memberFacts([otaMember]);
+    assert.equal(otaMemberFacts.find((fact) => fact.name === 'Patch members').detail, 'Foreign member OTA · 401',
+      'Patch summaries show the OTA name while preserving the recorded local ID');
+    assert.equal(otaMemberFacts.find((fact) => fact.name === 'Member 1 alias').detail, 'Foreign member OTA',
+      'Patch member details expose the OTA name in the existing alias slot');
+    assert.equal(memberFacts([{ ...otaMember, alias: 'Configured member' }])
+      .find((fact) => fact.name === 'Member 1 alias').detail, 'Configured member',
+    'Patch configured Aliases retain precedence over OTA names');
     sharing.renderDetails(details, directRadio);
     assert.ok(text(details).includes('Source home WACN') && text(details).includes('Target home identity'),
       'Complete recording identifiers remain available in the detail disclosures');

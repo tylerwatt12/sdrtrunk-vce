@@ -4,6 +4,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const radioLabelsSource = fs.readFileSync(path.resolve(__dirname,
+  '../../../../stats-web/assets/core/radio-labels.js'), 'utf8');
+const radioLabels = vm.runInNewContext(radioLabelsSource.replace(/^export .*;$/m, '') +
+  '\n({formatP25RadioIdentifier});');
 const source = fs.readFileSync(path.resolve(__dirname, '../../../../stats-web/assets/app.js'), 'utf8');
 
 function declaration(name) {
@@ -71,6 +75,7 @@ async function main() {
   const node = (...args) => new Element(...args);
   const fragment = (...children) => { const element = node('fragment'); element.append(...children); return element; };
   const context = {
+    ...radioLabels,
     URLSearchParams, route, document, content, node, fragment,
     radioSystemApiPath: (key, suffix) => `/api/v1/radio-systems/${key}/${suffix}`,
     renderIsCurrent: () => current,
@@ -132,7 +137,7 @@ async function main() {
   const behavior = vm.runInNewContext([
     'issiStateLabel', 'issiEmptyMessage', 'issiStateContent', 'issiSectionTabs',
     'issiCurrentAssignmentColumns', 'issiRecentChangeColumns', 'renderRadioSystemIssi',
-    'issiAssignmentIsOrdinaryLocal', 'radioCurrentAssignmentSection', 'p25IdentityEvidenceLabel', 'liveIdentityRenderKey',
+    'workingSubscriberId', 'issiAssignmentIsOrdinaryLocal', 'radioCurrentAssignmentSection', 'p25IdentityEvidenceLabel', 'liveIdentityRenderKey',
     'issiSubscriberCell', 'issiHomeSystemCell', 'issiHomeSystemText'
   ].map(declaration).join('\n') + '\n({renderRadioSystemIssi,radioCurrentAssignmentSection,' +
     'issiStateLabel,issiEmptyMessage,issiAssignmentIsOrdinaryLocal,p25IdentityEvidenceLabel,' +

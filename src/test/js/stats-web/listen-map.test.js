@@ -84,7 +84,7 @@ async function main() {
   assert.equal(normalizedRadio().raw_identifier, localEntity.identifier, 'The original identity remains inspectable.');
   assert.equal(normalizedRadio({ label: 'NRL-MEDIC 3' }).label, 'NRL-MEDIC 3', 'Configured alias labels survive.');
   assert.equal(normalizedRadio({ identifier: 'BEE00.49F.1872114 (Working ID 501)' }).identifier,
-    '1872114 (Working ID 501)', 'A different confirmed Working ID remains useful.');
+    'GCRCN · 1872114 (Working ID 501)', 'A different confirmed Working ID retains home context.');
   assert.equal(normalizedRadio({ identifier: 'BEE01.49F.1872114 (Working ID 501)' }).identifier,
     '1872114', 'Unrelated text cannot supply a Working ID for the numeric identity facts.');
   assert.equal(normalizedRadio({ serving_system: { key: 'p25:bee00:4a2' } }).identifier,

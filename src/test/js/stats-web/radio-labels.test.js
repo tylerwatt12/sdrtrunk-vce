@@ -33,7 +33,9 @@ async function main() {
   assert.equal(formatP25RadioIdentifier(home), 'BEE00.348.4326018',
     'Without the receiving system, the full home identity remains available.');
   assert.equal(formatP25RadioIdentifier(home, { homeSystemName: 'Home System' }), 'Home System · 4326018');
-  assert.equal(formatP25RadioIdentifier(home, { ...local, workingId: 501 }), '4326018 (Working ID 501)');
+  assert.equal(formatP25RadioIdentifier(home, { ...local, workingId: 501 }), 'Home System · 4326018 (Working ID 501)');
+  assert.equal(formatP25RadioIdentifier(home, { ...local, homeSystemName: '', workingId: 501 }),
+    'BEE00.348.4326018 (Working ID 501)', 'Different working and permanent numbers retain home context.');
   assert.equal(formatP25RadioIdentifier(home, { ...foreign, workingId: 501 }),
     'Home System · 4326018 (Working ID 501)');
   assert.equal(formatP25RadioIdentifier(home, { workingId: 501 }), 'BEE00.348.4326018 (Working ID 501)');
@@ -84,6 +86,11 @@ async function main() {
   const references = { source_entity_ref: sourceRef, target_entity_ref: targetRef };
   assert.equal(p25ServingSystemKey(references, 'source'), sourceRef.radio_system_key);
   assert.equal(p25ServingSystemKey(references, 'target'), targetRef.radio_system_key);
+  assert.equal(p25ServingSystemKey({ entity_ref: sourceRef }), sourceRef.radio_system_key,
+    'A radio detail reference supplies its authoritative receiving scope.');
+  assert.equal(p25ServingSystemKey({ entity_ref: { ...sourceRef, kind: 'talkgroup' } }), '');
+  assert.equal(p25ServingSystemKey({ entity_ref: sourceRef }, 'target'), '',
+    'A generic radio reference cannot substitute for a target radio.');
   assert.equal(p25ServingSystemKey(references), '', 'There is no generic endpoint-scope fallback.');
   assert.equal(p25ServingSystemKey({ source_entity_ref: sourceRef }, 'target'), '',
     'Source scope must not be borrowed by a target.');

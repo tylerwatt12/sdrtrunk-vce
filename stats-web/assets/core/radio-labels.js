@@ -13,7 +13,7 @@ function p25ServingSystemKey(row, prefix = '') {
   const explicit = text(row?.radio_system_key) || text(row?.system_key) ||
     text(row?.playback_target?.radio_system_key);
   if (explicit) return explicit;
-  const reference = prefix ? row?.[`${prefix}_entity_ref`] : null;
+  const reference = prefix ? row?.[`${prefix}_entity_ref`] : row?.entity_ref;
   return text(reference?.kind).toLowerCase() === 'radio' ? text(reference.radio_system_key) : '';
 }
 
@@ -35,12 +35,14 @@ function formatP25RadioIdentifier(identity, { servingSystemKey = '', homeSystemN
 
   const serving = /^p25:([0-9a-f]{1,5}):([0-9a-f]{1,3})$/i.exec(text(servingSystemKey));
   const local = serving && parseInt(serving[1], 16) === wacn && parseInt(serving[2], 16) === systemId;
+  const observedId = integer(workingId, 1, 0xFFFFFC);
+  const differentWorkingId = observedId !== null && observedId !== subscriberId;
   const name = text(homeSystemName);
   const fullIdentity = `${wacn.toString(16).toUpperCase().padStart(5, '0')}.` +
     `${systemId.toString(16).toUpperCase().padStart(3, '0')}.${subscriberId}`;
-  const label = local ? String(subscriberId) : name ? `${name} · ${subscriberId}` : fullIdentity;
-  const observedId = integer(workingId, 1, 0xFFFFFC);
-  return observedId !== null && observedId !== subscriberId ? `${label} (Working ID ${observedId})` : label;
+  const label = local && !differentWorkingId ? String(subscriberId) :
+    name ? `${name} · ${subscriberId}` : fullIdentity;
+  return differentWorkingId ? `${label} (Working ID ${observedId})` : label;
 }
 
 export { formatP25RadioIdentifier, p25ServingSystemKey, parseP25RadioIdentifier };

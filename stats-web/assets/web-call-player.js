@@ -1,5 +1,5 @@
 import { systemLabel, systemName } from './core/system-labels.js?v=1';
-import { formatP25RadioIdentifier, p25ServingSystemKey } from './core/radio-labels.js?v=3';
+import { formatP25RadioIdentifier, p25ServingSystemKey } from './core/radio-labels.js?v=4';
 import { formatSourceName } from './core/source-names.js?v=1';
 
 export class WebCallPlayer {
