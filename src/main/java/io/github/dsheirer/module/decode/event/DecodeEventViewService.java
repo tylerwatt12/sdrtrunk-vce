@@ -10,8 +10,10 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.channel.IChannelDescriptor;
+import io.github.dsheirer.channel.metadata.activity.ConventionalLiveSources;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
+import io.github.dsheirer.controller.channel.DecodeEventSource;
 import io.github.dsheirer.filter.FilterCatalog;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
@@ -20,11 +22,9 @@ import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
-import io.github.dsheirer.module.ProcessingChain;
 import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
-import io.github.dsheirer.source.Source;
 import io.github.dsheirer.util.concurrent.BoundedMpscPairQueue;
 import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
 import java.util.ArrayList;
@@ -40,6 +40,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
+import java.util.function.Predicate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -62,7 +63,7 @@ public class DecodeEventViewService implements AutoCloseable
     private final Broadcaster<EventView> mBroadcaster = new Broadcaster<>();
     private final Object mListenerLock = new Object();
     private final Object mLiveEdgeLock = new Object();
-    private volatile BoundedMpscPairQueue<Channel,IDecodeEvent> mIngress =
+    private volatile BoundedMpscPairQueue<Object,IDecodeEvent> mIngress =
         new BoundedMpscPairQueue<>(UPDATE_QUEUE_SIZE);
     private final ExecutorService mWorker = Executors.newSingleThreadExecutor(
         new ObserverThreadFactory("sdrtrunk decode event views"));
@@ -74,6 +75,8 @@ public class DecodeEventViewService implements AutoCloseable
     private final AtomicBoolean mActive = new AtomicBoolean();
     private final AtomicBoolean mEventActive = new AtomicBoolean();
     private final BiConsumer<Channel,IDecodeEvent> mDecodeEventListener = this::receive;
+    private final BiConsumer<DecodeEventSource,IDecodeEvent> mBoundDecodeEventListener = this::receive;
+    private final Predicate<DecodeEventSource> mSourceValidator;
     private final long mCloseTimeoutMilliseconds;
 
     public DecodeEventViewService(ChannelProcessingManager channelProcessingManager, AliasModel aliasModel)
@@ -84,8 +87,23 @@ public class DecodeEventViewService implements AutoCloseable
     DecodeEventViewService(ChannelProcessingManager channelProcessingManager, AliasModel aliasModel,
                            long closeTimeout, TimeUnit unit)
     {
+        this(channelProcessingManager, aliasModel, closeTimeout, unit, null);
+    }
+
+    DecodeEventViewService(ChannelProcessingManager channelProcessingManager, AliasModel aliasModel,
+                           Predicate<DecodeEventSource> sourceValidator)
+    {
+        this(channelProcessingManager, aliasModel, DEFAULT_CLOSE_TIMEOUT_MILLISECONDS, TimeUnit.MILLISECONDS,
+            sourceValidator);
+    }
+
+    private DecodeEventViewService(ChannelProcessingManager channelProcessingManager, AliasModel aliasModel,
+                                   long closeTimeout, TimeUnit unit, Predicate<DecodeEventSource> sourceValidator)
+    {
         mChannelProcessingManager = channelProcessingManager;
         mAliasModel = aliasModel;
+        mSourceValidator = sourceValidator != null ? sourceValidator : source -> mChannelProcessingManager == null ||
+            mChannelProcessingManager.getProcessingChain(source.channel()) == source.processingChain();
         java.util.Objects.requireNonNull(unit, "unit cannot be null");
         mCloseTimeoutMilliseconds = Math.max(0, unit.toMillis(closeTimeout));
         mWorker.execute(this::runWorker);
@@ -100,7 +118,7 @@ public class DecodeEventViewService implements AutoCloseable
                 if(mActive.get())
                 {
                     long generation = mDemandGeneration.get();
-                    BoundedMpscPairQueue<Channel,IDecodeEvent> ingress = mIngress;
+                    BoundedMpscPairQueue<Object,IDecodeEvent> ingress = mIngress;
                     drainSafely(generation, ingress);
                 }
 
@@ -133,6 +151,12 @@ public class DecodeEventViewService implements AutoCloseable
     public BiConsumer<Channel,IDecodeEvent> getDecodeEventListener()
     {
         return mDecodeEventListener;
+    }
+
+    /** Uses a lifecycle-prepared origin so queued observations cannot acquire a replacement chain's identity. */
+    public BiConsumer<DecodeEventSource,IDecodeEvent> getBoundDecodeEventListener()
+    {
+        return mBoundDecodeEventListener;
     }
 
     /**
@@ -228,7 +252,23 @@ public class DecodeEventViewService implements AutoCloseable
 
     void receive(Channel channel, IDecodeEvent event)
     {
-        if(channel == null || event == null || mClosed.get() || !mActive.get())
+        receive(channel, event, 0);
+    }
+
+    void receive(DecodeEventSource source, IDecodeEvent event)
+    {
+        if(source == null || mClosed.get() || !mActive.get())
+        {
+            return;
+        }
+
+        // Source getters are primitive reads; the prepared origin avoids map lookups or allocation on the decoder.
+        receive(source, event, source.source().getFrequency());
+    }
+
+    private void receive(Object origin, IDecodeEvent event, long sourceFrequency)
+    {
+        if(origin == null || event == null || mClosed.get() || !mActive.get())
         {
             return;
         }
@@ -238,7 +278,7 @@ public class DecodeEventViewService implements AutoCloseable
             return;
         }
 
-        BoundedMpscPairQueue<Channel,IDecodeEvent> ingress = mIngress;
+        BoundedMpscPairQueue<Object,IDecodeEvent> ingress = mIngress;
 
         if(!mActive.get())
         {
@@ -247,13 +287,13 @@ public class DecodeEventViewService implements AutoCloseable
 
         long liveEdgeEpoch = mLiveEdgeEpoch.get();
 
-        if(!ingress.offer(channel, event, liveEdgeEpoch))
+        if(!ingress.offer(origin, event, liveEdgeEpoch, sourceFrequency))
         {
             mDroppedObservations.incrementAndGet();
         }
     }
 
-    private void drainSafely(long generation, BoundedMpscPairQueue<Channel,IDecodeEvent> ingress)
+    private void drainSafely(long generation, BoundedMpscPairQueue<Object,IDecodeEvent> ingress)
     {
         try
         {
@@ -270,7 +310,7 @@ public class DecodeEventViewService implements AutoCloseable
         mIngress.clear();
     }
 
-    private void drain(long generation, BoundedMpscPairQueue<Channel,IDecodeEvent> ingress)
+    private void drain(long generation, BoundedMpscPairQueue<Object,IDecodeEvent> ingress)
     {
         if(mClosed.get())
         {
@@ -281,23 +321,33 @@ public class DecodeEventViewService implements AutoCloseable
 
         for(int count = 0; count < MAXIMUM_DRAIN_PER_RUN; count++)
         {
-            BoundedMpscPairQueue.Entry<Channel,IDecodeEvent> observation = ingress.poll();
+            BoundedMpscPairQueue.Entry<Object,IDecodeEvent> observation = ingress.poll();
 
             if(observation == null)
             {
                 break;
             }
 
-            Channel channel = observation.first();
+            DecodeEventSource origin = observation.first() instanceof DecodeEventSource bound ? bound : null;
+
+            if(origin != null && !isCurrent(origin, observation.originStamp()))
+            {
+                continue;
+            }
+
+            Channel channel = origin != null ? origin.channel() : (Channel)observation.first();
             IDecodeEvent event = observation.second();
             String configurationId = channel.getConfigurationId();
-            ProcessingChain chain = mChannelProcessingManager != null ?
-                mChannelProcessingManager.getProcessingChain(channel) : null;
-            Source source = chain != null ? chain.getSource() : null;
-            Long sourceFrequency = source != null && source.getFrequency() > 0 ? source.getFrequency() : null;
+            Long sourceFrequency = origin != null && observation.originStamp() > 0 ? observation.originStamp() : null;
             if(mEventActive.get())
             {
-                batch.add(view(configurationId, event, sourceFrequency, observation.stamp()));
+                EventView projected = view(configurationId, event, sourceFrequency, channel.getName(),
+                    observation.stamp(), origin);
+
+                if(isCurrent(projected))
+                {
+                    batch.add(projected);
+                }
             }
 
             if(mClosed.get() || !mActive.get() || mDemandGeneration.get() != generation || mIngress != ingress)
@@ -311,12 +361,30 @@ public class DecodeEventViewService implements AutoCloseable
             for(EventView projected: batch)
             {
                 if(mBroadcaster.broadcastIf(projected, () -> !mClosed.get() && mEventActive.get() &&
-                    mDemandGeneration.get() == generation && mIngress == ingress) < 0)
+                    mDemandGeneration.get() == generation && mIngress == ingress && isCurrent(projected)) < 0)
                 {
+                    if(!isCurrent(projected))
+                    {
+                        continue;
+                    }
                     break;
                 }
             }
         }
+    }
+
+    /** Checks origin validity on observer consumers, including while a slow browser's queue is waiting. */
+    public boolean isCurrent(EventView event)
+    {
+        return event != null && (event.sourceBinding() == null || event.sourceFrequencyHz() != null &&
+            isCurrent(event.sourceBinding(), event.sourceFrequencyHz()));
+    }
+
+    private boolean isCurrent(DecodeEventSource origin, long frequency)
+    {
+        return frequency > 0 && origin.processingChain().getDecodeEventSource() == origin &&
+            origin.processingChain().getSource() == origin.source() &&
+            origin.source().getFrequency() == frequency && mSourceValidator.test(origin);
     }
 
     public long getDroppedObservationCount()
@@ -368,10 +436,17 @@ public class DecodeEventViewService implements AutoCloseable
 
     EventView view(String configurationId, IDecodeEvent event, Long sourceFrequency)
     {
-        return view(configurationId, event, sourceFrequency, 0);
+        return view(configurationId, event, sourceFrequency, null, 0);
     }
 
-    private EventView view(String configurationId, IDecodeEvent event, Long sourceFrequency, long observationEpoch)
+    EventView view(String configurationId, IDecodeEvent event, Long sourceFrequency, String channelName,
+                   long observationEpoch)
+    {
+        return view(configurationId, event, sourceFrequency, channelName, observationEpoch, null);
+    }
+
+    private EventView view(String configurationId, IDecodeEvent event, Long sourceFrequency, String channelName,
+                           long observationEpoch, DecodeEventSource origin)
     {
         IdentifierCollection identifiers = event.getIdentifierCollection();
         Parties from = parties(identifiers, Role.FROM);
@@ -385,14 +460,15 @@ public class DecodeEventViewService implements AutoCloseable
         }
         DecodeEventType type = event.getEventType();
 
-        return new EventView(eventId(event), bounded(configurationId), event.getTimeStart(), event.getDuration(),
+        return new EventView(bounded(configurationId) + ":" + eventId(event), bounded(configurationId),
+            event.getTimeStart(), event.getDuration(),
             type != null ? type.name() : DecodeEventType.UNKNOWN.name(),
             type != null ? type.getLabel() : DecodeEventType.UNKNOWN.getLabel(), category(type),
             from.identifiers(), from.aliases(), to.identifiers(), to.aliases(),
             descriptor != null ? bounded(descriptor.toString()) : null, frequency,
             event.hasTimeslot() ? event.getTimeslot() : null, bounded(event.getDetails()),
             event.getProtocol() != null ? event.getProtocol().name() : null,
-            from.party(), to.party(), observationEpoch);
+            from.party(), to.party(), observationEpoch, bounded(channelName), sourceFrequency, origin);
     }
 
     private Parties parties(IdentifierCollection collection, Role role)
@@ -636,16 +712,43 @@ public class DecodeEventViewService implements AutoCloseable
         }
     }
 
-    public record Scope(String configurationId, Long frequencyHz, Integer timeslot)
+    public enum Mode
     {
+        CHANNEL, CONVENTIONAL
+    }
+
+    public record Scope(String configurationId, Long frequencyHz, Integer timeslot, Mode mode)
+    {
+        public Scope(String configurationId, Long frequencyHz, Integer timeslot)
+        {
+            this(configurationId, frequencyHz, timeslot, Mode.CHANNEL);
+        }
+
+        public static Scope conventional()
+        {
+            return new Scope(null, null, null, Mode.CONVENTIONAL);
+        }
+
         public Scope
         {
-            if(configurationId == null || configurationId.isBlank())
-            {
-                throw new IllegalArgumentException("configurationId is required");
-            }
+            java.util.Objects.requireNonNull(mode, "mode cannot be null");
 
-            configurationId = configurationId.strip();
+            if(mode == Mode.CONVENTIONAL)
+            {
+                if(configurationId != null || frequencyHz != null || timeslot != null)
+                {
+                    throw new IllegalArgumentException("conventional scope cannot select an exact channel");
+                }
+            }
+            else
+            {
+                if(configurationId == null || configurationId.isBlank())
+                {
+                    throw new IllegalArgumentException("configurationId is required");
+                }
+
+                configurationId = configurationId.strip();
+            }
 
             if(frequencyHz != null && frequencyHz <= 0)
             {
@@ -660,9 +763,15 @@ public class DecodeEventViewService implements AutoCloseable
 
         public boolean matches(EventView event)
         {
-            return event != null && configurationId.equals(event.configurationId()) &&
+            return mode == Mode.CHANNEL && event != null && configurationId.equals(event.configurationId()) &&
                 (frequencyHz == null || frequencyHz.equals(event.frequencyHz())) &&
                 (timeslot == null || timeslot.equals(event.timeslot()));
+        }
+
+        public boolean matches(EventView event, ConventionalLiveSources sources)
+        {
+            return mode == Mode.CONVENTIONAL ? event != null && sources != null &&
+                sources.matches(event.configurationId(), event.sourceFrequencyHz()) : matches(event);
         }
     }
 
@@ -670,7 +779,8 @@ public class DecodeEventViewService implements AutoCloseable
                             String eventType, String eventLabel, String category, String fromIdentifiers,
                             String fromAliases, String toIdentifiers, String toAliases, String channel,
                             Long frequencyHz, Integer timeslot, String details, String protocol,
-                            List<PartyIdentifier> fromParty, List<PartyIdentifier> toParty, long observationEpoch)
+                            List<PartyIdentifier> fromParty, List<PartyIdentifier> toParty, long observationEpoch,
+                            String channelName, Long sourceFrequencyHz, @JsonIgnore DecodeEventSource sourceBinding)
     {
         public EventView
         {
@@ -678,6 +788,30 @@ public class DecodeEventViewService implements AutoCloseable
                 .limit(PARTY_MAXIMUM_IDENTIFIERS).toList()) : List.of();
             toParty = toParty != null ? List.copyOf(toParty.stream()
                 .limit(PARTY_MAXIMUM_IDENTIFIERS).toList()) : List.of();
+        }
+
+        public EventView(String eventId, String configurationId, long timeStartMs, long durationMs,
+                         String eventType, String eventLabel, String category, String fromIdentifiers,
+                         String fromAliases, String toIdentifiers, String toAliases, String channel,
+                         Long frequencyHz, Integer timeslot, String details, String protocol,
+                         List<PartyIdentifier> fromParty, List<PartyIdentifier> toParty, long observationEpoch,
+                         String channelName, Long sourceFrequencyHz)
+        {
+            this(eventId, configurationId, timeStartMs, durationMs, eventType, eventLabel, category,
+                fromIdentifiers, fromAliases, toIdentifiers, toAliases, channel, frequencyHz, timeslot, details,
+                protocol, fromParty, toParty, observationEpoch, channelName, sourceFrequencyHz, null);
+        }
+
+        /** Source-compatible constructor for consumers without a saved channel name. */
+        public EventView(String eventId, String configurationId, long timeStartMs, long durationMs,
+                         String eventType, String eventLabel, String category, String fromIdentifiers,
+                         String fromAliases, String toIdentifiers, String toAliases, String channel,
+                         Long frequencyHz, Integer timeslot, String details, String protocol,
+                         List<PartyIdentifier> fromParty, List<PartyIdentifier> toParty, long observationEpoch)
+        {
+            this(eventId, configurationId, timeStartMs, durationMs, eventType, eventLabel, category,
+                fromIdentifiers, fromAliases, toIdentifiers, toAliases, channel, frequencyHz, timeslot, details,
+                protocol, fromParty, toParty, observationEpoch, null, frequencyHz);
         }
 
         /** Source-compatible constructor for consumers that only carry raw party text. */

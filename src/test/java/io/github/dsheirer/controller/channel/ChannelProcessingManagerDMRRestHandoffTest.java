@@ -231,6 +231,7 @@ class ChannelProcessingManagerDMRRestHandoffTest
             new EventLogManager(aliasModel, preferences), tunerManager, aliasModel, preferences, 10);
         Channel parent = channel(1);
         List<ChannelDecodeObservation> observations = new CopyOnWriteArrayList<>();
+        List<DecodeEventSource> boundOrigins = new CopyOnWriteArrayList<>();
         List<ControlChannelQualitySnapshot> qualitySnapshots = new CopyOnWriteArrayList<>();
         List<DecodeEventViewService.EventView> eventViews = new CopyOnWriteArrayList<>();
         DecodeEventViewService eventViewService = new DecodeEventViewService(manager, aliasModel);
@@ -238,7 +239,8 @@ class ChannelProcessingManagerDMRRestHandoffTest
         eventViewService.addListener(eventDemand);
         manager.addChannelDecodeEventListener((channel, event) ->
             observations.add(new ChannelDecodeObservation(channel, event)));
-        manager.addChannelDecodeEventListener(eventViewService.getDecodeEventListener());
+        manager.addBoundDecodeEventListener((source, event) -> boundOrigins.add(source));
+        manager.addBoundDecodeEventListener(eventViewService.getBoundDecodeEventListener());
         manager.addControlChannelQualityListener(qualitySnapshots::add);
 
         try
@@ -246,6 +248,10 @@ class ChannelProcessingManagerDMRRestHandoffTest
             manager.start(parent);
             ProcessingChain original = manager.getProcessingChain(parent);
             assertNotNull(original);
+            DecodeEventSource initialOrigin = original.getDecodeEventSource();
+            assertSame(parent, initialOrigin.channel());
+            assertSame(original, initialOrigin.processingChain());
+            assertSame(original.getSource(), initialOrigin.source());
             DMRTrafficChannelManager trafficManager = trafficManager(original);
             ControlChannelQualityMonitor oldQualityMonitor = modules(original,
                 ControlChannelQualityMonitor.class).getFirst();
@@ -275,6 +281,15 @@ class ChannelProcessingManagerDMRRestHandoffTest
             assertNotNull(converted);
             assertNotNull(replacement);
             assertTrue(converted.isTrafficChannel());
+            DecodeEventSource convertedOrigin = original.getDecodeEventSource();
+            DecodeEventSource replacementOrigin = replacement.getDecodeEventSource();
+            assertNotSame(initialOrigin, convertedOrigin);
+            assertSame(converted, convertedOrigin.channel());
+            assertSame(original, convertedOrigin.processingChain());
+            assertSame(initialOrigin.source(), convertedOrigin.source());
+            assertSame(parent, replacementOrigin.channel());
+            assertSame(replacement, replacementOrigin.processingChain());
+            assertSame(replacement.getSource(), replacementOrigin.source());
             assertFalse(original.getModules().contains(oldQualityMonitor));
             assertFalse(original.getModules().contains(oldRotationMonitor));
             assertTrue(modules(replacement, ControlChannelQualityMonitor.class).size() == 1);
@@ -313,6 +328,11 @@ class ChannelProcessingManagerDMRRestHandoffTest
             assertSame(parent, observations.get(1).channel());
             assertSame(converted, observations.get(2).channel());
             assertSame(converted, observations.get(3).channel());
+            assertEquals(4, boundOrigins.size());
+            assertSame(initialOrigin, boundOrigins.get(0));
+            assertSame(replacementOrigin, boundOrigins.get(1));
+            assertSame(convertedOrigin, boundOrigins.get(2));
+            assertSame(convertedOrigin, boundOrigins.get(3));
             DecodeEventViewService.Scope oldFrequencyScope = new DecodeEventViewService.Scope(
                 parent.getConfigurationId(), CURRENT_FREQUENCY, 1);
             assertTrue(awaitCondition(() -> eventViews.stream().filter(oldFrequencyScope::matches)
@@ -1192,6 +1212,7 @@ class ChannelProcessingManagerDMRRestHandoffTest
             original.getEventBus().register(observer);
             blocker = original.beginChannelConfigurationTransition(
                 new Channel("Injected Competing Transition", Channel.ChannelType.TRAFFIC));
+            DecodeEventSource initialOrigin = original.getDecodeEventSource();
             setBeforeChannelGrantAuthorityCheck(decoderState, () ->
             {
                 authorityCheckReached.countDown();
@@ -1235,6 +1256,10 @@ class ChannelProcessingManagerDMRRestHandoffTest
 
             original.rollbackChannelConfigurationTransition(blocker);
             blocker = null;
+            assertNotSame(initialOrigin, original.getDecodeEventSource());
+            assertSame(parent, original.getDecodeEventSource().channel());
+            assertSame(original, original.getDecodeEventSource().processingChain());
+            assertSame(initialOrigin.source(), original.getDecodeEventSource().source());
             releaseGrant.countDown();
             decoderThread.join(TimeUnit.SECONDS.toMillis(5));
             assertFalse(decoderThread.isAlive());

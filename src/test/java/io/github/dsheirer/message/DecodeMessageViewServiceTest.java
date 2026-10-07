@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -17,9 +18,17 @@ import io.github.dsheirer.filter.AllPassFilter;
 import io.github.dsheirer.filter.Filter;
 import io.github.dsheirer.filter.FilterElement;
 import io.github.dsheirer.filter.FilterSet;
+import io.github.dsheirer.channel.metadata.activity.ConventionalLiveSources;
+import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.module.ProcessingChain;
+import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
+import io.github.dsheirer.sample.complex.ComplexSamples;
+import io.github.dsheirer.source.ComplexSource;
+import io.github.dsheirer.source.SourceEvent;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -611,6 +620,469 @@ class DecodeMessageViewServiceTest
             () -> new DecodeMessageViewService.Scope("not-a-uuid", FREQUENCY));
         assertThrows(IllegalArgumentException.class,
             () -> new DecodeMessageViewService.Scope(CONFIGURATION_ID, 0));
+        assertTrue(DecodeMessageViewService.Scope.conventional().aggregate());
+        assertThrows(IllegalArgumentException.class,
+            () -> new DecodeMessageViewService.Scope(CONFIGURATION_ID, FREQUENCY,
+                DecodeMessageViewService.Mode.CONVENTIONAL));
+    }
+
+    @Test
+    void aggregateSharesExactSourceTapsAndProjectsMixedProtocolsOnlyOnce() throws InterruptedException
+    {
+        FakeMessageSource first = new FakeMessageSource(classifier("DMR Messages", "Known"));
+        FakeMessageSource second = new FakeMessageSource(classifier("NXDN Messages", "Known"));
+        AtomicInteger projections = new AtomicInteger();
+
+        try(DecodeMessageViewService service = new DecodeMessageViewService(selected ->
+            selected.equals(scope()) ? first : second, DecodeMessageViewServiceTest::bothSources);
+            DecodeMessageViewService.Session aggregate = service.openSession(DecodeMessageViewService.Scope.conventional());
+            DecodeMessageViewService.Session otherViewer = service.openSession(DecodeMessageViewService.Scope.conventional());
+            DecodeMessageViewService.Session exact = service.openSession(scope()))
+        {
+            await(() -> aggregate.isBound() && aggregate.filterCatalog().groups().size() == 2);
+            assertTrue(aggregate.sourceState().aggregate());
+            assertEquals(1, first.listenerCount());
+            assertEquals(1, second.listenerCount());
+            assertEquals(1, first.classifierBuilds());
+
+            first.receive(countedMessage(1_000, Protocol.DMR, "DMR", projections));
+            DecodeMessageViewService.MessageView firstView = aggregate.poll(2, TimeUnit.SECONDS);
+            assertEquals(CONFIGURATION_ID, firstView.configurationId());
+            assertEquals("First channel", firstView.channelName());
+            assertEquals(FREQUENCY, firstView.frequencyHz());
+            assertEquals(aggregate.generation(), firstView.sourceGeneration());
+            assertEquals(firstView, otherViewer.poll(2, TimeUnit.SECONDS));
+            assertEquals(firstView.messageId(), exact.poll(2, TimeUnit.SECONDS).messageId());
+
+            second.receive(countedMessage(1_000, Protocol.NXDN, "NXDN", projections));
+            DecodeMessageViewService.MessageView secondView = aggregate.poll(2, TimeUnit.SECONDS);
+            assertEquals(SECOND_CONFIGURATION_ID, secondView.configurationId());
+            assertEquals("Second channel", secondView.channelName());
+            assertNotEquals(firstView.messageId(), secondView.messageId());
+            assertNotEquals(firstView.filterKey(), secondView.filterKey(),
+                "the two positional message/0/0 choices must remain separate");
+            assertTrue(hasFilterKey(aggregate.filterCatalog().groups(), firstView.filterKey()));
+            assertTrue(hasFilterKey(aggregate.filterCatalog().groups(), secondView.filterKey()));
+            assertEquals(2, projections.get(), "projection is per source observation, not per viewer");
+            assertNull(exact.poll(0, TimeUnit.MILLISECONDS));
+
+            TestMessage sharedObject = new TestMessage(5_000, Protocol.DMR, 1, true, "same decoder object");
+            first.receive(sharedObject);
+            DecodeMessageViewService.MessageView sameObjectFirst = aggregate.poll(2, TimeUnit.SECONDS);
+            second.receive(sharedObject);
+            DecodeMessageViewService.MessageView sameObjectSecond = aggregate.poll(2, TimeUnit.SECONDS);
+            assertNotEquals(sameObjectFirst.messageId(), sameObjectSecond.messageId(),
+                "even one message reference observed on two channels needs two originating row identities");
+        }
+    }
+
+    @Test
+    void aggregateCallbacksDoNotWaitForContendedSourceLifecycleLock() throws Exception
+    {
+        CountDownLatch listenerAdded = new CountDownLatch(1);
+        CountDownLatch releaseBind = new CountDownLatch(1);
+        FakeMessageSource source = new FakeMessageSource()
+        {
+            @Override
+            public void addListener(Listener<IMessage> listener)
+            {
+                super.addListener(listener);
+                listenerAdded.countDown();
+
+                try
+                {
+                    releaseBind.await();
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        };
+
+        try(DecodeMessageViewService service = new DecodeMessageViewService(selected -> source,
+            () -> List.of(bothSources().getFirst()));
+            DecodeMessageViewService.Session aggregate = service.openSession(DecodeMessageViewService.Scope.conventional()))
+        {
+            assertTrue(listenerAdded.await(2, TimeUnit.SECONDS));
+            long started = System.nanoTime();
+
+            for(int index = 0; index < DecodeMessageViewService.INGRESS_QUEUE_SIZE + 16; index++)
+            {
+                source.receive(new TestMessage(index, Protocol.DMR, 1, true, "bounded offer"));
+            }
+
+            assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) < 250,
+                "the worker holds the producer's lifecycle lock throughout these callback offers");
+            assertTrue(service.getDroppedObservationCount(scope()) > 0);
+            releaseBind.countDown();
+            await(aggregate::isBound);
+        }
+        finally
+        {
+            releaseBind.countDown();
+        }
+    }
+
+    @Test
+    void aggregateMembershipRemovesSourcesWithoutTakingAnExactViewerDownAndRebindsWithoutReplay()
+        throws InterruptedException
+    {
+        FakeMessageSource first = new FakeMessageSource();
+        FakeMessageSource second = new FakeMessageSource();
+        FakeMessageSource replacement = new FakeMessageSource();
+        AtomicReference<FakeMessageSource> selectedFirst = new AtomicReference<>(first);
+        AtomicReference<List<ConventionalLiveSources.Source>> members = new AtomicReference<>(bothSources());
+
+        try(DecodeMessageViewService service = new DecodeMessageViewService(selected ->
+            selected.equals(scope()) ? selectedFirst.get() : second, members::get);
+            DecodeMessageViewService.Session aggregate = service.openSession(DecodeMessageViewService.Scope.conventional());
+            DecodeMessageViewService.Session exact = service.openSession(scope()))
+        {
+            await(() -> aggregate.isBound() && aggregate.filterCatalog().groups().size() == 2);
+            first.receive(new TestMessage(1_000, Protocol.DMR, 1, true, "first binding"));
+            String oldId = aggregate.poll(2, TimeUnit.SECONDS).messageId();
+            assertNotNull(exact.poll(2, TimeUnit.SECONDS));
+            members.set(List.of(bothSources().get(1)));
+            aggregate.refresh();
+            await(() -> aggregate.filterCatalog().groups().size() == 1);
+            assertEquals(1, first.listenerCount(), "selected-channel demand must keep its shared source attached");
+            first.receive(new TestMessage(2_000, Protocol.DMR, 1, true, "exact only"));
+            assertEquals("exact only", exact.poll(2, TimeUnit.SECONDS).text());
+            assertNull(aggregate.poll(100, TimeUnit.MILLISECONDS));
+            exact.close();
+            await(() -> first.listenerCount() == 0);
+
+            selectedFirst.set(replacement);
+            members.set(bothSources());
+            aggregate.refresh();
+            await(() -> replacement.listenerCount() == 1 && aggregate.filterCatalog().groups().size() == 2);
+            assertNull(aggregate.poll(0, TimeUnit.MILLISECONDS));
+            replacement.receive(new TestMessage(1_000, Protocol.DMR, 1, true, "replacement"));
+            DecodeMessageViewService.MessageView current = aggregate.poll(2, TimeUnit.SECONDS);
+            assertEquals("replacement", current.text());
+            assertEquals(aggregate.generation(), current.sourceGeneration());
+            assertNotEquals(oldId, current.messageId());
+
+            members.set(List.of());
+            aggregate.refresh();
+            await(() -> !aggregate.isBound() && replacement.listenerCount() == 0 && second.listenerCount() == 0);
+            assertNull(aggregate.filterCatalog());
+        }
+    }
+
+    @Test
+    void aggregateLateViewerStartsAtItsOwnLiveEdgeWhileProjectionIsBlocked() throws Exception
+    {
+        FakeMessageSource source = new FakeMessageSource();
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+
+        try(DecodeMessageViewService service = new DecodeMessageViewService(selected -> source,
+            () -> List.of(bothSources().getFirst()));
+            DecodeMessageViewService.Session existing = service.openSession(DecodeMessageViewService.Scope.conventional()))
+        {
+            await(existing::isBound);
+            source.receive(blockedMessage(entered, release));
+            assertTrue(entered.await(2, TimeUnit.SECONDS));
+            source.receive(new TestMessage(2_000, Protocol.DMR, 1, true, "queued before open"));
+
+            try(DecodeMessageViewService.Session late = service.openSession(DecodeMessageViewService.Scope.conventional()))
+            {
+                release.countDown();
+                assertEquals("blocked", existing.poll(2, TimeUnit.SECONDS).text());
+                assertEquals("queued before open", existing.poll(2, TimeUnit.SECONDS).text());
+                assertNull(late.poll(100, TimeUnit.MILLISECONDS));
+                source.receive(new TestMessage(3_000, Protocol.DMR, 1, true, "after open"));
+                assertEquals("after open", existing.poll(2, TimeUnit.SECONDS).text());
+                assertEquals("after open", late.poll(2, TimeUnit.SECONDS).text());
+            }
+        }
+        finally
+        {
+            release.countDown();
+        }
+    }
+
+    @Test
+    void aggregateLateViewerDoesNotReportIngressDropsFromBeforeItOpened() throws Exception
+    {
+        FakeMessageSource source = new FakeMessageSource();
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+
+        try(DecodeMessageViewService service = new DecodeMessageViewService(selected -> source,
+            () -> List.of(bothSources().getFirst()));
+            DecodeMessageViewService.Session existing = service.openSession(DecodeMessageViewService.Scope.conventional()))
+        {
+            await(existing::isBound);
+            source.receive(blockedMessage(entered, release));
+            assertTrue(entered.await(2, TimeUnit.SECONDS));
+
+            for(int index = 0; index < DecodeMessageViewService.INGRESS_QUEUE_SIZE + 16; index++)
+            {
+                source.receive(new TestMessage(index + 2_000, Protocol.DMR, 1, true, "before late viewer"));
+            }
+
+            assertTrue(service.getDroppedObservationCount(scope()) > 0);
+
+            try(DecodeMessageViewService.Session late = service.openSession(DecodeMessageViewService.Scope.conventional()))
+            {
+                release.countDown();
+                await(() -> service.getPendingObservationCount(scope()) == 0 && existing.droppedCount() > 0);
+                assertEquals(0, late.droppedCount(), "pre-viewer loss must not produce a live-gap warning");
+                assertNull(late.poll(0, TimeUnit.MILLISECONDS));
+                source.receive(new TestMessage(5_000, Protocol.DMR, 1, true, "after late viewer"));
+                assertEquals("after late viewer", late.poll(2, TimeUnit.SECONDS).text());
+                assertEquals(0, late.droppedCount());
+            }
+        }
+        finally
+        {
+            release.countDown();
+        }
+    }
+
+    @Test
+    void aggregatePollRejectsQueuedSourceRemovedWithoutAnExplicitRefresh() throws InterruptedException
+    {
+        FakeMessageSource source = new FakeMessageSource();
+        AtomicReference<List<ConventionalLiveSources.Source>> members =
+            new AtomicReference<>(List.of(bothSources().getFirst()));
+
+        try(DecodeMessageViewService service = new DecodeMessageViewService(selected -> source, members::get);
+            DecodeMessageViewService.Session aggregate = service.openSession(DecodeMessageViewService.Scope.conventional()))
+        {
+            await(aggregate::isBound);
+            source.receive(new TestMessage(500, Protocol.DMR, 1, true, "polled before promotion"));
+            DecodeMessageViewService.MessageView polled = aggregate.poll(2, TimeUnit.SECONDS);
+            assertTrue(aggregate.isCurrent(polled));
+            source.receive(new TestMessage(1_000, Protocol.DMR, 1, true, "queued before promotion"));
+            await(() -> aggregate.queuedCount() == 1);
+            members.set(List.of());
+            assertFalse(aggregate.isCurrent(polled),
+                "a previously polled row must also fail final admission after authoritative membership changes");
+            assertNull(aggregate.poll(0, TimeUnit.MILLISECONDS),
+                "a stopped or newly trunked source must disappear before the periodic chain refresh");
+            await(() -> !aggregate.isBound() && source.listenerCount() == 0);
+        }
+    }
+
+    @Test
+    void actualChainOriginInvalidationRejectsPolledAndInFlightAggregateRowsAndRebindsEqualValuedOrigins()
+        throws Exception
+    {
+        Channel channel = new Channel("Conventional DMR");
+        channel.setConfigurationId(CONFIGURATION_ID);
+        channel.setDecodeConfiguration(new DecodeConfigDMR());
+        ProcessingChain chain = new ProcessingChain(channel, new AliasModel());
+        TestChainSource source = new TestChainSource();
+        chain.setSource(source);
+        DecodeMessageViewService.ChainMessageSource original = new DecodeMessageViewService.ChainMessageSource(chain);
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+
+        try(DecodeMessageViewService service = new DecodeMessageViewService(selected ->
+            new DecodeMessageViewService.ChainMessageSource(chain), () -> List.of(bothSources().getFirst()));
+            DecodeMessageViewService.Session aggregate = service.openSession(DecodeMessageViewService.Scope.conventional());
+            DecodeMessageViewService.Session exact = service.openSession(scope()))
+        {
+            await(() -> aggregate.isBound() && exact.isBound());
+            source.receive(new TestMessage(1_000, Protocol.DMR, 1, true, "before origin changed"));
+            DecodeMessageViewService.MessageView polled = aggregate.poll(2, TimeUnit.SECONDS);
+            assertNotNull(exact.poll(2, TimeUnit.SECONDS));
+            assertTrue(aggregate.isCurrent(polled));
+            source.receive(blockedMessage(entered, release));
+            assertTrue(entered.await(2, TimeUnit.SECONDS));
+
+            // Same channel, chain, sample source, and final frequency: a rotation A→B→A has equal-valued origins.
+            chain.removeModule(source);
+            chain.setSource(source);
+            DecodeMessageViewService.ChainMessageSource replacement =
+                new DecodeMessageViewService.ChainMessageSource(chain);
+            assertNotSame(original.mOrigin(), replacement.mOrigin());
+            assertEquals(original.mOrigin(), replacement.mOrigin(), "the prepared record values intentionally match");
+            assertFalse(original.matches(scope()));
+            assertTrue(replacement.matches(scope()));
+            assertNotEquals(original, replacement, "source equality must compare origin identity, not record values");
+            assertFalse(aggregate.isCurrent(polled),
+                "final wire admission must reject the old origin while its aggregate generation is still cached");
+
+            long generation = aggregate.generation();
+            aggregate.refresh();
+            release.countDown();
+            await(() -> aggregate.generation() > generation && aggregate.isBound() && exact.isBound());
+            assertNull(aggregate.poll(0, TimeUnit.MILLISECONDS));
+            assertNull(exact.poll(0, TimeUnit.MILLISECONDS));
+            assertFalse(aggregate.isCurrent(polled), "a completed rebind must also reject the old binding sequence");
+
+            source.receive(new TestMessage(2_000, Protocol.DMR, 1, true, "new origin"));
+            DecodeMessageViewService.MessageView current = aggregate.poll(2, TimeUnit.SECONDS);
+            assertEquals("new origin", current.text());
+            assertTrue(aggregate.isCurrent(current));
+            assertNotEquals(polled.sourceBindingSequence(), current.sourceBindingSequence());
+        }
+        finally
+        {
+            release.countDown();
+            chain.dispose();
+        }
+    }
+
+    @Test
+    void aggregateSaturationReportsIngressLossAndPreservesQuietSourceInOneBoundedQueue() throws Exception
+    {
+        FakeMessageSource hot = new FakeMessageSource();
+        FakeMessageSource quiet = new FakeMessageSource();
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+
+        try(DecodeMessageViewService service = new DecodeMessageViewService(selected ->
+            selected.equals(scope()) ? hot : quiet, DecodeMessageViewServiceTest::bothSources);
+            DecodeMessageViewService.Session aggregate = service.openSession(DecodeMessageViewService.Scope.conventional()))
+        {
+            await(() -> aggregate.isBound() && aggregate.filterCatalog().groups().size() == 2);
+            quiet.receive(new TestMessage(1_000, Protocol.NXDN, 0, true, "quiet"));
+            await(() -> aggregate.queuedCount() == 1);
+            hot.receive(blockedMessage(entered, release));
+            assertTrue(entered.await(2, TimeUnit.SECONDS));
+            long started = System.nanoTime();
+
+            for(int index = 0; index < DecodeMessageViewService.INGRESS_QUEUE_SIZE + 16; index++)
+            {
+                hot.receive(new TestMessage(index + 2_000, Protocol.DMR, 1, true, "hot"));
+            }
+
+            assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) < 250);
+            assertTrue(service.getDroppedObservationCount(scope()) > 0);
+            release.countDown();
+            await(() -> service.getPendingObservationCount(scope()) == 0 && aggregate.droppedCount() > 0);
+            int count = 0;
+            boolean foundQuiet = false;
+            DecodeMessageViewService.MessageView view;
+
+            while((view = aggregate.poll(0, TimeUnit.MILLISECONDS)) != null)
+            {
+                count++;
+                foundQuiet |= "quiet".equals(view.text());
+            }
+
+            assertTrue(count <= DecodeMessageViewService.LIVE_QUEUE_SIZE);
+            assertTrue(foundQuiet, "the hot source must replace its own stale rows before the quiet source");
+        }
+        finally
+        {
+            release.countDown();
+        }
+    }
+
+    @Test
+    void aggregateFinalDisconnectImmediatelyStopsOffersAndAbandonsQueuedProjection() throws Exception
+    {
+        FakeMessageSource source = new FakeMessageSource();
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicInteger abandoned = new AtomicInteger();
+
+        try(DecodeMessageViewService service = new DecodeMessageViewService(selected -> source,
+            () -> List.of(bothSources().getFirst())))
+        {
+            DecodeMessageViewService.Session aggregate = service.openSession(DecodeMessageViewService.Scope.conventional());
+            await(aggregate::isBound);
+            source.receive(blockedMessage(entered, release));
+            assertTrue(entered.await(2, TimeUnit.SECONDS));
+            source.receive(countedMessage(2_000, Protocol.DMR, "abandoned", abandoned));
+            int pending = service.getPendingObservationCount(scope());
+            aggregate.close();
+
+            for(int index = 0; index < 32; index++)
+            {
+                source.receive(countedMessage(3_000 + index, Protocol.DMR, "after disconnect", abandoned));
+            }
+
+            assertEquals(pending, service.getPendingObservationCount(scope()),
+                "no-demand sources must stop accepting observations before the blocked worker returns");
+            release.countDown();
+            await(() -> source.listenerCount() == 0 && service.getProducerCount() == 0);
+            assertEquals(0, abandoned.get());
+        }
+        finally
+        {
+            release.countDown();
+        }
+    }
+
+    @Test
+    void aggregateRemovalDuringBlockedProjectionRejectsOldSourceMessage() throws Exception
+    {
+        FakeMessageSource source = new FakeMessageSource();
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicReference<List<ConventionalLiveSources.Source>> members =
+            new AtomicReference<>(List.of(bothSources().getFirst()));
+
+        try(DecodeMessageViewService service = new DecodeMessageViewService(selected -> source, members::get);
+            DecodeMessageViewService.Session aggregate = service.openSession(DecodeMessageViewService.Scope.conventional()))
+        {
+            await(aggregate::isBound);
+            source.receive(blockedMessage(entered, release));
+            assertTrue(entered.await(2, TimeUnit.SECONDS));
+            members.set(List.of());
+            release.countDown();
+            await(() -> !aggregate.isBound() && source.listenerCount() == 0);
+            assertNull(aggregate.poll(0, TimeUnit.MILLISECONDS));
+        }
+        finally
+        {
+            release.countDown();
+        }
+    }
+
+    private static List<ConventionalLiveSources.Source> bothSources()
+    {
+        return List.of(new ConventionalLiveSources.Source(CONFIGURATION_ID, FREQUENCY, "First channel"),
+            new ConventionalLiveSources.Source(SECOND_CONFIGURATION_ID, SECOND_FREQUENCY, "Second channel"));
+    }
+
+    private static TestMessage countedMessage(long timestamp, Protocol protocol, String text, AtomicInteger counter)
+    {
+        return new TestMessage(timestamp, protocol, 0, true, text)
+        {
+            @Override
+            public String toString()
+            {
+                counter.incrementAndGet();
+                return super.toString();
+            }
+        };
+    }
+
+    private static TestMessage blockedMessage(CountDownLatch entered, CountDownLatch release)
+    {
+        return new TestMessage(1_000, Protocol.DMR, 1, true, "blocked")
+        {
+            @Override
+            public String toString()
+            {
+                entered.countDown();
+
+                try
+                {
+                    release.await();
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                }
+
+                return super.toString();
+            }
+        };
+    }
+
+    private static boolean hasFilterKey(List<io.github.dsheirer.filter.FilterCatalog.Node> nodes, String key)
+    {
+        return nodes.stream().anyMatch(node -> node.key().equals(key) || hasFilterKey(node.children(), key));
     }
 
     private static void await(BooleanSupplier condition)
@@ -761,6 +1233,28 @@ class DecodeMessageViewServiceTest
         int classifierBuilds()
         {
             return mClassifierBuilds.get();
+        }
+    }
+
+    private static class TestChainSource extends ComplexSource implements IMessageProvider
+    {
+        private Listener<IMessage> mMessages;
+
+        @Override public void setMessageListener(Listener<IMessage> listener) { mMessages = listener; }
+        @Override public void removeMessageListener() { mMessages = null; }
+        @Override public void setListener(Listener<ComplexSamples> listener) {}
+        @Override public Listener<SourceEvent> getSourceEventListener() { return event -> {}; }
+        @Override public void setSourceEventListener(Listener<SourceEvent> listener) {}
+        @Override public void removeSourceEventListener() {}
+        @Override public double getSampleRate() { return 25_000; }
+        @Override public long getFrequency() { return FREQUENCY; }
+        @Override public void reset() {}
+        @Override public void start() {}
+        @Override public void stop() {}
+
+        void receive(IMessage message)
+        {
+            mMessages.receive(message);
         }
     }
 

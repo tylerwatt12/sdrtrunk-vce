@@ -155,8 +155,25 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
                 mTunerChannelSource.setSourceEventListener(mConsumerSourceEventAdapter);
                 mTunerChannelSource.setListener(mComplexSamplesListener);
                 mTunerChannelSource.addHeartbeatListener(mHeartbeatListener);
-                mTunerChannelSource.start();
+                TunerChannel previousChannel = mTunerChannel;
                 mTunerChannel = nextChannel;
+                boolean sourceStarted = false;
+
+                try
+                {
+                    // Startup publishes the new frequency before requesting samples. Keep the wrapper's descriptor
+                    // coherent for lifecycle observers at that boundary.
+                    mTunerChannelSource.start();
+                    sourceStarted = true;
+                }
+                finally
+                {
+                    if(!sourceStarted)
+                    {
+                        mTunerChannel = previousChannel;
+                    }
+                }
+
                 mChangingChannels.set(false);
 
                 getSourceEventListener().receive(SourceEvent.frequencyRotationSuccessNotification(this, nextChannel.getFrequency()));

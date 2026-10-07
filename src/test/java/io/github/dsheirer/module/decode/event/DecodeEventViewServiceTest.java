@@ -14,6 +14,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.DecodeEventSource;
+import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.filter.FilterCatalog;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
@@ -26,7 +28,12 @@ import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifie
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
+import io.github.dsheirer.module.ProcessingChain;
 import io.github.dsheirer.protocol.Protocol;
+import io.github.dsheirer.sample.Listener;
+import io.github.dsheirer.sample.SampleType;
+import io.github.dsheirer.source.Source;
+import io.github.dsheirer.source.SourceEvent;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -98,6 +105,33 @@ class DecodeEventViewServiceTest
             assertEquals("APCO25_PHASE2", updated.protocol());
             assertEquals(512, updated.details().length());
             assertTrue(updated.details().endsWith("…"));
+        }
+    }
+
+    @Test
+    void preservesSavedOriginAlongsideDecodedDescriptorAndSeparatesEqualEventObjectsByChannel() throws Exception
+    {
+        DecodeEvent event = DecodeEvent.builder(DecodeEventType.CALL_GROUP, 1_000L)
+            .channel(new StandardChannel(FREQUENCY + 25_000)).build();
+
+        try(DecodeEventViewService service = new DecodeEventViewService(null, null))
+        {
+            var origin = service.view(CONFIGURATION_ID, event, FREQUENCY, "County Fire", 3);
+            var other = service.view("00000000-0000-0000-0000-000000000002", event, FREQUENCY,
+                "County EMS", 3);
+            assertEquals("County Fire", origin.channelName());
+            assertEquals(FREQUENCY, origin.sourceFrequencyHz());
+            assertEquals(FREQUENCY + 25_000, origin.frequencyHz(),
+                "Decoded descriptor semantics remain unchanged for an exact selection");
+            assertFalse(origin.eventId().equals(other.eventId()));
+            assertEquals(origin.eventId(), service.view(CONFIGURATION_ID, event, FREQUENCY,
+                "Renamed Fire", 4).eventId());
+
+            var json = new ObjectMapper().setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
+                .valueToTree(origin);
+            assertEquals("County Fire", json.path("channel_name").textValue());
+            assertEquals(FREQUENCY, json.path("source_frequency_hz").longValue());
+            assertFalse(json.has("observation_epoch"));
         }
     }
 
@@ -503,6 +537,184 @@ class DecodeEventViewServiceTest
             assertTrue(callback.await(2, TimeUnit.SECONDS));
             assertEquals(1, callbacks.get());
         }
+    }
+
+    @Test
+    void discardsQueuedAndInFlightEventsFromAReplacedChainWithoutAssigningItsNewFrequency() throws Exception
+    {
+        Channel channel = new Channel("County Fire");
+        channel.setConfigurationId(CONFIGURATION_ID);
+        AliasModel aliases = new AliasModel();
+        ProcessingChain oldChain = new ProcessingChain(channel, aliases);
+        ProcessingChain replacement = new ProcessingChain(channel, aliases);
+        oldChain.setSource(new MutableFrequencySource(FREQUENCY));
+        replacement.setSource(new MutableFrequencySource(FREQUENCY + 25_000));
+        var current = new AtomicReference<>(oldChain);
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        List<DecodeEventViewService.EventView> observed = new CopyOnWriteArrayList<>();
+
+        try(DecodeEventViewService service = new DecodeEventViewService(null, aliases,
+            origin -> current.get() == origin.processingChain()))
+        {
+            service.addListener(observed::add);
+            service.getBoundDecodeEventListener().accept(oldChain.getDecodeEventSource(), blockedEvent(1_000, entered,
+                release));
+            assertTrue(entered.await(2, TimeUnit.SECONDS));
+            service.getBoundDecodeEventListener().accept(oldChain.getDecodeEventSource(),
+                DecodeEvent.builder(DecodeEventType.CALL, 2_000).build());
+            current.set(replacement);
+            service.getBoundDecodeEventListener().accept(replacement.getDecodeEventSource(),
+                DecodeEvent.builder(DecodeEventType.CALL, 3_000).build());
+            release.countDown();
+            await(() -> observed.size() == 1);
+            var view = observed.getFirst();
+            assertEquals(3_000, view.timeStartMs());
+            assertEquals(FREQUENCY + 25_000, view.sourceFrequencyHz());
+            assertEquals(FREQUENCY + 25_000, view.frequencyHz());
+            assertEquals("County Fire", view.channelName());
+            assertTrue(service.isCurrent(view));
+
+            String json = new ObjectMapper().setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
+                .writeValueAsString(view);
+            assertFalse(json.contains("source_binding"));
+            assertFalse(json.contains("processing_chain"));
+            current.set(null);
+            assertFalse(service.isCurrent(view), "A browser cannot send a queued row after its originating chain stops");
+        }
+        finally
+        {
+            release.countDown();
+            oldChain.dispose();
+            replacement.dispose();
+        }
+    }
+
+    @Test
+    void sameChainRetuneRejectsOldIngressAndAlreadyProjectedRows() throws Exception
+    {
+        Channel channel = new Channel("County Fire");
+        channel.setConfigurationId(CONFIGURATION_ID);
+        ProcessingChain chain = new ProcessingChain(channel, new AliasModel());
+        MutableFrequencySource source = new MutableFrequencySource(FREQUENCY);
+        chain.setSource(source);
+        DecodeEventSource origin = chain.getDecodeEventSource();
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        List<DecodeEventViewService.EventView> observed = new CopyOnWriteArrayList<>();
+
+        try(DecodeEventViewService service = new DecodeEventViewService(null, null))
+        {
+            service.addListener(observed::add);
+            service.getBoundDecodeEventListener().accept(origin,
+                DecodeEvent.builder(DecodeEventType.CALL, 1_000).build());
+            await(() -> observed.size() == 1);
+            var earlier = observed.getFirst();
+            service.getBoundDecodeEventListener().accept(origin, blockedEvent(2_000, entered, release));
+            assertTrue(entered.await(2, TimeUnit.SECONDS));
+            service.getBoundDecodeEventListener().accept(origin,
+                DecodeEvent.builder(DecodeEventType.CALL, 2_500).build());
+            source.frequency = FREQUENCY + 25_000;
+            assertFalse(service.isCurrent(earlier));
+            service.getBoundDecodeEventListener().accept(origin,
+                DecodeEvent.builder(DecodeEventType.CALL, 3_000).build());
+            release.countDown();
+            await(() -> observed.size() == 2);
+            assertEquals(List.of(1_000L, 3_000L), observed.stream().map(view -> view.timeStartMs()).toList());
+            assertEquals(FREQUENCY + 25_000, observed.getLast().sourceFrequencyHz());
+            assertTrue(service.isCurrent(observed.getLast()));
+        }
+        finally
+        {
+            release.countDown();
+            chain.dispose();
+        }
+    }
+
+    @Test
+    void channelTransitionRollbackRejectsOldIngressEvenWhenTheChannelAndFrequencyReturn() throws Exception
+    {
+        Channel original = new Channel("County Fire");
+        original.setConfigurationId(CONFIGURATION_ID);
+        ProcessingChain chain = new ProcessingChain(original, new AliasModel());
+        chain.setSource(new MutableFrequencySource(FREQUENCY));
+        DecodeEventSource oldOrigin = chain.getDecodeEventSource();
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        List<DecodeEventViewService.EventView> observed = new CopyOnWriteArrayList<>();
+
+        try(DecodeEventViewService service = new DecodeEventViewService(null, null))
+        {
+            service.addListener(observed::add);
+            service.getBoundDecodeEventListener().accept(oldOrigin, blockedEvent(1_000, entered, release));
+            assertTrue(entered.await(2, TimeUnit.SECONDS));
+            service.getBoundDecodeEventListener().accept(oldOrigin,
+                DecodeEvent.builder(DecodeEventType.CALL, 2_000).build());
+
+            var transition = chain.beginChannelConfigurationTransition(
+                new Channel("Traffic", Channel.ChannelType.TRAFFIC));
+            chain.publishChannelConfigurationTransition(transition);
+            chain.rollbackChannelConfigurationTransition(transition);
+            DecodeEventSource returnedOrigin = chain.getDecodeEventSource();
+            assertEquals(oldOrigin, returnedOrigin,
+                "The channel, chain and sample source return to the same values");
+            assertFalse(oldOrigin == returnedOrigin,
+                "A prepared origin is an incarnation token; equal values do not revive old observations");
+
+            service.getBoundDecodeEventListener().accept(returnedOrigin,
+                DecodeEvent.builder(DecodeEventType.CALL, 3_000).build());
+            release.countDown();
+            await(() -> observed.size() == 1);
+            assertEquals(3_000, observed.getFirst().timeStartMs());
+            assertEquals(CONFIGURATION_ID, observed.getFirst().configurationId());
+            assertEquals(FREQUENCY, observed.getFirst().sourceFrequencyHz());
+        }
+        finally
+        {
+            release.countDown();
+            chain.dispose();
+        }
+    }
+
+    private static DecodeEvent blockedEvent(long timestamp, CountDownLatch entered, CountDownLatch release)
+    {
+        return new DecodeEvent(DecodeEventType.CALL, timestamp)
+        {
+            @Override
+            public DecodeEventType getEventType()
+            {
+                entered.countDown();
+                try
+                {
+                    release.await();
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                }
+                return super.getEventType();
+            }
+        };
+    }
+
+    private static class MutableFrequencySource extends Source
+    {
+        private volatile long frequency;
+
+        private MutableFrequencySource(long frequency)
+        {
+            this.frequency = frequency;
+        }
+
+        @Override public SampleType getSampleType() { return SampleType.COMPLEX; }
+        @Override public double getSampleRate() { return 48_000; }
+        @Override public long getFrequency() { return frequency; }
+        @Override public void reset() { }
+        @Override public void start() { }
+        @Override public void stop() { }
+        @Override public Listener<SourceEvent> getSourceEventListener() { return event -> { }; }
+        @Override public void setSourceEventListener(Listener<SourceEvent> listener) { }
+        @Override public void removeSourceEventListener() { }
     }
 
     private static void await(BooleanSupplier condition)

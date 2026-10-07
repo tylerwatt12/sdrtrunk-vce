@@ -88,6 +88,32 @@ class MessageFilterCatalogTest
     }
 
     @Test
+    void aggregateCatalogNamespacesMixedDecoderTreesAndCombinesTimeslotsDeterministically()
+    {
+        FilterCatalog dmr = MessageFilterCatalog.fromFilterSet(filters(DecoderType.DMR), new int[]{1, 2}).catalog();
+        FilterCatalog p25 = MessageFilterCatalog.fromFilterSet(filters(DecoderType.P25_PHASE1), new int[0]).catalog();
+        FilterCatalog nxdn = MessageFilterCatalog.fromFilterSet(filters(DecoderType.NXDN), new int[0]).catalog();
+        List<MessageFilterCatalog.CatalogSource> sources = List.of(
+            new MessageFilterCatalog.CatalogSource("source/dmr/", "Shared name", dmr),
+            new MessageFilterCatalog.CatalogSource("source/p25/", "Shared name", p25),
+            new MessageFilterCatalog.CatalogSource("source/nxdn/", "NXDN channel", nxdn));
+        FilterCatalog aggregate = MessageFilterCatalog.aggregate(sources);
+        assertEquals(aggregate, MessageFilterCatalog.aggregate(sources));
+        assertEquals(List.of(1, 2), aggregate.timeslots());
+        assertEquals(List.of("Shared name", "Shared name", "NXDN channel"),
+            aggregate.groups().stream().map(FilterCatalog.Node::label).toList());
+        List<String> keys = new ArrayList<>();
+        aggregate.groups().forEach(node -> collectKeys(node, keys));
+        assertEquals(keys.size(), new HashSet<>(keys).size());
+        assertEquals(dmr.groups().stream().mapToInt(MessageFilterCatalogTest::leafCount).sum() +
+                p25.groups().stream().mapToInt(MessageFilterCatalogTest::leafCount).sum() +
+                nxdn.groups().stream().mapToInt(MessageFilterCatalogTest::leafCount).sum(),
+            aggregate.groups().stream().mapToInt(MessageFilterCatalogTest::leafCount).sum());
+        assertTrue(aggregate.groups().getFirst().children().stream().allMatch(node ->
+            node.key().startsWith("source/dmr/")));
+    }
+
+    @Test
     void repairedLegacyBranchesAreCatalogedAndClassified()
     {
         MessageFilterCatalog.Match pdu = classifier(DecoderType.P25_PHASE1).classify(

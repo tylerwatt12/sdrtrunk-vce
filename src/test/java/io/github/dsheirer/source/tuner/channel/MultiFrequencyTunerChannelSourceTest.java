@@ -12,8 +12,16 @@ package io.github.dsheirer.source.tuner.channel;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.DecodeEventSource;
+import io.github.dsheirer.module.ProcessingChain;
+import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.sample.complex.ComplexSamples;
 import io.github.dsheirer.source.Source;
@@ -22,6 +30,7 @@ import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitorPa
 import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitorResumeRequest;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.SortedSet;
 import java.util.concurrent.CountDownLatch;
@@ -61,6 +70,88 @@ class MultiFrequencyTunerChannelSourceTest
         MultiFrequencyTunerChannelSource source = source(FIRST_FREQUENCY);
 
         assertEquals(SECOND_FREQUENCY, getNextFrequency(source));
+    }
+
+    @Test
+    void conventionalRotationPublishesTheFrequencyAndNewOriginBeforeSamplesAndFencesReturnToA() throws Exception
+    {
+        TestTunerManager tunerManager = new TestTunerManager(null, null, null)
+        {
+            @Override
+            public Source getSource(TunerChannel tunerChannel, ChannelSpecification specification,
+                                    String preferredTuner, String threadName, SortedSet<TunerChannel> tunerChannels)
+            {
+                return new TestTunerChannelSource(tunerChannel.getFrequency());
+            }
+        };
+        MultiFrequencyTunerChannelSource source = new MultiFrequencyTunerChannelSource(tunerManager,
+            new TestTunerChannelSource(FIRST_FREQUENCY), List.of(FIRST_FREQUENCY, SECOND_FREQUENCY),
+            CHANNEL_SPECIFICATION, null, "conventional rotation origin test", null, null);
+        Channel channel = new Channel("Conventional DMR", Channel.ChannelType.STANDARD);
+        channel.setDecodeConfiguration(new DecodeConfigDMR());
+        ProcessingChain chain = new ProcessingChain(channel, new AliasModel());
+        List<DecodeEventSource> startupOrigins = new ArrayList<>();
+        List<Long> startupFrequencies = new ArrayList<>();
+
+        try
+        {
+            chain.setSource(source);
+            chain.addSourceEventListener(event ->
+            {
+                if(event.getEvent() == SourceEvent.Event.NOTIFICATION_FREQUENCY_CHANGE)
+                {
+                    assertEquals(event.getValue().longValue(), source.getFrequency(),
+                        "wrapper frequency must be coherent during the startup notification");
+                    startupOrigins.add(chain.getDecodeEventSource());
+                    startupFrequencies.add(source.getFrequency());
+                }
+            });
+            source.start();
+            DecodeEventSource firstA = chain.getDecodeEventSource();
+            source.process(SourceEvent.frequencyRotationRequest());
+            DecodeEventSource b = chain.getDecodeEventSource();
+            source.process(SourceEvent.frequencyRotationRequest());
+            DecodeEventSource returnedA = chain.getDecodeEventSource();
+
+            assertEquals(List.of(FIRST_FREQUENCY, SECOND_FREQUENCY, FIRST_FREQUENCY), startupFrequencies);
+            assertEquals(List.of(firstA, b, returnedA), startupOrigins);
+            assertNotSame(firstA, b);
+            assertNotSame(firstA, returnedA, "an old A observation must retain a stale origin after returning to A");
+            assertSame(channel, returnedA.channel());
+            assertSame(source, returnedA.source());
+        }
+        finally
+        {
+            chain.dispose();
+        }
+    }
+
+    @Test
+    void failedReplacementStartupRestoresThePreviousWrapperDescriptor() throws Exception
+    {
+        TestTunerChannelSource failing = new TestTunerChannelSource(SECOND_FREQUENCY)
+        {
+            @Override
+            public void start()
+            {
+                super.start();
+                throw new IllegalStateException("Injected replacement startup failure");
+            }
+        };
+        MultiFrequencyTunerChannelSource source = source(FIRST_FREQUENCY,
+            new TestTunerManager(null, null, failing));
+        source.setSourceEventListener(event -> {});
+
+        try
+        {
+            source.start();
+            assertThrows(IllegalStateException.class, () -> source.process(SourceEvent.frequencyRotationRequest()));
+            assertEquals(FIRST_FREQUENCY, source.getFrequency());
+        }
+        finally
+        {
+            source.stop();
+        }
     }
 
     @Test

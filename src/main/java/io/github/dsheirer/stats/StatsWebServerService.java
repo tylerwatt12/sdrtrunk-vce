@@ -37,6 +37,7 @@ import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.filter.FilterCatalog;
 import io.github.dsheirer.message.DecodeMessageViewService;
+import io.github.dsheirer.channel.metadata.activity.ConventionalLiveSources;
 import io.github.dsheirer.map.MapSnapshotService;
 import io.github.dsheirer.module.decode.event.DecodeEventViewService;
 import io.github.dsheirer.preference.PreferenceType;
@@ -138,6 +139,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicLongArray;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
+import java.util.function.Predicate;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 import javax.net.ssl.SSLContext;
 import org.slf4j.Logger;
@@ -185,6 +188,7 @@ public class StatsWebServerService implements AutoCloseable
     private final StatsP25AssignmentService mP25AssignmentService;
     private final DecodeEventViewService mDecodeEventViewService;
     private final DecodeMessageViewService mDecodeMessageViewService;
+    private final ConventionalLiveSources mConventionalLiveSources;
     private final DiagnosticFftScheduler mDiagnosticFftScheduler;
     private final ChannelDiagnosticService mChannelDiagnosticService;
     private final TunerDiagnosticService mTunerDiagnosticService;
@@ -381,8 +385,10 @@ public class StatsWebServerService implements AutoCloseable
         mChannelAdministrationService = channelAdministrationService;
         mTunerManager = tunerManager;
         mDecodeEventViewService = decodeEventViewService;
+        mConventionalLiveSources = new ConventionalLiveSources(channelProcessingManager != null ?
+            channelProcessingManager.getChannelActivityModel() : null);
         mDecodeMessageViewService = channelProcessingManager != null ?
-            new DecodeMessageViewService(channelProcessingManager) : null;
+            new DecodeMessageViewService(channelProcessingManager, mConventionalLiveSources) : null;
         mDiagnosticFftScheduler = new DiagnosticFftScheduler();
         mChannelDiagnosticService = channelProcessingManager != null ?
             new ChannelDiagnosticService(channelProcessingManager, mDiagnosticFftScheduler) : null;
@@ -1819,6 +1825,66 @@ public class StatsWebServerService implements AutoCloseable
         output.offerRecovery(topic, LiveMultiplexFrame.json(topic, event, data).bytes(output.mGzipEnabled));
     }
 
+    /** Samples a bounded message batch and admits each row only behind its matching source-change boundary. */
+    static DecodeMessagePumpResult pumpDecodeMessages(MultiplexOutput output,
+                                                       Supplier<DecodeMessageViewService.SourceState> source,
+                                                       DecodeMessagePoller messages,
+                                                       Predicate<DecodeMessageViewService.MessageView> admission,
+                                                       int maximumMessages,
+                                                       long currentGeneration, String subscriptionId)
+        throws IOException, InterruptedException
+    {
+        boolean wrote = false;
+        DecodeMessageViewService.SourceState state = source.get();
+
+        if(state.generation() != currentGeneration)
+        {
+            currentGeneration = state.generation();
+            writeMultiplexRecoveryJson(output, TOPIC_DECODE_MESSAGES, "source_change",
+                decodeMessageSourceState(state, subscriptionId));
+            wrote = true;
+        }
+
+        for(int count = 0; count < maximumMessages; count++)
+        {
+            DecodeMessageViewService.MessageView message = messages.poll();
+
+            if(message == null)
+            {
+                break;
+            }
+
+            // A source can stop, retune, or join the aggregate while poll() is returning a previously admitted row.
+            state = source.get();
+
+            if(state.generation() != currentGeneration)
+            {
+                currentGeneration = state.generation();
+                writeMultiplexRecoveryJson(output, TOPIC_DECODE_MESSAGES, "source_change",
+                    decodeMessageSourceState(state, subscriptionId));
+                wrote = true;
+            }
+
+            if(message.sourceGeneration() == state.generation() && state.bound() && admission.test(message))
+            {
+                writeMultiplexJson(output, TOPIC_DECODE_MESSAGES, "decode_message", message);
+                wrote = true;
+            }
+        }
+
+        return new DecodeMessagePumpResult(currentGeneration, wrote);
+    }
+
+    @FunctionalInterface
+    interface DecodeMessagePoller
+    {
+        DecodeMessageViewService.MessageView poll() throws InterruptedException;
+    }
+
+    record DecodeMessagePumpResult(long generation, boolean wrote)
+    {
+    }
+
     private static void writeMultiplexRecoverySequenceJson(MultiplexOutput output, int topic,
                                                             String firstEvent, Object firstData,
                                                             String secondEvent, Object secondData) throws IOException
@@ -1870,6 +1936,20 @@ public class StatsWebServerService implements AutoCloseable
     private static DecodeEventRequest decodeEventRequest(URI uri, boolean diagnostics)
     {
         StatsRequest request = StatsRequest.from(uri);
+        if(conventionalDecodeScope(request))
+        {
+            if(diagnostics)
+            {
+                throw new StatsApiException(400, "invalid_parameter", "scope is not supported for channel diagnostics",
+                    "scope");
+            }
+
+            request.requireOnly("scope", "subscription_id");
+            String subscriptionId = decodeSubscriptionId(request);
+            request.requireFullyConsumed();
+            return new DecodeEventRequest(DecodeEventViewService.Scope.conventional(), subscriptionId, false);
+        }
+
         String configurationId;
 
         try
@@ -1883,7 +1963,7 @@ public class StatsWebServerService implements AutoCloseable
 
         Long frequency = request.optionalLong("frequency_hz");
         Integer timeslot = request.optionalInt("timeslot");
-        String subscriptionId = request.text("subscription_id");
+        String subscriptionId = decodeSubscriptionId(request);
         boolean compactStrength = diagnostics && compactStrength(request.text("strength_encoding"));
 
         if(frequency != null)
@@ -1900,18 +1980,6 @@ public class StatsWebServerService implements AutoCloseable
             throw new StatsApiException(400, "invalid_parameter", "timeslot must be positive", "timeslot");
         }
 
-        if(subscriptionId != null)
-        {
-            try
-            {
-                subscriptionId = UUID.fromString(subscriptionId).toString();
-            }
-            catch(IllegalArgumentException exception)
-            {
-                throw new StatsApiException(400, "subscription_id is invalid");
-            }
-        }
-
         request.requireFullyConsumed();
         return new DecodeEventRequest(new DecodeEventViewService.Scope(configurationId, frequency, timeslot),
             subscriptionId, compactStrength);
@@ -1926,6 +1994,14 @@ public class StatsWebServerService implements AutoCloseable
     private static DecodeMessageRequest decodeMessageRequest(URI uri)
     {
         StatsRequest request = StatsRequest.from(uri);
+        if(conventionalDecodeScope(request))
+        {
+            request.requireOnly("scope", "subscription_id");
+            String subscriptionId = decodeSubscriptionId(request);
+            request.requireFullyConsumed();
+            return new DecodeMessageRequest(DecodeMessageViewService.Scope.conventional(), subscriptionId);
+        }
+
         String configurationId;
 
         try
@@ -1938,7 +2014,7 @@ public class StatsWebServerService implements AutoCloseable
         }
 
         Long frequency = request.optionalLong("frequency_hz");
-        String subscriptionId = request.text("subscription_id");
+        String subscriptionId = decodeSubscriptionId(request);
 
         if(frequency == null)
         {
@@ -1950,6 +2026,32 @@ public class StatsWebServerService implements AutoCloseable
             throw new StatsApiException(400, "invalid_parameter", "frequency_hz must be positive",
                 "frequency_hz");
         }
+
+        request.requireFullyConsumed();
+        return new DecodeMessageRequest(new DecodeMessageViewService.Scope(configurationId, frequency),
+            subscriptionId);
+    }
+
+    private static boolean conventionalDecodeScope(StatsRequest request)
+    {
+        String scope = request.text("scope");
+
+        if(scope == null)
+        {
+            return false;
+        }
+
+        if(!"conventional".equals(scope))
+        {
+            throw new StatsApiException(400, "invalid_parameter", "scope must be conventional", "scope");
+        }
+
+        return true;
+    }
+
+    private static String decodeSubscriptionId(StatsRequest request)
+    {
+        String subscriptionId = request.text("subscription_id");
 
         if(subscriptionId != null)
         {
@@ -1963,9 +2065,7 @@ public class StatsWebServerService implements AutoCloseable
             }
         }
 
-        request.requireFullyConsumed();
-        return new DecodeMessageRequest(new DecodeMessageViewService.Scope(configurationId, frequency),
-            subscriptionId);
+        return subscriptionId;
     }
 
     static ChannelDiagnosticService.Scope channelDiagnosticScope(URI uri)
@@ -3257,6 +3357,7 @@ public class StatsWebServerService implements AutoCloseable
     private final class MultiplexClient implements AutoCloseable
     {
         private static final int MAXIMUM_EVENTS_PER_PUMP = 16;
+        private static final int MAXIMUM_AGGREGATE_MESSAGES_PER_PUMP = 64;
         private static final int MAXIMUM_RECOVERY_DISCARD = 512;
         private final String mClientId;
         private volatile MultiplexOutput mOutput;
@@ -3270,6 +3371,7 @@ public class StatsWebServerService implements AutoCloseable
         private Set<String> mUnauthorizedTopics = Set.of();
         private StatsLiveEventHub.Subscription mChannelActivity;
         private StatsLiveEventHub.Subscription mDecodeEvents;
+        private DecodeEventViewService.Scope mDecodeEventScope;
         private DecodeMessageViewService.Session mDecodeMessages;
         private ChannelDiagnosticService.Session mChannelDiagnostics;
         private TunerDiagnosticService.Session mTunerDiagnostics;
@@ -3349,31 +3451,18 @@ public class StatsWebServerService implements AutoCloseable
 
             long now = System.nanoTime();
 
-            if(mDecodeMessages != null && now - mLastMessagePoll >= TimeUnit.MILLISECONDS.toNanos(100))
+            if(mDecodeMessages != null && now - mLastMessagePoll >= TimeUnit.MILLISECONDS.toNanos(
+                mDecodeMessages.getScope().aggregate() ? 20 : 100))
             {
                 mLastMessagePoll = now;
                 DecodeMessageViewService.SourceState sourceState = mDecodeMessages.sourceState();
-
-                if(sourceState.generation() != mDecodeMessageGeneration)
-                {
-                    mDecodeMessageGeneration = sourceState.generation();
-                    writeMultiplexRecoveryJson(output, TOPIC_DECODE_MESSAGES, "source_change",
-                        decodeMessageSourceState(sourceState, mDecodeMessageSubscriptionId));
-                    wrote = true;
-                }
-
-                for(int count = 0; count < MAXIMUM_EVENTS_PER_PUMP; count++)
-                {
-                    DecodeMessageViewService.MessageView message = mDecodeMessages.poll(0, TimeUnit.NANOSECONDS);
-
-                    if(message == null)
-                    {
-                        break;
-                    }
-
-                    writeMultiplexJson(output, TOPIC_DECODE_MESSAGES, "decode_message", message);
-                    wrote = true;
-                }
+                int maximumMessages = sourceState.aggregate() ? MAXIMUM_AGGREGATE_MESSAGES_PER_PUMP :
+                    MAXIMUM_EVENTS_PER_PUMP;
+                DecodeMessagePumpResult result = pumpDecodeMessages(output, mDecodeMessages::sourceState,
+                    () -> mDecodeMessages.poll(0, TimeUnit.NANOSECONDS), mDecodeMessages::isCurrent, maximumMessages,
+                    mDecodeMessageGeneration, mDecodeMessageSubscriptionId);
+                mDecodeMessageGeneration = result.generation();
+                wrote |= result.wrote();
             }
 
             wrote |= reportStatelessGaps(output);
@@ -3651,6 +3740,7 @@ public class StatsWebServerService implements AutoCloseable
 
                     DecodeEventRequest request = decodeEventRequest(uri);
                     DecodeEventViewService.Scope scope = request.scope();
+                    mDecodeEventScope = scope;
                     long ingressDropBaseline = mDecodeEventViewService.getDroppedObservationCount();
                     AtomicLong liveEdge = new AtomicLong(Long.MAX_VALUE);
 
@@ -3658,7 +3748,9 @@ public class StatsWebServerService implements AutoCloseable
                     {
                         mDecodeEvents = mDecodeEventHub.subscribe(event ->
                             event.data() instanceof DecodeEventViewService.EventView view &&
-                                view.observationEpoch() >= liveEdge.get() && scope.matches(view));
+                                view.observationEpoch() >= liveEdge.get() &&
+                                mDecodeEventViewService.isCurrent(view) &&
+                                scope.matches(view, mConventionalLiveSources));
 
                         if(mDecodeEvents != null)
                         {
@@ -3670,10 +3762,8 @@ public class StatsWebServerService implements AutoCloseable
                     requiredSubscription(mDecodeEvents, topic);
                     mDecodeEventDrops = 0;
                     mDecodeEventIngressDrops = ingressDropBaseline;
-                    FilterCatalog filterCatalog = DecodeEventViewService.filterCatalog();
                     writeMultiplexRecoveryJson(output, TOPIC_DECODE_EVENTS, "source_change",
-                        new DecodeEventSourceState(scope.configurationId(), scope.frequencyHz(), scope.timeslot(),
-                            request.subscriptionId(), filterCatalog));
+                        decodeEventSourceState(scope, request.subscriptionId()));
                     observeOutputDrops(output, TOPIC_DECODE_EVENTS);
                 }
                 case "decode_messages" -> {
@@ -3797,6 +3887,15 @@ public class StatsWebServerService implements AutoCloseable
                     break;
                 }
 
+                if(topic == TOPIC_DECODE_EVENTS && mDecodeEventScope != null &&
+                    event.data() instanceof DecodeEventViewService.EventView view &&
+                    (!mDecodeEventViewService.isCurrent(view) ||
+                        !mDecodeEventScope.matches(view, mConventionalLiveSources)))
+                {
+                    // Membership can change while this browser's bounded queue is waiting to be sampled.
+                    continue;
+                }
+
                 if(topic == TOPIC_CHANNEL_ACTIVITY && event.data() instanceof Map<?,?> data)
                 {
                     if("activity_resync".equals(event.name()))
@@ -3875,6 +3974,7 @@ public class StatsWebServerService implements AutoCloseable
             synchronized(mDecodeEventSubscriptionLock)
             {
                 mDecodeEvents = closeSubscription(mDecodeEvents);
+                mDecodeEventScope = null;
 
                 if(mDecodeEventViewService != null && !mDecodeEventHub.hasSubscribers())
                 {
@@ -4095,8 +4195,15 @@ public class StatsWebServerService implements AutoCloseable
     }
 
     private record DecodeEventSourceState(String configurationId, Long frequencyHz, Integer timeslot,
-                                          String subscriptionId, FilterCatalog filterCatalog)
+                                          String subscriptionId, FilterCatalog filterCatalog, String scope)
     {
+    }
+
+    static DecodeEventSourceState decodeEventSourceState(DecodeEventViewService.Scope scope,
+                                                        String subscriptionId)
+    {
+        return new DecodeEventSourceState(scope.configurationId(), scope.frequencyHz(), scope.timeslot(),
+            subscriptionId, DecodeEventViewService.filterCatalog(), scope.mode().name());
     }
 
     private record DecodeEventRequest(DecodeEventViewService.Scope scope, String subscriptionId,
@@ -4104,11 +4211,12 @@ public class StatsWebServerService implements AutoCloseable
     {
     }
 
-    private static DecodeMessageSourceState decodeMessageSourceState(DecodeMessageViewService.SourceState state,
-                                                                      String subscriptionId)
+    static DecodeMessageSourceState decodeMessageSourceState(DecodeMessageViewService.SourceState state,
+                                                             String subscriptionId)
     {
         return new DecodeMessageSourceState(state.generation(), state.bound(), state.configurationId(),
-            state.frequencyHz(), subscriptionId, state.filterCatalog());
+            state.aggregate() ? null : state.frequencyHz(), subscriptionId, state.filterCatalog(),
+            state.aggregate() ? "CONVENTIONAL" : "CHANNEL");
     }
 
     private record DecodeMessageRequest(DecodeMessageViewService.Scope scope, String subscriptionId)
@@ -4116,7 +4224,8 @@ public class StatsWebServerService implements AutoCloseable
     }
 
     private record DecodeMessageSourceState(long generation, boolean bound, String configurationId,
-                                            long frequencyHz, String subscriptionId, FilterCatalog filterCatalog)
+                                            Long frequencyHz, String subscriptionId, FilterCatalog filterCatalog,
+                                            String scope)
     {
     }
 

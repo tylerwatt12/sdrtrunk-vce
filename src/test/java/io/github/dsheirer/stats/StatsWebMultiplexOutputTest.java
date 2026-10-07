@@ -495,8 +495,8 @@ class StatsWebMultiplexOutputTest
         assertTrue(source.contains("mLiveService.droppedActivityIngressEvents()"));
         assertTrue(source.contains(
             "writeMultiplexRecoveryJson(output, TOPIC_DECODE_MESSAGES, \"source_change\""));
-        assertEquals(2, countOccurrences(source,
-            "decodeMessageSourceState(sourceState, mDecodeMessageSubscriptionId)"));
+        assertTrue(source.contains("pumpDecodeMessages(output, mDecodeMessages::sourceState,"));
+        assertEquals(2, countOccurrences(source, "decodeMessageSourceState(state, subscriptionId)"));
         assertTrue(source.contains("record DecodeMessageSourceState(long generation, boolean bound"));
         assertTrue(source.contains(
             "writeMultiplexRecoveryJson(output, TOPIC_DECODE_EVENTS, \"source_change\""));

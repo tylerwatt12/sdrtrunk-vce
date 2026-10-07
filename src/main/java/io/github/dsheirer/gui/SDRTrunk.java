@@ -287,8 +287,8 @@ public class SDRTrunk
 
         mDecodeEventViewService = new DecodeEventViewService(
             mConfigurationManager.getChannelProcessingManager(), mConfigurationManager.getAliasModel());
-        mConfigurationManager.getChannelProcessingManager().addChannelDecodeEventListener(
-            mDecodeEventViewService.getDecodeEventListener());
+        mConfigurationManager.getChannelProcessingManager().addBoundDecodeEventListener(
+            mDecodeEventViewService.getBoundDecodeEventListener());
 
         mStatsWebServerService = new StatsWebServerService(mUserPreferences,
             mConfigurationManager.getChannelProcessingManager(), mReceiverActivityService,
@@ -1027,8 +1027,8 @@ public class SDRTrunk
         }
         if(mDecodeEventViewService != null)
         {
-            channelProcessingManager.removeChannelDecodeEventListener(
-                mDecodeEventViewService.getDecodeEventListener());
+            channelProcessingManager.removeBoundDecodeEventListener(
+                mDecodeEventViewService.getBoundDecodeEventListener());
             mDecodeEventViewService.close();
         }
         EventLogger.flushPendingWrites();

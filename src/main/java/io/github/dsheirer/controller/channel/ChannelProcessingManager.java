@@ -134,6 +134,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     private List<Listener<AudioCallEvent>> mAudioCallListeners = new CopyOnWriteArrayList<>();
     private List<Listener<IDecodeEvent>> mDecodeEventListeners = new CopyOnWriteArrayList<>();
     private List<BiConsumer<Channel,IDecodeEvent>> mChannelDecodeEventListeners = new CopyOnWriteArrayList<>();
+    private List<BiConsumer<DecodeEventSource,IDecodeEvent>> mBoundDecodeEventListeners = new CopyOnWriteArrayList<>();
     private List<Listener<ControlChannelQualitySnapshot>> mControlChannelQualityListeners = new CopyOnWriteArrayList<>();
     private List<SiteMetadataListener> mSiteMetadataListeners = new CopyOnWriteArrayList<>();
     private List<ProtocolSiteMetadataListener> mProtocolSiteMetadataListeners = new CopyOnWriteArrayList<>();
@@ -1478,6 +1479,12 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                     listener.accept(observerChain.getCurrentChannel(), event));
             }
 
+            for(BiConsumer<DecodeEventSource,IDecodeEvent> listener : mBoundDecodeEventListeners)
+            {
+                processingChain.addDecodeEventListener(event ->
+                    listener.accept(observerChain.getDecodeEventSource(), event));
+            }
+
             //Add a listener to detect source error state that indicates the channel should be shutdown.
             //Note: processing chain will only add this once.
             processingChain.addSourceEventListener(mSourceErrorListener);
@@ -2539,6 +2546,17 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     public void removeChannelDecodeEventListener(BiConsumer<Channel,IDecodeEvent> listener)
     {
         mChannelDecodeEventListeners.remove(listener);
+    }
+
+    /** Adds a route carrying the existing immutable source binding prepared by each processing chain. */
+    public void addBoundDecodeEventListener(BiConsumer<DecodeEventSource,IDecodeEvent> listener)
+    {
+        mBoundDecodeEventListeners.add(listener);
+    }
+
+    public void removeBoundDecodeEventListener(BiConsumer<DecodeEventSource,IDecodeEvent> listener)
+    {
+        mBoundDecodeEventListeners.remove(listener);
     }
 
     public void addControlChannelQualityListener(Listener<ControlChannelQualitySnapshot> listener)

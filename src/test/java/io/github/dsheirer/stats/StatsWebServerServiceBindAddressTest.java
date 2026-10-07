@@ -11,6 +11,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sun.net.httpserver.Headers;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.dsheirer.message.DecodeMessageViewService;
 import io.github.dsheirer.module.decode.event.DecodeEventViewService;
 import io.github.dsheirer.scanlist.ScanList;
@@ -18,6 +20,7 @@ import io.github.dsheirer.scanlist.ScanListConfiguration;
 import io.github.dsheirer.scanlist.ScanListModel;
 import java.net.InetSocketAddress;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -131,6 +134,67 @@ class StatsWebServerServiceBindAddressTest
         assertThrows(StatsApiException.class, () -> StatsWebServerService.decodeMessageScope(URI.create(
             "/multiplex/decode-messages?configuration_id=00000000-0000-0000-0000-000000000001" +
                 "&frequency_hz=851012500&subscription_id=not-a-uuid")));
+    }
+
+    @Test
+    void acceptsExplicitConventionalAggregateScopesAndRetainsExactDiagnostics()
+    {
+        String aggregate = "?scope=conventional&subscription_id=00000000-0000-0000-0000-000000000005";
+        assertEquals(DecodeEventViewService.Mode.CONVENTIONAL,
+            StatsWebServerService.decodeEventScope(URI.create("/multiplex/decode-events" + aggregate)).mode());
+        assertTrue(StatsWebServerService.decodeMessageScope(
+            URI.create("/multiplex/decode-messages" + aggregate)).aggregate());
+        assertThrows(StatsApiException.class, () -> StatsWebServerService.channelDiagnosticScope(
+            URI.create("/multiplex/channel-diagnostics" + aggregate)));
+
+        for(String invalid: List.of("scope=all", "scope=trunked", "scope=conventional&scope=conventional",
+            "scope=conventional&configuration_id=00000000-0000-0000-0000-000000000001",
+            "scope=conventional&configuration_id=", "scope=conventional&frequency_hz=451012500",
+            "scope=conventional&frequency_hz=", "scope=conventional&timeslot=1",
+            "scope=conventional&timeslot=", "scope=conventional&subscription_id=not-a-uuid",
+            "scope=conventional&unknown=true"))
+        {
+            assertThrows(StatsApiException.class, () -> StatsWebServerService.decodeEventScope(
+                URI.create("/multiplex/decode-events?" + invalid)), invalid);
+            assertThrows(StatsApiException.class, () -> StatsWebServerService.decodeMessageScope(
+                URI.create("/multiplex/decode-messages?" + invalid)), invalid);
+        }
+    }
+
+    @Test
+    void aggregateSourceChangesCarryExplicitScopeAndSubscriptionWithoutAnExactChannel() throws Exception
+    {
+        String subscription = "00000000-0000-0000-0000-000000000005";
+        Object eventState = StatsWebServerService.decodeEventSourceState(DecodeEventViewService.Scope.conventional(),
+            subscription);
+        Object messageState = StatsWebServerService.decodeMessageSourceState(
+            new DecodeMessageViewService.SourceState(4, true, null, 0, DecodeEventViewService.filterCatalog(), true),
+            subscription);
+
+        for(Object state: List.of(eventState, messageState))
+        {
+            byte[] frame = LiveMultiplexFrame.json(2, "source_change", state).bytes(false);
+            JsonNode wire = new ObjectMapper().readTree(new String(frame, LiveMultiplexFrame.HEADER_BYTES,
+                frame.length - LiveMultiplexFrame.HEADER_BYTES, StandardCharsets.UTF_8));
+            JsonNode data = wire.path("data");
+            assertEquals("source_change", wire.path("event").textValue());
+            assertEquals("CONVENTIONAL", data.path("scope").textValue());
+            assertEquals(subscription, data.path("subscription_id").textValue());
+            assertTrue(data.path("configuration_id").isNull());
+            assertTrue(data.path("frequency_hz").isNull());
+            assertFalse(data.path("filter_catalog").isMissingNode());
+        }
+
+        DecodeEventViewService.Scope exact = new DecodeEventViewService.Scope(
+            "00000000-0000-0000-0000-000000000001", 851_012_500L, 2);
+        byte[] frame = LiveMultiplexFrame.json(2, "source_change",
+            StatsWebServerService.decodeEventSourceState(exact, subscription)).bytes(false);
+        JsonNode data = new ObjectMapper().readTree(new String(frame, LiveMultiplexFrame.HEADER_BYTES,
+            frame.length - LiveMultiplexFrame.HEADER_BYTES, StandardCharsets.UTF_8)).path("data");
+        assertEquals("CHANNEL", data.path("scope").textValue());
+        assertEquals(exact.configurationId(), data.path("configuration_id").textValue());
+        assertEquals(851_012_500L, data.path("frequency_hz").longValue());
+        assertEquals(2, data.path("timeslot").intValue());
     }
 
     @Test

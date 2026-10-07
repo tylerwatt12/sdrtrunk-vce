@@ -37,6 +37,7 @@ import io.github.dsheirer.channel.state.SingleChannelState;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelConfigurationChangeNotification;
 import io.github.dsheirer.controller.channel.ChannelEvent;
+import io.github.dsheirer.controller.channel.DecodeEventSource;
 import io.github.dsheirer.controller.channel.IChannelEventListener;
 import io.github.dsheirer.controller.channel.IChannelEventProvider;
 import io.github.dsheirer.identifier.IdentifierUpdateListener;
@@ -73,6 +74,7 @@ import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.heartbeat.Heartbeat;
 import io.github.dsheirer.source.heartbeat.IHeartbeatListener;
 import io.github.dsheirer.source.heartbeat.IHeartbeatProvider;
+import io.github.dsheirer.source.tuner.channel.MultiFrequencyTunerChannelSource;
 import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitor;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -121,6 +123,7 @@ public class ProcessingChain implements Listener<ChannelEvent>
     private AbstractChannelState mChannelState;
     private EventBus mEventBus;
     protected Source mSource;
+    private volatile DecodeEventSource mDecodeEventSource;
     //Lock to protect access to the modules list.
     private ReentrantLock mModuleLock = new ReentrantLock();
     private List<Module> mModules = new ArrayList<>();
@@ -174,6 +177,18 @@ public class ProcessingChain implements Listener<ChannelEvent>
         return mChannelState.getCurrentChannel();
     }
 
+    /** One volatile read of the origin prepared by source setup or a functional-channel transition. */
+    public DecodeEventSource getDecodeEventSource()
+    {
+        return mDecodeEventSource;
+    }
+
+    private void refreshDecodeEventSource()
+    {
+        Source source = mSource;
+        mDecodeEventSource = source != null ? new DecodeEventSource(getCurrentChannel(), this, source) : null;
+    }
+
     /**
      * Retrieves the primary decoder module
      * @return primary decoder or null.
@@ -199,7 +214,19 @@ public class ProcessingChain implements Listener<ChannelEvent>
      */
     public void channelConfigurationChanged(ChannelConfigurationChangeNotification notification)
     {
-        getEventBus().post(notification);
+        try
+        {
+            getEventBus().post(notification);
+        }
+        finally
+        {
+            DecodeEventSource source = mDecodeEventSource;
+
+            if(source != null && source.channel() != getCurrentChannel())
+            {
+                refreshDecodeEventSource();
+            }
+        }
     }
 
     /**
@@ -217,7 +244,14 @@ public class ProcessingChain implements Listener<ChannelEvent>
     public void publishChannelConfigurationTransition(
         AbstractChannelState.ChannelConfigurationTransition transition)
     {
-        mChannelState.publishChannelConfigurationTransition(transition);
+        try
+        {
+            mChannelState.publishChannelConfigurationTransition(transition);
+        }
+        finally
+        {
+            refreshDecodeEventSource();
+        }
     }
 
     /** Completes the transition and reconciles an overlapping decoder-owned teardown. */
@@ -231,7 +265,14 @@ public class ProcessingChain implements Listener<ChannelEvent>
     public void rollbackChannelConfigurationTransition(
         AbstractChannelState.ChannelConfigurationTransition transition)
     {
-        mChannelState.rollbackChannelConfigurationTransition(transition);
+        try
+        {
+            mChannelState.rollbackChannelConfigurationTransition(transition);
+        }
+        finally
+        {
+            refreshDecodeEventSource();
+        }
     }
 
     /**
@@ -401,6 +442,7 @@ public class ProcessingChain implements Listener<ChannelEvent>
         }
 
         mSource = source;
+        refreshDecodeEventSource();
 
         addModule(mSource);
     }
@@ -744,7 +786,24 @@ public class ProcessingChain implements Listener<ChannelEvent>
 
         if(module instanceof ISourceEventProvider)
         {
-            ((ISourceEventProvider)module).setSourceEventListener(mSourceEventBroadcaster);
+            if(module instanceof MultiFrequencyTunerChannelSource)
+            {
+                ((ISourceEventProvider)module).setSourceEventListener(event ->
+                {
+                    if(module == mSource && event.getEvent() == SourceEvent.Event.NOTIFICATION_FREQUENCY_CHANGE)
+                    {
+                        // The replacement source publishes its startup frequency on the rotation lifecycle thread,
+                        // before requesting samples. Prepare a new origin even when a later rotation returns to A.
+                        refreshDecodeEventSource();
+                    }
+
+                    mSourceEventBroadcaster.receive(event);
+                });
+            }
+            else
+            {
+                ((ISourceEventProvider)module).setSourceEventListener(mSourceEventBroadcaster);
+            }
         }
 
         if(module instanceof ISquelchStateProvider)
@@ -1015,6 +1074,7 @@ public class ProcessingChain implements Listener<ChannelEvent>
         {
             Source source = mSource;
             mSource = null;
+            mDecodeEventSource = null;
             return source;
         }
         finally

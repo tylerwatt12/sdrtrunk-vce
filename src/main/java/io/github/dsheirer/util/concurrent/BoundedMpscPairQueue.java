@@ -57,6 +57,12 @@ public final class BoundedMpscPairQueue<A,B>
      */
     public boolean offer(A first, B second, long stamp)
     {
+        return offer(first, second, stamp, 0);
+    }
+
+    /** Offers an additional primitive origin stamp without allocating or waiting on the producer. */
+    public boolean offer(A first, B second, long stamp, long originStamp)
+    {
         Objects.requireNonNull(first, "first cannot be null");
         Objects.requireNonNull(second, "second cannot be null");
         long sequence = mProducerSequence.get();
@@ -74,6 +80,7 @@ public final class BoundedMpscPairQueue<A,B>
                     cell.mFirst = first;
                     cell.mSecond = second;
                     cell.mStamp = stamp;
+                    cell.mOriginStamp = originStamp;
                     cell.mSequence.lazySet(sequence + 1);
                     return true;
                 }
@@ -106,12 +113,14 @@ public final class BoundedMpscPairQueue<A,B>
         A first = cell.mFirst;
         B second = cell.mSecond;
         long stamp = cell.mStamp;
+        long originStamp = cell.mOriginStamp;
         cell.mFirst = null;
         cell.mSecond = null;
         cell.mStamp = 0;
+        cell.mOriginStamp = 0;
         cell.mSequence.lazySet(sequence + mCells.length);
         mConsumerSequence.lazySet(sequence + 1);
-        return new Entry<>(first, second, stamp);
+        return new Entry<>(first, second, stamp, originStamp);
     }
 
     public int size()
@@ -133,11 +142,16 @@ public final class BoundedMpscPairQueue<A,B>
         }
     }
 
-    public record Entry<A,B>(A first, B second, long stamp)
+    public record Entry<A,B>(A first, B second, long stamp, long originStamp)
     {
         public Entry(A first, B second)
         {
             this(first, second, 0);
+        }
+
+        public Entry(A first, B second, long stamp)
+        {
+            this(first, second, stamp, 0);
         }
     }
 
@@ -147,6 +161,7 @@ public final class BoundedMpscPairQueue<A,B>
         private volatile A mFirst;
         private volatile B mSecond;
         private volatile long mStamp;
+        private volatile long mOriginStamp;
 
         private Cell(long sequence)
         {

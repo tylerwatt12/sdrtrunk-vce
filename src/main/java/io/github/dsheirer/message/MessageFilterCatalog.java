@@ -61,6 +61,32 @@ final class MessageFilterCatalog
         return FALLBACK;
     }
 
+    /** Namespace positional decoder choices by their exact source before combining unlike protocols. */
+    static FilterCatalog aggregate(List<CatalogSource> sources)
+    {
+        List<FilterCatalog.Node> groups = new ArrayList<>();
+        List<Integer> timeslots = new ArrayList<>();
+
+        for(CatalogSource source: sources)
+        {
+            groups.add(new FilterCatalog.Node(source.prefix(), label(source.label(), "Channel"),
+                source.catalog().groups().stream().map(node -> namespace(node, source.prefix())).toList()));
+            timeslots.addAll(source.catalog().timeslots());
+        }
+
+        return FilterCatalog.create(groups, timeslots.stream().distinct().sorted().toList());
+    }
+
+    private static FilterCatalog.Node namespace(FilterCatalog.Node node, String prefix)
+    {
+        return new FilterCatalog.Node(prefix + node.key(), node.label(),
+            node.children().stream().map(child -> namespace(child, prefix)).toList());
+    }
+
+    record CatalogSource(String prefix, String label, FilterCatalog catalog)
+    {
+    }
+
     private static Classifier fallbackClassifier()
     {
         FilterSet<IMessage> filters = new FilterSet<>("Message Filters");
