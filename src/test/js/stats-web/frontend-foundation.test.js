@@ -1715,7 +1715,7 @@ async function main() {
   assert.deepEqual(decodedDefaults, {
     version: 11,
     appearance: { theme: 'light', hue: null },
-    page_titles: { prepend_playing_call: false },
+    page_titles: { prepend_playing_call: true },
     playback: {
       volume: 1, selected_scan_list_ids: [], target_grouping: true, target_burst_limit: 4
     },
@@ -1735,6 +1735,12 @@ async function main() {
     health_alerts: { disabled_codes: [] },
     tables: {}
   });
+  for (const prependPlayingCall of [true, false]) {
+    assert.equal(preferenceSchema.validate({ ...decodedDefaults,
+      page_titles: { prepend_playing_call: prependPlayingCall }
+    }).page_titles.prepend_playing_call, prependPlayingCall,
+    'Saved page title choices must remain independent of the default');
+  }
   for (const hue of [0, 215, 359, null]) {
     assert.equal(preferenceSchema.validate({ ...decodedDefaults,
       appearance: { theme: 'light', hue } }).appearance.hue, hue);

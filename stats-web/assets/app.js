@@ -1,5 +1,5 @@
 import * as routeFoundation from './core/routes.js?v=8';
-import * as preferenceSchema from './core/preference-schema.js?v=6';
+import * as preferenceSchema from './core/preference-schema.js?v=7';
 import { formatSourceName } from './core/source-names.js?v=1';
 import { Controller as UserPreferenceController } from './core/user-preferences.js';
 import * as tableLayouts from './core/table-layout.js';

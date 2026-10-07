@@ -77,7 +77,7 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
                                                boolean showVoiceDecodeQuality, String decodeQualityDisplayMode,
                                                int liveDetailRowLimit)
     {
-        return new WebUserPreferences(CURRENT_VERSION, new Appearance("light", null), new PageTitles(false),
+        return new WebUserPreferences(CURRENT_VERSION, new Appearance("light", null), new PageTitles(true),
             new Playback(1.0, List.of(), true, DEFAULT_TARGET_BURST_LIMIT), new Scanner("normal"),
             new Presentation(showEncryptionDetails, showControlDecodeQuality, showVoiceDecodeQuality,
                 decodeQualityDisplayMode, liveDetailRowLimit, true, false, false, "talker_alias", "order_appeared", "normal"),

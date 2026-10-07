@@ -3,7 +3,7 @@
   const defaults = Object.freeze({
     version: 11,
     appearance: Object.freeze({ theme: 'light', hue: null }),
-    page_titles: Object.freeze({ prepend_playing_call: false }),
+    page_titles: Object.freeze({ prepend_playing_call: true }),
     playback: Object.freeze({
       volume: 1,
       selected_scan_list_ids: Object.freeze([]),

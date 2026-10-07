@@ -18,13 +18,27 @@ import org.junit.jupiter.api.Test;
 class WebUserPreferencesCodecTest
 {
     private static final String DEFAULT_JSON = """
-        {"version":11,"appearance":{"theme":"light","hue":null},"page_titles":{"prepend_playing_call":false},"playback":{"volume":1.0,"selected_scan_list_ids":[],"target_grouping":true,"target_burst_limit":4},"scanner":{"detail_mode":"normal"},"presentation":{"show_encryption_details":true,"show_control_decode_quality":true,"show_voice_decode_quality":true,"decode_quality_display_mode":"percentage","live_detail_row_limit":200,"show_only_active_trunked_channels":true,"retain_last_call_on_idle_rows":false,"clear_voice_quality_when_idle":false,"source_name_display":"talker_alias","live_channel_sort":"order_appeared","live_row_density":"normal"},"tuner":{"floor_db":-140,"ceiling_db":0,"waterfall_speed":1.0,"snap_frequency":true,"smooth_fft":true,"highlight_waterfall_channels":false,"show_idle_channels":false,"profile":"balanced"},"health_alerts":{"disabled_codes":[]},"tables":{}}""";
+        {"version":11,"appearance":{"theme":"light","hue":null},"page_titles":{"prepend_playing_call":true},"playback":{"volume":1.0,"selected_scan_list_ids":[],"target_grouping":true,"target_burst_limit":4},"scanner":{"detail_mode":"normal"},"presentation":{"show_encryption_details":true,"show_control_decode_quality":true,"show_voice_decode_quality":true,"decode_quality_display_mode":"percentage","live_detail_row_limit":200,"show_only_active_trunked_channels":true,"retain_last_call_on_idle_rows":false,"clear_voice_quality_when_idle":false,"source_name_display":"talker_alias","live_channel_sort":"order_appeared","live_row_density":"normal"},"tuner":{"floor_db":-140,"ceiling_db":0,"waterfall_speed":1.0,"snap_frequency":true,"smooth_fft":true,"highlight_waterfall_channels":false,"show_idle_channels":false,"profile":"balanced"},"health_alerts":{"disabled_codes":[]},"tables":{}}""";
 
     @Test
     void defaultsHaveTheExactVersionElevenSnakeCaseWireShape() throws Exception
     {
         assertEquals(DEFAULT_JSON, WebUserPreferencesCodec.encode(WebUserPreferences.defaults()));
         assertEquals(WebUserPreferences.defaults(), WebUserPreferencesCodec.decode(DEFAULT_JSON));
+    }
+
+    @Test
+    void preservesSavedPageTitleChoicesIndependentlyOfTheDefault() throws Exception
+    {
+        assertTrue(WebUserPreferences.defaults().pageTitles().prependPlayingCall());
+        for(boolean enabled: List.of(false, true))
+        {
+            String saved = DEFAULT_JSON.replace("\"prepend_playing_call\":true",
+                "\"prepend_playing_call\":" + enabled);
+            WebUserPreferences preferences = WebUserPreferencesCodec.decode(saved);
+            assertEquals(enabled, preferences.pageTitles().prependPlayingCall());
+            assertEquals(saved, WebUserPreferencesCodec.encode(preferences));
+        }
     }
 
     @Test
