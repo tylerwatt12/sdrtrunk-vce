@@ -47,6 +47,9 @@ jobs:
       - name: Check Nightly preparation and publication guards
         run: node src/test/js/release/nightly-workflow.test.js .github/workflows/nightly.yml
 
+      - name: Check packaged database smoke contracts
+        run: python -m unittest discover -s tools/release -p 'test_*.py'
+
       - name: Run full check
         shell: bash
         run: >-

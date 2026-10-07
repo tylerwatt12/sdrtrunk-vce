@@ -4,6 +4,7 @@ import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.upgrade.DatabaseFormatCatalog;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.portable.SqlitePreferencesFactory;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.DriverManager;
 
@@ -16,8 +17,7 @@ public class SmokeProfile
         Path database = SdrTrunkDatabasePath.getDatabasePath();
         try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            if(DatabaseFormatCatalog.inspect(connection).version() != DatabaseFormatCatalog.CURRENT_VERSION)
-                throw new IllegalStateException("Fresh profile has the wrong database format");
+            DatabaseFormatCatalog.requireCurrent(connection);
         }
         SqlitePreferencesFactory.install(database);
         try
@@ -32,6 +32,8 @@ public class SmokeProfile
         {
             SqlitePreferencesFactory.shutdown();
         }
-        System.out.println("Isolated profile ready; database format " + DatabaseFormatCatalog.CURRENT_VERSION);
+        int targetFormat = DatabaseFormatCatalog.current().version();
+        Files.writeString(Path.of(args[2]), Integer.toString(targetFormat));
+        System.out.println("Isolated profile ready; database format " + targetFormat);
     }
 }

@@ -6,10 +6,12 @@ All writes and the receiver process stay inside the supplied empty work director
 """
 import argparse
 import base64
+from contextlib import closing
 import gzip
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import shutil
@@ -47,8 +49,18 @@ def extract(archive, destination):
     return roots[0]
 
 
-def check_database(database, expected_format=44):
-    with sqlite3.connect(database) as connection:
+def read_target_format(metadata):
+    try:
+        value = metadata.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError) as error:
+        raise RuntimeError("Packaged database target metadata is missing or unreadable") from error
+    if not re.fullmatch(r"[1-9][0-9]{0,9}", value) or int(value) > 2_147_483_647:
+        raise RuntimeError("Packaged database target metadata is invalid")
+    return int(value)
+
+
+def check_database(database, expected_format):
+    with closing(sqlite3.connect(database)) as connection:
         if connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
             raise RuntimeError("Profile failed SQLite integrity check")
         if connection.execute("PRAGMA foreign_key_check").fetchall():
@@ -60,7 +72,7 @@ def check_database(database, expected_format=44):
 
 
 def retained_counts(database):
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection:
         return {table: connection.execute(f'SELECT count(*) FROM "{table}"').fetchone()[0]
                 for table in ("configuration_channel", "configuration_broadcast_stream", "alias", "web_user")}
 
@@ -153,21 +165,23 @@ def main():
         cwd=work, env=env, log=evidence / "helper-compile.log")
     options = ["-Djava.awt.headless=true", f"-Duser.home={home}", f"-Djava.io.tmpdir={temporary}",
                f"-Dsdrtrunk.vce.data.root={profile}"]
+    target_metadata = evidence / "target-format.txt"
     try:
         run([str(java), *options, "-cp", str(classes) + os.pathsep + classpath,
-             "SmokeProfile", str(password), str(port)],
+             "SmokeProfile", str(password), str(port), str(target_metadata)],
             cwd=installation, env=env, log=evidence / "profile.log")
     finally:
         password.unlink(missing_ok=True)
     database = profile / "database" / "sdrtrunk.sqlite"
-    check_database(database)
+    target_format = read_target_format(target_metadata)
+    check_database(database, target_format)
     staged = database.with_name(".sdrtrunk.sqlite.migration-" + str(uuid.uuid4()))
-    with sqlite3.connect(database) as source, sqlite3.connect(staged) as destination:
+    with closing(sqlite3.connect(database)) as source, closing(sqlite3.connect(staged)) as destination:
         source.backup(destination)
     run([str(java), *options, "-cp", classpath,
          "io.github.dsheirer.database.upgrade.ApplicationDatabaseMigrator", str(staged)],
         cwd=installation, env=env, log=evidence / "migrator.log")
-    check_database(staged)
+    check_database(staged, target_format)
     # This schema comes from the actual previously published format-20 runtime, with synthetic data only.
     legacy = work / "published-format20.sqlite"
     resource = (Path(__file__).resolve().parents[2] / "src/test/resources/io/github/dsheirer/database/upgrade"
@@ -180,8 +194,8 @@ def main():
     shutil.copyfile(legacy, migrated)
     run([str(java), *options, "-cp", classpath,
          "io.github.dsheirer.database.upgrade.ApplicationDatabaseMigrator", str(migrated)],
-        cwd=installation, env=env, log=evidence / "format20-to44.log")
-    check_database(migrated)
+        cwd=installation, env=env, log=evidence / f"format20-to{target_format}.log")
+    check_database(migrated, target_format)
     if retained_counts(migrated) != expected_counts or legacy.read_bytes() != legacy_bytes:
         raise RuntimeError("Packaged format-20 upgrade changed retained counts or the selected source")
     launcher = installation / ({"nt": "Start VCE.bat"}.get(os.name) or
@@ -216,10 +230,10 @@ def main():
                     raise RuntimeError("Packaged web JavaScript was not served")
         finally:
             stop(process)
-    check_database(database)
+    check_database(database, target_format)
     with archive.open("rb") as source:
         digest = hashlib.file_digest(source, "sha256").hexdigest()
-    print(f"PASS: {archive.name}: bundled Java, fresh format 44 profile, format 20-to-44 migration, native launcher and web assets")
+    print(f"PASS: {archive.name}: bundled Java, fresh format {target_format} profile, format 20-to-{target_format} migration, native launcher and web assets")
     print(f"SHA256: {digest}")
 
 
