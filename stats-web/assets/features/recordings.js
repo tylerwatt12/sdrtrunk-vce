@@ -229,6 +229,8 @@ export function createRecordingsFeature(deps) {
   let resultHost = null;
   let resultStatus = null;
   let countHost = null;
+  let countText = null;
+  let pageSelect = null;
   let pagerHost = null;
   let sharedHost = null;
   let selectedFiltersHost = null;
@@ -1164,6 +1166,12 @@ export function createRecordingsFeature(deps) {
   }
 
   function drawSelection() {
+    if (pageSelect) {
+      const selected = currentResults.filter((row) => selection.has(String(row.id))).length;
+      pageSelect.checked = currentResults.length > 0 && selected === currentResults.length;
+      pageSelect.indeterminate = selected > 0 && selected < currentResults.length;
+      pageSelect.disabled = currentResults.length === 0;
+    }
     if (!selectedHost) return;
     selectedHost.replaceChildren();
     selectedHost.hidden = !selection.size || !isPrimaryAdmin();
@@ -1232,7 +1240,7 @@ export function createRecordingsFeature(deps) {
     if (countHost) {
       countHost.hidden = !showCount;
       const count = resultTotal === null ? currentResults.length : Number(resultTotal);
-      countHost.textContent = `${count.toLocaleString()} ${count === 1 ? 'call' : 'calls'}` +
+      countText.textContent = `${count.toLocaleString()} ${count === 1 ? 'call' : 'calls'}` +
         (resultTotal === null ? ' shown' : '') +
         (sharedDate ? ` · ${sharedDate}` : '') +
         (showPager && nextCursor ? ' · more available' : '');
@@ -1664,6 +1672,25 @@ export function createRecordingsFeature(deps) {
     selectedHost = node('div', 'recordings-selected ui-selection-bar');
     selectedHost.hidden = true;
     countHost = node('div', 'recordings-result-count');
+    countText = node('span');
+    countHost.append(countText);
+    pageSelect = null;
+    if (isPrimaryAdmin()) {
+      const pageSelection = node('label', 'recordings-page-selection');
+      pageSelect = node('input', 'recordings-page-select ui-selection-check');
+      pageSelect.type = 'checkbox';
+      pageSelect.disabled = true;
+      pageSelect.addEventListener('change', () => {
+        currentResults.forEach((row) => pageSelect.checked ? selection.add(String(row.id)) :
+          selection.delete(String(row.id)));
+        resultHost.querySelectorAll('input.recordings-call-select').forEach((input) => {
+          input.checked = pageSelect.checked;
+        });
+        drawSelection();
+      });
+      pageSelection.append(pageSelect, node('span', '', 'Select all calls on this page'));
+      countHost.append(pageSelection);
+    }
     resultStatus = node('div', 'recordings-result-status');
     resultStatus.setAttribute('role', 'status');
     resultHost = node('div', 'recordings-results');

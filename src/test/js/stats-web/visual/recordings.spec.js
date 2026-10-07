@@ -120,10 +120,11 @@ async function openRecordings(page, options = {}) {
   const state = {
     mode: options.mode || 'MANAGED', available: options.available !== false,
     hasCalls: options.hasCalls !== false, matchCalls: true, admin: options.admin !== false,
+    primary: options.primary !== false,
     call: options.call || call, calls: options.calls || null, callDetail: options.callDetail || null,
     requestedFilters: [], suggestionRequests: [],
     paginate: options.paginate === true,
-    transcription: options.transcription || null, settingsWrites: [], maintenanceWrites: [],
+    transcription: options.transcription || null, settingsWrites: [], maintenanceWrites: [], deletionWrites: [],
     catalogStatusError: null,
     catalogStatus: options.catalogStatus || { catalog: { call_count: 1 },
       transcription: { pending: 3, completed: 1, failed: 1, active: false } },
@@ -140,7 +141,7 @@ async function openRecordings(page, options = {}) {
     if (pathname === '/api/v1/auth/session') {
       await route.fulfill({ json: { data: { configured: true, authenticated: state.admin,
         username: state.admin ? 'admin' : null, tier: state.admin ? 'admin' : 'public',
-        primary: state.admin, capabilities: { recordings: true,
+        primary: state.admin && state.primary, capabilities: { recordings: true,
           'admin-recordings': state.admin, 'admin-settings': state.admin, dashboard: true,
           radio: options.radio !== false } } } });
     } else if (pathname === '/api/v1/me/preferences') {
@@ -158,6 +159,15 @@ async function openRecordings(page, options = {}) {
         calls.slice(offset, offset + limit),
         next_cursor: state.paginate && offset + limit < calls.length ? `fixture:${offset + limit}` : null,
         total: null } } });
+    } else if (pathname === '/api/v1/admin/recordings/calls' && route.request().method() === 'DELETE') {
+      const update = route.request().postDataJSON();
+      state.deletionWrites.push(update);
+      const ids = new Set(update.ids);
+      const calls = state.calls || [state.call];
+      state.calls = calls.filter((item) => !ids.has(item.id));
+      state.hasCalls = state.calls.length > 0;
+      await route.fulfill({ json: { data: { requested: ids.size,
+        deleted: calls.length - state.calls.length } } });
     } else if (/^\/api\/v1\/recordings\/calls\/\d+$/.test(pathname)) {
       const id = Number(pathname.split('/').at(-1));
       const selected = state.calls?.find((item) => item.id === id) || state.call;
@@ -1284,13 +1294,142 @@ test('phone filters retain cancelled choices and Enter applies one query with it
   await expect(filters.locator('.recordings-filter-count')).toHaveText('1');
 });
 
+test('page selection selects and deselects displayed calls and reflects partial selection', async ({ page }) => {
+  await openRecordings(page, { calls: mixedRecordingCalls(), paginate: true });
+  const pageCheck = page.getByRole('checkbox', { name: 'Select all calls on this page', exact: true });
+  const callChecks = page.locator('.recordings-call-select');
+  await expect(callChecks).toHaveCount(25);
+  await expect(pageCheck).not.toBeChecked();
+  await expect(pageCheck).toBeEnabled();
+  await pageCheck.check();
+  await expect(page.locator('.recordings-call-select:checked')).toHaveCount(25);
+  await expect(page.locator('.recordings-selected')).toContainText('25 selected');
+  await expect(pageCheck).toBeChecked();
+  await expect.poll(() => pageCheck.evaluate((input) => input.indeterminate)).toBe(false);
+
+  await callChecks.first().uncheck();
+  await expect(page.locator('.recordings-selected')).toContainText('24 selected');
+  await expect(pageCheck).not.toBeChecked();
+  await expect.poll(() => pageCheck.evaluate((input) => input.indeterminate)).toBe(true);
+  await pageCheck.check();
+  await expect(page.locator('.recordings-call-select:checked')).toHaveCount(25);
+  await expect.poll(() => pageCheck.evaluate((input) => input.indeterminate)).toBe(false);
+
+  await pageCheck.uncheck();
+  await expect(page.locator('.recordings-call-select:checked')).toHaveCount(0);
+  await expect(page.locator('.recordings-selected')).toBeHidden();
+  await expect(page.locator('.recordings-call')).toHaveCount(25);
+});
+
+test('page selection preserves other pages and Clear selection resets every page', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openRecordings(page, { calls: mixedRecordingCalls(), paginate: true });
+  const pageCheck = page.getByRole('checkbox', { name: 'Select all calls on this page', exact: true });
+  const pager = page.locator('.recordings-pager');
+  await expect(page.locator('.recordings-call')).toHaveCount(25);
+  await pageCheck.check();
+  await pager.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(page.locator('.recordings-call')).toHaveCount(5);
+  await expect(pageCheck).not.toBeChecked();
+  await expect.poll(() => pageCheck.evaluate((input) => input.indeterminate)).toBe(false);
+  await pageCheck.check();
+  await expect(page.locator('.recordings-selected')).toContainText('30 selected');
+  await pageCheck.uncheck();
+  await expect(page.locator('.recordings-call-select:checked')).toHaveCount(0);
+  await expect(page.locator('.recordings-selected')).toContainText('25 selected');
+  await pager.getByRole('button', { name: 'Previous', exact: true }).click();
+  await expect(page.locator('.recordings-call-select:checked')).toHaveCount(25);
+  await expect(pageCheck).toBeChecked();
+
+  await page.locator('.recordings-selected').getByRole('button', { name: 'Clear selection', exact: true }).click();
+  await expect(pageCheck).not.toBeChecked();
+  await expect.poll(() => pageCheck.evaluate((input) => input.indeterminate)).toBe(false);
+  await expect(page.locator('.recordings-selected')).toBeHidden();
+  await expect(page.locator('.recordings-call-select').first()).toBeFocused();
+  await pager.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(page.locator('.recordings-call')).toHaveCount(5);
+  await expect(page.locator('.recordings-call-select:checked')).toHaveCount(0);
+  await expect(pageCheck).not.toBeChecked();
+});
+
+test('page selection resets when a new call search is applied', async ({ page }) => {
+  const state = await openRecordings(page, { calls: mixedRecordingCalls(), paginate: true });
+  const pageCheck = page.getByRole('checkbox', { name: 'Select all calls on this page', exact: true });
+  await expect(page.locator('.recordings-call')).toHaveCount(25);
+  await pageCheck.check();
+  await page.getByRole('combobox', { name: 'Find a call' }).fill('Fire Dispatch');
+  await page.getByRole('combobox', { name: 'Find a call' }).press('Escape');
+  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  await expect.poll(() => state.requestedFilters.at(-1).q).toBe('Fire Dispatch');
+  await expect(page.locator('.recordings-call-select:checked')).toHaveCount(0);
+  await expect(page.locator('.recordings-selected')).toBeHidden();
+  await expect(pageCheck).not.toBeChecked();
+  await expect.poll(() => pageCheck.evaluate((input) => input.indeterminate)).toBe(false);
+});
+
+for (const account of [{ name: 'secondary administrator', admin: true, primary: false },
+  { name: 'guest', admin: false }]) {
+  test(`page selection is unavailable to a ${account.name}`, async ({ page }) => {
+    await openRecordings(page, { ...account, calls: mixedRecordingCalls(), paginate: true });
+    await expect(page.locator('.recordings-call')).toHaveCount(25);
+    await expect(page.getByRole('checkbox', { name: 'Select all calls on this page', exact: true })).toHaveCount(0);
+    await expect(page.locator('.recordings-call-select')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Review delete', exact: true })).toHaveCount(0);
+  });
+}
+
+test('page selection cannot select an empty cursor batch or a zero-match search', async ({ page }) => {
+  const state = await openRecordings(page, { calls: mixedRecordingCalls(), paginate: true,
+    emptyFirstBatch: true });
+  const pageCheck = page.locator('.recordings-page-select');
+  const pager = page.locator('.recordings-pager');
+  await expect(page.locator('.recordings-call')).toHaveCount(0);
+  await expect(pageCheck).toBeDisabled();
+  await expect(pageCheck).not.toBeChecked();
+  await expect(pager.getByRole('button', { name: 'Next', exact: true })).toBeEnabled();
+  await pager.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(page.locator('.recordings-call')).toHaveCount(5);
+  await expect(pageCheck).toBeEnabled();
+  await pageCheck.check();
+  state.matchCalls = false;
+  const requests = state.requestedFilters.length;
+  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  await expect.poll(() => state.requestedFilters.length).toBe(requests + 1);
+  await expect(page.locator('.recordings-call')).toHaveCount(0);
+  await expect(page.locator('.recordings-results')).toContainText('No matching calls.');
+  await expect(pageCheck).toBeDisabled();
+  await expect(page.locator('.recordings-selected')).toBeHidden();
+  await expect.poll(() => pageCheck.evaluate((input) => input.indeterminate)).toBe(false);
+});
+
+test('page selection deletes only the selected page calls after confirmation', async ({ page }) => {
+  const calls = mixedRecordingCalls();
+  const state = await openRecordings(page, { calls, paginate: true });
+  await expect(page.locator('.recordings-call')).toHaveCount(25);
+  await page.locator('.recordings-pager').getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(page.locator('.recordings-call')).toHaveCount(5);
+  await page.getByRole('checkbox', { name: 'Select all calls on this page', exact: true }).check();
+  await page.getByRole('button', { name: 'Review delete', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Delete recordings', exact: true });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText('Delete 5 selected managed recordings?');
+  expect(state.deletionWrites).toEqual([]);
+  await dialog.getByRole('button', { name: 'Delete recordings', exact: true }).click();
+  await expect.poll(() => state.deletionWrites).toEqual([{ ids: calls.slice(25).map((item) => item.id) }]);
+  await expect(dialog).toBeHidden();
+  await expect(page.locator('.recordings-call')).toHaveCount(25);
+  await expect(page.locator('.recordings-call-select:checked')).toHaveCount(0);
+  await expect(page.getByRole('checkbox', { name: 'Select all calls on this page', exact: true })).not.toBeChecked();
+  expect(state.calls.map((item) => item.id)).toEqual(calls.slice(0, 25).map((item) => item.id));
+});
+
 test('cursor paging keeps selection across pages and Clear selection leaves results intact', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const state = await openRecordings(page, { calls: mixedRecordingCalls(), paginate: true });
   const pager = page.locator('.recordings-pager');
   await expect(page.locator('.recordings-call')).toHaveCount(25);
   await expect(pager.locator('.ui-browse-pager-count')).toHaveText('Page 1');
-  await expect(page.locator('.recordings-result-count')).not.toContainText(/page/i);
+  await expect(page.locator('.recordings-result-count')).not.toContainText(/Page \d+/i);
   await expect(pager.getByRole('button', { name: 'Previous', exact: true })).toBeDisabled();
   await page.locator('.recordings-call-select').first().check();
   await pager.getByRole('button', { name: 'Next', exact: true }).click();

@@ -230,9 +230,24 @@
 }
 
 .recordings-result-count {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
   padding: var(--space-2) var(--space-4);
   color: var(--muted);
   border-bottom: 1px solid var(--line);
+}
+
+.recordings-result-count[hidden] {
+  display: none;
+}
+
+.recordings-page-selection {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
 }
 
 .recordings-result-status:not(:empty) {
