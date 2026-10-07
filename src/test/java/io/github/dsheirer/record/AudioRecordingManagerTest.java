@@ -25,7 +25,6 @@ import io.github.dsheirer.audio.call.CallLegId;
 import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
-import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.record.RecordingMode;
@@ -73,16 +72,6 @@ class AudioRecordingManagerTest
     }
 
     @Test
-    void recordingFilenameIdentityUsesCanonicalSubscriberAndExplicitWorkingId()
-    {
-        assertEquals("BEE00_348_2115288_Working_ID_501", AudioRecordingManager.cleanIdentifier(
-            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
-                501, 0xBEE00, 0x348, 2_115_288)));
-        assertEquals("BEE00_348_2115288", AudioRecordingManager.cleanIdentifier(
-            APCO25FullyQualifiedRadioIdentifier.createFrom(2_115_288, 0xBEE00, 0x348, 2_115_288)));
-    }
-
-    @Test
     void reportsRecordedOnlyAfterPermanentFileExists() throws Exception
     {
         UserPreferences preferences = new UserPreferences();
@@ -121,7 +110,7 @@ class AudioRecordingManagerTest
     }
 
     @Test
-    void callsCompletedOneMillisecondApartUseDistinctMp3Files() throws Exception
+    void completedCallsUseWriterClockSecondsAndDistinctMp3Files() throws Exception
     {
         UserPreferences preferences = new UserPreferences();
         Path originalDirectory = preferences.getDirectoryPreference().getDirectoryRecording();
@@ -148,14 +137,54 @@ class AudioRecordingManagerTest
             assertEquals(2, recorded.get());
             assertEquals(2, writtenPaths.size());
             assertNotEquals(writtenPaths.get(0), writtenPaths.get(1));
-            assertTrue(writtenPaths.get(0).getFileName().toString()
-                .startsWith(TimeStamp.getLongTimeStamp(completedAt, "_") + "_"));
-            assertTrue(writtenPaths.get(1).getFileName().toString()
-                .startsWith(TimeStamp.getLongTimeStamp(completedAt + 1, "_") + "_"));
+            for(Path path: writtenPaths)
+            {
+                assertTrue(path.getFileName().toString().matches("\\d{8}_\\d{6}__TO_56138(?:_V\\d+)?\\.mp3"));
+                assertFalse(path.getFileName().toString().startsWith(TimeStamp.getTimeStamp(completedAt, "_")));
+            }
             assertFalse(writtenPaths.get(0).getFileName().toString().contains("_CALL_"));
             assertFalse(writtenPaths.get(1).getFileName().toString().contains("_CALL_"));
             assertArrayEquals(new byte[]{1}, Files.readAllBytes(writtenPaths.get(0)));
             assertArrayEquals(new byte[]{2}, Files.readAllBytes(writtenPaths.get(1)));
+        }
+        finally
+        {
+            manager.stop();
+            scheduler.shutdownNow();
+            preferences.getDirectoryPreference().setDirectoryRecording(originalDirectory);
+            preferences.getRecordPreference().setAudioRecordFormat(originalFormat);
+        }
+    }
+
+    @Test
+    void basicWriterRetriesCreateNewCollisionsWithoutReplacingExistingFile() throws Exception
+    {
+        UserPreferences preferences = new UserPreferences();
+        Path originalDirectory = preferences.getDirectoryPreference().getDirectoryRecording();
+        RecordFormat originalFormat = preferences.getRecordPreference().getAudioRecordFormat();
+        ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
+        List<Path> attempted = new ArrayList<>();
+        AtomicInteger recorded = new AtomicInteger();
+        AudioRecordingManager manager = new AudioRecordingManager(preferences,
+            ignored -> recorded.incrementAndGet(), scheduler, (call, path, format, userPreferences) -> {
+                attempted.add(path);
+                if(attempted.size() == 1) Files.write(path, new byte[]{9}, StandardOpenOption.CREATE_NEW);
+                AudioCallRecorder.write(call, path, format, userPreferences);
+            });
+        try
+        {
+            preferences.getDirectoryPreference().setDirectoryRecording(mTemporaryFolder);
+            preferences.getRecordPreference().setAudioRecordFormat(RecordFormat.WAVE);
+            manager.start();
+            manager.receive(completedCall());
+            manager.stop();
+
+            assertEquals(2, attempted.size());
+            assertEquals(1, recorded.get());
+            assertArrayEquals(new byte[]{9}, Files.readAllBytes(attempted.getFirst()));
+            assertTrue(attempted.get(1).getFileName().toString().endsWith("_V2.wav"));
+            assertTrue(Files.size(attempted.get(1)) > 44);
+            assertEquals(0, manager.getQueueStatus().droppedRecordings());
         }
         finally
         {

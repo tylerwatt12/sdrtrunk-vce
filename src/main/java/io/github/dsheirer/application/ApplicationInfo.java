@@ -37,6 +37,11 @@ public final class ApplicationInfo
         return manifestValue(VERSION);
     }
 
+    public static String getBuildTimestamp()
+    {
+        return manifestValue(BUILD_TIMESTAMP);
+    }
+
     public static String getUpdateTrack()
     {
         return manifestValue(UPDATE_TRACK);

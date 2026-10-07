@@ -34,9 +34,7 @@ import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentif
 import io.github.dsheirer.identifier.configuration.SiteConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier;
 import io.github.dsheirer.identifier.decoder.DecoderLogicalChannelNameIdentifier;
-import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
-import io.github.dsheirer.application.ApplicationInfo;
-import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
+import io.github.dsheirer.record.BasicRecordingContract;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.Charset;
@@ -82,7 +80,8 @@ public class AudioMetadataUtils
     {
         Map<AudioMetadata, String> audioMetadata = new EnumMap<>(AudioMetadata.class);
         StringBuilder comments = new StringBuilder();
-        audioMetadata.put(AudioMetadata.COMPOSER, ApplicationInfo.getDisplayName());
+        //The same upstream tag contract applies to recordings, streams, and audio conversion exports.
+        audioMetadata.put(AudioMetadata.COMPOSER, BasicRecordingContract.composer());
         LocalDateTime now = LocalDateTime.now();
         String dateCreated = SDF.format(now);
         audioMetadata.put(AudioMetadata.DATE_CREATED, dateCreated);
@@ -98,9 +97,9 @@ public class AudioMetadataUtils
             if(to != null)
             {
                 sb = new StringBuilder();
-                sb.append(formatRadioIdentity(to));
+                sb.append(BasicRecordingContract.targetIdentifier(to));
 
-                List<Alias> toAliases = aliasList.getAliases(to);
+                List<Alias> toAliases = aliasList != null ? aliasList.getAliases(to) : List.of();
 
                 if(!toAliases.isEmpty())
                 {
@@ -114,9 +113,9 @@ public class AudioMetadataUtils
             if(from != null)
             {
                 sb = new StringBuilder();
-                sb.append(formatRadioIdentity(from));
+                sb.append(BasicRecordingContract.sourceIdentifier(from));
 
-                List<Alias> fromAliases = aliasList.getAliases(from);
+                List<Alias> fromAliases = aliasList != null ? aliasList.getAliases(from) : List.of();
 
                 for(Alias alias: fromAliases)
                 {
@@ -179,30 +178,6 @@ public class AudioMetadataUtils
 
         return audioMetadata;
     }
-
-    /**
-     * Formats a fully qualified P25 subscriber as its canonical identity.  A temporary working ID is useful
-     * observation context, but is not the subscriber identity and is therefore labeled separately.
-     */
-    private static String formatRadioIdentity(Identifier identifier)
-    {
-        if(identifier instanceof FullyQualifiedRadioIdentifier fullyQualified)
-        {
-            String canonical = fullyQualified.getFullyQualifiedRadioAddress();
-            Integer workingAddress = fullyQualified.getWorkingAddress();
-
-            if(workingAddress != null && workingAddress > 0 &&
-                workingAddress <= RadioSystemIdentityKey.MAX_P25_WORKING_UNIT_ID)
-            {
-                return canonical + " (Working ID " + workingAddress + ")";
-            }
-
-            return canonical;
-        }
-
-        return identifier.toString();
-    }
-
 
     /**
      * Creates an ID3 V2.4 metadata chunk suitable for embedding in an .mp3 audio file
@@ -326,6 +301,7 @@ public class AudioMetadataUtils
             if(entry.getKey().isPrimaryTag())
             {
                 ByteBuffer buffer = getLISTSubChunk(entry.getKey(), entry.getValue());
+                if(buffer == null) continue;
                 length += buffer.capacity();
                 buffers.add(buffer);
             }
@@ -336,6 +312,7 @@ public class AudioMetadataUtils
             if(!entry.getKey().isPrimaryTag())
             {
                 ByteBuffer buffer = getLISTSubChunk(entry.getKey(), entry.getValue());
+                if(buffer == null) continue;
                 length += buffer.capacity();
                 buffers.add(buffer);
             }

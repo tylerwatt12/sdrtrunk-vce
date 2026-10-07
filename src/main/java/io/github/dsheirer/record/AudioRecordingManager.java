@@ -25,19 +25,11 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
-import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
-import io.github.dsheirer.identifier.string.StringIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
-import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
-import io.github.dsheirer.identifier.tone.Tone;
-import io.github.dsheirer.identifier.tone.ToneIdentifier;
-import io.github.dsheirer.identifier.tone.ToneSequence;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.record.RecordingMode;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog;
-import io.github.dsheirer.util.StringUtils;
 import io.github.dsheirer.util.ThreadPool;
-import io.github.dsheirer.util.TimeStamp;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.FileAlreadyExistsException;
@@ -207,11 +199,19 @@ public class AudioRecordingManager
                     mUserPreferences.getRecordPreference().getAudioRecordFormat();
                 Path path = null;
                 boolean writeStarted = false;
+                long writerTimestamp = System.currentTimeMillis();
+                int unknownIndex = mUnknownAudioRecordingIndex;
+                if(!managed && completedAudioCall.snapshot().identifierCollection() == null)
+                {
+                    if(++mUnknownAudioRecordingIndex <= 0) mUnknownAudioRecordingIndex = 1;
+                }
 
                 try
                 {
                     path = managed ? getManagedRecordingPath(completedAudioCall) :
-                        getAudioRecordingPath(completedAudioCall, recordFormat);
+                        BasicRecordingContract.nextPath(getRecordingBasePath(),
+                            completedAudioCall.snapshot().identifierCollection(), recordFormat, writerTimestamp,
+                            unknownIndex);
 
                     if(managed)
                     {
@@ -219,7 +219,23 @@ public class AudioRecordingManager
                     }
 
                     writeStarted = true;
-                    mRecordingWriter.write(completedAudioCall, path, recordFormat, mUserPreferences);
+                    //CREATE_NEW owns the final collision check. Never overwrite an existing Basic recording,
+                    //including a file another writer creates after nextPath() checks the directory.
+                    for(int attempt = 0; ; attempt++)
+                    {
+                        try
+                        {
+                            mRecordingWriter.write(completedAudioCall, path, recordFormat, mUserPreferences);
+                            break;
+                        }
+                        catch(FileAlreadyExistsException collision)
+                        {
+                            if(managed || attempt >= 31) throw collision;
+                            path = BasicRecordingContract.nextPath(getRecordingBasePath(),
+                                completedAudioCall.snapshot().identifierCollection(), recordFormat, writerTimestamp,
+                                unknownIndex);
+                        }
+                    }
 
                     long fileSize = Files.isRegularFile(path) ? Files.size(path) : 0L;
 
@@ -452,139 +468,6 @@ public class AudioRecordingManager
         return mUserPreferences.getDirectoryPreference().getDirectoryRecording();
     }
 
-    /**
-     * Provides a formatted audio recording filename to use as the final audio filename.
-     */
-    private Path getAudioRecordingPath(CompletedAudioCall completedAudioCall, RecordFormat recordFormat)
-    {
-        IdentifierCollection identifierCollection = completedAudioCall.snapshot().identifierCollection();
-        StringBuilder sb = new StringBuilder();
-
-        if(identifierCollection != null)
-        {
-            Identifier system = identifierCollection.getIdentifier(IdentifierClass.CONFIGURATION, Form.SYSTEM, Role.ANY);
-
-            if(system != null)
-            {
-                sb.append(((StringIdentifier)system).getValue()).append("_");
-            }
-
-            Identifier site = identifierCollection.getIdentifier(IdentifierClass.CONFIGURATION, Form.SITE, Role.ANY);
-
-            if(site != null)
-            {
-                sb.append(((StringIdentifier)site).getValue()).append("_");
-            }
-
-            Identifier channel = identifierCollection.getIdentifier(IdentifierClass.CONFIGURATION, Form.CHANNEL, Role.ANY);
-
-            if(channel != null)
-            {
-                sb.append(((StringIdentifier)channel).getValue()).append("_");
-            }
-
-            Identifier to = identifierCollection.getIdentifier(IdentifierClass.USER, Form.TALKGROUP, Role.TO);
-
-            if(to != null)
-            {
-                sb.append("_TO_").append(cleanIdentifier(to));
-            }
-            else
-            {
-                List<Identifier> toIdentifiers = identifierCollection.getIdentifiers(Role.TO);
-
-                if(!toIdentifiers.isEmpty())
-                {
-                    sb.append("_TO_").append(cleanIdentifier(toIdentifiers.get(0)));
-                }
-            }
-
-            Identifier from = identifierCollection.getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM);
-
-            if(from != null)
-            {
-                sb.append("_FROM_").append(cleanIdentifier(from));
-            }
-            else
-            {
-                List<Identifier> fromIdentifiers = identifierCollection.getIdentifiers(Role.FROM);
-
-                if(!fromIdentifiers.isEmpty())
-                {
-                    for(Identifier identifier: fromIdentifiers)
-                    {
-                        if(identifier.getForm() != Form.TONE)
-                        {
-                            sb.append("_FROM_").append(cleanIdentifier(identifier));
-                            break;
-                        }
-                    }
-                }
-            }
-
-            List<Identifier> toneIdentifiers = identifierCollection.getIdentifiers(IdentifierClass.USER, Form.TONE);
-
-            if(!toneIdentifiers.isEmpty())
-            {
-                try
-                {
-                    Identifier identifier = toneIdentifiers.get(0);
-
-                    if(identifier instanceof ToneIdentifier)
-                    {
-                        ToneIdentifier toneIdentifier = (ToneIdentifier)identifier;
-                        ToneSequence toneSequence = toneIdentifier.getValue();
-
-                        if(toneSequence.hasTones())
-                        {
-                            sb.append("_TONES");
-
-                            for(Tone tone: toneIdentifier.getValue().getTones())
-                            {
-                                String label = tone.getAmbeTone().toString();
-                                label = label.replace("TONE", "").trim();
-                                label = label.replace(" ", "_");
-                                sb.append("_").append(label);
-                            }
-                        }
-                    }
-                }
-                catch(Exception e)
-                {
-                    mLog.error("Error appending tones to audio recording filename");
-                }
-            }
-        }
-        else
-        {
-            sb.append("audio_recording_no_metadata_").append(mUnknownAudioRecordingIndex++);
-
-            if(mUnknownAudioRecordingIndex < 0)
-            {
-                mUnknownAudioRecordingIndex = 1;
-            }
-        }
-
-        StringBuilder sbFinal = new StringBuilder();
-        sbFinal.append(TimeStamp.getLongTimeStamp(completedAudioCall.snapshot().lastActivityTimestamp(), "_"))
-            .append("_");
-
-        //Remove any illegal filename characters
-        String cleaned = StringUtils.replaceIllegalCharacters(sb.toString());
-
-        //Ensure total length doesn't exceed 255 characters.  Allow room for timestamp and extension.
-        int maxLength = 255 - sbFinal.length() - recordFormat.getExtension().length();
-
-        if(cleaned.length() > maxLength)
-        {
-            cleaned = cleaned.substring(0, maxLength);
-        }
-
-        sbFinal.append(cleaned).append(recordFormat.getExtension());
-
-        return getRecordingBasePath().resolve(sbFinal.toString());
-    }
-
     /** Uses only stable machine identifiers in folders; current display labels remain in the catalog lookup. */
     private Path getManagedRecordingPath(CompletedAudioCall call)
     {
@@ -641,44 +524,6 @@ public class AudioRecordingManager
         {
             mLog.warn("Unable to remove an unindexed managed recording [{}]", path, exception);
         }
-    }
-
-    public static String clean(String value)
-    {
-        if(value != null)
-        {
-            return value.replace(":", "")
-                    .replace(".", "_")
-                    .replace("(", "_")
-                    .replace(")", "");
-        }
-
-        return null;
-    }
-
-    /**
-     * Projects structured identifiers into a stable filename component without parsing presentation prefixes.
-     */
-    static String cleanIdentifier(Identifier identifier)
-    {
-        if(identifier instanceof FullyQualifiedRadioIdentifier radio)
-        {
-            String value = radio.getFullyQualifiedRadioAddress();
-
-            if(radio.isAliased())
-            {
-                value += "_Working_ID_" + radio.getValue();
-            }
-
-            return clean(value);
-        }
-
-        if(identifier instanceof FullyQualifiedTalkgroupIdentifier talkgroup)
-        {
-            return clean(talkgroup.getFullyQualifiedTalkgroupAddress());
-        }
-
-        return clean(identifier != null ? identifier.toString() : null);
     }
 
     /**

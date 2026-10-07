@@ -114,7 +114,9 @@ public class WaveWriter implements AutoCloseable
     {
         int version = 2;
 
-        while(Files.exists(mFile) && version < 20)
+        //Only temporary WAV series use this rollover grammar. A final recording must report CREATE_NEW's
+        //FileAlreadyExistsException so its caller can choose an unused name without replacing existing audio.
+        while(mFile.toString().endsWith(".tmp") && Files.exists(mFile) && version < 20)
         {
             mFile = Paths.get(mFile.toFile().getAbsolutePath().replace(".tmp", "_" + version + ".tmp"));
             version++;

@@ -21,7 +21,6 @@ package io.github.dsheirer.record;
 
 import io.github.dsheirer.audio.AudioFormats;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
-import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.audio.convert.InputAudioFormat;
 import io.github.dsheirer.audio.convert.MP3AudioConverter;
 import io.github.dsheirer.audio.convert.MP3Setting;
@@ -37,8 +36,6 @@ import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
-import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -87,7 +84,6 @@ public class AudioCallRecorder
             {
                 Map<AudioMetadata,String> metadataMap = AudioMetadataUtils.getMetadataMap(identifierCollection,
                     completedAudioCall.snapshot().aliasList());
-                addVoiceQualityMetadata(metadataMap, completedAudioCall);
 
                 byte[] id3Bytes = AudioMetadataUtils.getMP3ID3(metadataMap);
                 outputStream.write(id3Bytes);
@@ -127,7 +123,6 @@ public class AudioCallRecorder
 
                 Map<AudioMetadata,String> metadataMap = AudioMetadataUtils.getMetadataMap(identifierCollection,
                     completedAudioCall.snapshot().aliasList());
-                addVoiceQualityMetadata(metadataMap, completedAudioCall);
 
                 ByteBuffer listChunk = AudioMetadataUtils.getLISTChunk(metadataMap);
                 byte[] id3Bytes = AudioMetadataUtils.getMP3ID3(metadataMap);
@@ -137,28 +132,4 @@ public class AudioCallRecorder
         }
     }
 
-    static void addVoiceQualityMetadata(Map<AudioMetadata,String> metadataMap,
-                                        CompletedAudioCall completedAudioCall)
-    {
-        VoiceCallQuality quality = completedAudioCall != null && completedAudioCall.snapshot() != null ?
-            completedAudioCall.snapshot().voiceCallQuality() : null;
-
-        if(metadataMap == null || quality == null || !quality.hasMeasurements())
-        {
-            return;
-        }
-
-        String comments = metadataMap.getOrDefault(AudioMetadata.COMMENTS, "");
-
-        if(!comments.isEmpty() && !comments.endsWith(";"))
-        {
-            comments += ";";
-        }
-
-        comments += String.format(Locale.US, "VC Quality:%.1f%%;VC Frames:%d/%d/%d/%d;VC FEC:%d/%d;",
-            quality.qualityPercent(), quality.decodedFrameCount(), quality.repeatedFrameCount(),
-            quality.concealedFrameCount(), quality.missingFrameCount(), quality.fecErrorCount(),
-            quality.fecProtectedBitCount());
-        metadataMap.put(AudioMetadata.COMMENTS, comments);
-    }
 }
