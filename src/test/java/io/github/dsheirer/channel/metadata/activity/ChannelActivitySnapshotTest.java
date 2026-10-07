@@ -7,17 +7,21 @@ package io.github.dsheirer.channel.metadata.activity;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.patch.PatchGroup;
+import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
 import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
+import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
+import io.github.dsheirer.protocol.Protocol;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -173,6 +177,38 @@ class ChannelActivitySnapshotTest
         assertNull(identityOnlyMatcher.workingAddress());
         assertEquals("v1-r-bee00-348-2115288", explicitMatcher.identityKey());
         assertEquals(2_115_288, explicitMatcher.workingAddress());
+    }
+
+    @Test
+    void legacyMatcherKeepsItsCanonicalFactsWithoutClaimingDirectEvidence()
+    {
+        ChannelActivitySnapshot.MatcherReference matcher = new ChannelActivitySnapshot.MatcherReference(
+            "radio", "p25", "phase_2", 501, "v1-r-bee00-348-2115288", 501);
+        ChannelActivitySnapshot.MatcherReference canonicalOnly = new ChannelActivitySnapshot.MatcherReference(
+            "radio", "p25", "phase_1", 2_115_288, "v1-r-bee00-348-2115288");
+
+        assertEquals(501, matcher.workingAddress());
+        assertEquals(new P25SubscriberIdentity(0xBEE00, 0x348, 2_115_288), matcher.radioIdentity().subscriber());
+        assertEquals(Protocol.APCO25_PHASE2, matcher.radioIdentity().protocol());
+        assertEquals(ResolvedRadioIdentity.Evidence.UNKNOWN, matcher.radioIdentity().evidence());
+        assertNull(canonicalOnly.workingAddress());
+        assertEquals(ResolvedRadioIdentity.Evidence.UNKNOWN, canonicalOnly.radioIdentity().evidence());
+        assertNull(new ChannelActivitySnapshot.MatcherReference("radio", "p25", "phase_1", 501,
+            "malformed").radioIdentity());
+    }
+
+    @Test
+    void resolvedMatcherObservationOwnsItsWorkingAddress()
+    {
+        ResolvedRadioIdentity confirmed = new ResolvedRadioIdentity(Protocol.APCO25, 502,
+            new P25SubscriberIdentity(0xBEE00, 0x348, 2_115_288),
+            ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT);
+        ChannelActivitySnapshot.MatcherReference matcher = new ChannelActivitySnapshot.MatcherReference(
+            "radio", "p25", "phase_1", 501, "v1-r-bee00-348-2115288", 501, confirmed);
+
+        assertSame(confirmed, matcher.radioIdentity());
+        assertEquals(502, matcher.workingAddress(), "the legacy copy cannot contradict the captured observation");
+        assertEquals(ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT, matcher.radioIdentity().evidence());
     }
 
     @Test

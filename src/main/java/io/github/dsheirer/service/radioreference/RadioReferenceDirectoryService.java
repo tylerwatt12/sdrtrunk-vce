@@ -38,6 +38,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.function.Predicate;
@@ -49,7 +50,8 @@ import java.util.function.Predicate;
  * lookup cannot prevent region selection. Every operation has one total caller deadline that includes
  * queue time.  A timeout cancels the future and interrupts the worker, but cannot force an upstream library call that
  * ignores interruption to stop.  {@link #runtimeStatus()} exposes whether remote work remains.  Results are
- * request-local and are not cached or written to a database.</p>
+ * request-local unless an explicit, bounded discovery workflow retains an immutable catalog. No directory results
+ * are written to a database.</p>
  */
 public final class RadioReferenceDirectoryService implements AutoCloseable
 {
@@ -555,6 +557,106 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         return page(matches, offset, limit);
     }
 
+    /** Creates a short-lived catalog owned by one discovery workflow, never by the application or account. */
+    public DiscoveryCatalog newDiscoveryCatalog()
+    {
+        return new DiscoveryCatalog();
+    }
+
+    /**
+     * Only complete immutable gateway records are retained. The existing premium executor still admits every
+     * lookup, including cache hits; waiting on a concurrent load is interruptible and shares its caller deadline.
+     */
+    public final class DiscoveryCatalog implements AutoCloseable
+    {
+        private static final int MAXIMUM_CATALOG_ENTRIES = 32;
+        private static final long LIFETIME_MILLIS = Duration.ofMinutes(5).toMillis();
+        private final ReentrantLock mLock = new ReentrantLock();
+        private final Map<Integer,Set<Integer>> mP25Systems = new LinkedHashMap<>();
+        private final Map<Integer,DiscoverySystem> mSystems = new LinkedHashMap<>();
+        private Session mAccountSession;
+        private long mExpiresAt;
+        private long mRetainedItems;
+        private volatile boolean mDiscarded;
+
+        private <T> T execute(Session session, GatewayRequest<T> request, long expiresAtNanos)
+            throws RadioReferenceGatewayException
+        {
+            try
+            {
+                mLock.lockInterruptibly();
+            }
+            catch(InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+                throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INTERRUPTED);
+            }
+            try
+            {
+                requireActive(expiresAtNanos);
+                if(mAccountSession != session || mClock.millis() >= mExpiresAt)
+                {
+                    clear();
+                    mAccountSession = session;
+                    mExpiresAt = mClock.millis() + LIFETIME_MILLIS;
+                }
+                T result = request.execute(session.gateway());
+                requireActive(expiresAtNanos);
+                return result;
+            }
+            catch(RadioReferenceGatewayException | RuntimeException exception)
+            {
+                // Failed or interrupted requests must not leave an incomplete candidate set for the next row.
+                clear();
+                throw exception;
+            }
+            finally
+            {
+                if(mDiscarded) clear();
+                mLock.unlock();
+            }
+        }
+
+        private void requireActive(long expiresAtNanos) throws RadioReferenceGatewayException
+        {
+            if(mDiscarded || Thread.currentThread().isInterrupted())
+                throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INTERRUPTED);
+            if(System.nanoTime() - expiresAtNanos >= 0)
+                throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.TIMEOUT);
+        }
+
+        private void retain(DiscoverySystem snapshot)
+        {
+            long size = 1L + snapshot.system().radioNetworks().size() + snapshot.sites().stream()
+                .mapToLong(site -> 1L + site.channels().size()).sum();
+            // Exhausting the memory budget skips retention only. It never truncates the returned catalog.
+            if(mSystems.size() < MAXIMUM_CATALOG_ENTRIES && mRetainedItems + size <= MAXIMUM_REMOTE_ITEMS_SCANNED)
+            {
+                mSystems.put(snapshot.system().id(), snapshot);
+                mRetainedItems += size;
+            }
+        }
+
+        private void clear()
+        {
+            mP25Systems.clear();
+            mSystems.clear();
+            mAccountSession = null;
+            mRetainedItems = 0;
+        }
+
+        /** Cancellation never waits for an upstream call; the active worker discards its result on return. */
+        @Override public void close()
+        {
+            mDiscarded = true;
+            if(mLock.tryLock())
+            {
+                try { clear(); }
+                finally { mLock.unlock(); }
+            }
+        }
+    }
+
     /**
      * Loads exact-frequency trunked candidates for identity verification. The entire search and all detail requests
      * share the existing bounded detail deadline. Candidate and channel bounds prevent discovery from walking a
@@ -578,6 +680,20 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         Predicate<RadioReferenceGateway.TrunkedSystemDetails> identityFilter, Duration deadline)
         throws RadioReferenceDirectoryException
     {
+        return discoverySystems(stateId, frequencyHz, identityFilter, deadline, null);
+    }
+
+    List<DiscoverySystem> discoverySystems(int stateId, long frequencyHz,
+        Predicate<RadioReferenceGateway.TrunkedSystemDetails> identityFilter, DiscoveryCatalog catalog)
+        throws RadioReferenceDirectoryException
+    {
+        return discoverySystems(stateId, frequencyHz, identityFilter, DEFAULT_DETAIL_REQUEST_DEADLINE, catalog);
+    }
+
+    List<DiscoverySystem> discoverySystems(int stateId, long frequencyHz,
+        Predicate<RadioReferenceGateway.TrunkedSystemDetails> identityFilter, Duration deadline, DiscoveryCatalog catalog)
+        throws RadioReferenceDirectoryException
+    {
         validateId(stateId);
         Objects.requireNonNull(identityFilter);
         long deadlineNanos = Math.min(positiveNanos(deadline, "deadline"), DEFAULT_DETAIL_REQUEST_DEADLINE.toNanos());
@@ -585,8 +701,8 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         {
             throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.INVALID_REQUEST);
         }
-        return invokePremiumDetail(gateway -> frequencyDiscoverySystems(gateway, stateId, frequencyHz, identityFilter),
-            deadlineNanos);
+        return invokePremium(gateway -> frequencyDiscoverySystems(gateway, stateId, frequencyHz, identityFilter, catalog),
+            deadlineNanos, mDetailExecutor, catalog);
     }
 
     /** Global P25 System ID lookup can use a selected state-frequency fallback inside the same total deadline. */
@@ -617,6 +733,22 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         Predicate<RadioReferenceGateway.TrunkedSystemDetails> identityFilter,
         Predicate<DiscoverySystem> verifiedMatch, Duration deadline) throws RadioReferenceDirectoryException
     {
+        return p25DiscoverySystems(systemId, frequencyHz, fallbackStateId, identityFilter, verifiedMatch, deadline, null);
+    }
+
+    List<DiscoverySystem> p25DiscoverySystems(int systemId, long frequencyHz, Integer fallbackStateId,
+        Predicate<RadioReferenceGateway.TrunkedSystemDetails> identityFilter,
+        Predicate<DiscoverySystem> verifiedMatch, DiscoveryCatalog catalog) throws RadioReferenceDirectoryException
+    {
+        return p25DiscoverySystems(systemId, frequencyHz, fallbackStateId, identityFilter, verifiedMatch,
+            DEFAULT_DETAIL_REQUEST_DEADLINE, catalog);
+    }
+
+    List<DiscoverySystem> p25DiscoverySystems(int systemId, long frequencyHz, Integer fallbackStateId,
+        Predicate<RadioReferenceGateway.TrunkedSystemDetails> identityFilter,
+        Predicate<DiscoverySystem> verifiedMatch, Duration deadline, DiscoveryCatalog catalog)
+        throws RadioReferenceDirectoryException
+    {
         if(systemId < 0 || systemId > 0xFFF || frequencyHz <= 0 || frequencyHz > 100_000_000_000L)
         {
             throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.INVALID_REQUEST);
@@ -625,10 +757,10 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         Objects.requireNonNull(identityFilter);
         Objects.requireNonNull(verifiedMatch);
         long deadlineNanos = Math.min(positiveNanos(deadline, "deadline"), DEFAULT_DETAIL_REQUEST_DEADLINE.toNanos());
-        return invokePremiumDetail(gateway -> {
+        return invokePremium(gateway -> {
             try
             {
-                List<DiscoverySystem> global = p25SystemCandidates(gateway, systemId, identityFilter);
+                List<DiscoverySystem> global = p25SystemCandidates(gateway, systemId, identityFilter, catalog);
                 if(fallbackStateId == null || global.stream().anyMatch(verifiedMatch)) return global;
             }
             catch(RadioReferenceGatewayException exception)
@@ -636,13 +768,16 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
                 if(exception.kind() != RadioReferenceGatewayException.Kind.RESULT_SET_TOO_LARGE || fallbackStateId == null)
                     throw exception;
             }
-            return frequencyDiscoverySystems(gateway, fallbackStateId, frequencyHz, identityFilter);
-        }, deadlineNanos);
+            return frequencyDiscoverySystems(gateway, fallbackStateId, frequencyHz, identityFilter, catalog);
+        }, deadlineNanos, mDetailExecutor, catalog);
     }
 
     private static List<DiscoverySystem> p25SystemCandidates(RadioReferenceGateway gateway, int systemId,
-        Predicate<RadioReferenceGateway.TrunkedSystemDetails> identityFilter) throws RadioReferenceGatewayException
+        Predicate<RadioReferenceGateway.TrunkedSystemDetails> identityFilter, DiscoveryCatalog catalog)
+        throws RadioReferenceGatewayException
     {
+        if(catalog != null && catalog.mP25Systems.containsKey(systemId))
+            return discoverySystemDetails(gateway, catalog.mP25Systems.get(systemId), identityFilter, catalog);
         List<RadioReferenceGateway.TrunkedSystem> candidates = required(gateway.p25SystemsBySystemId(systemId));
         if(candidates != null && candidates.size() > MAXIMUM_REMOTE_ITEMS_SCANNED)
         {
@@ -656,11 +791,14 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
                 if(candidate != null && candidate.id() > 0) systemIds.add(candidate.id());
             }
         }
-        return discoverySystemDetails(gateway, systemIds, identityFilter);
+        List<DiscoverySystem> result = discoverySystemDetails(gateway, systemIds, identityFilter, catalog);
+        if(catalog != null && catalog.mP25Systems.size() < DiscoveryCatalog.MAXIMUM_CATALOG_ENTRIES)
+            catalog.mP25Systems.put(systemId, java.util.Collections.unmodifiableSet(new LinkedHashSet<>(systemIds)));
+        return result;
     }
 
     private static List<DiscoverySystem> frequencyDiscoverySystems(RadioReferenceGateway gateway, int stateId,
-        long frequencyHz, Predicate<RadioReferenceGateway.TrunkedSystemDetails> identityFilter)
+        long frequencyHz, Predicate<RadioReferenceGateway.TrunkedSystemDetails> identityFilter, DiscoveryCatalog catalog)
         throws RadioReferenceGatewayException
     {
         List<RadioReferenceGateway.FrequencyResult> frequencies =
@@ -681,11 +819,12 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
                 }
             }
         }
-        return discoverySystemDetails(gateway, systemIds, identityFilter);
+        return discoverySystemDetails(gateway, systemIds, identityFilter, catalog);
     }
 
     private static List<DiscoverySystem> discoverySystemDetails(RadioReferenceGateway gateway, Set<Integer> systemIds,
-        Predicate<RadioReferenceGateway.TrunkedSystemDetails> identityFilter) throws RadioReferenceGatewayException
+        Predicate<RadioReferenceGateway.TrunkedSystemDetails> identityFilter, DiscoveryCatalog catalog)
+        throws RadioReferenceGatewayException
     {
         if(systemIds.size() > MAXIMUM_DISCOVERY_SYSTEMS)
         {
@@ -699,13 +838,16 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
             {
                 throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INTERRUPTED);
             }
-            RadioReferenceGateway.TrunkedSystemDetails system = gateway.trunkedSystemDetails(systemId);
+            DiscoverySystem cached = catalog == null ? null : catalog.mSystems.get(systemId);
+            RadioReferenceGateway.TrunkedSystemDetails system = cached == null ?
+                gateway.trunkedSystemDetails(systemId) : cached.system();
             if(system == null || system.id() != systemId)
             {
                 throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
             }
             if(!identityFilter.test(system)) continue;
-            List<RadioReferenceGateway.TrunkedSiteDetails> sites = required(gateway.trunkedSiteDetails(systemId));
+            List<RadioReferenceGateway.TrunkedSiteDetails> sites = cached == null ?
+                required(gateway.trunkedSiteDetails(systemId)) : cached.sites();
             if(sites != null && sites.size() > MAXIMUM_REMOTE_ITEMS_SCANNED)
             {
                 throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.RESULT_SET_TOO_LARGE);
@@ -729,7 +871,9 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
                     }
                 }
             }
-            systems.add(new DiscoverySystem(system, verified));
+            DiscoverySystem snapshot = cached == null ? new DiscoverySystem(system, verified) : cached;
+            systems.add(snapshot);
+            if(catalog != null && cached == null) catalog.retain(snapshot);
         }
         return List.copyOf(systems);
     }
@@ -1323,6 +1467,12 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     private <T> T invokePremium(GatewayRequest<T> request, long requestDeadlineNanos, ThreadPoolExecutor executor)
         throws RadioReferenceDirectoryException
     {
+        return invokePremium(request, requestDeadlineNanos, executor, null);
+    }
+
+    private <T> T invokePremium(GatewayRequest<T> request, long requestDeadlineNanos, ThreadPoolExecutor executor,
+                               DiscoveryCatalog catalog) throws RadioReferenceDirectoryException
+    {
         Session session;
 
         synchronized(mSessionLock)
@@ -1345,7 +1495,9 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
 
         try
         {
-            T result = invoke(() -> request.execute(session.gateway()), requestDeadlineNanos, executor, session);
+            long expiresAtNanos = System.nanoTime() + requestDeadlineNanos;
+            T result = invoke(() -> catalog == null ? request.execute(session.gateway()) :
+                catalog.execute(session, request, expiresAtNanos), requestDeadlineNanos, executor, session);
 
             synchronized(mSessionLock)
             {

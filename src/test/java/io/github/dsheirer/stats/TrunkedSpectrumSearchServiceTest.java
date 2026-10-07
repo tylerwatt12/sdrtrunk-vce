@@ -167,6 +167,12 @@ class TrunkedSpectrumSearchServiceTest
     }
     private static class Channels implements SpectrumSearchService.Channels
     {
+        public ChannelAdministrationService.DiscoveryBatch createBatch(
+            List<ChannelAdministrationService.DiscoveryRequest> requests, long revision, BooleanSupplier cancelled)
+        {
+            return DiscoveryBatchTestAdapter.save(this, requests, revision, cancelled);
+        }
+
         long revision = 1; ChannelDefinition saved; boolean createsAliasList;
         List<ChannelAdministrationService.DiscoveryAliasList> aliasLists = List.of();
         public long revision() { return revision; } public SpectrumSearchService.KnownChannel known(long frequency) { return null; }

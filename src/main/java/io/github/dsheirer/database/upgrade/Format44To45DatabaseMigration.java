@@ -20,33 +20,24 @@ final class Format44To45DatabaseMigration implements DatabaseMigrationStep
             DatabaseMigrationEffect.UNKNOWN_COUNT);
     }
 
-    @Override public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    @Override public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
-        requireSource(connection);
         // Preflight does not scan retained history; exact consolidation counts come from the single real migration.
         return declaredEffects();
     }
 
-    @Override public void migrate(Connection connection) throws SQLException
+    @Override public void migrateSource(Connection connection) throws SQLException
     {
-        migrateAndReport(connection);
+        migrateSourceAndReport(connection);
     }
 
-    @Override public List<DatabaseMigrationEffect> migrateAndReport(Connection connection) throws SQLException
+    @Override public List<DatabaseMigrationEffect> migrateSourceAndReport(Connection connection) throws SQLException
     {
-        requireSource(connection);
         var result = ReceiverActivitySchema.consolidateP25HomeRadioIdentities(connection);
         ReceiverActivitySchema.rebuildP25HomeIdentityKeyView(connection);
         return effects(result.promotedIdentities(), result.mergedIdentities(), result.skippedAmbiguousIdentities());
     }
 
-    private static void requireSource(Connection connection) throws SQLException
-    {
-        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 44)
-        {
-            throw new SQLException("Expected format 44");
-        }
-    }
 
     private static List<DatabaseMigrationEffect> effects(long promoted, long merged, long ambiguous)
     {

@@ -568,7 +568,7 @@ public final class ApplicationMigrationService
             {
                 try
                 {
-                    return DatabaseMigrationChain.plan(DatabaseFormatCatalog.requireCurrent(connection));
+                    return DatabaseMigrationChain.plan(DatabaseFormatCatalog.requireCurrent(connection, source));
                 }
                 catch(SQLException rejectedCurrent)
                 {

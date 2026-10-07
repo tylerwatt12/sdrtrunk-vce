@@ -82,6 +82,9 @@ public final class SpectrumSearchService implements AutoCloseable
             { return channels.discoveryTrunkedReview(evidence.protocolId(), frequency, preferred, evidence); }
             public ChannelAdministrationService.DiscoveryCreated createTrunked(ChannelDefinition definition, TrunkedDiscoveryEvidence evidence, String aliasName, long revision, boolean autoStart)
             { return channels.createTrunkedDiscovered(definition, evidence, aliasName, revision, autoStart); }
+            public ChannelAdministrationService.DiscoveryBatch createBatch(
+                List<ChannelAdministrationService.DiscoveryRequest> requests, long revision, BooleanSupplier cancelled)
+            { return channels.createDiscoveredBatch(requests, revision, cancelled); }
             public KnownChannel knownSite(P25SiteIdentity identity)
             {
                 var match = channels.discoverySiteMatch(identity);
@@ -306,6 +309,8 @@ public final class SpectrumSearchService implements AutoCloseable
             long revision = mChannels.revision();
             if(request.revision() != revision)
                 throw new ChannelAdministrationService.StaleRevisionException(request.revision(), revision);
+            List<PendingSave> pending = new ArrayList<>();
+            List<ChannelAdministrationService.DiscoveryRequest> prepared = new ArrayList<>();
             for(int index = 0; index < selected.size(); index++)
             {
                 Row row = selected.get(index);
@@ -345,47 +350,62 @@ public final class SpectrumSearchService implements AutoCloseable
                     RadioReferenceDiscoveryResolver.Result aliasDirectory = DiscoveryAliasImportService.groupDirectory(
                         job.rows.values().stream().filter(member -> member.groupId().equals(row.groupId()))
                             .map(member -> member.directory).toList());
-                    row.saved = mChannels.createTrunked(definition, saveEvidence, aliasName, revision, edit.autoStart());
-                    if(row.saved.aliasListCreated())
-                    {
-                        job.aliasImport.register(row.saved.aliasListId(), aliasName, definition.system(), aliasDirectory);
-                        mAliasImporter.retain(job.id, job.aliasImport);
-                    }
-                    row.savedName = name;
-                    row.autoStart = edit.autoStart();
-                    job.aliasIds.put(row.groupId(), row.saved.aliasListId());
-                    revision = mChannels.revision();
-                }
-                catch(ChannelAdministrationService.StaleRevisionException exception)
-                {
-                    row.saveError = "Saved choices changed. Review the Alias Lists and retry.";
-                    for(int pending = index + 1; pending < selected.size(); pending++)
-                        if(selected.get(pending).saved == null) selected.get(pending).saveError =
-                            "Saved choices changed. Review the Alias Lists and retry.";
-                    break;
-                }
-                catch(ConfigurationManager.ConfigurationPublicationException exception)
-                {
-                    if(exception.committedConfigurationId() != null)
-                    {
-                        row.saved = new ChannelAdministrationService.DiscoveryCreated(exception.committedConfigurationId(),
-                            exception.committedAliasListId());
-                        row.savedName = name;
-                        row.autoStart = edit.autoStart();
-                        job.aliasIds.put(row.groupId(), row.saved.aliasListId());
-                    }
-                    job.restartRequired = true;
-                    job.reason = job.rows.values().stream().anyMatch(saved -> saved.saved != null) ?
-                        "Restart VCE before adding or listening to more channels. Your added channels are saved." :
-                        "Nothing was added by this search. Restart VCE before continuing.";
-                    selected.stream().filter(pending -> pending.saved == null).forEach(pending ->
-                        pending.saveError = "Not added. Restart VCE before continuing.");
-                    throw exception;
+                    pending.add(new PendingSave(row, name, edit.autoStart(), aliasName, definition.system(), aliasDirectory));
+                    prepared.add(new ChannelAdministrationService.DiscoveryRequest(definition,
+                        saveEvidence.identity().p25(), saveEvidence, aliasName, edit.autoStart()));
                 }
                 catch(RuntimeException exception)
                 {
                     row.saveError = exception instanceof IllegalArgumentException || exception instanceof IllegalStateException ?
                         exception.getMessage() : "This channel could not be saved. Retry this result.";
+                }
+            }
+            if(!prepared.isEmpty())
+            {
+                try
+                {
+                    var batch = mChannels.createBatch(prepared, revision, job.cancelled::get);
+                    for(int index = 0; index < pending.size(); index++)
+                    {
+                        PendingSave save = pending.get(index);
+                        Row row = save.row();
+                        var outcome = batch.results().get(index);
+                        if(outcome.failure() != null)
+                        {
+                            row.saveError = discoverySaveError(outcome.failure());
+                            continue;
+                        }
+                        row.saved = outcome.created();
+                        row.savedName = save.name();
+                        row.autoStart = save.autoStart();
+                        job.aliasIds.put(row.groupId(), row.saved.aliasListId());
+                    }
+                    if(batch.publicationFailure() != null) throw batch.publicationFailure();
+                    // All committed identities are recorded before optional follow-up work can fail.
+                    for(PendingSave save: pending)
+                    {
+                        Row row = save.row();
+                        if(row.saved != null && row.saved.aliasListCreated())
+                        {
+                            job.aliasImport.register(row.saved.aliasListId(), save.aliasName(), save.system(), save.directory());
+                            mAliasImporter.retain(job.id, job.aliasImport);
+                        }
+                    }
+                }
+                catch(ConfigurationManager.ConfigurationPublicationException exception)
+                {
+                    job.restartRequired = true;
+                    job.reason = job.rows.values().stream().anyMatch(saved -> saved.saved != null) ?
+                        "Restart VCE before adding or listening to more channels. Your added channels are saved." :
+                        "Nothing was added by this search. Restart VCE before continuing.";
+                    selected.stream().filter(row -> row.saved == null).forEach(row ->
+                        row.saveError = "Not added. Restart VCE before continuing.");
+                    throw exception;
+                }
+                catch(RuntimeException exception)
+                {
+                    pending.stream().map(PendingSave::row).filter(row -> row.saved == null)
+                        .forEach(row -> row.saveError = discoverySaveError(exception));
                 }
             }
             refreshGroups(job);
@@ -394,6 +414,17 @@ public final class SpectrumSearchService implements AutoCloseable
         }
         finally { endCommand(job); }
     }
+
+    private static String discoverySaveError(RuntimeException failure)
+    {
+        if(failure instanceof ChannelAdministrationService.StaleRevisionException)
+            return "Saved choices changed. Review the Alias Lists and retry.";
+        return failure instanceof IllegalArgumentException || failure instanceof IllegalStateException ?
+            failure.getMessage() : "This channel could not be saved. Retry this result.";
+    }
+
+    private record PendingSave(Row row, String name, boolean autoStart, String aliasName, String system,
+        RadioReferenceDiscoveryResolver.Result directory) {}
 
     public Snapshot start(String id, List<String> candidateIds, String firstCandidateId)
     {
@@ -513,6 +544,7 @@ public final class SpectrumSearchService implements AutoCloseable
     private void cancelLocked(Job job)
     {
         job.cancelled.set(true);
+        if(job.directoryCatalog != null) job.directoryCatalog.close();
         job.worker.interrupt();
     }
     private void quiesce(Job job)
@@ -689,8 +721,12 @@ public final class SpectrumSearchService implements AutoCloseable
         if(resolver == null) return;
         row.directory = RadioReferenceDiscoveryResolver.Result.pending();
         try { mDirectoryWorker.execute(() -> {
-            synchronized(mLock) { if(job.cancelled.get() || mJob != job) return; }
-            var result = resolver.resolve(job.stateId, directoryIdentity(row.evidence,row.frequency));
+            synchronized(mLock)
+            {
+                if(job.cancelled.get() || mJob != job) return;
+                if(job.directoryCatalog == null) job.directoryCatalog = resolver.newCatalog();
+            }
+            var result = resolver.resolve(job.stateId, directoryIdentity(row.evidence,row.frequency), job.directoryCatalog);
             synchronized(mLock)
             {
                 if(job.cancelled.get() || mJob != job) return;
@@ -814,6 +850,8 @@ public final class SpectrumSearchService implements AutoCloseable
         { return review(frequency, preferred, evidence.identity().p25(), (String)evidence.settings().get("modulation")); }
         default ChannelAdministrationService.DiscoveryCreated createTrunked(ChannelDefinition definition, TrunkedDiscoveryEvidence evidence, String aliasName,long revision,boolean autoStart)
         { return create(definition,evidence.identity().p25(),aliasName,revision,autoStart); }
+        ChannelAdministrationService.DiscoveryBatch createBatch(
+            List<ChannelAdministrationService.DiscoveryRequest> requests, long revision, BooleanSupplier cancelled);
         ChannelAdministrationService.DiscoveryReview review(long frequency, String preferred, P25SiteIdentity identity, String modulation);
         ChannelAdministrationService.DiscoveryCreated create(ChannelDefinition definition, P25SiteIdentity identity,
             String aliasName, long revision, boolean autoStart);
@@ -822,6 +860,7 @@ public final class SpectrumSearchService implements AutoCloseable
     private static final class Job
     {
         final String id = UUID.randomUUID().toString();
+        io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService.DiscoveryCatalog directoryCatalog;
         Integer stateId;
         final String tunerId;
         final SpectrumSearchHardware.Lease lease;

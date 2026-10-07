@@ -108,7 +108,7 @@ class Format23To24DatabaseMigrationTest
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);
             SQLException exception = assertThrows(SQLException.class,
                 () -> new Format23To24DatabaseMigration().migrate(connection));
-            assertTrue(exception.getMessage().contains("Expected format 23"), exception::getMessage);
+            assertTrue(exception.getMessage().contains("requires exact source format 23"), exception::getMessage);
             assertEquals(22, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(fingerprint, SqliteSchemaValidator.fingerprint(connection));
         }

@@ -439,6 +439,238 @@ class RadioReferenceDiscoveryResolverTest
         }
     }
 
+    @Test
+    void oneWorkflowLoadsTheP25CatalogOnceButVerifiesEverySiteAndFrequency() throws Exception
+    {
+        FakeGateway gateway = new FakeGateway();
+        DiscoverySystem first = p25(2001, 3001, "BEE00", "49F", 2, 12, FREQUENCY);
+        DiscoverySystem second = p25(2001, 3002, "BEE00", "49F", 2, 13, FREQUENCY + 100_000);
+        gateway.p25Candidates = List.of(catalog(2001));
+        gateway.systems.put(2001, new DiscoverySystem(first.system(),
+            List.of(first.sites().getFirst(), second.sites().getFirst())));
+        try(RadioReferenceDirectoryService directory = directory(gateway, Duration.ofSeconds(1));
+            var catalog = directory.newDiscoveryCatalog())
+        {
+            directory.login("test", "cleared-password".toCharArray());
+            var resolver = new RadioReferenceDiscoveryResolver(directory);
+            Identity next = new Identity("p25-phase1", "phase1", FREQUENCY + 100_000,
+                0xBEE00, 0x49F, 2, 13, null, null);
+            Identity wrongFrequency = new Identity("p25-phase1", "phase1", FREQUENCY,
+                0xBEE00, 0x49F, 2, 13, null, null);
+            List<Identity> rows = List.of(P25, next, wrongFrequency);
+            List<Result> uncached = rows.stream().map(identity -> resolver.resolve(null, identity)).toList();
+            assertEquals(3, gateway.p25SystemIds.size());
+            assertEquals(3, gateway.detailIds.size());
+            assertEquals(3, gateway.siteIds.size());
+            gateway.p25SystemIds.clear(); gateway.detailIds.clear(); gateway.siteIds.clear();
+            List<Result> reused = rows.stream().map(identity -> resolver.resolve(null, identity, catalog)).toList();
+            assertEquals(uncached, reused, "retention must preserve the complete match result for each row");
+            assertEquals(3001, reused.get(0).match().rrSiteId());
+            assertEquals(3002, reused.get(1).match().rrSiteId());
+            assertEquals("no_match", reused.get(2).state());
+            assertEquals(List.of(0x49F), gateway.p25SystemIds);
+            assertEquals(List.of(2001), gateway.detailIds);
+            assertEquals(List.of(2001), gateway.siteIds);
+            assertEquals(0, gateway.searches.get());
+        }
+    }
+
+    @Test
+    void sharedDmrCatalogStillSearchesEachExactFrequencyAndRejectsWrongColor() throws Exception
+    {
+        FakeGateway gateway = new FakeGateway();
+        gateway.rows = List.of(row(2001, FREQUENCY), row(2001, FREQUENCY + 25_000));
+        gateway.systems.put(2001, system(2001, 3001, "DMR", "Tier III", "", "0x7B", 0, 12,
+            FREQUENCY, "7", 0));
+        try(RadioReferenceDirectoryService directory = directory(gateway, Duration.ofSeconds(1));
+            var catalog = directory.newDiscoveryCatalog())
+        {
+            directory.login("test", "cleared-password".toCharArray());
+            var resolver = new RadioReferenceDiscoveryResolver(directory);
+            assertTrue(resolver.resolve(10, new Identity("dmr", "tier3", FREQUENCY,
+                null, 123, null, 12, 7, null), catalog).matched());
+            assertTrue(resolver.resolve(10, new Identity("dmr", "tier3", FREQUENCY + 25_000,
+                null, 123, null, 12, 7, null), catalog).matched());
+            assertEquals("no_match", resolver.resolve(10, new Identity("dmr", "tier3", FREQUENCY,
+                null, 123, null, 12, 8, null), catalog).state());
+            assertEquals(3, gateway.searches.get());
+            assertEquals(List.of(2001), gateway.detailIds);
+            assertEquals(List.of(2001), gateway.siteIds);
+        }
+    }
+
+    @Test
+    void workflowRetainsAmbiguousCandidatesAndInvalidatesOnAccountChangeOrClose() throws Exception
+    {
+        FakeGateway gateway = new FakeGateway();
+        gateway.p25Candidates = List.of(catalog(2001), catalog(2002));
+        gateway.systems.put(2001, p25(2001, 3001, "BEE00", "49F", 2, 12, FREQUENCY));
+        gateway.systems.put(2002, p25(2002, 3002, "BEE00", "49F", 2, 12, FREQUENCY));
+        try(RadioReferenceDirectoryService directory = directory(gateway, Duration.ofSeconds(1));
+            var catalog = directory.newDiscoveryCatalog())
+        {
+            directory.login("test", "cleared-password".toCharArray());
+            var resolver = new RadioReferenceDiscoveryResolver(directory);
+            assertEquals("ambiguous", resolver.resolve(10, P25, catalog).state());
+            assertEquals("ambiguous", resolver.resolve(10, P25, catalog).state());
+            assertEquals(2, gateway.siteIds.size());
+            directory.logout();
+            assertEquals("login_required", resolver.resolve(10, P25, catalog).state());
+            gateway.p25Candidates = List.of(catalog(2001));
+            directory.login("another-test", "cleared-password".toCharArray());
+            assertTrue(resolver.resolve(10, P25, catalog).matched());
+            assertEquals(3, gateway.siteIds.size());
+            catalog.close();
+            assertEquals("unavailable", resolver.resolve(10, P25, catalog).state());
+            assertEquals(3, gateway.siteIds.size());
+        }
+    }
+
+    @Test
+    void workflowExpiresAndLoadsFreshCompleteCatalogs() throws Exception
+    {
+        FakeGateway gateway = new FakeGateway();
+        gateway.p25Candidates = List.of(catalog(2001));
+        gateway.systems.put(2001, p25(2001, 3001, "BEE00", "49F", 2, 12, FREQUENCY));
+        var now = new java.util.concurrent.atomic.AtomicLong(1_800_000_000_000L);
+        Clock clock = new Clock()
+        {
+            @Override public java.time.ZoneId getZone() { return java.time.ZoneOffset.UTC; }
+            @Override public Clock withZone(java.time.ZoneId zone) { return this; }
+            @Override public java.time.Instant instant() { return java.time.Instant.ofEpochMilli(now.get()); }
+            @Override public long millis() { return now.get(); }
+        };
+        try(var directory = new RadioReferenceDirectoryService((user, password) -> gateway, 1, 2,
+            Duration.ofSeconds(1), Duration.ofMillis(100), clock); var catalog = directory.newDiscoveryCatalog())
+        {
+            directory.login("test", "cleared-password".toCharArray());
+            var resolver = new RadioReferenceDiscoveryResolver(directory);
+            assertTrue(resolver.resolve(null, P25, catalog).matched());
+            gateway.systems.put(2001, p25(2001, 3001, "BEE01", "49F", 2, 12, FREQUENCY));
+            now.addAndGet(Duration.ofMinutes(5).toMillis());
+            assertEquals("no_match", resolver.resolve(null, P25, catalog).state());
+            assertEquals(2, gateway.p25SystemIds.size());
+            assertEquals(2, gateway.detailIds.size());
+        }
+    }
+
+    @Test
+    void incompleteAndTimedOutWorkflowLoadsAreRetryable() throws Exception
+    {
+        FakeGateway gateway = new FakeGateway();
+        gateway.p25Candidates = List.of(catalog(2001));
+        gateway.systems.put(2001, p25(2001, 3001, "BEE00", "49F", 2, 12, FREQUENCY));
+        try(RadioReferenceDirectoryService directory = directory(gateway, Duration.ofSeconds(1));
+            var catalog = directory.newDiscoveryCatalog())
+        {
+            directory.login("test", "cleared-password".toCharArray());
+            var resolver = new RadioReferenceDiscoveryResolver(directory);
+            gateway.nullSites = true;
+            assertEquals("unavailable", resolver.resolve(null, P25, catalog).state());
+            gateway.nullSites = false;
+            gateway.siteDelayMillis = 200;
+            assertEquals(RadioReferenceDirectoryException.Code.TIMEOUT,
+                assertThrows(RadioReferenceDirectoryException.class, () -> directory.p25DiscoverySystems(
+                    0x49F, FREQUENCY, null, system -> true, candidate -> true, Duration.ofMillis(50), catalog)).code());
+            gateway.siteDelayMillis = 0;
+            assertTrue(resolver.resolve(null, P25, catalog).matched());
+            assertEquals(3, gateway.p25SystemIds.size());
+            assertEquals(3, gateway.siteIds.size());
+        }
+    }
+
+    @Test
+    void concurrentRowsShareOneCompleteCatalogLoad() throws Exception
+    {
+        FakeGateway gateway = new FakeGateway();
+        gateway.p25Candidates = List.of(catalog(2001));
+        gateway.systems.put(2001, p25(2001, 3001, "BEE00", "49F", 2, 12, FREQUENCY));
+        gateway.siteDelayMillis = 100;
+        try(var directory = new RadioReferenceDirectoryService((user, password) -> gateway, 2, 4,
+            Duration.ofSeconds(1), Duration.ofMillis(100), Clock.systemUTC());
+            var catalog = directory.newDiscoveryCatalog(); var callers = java.util.concurrent.Executors.newFixedThreadPool(2))
+        {
+            directory.login("test", "cleared-password".toCharArray());
+            var resolver = new RadioReferenceDiscoveryResolver(directory);
+            var first = callers.submit(() -> resolver.resolve(null, P25, catalog));
+            var second = callers.submit(() -> resolver.resolve(null, P25, catalog));
+            assertTrue(first.get(2, java.util.concurrent.TimeUnit.SECONDS).matched());
+            assertTrue(second.get(2, java.util.concurrent.TimeUnit.SECONDS).matched());
+            assertEquals(List.of(0x49F), gateway.p25SystemIds);
+            assertEquals(List.of(2001), gateway.siteIds);
+        }
+    }
+
+    @Test
+    void waitingForTheSameCatalogSharesTheCallerDeadlineWithoutDiscardingTheActiveLoad() throws Exception
+    {
+        FakeGateway gateway = new FakeGateway();
+        gateway.p25Candidates = List.of(catalog(2001));
+        gateway.systems.put(2001, p25(2001, 3001, "BEE00", "49F", 2, 12, FREQUENCY));
+        gateway.siteEntered = new java.util.concurrent.CountDownLatch(1);
+        gateway.siteRelease = new java.util.concurrent.CountDownLatch(1);
+        try(var directory = new RadioReferenceDirectoryService((user, password) -> gateway, 2, 4,
+            Duration.ofSeconds(1), Duration.ofMillis(100), Clock.systemUTC());
+            var catalog = directory.newDiscoveryCatalog(); var caller = java.util.concurrent.Executors.newSingleThreadExecutor())
+        {
+            directory.login("test", "cleared-password".toCharArray());
+            var resolver = new RadioReferenceDiscoveryResolver(directory);
+            var active = caller.submit(() -> resolver.resolve(null, P25, catalog));
+            assertTrue(gateway.siteEntered.await(1, java.util.concurrent.TimeUnit.SECONDS));
+            assertEquals(RadioReferenceDirectoryException.Code.TIMEOUT,
+                assertThrows(RadioReferenceDirectoryException.class, () -> directory.p25DiscoverySystems(
+                    0x49F, FREQUENCY, null, system -> true, candidate -> true, Duration.ofMillis(20), catalog)).code());
+            gateway.siteRelease.countDown();
+            assertTrue(active.get(2, java.util.concurrent.TimeUnit.SECONDS).matched());
+            assertTrue(resolver.resolve(null, P25, catalog).matched());
+            assertEquals(List.of(2001), gateway.siteIds);
+        }
+    }
+
+    @Test
+    void closingAWorkflowDiscardsAnInFlightLookup() throws Exception
+    {
+        FakeGateway gateway = new FakeGateway();
+        gateway.p25Candidates = List.of(catalog(2001));
+        gateway.systems.put(2001, p25(2001, 3001, "BEE00", "49F", 2, 12, FREQUENCY));
+        gateway.siteEntered = new java.util.concurrent.CountDownLatch(1);
+        gateway.siteRelease = new java.util.concurrent.CountDownLatch(1);
+        try(RadioReferenceDirectoryService directory = directory(gateway, Duration.ofSeconds(1));
+            var catalog = directory.newDiscoveryCatalog(); var caller = java.util.concurrent.Executors.newSingleThreadExecutor())
+        {
+            directory.login("test", "cleared-password".toCharArray());
+            var resolver = new RadioReferenceDiscoveryResolver(directory);
+            var active = caller.submit(() -> resolver.resolve(null, P25, catalog));
+            assertTrue(gateway.siteEntered.await(1, java.util.concurrent.TimeUnit.SECONDS));
+            catalog.close();
+            gateway.siteRelease.countDown();
+            assertEquals("unavailable", active.get(2, java.util.concurrent.TimeUnit.SECONDS).state());
+            assertEquals("unavailable", resolver.resolve(null, P25, catalog).state());
+            assertEquals(List.of(2001), gateway.siteIds);
+        }
+    }
+
+    @Test
+    void catalogRetentionLimitNeverTruncatesResults() throws Exception
+    {
+        FakeGateway gateway = new FakeGateway();
+        try(RadioReferenceDirectoryService directory = directory(gateway, Duration.ofSeconds(1));
+            var catalog = directory.newDiscoveryCatalog())
+        {
+            directory.login("test", "cleared-password".toCharArray());
+            for(int index = 1; index <= 33; index++)
+            {
+                gateway.p25Candidates = List.of(catalog(index));
+                gateway.systems.put(index, p25(index, 3000 + index, "BEE00", "49F", 2, 12, FREQUENCY));
+                assertEquals(index, directory.p25DiscoverySystems(index, FREQUENCY, null, system -> true,
+                    candidate -> true, catalog).getFirst().system().id());
+            }
+            assertEquals(33, directory.p25DiscoverySystems(33, FREQUENCY, null, system -> true,
+                candidate -> true, catalog).getFirst().system().id());
+            assertEquals(34, gateway.siteIds.size(), "uncached entries load completely again");
+        }
+    }
+
     private static RadioReferenceDirectoryService directory(FakeGateway gateway, Duration deadline)
     {
         return new RadioReferenceDirectoryService((user, password) -> gateway, 1, 2, deadline,
@@ -487,6 +719,8 @@ class RadioReferenceDiscoveryResolverTest
         volatile RadioReferenceGatewayException.Kind failure;
         volatile RadioReferenceGatewayException.Kind frequencyFailure;
         volatile boolean nullSites;
+        volatile java.util.concurrent.CountDownLatch siteEntered;
+        volatile java.util.concurrent.CountDownLatch siteRelease;
         @Override public Account account() { return new Account("test", expiration); }
         @Override public List<Country> countries() { return List.of(); }
         @Override public CountryDirectory country(int id) { return null; }
@@ -527,8 +761,14 @@ class RadioReferenceDiscoveryResolverTest
         @Override public List<TrunkedSiteDetails> trunkedSiteDetails(int id) throws RadioReferenceGatewayException
         {
             siteIds.add(id);
+            if(siteEntered != null) siteEntered.countDown();
             if(nullSites) return null;
-            try { if(siteDelayMillis > 0) Thread.sleep(siteDelayMillis); }
+            try
+            {
+                if(siteRelease != null && !siteRelease.await(2, java.util.concurrent.TimeUnit.SECONDS))
+                    throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.TIMEOUT);
+                if(siteDelayMillis > 0) Thread.sleep(siteDelayMillis);
+            }
             catch(InterruptedException exception)
             {
                 Thread.currentThread().interrupt();

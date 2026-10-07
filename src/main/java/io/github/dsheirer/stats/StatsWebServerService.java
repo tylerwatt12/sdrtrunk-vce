@@ -406,8 +406,6 @@ public class StatsWebServerService implements AutoCloseable
         if(mSpectrumSearchService != null) mSpectrumSearchService.setRadioReferenceResolver(discoveryDirectory);
         if(mSpectrumDiscoveryService != null) mSpectrumDiscoveryService.setAliasImporter(mRadioReferenceImportService);
         if(mSpectrumSearchService != null) mSpectrumSearchService.setAliasImporter(mRadioReferenceImportService);
-        if(mChannelAdministrationService != null)
-            mChannelAdministrationService.setRetainedDiscoveryIdentityProvider(mDatabase::retainedDiscoveryIdentities);
         mLiveService = new StatsLiveService(channelProcessingManager, mEntityCatalog,
             remoteLinkAdministrationService);
         mP25AssignmentService = new StatsP25AssignmentService(userPreferences.getP25WuidAssignmentRegistry(), mDatabase);

@@ -146,57 +146,7 @@ final class ManagedRecordingStore implements AutoCloseable
 
     private void validateExisting() throws SQLException
     {
-        try(Statement statement = mWriterConnection.createStatement())
-        {
-            int applicationId = pragmaInt(statement, "application_id");
-            int version = pragmaInt(statement, "user_version");
-            if(applicationId != APPLICATION_ID || version != FORMAT_VERSION)
-            {
-                throw new SQLException("Unsupported or unrecognized managed recordings catalog format");
-            }
-            try(ResultSet rows = statement.executeQuery("SELECT format_version, call_count, total_bytes " +
-                "FROM catalog_metadata WHERE id=1"))
-            {
-                if(!rows.next() || rows.getInt(1) != FORMAT_VERSION || rows.getLong(2) < 0 ||
-                    rows.getLong(3) < 0 || rows.next())
-                {
-                    throw new SQLException("Managed recordings catalog metadata is invalid");
-                }
-            }
-        }
-        Map<String,String> actualSchema = new HashMap<>();
-        try(Statement statement = mWriterConnection.createStatement();
-            ResultSet rows = statement.executeQuery(
-                "SELECT name,sql FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'"))
-        {
-            while(rows.next())
-            {
-                actualSchema.put(rows.getString(1), rows.getString(2));
-            }
-        }
-        for(Map.Entry<String,String> entry : SCHEMA.entrySet())
-        {
-            if(!entry.getValue().equals(actualSchema.get(entry.getKey())))
-            {
-                throw new SQLException("Managed recordings catalog schema differs at " + entry.getKey());
-            }
-        }
-        if(actualSchema.size() != SCHEMA.size())
-        {
-            throw new SQLException("Managed recordings catalog has unexpected schema objects");
-        }
-    }
-
-    private static int pragmaInt(Statement statement, String name) throws SQLException
-    {
-        try(ResultSet rows = statement.executeQuery("PRAGMA " + name))
-        {
-            if(!rows.next())
-            {
-                throw new SQLException("Missing SQLite pragma " + name);
-            }
-            return rows.getInt(1);
-        }
+        ManagedRecordingSchema.validate(mWriterConnection, FORMAT_VERSION);
     }
 
     /** Only the dedicated catalog thread calls this method. */

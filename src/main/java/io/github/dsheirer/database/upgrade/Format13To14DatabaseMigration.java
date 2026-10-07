@@ -23,16 +23,14 @@ final class Format13To14DatabaseMigration implements DatabaseMigrationStep
         return effects(DatabaseMigrationEffect.UNKNOWN_COUNT, DatabaseMigrationEffect.UNKNOWN_COUNT);
     }
 
-    public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
-        requireSourceFormat(connection);
         SettingInspection inspection = inspectSetting(connection);
         return effects(inspection.preserved() ? 0 : 1, inspection.preserved() ? 1 : 0);
     }
 
-    public void migrate(Connection connection) throws SQLException
+    public void migrateSource(Connection connection) throws SQLException
     {
-        requireSourceFormat(connection);
         SettingInspection inspection = inspectSetting(connection);
         if(!inspection.preserved())
         {
@@ -40,13 +38,6 @@ final class Format13To14DatabaseMigration implements DatabaseMigrationStep
         }
     }
 
-    private static void requireSourceFormat(Connection connection) throws SQLException
-    {
-        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 13)
-        {
-            throw new SQLException("Expected format 13");
-        }
-    }
 
     private static SettingInspection inspectSetting(Connection connection) throws SQLException
     {

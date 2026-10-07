@@ -45,16 +45,14 @@ final class Format9To10DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
-        requireSourceFormat(connection);
         return effects(configurationRowCount(connection));
     }
 
     @Override
-    public void migrate(Connection connection) throws SQLException
+    public void migrateSource(Connection connection) throws SQLException
     {
-        requireSourceFormat(connection);
     }
 
     private static List<DatabaseMigrationEffect> effects(long configurationRows)
@@ -69,15 +67,6 @@ final class Format9To10DatabaseMigration implements DatabaseMigrationStep
                     "opt-in setting as disabled"));
     }
 
-    private static void requireSourceFormat(Connection connection) throws SQLException
-    {
-        DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspectForMigration(connection);
-        if(detected.version() != 9)
-        {
-            throw new SQLException("Migration step format-9-to-10 requires exact source format 9; found " +
-                detected.version() + " [" + detected.id() + "]");
-        }
-    }
 
     private static long configurationRowCount(Connection connection) throws SQLException
     {

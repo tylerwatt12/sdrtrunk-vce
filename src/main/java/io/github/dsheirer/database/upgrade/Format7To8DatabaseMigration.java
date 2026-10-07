@@ -52,14 +52,14 @@ final class Format7To8DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
         UserInspection inspection = inspect(connection);
         return effects(inspection.users().size(), inspection.defaultedUsers());
     }
 
     @Override
-    public void migrate(Connection connection) throws SQLException
+    public void migrateSource(Connection connection) throws SQLException
     {
         List<UserPreferenceUpdate> users = inspect(connection).users();
         long updatedAt = System.currentTimeMillis();
@@ -88,7 +88,6 @@ final class Format7To8DatabaseMigration implements DatabaseMigrationStep
 
     private static UserInspection inspect(Connection connection) throws SQLException
     {
-        requireSourceFormat(connection);
         List<UserPreferenceUpdate> users = new ArrayList<>();
         int defaultedUsers = 0;
 
@@ -156,15 +155,6 @@ final class Format7To8DatabaseMigration implements DatabaseMigrationStep
                 "Replace only malformed or oversized user preference documents with version-3 defaults"));
     }
 
-    private static void requireSourceFormat(Connection connection) throws SQLException
-    {
-        DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspectForMigration(connection);
-        if(detected.version() != 7)
-        {
-            throw new SQLException("Migration step format-7-to-8 requires exact source format 7; found " +
-                detected.version() + " [" + detected.id() + "]");
-        }
-    }
 
     private record UserPreferenceUpdate(long id, String targetJson, long targetRevision)
     {

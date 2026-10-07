@@ -48,7 +48,7 @@ class Format44To45DatabaseMigrationTest
             connection.setAutoCommit(false);
             var report = DatabaseMigrationChain.migrate(connection);
             connection.commit();
-            assertEquals(1, report.steps().size());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 44, report.steps().size());
             assertEquals("format-44-to-45", report.steps().getFirst().id());
             assertCounts(report.steps().getFirst().effects());
             Map<String,TableContents> after = contents(connection);
@@ -66,7 +66,7 @@ class Format44To45DatabaseMigrationTest
                 targetSchema.get("view:receiver_activity_event_resolved"));
             assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
             assertConsolidated(connection);
-            assertEquals(45, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
             assertHealthy(connection);
         }
         SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database);
@@ -169,24 +169,17 @@ class Format44To45DatabaseMigrationTest
     }
 
     @Test
-    void theNewViewDistinguishesFormat45AndTheCurrentFormatIsANoOp() throws Exception
+    void theNewViewDistinguishesFormat45AndDiscoverySemanticsRequireTheirMarker() throws Exception
     {
-        Path database = Format45TestDatabase.create(mTemporaryFolder.resolve("current45.sqlite"));
+        Path database = Format45TestDatabase.create(mTemporaryFolder.resolve("format45.sqlite"));
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             assertNotEquals(DatabaseFormatCatalog.requireVersion(44).fingerprint(),
                 DatabaseFormatCatalog.requireVersion(45).fingerprint());
-            var before = contents(connection);
-            assertTrue(DatabaseMigrationChain.migrate(connection).steps().isEmpty());
-            assertEquals(before, contents(connection));
-            statement.executeUpdate("DELETE FROM database_metadata WHERE key='database_format_version'");
             assertEquals(45, DatabaseFormatCatalog.inspect(connection).version());
-            assertFalse(DatabaseFormatCatalog.inspect(connection).markerPresent());
-            assertThrows(SQLException.class, () -> DatabaseFormatCatalog.requireCurrent(connection));
-            var adoption = DatabaseMigrationChain.migrate(connection);
-            assertEquals("adopt-global-format-marker", adoption.steps().getFirst().id());
-            assertEquals(before, contents(connection));
-            assertEquals(45, DatabaseFormatCatalog.requireCurrent(connection).version());
+            statement.executeUpdate("DELETE FROM database_metadata WHERE key='database_format_version'");
+            assertThrows(SQLException.class, () -> DatabaseFormatCatalog.inspect(connection));
+            assertThrows(SQLException.class, () -> DatabaseMigrationChain.migrate(connection));
         }
     }
 
@@ -325,7 +318,7 @@ class Format44To45DatabaseMigrationTest
             assertEquals("ok", scalar(connection, "PRAGMA integrity_check"));
             assertEquals("2", scalar(connection, "SELECT count(*) FROM pragma_foreign_key_check"),
                 "Keep the two explicitly seeded historical scope mismatches unchanged");
-            assertEquals(45, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(45, DatabaseFormatCatalog.inspect(connection).version());
         }
     }
 
@@ -430,7 +423,7 @@ class Format44To45DatabaseMigrationTest
             assertEquals("ok", scalar(connection, "PRAGMA integrity_check"));
             assertEquals("6", scalar(connection, "SELECT count(*) FROM pragma_foreign_key_check"),
                 "The six explicitly seeded historical child scope mismatches remain, with the surviving owner");
-            assertEquals(45, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(45, DatabaseFormatCatalog.inspect(connection).version());
         }
     }
 
@@ -566,7 +559,7 @@ class Format44To45DatabaseMigrationTest
             }
             assertEquals("64", scalar(connection, "SELECT count(*) FROM trunked_radio_channel_presence_clear " +
                 "WHERE radio_identity_id BETWEEN 6000000002 AND 6000000129 AND cleared_at_ms=10000"));
-            assertEquals(45, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(45, DatabaseFormatCatalog.inspect(connection).version());
             assertHealthy(connection);
             return callbacks.get();
         }

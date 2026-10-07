@@ -27,9 +27,8 @@ final class Format20To21DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
-        requireSource(connection);
         try(Statement statement = connection.createStatement();
             ResultSet rows = statement.executeQuery("SELECT count(*) FROM alias_list"))
         {
@@ -38,9 +37,8 @@ final class Format20To21DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public void migrate(Connection connection) throws SQLException
+    public void migrateSource(Connection connection) throws SQLException
     {
-        requireSource(connection);
         try(Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -72,13 +70,6 @@ final class Format20To21DatabaseMigration implements DatabaseMigrationStep
         }
     }
 
-    private static void requireSource(Connection connection) throws SQLException
-    {
-        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 20)
-        {
-            throw new SQLException("Expected format 20");
-        }
-    }
 
     private static List<DatabaseMigrationEffect> effects(long aliasLists)
     {

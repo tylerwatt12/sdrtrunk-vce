@@ -14,8 +14,6 @@ package io.github.dsheirer.stats;
 import static io.github.dsheirer.stats.StatsSqlRows.queryRows;
 
 import io.github.dsheirer.module.decode.p25.reference.Vendor;
-import io.github.dsheirer.channel.ChannelAdministrationService.RetainedDiscoveryIdentity;
-import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
@@ -62,73 +60,6 @@ class StatsWebDatabase
     private static final long DAY_MILLISECONDS = 24L * HOUR_MILLISECONDS;
     private static final int MAX_ACTIVITY_ACTION_FILTERS = 23;
     private static final int MAX_ACTIVITY_RADIO_INDEX_HINT_EVENTS = 1_000;
-
-    /** Reuses existing native site history for restart-safe discovery. No new persisted semantics are introduced. */
-    List<RetainedDiscoveryIdentity> retainedDiscoveryIdentities(TrunkedDiscoveryEvidence evidence)
-    {
-        if(evidence == null || !evidence.verified() || evidence.identity().radioSystemKey() == null ||
-            !Set.of("dmr", "nxdn").contains(evidence.protocolId())) return List.of();
-        try
-        {
-            return readSnapshot(connection -> {
-                List<Map<String,Object>> rows = queryRows(connection, """
-                    SELECT config.configuration_id, site.protocol_code, site.variant_code,
-                        system.system_key, system.dmr_model_code, system.dmr_network_id,
-                        system.nxdn_location_category_code, system.nxdn_system_id,
-                        site.observed_model_code, site.observed_network_id, site.observed_location_category_code,
-                        site.observed_system_id, site.observed_site_id, site.observed_ran,
-                        site.color_code_ts1, site.color_code_ts2, site.current_control_hz, site.primary_frequency_hz,
-                        site.first_seen_ms, site.last_seen_ms, site.observation_count
-                    FROM radio_system system
-                    JOIN receiver_channel channel ON channel.radio_system_id=system.id
-                    JOIN configuration_channel config ON config.configuration_id=channel.configuration_id
-                    JOIN trunked_site_snapshot site ON site.channel_id=channel.id
-                    WHERE system.system_key=? AND system.configuration_id IS NULL AND config.channel_kind='TRUNKED'
-                        AND site.protocol_code=system.protocol_code AND site.variant_code=1
-                        AND site.observed_site_id IS NOT NULL AND site.observation_count>=3
-                        AND site.last_seen_ms-site.first_seen_ms>=2000
-                        AND ((site.protocol_code=3 AND config.decoder_type='DMR'
-                            AND site.observed_model_code=system.dmr_model_code
-                            AND site.observed_network_id=system.dmr_network_id)
-                          OR (site.protocol_code=4 AND config.decoder_type='NXDN' AND config.address_domain_code=1
-                            AND site.observed_location_category_code=system.nxdn_location_category_code
-                            AND site.observed_system_id=system.nxdn_system_id))
-                    ORDER BY config.configuration_id LIMIT 257
-                    """, evidence.identity().radioSystemKey());
-                if(rows.size() > 256) return List.of();
-                List<RetainedDiscoveryIdentity> result = new ArrayList<>();
-                for(Map<String,Object> row: rows)
-                {
-                    boolean dmr = number(row.get("protocol_code")) == 3;
-                    String model = dmr ? switch(integer(row.get("observed_model_code"))) {
-                        case 1 -> "TINY"; case 2 -> "SMALL"; case 3 -> "LARGE"; case 4 -> "HUGE"; default -> null;
-                    } : null;
-                    String category = !dmr ? switch(integer(row.get("observed_location_category_code"))) {
-                        case 1 -> "GLOBAL"; case 2 -> "REGIONAL"; case 3 -> "LOCAL"; default -> null;
-                    } : null;
-                    Integer network = dmr ? integer(row.get("observed_network_id")) : null;
-                    Integer system = dmr ? network : integer(row.get("observed_system_id"));
-                    String key = dmr ? RadioSystemKey.dmrTier3(model, network) : RadioSystemKey.nxdnTypeC(category, system);
-                    if(key == null || !key.equals(row.get("system_key"))) continue;
-                    Integer site = integer(row.get("observed_site_id"));
-                    Integer color1 = integer(row.get("color_code_ts1")), color2 = integer(row.get("color_code_ts2"));
-                    //A contradictory two-slot color code cannot identify one serving carrier safely.
-                    if(color1 != null && color2 != null && !color1.equals(color2)) continue;
-                    var identity = new TrunkedDiscoveryEvidence.Identity(null, key, key + ":site:" + site,
-                        network, system, site, model, category, null, integer(row.get("observed_ran")),
-                        color1 != null ? color1 : color2);
-                    result.add(new RetainedDiscoveryIdentity((String)row.get("configuration_id"), dmr ? "dmr" : "nxdn",
-                        dmr ? "TIER_III" : "TYPE_C", identity, positiveOrZero(row.get("current_control_hz")),
-                        positiveOrZero(row.get("primary_frequency_hz")), number(row.get("first_seen_ms")),
-                        number(row.get("last_seen_ms")), number(row.get("observation_count"))));
-                }
-                return List.copyOf(result);
-            });
-        }
-        catch(StatsApiException unavailable) { return List.of(); }
-    }
-
-    private static long positiveOrZero(Object value) { return value instanceof Number number ? Math.max(0, number.longValue()) : 0; }
 
     /** Optional names are projected on the HTTP/request worker, never on decoder or audio ingress callbacks. */
     Object enrichSystemNames(Object value)
@@ -409,7 +340,7 @@ class StatsWebDatabase
     private static final String CONVENTIONAL_ACTIVITY_ACTION_SQL = activityActionAggregateSql(
         "conventional_activity_bucket", "idx_conventional_bucket_dashboard_time");
     private static final String P25_CHANNEL_RADIO_ALIAS_IDENTIFIER_SQL =
-        "CASE WHEN grouped.p25_subscriber_identity_id IS NULL THEN grouped.observed_local_id " +
+        "CASE WHEN grouped.p25_subscriber_identity_id IS NULL THEN coalesce(grouped.observed_local_id, grouped.native_id) " +
             "WHEN grouped.observed_working_id IS NOT NULL THEN grouped.observed_working_id " +
             "WHEN grouped.home_system_radio=1 AND grouped.observed_local_id=grouped.canonical_subscriber_id " +
             "THEN grouped.observed_local_id END";
@@ -4207,17 +4138,18 @@ class StatsWebDatabase
             return List.of();
         }
 
-        String aliasProjection = channelAliasProjection(configured, "alias_talkgroup",
-            "grouped.observed_local_id");
+        String aliasJoin = channelAliasJoin(configured, "alias_talkgroup",
+            "coalesce(grouped.observed_local_id, grouped.native_id)");
         StringBuilder sql = new StringBuilder("WITH grouped AS (").append(groupedSql).append("), presented AS (")
             .append("SELECT grouped.*, ")
-            .append(aliasProjection).append(" FROM grouped) SELECT * FROM presented");
+            .append(CHANNEL_ALIAS_PROJECTION).append(" FROM grouped ").append(aliasJoin)
+            .append(") SELECT * FROM presented");
         addChannelIdentitySearch(sql, parameters, search, "coalesce(observed_local_id, native_id)");
         sql.append(" ORDER BY ").append(requestedOrder)
             .append(", group_identity_kind_code ASC, native_id ASC LIMIT ? OFFSET ?");
         addLimitOffset(parameters, limit, offset);
         List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
-        removeMatchedAliasFields(rows);
+        rows.forEach(StatsAliasResolver::applySelectedChannelAlias);
 
         for(Map<String,Object> row: rows)
         {
@@ -4232,7 +4164,6 @@ class StatsWebDatabase
                 textValue(row.get("identity_key"))));
         }
 
-        enrichChannelGroupAliases(connection, configured.protocol(), rows);
         return rows;
     }
 
@@ -6118,13 +6049,14 @@ class StatsWebDatabase
             return List.of();
         }
 
-        String aliasProjection = channelAliasProjection(configured, "alias_radio",
+        String aliasJoin = channelAliasJoin(configured, "alias_radio",
             configured.protocolCode() == StatsApiProtocol.P25.databaseCode() ?
                 P25_CHANNEL_RADIO_ALIAS_IDENTIFIER_SQL : "grouped.observed_local_id");
         StringBuilder sql = new StringBuilder("WITH grouped AS (").append(groupedSql).append("), presented AS (")
             .append("SELECT grouped.*, ? AS configuration_id, ? AS radio_system_key, ? AS protocol_code, ")
             .append("? AS address_domain_code, ? AS alias_list_name, ? AS alias_list_id, ")
-            .append(aliasProjection).append(" FROM grouped) SELECT * FROM presented");
+            .append(CHANNEL_ALIAS_PROJECTION).append(" FROM grouped ").append(aliasJoin)
+            .append(") SELECT * FROM presented");
         parameters.add(configured.configurationId());
         parameters.add(configured.radioSystemKey());
         parameters.add(configured.protocolCode());
@@ -6135,8 +6067,7 @@ class StatsWebDatabase
         sql.append(" ORDER BY ").append(requestedOrder).append(", native_id ASC LIMIT ? OFFSET ?");
         addLimitOffset(parameters, limit, offset);
         List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
-        removeMatchedAliasFields(rows);
-        enrichChannelRadioAliases(connection, configured.protocol(), rows);
+        rows.forEach(StatsAliasResolver::applySelectedChannelAlias);
 
         for(Map<String,Object> row: rows)
         {
@@ -6262,7 +6193,7 @@ class StatsWebDatabase
 
         if(configured.protocol() != StatsApiProtocol.DMR)
         {
-            String aliasProjection = channelAliasProjection(configured, "alias_talkgroup",
+            String aliasJoin = channelAliasJoin(configured, "alias_talkgroup",
                 "grouped.native_id");
             StringBuilder sql = new StringBuilder("""
                 WITH grouped AS (
@@ -6283,7 +6214,8 @@ class StatsWebDatabase
                 ), presented AS (
                     SELECT grouped.*, ? AS configuration_id, ? AS alias_list_name,
                         ? AS alias_list_id,
-                """).append(aliasProjection).append(" FROM grouped) SELECT * FROM presented");
+                """).append(CHANNEL_ALIAS_PROJECTION).append(" FROM grouped ").append(aliasJoin)
+                .append(") SELECT * FROM presented");
             List<Object> parameters = new ArrayList<>();
             parameters.add(configured.channelId());
             parameters.add(IDENTITY_ROLE_DESTINATION);
@@ -6296,8 +6228,7 @@ class StatsWebDatabase
                 .append(", group_identity_kind_code ASC, native_id ASC LIMIT ? OFFSET ?");
             addLimitOffset(parameters, limit, offset);
             List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
-            removeMatchedAliasFields(rows);
-            enrichChannelGroupAliases(connection, configured.protocol(), rows);
+            rows.forEach(StatsAliasResolver::applySelectedChannelAlias);
 
             for(Map<String,Object> row: rows)
             {
@@ -6374,7 +6305,7 @@ class StatsWebDatabase
 
         if(configured.protocol() != StatsApiProtocol.DMR)
         {
-            String aliasProjection = channelAliasProjection(configured, "alias_radio", "grouped.native_id");
+            String aliasJoin = channelAliasJoin(configured, "alias_radio", "grouped.native_id");
             StringBuilder sql = new StringBuilder("""
                 WITH grouped AS (
                     SELECT bucket.channel_id, bucket.identity_id AS native_id,
@@ -6396,7 +6327,8 @@ class StatsWebDatabase
                 ), presented AS (
                     SELECT grouped.*, ? AS configuration_id, ? AS protocol_code,
                         ? AS alias_list_name, ? AS alias_list_id,
-                """).append(aliasProjection).append(" FROM grouped) SELECT * FROM presented");
+                """).append(CHANNEL_ALIAS_PROJECTION).append(" FROM grouped ").append(aliasJoin)
+                .append(") SELECT * FROM presented");
             List<Object> parameters = new ArrayList<>();
             parameters.add(configured.channelId());
             parameters.add(configured.configurationId());
@@ -6408,8 +6340,7 @@ class StatsWebDatabase
                 .append(", native_id ASC LIMIT ? OFFSET ?");
             addLimitOffset(parameters, limit, offset);
             List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
-            removeMatchedAliasFields(rows);
-            enrichChannelRadioAliases(connection, configured.protocol(), rows);
+            rows.forEach(StatsAliasResolver::applySelectedChannelAlias);
 
             for(Map<String,Object> row: rows)
             {
@@ -6458,50 +6389,6 @@ class StatsWebDatabase
         }
 
         return rows;
-    }
-
-    private void enrichChannelGroupAliases(Connection connection, StatsApiProtocol protocol,
-                                            List<Map<String,Object>> rows) throws SQLException
-    {
-        rows.forEach(row -> row.put("alias_lookup_id", row.get("observed_local_id") != null ?
-            row.get("observed_local_id") : row.get("native_id")));
-        if(protocol == StatsApiProtocol.P25)
-        {
-            mAliasResolver.enrichP25ConventionalTalkgroups(connection, rows, "alias_lookup_id", "alias_");
-        }
-        else if(protocol == StatsApiProtocol.NXDN)
-        {
-            mAliasResolver.enrichNxdnTalkgroups(connection, rows, "alias_lookup_id", "alias_");
-        }
-        else if(protocol == StatsApiProtocol.DMR)
-        {
-            mAliasResolver.enrichDmrTalkgroups(connection, rows, "alias_lookup_id", "alias_");
-        }
-        rows.forEach(row -> row.remove("alias_lookup_id"));
-    }
-
-    private void enrichChannelRadioAliases(Connection connection, StatsApiProtocol protocol,
-                                            List<Map<String,Object>> rows) throws SQLException
-    {
-        rows.forEach(row -> row.put("alias_lookup_id",
-            protocol == StatsApiProtocol.P25 && row.get("p25_subscriber_identity_id") != null &&
-                !(StatsAliasResolver.homeSystemRadio(row, "") &&
-                    java.util.Objects.equals(row.get("observed_local_id"), row.get("canonical_subscriber_id"))) ?
-                row.get("observed_working_id") : row.get("observed_local_id") != null ?
-                    row.get("observed_local_id") : row.get("native_id")));
-        if(protocol == StatsApiProtocol.P25)
-        {
-            mAliasResolver.enrichP25ConventionalRadios(connection, rows, "alias_lookup_id", "alias_");
-        }
-        else if(protocol == StatsApiProtocol.NXDN)
-        {
-            mAliasResolver.enrichNxdnRadios(connection, rows, "alias_lookup_id", "alias_");
-        }
-        else if(protocol == StatsApiProtocol.DMR)
-        {
-            mAliasResolver.enrichDmrRadios(connection, rows, "alias_lookup_id", "alias_");
-        }
-        rows.forEach(row -> row.remove("alias_lookup_id"));
     }
 
     /** One bounded directory row per learned radio system. */
@@ -7958,36 +7845,30 @@ class StatsWebDatabase
             aliasWinnerOrder()).strip();
     }
 
-    /**
-     * Projects the winning Alias from exactly the saved channel's Alias List so search and sort happen before
-     * pagination. The bounded page is still enriched through {@link StatsAliasResolver} for its public Alias fields.
-     */
-    private static String channelAliasProjection(WebConfiguredEntityRepository.ConfiguredChannel configured,
-                                                  String identifierTable, String identifierColumn)
-    {
-        return channelAliasValueExpression(configured, identifierTable, identifierColumn, "name") +
-            " AS matched_alias_name, " +
-            channelAliasValueExpression(configured, identifierTable, identifierColumn, "description") +
-            " AS matched_alias_description, " +
-            channelAliasValueExpression(configured, identifierTable, identifierColumn, "group_name") +
-            " AS matched_alias_group";
-    }
+    private static final String CHANNEL_ALIAS_PROJECTION = """
+        matched.id AS matched_alias_id, matched.name AS matched_alias_name,
+        matched.description AS matched_alias_description, matched.group_name AS matched_alias_group,
+        matched.color AS matched_alias_color
+        """;
 
-    private static String channelAliasValueExpression(WebConfiguredEntityRepository.ConfiguredChannel configured,
-                                                       String identifierTable, String identifierColumn,
-                                                       String aliasColumn)
+    /**
+     * Selects one existing Alias row from the saved channel's exact list. The same winner supplies search, sort
+     * and returned presentation, including nullable fields on a canonical P25 match.
+     */
+    private static String channelAliasJoin(WebConfiguredEntityRepository.ConfiguredChannel configured,
+                                          String identifierTable, String identifierColumn)
     {
         if((!"alias_talkgroup".equals(identifierTable) && !"alias_radio".equals(identifierTable)) ||
             (!identifierColumn.matches("grouped\\.(?:native_id|observed_local_id|observed_working_id)") &&
-                !P25_CHANNEL_RADIO_ALIAS_IDENTIFIER_SQL.equals(identifierColumn)) ||
-            !Set.of("name", "description", "group_name").contains(aliasColumn))
+                !P25_CHANNEL_RADIO_ALIAS_IDENTIFIER_SQL.equals(identifierColumn) &&
+                !"coalesce(grouped.observed_local_id, grouped.native_id)".equals(identifierColumn)))
         {
             throw new IllegalArgumentException("Unsupported saved-channel Alias expression");
         }
 
         if(configured.aliasListId() == null)
         {
-            return "NULL";
+            return "LEFT JOIN alias matched ON matched.id = NULL";
         }
 
         String protocols = switch(configured.protocol())
@@ -7997,29 +7878,29 @@ class StatsWebDatabase
             case NXDN -> "'NXDN'";
             default -> throw new IllegalArgumentException("Analog channels do not have identity directories");
         };
-        String local = """
-            (SELECT alias.%s
-             FROM %s identifier
-             JOIN alias ON alias.id = identifier.alias_id
-             WHERE identifier.protocol IN (%s)
-               AND identifier.alias_list_id = %d
-               AND ((identifier.ranged <> 0 AND %s BETWEEN identifier.min_value AND identifier.max_value)
-                 OR (identifier.ranged = 0 AND identifier.value = %s))
-             ORDER BY %s
-             LIMIT 1)
-            """.formatted(aliasColumn, identifierTable, protocols, configured.aliasListId(), identifierColumn,
-            identifierColumn, aliasWinnerOrder()).strip();
+        String matcher = "alias_radio".equals(identifierTable) ? "RADIO_ID" : "TALKGROUP";
+        String exactIndex = "alias_radio".equals(identifierTable) ? "idx_alias_radio_value" : "idx_alias_talkgroup_value";
+        String winner = """
+            coalesce(
+                (SELECT id FROM alias INDEXED BY %5$s
+                 WHERE matcher_type = '%1$s' AND protocol IN (%2$s)
+                   AND alias_list_id = %3$d AND value = %4$s
+                 ORDER BY id DESC LIMIT 1),
+                (SELECT id FROM alias
+                 WHERE matcher_type = '%1$s_RANGE' AND protocol IN (%2$s)
+                   AND alias_list_id = %3$d AND min_value <= %4$s AND max_value >= %4$s
+                 ORDER BY min_value DESC, max_value DESC, id DESC LIMIT 1))
+            """.formatted(matcher, protocols, configured.aliasListId(), identifierColumn, exactIndex).strip();
         if(configured.protocol() == StatsApiProtocol.P25 && "alias_radio".equals(identifierTable) &&
             P25_CHANNEL_RADIO_ALIAS_IDENTIFIER_SQL.equals(identifierColumn))
         {
-            String canonical = " FROM alias_p25_subscriber_identity matched JOIN alias " +
-                "ON alias.id=matched.alias_id WHERE matched.p25_subscriber_identity_id=" +
+            //Coalesce IDs, never presentation fields: a canonical winner with an empty optional field still wins.
+            winner = "coalesce((SELECT alias.id FROM alias_p25_subscriber_identity subscriber " +
+                "JOIN alias ON alias.id=subscriber.alias_id WHERE subscriber.p25_subscriber_identity_id=" +
                 "grouped.p25_subscriber_identity_id AND alias.alias_list_id=" + configured.aliasListId() +
-                " AND alias.matcher_type='P25_SUBSCRIBER_IDENTITY'";
-            return "CASE WHEN EXISTS(SELECT 1" + canonical + ") THEN (SELECT alias." + aliasColumn +
-                canonical + " ORDER BY alias.id DESC LIMIT 1) ELSE " + local + " END";
+                " AND alias.matcher_type='P25_SUBSCRIBER_IDENTITY' ORDER BY alias.id DESC LIMIT 1), " + winner + ")";
         }
-        return local;
+        return "LEFT JOIN alias matched ON matched.id = " + winner;
     }
 
     private static void addChannelIdentitySearch(StringBuilder sql, List<Object> parameters, String search,
@@ -8044,16 +7925,6 @@ class StatsWebDatabase
         parameters.add(like);
         parameters.add(like);
         parameters.add(like);
-    }
-
-    private static void removeMatchedAliasFields(List<Map<String,Object>> rows)
-    {
-        for(Map<String,Object> row: rows)
-        {
-            row.remove("matched_alias_name");
-            row.remove("matched_alias_description");
-            row.remove("matched_alias_group");
-        }
     }
 
     /**

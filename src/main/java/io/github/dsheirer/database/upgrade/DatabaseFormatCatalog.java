@@ -36,7 +36,7 @@ import java.util.Map;
 public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
-    public static final int CURRENT_VERSION = 45;
+    public static final int CURRENT_VERSION = 46;
     static final String RETIRED_TRUNKED_IDENTITY_BOUNDARY_KEY = "trunked_identity_metrics_started_at_ms";
     static final List<String> RETIRED_SUBSYSTEM_VERSION_KEYS = List.of(
         "alias_schema_version", "configuration_schema_version", "settings_schema_version", "icon_schema_version",
@@ -534,12 +534,21 @@ public final class DatabaseFormatCatalog
             "Preserve every administrator configuration, credential, personal setting and allocator high-water mark",
             "Rebuild only the resolved Activity view to use stored home identity keys; change no table or index and reset or drop no retained history"));
 
+    private static final FormatDescriptor FORMAT_46 = new FormatDescriptor(46, "saved-trunked-discovery-identity-v1",
+        "Receiver-confirmed discovery identity stored with its saved channel", FORMAT_45_FINGERPRINT, Map.of(),
+        List.of("main format 46"),
+        "src/test/java/io/github/dsheirer/database/upgrade/Format46TestDatabase.java", List.of(
+            "Preserve all saved channels and other administrator configuration, credentials, preferences and retained history",
+            "Treat an absent saved DMR or NXDN discovery identity as unknown; do not infer identity from retained history",
+            "Store future receiver-confirmed discovery identity in the existing channel document without another table or relationship",
+            "Keep format-45 schema unchanged and require the authoritative format marker for this shared semantic layout"));
+
     private static final List<FormatDescriptor> FORMATS =
         List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7, FORMAT_8, FORMAT_9,
             FORMAT_10, FORMAT_11, FORMAT_12, FORMAT_13, FORMAT_14, FORMAT_15, FORMAT_16, FORMAT_17, FORMAT_18,
             FORMAT_19, FORMAT_20, FORMAT_21, FORMAT_22, FORMAT_23, FORMAT_24, FORMAT_25, FORMAT_26, FORMAT_27,
             FORMAT_28, FORMAT_29, FORMAT_30, FORMAT_31, FORMAT_32, FORMAT_33, FORMAT_34, FORMAT_35, FORMAT_36,
-            FORMAT_37, FORMAT_38, FORMAT_39, FORMAT_40, FORMAT_41, FORMAT_42, FORMAT_43, FORMAT_44, FORMAT_45);
+            FORMAT_37, FORMAT_38, FORMAT_39, FORMAT_40, FORMAT_41, FORMAT_42, FORMAT_43, FORMAT_44, FORMAT_45, FORMAT_46);
 
     private static final Map<Integer,FormatDescriptor> BY_VERSION = FORMATS.stream().collect(
         java.util.stream.Collectors.toUnmodifiableMap(FormatDescriptor::version, descriptor -> descriptor));
@@ -646,7 +655,7 @@ public final class DatabaseFormatCatalog
         }
 
         if(FORMAT_25_FINGERPRINT.equals(fingerprint) || FORMAT_28_FINGERPRINT.equals(fingerprint) ||
-            FORMAT_33_FINGERPRINT.equals(fingerprint))
+            FORMAT_33_FINGERPRINT.equals(fingerprint) || FORMAT_45_FINGERPRINT.equals(fingerprint))
         {
             //These DDL families contain adjacent semantic formats with identical preserved row content.
             //Keep the authoritative marker requirement for the whole family, including later preference revisions
@@ -720,7 +729,7 @@ public final class DatabaseFormatCatalog
     /** Current catalog descriptor. */
     public static FormatDescriptor current()
     {
-        return FORMAT_45;
+        return FORMAT_46;
     }
 
     /** Ordered manifest used by completeness tests and migration UX. */
@@ -732,8 +741,24 @@ public final class DatabaseFormatCatalog
     /** Requires both the exact current signature and its authoritative global marker. */
     public static DetectedFormat requireCurrent(Connection connection) throws SQLException
     {
-        DetectedFormat detected = inspect(connection);
+        return requireCurrentIdentity(inspect(connection));
+    }
 
+    /** Completes strict current admission after the same connection's exact source inspection. */
+    static DetectedFormat requireCurrent(Connection connection, DetectedFormat detected) throws SQLException
+    {
+        requireCurrentIdentity(detected);
+        if(!Integer.toString(detected.version()).equals(metadata(connection, FORMAT_VERSION_KEY)))
+        {
+            throw new FormatRejectionException("SQLite database format marker changed after source admission");
+        }
+        validateMetadata(connection, detected.descriptor());
+        validateInvariants(connection, detected.descriptor(), false);
+        return detected;
+    }
+
+    private static DetectedFormat requireCurrentIdentity(DetectedFormat detected) throws SQLException
+    {
         if(detected.version() != CURRENT_VERSION)
         {
             throw new SQLException("SQLite database format " + detected.version() + " [" + detected.id() +

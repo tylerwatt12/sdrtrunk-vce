@@ -30,9 +30,8 @@ final class Format21To22DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
-        requireSource(connection);
         try(Statement statement = connection.createStatement();
             ResultSet rows = statement.executeQuery("SELECT count(*) FROM conventional_call_identity_bucket"))
         {
@@ -41,9 +40,8 @@ final class Format21To22DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public void migrate(Connection connection) throws SQLException
+    public void migrateSource(Connection connection) throws SQLException
     {
-        requireSource(connection);
         try(Statement statement = connection.createStatement())
         {
             ReceiverActivitySchema.createFormat22ConventionalCallIdentityMigrationTable(connection);
@@ -56,13 +54,6 @@ final class Format21To22DatabaseMigration implements DatabaseMigrationStep
         }
     }
 
-    private static void requireSource(Connection connection) throws SQLException
-    {
-        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 21)
-        {
-            throw new SQLException("Expected format 21");
-        }
-    }
 
     private static List<DatabaseMigrationEffect> effects(long rows)
     {

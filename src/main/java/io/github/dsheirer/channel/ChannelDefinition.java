@@ -80,9 +80,15 @@ public record ChannelDefinition(String configurationId, String protocolId, Strin
     {
     }
 
-    public record Observed(List<Long> learnedControlFrequenciesHz, Map<String,Object> p25SiteIdentity)
+    public record Observed(List<Long> learnedControlFrequenciesHz, Map<String,Object> p25SiteIdentity,
+                           TrunkedDiscoveryIdentity trunkedDiscoveryIdentity)
     {
-        public static final Observed EMPTY = new Observed(List.of(), Map.of());
+        public static final Observed EMPTY = new Observed(List.of(), Map.of(), null);
+
+        public Observed(List<Long> learnedControlFrequenciesHz, Map<String,Object> p25SiteIdentity)
+        {
+            this(learnedControlFrequenciesHz, p25SiteIdentity, null);
+        }
 
         public Observed
         {

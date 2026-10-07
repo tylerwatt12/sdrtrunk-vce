@@ -29,23 +29,21 @@ final class Format43To44DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
-        requireSource(connection);
         return effects(CurrentDatabaseBestEffortRepair.inspect(connection), false, true);
     }
 
     @Override
-    public void migrate(Connection connection) throws SQLException
+    public void migrateSource(Connection connection) throws SQLException
     {
-        migrateAndReport(connection, true);
+        migrateSourceAndReport(connection, true);
     }
 
     @Override
-    public List<DatabaseMigrationEffect> migrateAndReport(Connection connection, boolean selectedSourceStep)
+    public List<DatabaseMigrationEffect> migrateSourceAndReport(Connection connection, boolean selectedSourceStep)
         throws SQLException
     {
-        requireSource(connection);
         if(scalar(connection, "PRAGMA foreign_keys") != 0)
         {
             throw new SQLException("Alias List migration requires the Application Migrator foreign-key boundary");
@@ -100,13 +98,6 @@ final class Format43To44DatabaseMigration implements DatabaseMigrationStep
         return effects(repairs, false, selectedSourceStep);
     }
 
-    private static void requireSource(Connection connection) throws SQLException
-    {
-        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 43)
-        {
-            throw new SQLException("Expected format 43");
-        }
-    }
 
     private static long scalar(Connection connection, String sql) throws SQLException
     {

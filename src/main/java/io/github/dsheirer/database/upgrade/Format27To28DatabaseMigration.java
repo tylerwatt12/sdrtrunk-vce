@@ -40,31 +40,28 @@ final class Format27To28DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
-        requireSourceFormat(connection);
         return effects(count(connection, "configuration_channel"), count(connection, "application_settings"),
             inspectRepairs(connection), false);
     }
 
     @Override
-    public void migrate(Connection connection) throws SQLException
+    public void migrateSource(Connection connection) throws SQLException
     {
-        requireSourceFormat(connection);
         repair(connection);
     }
 
     @Override
-    public List<DatabaseMigrationEffect> migrateAndReport(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> migrateSourceAndReport(Connection connection) throws SQLException
     {
-        return migrateAndReport(connection, true);
+        return migrateSourceAndReport(connection, true);
     }
 
     @Override
-    public List<DatabaseMigrationEffect> migrateAndReport(Connection connection, boolean selectedSourceStep)
+    public List<DatabaseMigrationEffect> migrateSourceAndReport(Connection connection, boolean selectedSourceStep)
         throws SQLException
     {
-        requireSourceFormat(connection);
         long channels = count(connection, "configuration_channel");
         long settings = count(connection, "application_settings");
         return selectedSourceStep ? effects(channels, settings, repair(connection), false) :
@@ -129,15 +126,6 @@ final class Format27To28DatabaseMigration implements DatabaseMigrationStep
         }
     }
 
-    private static void requireSourceFormat(Connection connection) throws SQLException
-    {
-        DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspectForMigration(connection);
-        if(detected.version() != SOURCE_VERSION)
-        {
-            throw new SQLException("Migration step format-27-to-28 requires exact source format 27; found " +
-                detected.version() + " [" + detected.id() + "]");
-        }
-    }
 
     private static long count(Connection connection, String table) throws SQLException
     {

@@ -85,9 +85,8 @@ final class Format1To2DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
-        requireSourceFormat(connection);
         long convertedCatchalls = eligibleCatchallCount(connection);
         long priorityValues = scalarLong(connection, "SELECT COUNT(*) FROM alias WHERE priority IS NOT NULL");
         long removedTalkgroups = matcherCount(connection, FULLY_QUALIFIED_TALKGROUP);
@@ -159,24 +158,13 @@ final class Format1To2DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public void migrate(Connection connection) throws SQLException
+    public void migrateSource(Connection connection) throws SQLException
     {
-        requireSourceFormat(connection);
         migrateAliases(connection);
         resetTrunkedIdentityHistory(connection);
         validateTrunkedIdentityResetTarget(connection);
     }
 
-    private static void requireSourceFormat(Connection connection) throws SQLException
-    {
-        DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspectForMigration(connection);
-
-        if(detected.version() != 1)
-        {
-            throw new SQLException("Migration step format-1-to-2 requires exact source format 1; found " +
-                detected.version() + " [" + detected.id() + "]");
-        }
-    }
 
     private static void migrateAliases(Connection connection) throws SQLException
     {

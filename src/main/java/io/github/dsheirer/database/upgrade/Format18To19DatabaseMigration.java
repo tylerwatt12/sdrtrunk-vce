@@ -25,26 +25,17 @@ final class Format18To19DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
-        requireSource(connection);
         return effects();
     }
 
     @Override
-    public void migrate(Connection connection) throws SQLException
+    public void migrateSource(Connection connection) throws SQLException
     {
-        requireSource(connection);
         SdrTrunkDatabaseSchema.createReceiverHealthIncidentTable(connection);
     }
 
-    private static void requireSource(Connection connection) throws SQLException
-    {
-        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 18)
-        {
-            throw new SQLException("Expected format 18");
-        }
-    }
 
     private static List<DatabaseMigrationEffect> effects()
     {

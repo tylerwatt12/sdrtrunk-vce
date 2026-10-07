@@ -976,6 +976,20 @@ class StatsAliasResolver
         apply(row, best, prefix);
     }
 
+    /** Uses the Alias already selected for channel filtering/ordering; never runs a second winner lookup. */
+    static void applySelectedChannelAlias(Map<String,Object> row)
+    {
+        Object winner = row.remove("matched_alias_id");
+        for(String field: List.of("name", "description", "group", "color"))
+        {
+            Object value = row.remove("matched_alias_" + field);
+            if(winner != null)
+            {
+                row.put("alias_" + field, value);
+            }
+        }
+    }
+
     private static void apply(Map<String,Object> row, Rule rule, String prefix)
     {
         if(rule != null)

@@ -16,6 +16,7 @@ import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.LinkedHashMap;
@@ -260,8 +261,6 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
                 primary.getProtocol() == Protocol.APCO25 ? "phase_1" : null;
             String identityKey = null;
             ResolvedRadioIdentity resolvedRadio = ResolvedRadioIdentity.from(primary);
-            Integer workingAddress = resolvedRadio != null && resolvedRadio.subscriber() != null ?
-                resolvedRadio.observedWorkingId() : null;
             try
             {
                 if(primary instanceof FullyQualifiedRadioIdentifier radio)
@@ -280,7 +279,7 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
             {
                 //Reserved or infrastructure addresses remain visible as local values without a canonical link.
             }
-            return new MatcherReference(type, protocol, variant, value.intValue(), identityKey, workingAddress, resolvedRadio);
+            return new MatcherReference(type, protocol, variant, value.intValue(), resolvedRadio, identityKey);
         }
 
         private static List<AliasReference> aliasReferences(List<Alias> aliases)
@@ -366,9 +365,17 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
         }
     }
 
-    public record MatcherReference(String type, String protocol, String variant, int value, String identityKey,
-                                   Integer workingAddress, ResolvedRadioIdentity radioIdentity)
+    public record MatcherReference(String type, String protocol, String variant, int value,
+                                   ResolvedRadioIdentity radioIdentity, String identityKey)
     {
+        /** Legacy facts retain unknown provenance; an explicit resolved observation is authoritative. */
+        public MatcherReference(String type, String protocol, String variant, int value, String identityKey,
+                                Integer workingAddress, ResolvedRadioIdentity radioIdentity)
+        {
+            this(type, protocol, variant, value, radioIdentity != null ? radioIdentity :
+                legacyIdentity(type, protocol, variant, identityKey, workingAddress), identityKey);
+        }
+
         public MatcherReference(String type, String protocol, String variant, int value, String identityKey,
                                 Integer workingAddress)
         {
@@ -377,12 +384,50 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
 
         public MatcherReference(String type, String protocol, String variant, int value)
         {
-            this(type, protocol, variant, value, null, null);
+            this(type, protocol, variant, value, (String)null, null);
         }
 
         public MatcherReference(String type, String protocol, String variant, int value, String identityKey)
         {
             this(type, protocol, variant, value, identityKey, null);
+        }
+
+        public Integer workingAddress()
+        {
+            return radioIdentity != null && (radioIdentity.subscriber() != null ||
+                radioIdentity.evidence() == ResolvedRadioIdentity.Evidence.UNKNOWN) ?
+                radioIdentity.observedWorkingId() : null;
+        }
+
+        private static ResolvedRadioIdentity legacyIdentity(String type, String protocol, String variant,
+                                                             String identityKey, Integer workingAddress)
+        {
+            if(!"radio".equals(type) || !"p25".equals(protocol))
+            {
+                return null;
+            }
+            P25SubscriberIdentity subscriber = null;
+            if(identityKey != null)
+            {
+                try
+                {
+                    RadioSystemIdentityKey.Identity identity = RadioSystemIdentityKey.parse(identityKey);
+                    if(identity.kindCode() == RadioSystemIdentityKey.KIND_RADIO && identity.hasHome())
+                    {
+                        subscriber = new P25SubscriberIdentity(identity.homeWacn(), identity.homeSystemId(),
+                            identity.identityId());
+                    }
+                }
+                catch(IllegalArgumentException ignored)
+                {
+                    //Legacy malformed navigation keys never establish a canonical identity.
+                }
+            }
+            Integer working = workingAddress != null && workingAddress > 0 &&
+                workingAddress <= RadioSystemIdentityKey.MAX_P25_WORKING_UNIT_ID ? workingAddress : null;
+            return subscriber != null || working != null ? new ResolvedRadioIdentity(
+                "phase_2".equals(variant) ? Protocol.APCO25_PHASE2 : Protocol.APCO25, working, subscriber,
+                ResolvedRadioIdentity.Evidence.UNKNOWN) : null;
         }
     }
 }

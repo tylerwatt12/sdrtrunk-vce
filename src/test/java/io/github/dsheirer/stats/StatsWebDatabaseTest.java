@@ -167,6 +167,21 @@ class StatsWebDatabaseTest
         Map<String,Object> namedCanonical = rows(mDatabase.channelRadios(P25_CHANNEL_A,
             request("/?q=canonical%20home%20unit&sort=alias&limit=1"))).getFirst();
         assertEquals("Canonical Home Unit",namedCanonical.get("alias_name"));
+        //The canonical Alias owns every presented/searchable field, including empty optional fields.
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE alias SET description='Local fallback description'," +
+                "group_name='Local fallback group',color=123 WHERE id=9901");
+            statement.executeUpdate("UPDATE alias SET description='',group_name=NULL,color=456 WHERE id=9902");
+        }
+        Map<String,Object> emptyCanonical = rows(mDatabase.channelRadios(P25_CHANNEL_A,
+            request("/?q=canonical%20home%20unit&sort=alias&limit=1"))).getFirst();
+        assertEquals("", emptyCanonical.get("alias_description"));
+        assertNull(emptyCanonical.get("alias_group"));
+        assertEquals(456, number(emptyCanonical.get("alias_color")));
+        assertTrue(rows(mDatabase.channelRadios(P25_CHANNEL_A, request("/?q=local%20fallback"))).isEmpty());
+        assertTrue(emptyCanonical.keySet().stream().noneMatch(key -> key.startsWith("matched_alias_")));
     }
 
     @Test

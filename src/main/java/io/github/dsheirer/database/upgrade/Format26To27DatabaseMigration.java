@@ -40,30 +40,28 @@ final class Format26To27DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
-        requireSource(connection);
         RepairReport repairs = inspectRepairs(connection);
         return effects(convertedAccountCount(connection, repairs.administrative()), repairs, false, true);
     }
 
     @Override
-    public void migrate(Connection connection) throws SQLException
+    public void migrateSource(Connection connection) throws SQLException
     {
-        migrateAndReport(connection, true);
+        migrateSourceAndReport(connection, true);
     }
 
     @Override
-    public List<DatabaseMigrationEffect> migrateAndReport(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> migrateSourceAndReport(Connection connection) throws SQLException
     {
-        return migrateAndReport(connection, true);
+        return migrateSourceAndReport(connection, true);
     }
 
     @Override
-    public List<DatabaseMigrationEffect> migrateAndReport(Connection connection, boolean selectedSourceStep)
+    public List<DatabaseMigrationEffect> migrateSourceAndReport(Connection connection, boolean selectedSourceStep)
         throws SQLException
     {
-        requireSource(connection);
         RepairReport repairs = selectedSourceStep ? repair(connection) : RepairReport.none();
         long convertedAccounts = count(connection,
             "SELECT COUNT(*) FROM web_user WHERE primary_admin=0 AND tier='ADMIN'");
@@ -150,13 +148,6 @@ final class Format26To27DatabaseMigration implements DatabaseMigrationStep
         return new RepairReport(portablePreferenceResets, administrative, derived, configuration);
     }
 
-    private static void requireSource(Connection connection) throws SQLException
-    {
-        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 26)
-        {
-            throw new SQLException("Expected format 26");
-        }
-    }
 
     private static long count(Connection connection, String sql) throws SQLException
     {

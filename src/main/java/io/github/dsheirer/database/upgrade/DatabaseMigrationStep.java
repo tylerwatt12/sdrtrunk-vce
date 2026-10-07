@@ -39,28 +39,57 @@ interface DatabaseMigrationStep
         return declaredEffects();
     }
 
-    /** Inspects the staged source without mutation and returns exact effects for this step. */
-    List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException;
-
-    /** Mutates only the caller-provided staged database inside the caller-owned transaction. */
-    void migrate(Connection connection) throws SQLException;
-
-    /**
-     * Migrates the staged database and returns the effects actually observed.  Historical steps retain their
-     * validate-then-migrate behavior by default; recovery-oriented steps can override this hook to build their
-     * migration input once and report skipped or repaired rows precisely.
-     */
-    default List<DatabaseMigrationEffect> migrateAndReport(Connection connection) throws SQLException
+    /** Standalone inspection retains exact source admission, including fixture and tool callers. */
+    default List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
     {
-        List<DatabaseMigrationEffect> effects = List.copyOf(validateSource(connection));
-        migrate(connection);
-        return effects;
+        requireSource(connection);
+        return inspectSource(connection);
     }
 
-    /** Runs this step with the same direct-source context shown during preflight. */
+    /** Standalone mutation retains exact source admission before any writes. */
+    default void migrate(Connection connection) throws SQLException
+    {
+        requireSource(connection);
+        migrateSource(connection);
+    }
+
+    default List<DatabaseMigrationEffect> migrateAndReport(Connection connection) throws SQLException
+    {
+        return migrateAndReport(connection, true);
+    }
+
     default List<DatabaseMigrationEffect> migrateAndReport(Connection connection, boolean selectedSourceStep)
         throws SQLException
     {
-        return migrateAndReport(connection);
+        requireSource(connection);
+        return migrateSourceAndReport(connection, selectedSourceStep);
+    }
+
+    private void requireSource(Connection connection) throws SQLException
+    {
+        DatabaseFormatCatalog.DetectedFormat source = DatabaseFormatCatalog.inspectForMigration(connection);
+        if(source.version() != sourceVersion())
+        {
+            throw new SQLException("Migration step " + id() + " requires exact source format " + sourceVersion() +
+                "; found " + source.version());
+        }
+    }
+
+    /** Internal hooks: the chain has admitted this source, or just verified the preceding exact target. */
+    List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException;
+
+    void migrateSource(Connection connection) throws SQLException;
+
+    default List<DatabaseMigrationEffect> migrateSourceAndReport(Connection connection) throws SQLException
+    {
+        List<DatabaseMigrationEffect> effects = List.copyOf(inspectSource(connection));
+        migrateSource(connection);
+        return effects;
+    }
+
+    default List<DatabaseMigrationEffect> migrateSourceAndReport(Connection connection, boolean selectedSourceStep)
+        throws SQLException
+    {
+        return migrateSourceAndReport(connection);
     }
 }

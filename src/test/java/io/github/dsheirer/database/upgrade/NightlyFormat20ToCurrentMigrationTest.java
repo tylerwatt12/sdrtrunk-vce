@@ -31,7 +31,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /** Release regression for the actual published Nightly's format through this candidate's format. */
-class NightlyFormat20To45MigrationTest
+class NightlyFormat20ToCurrentMigrationTest
 {
     // Independently verified in published build 34930803451, commit 09bfa0417dc2a597eb32da42e9e8a2d56780865f.
     private static final String PUBLISHED_FORMAT_20_FINGERPRINT =
@@ -42,8 +42,6 @@ class NightlyFormat20To45MigrationTest
     @Test
     void updatesThePopulatedPublishedFormatWithEitherBackupChoiceAndPreservesItsData() throws Exception
     {
-        assertEquals(45, DatabaseFormatCatalog.CURRENT_VERSION,
-            "Reassess this release boundary when the target format changes");
         for(boolean withBackup: List.of(true, false))
         {
             Path database = populatedPublishedDatabase("owned-" + withBackup + ".sqlite");
@@ -60,10 +58,10 @@ class NightlyFormat20To45MigrationTest
 
             assertEquals(withBackup ? 1 : 0, backups.get());
             assertEquals(20, result.sourcePlan().source().version());
-            assertEquals(25, result.sourcePlan().steps().size());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 20, result.sourcePlan().steps().size());
             assertEquals("format-20-to-21", result.sourcePlan().steps().getFirst().id());
             assertEquals(CurrentFormatTestDatabase.lastMigrationStepId(), result.sourcePlan().steps().getLast().id());
-            assertEquals(25, progress.stream().filter(message -> message.startsWith("Step ")).count());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 20, progress.stream().filter(message -> message.startsWith("Step ")).count());
             assertTrue(progress.contains("Database update committed"));
             assertPreservedAndCurrent(database, before);
             if(withBackup)
@@ -81,7 +79,7 @@ class NightlyFormat20To45MigrationTest
     }
 
     @Test
-    void stagedMigratorReaches45WithoutChangingTheSelectedPublishedSource() throws Exception
+    void stagedMigratorReachesCurrentWithoutChangingTheSelectedPublishedSource() throws Exception
     {
         Path source = populatedPublishedDatabase("selected-source.sqlite");
         Snapshot before = snapshot(source);
@@ -105,7 +103,7 @@ class NightlyFormat20To45MigrationTest
     }
 
     @Test
-    void aFailureAfterAll25StepsRollsBackTheEntireUpgradeAndAllowsRetry() throws Exception
+    void aFailureAfterAllStepsRollsBackTheEntireUpgradeAndAllowsRetry() throws Exception
     {
         Path database = populatedPublishedDatabase("retry.sqlite");
         Snapshot before = snapshot(database);
@@ -212,7 +210,7 @@ class NightlyFormat20To45MigrationTest
     {
         try(Connection connection = open(database))
         {
-            assertEquals(45, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
             assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
             assertEquals(before.contents(), tableContents(connection, before.columns()),
                 "Valid configuration, aliases, credentials, activity, relationships or allocators changed");

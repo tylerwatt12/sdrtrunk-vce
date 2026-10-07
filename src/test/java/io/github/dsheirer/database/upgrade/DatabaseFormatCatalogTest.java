@@ -365,7 +365,7 @@ class DatabaseFormatCatalogTest
     }
 
     @Test
-    void exactMarkerlessCurrentFormatIsAdoptedWithoutChangingItsSchema() throws Exception
+    void markerlessSharedCurrentFormatIsRefusedWithoutChangingItsSchema() throws Exception
     {
         Path database = CurrentFormatTestDatabase.create(mTemporaryFolder.resolve("markerless-current.sqlite"));
         try(Connection connection = open(database); Statement statement = connection.createStatement())
@@ -373,14 +373,9 @@ class DatabaseFormatCatalogTest
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);
             assertEquals(1, statement.executeUpdate(
                 "DELETE FROM database_metadata WHERE key='database_format_version'"));
-            DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspect(connection);
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, detected.version());
-            assertFalse(detected.markerPresent());
-            DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
-            assertEquals(1, report.steps().size());
-            assertEquals("adopt-global-format-marker", report.steps().getFirst().id());
+            assertThrows(SQLException.class, () -> DatabaseFormatCatalog.inspect(connection));
+            assertThrows(SQLException.class, () -> DatabaseMigrationChain.migrate(connection));
             assertEquals(fingerprint, SqliteSchemaValidator.fingerprint(connection));
-            assertTrue(DatabaseFormatCatalog.requireCurrent(connection).markerPresent());
         }
     }
 

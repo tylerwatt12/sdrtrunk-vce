@@ -46,14 +46,14 @@ final class Format22To23DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
         UserInspection inspection = inspect(connection);
         return effects(inspection.users().size(), inspection.defaultedUsers());
     }
 
     @Override
-    public void migrate(Connection connection) throws SQLException
+    public void migrateSource(Connection connection) throws SQLException
     {
         List<UserUpdate> updates = inspect(connection).users();
         long updatedAt = System.currentTimeMillis();
@@ -79,10 +79,6 @@ final class Format22To23DatabaseMigration implements DatabaseMigrationStep
 
     private static UserInspection inspect(Connection connection) throws SQLException
     {
-        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 22)
-        {
-            throw new SQLException("Migration step format-22-to-23 requires exact source format 22");
-        }
         List<UserUpdate> updates = new ArrayList<>();
         int defaultedUsers = 0;
         try(var query = connection.createStatement(); ResultSet rows = query.executeQuery("""

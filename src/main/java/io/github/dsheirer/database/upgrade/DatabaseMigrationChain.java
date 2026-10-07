@@ -45,7 +45,8 @@ public final class DatabaseMigrationChain
         new Format34To35DatabaseMigration(), new Format35To36DatabaseMigration(), new Format36To37DatabaseMigration(),
         new Format37To38DatabaseMigration(), new Format38To39DatabaseMigration(),
         new Format39To40DatabaseMigration(), new Format40To41DatabaseMigration(), new Format41To42DatabaseMigration(),
-        new Format42To43DatabaseMigration(), new Format43To44DatabaseMigration(), new Format44To45DatabaseMigration());
+        new Format42To43DatabaseMigration(), new Format43To44DatabaseMigration(), new Format44To45DatabaseMigration(),
+        new Format45To46DatabaseMigration());
     private static final Map<Integer,DatabaseMigrationStep> STEPS = ORDERED_STEPS.stream().collect(
         Collectors.toUnmodifiableMap(DatabaseMigrationStep::sourceVersion, Function.identity()));
 
@@ -251,7 +252,7 @@ public final class DatabaseMigrationChain
             progress.accept(new StepDescriptor(step.id(), step.description(), step.sourceVersion(),
                 step.targetVersion(), List.copyOf(step.declaredEffects(false))));
             List<DatabaseMigrationEffect> effects = List.copyOf(
-                step.migrateAndReport(connection,
+                step.migrateSourceAndReport(connection,
                     repairSelectedSource && step.sourceVersion() == source.version()));
             requireObservedCounts(step, effects);
             DatabaseFormatCatalog.DetectedFormat target =

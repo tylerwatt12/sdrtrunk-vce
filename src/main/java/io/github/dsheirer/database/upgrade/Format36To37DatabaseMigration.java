@@ -21,26 +21,17 @@ final class Format36To37DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
-        requireSource(connection);
         return effects();
     }
 
     @Override
-    public void migrate(Connection connection) throws SQLException
+    public void migrateSource(Connection connection) throws SQLException
     {
-        requireSource(connection);
         ReceiverActivitySchema.createIdentityRetentionIndexes(connection);
     }
 
-    private static void requireSource(Connection connection) throws SQLException
-    {
-        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 36)
-        {
-            throw new SQLException("Expected format 36");
-        }
-    }
 
     private static List<DatabaseMigrationEffect> effects()
     {

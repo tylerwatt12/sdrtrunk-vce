@@ -62,7 +62,7 @@ final class Format8To9DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
         MigrationInput input = inspect(connection);
         return effects(input.users().size(), input.defaultedUsers(),
@@ -70,7 +70,7 @@ final class Format8To9DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public void migrate(Connection connection) throws SQLException
+    public void migrateSource(Connection connection) throws SQLException
     {
         MigrationInput input = inspect(connection);
         long updatedAt = System.currentTimeMillis();
@@ -119,7 +119,6 @@ final class Format8To9DatabaseMigration implements DatabaseMigrationStep
 
     private static MigrationInput inspect(Connection connection) throws SQLException
     {
-        requireSourceFormat(connection);
         PortablePreferenceUpdate portable = inspectPortablePreferences(connection);
         List<UserPreferenceUpdate> users = new ArrayList<>();
         int defaultedUsers = 0;
@@ -303,15 +302,6 @@ final class Format8To9DatabaseMigration implements DatabaseMigrationStep
                     "document with an empty bounded document"));
     }
 
-    private static void requireSourceFormat(Connection connection) throws SQLException
-    {
-        DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspectForMigration(connection);
-        if(detected.version() != 8)
-        {
-            throw new SQLException("Migration step format-8-to-9 requires exact source format 8; found " +
-                detected.version() + " [" + detected.id() + "]");
-        }
-    }
 
     private record MigrationInput(List<UserPreferenceUpdate> users, int defaultedUsers,
                                   PortablePreferenceUpdate portablePreferences)

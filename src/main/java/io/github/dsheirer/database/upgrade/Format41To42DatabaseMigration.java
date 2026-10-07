@@ -18,26 +18,17 @@ final class Format41To42DatabaseMigration implements DatabaseMigrationStep
     public List<DatabaseMigrationEffect> declaredEffects() { return effects(); }
 
     @Override
-    public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
-        requireSource(connection);
         return effects();
     }
 
     @Override
-    public void migrate(Connection connection) throws SQLException
+    public void migrateSource(Connection connection) throws SQLException
     {
-        requireSource(connection);
         ReceiverActivitySchema.rebuildTargetIdentityForeignKeyIndex(connection);
     }
 
-    private static void requireSource(Connection connection) throws SQLException
-    {
-        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 41)
-        {
-            throw new SQLException("Expected format 41");
-        }
-    }
 
     private static List<DatabaseMigrationEffect> effects()
     {

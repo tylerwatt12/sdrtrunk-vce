@@ -149,14 +149,14 @@ final class Format4To5DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
         MigrationInput input = inspect(connection);
         return effects(input);
     }
 
     @Override
-    public void migrate(Connection connection) throws SQLException
+    public void migrateSource(Connection connection) throws SQLException
     {
         MigrationInput input = inspect(connection);
 
@@ -189,13 +189,6 @@ final class Format4To5DatabaseMigration implements DatabaseMigrationStep
 
     private static MigrationInput inspect(Connection connection) throws SQLException
     {
-        DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspectForMigration(connection);
-        if(detected.version() != 4)
-        {
-            throw new SQLException("Migration step format-4-to-5 requires exact source format 4; found " +
-                detected.version() + " [" + detected.id() + "]");
-        }
-
         ChannelInspection channelInspection = inspectChannels(connection);
         Optional<String> accessStored = setting(connection, ACCESS_KEY);
         LegacyAccess access;

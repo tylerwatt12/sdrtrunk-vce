@@ -29,9 +29,8 @@ final class Format28To29DatabaseMigration implements DatabaseMigrationStep
         return effects(DatabaseMigrationEffect.UNKNOWN_COUNT, RepairReport.declared(), selectedSourceStep, true);
     }
 
-    @Override public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    @Override public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
-        requireSource(connection);
         long invalid = validLegacyProgress(connection) ? 0 : 1;
         RepairReport repairs = inspectRepairs(connection);
         List<DatabaseMigrationEffect> effects = effects(invalid, repairs, true, false);
@@ -40,15 +39,14 @@ final class Format28To29DatabaseMigration implements DatabaseMigrationStep
         return effects.stream().filter(effect -> !effect.subject().equals("unusable setup progress")).toList();
     }
 
-    @Override public void migrate(Connection connection) throws SQLException
+    @Override public void migrateSource(Connection connection) throws SQLException
     {
-        migrateAndReport(connection, true);
+        migrateSourceAndReport(connection, true);
     }
 
-    @Override public List<DatabaseMigrationEffect> migrateAndReport(Connection connection,
+    @Override public List<DatabaseMigrationEffect> migrateSourceAndReport(Connection connection,
                                                                      boolean selectedSourceStep) throws SQLException
     {
-        requireSource(connection);
         boolean valid = validLegacyProgress(connection);
         SetupProgress progress = valid ? SetupProgress.readLegacy(connection) : SetupProgress.replacementReview();
         progress.set(SetupStep.RECORDINGS, SetupProgress.State.CARRIED_OVER);
@@ -126,14 +124,6 @@ final class Format28To29DatabaseMigration implements DatabaseMigrationStep
         }
     }
 
-    private static void requireSource(Connection connection) throws SQLException
-    {
-        DatabaseFormatCatalog.DetectedFormat source = DatabaseFormatCatalog.inspectForMigration(connection);
-        if(source.version() != 28)
-        {
-            throw new SQLException("Migration step format-28-to-29 requires format 28; found " + source.version());
-        }
-    }
 
     private record RepairReport(int portablePreferenceResets,
                                 CurrentDatabaseAdministrativeRepair.Inspection administrative,

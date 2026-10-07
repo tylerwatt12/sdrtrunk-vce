@@ -287,28 +287,28 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
         return effects(inspect(connection));
     }
 
     @Override
-    public void migrate(Connection connection) throws SQLException
+    public void migrateSource(Connection connection) throws SQLException
     {
         MigrationInput input = inspect(connection);
 
-        migrate(connection, input);
+        migrateSource(connection, input);
     }
 
     @Override
-    public List<DatabaseMigrationEffect> migrateAndReport(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> migrateSourceAndReport(Connection connection) throws SQLException
     {
         MigrationInput input = inspect(connection);
-        migrate(connection, input);
+        migrateSource(connection, input);
         return effects(input);
     }
 
-    private static void migrate(Connection connection, MigrationInput input) throws SQLException
+    private static void migrateSource(Connection connection, MigrationInput input) throws SQLException
     {
 
         dropActivitySchema(connection);
@@ -324,13 +324,6 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
     private static MigrationInput inspect(Connection connection) throws SQLException
     {
         Objects.requireNonNull(connection, "Connection cannot be null");
-        DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspectForMigration(connection);
-        if(detected.version() != 14)
-        {
-            throw new SQLException("Migration step format-14-to-15 requires exact source format 14; found " +
-                detected.version() + " [" + detected.id() + "]");
-        }
-
         try
         {
             CoreInspection core = inspectCoreRows(connection);

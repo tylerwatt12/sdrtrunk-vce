@@ -73,7 +73,7 @@ final class Format6To7DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
         MigrationInput input = inspect(connection);
         return effects(input.users().size(), input.defaultedUsers(),
@@ -81,7 +81,7 @@ final class Format6To7DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public void migrate(Connection connection) throws SQLException
+    public void migrateSource(Connection connection) throws SQLException
     {
         MigrationInput input = inspect(connection);
         long updatedAt = System.currentTimeMillis();
@@ -130,7 +130,6 @@ final class Format6To7DatabaseMigration implements DatabaseMigrationStep
 
     private static MigrationInput inspect(Connection connection) throws SQLException
     {
-        requireSourceFormat(connection);
         List<UserPreferenceUpdate> users = new ArrayList<>();
         int defaultedUsers = 0;
 
@@ -281,15 +280,6 @@ final class Format6To7DatabaseMigration implements DatabaseMigrationStep
                     "empty bounded document"));
     }
 
-    private static void requireSourceFormat(Connection connection) throws SQLException
-    {
-        DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspectForMigration(connection);
-        if(detected.version() != 6)
-        {
-            throw new SQLException("Migration step format-6-to-7 requires exact source format 6; found " +
-                detected.version() + " [" + detected.id() + "]");
-        }
-    }
 
     private record MigrationInput(List<UserPreferenceUpdate> users, int defaultedUsers,
                                   PortablePreferenceUpdate portablePreferences)

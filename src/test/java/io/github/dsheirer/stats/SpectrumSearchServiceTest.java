@@ -961,6 +961,12 @@ class SpectrumSearchServiceTest
 
     private static final class FakeChannels implements SpectrumSearchService.Channels
     {
+        public ChannelAdministrationService.DiscoveryBatch createBatch(
+            List<ChannelAdministrationService.DiscoveryRequest> requests, long revision, BooleanSupplier cancelled)
+        {
+            return DiscoveryBatchTestAdapter.save(this, requests, revision, cancelled);
+        }
+
         long revision = 1, failOnce, staleAt, publicationFailureAt, suspendedAt;
         int createdAliases;
         String systemName = "Friendly network";
@@ -1003,6 +1009,7 @@ class SpectrumSearchServiceTest
             if(frequency == staleAt) { revision++; throw new ChannelAdministrationService.StaleRevisionException(expected, revision); }
             assertEquals(revision, expected);
             long aliasId = definition.aliasListId();
+            if(aliasId == 0) aliasId = aliases.getOrDefault(key(identity), 0L);
             if(aliasId == 0) { aliasId = 100 + ++createdAliases; aliases.put(key(identity), aliasId); }
             aliasNames.add(aliasName);
             definitions.add(definition); identities.add(identity); revision++;

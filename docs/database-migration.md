@@ -80,7 +80,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -531,6 +531,14 @@ local links after consolidation. Ordinary home-system labels omit redundant full
 systems or observed Working IDs retain their distinguishing details. The resolved-view change gives format 45 its
 own exact DDL fingerprint. Historical format 44 remains frozen and startup continues to validate without migration.
 
+The format 45-to-46 step establishes optional receiver-confirmed DMR and NXDN discovery identity inside the
+existing saved-channel document. Existing documents remain unchanged, with absent identity treated as unknown.
+The migrator does not backfill identity from activity history. Newly discovered channels retain their verified native
+system and site identity alongside their configuration so restart, history retention and activity clearing cannot
+remove that identity. Receiving-setting edits and copied channels cannot inherit stale confirmation. No table, index,
+relationship or retained row is added by this semantic step. Formats 45 and 46 share the exact DDL fingerprint and
+require the authoritative global marker; the prior populated format-45 fixture remains supported.
+
 ## Schema-Change Rule
 
 The optional Managed Recordings catalog is a separate SQLite file with its own adjacent format chain. Its format 2
@@ -541,7 +549,7 @@ counters, and adds no transcript rows. Catalog format 3 adds a constrained `tran
 transcript, marking calls with an existing transcript `complete` and other calls `pending`. Short calls stay pending;
 the background worker applies its configured minimum duration when selecting work. A failed call is retried only by
 an administrator action. Fresh format-3 catalogs use the same status default and index. The main application database
-is independently at format 45; transcript-catalog migrations do not change it. Recognized older catalogs are backed up
+is independently at format 46; transcript-catalog migrations do not change it. Recognized older catalogs are backed up
 and updated in one transaction at the pre-receiver setup boundary, with an optional SQLite-aware recovery snapshot
 before changes. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with
 Managed Recordings unavailable, so optional catalog trouble does not prevent ordinary receiving.
@@ -591,8 +599,8 @@ and database services start. The Setup Wizard can already be visible at this poi
    headless upgrade commands accept `--no-upgrade-backup` to omit it.
 3. Reserve the database writer with `BEGIN IMMEDIATE` and check the source format again. If selected, make one
    standalone SQLite-aware recovery snapshot before any changes. A backup failure aborts without changing data.
-4. Run the existing `N -> N+1 -> ... -> current` chain in the same transaction. Each step verifies its exact target
-   schema. Once the final layout is reached, independently repair unusable portable, account, and configuration
+4. Run the existing `N -> N+1 -> ... -> current` chain in the same transaction. The runner verifies every exact target
+   schema and carries that admitted result into the next adjacent step, without repeating source fingerprint scans. Once the final layout is reached, independently repair unusable portable, account, and configuration
    components and report their counts. Preserve usable configuration and credentials.
 5. Validate the final global format, exact schema, required settings, and startup configuration once, then commit.
    Normal startup opens the result with validation only. Freed pages remain reusable; upgrades do not compact them.

@@ -89,9 +89,8 @@ final class Format2To3DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
-        requireSourceFormat(connection);
 
         List<FactoryAliasListCollisionRepair.Collision> collisions =
             FactoryAliasListCollisionRepair.plan(connection, FACTORY_TARGETS);
@@ -142,9 +141,8 @@ final class Format2To3DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public void migrate(Connection connection) throws SQLException
+    public void migrateSource(Connection connection) throws SQLException
     {
-        requireSourceFormat(connection);
         LegacyDefaultScanListRepair.ensureOneDefault(connection);
         FactoryAliasListCollisionRepair.recoverJsonOwnedChannelProjections(connection);
         List<FactoryAliasListCollisionRepair.Collision> collisions =
@@ -167,16 +165,6 @@ final class Format2To3DatabaseMigration implements DatabaseMigrationStep
         setMetadata(connection, "p25_activity_schema_version", "27");
     }
 
-    private static void requireSourceFormat(Connection connection) throws SQLException
-    {
-        DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspectForMigration(connection);
-
-        if(detected.version() != 2)
-        {
-            throw new SQLException("Migration step format-2-to-3 requires exact source format 2; found " +
-                detected.version() + " [" + detected.id() + "]");
-        }
-    }
 
     private static long missingDefaultAliasListCount(Connection connection) throws SQLException
     {

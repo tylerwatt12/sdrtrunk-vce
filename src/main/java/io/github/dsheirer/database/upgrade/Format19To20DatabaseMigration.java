@@ -28,9 +28,8 @@ final class Format19To20DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
-        requireSource(connection);
         try(Statement statement = connection.createStatement();
             ResultSet rows = statement.executeQuery("SELECT count(*) FROM alias"))
         {
@@ -39,20 +38,12 @@ final class Format19To20DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public void migrate(Connection connection) throws SQLException
+    public void migrateSource(Connection connection) throws SQLException
     {
-        requireSource(connection);
         SdrTrunkDatabaseSchema.createAliasActivitySummary(connection);
         AliasActivitySummaryMaintenance.rebuildAll(connection);
     }
 
-    private static void requireSource(Connection connection) throws SQLException
-    {
-        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 19)
-        {
-            throw new SQLException("Expected format 19");
-        }
-    }
 
     private static List<DatabaseMigrationEffect> effects(long aliases)
     {

@@ -191,6 +191,28 @@ class RadioReferenceImportServiceTest
     }
 
     @Test
+    void previewFindsASiteBeyondTheFirstPageWithOneCompleteCatalogRead() throws Exception
+    {
+        try(Fixture fixture = new Fixture(mTemporaryFolder))
+        {
+            List<TrunkedSiteDetails> sites = new ArrayList<>();
+            for(int index = 0; index < 501; index++)
+                sites.add(new TrunkedSiteDetails(1000 + index, 10, index % 255 + 1, "Site " + index, 1, 0, index / 255 + 1,
+                    "321", 0, "C4FM", false, fixture.directory.site.channels()));
+            fixture.directory.sites = List.copyOf(sites);
+            var preview = fixture.importer.previewSite(new RadioReferenceImportService.SiteImportRequest(
+                10, 1500, aliasList(fixture, AliasListFamily.P25),
+                RadioReferenceImportService.FrequencySet.CONTROL, List.of(), null, null, null));
+            assertEquals("Site 500", preview.channel().site());
+            assertEquals(1, fixture.directory.siteCatalogReads);
+            assertThrows(IllegalArgumentException.class, () -> fixture.importer.previewSite(
+                new RadioReferenceImportService.SiteImportRequest(10, 99999, aliasList(fixture, AliasListFamily.P25),
+                    RadioReferenceImportService.FrequencySet.CONTROL, List.of(), null, null, null)));
+            assertEquals(2, fixture.directory.siteCatalogReads, "a new preview obtains a fresh catalog");
+        }
+    }
+
+    @Test
     void createsThenRefreshesOnlySiteSourceFieldsAndKeepsTalkgroupDefaults() throws Exception
     {
         try(Fixture fixture = new Fixture(mTemporaryFolder))
@@ -616,12 +638,14 @@ class RadioReferenceImportServiceTest
         private final List<RemoteTalkgroupCategory> categories = new ArrayList<>(
             List.of(new RemoteTalkgroupCategory(50, 10, "Public Safety")));
         private List<ConventionalFrequency> conventional = List.of();
+        private List<TrunkedSiteDetails> sites;
+        private int siteCatalogReads;
         private int catalogReads;
         private int categoryReads;
 
         @Override public TrunkedSystemDetails trunkedSystemDetails(int systemId) { return system; }
-        @Override public BoundedPage<TrunkedSiteDetails> trunkedSites(int systemId, int offset, int limit)
-            { return new BoundedPage<>(List.of(site), 0, null, 1); }
+        @Override public List<TrunkedSiteDetails> allTrunkedSites(int systemId)
+            { siteCatalogReads++; return sites == null ? List.of(site) : sites; }
         @Override public BoundedPage<RemoteTalkgroup> talkgroups(int systemId, Integer categoryId, String search,
             int offset, int limit) { return new BoundedPage<>(talkgroups, 0, null, talkgroups.size()); }
         @Override public List<RemoteTalkgroup> allTalkgroups(int systemId)

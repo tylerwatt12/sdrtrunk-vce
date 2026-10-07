@@ -194,6 +194,13 @@ public final class ChannelDefinitionCodec
             channel.setAutoStart(existing.getAutoStart());
             channel.setAutoStartOrder(existing.getAutoStartOrder());
             channel.setP25SiteIdentity(existing.getP25SiteIdentity());
+            ChannelDefinition previous = fromChannel(existing);
+            // Friendly names, routing and ordinary decoder preferences do not alter native identity. A new
+            // receiving source, channel map, conventional/trunked mode or NXDN rate must be confirmed again.
+            if(previous.source().equals(submitted.source()) && previous.frequencyMap().equals(submitted.frequencyMap()) &&
+                Objects.equals(previous.settings().get("channel_mode"), settings.get("channel_mode")) &&
+                Objects.equals(previous.settings().get("transmission_mode"), settings.get("transmission_mode")))
+                channel.setTrunkedDiscoveryIdentity(existing.getTrunkedDiscoveryIdentity());
         }
         return channel;
     }
@@ -718,6 +725,6 @@ public final class ChannelDefinitionCodec
         P25SiteIdentity identity = channel.getP25SiteIdentity();
         Map<String,Object> site = identity != null ? Map.of("wacn", identity.wacn(), "system", identity.system(),
             "rfss", identity.rfss(), "site", identity.site(), "display", identity.display()) : Map.of();
-        return new ChannelDefinition.Observed(learned, site);
+        return new ChannelDefinition.Observed(learned, site, channel.getTrunkedDiscoveryIdentity());
     }
 }

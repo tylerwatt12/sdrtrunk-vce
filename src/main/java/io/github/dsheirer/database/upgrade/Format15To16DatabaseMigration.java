@@ -63,9 +63,8 @@ final class Format15To16DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
-        requireSource(connection);
         long assignments = 0;
         long createdLists = 0;
 
@@ -84,9 +83,8 @@ final class Format15To16DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public void migrate(Connection connection) throws SQLException
+    public void migrateSource(Connection connection) throws SQLException
     {
-        requireSource(connection);
 
         for(Family family: FAMILIES)
         {
@@ -289,13 +287,6 @@ final class Format15To16DatabaseMigration implements DatabaseMigrationStep
         }
     }
 
-    private static void requireSource(Connection connection) throws SQLException
-    {
-        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 15)
-        {
-            throw new SQLException("Migration step format-15-to-16 requires exact source format 15");
-        }
-    }
 
     private static List<DatabaseMigrationEffect> effects(long assignments, long createdLists, long rebuiltChannels)
     {

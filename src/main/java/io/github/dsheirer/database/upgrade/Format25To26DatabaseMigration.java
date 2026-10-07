@@ -53,9 +53,8 @@ final class Format25To26DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
-        requireSource(connection);
         RepairReport repairs = inspectRepairs(connection);
         boolean resetsDerivedState = repairs.derived().damagedTables() > 0;
         return effects(resetsDerivedState ? 0 : count(connection, "receiver_activity_event"),
@@ -64,22 +63,21 @@ final class Format25To26DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public void migrate(Connection connection) throws SQLException
+    public void migrateSource(Connection connection) throws SQLException
     {
-        migrateAndReport(connection, true);
+        migrateSourceAndReport(connection, true);
     }
 
     @Override
-    public List<DatabaseMigrationEffect> migrateAndReport(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> migrateSourceAndReport(Connection connection) throws SQLException
     {
-        return migrateAndReport(connection, true);
+        return migrateSourceAndReport(connection, true);
     }
 
     @Override
-    public List<DatabaseMigrationEffect> migrateAndReport(Connection connection, boolean selectedSourceStep)
+    public List<DatabaseMigrationEffect> migrateSourceAndReport(Connection connection, boolean selectedSourceStep)
         throws SQLException
     {
-        requireSource(connection);
         RepairReport repairs = selectedSourceStep ? repair(connection) : RepairReport.none();
         long events = count(connection, "receiver_activity_event");
         long identityMembers = count(connection, "activity_event_identity_member");
@@ -135,13 +133,6 @@ final class Format25To26DatabaseMigration implements DatabaseMigrationStep
         return new RepairReport(portablePreferenceResets, administrative, derived, configuration);
     }
 
-    private static void requireSource(Connection connection) throws SQLException
-    {
-        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 25)
-        {
-            throw new SQLException("Expected format 25");
-        }
-    }
 
     private static long count(Connection connection, String table) throws SQLException
     {

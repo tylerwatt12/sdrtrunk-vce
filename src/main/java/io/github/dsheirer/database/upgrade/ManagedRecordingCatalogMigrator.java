@@ -20,9 +20,7 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import org.sqlite.SQLiteConfig;
@@ -142,9 +140,9 @@ public final class ManagedRecordingCatalogMigrator
                     SqliteDatabaseSnapshot.create(source, candidate);
                     backup = candidate;
                 }
-                applyAdjacentSteps(statement, version);
+                applyAdjacentSteps(connection, statement, version);
                 beforeCommit.validate(connection);
-                requireExact(connection, CURRENT_FORMAT);
+                ManagedRecordingSchema.validate(connection, CURRENT_FORMAT);
                 statement.execute("COMMIT");
                 transactionStarted = false;
                 completed = true;
@@ -199,18 +197,25 @@ public final class ManagedRecordingCatalogMigrator
         }
     }
 
-    private static void applyAdjacentSteps(Statement statement, int version) throws SQLException
+    private static void applyAdjacentSteps(Connection connection, Statement statement, int version) throws SQLException
     {
-        if(version == 1)
+        while(version < CURRENT_FORMAT)
         {
-            statement.execute(ManagedRecordingSchema.ddlForFormat(2).get("recording_transcript"));
-            stamp(statement, 2);
+            switch(version)
+            {
+                case 1 -> statement.execute(ManagedRecordingSchema.ddlForFormat(2).get("recording_transcript"));
+                case 2 ->
+                {
+                    statement.execute("ALTER TABLE recording_call ADD COLUMN " + ManagedRecordingSchema.TRANSCRIPTION_STATUS_COLUMN);
+                    statement.executeUpdate("UPDATE recording_call SET transcription_status='complete' " +
+                        "WHERE id IN (SELECT call_id FROM recording_transcript)");
+                    statement.execute(ManagedRecordingSchema.ddlForFormat(3).get("idx_recording_call_transcription_pending"));
+                }
+                default -> throw new SQLException("No adjacent managed recordings migration from format " + version);
+            }
+            stamp(statement, ++version);
+            ManagedRecordingSchema.validate(connection, version);
         }
-        statement.execute("ALTER TABLE recording_call ADD COLUMN " + ManagedRecordingSchema.TRANSCRIPTION_STATUS_COLUMN);
-        statement.executeUpdate("UPDATE recording_call SET transcription_status='complete' " +
-            "WHERE id IN (SELECT call_id FROM recording_transcript)");
-        statement.execute(ManagedRecordingSchema.ddlForFormat(3).get("idx_recording_call_transcription_pending"));
-        stamp(statement, CURRENT_FORMAT);
     }
 
     private static int requireSupportedVersion(Connection connection) throws SQLException
@@ -218,35 +223,13 @@ public final class ManagedRecordingCatalogMigrator
         int version = pragmaInt(connection, "user_version");
         if(version < LEGACY_FORMAT || version > CURRENT_FORMAT)
             throw new SQLException("Unsupported managed recordings catalog version " + version + ".");
-        requireExact(connection, version);
+        ManagedRecordingSchema.validate(connection, version);
         return version;
     }
 
     private static State state(int version)
     {
         return version == CURRENT_FORMAT ? State.CURRENT : State.UPGRADE_REQUIRED;
-    }
-
-    private static void requireExact(Connection connection, int version) throws SQLException
-    {
-        if(pragmaInt(connection, "application_id") != ManagedRecordingSchema.APPLICATION_ID ||
-            pragmaInt(connection, "user_version") != version)
-            throw new SQLException("Unrecognized managed recordings catalog identity or version.");
-        Map<String,String> actual = new LinkedHashMap<>();
-        try(Statement statement = connection.createStatement();
-            ResultSet rows = statement.executeQuery("SELECT name,sql FROM sqlite_master " +
-                "WHERE type IN ('table','index','view','trigger') AND name NOT GLOB 'sqlite_*' ORDER BY name"))
-        {
-            while(rows.next()) actual.put(rows.getString(1), rows.getString(2));
-        }
-        if(!actual.equals(ManagedRecordingSchema.ddlForFormat(version)))
-            throw new SQLException("Managed recordings catalog schema is unknown or partially migrated.");
-        try(Statement statement = connection.createStatement();
-            ResultSet rows = statement.executeQuery("SELECT format_version,call_count,total_bytes FROM catalog_metadata WHERE id=1"))
-        {
-            if(!rows.next() || rows.getInt(1) != version || rows.getLong(2) < 0 || rows.getLong(3) < 0 || rows.next())
-                throw new SQLException("Managed recordings catalog metadata is invalid.");
-        }
     }
 
     private static void stamp(Statement statement, int version) throws SQLException

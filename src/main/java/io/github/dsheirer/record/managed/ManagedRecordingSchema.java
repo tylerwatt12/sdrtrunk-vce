@@ -10,6 +10,10 @@
  */
 package io.github.dsheirer.record.managed;
 
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -36,6 +40,38 @@ public final class ManagedRecordingSchema
             case 3 -> DDL;
             default -> throw new IllegalArgumentException("Unsupported managed recordings catalog format: " + version);
         };
+    }
+
+    /** Exact, read-only admission shared by normal startup and the bundled catalog migrator. */
+    public static void validate(Connection connection, int version) throws SQLException
+    {
+        if(pragmaInt(connection, "application_id") != APPLICATION_ID ||
+            pragmaInt(connection, "user_version") != version)
+            throw new SQLException("Unrecognized managed recordings catalog identity or version.");
+        Map<String,String> actual = new LinkedHashMap<>();
+        try(Statement statement = connection.createStatement();
+            ResultSet rows = statement.executeQuery("SELECT name,sql FROM sqlite_master " +
+                "WHERE type IN ('table','index','view','trigger') AND name NOT GLOB 'sqlite_*' ORDER BY name"))
+        {
+            while(rows.next()) actual.put(rows.getString(1), rows.getString(2));
+        }
+        if(!actual.equals(ddlForFormat(version)))
+            throw new SQLException("Managed recordings catalog schema is unknown or partially migrated.");
+        try(Statement statement = connection.createStatement();
+            ResultSet rows = statement.executeQuery("SELECT format_version,call_count,total_bytes FROM catalog_metadata WHERE id=1"))
+        {
+            if(!rows.next() || rows.getInt(1) != version || rows.getLong(2) < 0 || rows.getLong(3) < 0 || rows.next())
+                throw new SQLException("Managed recordings catalog metadata is invalid.");
+        }
+    }
+
+    private static int pragmaInt(Connection connection, String name) throws SQLException
+    {
+        try(Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery("PRAGMA " + name))
+        {
+            if(!rows.next()) throw new SQLException("Missing SQLite " + name + " pragma.");
+            return rows.getInt(1);
+        }
     }
 
     private static Map<String,String> formatTwoSchema()

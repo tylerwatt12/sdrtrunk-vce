@@ -56,30 +56,27 @@ final class Format24To25DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
-        requireSourceFormat(connection);
         return effects(configurationRowCount(connection), inspectRepairs(connection), false);
     }
 
     @Override
-    public void migrate(Connection connection) throws SQLException
+    public void migrateSource(Connection connection) throws SQLException
     {
-        requireSourceFormat(connection);
         repair(connection);
     }
 
     @Override
-    public List<DatabaseMigrationEffect> migrateAndReport(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> migrateSourceAndReport(Connection connection) throws SQLException
     {
-        return migrateAndReport(connection, true);
+        return migrateSourceAndReport(connection, true);
     }
 
     @Override
-    public List<DatabaseMigrationEffect> migrateAndReport(Connection connection, boolean selectedSourceStep)
+    public List<DatabaseMigrationEffect> migrateSourceAndReport(Connection connection, boolean selectedSourceStep)
         throws SQLException
     {
-        requireSourceFormat(connection);
         long configurationRows = configurationRowCount(connection);
         return selectedSourceStep ? effects(configurationRows, repair(connection), false) :
             semanticEffects(configurationRows);
@@ -146,15 +143,6 @@ final class Format24To25DatabaseMigration implements DatabaseMigrationStep
         }
     }
 
-    private static void requireSourceFormat(Connection connection) throws SQLException
-    {
-        DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspectForMigration(connection);
-        if(detected.version() != SOURCE_VERSION)
-        {
-            throw new SQLException("Migration step format-24-to-25 requires exact source format 24; found " +
-                detected.version() + " [" + detected.id() + "]");
-        }
-    }
 
     private static long configurationRowCount(Connection connection) throws SQLException
     {

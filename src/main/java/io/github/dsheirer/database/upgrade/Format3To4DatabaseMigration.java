@@ -94,9 +94,8 @@ final class Format3To4DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
-        requireSourceFormat(connection);
         return List.of(
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.PRESERVE,
                 "administrator configuration", rowCount(connection, CONFIGURATION_TABLES),
@@ -109,9 +108,8 @@ final class Format3To4DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public void migrate(Connection connection) throws SQLException
+    public void migrateSource(Connection connection) throws SQLException
     {
-        requireSourceFormat(connection);
         LegacyActivityReset.clear(connection, LegacyActivityReset.PRE_LOGICAL_CALL_TABLES);
 
         try(Statement statement = connection.createStatement())
@@ -140,16 +138,6 @@ final class Format3To4DatabaseMigration implements DatabaseMigrationStep
         setMetadata(connection, LOGICAL_CALL_BOUNDARY_KEY, Long.toString(now), now);
     }
 
-    private static void requireSourceFormat(Connection connection) throws SQLException
-    {
-        DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspectForMigration(connection);
-
-        if(detected.version() != 3)
-        {
-            throw new SQLException("Migration step format-3-to-4 requires exact source format 3; found " +
-                detected.version() + " [" + detected.id() + "]");
-        }
-    }
 
     private static long rowCount(Connection connection, List<String> tables) throws SQLException
     {

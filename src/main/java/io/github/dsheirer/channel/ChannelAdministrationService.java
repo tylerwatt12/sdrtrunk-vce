@@ -47,7 +47,6 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.ScheduledFuture;
@@ -55,7 +54,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
-import java.util.function.Function;
 import javafx.application.Platform;
 
 /**
@@ -76,16 +74,6 @@ public final class ChannelAdministrationService
     /** One web mutation or receiver lifecycle batch at a time; saturation fails without blocking request workers. */
     private final Semaphore mCommandAdmission = new Semaphore(1);
     private final Map<String,SquelchPreviewLease> mSquelchPreviews = new HashMap<>();
-    /** Discovery evidence is receiver-owned; non-P25 identities are not part of the saved channel format. */
-    private final Map<String,SavedDiscoveryIdentity> mDiscoveredTrunkedIdentities = new ConcurrentHashMap<>();
-    private volatile Function<TrunkedDiscoveryEvidence,List<RetainedDiscoveryIdentity>> mRetainedDiscoveryIdentities = ignored -> List.of();
-
-    /** Optional bounded, read-only receiver history. The provider runs on the caller, outside configuration mutations. */
-    public void setRetainedDiscoveryIdentityProvider(Function<TrunkedDiscoveryEvidence,List<RetainedDiscoveryIdentity>> provider)
-    {
-        mRetainedDiscoveryIdentities = Objects.requireNonNull(provider);
-    }
-
     public ChannelAdministrationService(ConfigurationManager configurationManager)
     {
         this(configurationManager, new ChannelProtocolRegistry(), !GraphicsEnvironment.isHeadless());
@@ -255,10 +243,14 @@ public final class ChannelAdministrationService
     public List<DiscoveryFrequencyMatch> discoveryFrequencyMatches(long frequencyHz)
     {
         if(frequencyHz <= 0) throw new IllegalArgumentException("Frequency must be positive");
-        return onConfigurationThread(() ->
-        {
+        return onConfigurationThread(() -> discoveryFrequencyMatches(frequencyHz,
+            mConfigurationManager.getChannelModel().getChannels()));
+    }
+
+    private List<DiscoveryFrequencyMatch> discoveryFrequencyMatches(long frequencyHz, List<Channel> channels)
+    {
             List<DiscoveryFrequencyMatch> matches = new ArrayList<>();
-            for(Channel channel: mConfigurationManager.getChannelModel().getChannels())
+            for(Channel channel: channels)
             {
                 ChannelDefinition definition = mCodec.fromChannel(channel);
                 int halfBandwidth = channel.getDecodeConfiguration().getChannelSpecification().getBandwidth() / 2;
@@ -270,7 +262,6 @@ public final class ChannelAdministrationService
                         channel.getSystem(), channel.getSite(), "configured"));
             }
             return List.copyOf(matches);
-        });
     }
 
     public DiscoveryReview discoveryReview(String protocolId, long frequencyHz, String preferredTuner,
@@ -330,16 +321,16 @@ public final class ChannelAdministrationService
         if("p25-phase1".equals(protocolId))
             return discoveryReview(protocolId, frequencyHz, preferredTuner, evidence.identity().p25(),
                 (String)evidence.settings().get("modulation"));
-        List<RetainedDiscoveryIdentity> retained = retainedDiscoveryIdentities(evidence);
         return onConfigurationThread(() ->
         {
             ChannelProtocolRegistry.Profile profile = mProtocolRegistry.require(protocolId);
-            List<DiscoveryAliasList> lists = discoveryTrunkedAliasLists(profile, evidence, retained);
+            List<DiscoveryAliasList> lists = discoveryTrunkedAliasLists(profile, evidence, mConfigurationManager.getChannelModel().getChannels(),
+                mConfigurationManager.getAliasModel().aliasListDefinitions());
             Long suggested = lists.size() == 1 ? lists.getFirst().id() : null;
-            List<Channel> known = knownTrunkedChannels(evidence, false, retained);
+            List<Channel> known = knownTrunkedChannels(evidence, false, mConfigurationManager.getChannelModel().getChannels());
             String system = known.stream().map(Channel::getSystem)
                 .filter(value -> value != null && !value.isBlank()).findFirst().orElse(evidence.systemName());
-            String site = knownTrunkedChannels(evidence, true, retained).stream().map(Channel::getSite)
+            String site = knownTrunkedChannels(evidence, true, mConfigurationManager.getChannelModel().getChannels()).stream().map(Channel::getSite)
                 .filter(value -> value != null && !value.isBlank()).findFirst().orElse(evidence.siteName());
             ChannelDefinition template = new ChannelDefinition(null, protocolId, system, site, site, null,
                 suggested != null ? suggested : 0,
@@ -354,13 +345,12 @@ public final class ChannelAdministrationService
         });
     }
 
-    /** Native DMR/NXDN identity also survives restart when repeated receiver history remains available. */
+    /** Confirmed native DMR/NXDN identity belongs to the saved channel, independently of activity history. */
     public DiscoveryFrequencyMatch discoveryTrunkedSiteMatch(TrunkedDiscoveryEvidence evidence)
     {
         requireTrunkedEvidence(evidence != null ? evidence.protocolId() : null, evidence);
         if("p25-phase1".equals(evidence.protocolId())) return discoverySiteMatch(evidence.identity().p25());
-        List<RetainedDiscoveryIdentity> retained = retainedDiscoveryIdentities(evidence);
-        return onConfigurationThread(() -> knownTrunkedChannels(evidence, true, retained).stream()
+        return onConfigurationThread(() -> knownTrunkedChannels(evidence, true, mConfigurationManager.getChannelModel().getChannels()).stream()
             .map(channel -> new DiscoveryFrequencyMatch(channel.getConfigurationId(), channel.getName(),
                 channel.getSystem(), channel.getSite(), "site")).findFirst().orElse(null));
     }
@@ -372,8 +362,12 @@ public final class ChannelAdministrationService
             throw new IllegalArgumentException("A confirmed trunked serving-site identity is required");
         if("p25-phase1".equals(protocolId) && evidence.identity().p25() == null)
             throw new IllegalArgumentException("A confirmed P25 identity is required");
-        if(!"p25-phase1".equals(protocolId) && !"TRUNKED".equals(evidence.settings().get("channel_mode")))
-            throw new IllegalArgumentException("Confirmed trunked decoder settings are required");
+        if(!"p25-phase1".equals(protocolId))
+        {
+            if(!"TRUNKED".equals(evidence.settings().get("channel_mode")))
+                throw new IllegalArgumentException("Confirmed trunked decoder settings are required");
+            TrunkedDiscoveryIdentity.from(evidence);
+        }
     }
 
     private Map<String,Object> discoveryTrunkedSettings(ChannelProtocolRegistry.Profile profile,
@@ -386,103 +380,25 @@ public final class ChannelAdministrationService
         return mProtocolRegistry.validateSettings(profile, settings);
     }
 
-    private List<RetainedDiscoveryIdentity> retainedDiscoveryIdentities(TrunkedDiscoveryEvidence evidence)
-    {
-        if(evidence.identity().radioSystemKey() == null) return List.of();
-        try
-        {
-            List<RetainedDiscoveryIdentity> values = mRetainedDiscoveryIdentities.apply(evidence);
-            return values != null && values.size() <= 256 ? List.copyOf(values) : List.of();
-        }
-        catch(RuntimeException unavailable) { return List.of(); }
-    }
-
     private List<Channel> knownTrunkedChannels(TrunkedDiscoveryEvidence evidence, boolean siteOnly,
-                                              List<RetainedDiscoveryIdentity> retained)
+                                              List<Channel> channels)
     {
-        List<Channel> channels = mConfigurationManager.getChannelModel().getChannels();
-        Set<String> liveIds = channels.stream().map(Channel::getConfigurationId)
-            .collect(java.util.stream.Collectors.toSet());
-        mDiscoveredTrunkedIdentities.keySet().retainAll(liveIds);
         return channels.stream().filter(channel ->
-        {
-            SavedDiscoveryIdentity saved = mDiscoveredTrunkedIdentities.get(channel.getConfigurationId());
-            if(!mProtocolRegistry.require(channel.getDecodeConfiguration().getDecoderType()).id()
-                .equals(evidence.protocolId()) ||
-                ChannelConfigurationPolicy.requireChannelKind(channel) != ChannelConfigurationPolicy.ChannelKind.TRUNKED)
-                return false;
-            ChannelDefinition current = mCodec.fromChannel(channel);
-            if(saved == null || !evidence.protocolId().equals(saved.protocolId()) ||
-                !saved.sourceFrequencies().equals(new HashSet<>(current.source().frequenciesHz())) ||
-                !saved.frequencyMap().equals(current.frequencyMap()))
-                return retained.stream().anyMatch(value -> retainedIdentityMatches(channel, evidence, value, siteOnly));
-            TrunkedDiscoveryEvidence.Identity identity = evidence.identity();
-            if(siteOnly) return identity.siteKey().equals(saved.identity().siteKey()) &&
-                Objects.equals(identity.radioSystemKey(), saved.identity().radioSystemKey());
-            return identity.radioSystemKey() != null ?
-                identity.radioSystemKey().equals(saved.identity().radioSystemKey()) :
-                identity.siteKey().equals(saved.identity().siteKey());
-        }).toList();
+            ChannelConfigurationPolicy.requireChannelKind(channel) == ChannelConfigurationPolicy.ChannelKind.TRUNKED &&
+            channel.getTrunkedDiscoveryIdentity() != null &&
+            mProtocolRegistry.require(channel.getDecodeConfiguration().getDecoderType()).id().equals(evidence.protocolId()) &&
+            channel.getTrunkedDiscoveryIdentity().matches(evidence, siteOnly)).toList();
     }
 
     private List<DiscoveryAliasList> discoveryTrunkedAliasLists(ChannelProtocolRegistry.Profile profile,
-                                                              TrunkedDiscoveryEvidence evidence,
-                                                              List<RetainedDiscoveryIdentity> retained)
+        TrunkedDiscoveryEvidence evidence, List<Channel> channels, List<AliasListDefinition> definitions)
     {
-        Set<Long> matchingIds = knownTrunkedChannels(evidence, false, retained).stream().map(Channel::getAliasListId)
+        Set<Long> matchingIds = knownTrunkedChannels(evidence, false, channels).stream().map(Channel::getAliasListId)
             .collect(java.util.stream.Collectors.toSet());
-        return mConfigurationManager.getAliasModel().aliasListDefinitions().stream()
+        return definitions.stream()
             .filter(list -> list.getFamily() == profile.aliasFamily() && matchingIds.contains(list.getId()))
             .map(list -> new DiscoveryAliasList(list.getId(), list.getName(), true))
             .sorted(Comparator.comparing(DiscoveryAliasList::name, String.CASE_INSENSITIVE_ORDER)).toList();
-    }
-
-    private record SavedDiscoveryIdentity(String protocolId, TrunkedDiscoveryEvidence.Identity identity,
-                                          Set<Long> sourceFrequencies, List<ChannelDefinition.FrequencyMapEntry> frequencyMap) {}
-
-    private SavedDiscoveryIdentity savedDiscoveryIdentity(Channel channel, TrunkedDiscoveryEvidence evidence)
-    {
-        ChannelDefinition saved = mCodec.fromChannel(channel);
-        return new SavedDiscoveryIdentity(evidence.protocolId(), evidence.identity(),
-            Set.copyOf(saved.source().frequenciesHz()), saved.frequencyMap());
-    }
-
-    /** Existing telemetry fields only; no receiver observations are written by discovery. */
-    public record RetainedDiscoveryIdentity(String configurationId, String protocolId, String variant,
-        TrunkedDiscoveryEvidence.Identity identity, long observedControlHz, long observedPrimaryHz,
-        long firstSeenMs, long lastSeenMs, long observations) {}
-
-    private boolean retainedIdentityMatches(Channel channel, TrunkedDiscoveryEvidence evidence,
-                                            RetainedDiscoveryIdentity retained, boolean siteOnly)
-    {
-        if(retained == null || !channel.getConfigurationId().equals(retained.configurationId()) ||
-            !evidence.protocolId().equals(retained.protocolId()) || retained.identity() == null ||
-            retained.observations() < 3 || retained.firstSeenMs() <= 0 ||
-            retained.lastSeenMs() - retained.firstSeenMs() < 2000) return false;
-        var wanted = evidence.identity(); var observed = retained.identity();
-        if(wanted.radioSystemKey() == null || !wanted.radioSystemKey().equals(observed.radioSystemKey()) ||
-            !nativeVariant(evidence.protocolId(), evidence.variant()) ||
-            !nativeVariant(retained.protocolId(), retained.variant()) ||
-            observed.site() == null || !sameDiscoveryText(wanted.model(), observed.model()) ||
-            !sameDiscoveryText(wanted.category(), observed.category()) ||
-            !Objects.equals(wanted.network(), observed.network()) || !Objects.equals(wanted.system(), observed.system())) return false;
-        if(siteOnly && (!wanted.siteKey().equals(observed.siteKey()) ||
-            !compatibleDiscoveryFact(wanted.ran(), observed.ran()) ||
-            !compatibleDiscoveryFact(wanted.colorCode(), observed.colorCode()))) return false;
-        ChannelDefinition current = mCodec.fromChannel(channel);
-        Set<Long> configured = new HashSet<>(current.source().frequenciesHz());
-        current.frequencyMap().stream().map(ChannelDefinition.FrequencyMapEntry::downlinkHz).forEach(configured::add);
-        return retained.observedControlHz() > 0 && configured.contains(retained.observedControlHz()) ||
-            retained.observedPrimaryHz() > 0 && configured.contains(retained.observedPrimaryHz());
-    }
-
-    private static boolean compatibleDiscoveryFact(Object a, Object b) { return a == null || b == null || a.equals(b); }
-    private static boolean sameDiscoveryText(String a, String b) { return a == null ? b == null : b != null && a.equalsIgnoreCase(b); }
-    private static boolean nativeVariant(String protocol, String variant)
-    {
-        if(variant == null) return false;
-        return "dmr".equals(protocol) ? Set.of("TIER_III", "CAPACITY_MAX", "HYTERA_TIER_III").contains(variant) :
-            "nxdn".equals(protocol) && Set.of("TYPE_C", "TYPE_C_4800", "TYPE_C_9600").contains(variant);
     }
 
     private ChannelProtocolRegistry.Profile discoveryProfile(String protocolId)
@@ -495,15 +411,22 @@ public final class ChannelAdministrationService
     private List<DiscoveryAliasList> discoveryAliasLists(ChannelProtocolRegistry.Profile profile,
                                                        P25SiteIdentity identity)
     {
+        return discoveryAliasLists(profile, identity, mConfigurationManager.getChannelModel().getChannels(),
+            mConfigurationManager.getAliasModel().aliasListDefinitions());
+    }
+
+    private List<DiscoveryAliasList> discoveryAliasLists(ChannelProtocolRegistry.Profile profile,
+        P25SiteIdentity identity, List<Channel> channels, List<AliasListDefinition> definitions)
+    {
         Set<Long> matchingIds = new HashSet<>();
         if(identity != null)
-            for(Channel channel: mConfigurationManager.getChannelModel().getChannels())
+            for(Channel channel: channels)
             {
                 P25SiteIdentity known = channel.getP25SiteIdentity();
                 if(known != null && known.wacn() == identity.wacn() && known.system() == identity.system())
                     matchingIds.add(channel.getAliasListId());
             }
-        return mConfigurationManager.getAliasModel().aliasListDefinitions().stream()
+        return definitions.stream()
             .filter(list -> list.getFamily() == profile.aliasFamily() &&
                 (identity == null || matchingIds.contains(list.getId())))
             .map(list -> new DiscoveryAliasList(list.getId(), list.getName(), identity != null))
@@ -517,144 +440,199 @@ public final class ChannelAdministrationService
         return createDiscovered(definition, identity, newAliasListName, expectedRevision, true);
     }
 
-    /** Search results can be saved for later without joining the receiver's automatic startup order. */
     public DiscoveryCreated createDiscovered(ChannelDefinition definition, P25SiteIdentity identity,
                                                String newAliasListName, long expectedRevision, boolean autoStart)
     {
-        return createDiscoveredInternal(definition, identity, null, List.of(), newAliasListName, expectedRevision, autoStart);
+        return createSingleDiscovery(new DiscoveryRequest(definition, identity, null, newAliasListName, autoStart), expectedRevision);
     }
 
     public DiscoveryCreated createTrunkedDiscovered(ChannelDefinition definition, TrunkedDiscoveryEvidence evidence,
                                                      String newAliasListName, long expectedRevision, boolean autoStart)
     {
         requireTrunkedEvidence(definition.protocolId(), evidence);
-        return createDiscoveredInternal(definition, evidence.identity().p25(), evidence, retainedDiscoveryIdentities(evidence),
-            newAliasListName, expectedRevision, autoStart);
+        return createSingleDiscovery(new DiscoveryRequest(definition, evidence.identity().p25(), evidence,
+            newAliasListName, autoStart), expectedRevision);
     }
 
-    private DiscoveryCreated createDiscoveredInternal(ChannelDefinition definition, P25SiteIdentity identity,
-                                                        TrunkedDiscoveryEvidence evidence, List<RetainedDiscoveryIdentity> retained, String newAliasListName,
-                                                        long expectedRevision, boolean autoStart)
+    private DiscoveryCreated createSingleDiscovery(DiscoveryRequest request, long revision)
     {
+        DiscoveryBatch batch = createDiscoveredBatch(List.of(request), revision, () -> false);
+        DiscoverySave saved = batch.results().getFirst();
+        if(saved.failure() != null) throw saved.failure();
+        if(batch.publicationFailure() != null)
+            throw new ConfigurationManager.ConfigurationPublicationException(batch.publicationFailure().getMessage(),
+                batch.publicationFailure(), saved.created().configurationId(), saved.created().aliasListId());
+        return saved.created();
+    }
+
+    /** One admitted, bounded transaction for valid rows; rejected rows retain their individual retry reason. */
+    public DiscoveryBatch createDiscoveredBatch(List<DiscoveryRequest> requests, long expectedRevision,
+                                                 java.util.function.BooleanSupplier cancelled)
+    {
+        if(requests == null || requests.isEmpty() || requests.size() > MAXIMUM_BULK_CHANNELS)
+            throw new IllegalArgumentException("Choose between 1 and " + MAXIMUM_BULK_CHANNELS + " channels");
+        List<DiscoveryRequest> rows = List.copyOf(requests);
+        Objects.requireNonNull(cancelled);
         return admitted(() -> onConfigurationThread(() -> mConfigurationManager.applyConfigurationMutation(() ->
         {
-            // The configuration monitor stays held through commit, so a later publication exception proves a commit.
-            // Suspended saves fail here before creating a candidate or assigning a committed identity.
             mConfigurationManager.flushConfiguration();
             requireRevision(expectedRevision);
-            ChannelProtocolRegistry.Profile profile = evidence != null ?
-                mProtocolRegistry.require(definition.protocolId()) : discoveryProfile(definition.protocolId());
-            if("p25-phase1".equals(profile.id()) != (identity != null))
-                throw new IllegalArgumentException("A confirmed P25 identity is required");
-            if(definition.source().frequenciesHz().size() != 1 ||
-                !discoveryFrequencyMatches(definition.source().frequenciesHz().getFirst()).isEmpty())
-                throw new IllegalStateException("This frequency already belongs to a saved channel");
-            if(identity != null && mConfigurationManager.getChannelModel().getChannels().stream()
-                .anyMatch(channel -> identity.equals(channel.getP25SiteIdentity())))
-                throw new IllegalStateException("This P25 site already has a saved channel");
-            if(evidence != null && identity == null && !knownTrunkedChannels(evidence, true, retained).isEmpty())
-                throw new IllegalStateException("This trunked site already has a saved channel");
-            List<DiscoveryAliasList> compatibleLists = evidence != null && identity == null ?
-                discoveryTrunkedAliasLists(profile, evidence, retained) : discoveryAliasLists(profile, identity);
-            AliasConfigurationSnapshot aliases = mConfigurationManager.createDetachedAliasConfigurationSnapshot();
-            boolean newList = definition.aliasListId() == 0;
-            AliasListDefinition selected;
-            if(newList && (identity != null || evidence != null) && compatibleLists.size() == 1)
-            {
-                selected = requireAliasList(compatibleLists.getFirst().id());
-                newList = false;
-            }
-            else if(newList)
-            {
-                String name = newAliasListName != null ? newAliasListName.strip() :
-                    discoveryAliasListName(definition.system(), definition.name());
-                if(name.isBlank() || name.length() > AliasAdministrationService.MAX_ALIAS_LIST_NAME_LENGTH)
-                    throw new IllegalArgumentException("Alias List name must contain between 1 and " +
-                        AliasAdministrationService.MAX_ALIAS_LIST_NAME_LENGTH + " characters");
-                AliasListDefinition existing = aliases.definitions().stream()
-                    .filter(list -> name.equalsIgnoreCase(list.getName())).findFirst().orElse(null);
-                if(existing != null)
-                {
-                    boolean matchesSystem = compatibleLists.stream().anyMatch(list -> list.id() == existing.getId());
-                    boolean assignedToTrunked = mConfigurationManager.getChannelModel().getChannels().stream()
-                        .anyMatch(channel -> channel.getAliasListId() == existing.getId() &&
-                            ChannelConfigurationPolicy.requireChannelKind(channel) ==
-                                ChannelConfigurationPolicy.ChannelKind.TRUNKED);
-                    if(existing.getFamily() != profile.aliasFamily() ||
-                        (identity != null || evidence != null) && assignedToTrunked && !matchesSystem)
-                        throw new IllegalArgumentException("Choose a compatible Alias List for this system");
-                    selected = requireAliasList(existing.getId());
-                    newList = false;
-                }
-                else
-                {
-                    if((identity != null || evidence != null) && !compatibleLists.isEmpty())
-                        throw new IllegalArgumentException(identity != null ? "Use an Alias List matching this P25 system" :
-                            "Use an Alias List matching this trunked system");
-                    selected = new AliasListDefinition(name, profile.aliasFamily());
-                    selected.setId(mConfigurationManager.nextAliasListIds(aliases.definitions().stream()
-                        .map(AliasListDefinition::getId).toList(), 1).getFirst());
-                    List<AliasListDefinition> definitions = new ArrayList<>(aliases.definitions());
-                    definitions.add(selected);
-                    ScanListConfiguration scans = aliases.scanLists();
-                    Set<Long> defaultMembership = Set.of(scans.defaultScanList().getId());
-                    Map<Long,Set<Long>> unmatched = new HashMap<>(scans.unmatchedAliasListMemberships());
-                    Map<Long,Set<Long>> newAliases = new HashMap<>(scans.newAliasListMemberships());
-                    unmatched.put(selected.getId(), defaultMembership);
-                    newAliases.put(selected.getId(), defaultMembership);
-                    aliases = new AliasConfigurationSnapshot(definitions, aliases.aliases(),
-                        new ScanListConfiguration(scans.scanLists(), scans.aliasMemberships(), unmatched, newAliases));
-                }
-            }
-            else
-            {
-                if(compatibleLists.stream()
-                    .noneMatch(list -> list.id() == definition.aliasListId()))
-                    throw new IllegalArgumentException("Choose a compatible Alias List for this system");
-                selected = requireAliasList(definition.aliasListId());
-            }
-            ChannelDefinition normalized = new ChannelDefinition(null, definition.protocolId(), definition.system(),
-                definition.site(), definition.name(), null, selected.getId(), definition.source(),
-                evidence != null ? discoveryTrunkedSettings(profile, definition.settings(), evidence) : definition.settings(),
-                evidence != null ? evidence.frequencyMap() : List.of(), List.of(), List.of(), List.of(),
-                ChannelDefinition.Observed.EMPTY);
-            Channel created = mCodec.toChannel(normalized, selected, null);
-            if(created.getDecodeConfiguration() instanceof DecodeConfigP25 p25)
-            {
-                p25.setLearnAnnouncedControlChannels(true);
-                created.setP25SiteIdentity(identity);
-            }
             List<Channel> channels = detachedChannels(false);
-            created.setAutoStart(autoStart);
-            created.setAutoStartOrder(autoStart ? effectiveAutoStartIds(channels).size() + 1 : null);
-            channels.add(created);
+            AliasConfigurationSnapshot aliases = mConfigurationManager.createDetachedAliasConfigurationSnapshot();
+            List<DiscoverySave> results = new ArrayList<>();
+            Set<String> createdIds = new LinkedHashSet<>();
+            boolean aliasesChanged = false;
+            for(DiscoveryRequest row: rows)
+            {
+                try
+                {
+                    if(cancelled.getAsBoolean()) throw new IllegalStateException("The search was cancelled");
+                    PreparedDiscovery prepared = prepareDiscovery(row, channels, aliases);
+                    aliases = prepared.aliases();
+                    Channel created = prepared.channel();
+                    channels.add(created);
+                    createdIds.add(created.getConfigurationId());
+                    aliasesChanged |= prepared.created().aliasListCreated();
+                    results.add(new DiscoverySave(prepared.created(), null));
+                }
+                catch(IllegalArgumentException | IllegalStateException rejected)
+                {
+                    results.add(new DiscoverySave(null, rejected));
+                }
+            }
+            if(createdIds.isEmpty()) return new DiscoveryBatch(results, null);
+            if(cancelled.getAsBoolean()) throw new IllegalStateException("The search was cancelled");
             try
             {
-                if(newList)
-                    mConfigurationManager.commitAndPublishDiscoveredChannel(aliases,
-                        new ChannelConfigurationSnapshot(channels), created.getConfigurationId());
+                if(aliasesChanged)
+                    mConfigurationManager.commitAndPublishDiscoveredChannels(aliases,
+                        new ChannelConfigurationSnapshot(channels), createdIds);
                 else
                     mConfigurationManager.commitAndPublishChannelConfiguration(new ChannelConfigurationSnapshot(channels),
-                        Set.of(created.getConfigurationId()), false);
+                        createdIds, false);
             }
             catch(ConfigurationManager.ConfigurationCommitException exception)
             {
-                throw new PersistenceException("The channel could not be saved", exception);
+                throw new PersistenceException("The channels could not be saved", exception);
             }
             catch(ConfigurationManager.ConfigurationPublicationException exception)
             {
-                if(evidence != null && identity == null)
-                    mDiscoveredTrunkedIdentities.put(created.getConfigurationId(),
-                        savedDiscoveryIdentity(created, evidence));
-                throw new ConfigurationManager.ConfigurationPublicationException(exception.getMessage(), exception,
-                    created.getConfigurationId(), selected.getId());
+                // Every successful row is already committed; callers must never retry those identities.
+                return new DiscoveryBatch(results, exception);
             }
-            if(evidence != null && identity == null)
-                mDiscoveredTrunkedIdentities.put(created.getConfigurationId(),
-                    savedDiscoveryIdentity(created, evidence));
-            return new DiscoveryCreated(created.getConfigurationId(), selected.getId(), newList);
+            return new DiscoveryBatch(results, null);
         })));
     }
+
+    private PreparedDiscovery prepareDiscovery(DiscoveryRequest request, List<Channel> channels,
+                                                 AliasConfigurationSnapshot aliases)
+    {
+        ChannelDefinition definition = Objects.requireNonNull(request.definition());
+        P25SiteIdentity identity = request.p25Identity();
+        TrunkedDiscoveryEvidence evidence = request.evidence();
+        if(evidence != null)
+        {
+            requireTrunkedEvidence(definition.protocolId(), evidence);
+            if(!Objects.equals(identity, evidence.identity().p25()))
+                throw new IllegalArgumentException("The confirmed serving-site identity changed");
+        }
+        ChannelProtocolRegistry.Profile profile = evidence != null ?
+            mProtocolRegistry.require(definition.protocolId()) : discoveryProfile(definition.protocolId());
+        if("p25-phase1".equals(profile.id()) != (identity != null))
+            throw new IllegalArgumentException("A confirmed P25 identity is required");
+        if(definition.source().frequenciesHz().size() != 1 ||
+            !discoveryFrequencyMatches(definition.source().frequenciesHz().getFirst(), channels).isEmpty())
+            throw new IllegalStateException("This frequency already belongs to a saved channel");
+        if(identity != null && channels.stream().anyMatch(channel -> identity.equals(channel.getP25SiteIdentity())))
+            throw new IllegalStateException("This P25 site already has a saved channel");
+        if(evidence != null && identity == null && !knownTrunkedChannels(evidence, true, channels).isEmpty())
+            throw new IllegalStateException("This trunked site already has a saved channel");
+        List<DiscoveryAliasList> compatibleLists = evidence != null && identity == null ?
+            discoveryTrunkedAliasLists(profile, evidence, channels, aliases.definitions()) :
+            discoveryAliasLists(profile, identity, channels, aliases.definitions());
+        boolean newList = definition.aliasListId() == 0;
+        AliasListDefinition selected;
+        if(newList && (identity != null || evidence != null) && compatibleLists.size() == 1)
+        {
+            long id = compatibleLists.getFirst().id();
+            selected = aliases.definitions().stream().filter(list -> list.getId() == id).findFirst().orElseThrow();
+            newList = false;
+        }
+        else if(newList)
+        {
+            String name = request.newAliasListName() != null ? request.newAliasListName().strip() :
+                discoveryAliasListName(definition.system(), definition.name());
+            if(name.isBlank() || name.length() > AliasAdministrationService.MAX_ALIAS_LIST_NAME_LENGTH)
+                throw new IllegalArgumentException("Alias List name must contain between 1 and " +
+                    AliasAdministrationService.MAX_ALIAS_LIST_NAME_LENGTH + " characters");
+            AliasListDefinition existing = aliases.definitions().stream()
+                .filter(list -> name.equalsIgnoreCase(list.getName())).findFirst().orElse(null);
+            if(existing != null)
+            {
+                boolean matchesSystem = compatibleLists.stream().anyMatch(list -> list.id() == existing.getId());
+                boolean assignedToTrunked = channels.stream().anyMatch(channel -> channel.getAliasListId() == existing.getId() &&
+                    ChannelConfigurationPolicy.requireChannelKind(channel) == ChannelConfigurationPolicy.ChannelKind.TRUNKED);
+                if(existing.getFamily() != profile.aliasFamily() ||
+                    (identity != null || evidence != null) && assignedToTrunked && !matchesSystem)
+                    throw new IllegalArgumentException("Choose a compatible Alias List for this system");
+                selected = existing;
+                newList = false;
+            }
+            else
+            {
+                if((identity != null || evidence != null) && !compatibleLists.isEmpty())
+                    throw new IllegalArgumentException(identity != null ? "Use an Alias List matching this P25 system" :
+                        "Use an Alias List matching this trunked system");
+                selected = new AliasListDefinition(name, profile.aliasFamily());
+                selected.setId(mConfigurationManager.nextAliasListIds(aliases.definitions().stream()
+                    .map(AliasListDefinition::getId).toList(), 1).getFirst());
+            }
+        }
+        else
+        {
+            if(compatibleLists.stream().noneMatch(list -> list.id() == definition.aliasListId()))
+                throw new IllegalArgumentException("Choose a compatible Alias List for this system");
+            selected = aliases.definitions().stream().filter(list -> list.getId() == definition.aliasListId()).findFirst().orElseThrow();
+        }
+        ChannelDefinition normalized = new ChannelDefinition(null, definition.protocolId(), definition.system(),
+            definition.site(), definition.name(), null, selected.getId(), definition.source(),
+            evidence != null ? discoveryTrunkedSettings(profile, definition.settings(), evidence) : definition.settings(),
+            evidence != null ? evidence.frequencyMap() : List.of(), List.of(), List.of(), List.of(), ChannelDefinition.Observed.EMPTY);
+        Channel created = mCodec.toChannel(normalized, selected, null);
+        if(created.getDecodeConfiguration() instanceof DecodeConfigP25 p25)
+        {
+            p25.setLearnAnnouncedControlChannels(true);
+            created.setP25SiteIdentity(identity);
+        }
+        else if(evidence != null) created.setTrunkedDiscoveryIdentity(TrunkedDiscoveryIdentity.from(evidence));
+        created.setAutoStart(request.autoStart());
+        created.setAutoStartOrder(request.autoStart() ? effectiveAutoStartIds(channels).size() + 1 : null);
+        if(newList)
+        {
+            List<AliasListDefinition> definitions = new ArrayList<>(aliases.definitions());
+            definitions.add(selected);
+            ScanListConfiguration scans = aliases.scanLists();
+            Set<Long> defaultMembership = Set.of(scans.defaultScanList().getId());
+            Map<Long,Set<Long>> unmatched = new HashMap<>(scans.unmatchedAliasListMemberships());
+            Map<Long,Set<Long>> newAliases = new HashMap<>(scans.newAliasListMemberships());
+            unmatched.put(selected.getId(), defaultMembership);
+            newAliases.put(selected.getId(), defaultMembership);
+            aliases = new AliasConfigurationSnapshot(definitions, aliases.aliases(),
+                new ScanListConfiguration(scans.scanLists(), scans.aliasMemberships(), unmatched, newAliases));
+        }
+        return new PreparedDiscovery(created, aliases,
+            new DiscoveryCreated(created.getConfigurationId(), selected.getId(), newList));
+    }
+
+    public record DiscoveryRequest(ChannelDefinition definition, P25SiteIdentity p25Identity,
+        TrunkedDiscoveryEvidence evidence, String newAliasListName, boolean autoStart) {}
+    public record DiscoverySave(DiscoveryCreated created, RuntimeException failure) {}
+    public record DiscoveryBatch(List<DiscoverySave> results,
+        ConfigurationManager.ConfigurationPublicationException publicationFailure)
+    {
+        public DiscoveryBatch { results = List.copyOf(results); }
+    }
+    private record PreparedDiscovery(Channel channel, AliasConfigurationSnapshot aliases, DiscoveryCreated created) {}
 
     public record DiscoveryFrequencyMatch(String configurationId, String name, String system, String site, String kind) {}
     public record DiscoveryAliasList(long id, String name, boolean matched) {}

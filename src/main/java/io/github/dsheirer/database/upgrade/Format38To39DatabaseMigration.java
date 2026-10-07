@@ -21,16 +21,16 @@ final class Format38To39DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
-        requireSource(connection);
+        requireMemberParents(connection);
         return effects(memberCount(connection));
     }
 
     @Override
-    public void migrate(Connection connection) throws SQLException
+    public void migrateSource(Connection connection) throws SQLException
     {
-        requireSource(connection);
+        requireMemberParents(connection);
         long members = memberCount(connection);
         ReceiverActivitySchema.rebuildStoredMemberChannelEvidence(connection);
         if(memberCount(connection) != members)
@@ -39,12 +39,9 @@ final class Format38To39DatabaseMigration implements DatabaseMigrationStep
         }
     }
 
-    private static void requireSource(Connection connection) throws SQLException
+
+    private static void requireMemberParents(Connection connection) throws SQLException
     {
-        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 38)
-        {
-            throw new SQLException("Expected format 38");
-        }
         try(var statement = connection.createStatement(); var rows = statement.executeQuery("""
             SELECT 1 FROM activity_event_identity_member member
             LEFT JOIN receiver_activity_event event INDEXED BY sqlite_autoindex_receiver_activity_event_1

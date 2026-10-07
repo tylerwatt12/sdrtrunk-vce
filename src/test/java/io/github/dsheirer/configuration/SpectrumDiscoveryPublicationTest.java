@@ -15,6 +15,8 @@ import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -68,4 +70,50 @@ class SpectrumDiscoveryPublicationTest
         }
         finally { MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager()); }
     }
+    @Test
+    void batchPublicationFailureReturnsEveryCommittedIdentityAndPreventsRetry() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(root);
+        SdrTrunkTestDatabase.create(database);
+        UserPreferences preferences = new UserPreferences()
+        {
+            final DirectoryPreference directory = new DirectoryPreference(type -> {})
+            { @Override public Path getDirectoryApplicationRoot() { return root; } };
+            @Override public DirectoryPreference getDirectoryPreference() { return directory; }
+        };
+        ConfigurationManager manager = new ConfigurationManager(preferences, null, new AliasModel(), null, null)
+        {
+            @Override protected void publishCommittedAliasConfiguration(AliasConfigurationSnapshot committed,
+                AliasConfigurationPublication publication)
+            { throw new IllegalStateException("Injected publication failure"); }
+        };
+        manager.init();
+        try
+        {
+            var channels = ChannelAdministrationServiceTestSupport.create(manager);
+            var first = new P25SiteIdentity(0xBEE00, 0x123, 1, 2);
+            var second = new P25SiteIdentity(0xBEE00, 0x123, 1, 3);
+            var firstReview = channels.discoveryReview("p25-phase1", 851_012_500, "Tuner", first, "C4FM");
+            var secondReview = channels.discoveryReview("p25-phase1", 852_012_500, "Tuner", second, "C4FM");
+            var requests = List.of(
+                new ChannelAdministrationService.DiscoveryRequest(firstReview.template(), first, null, "County P25", false),
+                new ChannelAdministrationService.DiscoveryRequest(secondReview.template(), second, null, "Another suggestion", false));
+            var batch = channels.createDiscoveredBatch(requests, firstReview.revision(), () -> false);
+            assertNotNull(batch.publicationFailure());
+            assertTrue(batch.results().stream().allMatch(result -> result.created() != null && result.failure() == null));
+            var firstSaved = batch.results().getFirst().created();
+            var secondSaved = batch.results().get(1).created();
+            assertNotEquals(firstSaved.configurationId(), secondSaved.configurationId());
+            assertEquals(firstSaved.aliasListId(), secondSaved.aliasListId());
+            var disk = new ConfigurationRepository(database).load();
+            assertEquals(Set.of(firstSaved.configurationId(), secondSaved.configurationId()),
+                disk.channels().stream().map(channel -> channel.getConfigurationId()).collect(java.util.stream.Collectors.toSet()));
+            assertTrue(manager.getChannelModel().getChannels().isEmpty());
+            assertThrows(ConfigurationManager.ConfigurationPublicationException.class, () ->
+                channels.createDiscoveredBatch(requests, firstReview.revision(), () -> false));
+            assertEquals(2, new ConfigurationRepository(database).load().channels().size());
+        }
+        finally { MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager()); }
+    }
+
 }

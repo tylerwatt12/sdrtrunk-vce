@@ -833,23 +833,8 @@ public final class RadioReferenceImportService
 
     private TrunkedSiteDetails requireSite(int systemId, int siteId) throws RadioReferenceDirectoryException
     {
-        int offset = 0;
-        while(true)
-        {
-            BoundedPage<TrunkedSiteDetails> page = mDirectory.trunkedSites(systemId, offset,
-                RadioReferenceDirectoryService.MAXIMUM_RESULT_LIMIT);
-            TrunkedSiteDetails match = page.items().stream().filter(site -> site.id() == siteId).findFirst()
-                .orElse(null);
-            if(match != null)
-            {
-                return match;
-            }
-            if(page.nextOffset() == null)
-            {
-                throw new IllegalArgumentException("RadioReference site was not found");
-            }
-            offset = page.nextOffset();
-        }
+        return mDirectory.allTrunkedSites(systemId).stream().filter(site -> site.id() == siteId)
+            .findFirst().orElseThrow(() -> new IllegalArgumentException("RadioReference site was not found"));
     }
 
     private synchronized ChannelPreview storeChannel(long revision, ChannelAction action, String existingId,
@@ -1161,7 +1146,7 @@ public final class RadioReferenceImportService
     interface DirectoryAccess
     {
         TrunkedSystemDetails trunkedSystemDetails(int systemId) throws RadioReferenceDirectoryException;
-        BoundedPage<TrunkedSiteDetails> trunkedSites(int systemId, int offset, int limit)
+        List<TrunkedSiteDetails> allTrunkedSites(int systemId)
             throws RadioReferenceDirectoryException;
         BoundedPage<RemoteTalkgroup> talkgroups(int systemId, Integer categoryId, String search, int offset, int limit)
             throws RadioReferenceDirectoryException;
@@ -1183,8 +1168,8 @@ public final class RadioReferenceImportService
 
         @Override public TrunkedSystemDetails trunkedSystemDetails(int systemId)
             throws RadioReferenceDirectoryException { return service.trunkedSystemDetails(systemId); }
-        @Override public BoundedPage<TrunkedSiteDetails> trunkedSites(int systemId, int offset, int limit)
-            throws RadioReferenceDirectoryException { return service.trunkedSites(systemId, offset, limit); }
+        @Override public List<TrunkedSiteDetails> allTrunkedSites(int systemId)
+            throws RadioReferenceDirectoryException { return service.allTrunkedSites(systemId); }
         @Override public BoundedPage<RemoteTalkgroup> talkgroups(int systemId, Integer categoryId, String search,
             int offset, int limit) throws RadioReferenceDirectoryException
             { return service.talkgroups(systemId, categoryId, search, offset, limit); }

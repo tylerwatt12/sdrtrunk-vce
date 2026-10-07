@@ -184,7 +184,7 @@ class Format29To30DatabaseMigrationTest
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);
             SQLException exception = assertThrows(SQLException.class,
                 () -> new Format29To30DatabaseMigration().migrate(connection));
-            assertTrue(exception.getMessage().contains("requires format 29"), exception::getMessage);
+            assertTrue(exception.getMessage().contains("requires exact source format 29"), exception::getMessage);
             assertEquals(28, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(fingerprint, SqliteSchemaValidator.fingerprint(connection));
         }

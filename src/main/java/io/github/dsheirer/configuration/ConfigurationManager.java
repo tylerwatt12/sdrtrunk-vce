@@ -515,8 +515,8 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     }
 
     /** One persist-before-publish boundary for spectrum channel creation, including listening defaults. */
-    public synchronized void commitAndPublishDiscoveredChannel(AliasConfigurationSnapshot aliases,
-        ChannelConfigurationSnapshot channels, String configurationId)
+    public synchronized void commitAndPublishDiscoveredChannels(AliasConfigurationSnapshot aliases,
+        ChannelConfigurationSnapshot channels, Set<String> configurationIds)
     {
         if(mExternalConfigurationOperation)
             throw new ConfigurationPublicationException("Configuration saves are suspended until VCE restarts");
@@ -525,7 +525,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         {
             saveNow();
             if(hasDirtyConfiguration()) throw new IllegalStateException("Pending configuration could not be saved");
-            committed = mConfigurationRepository.commitDiscoveredChannel(aliases, channels);
+            committed = mConfigurationRepository.commitDiscoveredChannels(aliases, channels);
         }
         catch(Exception exception)
         {
@@ -533,13 +533,13 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         }
         try
         {
-            publishDiscoveredChannel(committed, configurationId);
+            publishDiscoveredChannels(committed, configurationIds);
         }
         catch(RuntimeException | Error failure)
         {
             try
             {
-                publishDiscoveredChannel(mConfigurationRepository.load(), configurationId);
+                publishDiscoveredChannels(mConfigurationRepository.load(), configurationIds);
             }
             catch(Exception recovery)
             {
@@ -551,12 +551,12 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         }
     }
 
-    private void publishDiscoveredChannel(ConfigurationSnapshot snapshot, String configurationId)
+    private void publishDiscoveredChannels(ConfigurationSnapshot snapshot, Set<String> configurationIds)
     {
         publishCommittedAliasConfiguration(snapshot.aliasConfiguration(),
             new AliasConfigurationPublication(Set.of(), true, true, true));
         publishCommittedChannelConfiguration(new ChannelConfigurationSnapshot(snapshot.channels()),
-            Set.of(configurationId), false);
+            configurationIds, false);
     }
 
     private void publishCommittedChannelConfiguration(ChannelConfigurationSnapshot committed,

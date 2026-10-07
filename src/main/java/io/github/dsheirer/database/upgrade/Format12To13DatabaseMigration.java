@@ -17,22 +17,13 @@ final class Format12To13DatabaseMigration implements DatabaseMigrationStep
         return List.of(new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT, "setup wizard progress", 1,
             "Mark existing profiles as previously configured; preserve all settings and recheck actual readiness at launch"));
     }
-    public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
-        requireSourceFormat(connection);
         return declaredEffects();
     }
-    public void migrate(Connection connection) throws SQLException
+    public void migrateSource(Connection connection) throws SQLException
     {
-        requireSourceFormat(connection);
         SetupProgress.writeLegacy(connection, new SetupProgress(true, false));
     }
 
-    private static void requireSourceFormat(Connection connection) throws SQLException
-    {
-        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 12)
-        {
-            throw new SQLException("Expected format 12");
-        }
-    }
 }

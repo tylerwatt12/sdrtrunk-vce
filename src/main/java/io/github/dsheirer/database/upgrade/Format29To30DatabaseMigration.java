@@ -33,45 +33,35 @@ final class Format29To30DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
-        requireSource(connection);
         RepairReport repairs = inspectRepairs(connection);
         long encryptedEvents = repairs.derived().damagedTables() > 0 ? 0 : countEncryptedEvents(connection);
         return effects(encryptedEvents, repairs, false, true);
     }
 
     @Override
-    public void migrate(Connection connection) throws SQLException
+    public void migrateSource(Connection connection) throws SQLException
     {
-        migrateAndReport(connection, true);
+        migrateSourceAndReport(connection, true);
     }
 
     @Override
-    public List<DatabaseMigrationEffect> migrateAndReport(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> migrateSourceAndReport(Connection connection) throws SQLException
     {
-        return migrateAndReport(connection, true);
+        return migrateSourceAndReport(connection, true);
     }
 
     @Override
-    public List<DatabaseMigrationEffect> migrateAndReport(Connection connection, boolean selectedSourceStep)
+    public List<DatabaseMigrationEffect> migrateSourceAndReport(Connection connection, boolean selectedSourceStep)
         throws SQLException
     {
-        requireSource(connection);
         RepairReport repairs = selectedSourceStep ? repair(connection) : RepairReport.none();
         long encryptedEvents = countEncryptedEvents(connection);
         ReceiverActivitySchema.createEncryptedActivityFilterIndexes(connection);
         return effects(encryptedEvents, repairs, false, selectedSourceStep);
     }
 
-    private static void requireSource(Connection connection) throws SQLException
-    {
-        DatabaseFormatCatalog.DetectedFormat source = DatabaseFormatCatalog.inspectForMigration(connection);
-        if(source.version() != 29)
-        {
-            throw new SQLException("Migration step format-29-to-30 requires format 29; found " + source.version());
-        }
-    }
 
     private static RepairReport inspectRepairs(Connection connection) throws SQLException
     {

@@ -55,9 +55,8 @@ final class Format10To11DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
-        requireSource(connection);
         long missing = 0;
         long unassigned = 0;
         List<FactoryAliasListCollisionRepair.Collision> collisions =
@@ -98,9 +97,9 @@ final class Format10To11DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public void migrate(Connection connection) throws SQLException
+    public void migrateSource(Connection connection) throws SQLException
     {
-        validateSource(connection);
+        inspectSource(connection);
         LegacyDefaultScanListRepair.ensureOneDefault(connection);
         FactoryAliasListCollisionRepair.recoverJsonOwnedChannelProjections(connection);
         List<FactoryAliasListCollisionRepair.Collision> collisions =
@@ -235,13 +234,6 @@ final class Format10To11DatabaseMigration implements DatabaseMigrationStep
         }
     }
 
-    private static void requireSource(Connection connection) throws SQLException
-    {
-        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 10)
-        {
-            throw new SQLException("Migration step format-10-to-11 requires exact source format 10");
-        }
-    }
 
     private static List<DatabaseMigrationEffect> effects(long renamed, long references, long collisionLists,
                                                           long collisionReferences, long projectionRepairs,

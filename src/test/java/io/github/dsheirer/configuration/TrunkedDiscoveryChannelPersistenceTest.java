@@ -9,6 +9,9 @@ import io.github.dsheirer.channel.ChannelAdministrationServiceTestSupport;
 import io.github.dsheirer.channel.ChannelDefinition;
 import io.github.dsheirer.channel.ChannelDefinitionCodec;
 import io.github.dsheirer.channel.ChannelProtocolRegistry;
+import io.github.dsheirer.channel.TrunkedDiscoveryIdentity;
+import io.github.dsheirer.alias.AliasConfigurationSnapshot;
+import java.util.Set;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import io.github.dsheirer.database.configuration.ConfigurationRepository;
@@ -174,7 +177,7 @@ class TrunkedDiscoveryChannelPersistenceTest
     }
 
     @Test
-    void retainedNativeHistoryRestoresSiteDedupAndAliasesAfterAdministrationRestart() throws Exception
+    void savedNativeIdentitySurvivesRestartWithoutHistoryAndReceivingEditsInvalidateIt() throws Exception
     {
         try(Fixture fixture = new Fixture(root))
         {
@@ -187,20 +190,18 @@ class TrunkedDiscoveryChannelPersistenceTest
                 var review = fixture.channels.discoveryTrunkedReview(protocol,frequency,null,proof);
                 var saved = fixture.channels.createTrunkedDiscovered(review.template(),proof,dmr ? "Retained DMR" : "Retained NXDN",review.revision(),false);
                 var restarted = ChannelAdministrationServiceTestSupport.create(fixture.manager);
-                assertNull(restarted.discoveryTrunkedSiteMatch(proof),"Never-received channels have no retained identity");
-                var retained = new ChannelAdministrationService.RetainedDiscoveryIdentity(saved.configurationId(),protocol,
-                    proof.variant(),proof.identity(),frequency,frequency,1000,4000,4);
-                restarted.setRetainedDiscoveryIdentityProvider(ignored -> List.of(retained));
-                assertEquals(saved.configurationId(),restarted.discoveryTrunkedSiteMatch(proof).configurationId());
+                assertEquals(saved.configurationId(), restarted.discoveryTrunkedSiteMatch(proof).configurationId());
+                var persisted = new ConfigurationRepository(fixture.database).load().channels().stream()
+                    .filter(channel -> saved.configurationId().equals(channel.getConfigurationId())).findFirst().orElseThrow();
+                assertEquals(TrunkedDiscoveryIdentity.from(proof), persisted.getTrunkedDiscoveryIdentity());
+                assertNull(persisted.copyOf().getTrunkedDiscoveryIdentity(), "Clones need their own receiver proof");
+                assertEquals(persisted.getTrunkedDiscoveryIdentity(), persisted.copyOfPreservingIdentity().getTrunkedDiscoveryIdentity());
+                persisted.regenerateConfigurationId();
+                assertNull(persisted.getTrunkedDiscoveryIdentity(), "A legacy import receives a new channel identity and no proof");
                 var nextSite = evidence(protocol,proof.variant(),proof.identity().radioSystemKey(),4,frequency+1_000_000,proof.settings());
                 assertEquals(saved.aliasListId(),restarted.discoveryTrunkedReview(protocol,frequency+1_000_000,null,nextSite).suggestedAliasListId());
                 var duplicate = restarted.discoveryTrunkedReview(protocol,frequency+2_000_000,null,proof);
                 assertThrows(IllegalStateException.class,() -> restarted.createTrunkedDiscovered(duplicate.template(),proof,null,duplicate.revision(),false));
-                restarted.setRetainedDiscoveryIdentityProvider(ignored -> List.of(new ChannelAdministrationService.RetainedDiscoveryIdentity(
-                    saved.configurationId(),protocol,proof.variant(),proof.identity(),frequency+100_000,frequency+100_000,1000,4000,4)));
-                assertNull(restarted.discoveryTrunkedSiteMatch(proof),"An edited source/map cannot reuse unrelated history");
-                restarted.setRetainedDiscoveryIdentityProvider(ignored -> { throw new IllegalStateException("offline"); });
-                assertNull(restarted.discoveryTrunkedSiteMatch(proof));
                 var entry = fixture.channels.get(saved.configurationId());
                 var previous = entry.channel();
                 var edited = new ChannelDefinition(previous.configurationId(),previous.protocolId(),previous.system(),previous.site(),
@@ -208,7 +209,7 @@ class TrunkedDiscoveryChannelPersistenceTest
                     new ChannelDefinition.Source(List.of(frequency+250_000),null,null,frequency+250_000,null,null),
                     previous.settings(),List.of(),previous.eventLogs(),previous.recorders(),previous.auxiliaryDecoders(),previous.observed());
                 fixture.channels.update(saved.configurationId(),edited,entry.revision());
-                assertNull(fixture.channels.discoveryTrunkedSiteMatch(proof),"Editing receiving configuration invalidates the in-memory proof");
+                assertNull(fixture.channels.discoveryTrunkedSiteMatch(proof),"Editing receiving configuration invalidates the saved proof");
             }
         }
     }
@@ -246,6 +247,157 @@ class TrunkedDiscoveryChannelPersistenceTest
                 fixture.channels.discoveryTrunkedReview("nxdn", 452_000_000, null, another));
             assertThrows(IllegalArgumentException.class, () -> fixture.channels.discoveryTrunkedSiteMatch(null));
         }
+    }
+
+    @Test
+    void batchCommitsValidRowsOnceAndDeduplicatesWithinTheSelection() throws Exception
+    {
+        try(Fixture fixture = new Fixture(root))
+        {
+            int beforeAliases = new ConfigurationRepository(fixture.database).load().aliasListDefinitions().size();
+            var first = matchingSiteEvidence("dmr", 3, 450_000_000);
+            var second = matchingSiteEvidence("dmr", 4, 452_000_000);
+            var third = matchingSiteEvidence("nxdn", 5, 454_000_000);
+            var firstReview = fixture.channels.discoveryTrunkedReview("dmr", 450_000_000, null, first);
+            var secondReview = fixture.channels.discoveryTrunkedReview("dmr", 452_000_000, null, second);
+            var thirdReview = fixture.channels.discoveryTrunkedReview("nxdn", 454_000_000, null, third);
+            var requests = List.of(
+                new ChannelAdministrationService.DiscoveryRequest(firstReview.template(), null, first, "DMR Batch", true),
+                new ChannelAdministrationService.DiscoveryRequest(secondReview.template(), null, second, "Different suggestion", true),
+                new ChannelAdministrationService.DiscoveryRequest(firstReview.template(), null, first, "Duplicate", false),
+                new ChannelAdministrationService.DiscoveryRequest(thirdReview.template(), null, third, "NXDN Batch", false));
+            var batch = fixture.channels.createDiscoveredBatch(requests, firstReview.revision(), () -> false);
+            assertNull(batch.publicationFailure());
+            assertEquals(1, fixture.commits);
+            assertEquals(4, batch.results().size());
+            assertNull(batch.results().get(0).failure());
+            assertNull(batch.results().get(1).failure());
+            assertNotNull(batch.results().get(2).failure());
+            assertNull(batch.results().get(3).failure());
+            assertEquals(batch.results().get(0).created().aliasListId(), batch.results().get(1).created().aliasListId());
+            assertTrue(batch.results().get(0).created().aliasListCreated());
+            assertFalse(batch.results().get(1).created().aliasListCreated());
+            var disk = new ConfigurationRepository(fixture.database).load();
+            assertEquals(3, disk.channels().size());
+            assertEquals(beforeAliases + 2, disk.aliasListDefinitions().size());
+            assertEquals(List.of(1, 2), disk.channels().stream().filter(channel -> channel.isAutoStart())
+                .map(channel -> channel.getAutoStartOrder()).sorted().toList());
+            assertThrows(ChannelAdministrationService.StaleRevisionException.class, () ->
+                fixture.channels.createDiscoveredBatch(requests, firstReview.revision(), () -> false));
+            assertEquals(1, fixture.commits);
+            var cancelled = fixture.channels.createDiscoveredBatch(requests, fixture.channels.currentRevision(), () -> true);
+            assertTrue(cancelled.results().stream().allMatch(row -> row.created() == null && row.failure() != null));
+            assertEquals(1, fixture.commits);
+        }
+    }
+
+    @Test
+    void rejectedRowDoesNotLeaveAnAliasAndBrowserProofCannotCreateOrReplaceIdentity() throws Exception
+    {
+        try(Fixture fixture = new Fixture(root))
+        {
+            var proof = matchingSiteEvidence("dmr", 3, 450_000_000);
+            var review = fixture.channels.discoveryTrunkedReview("dmr", 450_000_000, null, proof);
+            var template = review.template();
+            var invalid = new ChannelDefinition(null, template.protocolId(), template.system(), template.site(), "", null,
+                0, template.source(), template.settings(), template.frequencyMap(), List.of(), List.of(), List.of(), template.observed());
+            var batch = fixture.channels.createDiscoveredBatch(List.of(
+                new ChannelAdministrationService.DiscoveryRequest(invalid, null, proof, "Must not remain", false),
+                new ChannelAdministrationService.DiscoveryRequest(template, null, proof, "Verified system", false)),
+                review.revision(), () -> false);
+            assertNotNull(batch.results().getFirst().failure());
+            var saved = batch.results().get(1).created();
+            assertNotNull(saved);
+            assertFalse(new ConfigurationRepository(fixture.database).load().aliasListDefinitions().stream()
+                .anyMatch(list -> "Must not remain".equals(list.getName())));
+            var entry = fixture.channels.get(saved.configurationId());
+            var observed = new ChannelDefinition.Observed(List.of(), Map.of(),
+                TrunkedDiscoveryIdentity.from(matchingSiteEvidence("dmr", 9, 455_000_000)));
+            var current = entry.channel();
+            var forged = new ChannelDefinition(current.configurationId(), current.protocolId(), "New friendly name", current.site(),
+                current.name(), null, current.aliasListId(), current.source(), current.settings(), current.frequencyMap(),
+                List.of(), List.of(), List.of(), observed);
+            fixture.channels.update(saved.configurationId(), forged, entry.revision());
+            assertEquals(TrunkedDiscoveryIdentity.from(proof), fixture.channels.get(saved.configurationId()).channel().observed().trunkedDiscoveryIdentity());
+            var codec = new ChannelDefinitionCodec(new ChannelProtocolRegistry());
+            var disk = new ConfigurationRepository(fixture.database).load();
+            var owner = disk.aliasListDefinitions().stream().filter(list -> list.getId() == saved.aliasListId()).findFirst().orElseThrow();
+            var imported = new ChannelDefinition(null, forged.protocolId(), forged.system(), forged.site(), forged.name(), null,
+                forged.aliasListId(), forged.source(), forged.settings(), forged.frequencyMap(), List.of(), List.of(), List.of(), observed);
+            assertNull(codec.toChannel(imported, owner, null).getTrunkedDiscoveryIdentity());
+            assertNull(codec.cloneChannel(disk.channels().getFirst(), owner).getTrunkedDiscoveryIdentity());
+        }
+    }
+
+    @Test
+    void savedJsonIdentityDoesNotDependOnPropertyOrderAndRejectsConflictingReceivingSettings() throws Exception
+    {
+        try(Fixture fixture = new Fixture(root))
+        {
+            var proof = matchingSiteEvidence("dmr", 3, 450_000_000);
+            var review = fixture.channels.discoveryTrunkedReview("dmr", 450_000_000, null, proof);
+            var saved = fixture.channels.createTrunkedDiscovered(review.template(), proof, "Order independent", review.revision(), false);
+            var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            try(var connection = io.github.dsheirer.database.SdrTrunkDatabase.open(fixture.database))
+            {
+                com.fasterxml.jackson.databind.node.ObjectNode original;
+                try(var query = connection.prepareStatement("SELECT config_json FROM configuration_channel WHERE configuration_id = ?"))
+                {
+                    query.setString(1, saved.configurationId());
+                    try(var result = query.executeQuery())
+                    {
+                        assertTrue(result.next());
+                        original = (com.fasterxml.jackson.databind.node.ObjectNode)mapper.readTree(result.getString(1));
+                    }
+                }
+                var reordered = mapper.createObjectNode();
+                reordered.set("trunkedDiscoveryIdentity", original.get("trunkedDiscoveryIdentity"));
+                var names = new java.util.ArrayList<String>();
+                original.fieldNames().forEachRemaining(names::add);
+                java.util.Collections.reverse(names);
+                for(String name: names)
+                    if(!"trunkedDiscoveryIdentity".equals(name)) reordered.set(name, original.get(name));
+                try(var update = connection.prepareStatement("UPDATE configuration_channel SET config_json = ? WHERE configuration_id = ?"))
+                {
+                    update.setString(1, mapper.writeValueAsString(reordered));
+                    update.setString(2, saved.configurationId());
+                    assertEquals(1, update.executeUpdate());
+                }
+                var reloaded = new ConfigurationRepository(fixture.database).load().channels().getFirst();
+                assertEquals(TrunkedDiscoveryIdentity.from(proof), reloaded.getTrunkedDiscoveryIdentity());
+                assertEquals(List.of(450_000_000L), new ChannelDefinitionCodec(new ChannelProtocolRegistry())
+                    .fromChannel(reloaded).source().frequenciesHz());
+                reordered.set("decodeConfiguration", mapper.valueToTree(new io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN()));
+                assertThrows(com.fasterxml.jackson.databind.JsonMappingException.class, () ->
+                    mapper.treeToValue(reordered, io.github.dsheirer.controller.channel.Channel.class));
+                var local = evidence("dmr", "CAPACITY_PLUS", null, 3, 450_000_000, Map.of("channel_mode", "TRUNKED"));
+                reordered.set("decodeConfiguration", original.get("decodeConfiguration"));
+                reordered.set("trunkedDiscoveryIdentity", mapper.valueToTree(TrunkedDiscoveryIdentity.from(local)));
+                var wrongSource = new io.github.dsheirer.source.config.SourceConfigTuner();
+                wrongSource.setFrequency(451_000_000);
+                reordered.set("sourceConfiguration", mapper.valueToTree(wrongSource));
+                assertThrows(com.fasterxml.jackson.databind.JsonMappingException.class, () ->
+                    mapper.treeToValue(reordered, io.github.dsheirer.controller.channel.Channel.class));
+            }
+        }
+    }
+
+    @Test
+    void persistedIdentityRejectsForgedVariantKeysAndConflictingSiteFacts()
+    {
+        var proof = matchingSiteEvidence("dmr", 3, 450_000_000);
+        assertThrows(IllegalArgumentException.class, () -> new TrunkedDiscoveryIdentity("dmr", "UNKNOWN", proof.identity()));
+        assertThrows(IllegalArgumentException.class, () -> new TrunkedDiscoveryIdentity("nxdn", "TYPE_C", proof.identity()));
+        var value = proof.identity();
+        var forged = new TrunkedDiscoveryEvidence.Identity(null, value.radioSystemKey(), value.siteKey(), value.network(),
+            value.system(), 99, value.model(), value.category(), null, value.ran(), value.colorCode());
+        assertThrows(IllegalArgumentException.class, () -> new TrunkedDiscoveryIdentity("dmr", "TIER_III", forged));
+        var differentColor = new TrunkedDiscoveryEvidence.Identity(null, value.radioSystemKey(), value.siteKey(), value.network(),
+            value.system(), value.site(), value.model(), value.category(), null, value.ran(), 9);
+        var conflict = new TrunkedDiscoveryEvidence(proof.protocolId(), proof.variant(), differentColor, proof.settings(),
+            proof.frequencyMap(), 100, 100, 25, 0, 1, "confirmed");
+        assertFalse(TrunkedDiscoveryIdentity.from(proof).matches(conflict, true));
+        assertTrue(TrunkedDiscoveryIdentity.from(proof).matches(conflict, false), "Another site may use another color");
     }
 
     private static TrunkedDiscoveryEvidence evidence(String protocol, String variant, String nativeKey,
@@ -296,6 +448,7 @@ class TrunkedDiscoveryChannelPersistenceTest
         final Path database;
         final ConfigurationManager manager;
         final ChannelAdministrationService channels;
+        int commits;
 
         Fixture(Path root) throws Exception
         {
@@ -307,7 +460,21 @@ class TrunkedDiscoveryChannelPersistenceTest
                 { @Override public Path getDirectoryApplicationRoot() { return root; } };
                 @Override public DirectoryPreference getDirectoryPreference() { return directory; }
             };
-            manager = new ConfigurationManager(preferences, null, new AliasModel(), null, null);
+            manager = new ConfigurationManager(preferences, null, new AliasModel(), null, null)
+            {
+                @Override public synchronized void commitAndPublishDiscoveredChannels(AliasConfigurationSnapshot aliases,
+                    ChannelConfigurationSnapshot channels, Set<String> ids)
+                {
+                    commits++;
+                    super.commitAndPublishDiscoveredChannels(aliases, channels, ids);
+                }
+                @Override public synchronized ChannelConfigurationSnapshot commitAndPublishChannelConfiguration(
+                    ChannelConfigurationSnapshot channels, Set<String> ids, boolean autoStartOnly)
+                {
+                    commits++;
+                    return super.commitAndPublishChannelConfiguration(channels, ids, autoStartOnly);
+                }
+            };
             manager.init();
             channels = ChannelAdministrationServiceTestSupport.create(manager);
         }

@@ -28,7 +28,18 @@ public final class RadioReferenceDiscoveryResolver
         mDirectory = Objects.requireNonNull(directory);
     }
 
+    /** One bounded catalog belongs to one search, and is closed when that search is discarded. */
+    public RadioReferenceDirectoryService.DiscoveryCatalog newCatalog()
+    {
+        return mDirectory.newDiscoveryCatalog();
+    }
+
     public Result resolve(Integer stateId, Identity identity)
+    {
+        return resolve(stateId, identity, null);
+    }
+
+    public Result resolve(Integer stateId, Identity identity, RadioReferenceDirectoryService.DiscoveryCatalog catalog)
     {
         if(identity == null || !identity.stable())
         {
@@ -52,9 +63,9 @@ public final class RadioReferenceDiscoveryResolver
             return match(identity, identity.p25() ?
                 mDirectory.p25DiscoverySystems(identity.system(), identity.frequencyHz(), stateId,
                     system -> protocolMatches(identity, system) && networkMatches(identity, system),
-                    candidate -> verifiesSite(identity, candidate)) :
+                    candidate -> verifiesSite(identity, candidate), catalog) :
                 mDirectory.discoverySystems(stateId, identity.frequencyHz(),
-                    system -> protocolMatches(identity, system) && networkMatches(identity, system)));
+                    system -> protocolMatches(identity, system) && networkMatches(identity, system), catalog));
         }
         catch(RadioReferenceDirectoryException exception)
         {

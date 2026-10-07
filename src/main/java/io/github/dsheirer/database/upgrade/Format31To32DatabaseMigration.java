@@ -39,9 +39,8 @@ final class Format31To32DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
-        requireSource(connection);
         try(Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery("SELECT count(*) FROM alias"))
         {
@@ -50,9 +49,8 @@ final class Format31To32DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public void migrate(Connection connection) throws SQLException
+    public void migrateSource(Connection connection) throws SQLException
     {
-        requireSource(connection);
         ReceiverActivitySchema.createFormat32P25SubscriberIdentityTables(connection);
         rebuildAliasTable(connection);
         ReceiverActivitySchema.addFormat32ExplicitWorkingAddressProvenance(connection);
@@ -168,13 +166,6 @@ final class Format31To32DatabaseMigration implements DatabaseMigrationStep
         }
     }
 
-    private static void requireSource(Connection connection) throws SQLException
-    {
-        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 31)
-        {
-            throw new SQLException("Expected format 31");
-        }
-    }
 
     private static List<DatabaseMigrationEffect> effects(long aliases)
     {

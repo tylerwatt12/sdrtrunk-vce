@@ -19,9 +19,12 @@
 package io.github.dsheirer.controller.channel;
 
 import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.alias.AliasListDefinition;
+import io.github.dsheirer.channel.TrunkedDiscoveryIdentity;
 import io.github.dsheirer.controller.config.Configuration;
 import io.github.dsheirer.module.decode.DecoderFactory;
 import io.github.dsheirer.module.decode.DecoderType;
@@ -40,6 +43,7 @@ import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.source.config.SourceConfiguration;
 import io.github.dsheirer.source.tuner.channel.TunerChannel;
+import java.beans.ConstructorProperties;
 import java.beans.Transient;
 import java.util.ArrayList;
 import java.util.List;
@@ -85,6 +89,7 @@ public class Channel extends Configuration
     private StringProperty mName = new SimpleStringProperty();
     private StringProperty mRadioResolveId = new SimpleStringProperty();
     private ObjectProperty<P25SiteIdentity> mP25SiteIdentity = new SimpleObjectProperty<>();
+    private TrunkedDiscoveryIdentity mTrunkedDiscoveryIdentity;
     private String mConfigurationId;
     private boolean mConfigurationIdPersistenceRequired;
     private ObservableList<Long> mFrequencyList;
@@ -135,6 +140,20 @@ public class Channel extends Configuration
     {
         mChannelID = UNIQUE_ID++;
         regenerateConfigurationId();
+    }
+
+    /**
+     * Jackson collects these related properties before constructing the channel, regardless of document order.
+     * Implicit constructor-property names retain the legacy XML importer's snake-case naming strategy.
+     */
+    @JsonCreator
+    @ConstructorProperties({"decodeConfiguration", "sourceConfiguration", "trunkedDiscoveryIdentity"})
+    public Channel(DecodeConfiguration decoder, SourceConfiguration source, TrunkedDiscoveryIdentity identity)
+    {
+        this();
+        setDecodeConfiguration(decoder);
+        setSourceConfiguration(source);
+        setTrunkedDiscoveryIdentity(identity);
     }
 
     /**
@@ -204,6 +223,7 @@ public class Channel extends Configuration
         channel.setConfigurationId(getConfigurationId());
         channel.setRadioResolveId(hasRadioResolveId() ? getRadioResolveId() : null);
         channel.setP25SiteIdentity(getP25SiteIdentity());
+        channel.setTrunkedDiscoveryIdentity(getTrunkedDiscoveryIdentity());
         return channel;
     }
 
@@ -536,6 +556,7 @@ public class Channel extends Configuration
      */
     public void regenerateConfigurationId()
     {
+        mTrunkedDiscoveryIdentity = null;
         mConfigurationId = UUID.randomUUID().toString();
         mConfigurationIdPersistenceRequired = true;
     }
@@ -607,6 +628,19 @@ public class Channel extends Configuration
     public void setP25SiteIdentity(P25SiteIdentity identity)
     {
         mP25SiteIdentity.set(identity);
+    }
+
+    /** Persisted receiver proof; ordinary channel documents cannot supply this through the administration API. */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public TrunkedDiscoveryIdentity getTrunkedDiscoveryIdentity()
+    {
+        return mTrunkedDiscoveryIdentity;
+    }
+
+    public void setTrunkedDiscoveryIdentity(TrunkedDiscoveryIdentity identity)
+    {
+        if(identity != null) identity.validateFor(this);
+        mTrunkedDiscoveryIdentity = identity;
     }
 
     /**
@@ -914,6 +948,7 @@ public class Channel extends Configuration
     {
         if(config != null)
         {
+            mTrunkedDiscoveryIdentity = null;
             mDecodeConfiguration = config;
         }
     }
@@ -954,6 +989,7 @@ public class Channel extends Configuration
     {
         if(config != null)
         {
+            mTrunkedDiscoveryIdentity = null;
             mSourceConfiguration = config;
         }
 

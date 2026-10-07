@@ -177,8 +177,8 @@ public final class ConfigurationRepository
         });
     }
 
-    /** Saves a newly discovered channel and its optional new Alias List in one transaction. */
-    public synchronized ConfigurationSnapshot commitDiscoveredChannel(AliasConfigurationSnapshot aliases,
+    /** Saves a bounded group of discovered channels and their optional new Alias Lists in one transaction. */
+    public synchronized ConfigurationSnapshot commitDiscoveredChannels(AliasConfigurationSnapshot aliases,
                                                                        ChannelConfigurationSnapshot channels)
         throws IOException, SQLException
     {

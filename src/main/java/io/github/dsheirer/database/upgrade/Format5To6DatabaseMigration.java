@@ -53,16 +53,14 @@ final class Format5To6DatabaseMigration implements DatabaseMigrationStep
     }
 
     @Override
-    public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
-        requireSourceFormat(connection);
         return List.of(effect(LegacyActivityReset.count(connection, LegacyActivityReset.LOGICAL_CALL_TABLES)));
     }
 
     @Override
-    public void migrate(Connection connection) throws SQLException
+    public void migrateSource(Connection connection) throws SQLException
     {
-        requireSourceFormat(connection);
         LegacyActivityReset.clear(connection, LegacyActivityReset.LOGICAL_CALL_TABLES);
 
         try(PreparedStatement statement = connection.prepareStatement("""
@@ -88,14 +86,4 @@ final class Format5To6DatabaseMigration implements DatabaseMigrationStep
                 "uses canonical configured-channel identities");
     }
 
-    private static void requireSourceFormat(Connection connection) throws SQLException
-    {
-        DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspectForMigration(connection);
-
-        if(detected.version() != 5)
-        {
-            throw new SQLException("Migration step format-5-to-6 requires exact source format 5; found " +
-                detected.version() + " [" + detected.id() + "]");
-        }
-    }
 }

@@ -25,9 +25,11 @@ import io.github.dsheirer.alias.id.radio.P25Subscriber;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.configuration.RadioResolveConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.SiteConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier;
+import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
@@ -269,6 +271,138 @@ class MutableAudioCallBuilderRecordingMetadataTest
         assertEquals(402, resolved.destinationObservedWorkingId());
         assertNull(resolved.sourceAlias());
         assertNull(resolved.destinationAlias());
+    }
+
+    @Test
+    void legacyCanonicalMetadataKeepsUnknownEvidenceAndFrozenOutputDecisions()
+    {
+        P25SubscriberIdentity source = new P25SubscriberIdentity(0xBEE00, 0x348, 2_115_288);
+        P25SubscriberIdentity target = new P25SubscriberIdentity(0xABCDE, 0x456, 9_001);
+        AudioCallRecordingMetadata metadata = legacyMetadata(source, 501, target, 777);
+
+        assertEquals(source, metadata.sourceP25Identity());
+        assertEquals(501, metadata.sourceObservedWorkingId());
+        assertEquals(target, metadata.destinationP25Identity());
+        assertEquals(777, metadata.destinationObservedWorkingId());
+        assertEquals(ResolvedRadioIdentity.Evidence.UNKNOWN, metadata.sourceRadioIdentity().evidence());
+        assertEquals(ResolvedRadioIdentity.Evidence.UNKNOWN, metadata.destinationRadioIdentity().evidence());
+        assertEquals("501", metadata.sourceValue());
+        assertEquals("777", metadata.destinationValue());
+        assertEquals("Frozen source", metadata.sourceAlias());
+        assertEquals("Frozen destination", metadata.destinationAlias());
+        assertEquals("frozen matcher", metadata.destinationMatcherIdentity());
+        assertTrue(metadata.destinationRecordEnabled());
+        assertSame(metadata.sourceRadioIdentity(), metadata.withResolvedUserIdentifiers(null, null).sourceRadioIdentity());
+    }
+
+    @Test
+    void legacyCanonicalOnlyMetadataDoesNotInventAWorkingAssignment()
+    {
+        P25SubscriberIdentity source = new P25SubscriberIdentity(0xBEE00, 0x348, 501);
+        AudioCallRecordingMetadata metadata = legacyMetadata(source, null, null, null);
+
+        assertEquals(source, metadata.sourceP25Identity());
+        assertNull(metadata.sourceObservedWorkingId());
+        assertEquals(ResolvedRadioIdentity.Evidence.UNKNOWN, metadata.sourceRadioIdentity().evidence());
+        assertNull(metadata.destinationRadioIdentity());
+        assertNull(legacyMetadata(null, null, null, null).sourceRadioIdentity());
+    }
+
+    @Test
+    void lateAbbreviatedAndCanonicalOnlyUpdatesRetainTheWholeConfirmedObservation()
+    {
+        APCO25FullyQualifiedRadioIdentifier source = APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(
+            501, 0xBEE00, 0x348, 2_115_288, Role.FROM, ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT);
+        APCO25FullyQualifiedRadioIdentifier target = APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(
+            777, 0xABCDE, 0x456, 9_001);
+        AudioCallRecordingMetadata metadata = AudioCallRecordingMetadata.captureAtSnapshot(null,
+            new IdentifierCollection(List.of(source, target)));
+
+        AudioCallRecordingMetadata abbreviated = metadata.withResolvedUserIdentifiers(
+            APCO25RadioIdentifier.createTo(777), APCO25RadioIdentifier.createFrom(501));
+        AudioCallRecordingMetadata canonicalOnly = metadata.withResolvedUserIdentifiers(
+            APCO25FullyQualifiedRadioIdentifier.createTo(9_001, 0xABCDE, 0x456, 9_001),
+            APCO25FullyQualifiedRadioIdentifier.createFrom(2_115_288, 0xBEE00, 0x348, 2_115_288));
+
+        for(AudioCallRecordingMetadata resolved: List.of(abbreviated, canonicalOnly))
+        {
+            assertSame(metadata.sourceRadioIdentity(), resolved.sourceRadioIdentity());
+            assertSame(metadata.destinationRadioIdentity(), resolved.destinationRadioIdentity());
+            assertEquals(ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT,
+                resolved.sourceRadioIdentity().evidence());
+            assertEquals(ResolvedRadioIdentity.Evidence.DIRECT, resolved.destinationRadioIdentity().evidence());
+            assertEquals(501, resolved.sourceObservedWorkingId());
+            assertEquals(777, resolved.destinationObservedWorkingId());
+        }
+    }
+
+    @Test
+    void finalDifferentCanonicalIdentityNeverBorrowsThePreviousWorkingAddress()
+    {
+        AudioCallRecordingMetadata metadata = legacyMetadata(
+            new P25SubscriberIdentity(0xBEE00, 0x348, 501), 501,
+            new P25SubscriberIdentity(0xABCDE, 0x456, 777), 777);
+        AudioCallRecordingMetadata resolved = metadata.withResolvedUserIdentifiers(
+            APCO25FullyQualifiedRadioIdentifier.createTo(777, 0xABCDE, 0x457, 777),
+            APCO25FullyQualifiedRadioIdentifier.createFrom(501, 0xBEE01, 0x348, 501));
+
+        assertEquals(new P25SubscriberIdentity(0xBEE01, 0x348, 501), resolved.sourceP25Identity());
+        assertEquals(new P25SubscriberIdentity(0xABCDE, 0x457, 777), resolved.destinationP25Identity());
+        assertNull(resolved.sourceObservedWorkingId());
+        assertNull(resolved.destinationObservedWorkingId());
+        assertEquals(ResolvedRadioIdentity.Evidence.DIRECT, resolved.sourceRadioIdentity().evidence());
+        assertEquals("Frozen source", resolved.sourceAlias());
+        assertEquals("Frozen destination", resolved.destinationAlias());
+        assertEquals("frozen matcher", resolved.destinationMatcherIdentity());
+    }
+
+    @Test
+    void laterExplicitAddressReplacesBothLegacyFactsTogether()
+    {
+        AudioCallRecordingMetadata metadata = legacyMetadata(
+            new P25SubscriberIdentity(0xBEE00, 0x348, 2_115_288), 501, null, null);
+        AudioCallRecordingMetadata resolved = metadata.withResolvedUserIdentifiers(null,
+            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(502, 0xBEE00, 0x348, 2_115_288));
+
+        assertEquals(metadata.sourceP25Identity(), resolved.sourceP25Identity());
+        assertEquals(502, resolved.sourceObservedWorkingId());
+        assertEquals(ResolvedRadioIdentity.Evidence.DIRECT, resolved.sourceRadioIdentity().evidence());
+        assertEquals("501", resolved.sourceValue(), "historical recording policy values remain frozen");
+    }
+
+    @Test
+    void canonicalOnlyObservationDoesNotPromoteLegacyWorkingAddressEvidence()
+    {
+        AudioCallRecordingMetadata metadata = legacyMetadata(
+            new P25SubscriberIdentity(0xBEE00, 0x348, 2_115_288), 501, null, null);
+        AudioCallRecordingMetadata resolved = metadata.withResolvedUserIdentifiers(null,
+            APCO25FullyQualifiedRadioIdentifier.createFrom(2_115_288, 0xBEE00, 0x348, 2_115_288));
+
+        assertSame(metadata.sourceRadioIdentity(), resolved.sourceRadioIdentity());
+        assertEquals(501, resolved.sourceObservedWorkingId());
+        assertEquals(ResolvedRadioIdentity.Evidence.UNKNOWN, resolved.sourceRadioIdentity().evidence());
+    }
+
+    @Test
+    void anEqualLocalNumberDoesNotEstablishACanonicalOnlyForeignWorkingAssignment()
+    {
+        AudioCallRecordingMetadata metadata = legacyMetadata(null, null, null, null).withResolvedUserIdentifiers(
+            null, APCO25RadioIdentifier.createFrom(501));
+        AudioCallRecordingMetadata resolved = metadata.withResolvedUserIdentifiers(null,
+            APCO25FullyQualifiedRadioIdentifier.createFrom(501, 0xBEE00, 0x348, 501));
+
+        assertEquals(new P25SubscriberIdentity(0xBEE00, 0x348, 501), resolved.sourceP25Identity());
+        assertNull(resolved.sourceObservedWorkingId());
+        assertNull(resolved.sourceRadioIdentity().observedWorkingId());
+    }
+
+    private static AudioCallRecordingMetadata legacyMetadata(P25SubscriberIdentity source, Integer sourceWorking,
+                                                             P25SubscriberIdentity target, Integer targetWorking)
+    {
+        return new AudioCallRecordingMetadata("County", "North", null, "Dispatch", null, "Primary", "APCO25",
+            "777", "frozen identity", "Frozen destination", "Destination description", "Destination group",
+            "frozen matcher", true, "APCO25", "501", "Frozen source", "Source description", "Source group",
+            source, sourceWorking, target, targetWorking);
     }
 
     @Test

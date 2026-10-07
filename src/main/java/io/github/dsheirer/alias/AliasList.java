@@ -1000,47 +1000,22 @@ public class AliasList
     }
 
     /**
-     * Listing of talkgroups and ranges for a specific protocol
+     * Listing of talkgroups and ranges for a specific protocol.
      */
     public class TalkgroupAliasList
     {
-        private final Map<Integer,Alias> mTalkgroupAliasMap = new HashMap<>();
-        private final List<TalkgroupRangeEntry> mTalkgroupRanges = new ArrayList<>();
-        private int[] mTalkgroupRangePrefixMaximums = new int[0];
+        private final NumericAliasIndex mIndex = new NumericAliasIndex();
 
         public Alias getAlias(TalkgroupIdentifier identifier)
         {
             //P25 fully-qualified signaling carries a local talkgroup address in getValue(). Alias matching uses that
             //local address just like every other P25 talkgroup and deliberately ignores the rarely used home tuple.
-            int value = identifier.getValue();
-
-            Alias mapValue = mTalkgroupAliasMap.get(value);
-            if (mapValue != null)
-            {
-                return mapValue;
-            }
-
-            //Alternatively, match the talkgroup to any talkgroup ranges
-            int rangeIndex = lastRangeStartingAtOrBefore(value);
-
-            while(rangeIndex >= 0 && mTalkgroupRangePrefixMaximums[rangeIndex] >= value)
-            {
-                TalkgroupRangeEntry entry = mTalkgroupRanges.get(rangeIndex);
-
-                if(entry.contains(value))
-                {
-                    return entry.alias();
-                }
-
-                rangeIndex--;
-            }
-
-            return null;
+            return mIndex.getAlias(identifier.getValue());
         }
 
         public void add(Talkgroup talkgroup, Alias alias)
         {
-            Alias existingTalkgroupAlias = mTalkgroupAliasMap.computeIfAbsent(talkgroup.getValue(), key -> alias);
+            Alias existingTalkgroupAlias = mIndex.add(talkgroup.getValue(), alias);
 
             //Detect collisions and set overlap flag for both
             if(!existingTalkgroupAlias.equals(alias))
@@ -1056,173 +1031,30 @@ public class AliasList
                     aliasID.setOverlap(true);
                 }
             }
-
-            mTalkgroupAliasMap.put(talkgroup.getValue(), alias);
         }
 
         public void add(TalkgroupRange talkgroupRange, Alias alias)
         {
-            mTalkgroupRanges.add(new TalkgroupRangeEntry(talkgroupRange.getMinTalkgroup(),
-                talkgroupRange.getMaxTalkgroup(), talkgroupRange, alias));
+            mIndex.add(talkgroupRange.getMinTalkgroup(), talkgroupRange.getMaxTalkgroup(), talkgroupRange, alias);
         }
 
         private void prepare()
         {
-            mTalkgroupRanges.sort((first, second) -> {
-                int comparison = Integer.compare(first.minimum(), second.minimum());
-                return comparison != 0 ? comparison : Integer.compare(first.maximum(), second.maximum());
-            });
-            mTalkgroupRangePrefixMaximums = new int[mTalkgroupRanges.size()];
-            TalkgroupRangeEntry maximumEntry = null;
-            TalkgroupRangeEntry secondMaximumEntry = null;
-            int maximum = Integer.MIN_VALUE;
-
-            for(int index = 0; index < mTalkgroupRanges.size(); index++)
-            {
-                TalkgroupRangeEntry entry = mTalkgroupRanges.get(index);
-                TalkgroupRangeEntry overlapCandidate = maximumEntry != null &&
-                    !maximumEntry.alias().equals(entry.alias()) ? maximumEntry : secondMaximumEntry;
-
-                if(overlapCandidate != null && entry.minimum() <= overlapCandidate.maximum())
-                {
-                    entry.identifier().setOverlap(true);
-                }
-
-                if(maximumEntry == null)
-                {
-                    maximumEntry = entry;
-                }
-                else if(maximumEntry.alias().equals(entry.alias()))
-                {
-                    if(entry.maximum() > maximumEntry.maximum())
-                    {
-                        maximumEntry = entry;
-                    }
-                }
-                else if(entry.maximum() > maximumEntry.maximum())
-                {
-                    secondMaximumEntry = maximumEntry;
-                    maximumEntry = entry;
-                }
-                else if(secondMaximumEntry == null)
-                {
-                    secondMaximumEntry = entry;
-                }
-                else if(secondMaximumEntry.alias().equals(entry.alias()))
-                {
-                    if(entry.maximum() > secondMaximumEntry.maximum())
-                    {
-                        secondMaximumEntry = entry;
-                    }
-                }
-                else if(entry.maximum() > secondMaximumEntry.maximum())
-                {
-                    secondMaximumEntry = entry;
-                }
-
-                maximum = Math.max(maximum, entry.maximum());
-                mTalkgroupRangePrefixMaximums[index] = maximum;
-            }
-
-            TalkgroupRangeEntry minimumEntry = null;
-            TalkgroupRangeEntry secondMinimumEntry = null;
-
-            for(int index = mTalkgroupRanges.size() - 1; index >= 0; index--)
-            {
-                TalkgroupRangeEntry entry = mTalkgroupRanges.get(index);
-                TalkgroupRangeEntry overlapCandidate = minimumEntry != null &&
-                    !minimumEntry.alias().equals(entry.alias()) ? minimumEntry : secondMinimumEntry;
-
-                if(overlapCandidate != null && overlapCandidate.minimum() <= entry.maximum())
-                {
-                    entry.identifier().setOverlap(true);
-                }
-
-                if(minimumEntry == null)
-                {
-                    minimumEntry = entry;
-                }
-                else if(minimumEntry.alias().equals(entry.alias()))
-                {
-                    if(entry.minimum() < minimumEntry.minimum())
-                    {
-                        minimumEntry = entry;
-                    }
-                }
-                else if(entry.minimum() < minimumEntry.minimum())
-                {
-                    secondMinimumEntry = minimumEntry;
-                    minimumEntry = entry;
-                }
-                else if(secondMinimumEntry == null)
-                {
-                    secondMinimumEntry = entry;
-                }
-                else if(secondMinimumEntry.alias().equals(entry.alias()))
-                {
-                    if(entry.minimum() < secondMinimumEntry.minimum())
-                    {
-                        secondMinimumEntry = entry;
-                    }
-                }
-                else if(entry.minimum() < secondMinimumEntry.minimum())
-                {
-                    secondMinimumEntry = entry;
-                }
-            }
+            mIndex.prepare();
         }
 
-        private int lastRangeStartingAtOrBefore(int value)
-        {
-            int low = 0;
-            int high = mTalkgroupRanges.size() - 1;
-            int result = -1;
-
-            while(low <= high)
-            {
-                int middle = (low + high) >>> 1;
-
-                if(mTalkgroupRanges.get(middle).minimum() <= value)
-                {
-                    result = middle;
-                    low = middle + 1;
-                }
-                else
-                {
-                    high = middle - 1;
-                }
-            }
-
-            return result;
-        }
-
-        /**
-         * Removes the alias from both the talkgroup and the talkgroup range maps.
-         */
         public void remove(Alias alias)
         {
-            mTalkgroupAliasMap.values().removeAll(Collections.singleton(alias));
-            mTalkgroupRanges.removeIf(entry -> entry.alias().equals(alias));
+            mIndex.remove(alias);
         }
-    }
-
-    private record TalkgroupRangeEntry(int minimum, int maximum, TalkgroupRange identifier, Alias alias)
-    {
-        private boolean contains(int value)
-        {
-            return minimum <= value && value <= maximum;
-        }
-
     }
 
     /**
-     * Listing of radio IDs and ranges for a specific protocol
+     * Listing of radio IDs and ranges for a specific protocol.
      */
     public class RadioAliasList
     {
-        private final Map<Integer,Alias> mRadioAliasMap = new HashMap<>();
-        private final List<RadioRangeEntry> mRadioRanges = new ArrayList<>();
-        private int[] mRadioRangePrefixMaximums = new int[0];
+        private final NumericAliasIndex mIndex = new NumericAliasIndex();
 
         public Alias getAlias(RadioIdentifier identifier)
         {
@@ -1231,36 +1063,14 @@ public class AliasList
 
         public Alias getAlias(int value)
         {
-
-            Alias mapValue = mRadioAliasMap.get(value);
-            if(mapValue != null)
-            {
-                return mapValue;
-            }
-
-            //Alternatively, attempt to match the radio address against any radio ranges.
-            int rangeIndex = lastRangeStartingAtOrBefore(value);
-
-            while(rangeIndex >= 0 && mRadioRangePrefixMaximums[rangeIndex] >= value)
-            {
-                RadioRangeEntry entry = mRadioRanges.get(rangeIndex);
-
-                if(entry.contains(value))
-                {
-                    return entry.alias();
-                }
-
-                rangeIndex--;
-            }
-
-            return null;
+            return mIndex.getAlias(value);
         }
 
         public void add(Radio radio, Alias alias)
         {
-            Alias existingRadioAlias = mRadioAliasMap.computeIfAbsent(radio.getValue(), key -> alias);
+            Alias existingRadioAlias = mIndex.add(radio.getValue(), alias);
 
-            //Detect collisions
+            //Detect collisions and set overlap flag for both
             if(!existingRadioAlias.equals(alias))
             {
                 radio.setOverlap(true);
@@ -1274,30 +1084,89 @@ public class AliasList
                     aliasID.setOverlap(true);
                 }
             }
-
-            mRadioAliasMap.put(radio.getValue(), alias);
         }
 
         public void add(RadioRange radioRange, Alias alias)
         {
-            mRadioRanges.add(new RadioRangeEntry(radioRange.getMinRadio(), radioRange.getMaxRadio(), radioRange, alias));
+            mIndex.add(radioRange.getMinRadio(), radioRange.getMaxRadio(), radioRange, alias);
         }
 
         private void prepare()
         {
-            mRadioRanges.sort((first, second) -> {
+            mIndex.prepare();
+        }
+
+        public void remove(Alias alias)
+        {
+            mIndex.remove(alias);
+        }
+    }
+
+    /**
+     * Shared numeric lookup, built and prepared before its owning LookupIndex is published. Typed wrappers retain
+     * protocol admission and collision checks; callers retain fully qualified identity and working-address policy.
+     */
+    private static class NumericAliasIndex
+    {
+        private final Map<Integer,Alias> mExactAliases = new HashMap<>();
+        private final List<NumericRangeEntry> mRanges = new ArrayList<>();
+        private int[] mRangePrefixMaximums = new int[0];
+
+        private Alias getAlias(int value)
+        {
+            Alias exact = mExactAliases.get(value);
+
+            if(exact != null)
+            {
+                return exact;
+            }
+
+            int rangeIndex = lastRangeStartingAtOrBefore(value);
+
+            while(rangeIndex >= 0 && mRangePrefixMaximums[rangeIndex] >= value)
+            {
+                NumericRangeEntry entry = mRanges.get(rangeIndex);
+
+                if(entry.minimum() <= value && value <= entry.maximum())
+                {
+                    return entry.alias();
+                }
+
+                rangeIndex--;
+            }
+
+            return null;
+        }
+
+        /**
+         * The last exact matcher wins; return the prior owner for typed collision checks.
+         */
+        private Alias add(int value, Alias alias)
+        {
+            Alias previous = mExactAliases.put(value, alias);
+            return previous != null ? previous : alias;
+        }
+
+        private void add(int minimum, int maximum, AliasID identifier, Alias alias)
+        {
+            mRanges.add(new NumericRangeEntry(minimum, maximum, identifier, alias));
+        }
+
+        private void prepare()
+        {
+            mRanges.sort((first, second) -> {
                 int comparison = Integer.compare(first.minimum(), second.minimum());
                 return comparison != 0 ? comparison : Integer.compare(first.maximum(), second.maximum());
             });
-            mRadioRangePrefixMaximums = new int[mRadioRanges.size()];
-            RadioRangeEntry maximumEntry = null;
-            RadioRangeEntry secondMaximumEntry = null;
+            mRangePrefixMaximums = new int[mRanges.size()];
+            NumericRangeEntry maximumEntry = null;
+            NumericRangeEntry secondMaximumEntry = null;
             int maximum = Integer.MIN_VALUE;
 
-            for(int index = 0; index < mRadioRanges.size(); index++)
+            for(int index = 0; index < mRanges.size(); index++)
             {
-                RadioRangeEntry entry = mRadioRanges.get(index);
-                RadioRangeEntry overlapCandidate = maximumEntry != null &&
+                NumericRangeEntry entry = mRanges.get(index);
+                NumericRangeEntry overlapCandidate = maximumEntry != null &&
                     !maximumEntry.alias().equals(entry.alias()) ? maximumEntry : secondMaximumEntry;
 
                 if(overlapCandidate != null && entry.minimum() <= overlapCandidate.maximum())
@@ -1338,16 +1207,16 @@ public class AliasList
                 }
 
                 maximum = Math.max(maximum, entry.maximum());
-                mRadioRangePrefixMaximums[index] = maximum;
+                mRangePrefixMaximums[index] = maximum;
             }
 
-            RadioRangeEntry minimumEntry = null;
-            RadioRangeEntry secondMinimumEntry = null;
+            NumericRangeEntry minimumEntry = null;
+            NumericRangeEntry secondMinimumEntry = null;
 
-            for(int index = mRadioRanges.size() - 1; index >= 0; index--)
+            for(int index = mRanges.size() - 1; index >= 0; index--)
             {
-                RadioRangeEntry entry = mRadioRanges.get(index);
-                RadioRangeEntry overlapCandidate = minimumEntry != null &&
+                NumericRangeEntry entry = mRanges.get(index);
+                NumericRangeEntry overlapCandidate = minimumEntry != null &&
                     !minimumEntry.alias().equals(entry.alias()) ? minimumEntry : secondMinimumEntry;
 
                 if(overlapCandidate != null && overlapCandidate.minimum() <= entry.maximum())
@@ -1392,14 +1261,14 @@ public class AliasList
         private int lastRangeStartingAtOrBefore(int value)
         {
             int low = 0;
-            int high = mRadioRanges.size() - 1;
+            int high = mRanges.size() - 1;
             int result = -1;
 
             while(low <= high)
             {
                 int middle = (low + high) >>> 1;
 
-                if(mRadioRanges.get(middle).minimum() <= value)
+                if(mRanges.get(middle).minimum() <= value)
                 {
                     result = middle;
                     low = middle + 1;
@@ -1413,22 +1282,14 @@ public class AliasList
             return result;
         }
 
-        /**
-         * Removes the alias from both the radio and the radio range maps.
-         */
-        public void remove(Alias alias)
+        private void remove(Alias alias)
         {
-            mRadioAliasMap.values().removeAll(Collections.singleton(alias));
-            mRadioRanges.removeIf(entry -> entry.alias().equals(alias));
+            mExactAliases.values().removeAll(Collections.singleton(alias));
+            mRanges.removeIf(entry -> entry.alias().equals(alias));
         }
     }
 
-    private record RadioRangeEntry(int minimum, int maximum, RadioRange identifier, Alias alias)
+    private record NumericRangeEntry(int minimum, int maximum, AliasID identifier, Alias alias)
     {
-        private boolean contains(int value)
-        {
-            return minimum <= value && value <= maximum;
-        }
-
     }
 }

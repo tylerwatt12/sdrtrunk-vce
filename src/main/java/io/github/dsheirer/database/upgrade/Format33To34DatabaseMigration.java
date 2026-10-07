@@ -15,26 +15,17 @@ final class Format33To34DatabaseMigration implements DatabaseMigrationStep
 
     @Override public List<DatabaseMigrationEffect> declaredEffects() { return effects(); }
 
-    @Override public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
+    @Override public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
-        requireSource(connection);
         return effects();
     }
 
-    @Override public void migrate(Connection connection) throws SQLException
+    @Override public void migrateSource(Connection connection) throws SQLException
     {
-        requireSource(connection);
         // Historical snapshots discarded reception provenance, and outputs lack an exact late-source call link.
         // Preserve these rows rather than fabricating a reconstruction or clearing unrelated history.
     }
 
-    private static void requireSource(Connection connection) throws SQLException
-    {
-        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 33)
-        {
-            throw new SQLException("Expected format 33");
-        }
-    }
 
     private static List<DatabaseMigrationEffect> effects()
     {

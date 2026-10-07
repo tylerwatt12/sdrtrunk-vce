@@ -143,7 +143,7 @@ class Format25To26DatabaseMigrationTest
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);
             SQLException wrongSource = assertThrows(SQLException.class,
                 () -> new Format25To26DatabaseMigration().migrate(connection));
-            assertTrue(wrongSource.getMessage().contains("Expected format 25"), wrongSource::getMessage);
+            assertTrue(wrongSource.getMessage().contains("requires exact source format 25"), wrongSource::getMessage);
             assertEquals(fingerprint, SqliteSchemaValidator.fingerprint(connection));
         }
     }
