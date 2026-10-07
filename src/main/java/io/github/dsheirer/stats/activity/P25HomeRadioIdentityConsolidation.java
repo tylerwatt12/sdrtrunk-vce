@@ -13,8 +13,10 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -60,6 +62,8 @@ final class P25HomeRadioIdentityConsolidation
         long promoted = 0;
         long merged = 0;
         long retained = 0;
+        //The layouts and actual child system scopes remain fixed throughout this consolidation transaction.
+        Map<String,MergeTable> mergeTables = new HashMap<>();
         try(PreparedStatement counterpart = connection.prepareStatement("""
             SELECT id FROM radio_system_identity_summary
             WHERE radio_system_id=? AND identity_kind_code=2 AND home_wacn=? AND home_system_id=? AND identity_id=?
@@ -96,7 +100,7 @@ final class P25HomeRadioIdentityConsolidation
                 }
                 else
                 {
-                    merge(connection, radio, survivor);
+                    merge(connection, radio, survivor, mergeTables);
                     merged++;
                 }
             }
@@ -138,9 +142,17 @@ final class P25HomeRadioIdentityConsolidation
     private static void collectEvidence(Connection connection, Set<LocalAddress> addresses, String table,
                                         String ownerColumn, String address) throws SQLException
     {
-        //Keep the bounded directory before retained history so the existing owner indexes seek qualified evidence.
+        //The source-time index lacks the event's system, and radio-child keys lead with system rather than owner.
+        //Read these projections once in table order instead of fetching source rows or scanning child tables for
+        //each owner. Keep the original evidence-system scope, including off-system historical evidence; target
+        //Activity and site buckets retain their existing owner lookup paths.
+        boolean sequentialEvidence = RADIO_CHILDREN.contains(table) || table.equals("receiver_activity_event") &&
+            ownerColumn.equals("source_identity_summary_id");
+        String tables = sequentialEvidence ? table + " evidence NOT INDEXED CROSS JOIN " + SUMMARY +
+            " owner ON owner.id=evidence." + ownerColumn :
+            SUMMARY + " owner CROSS JOIN " + table + " evidence ON owner.id=evidence." + ownerColumn;
         collect(connection, addresses, "SELECT DISTINCT evidence.radio_system_id, " + address + " FROM " +
-            SUMMARY + " owner CROSS JOIN " + table + " evidence ON owner.id=evidence." + ownerColumn +
+            tables +
             " JOIN radio_system system ON system.id=evidence.radio_system_id" +
             " JOIN " + SUMMARY + " local ON local.radio_system_id=evidence.radio_system_id" +
             " AND local.identity_kind_code=2 AND local.home_wacn=-1 AND local.home_system_id=-1" +
@@ -161,7 +173,8 @@ final class P25HomeRadioIdentityConsolidation
         }
     }
 
-    private static void merge(Connection connection, LocalRadio radio, long survivor) throws SQLException
+    private static void merge(Connection connection, LocalRadio radio, long survivor,
+                              Map<String,MergeTable> mergeTables) throws SQLException
     {
         for(String column: List.of("source_identity_summary_id", "target_identity_summary_id"))
         {
@@ -175,17 +188,18 @@ final class P25HomeRadioIdentityConsolidation
         }
         for(String table: RADIO_CHILDREN)
         {
-            mergeRows(connection, table, "radio_identity_id", radio.summaryId(), survivor);
+            mergeRows(connection, table, "radio_identity_id", radio.summaryId(), survivor, mergeTables);
         }
         for(String table: IDENTITY_BUCKETS)
         {
-            mergeRows(connection, table, "identity_summary_id", radio.summaryId(), survivor);
+            mergeRows(connection, table, "identity_summary_id", radio.summaryId(), survivor, mergeTables);
         }
         //The surviving clear watermark also applies to confirmations formerly owned by the other row.
         for(String table: List.of("trunked_radio_affiliation", "trunked_radio_channel_presence"))
         {
             try(PreparedStatement statement = connection.prepareStatement("DELETE FROM " + table +
-                " WHERE radio_identity_id=? AND EXISTS (SELECT 1 FROM trunked_radio_channel_presence_clear clear" +
+                " WHERE " + mergeTables.get(table).scope() + "radio_identity_id=? " +
+                "AND EXISTS (SELECT 1 FROM trunked_radio_channel_presence_clear clear" +
                 " WHERE clear.radio_system_id=" + table + ".radio_system_id" +
                 " AND clear.radio_identity_id=" + table + ".radio_identity_id" +
                 " AND clear.channel_id=" + table + ".channel_id AND clear.cleared_at_ms>=" +
@@ -197,22 +211,43 @@ final class P25HomeRadioIdentityConsolidation
         }
 
         //Normalize the losing key only in the SELECT; its persistent key cannot change until the collision is folded.
-        mergeRows(connection, SUMMARY, "id", radio.summaryId(), survivor);
+        mergeRows(connection, SUMMARY, "id", radio.summaryId(), survivor, mergeTables);
     }
 
     /** Fold accepted counter credits once; independent site observations stay in their original site/channel keys. */
-    private static void mergeRows(Connection connection, String table, String ownerColumn, long losingId,
-                                   long survivingId) throws SQLException
+    private static void mergeRows(Connection connection, String table, String ownerColumn,
+                                   long losingId, long survivingId, Map<String,MergeTable> mergeTables)
+        throws SQLException
     {
-        List<Column> columns = new ArrayList<>();
-        try(Statement statement = connection.createStatement();
-            ResultSet rows = statement.executeQuery("PRAGMA table_info(" + table + ")"))
+        MergeTable mergeTable = mergeTables.get(table);
+        if(mergeTable == null)
         {
-            while(rows.next())
+            List<Column> discovered = new ArrayList<>();
+            try(Statement statement = connection.createStatement();
+                ResultSet rows = statement.executeQuery("PRAGMA table_info(" + table + ")"))
             {
-                columns.add(new Column(rows.getString("name"), rows.getInt("pk")));
+                while(rows.next())
+                {
+                    discovered.add(new Column(rows.getString("name"), rows.getInt("pk")));
+                }
             }
+            String scope = "";
+            if(RADIO_CHILDREN.contains(table))
+            {
+                List<String> systems = new ArrayList<>();
+                try(Statement statement = connection.createStatement();
+                    ResultSet rows = statement.executeQuery("SELECT DISTINCT radio_system_id FROM " + table))
+                {
+                    while(rows.next()) systems.add(Long.toString(rows.getLong(1)));
+                }
+                //Use every actual scope, including historical off-system children, instead of assuming the
+                //losing owner's system. Rows are copied within their existing scope, so this set cannot grow.
+                scope = "radio_system_id IN (" + (systems.isEmpty() ? "NULL" : String.join(",", systems)) + ") AND ";
+            }
+            mergeTable = new MergeTable(List.copyOf(discovered), scope);
+            mergeTables.put(table, mergeTable);
         }
+        List<Column> columns = mergeTable.columns();
         String names = columns.stream().map(Column::name).collect(Collectors.joining(", "));
         String select = columns.stream().map(column -> column.name().equals(ownerColumn) ? "?" :
             table.equals(SUMMARY) && Set.of("home_wacn", "home_system_id").contains(column.name()) ?
@@ -231,7 +266,7 @@ final class P25HomeRadioIdentityConsolidation
             .map(column -> column.name() + "=" + mergedValue(table, column.name(), timestamp))
             .collect(Collectors.joining(", "));
         try(PreparedStatement statement = connection.prepareStatement("INSERT INTO " + table + " (" + names +
-            ") SELECT " + select + " FROM " + table + " WHERE " + ownerColumn +
+            ") SELECT " + select + " FROM " + table + " WHERE " + mergeTable.scope() + ownerColumn +
             "=? ON CONFLICT(" + keys + ") DO UPDATE SET " + updates))
         {
             statement.setLong(1, survivingId);
@@ -239,7 +274,7 @@ final class P25HomeRadioIdentityConsolidation
             statement.executeUpdate();
         }
         try(PreparedStatement statement = connection.prepareStatement("DELETE FROM " + table +
-            " WHERE " + ownerColumn + "=?"))
+            " WHERE " + mergeTable.scope() + ownerColumn + "=?"))
         {
             statement.setLong(1, losingId);
             statement.executeUpdate();
@@ -290,6 +325,10 @@ final class P25HomeRadioIdentityConsolidation
     }
 
     private record Column(String name, int primaryKeyOrder)
+    {
+    }
+
+    private record MergeTable(List<Column> columns, String scope)
     {
     }
 }
