@@ -991,3 +991,50 @@ test('recording removal closes its busy modal and keeps the WAV file', async ({ 
   await expect(page.getByText('No tuners found')).toBeVisible();
   expect(mutations.at(-1)).toEqual({ type: 'remove' });
 });
+
+for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
+test(`recording tuner save keeps WAV and frequency drafts through failure and prevents duplicate creation in ${theme} at ${width}px`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 740 });
+  const writes = [], pending = [];
+  await mockTuners(page, []);
+  await page.route('**/api/v1/admin/tuners/recordings', async route => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    writes.push(route.request().postDataJSON());
+    await new Promise(resolve => pending.push(async (status) => {
+      await route.fulfill({ status, json: status === 200 ? { data: { status: 'added' } } :
+        { error: { message: 'Could not add recording tuner. Try again.' } } });
+      resolve();
+    }));
+  });
+  await page.goto('/app.html?view=tuners');
+  await page.getByRole('button', { name: 'Add tuner', exact: true }).click();
+  await page.locator('html').evaluate((element, value) => { element.dataset.theme = value; }, theme);
+  const dialog = page.getByRole('dialog', { name: 'Add recording tuner', exact: true });
+  const center = dialog.getByRole('spinbutton', { name: 'Center frequency (MHz)', exact: true });
+  const file = dialog.getByRole('radio', { name: /debug-851.wav/ });
+  const save = dialog.getByRole('button', { name: 'Add recording tuner', exact: true });
+  await center.fill('');
+  await save.click();
+  expect(writes).toHaveLength(0);
+  await center.fill('852.0125');
+  await save.click();
+  await expect.poll(() => pending.length).toBe(1);
+  await expect(center).toBeDisabled();
+  await expect(file).toBeDisabled();
+  await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeDisabled();
+  await page.keyboard.press('Escape');
+  for (const type of ['pointerdown', 'pointerup', 'click'])
+    await page.locator('.modal-backdrop').last().dispatchEvent(type, { pointerId: 1, isPrimary: true, button: 0 });
+  await dialog.locator('form').evaluate(form => form.dispatchEvent(new Event('submit', { cancelable: true })));
+  expect(writes).toHaveLength(1);
+  await pending.shift()(503);
+  await expect(dialog.getByRole('alert')).toContainText('Try again');
+  await expect(center).toHaveValue('852.0125');
+  await expect(file).toBeChecked();
+  await save.click();
+  await expect.poll(() => pending.length).toBe(1);
+  await pending.shift()(200);
+  await expect(dialog).toHaveCount(0);
+  expect(writes).toEqual(Array(2).fill({ file_id: 'file-a', center_frequency_hz: 852012500 }));
+});
+}

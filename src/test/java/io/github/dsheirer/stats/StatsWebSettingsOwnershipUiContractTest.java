@@ -30,6 +30,7 @@ class StatsWebSettingsOwnershipUiContractTest
         String personalReset = function(source, "function openResetUserPreferences(returnFocusSelector = null)");
         String livePresentation = function(source, "function openLivePresentationSettings(returnFocusSelector = null)");
         String scannerPlayback = function(source, "function openScannerSettings(returnFocusSelector = null)");
+        String preferenceSave = function(source, "async function savePreferenceForm(workflow, modal, mutate, options)");
         String admin = function(source, "async function renderAdmin()");
         String adminGroups = function(source, "function adminSettingsGroups()");
 
@@ -124,8 +125,15 @@ class StatsWebSettingsOwnershipUiContractTest
         assertFalse(livePresentation.contains("target_burst_limit"));
         assertFalse(livePresentation.contains("preferences.playback"));
         assertFalse(livePresentation.contains("preferences.page_titles"));
-        assertTrue(livePresentation.contains("modal.setDirty(true)"));
-        assertTrue(livePresentation.contains("void render()"));
+        assertTrue(livePresentation.contains("createFormWorkflow({ form, submit: save, feedback: message, modal })"));
+        assertTrue(livePresentation.contains("savePreferenceForm(workflow, modal"));
+        assertTrue(livePresentation.contains("identity: snapshot.identity"));
+        assertTrue(livePresentation.contains("renderAfterSave: !densityOnly"));
+        assertTrue(preferenceSave.contains("await workflow.save(async () =>"));
+        assertTrue(preferenceSave.contains("userPreferenceController.snapshot().identity !== identity"));
+        assertTrue(preferenceSave.contains("await updateUserPreferences(mutate, false)"));
+        assertTrue(preferenceSave.contains("modal.close() && renderAfterSave"));
+        assertTrue(preferenceSave.contains("void render()"));
 
         assertTrue(scannerPlayback.contains("openReadOnlyModal('Scanner settings'"));
         assertTrue(scannerPlayback.contains("target_grouping"));
@@ -134,6 +142,8 @@ class StatsWebSettingsOwnershipUiContractTest
         assertTrue(scannerPlayback.contains("preferences.playback.target_grouping ="));
         assertTrue(scannerPlayback.contains("preferences.playback.target_burst_limit ="));
         assertTrue(scannerPlayback.contains("preferences.page_titles.prepend_playing_call ="));
+        assertTrue(scannerPlayback.contains("savePreferenceForm(workflow, modal"));
+        assertTrue(scannerPlayback.contains("identity: snapshot.identity"));
         assertTrue(scannerPlayback.contains("same playback target together"));
         assertTrue(scannerPlayback.contains("current playback target before another target"));
         assertFalse(scannerPlayback.contains("groupIdentity"));

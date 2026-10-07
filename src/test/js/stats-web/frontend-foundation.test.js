@@ -655,8 +655,8 @@ async function main() {
   assert.doesNotMatch(settingsSource, /userPreferenceController\.replace\(/);
   const livePresentationSource = functionBinding(appSource, 'openLivePresentationSettings');
   assert.match(livePresentationSource, /openReadOnlyModal\('Live presentation'/);
-  assert.match(livePresentationSource, /modal\.setDirty\(true\)/);
-  assert.match(livePresentationSource, /modal\.setBusy\(true\)/);
+  assert.match(livePresentationSource, /createFormWorkflow\(/);
+  assert.match(livePresentationSource, /savePreferenceForm\(/);
   assert.match(livePresentationSource, /const submitted = \{/);
   assert.match(livePresentationSource, /preferences\.presentation = \{ \.\.\.preferences\.presentation, \.\.\.submitted \};/);
   assert.match(livePresentationSource, /show_only_active_trunked_channels: activeOnly\.input\.checked/);
@@ -671,10 +671,12 @@ async function main() {
     /encryption algorithm, and key ID visible after a row becomes idle\./,
     'Idle-row guidance must explicitly name the retained encryption algorithm and key ID');
   assert.doesNotMatch(livePresentationSource, /target_grouping|target_burst_limit|preferences\.playback/);
-  assert.match(livePresentationSource, /if \(modal\.close\(\)\) void render\(\)/);
-  assert.match(livePresentationSource, /error\?\.code === 'preference_session_changed'/);
-  assert.match(livePresentationSource, /void render\(\)/);
-  assert.match(livePresentationSource, /apply\(latest\.preferences\.presentation\)/);
+  const preferenceFormSource = functionBinding(appSource, 'savePreferenceForm');
+  assert.match(preferenceFormSource, /if \(modal\.close\(\)\) void render\(\)/);
+  assert.match(preferenceFormSource, /error\?\.code === 'preference_session_changed'/);
+  assert.match(preferenceFormSource, /apply\(latest\.preferences\)/);
+  assert.match(livePresentationSource, /apply\(preferences\.presentation\)/);
+  assert.match(livePresentationSource, /renderAfterSave: !densityOnly/);
   const scannerPlaybackSource = functionBinding(appSource, 'openScannerSettings');
   assert.match(scannerPlaybackSource, /openReadOnlyModal\('Scanner settings'/);
   assert.match(scannerPlaybackSource, /preferences\.playback\.target_grouping =/);

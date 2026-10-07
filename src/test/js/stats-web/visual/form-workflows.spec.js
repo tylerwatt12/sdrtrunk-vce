@@ -10,7 +10,8 @@ test.beforeAll(async () => {
 });
 
 async function openForms(page, view, theme = 'light', scanList = {}) {
-  const preferences = structuredClone(defaults);
+  let preferences = structuredClone(defaults);
+  let preferenceRevision = 1;
   preferences.appearance.theme = theme;
   const state = { writes: [], pending: [], scanLists: [{ id: 1, name: 'Public Safety',
     description: 'Dispatch and mutual aid', sort_order: 0, published: true, default: true,
@@ -23,8 +24,17 @@ async function openForms(page, view, theme = 'light', scanList = {}) {
     if (pathname === '/api/v1/auth/session') return data({ configured: true, authenticated: true,
       username: 'admin', tier: 'admin', primary: true, capabilities: {
         'admin-settings': true, 'admin-aliases': true, 'receiver-health': true,
-        'scanner': true, 'recordings': true, 'credits': true } });
-    if (pathname === '/api/v1/me/preferences') return route.fulfill({ json: { revision: 1, preferences } });
+        'scanner': true, 'call-audio': true, 'live': true, 'user-settings': true, 'recordings': true, 'credits': true } });
+    if (pathname === '/api/v1/me/preferences') {
+      if (request.method() === 'PUT') {
+        state.writes.push({ pathname, body: request.postDataJSON(), revision: request.headers()['if-match'] });
+        const response = await new Promise((resolve) => state.pending.push(resolve));
+        if (response.status !== 200) return route.fulfill(response);
+        preferences = request.postDataJSON();
+        preferenceRevision += 1;
+      }
+      return route.fulfill({ json: { revision: preferenceRevision, preferences } });
+    }
     if (['/api/v1/admin/scan-lists', '/api/v1/scan-lists'].includes(pathname)) {
       return data({ revision: 1, scan_lists: state.scanLists });
     }
@@ -186,3 +196,64 @@ test('failure mapping cannot strand a form busy or enable a permanently disabled
   expect(state).toEqual({ busy: false, markedBusy: false, inputDisabled: true,
     submitDisabled: false, role: 'alert', message: 'Refresh failed' });
 });
+
+for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
+for (const [view, trigger, title, setting, saveLabel] of [
+  ['settings', '#status-icon-settings', 'Status icon issues', null, 'Save choices'],
+  ['live', '.live-presentation-button', 'Live presentation', 'Matching rows shown', 'Save Live Presentation'],
+  ['scanner', '#scanner-settings', 'Scanner settings', 'Calls before switching targets', 'Save Scanner Settings']
+]) {
+  test(`${title} shares busy, failure, retry, and conflict handling in ${theme} at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 740 });
+    const app = await openForms(page, `view=${view}`, theme);
+    if (view === 'settings' && width === 1280)
+      await page.getByRole('button', { name: 'Hide audio player', exact: true }).click();
+    if (view === 'live') await page.getByRole('button', { name: 'Live presentation settings', exact: true }).click();
+    else await page.locator(trigger).click();
+    const dialog = page.getByRole('dialog', { name: title, exact: true });
+    if (view === 'settings' && width === 1280) {
+      await page.getByRole('button', { name: 'Show audio player', exact: true }).evaluate(button => button.click());
+      await expect(page.locator('#audio-dock')).toHaveAttribute('data-super-collapsed', 'false');
+    }
+    const control = setting ? dialog.getByRole('spinbutton', { name: new RegExp(`^${setting}`) }) :
+      dialog.getByRole('checkbox').first();
+    const save = dialog.getByRole('button', { name: saveLabel, exact: true });
+    const value = setting ? (view === 'live' ? '125' : '7') : null;
+    if (value) await control.fill(value);
+    else { await control.focus(); await page.keyboard.press('Space'); }
+    await save.click();
+    await expect.poll(() => app.state.pending.length).toBe(1);
+    await expect(control).toBeDisabled();
+    await page.keyboard.press('Escape');
+    for (const type of ['pointerdown', 'pointerup', 'click'])
+      await page.locator('.modal-backdrop').last().dispatchEvent(type, { pointerId: 1, isPrimary: true, button: 0 });
+    await dialog.locator('form').evaluate(form => form.dispatchEvent(new Event('submit', { cancelable: true })));
+    expect(app.state.writes).toHaveLength(1);
+    await expect(dialog).toBeVisible();
+    app.finish(503);
+    await expect(dialog.getByRole('alert')).toContainText('Unable to save user preferences.');
+    await expect(control).toBeEnabled();
+    if (value) await expect(control).toHaveValue(value);
+    else await expect(control).not.toBeChecked();
+    await page.keyboard.press('Escape');
+    const discard = page.getByRole('alertdialog', { name: 'Discard unsaved changes' });
+    await expect(discard).toBeVisible();
+    await discard.getByRole('button', { name: 'Keep editing', exact: true }).click();
+    await expect(dialog).toBeVisible();
+    // A conflict reload replaces the draft with the authoritative saved choices.
+    await save.click();
+    await expect.poll(() => app.state.pending.length).toBe(1);
+    app.finish(409);
+    await expect(dialog.getByRole('status')).toContainText('saved');
+    if (value) await expect(control).not.toHaveValue(value);
+    else await expect(control).toBeChecked();
+    if (value) await control.fill(value);
+    else { await control.focus(); await page.keyboard.press('Space'); }
+    await save.click();
+    await expect.poll(() => app.state.pending.length).toBe(1);
+    app.finish();
+    await expect(dialog).toHaveCount(0);
+    expect(app.state.writes.map(write => write.revision)).toEqual(['"1"', '"1"', '"1"']);
+  });
+}
+}

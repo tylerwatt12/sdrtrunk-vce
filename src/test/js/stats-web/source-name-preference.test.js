@@ -315,6 +315,54 @@ async function main() {
   await firstSubmit;
   assert.equal(pending.modal.busy, false);
   assert.equal(pending.modal.closeCount, 1);
+
+  // The other preference editors share save/reload/session decisions while
+  // retaining their own payloads and presentation refresh policy.
+  for (const outcome of ['saved', 'density-only', 'failed', 'conflict', 'reload-failed', 'new-account', 'session-changed']) {
+    const form = new Element('form');
+    const input = new Element('input');
+    input.value = 'draft';
+    const submit = new Element('button');
+    const feedback = new Element('div');
+    form.append(input, submit, feedback);
+    let writes = 0, renders = 0;
+    const modal = { dirty: false, busy: false, closed: false,
+      setDirty(value) { this.dirty = value; }, setBusy(value) { this.busy = value; },
+      close() { this.closed = !this.dirty && !this.busy; return this.closed; } };
+    const workflow = createFormWorkflow({ form, submit, feedback, modal });
+    await form.dispatch('input');
+    const scope = {
+      userPreferenceController: { snapshot: () => ({ loaded: true,
+        identity: outcome === 'new-account' ? 'second' : 'first', preferences: { value: 'saved' } }) },
+      updateUserPreferences: async (mutate, retry) => {
+        writes += 1;
+        assert.equal(retry, false, 'Editor conflicts must not overwrite the saved document automatically');
+        if (outcome === 'failed') throw new Error('Offline');
+        if (outcome === 'session-changed') throw Object.assign(new Error('Changed account'),
+          { code: 'preference_session_changed' });
+        if (['conflict', 'reload-failed'].includes(outcome)) throw Object.assign(new Error('Conflict'),
+          { code: 'preference_conflict', reloadError: outcome === 'reload-failed' ? new Error('Offline') : null });
+        const preferences = {};
+        mutate(preferences);
+        assert.equal(preferences.value, 'draft');
+      },
+      render: () => { renders += 1; }
+    };
+    vm.createContext(scope);
+    vm.runInContext(functionSource('savePreferenceForm'), scope);
+    await scope.savePreferenceForm(workflow, modal, preferences => { preferences.value = input.value; },
+      { identity: 'first', saving: 'Saving…', apply: preferences => { input.value = preferences.value; },
+        renderAfterSave: outcome !== 'density-only' });
+    assert.equal(workflow.isBusy(), false, outcome);
+    assert.equal(input.disabled, false, outcome);
+    assert.equal(writes, outcome === 'new-account' ? 0 : 1, outcome);
+    const closed = ['saved', 'density-only', 'new-account', 'session-changed'].includes(outcome);
+    assert.equal(modal.closed, closed, outcome);
+    assert.equal(renders, closed && outcome !== 'density-only' ? 1 : 0, outcome);
+    assert.equal(input.value, outcome === 'conflict' ? 'saved' : 'draft', outcome);
+    assert.equal(modal.dirty, ['failed', 'reload-failed'].includes(outcome), outcome);
+    assert.equal(submit.disabled, ['new-account', 'session-changed'].includes(outcome), outcome);
+  }
 }
 
 main().catch((error) => { console.error(error); process.exitCode = 1; });

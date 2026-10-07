@@ -149,8 +149,10 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(renderer.contains("requestJson('/api/v1/admin/alias-lists'"));
         assertTrue(renderer.contains("admin: true"));
         assertTrue(editor.contains("/api/v1/admin/aliases/options?alias_list_id="));
-        assertTrue(editor.contains("method: 'PUT', body: { revision, alias: payload }"));
-        assertTrue(editor.contains("method: 'POST', body: { revision, alias: payload }"));
+        assertTrue(editor.contains("aliasFormWorkflow(form, save, errorHost, modal"));
+        assertTrue(editor.contains("await workflow.save(async () =>"));
+        assertTrue(editor.contains("requestJson(editing ? `/api/v1/admin/aliases/${id}` : '/api/v1/admin/aliases'"));
+        assertTrue(editor.contains("method: editing ? 'PUT' : 'POST', body: { revision, alias: payload }"));
         assertTrue(editor.contains("options?.alias_list?.new_alias_behavior"));
         assertFalse(editor.contains("options?.alias_list?.unmatched_talkgroup_policy"));
         assertFalse(editor.contains("requestedScanLists"));

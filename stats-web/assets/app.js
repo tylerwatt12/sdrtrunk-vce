@@ -11,7 +11,7 @@ import * as systemLabels from './core/system-labels.js?v=1';
 import { formatP25RadioIdentifier, p25ServingSystemKey } from './core/radio-labels.js?v=4';
 import * as pageLifecycle from './core/page-lifecycle.js';
 import { installIconHints } from './core/icon-hints.js?v=4';
-import { createFormWorkflow } from './core/form-workflows.js?v=1';
+import { createFormWorkflow } from './core/form-workflows.js?v=2';
 import { createChannelSetupGuide } from './features/channel-setup-guide.js?v=3';
 import { applyThemeHue } from './core/theme.js?v=1';
 import * as browsingWorkflows from './core/browsing-workflows.js?v=1';
@@ -4681,6 +4681,16 @@ function aliasMutationError(host, error, retry = null) {
   }
 }
 
+function aliasFormWorkflow(form, submit, feedback, modal, reload = null) {
+  return createFormWorkflow({ form, submit, modal, renderFeedback: (state, message, error) => {
+    if (error) aliasMutationError(feedback, error, reload);
+    else {
+      feedback.replaceChildren();
+      if (message) feedback.append(node('div', 'ui-feedback', message));
+    }
+  } });
+}
+
 function aliasListPopupTrigger(options) {
   if (!aliasAdminAllowed()) return document.createDocumentFragment();
   return buildAliasListPopupTrigger({ node, iconGlyph, uiPill, requestJson, openReadOnlyModal }, options);
@@ -4810,22 +4820,15 @@ function openAliasListCreateModal() {
   const modal = openReadOnlyModal('Create Alias List', form, { id: 'create-alias-list', className: 'alias-editor-modal' });
   if (!modal) return;
   cancel.addEventListener('click', modal.close);
-  form.addEventListener('input', () => modal.setDirty(true));
+  const workflow = aliasFormWorkflow(form, submit, errorHost, modal);
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    submit.disabled = true;
-    modal.setBusy(true);
-    errorHost.replaceChildren();
-    try {
+    await workflow.save(async () => {
       const result = await createAliasList(requestJson, {
         revision: Number(aliasEditorContext?.revision ?? 0), name: name.value.trim(), family: family.value
       });
       await finishAliasMutation(modal, result, { list: result.alias_list_id, aliasTab: 'configure' });
-    } catch (error) {
-      aliasMutationError(errorHost, error);
-      modal.setBusy(false);
-      submit.disabled = false;
-    }
+    });
   });
   modal.focus?.(name);
 }
@@ -5459,39 +5462,23 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     }
     form.append(tabBar, basics, identifier, audio, usage, errorHost,
       aliasModalFooter(remove, clone, node('span', 'alias-modal-footer-spacer'), cancel, save));
-    form.addEventListener('input', () => modal.setDirty(true));
-    form.addEventListener('change', () => modal.setDirty(true));
+    const workflow = aliasFormWorkflow(form, save, errorHost, modal, () => {
+      modal.setDirty(false);
+      closeReadOnlyModal(true);
+      openAliasEditorModal(mode, id, prefill);
+    });
     form.addEventListener('click', (event) => {
-      if (event.target.closest('.alias-tone-add, .alias-tone-remove, .alias-tone-move')) modal.setDirty(true);
+      if (event.target.closest('.alias-tone-add, .alias-tone-remove, .alias-tone-move')) workflow.setDirty(true);
     });
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
-      if (!form.reportValidity()) return;
-      errorHost.replaceChildren();
-      save.disabled = true;
-      modal.setBusy(true);
-      try {
+      await workflow.save(async () => {
         const payload = aliasEditorPayload(form, options);
-        let result;
-        if (editing) {
-          result = await requestJson(`/api/v1/admin/aliases/${id}`, {
-            method: 'PUT', body: { revision, alias: payload }
-          });
-        } else {
-          result = await requestJson('/api/v1/admin/aliases', {
-            method: 'POST', body: { revision, alias: payload }
-          });
-        }
-        await finishAliasMutation(modal, result, { list: payload.alias_list_id });
-      } catch (error) {
-        aliasMutationError(errorHost, error, () => {
-          modal.setDirty(false);
-  closeReadOnlyModal(true);
-          openAliasEditorModal(mode, id, prefill);
+        const result = await requestJson(editing ? `/api/v1/admin/aliases/${id}` : '/api/v1/admin/aliases', {
+          method: editing ? 'PUT' : 'POST', body: { revision, alias: payload }
         });
-        modal.setBusy(false);
-        save.disabled = false;
-      }
+        await finishAliasMutation(modal, result, { list: payload.alias_list_id });
+      });
     });
     modal.dialog.querySelector('.modal-header h2').textContent = editing ? `Edit ${source.name}` :
       (cloning ? `Clone ${source.name}` : `Add Alias to ${currentList?.name || 'List'}`);
@@ -28048,6 +28035,40 @@ async function openSourceNameSettings(returnFocusSelector = null) {
   modal.focus(select);
 }
 
+async function savePreferenceForm(workflow, modal, mutate, options) {
+  const { identity, saving, apply, renderAfterSave = true,
+    conflictMessage = 'These settings changed in another session. The current saved values were loaded.',
+    reloadMessage = 'These settings changed in another session, but the current values could not be ' +
+      'reloaded. Try saving again or reopen this panel.' } = options;
+  let sessionChanged = false;
+  await workflow.save(async () => {
+    if (userPreferenceController.snapshot().identity !== identity) {
+      throw Object.assign(new Error('The signed-in account changed.'), { code: 'preference_session_changed' });
+    }
+    await updateUserPreferences(mutate, false);
+  }, {
+    saving,
+    onSuccess: () => { if (modal.close() && renderAfterSave) void render(); },
+    onError: (error) => {
+      if (error?.code === 'preference_session_changed') {
+        sessionChanged = true;
+        workflow.setReady(false);
+      } else if (error?.code === 'preference_conflict') {
+        if (error.reloadError) return { state: 'error', message: reloadMessage };
+        const latest = userPreferenceController.snapshot();
+        if (latest.loaded) apply(latest.preferences);
+        workflow.setDirty(false);
+        return { state: 'warning', message: conflictMessage };
+      }
+      return null;
+    }
+  });
+  if (sessionChanged) {
+    workflow.setDirty(false);
+    if (modal.close()) void render();
+  }
+}
+
 function openStatusIconSettings(returnFocusSelector = null) {
   const snapshot = userPreferenceController.snapshot();
   if (!snapshot.loaded) return;
@@ -28086,43 +28107,15 @@ function openStatusIconSettings(returnFocusSelector = null) {
     id: 'status-icon-settings', className: 'health-alert-settings-modal', returnFocusSelector
   });
   if (!modal) return;
-  form.addEventListener('input', () => modal.setDirty(true));
+  const workflow = createFormWorkflow({ form, submit: save, feedback: message, modal });
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (save.disabled) return;
-    controls.forEach((input) => { input.disabled = true; });
-    save.disabled = true;
-    modal.setBusy(true);
-    message.textContent = 'Saving status icon choices…';
-    try {
-      await updateUserPreferences((preferences) => {
-        preferences.health_alerts.disabled_codes = receiverHealthDisabledCodesForSave(preferences, controls);
-      }, false);
-      modal.setDirty(false);
-      modal.setBusy(false);
-      if (modal.close()) void render();
-    } catch (error) {
-      if (error?.code === 'preference_session_changed') {
-        modal.setDirty(false);
-        modal.setBusy(false);
-        if (modal.close()) void render();
-      } else if (error?.code === 'preference_conflict') {
-        if (error.reloadError) {
-          modal.setDirty(true);
-          message.textContent = 'These choices changed elsewhere, but the saved choices could not be loaded. ' +
-            'Close and reopen this window.';
-        } else {
-          const latest = userPreferenceController.snapshot();
-          if (latest.loaded) apply(latest.preferences);
-          modal.setDirty(false);
-          message.textContent = 'These choices changed elsewhere. The saved choices were loaded.';
-        }
-      } else message.textContent = error.message;
-    } finally {
-      modal.setBusy(false);
-      controls.forEach((input) => { input.disabled = false; });
-      save.disabled = false;
-    }
+    await savePreferenceForm(workflow, modal, (preferences) => {
+      preferences.health_alerts.disabled_codes = receiverHealthDisabledCodesForSave(preferences, controls);
+    }, { identity: snapshot.identity, saving: 'Saving status icon choices…', apply,
+      conflictMessage: 'These choices changed elsewhere. The saved choices were loaded.',
+      reloadMessage: 'These choices changed elsewhere, but the saved choices could not be loaded. ' +
+        'Close and reopen this window.' });
   });
 }
 
@@ -28216,10 +28209,9 @@ function openLivePresentationSettings(returnFocusSelector = null) {
     id: 'live-presentation-settings', className: 'live-presentation-modal', returnFocusSelector
   });
   if (!modal) return;
-  form.addEventListener('input', () => modal.setDirty(true));
+  const workflow = createFormWorkflow({ form, submit: save, feedback: message, modal });
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (!form.reportValidity() || save.disabled) return;
     const submitted = {
       show_encryption_details: encryption.input.checked,
       show_control_decode_quality: controlQuality.input.checked,
@@ -28232,43 +28224,13 @@ function openLivePresentationSettings(returnFocusSelector = null) {
       retain_last_call_on_idle_rows: !activeOnly.input.checked && retainLastCall.input.checked,
       clear_voice_quality_when_idle: !activeOnly.input.checked && clearIdleQuality.input.checked
     };
-    const controls = [activeOnly.input, retainLastCall.input, clearIdleQuality.input, encryption.input,
-      controlQuality.input, voiceQuality.input, callSort, rowDensity, qualityMode, rowLimit, save];
     const densityOnly = Object.entries(submitted).every(([key, value]) =>
       key === 'live_row_density' || value === current[key]);
-    controls.forEach((control) => { control.disabled = true; });
-    save.disabled = true;
-    modal.setBusy(true);
-    message.textContent = 'Saving Live presentation…';
-    try {
-      await updateUserPreferences((preferences) => {
-        preferences.presentation = { ...preferences.presentation, ...submitted };
-      }, false);
-      modal.setDirty(false);
-      modal.setBusy(false);
-      if (modal.close() && !densityOnly) void render();
-    } catch (error) {
-      if (error?.code === 'preference_session_changed') {
-        modal.setDirty(false);
-        modal.setBusy(false);
-        if (modal.close()) void render();
-      } else if (error?.code === 'preference_conflict') {
-        if (error.reloadError) {
-          modal.setDirty(true);
-          message.textContent = 'These settings changed in another session, but the current values could not be ' +
-            'reloaded. Try saving again or reopen this panel.';
-        } else {
-          const latest = userPreferenceController.snapshot();
-          if (latest.loaded) apply(latest.preferences.presentation);
-          modal.setDirty(false);
-          message.textContent = 'These settings changed in another session. The current saved values were loaded.';
-        }
-      } else message.textContent = error.message;
-    } finally {
-      modal.setBusy(false);
-      controls.forEach((control) => { control.disabled = false; });
-      syncIdleRowOptions();
-    }
+    await savePreferenceForm(workflow, modal, (preferences) => {
+      preferences.presentation = { ...preferences.presentation, ...submitted };
+    }, { identity: snapshot.identity, saving: 'Saving Live presentation…',
+      apply: (preferences) => apply(preferences.presentation), renderAfterSave: !densityOnly });
+    if (!workflow.isBusy()) syncIdleRowOptions();
   });
 }
 
@@ -28340,49 +28302,19 @@ function openScannerSettings(returnFocusSelector = null) {
     id: 'scanner-settings-modal', className: 'scanner-settings-modal', returnFocusSelector
   });
   if (!modal) return;
-  form.addEventListener('input', () => modal.setDirty(true));
+  const workflow = createFormWorkflow({ form, submit: save, feedback: message, modal });
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (!form.reportValidity() || save.disabled) return;
     const submitted = {
       target_grouping: targetGrouping.input.checked,
       target_burst_limit: Number(targetBurstLimit.value),
       prepend_playing_call: prependTitle.input.checked
     };
-    const controls = [targetGrouping.input, targetBurstLimit, prependTitle.input, save];
-    controls.forEach((control) => { control.disabled = true; });
-    modal.setBusy(true);
-    message.textContent = 'Saving Scanner settings…';
-    try {
-      await updateUserPreferences((preferences) => {
-        preferences.playback.target_grouping = submitted.target_grouping;
-        preferences.playback.target_burst_limit = submitted.target_burst_limit;
-        preferences.page_titles.prepend_playing_call = submitted.prepend_playing_call;
-      }, false);
-      modal.setDirty(false);
-      modal.setBusy(false);
-      if (modal.close()) void render();
-    } catch (error) {
-      if (error?.code === 'preference_session_changed') {
-        modal.setDirty(false);
-        modal.setBusy(false);
-        if (modal.close()) void render();
-      } else if (error?.code === 'preference_conflict') {
-        if (error.reloadError) {
-          modal.setDirty(true);
-          message.textContent = 'These settings changed in another session, but the current values could not be ' +
-            'reloaded. Try saving again or reopen this panel.';
-        } else {
-          const latest = userPreferenceController.snapshot();
-          if (latest.loaded) apply(latest.preferences);
-          modal.setDirty(false);
-          message.textContent = 'These settings changed in another session. The current saved values were loaded.';
-        }
-      } else message.textContent = error.message;
-    } finally {
-      modal.setBusy(false);
-      controls.forEach((control) => { control.disabled = false; });
-    }
+    await savePreferenceForm(workflow, modal, (preferences) => {
+      preferences.playback.target_grouping = submitted.target_grouping;
+      preferences.playback.target_burst_limit = submitted.target_burst_limit;
+      preferences.page_titles.prepend_playing_call = submitted.prepend_playing_call;
+    }, { identity: snapshot.identity, saving: 'Saving Scanner settings…', apply });
   });
 }
 
@@ -29056,12 +28988,10 @@ async function renderTuners() {
             selectedId = radio.value;
             center.value = entry.suggested_center_frequency_hz ?
               String(Number(entry.suggested_center_frequency_hz) / 1_000_000) : '';
-            modal.setDirty(true);
           });
         }
         center.value = entries[0].suggested_center_frequency_hz ?
           String(Number(entries[0].suggested_center_frequency_hz) / 1_000_000) : '';
-        center.addEventListener('input', () => modal.setDirty(true));
         const message = node('div', 'admin-form-message');
         message.setAttribute('role', 'status');
         const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
@@ -29072,33 +29002,22 @@ async function renderTuners() {
         const actions = aliasModalFooter();
         actions.append(cancel, add);
         form.append(files, formField('Center frequency (MHz)', center), message, actions);
+        const workflow = createFormWorkflow({ form, submit: add, feedback: message, modal });
         form.addEventListener('submit', async (event) => {
           event.preventDefault();
-          if (!form.reportValidity()) return;
-          const centerFrequencyHz = Math.round(Number(center.value) * 1_000_000);
-          if (!Number.isSafeInteger(centerFrequencyHz) || centerFrequencyHz <= 0) {
-            message.textContent = 'Enter a valid center frequency.';
-            return;
-          }
-          modal.setBusy(true);
-          cancel.disabled = true;
-          add.disabled = true;
-          message.textContent = 'Adding recording tuner…';
-          try {
+          await workflow.save(async () => {
+            const centerFrequencyHz = Math.round(Number(center.value) * 1_000_000);
+            if (!Number.isSafeInteger(centerFrequencyHz) || centerFrequencyHz <= 0) {
+              throw new Error('Enter a valid center frequency.');
+            }
             await requestJson('/api/v1/admin/tuners/recordings', {
               method: 'POST', body: { file_id: selectedId, center_frequency_hz: centerFrequencyHz }
             });
-            operationNotice = 'Recording tuner added.';
-            modal.setDirty(false);
-            modal.setBusy(false);
-            modal.close();
-            await refresh();
-          } catch (error) {
-            message.textContent = error.message || 'Could not add recording tuner.';
-            modal.setBusy(false);
-            cancel.disabled = false;
-            add.disabled = false;
-          }
+          }, { saving: 'Adding recording tuner…', onSuccess: async () => {
+              operationNotice = 'Recording tuner added.';
+              modal.close();
+              await refresh();
+            }, onError: (error) => ({ message: error.message || 'Could not add recording tuner.' }) });
         });
         catalogBody.append(form);
       } catch (error) {

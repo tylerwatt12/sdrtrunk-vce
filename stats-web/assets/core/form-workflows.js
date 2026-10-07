@@ -5,8 +5,8 @@ export function createFormWorkflow({ form, submit, feedback, modal = null,
   let busy = false;
   let dirty = false;
 
-  const showFeedback = (state, message = '') => {
-    if (renderFeedback) { renderFeedback(state, message); return; }
+  const showFeedback = (state, message = '', error = null) => {
+    if (renderFeedback) { renderFeedback(state, message, error); return; }
     if (!feedback) return;
     feedback.classList.remove('ui-feedback', 'ui-feedback-loading', 'ui-feedback-error',
       'ui-notice', 'ui-notice-warning');
@@ -57,7 +57,7 @@ export function createFormWorkflow({ form, submit, feedback, modal = null,
       let notice = null;
       try { notice = onError ? await onError(error) : null; }
       catch (mappingError) { notice = { state: 'error', message: mappingError?.message }; }
-      showFeedback(notice?.state || 'error', notice?.message || error?.message || 'The changes could not be saved. Try again.');
+      showFeedback(notice?.state || 'error', notice?.message || error?.message || 'The changes could not be saved. Try again.', error);
     } finally {
       controls.forEach((control, index) => { control.disabled = disabled[index]; });
       busy = false;
@@ -77,6 +77,7 @@ export function createFormWorkflow({ form, submit, feedback, modal = null,
   };
 
   return { refresh, showFeedback, save,
+    setDirty: (value) => { dirty = Boolean(value); refresh(); },
     setReady: (value) => { ready = Boolean(value); refresh(); },
     isBusy: () => busy };
 }
