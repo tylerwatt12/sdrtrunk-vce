@@ -58,7 +58,6 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('liveRequestedChannelMatch')}
   ${functionSource('livePickerNavigationIndex')}
   ${functionSource('liveDetailsPanelPercent')}
-  ${functionSource('liveIdentityHasDisplayLabel')}
   ${functionSource('liveRemoteOriginLabel')}
   ${functionSource('liveShowRowRemoteOrigin')}
   ${functionSource('liveIdentityType')}
@@ -70,7 +69,7 @@ const behavior = vm.runInNewContext(`(() => {
   return { liveRowIsActive, livePresentedRow, liveChannelSortMethod, liveCompareChannelRows,
     livePresentedTableRows,
     liveIdentityRenderKey, liveDetailSelectionUnchanged, liveRequestedChannelMatch,
-    livePickerNavigationIndex, liveDetailsPanelPercent, liveIdentityHasDisplayLabel,
+    livePickerNavigationIndex, liveDetailsPanelPercent,
     liveRemoteOriginLabel,
     liveShowRowRemoteOrigin,
     liveIdentityType, liveIdentityLabel,
@@ -178,18 +177,6 @@ assert.equal(behavior.liveDetailsPanelPercent(90), 65,
   'The resizer must retain a useful minimum for the channel panel');
 assert.equal(behavior.liveDetailsPanelPercent(33.6), 34,
   'Persisted panel shares must remain compact and deterministic');
-
-assert.equal(behavior.liveIdentityHasDisplayLabel({ source_alias: 'Engine 4' }, 'source'), true,
-  'A configured source alias must replace its numeric ID on compact Live rows');
-assert.equal(behavior.liveIdentityHasDisplayLabel({ talker_alias: 'OTA Unit 312' }, 'source'), true,
-  'An over-the-air source alias must replace its numeric ID on compact Live rows');
-assert.equal(behavior.liveIdentityHasDisplayLabel({ source_alias_display: 'Composite label' }, 'source'), false,
-  'Composite navigation metadata must not suppress the source ID');
-assert.equal(behavior.liveIdentityHasDisplayLabel({ target_alias: 'Fire Dispatch' }, 'target'), true,
-  'A configured target alias must replace its talkgroup ID on compact Live rows');
-assert.equal(behavior.liveIdentityHasDisplayLabel({ talker_alias: 'Source only' }, 'target'), false,
-  'Source-only OTA aliases must not suppress the target ID');
-assert.equal(behavior.liveIdentityHasDisplayLabel({}, 'source'), false);
 
 for (const status of ['CONTROL', 'ACTIVE', 'CALL', 'DATA', 'ENCRYPTED']) {
   assert.equal(behavior.liveRowIsActive(row(status, status, { activation_order: 1 })), true);
@@ -390,12 +377,6 @@ assert.match(channels, /rowClass: activityRowClass/,
 assert.match(channels,
   /channelTagSet\(row\.tags\)\.has\('CONVENTIONAL'\) \? '' : 'live-row-trunked'/,
   'Only trunked rows may hide their LCN in the compact mobile presentation');
-assert.match(channels,
-  /liveIdentityHasDisplayLabel\(row, 'source'\) \? 'live-row-has-source-label' : ''/,
-  'Source-label availability must be reflected on each responsive row');
-assert.match(channels,
-  /liveIdentityHasDisplayLabel\(row, 'target'\) \? 'live-row-has-target-label' : ''/,
-  'Target-label availability must be reflected on each responsive row');
 assert.match(channelValue,
   /const conventional = channelTagSet\(row\.tags\)\.has\('CONVENTIONAL'\);[\s\S]*const value = conventional \? liveConventionalChannelValue\(row\) :[\s\S]*`LCN \$\{row\.lcn\}`/,
   'Conventional channel names must remain distinct from trunked LCN values');

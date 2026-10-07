@@ -240,7 +240,7 @@ function snapshot(duplicates = [duplicate()]) {
 }
 
 
-async function installSiteStyleApplication(page, theme = 'light') {
+async function installSiteStyleApplication(page, theme = 'light', liveInitialSnapshot = liveSnapshot) {
   const defaults = (await import(pathToFileURL(path.join(root, 'stats-web/assets/core/preference-schema.js')).href)).defaults;
   const preferences = structuredClone(defaults);
   preferences.appearance.theme = theme;
@@ -261,10 +261,11 @@ async function installSiteStyleApplication(page, theme = 'light') {
       };
       return Promise.resolve(new Response(new ReadableStream({ start(controller) {
         controller.enqueue(frame(0, 'ready', { client_id: url.searchParams.get('client_id') }));
-        controller.enqueue(frame(1, 'snapshot', snapshotValue));
+        window.fixtureSendLiveSnapshot = (next = snapshotValue) => controller.enqueue(frame(1, 'snapshot', next));
+        window.fixtureSendLiveSnapshot();
       } }), { status: 200 }));
     };
-  }, liveSnapshot);
+  }, liveInitialSnapshot);
   const icon = fs.readFileSync(path.join(root, 'src/main/resources/images/fire_truck.png'));
   const mapTile = '<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" fill="#e7eee3"/><path d="M0 80H256M0 180H256M60 0V256M170 0V256" stroke="#ffffff" stroke-width="9"/><path d="M0 80H256M0 180H256M60 0V256M170 0V256" stroke="#c8d5c2" stroke-width="1"/></svg>';
   await page.route('https://tile.openstreetmap.org/**', route => route.fulfill({ contentType: 'image/svg+xml', body: mapTile }));

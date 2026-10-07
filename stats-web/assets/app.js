@@ -17720,7 +17720,7 @@ function liveAliasValue(row, kind) {
     return label ? liveIdentityActionLink(row, kind, label) : '';
   }
   const references = liveAliasReferences(row, kind);
-  const fallback = row?.target_alias || '';
+  const fallback = String(row?.target_alias || '').trim();
   if (!references.length) return fallback ?
     liveIdentityActionLink(row, kind, fallback) : fallback;
   const result = node('span', 'live-alias-values');
@@ -17730,11 +17730,6 @@ function liveAliasValue(row, kind) {
     result.append(liveIdentityActionLink(row, kind, label));
   });
   return result;
-}
-
-function liveIdentityHasDisplayLabel(row, kind) {
-  const fields = kind === 'source' ? [row?.source_alias, row?.talker_alias] : [row?.target_alias];
-  return fields.some((value) => String(value || '').trim());
 }
 
 function liveConventionalChannelValue(row) {
@@ -18016,9 +18011,7 @@ function liveChannelsSection(onSelectionChange) {
   };
   const activityRowClass = (row) => [
     selection?.rowKey === row.key ? 'selected' : '',
-    channelTagSet(row.tags).has('CONVENTIONAL') ? '' : 'live-row-trunked',
-    liveIdentityHasDisplayLabel(row, 'source') ? 'live-row-has-source-label' : '',
-    liveIdentityHasDisplayLabel(row, 'target') ? 'live-row-has-target-label' : ''
+    channelTagSet(row.tags).has('CONVENTIONAL') ? '' : 'live-row-trunked'
   ].filter(Boolean).join(' ');
   const decodeQualityClass = (row) => {
     const values = decodeQualityValues(row);

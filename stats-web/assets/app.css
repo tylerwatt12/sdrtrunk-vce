@@ -23,7 +23,7 @@
 @import url("./styles/features/about.css?v=1") layer(features);
 @import url("./styles/features/channels.css?v=21") layer(features);
 @import url("./styles/features/entity-details.css?v=12") layer(features);
-@import url("./styles/features/live.css?v=20") layer(features);
+@import url("./styles/features/live.css?v=21") layer(features);
 @import url("./styles/features/radio-directory.css?v=8") layer(features);
 @import url("./styles/features/tuner-spectrum.css?v=31") layer(features);
 @import url("./styles/features/tuners.css?v=11") layer(features);

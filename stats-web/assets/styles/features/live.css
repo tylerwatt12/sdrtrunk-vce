@@ -1158,23 +1158,23 @@ body[data-view="live"] .channel-diagnostic-readouts {
     grid-column: 11 / span 2;
   }
 
-  .channels-live-table tr.live-row-has-source-label td[data-column="source"],
-  .channels-live-table tr.live-row-has-target-label td[data-column="target"] {
+  .channels-live-table tr:has(td[data-column="source-alias"]:not(:empty)) td[data-column="source"],
+  .channels-live-table tr:has(td[data-column="target-alias"]:not(:empty)) td[data-column="target"] {
     display: none;
   }
 
-  .channels-live-table tr.live-row-has-source-label td[data-column="source-alias"],
-  .channels-live-table tr:not(.live-row-has-source-label) td[data-column="source"] {
+  .channels-live-table tr:has(td[data-column="source-alias"]:not(:empty)) td[data-column="source-alias"],
+  .channels-live-table tr:not(:has(td[data-column="source-alias"]:not(:empty))) td[data-column="source"] {
     grid-column: 1 / span 6;
   }
 
-  .channels-live-table tr.live-row-has-target-label td[data-column="target-alias"],
-  .channels-live-table tr:not(.live-row-has-target-label) td[data-column="target"] {
+  .channels-live-table tr:has(td[data-column="target-alias"]:not(:empty)) td[data-column="target-alias"],
+  .channels-live-table tr:not(:has(td[data-column="target-alias"]:not(:empty))) td[data-column="target"] {
     grid-column: 7 / span 6;
   }
 
-  .channels-live-table tr:not(.live-row-has-source-label) td[data-column="source"],
-  .channels-live-table tr:not(.live-row-has-target-label) td[data-column="target"] {
+  .channels-live-table tr:not(:has(td[data-column="source-alias"]:not(:empty))) td[data-column="source"],
+  .channels-live-table tr:not(:has(td[data-column="target-alias"]:not(:empty))) td[data-column="target"] {
     color: var(--ink);
     font-size: var(--font-size-body);
     font-weight: var(--font-weight-medium);
@@ -1198,11 +1198,11 @@ body[data-view="live"] .channel-diagnostic-readouts {
   .channels-live-table td[data-column="source"]::before,
   .channels-live-table td[data-column="target"]::before { content: "#"; }
 
-  .channels-live-table tr:not(.live-row-has-source-label) td[data-column="source"]::before {
+  .channels-live-table tr:not(:has(td[data-column="source-alias"]:not(:empty))) td[data-column="source"]::before {
     content: "From";
   }
 
-  .channels-live-table tr:not(.live-row-has-target-label) td[data-column="target"]::before {
+  .channels-live-table tr:not(:has(td[data-column="target-alias"]:not(:empty))) td[data-column="target"]::before {
     content: "To";
   }
 
