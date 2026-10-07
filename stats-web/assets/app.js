@@ -1859,9 +1859,22 @@ function exportCsvLink(dataset, context = {}, options = {}) {
   link.setAttribute('download', '');
   link.setAttribute('aria-label', label);
   link.title = label;
-  if (options.loading) {
-    const target = link.href;
+  if (options.loading !== false) {
     let activeController = null;
+    let feedback = null;
+    const showFeedback = (message, state = 'info') => {
+      if (!link.isConnected) return;
+      if (!feedback?.isConnected) {
+        feedback = node('div', 'export-csv-feedback');
+        const section = link.closest('.ui-section');
+        const header = section?.querySelector(':scope > .section-title');
+        if (header) header.after(feedback);
+        else link.parentElement?.after(feedback);
+      }
+      feedback.className = `export-csv-feedback ui-feedback ui-feedback-${state}`;
+      feedback.setAttribute('role', state === 'error' ? 'alert' : 'status');
+      feedback.textContent = message;
+    };
     const reset = (errorMessage = '') => {
       link.classList.remove('is-loading');
       link.removeAttribute('aria-busy');
@@ -1876,12 +1889,16 @@ function exportCsvLink(dataset, context = {}, options = {}) {
         return;
       }
       const controller = new AbortController();
+      const target = link.href;
       activeController = controller;
+      const cleanup = { close: () => controller.abort() };
+      pageConnections.add(cleanup);
       link.classList.add('is-loading');
       link.setAttribute('aria-busy', 'true');
       link.setAttribute('aria-label', `Preparing ${label.toLowerCase()}; click to cancel`);
       link.title = 'Preparing CSV export. Click again to cancel.';
       link.replaceChildren();
+      showFeedback('Preparing CSV export. Click Export again to cancel.', 'loading');
       void (async () => {
         let errorMessage = '';
         try {
@@ -1890,24 +1907,38 @@ function exportCsvLink(dataset, context = {}, options = {}) {
             headers: { Accept: 'text/csv' }, signal: controller.signal
           });
           if (!response.ok) {
-            throw new Error(`The report could not be downloaded (HTTP ${response.status}).`);
+            const message = response.status === 401 ? 'Sign in again, then try Export.' :
+              response.status === 403 ? 'Your account cannot export this report.' :
+                response.status === 429 ? 'Another export is running. Try Export again in a moment.' :
+                  'The CSV could not be downloaded. Try Export again.';
+            throw new Error(message);
+          }
+          if (String(response.headers.get('Content-Type') || '').split(';', 1)[0].trim().toLowerCase() !== 'text/csv') {
+            throw new Error('The receiver did not return a CSV report. Try Export again.');
           }
           const blob = await response.blob();
-          if (controller.signal.aborted) return;
+          if (controller.signal.aborted || !link.isConnected) return;
           const download = document.createElement('a');
           const objectUrl = URL.createObjectURL(blob);
           download.href = objectUrl;
           download.download = exportCsvFileName(response, `${dataset}.csv`);
-          download.style.display = 'none';
+          download.hidden = true;
           document.body.append(download);
           download.click();
           download.remove();
           window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
+          showFeedback('CSV prepared. Check your browser’s downloads.');
         } catch (error) {
-          if (error?.name !== 'AbortError') {
-            errorMessage = error.message || 'The CSV could not be downloaded.';
+          if (error?.name === 'AbortError') {
+            showFeedback('CSV export canceled.');
+          } else {
+            errorMessage = error?.name === 'TypeError' ?
+              'The receiver could not be reached. Check the connection and try Export again.' :
+              error.message || 'The CSV could not be downloaded. Try Export again.';
+            showFeedback(errorMessage, 'error');
           }
         } finally {
+          pageConnections.delete(cleanup);
           if (activeController === controller) {
             activeController = null;
             reset(errorMessage);
