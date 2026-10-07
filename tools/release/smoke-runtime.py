@@ -59,8 +59,8 @@ def read_target_format(metadata):
     return int(value)
 
 
-def check_database(database, expected_format):
-    with closing(sqlite3.connect(database)) as connection:
+def check_database(database, expected_format, *, timeout=5):
+    with closing(sqlite3.connect(database, timeout=timeout)) as connection:
         if connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
             raise RuntimeError("Profile failed SQLite integrity check")
         if connection.execute("PRAGMA foreign_key_check").fetchall():
@@ -69,6 +69,26 @@ def check_database(database, expected_format):
             "SELECT value FROM database_metadata WHERE key='database_format_version'").fetchone()
         if version != (str(expected_format),):
             raise RuntimeError(f"Expected database format {expected_format}, found {version!r}")
+
+
+def check_database_after_stop(database, expected_format):
+    # taskkill can return after the cmd launcher exits while its JVM's SQLite handles are still closing.
+    # Every attempt keeps the full database checks; persistent I/O errors and invalid data still fail.
+    deadline = time.monotonic() + 5 if os.name == "nt" else 0
+    while True:
+        try:
+            remaining = max(0, deadline - time.monotonic()) if deadline else 5
+            check_database(database, expected_format, timeout=remaining)
+            return
+        except sqlite3.OperationalError as error:
+            code = getattr(error, "sqlite_errorcode", 0) & 0xff
+            remaining = deadline - time.monotonic()
+            # SQLite's stable primary result codes: BUSY=5, LOCKED=6, IOERR=10.
+            if code not in (5, 6, 10) or remaining <= 0:
+                error.args = (f"{error} (sqlite_errorcode={getattr(error, 'sqlite_errorcode', None)}, "
+                              f"sqlite_errorname={getattr(error, 'sqlite_errorname', None)})",)
+                raise
+            time.sleep(min(0.05, remaining))
 
 
 def retained_counts(database):
@@ -230,7 +250,7 @@ def main():
                     raise RuntimeError("Packaged web JavaScript was not served")
         finally:
             stop(process)
-    check_database(database, target_format)
+    check_database_after_stop(database, target_format)
     with archive.open("rb") as source:
         digest = hashlib.file_digest(source, "sha256").hexdigest()
     print(f"PASS: {archive.name}: bundled Java, fresh format {target_format} profile, format 20-to-{target_format} migration, native launcher and web assets")

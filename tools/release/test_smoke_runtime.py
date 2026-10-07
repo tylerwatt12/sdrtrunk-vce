@@ -6,6 +6,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+from unittest import mock
 
 
 SPEC = importlib.util.spec_from_file_location("smoke_runtime", Path(__file__).with_name("smoke-runtime.py"))
@@ -76,6 +77,84 @@ class SmokeRuntimeTest(unittest.TestCase):
             connection.execute("INSERT INTO child VALUES(1)")
         with self.assertRaisesRegex(RuntimeError, "foreign-key check"):
             SMOKE.check_database(damaged, 45)
+
+    def test_windows_shutdown_waits_for_transient_handle_release_then_runs_all_checks(self):
+        database = self.database(45)
+        strict_check = SMOKE.check_database
+        for code in (5, 6, 10):
+            with self.subTest(code=code):
+                transient = sqlite3.OperationalError("shutdown handle not released")
+                transient.sqlite_errorcode = code
+                calls = []
+                def probe(path, expected, *, timeout):
+                    calls.append((path, expected))
+                    self.assertGreaterEqual(timeout, 0)
+                    self.assertLessEqual(timeout, 5)
+                    if len(calls) == 1:
+                        raise transient
+                    strict_check(path, expected, timeout=timeout)
+                with mock.patch.object(SMOKE.os, "name", "nt"), \
+                     mock.patch.object(SMOKE, "check_database", side_effect=probe), \
+                     mock.patch.object(SMOKE.time, "sleep") as pause:
+                    SMOKE.check_database_after_stop(database, 45)
+                self.assertEqual([(database, 45), (database, 45)], calls)
+                pause.assert_called_once_with(0.05)
+
+    def test_persistent_windows_shutdown_io_error_remains_a_bounded_failure(self):
+        database = self.database(45)
+        error = sqlite3.OperationalError("disk I/O error")
+        error.sqlite_errorcode = 10
+        error.sqlite_errorname = "SQLITE_IOERR"
+        with mock.patch.object(SMOKE.os, "name", "nt"), \
+             mock.patch.object(SMOKE, "check_database", side_effect=error) as probe, \
+             mock.patch.object(SMOKE.time, "monotonic", side_effect=(0.0, 0.0, 0.0, 5.0, 5.0)), \
+             mock.patch.object(SMOKE.time, "sleep") as pause:
+            with self.assertRaises(sqlite3.OperationalError) as failure:
+                SMOKE.check_database_after_stop(database, 45)
+            self.assertIs(error, failure.exception)
+            self.assertIn("sqlite_errorcode=10", str(failure.exception))
+            self.assertIn("sqlite_errorname=SQLITE_IOERR", str(failure.exception))
+        self.assertEqual(2, probe.call_count)
+        pause.assert_called_once_with(0.05)
+
+    def test_shutdown_does_not_retry_corruption_or_failed_integrity_foreign_key_and_target_gates(self):
+        database = self.database(45)
+        corrupt = sqlite3.DatabaseError("database disk image is malformed")
+        for error in (corrupt, RuntimeError("Profile failed SQLite integrity check"),
+                      RuntimeError("Profile failed SQLite foreign-key check"),
+                      RuntimeError("Expected database format 45, found 44"),
+                      sqlite3.OperationalError("unknown operational failure")):
+            with self.subTest(error=str(error)), mock.patch.object(SMOKE.os, "name", "nt"), \
+                 mock.patch.object(SMOKE, "check_database", side_effect=error) as probe, \
+                 mock.patch.object(SMOKE.time, "sleep") as pause:
+                with self.assertRaises(type(error)) as failure:
+                    SMOKE.check_database_after_stop(database, 45)
+                self.assertIs(error, failure.exception)
+                self.assertEqual((database, 45), probe.call_args.args)
+                pause.assert_not_called()
+
+    def test_non_windows_shutdown_does_not_retry_io_errors(self):
+        database = self.database(45)
+        error = sqlite3.OperationalError("disk I/O error")
+        error.sqlite_errorcode = 10
+        with mock.patch.object(SMOKE.os, "name", "posix"), \
+             mock.patch.object(SMOKE, "check_database", side_effect=error) as probe, \
+             mock.patch.object(SMOKE.time, "sleep") as pause:
+            with self.assertRaises(sqlite3.OperationalError):
+                SMOKE.check_database_after_stop(database, 45)
+        probe.assert_called_once_with(database, 45, timeout=5)
+        pause.assert_not_called()
+
+    def test_actual_invalid_target_and_corrupt_files_fail_windows_final_probe_immediately(self):
+        wrong_target = self.database(44)
+        corrupt = self.root / "invalid-after-stop.sqlite"
+        corrupt.write_bytes(b"invalid sqlite file")
+        for path, failure in ((wrong_target, RuntimeError), (corrupt, sqlite3.DatabaseError)):
+            with self.subTest(path=path.name), mock.patch.object(SMOKE.os, "name", "nt"), \
+                 mock.patch.object(SMOKE.time, "sleep") as pause:
+                with self.assertRaises(failure):
+                    SMOKE.check_database_after_stop(path, 45)
+                pause.assert_not_called()
 
 
 if __name__ == "__main__":
