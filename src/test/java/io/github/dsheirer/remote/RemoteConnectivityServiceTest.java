@@ -13,6 +13,7 @@ import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkTestDatabase;
+import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.log.EventLogManager;
 import io.github.dsheirer.preference.UserPreferences;
@@ -81,8 +82,7 @@ class RemoteConnectivityServiceTest
     @Test
     void revokedSenderCannotFinishAnInFlightAuthentication() throws Exception
     {
-        Installation host = new Installation(mTemp.resolve("revocation-host"));
-        try
+        try(Installation host = new Installation(mTemp.resolve("revocation-host")))
         {
             CreateSenderResult pair = host.remote.createSender(host.remote.snapshot().revision(),
                 new RemoteLinkAdministrationService.CreateSenderRequest("Revoked receiver"));
@@ -115,17 +115,12 @@ class RemoteConnectivityServiceTest
             }
             assertEquals(SenderState.REVOKED, host.remote.snapshot().senders().getFirst().state());
         }
-        finally
-        {
-            host.remote.close();
-        }
     }
 
     @Test
     void rejectsATrustedSendersExcessiveTrafficOpens() throws Exception
     {
-        Installation host = new Installation(mTemp.resolve("quota-host"));
-        try
+        try(Installation host = new Installation(mTemp.resolve("quota-host")))
         {
             CreateSenderResult pair = host.remote.createSender(host.remote.snapshot().revision(),
                 new RemoteLinkAdministrationService.CreateSenderRequest("Busy receiver"));
@@ -151,20 +146,15 @@ class RemoteConnectivityServiceTest
                 await(() -> !sender.isOpen());
             }
         }
-        finally
-        {
-            host.remote.close();
-        }
     }
 
     @Test
     void missingP25AliasListKeepsFeedVisibleAndAliasListCreationStartsSetup() throws Exception
     {
-        Installation host = new Installation(mTemp.resolve("missing-alias-host"));
-        List<AliasListDefinition> savedDefinitions =
-            List.copyOf(host.configuration.getAliasModel().aliasListDefinitions());
-        try
+        try(Installation host = new Installation(mTemp.resolve("missing-alias-host")))
         {
+            List<AliasListDefinition> savedDefinitions =
+                List.copyOf(host.configuration.getAliasModel().aliasListDefinitions());
             host.configuration.getAliasModel().replaceCommittedConfiguration(List.of(), List.of());
             CreateSenderResult pair = host.remote.createSender(host.remote.snapshot().revision(),
                 new RemoteLinkAdministrationService.CreateSenderRequest("Receiver"));
@@ -194,10 +184,6 @@ class RemoteConnectivityServiceTest
                 assertEquals(1, host.configuration.getChannelModel().getChannels().size());
             }
         }
-        finally
-        {
-            host.remote.close();
-        }
     }
 
     private static int availablePort() throws Exception
@@ -211,16 +197,10 @@ class RemoteConnectivityServiceTest
     @Test
     void hostDiscoversTwoAuthenticatedSenderCatalogsWithoutAllocatingLocalTuners() throws Exception
     {
-        Installation host = new Installation(mTemp.resolve("host"));
-        Installation west = new Installation(mTemp.resolve("west"));
-        Installation east = new Installation(mTemp.resolve("east"));
-        int port;
-        try(ServerSocket reservation = new ServerSocket(0, 1, InetAddress.getLoopbackAddress()))
-        {
-            port = reservation.getLocalPort();
-        }
-
-        try
+        int port = availablePort();
+        try(Installation host = new Installation(mTemp.resolve("host"));
+            Installation west = new Installation(mTemp.resolve("west"));
+            Installation east = new Installation(mTemp.resolve("east")))
         {
             Channel westControl = west.addControl("West", 851_012_500L);
             Channel eastControl = east.addControl("East".repeat(50), 852_012_500L);
@@ -332,12 +312,6 @@ class RemoteConnectivityServiceTest
                     westControl.getConfigurationId().equals(source.getFeedId())).count(),
                 "reconnect and duplicate catalogs must reuse the saved remote channel");
         }
-        finally
-        {
-            east.remote.close();
-            west.remote.close();
-            host.remote.close();
-        }
     }
 
     private static void await(java.util.function.BooleanSupplier condition) throws Exception
@@ -351,7 +325,7 @@ class RemoteConnectivityServiceTest
         fail("Remote-link state did not converge before the test deadline");
     }
 
-    private static final class Installation
+    private static final class Installation implements AutoCloseable
     {
         private final ConfigurationManager configuration;
         private final RemoteConnectivityService remote;
@@ -374,14 +348,37 @@ class RemoteConnectivityServiceTest
             Channel channel = new Channel(name, Channel.ChannelType.STANDARD);
             channel.setSystem("Test system");
             channel.setSite(name);
-            channel.setAliasListId(configuration.getAliasModel().aliasListDefinitions().stream()
-                .filter(alias -> alias.getFamily() == AliasListFamily.P25).findFirst().orElseThrow().getId());
+            AliasListDefinition aliasList = configuration.getAliasModel().aliasListDefinitions().stream()
+                .filter(alias -> alias.getFamily() == AliasListFamily.P25).findFirst().orElseThrow();
+            channel.setAliasListId(aliasList.getId());
+            channel.setAliasListName(aliasList.getName());
             channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
             SourceConfigTuner source = new SourceConfigTuner();
             source.setFrequency(frequency);
             channel.setSourceConfiguration(source);
             configuration.getChannelModel().addChannel(channel);
             return channel;
+        }
+
+        @Override
+        public void close()
+        {
+            try
+            {
+                remote.close();
+            }
+            finally
+            {
+                try
+                {
+                    configuration.getChannelProcessingManager().shutdown();
+                    configuration.flushConfiguration();
+                }
+                finally
+                {
+                    MyEventBus.getGlobalEventBus().unregister(configuration.getChannelProcessingManager());
+                }
+            }
         }
     }
 
