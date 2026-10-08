@@ -33,6 +33,7 @@ async function installLiveStream(page) {
     let sequence = 0;
     let generation = 0;
     let activeParameters = {};
+    let receiverState = { centerHz: initialCenterHz, streamState: 'live', reason: null };
     const multiplex = (topic, kind, payload) => {
       const frame = new Uint8Array(16 + payload.byteLength);
       const header = new DataView(frame.buffer);
@@ -72,8 +73,9 @@ async function installLiveStream(page) {
       frame.set(payload, headerBytes);
       return frame;
     };
-    const emit = (centerHz, parameters = activeParameters,
-      { streamState = 'live', reason = null, fftValues = null } = {}) => {
+    const emit = (centerHz = receiverState.centerHz, parameters = activeParameters,
+      { streamState = receiverState.streamState, reason = receiverState.reason, fftValues = null } = {}) => {
+      receiverState = { centerHz, streamState, reason };
       if (!controller || controller.desiredSize === null) return;
       activeParameters = parameters;
       const state = {
@@ -119,20 +121,29 @@ async function installLiveStream(page) {
       const url = new URL(rawUrl, window.location.href);
       if (url.pathname !== '/api/v1/live/multiplex') return nativeFetch(input, options);
       generation += 1;
+      const streamGeneration = generation;
+      let streamController = null;
+      let initialTimer = null;
       window.spectrumDragStream.opened += 1;
+      window.spectrumDragStream.initialEmitted = false;
       const ready = multiplex(0, 1, encoder.encode(JSON.stringify({
         event: 'ready', data: { client_id: url.searchParams.get('client_id') }
       })));
       return Promise.resolve(new Response(new ReadableStream({
         start(value) {
-          controller = value;
+          controller = streamController = value;
           controller.enqueue(ready);
-          window.setTimeout(() => {
+          initialTimer = window.setTimeout(() => {
+            if (controller !== streamController || generation !== streamGeneration) return;
             window.spectrumDragStream.initialEmitted = true;
-            emit(initialCenterHz);
+            emit();
           }, 50);
         },
-        cancel() { controller = null; window.spectrumDragStream.cancelled += 1; }
+        cancel() {
+          window.clearTimeout(initialTimer);
+          if (controller === streamController) controller = null;
+          window.spectrumDragStream.cancelled += 1;
+        }
       }), { status: 200, headers: { 'Content-Type': 'application/vnd.sdrtrunk.live+binary' } }));
     };
   }, { initialCenterHz: INITIAL_CENTER_HZ, sampleRateHz: SAMPLE_RATE_HZ });
@@ -241,6 +252,12 @@ async function install(page) {
   await page.goto('/app.html?view=tuner-spectrum');
   await expect(page.getByRole('heading', { name: 'Browse Spectrum', exact: true })).toBeVisible();
   await expect(page.locator('.spectrum-browse-center')).toContainText('0851.01250MHz');
+  await expect(page.getByRole('combobox', { name: 'Tuner', exact: true })).toBeEnabled();
+  // Lease selection/inventory refresh can clear the plots after the first control response.
+  // Wait for the producer's initial sample and the usable plots, rather than any transient Live badge.
+  await expect.poll(() => page.evaluate(() => window.spectrumDragStream.initialEmitted)).toBe(true);
+  await expect(page.locator('.tuner-spectrum-fft .channel-diagnostic-overlay')).toBeHidden();
+  await expect(page.locator('.tuner-spectrum-waterfall .channel-diagnostic-overlay')).toBeHidden();
   await expect(page.locator('.spectrum-browse-status')).toHaveText('Live');
   await expect(page.getByRole('button', { name: 'Zoom in', exact: true })).toBeEnabled();
   return state;
@@ -382,7 +399,9 @@ async function beginDrag(page, canvas, ratio = 0.6) {
   const y = bounds.y + bounds.height / 2;
   const startX = bounds.x + bounds.width * ratio;
   await page.mouse.move(startX, y);
+  await expect(page.locator('.tuner-spectrum-fft .channel-diagnostic-overlay')).toBeHidden();
   await page.mouse.down();
+  await expect(canvas).toHaveClass(/dragging/);
   return { bounds, y, startX, startRatio: ratio };
 }
 
@@ -590,7 +609,7 @@ for (const streamState of ['unavailable', 'closed']) {
       await moveDrag(page, gesture, 0.55);
       await expectTuneCount(state, 1);
       await moveDrag(page, gesture, 0.4);
-      await page.evaluate(({ centerHz, streamState }) => window.spectrumDragStream.emit(centerHz, {}, {
+      await page.evaluate(({ centerHz, streamState }) => window.spectrumDragStream.emit(centerHz, undefined, {
         streamState, reason: 'Receiver samples stopped.'
       }), { centerHz: INITIAL_CENTER_HZ - 5000000, streamState });
       await expect(page.locator('.spectrum-browse-status')).toHaveText('Unavailable');
@@ -612,14 +631,28 @@ test('repeated unavailable STATE while idle leaves lease renewal on its existing
   const state = await install(page);
   const browseCount = state.browses.length;
   for (const streamState of ['unavailable', 'closed', 'unavailable']) {
-    await page.evaluate(({ centerHz, streamState }) => window.spectrumDragStream.emit(centerHz, {}, {
+    await page.evaluate(({ centerHz, streamState }) => window.spectrumDragStream.emit(centerHz, undefined, {
       streamState, reason: 'Receiver samples stopped.'
     }), { centerHz: INITIAL_CENTER_HZ, streamState });
     await expect(page.locator('.spectrum-browse-status')).toHaveText('Unavailable');
+    // Model a late subscription response. It must report the same stopped receiver, without reviving samples.
+    const parameters = state.controls.filter(Boolean).at(-1);
+    expect(parameters).toBeTruthy();
+    await page.evaluate(({ centerHz, parameters }) => window.spectrumDragStream.emit(centerHz, parameters),
+      { centerHz: INITIAL_CENTER_HZ, parameters });
+    await settle(page);
+    await expect(page.locator('.spectrum-browse-status')).toHaveText('Unavailable');
+    await expect(page.locator('.tuner-spectrum-fft .channel-diagnostic-overlay'))
+      .toHaveText('Receiver samples stopped.');
   }
   await settle(page);
   expect(state.browses).toHaveLength(browseCount);
   expect(state.tunes).toHaveLength(0);
+  await page.evaluate((centerHz) => window.spectrumDragStream.emit(centerHz, undefined, {
+    streamState: 'live', reason: null
+  }), INITIAL_CENTER_HZ);
+  await expect(page.locator('.spectrum-browse-status')).toHaveText('Live');
+  await expect(page.locator('.tuner-spectrum-fft .channel-diagnostic-overlay')).toBeHidden();
 });
 
 test('repeated gesture cancellation serializes renewal and retains only one periodic timer', async ({ page }) => {

@@ -6,6 +6,7 @@ const { readFileSync } = require('node:fs');
 const root = resolve(__dirname, '../../../../..');
 const CENTER_HZ = 451000000;
 const RATE_HZ = 2400000;
+const BALANCED_FRAME_INTERVAL_MS = 100; // TunerDiagnosticService.FRAMES_PER_SECOND = 10.
 
 function recording(tunerClass = 'recording_tuner') {
   return {
@@ -18,12 +19,13 @@ function recording(tunerClass = 'recording_tuner') {
 
 // Exercise the production multiplex, STATE and FFT decoders; no receiver endpoint is contacted.
 async function installStream(page) {
-  await page.addInitScript(({ centerHz, sampleRateHz }) => {
+  await page.addInitScript(({ centerHz, sampleRateHz, frameIntervalMs }) => {
     const nativeFetch = window.fetch.bind(window);
     const encoder = new TextEncoder();
     const streams = new Set();
     let sequence = 0;
     let generation = 0;
+    let frameTimer = null;
     const multiplex = (topic, kind, payload) => {
       const frame = new Uint8Array(16 + payload.byteLength);
       const header = new DataView(frame.buffer);
@@ -56,8 +58,25 @@ async function installStream(page) {
       frame.set(payload, 72);
       return frame;
     };
+    const stopFrames = () => {
+      if (frameTimer !== null) window.clearInterval(frameTimer);
+      frameTimer = null;
+    };
+    const emitFft = () => {
+      if (!streams.size) return;
+      const values = new Uint8Array(2048).fill(118);
+      values[900] = 180;
+      for (const controller of streams) {
+        if (controller.desiredSize !== null) {
+          controller.enqueue(multiplex(5, 2, diagnostic(4, values, values.length)));
+        }
+      }
+      window.recordingSpectrum.fftFrames += 1;
+    };
     window.recordingSpectrum = {
-      opened: 0, cancelled: 0,
+      opened: 0, cancelled: 0, stateFrames: 0, fftFrames: 0,
+      get streaming() { return frameTimer !== null; },
+      stop: stopFrames,
       activity(tables) {
         const payload = encoder.encode(JSON.stringify({ event: 'snapshot', data: { revision: 1, tables } }));
         for (const controller of streams) {
@@ -65,7 +84,8 @@ async function installStream(page) {
         }
       },
       emit(streamState = 'live', reason = null, parameters = {}) {
-        const state = { stream_state: streamState, reason, center_frequency_hz: centerHz,
+        stopFrames();
+        const state = { target_id: parameters.target_id, stream_state: streamState, reason, center_frequency_hz: centerHz,
           sample_rate_hz: sampleRateHz, profile: parameters.profile || 'balanced' };
         if (parameters.viewport_start_hz != null) {
           state.requested_start_frequency_hz = state.visible_start_frequency_hz = parameters.viewport_start_hz;
@@ -74,11 +94,12 @@ async function installStream(page) {
         for (const controller of streams) {
           if (controller.desiredSize === null) continue;
           controller.enqueue(multiplex(5, 2, diagnostic(1, encoder.encode(JSON.stringify(state)))));
-          if (streamState === 'live') {
-            const values = new Uint8Array(2048).fill(118);
-            values[900] = 180;
-            controller.enqueue(multiplex(5, 2, diagnostic(4, values, values.length)));
-          }
+        }
+        if (streams.size) window.recordingSpectrum.stateFrames += 1;
+        if (streamState === 'live' && streams.size) {
+          emitFft();
+          // A bound production diagnostic session continues sending FFT frames after its initial STATE.
+          frameTimer = window.setInterval(emitFft, frameIntervalMs);
         }
       }
     };
@@ -96,10 +117,14 @@ async function installStream(page) {
           value.enqueue(multiplex(0, 1, encoder.encode(JSON.stringify({ event: 'ready',
             data: { client_id: url.searchParams.get('client_id') } }))));
         },
-        cancel() { streams.delete(controller); window.recordingSpectrum.cancelled += 1; }
+        cancel() {
+          streams.delete(controller);
+          if (!streams.size) stopFrames();
+          window.recordingSpectrum.cancelled += 1;
+        }
       }), { status: 200, headers: { 'Content-Type': 'application/vnd.sdrtrunk.live+binary' } }));
     };
-  }, { centerHz: CENTER_HZ, sampleRateHz: RATE_HZ });
+  }, { centerHz: CENTER_HZ, sampleRateHz: RATE_HZ, frameIntervalMs: BALANCED_FRAME_INTERVAL_MS });
 }
 
 async function install(page, { tunerClass = 'recording_tuner', width = 1280, theme = 'light',
@@ -111,7 +136,7 @@ async function install(page, { tunerClass = 'recording_tuner', width = 1280, the
   receiver.spectrum_target_id = targetAvailable ? 'recording-target' : null;
   receiver.channel_count = channelCount;
   receiver.recording_playback = { state: playbackState };
-  const state = { receiver, requests: [], subscriptions: [], releases: [] };
+  const state = { receiver, requests: [], subscriptions: [], releases: [], availableDiagnosticsRequests: 0 };
   await page.setViewportSize({ width, height: 900 });
   await installStream(page);
   if (exposeController) await page.route('**/assets/app.js?*', async (route) => {
@@ -145,7 +170,9 @@ async function install(page, { tunerClass = 'recording_tuner', width = 1280, the
     if (path === '/api/v1/diagnostics/tuners') {
       const snapshot = { rows: receiver.spectrum_target_id ? [{ target_id: receiver.spectrum_target_id,
         label: receiver.name, center_frequency_hz: CENTER_HZ, sample_rate_hz: RATE_HZ }] : [] };
-      if (holdFirstDiagnostics || state.holdNextDiagnostics) {
+      if (snapshot.rows.length) state.availableDiagnosticsRequests += 1;
+      if (holdFirstDiagnostics || state.holdNextDiagnostics ||
+          (snapshot.rows.length && state.availableDiagnosticsRequests === state.holdAvailableDiagnosticsRequest)) {
         holdFirstDiagnostics = false;
         state.holdNextDiagnostics = false;
         await new Promise((release) => { state.releaseDiagnostics = release; });
@@ -161,8 +188,10 @@ async function install(page, { tunerClass = 'recording_tuner', width = 1280, the
       const parameters = body.subscriptions?.tuner_diagnostics;
       state.subscriptions.push(body.subscriptions);
       await respond({});
-      if (parameters && !page.isClosed()) await page.evaluate((parameters) =>
-        window.recordingSpectrum.emit('live', null, parameters), parameters);
+      if (!page.isClosed()) await page.evaluate((parameters) => {
+        if (parameters) window.recordingSpectrum.emit('live', null, parameters);
+        else window.recordingSpectrum.stop();
+      }, parameters);
       return;
     }
     return respond({});
@@ -170,6 +199,27 @@ async function install(page, { tunerClass = 'recording_tuner', width = 1280, the
   await page.goto('/app.html?view=tuner-spectrum');
   await expect(page.getByRole('heading', { name: 'Browse Spectrum', exact: true })).toBeVisible();
   return state;
+}
+
+async function expectRenderedRecordingPlots(page) {
+  const plotPixels = await page.locator('.tuner-spectrum-fft canvas').evaluate((canvas) => {
+    const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+    let blueTrace = 0;
+    for (let index = 0; index < pixels.length; index += 4) {
+      if (pixels[index + 1] > 150 && pixels[index + 2] > 200) blueTrace += 1;
+    }
+    return blueTrace;
+  });
+  expect(plotPixels).toBeGreaterThan(50);
+  const waterfallColors = await page.locator('.tuner-spectrum-waterfall canvas').evaluate((canvas) => {
+    const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+    const colors = new Set();
+    for (let index = 0; index < pixels.length; index += 4) {
+      colors.add(`${pixels[index]},${pixels[index + 1]},${pixels[index + 2]}`);
+    }
+    return colors.size;
+  });
+  expect(waterfallColors).toBeGreaterThan(1);
 }
 
 for (const theme of ['light', 'dark']) {
@@ -185,24 +235,7 @@ for (const theme of ['light', 'dark']) {
       await expect(page.locator('.tuner-spectrum-fft .channel-diagnostic-overlay')).toBeHidden();
       await expect(page.locator('.tuner-spectrum-waterfall .channel-diagnostic-overlay')).toBeHidden();
       await expect(page.getByRole('button', { name: 'Setup', exact: true })).toBeHidden();
-      const plotPixels = await page.locator('.tuner-spectrum-fft canvas').evaluate((canvas) => {
-        const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
-        let blueTrace = 0;
-        for (let index = 0; index < pixels.length; index += 4) {
-          if (pixels[index + 1] > 150 && pixels[index + 2] > 200) blueTrace += 1;
-        }
-        return blueTrace;
-      });
-      expect(plotPixels).toBeGreaterThan(50);
-      const waterfallColors = await page.locator('.tuner-spectrum-waterfall canvas').evaluate((canvas) => {
-        const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
-        const colors = new Set();
-        for (let index = 0; index < pixels.length; index += 4) {
-          colors.add(`${pixels[index]},${pixels[index + 1]},${pixels[index + 2]}`);
-        }
-        return colors.size;
-      });
-      expect(waterfallColors).toBeGreaterThan(1);
+      await expectRenderedRecordingPlots(page);
       expect(state.subscriptions.some((subscriptions) =>
         subscriptions?.tuner_diagnostics?.target_id === 'recording-target')).toBe(true);
       expect(state.requests.some(({ method, body }) => method === 'POST' && body.takeover)).toBe(false);
@@ -241,6 +274,7 @@ test('navigation releases recording diagnostics and its browse lease; returning 
   await expect.poll(() => state.releases.length).toBe(1);
   expect(state.releases[0].lease_id).toBe('recording-browse');
   await expect.poll(() => page.evaluate(() => window.recordingSpectrum.cancelled)).toBeGreaterThan(0);
+  await expect.poll(() => page.evaluate(() => window.recordingSpectrum.streaming)).toBe(false);
   await page.evaluate(() => window.recordingSpectrum.emit());
   await expect(page.locator('.spectrum-browse-status')).toHaveCount(0);
   await page.evaluate(() => document.querySelector('a[data-view="tuner-spectrum"]').click());
@@ -289,13 +323,39 @@ test('a newly available recording target binds on lease renewal without leaving 
   await expect(page.locator('.spectrum-browse-status')).toHaveText('Waiting');
   await expect(page.locator('.tuner-spectrum-fft .channel-diagnostic-overlay'))
     .toHaveText('Waiting for recording samples.');
+  // Pause before the ten-second renewal; allow command dispatch while the clock is still running.
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+  // Force the second inventory response to arrive after the subscription's first STATE/FFT pair.
+  state.holdAvailableDiagnosticsRequest = 2;
   state.receiver.spectrum_target_id = 'recording-target';
   state.receiver.channel_count = 1;
   await page.clock.fastForward(11000);
+  await expect.poll(() => typeof state.releaseDiagnostics).toBe('function');
+  await expect(page.locator('.spectrum-browse-status')).toHaveText('Connected');
+  await page.clock.runFor(20); // Apply the mux's queued subscription control request.
+  await expect(page.locator('.tuner-spectrum-fft .channel-diagnostic-overlay')).toBeHidden();
+  await page.clock.runFor(BALANCED_FRAME_INTERVAL_MS);
   await expect(page.locator('.spectrum-browse-status')).toHaveText('Live');
   expect(state.subscriptions.some((subscriptions) =>
     subscriptions?.tuner_diagnostics?.target_id === 'recording-target')).toBe(true);
-  await expect(page.locator('.tuner-spectrum-fft .channel-diagnostic-overlay')).toBeHidden();
+  const initialFrames = await page.evaluate(() => ({ state: window.recordingSpectrum.stateFrames,
+    fft: window.recordingSpectrum.fftFrames }));
+  expect(initialFrames.fft).toBeGreaterThan(0);
+  state.releaseDiagnostics();
+  await expect(page.locator('.tuner-spectrum-fft .channel-diagnostic-overlay'))
+    .toHaveText('Waiting for tuner data…');
+  // The next ordinary FFT, without another STATE or subscription, restores the refreshed plots.
+  await page.clock.runFor(BALANCED_FRAME_INTERVAL_MS);
+  for (const surface of ['fft', 'waterfall']) await expect(page.locator(
+    `.tuner-spectrum-${surface} .channel-diagnostic-overlay`)).toBeHidden();
+  await page.clock.runFor(20); // One animation-frame turn paints the accepted samples.
+  await expectRenderedRecordingPlots(page);
+  expect(await page.evaluate(() => window.recordingSpectrum.fftFrames)).toBeGreaterThan(initialFrames.fft);
+  expect(await page.evaluate(() => window.recordingSpectrum.stateFrames)).toBe(initialFrames.state);
+  expect(state.requests.filter(({ path, method }) =>
+    path === '/api/v1/admin/tuners/recording-a/browse' && method === 'POST')).toHaveLength(2);
+  expect(state.releases).toHaveLength(0);
+  await expect(page).toHaveURL(/view=tuner-spectrum/);
 });
 
 test('stopped WAV shows Stopped and resumes on a new target after restart', async ({ page }) => {
