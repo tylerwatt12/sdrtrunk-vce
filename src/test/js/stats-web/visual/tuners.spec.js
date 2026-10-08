@@ -325,6 +325,17 @@ test('embedded signal view reuses cursor and zoom with HiRes and LoRes controls'
   await expect(hiRes).toHaveAttribute('aria-pressed', 'false');
   await expect(loRes).toHaveAttribute('aria-pressed', 'true');
   await expect(embedded.locator('.tuner-spectrum-toolbar-profile select')).toHaveCount(0);
+  const display = embedded.getByRole('button', { name: 'Display options', exact: true });
+  await display.click();
+  const options = embedded.locator('.tuner-spectrum-options-panel');
+  await expect(options.locator('.settings-card-title')).toHaveText(['Display', 'FFT', 'Waterfall']);
+  await expect(options.getByRole('checkbox', { name: 'Auto range display range on retune', exact: true })).toHaveCount(2);
+  await expect(options.getByRole('checkbox', { name: 'Auto range display range on retune', exact: true }).first()).toBeChecked();
+  await expect(options.getByRole('checkbox', { name: 'Auto range display range on retune', exact: true }).last()).toBeChecked();
+  await options.getByRole('slider', { name: 'Lower display limit', exact: true }).focus();
+  await page.keyboard.press('Escape');
+  await expect(options).toBeHidden();
+  await expect(display).toBeFocused();
 
   await canvases.first().hover({ position: { x: 100, y: 60 } });
   await expect(embedded.locator('.tuner-spectrum-cursor-popup')).toBeVisible();

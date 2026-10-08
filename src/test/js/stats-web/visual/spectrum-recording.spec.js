@@ -168,7 +168,7 @@ async function install(page, { tunerClass = 'recording_tuner', width = 1280, the
     return respond({});
   });
   await page.goto('/app.html?view=tuner-spectrum');
-  await expect(page.getByRole('heading', { name: 'Tuner Spectrum', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Browse Spectrum', exact: true })).toBeVisible();
   return state;
 }
 
@@ -184,7 +184,7 @@ for (const theme of ['light', 'dark']) {
         .toHaveAttribute('aria-disabled', 'true');
       await expect(page.locator('.tuner-spectrum-fft .channel-diagnostic-overlay')).toBeHidden();
       await expect(page.locator('.tuner-spectrum-waterfall .channel-diagnostic-overlay')).toBeHidden();
-      await expect(page.getByRole('button', { name: 'Stop channels to tune', exact: true })).toBeHidden();
+      await expect(page.getByRole('button', { name: 'Setup', exact: true })).toBeHidden();
       const plotPixels = await page.locator('.tuner-spectrum-fft canvas').evaluate((canvas) => {
         const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
         let blueTrace = 0;
@@ -251,7 +251,7 @@ test('navigation releases recording diagnostics and its browse lease; returning 
 test('local hardware retains its busy receiver controls and Spectrum frames', async ({ page }) => {
   await install(page, { tunerClass: 'AIRSPY' });
   await expect(page.locator('.spectrum-browse-status')).toHaveText('Live');
-  await expect(page.getByRole('button', { name: 'Stop channels to tune', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Setup', exact: true })).toBeVisible();
   await expect(page.locator('.tuner-spectrum-fft .channel-diagnostic-overlay')).toBeHidden();
 });
 
@@ -280,7 +280,7 @@ test('playing WAV without channels is Playing and renders actual spectrum sample
   await install(page, { channelCount: 0 });
   await expect(page.locator('.spectrum-browse-status')).toHaveText('Live');
   await expect(page.getByRole('combobox', { name: 'Tuner', exact: true })).toContainText('Playing');
-  await expect(page.getByRole('button', { name: 'Stop channels to tune', exact: true })).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Setup', exact: true })).toBeHidden();
 });
 
 test('a newly available recording target binds on lease renewal without leaving Spectrum', async ({ page }) => {

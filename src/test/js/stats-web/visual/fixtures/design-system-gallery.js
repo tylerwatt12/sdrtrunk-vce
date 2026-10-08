@@ -1285,6 +1285,33 @@ if(view === 'tuner-spectrum') {
   syncSpectrumOptionsLabel();
   compactSpectrum.addEventListener('change', syncSpectrumOptionsLabel);
 }
+if(view === 'tuners') {
+  const toolbar = document.querySelector('.visual-tuners-example .tuner-spectrum-toolbar');
+  const options = document.querySelector('.visual-tuner-spectrum-example .tuner-spectrum-options').cloneNode(true);
+  options.querySelector('.spectrum-browse-mobile-options-actions').remove();
+  const header = options.querySelector('.tuner-spectrum-options-header');
+  header.querySelector('strong').textContent = 'Signal display';
+  header.querySelector('span:last-child').remove();
+  options.querySelector('.settings-card:last-child').remove();
+  options.querySelector('.settings-card:first-child .admin-toggle-control').remove();
+  const fft = options.querySelectorAll('.settings-card')[1];
+  fft.querySelector('.admin-toggle-control:last-child').remove();
+  const actions = document.createElement('div');
+  actions.className = 'tuner-spectrum-toolbar-actions';
+  actions.append(options);
+  toolbar.append(actions);
+  const summary = options.querySelector('summary');
+  options.addEventListener('toggle', () => summary.setAttribute('aria-expanded', String(options.open)));
+  options.addEventListener('keydown', (event) => {
+    if(event.key !== 'Escape' || !options.open) return;
+    event.preventDefault();
+    options.open = false;
+    summary.focus();
+  });
+  options.querySelectorAll('.ui-toggle input').forEach((input) => input.addEventListener('change', () => {
+    input.closest('.ui-toggle').querySelector('.ui-toggle-state').textContent = input.checked ? 'On' : 'Off';
+  }));
+}
 const label = document.getElementById('visual-theme-label');
 if(label) label.textContent = `${theme[0].toUpperCase()}${theme.slice(1)} theme`;
 

@@ -35,6 +35,11 @@ class Element {
   replaceChildren(...children) { this.children = children; }
   querySelector(selector) {
     if(selector === 'input') return this.children.find((child) => child?.tag === 'input') || null;
+    for(const child of this.children) {
+      if(selector.startsWith('.') && child?.className?.split(/\s+/).includes(selector.slice(1))) return child;
+      const nested = child?.querySelector?.(selector);
+      if(nested) return nested;
+    }
     return null;
   }
   setAttribute(key, value) { this.attributes[key] = value; }
@@ -51,6 +56,10 @@ function harness(liveAllowed = true) {
   let closed = 0;
   const context = {
     basicOperator: false,
+    route: { get: () => '' }, initialFloor: -120, initialCeiling: -20,
+    getSpectrumAutoRangePreference: () => true, storeSpectrumAutoRangePreference: () => {},
+    syncAutomaticDisplayRangeReadouts: () => {}, restoreWaterfallHistory: () => {}, scheduleDraw: () => {},
+    refining: false,
     node: (...args) => new Element(...args),
     uiToggle: (checked, label) => {
       const control = new Element('label', 'ui-toggle');
@@ -96,6 +105,8 @@ function harness(liveAllowed = true) {
   vm.runInContext(source.slice(source.indexOf('const TUNER_ACTIVITY_PRIORITY'),
     source.indexOf('const RADIO_REFERENCE_DETAIL_CACHE_LIMIT')), context);
   [
+    'function preferenceCheckbox(name, label, checked, detail = \'\')',
+    'function settingsCard(title, description, ...items)',
     'function protocol(value)', 'function protocolFamily(row)', 'function isAnalogChannel(row)',
     'function hex(value, width = 0)', 'function isP25(row)', 'function identifierNumber(value)',
     'function identityNumber(row, value)', "function p25CanonicalSubscriber(row, prefix = '')",
@@ -114,7 +125,7 @@ function harness(liveAllowed = true) {
     'function connectActiveChannels()', 'function closeActiveChannels()'
   ].forEach((signature) => vm.runInContext(functionSource(signature), context));
   vm.runInContext(source.slice(source.indexOf('  const optionToggle = (checked, label, detail) => {'),
-    source.indexOf("  const profilePanel = node('fieldset', 'tuner-spectrum-profile')")), context);
+    source.indexOf("  const profileControl = node('label', 'settings-field-control")), context);
   vm.runInContext(source.slice(source.indexOf("  idleChannelsInput.addEventListener('change'"),
     source.indexOf('  if (plotInteractions) [spectrum.canvas, waterfall.canvas].forEach(addPlotInteractions)')), context);
   const controls = vm.runInContext('({ idleChannelsInput, idleChannelsControl, fftOptions, waterfallOptions })', context);
@@ -394,17 +405,17 @@ test('Tuners and Spectrum pages instantiate the same spectrum renderer', () => {
   assert.match(source, /const frequencyActions = !basicOperator/);
   assert.match(source, /let tunerOperatorSpectrumProfile = 'efficient'/);
   assert.match(source, /if \(basicOperator\) tunerOperatorSpectrumProfile = spectrumProfile/);
-  assert.match(source, /if \(!basicOperator && !panelOptions\.inlineDisplayOptions\)/);
+  assert.match(source, /if \(basicOperator \|\| !panelOptions\.inlineDisplayOptions\) toolbarActions.append\(options\)/);
   assert.equal((source.match(/function tunerSpectrumPanel\(/g) || []).length, 1);
 });
 
 test('FFT and waterfall settings are separate and idle markers remain per-user, default off', () => {
   const h = harness();
   assert.equal(h.controls.idleChannelsInput.checked, false);
-  assert.equal(h.controls.fftOptions.children[0].textContent, 'FFT');
-  assert.equal(h.controls.fftOptions.children.length, 3);
-  assert.equal(h.controls.waterfallOptions.children[0].textContent, 'Waterfall');
-  assert.equal(h.controls.waterfallOptions.children.length, 2);
+  assert.equal(h.controls.fftOptions.children[0].children[0].textContent, 'FFT');
+  assert.equal(h.controls.fftOptions.children[1].children.length, 3);
+  assert.equal(h.controls.waterfallOptions.children[0].children[0].textContent, 'Waterfall');
+  assert.equal(h.controls.waterfallOptions.children[1].children.length, 2);
   const original = JSON.parse(JSON.stringify(h.preferences()));
   h.toggle(h.controls.idleChannelsInput, true);
   assert.deepEqual(h.preferences(), { tuner: { ...original.tuner, show_idle_channels: true } });

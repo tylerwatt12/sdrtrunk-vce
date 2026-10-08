@@ -428,10 +428,18 @@
 }
 
 .settings-card-body .admin-toggle-control,
+.settings-card-body .settings-field-control,
 .live-presentation-form .admin-toggle-control {
   background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: var(--radius-control);
+}
+
+.settings-field-control {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3);
 }
 
 .settings-field-grid {

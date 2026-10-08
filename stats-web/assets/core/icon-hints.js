@@ -1,6 +1,6 @@
 const ICON_CONTROL_SELECTOR = [
   '.ui-icon-button', '.icon-button', '.ui-header-indicator', '.playback-command',
-  '.playback-control-menu > summary', '.channels-tab-close', '.ui-segmented-option-icon'
+  '.playback-control-menu > summary', '.channels-tab-close', '.ui-segmented-option-icon', '[data-ui-hint]'
 ].join(', ');
 
 export function installIconHints(root = document) {

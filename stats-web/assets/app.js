@@ -1,4 +1,4 @@
-import * as routeFoundation from './core/routes.js?v=8';
+import * as routeFoundation from './core/routes.js?v=9';
 import * as preferenceSchema from './core/preference-schema.js?v=7';
 import { formatSourceName } from './core/source-names.js?v=1';
 import { Controller as UserPreferenceController } from './core/user-preferences.js';
@@ -10,7 +10,7 @@ import { href as entityRefHref } from './core/entity-ref.js?v=1';
 import * as systemLabels from './core/system-labels.js?v=1';
 import { formatP25RadioIdentifier, p25ServingSystemKey } from './core/radio-labels.js?v=4';
 import * as pageLifecycle from './core/page-lifecycle.js';
-import { installIconHints } from './core/icon-hints.js?v=4';
+import { installIconHints } from './core/icon-hints.js?v=5';
 import { createFormWorkflow } from './core/form-workflows.js?v=2';
 import { createChannelSetupGuide } from './features/channel-setup-guide.js?v=3';
 import { applyThemeHue } from './core/theme.js?v=1';
@@ -35,6 +35,8 @@ import { createRecordingsFeature } from './features/recordings.js?v=27';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=27';
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=8';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
+import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=1';
+import { createSpectrumAutoRange } from './features/spectrum-auto-range.js?v=1';
 import { createAudioDock } from './core/audio-dock.js?v=14';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=4';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
@@ -15431,6 +15433,10 @@ function tunerResolvedScopeSegments(viewport, scopes = []) {
 }
 
 function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
+  const spectrumDisplayPreferences = createSpectrumDisplayPreferences({
+    identity: userPreferenceController.snapshot().identity });
+  const getSpectrumAutoRangePreference = (key) => spectrumDisplayPreferences.get(key);
+  const storeSpectrumAutoRangePreference = (key, value) => spectrumDisplayPreferences.set(key, value);
   const frequencyScopes = snapPresetDocument?.scopes || [];
   const basicOperator = panelOptions.basicOperator === true;
   const frequencyCursor = !basicOperator || panelOptions.frequencyCursor === true;
@@ -15445,7 +15451,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const managedSelection = panelOptions.managedSelection === true;
   const statusClassName = typeof panelOptions.statusClassName === 'string' ?
     panelOptions.statusClassName.trim() : '';
-  const layout = node('div', `tuner-spectrum-layout${panelOptions.inlineDisplayOptions ?
+  const layout = node('div', `tuner-spectrum-layout${panelOptions.inlineDisplayOptions && !basicOperator ?
     ' tuner-spectrum-layout-inline-options' : ''}${basicOperator ? ' tuner-spectrum-layout-basic' : ''}${
     frequencyCursor ? ' tuner-spectrum-layout-cursor' : ''}${
     viewportControls ? ' tuner-spectrum-layout-viewport' : ''}`);
@@ -15509,10 +15515,10 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     initialFloor = TUNER_SPECTRUM_DEFAULT_FLOOR_DB;
     initialCeiling = TUNER_SPECTRUM_DEFAULT_CEILING_DB;
   }
-  const rangeControl = node('div', 'tuner-spectrum-display-control tuner-spectrum-range-control');
+  const rangeControl = node('div', 'settings-field-control ui-field tuner-spectrum-display-control tuner-spectrum-range-control');
   const rangeHeading = node('div', 'tuner-spectrum-range-heading');
   const rangeValue = node('output', '', `${initialFloor} to ${initialCeiling} dB`);
-  rangeHeading.append(node('span', '', 'Display range'), rangeValue);
+  rangeHeading.append(node('span', '', 'Manual display range'), rangeValue);
   const rangeSlider = node('div', 'tuner-spectrum-dual-range');
   rangeSlider.append(node('span', 'tuner-spectrum-dual-range-track'));
   const floorInput = node('input');
@@ -15534,8 +15540,8 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   rangeSlider.append(floorInput, ceilingInput);
   rangeControl.append(rangeHeading, rangeSlider);
   const rangeHelp = node('span', 'tuner-spectrum-control-help',
-    'Move either handle to set display contrast. Receiver gain and decoder thresholds do not change.');
-  const speedControl = node('label', 'tuner-spectrum-display-control ui-field');
+    'Moving a handle uses the manual range until the next retune when auto range is enabled.');
+  const speedControl = node('label', 'settings-field-control tuner-spectrum-display-control tuner-spectrum-speed-control ui-field');
   const speedInput = node('input');
   speedInput.type = 'range';
   speedInput.min = '0.25';
@@ -15543,16 +15549,12 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   speedInput.step = '0.25';
   speedInput.value = String(tunerStoredNumber(TUNER_WATERFALL_SPEED_PREFERENCE, 1, 0.25, 4));
   speedInput.id = 'tuner-waterfall-speed';
+  speedInput.setAttribute('aria-label', 'Waterfall speed');
   const speedValue = node('output', '', `${Number(speedInput.value).toFixed(2)}×`);
   speedValue.htmlFor = speedInput.id;
   speedControl.append(node('span', '', 'Waterfall speed'), speedInput, speedValue);
   const optionToggle = (checked, label, detail) => {
-    const control = uiToggle(checked, label);
-    control.classList.add('tuner-spectrum-toggle-control');
-    const copy = node('span', 'tuner-spectrum-toggle-copy');
-    copy.append(node('strong', '', label), node('small', '', detail));
-    control.prepend(copy);
-    return { control, input: control.querySelector('input') };
+    return preferenceCheckbox('', label, checked, detail);
   };
   const snapToggle = optionToggle(!basicOperator &&
     tunerStoredBoolean(TUNER_SPECTRUM_SNAP_PREFERENCE, true),
@@ -15569,19 +15571,30 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const idleChannelsInput = idleToggle.input;
   const liveActivityAllowed = capabilityAllowed(ACCESS_CAPABILITIES.LIVE);
   idleChannelsControl.hidden = !liveActivityAllowed;
-  const displayOptions = node('fieldset', 'tuner-spectrum-display-section tuner-spectrum-range-section');
-  displayOptions.append(node('legend', '', 'Display'), rangeControl);
-  if (!basicOperator) displayOptions.append(rangeHelp, snapControl);
-  const fftOptions = node('fieldset', 'tuner-spectrum-display-section');
-  fftOptions.append(node('legend', '', 'FFT'), smoothControl);
-  if (!basicOperator) fftOptions.append(idleChannelsControl);
-  const waterfallOptions = node('fieldset', 'tuner-spectrum-display-section');
-  waterfallOptions.append(node('legend', '', 'Waterfall'), speedControl);
-  const profilePanel = node('fieldset', 'tuner-spectrum-profile');
-  profilePanel.append(node('legend', '', 'Spectrum performance'));
-  const profileControl = node('label', 'tuner-spectrum-display-control ui-field');
+  const fftAutoRangeToggle = optionToggle(getSpectrumAutoRangePreference('fft_auto_range_on_retune'),
+    'Auto range display range on retune', 'Adjust the lower display limit after the tuner changes frequency.');
+  const fftAutoRangeInput = fftAutoRangeToggle.input;
+  fftAutoRangeInput.name = 'fft_auto_range_on_retune';
+  const fftAutoRangeValue = node('output', 'ui-field-detail', `${initialFloor} to ${initialCeiling} dB`);
+  fftAutoRangeValue.setAttribute('aria-label', 'FFT display range');
+  fftAutoRangeToggle.control.querySelector('.admin-toggle-copy').append(fftAutoRangeValue);
+  const waterfallAutoRangeToggle = optionToggle(getSpectrumAutoRangePreference('waterfall_auto_range_on_retune'),
+    'Auto range display range on retune', 'Adjust the lower display limit after the tuner changes frequency.');
+  const waterfallAutoRangeInput = waterfallAutoRangeToggle.input;
+  waterfallAutoRangeInput.name = 'waterfall_auto_range_on_retune';
+  const waterfallAutoRangeValue = node('output', 'ui-field-detail', `${initialFloor} to ${initialCeiling} dB`);
+  waterfallAutoRangeValue.setAttribute('aria-label', 'Waterfall display range');
+  waterfallAutoRangeToggle.control.querySelector('.admin-toggle-copy').append(waterfallAutoRangeValue);
+  rangeControl.append(rangeHelp);
+  const displayOptions = settingsCard('Display', '', rangeControl,
+    ...(!basicOperator ? [snapControl] : []));
+  const fftOptions = settingsCard('FFT', '', fftAutoRangeToggle.control, smoothControl,
+    ...(!basicOperator ? [idleChannelsControl] : []));
+  const waterfallOptions = settingsCard('Waterfall', '', waterfallAutoRangeToggle.control, speedControl);
+  const profileControl = node('label', 'settings-field-control tuner-spectrum-profile-control ui-field');
   const profileLabel = node('span', '', basicOperator ? 'Quality' : 'Profile');
   const profileSelect = node('select', 'ui-select');
+  profileSelect.setAttribute('aria-label', basicOperator ? 'Quality' : 'Profile');
   [
     ['efficient', 'Efficient · 2,048 bins / 5 FPS'],
     ['balanced', 'Balanced · 8,192 bins / 10 FPS'],
@@ -15598,7 +15611,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   profileControl.append(profileLabel, uiSelectFrame(profileSelect));
   const profileWarning = node('p', 'tuner-spectrum-control-help',
     'Higher-detail profiles use more CPU and may affect decoding on lower-end systems.');
-  profilePanel.append(profileControl);
+  const profilePanel = settingsCard('Spectrum performance', '', profileControl);
   const qualityControl = node('div', 'tuner-spectrum-quality-control ui-segmented');
   qualityControl.setAttribute('role', 'group');
   qualityControl.setAttribute('aria-label', 'Signal detail');
@@ -15617,19 +15630,33 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     syncOperatorQuality();
     toolbar.append(qualityControl);
   }
-  if (!basicOperator) profilePanel.append(profileWarning);
+  if (!basicOperator) profileControl.append(profileWarning);
   const optionsHeader = node('header', 'tuner-spectrum-options-header');
   optionsHeader.append(node('span', 'tuner-spectrum-options-kicker', 'Display'),
     node('strong', '', basicOperator ? 'Signal display' : 'Spectrum and waterfall'));
   if (!basicOperator) optionsHeader.append(
     node('span', '', 'Tune the visualization without changing receiver gain or decoder behavior.'));
-  optionsPanel.append(optionsHeader, displayOptions, fftOptions, waterfallOptions);
-  if (!basicOperator) optionsPanel.append(profilePanel);
+  const optionGroups = settingsCardGrid(displayOptions, fftOptions, waterfallOptions,
+    ...(!basicOperator ? [profilePanel] : []));
+  optionGroups.classList.add('tuner-spectrum-settings-grid');
+  optionsPanel.append(optionsHeader, optionGroups);
   options.append(optionsSummary, optionsPanel);
+  const syncOptionsViewport = () => {
+    if (!options.open || panelOptions.inlineDisplayOptions && !basicOperator) return;
+    const available = Math.max(96, window.innerHeight - optionsPanel.getBoundingClientRect().top - 8);
+    optionsPanel.style.setProperty('--tuner-spectrum-options-available-height', `${available}px`);
+  };
   options.addEventListener('toggle', () => {
     optionsSummary.setAttribute('aria-expanded', String(options.open));
+    syncOptionsViewport();
   });
-  if (!basicOperator && !panelOptions.inlineDisplayOptions) toolbarActions.append(options);
+  if (basicOperator) options.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || !options.open) return;
+    event.preventDefault();
+    options.open = false;
+    optionsSummary.focus();
+  });
+  if (basicOperator || !panelOptions.inlineDisplayOptions) toolbarActions.append(options);
   if (toolbarActions.childElementCount) toolbar.append(toolbarActions);
   if (basicOperator && viewportControls) toolbar.append(zoomActions);
   const refiningBadge = node('span', 'tuner-spectrum-refining', 'Refining…');
@@ -15745,6 +15772,9 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   let suppressClick = false;
   let dbFloor = initialFloor;
   let dbCeiling = initialCeiling;
+  let fftAutoFloorDb = null;
+  let waterfallAutoFloorDb = null;
+  const automaticDisplayRange = createSpectrumAutoRange();
   let waterfallSpeed = Number(speedInput.value);
   let waterfallScrollAccumulator = 0;
   let activeChannelSource = null;
@@ -15914,6 +15944,39 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
       Math.max(1, viewport.endHz - viewport.startHz);
   }
 
+  function spectrumDisplayFloorDb() {
+    return fftAutoRangeInput.checked && Number.isFinite(fftAutoFloorDb) ?
+      Math.min(dbCeiling - TUNER_SPECTRUM_MINIMUM_DISPLAY_SPAN_DB, fftAutoFloorDb) : dbFloor;
+  }
+
+  function waterfallDisplayFloorDb() {
+    return waterfallAutoRangeInput.checked && Number.isFinite(waterfallAutoFloorDb) ?
+      Math.min(dbCeiling - TUNER_SPECTRUM_MINIMUM_DISPLAY_SPAN_DB, waterfallAutoFloorDb) : dbFloor;
+  }
+
+  function syncAutomaticDisplayRangeReadouts() {
+    fftAutoRangeValue.textContent = `${spectrumDisplayFloorDb()} to ${dbCeiling} dB`;
+    waterfallAutoRangeValue.textContent = `${waterfallDisplayFloorDb()} to ${dbCeiling} dB`;
+  }
+
+  function resetAutomaticDisplayRange() {
+    fftAutoFloorDb = waterfallAutoFloorDb = null;
+    automaticDisplayRange.discard();
+    syncAutomaticDisplayRangeReadouts();
+  }
+
+  function applyAutomaticDisplayRange(values, frame) {
+    const requestedCenter = panelOptions.retunePending?.() ? Number(panelOptions.retuneFrequencyHz?.()) : null;
+    const confirmedCenter = fullViewport ? (fullViewport.startHz + fullViewport.endHz) / 2 : null;
+    if (requestedCenter > 0 && confirmedCenter > 0 && Math.abs(requestedCenter - confirmedCenter) > 10) return;
+    const floor = automaticDisplayRange.sample(values, frame.generation, dbCeiling);
+    if (floor === null) return;
+    if (fftAutoRangeInput.checked) fftAutoFloorDb = floor;
+    if (waterfallAutoRangeInput.checked) waterfallAutoFloorDb = floor;
+    syncAutomaticDisplayRangeReadouts();
+    if (waterfallAutoRangeInput.checked) restoreWaterfallHistory();
+  }
+
   function median(values) {
     if (!values.length) return null;
     const sorted = [...values].sort((left, right) => left - right);
@@ -16060,6 +16123,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     const prepared = prepareCanvas(spectrum);
     if (!prepared) return;
     const { context, cssWidth, cssHeight } = prepared;
+    const displayFloor = spectrumDisplayFloorDb();
     context.fillStyle = '#07111d';
     context.fillRect(0, 0, cssWidth, cssHeight);
     context.strokeStyle = 'rgba(150, 177, 199, 0.18)';
@@ -16068,7 +16132,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     context.font = `${typeStyle.getPropertyValue('--font-size-meta').trim()} ${typeStyle.getPropertyValue('--font-mono').trim()}`;
     context.textBaseline = 'middle';
     for (let line = 1; line < 6; line += 1) {
-      const power = dbFloor + (dbCeiling - dbFloor) * (1 - line / 6);
+      const power = displayFloor + (dbCeiling - displayFloor) * (1 - line / 6);
       const y = cssHeight * line / 6;
       context.beginPath();
       context.moveTo(0, y);
@@ -16099,9 +16163,9 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
       for (let bin = first; bin < last; bin += 1) {
         if (Number.isFinite(spectrumValues[bin])) raw = Math.max(raw, spectrumValues[bin]);
       }
-      const value = Number.isFinite(raw) ? Math.max(dbFloor, Math.min(dbCeiling, raw)) : dbFloor;
+      const value = Number.isFinite(raw) ? Math.max(displayFloor, Math.min(dbCeiling, raw)) : displayFloor;
       const drawX = x * cssWidth / (points - 1);
-      const y = (dbCeiling - value) / (dbCeiling - dbFloor) * cssHeight;
+      const y = (dbCeiling - value) / (dbCeiling - displayFloor) * cssHeight;
       if (x === 0) context.moveTo(drawX, y);
       else context.lineTo(drawX, y);
     }
@@ -16156,6 +16220,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     const viewportSpan = viewport.endHz - viewport.startHz;
     if (!(domainSpan > 0) || !(viewportSpan > 0)) return;
     const row = waterfallRowImage;
+    const displayFloor = waterfallDisplayFloorDb();
     for (let x = 0; x < waterfallBuffer.width; x += 1) {
       row.data[x * 4] = palette[0];
       row.data[x * 4 + 1] = palette[1];
@@ -16177,9 +16242,9 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
         const value = decodedValues ? decodedValues[bin] : diagnosticValueAt(values, bin);
         if (Number.isFinite(value)) raw = Math.max(raw, value);
       }
-      const value = Number.isFinite(raw) ? Math.max(dbFloor, Math.min(dbCeiling, raw)) : dbFloor;
+      const value = Number.isFinite(raw) ? Math.max(displayFloor, Math.min(dbCeiling, raw)) : displayFloor;
       const color = Math.max(0, Math.min(255,
-        Math.round((value - dbFloor) / (dbCeiling - dbFloor) * 255)));
+        Math.round((value - displayFloor) / (dbCeiling - displayFloor) * 255)));
       row.data[x * 4] = palette[color * 4];
       row.data[x * 4 + 1] = palette[color * 4 + 1];
       row.data[x * 4 + 2] = palette[color * 4 + 2];
@@ -16287,6 +16352,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   };
 
   const resetPlots = (message) => {
+    if (automaticDisplayRange.selectTarget(selectedTargetId())) resetAutomaticDisplayRange();
     generation = -1;
     sequence = null;
     droppedFrames = 0;
@@ -16414,6 +16480,9 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
       }
       return;
     }
+    if (!automaticDisplayRange.confirm({ targetId: tunerState?.target_id || selectedTargetId(),
+      centerFrequencyHz: center, sampleRateHz: sampleRate, generation: frame.generation,
+      revision: frame.sequence, live })) return;
     if (center > 0 && sampleRate > 0) {
       const nextFull = { startHz: center - sampleRate / 2, endHz: center + sampleRate / 2 };
       const previousFull = fullViewport;
@@ -16496,6 +16565,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
 
   function acceptTunerFrame(frame) {
     if (frame.type !== DIAGNOSTIC_FRAME_TYPES.TUNER_FFT ||
+        !automaticDisplayRange.acceptsFrame(frame.generation) ||
         (drag?.moved && !drag.retune) ||
         awaitingViewportState ||
         (generation === frame.generation && sequence !== null && frame.sequence <= sequence)) return;
@@ -16525,6 +16595,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     updateSpectrumSmoothing(values, frame, domain);
     frameMetadata = frame;
     analysisViewport = nextAnalysis;
+    applyAutomaticDisplayRange(values, frame);
     updateSpectrumPeak();
     const now = performance.now();
     frameTimes.push(now);
@@ -17399,6 +17470,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     dbCeiling = Math.min(TUNER_SPECTRUM_MAXIMUM_DISPLAY_DB, ceiling);
     floorInput.value = String(dbFloor);
     ceilingInput.value = String(dbCeiling);
+    if (changedHandle) resetAutomaticDisplayRange();
     rangeValue.textContent = `${dbFloor} to ${dbCeiling} dB`;
     const fullSpan = TUNER_SPECTRUM_MAXIMUM_DISPLAY_DB - TUNER_SPECTRUM_MINIMUM_DISPLAY_DB;
     rangeSlider.style.setProperty('--range-lower',
@@ -17411,6 +17483,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
         preferences.tuner.ceiling_db = dbCeiling;
       });
     }
+    syncAutomaticDisplayRangeReadouts();
     restoreWaterfallHistory();
     if (!refining) scheduleDraw();
   }
@@ -17446,6 +17519,16 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     storeTunerBoolean(TUNER_SPECTRUM_IDLE_PREFERENCE, idleChannelsInput.checked);
     renderActiveChannels();
   });
+  const updateAutoRangePreference = (key, input) => {
+    storeSpectrumAutoRangePreference(key, input.checked);
+    syncAutomaticDisplayRangeReadouts();
+    restoreWaterfallHistory();
+    if (!refining) scheduleDraw();
+  };
+  fftAutoRangeInput.addEventListener('change', () =>
+    updateAutoRangePreference('fft_auto_range_on_retune', fftAutoRangeInput));
+  waterfallAutoRangeInput.addEventListener('change', () =>
+    updateAutoRangePreference('waterfall_auto_range_on_retune', waterfallAutoRangeInput));
   if (plotInteractions) [spectrum.canvas, waterfall.canvas].forEach(addPlotInteractions);
   const onVisibilityChange = () => {
     pageFocused = document.hasFocus();
@@ -17480,6 +17563,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     sync();
   };
   const onResize = () => {
+    syncOptionsViewport();
     renderActiveChannels();
     if (hoverFlag) positionCursorPopup(hoverFlag);
     else positionCursorPopup();
@@ -18905,7 +18989,7 @@ async function renderTunerSpectrum() {
   if (!browseAllowed) {
     const spectrum = tunerSpectrumPanel(snapPresetDocument);
     pageConnections.add(spectrum);
-    beginPage(renderContext, pageHeader('Tuner Spectrum',
+    beginPage(renderContext, pageHeader('Browse Spectrum',
       'Inspect receiver signals. Click a frequency to choose an action.'), spectrum.element);
     return;
   }
@@ -18989,14 +19073,26 @@ async function renderTunerSpectrum() {
   let liveTune = null;
   let retuneCancelled = false;
   let leaseRetrying = false;
-  const takeControl = iconButton('icon-power', 'Stop channels to tune',
-    'ui-button ui-button-secondary ui-icon-button spectrum-browse-takeover spectrum-browse-takeover-warning');
-  takeControl.addEventListener('click', () => void takeOverSelectedTuner());
-  const resumeChannels = iconButton('icon-play', 'Resume channels',
-    'ui-button ui-button-secondary ui-icon-button spectrum-browse-takeover');
-  resumeChannels.addEventListener('click', () => void finishTakeover());
-  takeControl.hidden = true;
-  resumeChannels.hidden = true;
+  let modeConfirming = false;
+  const mode = node('div', 'ui-segmented');
+  mode.setAttribute('role', 'group');
+  mode.setAttribute('aria-label', 'Tuner mode');
+  mode.hidden = true;
+  const modeButtons = new Map();
+  for (const next of ['live', 'setup']) {
+    const button = node('button', 'ui-segmented-option', next === 'live' ? 'Live' : 'Setup');
+    button.type = 'button';
+    button.dataset.mode = next;
+    button.title = next === 'live' ? 'Resume the channels this Spectrum session stopped' :
+      'Keep tuner on for adjustments; active channels stop';
+    button.addEventListener('click', () => {
+      if (button.getAttribute('aria-disabled') === 'true' || button.getAttribute('aria-pressed') === 'true') return;
+      if (next === 'setup') void takeOverSelectedTuner();
+      else void finishTakeover();
+    });
+    modeButtons.set(next, button);
+    mode.append(button);
+  }
   const allocationGroupKey = (tuner) => String(tuner?.device_group?.id || tuner?.id || '');
   const allocationGroupChannelCount = (tuner) => {
     const key = allocationGroupKey(tuner);
@@ -19053,12 +19149,15 @@ async function renderTunerSpectrum() {
   const leaseOwnershipLost = (error) => [404, 409, 410].includes(Number(error?.status)) ||
     ['tuner_not_found', 'tuner_browse_unavailable', 'tuner_browse_expired'].includes(String(error?.code || ''));
   const syncTakeoverActions = () => {
+    // This control owns the page's temporary takeover; idle monitoring can also borrow Setup hardware.
     const takeover = lease?.takeover === true;
-    const active = allocationGroupChannelCount(selectedInventoryTuner());
-    takeControl.hidden = tunerIsRecording(selectedInventoryTuner()) || takeover ||
-      lease?.can_tune === true || active === 0;
-    resumeChannels.hidden = !takeover;
-    takeControl.disabled = resumeChannels.disabled = probeActive || tuning || liveTune?.busy === true;
+    const tuner = selectedInventoryTuner();
+    mode.hidden = !tuner || tunerIsRecording(tuner);
+    const unavailable = modeConfirming || select.disabled || probeActive || tuning || liveTune?.busy === true;
+    for (const [next, button] of modeButtons) {
+      button.setAttribute('aria-pressed', String(next === (takeover ? 'setup' : 'live')));
+      button.setAttribute('aria-disabled', String(unavailable));
+    }
   };
   const releaseLease = async (suppressFailure = true) => {
     window.clearTimeout(leaseTimer);
@@ -19092,15 +19191,29 @@ async function renderTunerSpectrum() {
   };
   const takeOverSelectedTuner = async () => {
     const tuner = selectedInventoryTuner();
-    if (!tuner || !await confirmTakeover(tuner)) return;
-    await chooseTuner(tuner.id, true);
+    if (!tuner || modeConfirming || disposed) return;
+    const generation = operation;
+    modeConfirming = true;
+    syncTakeoverActions();
+    try {
+      const centerLocked = tuner.settings?.some((setting) =>
+        setting.id === 'center_frequency_locked' && setting.value === true);
+      const needsConfirmation = allocationGroupChannelCount(tuner) > 0 || centerLocked ||
+        /channel|serving/i.test(String(tuner.reason || ''));
+      if (needsConfirmation && !await confirmTakeover(tuner)) return;
+      if (disposed || generation !== operation) return;
+      await chooseTuner(tuner.id, true);
+    } finally {
+      modeConfirming = false;
+      syncTakeoverActions();
+    }
   };
   const finishTakeover = async () => {
     const id = selectedTuner?.id;
     if (!id || lease?.takeover !== true) return;
     const generation = ++operation;
     select.disabled = true;
-    resumeChannels.disabled = true;
+    syncTakeoverActions();
     setBrowseMessage('Resuming the channels this Spectrum session stopped…');
     try {
       await releaseLease(false);
@@ -19124,9 +19237,10 @@ async function renderTunerSpectrum() {
       canEditCenter() ? tunerSettingUsability(setting, selectedTuner, selectedTuner.settings) :
       { enabled: false, reason: tuning ? 'Saving center frequency settings' :
         probeActive ? 'Finish or close channel discovery to tune' :
-        'Active channels keep the center frequency fixed' };
+        'Active channels keep the center frequency fixed. Switch to Setup mode to retune' };
     if (usability.reason === 'Unlock center to tune') usability.reason = 'Turn off Lock center on Tuners to tune.';
     centerControl = tunerCenterFrequencyControl(selectedTuner, setting, usability, {
+      unavailableHint: true,
       save: async (_tuner, _setting, value) => tune(Math.round(value * 1_000_000))
     });
     centerHost.replaceChildren(centerControl);
@@ -19197,7 +19311,7 @@ async function renderTunerSpectrum() {
       if (disposed) return;
       centerControl?.previewFrequency(frequencyHz / 1_000_000);
       centerHost.inert = true;
-      takeControl.disabled = resumeChannels.disabled = true;
+      for (const button of modeButtons.values()) button.setAttribute('aria-disabled', 'true');
     },
     applied: (renewed) => {
       if (disposed || !renewed || lease?.lease_id !== renewed.lease_id) return;
@@ -19451,7 +19565,7 @@ async function renderTunerSpectrum() {
   const zoomActions = spectrum.controls.actions.querySelector('.tuner-spectrum-zoom-actions');
   zoomActions?.classList.remove('ui-control-group');
   spectrum.controls.actions.classList.add('spectrum-browse-actions');
-  spectrum.controls.actions.prepend(takeControl, resumeChannels);
+  spectrum.controls.actions.prepend(mode);
   spectrum.controls.actions.querySelectorAll('.ui-button-secondary').forEach((button) =>
     button.classList.add('ui-button-quiet'));
   const commandCluster = node('div', 'spectrum-browse-command-cluster');
@@ -19518,7 +19632,7 @@ async function renderTunerSpectrum() {
   const main = node('div', 'spectrum-browse-main');
   main.append(spectrum.element, frequencyRail);
   workspace.append(spectrum.controls.toolbar, main);
-  const header = pageHeader('Tuner Spectrum',
+  const header = pageHeader('Browse Spectrum',
     'Browse live signals and add channels.');
   if (!beginPage(renderContext, header, workspace)) {
     spectrum.close();
@@ -29162,7 +29276,11 @@ function tunerCenterFrequencyControl(tuner, setting, usability, callbacks = {}) 
     }
   });
   wrapper.addEventListener('keydown', keydown);
-  if (!usability.enabled) {
+  if (!usability.enabled && callbacks.unavailableHint) {
+    wrapper.dataset.uiHint = usability.reason;
+    wrapper.setAttribute('aria-description', usability.reason);
+    wrapper.tabIndex = 0;
+  } else if (!usability.enabled) {
     const help = iconButton('icon-about', usability.reason,
       'ui-button ui-button-secondary ui-icon-button ui-icon-button-compact tuners-center-help');
     help.dataset.tunerHelp = setting.id;

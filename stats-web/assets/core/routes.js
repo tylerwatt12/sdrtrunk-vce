@@ -7,7 +7,7 @@
     { id: 'map', label: 'Map', title: 'Map', parent: 'map', capability: 'call-audio', databaseNotice: false },
     { id: 'network-visualizer', label: 'P25 Visualizer', title: 'P25 Visualizer', parent: 'network-visualizer', capability: 'radio', databaseNotice: false },
     { id: 'scanner', label: 'Scanner', title: 'Scanner', parent: 'scanner', capability: 'call-audio', databaseNotice: false },
-    { id: 'tuner-spectrum', label: 'Tuner Spectrum', title: 'Tuner Spectrum', parent: 'tuner-spectrum', access: 'admin-tuner', databaseNotice: false },
+    { id: 'tuner-spectrum', label: 'Browser Spectrum', title: 'Browse Spectrum', parent: 'tuner-spectrum', access: 'admin-tuner', databaseNotice: false },
     { id: 'radio-system', label: 'Radio System Details', title: 'Radio System Details', parent: 'dashboard', capability: 'radio', databaseNotice: true },
     { id: 'group-identity', label: 'Group Identity Details', title: 'Group Identity Details', parent: 'dashboard', capability: 'radio', databaseNotice: true },
     { id: 'radio', label: 'Radio Details', title: 'Radio Details', parent: 'dashboard', capability: 'radio', databaseNotice: true },

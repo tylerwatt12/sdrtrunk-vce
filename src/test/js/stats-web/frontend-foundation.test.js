@@ -1052,7 +1052,9 @@ async function main() {
   assert.match(tunerSpectrumPanel,
     /node\('summary', 'ui-button ui-button-secondary ui-icon-button'\)[\s\S]+moreSummary\.setAttribute\('aria-label', 'More measurements'\)/);
   assert.doesNotMatch(tunerSpectrumPanel, /tuner-spectrum-labeled-action/);
-  assert.match(tunerSpectrumPanel, /const optionToggle = \(checked, label, detail\)[\s\S]+uiToggle\(checked, label\)/);
+  assert.match(tunerSpectrumPanel, /const optionToggle = \(checked, label, detail\)[\s\S]+preferenceCheckbox\('', label, checked, detail\)/);
+  assert.match(tunerSpectrumPanel, /settingsCard\('FFT', '', fftAutoRangeToggle.control, smoothControl/);
+  assert.match(tunerSpectrumPanel, /settingsCard\('Waterfall', '', waterfallAutoRangeToggle.control, speedControl/);
   assert.match(tunerSpectrumPanel, /tuner-spectrum-options-header/);
   assert.match(tunerSpectrumPanel, /uiSelectFrame\(targetSelect\)/);
   assert.match(functionBinding(appSource, 'renderActivity'), /browsingWorkflows\.createBrowsingPager\(/);

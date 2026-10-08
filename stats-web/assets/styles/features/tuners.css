@@ -552,7 +552,7 @@
 
 .tuners-spectrum .tuner-spectrum-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: 0 var(--space-3);
   padding: 0;
@@ -587,6 +587,11 @@
 
 .tuners-spectrum .tuner-spectrum-toolbar > .tuner-spectrum-zoom-actions {
   grid-column: 3;
+  grid-row: 1;
+}
+
+.tuners-spectrum .tuner-spectrum-toolbar-actions {
+  grid-column: 4;
   grid-row: 1;
   margin-right: var(--space-4);
 }
@@ -885,7 +890,7 @@
 
 @media (max-width: 1120px) {
   .tuners-spectrum .tuner-spectrum-toolbar {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto auto;
   }
 
   .tuners-spectrum .tuner-spectrum-quality-control {
@@ -897,6 +902,10 @@
 
   .tuners-spectrum .tuner-spectrum-toolbar > .tuner-spectrum-zoom-actions {
     grid-column: 2;
+  }
+
+  .tuners-spectrum .tuner-spectrum-toolbar-actions {
+    grid-column: 3;
   }
 }
 
@@ -974,6 +983,18 @@
   .tuners-spectrum .tuner-spectrum-toolbar > .tuner-spectrum-zoom-actions {
     grid-column: 2;
     grid-row: 2;
+  }
+
+  .tuners-spectrum .tuner-spectrum-toolbar-actions {
+    grid-row: 2;
+    width: auto;
+    display: flex;
+    margin-right: var(--space-3);
+  }
+
+  .tuners-spectrum .tuner-spectrum-options[open] .tuner-spectrum-options-panel {
+    width: min(430px, calc(100vw - 32px));
+    position: absolute;
   }
 
   .tuners-frequency-digit {

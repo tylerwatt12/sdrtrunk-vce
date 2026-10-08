@@ -1708,10 +1708,18 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.contains("data-view=\"tuner-spectrum\""));
         assertTrue(source.contains("TUNER_SPECTRUM: 'tuner-spectrum'"));
         assertTrue(readText(Path.of("stats-web", "assets", "core", "routes.js"))
-            .contains("id: 'tuner-spectrum', label: 'Tuner Spectrum', title: 'Tuner Spectrum', " +
+            .contains("id: 'tuner-spectrum', label: 'Browser Spectrum', title: 'Browse Spectrum', " +
                 "parent: 'tuner-spectrum', access: 'admin-tuner'"));
         assertTrue(tunerPage.contains("pageConnections.add(spectrum)"));
-        assertTrue(tunerPage.contains("pageHeader('Tuner Spectrum'"));
+        assertTrue(tunerPage.contains("pageHeader('Browse Spectrum'"));
+        assertTrue(html.contains("<span>Browser Spectrum</span>"));
+        assertTrue(tunerPage.contains("for (const next of ['live', 'setup'])"));
+        assertTrue(tunerPage.contains("node('div', 'ui-segmented')"));
+        assertTrue(tunerPage.contains("if (next === 'setup') void takeOverSelectedTuner()"));
+        assertTrue(tunerPage.contains("else void finishTakeover()"));
+        assertTrue(tunerPage.contains("unavailableHint: true"));
+        assertTrue(tunerPage.contains("Active channels keep the center frequency fixed. Switch to Setup mode to retune"));
+        assertFalse(tunerPage.contains("iconButton('icon-power'"));
         assertFalse(tuner.contains("openReadOnlyModal('Tuner Spectrum'"));
         assertTrue(tuner.contains("api('/api/v1/diagnostics/tuners')"));
         assertTrue(tuner.contains("binaryFrameConnection('tuner_diagnostics'"));
@@ -1768,7 +1776,7 @@ class StatsWebInteractionUiContractTest
         assertFalse(tuner.contains("Reset measurement"));
         assertFalse(parameters.contains("experiment_"));
         assertFalse(tuner.contains("resetExperimentMeasurement"));
-        assertTrue(css.contains(".tuner-spectrum-profile,\n.tuner-spectrum-display-section {"));
+        assertTrue(css.contains(".tuner-spectrum-settings-grid {"));
         assertTrue(tuner.contains(
             "iconButton('icon-zoom-in', 'Zoom in', 'ui-button ui-button-secondary ui-icon-button')"));
         assertTrue(tuner.contains(
@@ -1838,8 +1846,10 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("preferences.tuner.floor_db = dbFloor"));
         assertTrue(tuner.contains("preferences.tuner.ceiling_db = dbCeiling"));
         assertTrue(tuner.contains("Math.min(dbCeiling, raw)"));
-        assertTrue(tuner.contains("(dbCeiling - value) / (dbCeiling - dbFloor)"));
-        assertTrue(tuner.contains("(value - dbFloor) / (dbCeiling - dbFloor)"));
+        assertTrue(tuner.contains("const displayFloor = spectrumDisplayFloorDb()"));
+        assertTrue(tuner.contains("const displayFloor = waterfallDisplayFloorDb()"));
+        assertTrue(tuner.contains("(dbCeiling - value) / (dbCeiling - displayFloor)"));
+        assertTrue(tuner.contains("(value - displayFloor) / (dbCeiling - displayFloor)"));
         assertTrue(tuner.contains("TUNER_WATERFALL_SPEED_PREFERENCE, waterfallSpeed"));
         assertTrue(tuner.contains("TUNER_SPECTRUM_SNAP_PREFERENCE, true"));
         assertTrue(tuner.contains("storeTunerBoolean(TUNER_SPECTRUM_SNAP_PREFERENCE, snapInput.checked)"));
@@ -1854,15 +1864,15 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("'Idle channel markers'"));
         assertTrue(tuner.contains("TUNER_SPECTRUM_IDLE_PREFERENCE, false"));
         assertTrue(tuner.contains("storeTunerBoolean(TUNER_SPECTRUM_IDLE_PREFERENCE, idleChannelsInput.checked)"));
-        assertTrue(tuner.contains("fftOptions.append(node('legend', '', 'FFT'), smoothControl)"));
-        assertTrue(tuner.contains("if (!basicOperator) fftOptions.append(idleChannelsControl)"));
-        assertTrue(tuner.contains("waterfallOptions.append(node('legend', '', 'Waterfall'), speedControl)"));
+        assertTrue(tuner.contains("settingsCard('FFT', '', fftAutoRangeToggle.control, smoothControl"));
+        assertTrue(tuner.contains("...(!basicOperator ? [idleChannelsControl] : [])"));
+        assertTrue(tuner.contains("settingsCard('Waterfall', '', waterfallAutoRangeToggle.control, speedControl)"));
         assertTrue(tuner.contains("storeTunerChoice('session-target', targetSelect.value)"));
         assertTrue(tuner.contains("tunerStoredChoice('session-target', targets[0].id"));
         assertTrue(tuner.contains("const options = node('details', 'tuner-spectrum-options')"));
-        assertTrue(tuner.contains(
-            "optionsPanel.append(optionsHeader, displayOptions, fftOptions, waterfallOptions)"));
-        assertTrue(tuner.contains("if (!basicOperator) optionsPanel.append(profilePanel)"));
+        assertTrue(tuner.contains("settingsCardGrid(displayOptions, fftOptions, waterfallOptions"));
+        assertTrue(tuner.contains("...(!basicOperator ? [profilePanel] : [])"));
+        assertTrue(tuner.contains("optionsPanel.append(optionsHeader, optionGroups)"));
         assertTrue(tuner.contains("optionsSummary.setAttribute('aria-expanded', 'false')"));
         assertTrue(tuner.contains("optionsSummary.setAttribute('aria-expanded', String(options.open))"));
         assertTrue(tuner.contains("toolbarActions.append(options)"));
@@ -2042,9 +2052,10 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains(".tuner-spectrum-options:not([open]) > .tuner-spectrum-options-panel"));
         assertTrue(css.contains("padding: 12px;"));
         assertTrue(css.contains(".tuner-spectrum-options[open] .tuner-spectrum-options-panel"));
-        assertTrue(css.contains(".tuner-spectrum-toggle-control"));
-        assertTrue(css.contains(".tuner-spectrum-toggle-copy"));
-        assertTrue(css.contains(".tuner-spectrum-display-section"));
+        assertTrue(tuner.contains("preferenceCheckbox('', label, checked, detail)"));
+        assertTrue(tuner.contains("settingsCard('Display', '', rangeControl"));
+        assertTrue(css.contains(".settings-card-body .settings-field-control"));
+        assertTrue(css.contains(".settings-field-control {"));
         assertTrue(css.contains(".tuner-spectrum-active-flag.status-encrypted"));
         assertTrue(css.contains(".tuner-spectrum-active-flag.status-call"));
         assertTrue(css.contains(".tuner-spectrum-active-flag.status-data"));

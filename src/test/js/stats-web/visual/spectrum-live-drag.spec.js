@@ -174,9 +174,13 @@ async function install(page) {
       return;
     }
     if (path === '/api/v1/admin/tuners/idle-a/browse') {
-      if (method === 'DELETE') return respond(null, 204);
+      if (method === 'DELETE') {
+        state.takeover = false;
+        return respond(null, 204);
+      }
+      if (body.takeover === true) state.takeover = true;
       const record = { body, snapshot: { lease_id: 'browse-a', expires_at_epoch_ms: Date.now() + 30000,
-        can_tune: true, tuner: tuner(state.centerHz) }, fail: state.failNextBrowse };
+        takeover: state.takeover === true, can_tune: true, tuner: tuner(state.centerHz) }, fail: state.failNextBrowse };
       state.failNextBrowse = false;
       const gate = state.holdNextBrowse ? new Promise((release) => { record.release = release; }) : null;
       state.holdNextBrowse = false;
@@ -223,7 +227,7 @@ async function install(page) {
     state.browses.forEach((record) => record.release?.());
   };
   await page.goto('/app.html?view=tuner-spectrum');
-  await expect(page.getByRole('heading', { name: 'Tuner Spectrum', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Browse Spectrum', exact: true })).toBeVisible();
   await expect(page.locator('.spectrum-browse-center')).toContainText('0851.01250MHz');
   await expect(page.locator('.spectrum-browse-status')).toHaveText('Live');
   await expect(page.getByRole('button', { name: 'Zoom in', exact: true })).toBeEnabled();
@@ -234,13 +238,88 @@ function plot(page, surface = 'fft') {
   return page.locator(`.tuner-spectrum-${surface} canvas`);
 }
 
+test('retune display choices keep FFT and waterfall independent, preserve manual range, and follow the browser to Tuners', async ({ page }) => {
+  const state = await install(page);
+  await page.getByRole('button', { name: 'Display options', exact: true }).click();
+  const options = page.locator('.tuner-spectrum-options-panel');
+  const fftRange = options.locator('output[aria-label="FFT display range"]');
+  const waterfallRange = options.locator('output[aria-label="Waterfall display range"]');
+  const fftChoice = options.locator('input[name="fft_auto_range_on_retune"]');
+  const waterfallChoice = options.locator('input[name="waterfall_auto_range_on_retune"]');
+  const manualRange = options.locator('.tuner-spectrum-range-heading output');
+  const baseline = await manualRange.textContent();
+  await expect.poll(() => fftRange.textContent()).not.toBe(baseline);
+  const automaticRange = await fftRange.textContent();
+  await expect(waterfallRange).toHaveText(automaticRange);
+  await fftChoice.locator('..').click();
+  await expect(fftRange).toHaveText(baseline);
+  await expect(waterfallRange).toHaveText(automaticRange);
+  const floor = options.getByRole('slider', { name: 'Lower display limit', exact: true });
+  await floor.focus();
+  await page.keyboard.press('ArrowRight');
+  const manual = await manualRange.textContent();
+  expect(manual).not.toBe(baseline);
+  await expect(fftRange).toHaveText(manual);
+  await expect(waterfallRange).toHaveText(manual);
+  await page.evaluate((centerHz) => window.spectrumDragStream.emit(centerHz), INITIAL_CENTER_HZ);
+  await expect(waterfallRange).toHaveText(manual);
+  await page.evaluate((centerHz) => window.spectrumDragStream.emit(centerHz), INITIAL_CENTER_HZ + 1000000);
+  await expect(waterfallRange).toHaveText(automaticRange);
+  await expect(fftRange).toHaveText(manual);
+  await fftChoice.locator('..').click();
+  await expect(fftChoice).toBeChecked();
+  await expect(fftRange).toHaveText(manual);
+  await page.evaluate((centerHz) => window.spectrumDragStream.emit(centerHz), INITIAL_CENTER_HZ + 2000000);
+  await expect(fftRange).toHaveText(automaticRange);
+  await expect(waterfallRange).toHaveText(automaticRange);
+  await fftChoice.locator('..').click();
+  await expect(fftRange).toHaveText(manual);
+  expect(state.requests.filter((request) => request.path === '/api/v1/me/preferences' && request.method !== 'GET')
+    .map((request) => request.body).some((body) => Object.hasOwn(body.preferences?.tuner || {}, 'fft_auto_range_on_retune'))).toBe(false);
+  await page.goto('/app.html?view=tuners');
+  const embedded = page.locator('.tuners-spectrum');
+  await embedded.getByRole('button', { name: 'Display options', exact: true }).click();
+  await expect(embedded.locator('input[name="fft_auto_range_on_retune"]')).not.toBeChecked();
+  await expect(embedded.locator('input[name="waterfall_auto_range_on_retune"]')).toBeChecked();
+});
+
+test('Live and Setup preserve manual FFT and waterfall ranges when the center frequency does not change', async ({ page }) => {
+  await install(page);
+  await page.getByRole('button', { name: 'Display options', exact: true }).click();
+  const options = page.locator('.tuner-spectrum-options-panel');
+  const fftRange = options.locator('output[aria-label="FFT display range"]');
+  const waterfallRange = options.locator('output[aria-label="Waterfall display range"]');
+  const baseline = await options.locator('.tuner-spectrum-range-heading output').textContent();
+  await expect.poll(() => fftRange.textContent()).not.toBe(baseline);
+  const automatic = await fftRange.textContent();
+  await options.getByRole('slider', { name: 'Lower display limit', exact: true }).focus();
+  await page.keyboard.press('ArrowRight');
+  const manual = await options.locator('.tuner-spectrum-range-heading output').textContent();
+  await expect(fftRange).toHaveText(manual);
+  await expect(waterfallRange).toHaveText(manual);
+  const status = page.locator('.spectrum-browse-status');
+  for (const name of ['Setup', 'Live']) {
+    await page.getByRole('button', { name, exact: true }).click();
+    await expect(page.getByRole('button', { name, exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(status).toHaveText('Live');
+    await page.evaluate((centerHz) => window.spectrumDragStream.emit(centerHz), INITIAL_CENTER_HZ);
+    await expect(fftRange).toHaveText(manual);
+    await expect(waterfallRange).toHaveText(manual);
+  }
+  await page.evaluate((centerHz) => window.spectrumDragStream.emit(centerHz), INITIAL_CENTER_HZ + 1000000);
+  await expect(fftRange).toHaveText(automatic);
+  await expect(waterfallRange).toHaveText(automatic);
+});
+
 test('compact strength frames retain numeric hover after changing the waterfall display range', async ({ page }) => {
   const state = await install(page);
   await expect.poll(() => state.controls.some((value) => value?.strength_encoding === 'packed6')).toBe(true);
   await page.evaluate(({ centerHz }) => window.spectrumDragStream.emit(centerHz,
     { strength_encoding: 'packed6' }), { centerHz: INITIAL_CENTER_HZ });
   await page.getByRole('button', { name: 'Display options', exact: true }).click();
-  await page.getByLabel('Smooth FFT', { exact: true }).uncheck();
+  const smoothing = page.getByLabel('Smooth FFT', { exact: true });
+  await smoothing.locator('..').click();
+  await expect(smoothing).not.toBeChecked();
   await page.getByRole('button', { name: 'Display options', exact: true }).click();
   const canvas = plot(page);
   const bounds = await canvas.boundingBox();

@@ -71,8 +71,13 @@ function searchSnapshot() {
 }
 
 async function install(page, options = {}) {
-  const state = { requests: [], takeoverSequence: 0, monitorSequence: 0 };
-  const inventory = options.paired ? pairedTuners() : [activeTuner()];
+  const state = { requests: [], takeoverSequence: 0, monitorSequence: 0,
+    failNextTakeover: options.failTakeover === true };
+  const inventory = options.paired ? pairedTuners() : [options.idle ? {
+    ...activeTuner(), channel_count: 0,
+    settings: activeTuner().settings.map((setting) => setting.id === 'center_frequency_locked' ?
+      { ...setting, value: false } : setting)
+  } : activeTuner()];
   const preferenceModule = await import(pathToFileURL(resolve(root,
     'stats-web/assets/core/preference-schema.js')).href);
 
@@ -94,7 +99,7 @@ async function install(page, options = {}) {
       } });
     if (path === '/api/v1/me/preferences') return route.fulfill({ contentType: 'application/json',
       body: JSON.stringify({ revision: 1, preferences: { ...preferenceModule.defaults,
-        appearance: { theme: 'light', hue: null } } }) });
+        appearance: { theme: options.theme || 'light', hue: null } } }) });
     if (path === '/api/v1/spectrum-snap-presets') return route.fulfill({ contentType: 'application/json',
       body: JSON.stringify({ revision: 1, country_code: 'US', country_label: 'United States',
         countries: [{ code: 'US', label: 'United States' }], scopes: [] }) });
@@ -105,12 +110,16 @@ async function install(page, options = {}) {
     if (path === browsePath) {
       if (method === 'DELETE') return respond(null, 204);
       if (body.takeover === true) {
+        if (state.failNextTakeover) {
+          state.failNextTakeover = false;
+          return fail('Setup could not take control. Receiver channels were restored.', 'tuner_browse_failed');
+        }
         const leaseId = `takeover-${++state.takeoverSequence}`;
-        const prepared = options.paired ? { ...inventory[0], operator_state: 'setup',
+        const prepared = options.paired || options.idle ? { ...inventory[0], operator_state: 'setup',
           settings: inventory[0].settings.map((setting) => setting.id === 'center_frequency_locked' ?
             { ...setting, value: false } : setting) } : preparedTuner();
         return respond({ lease_id: leaseId, expires_at_epoch_ms: Date.now() + 30000,
-          takeover: true, can_tune: true, stopped_channels: [{ configuration_id: 'channel-a' }],
+          takeover: true, can_tune: true, stopped_channels: options.idle ? [] : [{ configuration_id: 'channel-a' }],
           tuner: prepared });
       }
       if (String(body.lease_id || '').startsWith('takeover-')) {
@@ -121,8 +130,8 @@ async function install(page, options = {}) {
       if (options.paired && !body.lease_id)
         return fail('Channels are using this tuner\'s paired hardware', 'tuner_browse_unavailable', 409);
       return respond({ lease_id: `monitor-${++state.monitorSequence}`,
-        expires_at_epoch_ms: Date.now() + 30000, takeover: false, can_tune: false,
-        tuner: activeTuner() });
+        expires_at_epoch_ms: Date.now() + 30000, takeover: false, can_tune: options.idle === true,
+        tuner: options.idle ? { ...inventory[0], operator_state: 'setup' } : activeTuner() });
     }
     if (path === '/api/v1/diagnostics/tuners') return respond({ rows: [] });
     if (path === `${searchPath}/catalog`) return respond(catalog());
@@ -135,7 +144,7 @@ async function install(page, options = {}) {
   });
 
   await page.goto('/app.html?view=tuner-spectrum');
-  await expect(page.getByRole('heading', { name: 'Tuner Spectrum', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Browse Spectrum', exact: true })).toBeVisible();
   await expect.poll(() => state.requests.some((request) => request.path === browsePath &&
     request.method === 'POST' && Object.keys(request.body).length === 0)).toBe(true);
   return state;
@@ -156,25 +165,28 @@ async function confirmStopChannels(page, purpose = 'tune') {
 
 test('Spectrum can temporarily stop an active locked tuner and resume its channels', async ({ page }) => {
   const state = await install(page);
-  const stop = page.getByRole('button', { name: 'Stop channels to tune', exact: true });
+  const stop = page.getByRole('button', { name: 'Setup', exact: true });
   await expect(stop).toBeVisible();
-  await expect(stop).toHaveClass(/ui-icon-button/);
-  await expect(stop).toHaveText('');
+  await expect(stop).toHaveClass('ui-segmented-option');
+  await expect(stop).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.getByRole('button', { name: 'Live', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('group', { name: 'Tuner mode', exact: true }).getByRole('button')).toHaveText(['Live', 'Setup']);
 
   await stop.click();
   await confirmStopChannels(page);
 
-  const resume = page.getByRole('button', { name: 'Resume channels', exact: true });
+  const resume = page.getByRole('button', { name: 'Live', exact: true });
   await expect(resume).toBeVisible();
-  await expect(resume).toHaveClass(/ui-icon-button/);
-  await expect(resume).toHaveText('');
+  await expect(resume).toHaveClass('ui-segmented-option');
+  await expect(resume).toHaveAttribute('aria-pressed', 'false');
+  await expect(stop).toHaveAttribute('aria-pressed', 'true');
   const takeover = state.requests.find((request) => request.path === browsePath &&
     request.method === 'POST' && request.body.takeover === true);
   expect(takeover).toBeTruthy();
 
   const requestCount = state.requests.length;
   await resume.click();
-  await expect(stop).toBeVisible();
+  await expect(stop).toHaveAttribute('aria-pressed', 'false');
   await expect.poll(() => state.requests.length).toBeGreaterThan(requestCount);
 
   const releaseIndex = state.requests.findIndex((request, index) => index >= requestCount &&
@@ -185,10 +197,131 @@ test('Spectrum can temporarily stop an active locked tuner and resume its channe
   expect(reacquireIndex).toBeGreaterThan(releaseIndex);
 });
 
+test('Setup prepares an idle receiver once and Live releases only its Spectrum lease', async ({ page }) => {
+  const state = await install(page, { idle: true });
+  const mode = page.getByRole('group', { name: 'Tuner mode', exact: true });
+  const setup = mode.getByRole('button', { name: 'Setup', exact: true });
+  const live = mode.getByRole('button', { name: 'Live', exact: true });
+  await expect(setup).toBeEnabled();
+  await setup.click();
+  await expect(setup).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('alertdialog')).toHaveCount(0);
+  expect(state.takeoverSequence).toBe(1);
+  const before = state.requests.length;
+  await setup.click();
+  expect(state.requests.length).toBe(before);
+  await live.click();
+  await expect(live).toHaveAttribute('aria-pressed', 'true');
+  expect(state.requests.filter((request) => request.path === browsePath && request.method === 'DELETE')
+    .map((request) => request.body.lease_id)).toEqual(['monitor-1', 'takeover-1']);
+  expect(state.requests.some((request) => request.path.endsWith('/state'))).toBe(false);
+});
+
+test('cancelled Setup leaves live channels and the monitoring lease unchanged', async ({ page }) => {
+  const state = await install(page);
+  await page.getByRole('button', { name: 'Setup', exact: true }).click();
+  const warning = page.getByRole('alertdialog', { name: 'Stop channels to tune?' });
+  await warning.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Live', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'Setup', exact: true })).toBeEnabled();
+  expect(state.takeoverSequence).toBe(0);
+  expect(state.requests.some((request) => request.path === browsePath && request.method === 'DELETE')).toBe(false);
+});
+
+test('failed Setup keeps Live selected and permits another confirmed attempt', async ({ page }) => {
+  const state = await install(page, { failTakeover: true });
+  const setup = page.getByRole('button', { name: 'Setup', exact: true });
+  const live = page.getByRole('button', { name: 'Live', exact: true });
+  await setup.click();
+  await confirmStopChannels(page);
+  await expect(page.getByText('Setup could not take control. Receiver channels were restored.', { exact: true }))
+    .toBeVisible();
+  await expect(live).toHaveAttribute('aria-pressed', 'true');
+  await expect(setup).toBeEnabled();
+  expect(state.takeoverSequence).toBe(0);
+  await setup.click();
+  await confirmStopChannels(page);
+  await expect(setup).toHaveAttribute('aria-pressed', 'true');
+  expect(state.takeoverSequence).toBe(1);
+});
+
+test('leaving Spectrum in Setup releases its takeover lease once', async ({ page }) => {
+  const state = await install(page);
+  await page.getByRole('button', { name: 'Setup', exact: true }).click();
+  await confirmStopChannels(page);
+  await expect(page.getByRole('button', { name: 'Setup', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await page.evaluate(() => document.querySelector('a[data-view="dashboard"]').click());
+  await expect(page.getByRole('heading', { name: 'Main', exact: true })).toBeVisible();
+  await expect.poll(() => state.requests.filter((request) => request.path === browsePath &&
+    request.method === 'DELETE' && request.body.lease_id === 'takeover-1').length).toBe(1);
+  await expect(page.getByRole('group', { name: 'Tuner mode', exact: true })).toHaveCount(0);
+  expect(state.requests.some((request) => request.path.endsWith('/state'))).toBe(false);
+});
+
+test('fixed center frequency explains Setup on hover and keyboard focus without a help icon', async ({ page }) => {
+  const state = await install(page);
+  const center = page.getByRole('group', { name: 'Center frequency', exact: true });
+  const hint = page.getByRole('tooltip');
+  await expect(center.locator('.tuners-center-help')).toHaveCount(0);
+  await expect(center).toHaveAttribute('aria-disabled', 'true');
+  await expect(center).toHaveAccessibleDescription('Active channels keep the center frequency fixed. Switch to Setup mode to retune');
+  await center.hover();
+  await expect(hint).toHaveText('Active channels keep the center frequency fixed. Switch to Setup mode to retune');
+  await expect(hint).toBeVisible();
+  await page.mouse.move(0, 0);
+  await expect(hint).toBeHidden();
+  await page.getByRole('combobox', { name: 'Tuner', exact: true }).focus();
+  await page.keyboard.press('Tab');
+  await expect(center).toBeFocused();
+  await expect(hint).toBeVisible();
+  const before = state.requests.length;
+  await page.keyboard.press('ArrowUp');
+  expect(state.requests.length).toBe(before);
+  await page.keyboard.press('Escape');
+  await expect(hint).toBeHidden();
+});
+
+for (const [theme, device, viewport] of [
+  ['light', 'desktop', { width: 1280, height: 900 }],
+  ['dark', 'desktop', { width: 1280, height: 900 }],
+  ['light', 'mobile', { width: 390, height: 844 }],
+  ['dark', 'mobile', { width: 390, height: 844 }]
+]) {
+  test(`Spectrum mode control ${theme} ${device}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await install(page, { theme });
+    await expect(page.locator('a[data-view="tuner-spectrum"] span').first()).toHaveText('Browser Spectrum');
+    await expect(page.getByRole('group', { name: 'Tuner mode', exact: true }).getByRole('button')).toHaveText(['Live', 'Setup']);
+    await expect(page.getByRole('button', { name: 'Disabled', exact: true })).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <=
+      document.documentElement.clientWidth)).toBe(true);
+    await page.evaluate(() => document.fonts.ready);
+    await expect(page.locator('.spectrum-browse-toolbar'))
+      .toHaveScreenshot(`spectrum-mode-${theme}-${device}.png`);
+  });
+}
+
+for (const width of [820, 320]) {
+  test(`Spectrum mode and actions stay within the toolbar at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await install(page);
+    const toolbar = page.locator('.spectrum-browse-toolbar');
+    const bounds = await toolbar.boundingBox();
+    for (const control of await toolbar.getByRole('button').all()) {
+      if (!await control.isVisible()) continue;
+      const controlBounds = await control.boundingBox();
+      expect(controlBounds.x).toBeGreaterThanOrEqual(bounds.x);
+      expect(controlBounds.x + controlBounds.width).toBeLessThanOrEqual(bounds.x + bounds.width);
+    }
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <=
+      document.documentElement.clientWidth)).toBe(true);
+  });
+}
+
 test('an idle member can stop channels using its paired receiver', async ({ page }) => {
   const state = await install(page, { paired: true });
   await expect(page.locator('.spectrum-browse-tuner option').first()).toContainText('2 active in pair');
-  const stop = page.getByRole('button', { name: 'Stop channels to tune', exact: true });
+  const stop = page.getByRole('button', { name: 'Setup', exact: true });
   await expect(stop).toBeVisible();
 
   await stop.click();
@@ -198,14 +331,14 @@ test('an idle member can stop channels using its paired receiver', async ({ page
   await expect(warning).toContainText('restart the same configured channels');
   await warning.getByRole('button', { name: 'Stop channels and tune', exact: true }).click();
 
-  await expect(page.getByRole('button', { name: 'Resume channels', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Live', exact: true })).toHaveAttribute('aria-pressed', 'false');
   await expect(page.locator('.spectrum-browse-tuner option')).toHaveText([
     /Primary receiver · Idle/, /Partner receiver · Idle/
   ]);
   expect(state.requests.some((request) => request.path === browsePath && request.method === 'POST' &&
     request.body.takeover === true)).toBe(true);
 
-  await page.getByRole('button', { name: 'Resume channels', exact: true }).click();
+  await page.getByRole('button', { name: 'Live', exact: true }).click();
   await expect(page.locator('.spectrum-browse-tuner option').first()).toContainText('2 active in pair');
 });
 

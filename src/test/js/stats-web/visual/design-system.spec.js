@@ -724,9 +724,10 @@ test('tuner-spectrum-dark-desktop', async ({ page }) => {
   await expect(example.getByText('Lock center', { exact: true })).toHaveCount(0);
   await expect(example.locator('.tuners-center-lock-field')).toHaveCount(0);
   await expect(example.locator('.spectrum-browse-message')).toHaveCount(0);
+  await expect(example.getByRole('group', { name: 'Tuner mode', exact: true }).getByRole('button')).toHaveText(['Live', 'Setup']);
   await expect(example.locator('.tuner-spectrum-readouts .channel-diagnostic-readout small'))
     .toHaveText(['Visible span', 'Zoom', 'Peak', 'Best SNR']);
-  for (const label of ['Stop channels to tune', 'Reset zoom', 'Pause',
+  for (const label of ['Reset zoom', 'Pause',
     'Display options', 'More measurements']) {
     const control = example.locator(`[aria-label="${label}"]`).first();
     await expect(control).toHaveClass(/ui-icon-button/);

@@ -250,8 +250,8 @@ async function install(page, options = {}) {
   });
 
   await page.goto('/app.html?view=tuner-spectrum');
-  await expect(page.getByRole('heading', { name: 'Tuner Spectrum', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Stop channels to tune', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Browse Spectrum', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Setup', exact: true })).toBeVisible();
   if (options.discovery) await page.evaluate(async () => {
     const script = document.querySelector('script[type="module"][src*="/assets/app.js"]');
     window.spectrumLifecycleApi = await import(script.src);
@@ -260,11 +260,11 @@ async function install(page, options = {}) {
 }
 
 async function takeControl(page) {
-  await page.getByRole('button', { name: 'Stop channels to tune', exact: true }).click();
+  await page.getByRole('button', { name: 'Setup', exact: true }).click();
   const warning = page.getByRole('alertdialog', { name: 'Stop channels to tune?' });
   await expect(warning).toBeVisible();
   await warning.getByRole('button', { name: 'Stop channels and tune', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Resume channels', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Live', exact: true })).toHaveAttribute('aria-pressed', 'false');
 }
 
 async function openDiscoveryFromSpectrum(page) {
@@ -287,9 +287,10 @@ test('failed Resume keeps takeover ownership and renews its lease', async ({ pag
   await takeControl(page);
   state.failNextDelete = true;
 
-  await page.getByRole('button', { name: 'Resume channels', exact: true }).click();
+  await page.getByRole('button', { name: 'Live', exact: true }).click();
   await expect(page.getByText('Receiver release failed', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Resume channels', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Live', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Setup', exact: true })).toHaveAttribute('aria-pressed', 'true');
   const renewals = () => state.requests.filter((request) => request.path === browsePath('active-a') &&
     request.method === 'POST' && request.body.lease_id === 'takeover-1').length;
   const before = renewals();
@@ -309,7 +310,7 @@ test('failed tuner switch retains the takeover and does not browse the new recei
 
   await expect(page.getByText('Receiver release failed', { exact: true })).toBeVisible();
   await expect(page.getByLabel('Tuner', { exact: true })).toHaveValue('active-a');
-  await expect(page.getByRole('button', { name: 'Resume channels', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Live', exact: true })).toHaveAttribute('aria-pressed', 'false');
   expect(secondReceiverPosts()).toBe(0);
 });
 
@@ -318,13 +319,15 @@ test('Resume locks receiver choices until release and reacquisition finish', asy
   await takeControl(page);
   state.delayNextDelete = true;
 
-  await page.getByRole('button', { name: 'Resume channels', exact: true }).click();
+  await page.getByRole('button', { name: 'Live', exact: true }).click();
   await expect.poll(() => typeof state.releaseDelete).toBe('function');
   await expect(page.getByLabel('Tuner', { exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Live', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Setup', exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Find Trunked Systems', exact: true })).toHaveCount(0);
 
   state.releaseDelete();
-  await expect(page.getByRole('button', { name: 'Stop channels to tune', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Setup', exact: true })).toBeVisible();
   await expect(page.getByLabel('Tuner', { exact: true })).toBeEnabled();
   const releaseIndex = state.requests.findIndex((request) => request.path === browsePath('active-a') &&
     request.method === 'DELETE' && request.body.lease_id === 'takeover-1');
@@ -428,12 +431,12 @@ test('temporary renewal failure keeps takeover ownership and retries automatical
   await page.clock.fastForward(10_100);
   await expect(page.getByText('Connection interrupted. Your stopped channels are still under Spectrum control; retrying automatically.',
     { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Resume channels', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Live', exact: true })).toHaveAttribute('aria-pressed', 'false');
   const afterFailure = renewals();
 
   await page.clock.fastForward(10_100);
   await expect.poll(renewals).toBeGreaterThan(afterFailure);
-  await expect(page.getByRole('button', { name: 'Resume channels', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Live', exact: true })).toHaveAttribute('aria-pressed', 'false');
   await expect(page.getByText('1 channel stopped · Resume when finished', { exact: true })).toBeVisible();
 });
 
@@ -446,7 +449,7 @@ test('confirmed renewal ownership conflict clears the expired takeover', async (
 
   await page.clock.fastForward(10_100);
   await expect(page.getByText('Spectrum tuner session expired; reopen Spectrum', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Resume channels', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Live', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('button', { name: 'Retry browsing', exact: true })).toBeVisible();
 });
 
@@ -454,6 +457,6 @@ test('Spectrum retains click discovery without exposing the band scanner', async
   const state = await install(page);
   await takeControl(page);
   await expect(page.getByRole('button', { name: 'Find Trunked Systems', exact: true })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Resume channels', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Live', exact: true })).toHaveAttribute('aria-pressed', 'false');
   expect(state.requests.some((request) => request.path.startsWith('/api/v1/admin/spectrum-search'))).toBe(false);
 });

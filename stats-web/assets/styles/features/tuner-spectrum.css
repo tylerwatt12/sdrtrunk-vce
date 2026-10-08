@@ -261,7 +261,7 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 
 .tuner-spectrum-options-panel {
   width: min(430px, calc(100vw - 32px));
-  max-height: min(620px, calc(100dvh - 220px));
+  max-height: min(620px, calc(var(--tuner-spectrum-options-available-height, calc(100dvh - 220px)) - var(--audio-dock-height, 0px)));
   position: absolute;
   top: calc(100% + var(--space-3));
   right: 0;
@@ -332,9 +332,6 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   grid-template-columns: auto minmax(90px, 1fr) 58px;
   align-items: center;
   gap: var(--space-2);
-  color: var(--muted);
-  font-size: var(--font-size-label);
-  font-weight: var(--font-weight-control);
 }
 
 .tuner-spectrum-display-control input {
@@ -355,6 +352,7 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 
 .tuner-spectrum-range-heading {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
@@ -440,53 +438,8 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   line-height: 1.4;
 }
 
-.tuner-spectrum-toggle-control {
-  min-height: 62px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: var(--space-3);
-  padding: var(--space-3) 0;
-}
-
-.tuner-spectrum-toggle-copy {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-}
-
-.tuner-spectrum-toggle-copy strong {
-  font-size: var(--font-size-label);
-}
-
-.tuner-spectrum-toggle-copy small {
-  color: var(--muted);
-  font-size: var(--font-size-meta);
-  font-weight: var(--font-weight-normal);
-  line-height: 1.35;
-}
-
-.tuner-spectrum-profile,
-.tuner-spectrum-display-section {
-  min-width: 0;
-  margin: 0;
-  padding: var(--space-4);
-  display: grid;
-  align-content: start;
-  gap: var(--space-3);
-  background: transparent;
-  border: 0;
-}
-
-.tuner-spectrum-profile legend,
-.tuner-spectrum-display-section legend {
-  padding: 0;
-  color: var(--ink);
-  font-size: var(--font-size-secondary);
-  font-weight: var(--font-weight-heading);
-}
-
-.tuner-spectrum-profile .tuner-spectrum-display-control {
-  grid-template-columns: minmax(90px, auto) minmax(150px, 1fr);
+.tuner-spectrum-settings-grid {
+  padding: var(--space-3);
 }
 
 .tuner-spectrum-refining {
@@ -938,7 +891,6 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 
   .tuner-spectrum-options[open] .tuner-spectrum-options-panel {
     width: 100%;
-    max-height: none;
     position: static;
     grid-template-columns: minmax(0, 1fr);
     margin-top: var(--space-2);
@@ -979,12 +931,18 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
     width: 100%;
   }
 
-  .tuner-spectrum-profile .tuner-spectrum-display-control {
-    grid-template-columns: minmax(0, 1fr);
+  .tuner-spectrum-speed-control {
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
-  .tuner-spectrum-profile .tuner-spectrum-display-control > span:last-child {
-    width: 100%;
+  .tuner-spectrum-speed-control > input {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .tuner-spectrum-speed-control > output {
+    grid-column: 2;
+    grid-row: 1;
   }
 
 }
@@ -1056,11 +1014,6 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 .spectrum-browse-feedback .spectrum-browse-message {
   min-width: 0;
   flex: 1 1 auto;
-}
-
-.spectrum-browse-takeover {
-  --icon-action-size: var(--control-height-compact);
-  flex: 0 0 auto;
 }
 
 .spectrum-browse-tuner {
@@ -1165,21 +1118,6 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 .spectrum-browse-message {
   min-width: 0;
   max-width: none;
-}
-
-.spectrum-browse-takeover-warning:not([hidden]) {
-  position: relative;
-}
-
-.spectrum-browse-takeover-warning:not([hidden])::after {
-  content: '';
-  width: 6px;
-  height: 6px;
-  position: absolute;
-  top: var(--space-1);
-  right: var(--space-1);
-  background: var(--warning);
-  border-radius: 50%;
 }
 
 .spectrum-browse-actions .tuner-spectrum-options-summary {
@@ -1330,7 +1268,7 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   .spectrum-browse-toolbar {
     --ui-control-height: var(--control-height-compact);
     --icon-action-size: var(--control-height-compact);
-    grid-template-columns: minmax(140px, .8fr) minmax(270px, 1.45fr) max-content;
+    grid-template-columns: minmax(120px, .8fr) minmax(240px, 1.45fr) max-content;
     justify-content: stretch;
   }
 
@@ -2029,9 +1967,10 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 
 @media (max-width: 560px) {
   .spectrum-browse-toolbar .spectrum-browse-actions {
-    width: auto;
+    width: 100%;
     display: flex;
-    justify-self: end;
+    flex-wrap: wrap;
+    justify-self: stretch;
     gap: var(--space-1);
   }
 

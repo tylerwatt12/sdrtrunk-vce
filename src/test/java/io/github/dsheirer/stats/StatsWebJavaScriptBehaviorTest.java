@@ -69,6 +69,7 @@ class StatsWebJavaScriptBehaviorTest
         contract("tuner idle markers", "tuner-idle-markers.test.js", APP_JAVASCRIPT),
         contract("spectrum display preferences", "spectrum-display-preferences.test.js",
             CORE_MODULES.resolve("spectrum-display-preferences.js")),
+        contract("spectrum automatic range", "spectrum-auto-range.test.js", APP_JAVASCRIPT),
         contract("diagnostic strength encoding", "diagnostic-strength.test.js", APP_JAVASCRIPT),
         contract("web call player", "web-call-player.test.js", WEB_CALL_PLAYER));
 

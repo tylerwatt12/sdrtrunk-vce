@@ -325,7 +325,7 @@ async function install(page, state = {}) {
     return respond({});
   });
   await page.goto('/app.html?view=tuner-spectrum');
-  await expect(page.getByRole('heading', { name: 'Tuner Spectrum', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Browse Spectrum', exact: true })).toBeVisible();
   if (browseWillFail) await expect(page.getByRole('button', { name: 'Retry browsing', exact: true })).toBeVisible();
   else await expect(page.locator('.spectrum-browse-center')).toContainText('0851.01250MHz');
   await page.evaluate(async (frequencyHz) => {
@@ -1095,7 +1095,7 @@ test('managed Spectrum keeps one aligned toolbar and updates one persistent freq
   const state = { liveSpectrum: true };
   await install(page, state);
 
-  const heading = page.getByRole('heading', { name: 'Tuner Spectrum', exact: true });
+  const heading = page.getByRole('heading', { name: 'Browse Spectrum', exact: true });
   const header = page.locator('.page-header').filter({ has: heading });
   const toolbar = page.locator('.spectrum-browse-toolbar');
   const panel = page.locator('.spectrum-browse-panel');
@@ -1270,6 +1270,74 @@ test('Spectrum display options remain reachable from desktop and mobile controls
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <=
     document.documentElement.clientWidth)).toBe(true);
 });
+
+for (const theme of ['light', 'dark']) for (const width of [1280, 390]) {
+  test(`boxed Spectrum display options retain independent retune settings in ${theme} at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const state = { theme, listening: true, liveSpectrum: true };
+    await install(page, state);
+    const trigger = page.getByRole('button', { name: width < 600 ? 'More spectrum actions' : 'Display options', exact: true });
+    await trigger.click();
+    const panel = page.locator('.tuner-spectrum-options-panel');
+    await expect(panel.locator('.settings-card-title')).toHaveText(['Display', 'FFT', 'Waterfall', 'Spectrum performance']);
+    const fft = panel.locator('.settings-card').filter({ has: page.getByRole('heading', { name: 'FFT', exact: true }) });
+    const waterfall = panel.locator('.settings-card').filter({ has: page.getByRole('heading', { name: 'Waterfall', exact: true }) });
+    const fftChoice = fft.getByRole('checkbox', { name: 'Auto range display range on retune', exact: true });
+    const waterfallChoice = waterfall.getByRole('checkbox', { name: 'Auto range display range on retune', exact: true });
+    await expect(fftChoice).toBeChecked();
+    await expect(waterfallChoice).toBeChecked();
+    await fftChoice.locator('..').click();
+    await expect(fftChoice).not.toBeChecked();
+    await expect(waterfallChoice).toBeChecked();
+    expect(state.requests.filter((request) => request.path === '/api/v1/me/preferences' && request.method !== 'GET')).toHaveLength(0);
+    const styles = await panel.locator('.settings-field-control, .admin-toggle-control').evaluateAll((controls) =>
+      controls.filter((control) => !control.hidden).map((control) => {
+        const style = getComputedStyle(control);
+        return { border: style.borderTopWidth, background: style.backgroundColor };
+      }));
+    expect(styles).toHaveLength(8);
+    expect(styles.every((style) => style.border === '1px' && !['transparent', 'rgba(0, 0, 0, 0)'].includes(style.background))).toBe(true);
+    const overflow = await panel.evaluate((element) => [element, ...element.querySelectorAll('*')]
+      .filter((control) => control.clientWidth > 0 && control.scrollWidth > control.clientWidth + 1)
+      .map((control) => ({ className: control.className, tag: control.tagName,
+        width: control.clientWidth, scroll: control.scrollWidth })));
+    expect(overflow).toEqual([]);
+    if (width < 600) {
+      const dock = page.locator('#audio-dock');
+      await expect(dock).toBeVisible();
+      const unobstructed = async (control) => {
+        await control.evaluate((element) => element.scrollIntoView({ block: 'center' }));
+        const bounds = await control.boundingBox();
+        const panelBounds = await panel.boundingBox();
+        const dockBounds = await dock.boundingBox();
+        expect(bounds.y).toBeGreaterThanOrEqual(panelBounds.y);
+        expect(bounds.y + bounds.height).toBeLessThanOrEqual(panelBounds.y + panelBounds.height + 1);
+        expect(bounds.y + bounds.height).toBeLessThanOrEqual(dockBounds.y - 7);
+      };
+      for (const control of await panel.locator('.settings-field-control, .admin-toggle-control').all()) {
+        if (await control.isVisible()) await unobstructed(control);
+      }
+      const fftControl = fft.locator('.admin-toggle-control').first();
+      const waterfallControl = waterfall.locator('.admin-toggle-control').first();
+      await unobstructed(fftControl);
+      await expect(fftControl).toHaveScreenshot(`spectrum-options-${theme}-${width}-fft.png`);
+      await unobstructed(waterfallControl);
+      await expect(waterfallControl).toHaveScreenshot(`spectrum-options-${theme}-${width}-waterfall.png`);
+    } else {
+      await panel.evaluate((element) => { element.scrollTop = 0; });
+      await expect(panel).toHaveScreenshot(`spectrum-options-${theme}-${width}-top.png`);
+      await panel.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+      await expect(panel).toHaveScreenshot(`spectrum-options-${theme}-${width}-bottom.png`);
+    }
+    await page.keyboard.press('Escape');
+    await expect(panel).toBeHidden();
+    await expect(trigger).toBeFocused();
+    await page.reload();
+    await trigger.click();
+    await expect(fftChoice).not.toBeChecked();
+    await expect(waterfallChoice).toBeChecked();
+  });
+}
 
 test('confirmed lease activity updates the existing tuner option and preserves picker focus', async ({ page }) => {
   const state = { browseChannelCount: 1 };

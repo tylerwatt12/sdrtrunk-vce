@@ -90,6 +90,7 @@ test('compact history preserves peak rendering and can be recolored after contra
   Object.assign(context, {
     viewport: { startHz: 95.5, endHz: 104.5 }, waterfallBuffer: { width: 3, height: 256 },
     waterfallRowImage: { data: new Uint8ClampedArray(12) }, palette, dbFloor: -80, dbCeiling: 0,
+    waterfallDisplayFloorDb: () => context.dbFloor,
     waterfallContext: { putImageData: image => { rendered = Array.from(image.data); } },
     nextWaterfallRow: 0, newestWaterfallRow: -1,
     waterfallObservedAtRows: new Float64Array(256), waterfallMetadataRows: [], waterfallRetuneRows: []
