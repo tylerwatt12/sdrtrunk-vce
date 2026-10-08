@@ -29,7 +29,7 @@ function queryPath(root, values = {}) {
 export function recordingSuggestionFilters(filters, suggestion) {
   const next = { ...filters };
   if (!suggestion?.name_query) return next;
-  for (const key of ['radio_id', 'radio_min', 'radio_max', 'talkgroup_id',
+  for (const key of ['radio_id', 'radio_identity_key', 'radio_min', 'radio_max', 'talkgroup_id',
     'talkgroup_min', 'talkgroup_max', 'alias_list_id']) next[key] = '';
   next.q = String(suggestion.name_query);
   if (suggestion.system_key) next.system_key = String(suggestion.system_key);
@@ -42,6 +42,82 @@ function value(row, ...names) {
     if (candidate !== null && candidate !== undefined && candidate !== '') return candidate;
   }
   return null;
+}
+
+// Convert recorded identities into search constraints, never display names or detail-page routes.
+export function recordingResultFilter(row, reference, field = '') {
+  const system = value(row, 'system_key', 'radio_system_key') || row?.radio_system_entity_ref?.key;
+  const channel = value(row, 'channel_id') || row?.channel_entity_ref?.key;
+  const scope = system ? { system_key: String(system) } : channel ? { channel_id: String(channel) } : null;
+  if (/home.system/i.test(field)) return null;
+  if (field === 'site' || field === 'site_entity_ref') {
+    const site = row?.audio_from || row;
+    const coordinates = {
+      wacn: value(site, 'wacn'), sysid: value(site, 'system_id', 'sysid'),
+      rfss: value(site, 'rfss', 'rfss_id'), site_id: value(site, 'site_id')
+    };
+    if (Object.values(coordinates).some(item => item === null || !Number.isInteger(Number(item)) || Number(item) < 0)) return null;
+    return { key: 'site', filters: { ...scope, site: '', ...Object.fromEntries(
+      Object.entries(coordinates).map(([key, item]) => [key, String(item)])) } };
+  }
+  if (field === 'alias_list_entity_ref') {
+    const id = value(row, 'alias_list_id');
+    return id !== null && Number(id) > 0 ? { key: 'alias_list_id', filters: { alias_list_id: String(id) } } : null;
+  }
+  if (reference?.kind === 'radio_system' || field === 'system' || field === 'radio_system_entity_ref') {
+    const key = reference?.key || system;
+    return key && (!system || key === system) ? { key: 'system_key', filters: { system_key: String(key) } } : null;
+  }
+  if (reference?.kind === 'channel' || field === 'channel' || field === 'channel_entity_ref') {
+    const key = reference?.key || channel;
+    return key ? { key: 'channel_id', filters: { channel_id: String(key) } } : null;
+  }
+  const kind = reference?.kind || (field === 'source' || field === 'source_entity_ref' ? 'radio' :
+    field === 'target' || field === 'target_entity_ref' ?
+      (value(row, 'destination_radio_id') !== null ? 'radio' : 'talkgroup') : '');
+  if (!scope || !['radio', 'talkgroup', 'patch_group'].includes(kind)) return null;
+  const tuple = /^v1-([rgp])-(x|[0-9a-f]{5})-(x|[0-9a-f]{3})-([1-9][0-9]*)$/.exec(reference?.identity_key || '');
+  if (reference?.identity_key && (!tuple || (tuple[2] === 'x') !== (tuple[3] === 'x') ||
+      Number(tuple[4]) > 0xFFFFFF || (kind === 'radio' ? tuple[1] !== 'r' : !['g', 'p'].includes(tuple[1])))) return null;
+  if (reference?.radio_system_key && system && reference.radio_system_key !== system) return null;
+  if (kind !== 'radio') {
+    const target = field === 'target' || field === 'target_entity_ref';
+    if (/^p25:/.test(system || '') && tuple?.[2] !== 'x' && tuple &&
+        `p25:${tuple[2]}:${tuple[3]}` !== system) return null;
+    const home = ['target_home_wacn', 'target_home_system_id', 'target_home_id'].map(key => value(row, key));
+    if (target && /^p25:/.test(system || '') && home.some(item => item !== null) &&
+        (home.some(item => item === null) || Number(home[0]) !== Number.parseInt(system.slice(4, 9), 16) ||
+          Number(home[1]) !== Number.parseInt(system.slice(10), 16) ||
+          Number(home[2]) !== Number(value(row, 'talkgroup_id', 'group_id')))) return null;
+    const id = target ? value(row, 'talkgroup_id', 'group_id') ?? tuple?.[4] :
+      tuple?.[4] ?? value(row, 'talkgroup_id', 'group_id');
+    return id !== null && id !== undefined && Number(id) > 0 ? { key: 'talkgroup_id', filters: {
+      ...scope, talkgroup_id: String(id), talkgroup_min: '', talkgroup_max: ''
+    } } : null;
+  }
+  const target = field === 'target' || field === 'target_entity_ref';
+  const source = field === 'source' || field === 'source_entity_ref';
+  const prefix = target ? 'target' : 'source';
+  const id = target ? value(row, 'destination_radio_id', 'target_id') : source ?
+    value(row, 'source_id', 'radio_id') : tuple?.[4] ?? value(row, 'source_id', 'radio_id');
+  const p25 = /^p25:[0-9a-f]{5}:[0-9a-f]{3}$/.test(system || '');
+  let exact = tuple && tuple[2] !== 'x' && tuple[3] !== 'x' ? reference.identity_key : null;
+  if (p25 && !exact) {
+    const homeWacn = source || target ? value(row, `${prefix}_home_wacn`) : null;
+    const homeSystem = source || target ? value(row, `${prefix}_home_system_id`) : null;
+    const homeId = source || target ? value(row, `${prefix}_home_id`) : null;
+    if ([homeWacn, homeSystem, homeId].every(item => item !== null)) {
+      exact = `v1-r-${Number(homeWacn).toString(16).padStart(5, '0')}-${Number(homeSystem).toString(16).padStart(3, '0')}-${homeId}`;
+    } else if ([homeWacn, homeSystem, homeId].some(item => item !== null)) return null;
+    else if (id !== null && Number(id) > 0) exact = `v1-r-${system.slice(4, 9)}-${system.slice(10)}-${id}`;
+  }
+  if (p25 && exact) return { key: 'radio_id', filters: {
+    ...scope, radio_identity_key: exact, radio_id: '', radio_min: '', radio_max: ''
+  } };
+  const nativeId = id ?? tuple?.[4];
+  return nativeId !== null && nativeId !== undefined && Number(nativeId) > 0 ? { key: 'radio_id', filters: {
+    ...scope, radio_id: String(nativeId), radio_identity_key: '', radio_min: '', radio_max: ''
+  } } : null;
 }
 
 function recordingRadioId(row, prefix, id) {
@@ -117,7 +193,8 @@ function timeOnly(timestamp) {
 
 function localDateTime(milliseconds) {
   if (!milliseconds) return '';
-  const date = new Date(milliseconds);
+  const date = new Date(Number(milliseconds));
+  if (!Number.isFinite(date.getTime())) return '';
   const pad = (number) => String(number).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
@@ -207,11 +284,11 @@ function select(node, options, labelText) {
 export function createRecordingsFeature(deps) {
   const { node, requestJson, openReadOnlyModal, section, pageHeader, beginPage,
     captureRenderContext, renderIsCurrent, content, isPrimaryAdmin, canViewRadio,
-    entityRefHref, stopLiveAudio, href, anchor, uiToggleField, metrics, browsingWorkflows, modalFooter,
+    entityRefHref, stopLiveAudio, href, anchor, uiToggleField, metrics, browsingWorkflows, modalFooter, closeReadOnlyModal,
     getSourceNameDisplay = () => 'talker_alias' } = deps;
   const search = {
     q: '', transcript: '', from_ms: '', to_ms: '', system_key: '', site: '', talkgroup_id: '', radio_id: '',
-    channel_id: '', min_duration_ms: '', max_duration_ms: '', frequency_hz: '',
+    channel_id: '', alias_list_id: '', radio_identity_key: '', min_duration_ms: '', max_duration_ms: '', frequency_hz: '',
     talkgroup_min: '', talkgroup_max: '', radio_min: '', radio_max: '',
     call_type: '', voice_type: '', protocol: '', wacn: '', sysid: '', rfss: '', site_id: ''
   };
@@ -219,6 +296,8 @@ export function createRecordingsFeature(deps) {
   const selection = new Set();
   let currentResults = [];
   let currentFilters = {};
+  let appliedSuggestions = new Map();
+  let appliedRange = '24h';
   let sharedDetails = new Map();
   let sharedDate = '';
   let currentPage = 0;
@@ -249,7 +328,45 @@ export function createRecordingsFeature(deps) {
     return notice;
   };
 
-  const entityLink = (text, reference) => {
+  const entityLink = (text, reference, row, field) => {
+    if (pageHost?.isConnected && row) {
+      const match = recordingResultFilter(row, reference, field);
+      if (!match) return String(text);
+      const values = Object.fromEntries(Object.entries({ ...currentFilters, ...match.filters,
+        sort: sortControl?.value || 'desc', recording_filters: '1' }).filter(([, item]) => item !== ''));
+      const link = anchor(String(text), href('recordings', values));
+      link.title = `Filter recordings by ${text}`;
+      link.addEventListener('click', (event) => {
+        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        const apply = () => {
+          Object.keys(search).forEach(key => { search[key] = currentFilters[key] ?? ''; });
+          search.range = appliedRange;
+          selectedSuggestions.clear();
+          appliedSuggestions.forEach((suggestion, key) => selectedSuggestions.set(key, suggestion));
+          Object.assign(search, match.filters);
+          selectedSuggestions.set(match.key, { label: String(text),
+            appliedKeys: match.key === 'site' ? ['wacn', 'sysid', 'rfss', 'site_id'] :
+              match.filters.radio_identity_key ? ['radio_identity_key'] : [] });
+          if (match.filters.system_key && match.key !== 'system_key') selectedSuggestions.set('system_key', {
+            label: systemLabel(row), id: match.filters.system_key
+          });
+          currentFilters = effectiveFilters();
+          appliedSuggestions = new Map(selectedSuggestions);
+          pageHost.querySelector('.recordings-search')?.replaceWith(makeSearchForm());
+          cursors = [null];
+          nextCursor = null;
+          currentPage = 0;
+          selection.clear();
+          drawSelection();
+          drawSelectedFilters();
+          void loadPage(0);
+        };
+        if (closeReadOnlyModal && !closeReadOnlyModal(false, false, closed => { if (closed) apply(); })) return;
+        apply();
+      });
+      return link;
+    }
     const target = canViewRadio?.() ? entityRefHref?.(reference) : null;
     return target ? anchor(String(text), target) : String(text);
   };
@@ -757,7 +874,7 @@ export function createRecordingsFeature(deps) {
       const text = siteText(site);
       if (!text) return;
       if (list.childNodes.length) list.append(', ');
-      list.append(entityLink(text, site?.entity_ref));
+      list.append(entityLink(text, site?.entity_ref, { ...row, audio_from: site }, 'site'));
     });
     return list.childNodes.length ? list : '';
   }
@@ -772,7 +889,7 @@ export function createRecordingsFeature(deps) {
       if (id === null && !name) return;
       if (list.childNodes.length) list.append(', ');
       const text = name ? `${name}${id !== null ? ` · ${id}` : ''}` : String(id);
-      list.append(entityLink(text, member?.entity_ref));
+      list.append(entityLink(text, member?.entity_ref, { ...row, talkgroup_id: member?.id ?? member?.talkgroup_id }, 'member'));
     });
     return list.childNodes.length ? list : '';
   }
@@ -846,7 +963,7 @@ export function createRecordingsFeature(deps) {
       value(row, 'also_received_on', 'also_received_sites') : [])].filter((site) => site && typeof site === 'object');
     if (sites.length) groups.push(['Received site identities', sites.flatMap((site, index) => {
       const prefix = index === 0 && row.audio_from ? 'Winning site' : `Received site ${index + (row.audio_from ? 0 : 1)}`;
-      return [[`${prefix} name`, siteText(site), site.entity_ref],
+      return [[`${prefix} name`, siteText(site), 'site_entity_ref', { ...row, audio_from: site }],
         [`${prefix} system name`, systemName(site) || systemName(site.system_identity),
           site.radio_system_entity_ref || site.system_identity?.entity_ref],
         [`${prefix} WACN`, hexIdentity(value(site, 'wacn'), 5)],
@@ -867,9 +984,10 @@ export function createRecordingsFeature(deps) {
         [`${prefix} home identity`, value(member, 'home_identity_id'), member.entity_ref]];
     })]);
     return groups.map(([title, facts]) => [title, facts.filter(([, detail]) => includeEmpty ||
-      detail !== null && detail !== undefined && detail !== '').map(([name, detail, reference]) => [name,
+      detail !== null && detail !== undefined && detail !== '').map(([name, detail, reference, context]) => [name,
       empty || detail === null || detail === undefined || detail === '' ? '' :
-        reference ? entityLink(detail, typeof reference === 'string' ? row?.[reference] : reference) : detail])])
+        reference ? entityLink(detail, typeof reference === 'string' ? row?.[reference] : reference, context || row,
+          typeof reference === 'string' ? reference : name) : detail])])
       .filter(([, facts]) => facts.length);
   }
 
@@ -1028,14 +1146,14 @@ export function createRecordingsFeature(deps) {
     const titleHost = node('strong', 'recordings-call-title');
     titleHost.title = sourceIsTitle ? sourceLabel(row, getSourceNameDisplay()) : title;
     titleHost.append(entityLink(title, sourceIsTitle ? row.source_entity_ref :
-      analog ? row.channel_entity_ref : row.target_entity_ref));
+      analog ? row.channel_entity_ref : row.target_entity_ref, row, sourceIsTitle ? 'source' : analog ? 'channel' : 'target'));
     heading.append(titleHost);
     const id = value(row, 'talkgroup_id', 'group_id');
     const hasAlias = value(row, 'talkgroup_alias', 'group_alias', 'talkgroup_name');
     if (!analog && id !== null && !sharedGroup && hasAlias) {
       const identity = node('span', 'recordings-call-id');
       identity.append(entityLink(`${value(row, 'call_type') === 'PATCH' ? 'Patch' : 'TG'} ${id}`,
-        row.target_entity_ref));
+        row.target_entity_ref, row, 'target'));
       heading.append(identity);
     }
     main.append(heading);
@@ -1044,7 +1162,7 @@ export function createRecordingsFeature(deps) {
       if (!text) return;
       const item = node('span', `recordings-call-context recordings-context-${key}`);
       item.title = `${name}: ${key === 'source' ? sourceLabel(row, getSourceNameDisplay()) : text}`;
-      item.append(entityLink(text, ref));
+      item.append(entityLink(text, ref, row, key));
       meta.append(item);
     };
     if (source && !sourceIsTitle && !sharedDetails.has('source')) {
@@ -1108,8 +1226,8 @@ export function createRecordingsFeature(deps) {
     heading.append(node('strong', '', 'Shared on this page'));
     const info = button(node, 'ⓘ', () => {
       const fullFacts = node('dl', 'ui-fact-list recordings-detail-facts');
-      for (const [, name, text, ref] of sharedDetails.values()) {
-        appendFact(node, fullFacts, name, entityLink(text, ref));
+      for (const [key, name, text, ref] of sharedDetails.values()) {
+        appendFact(node, fullFacts, name, entityLink(text, ref, currentResults[0], key));
       }
       openReadOnlyModal('Shared call details', fullFacts, {
         id: 'shared-recording-details', className: 'recordings-detail-modal'
@@ -1120,12 +1238,12 @@ export function createRecordingsFeature(deps) {
     heading.append(info);
     const facts = node('dl', 'recordings-shared-facts');
     const order = ['target', 'system', 'site', 'channel', 'source'];
-    for (const [, name, text, ref] of [...sharedDetails.values()].filter(([key]) => order.includes(key)).sort((a, b) =>
+    for (const [key, name, text, ref] of [...sharedDetails.values()].filter(([key]) => order.includes(key)).sort((a, b) =>
       order.indexOf(a[0]) - order.indexOf(b[0]))) {
       const item = node('div', 'recordings-shared-fact');
       const content = node('dd', '');
       content.title = String(text);
-      content.append(entityLink(text, ref));
+      content.append(entityLink(text, ref, currentResults[0], key));
       item.append(node('dt', '', name), content);
       facts.append(item);
     }
@@ -1138,8 +1256,8 @@ export function createRecordingsFeature(deps) {
     if (searchHint) searchHint.hidden = Boolean(search.system_key);
     if (filterCountHost) {
       const groups = [['system_key'], ['site', 'rfss', 'site_id'],
-        ['talkgroup_id', 'talkgroup_min', 'talkgroup_max'], ['radio_id', 'radio_min', 'radio_max'],
-        ['channel_id'], ['transcript'], ['min_duration_ms', 'max_duration_ms'], ['frequency_hz'],
+        ['talkgroup_id', 'talkgroup_min', 'talkgroup_max'], ['radio_id', 'radio_identity_key', 'radio_min', 'radio_max'],
+        ['channel_id'], ['alias_list_id'], ['transcript'], ['min_duration_ms', 'max_duration_ms'], ['frequency_hz'],
         ['call_type'], ['voice_type'], ['protocol']];
       const count = groups.filter((keys) => keys.some((key) => currentFilters[key])).length +
         (search.range && search.range !== '24h' ? 1 : 0);
@@ -1591,6 +1709,8 @@ export function createRecordingsFeature(deps) {
       search.voice_type = voiceType.value;
       search.protocol = protocol.value;
       currentFilters = effectiveFilters();
+      appliedSuggestions = new Map(selectedSuggestions);
+      appliedRange = search.range;
       cursors = [null];
       currentPage = 0;
       selection.clear();
@@ -1600,6 +1720,21 @@ export function createRecordingsFeature(deps) {
   }
 
   async function renderSearchPage() {
+    const parameters = new URLSearchParams(globalThis.location?.search || '');
+    if (parameters.get('recording_filters') === '1') {
+      Object.keys(search).forEach(key => { search[key] = parameters.get(key) || ''; });
+      search.range = 'custom';
+      appliedRange = search.range;
+      selectedSuggestions.clear();
+      for (const [key, names] of [['system_key', ['system_key']], ['talkgroup_id', ['talkgroup_id']],
+        ['radio_id', ['radio_identity_key', 'radio_id']], ['site', ['rfss', 'site_id']],
+        ['channel_id', ['channel_id']], ['alias_list_id', ['alias_list_id']]]) {
+        const values = names.map(name => search[name]).filter(Boolean);
+        if (values.length) selectedSuggestions.set(key, { label: values.join(' · '),
+          appliedKeys: key === 'radio_id' && search.radio_identity_key ? ['radio_identity_key'] :
+            key === 'site' ? ['wacn', 'sysid', 'rfss', 'site_id'] : [] });
+      }
+    }
     const context = captureRenderContext();
     searchRequest++;
     searchSignal?.abort();
@@ -1660,6 +1795,7 @@ export function createRecordingsFeature(deps) {
     titleBar.append(node('span', '', 'Calls'));
     const titleActions = node('div', 'ui-section-actions');
     sortControl = select(node, [['desc', 'Newest first'], ['asc', 'Oldest first']], 'Sort calls');
+    sortControl.value = parameters.get('recording_filters') === '1' && parameters.get('sort') === 'asc' ? 'asc' : 'desc';
     sortControl.addEventListener('change', () => {
       cursors = [null];
       currentPage = 0;
@@ -1702,6 +1838,8 @@ export function createRecordingsFeature(deps) {
     host.append(browser);
     if (Object.values(search).every((item) => !item)) search.from_ms = String(Date.now() - 86_400_000);
     currentFilters = effectiveFilters();
+    appliedSuggestions = new Map(selectedSuggestions);
+    appliedRange = search.range || '24h';
     cursors = [null];
     currentPage = 0;
     void loadPage(0);

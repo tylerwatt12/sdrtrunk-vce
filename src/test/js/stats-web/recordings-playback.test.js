@@ -67,10 +67,10 @@ async function main() {
     .replace(/from '\.\.\/core\/system-labels\.js\?v=\d+'/, `from '${labelsUrl}'`)
     .replace(/from '\.\.\/core\/radio-labels\.js\?v=\d+'/, `from '${radioLabelsUrl}'`)
     .replace(/from '\.\.\/core\/source-names\.js\?v=\d+'/, `from '${sourceNamesUrl}'`);
-  const { createRecordingsFeature, recordingSuggestionFilters } = await import(
+  const { createRecordingsFeature, recordingSuggestionFilters, recordingResultFilter } = await import(
     `data:text/javascript;base64,${Buffer.from(executable).toString('base64')}`);
   const previousFilters = Object.freeze({ q: 'Previous name', system_key: 'p25:00002:002',
-    radio_id: '401', talkgroup_id: '1201', radio_min: '400', radio_max: '500',
+    radio_id: '401', radio_identity_key: 'v1-r-00002-002-777', talkgroup_id: '1201', radio_min: '400', radio_max: '500',
     talkgroup_min: '1200', talkgroup_max: '1300', alias_list_id: '7',
     channel_id: 'channel-7', wacn: '1', sysid: '1', rfss: '1', site_id: '3',
     from_ms: '1000', to_ms: '9000', min_duration_ms: '500', transcript: 'arrival',
@@ -80,7 +80,7 @@ async function main() {
       name_query: 'Foreign OTA %_401', system_key: 'p25:00001:001' });
     const selected = recordingSuggestionFilters(previousFilters, suggestion);
     assert.deepEqual(selected, { ...previousFilters, q: 'Foreign OTA %_401',
-      system_key: 'p25:00001:001', radio_id: '', talkgroup_id: '',
+      system_key: 'p25:00001:001', radio_id: '', radio_identity_key: '', talkgroup_id: '',
       radio_min: '', radio_max: '', talkgroup_min: '', talkgroup_max: '', alias_list_id: '' },
     'OTA selection must search its exact name in the receiving system without stale raw identity constraints');
     assert.notEqual(selected, previousFilters, 'Selecting a suggestion must return independent filter state');
@@ -99,6 +99,64 @@ async function main() {
       'Numeric and configured suggestions must retain the existing numeric selection path');
     assert.notEqual(selected, previousFilters, 'Unchanged suggestion filters still return a shallow copy');
   }
+  const recordedIdentity = Object.freeze({ ...call(8), system_key: 'p25:00001:001',
+    channel_id: 'channel-7', talkgroup_id: 1201, source_id: 401,
+    source_home_wacn: 2, source_home_system_id: 2, source_home_id: 777 });
+  const foreignReference = Object.freeze({ kind: 'radio', radio_system_key: 'p25:00001:001',
+    identity_key: 'v1-r-00002-002-777' });
+  assert.deepEqual(recordingResultFilter(recordedIdentity, foreignReference, 'source').filters,
+    { system_key: 'p25:00001:001', radio_identity_key: 'v1-r-00002-002-777',
+      radio_id: '', radio_min: '', radio_max: '' },
+    'A foreign source filters its permanent address within the recorded receiving system, never its Working ID');
+  assert.deepEqual(recordingResultFilter(recordedIdentity, null, 'source').filters,
+    recordingResultFilter(recordedIdentity, foreignReference, 'source').filters,
+    'Complete saved home metadata supplies the same exact identity without a navigation reference');
+  const destination = Object.freeze({ ...recordedIdentity, talkgroup_id: null, call_type: 'DIRECT',
+    destination_radio_id: 402, target_home_wacn: 3, target_home_system_id: 3, target_home_id: 778 });
+  assert.equal(recordingResultFilter(destination, null, 'target').filters.radio_identity_key,
+    'v1-r-00003-003-778', 'Destination links use their own home identity rather than the source');
+  assert.deepEqual(recordingResultFilter(recordedIdentity,
+    { kind: 'talkgroup', radio_system_key: 'p25:00001:001', identity_key: 'v1-g-00001-001-1201' },
+    'target').filters,
+  { system_key: 'p25:00001:001', talkgroup_id: '1201', talkgroup_min: '', talkgroup_max: '' },
+  'Selecting a talkgroup clears only its replaced numeric range');
+  assert.equal(recordingResultFilter({ ...recordedIdentity, target_home_wacn: 2,
+    target_home_system_id: 2, target_home_id: 777 },
+  { kind: 'talkgroup', radio_system_key: 'p25:00001:001', identity_key: 'v1-g-00002-002-777' },
+  'target'), null, 'A foreign talkgroup must not become a misleading local numeric-ID search');
+  assert.equal(recordingResultFilter({ ...recordedIdentity, target_home_wacn: 1,
+    target_home_system_id: 1, target_home_id: 777 },
+  { kind: 'talkgroup', radio_system_key: 'p25:00001:001', identity_key: 'v1-g-00001-001-777' },
+  'target'), null, 'An unrepresentable talkgroup home/Working ID difference stays unlinked');
+  for (const protocol of ['DMR', 'NXDN']) {
+    const system = `${protocol.toLowerCase()}:7`;
+    assert.deepEqual(recordingResultFilter({ ...recordedIdentity, protocol, system_key: system },
+      { kind: 'radio', radio_system_key: system, identity_key: 'v1-r-x-x-401' }, 'source').filters,
+    { system_key: system, radio_id: '401', radio_identity_key: '', radio_min: '', radio_max: '' },
+    `${protocol} filters retain the recorded numeric radio ID in its receiving system`);
+  }
+  assert.deepEqual(recordingResultFilter({ ...recordedIdentity,
+    audio_from: { wacn: 1, system_id: 1, rfss: 2, site_id: 3 } }, null, 'site').filters,
+  { system_key: 'p25:00001:001', site: '', wacn: '1', sysid: '1', rfss: '2', site_id: '3' },
+  'Site filters use the complete recorded site tuple');
+  assert.equal(recordingResultFilter({ ...recordedIdentity,
+    audio_from: { wacn: 1, system_id: 1, site_id: 3 } }, null, 'site'), null,
+  'An incomplete site must not become an ambiguous broader site filter');
+  assert.equal(recordingResultFilter(recordedIdentity,
+    { kind: 'radio', radio_system_key: 'p25:00002:002', identity_key: 'v1-r-00002-002-777' }, 'source'), null,
+  'A reference from a different serving system cannot rewrite the recorded scope');
+  for (const reference of [{ kind: 'radio', identity_key: 'v1-r-invalid' },
+    { kind: 'radio', identity_key: 'v1-g-00001-001-1201' }, { kind: 'unknown', key: 'unknown' }]) {
+    assert.equal(recordingResultFilter(recordedIdentity, reference), null,
+      'Unsupported or malformed references remain readable without an incorrect filter');
+  }
+  assert.equal(recordingResultFilter(recordedIdentity,
+    { kind: 'radio_system', key: 'p25:00002:002' }, 'Source home system name'), null,
+  'Home-system labels do not accidentally replace the recorded serving-system filter');
+  assert.equal(recordingResultFilter({ ...recordedIdentity, source_home_id: null }, null, 'source'), null,
+    'Partial home metadata cannot imply a permanent subscriber identity');
+  assert.equal(recordedIdentity.source_id, 401);
+  assert.equal(foreignReference.identity_key, 'v1-r-00002-002-777');
   const originalAudio = global.Audio;
   const audios = [];
   global.Audio = class extends AudioFixture { constructor() { super(); audios.push(this); } };

@@ -46,7 +46,20 @@ const linkedHrefs = [
 ];
 
 function entityLink(host, href) {
-  return host.locator(`a[href="${href}"]`);
+  // Existing detail identities now refine the recording query in the same view.
+  const identity = new URL(href, 'http://127.0.0.1');
+  const params = identity.searchParams;
+  const filters = {};
+  if (params.get('view') === 'channel') filters.channel_id = params.get('configuration_id');
+  else {
+    filters.system_key = params.get('radio_system_key');
+    if (params.get('view') === 'radio') filters.radio_identity_key = params.get('identity_key');
+    if (params.get('view') === 'group-identity') filters.talkgroup_id = params.get('identity_key').split('-').at(-1);
+  }
+  const systemOnly = params.get('view') === 'radio-system' ?
+    ':not([href*="talkgroup_id="]):not([href*="radio_identity_key="]):not([href*="channel_id="]):not([href*="site_id="])' : '';
+  return host.locator(`a[href*="view=recordings"]${Object.entries(filters).map(([key, value]) =>
+    `[href*="${key}=${encodeURIComponent(value)}"]`).join('')}${systemOnly}`);
 }
 
 function mixedRecordingCalls() {
@@ -676,7 +689,7 @@ for (const theme of ['light', 'dark']) {
   });
 }
 
-test('linked recording cards and details open canonical entity pages', async ({ page }) => {
+test('linked recording cards and details refine their canonical recording identities', async ({ page }) => {
   await openRecordings(page, { call: linkedCall });
   const card = page.locator('.recordings-call');
   await expect(card).toHaveCount(1);
@@ -703,7 +716,7 @@ test('linked recording cards and details open canonical entity pages', async ({ 
   await expect(detail).toHaveScreenshot('recordings-linked-detail-mobile.png', componentScreenshot);
 });
 
-test('conventional recordings link their configured channel without a radio system', async ({ page }) => {
+test('conventional recordings filter their configured channel without a radio system', async ({ page }) => {
   const analog = {
     ...call, system_name: null, site_name: null, talkgroup_id: null, talkgroup_alias: null,
     source_id: null, source_alias: null, source_ota_alias: null,
@@ -721,7 +734,7 @@ test('conventional recordings link their configured channel without a radio syst
   await expect(entityLink(detail, channelHref).first()).toContainText('Hilltop FM');
 });
 
-test('direct destination and patch member facts link to their identities', async ({ page }) => {
+test('direct destination and patch member facts link to their recording identity filters', async ({ page }) => {
   const direct = {
     ...linkedCall, call_type: 'DIRECT', talkgroup_id: null, talkgroup_alias: null,
     destination_radio_id: 42137, destination_radio_alias: 'Unit 12',
@@ -811,7 +824,7 @@ test('destination and patch radio names show OTA names and preserve configured a
     .toContainText('Configured Member');
 });
 
-test('recording identities remain readable when references or radio access are absent', async ({ page }) => {
+test('recording identities remain readable without references and filter without radio-page access', async ({ page }) => {
   await openRecordings(page);
   let card = page.locator('.recordings-call');
   await expect(card).toContainText('Fire Dispatch');
@@ -826,11 +839,13 @@ test('recording identities remain readable when references or radio access are a
   card = page.locator('.recordings-call');
   await expect(card).toContainText('Fire Dispatch');
   await expect(card).toContainText('ENG 4');
-  await expect(card.locator('a[href*="view="]')).toHaveCount(0);
+  await expect(entityLink(card, linkedHrefs[2]).first()).toBeVisible();
+  await expect(card.locator('a[href*="view=radio&"],a[href*="view=radio-system"],a[href*="view=group-identity"]')).toHaveCount(0);
   await card.locator('.recordings-call-info').click();
   detail = page.getByRole('dialog', { name: 'Call details' });
   await expect(detail).toContainText('North Ridge Channel');
-  await expect(detail.locator('a[href*="view="]')).toHaveCount(0);
+  await expect(entityLink(detail, linkedHrefs[1]).first()).toBeVisible();
+  await expect(detail.locator('a[href*="view=radio&"],a[href*="view=radio-system"],a[href*="view=group-identity"]')).toHaveCount(0);
 });
 
 test('recording settings retain mode, retention, catalog facts, and both maintenance actions', async ({ page }) => {
