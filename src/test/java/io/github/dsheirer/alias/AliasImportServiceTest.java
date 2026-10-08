@@ -73,6 +73,43 @@ class AliasImportServiceTest
         }
     }
 
+    @Test void importsRecordingFlagsWithoutCaseSensitivity()
+    {
+        AliasListDefinition list = new AliasListDefinition("County", AliasListFamily.P25);
+        Alias alias = new Alias("Dispatch");
+        alias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 123));
+        var fields = AliasTransferCsv.fields(alias, "County", List.of(), List.of());
+        Map<String,Boolean> values = Map.of("true", true, "TRUE", true, "True", true, "TrUe", true,
+            "false", false, "FALSE", false, "False", false, "fAlSe", false);
+
+        for(var value: values.entrySet())
+        {
+            fields.put("record_enabled", value.getKey());
+            AliasImportService.Input imported = AliasTransferCsv.read(AliasTransferCsv.write(List.of(fields)),
+                AliasTransferCsv.Format.VCE, list).getFirst();
+            assertEquals(value.getValue().booleanValue(), imported.alias().isRecordable(), value.getKey());
+            assertEquals(value.getValue().toString(), AliasTransferCsv.fields(imported.alias(),
+                imported.sourceAliasList(), imported.scanLists(), imported.streams()).get("record_enabled"));
+        }
+    }
+
+    @Test void rejectsInvalidRecordingFlags()
+    {
+        AliasListDefinition list = new AliasListDefinition("County", AliasListFamily.P25);
+        Alias alias = new Alias("Dispatch");
+        alias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 123));
+        var fields = AliasTransferCsv.fields(alias, "County", List.of(), List.of());
+
+        for(String value: List.of("", "yes", "no", "1", "0", "truee", " false", "true "))
+        {
+            fields.put("record_enabled", value);
+            IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
+                AliasTransferCsv.read(AliasTransferCsv.write(List.of(fields)), AliasTransferCsv.Format.VCE, list),
+                value);
+            assertEquals("CSV row 2: record_enabled must be true or false", error.getMessage());
+        }
+    }
+
     @Test void protectsEverySpreadsheetFormulaPrefixAndDecodesVersionOne() throws Exception
     {
         for(String value: List.of("=Equals", "+Plus", "-Minus", "@At", "'Apostrophe", "\tTab",

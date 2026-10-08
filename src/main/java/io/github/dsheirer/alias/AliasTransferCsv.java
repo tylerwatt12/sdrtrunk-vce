@@ -353,7 +353,7 @@ public final class AliasTransferCsv
     }
     private static boolean bool(String value)
     {
-        if(!value.equals("true") && !value.equals("false")) throw new IllegalArgumentException("record_enabled must be true or false");
+        if(!value.equalsIgnoreCase("true") && !value.equalsIgnoreCase("false")) throw new IllegalArgumentException("record_enabled must be true or false");
         return Boolean.parseBoolean(value);
     }
     public static List<String> names(String value)
