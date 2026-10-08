@@ -635,3 +635,42 @@ test('marker subscriptions upgrade to full rows before sharing a cached baseline
   assert.equal(context.liveChannelActivitySource, null);
   assert.equal(context.pageConnections.size, 0);
 });
+
+// A control failure for another topic must not leave healthy activity marked as reconnecting.
+test('healthy deltas restore Live after an unrelated topic control failure without another snapshot', async (t) => {
+  const h = controlHarness();
+  t.after(() => h.mux.stop());
+  installRetainedActivityServer(h);
+  const states = [];
+  let updates = 0;
+  h.context.subscribeLiveChannelActivity({
+    open: () => states.push('open'), error: () => states.push('error'),
+    activityTable: () => updates++
+  });
+  await flushMicrotasks();
+  await h.clock.next();
+  const retainedServer = h.context.requestJson;
+  let failNext = true;
+  h.context.requestJson = async (...args) => {
+    if (failNext) {
+      failNext = false;
+      throw Object.assign(new Error('Temporary subscription failure'), { status: 503 });
+    }
+    return retainedServer(...args);
+  };
+  h.mux.subscribe('tuner_diagnostics', { target_id: 'fixture' }, {});
+  await h.clock.next();
+  assert.equal(h.context.liveChannelActivityState, 'error');
+  await h.clock.next();
+  assert.equal(h.mux.ready, true);
+  assert.equal(h.context.liveChannelActivityState, 'error');
+  await h.receive('activity_delta', { base_revision: 10, revision: 11, table_id: 'site',
+    rows: [{ key: 'one', value: 11 }] });
+  assert.equal(updates, 1);
+  assert.equal(h.context.liveChannelActivityState, 'open');
+  assert.deepEqual(states, ['open', 'error', 'open']);
+  await h.receive('activity_delta', { base_revision: 11, revision: 12, table_id: 'site',
+    rows: [{ key: 'one', value: 12 }] });
+  assert.equal(updates, 2);
+  assert.deepEqual(states, ['open', 'error', 'open'], 'healthy delivery must not repeatedly reopen the source');
+});

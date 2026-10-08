@@ -291,6 +291,7 @@ assert.deepEqual([...returnFromDiscover.entries()],
   [['view', 'aliases'], ['list', '7'], ['aliasTab', 'configure']],
   'Returning from Discover must start a fresh Alias search instead of reusing its different query.');
 const aliasRenderer = functionSource('async function renderAliases()');
+const aliasDataLoader = functionSource('async function requestAliasEditorData(selectedList, view, request = {})');
 const aliasViewTabs = functionSource('function aliasEditorViewTabs(selectedList, onSwitch = null)');
 const aliasFilterToolbar = functionSource('function aliasEditorFilterToolbar(aliasPage, options = null)');
 const aliasDiscoverToolbar = functionSource('function observedGroupIdentityToolbar(selectedList)');
@@ -306,17 +307,17 @@ assert.match(aliasViewTabs, /anchor\('Discover', href\('aliases', \{ list: id, a
   'Discover must have a separate link to its own search and results.');
 assert.match(aliasRenderer, /aliasEditorViewTabs\(selectedList, \(nextView\) => switchView\?\.\(nextView\)\)/,
   'The three column-view controls must be wired to the current Alias table.');
-assert.match(aliasRenderer, /switchView = async \(nextView\) => \{[\s\S]*?window\.history\.pushState\([\s\S]*?setAliasEditorViewTabs\(viewTabs, view\);[\s\S]*?renderTable\(\)/,
+assert.match(aliasRenderer, /switchView = async \(nextView, navigationRequest = null\) => \{[\s\S]*?aliasEditorWorkspaceController\.navigate\([\s\S]*?setAliasEditorViewTabs\(viewTabs, view\);[\s\S]*?renderTable\(\)/,
   'Switching views must update the route, selected control, and existing table without rendering the page again.');
-assert.match(aliasRenderer, /sort: route\.get\('sort'\) \|\| defaultOrder\.sort/,
+assert.match(aliasDataLoader, /sort: query\.get\('sort'\) \|\|/,
   'Explicit routed sorting must take precedence over the view default.');
 assert.match(aliasRenderer, /defaultSort: defaultOrder\.sort/,
   'The table indicator must match the order requested from the server.');
 assert.match(aliasRenderer, /admin\/alias-lists\?include_counts=false/,
   'Activity renders must not recount the complete in-memory Alias model.');
-assert.match(aliasRenderer, /apiPage\('\/api\/v1\/alias-lists\?limit=500'\)/,
+assert.match(aliasRenderer, /apiPage\('\/api\/v1\/alias-lists\?limit=500',/,
   'The editor must enrich its configuration lists with bounded activity metadata.');
-assert.match(aliasRenderer, /optionParameters\.include_group_names = false/,
+assert.match(aliasDataLoader, /optionParameters\.include_group_names = false/,
   'Activity renders must not rebuild global group-name suggestions.');
 assert.match(aliasFilterToolbar, /selectFilter\('Evidence', 'evidence'/,
   'The Activity filters must expose the server-side evidence state filter.');
@@ -398,18 +399,22 @@ assert.match(aliasRenderer, /aliasEditorPageController = renderObservedGroupIden
   'Observed-group creation must retain an in-place Alias Editor controller.');
 assert.match(aliasRenderer, /const pageController = \{/,
   'Alias list and scan-list views must expose refresh controllers.');
-assert.match(aliasMutationFinisher, /if \(!refreshed\) await render\(\)/,
-  'Alias mutations should rerender only when an in-place refresh is not safe.');
+assert.match(aliasMutationFinisher, /aliasEditorWorkspaceController\.navigate\(currentHref\(\)/,
+  'Mutations changing the active list must use the same dynamic workspace navigation.');
 assert.match(aliasMutationFinisher, /if \(aliasEditorContext\?\.scanListScope\) delete mutationRouteChanges\.list/,
   'Scan-list mutations must not leave a stale alias-list route behind.');
-assert.match(aliasMutationFinisher,
-  /resetAliasEditorSelection\(localRefresh \? aliasEditorSelectionScope : null\);\s+if \(localRefresh\)/s,
-  'Alias mutations must clear selection while retaining the scope of an in-place refreshed table.');
+assert.ok(aliasMutationFinisher.indexOf('resetAliasEditorSelection(localRefresh ? aliasEditorSelectionScope : null)') <
+  aliasMutationFinisher.indexOf('await aliasEditorPageController.refresh()'),
+  'Alias mutations must clear selection before refreshing the table.');
+assert.ok(aliasMutationFinisher.indexOf("route.delete('offset')") <
+  aliasMutationFinisher.indexOf('await aliasEditorPageController.refresh()'),
+  'The refreshed table must request the same page shown in the updated route.');
 
 vm.runInContext(`
   function closeReadOnlyModal() { return true; }
   function currentHref() { return '/?view=aliases'; }
   async function render() {}
+  let aliasEditorWorkspaceController = null;
   let mutationRefreshSelection = null;
   ${aliasMutationFinisher}
   globalThis.runMutationRefreshProbe = async (scope) => {

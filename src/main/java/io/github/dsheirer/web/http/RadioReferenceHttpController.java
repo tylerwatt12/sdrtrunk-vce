@@ -213,10 +213,12 @@ public final class RadioReferenceHttpController
             {
                 requireMethod(exchange, "GET");
                 requireEmptyBody(exchange, "GET");
-                Map<String,String> query = query(exchange, "system_id");
+                Map<String,String> query = query(exchange, "system_id", "refresh");
                 ensureStoredSession();
-                ApiHttpResponse.sendData(exchange, 200,
-                    mService.trunkedSystemDetails(positiveInt(query.get("system_id"), "system_id")));
+                int systemId = positiveInt(query.get("system_id"), "system_id");
+                boolean refresh = refreshRequested(query);
+                ApiHttpResponse.sendData(exchange, 200, mImportService == null ?
+                    mService.trunkedSystemDetails(systemId) : mImportService.systemDetails(systemId, refresh));
             }
             else if((PATH + "/systems/sites").equals(path))
             {
@@ -232,10 +234,12 @@ public final class RadioReferenceHttpController
             {
                 requireMethod(exchange, "GET");
                 requireEmptyBody(exchange, "GET");
-                Map<String,String> query = query(exchange, "system_id");
+                Map<String,String> query = query(exchange, "system_id", "refresh");
                 ensureStoredSession();
-                ApiHttpResponse.sendData(exchange, 200,
-                    mService.allTrunkedSites(positiveInt(query.get("system_id"), "system_id")));
+                int systemId = positiveInt(query.get("system_id"), "system_id");
+                boolean refresh = refreshRequested(query);
+                ApiHttpResponse.sendData(exchange, 200, mImportService == null ?
+                    mService.allTrunkedSites(systemId) : mImportService.siteCatalog(systemId, refresh));
             }
             else if((PATH + "/systems/talkgroups").equals(path))
             {
@@ -269,12 +273,12 @@ public final class RadioReferenceHttpController
             {
                 requireMethod(exchange, "GET");
                 requireEmptyBody(exchange, "GET");
-                Map<String,String> query = query(exchange, "system_id", "alias_list_id", "catalog_id");
+                Map<String,String> query = query(exchange, "system_id", "alias_list_id", "catalog_id", "refresh");
                 ensureStoredSession();
                 ApiHttpResponse.sendData(exchange, 200, requireImport().talkgroupCatalog(
                     positiveInt(query.get("system_id"), "system_id"),
                     query.containsKey("alias_list_id") ? positiveLong(query.get("alias_list_id"), "alias_list_id") :
-                        null, query.get("catalog_id")));
+                        null, query.get("catalog_id"), refreshRequested(query)));
             }
             else if((PATH + "/conventional/categories").equals(path))
             {
@@ -447,6 +451,7 @@ public final class RadioReferenceHttpController
                     throw new RequestException(400, "invalid_request", "Username and password are required");
                 }
 
+                if(mImportService != null) mImportService.clearSessionData();
                 AccountStatus status = mService.login(request.userName(), password);
 
                 synchronized(mStoredLoginLock)
@@ -456,10 +461,6 @@ public final class RadioReferenceHttpController
 
                 if(status.authenticated())
                 {
-                    if(mImportService != null)
-                    {
-                        mImportService.clearSessionData();
-                    }
                     if(Boolean.TRUE.equals(request.remember()))
                     {
                         mSettings.storeCredentials(request.userName().strip(), storedPassword);
@@ -594,6 +595,14 @@ public final class RadioReferenceHttpController
             mSettings.userName(), mSettings.countryId(), mSettings.stateId(), mSettings.countyId());
     }
 
+    private static boolean refreshRequested(Map<String,String> query)
+    {
+        String value = query.get("refresh");
+        if(value != null && !value.equals("true") && !value.equals("false"))
+            throw new IllegalArgumentException("refresh must be true or false");
+        return "true".equals(value);
+    }
+
     private RadioReferenceImportService requireImport()
     {
         if(mImportService == null)
@@ -645,6 +654,7 @@ public final class RadioReferenceHttpController
 
             if(userName != null && !userName.isBlank() && password != null && !password.isEmpty())
             {
+                if(mImportService != null) mImportService.clearSessionData();
                 mService.login(userName, password.toCharArray());
             }
         }

@@ -12,9 +12,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
+import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.configuration.ConfigurationManager;
+import io.github.dsheirer.database.SdrTrunkDatabasePath;
+import io.github.dsheirer.database.SdrTrunkTestDatabase;
+import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.preference.directory.DirectoryPreference;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService;
 import io.github.dsheirer.preference.radioreference.RadioReferencePreference.PreferredAliasList;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway;
+import io.github.dsheirer.service.radioreference.RadioReferenceGatewayException;
+import io.github.dsheirer.service.radioreference.RadioReferenceImportService;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.Account;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.Agency;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.Country;
@@ -41,14 +50,132 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class RadioReferenceHttpControllerTest
 {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
+    @TempDir
+    Path mTemporaryDirectory;
+
+    @Test
+    void catalogRoutesReuseSourcePerSystemRefreshExplicitlyAndDiscardFailedReplacementSessions() throws Exception
+    {
+        Path dataRoot = mTemporaryDirectory.resolve("catalog-http-data");
+        SdrTrunkTestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(dataRoot));
+        ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
+            new AliasModel(), null, null);
+        manager.init();
+        FakeGateway gateway = new FakeGateway();
+
+        try(RadioReferenceDirectoryService service = new RadioReferenceDirectoryService((user, password) -> {
+            if("invalid-user".equals(user))
+                throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INVALID_CREDENTIALS);
+            return gateway;
+        }))
+        {
+            RadioReferenceImportService importer = new RadioReferenceImportService(service, manager);
+            RadioReferenceHttpController controller = new RadioReferenceHttpController(service, new FakeSettings(),
+                importer);
+            HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+            server.createContext(RadioReferenceHttpController.PATH, controller::handle);
+            server.start();
+
+            try
+            {
+                URI origin = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
+                HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+                String loginBody = "{\"user_name\":\"test-user\",\"password\":\"catalog-test-password\",\"remember\":false}";
+                assertEquals("VALID_PREMIUM", data(send(client, jsonRequest(origin, "/session")
+                    .PUT(HttpRequest.BodyPublishers.ofString(loginBody)))).at("/account/state").textValue());
+
+                String talkgroupsPath = "/systems/talkgroups/catalog?system_id=2001";
+                JsonNode first = data(send(client, request(origin, talkgroupsPath).GET()));
+                String firstCatalogId = first.at("/catalog_id").textValue();
+                assertEquals("Dispatch", first.at("/items/0/talkgroup/alpha_tag").textValue());
+                assertEquals(firstCatalogId, data(send(client, request(origin, talkgroupsPath).GET()))
+                    .at("/catalog_id").textValue());
+                assertEquals(firstCatalogId, data(send(client,
+                    request(origin, talkgroupsPath + "&catalog_id=" + firstCatalogId).GET()))
+                    .at("/catalog_id").textValue());
+                data(send(client, request(origin, "/systems/talkgroups/catalog?system_id=2002").GET()));
+                assertEquals(1, gateway.talkgroupReads.get(2001).get());
+                assertEquals(1, gateway.talkgroupReads.get(2002).get());
+
+                gateway.alphaTag = "Updated dispatch";
+                assertEquals("Dispatch", data(send(client, request(origin, talkgroupsPath).GET()))
+                    .at("/items/0/talkgroup/alpha_tag").textValue());
+                JsonNode refreshed = data(send(client, request(origin, talkgroupsPath + "&refresh=true").GET()));
+                String refreshedCatalogId = refreshed.at("/catalog_id").textValue();
+                assertFalse(firstCatalogId.equals(refreshedCatalogId));
+                assertEquals("Updated dispatch", refreshed.at("/items/0/talkgroup/alpha_tag").textValue());
+                assertEquals(2, gateway.talkgroupReads.get(2001).get());
+                assertEquals(refreshedCatalogId, data(send(client, request(origin, talkgroupsPath).GET()))
+                    .at("/catalog_id").textValue());
+
+                for(String path: List.of("/systems/details", "/systems/sites/catalog"))
+                {
+                    for(int systemId: List.of(2001, 2002))
+                    {
+                        data(send(client, request(origin, path + "?system_id=" + systemId).GET()));
+                        data(send(client, request(origin, path + "?system_id=" + systemId).GET()));
+                    }
+                    data(send(client, request(origin, path + "?system_id=2001&refresh=true").GET()));
+                }
+                assertEquals(2, gateway.systemReads.get(2001).get());
+                assertEquals(1, gateway.systemReads.get(2002).get());
+                assertEquals(2, gateway.siteReads.get(2001).get());
+                assertEquals(1, gateway.siteReads.get(2002).get());
+
+                for(String path: List.of("/systems/talkgroups/catalog", "/systems/details", "/systems/sites/catalog"))
+                {
+                    assertEquals(400, send(client,
+                        request(origin, path + "?system_id=2001&refresh=invalid").GET()).statusCode(), path);
+                }
+                assertEquals(2, gateway.talkgroupReads.get(2001).get());
+
+                HttpResponse<String> rejectedLogin = send(client, jsonRequest(origin, "/session")
+                    .PUT(HttpRequest.BodyPublishers.ofString(
+                        "{\"user_name\":\"invalid-user\",\"password\":\"invalid-password\",\"remember\":false}")));
+                assertEquals("INVALID_CREDENTIALS", data(rejectedLogin).at("/account/state").textValue());
+                for(String path: List.of(talkgroupsPath, talkgroupsPath + "&catalog_id=" + refreshedCatalogId,
+                    "/systems/details?system_id=2001", "/systems/sites/catalog?system_id=2001"))
+                {
+                    HttpResponse<String> denied = send(client, request(origin, path).GET());
+                    assertEquals(401, denied.statusCode(), denied.body());
+                    assertEquals("not_authenticated", OBJECT_MAPPER.readTree(denied.body())
+                        .at("/error/code").textValue(), denied.body());
+                }
+                assertEquals(2, gateway.talkgroupReads.get(2001).get(),
+                    "failed replacement login must not serve cached data or contact the previous gateway");
+
+                data(send(client, jsonRequest(origin, "/session").PUT(HttpRequest.BodyPublishers.ofString(loginBody))));
+                assertEquals(400, send(client,
+                    request(origin, talkgroupsPath + "&catalog_id=" + refreshedCatalogId).GET()).statusCode(),
+                    "the previous account catalog must remain discarded after a new successful login");
+                JsonNode reloaded = data(send(client, request(origin, talkgroupsPath).GET()));
+                assertFalse(refreshedCatalogId.equals(reloaded.at("/catalog_id").textValue()));
+                assertEquals(3, gateway.talkgroupReads.get(2001).get());
+            }
+            finally
+            {
+                server.stop(0);
+            }
+        }
+        finally
+        {
+            try { manager.flushConfiguration(); }
+            finally { MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager()); }
+        }
+    }
 
     @Test
     void managesPremiumSessionLocationAndExactFrequencyResultsWithoutExposingPassword() throws Exception
@@ -361,6 +488,11 @@ class RadioReferenceHttpControllerTest
 
     private static final class FakeGateway implements RadioReferenceGateway
     {
+        private final Map<Integer,AtomicInteger> systemReads = new ConcurrentHashMap<>();
+        private final Map<Integer,AtomicInteger> siteReads = new ConcurrentHashMap<>();
+        private final Map<Integer,AtomicInteger> talkgroupReads = new ConcurrentHashMap<>();
+        private volatile String alphaTag = "Dispatch";
+
         @Override
         public Map<Integer,String> systemTypes()
         {
@@ -431,6 +563,7 @@ class RadioReferenceHttpControllerTest
         @Override
         public TrunkedSystemDetails trunkedSystemDetails(int systemId)
         {
+            systemReads.computeIfAbsent(systemId, ignored -> new AtomicInteger()).incrementAndGet();
             return new TrunkedSystemDetails(systemId, "State P25", "Capital", "Project 25", "Phase I",
                 "APCO-25 Common Air Interface", "BEE00", "123");
         }
@@ -438,6 +571,7 @@ class RadioReferenceHttpControllerTest
         @Override
         public List<TrunkedSiteDetails> trunkedSiteDetails(int systemId)
         {
+            siteReads.computeIfAbsent(systemId, ignored -> new AtomicInteger()).incrementAndGet();
             return List.of(new TrunkedSiteDetails(3001, systemId, 12, "Franklin Simulcast", 100, 0, 12,
                 "34C", 0, "", false,
                 List.of(new TrunkedSiteChannel(853_162_500L, 1, "1", "c", "", true, false))));
@@ -446,7 +580,8 @@ class RadioReferenceHttpControllerTest
         @Override
         public List<RemoteTalkgroup> talkgroups(int systemId)
         {
-            return List.of(new RemoteTalkgroup(9001, 1201, "Dispatch", "County dispatch", "D", 0, 701,
+            talkgroupReads.computeIfAbsent(systemId, ignored -> new AtomicInteger()).incrementAndGet();
+            return List.of(new RemoteTalkgroup(9001, 1201, alphaTag, "County dispatch", "D", 0, 701,
                 List.of("Law Dispatch")));
         }
 
@@ -467,5 +602,20 @@ class RadioReferenceHttpControllerTest
         public void close()
         {
         }
+    }
+
+    private static final class TestUserPreferences extends UserPreferences
+    {
+        private final DirectoryPreference mDirectoryPreference;
+
+        private TestUserPreferences(Path dataRoot)
+        {
+            mDirectoryPreference = new DirectoryPreference(preferenceType -> {})
+            {
+                @Override public Path getDirectoryApplicationRoot() { return dataRoot; }
+            };
+        }
+
+        @Override public DirectoryPreference getDirectoryPreference() { return mDirectoryPreference; }
     }
 }

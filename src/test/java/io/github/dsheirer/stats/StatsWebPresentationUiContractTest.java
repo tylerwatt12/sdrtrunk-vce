@@ -49,7 +49,7 @@ class StatsWebPresentationUiContractTest
         String discover = function(source,
             "function renderObservedGroupIdentities(main, page, selectedList, renderContext, updateSummary)");
         String scanList = function(source,
-            "async function renderScanListMembers(main, scanListCatalog, scanList, renderContext)");
+            "async function renderScanListMembers(main, scanListCatalog, scanList, renderContext, request, mount)");
         String aliases = function(source, "async function renderAliases()");
         String channelGroups = function(source, "async function channelTopGroupsSection(channel)");
         String channelFrequencies = function(source,

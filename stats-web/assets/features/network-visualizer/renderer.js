@@ -99,7 +99,7 @@ async function createP25Renderer(options = {}) {
       current: color('--network-affiliation', '#d59a46'),
       activity: color('--network-activity', '#80bfe5'),
       history: color('--network-space-muted', '#8ea1ac'),
-      call: color('--network-activity', '#80bfe5'),
+      call: color('--network-tx', '#60df98'),
       movement: color('--network-arrival', '#ffc366'),
       emergency: color('--network-emergency', '#ff7d72'),
       denial: color('--network-denial', '#f38eae'),

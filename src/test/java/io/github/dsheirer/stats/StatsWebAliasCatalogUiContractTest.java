@@ -26,15 +26,17 @@ class StatsWebAliasCatalogUiContractTest
 
         assertTrue(readText(INDEX_HTML).contains("data-view=\"aliases\" href=\"/?view=aliases\""));
         assertTrue(source.contains("aliases: renderAliases"));
-        assertTrue(renderer.contains("apiPage('/api/v1/alias-lists?limit=500')"));
+        assertTrue(renderer.contains("apiPage('/api/v1/alias-lists?limit=500', {}, requestOptions)"));
         assertTrue(renderer.contains("if (!selectedList)"));
         assertTrue(renderer.indexOf("if (!selectedList)") <
-            renderer.indexOf("apiPage('/api/v1/aliases'"));
+            renderer.indexOf("requestAliasEditorData(selectedList, view"));
         assertTrue(function(source, "function pageParameters(extra = {})").contains("limit: 100"));
         assertFalse(renderer.contains("All alias lists"));
         assertTrue(function(source, "function aliasListRail(lists, selectedList, usage)")
             .contains("href('aliases', { list: id"));
-        assertTrue(renderer.contains("view === 'configure' ? { include_activity: false }"));
+        assertTrue(function(source,
+            "async function requestAliasEditorData(selectedList, view, request = {})")
+            .contains("includeActivity = view !== 'configure'"));
     }
 
     @Test
@@ -99,10 +101,13 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(view.contains("'activity' : route.get('aliasTab')"));
         assertTrue(function(source, "function aliasEditorDefaultOrder(view)")
             .contains("view === 'activity' ? { sort: 'logical_call_count', direction: 'desc' }"));
-        assertTrue(renderer.contains("sort: route.get('sort') || defaultOrder.sort"));
-        assertTrue(renderer.contains("view === 'activity' ? { timeoutMs: 35_000 } : {}"));
+        assertTrue(function(source, "async function requestAliasEditorData(selectedList, view, request = {})")
+            .contains("sort: query.get('sort') ||"));
+        assertTrue(function(source,
+            "async function requestAliasEditorData(selectedList, view, request = {})")
+            .contains("view === 'activity' ? { timeoutMs: 35_000 } : {}"));
         assertTrue(renderer.contains("loading alias-activity-loading', 'Preparing alias activity…'"));
-        String activityAwait = "let [page, initialOptions] = await Promise.all";
+        String activityAwait = "let { page, options: initialOptions } = await dataPromise";
         assertTrue(renderer.indexOf("main.append(activityLoading)") < renderer.indexOf(activityAwait),
             "The in-panel activity status must be visible while the snapshot request is pending");
         assertTrue(renderer.indexOf("activityLoading?.remove()") > renderer.indexOf(activityAwait),
@@ -303,7 +308,7 @@ class StatsWebAliasCatalogUiContractTest
         String source = source();
         String renderer = function(source, "async function renderAliases()");
         String members = function(source,
-            "async function renderScanListMembers(main, scanListCatalog, scanList, renderContext)");
+            "async function renderScanListMembers(main, scanListCatalog, scanList, renderContext, request, mount)");
         String selectAll = function(source,
             "async function selectAllMatchingAliases(filters, scope, button, onSelectionChange)");
         String complete = function(source,
@@ -340,8 +345,8 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(applicationRender.contains("clearAliasSelectionOutsideEditor(effectiveView)"));
         assertTrue(applicationRender.contains("clearInactiveAliasSelection(false)"));
         assertTrue(renderer.contains("clearInactiveAliasSelection(aliasAdminAllowed() && requestedTable)"));
-        assertTrue(renderer.contains("if (requestedScanListId) {\n    clearInactiveAliasSelection(false);"));
-        assertTrue(renderer.contains("if (!selectedList) {\n    clearInactiveAliasSelection(false);"));
+        assertTrue(renderer.contains("if (requestedScanListId) {\n    if (!mount()) return;\n    clearInactiveAliasSelection(false);"));
+        assertTrue(renderer.contains("if (!selectedList) {\n    if (!mount()) return;\n    clearInactiveAliasSelection(false);"));
         assertTrue(inactive.contains("resetAliasEditorSelection()"));
         assertTrue(leave.contains("clearInactiveAliasSelection(view === 'aliases')"));
         int firstButton = source.indexOf("'Select All Matching'");
@@ -355,8 +360,10 @@ class StatsWebAliasCatalogUiContractTest
         String actions = function(source, "function adminScanListActions(scanList, revision)");
         String renderer = function(source, "async function renderAliases()");
         String members = function(source,
-            "async function renderScanListMembers(main, scanListCatalog, scanList, renderContext)");
+            "async function renderScanListMembers(main, scanListCatalog, scanList, renderContext, request, mount)");
         String columns = function(source, "function scanListMemberColumns(rows, onSelectionChange)");
+        String loader = function(source, "async function requestAliasEditorData(selectedList, view, request = {})");
+        String filters = function(source, "function aliasEditorQueryFilters(query, listId = null, scanListId = null)");
         String bulk = function(source, "function scanListMemberBulkBar(scanList, onClear)");
         String remove = function(source, "function openScanListMemberRemoveModal(scanList)");
 
@@ -364,9 +371,12 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(actions.contains("scanListId: scanList.id"));
         assertTrue(renderer.contains("requestJson('/api/v1/admin/scan-lists'"));
         assertTrue(renderer.contains("await renderScanListMembers"));
-        assertTrue(members.contains("apiPage('/api/v1/aliases'"));
-        assertTrue(members.contains("!renderIsCurrent(renderContext) || !main.isConnected"));
-        assertTrue(members.contains("scan_list_id: scanList.id"));
+        assertTrue(members.contains("requestAliasEditorData(null, 'configure'"));
+        assertTrue(members.contains("query, scanList, signal: request?.signal"));
+        assertTrue(members.contains("!renderIsCurrent(renderContext) || !request?.isCurrent() || !mount()"));
+        assertTrue(loader.contains("apiPage('/api/v1/aliases'"));
+        assertTrue(loader.contains("scanList?.id"));
+        assertTrue(filters.contains("scan_list_id: scanListId || query.get('scanListId')"));
         assertTrue(members.contains("scanListMemberColumns(rows, updateSelection)"));
         assertTrue(members.contains("'No aliases belong to this scan list'"));
         assertTrue(members.contains("scanListMemberBulkBar(scanList"));
@@ -443,7 +453,9 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(filters.contains("selectFilter('Evidence'"));
         assertTrue(filters.contains("'Assigned, no evidence'"));
         assertTrue(filters.contains("'Not being collected'"));
-        assertTrue(filters.contains("hidden.value = String(new Date(control.value).getTime())"));
+        assertTrue(filters.contains("aliasEditorSubmitFilters(form)"));
+        assertTrue(function(source, "function aliasEditorSubmitFilters(form, query = new URLSearchParams(route))")
+            .contains("String(new Date(value).getTime())"));
         assertTrue(activeFilters.contains("'lastActivityAfter', 'lastActivityBefore'"));
         assertTrue(source.contains("A call can also have signaling"));
         assertTrue(source.contains("An em dash means unavailable; 0 means monitored with none observed"));
@@ -478,8 +490,9 @@ class StatsWebAliasCatalogUiContractTest
             .contains("'Discover'"), "Discover must not be part of the column-view group");
         assertTrue(tabs.indexOf("const navigation = tabs(entries, active)") <
             tabs.indexOf("switcher.append(discover)"), "Discover must be separate from the column-view group");
-        assertTrue(renderer.contains("`/api/v1/alias-lists/${aliasListId(selectedList)}/observed-group-identities`"));
-        assertTrue(renderer.contains("include_exact: false"));
+        String loader = function(source, "async function requestAliasEditorData(selectedList, view, request = {})");
+        assertTrue(loader.contains("`/api/v1/alias-lists/${listId}/observed-group-identities`"));
+        assertTrue(loader.contains("include_exact: false"));
         assertTrue(renderer.contains("options?.alias_list && options?.revision !== undefined"));
         assertTrue(renderer.contains("aliasEditorContext.selectedList = selectedList"));
         assertTrue(source.contains("aliasTab: 'discover'"));

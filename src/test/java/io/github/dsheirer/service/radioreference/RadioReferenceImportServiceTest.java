@@ -43,6 +43,12 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.junit.jupiter.api.io.TempDir;
@@ -337,6 +343,247 @@ class RadioReferenceImportServiceTest
     }
 
     @Test
+    void sourceCatalogsAreReusedUntilExplicitRefreshAndCurrentAliasFieldsStayComplete() throws Exception
+    {
+        try(Fixture fixture = new Fixture(mTemporaryFolder))
+        {
+            long listId = aliasList(fixture, AliasListFamily.P25);
+            RadioReferenceImportService.TalkgroupPage initial = fixture.importer.talkgroupCatalog(10, listId, null);
+            assertEquals(initial.catalogId(), fixture.importer.talkgroupCatalog(10, null, null).catalogId(),
+                "reopening a system must reuse its account-scoped catalog even without a browser catalog ID");
+            assertEquals(1, fixture.directory.catalogReads);
+            RadioReferenceImportService.TalkgroupImportPreview preview = fixture.importer.previewTalkgroups(
+                new RadioReferenceImportService.TalkgroupImportRequest(10, listId, true, List.of(), initial.catalogId()));
+            fixture.importer.applyTalkgroups(preview.previewId());
+            RadioReferenceImportService.TalkgroupPage compared = fixture.importer.talkgroupCatalog(10, listId,
+                initial.catalogId());
+            assertEquals("Dispatch", compared.items().getFirst().currentAlias().alphaTag());
+            assertEquals("Primary dispatch", compared.items().getFirst().currentAlias().description());
+            assertEquals("Public Safety", compared.items().getFirst().currentAlias().category());
+            fixture.directory.talkgroups.set(0,
+                new RemoteTalkgroup(1, 101, "New dispatch name", "Primary dispatch", "D", 0, 50, List.of()));
+            assertEquals("Dispatch", fixture.importer.talkgroupCatalog(10, listId, null)
+                .items().getFirst().talkgroup().alphaTag(), "normal comparison keeps the cached source");
+            RadioReferenceImportService.TalkgroupPage fresh = fixture.importer.talkgroupCatalog(10, listId,
+                initial.catalogId(), true);
+            assertEquals(2, fixture.directory.catalogReads);
+            assertFalse(initial.catalogId().equals(fresh.catalogId()));
+            assertEquals(RadioReferenceImportService.TalkgroupStatus.DIFFERENT, fresh.items().getFirst().status());
+            assertEquals("New dispatch name", fresh.items().getFirst().talkgroup().alphaTag());
+            assertEquals("Dispatch", fresh.items().getFirst().currentAlias().alphaTag());
+            assertEquals("Primary dispatch", fresh.items().getFirst().currentAlias().description(),
+                "unchanged fields must be supplied alongside changed fields");
+            fixture.importer.siteCatalog(10, false);
+            fixture.directory.site = site("Renamed site", "C4FM", List.of(channel(852_100_000L, "d", true, false)));
+            assertEquals("Central Simulcast", fixture.importer.siteCatalog(10, false).getFirst().name());
+            assertEquals(1, fixture.directory.siteCatalogReads);
+            assertEquals("Renamed site", fixture.importer.siteCatalog(10, true).getFirst().name());
+            assertEquals(2, fixture.directory.siteCatalogReads);
+            fixture.importer.clearSessionData();
+            assertThrows(IllegalArgumentException.class, () -> fixture.importer.talkgroupCatalog(10, listId,
+                fresh.catalogId()));
+            fixture.importer.siteCatalog(10, false);
+            fixture.importer.talkgroupCatalog(10, listId, null);
+            assertEquals(3, fixture.directory.siteCatalogReads);
+            assertEquals(3, fixture.directory.catalogReads);
+        }
+    }
+
+    @Test
+    void concurrentRequestsForTheSameTalkgroupCatalogShareOneRemoteLoad() throws Exception
+    {
+        try(Fixture fixture = new Fixture(mTemporaryFolder))
+        {
+            CatalogGate gate = new CatalogGate();
+            fixture.directory.catalogGate = gate;
+            PendingCall<RadioReferenceImportService.TalkgroupPage> owner = catalogCall(() ->
+                fixture.importer.talkgroupCatalog(10, null, null));
+            PendingCall<RadioReferenceImportService.TalkgroupPage> joining = null;
+            try
+            {
+                assertTrue(gate.entered.await(1, TimeUnit.SECONDS));
+                joining = catalogCall(() -> fixture.importer.talkgroupCatalog(10, null, null));
+                awaitSharedCatalogWait(joining.thread());
+                assertEquals(1, fixture.directory.concurrentCatalogReads.get(),
+                    "the joining request must not start a second RadioReference catalog fetch");
+                gate.release.countDown();
+                RadioReferenceImportService.TalkgroupPage first = owner.result().get(2, TimeUnit.SECONDS);
+                RadioReferenceImportService.TalkgroupPage second = joining.result().get(2, TimeUnit.SECONDS);
+                assertEquals(first.catalogId(), second.catalogId());
+                assertEquals(first.items(), second.items());
+                assertEquals(1, fixture.directory.concurrentCatalogReads.get());
+                assertEquals(first.catalogId(), fixture.importer.talkgroupCatalog(10, null, null).catalogId());
+            }
+            finally
+            {
+                gate.release.countDown();
+                stopCatalogCall(owner);
+                stopCatalogCall(joining);
+                stopCatalogWorker(gate);
+            }
+        }
+    }
+
+    @Test
+    void failedExplicitRefreshPreservesTheLastSuccessfulTalkgroupCatalog() throws Exception
+    {
+        try(Fixture fixture = new Fixture(mTemporaryFolder))
+        {
+            RadioReferenceImportService.TalkgroupPage original = fixture.importer.talkgroupCatalog(10, null, null);
+            fixture.directory.catalogFailure = RadioReferenceDirectoryException.Code.UNAVAILABLE;
+            RadioReferenceDirectoryException failure = assertThrows(RadioReferenceDirectoryException.class, () ->
+                fixture.importer.talkgroupCatalog(10, null, original.catalogId(), true));
+            assertEquals(RadioReferenceDirectoryException.Code.UNAVAILABLE, failure.code());
+            assertEquals(original.catalogId(), fixture.importer.talkgroupCatalog(10, null, null).catalogId());
+            assertEquals(original.items(), fixture.importer.talkgroupCatalog(10, null, original.catalogId()).items());
+            assertEquals(2, fixture.directory.concurrentCatalogReads.get(),
+                "reading the retained value after failure must not perform another remote request");
+
+            fixture.directory.catalogFailure = null;
+            fixture.directory.talkgroups.set(0,
+                new RemoteTalkgroup(1, 101, "Refreshed dispatch", "Primary dispatch", "D", 0, 50, List.of()));
+            RadioReferenceImportService.TalkgroupPage refreshed = fixture.importer.talkgroupCatalog(10, null,
+                original.catalogId(), true);
+            assertFalse(original.catalogId().equals(refreshed.catalogId()));
+            assertEquals("Refreshed dispatch", refreshed.items().getFirst().talkgroup().alphaTag());
+            assertEquals(3, fixture.directory.concurrentCatalogReads.get(),
+                "a failed load must release its pending slot so a new refresh can succeed");
+        }
+    }
+
+    @Test
+    void accountChangeCancelsJoinedLoadsAndPreventsTheOldOwnerReplacingNewAccountData() throws Exception
+    {
+        try(Fixture fixture = new Fixture(mTemporaryFolder))
+        {
+            CatalogGate gate = new CatalogGate();
+            fixture.directory.catalogGate = gate;
+            PendingCall<RadioReferenceImportService.TalkgroupPage> owner = catalogCall(() ->
+                fixture.importer.talkgroupCatalog(10, null, null));
+            PendingCall<RadioReferenceImportService.TalkgroupPage> joining = null;
+            try
+            {
+                assertTrue(gate.entered.await(1, TimeUnit.SECONDS));
+                joining = catalogCall(() -> fixture.importer.talkgroupCatalog(10, null, null));
+                awaitSharedCatalogWait(joining.thread());
+                fixture.importer.clearSessionData();
+                PendingCall<RadioReferenceImportService.TalkgroupPage> joinedCall = joining;
+                ExecutionException joinedFailure = assertThrows(ExecutionException.class,
+                    () -> joinedCall.result().get(1, TimeUnit.SECONDS));
+                assertTrue(joinedFailure.getCause() instanceof IllegalStateException,
+                    "account changes must release a joined caller before the remote owner finishes");
+
+                fixture.directory.catalogGate = null;
+                fixture.directory.talkgroups.set(0,
+                    new RemoteTalkgroup(1, 101, "New account dispatch", "Primary dispatch", "D", 0, 50, List.of()));
+                RadioReferenceImportService.TalkgroupPage current = fixture.importer.talkgroupCatalog(10, null, null);
+                assertEquals("New account dispatch", current.items().getFirst().talkgroup().alphaTag());
+                gate.release.countDown();
+                ExecutionException ownerFailure = assertThrows(ExecutionException.class,
+                    () -> owner.result().get(2, TimeUnit.SECONDS));
+                assertTrue(ownerFailure.getCause() instanceof IllegalStateException);
+                stopCatalogWorker(gate);
+                RadioReferenceImportService.TalkgroupPage retained = fixture.importer.talkgroupCatalog(10, null, null);
+                assertEquals(current.catalogId(), retained.catalogId());
+                assertEquals("New account dispatch", retained.items().getFirst().talkgroup().alphaTag());
+                assertEquals(2, fixture.directory.concurrentCatalogReads.get());
+            }
+            finally
+            {
+                gate.release.countDown();
+                stopCatalogCall(owner);
+                stopCatalogCall(joining);
+                stopCatalogWorker(gate);
+            }
+        }
+    }
+
+    @Test
+    void expiredDirectorySessionRejectsCachedCatalogsAndValidSessionLoadsFreshData() throws Exception
+    {
+        try(Fixture fixture = new Fixture(mTemporaryFolder))
+        {
+            RadioReferenceImportService.TalkgroupPage previous = fixture.importer.talkgroupCatalog(10, null, null);
+            fixture.importer.siteCatalog(10, false);
+            fixture.directory.catalogSessionFailure = RadioReferenceDirectoryException.Code.NOT_AUTHENTICATED;
+            assertEquals(RadioReferenceDirectoryException.Code.NOT_AUTHENTICATED,
+                assertThrows(RadioReferenceDirectoryException.class,
+                    () -> fixture.importer.talkgroupCatalog(10, null, null)).code());
+            assertEquals(RadioReferenceDirectoryException.Code.NOT_AUTHENTICATED,
+                assertThrows(RadioReferenceDirectoryException.class,
+                    () -> fixture.importer.talkgroupCatalog(10, null, previous.catalogId())).code());
+            assertEquals(RadioReferenceDirectoryException.Code.NOT_AUTHENTICATED,
+                assertThrows(RadioReferenceDirectoryException.class,
+                    () -> fixture.importer.systemDetails(10, false)).code());
+            assertEquals(RadioReferenceDirectoryException.Code.NOT_AUTHENTICATED,
+                assertThrows(RadioReferenceDirectoryException.class,
+                    () -> fixture.importer.siteCatalog(10, false)).code());
+            assertEquals(1, fixture.directory.concurrentCatalogReads.get(),
+                "an invalid session must fail before any remote catalog read");
+            assertEquals(1, fixture.directory.siteCatalogReads);
+
+            fixture.directory.catalogSessionFailure = null;
+            fixture.directory.system = new TrunkedSystemDetails(10, "New account system", "", "Project 25",
+                "Phase I", "Digital", "BEE00", "123");
+            fixture.directory.site = site("New account site", "C4FM",
+                List.of(channel(852_100_000L, "d", true, false)));
+            fixture.directory.talkgroups.set(0,
+                new RemoteTalkgroup(1, 101, "New account dispatch", "Primary dispatch", "D", 0, 50, List.of()));
+            assertThrows(IllegalArgumentException.class,
+                () -> fixture.importer.talkgroupCatalog(10, null, previous.catalogId()),
+                "tokens from the expired session must not become valid again");
+            RadioReferenceImportService.TalkgroupPage current = fixture.importer.talkgroupCatalog(10, null, null);
+            assertFalse(previous.catalogId().equals(current.catalogId()));
+            assertEquals("New account dispatch", current.items().getFirst().talkgroup().alphaTag());
+            assertEquals("New account system", fixture.importer.systemDetails(10, false).name());
+            assertEquals("New account site", fixture.importer.siteCatalog(10, false).getFirst().name());
+            assertEquals(2, fixture.directory.concurrentCatalogReads.get());
+            assertEquals(2, fixture.directory.siteCatalogReads);
+        }
+    }
+
+    @Test
+    void interruptedOwnerCancelsItsRemoteWorkerWithoutPublishingTheOldCatalog() throws Exception
+    {
+        try(Fixture fixture = new Fixture(mTemporaryFolder))
+        {
+            CatalogGate gate = new CatalogGate();
+            fixture.directory.catalogGate = gate;
+            PendingCall<RadioReferenceImportService.TalkgroupPage> owner = catalogCall(() ->
+                fixture.importer.talkgroupCatalog(10, null, null));
+            try
+            {
+                assertTrue(gate.entered.await(1, TimeUnit.SECONDS));
+                awaitSharedCatalogWait(owner.thread());
+                owner.thread().interrupt();
+                ExecutionException failure = assertThrows(ExecutionException.class,
+                    () -> owner.result().get(2, TimeUnit.SECONDS));
+                assertTrue(failure.getCause() instanceof RadioReferenceDirectoryException);
+                assertEquals(RadioReferenceDirectoryException.Code.INTERRUPTED,
+                    ((RadioReferenceDirectoryException)failure.getCause()).code());
+                stopCatalogWorker(gate);
+                assertEquals(1, gate.release.getCount(),
+                    "request interruption must stop the remote worker while its fixture is still blocked");
+
+                fixture.directory.catalogGate = null;
+                fixture.directory.talkgroups.set(0,
+                    new RemoteTalkgroup(1, 101, "Retry dispatch", "Primary dispatch", "D", 0, 50, List.of()));
+                RadioReferenceImportService.TalkgroupPage retry = fixture.importer.talkgroupCatalog(10, null, null);
+                assertEquals("Retry dispatch", retry.items().getFirst().talkgroup().alphaTag(),
+                    "a canceled owner must neither retain its old value nor block a fresh load");
+                assertEquals(2, fixture.directory.concurrentCatalogReads.get());
+                assertEquals(retry.catalogId(), fixture.importer.talkgroupCatalog(10, null, null).catalogId());
+            }
+            finally
+            {
+                gate.release.countDown();
+                stopCatalogCall(owner);
+                stopCatalogWorker(gate);
+            }
+        }
+    }
+
+    @Test
     void conventionalPreviewImportsOneRowWithTheFactoryAliasList() throws Exception
     {
         try(Fixture fixture = new Fixture(mTemporaryFolder))
@@ -406,6 +653,9 @@ class RadioReferenceImportServiceTest
             assertEquals(1, fixture.directory.catalogReads);
             assertEquals("Fire Dispatch", fixture.aliases.getAlias(original.getId()).alias().getName());
 
+            // Explicit source refresh makes new upstream values available to a later discovery retry.
+            fixture.importer.talkgroupCatalog(10, listId, null, true);
+            assertEquals(2, fixture.directory.catalogReads);
             // A new revision-bound retry after an uncertain prior apply matches IDs instead of duplicating aliases.
             var freshHelper = new DiscoveryAliasImportService(fixture.importer);
             var freshBatch = new DiscoveryAliasImportService.Batch();
@@ -626,6 +876,60 @@ class RadioReferenceImportServiceTest
         }
     }
 
+    private static <T> PendingCall<T> catalogCall(Callable<T> call)
+    {
+        FutureTask<T> result = new FutureTask<>(call);
+        Thread thread = new Thread(result, "RadioReference catalog regression fixture");
+        thread.setDaemon(true);
+        thread.start();
+        return new PendingCall<>(result, thread);
+    }
+
+    private static void awaitSharedCatalogWait(Thread thread)
+    {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while(thread.isAlive() && System.nanoTime() < deadline)
+        {
+            if(thread.getState() == Thread.State.TIMED_WAITING &&
+                java.util.Arrays.stream(thread.getStackTrace()).anyMatch(frame ->
+                    frame.getClassName().equals("java.util.concurrent.CompletableFuture") &&
+                        frame.getMethodName().equals("timedGet")))
+            {
+                return;
+            }
+            Thread.yield();
+        }
+        throw new AssertionError("The concurrent request did not join the shared catalog load");
+    }
+
+    private static void stopCatalogCall(PendingCall<?> call) throws InterruptedException
+    {
+        if(call != null)
+        {
+            call.result().cancel(true);
+            call.thread().join(2_000);
+            assertFalse(call.thread().isAlive(), "The catalog regression fixture thread must terminate");
+        }
+    }
+
+    private static void stopCatalogWorker(CatalogGate gate) throws InterruptedException
+    {
+        if(gate.worker != null)
+        {
+            gate.worker.join(2_000);
+            assertFalse(gate.worker.isAlive(), "The old catalog loader must finish before its cache is checked");
+        }
+    }
+
+    private record PendingCall<T>(FutureTask<T> result, Thread thread) {}
+
+    private static final class CatalogGate
+    {
+        private final CountDownLatch entered = new CountDownLatch(1);
+        private final CountDownLatch release = new CountDownLatch(1);
+        private volatile Thread worker;
+    }
+
     private static final class FakeDirectory implements RadioReferenceImportService.DirectoryAccess
     {
         private TrunkedSystemDetails system = p25System();
@@ -642,14 +946,44 @@ class RadioReferenceImportServiceTest
         private int siteCatalogReads;
         private int catalogReads;
         private int categoryReads;
+        private final AtomicInteger concurrentCatalogReads = new AtomicInteger();
+        private volatile CatalogGate catalogGate;
+        private volatile RadioReferenceDirectoryException.Code catalogFailure;
+        private volatile RadioReferenceDirectoryException.Code catalogSessionFailure;
 
+        @Override public void requireCatalogSession() throws RadioReferenceDirectoryException
+        {
+            if(catalogSessionFailure != null) throw new RadioReferenceDirectoryException(catalogSessionFailure);
+        }
         @Override public TrunkedSystemDetails trunkedSystemDetails(int systemId) { return system; }
         @Override public List<TrunkedSiteDetails> allTrunkedSites(int systemId)
             { siteCatalogReads++; return sites == null ? List.of(site) : sites; }
         @Override public BoundedPage<RemoteTalkgroup> talkgroups(int systemId, Integer categoryId, String search,
             int offset, int limit) { return new BoundedPage<>(talkgroups, 0, null, talkgroups.size()); }
-        @Override public List<RemoteTalkgroup> allTalkgroups(int systemId)
-            { catalogReads++; return List.copyOf(talkgroups); }
+        @Override public List<RemoteTalkgroup> allTalkgroups(int systemId) throws RadioReferenceDirectoryException
+        {
+            catalogReads++;
+            concurrentCatalogReads.incrementAndGet();
+            if(catalogFailure != null) throw new RadioReferenceDirectoryException(catalogFailure);
+            List<RemoteTalkgroup> result = List.copyOf(talkgroups);
+            CatalogGate gate = catalogGate;
+            if(gate != null)
+            {
+                gate.worker = Thread.currentThread();
+                gate.entered.countDown();
+                try
+                {
+                    if(!gate.release.await(5, TimeUnit.SECONDS))
+                        throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.TIMEOUT);
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                    throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.INTERRUPTED);
+                }
+            }
+            return result;
+        }
         @Override public BoundedPage<RemoteTalkgroupCategory> talkgroupCategories(int systemId, int offset, int limit)
             { return new BoundedPage<>(categories, 0, null, categories.size()); }
         @Override public List<RemoteTalkgroupCategory> allTalkgroupCategories(int systemId)

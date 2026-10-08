@@ -75,7 +75,9 @@ class StatsWebDashboardActivityAccessTest
         server.setExecutor(executor);
         new WebSessionHttpController(accessService, authenticationService, requestSecurity).register(server);
         StatsWebDatabase statsDatabase = new StatsWebDatabase(new UserPreferences(), database);
-        new StatsApiV1Controller(statsDatabase, Map::of, requestSecurity, null).register(server);
+        AtomicInteger grantTiming = new AtomicInteger(2500);
+        new StatsApiV1Controller(statsDatabase, Map::of, requestSecurity, null, Map::of, null,
+            grantTiming::get).register(server);
         server.start();
 
         try
@@ -98,6 +100,17 @@ class StatsWebDashboardActivityAccessTest
             assertEquals(200, authenticatedRadios.statusCode(), authenticatedRadios.body());
             assertEquals("grant", OBJECT_MAPPER.readTree(authenticatedRadios.body())
                 .at("/meta/action").textValue(), authenticatedRadios.body());
+
+            accessService.setCapabilityTier(WebCapability.DASHBOARD_VIEW, AccessTier.ADMIN);
+            HttpResponse<String> activity = get(client, origin, StatsApiV1.ACTIVITY + "?limit=1", cookie);
+            assertEquals(200, activity.statusCode(), activity.body());
+            assertEquals(2500, OBJECT_MAPPER.readTree(activity.body())
+                .at("/meta/traffic_grant_age_out_milliseconds").intValue(), activity.body());
+            grantTiming.set(1750);
+            HttpResponse<String> updated = get(client, origin, StatsApiV1.ACTIVITY + "?limit=1", cookie);
+            assertEquals(1750, OBJECT_MAPPER.readTree(updated.body())
+                .at("/meta/traffic_grant_age_out_milliseconds").intValue(), updated.body());
+            assertEquals(403, get(client, origin, StatsApiV1.STATUS, cookie).statusCode());
         }
         finally
         {

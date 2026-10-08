@@ -787,6 +787,7 @@ function initializeReceiverHealth() {
     if (options.unit) number.append(node('small', 'ui-metric-unit', options.unit));
     copy.append(heading, number);
     if (options.progress !== undefined) {
+      card.classList.add('ui-metric-meter');
       const progress = node('progress', 'ui-metric-progress', `${options.progress}%`);
       progress.max = 100;
       progress.value = options.progress;

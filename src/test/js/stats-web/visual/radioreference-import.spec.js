@@ -116,7 +116,7 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
         });
       }
       element.append(colgroup, head, tableBody);
-      element.style.width = `${contentWidth}px`;
+      element.style.width = options.mobileCards && matchMedia('(max-width: 760px)').matches ? '100%' : `${contentWidth}px`;
       element.style.setProperty('--table-content-min-width', `${contentWidth}px`);
       if (options.layoutMenuHost) {
         const layoutMenu = node('div', 'table-layout-menu');
@@ -328,10 +328,12 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
         items: [
           { talkgroup: { id: 101, value: 101, category_id: 9, alpha_tag: 'Fire Dispatch',
             description: 'Countywide fire' },
-            category: 'Fire', status: rawCatalog ? 'UNCOMPARED' : 'IDENTICAL', existing_alias_id: 700 },
+            category: 'Fire', status: rawCatalog ? 'UNCOMPARED' : 'IDENTICAL', existing_alias_id: 700,
+            current_alias: { alpha_tag: 'Fire Dispatch', description: 'Countywide fire', category: 'Fire' } },
           { talkgroup: { id: 102, value: 102, category_id: 9, alpha_tag: 'Fireground 2',
             description: 'Fireground operations' },
             category: 'Fire', status: rawCatalog ? 'UNCOMPARED' : 'DIFFERENT', existing_alias_id: 701,
+            current_alias: { alpha_tag: 'Fireground Two', description: 'Local fireground description', category: 'Operations' },
             changes: [{ field: 'name', before: 'Fireground Two', after: 'Fireground 2' }] }
         ] };
       if (path.includes('/conventional/categories?')) return { items: [
@@ -1062,5 +1064,69 @@ for (const [name, theme, viewport] of [
     const toggle = page.locator('.radioreference-account-form .admin-toggle-copy');
     expect((await toggle.boundingBox()).width).toBeGreaterThan(viewport.width === 390 ? 180 : 360);
     await expect(page.locator('body')).toHaveScreenshot(`${name}.png`, { fullPage: true });
+  });
+}
+
+
+test('comparison reuses the source catalog and Different shows complete current and incoming alias fields', async ({ page }) => {
+  await installWorkspace(page);
+  await openSystem(page);
+  await page.getByRole('button', { name: 'Talkgroups & Aliases', exact: true }).click();
+  const picker = page.locator('.radioreference-talkgroup-alias-field select');
+  await expect(page.locator('.radioreference-talkgroup-table tbody tr')).toHaveCount(2);
+  await picker.selectOption('7');
+  await expect(page.locator('.radioreference-talkgroup-table tbody tr')).toHaveCount(2);
+  const requests = await page.evaluate(() => window.radioReferenceVisual.calls.filter(([path]) => path.includes('/systems/talkgroups/catalog?')));
+  expect(requests).toHaveLength(2);
+  expect(new URL(requests[1][0], 'http://localhost').searchParams.get('catalog_id')).toBe('loaded-catalog');
+  await page.getByRole('button', { name: 'Different', exact: true }).click();
+  const row = page.locator('.radioreference-talkgroup-table tbody tr');
+  await expect(row).toHaveCount(1);
+  await expect(row).toContainText('Current: Fireground Two');
+  await expect(row).toContainText('RadioReference: Fireground 2');
+  await expect(row).toContainText('Current: Local fireground description');
+  await expect(row).toContainText('RadioReference: Fireground operations');
+  await expect(row).toContainText('Current: Operations');
+  await expect(row).toContainText('RadioReference: Fire');
+});
+
+test('explicit refresh bypasses source caches while ordinary filtering and tab returns reuse them', async ({ page }) => {
+  await installWorkspace(page);
+  await openSystem(page);
+  await expect(page.locator('.radioreference-sites-list tbody tr')).toHaveCount(2);
+  await page.getByRole('button', { name: 'Refresh sites from RadioReference' }).click();
+  await expect(page.locator('.radioreference-sites-list tbody tr')).toHaveCount(2);
+  const sites = await page.evaluate(() => window.radioReferenceVisual.calls.filter(([path]) => path.includes('/systems/sites/catalog?')));
+  expect(sites).toHaveLength(2);
+  expect(new URL(sites[1][0], 'http://localhost').searchParams.get('refresh')).toBe('true');
+  await page.getByRole('button', { name: 'Talkgroups & Aliases', exact: true }).click();
+  await expect(page.locator('.radioreference-talkgroup-table tbody tr')).toHaveCount(2);
+  await page.locator('.radioreference-talkgroup-table tbody input[type="checkbox"]').first().check();
+  await page.getByRole('button', { name: 'Refresh talkgroups from RadioReference' }).click();
+  await expect(page.locator('.radioreference-talkgroup-table tbody tr')).toHaveCount(2);
+  await expect(page.locator('.radioreference-talkgroup-table tbody input[type="checkbox"]').first()).toBeChecked();
+  const talkgroups = await page.evaluate(() => window.radioReferenceVisual.calls.filter(([path]) => path.includes('/systems/talkgroups/catalog?')));
+  expect(talkgroups).toHaveLength(2);
+  const refresh = new URL(talkgroups[1][0], 'http://localhost').searchParams;
+  expect(refresh.get('refresh')).toBe('true');
+  expect(refresh.has('catalog_id')).toBe(false);
+  await page.getByRole('button', { name: 'Sites & Channels', exact: true }).click();
+  await expect(page.locator('.radioreference-sites-list tbody tr')).toHaveCount(2);
+  expect(await page.evaluate(() => window.radioReferenceVisual.calls.filter(([path]) => path.includes('/systems/sites/catalog?')).length)).toBe(2);
+});
+
+for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
+  test(`Different comparison remains readable in ${theme} at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await installWorkspace(page, theme);
+    await openSystem(page);
+    await page.getByRole('button', { name: 'Talkgroups & Aliases', exact: true }).click();
+    await page.getByLabel('Compare with Alias List').selectOption('7');
+    await page.getByRole('button', { name: 'Different', exact: true }).click();
+    await expect(page.locator('.radioreference-talkgroup-table tbody tr')).toHaveCount(1);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    await expect(page.locator('body')).toHaveScreenshot(`radioreference-different-${theme}-${width}.png`, {
+      fullPage: true
+    });
   });
 }

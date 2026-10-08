@@ -339,14 +339,14 @@ for (const [theme, width] of [['light', 1440], ['dark', 1440], ['light', 320], [
     async ({ page }, testInfo) => {
       await page.setViewportSize({ width, height: 900 });
       const resourceRows = [
-        { label: 'VCE processor use', value: 10.3, unit: '%', detail: 'Receiver processor use' },
+        { label: 'VCE processor use', value: 10.3, unit: '%', detail: '' },
         { label: 'VCE memory use', value: 15, unit: '%', detail: 'Used 307 MB of 2.0 GB' },
         { label: 'Time spent freeing memory', value: 13, unit: 'ms in last sample',
           detail: 'Total since startup 25925 ms' },
         { label: 'Free storage space', value: 30.2, unit: '%', detail: 'Free 69 GB of 228 GB' }
       ].map((row) => ({ ...row, severity: 'healthy', scope: 'Computer' }));
       const row = { severity: 'healthy', scope: 'County Dispatch · Primary site',
-        label: 'Received radio samples', value: 2048, unit: 'samples',
+        label: 'Received radio samples', display_label: 'Radio samples received', value: 2048, unit: 'samples',
         detail: 'Measurements remain available for the configured receiver.' };
       await openAdmin(page, 'health', [], { theme, healthDocument: {
         measurements: [
@@ -358,6 +358,14 @@ for (const [theme, width] of [['light', 1440], ['dark', 1440], ['light', 320], [
       } });
       const resources = page.locator('.receiver-health-resource-bars .ui-metric');
       await expect(resources).toHaveCount(4);
+      for (const card of await resources.all()) {
+        const inset = await card.evaluate((element) => {
+          const content = element.querySelector('.ui-metric-copy');
+          return content.getBoundingClientRect().top - element.getBoundingClientRect().top -
+            parseFloat(getComputedStyle(element).paddingTop) - parseFloat(getComputedStyle(element).borderTopWidth);
+        });
+        expect(Math.abs(inset)).toBeLessThan(1);
+      }
       await expect(resources.nth(2)).toContainText('13ms in last sample');
       await expect(resources.nth(2)).toContainText('Total since startup 25925 ms');
       await expect(page.getByRole('progressbar', { name: 'Time spent freeing memory', exact: true }))
@@ -390,6 +398,22 @@ for (const [theme, width] of [['light', 1440], ['dark', 1440], ['light', 320], [
       for (const text of [row.scope, row.label, String(row.value), row.unit, row.detail]) {
         await expect(measurement).toContainText(text);
       }
+      const reading = measurement.locator('.receiver-health-measurement-value');
+      const line = await reading.evaluate((element) => {
+        const value = element.querySelector('strong').firstChild;
+        const range = document.createRange();
+        range.selectNodeContents(value);
+        return { value: range.getBoundingClientRect().top,
+          unit: element.querySelector('.ui-metric-unit').getBoundingClientRect().top };
+      });
+      expect(Math.abs(line.value - line.unit)).toBeLessThan(4);
+      const identity = measurement.getByText('Radio identity', { exact: true });
+      const [identityBounds, titleBounds] = await Promise.all([
+        identity.boundingBox(), measurement.locator('.receiver-health-measurement-label').boundingBox()
+      ]);
+      expect(Math.abs(identityBounds.x - titleBounds.x)).toBeLessThan(1);
+      await identity.click();
+      await expect(measurement).toContainText(row.label);
       const [panel, grid] = await Promise.all([control.boundingBox(), diagnostics.boundingBox()]);
       expect(Math.abs(panel.width - grid.width)).toBeLessThan(2);
       await page.getByRole('button', { name: 'Check again', exact: true }).click();

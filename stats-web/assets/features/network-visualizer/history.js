@@ -303,8 +303,9 @@ function ensureRadio(state, system, row, identityKey, role) {
 
 function highlight(entity, action, untilMs) {
   if (!entity) return;
+  const sameSignal = entity.signalAction === action.toLowerCase();
+  entity.highlightUntilMs = sameSignal ? Math.max(entity.highlightUntilMs, untilMs) : untilMs;
   entity.signalAction = action.toLowerCase();
-  entity.highlightUntilMs = Math.max(entity.highlightUntilMs, untilMs);
 }
 
 function trimEvents(state) {
@@ -448,7 +449,8 @@ function applyLogout(state, system, row, result, initial, ingestedAtMs, shouldHi
   if (!initial && focusEligible) result.focusCandidates.push(event);
 }
 
-function applyRoutineActivity(state, system, row, result, initial, action, ingestedAtMs, shouldHighlight) {
+function applyRoutineActivity(state, system, row, result, initial, action, ingestedAtMs, shouldHighlight,
+    grantActivityTimeoutMs) {
   const radioIdentity = sourceRadioKey(row) || targetRadioKey(row);
   const role = sourceRadioKey(row) ? 'source' : 'target';
   const groupIdentity = targetGroupKey(row);
@@ -465,8 +467,8 @@ function applyRoutineActivity(state, system, row, result, initial, action, inges
   const firstGroupedEvent = !state.events.has(event.key);
   const focusEligible = upsertEvent(state, event);
   if (!initial && shouldHighlight('call')) {
-    highlight(radio, 'call', ingestedAtMs + 7_000);
-    highlight(group, 'call', ingestedAtMs + 7_000);
+    highlight(radio, 'call', ingestedAtMs + grantActivityTimeoutMs);
+    highlight(group, 'call', ingestedAtMs + grantActivityTimeoutMs);
   }
   if (firstGroupedEvent) system.score += 0.5;
   if (!initial && focusEligible) result.focusCandidates.push(event);
@@ -476,6 +478,7 @@ function applyP25ActivityRows(state, rows, options = {}) {
   if (!state?.systems || !state?.groups || !state?.radios) throw new TypeError('P25 history state is required.');
   const initial = options.initial === true;
   const ingestedAtMs = finite(options.atMs, Date.now());
+  const grantActivityTimeoutMs = Math.max(100, Math.min(15_000, finite(options.grantActivityTimeoutMs, 1_000)));
   const highlighted = options.highlightCategories instanceof Set ? options.highlightCategories : null;
   const shouldHighlight = (category) => !highlighted || highlighted.has(category);
   const result = { changed: false, accepted: 0, ignored: 0, focusCandidates: [] };
@@ -497,7 +500,8 @@ function applyP25ActivityRows(state, rows, options = {}) {
     if (action === 'JOIN') applyJoin(state, system, row, result, initial, ingestedAtMs, shouldHighlight);
     else if (action === 'LOGOUT') applyLogout(state, system, row, result, initial, ingestedAtMs, shouldHighlight);
     else if (P25_ROUTINE_ACTIONS.includes(action)) {
-      applyRoutineActivity(state, system, row, result, initial, action, ingestedAtMs, shouldHighlight);
+      applyRoutineActivity(state, system, row, result, initial, action, ingestedAtMs, shouldHighlight,
+        grantActivityTimeoutMs);
     } else applySignal(state, system, row, result, initial, action, ingestedAtMs, shouldHighlight);
     result.accepted += 1;
     result.changed = true;
@@ -510,6 +514,19 @@ function applyP25ActivityRows(state, rows, options = {}) {
 function visibleSignal(entity, atMs, highlighted) {
   const signal = entity?.highlightUntilMs > atMs ? entity.signalAction : '';
   return signal && (!highlighted || highlighted.has(signal)) ? signal : '';
+}
+
+function nextP25HighlightExpiry(state, atMs = Date.now(), options = {}) {
+  const highlighted = options.highlightCategories instanceof Set ? options.highlightCategories : null;
+  let next = 0;
+  for (const entities of [state.groups, state.radios]) {
+    for (const entity of entities.values()) {
+      if (visibleSignal(entity, atMs, highlighted) && (!next || entity.highlightUntilMs < next)) {
+        next = entity.highlightUntilMs;
+      }
+    }
+  }
+  return next;
 }
 
 function buildP25Graph(state, systemKey = '', atMs = Date.now(), focusGroupKey = '', options = {}) {
@@ -605,6 +622,7 @@ export {
   createP25HistoryState,
   applyP25ActivityRows,
   buildP25Graph,
+  nextP25HighlightExpiry,
   groupedP25Events,
   mostActiveP25System
 };

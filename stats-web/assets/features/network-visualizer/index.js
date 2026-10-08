@@ -6,11 +6,12 @@ import {
   createP25HistoryState,
   applyP25ActivityRows,
   buildP25Graph,
+  nextP25HighlightExpiry,
   groupedP25Events,
   mostActiveP25System
-} from './history.js?v=7';
+} from './history.js?v=8';
 import { createP25CameraCoordinator } from './camera.js?v=4';
-import { createP25Renderer } from './renderer.js?v=4';
+import { createP25Renderer } from './renderer.js?v=5';
 import {
   P25_EVENT_SETTINGS,
   normalizeP25EventSettings,
@@ -153,6 +154,8 @@ function createP25Visualizer(dependencies = {}) {
   let generation = 0;
   let requestController = null;
   let pollTimer = 0;
+  let highlightTimer = 0;
+  let grantActivityTimeoutMs = 1_000;
   let introTimer = 0;
   let animationFrame = 0;
   let lastAnimationAt = performance.now();
@@ -305,6 +308,13 @@ function createP25Visualizer(dependencies = {}) {
     visibleNodeKeys = new Set(graph.nodes.map((value) => value.id));
     renderer.setData(graph, { animate });
     renderEvents();
+    if (highlightTimer) window.clearTimeout(highlightTimer);
+    const now = Date.now();
+    const expiresAt = nextP25HighlightExpiry(state, now, { highlightCategories: highlightedCategories });
+    highlightTimer = expiresAt ? window.setTimeout(() => {
+      highlightTimer = 0;
+      if (!closed) renderGraph(false);
+    }, Math.max(1, expiresAt - now)) : 0;
   }
 
   function renderScopeTitle(system, group = null) {
@@ -409,14 +419,19 @@ function createP25Visualizer(dependencies = {}) {
     const { fromMs, toMs } = bounds;
     const actions = routineP25ActivityEnabled(eventSettings) ?
       [...P25_HISTORY_ACTIONS, ...P25_ROUTINE_ACTIONS] : P25_HISTORY_ACTIONS;
-    return validPage(await requestActivity({ from_ms: fromMs, to_ms: toMs,
+    const page = validPage(await requestActivity({ from_ms: fromMs, to_ms: toMs,
       actions: actions.join(','), after_id: afterId, watermark_id: watermarkId,
       limit: PAGE_LIMIT }, { signal }));
+    const timing = page.traffic_grant_age_out_milliseconds;
+    if (Number.isInteger(timing) && timing >= 100 && timing <= 15_000) grantActivityTimeoutMs = timing;
+    return page;
   }
 
   async function loadSeed() {
     const localGeneration = ++generation;
     navigationRevision += 1;
+    if (highlightTimer) window.clearTimeout(highlightTimer);
+    highlightTimer = 0;
     if (introTimer) window.clearTimeout(introTimer);
     introTimer = 0;
     requestController?.abort();
@@ -559,7 +574,7 @@ function createP25Visualizer(dependencies = {}) {
       } while (!controller.signal.aborted);
       cursor = Math.max(cursor, afterId, watermarkId || 0);
       const result = applyP25ActivityRows(state, pollRows, { initial: false, atMs: Date.now(),
-        highlightCategories: highlightedCategories });
+        highlightCategories: highlightedCategories, grantActivityTimeoutMs });
       renderGraph(true);
       result.focusCandidates.sort((left, right) => right.priority - left.priority ||
         right.observedAtMs - left.observedAtMs);
@@ -692,6 +707,7 @@ function createP25Visualizer(dependencies = {}) {
     generation += 1;
     requestController?.abort();
     if (pollTimer) window.clearTimeout(pollTimer);
+    if (highlightTimer) window.clearTimeout(highlightTimer);
     if (introTimer) window.clearTimeout(introTimer);
     if (animationFrame) cancelAnimationFrame(animationFrame);
     window.removeEventListener('keyup', onKeyUp);

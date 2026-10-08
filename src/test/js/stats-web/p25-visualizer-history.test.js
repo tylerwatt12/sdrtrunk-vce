@@ -3,6 +3,8 @@
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const fs = require('node:fs');
+const vm = require('node:vm');
 
 const feature = path.resolve(process.argv[2] ||
   path.resolve(__dirname, '../../../../stats-web/assets/features/network-visualizer'));
@@ -114,6 +116,70 @@ async function main() {
   assert.equal(history.buildP25Graph(routineState, SYSTEM_A, 2_000_000_000_001, '', {
     highlightCategories: new Set(['call'])
   }).nodes.find((entry) => entry.id === routineRadio.key)?.signalAction, 'call');
+
+  const timingState = history.createP25HistoryState();
+  const highlightedCategories = new Set(['call']);
+  history.applyP25ActivityRows(timingState, [row(70, 'CALL')], {
+    atMs: 10_000, highlightCategories: highlightedCategories, grantActivityTimeoutMs: 1_200
+  });
+  assert.equal(history.nextP25HighlightExpiry(timingState, 10_000), 11_200);
+  assert.equal(history.buildP25Graph(timingState, SYSTEM_A, 11_200).nodes.some((node) => node.signalAction), false);
+  history.applyP25ActivityRows(timingState, [row(71, 'GRANT')], {
+    atMs: 10_800, highlightCategories: highlightedCategories, grantActivityTimeoutMs: 1_200
+  });
+  assert.equal(history.nextP25HighlightExpiry(timingState, 10_800), 12_000,
+    'another call or grant extends its visible activity timeout');
+  history.applyP25ActivityRows(timingState, [row(71, 'GRANT')], {
+    atMs: 11_900, highlightCategories: highlightedCategories, grantActivityTimeoutMs: 1_200
+  });
+  assert.equal(history.nextP25HighlightExpiry(timingState, 11_900), 12_000,
+    'repeated delivery of the same saved row must not extend activity');
+  assert.equal(history.nextP25HighlightExpiry(timingState, 12_000), 0);
+
+  // Run the actual graph repaint against a local clock, with no polling or network work.
+  const indexSource = fs.readFileSync(path.join(feature, 'index.js'), 'utf8');
+  const renderGraphSource = indexSource.slice(indexSource.indexOf('  function renderGraph('),
+    indexSource.indexOf('  function renderScopeTitle('));
+  let now = 10_800;
+  let timerId = 0;
+  const scheduled = new Map();
+  const frames = [];
+  const context = {
+    state: timingState, selectedSystemKey: SYSTEM_A, selectedGroupKey: '', highlightedCategories,
+    buildP25Graph: history.buildP25Graph, nextP25HighlightExpiry: history.nextP25HighlightExpiry,
+    renderer: { setData: (graph) => frames.push(graph) }, renderEvents: () => {},
+    highlightTimer: 0, closed: false, Set, Date: { now: () => now },
+    window: {
+      setTimeout: (callback, delay) => { scheduled.set(++timerId, { callback, at: now + delay }); return timerId; },
+      clearTimeout: (id) => scheduled.delete(id)
+    }
+  };
+  vm.createContext(context);
+  vm.runInContext(renderGraphSource, context);
+  context.renderGraph(false);
+  assert.equal(scheduled.size, 1);
+  assert.equal([...scheduled.values()][0].at, 12_000);
+  assert.equal(frames.at(-1).nodes.filter((node) => node.signalAction === 'call').length, 2);
+  now = 11_500;
+  history.applyP25ActivityRows(timingState, [row(72, 'CALL')], {
+    atMs: now, highlightCategories: highlightedCategories, grantActivityTimeoutMs: 1_200
+  });
+  context.renderGraph(false);
+  assert.equal(scheduled.size, 1, 'a repeated call replaces the pending expiry timer');
+  const expiry = [...scheduled.values()][0];
+  assert.equal(expiry.at, 12_700);
+  now = expiry.at;
+  scheduled.clear();
+  expiry.callback();
+  assert.equal(frames.at(-1).nodes.some((node) => node.signalAction), false,
+    'the local timeout clears the rendered highlight without another history fetch');
+  assert.equal(scheduled.size, 0);
+  history.applyP25ActivityRows(timingState, [row(73, 'EMERGENCY')], { atMs: 13_000 });
+  history.applyP25ActivityRows(timingState, [row(74, 'CALL')], {
+    atMs: 13_100, grantActivityTimeoutMs: 1_200
+  });
+  assert.equal(history.nextP25HighlightExpiry(timingState, 13_100), 14_300,
+    'routine activity uses its own timeout rather than inheriting a longer prior event highlight');
   const unknownSource = history.createP25HistoryState();
   history.applyP25ActivityRows(unknownSource, [row(52, 'GRANT', {
     source_identity_key: null, source_radio_id: null, source_alias_name: null

@@ -18,6 +18,7 @@ import com.sun.net.httpserver.HttpServer;
 import io.github.dsheirer.web.auth.WebCapability;
 import io.github.dsheirer.web.http.ApiHttpResponse;
 import io.github.dsheirer.web.http.WebRequestSecurity;
+import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
@@ -30,6 +31,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Semaphore;
 import java.util.function.Supplier;
+import java.util.function.IntSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -50,6 +52,7 @@ final class StatsApiV1Controller
     private final TunerDiagnosticService mTunerDiagnosticService;
     private final Supplier<Map<String,Object>> mReceiverHealthSupplier;
     private final StatsP25AssignmentService mP25AssignmentService;
+    private final IntSupplier mTrafficGrantAgeOutMilliseconds;
     private final Semaphore mCsvExportPermit = new Semaphore(1);
     private final Semaphore mActivityRadioPermit = new Semaphore(1, true);
 
@@ -71,12 +74,23 @@ final class StatsApiV1Controller
                          Supplier<Map<String,Object>> receiverHealthSupplier,
                          StatsP25AssignmentService p25AssignmentService)
     {
+        this(database, statusSupplier, requestSecurity, tunerDiagnosticService, receiverHealthSupplier,
+            p25AssignmentService, () -> NowPlayingPreference.DEFAULT_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS);
+    }
+
+    StatsApiV1Controller(StatsWebDatabase database, Supplier<Map<String,Object>> statusSupplier,
+                         WebRequestSecurity requestSecurity, TunerDiagnosticService tunerDiagnosticService,
+                         Supplier<Map<String,Object>> receiverHealthSupplier,
+                         StatsP25AssignmentService p25AssignmentService,
+                         IntSupplier trafficGrantAgeOutMilliseconds)
+    {
         mDatabase = database;
         mStatusSupplier = statusSupplier;
         mRequestSecurity = requestSecurity;
         mTunerDiagnosticService = tunerDiagnosticService;
         mReceiverHealthSupplier = receiverHealthSupplier;
         mP25AssignmentService = p25AssignmentService;
+        mTrafficGrantAgeOutMilliseconds = trafficGrantAgeOutMilliseconds;
     }
 
     void register(HttpServer server)
@@ -117,7 +131,9 @@ final class StatsApiV1Controller
                     "action", "actions", "event_type", "encryption", "radio_role", "group_match", "source_identity_key",
                     "target_identity_key", "source_id", "target_id", "target_kind", "frequency_hz", "lcn",
                     "timeslot");
-                return page(mDatabase.activity(request));
+                Map<String,Object> activity = new LinkedHashMap<>(mDatabase.activity(request));
+                activity.put("traffic_grant_age_out_milliseconds", mTrafficGrantAgeOutMilliseconds.getAsInt());
+                return page(activity);
             })));
         create(server, StatsApiV1.ACTIVITY_ACTIONS, WebCapability.DASHBOARD_VIEW,
             exchange -> handleJson(exchange, StatsApiV1.ACTIVITY_ACTIONS, (request, segments) -> {

@@ -477,9 +477,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     return pending;
   };
   const chooseSystemAliasList = (systemIdValue, selectedId, notice) => {
-    const previous = state.talkgroupAliasListId;
     state.talkgroupAliasListId = selectedId;
-    if (previous !== selectedId) state.talkgroupCatalogId = null;
     return saveSystemAliasListPreference(systemIdValue, selectedId, notice);
   };
   const ensureSystemAliasListPreference = (systemIdValue, selectedId, notice) => {
@@ -880,7 +878,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     });
   };
 
-  const renderSites = async (system, target, systemDocument) => {
+  const renderSites = async (system, target, systemDocument, refreshRemote = false) => {
     const toolbar = node('div', 'radioreference-sites-toolbar ui-catalog-toolbar');
     const tableController = {};
     const searchFrame = node('label', 'ui-search');
@@ -900,16 +898,21 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     sort.value = state.siteSort;
     sort.disabled = true;
     const count = node('span', 'muted', 'Loading sites…');
+    const refresh = button('Refresh sites');
+    refresh.prepend(iconGlyph('icon-refresh'));
+    refresh.setAttribute('aria-label', 'Refresh sites from RadioReference');
+    refresh.disabled = true;
+    refresh.addEventListener('click', () => void renderSites(system, target, systemDocument, true));
     toolbar.append(formField('Search sites & channels', searchFrame),
-      formField('Sort sites', selectFrame(sort)), count);
+      formField('Sort sites', selectFrame(sort)), count, refresh);
     const list = node('div', 'radioreference-sites-list');
     list.append(feedback('Loading sites for this system. Large systems may take a minute.', 'loading'));
     target.replaceChildren(toolbar, list);
     try {
       const id = systemId(system);
-      if (!state.siteCatalogs.has(id)) {
+      if (refreshRemote || !state.siteCatalogs.has(id)) {
         const response = await api(query(RADIO_REFERENCE_IMPORT_PATHS.siteCatalog,
-          { system_id: id }), { timeoutMs: 65_000 });
+          { system_id: id, refresh: refreshRemote ? true : undefined }), { timeoutMs: 65_000 });
         state.siteCatalogs.set(id, rows(response).map((site) => ({
           site,
           searchText: [
@@ -929,6 +932,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       const systemDetails = systemDocument?.system || systemDocument || system;
       search.disabled = false;
       sort.disabled = false;
+      refresh.disabled = false;
       let offset = 0;
       const draw = () => {
         const term = search.value.trim().toLowerCase();
@@ -994,7 +998,8 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         count.textContent = 'Sites unavailable';
         const notice = feedback(error.message, 'error');
         const retry = button('Retry sites');
-        retry.addEventListener('click', () => void renderSites(system, target, systemDocument));
+        refresh.disabled = false;
+        retry.addEventListener('click', () => void renderSites(system, target, systemDocument, refreshRemote));
         notice.append(retry);
         list.replaceChildren(notice);
       }
@@ -1050,7 +1055,10 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     statusFilter.append(node('span', 'ui-field-label', 'Import status'), filter);
     const tableTools = node('div', 'radioreference-talkgroup-table-tools');
     const commandTools = node('div', 'radioreference-talkgroup-command-tools');
-    commandTools.append(tableTools, importAll);
+    const refresh = button('Refresh talkgroups');
+    refresh.prepend(iconGlyph('icon-refresh'));
+    refresh.setAttribute('aria-label', 'Refresh talkgroups from RadioReference');
+    commandTools.append(tableTools, refresh, importAll);
     const commandRow = node('div', 'radioreference-talkgroup-command-row');
     commandRow.append(statusFilter, commandTools);
     const actions = node('div', 'radioreference-talkgroup-actions ui-selection-bar');
@@ -1092,6 +1100,16 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     };
     updateCategoryStar();
     updateSelection();
+
+    const comparisonValue = (talkgroup, field, incoming) => {
+      if (state.talkgroupStatus !== 'DIFFERENT') return incoming;
+      const current = talkgroup.current_alias || talkgroup.currentAlias;
+      const value = node('span', 'ui-record-card-copy');
+      const saved = textValue(current, field === 'alpha_tag' ? ['alpha_tag', 'alphaTag'] : [field], '—');
+      value.append(node('span', '', `Current: ${saved}`),
+        node('small', 'muted', `RadioReference: ${incoming || '—'}`));
+      return value;
+    };
 
     const draw = () => {
       if (!catalog.length) {
@@ -1151,11 +1169,13 @@ export function createRadioReferenceImportWorkspace(dependencies) {
           render: (talkgroup) => String(firstValue(talkgroupValue(talkgroup),
             ['value', 'decimal', 'talkgroup_value'], talkgroupId(talkgroup) || 0)) },
         { id: 'alpha-tag', label: 'Alpha tag',
-          render: (talkgroup) => textValue(talkgroupValue(talkgroup),
-            ['alpha_tag', 'alphaTag', 'name'], 'Unnamed') },
+          render: (talkgroup) => comparisonValue(talkgroup, 'alpha_tag',
+            textValue(talkgroupValue(talkgroup), ['alpha_tag', 'alphaTag', 'name'], 'Unnamed')) },
         { id: 'description', label: 'Description',
-          render: (talkgroup) => textValue(talkgroupValue(talkgroup), ['description'], '—') },
-        { id: 'category', label: 'Category', render: talkgroupCategory },
+          render: (talkgroup) => comparisonValue(talkgroup, 'description',
+            textValue(talkgroupValue(talkgroup), ['description'], '—')) },
+        { id: 'category', label: 'Category',
+          render: (talkgroup) => comparisonValue(talkgroup, 'category', talkgroupCategory(talkgroup)) },
         { id: 'status', label: 'Status', fullLabel: 'Import status', render: (talkgroup) => {
           const value = importStatus(talkgroup);
           const content = node('span', 'radioreference-talkgroup-status');
@@ -1178,21 +1198,23 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       updateSelection();
     };
 
-    const load = async (force = false) => {
+    const load = async (force = false, refreshRemote = false) => {
       const sequence = ++loadSequence;
       const selectedAliasListId = aliasList.value;
       const key = systemIdValue + ':' + (selectedAliasListId || 'raw');
       aliasList.disabled = true;
+      refresh.disabled = true;
       tableHost.replaceChildren(feedback(selectedAliasListId ? 'Comparing talkgroups with Alias List…' :
         'Loading all talkgroups for instant filtering…', 'loading'));
       status.textContent = '';
       try {
-        if (force || !state.talkgroupCatalogs.has(key)) {
+        if (refreshRemote || force || !state.talkgroupCatalogs.has(key)) {
           let pending = state.talkgroupLoads.get(key);
           if (!pending) {
             pending = api(query(RADIO_REFERENCE_IMPORT_PATHS.talkgroupCatalog, {
               system_id: systemIdValue, alias_list_id: selectedAliasListId || undefined,
-              catalog_id: state.talkgroupCatalogId || undefined
+              catalog_id: refreshRemote ? undefined : state.talkgroupCatalogId || undefined,
+              refresh: refreshRemote ? true : undefined
             }), { timeoutMs: 65_000 });
             state.talkgroupLoads.set(key, pending);
           }
@@ -1203,6 +1225,11 @@ export function createRadioReferenceImportWorkspace(dependencies) {
             if (state.talkgroupLoads.get(key) === pending) state.talkgroupLoads.delete(key);
           }
           const loadedCatalogId = textValue(response, ['catalog_id', 'catalogId']) || null;
+          if (refreshRemote) {
+            for (const cachedKey of state.talkgroupCatalogs.keys()) {
+              if (cachedKey.startsWith(systemIdValue + ':')) state.talkgroupCatalogs.delete(cachedKey);
+            }
+          }
           state.talkgroupCatalogs.set(key, {
             catalogId: loadedCatalogId,
             categories: Array.isArray(response?.categories) ? response.categories : [],
@@ -1225,10 +1252,16 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         const saved = state.talkgroupCatalogs.get(key);
         state.talkgroupCatalogId = saved.catalogId;
         catalog = saved.items;
+        if (refreshRemote) {
+          const available = new Set(catalog.filter((item) => importStatus(item.row).tone !== 'danger')
+            .map((item) => talkgroupId(item.row)));
+          for (const id of selected) if (!available.has(id)) selected.delete(id);
+        }
+        refresh.disabled = false;
         filter.querySelectorAll('button').forEach((control) => {
           control.disabled = !aliasList.value && control.textContent !== 'All';
         });
-        if (!categoryRows.length && saved.categories.length && category.options.length <= 1) {
+        if (refreshRemote || !categoryRows.length && saved.categories.length && category.options.length <= 1) {
           setOptions(category, saved.categories, state.talkgroupCategoryId, 'All categories', true);
         }
         updateCategoryStar();
@@ -1243,6 +1276,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
           await load(true);
           return;
         }
+        refresh.disabled = false;
         tableHost.replaceChildren(feedback(error.message, 'error'));
         updateSelection();
       }
@@ -1280,6 +1314,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         }
       });
     };
+    refresh.addEventListener('click', () => void load(true, true));
     clear.addEventListener('click', () => { selected.clear(); draw(); });
     importSelected.classList.add('radioreference-import-selected');
     importAll.classList.add('radioreference-import-all');

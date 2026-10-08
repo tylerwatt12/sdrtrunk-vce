@@ -441,6 +441,9 @@
 
 .ui-metric-compact .ui-metric-copy > strong { font-size: var(--metric-value-compact-size); }
 
+/* Readouts with a meter start together when optional details differ in length. */
+.ui-metric-meter { align-items: flex-start; }
+
 /* Opt in when neighboring counters need shared label and value rows. Wrapped
    labels determine the row height without shifting individual values. */
 .ui-metric-grid-aligned > .ui-metric {

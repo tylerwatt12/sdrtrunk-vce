@@ -48,6 +48,7 @@ class StatsWebJavaScriptBehaviorTest
         contract("Live detail filters", "live-detail-filters.test.js", APP_JAVASCRIPT),
         contract("Live presentation", "live-presentation.test.js", APP_JAVASCRIPT),
         contract("Live bandwidth", "live-bandwidth.test.js", APP_JAVASCRIPT),
+        contract("Live impaired network", "live-network-simulation.test.js", APP_JAVASCRIPT),
         contract("Call matching deltas", "call-matching-deltas.test.js", APP_JAVASCRIPT),
         contract("source names", "source-names.test.js", CORE_MODULES.resolve("source-names.js")),
         contract("source name preference", "source-name-preference.test.js", APP_JAVASCRIPT),

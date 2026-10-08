@@ -27,7 +27,7 @@ import {
   createAliasList,
   createAliasListPopupTrigger as buildAliasListPopupTrigger
 } from './features/alias-list-create.js?v=5';
-import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=22';
+import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=23';
 import { createStreamingWorkspace } from './features/streaming.js?v=8';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=9';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=13';
@@ -312,6 +312,7 @@ let aliasEditorSelectionRequest = 0;
 let aliasEditorLastSelectionIndex = null;
 let aliasEditorContext = null;
 let aliasEditorPageController = null;
+let aliasEditorWorkspaceController = null;
 let accessSession = anonymousAccessSession();
 let accessSessionAvailable = false;
 let applicationRoutes = null;
@@ -1791,6 +1792,11 @@ function navigateTo(target, options = {}) {
   if (!closeReadOnlyModal(false, false, (closed) => {
     if (closed) navigateTo(target, options);
   })) return false;
+  if (aliasEditorWorkspaceController?.isCurrent?.() &&
+      aliasEditorWorkspaceController.canNavigate(target)) {
+    void aliasEditorWorkspaceController.navigate(target, options);
+    return true;
+  }
   return routeFoundation.navigate(window, target, (nextRoute) => {
     route = nextRoute;
     void render();
@@ -1860,7 +1866,6 @@ function exportCsvLink(dataset, context = {}, options = {}) {
   link.setAttribute('aria-label', label);
   link.title = label;
   if (options.loading) {
-    const target = link.href;
     let activeController = null;
     const reset = (errorMessage = '') => {
       link.classList.remove('is-loading');
@@ -1875,6 +1880,7 @@ function exportCsvLink(dataset, context = {}, options = {}) {
         activeController.abort();
         return;
       }
+      const target = link.href;
       const controller = new AbortController();
       activeController = controller;
       link.classList.add('is-loading');
@@ -3989,6 +3995,175 @@ function aliasListId(row) {
   return Number.isInteger(value) && value > 0 ? value : null;
 }
 
+function aliasEditorQueryFilters(query, listId = null, scanListId = null) {
+  return {
+    ...(listId ? { list: listId } : {}),
+    type: query.get('type'), matcher: query.get('matcher'), group: query.get('group'),
+    scan_list_id: scanListId || query.get('scanListId'), record: query.get('record'),
+    stream: query.get('stream'), evidence: query.get('evidence'), use: query.get('use'),
+    last_activity_before: query.get('lastActivityBefore'),
+    last_activity_after: query.get('lastActivityAfter')
+  };
+}
+
+async function requestAliasEditorData(selectedList, view, request = {}) {
+  const { query = new URLSearchParams(route), signal, scanList = null,
+    includeActivity = view !== 'configure', includeOptions = true, refreshCatalog = false } = request;
+  const listId = aliasListId(selectedList);
+  const filters = aliasEditorQueryFilters(query, scanList ? null : listId, scanList?.id);
+  const order = aliasEditorDefaultOrder(view);
+  const parameters = { q: query.get('q'), offset: query.get('offset'), limit: 100,
+    sort: query.get('sort') || (view === 'discover' ? 'last_seen' : order.sort),
+    direction: query.get('direction') || (view === 'discover' ? 'desc' : order.direction) };
+  const requestOptions = { signal, ...(view === 'activity' ? { timeoutMs: 35_000 } : {}) };
+  const pagePromise = view === 'discover' ?
+    apiPage(`/api/v1/alias-lists/${listId}/observed-group-identities`,
+      { ...parameters, include_exact: false }, requestOptions) :
+    apiPage('/api/v1/aliases', { ...parameters, ...filters,
+      ...(!includeActivity || scanList ? { include_activity: false } : {}) }, requestOptions);
+  const optionParameters = { alias_list_id: listId };
+  if (view === 'activity') optionParameters.include_group_names = false;
+  const optionsPromise = scanList || !includeOptions ? Promise.resolve(null) :
+    api('/api/v1/admin/aliases/options', optionParameters, { signal });
+  const catalogPromise = refreshCatalog ? requestJson(scanList ? '/api/v1/admin/scan-lists' :
+    '/api/v1/admin/alias-lists', { csrf: false, signal }) : Promise.resolve(null);
+  const [page, options, catalog] = await Promise.all([pagePromise, optionsPromise, catalogPromise]);
+  return { page, options, catalog, filters, query };
+}
+
+function aliasEditorBeginRequest(workspace = aliasEditorWorkspaceController) {
+  if (!workspace?.isCurrent?.()) return null;
+  workspace.requestController?.abort();
+  const controller = new AbortController();
+  workspace.requestController = controller;
+  const generation = ++workspace.requestGeneration;
+  const signal = AbortSignal.any([controller.signal, workspace.renderContext.signal]);
+  const draft = new Map([...workspace.main.querySelectorAll('form input[name], form select[name]')]
+    .filter((control) => control.type !== 'hidden').map((control) => [control.name, control.value]));
+  return { signal, draft, isCurrent: () => workspace.isCurrent() &&
+    generation === workspace.requestGeneration && !signal.aborted };
+}
+
+function aliasEditorUpdateCatalog(catalog, selectedList, options = null) {
+  if (catalog?.alias_lists) {
+    aliasEditorContext.lists = aliasEditorLists(catalog.alias_lists);
+    aliasEditorWorkspaceController?.rail?.updateLists(aliasEditorContext.lists,
+      aliasListId(selectedList));
+  }
+  const nextList = (catalog?.alias_lists || []).find((row) =>
+    aliasListId(row) === aliasListId(selectedList));
+  if (nextList || options?.alias_list) Object.assign(selectedList, nextList, options?.alias_list);
+  aliasEditorContext.selectedList = selectedList;
+  aliasEditorContext.revision = Number(options?.revision ?? catalog?.revision ??
+    aliasEditorContext.revision ?? 0);
+}
+
+function aliasEditorSubmitFilters(form, query = new URLSearchParams(route)) {
+  const values = new URLSearchParams(new FormData(form));
+  query = new URLSearchParams(query);
+  ['q', 'type', 'matcher', 'group', 'scanListId', 'record', 'stream', 'evidence', 'use',
+    'lastActivityAfter', 'lastActivityBefore', 'offset', 'alias'].forEach((key) => query.delete(key));
+  values.forEach((value, key) => {
+    if (!String(value).trim()) return;
+    const control = form.elements.namedItem(key);
+    query.set(key, control?.type === 'datetime-local' ? String(new Date(value).getTime()) : String(value));
+  });
+  void aliasEditorWorkspaceController?.navigate(`/?${query}`);
+}
+
+function aliasEditorReplaceFilters(previous, next, preserveDraft = true, startingDraft = null) {
+  const active = document.activeElement;
+  const focusName = previous.contains(active) ? active.name : null;
+  const selection = focusName && typeof active.selectionStart === 'number' ?
+    [active.selectionStart, active.selectionEnd] : null;
+  [...previous.elements].forEach((control) => {
+    if (!control.name || control.type === 'hidden') return;
+    if (!preserveDraft && (!startingDraft || startingDraft.get(control.name) === control.value)) return;
+    const replacement = next.elements.namedItem(control.name);
+    if (replacement) replacement.value = control.value;
+  });
+  previous.replaceWith(next);
+  if (focusName) {
+    const replacement = next.elements.namedItem(focusName);
+    replacement?.focus({ preventScroll: true });
+    if (selection && typeof replacement?.setSelectionRange === 'function' &&
+        ['text', 'search'].includes(replacement.type)) replacement.setSelectionRange(...selection);
+  }
+  return next;
+}
+
+function createAliasEditorWorkspaceController(element, main, rail, renderContext) {
+  const feedback = node('div', 'alias-editor-view-feedback');
+  feedback.setAttribute('role', 'status');
+  feedback.setAttribute('aria-live', 'polite');
+  main.prepend(feedback);
+  const controller = {
+    element, main, rail, feedback, renderContext, requestGeneration: 0, requestController: null,
+    pendingRequest: null, refreshCatalog: false, committedQuery: new URLSearchParams(route),
+    isCurrent: () => aliasEditorWorkspaceController === controller &&
+      renderIsCurrent(renderContext) && element.isConnected,
+    canNavigate: (value) => {
+      const target = routeFoundation.localTarget(window.location, value);
+      if (target?.searchParams.get('view') !== 'aliases') return false;
+      const scanListMode = !target.searchParams.get('list') && Boolean(target.searchParams.get('scanListId'));
+      return scanListMode === element.classList.contains('scan-list-members-workspace');
+    },
+    navigate: async (value, options = {}) => {
+      if (!controller.isCurrent() || !controller.canNavigate(value)) return false;
+      if (!closeReadOnlyModal(false, false, (closed) => {
+        if (closed) void controller.navigate(value, options);
+      })) return false;
+      const nextQuery = new URLSearchParams(new URL(value, window.location.href).search);
+      const previousQuery = new URLSearchParams(controller.committedQuery);
+      const previousContext = aliasEditorContext;
+      const previousPage = aliasEditorPageController;
+      const request = aliasEditorBeginRequest(controller);
+      controller.pendingRequest = request;
+      controller.refreshCatalog = options.refreshCatalog === true;
+      aliasEditorSelectionRequest += 1;
+      route = nextQuery;
+      main.setAttribute('aria-busy', 'true');
+      main.querySelectorAll('.alias-editor-table-section, .alias-bulk-bar, .alias-list-summary-actions')
+        .forEach((panel) => { panel.inert = true; });
+      feedback.replaceChildren(node('div', 'loading', 'Loading aliases…'));
+      try {
+        if (options.columnView && previousPage?.switchView) await previousPage.switchView(nextQuery, request);
+        else if (previousPage?.canNavigate?.(nextQuery)) await previousPage.navigate(nextQuery, request);
+        else await renderAliases();
+        if (!request.isCurrent()) return false;
+        const target = `/?${route}`;
+        if (options.history !== false) {
+          if (options.replace) window.history.replaceState({}, '', target);
+          else window.history.pushState({}, '', target);
+        }
+        controller.committedQuery = new URLSearchParams(route);
+        feedback.replaceChildren();
+        return true;
+      } catch (error) {
+        if (!request.isCurrent() || error?.name === 'AbortError') return false;
+        route = previousQuery;
+        aliasEditorContext = previousContext;
+        aliasEditorPageController = previousPage;
+        if (options.history === false) window.history.replaceState({}, '', `/?${previousQuery}`);
+        const retry = node('button', 'ui-button ui-button-secondary', 'Retry');
+        retry.type = 'button';
+        retry.addEventListener('click', () => void controller.navigate(value, options));
+        feedback.replaceChildren(node('div', 'error', `Could not load aliases. ${error.message}`), retry);
+        return false;
+      } finally {
+        if (request.isCurrent()) {
+          main.removeAttribute('aria-busy');
+          main.querySelectorAll('[inert]').forEach((panel) => { panel.inert = false; });
+          controller.pendingRequest = null;
+          controller.refreshCatalog = false;
+        }
+      }
+    }
+  };
+  renderContext.signal.addEventListener('abort', () => controller.requestController?.abort(), { once: true });
+  return controller;
+}
+
 function aliasListFamily(row) {
   return String(row?.family || '').trim().toUpperCase();
 }
@@ -4169,7 +4344,7 @@ function aliasListRail(lists, selectedList, usage) {
     select.append(option);
   });
   select.addEventListener('change', () => {
-    if (select.value) window.location.assign(href('aliases', { list: select.value, aliasTab: 'configure' }));
+    if (select.value) navigateTo(href('aliases', { list: select.value, aliasTab: 'configure' }));
   });
   mobile.append(select);
   const mobileCreate = node('button', 'ui-button ui-button-secondary alias-list-mobile-create', 'New Alias List');
@@ -4177,7 +4352,21 @@ function aliasListRail(lists, selectedList, usage) {
   mobileCreate.addEventListener('click', () => openAliasListCreateModal());
   mobile.append(mobileCreate);
   rail.append(header, search, list, mobile);
-  return { element: rail, updateChannelUsage };
+  return { element: rail, updateChannelUsage, updateLists: (nextLists, selectedId) => {
+    lists = nextLists;
+    selectedList = lists.find((row) => aliasListId(row) === Number(selectedId));
+    const currentSearch = search.value;
+    draw();
+    search.value = currentSearch;
+    select.replaceChildren(prompt);
+    lists.forEach((row) => {
+      const option = node('option', '', `${row.name} · ${aliasListFamilyLabel(row)} · ${aliasListCountLabel(row)}`);
+      option.value = String(aliasListId(row));
+      option.selected = aliasListId(row) === Number(selectedId);
+      select.append(option);
+    });
+    select.value = selectedId ? String(selectedId) : '';
+  } };
 }
 
 function aliasEditorView(selectedList) {
@@ -4320,6 +4509,8 @@ function aliasEditorFilterToolbar(aliasPage, options = null) {
     'datetime-local');
   const lastBefore = aliasEditorFilterInput('', aliasLocalDateTimeValue(route.get('lastActivityBefore')),
     'datetime-local');
+  lastAfter.name = 'lastActivityAfter';
+  lastBefore.name = 'lastActivityBefore';
   const filterGroup = (label, className, controls) => {
     const group = node('fieldset', `alias-filter-group ui-form-section ${className}`);
     const fields = node('div', 'alias-filter-group-fields');
@@ -4398,19 +4589,9 @@ function aliasEditorFilterToolbar(aliasPage, options = null) {
   browsingWorkflows.createFilterDisclosure({ node, openReadOnlyModal, form, panel: advancedFilters,
     button: advancedButton, clearAction: clearFilters, initialExpanded: activeAdvanced.length > 0,
     returnFocusSelector: '#alias-editor-filters-toggle', id: 'alias-editor-filters' });
-  form.addEventListener('submit', () => {
-    [[lastAfter, 'lastActivityAfter'], [lastBefore, 'lastActivityBefore']].forEach(([control, name]) => {
-      if (!control.value) return;
-      const hidden = node('input');
-      hidden.type = 'hidden';
-      hidden.name = name;
-      hidden.value = String(new Date(control.value).getTime());
-      form.append(hidden);
-    });
-    [...form.elements].forEach((control) => {
-      if (control.name && !['view', 'list', 'aliasTab'].includes(control.name) &&
-          !String(control.value || '').trim()) control.disabled = true;
-    });
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    aliasEditorSubmitFilters(form);
   });
   return form;
 }
@@ -4780,6 +4961,13 @@ async function finishAliasMutation(modal, result, routeChanges = {}) {
       Number.isInteger(currentListId) && currentListId > 0 && requestedListId === currentListId);
   let refreshed = false;
   resetAliasEditorSelection(localRefresh ? aliasEditorSelectionScope : null);
+  Object.entries(mutationRouteChanges).forEach(([key, value]) => {
+    if (value === null || value === undefined || value === '') route.delete(key);
+    else route.set(key, String(value));
+  });
+  route.delete('alias');
+  ALIAS_CREATE_ROUTE_KEYS.forEach((key) => route.delete(key));
+  route.delete('offset');
   if (localRefresh) {
     try {
       refreshed = await aliasEditorPageController.refresh();
@@ -4789,16 +4977,16 @@ async function finishAliasMutation(modal, result, routeChanges = {}) {
   }
   if (modal) modal.setDirty(false);
   closeReadOnlyModal(true);
-  Object.entries(mutationRouteChanges).forEach(([key, value]) => {
-    if (value === null || value === undefined || value === '') route.delete(key);
-    else route.set(key, String(value));
-  });
-  route.delete('alias');
-  ALIAS_CREATE_ROUTE_KEYS.forEach((key) => route.delete(key));
-  route.delete('offset');
   window.history.replaceState({}, '', currentHref());
   if (result?.revision !== undefined && aliasEditorContext) aliasEditorContext.revision = result.revision;
-  if (!refreshed) await render();
+  if (!refreshed) {
+    if (aliasEditorWorkspaceController?.isCurrent?.()) {
+      await aliasEditorWorkspaceController.navigate(currentHref(), { replace: true, refreshCatalog: true });
+    } else await render();
+  }
+  if (aliasEditorWorkspaceController?.isCurrent?.()) {
+    aliasEditorWorkspaceController.committedQuery = new URLSearchParams(route);
+  }
 }
 
 function openAliasListCreateModal() {
@@ -7014,10 +7202,20 @@ function observedGroupIdentityDetail(row, selectedList) {
 
 function openObservedGroupIdentityDetail(row, selectedList) {
   const id = identityNumber(row, row.group_identity_id);
-  openReadOnlyModal(`Observed ${groupIdentityLabel(row, null, false)} ${id}`,
+  const modal = openReadOnlyModal(`Observed ${groupIdentityLabel(row, null, false)} ${id}`,
     observedGroupIdentityDetail(row, selectedList), {
     id: `observed-group-identity-${id}`, className: 'alias-editor-modal observed-group-identity-modal'
   });
+  const target = entityReferenceAllowed(row?.entity_ref) ?
+    entityTarget(row.entity_ref, { channel: 'groups' }) : '';
+  if (modal && target) {
+    const label = `Open ${groupIdentityLabel(row, null, false).toLowerCase()} details in a new tab`;
+    const open = externalAnchor(iconGlyph('icon-open-details'), target,
+      'ui-button ui-button-secondary ui-icon-button');
+    open.setAttribute('aria-label', label);
+    open.title = label;
+    modal.dialog.querySelector('.modal-close').before(open);
+  }
 }
 
 function observedGroupIdentityToolbar(selectedList) {
@@ -7044,11 +7242,16 @@ function observedGroupIdentityToolbar(selectedList) {
       direction: route.get('direction')
     }), 'ui-button ui-button-secondary'));
   }
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    aliasEditorSubmitFilters(form);
+  });
   return form;
 }
 
 function renderObservedGroupIdentities(main, page, selectedList, renderContext, updateSummary) {
   const rows = [...(page.rows || [])].filter((row) => observedGroupIdentityMatchKind(row) !== 'exact');
+  let appliedQuery = new URLSearchParams(route);
   const columns = [
     { id: 'group-identity-id', label: 'Identity', fullLabel: 'Group identity', sort: 'group_identity',
       render: observedGroupIdentityValue },
@@ -7066,7 +7269,7 @@ function renderObservedGroupIdentities(main, page, selectedList, renderContext, 
   const tableController = {};
   const controller = {};
   const actions = node('div', 'section-title-actions ui-section-actions');
-  const observedTable = table(rows, columns,
+  const drawTable = () => table(rows, columns,
     'No observed groups without an exact alias are available for this list', {
       type: 'alias-observed-group-identities', serverSort: true, sortable: false,
       defaultSort: 'last_seen', defaultDirection: 'desc',
@@ -7074,7 +7277,7 @@ function renderObservedGroupIdentities(main, page, selectedList, renderContext, 
       rowKey: observedGroupIdentityKey, rowClass: 'observed-group-identity-row',
       onRowClick: (row) => openObservedGroupIdentityDetail(row, selectedList), layoutMenuHost: actions
     });
-  host.append(observedTable);
+  host.append(drawTable());
   const block = section('Observed Groups', host, actions);
   block.classList.add('alias-editor-table-section', 'observed-group-identity-section');
   const pagerHost = node('div');
@@ -7088,24 +7291,30 @@ function renderObservedGroupIdentities(main, page, selectedList, renderContext, 
       renderIsCurrent(renderContext) && main.isConnected,
     canRefreshMutation: (routeChanges) => routeChanges?.list === undefined ||
       Number(routeChanges.list) === aliasListId(selectedList),
-    refresh: async () => {
+    canNavigate: (query) => Number(query.get('list')) === aliasListId(selectedList) &&
+      query.get('aliasTab') === 'discover',
+    navigate: async (query, request) => controller.reload(query, request),
+    refresh: async () => controller.reload(new URLSearchParams(route), null, true),
+    reload: async (query, navigationRequest = null, mutation = false) => {
       if (!controller.isCurrent()) return false;
-      const nextPagePromise = apiPage(`/api/v1/alias-lists/${aliasListId(selectedList)}/observed-group-identities`,
-        pageParameters({ include_exact: false }));
-      const nextCatalogPromise = requestJson('/api/v1/admin/alias-lists', { csrf: false });
-      const [nextPage, nextCatalog] = await Promise.all([nextPagePromise, nextCatalogPromise]);
-      if (!controller.isCurrent()) return false;
+      const request = navigationRequest || aliasEditorBeginRequest();
+      const { page: nextPage, options: nextOptions, catalog: nextCatalog } =
+        await requestAliasEditorData(selectedList, 'discover', {
+          query, signal: request?.signal, refreshCatalog: mutation
+        });
+      if (!controller.isCurrent() || !request?.isCurrent()) return false;
       rows.splice(0, rows.length, ...(nextPage.rows || [])
         .filter((row) => observedGroupIdentityMatchKind(row) !== 'exact'));
       aliasEditorContext.page = nextPage;
-      const nextList = (nextCatalog.alias_lists || [])
-        .find((row) => aliasListId(row) === aliasListId(selectedList));
-      if (nextList) {
-        Object.assign(selectedList, nextList);
-        aliasEditorContext.selectedList = selectedList;
-        updateSummary?.(selectedList);
-      }
-      tableController.replaceRows(rows);
+      aliasEditorContext.options = nextOptions;
+      aliasEditorUpdateCatalog(nextCatalog, selectedList, nextOptions);
+      updateSummary?.(selectedList);
+      const toolbar = main.querySelector('.observed-group-identity-toolbar');
+      aliasEditorReplaceFilters(toolbar, observedGroupIdentityToolbar(selectedList),
+        mutation || appliedQuery.get('q') === query.get('q'), request?.draft);
+      appliedQuery = new URLSearchParams(query);
+      if (mutation) tableController.replaceRows(rows);
+      else host.replaceChildren(drawTable());
       pagerHost.replaceChildren(pager({ ...nextPage, rows }));
       return true;
     }
@@ -7113,15 +7322,12 @@ function renderObservedGroupIdentities(main, page, selectedList, renderContext, 
   return controller;
 }
 
-async function renderScanListMembers(main, scanListCatalog, scanList, renderContext) {
-  const filters = {
-    type: route.get('type'), matcher: route.get('matcher'), group: route.get('group'),
-    scan_list_id: scanList.id, record: route.get('record'), stream: route.get('stream'),
-    evidence: route.get('evidence'), use: route.get('use'),
-    last_activity_before: route.get('lastActivityBefore'), last_activity_after: route.get('lastActivityAfter')
-  };
-  let page = await apiPage('/api/v1/aliases', pageParameters({ ...filters, include_activity: false }));
-  if (!renderIsCurrent(renderContext) || !main.isConnected) return;
+async function renderScanListMembers(main, scanListCatalog, scanList, renderContext, request, mount) {
+  const query = new URLSearchParams(route);
+  let { page, filters } = await requestAliasEditorData(null, 'configure', {
+    query, scanList, signal: request?.signal
+  });
+  if (!renderIsCurrent(renderContext) || !request?.isCurrent() || !mount()) return;
   const options = {
     scan_lists: scanListCatalog.scan_lists || [], scan_list_scope: true
   };
@@ -7129,8 +7335,8 @@ async function renderScanListMembers(main, scanListCatalog, scanList, renderCont
   aliasEditorContext.options = options;
   aliasEditorContext.revision = Number(scanListCatalog.revision ?? 0);
   const rows = [...(page.rows || [])];
-  const selectionFilters = { ...filters, q: route.get('q') };
-  const selectionScope = aliasSelectionScopeKey('scan-list-members', selectionFilters);
+  let selectionFilters = { ...filters, q: route.get('q') };
+  let selectionScope = aliasSelectionScopeKey('scan-list-members', selectionFilters);
   synchronizeAliasEditorSelectionScope(selectionScope);
 
   const summary = node('section', 'alias-list-summary scan-list-member-summary ui-summary-card');
@@ -7161,7 +7367,8 @@ async function renderScanListMembers(main, scanListCatalog, scanList, renderCont
   removeAll.addEventListener('click', () => openFullScanListMembershipModal(scanList, 'remove'));
   summaryActions.append(addAll, removeAll);
   summary.append(summaryCopy, summaryActions);
-  main.append(summary, aliasEditorFilterToolbar(page, options));
+  let filterToolbar = aliasEditorFilterToolbar(page, options);
+  main.append(summary, filterToolbar);
 
   const tableHost = node('div', 'alias-catalog-table-host alias-editor-table-host');
   const tableController = {};
@@ -7176,6 +7383,7 @@ async function renderScanListMembers(main, scanListCatalog, scanList, renderCont
       const id = Number(tableRow?.dataset.id);
       checkbox.checked = aliasEditorSelection.has(id);
       tableRow?.classList.toggle('selected', checkbox.checked);
+      tableRow?.setAttribute('aria-selected', String(checkbox.checked));
     });
     syncAliasPageSelectionHeader(tableHost, rows);
     bulkBar?.update();
@@ -7183,8 +7391,8 @@ async function renderScanListMembers(main, scanListCatalog, scanList, renderCont
     if (message) selectionStatus.append(node(error ? 'div' : 'span', error ? 'error' : 'muted', message));
   };
   const actions = node('div', 'section-title-actions ui-section-actions');
-  const filtersActive = aliasEditorHasActiveFilters(true);
-  const aliasTable = table(rows, scanListMemberColumns(rows, updateSelection),
+  let filtersActive = aliasEditorHasActiveFilters(true);
+  const drawTable = () => table(rows, scanListMemberColumns(rows, updateSelection),
     filtersActive ? 'No aliases match these filters' : 'No aliases belong to this scan list', {
       type: 'alias-scan-list-members', serverSort: true, sortable: false,
       defaultSort: 'name', defaultDirection: 'asc', rowKey: (row) => row.alias_id,
@@ -7212,7 +7420,7 @@ async function renderScanListMembers(main, scanListCatalog, scanList, renderCont
         openAliasEditorFromRow(row);
       }
   });
-  tableHost.append(aliasTable);
+  tableHost.append(drawTable());
 
   const selectAll = node('button', 'ui-button ui-button-secondary alias-select-all', 'Select All Matching');
   selectAll.type = 'button';
@@ -7227,7 +7435,8 @@ async function renderScanListMembers(main, scanListCatalog, scanList, renderCont
   ]).forEach((queryKey, routeKey) => {
     if (route.get(routeKey)) exportContext[queryKey] = route.get(routeKey);
   });
-  actions.append(exportCsvLink('aliases', exportContext, { loading: true }));
+  const exportLink = exportCsvLink('aliases', exportContext, { loading: true });
+  actions.append(exportLink);
   const block = section(`Aliases in ${scanList.name}`, tableHost, actions);
   block.classList.add('alias-editor-table-section', 'scan-list-member-table-section');
   const resultCount = node('p', 'ui-section-note alias-filter-result-count',
@@ -7250,21 +7459,38 @@ async function renderScanListMembers(main, scanListCatalog, scanList, renderCont
     isCurrent: () => aliasEditorPageController === pageController &&
       renderIsCurrent(renderContext) && main.isConnected,
     canRefreshMutation: (routeChanges) => routeChanges?.list === undefined,
-    refresh: async () => {
+    canNavigate: (query) => !query.get('list') && Number(query.get('scanListId')) === Number(scanList.id),
+    navigate: async (query, request) => pageController.reload(query, request),
+    refresh: async () => pageController.reload(new URLSearchParams(route), null, true),
+    reload: async (query, navigationRequest = null, mutation = false) => {
       if (!pageController.isCurrent()) return false;
-      const nextPagePromise = apiPage('/api/v1/aliases', pageParameters({ ...filters, include_activity: false }));
-      const nextCatalogPromise = requestJson('/api/v1/admin/scan-lists', { csrf: false });
-      const [nextPage, nextCatalog] = await Promise.all([nextPagePromise, nextCatalogPromise]);
-      if (!pageController.isCurrent()) return false;
-      const nextScanList = (nextCatalog.scan_lists || []).find((row) => Number(row.id) === Number(scanList.id));
+      const request = navigationRequest || aliasEditorBeginRequest();
+      const { page: nextPage, catalog: nextCatalog, filters: nextFilters } =
+        await requestAliasEditorData(null, 'configure', {
+          query, signal: request?.signal, scanList, refreshCatalog: mutation
+        });
+      if (!pageController.isCurrent() || !request?.isCurrent()) return false;
+      const nextScanList = nextCatalog ?
+        (nextCatalog.scan_lists || []).find((row) => Number(row.id) === Number(scanList.id)) : scanList;
       if (!nextScanList) return false;
+      const previousScope = selectionScope;
+      filters = nextFilters;
+      exportLink.href = exportCsvHref('aliases', filters);
+      selectionFilters = { ...filters, q: query.get('q') };
+      selectionScope = aliasSelectionScopeKey('scan-list-members', selectionFilters);
+      synchronizeAliasEditorSelectionScope(selectionScope);
+      filtersActive = aliasEditorHasActiveFilters(true);
       rows.splice(0, rows.length, ...(nextPage.rows || []));
       page = nextPage;
       resultCount.textContent = aliasEditorResultCount(nextPage, filtersActive);
       Object.assign(scanList, nextScanList);
       aliasEditorContext.page = nextPage;
-      aliasEditorContext.revision = Number(nextCatalog.revision ?? aliasEditorContext.revision ?? 0);
-      tableController.replaceRows(rows);
+      aliasEditorContext.revision = Number(nextCatalog?.revision ?? aliasEditorContext.revision ?? 0);
+      if (nextCatalog) options.scan_lists = nextCatalog.scan_lists || [];
+      filterToolbar = aliasEditorReplaceFilters(filterToolbar, aliasEditorFilterToolbar(nextPage, options),
+        mutation || previousScope === selectionScope, request?.draft);
+      if (mutation) tableController.replaceRows(rows);
+      else tableHost.replaceChildren(drawTable());
       pagerHost.replaceChildren(pager(nextPage));
       updateSummary(scanList);
       addAll.disabled = !(aliasEditorContext?.lists || []).length;
@@ -7277,27 +7503,37 @@ async function renderScanListMembers(main, scanListCatalog, scanList, renderCont
 }
 
 async function renderAliases() {
-  const renderContext = captureRenderContext();
-  aliasEditorPageController = null;
+  const retainedWorkspace = aliasEditorWorkspaceController?.isCurrent?.() ?
+    aliasEditorWorkspaceController : null;
+  const renderContext = retainedWorkspace?.renderContext || captureRenderContext();
+  let request = retainedWorkspace?.pendingRequest;
+  const isCurrent = () => renderIsCurrent(renderContext) && (!request || request.isCurrent());
+  const requestOptions = { signal: request?.signal || renderContext.signal };
+  if (!retainedWorkspace) aliasEditorPageController = null;
   const requestedListId = /^[1-9][0-9]*$/.test(route.get('list') || '') ? Number(route.get('list')) : null;
   const requestedScanListId = !route.get('list') && /^[1-9][0-9]*$/.test(route.get('scanListId') || '') ?
     Number(route.get('scanListId')) : null;
   const activityRequested = ['activity', 'calls', 'evidence'].includes(route.get('aliasTab'));
   const requestedTable = route.get('aliasTab') !== 'discover' &&
     (requestedListId !== null || requestedScanListId !== null);
-  clearInactiveAliasSelection(aliasAdminAllowed() && requestedTable);
+  if (!retainedWorkspace) clearInactiveAliasSelection(aliasAdminAllowed() && requestedTable);
   if (!aliasAdminAllowed()) throw Object.assign(new Error('Administrator access is required.'), { status: 403 });
-  const aliasListMetadataPromise = apiPage('/api/v1/alias-lists?limit=500');
-  const editorCatalogPromise = activityRequested ?
-    requestJson('/api/v1/admin/alias-lists?include_counts=false', { csrf: false }) :
-    requestJson('/api/v1/admin/alias-lists', { csrf: false });
+  const reuseCatalog = retainedWorkspace && !retainedWorkspace.refreshCatalog;
+  const aliasListMetadataPromise = reuseCatalog ?
+    Promise.resolve({ rows: aliasEditorContext?.lists || [] }) :
+    apiPage('/api/v1/alias-lists?limit=500', {}, requestOptions);
+  const editorCatalogPromise = reuseCatalog ? Promise.resolve({
+    alias_lists: aliasEditorContext?.lists || [], revision: aliasEditorContext?.revision
+  }) : activityRequested ?
+    requestJson('/api/v1/admin/alias-lists?include_counts=false', { csrf: false, ...requestOptions }) :
+    requestJson('/api/v1/admin/alias-lists', { csrf: false, ...requestOptions });
   const scanListCatalogPromise = requestedScanListId ?
-    requestJson('/api/v1/admin/scan-lists', { csrf: false }) :
+    requestJson('/api/v1/admin/scan-lists', { csrf: false, ...requestOptions }) :
     Promise.resolve({ revision: null, scan_lists: [] });
   const [aliasListMetadata, editorCatalog, scanListCatalog] = await Promise.all([
     aliasListMetadataPromise, editorCatalogPromise, scanListCatalogPromise
   ]);
-  if (!renderIsCurrent(renderContext)) return;
+  if (!isCurrent()) return;
   const lists = aliasEditorLists(editorCatalog.alias_lists || [], aliasListMetadata.rows || []);
   let selectedList = lists.find((row) => aliasListId(row) === Number(route.get('list')));
   if (route.get('createAlias') === '1' && route.has('createListId')) {
@@ -7314,49 +7550,65 @@ async function renderAliases() {
   const scanListScope = requestedScanListId ?
     (scanListCatalog.scan_lists || []).find((row) => Number(row.id) === requestedScanListId) :
     null;
-  aliasEditorContext = {
+  const nextEditorContext = {
     admin: true, revision: Number(scanListScope ? scanListCatalog.revision : editorCatalog.revision ?? 0),
     lists, selectedList, scanListScope, options: null, page: null
   };
+  if (!retainedWorkspace) aliasEditorContext = nextEditorContext;
 
   const scanListMode = Boolean(requestedScanListId);
   const subtitle = scanListScope ?
     `${number(scanListScope.alias_count || 0)} members across all alias lists · administrator editing enabled` :
     (scanListMode ? 'Scan list unavailable · administrator editing enabled' :
       `${number(lists.length)} alias lists · administrator editing enabled`);
-  const workspace = node('div', scanListMode ?
+  const workspace = retainedWorkspace?.element || node('div', scanListMode ?
     'alias-editor-workspace scan-list-members-workspace data-workspace' :
     'alias-editor-workspace editor-workspace');
-  const usage = { canEditChannels: capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_CHANNELS),
-    channelsByList: null, error: false };
-  const rail = scanListMode ? null : aliasListRail(lists, selectedList, usage);
-  if (rail) workspace.append(rail.element);
-  const main = node('div', 'alias-editor-main');
-  workspace.append(main);
-  if (!beginPage(renderContext, pageHeader(scanListMode ? 'Scan List Members' : 'Alias Editor', subtitle),
-    workspace)) return;
+  const usage = retainedWorkspace?.usage || {
+    canEditChannels: capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_CHANNELS), channelsByList: null, error: false };
+  const rail = retainedWorkspace?.rail || (scanListMode ? null : aliasListRail(lists, selectedList, usage));
+  if (rail && !rail.element.isConnected) workspace.append(rail.element);
+  const main = retainedWorkspace?.main || node('div', 'alias-editor-main');
+  if (!main.isConnected) workspace.append(main);
+  if (!retainedWorkspace) {
+    if (!beginPage(renderContext, pageHeader(scanListMode ? 'Scan List Members' : 'Alias Editor', subtitle),
+      workspace)) return;
+    aliasEditorWorkspaceController = createAliasEditorWorkspaceController(workspace, main, rail, renderContext);
+    aliasEditorWorkspaceController.usage = usage;
+    request = aliasEditorBeginRequest();
+    requestOptions.signal = request.signal;
+  }
+  const mount = () => {
+    if (!isCurrent()) return false;
+    clearInactiveAliasSelection(aliasAdminAllowed() && requestedTable);
+    aliasEditorContext = nextEditorContext;
+    if (retainedWorkspace) main.replaceChildren(retainedWorkspace.feedback);
+    rail?.updateLists(lists, aliasListId(selectedList));
+    return true;
+  };
   let updateUsageCard = () => {};
   if (rail) {
     const channelCatalogPath = usage.canEditChannels ? '/api/v1/admin/channels' : '/api/v1/channel-catalog';
     requestJson(channelCatalogPath, { csrf: false, signal: renderContext.signal })
       .then((catalog) => {
-        if (!renderIsCurrent(renderContext) || !workspace.isConnected) return;
+        if (!isCurrent() || !workspace.isConnected) return;
         usage.channelsByList = aliasListChannelUsage(catalog?.channels || []);
         rail.updateChannelUsage();
         updateUsageCard();
       }).catch((error) => {
-        if (!renderIsCurrent(renderContext) || !workspace.isConnected || error?.name === 'AbortError') return;
+        if (!isCurrent() || !workspace.isConnected || error?.name === 'AbortError') return;
         usage.error = true;
         updateUsageCard();
       });
   }
 
   if (scanListScope) {
-    await renderScanListMembers(main, scanListCatalog, scanListScope, renderContext);
+    await renderScanListMembers(main, scanListCatalog, scanListScope, renderContext, request, mount);
     return;
   }
 
   if (requestedScanListId) {
+    if (!mount()) return;
     clearInactiveAliasSelection(false);
     const missing = node('section', 'alias-editor-welcome ui-empty-state');
     missing.append(node('h2', '', 'Scan list not found'),
@@ -7367,6 +7619,7 @@ async function renderAliases() {
   }
 
   if (!selectedList) {
+    if (!mount()) return;
     clearInactiveAliasSelection(false);
     main.append(aliasEditorEmptyState(lists));
     return;
@@ -7376,29 +7629,21 @@ async function renderAliases() {
   let defaultOrder = aliasEditorDefaultOrder(view);
   const activityLoading = view === 'activity' ?
     node('div', 'loading alias-activity-loading', 'Preparing alias activity…') : null;
-  if (activityLoading) {
+  if (activityLoading && !retainedWorkspace) {
     activityLoading.setAttribute('role', 'status');
     activityLoading.setAttribute('aria-live', 'polite');
     main.append(activityLoading);
   }
-  const filters = {
+  let filters = {
     list: aliasListId(selectedList), type: route.get('type'), matcher: route.get('matcher'),
     group: route.get('group'), scan_list_id: route.get('scanListId'), record: route.get('record'),
     stream: route.get('stream'), evidence: route.get('evidence'), use: route.get('use'),
     last_activity_before: route.get('lastActivityBefore'), last_activity_after: route.get('lastActivityAfter')
   };
-  const pagePromise = view === 'discover' ?
-    apiPage(`/api/v1/alias-lists/${aliasListId(selectedList)}/observed-group-identities`,
-      pageParameters({ include_exact: false })) : apiPage('/api/v1/aliases',
-    pageParameters({ ...filters, ...(view === 'configure' ? { include_activity: false } : {}),
-        sort: route.get('sort') || defaultOrder.sort,
-        direction: route.get('direction') || defaultOrder.direction }),
-      view === 'activity' ? { timeoutMs: 35_000 } : {});
-  const optionParameters = { alias_list_id: aliasListId(selectedList) };
-  if (view === 'activity') optionParameters.include_group_names = false;
-  const optionsPromise = api('/api/v1/admin/aliases/options', optionParameters);
-  let [page, initialOptions] = await Promise.all([pagePromise, optionsPromise]);
-  if (!renderIsCurrent(renderContext) || !main.isConnected) return;
+  const dataPromise = requestAliasEditorData(selectedList, view, requestOptions);
+  let { page, options: initialOptions } = await dataPromise;
+  if (!isCurrent() || !main.isConnected) return;
+  if (!mount()) return;
   activityLoading?.remove();
   let options = initialOptions;
   aliasEditorContext.page = page;
@@ -7419,8 +7664,8 @@ async function renderAliases() {
     aliasEditorContext.revision = Number(options.revision);
   }
   const rows = [...(page.rows || [])];
-  const selectionFilters = { ...filters, q: route.get('q') };
-  const selectionScope = aliasSelectionScopeKey('alias-list', selectionFilters);
+  let selectionFilters = { ...filters, q: route.get('q') };
+  let selectionScope = aliasSelectionScopeKey('alias-list', selectionFilters);
   synchronizeAliasEditorSelectionScope(selectionScope);
 
   const summary = node('section', 'alias-list-summary ui-summary-card');
@@ -7462,7 +7707,7 @@ async function renderAliases() {
   updateUsageCard = usageCard.update;
   let switchView = null;
   const viewTabs = aliasEditorViewTabs(selectedList, (nextView) => switchView?.(nextView));
-  const filterToolbar = view === 'discover' ? observedGroupIdentityToolbar(selectedList) :
+  let filterToolbar = view === 'discover' ? observedGroupIdentityToolbar(selectedList) :
     aliasEditorFilterToolbar(page, options);
   main.append(summary, usageCard.element, viewTabs, filterToolbar);
 
@@ -7489,6 +7734,7 @@ async function renderAliases() {
       const id = Number(row?.dataset.id);
       checkbox.checked = aliasEditorSelection.has(id);
       row?.classList.toggle('selected', checkbox.checked);
+      row?.setAttribute('aria-selected', String(checkbox.checked));
     });
     syncAliasPageSelectionHeader(tableHost, rows);
     bulkBar?.update();
@@ -7496,7 +7742,7 @@ async function renderAliases() {
     if (message) selectionStatus.append(node(error ? 'div' : 'span', error ? 'error' : 'muted', message));
   };
   const columnsForView = () => aliasEditorColumns(view, rows, updateSelection);
-  const filtersActive = aliasEditorHasActiveFilters();
+  let filtersActive = aliasEditorHasActiveFilters();
   const renderTable = () => {
     const aliasTable = table(rows, columnsForView(), filtersActive ?
       'No aliases match these filters' : 'This Alias List has no aliases yet', {
@@ -7546,7 +7792,8 @@ async function renderAliases() {
   exportFilters.forEach((queryKey, routeKey) => {
     if (route.get(routeKey)) exportContext[queryKey] = route.get(routeKey);
   });
-  actions.append(exportCsvLink('aliases', exportContext, { loading: true }));
+  const exportLink = exportCsvLink('aliases', exportContext, { loading: true });
+  actions.append(exportLink);
   const pagerHost = node('div');
   pagerHost.append(pager(page));
   const viewTitle = (selectedView) => selectedView === 'configure' ? 'Alias Configuration' :
@@ -7571,29 +7818,28 @@ async function renderAliases() {
   main.append(bulkBar, block);
 
   let activityLoaded = view !== 'configure';
-  let activityPagePromise = null;
+  let appliedQuery = new URLSearchParams(route);
   let viewSwitchRequest = 0;
   let dataVersion = 0;
-  switchView = async (nextView) => {
+  switchView = async (nextView, navigationRequest = null) => {
+    if (!['configure', 'activity', 'custom'].includes(nextView) ||
+        nextView === view && !aliasEditorWorkspaceController.pendingRequest) return;
+    if (!navigationRequest) return aliasEditorWorkspaceController.navigate(
+      aliasEditorViewHref(selectedList, nextView, view), { columnView: true });
     const request = ++viewSwitchRequest;
     const currentDataVersion = dataVersion;
     viewFeedback.replaceChildren();
-    if (nextView === view || !['configure', 'activity', 'custom'].includes(nextView)) return;
     if (nextView !== 'configure' && !activityLoaded) {
       viewFeedback.append(node('div', 'loading alias-activity-loading', 'Preparing alias activity…'));
       try {
-        if (!activityPagePromise) {
-          const pending = apiPage('/api/v1/aliases', pageParameters({
-            ...filters, sort: route.get('sort') || defaultOrder.sort,
-            direction: route.get('direction') || defaultOrder.direction
-          }), { timeoutMs: 35_000 }).finally(() => {
-            if (activityPagePromise === pending) activityPagePromise = null;
-          });
-          activityPagePromise = pending;
-        }
-        const activityPage = await activityPagePromise;
+        const activityQuery = new URLSearchParams(appliedQuery);
+        activityQuery.set('sort', activityQuery.get('sort') || defaultOrder.sort);
+        activityQuery.set('direction', activityQuery.get('direction') || defaultOrder.direction);
+        const { page: activityPage } = await requestAliasEditorData(selectedList, 'activity', {
+          query: activityQuery, signal: navigationRequest.signal, includeOptions: false
+        });
         if (request !== viewSwitchRequest || currentDataVersion !== dataVersion ||
-            !pageController.isCurrent()) return;
+            !pageController.isCurrent() || !navigationRequest.isCurrent()) return;
         const activityRows = new Map((activityPage.rows || []).map((row) => [Number(row.alias_id), row]));
         rows.splice(0, rows.length, ...rows.map((row) =>
           ({ ...row, ...(activityRows.get(Number(row.alias_id)) || {}) })));
@@ -7601,18 +7847,13 @@ async function renderAliases() {
         aliasEditorContext.page = page;
         activityLoaded = true;
       } catch (error) {
-        if (request === viewSwitchRequest && pageController.isCurrent() && error?.name !== 'AbortError') {
-          viewFeedback.replaceChildren(node('div', 'error',
-            `Could not load alias activity. ${error.message}`));
-        }
-        return;
+        viewFeedback.replaceChildren();
+        throw error;
       }
     }
     if (request !== viewSwitchRequest || currentDataVersion !== dataVersion ||
-        !pageController.isCurrent()) return;
-    const target = aliasEditorViewHref(selectedList, nextView, view);
-    window.history.pushState({}, '', target);
-    route = new URLSearchParams(new URL(target, window.location.href).search);
+        !pageController.isCurrent() || !navigationRequest.isCurrent()) return;
+    appliedQuery = new URLSearchParams(route);
     view = nextView;
     defaultOrder = aliasEditorDefaultOrder(view);
     ['aliasTab', 'sort', 'direction'].forEach((name) => {
@@ -7643,23 +7884,34 @@ async function renderAliases() {
       renderIsCurrent(renderContext) && main.isConnected,
     canRefreshMutation: (routeChanges) => routeChanges?.list === undefined ||
       Number(routeChanges.list) === aliasListId(selectedList),
-    refresh: async () => {
+    canNavigate: (query) => Number(query.get('list')) === aliasListId(selectedList) &&
+      query.get('aliasTab') !== 'discover',
+    switchView: (query, request) => switchView(query.get('aliasTab'), request),
+    navigate: async (query, request) => pageController.reload(query, request),
+    refresh: async () => pageController.reload(new URLSearchParams(route), null, true),
+    reload: async (query, navigationRequest = null, mutation = false) => {
       if (!pageController.isCurrent()) return false;
+      const request = navigationRequest || aliasEditorBeginRequest();
       viewSwitchRequest += 1;
       dataVersion += 1;
-      activityPagePromise = null;
       viewFeedback.replaceChildren();
-      const nextPagePromise = apiPage('/api/v1/aliases', pageParameters({
-        ...filters, ...(view === 'configure' && !activityLoaded ? { include_activity: false } : {}),
-        sort: route.get('sort') || defaultOrder.sort,
-        direction: route.get('direction') || defaultOrder.direction
-      }));
-      const nextOptionsPromise = api('/api/v1/admin/aliases/options', optionParameters);
-      const nextCatalogPromise = requestJson('/api/v1/admin/alias-lists', { csrf: false });
-      const [nextPage, nextOptions, nextCatalog] = await Promise.all([
-        nextPagePromise, nextOptionsPromise, nextCatalogPromise
-      ]);
-      if (!pageController.isCurrent()) return false;
+      const nextView = aliasEditorView(selectedList);
+      const { page: nextPage, options: nextOptions, catalog: nextCatalog, filters: nextFilters } =
+        await requestAliasEditorData(selectedList, nextView, {
+          query, signal: request?.signal, includeActivity: activityLoaded || nextView !== 'configure',
+          refreshCatalog: mutation
+        });
+      if (!pageController.isCurrent() || !request?.isCurrent()) return false;
+      appliedQuery = new URLSearchParams(query);
+      view = nextView;
+      defaultOrder = aliasEditorDefaultOrder(view);
+      filters = nextFilters;
+      exportLink.href = exportCsvHref('aliases', filters);
+      selectionFilters = { ...filters, q: query.get('q') };
+      const previousScope = selectionScope;
+      selectionScope = aliasSelectionScopeKey('alias-list', selectionFilters);
+      synchronizeAliasEditorSelectionScope(selectionScope);
+      filtersActive = aliasEditorHasActiveFilters();
       rows.splice(0, rows.length, ...(nextPage.rows || []));
       page = nextPage;
       activityLoaded = activityLoaded || view !== 'configure';
@@ -7668,17 +7920,22 @@ async function renderAliases() {
       aliasEditorContext.page = nextPage;
       aliasEditorContext.options = nextOptions;
       aliasEditorContext.revision = Number(nextOptions?.revision ?? aliasEditorContext.revision ?? 0);
-      const nextList = (nextCatalog.alias_lists || [])
-        .find((row) => aliasListId(row) === aliasListId(selectedList));
-      const nextOptionsList = nextOptions?.alias_list;
-      if (nextList || nextOptionsList) {
-        selectedList = { ...selectedList, ...nextList, ...nextOptionsList };
-        aliasEditorContext.selectedList = selectedList;
-        updateSummary(selectedList);
-      }
-      tableController.replaceRows(rows);
+      aliasEditorUpdateCatalog(nextCatalog, selectedList, nextOptions);
+      updateSummary(selectedList);
+      filterToolbar = aliasEditorReplaceFilters(filterToolbar, aliasEditorFilterToolbar(nextPage, nextOptions),
+        mutation || previousScope === selectionScope, request?.draft);
+      setAliasEditorViewTabs(viewTabs, view);
+      block.querySelector(':scope > .section-title').firstChild.textContent = viewTitle(view);
+      viewDescription.textContent = view === 'configure' ?
+        'Configuration controls what the alias matches and what happens to its calls. Open an alias to edit it.' :
+        'Calls are completed transmissions. Signaling counts recognized system actions. A call can also have signaling, ' +
+          'so the columns should not be added together. An em dash means unavailable; 0 means monitored with none ' +
+          'observed.';
+      if (mutation) tableController.replaceRows(rows);
+      else renderTable();
       pagerHost.replaceChildren(pager(nextPage));
       updateSelection();
+      if (query.has('alias')) await openAliasEditorModal('edit', Number(query.get('alias')));
       return true;
     }
   };
@@ -10125,13 +10382,16 @@ function synchronizeLiveChannelActivitySource() {
     liveChannelActivityState = 'connecting';
     const source = liveConnection('channel_activity', parameters, false);
     liveChannelActivitySource = source;
+    const reportHealthyDelivery = () => {
+      if (liveChannelActivitySource !== source || liveChannelActivityNeedsResync ||
+          liveChannelActivityState !== 'error') return;
+      liveChannelActivityState = 'open';
+      liveChannelActivitySubscribers.forEach((target) => invokeLiveSubscriber(target, 'open'));
+    };
     source.addEventListener('snapshot', (event) => {
       try {
         applyLiveChannelActivitySnapshot(JSON.parse(event.data));
-        if (!liveChannelActivityNeedsResync && liveChannelActivityState === 'error') {
-          liveChannelActivityState = 'open';
-          liveChannelActivitySubscribers.forEach((target) => invokeLiveSubscriber(target, 'open'));
-        }
+        reportHealthyDelivery();
       } catch (error) {
         //Ignore a malformed optional live update and retain the last complete snapshot.
       }
@@ -10159,6 +10419,7 @@ function synchronizeLiveChannelActivitySource() {
         else if (update.table) liveChannelActivityTables.set(id, update.table);
         if (revision) liveChannelActivityRevision = revision;
         liveChannelActivitySubscribers.forEach((target) => invokeLiveSubscriber(target, 'activityTable', update));
+        reportHealthyDelivery();
       } catch (error) {
         //Ignore one malformed update; a later snapshot restores authoritative state.
       }
@@ -10179,6 +10440,7 @@ function synchronizeLiveChannelActivitySource() {
         else liveChannelActivityTables.set(id, merged.table);
         liveChannelActivityRevision = revision;
         liveChannelActivitySubscribers.forEach((target) => invokeLiveSubscriber(target, 'activityTable', merged));
+        reportHealthyDelivery();
       } catch (_) {
         reportLiveChannelActivityGap({ reason: 'channel_activity_invalid_delta' }, true);
       }
@@ -18580,7 +18842,7 @@ function saveP25VisualizerEventSettings(value) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=34');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=35');
   const visualizerModule = await p25VisualizerModulePromise;
   if (!renderIsCurrent(renderContext)) return;
   const visualizer = visualizerModule.createP25Visualizer({
@@ -27556,7 +27818,7 @@ function receiverHealthResourceBar(row) {
   const scale = receiverHealthResourceScale(row);
   const item = metricCard(label, row.value, value);
   item.classList.remove('ui-metric-blue');
-  item.classList.add('receiver-health-resource-bar', 'ui-metric-compact',
+  item.classList.add('receiver-health-resource-bar', 'ui-metric-compact', 'ui-metric-meter',
     `receiver-health-${severity}`,
     `ui-metric-${severity === 'critical' ? 'danger' : severity === 'warning' ? 'warning' : 'success'}`);
   const copy = item.querySelector('.ui-metric-copy');
@@ -27599,9 +27861,10 @@ function receiverHealthMeasurementRow(row) {
     receiverHealthText(row.display_label || row.label));
   identity.append(scope, label);
   const reading = node('div', 'receiver-health-measurement-value');
-  reading.append(node('strong', '', receiverHealthText(row.value)));
+  const value = node('strong', '', receiverHealthText(row.value));
   const unit = receiverHealthText(row.unit, '');
-  if (unit) reading.append(node('small', 'ui-metric-unit', unit));
+  if (unit) value.append(node('small', 'ui-metric-unit', unit));
+  reading.append(value);
   heading.append(identity, reading, receiverHealthStatus(row.severity));
   item.append(heading);
   const detail = receiverHealthText(row.detail, '');
@@ -27610,7 +27873,9 @@ function receiverHealthMeasurementRow(row) {
     const technical = node('details', 'ui-section-disclosure ui-section-disclosure-flat');
     technical.append(node('summary', 'ui-section-summary', 'Radio identity'),
       keyValues([['Receiver', receiverHealthText(row.scope)], ['Identity', receiverHealthText(row.label)]]));
-    item.append(technical);
+    const technicalBody = node('div', 'ui-record-card-body');
+    technicalBody.append(technical);
+    item.append(technicalBody);
   }
   return item;
 }
@@ -31355,6 +31620,11 @@ window.addEventListener('popstate', () => {
   const target = window.location.href;
   if (!closeReadOnlyModal(false, false, (closed) => { if (closed) navigateTo(target); })) {
     window.history.pushState({}, '', previous);
+    return;
+  }
+  if (aliasEditorWorkspaceController?.isCurrent?.() &&
+      aliasEditorWorkspaceController.canNavigate(target)) {
+    void aliasEditorWorkspaceController.navigate(target, { history: false });
     return;
   }
   route = new URLSearchParams(window.location.search);

@@ -201,8 +201,8 @@ body[data-view="network-visualizer"] .content {
 }
 
 .network-visualizer-label[data-signal="call"] {
-  color: var(--network-activity);
-  border-color: var(--network-activity);
+  color: var(--network-tx);
+  border-color: var(--network-tx);
 }
 
 .network-visualizer-renderer-status,
@@ -244,7 +244,6 @@ body[data-view="network-visualizer"] .content {
   border-color: var(--danger);
 }
 
-.network-visualizer-back,
 .network-visualizer-scope-title,
 .network-visualizer-auto-focus,
 .network-visualizer-manual-guide,
@@ -259,6 +258,8 @@ body[data-view="network-visualizer"] .content {
 }
 
 .network-visualizer-back {
+  position: absolute;
+  z-index: 5;
   top: var(--space-3);
   left: var(--space-3);
 }

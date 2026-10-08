@@ -136,10 +136,7 @@
 
 .receiver-health-measurement-value {
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: var(--space-1);
+  text-align: end;
   overflow-wrap: anywhere;
 }
 
@@ -187,6 +184,6 @@
   .receiver-health-measurement-value {
     grid-column: 1;
     grid-row: 2;
-    align-items: flex-start;
+    text-align: start;
   }
 }

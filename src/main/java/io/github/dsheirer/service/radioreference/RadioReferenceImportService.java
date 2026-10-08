@@ -43,6 +43,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -71,6 +75,12 @@ public final class RadioReferenceImportService
     private final Map<String,PendingChannel> mPendingChannels = new HashMap<>();
     private final Map<String,PendingTalkgroups> mPendingTalkgroups = new HashMap<>();
     private final Map<String,RemoteCatalog> mTalkgroupCatalogs = new LinkedHashMap<>();
+    private final Map<Integer,RemoteCatalog> mSystemTalkgroupCatalogs = new LinkedHashMap<>();
+    private final Map<Integer,TrunkedSystemDetails> mSystemDetails = new LinkedHashMap<>();
+    private final Map<Integer,List<TrunkedSiteDetails>> mSiteCatalogs = new LinkedHashMap<>();
+    private final Map<Integer,CompletableFuture<RemoteCatalog>> mTalkgroupLoads = new HashMap<>();
+    private final Map<Integer,CompletableFuture<TrunkedSystemDetails>> mSystemLoads = new HashMap<>();
+    private final Map<Integer,CompletableFuture<List<TrunkedSiteDetails>>> mSiteLoads = new HashMap<>();
     private long mSessionGeneration;
 
     public RadioReferenceImportService(RadioReferenceDirectoryService directory,
@@ -231,9 +241,16 @@ public final class RadioReferenceImportService
     public TalkgroupPage talkgroupCatalog(int systemId, Long aliasListId, String catalogId)
         throws RadioReferenceDirectoryException
     {
+        return talkgroupCatalog(systemId, aliasListId, catalogId, false);
+    }
+
+    public TalkgroupPage talkgroupCatalog(int systemId, Long aliasListId, String catalogId, boolean refresh)
+        throws RadioReferenceDirectoryException
+    {
         positive(systemId, "system_id");
-        RemoteCatalog catalog = catalogId == null || catalogId.isBlank() ? loadTalkgroupCatalog(systemId) :
-            requireTalkgroupCatalog(catalogId, systemId);
+        RemoteCatalog catalog = refresh || catalogId == null || catalogId.isBlank() ?
+            cachedCatalog(systemId, refresh, mSystemTalkgroupCatalogs, mTalkgroupLoads,
+                () -> loadTalkgroupCatalog(systemId)) : requireTalkgroupCatalog(catalogId, systemId);
         DecoderPlan decoder = systemDecoder(catalog.system());
         requireSupported(decoder);
         if(aliasListId == null)
@@ -255,12 +272,7 @@ public final class RadioReferenceImportService
     private RemoteCatalog loadTalkgroupCatalog(int systemId) throws RadioReferenceDirectoryException
     {
         long started = System.nanoTime();
-        long generation;
-        synchronized(this)
-        {
-            generation = mSessionGeneration;
-        }
-        TrunkedSystemDetails system = requireSystem(systemId);
+        TrunkedSystemDetails system = systemDetails(systemId, false);
         long systemLoaded = System.nanoTime();
         DecoderPlan decoder = systemDecoder(system);
         requireSupported(decoder);
@@ -272,23 +284,13 @@ public final class RadioReferenceImportService
             Duration.ofNanos(talkgroupsLoaded - systemLoaded).toMillis(),
             Duration.ofNanos(System.nanoTime() - talkgroupsLoaded).toMillis(), talkgroups.size());
         RemoteCatalog catalog = new RemoteCatalog(UUID.randomUUID().toString(), system, talkgroups, categories);
-        synchronized(this)
-        {
-            if(generation != mSessionGeneration)
-            {
-                throw new IllegalStateException("RadioReference account changed; reload talkgroups");
-            }
-            if(mTalkgroupCatalogs.size() >= MAXIMUM_TALKGROUP_CATALOGS)
-            {
-                mTalkgroupCatalogs.remove(mTalkgroupCatalogs.keySet().iterator().next());
-            }
-            mTalkgroupCatalogs.put(catalog.id(), catalog);
-        }
         return catalog;
     }
 
     private synchronized RemoteCatalog requireTalkgroupCatalog(String catalogId, int systemId)
+        throws RadioReferenceDirectoryException
     {
+        requireCatalogSession();
         RemoteCatalog catalog = mTalkgroupCatalogs.get(catalogId);
         if(catalog == null || catalog.system().id() != systemId)
         {
@@ -302,6 +304,12 @@ public final class RadioReferenceImportService
     {
         mSessionGeneration++;
         mTalkgroupCatalogs.clear();
+        mSystemTalkgroupCatalogs.clear();
+        mSystemDetails.clear();
+        mSiteCatalogs.clear();
+        cancelCatalogLoads(mTalkgroupLoads);
+        cancelCatalogLoads(mSystemLoads);
+        cancelCatalogLoads(mSiteLoads);
         mPendingTalkgroups.clear();
         mPendingChannels.clear();
     }
@@ -360,7 +368,8 @@ public final class RadioReferenceImportService
                 .filter(Objects::nonNull).findFirst().orElse("RadioReference talkgroup import is invalid");
             throw new IllegalArgumentException(error);
         }
-        List<TalkgroupRow> rows = annotatedRows(remote, prepared.categoriesById(), aliasPreview.rows());
+        List<TalkgroupRow> rows = annotatedRows(options.aliasList().getId(), aliasPreview.revision(), remote,
+            prepared.categoriesById(), aliasPreview.rows());
         int rowCount = rows.size();
         List<TalkgroupRow> displayed = rows.subList(0, Math.min(rowCount, MAXIMUM_TALKGROUP_PREVIEW_ROWS));
         TalkgroupImportPreview preview = storeTalkgroups(options.aliasList().getId(), aliasPreview, plan,
@@ -742,7 +751,8 @@ public final class RadioReferenceImportService
             throw new IllegalArgumentException(preview.rows().stream().map(AliasImportService.Row::error)
                 .filter(Objects::nonNull).findFirst().orElse("RadioReference talkgroup preview is invalid"));
         }
-        return new AliasRows(preview.revision(), annotatedRows(remote, prepared.categoriesById(), preview.rows()));
+        return new AliasRows(preview.revision(), annotatedRows(aliasListId, preview.revision(), remote,
+            prepared.categoriesById(), preview.rows()));
     }
 
     private PreparedAliases prepareAliases(long aliasListId, Protocol protocol, List<RemoteTalkgroup> remote,
@@ -769,10 +779,14 @@ public final class RadioReferenceImportService
             Collections.unmodifiableMap(new HashMap<>(categoriesById)));
     }
 
-    private static List<TalkgroupRow> annotatedRows(List<RemoteTalkgroup> remote,
-                                                    Map<Integer,String> categories,
-                                                    List<AliasImportService.Row> rows)
+    private List<TalkgroupRow> annotatedRows(long aliasListId, long revision, List<RemoteTalkgroup> remote,
+                                             Map<Integer,String> categories, List<AliasImportService.Row> rows)
     {
+        AliasAdministrationService.TransferSnapshot snapshot = mAliases.transferSnapshot(aliasListId);
+        requireSameRevision(revision, snapshot.options().revision());
+        Map<Long,CurrentAlias> currentAliases = new HashMap<>();
+        snapshot.aliases().forEach(entry -> currentAliases.put(entry.alias().getId(),
+            new CurrentAlias(entry.alias().getName(), entry.alias().getDescription(), entry.alias().getGroup())));
         if(remote.size() != rows.size())
         {
             throw new IllegalStateException("RadioReference talkgroup preview row mismatch");
@@ -791,7 +805,7 @@ public final class RadioReferenceImportService
                     "RadioReference talkgroup preview is invalid");
             };
             result.add(new TalkgroupRow(talkgroup, categories.get(talkgroup.categoryId()), status, row.aliasId(),
-                row.changes()));
+                row.changes(), currentAliases.get(row.aliasId())));
         }
         return List.copyOf(result);
     }
@@ -821,9 +835,159 @@ public final class RadioReferenceImportService
         }
     }
 
+    /** Account-scoped, bounded source catalogs; explicit refresh keeps the previous successful value on failure. */
+    public TrunkedSystemDetails systemDetails(int systemId, boolean refresh)
+        throws RadioReferenceDirectoryException
+    {
+        positive(systemId, "system_id");
+        return cachedCatalog(systemId, refresh, mSystemDetails, mSystemLoads, () -> {
+            TrunkedSystemDetails system = mDirectory.trunkedSystemDetails(systemId);
+            if(system == null || system.id() != systemId)
+                throw new IllegalArgumentException("RadioReference system was not found");
+            return system;
+        });
+    }
+
+    public List<TrunkedSiteDetails> siteCatalog(int systemId, boolean refresh)
+        throws RadioReferenceDirectoryException
+    {
+        positive(systemId, "system_id");
+        return cachedCatalog(systemId, refresh, mSiteCatalogs, mSiteLoads,
+            () -> List.copyOf(mDirectory.allTrunkedSites(systemId)));
+    }
+
+    private <T> T cachedCatalog(int systemId, boolean refresh, Map<Integer,T> values,
+                                Map<Integer,CompletableFuture<T>> loads, CatalogLoader<T> loader)
+        throws RadioReferenceDirectoryException
+    {
+        requireCatalogSession();
+        CompletableFuture<T> pending;
+        boolean owner;
+        long generation;
+        synchronized(this)
+        {
+            if(!refresh && values.containsKey(systemId)) return values.get(systemId);
+            generation = mSessionGeneration;
+            pending = loads.get(systemId);
+            if(pending != null && pending.isDone())
+            {
+                loads.remove(systemId, pending);
+                pending = null;
+            }
+            owner = pending == null;
+            if(owner)
+            {
+                if(loads.size() >= MAXIMUM_TALKGROUP_CATALOGS)
+                    throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.BUSY);
+                pending = new CompletableFuture<>();
+                loads.put(systemId, pending);
+            }
+        }
+        Thread worker = null;
+        if(owner)
+        {
+            CompletableFuture<T> shared = pending;
+            worker = Thread.ofVirtual().name("radioreference-catalog").start(() -> {
+                try
+                {
+                    T value = loader.load();
+                    synchronized(this)
+                    {
+                        if(generation != mSessionGeneration || shared.isDone())
+                            throw new IllegalStateException("RadioReference catalog load was cancelled; reload the catalog");
+                        if(!values.containsKey(systemId) && values.size() >= MAXIMUM_TALKGROUP_CATALOGS)
+                            values.remove(values.keySet().iterator().next());
+                        if(value instanceof RemoteCatalog catalog)
+                        {
+                            if(mTalkgroupCatalogs.size() >= MAXIMUM_TALKGROUP_CATALOGS)
+                            {
+                                RemoteCatalog removed = mTalkgroupCatalogs.remove(
+                                    mTalkgroupCatalogs.keySet().iterator().next());
+                                mSystemTalkgroupCatalogs.remove(removed.system().id(), removed);
+                            }
+                            mTalkgroupCatalogs.put(catalog.id(), catalog);
+                        }
+                        values.put(systemId, value);
+                        shared.complete(value);
+                    }
+                }
+                catch(Exception exception) { shared.completeExceptionally(exception); }
+                finally
+                {
+                    synchronized(this) { loads.remove(systemId, shared); }
+                }
+            });
+        }
+        try
+        {
+            T value = pending.get(60, TimeUnit.SECONDS);
+            requireCatalogSession();
+            synchronized(this)
+            {
+                if(generation != mSessionGeneration)
+                    throw new IllegalStateException("RadioReference account changed; reload the catalog");
+            }
+            return value;
+        }
+        catch(InterruptedException exception)
+        {
+            if(worker != null)
+            {
+                pending.completeExceptionally(new RadioReferenceDirectoryException(
+                    RadioReferenceDirectoryException.Code.INTERRUPTED));
+                worker.interrupt();
+            }
+            Thread.currentThread().interrupt();
+            throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.INTERRUPTED);
+        }
+        catch(TimeoutException exception)
+        {
+            if(worker != null)
+            {
+                pending.completeExceptionally(new RadioReferenceDirectoryException(
+                    RadioReferenceDirectoryException.Code.TIMEOUT));
+                worker.interrupt();
+            }
+            throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.TIMEOUT);
+        }
+        catch(ExecutionException exception)
+        {
+            if(exception.getCause() instanceof RadioReferenceDirectoryException failure) throw failure;
+            if(exception.getCause() instanceof RuntimeException failure) throw failure;
+            throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.UNAVAILABLE);
+        }
+    }
+
+    @FunctionalInterface
+    private interface CatalogLoader<T> { T load() throws RadioReferenceDirectoryException; }
+
+    private void requireCatalogSession() throws RadioReferenceDirectoryException
+    {
+        try { mDirectory.requireCatalogSession(); }
+        catch(RadioReferenceDirectoryException exception)
+        {
+            if(exception.code() == RadioReferenceDirectoryException.Code.NOT_AUTHENTICATED ||
+                exception.code() == RadioReferenceDirectoryException.Code.INVALID_CREDENTIALS ||
+                exception.code() == RadioReferenceDirectoryException.Code.PREMIUM_REQUIRED ||
+                exception.code() == RadioReferenceDirectoryException.Code.CLOSED)
+                clearSessionData();
+            throw exception;
+        }
+    }
+
+    private static <T> void cancelCatalogLoads(Map<Integer,CompletableFuture<T>> loads)
+    {
+        loads.values().forEach(load -> load.completeExceptionally(
+            new IllegalStateException("RadioReference account changed; reload the catalog")));
+        loads.clear();
+    }
+
     private TrunkedSystemDetails requireSystem(int systemId) throws RadioReferenceDirectoryException
     {
-        TrunkedSystemDetails system = mDirectory.trunkedSystemDetails(systemId);
+        requireCatalogSession();
+        TrunkedSystemDetails system;
+        synchronized(this) { system = mSystemDetails.get(systemId); }
+        if(system == null) system = mDirectory.trunkedSystemDetails(systemId);
         if(system == null || system.id() != systemId)
         {
             throw new IllegalArgumentException("RadioReference system was not found");
@@ -833,7 +997,11 @@ public final class RadioReferenceImportService
 
     private TrunkedSiteDetails requireSite(int systemId, int siteId) throws RadioReferenceDirectoryException
     {
-        return mDirectory.allTrunkedSites(systemId).stream().filter(site -> site.id() == siteId)
+        requireCatalogSession();
+        List<TrunkedSiteDetails> sites;
+        synchronized(this) { sites = mSiteCatalogs.get(systemId); }
+        if(sites == null) sites = mDirectory.allTrunkedSites(systemId);
+        return sites.stream().filter(site -> site.id() == siteId)
             .findFirst().orElseThrow(() -> new IllegalArgumentException("RadioReference site was not found"));
     }
 
@@ -1080,9 +1248,18 @@ public final class RadioReferenceImportService
         }
     }
 
+    public record CurrentAlias(String alphaTag, String description, String category) {}
+
     public record TalkgroupRow(RemoteTalkgroup talkgroup, String category, TalkgroupStatus status,
-                               Long existingAliasId, List<AliasImportService.Change> changes)
+                               Long existingAliasId, List<AliasImportService.Change> changes,
+                               CurrentAlias currentAlias)
     {
+        public TalkgroupRow(RemoteTalkgroup talkgroup, String category, TalkgroupStatus status,
+                            Long existingAliasId, List<AliasImportService.Change> changes)
+        {
+            this(talkgroup, category, status, existingAliasId, changes, null);
+        }
+
         public TalkgroupRow
         {
             changes = List.copyOf(changes);
@@ -1145,6 +1322,7 @@ public final class RadioReferenceImportService
 
     interface DirectoryAccess
     {
+        default void requireCatalogSession() throws RadioReferenceDirectoryException {}
         TrunkedSystemDetails trunkedSystemDetails(int systemId) throws RadioReferenceDirectoryException;
         List<TrunkedSiteDetails> allTrunkedSites(int systemId)
             throws RadioReferenceDirectoryException;
@@ -1164,6 +1342,16 @@ public final class RadioReferenceImportService
         private DirectoryAdapter
         {
             Objects.requireNonNull(service);
+        }
+
+        @Override public void requireCatalogSession() throws RadioReferenceDirectoryException
+        {
+            RadioReferenceDirectoryService.AccountState state = service.status().state();
+            if(state != RadioReferenceDirectoryService.AccountState.VALID_PREMIUM)
+                throw new RadioReferenceDirectoryException(
+                    state == RadioReferenceDirectoryService.AccountState.EXPIRED_PREMIUM ?
+                    RadioReferenceDirectoryException.Code.PREMIUM_REQUIRED :
+                    RadioReferenceDirectoryException.Code.NOT_AUTHENTICATED);
         }
 
         @Override public TrunkedSystemDetails trunkedSystemDetails(int systemId)
