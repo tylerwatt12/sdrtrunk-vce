@@ -1862,6 +1862,14 @@ function exportCsvLink(dataset, context = {}, options = {}) {
   if (options.loading !== false) {
     let activeController = null;
     let feedback = null;
+    let readyDownload = null;
+    const clearReadyDownload = () => {
+      if (!readyDownload) return;
+      URL.revokeObjectURL(readyDownload.url);
+      readyDownload.link.remove();
+      pageConnections.delete(readyDownload.cleanup);
+      readyDownload = null;
+    };
     const showFeedback = (message, state = 'info') => {
       if (!link.isConnected) return;
       if (!feedback?.isConnected) {
@@ -1888,6 +1896,7 @@ function exportCsvLink(dataset, context = {}, options = {}) {
         activeController.abort();
         return;
       }
+      clearReadyDownload();
       const controller = new AbortController();
       const target = link.href;
       activeController = controller;
@@ -1918,16 +1927,15 @@ function exportCsvLink(dataset, context = {}, options = {}) {
           }
           const blob = await response.blob();
           if (controller.signal.aborted || !link.isConnected) return;
-          const download = document.createElement('a');
           const objectUrl = URL.createObjectURL(blob);
-          download.href = objectUrl;
+          const download = anchor('Download CSV', objectUrl, 'ui-button ui-button-secondary');
           download.download = exportCsvFileName(response, `${dataset}.csv`);
-          download.hidden = true;
-          document.body.append(download);
-          download.click();
-          download.remove();
-          window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
+          const downloadCleanup = { close: clearReadyDownload };
+          readyDownload = { url: objectUrl, link: download, cleanup: downloadCleanup };
+          pageConnections.add(downloadCleanup);
           showFeedback('CSV prepared. Check your browser’s downloads.');
+          feedback.append(' ', download);
+          download.click();
         } catch (error) {
           if (error?.name === 'AbortError') {
             showFeedback('CSV export canceled.');

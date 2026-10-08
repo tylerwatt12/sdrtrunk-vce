@@ -24,6 +24,19 @@ test.describe('Talker Alias report downloads', () => {
   async function openReport(page, presentation) {
     await page.setViewportSize(presentation.viewport);
     const fixture = await installSiteStyleApplication(page, presentation.theme);
+    await page.addInitScript(() => {
+      const create = URL.createObjectURL.bind(URL), revoke = URL.revokeObjectURL.bind(URL);
+      window.fixtureReportUrls = { created: [], revoked: [] };
+      URL.createObjectURL = value => {
+        const url = create(value);
+        window.fixtureReportUrls.created.push(url);
+        return url;
+      };
+      URL.revokeObjectURL = url => {
+        window.fixtureReportUrls.revoked.push(url);
+        revoke(url);
+      };
+    });
     const state = { requests: [], pending: [], deferred: true, failure: null, invalidContentType: null, downloads: [] };
     page.on('download', download => state.downloads.push(download));
     const system = { protocol: 'P25', radio_system_key: systemKey, wacn: 0xBEE00, system_id: 0x348,
@@ -114,6 +127,51 @@ test.describe('Talker Alias report downloads', () => {
       expect(page.url()).toBe(fixture.state.originalUrl);
       await expectNoHorizontalOverflow(page, '#content');
       await capture(page, `success-${presentation.name}`);
+      expect(fixture.pageErrors).toEqual([]);
+      expect(fixture.unexpected).toEqual([]);
+    });
+  }
+
+  for (const presentation of presentations) {
+    test(`ready CSV supports direct ${presentation.theme === 'light' ? 'pointer' : 'keyboard'} download without refetch and releases old URLs ${presentation.name}`, async ({ page }) => {
+      const fixture = await openReport(page, presentation);
+      fixture.state.deferred = false;
+      const automatic = page.waitForEvent('download');
+      await fixture.action().click();
+      await verifyDownload(await automatic);
+      const save = page.getByRole('link', { name: 'Download CSV', exact: true });
+      await expect(save).toBeVisible();
+      const firstUrl = await save.getAttribute('href');
+      expect(firstUrl).toMatch(/^blob:/);
+      // A direct save must remain usable after the old one-second handoff cleanup window.
+      await page.waitForTimeout(1_100);
+      expect(await page.evaluate(() => window.fixtureReportUrls.revoked)).not.toContain(firstUrl);
+      await expectNoHorizontalOverflow(page, '#content');
+      await capture(page, `fallback-ready-${presentation.name}`);
+      const direct = page.waitForEvent('download');
+      if (presentation.theme === 'light') await save.click();
+      else {
+        await save.focus();
+        await page.keyboard.press('Enter');
+      }
+      await verifyDownload(await direct);
+      expect(fixture.state.requests).toHaveLength(1);
+      expect(fixture.state.downloads).toHaveLength(2);
+      expect(page.url()).toBe(fixture.state.originalUrl);
+      const retry = page.waitForEvent('download');
+      await fixture.action().click();
+      await verifyDownload(await retry);
+      await expect.poll(() => page.evaluate(() => window.fixtureReportUrls.revoked)).toContain(firstUrl);
+      const secondUrl = await save.getAttribute('href');
+      expect(secondUrl).toMatch(/^blob:/);
+      expect(secondUrl).not.toBe(firstUrl);
+      expect(fixture.state.requests).toHaveLength(2);
+      if (presentation.theme === 'dark') await page.getByRole('button', { name: 'Open navigation', exact: true }).click();
+      await page.getByRole('link', { name: 'Administration', exact: true }).click();
+      await expect(page).toHaveURL(/view=admin/);
+      await expect.poll(() => page.evaluate(() => window.fixtureReportUrls.revoked)).toContain(secondUrl);
+      await expect(page.locator('.export-csv-feedback')).toHaveCount(0);
+      expect(fixture.state.downloads).toHaveLength(3);
       expect(fixture.pageErrors).toEqual([]);
       expect(fixture.unexpected).toEqual([]);
     });
