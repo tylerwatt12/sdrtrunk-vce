@@ -60,7 +60,7 @@ async function installLiveStream(page) {
       header.setBigInt64(40, BigInt(Date.now()), true);
       header.setBigInt64(48, BigInt(centerHz), true);
       header.setInt32(56, sampleRateHz, true);
-      header.setInt32(60, 2048, true);
+      header.setInt32(60, count || 2048, true);
       header.setInt32(64, 0, true);
       header.setInt32(68, count, true);
       if (compact) {
@@ -72,7 +72,8 @@ async function installLiveStream(page) {
       frame.set(payload, headerBytes);
       return frame;
     };
-    const emit = (centerHz, parameters = activeParameters, { streamState = 'live', reason = null } = {}) => {
+    const emit = (centerHz, parameters = activeParameters,
+      { streamState = 'live', reason = null, fftValues = null } = {}) => {
       if (!controller || controller.desiredSize === null) return;
       activeParameters = parameters;
       const state = {
@@ -87,6 +88,14 @@ async function installLiveStream(page) {
       }
       controller.enqueue(multiplex(5, 2, diagnostic(1, encoder.encode(JSON.stringify(state)), centerHz)));
       if (streamState !== 'live') return;
+      fftValues ??= window.spectrumDragStream.fftValues;
+      if (fftValues) {
+        const payload = new Uint8Array(fftValues.length * 4);
+        const view = new DataView(payload.buffer);
+        fftValues.forEach((value, index) => view.setFloat32(index * 4, value, true));
+        controller.enqueue(multiplex(5, 2, diagnostic(4, payload, centerHz, fftValues.length)));
+        return;
+      }
       const compact = parameters.strength_encoding === 'packed6';
       const values = new Uint8Array(2048).fill(compact ? 20 : 118);
       values[900] = compact ? 63 : 180;
@@ -101,7 +110,7 @@ async function installLiveStream(page) {
       }
       controller.enqueue(multiplex(5, 2, diagnostic(4, payload, centerHz, values.length, compact)));
     };
-    window.spectrumDragStream = { emit, opened: 0, cancelled: 0 };
+    window.spectrumDragStream = { emit, opened: 0, cancelled: 0, initialEmitted: false };
     document.addEventListener('pointerdown', (event) => {
       if (event.target.matches('.tuner-spectrum-canvas')) window.spectrumDragPointerId = event.pointerId;
     }, true);
@@ -118,7 +127,10 @@ async function installLiveStream(page) {
         start(value) {
           controller = value;
           controller.enqueue(ready);
-          window.setTimeout(() => emit(initialCenterHz), 50);
+          window.setTimeout(() => {
+            window.spectrumDragStream.initialEmitted = true;
+            emit(initialCenterHz);
+          }, 50);
         },
         cancel() { controller = null; window.spectrumDragStream.cancelled += 1; }
       }), { status: 200, headers: { 'Content-Type': 'application/vnd.sdrtrunk.live+binary' } }));
@@ -275,6 +287,39 @@ test('one display choice changes both plots, disables manual controls and follow
   await embedded.getByRole('button', { name: 'Display options', exact: true }).click();
   await expect(embedded.locator('input[name="auto_range_on_retune"]')).not.toBeChecked();
 });
+
+for (const width of [1280, 390]) {
+  test(`auto range uses visible FFT pixels instead of deep raw nulls at ${width}px`, async ({ page }) => {
+    const state = await install(page);
+    await page.setViewportSize({ width, height: 900 });
+    await expect.poll(() => page.evaluate(() => window.spectrumDragStream.initialEmitted)).toBe(true);
+    const center = INITIAL_CENTER_HZ + 1000000;
+    state.centerHz = center;
+    await page.evaluate((centerHz) => {
+      window.spectrumDragStream.fftValues = Array.from({ length: 8192 }, (_, index) =>
+        index % 8 === 0 ? -116 : -70);
+      window.spectrumDragStream.emit(centerHz);
+    }, center);
+    const trigger = page.getByRole('button', {
+      name: width < 600 ? 'More spectrum actions' : 'Display options', exact: true
+    });
+    await trigger.click();
+    const options = page.locator('.tuner-spectrum-options-panel');
+    const floor = options.getByRole('slider', { name: 'Lower display limit', exact: true });
+    await expect(floor).toHaveValue('-70');
+    await expect(floor).toBeDisabled();
+    await expect(options.locator('output[aria-label="FFT and waterfall display range"]'))
+      .toHaveText('FFT and waterfall: -70 to 0 dB');
+    await page.evaluate((centerHz) => {
+      window.spectrumDragStream.fftValues = Array.from({ length: 8192 }, (_, index) =>
+        index % 8 === 0 ? -130 : -90);
+      window.spectrumDragStream.emit(centerHz);
+    }, center);
+    await expect(floor).toHaveValue('-70');
+    expect(state.requests.filter((request) => request.path === '/api/v1/me/preferences' && request.method !== 'GET'))
+      .toHaveLength(0);
+  });
+}
 
 test('Live and Setup retain manual settings and automatic minimum on the same center frequency', async ({ page }) => {
   await install(page);

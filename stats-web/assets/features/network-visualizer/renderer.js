@@ -6,6 +6,9 @@ const LABEL_LIMIT = 90;
 const AUTO_ROTATE_SPEED = 0.34;
 const FOCUS_FADE_MS = 220;
 const SYSTEM_FOG_DEPTH = 0.83;
+const AFFILIATION_MOVE_MS = 1_100;
+const AFFILIATION_ATTACH_MS = 180;
+const MAX_AFFILIATION_MOVES = 4;
 
 let vendorPromise;
 const loadVendor = () => vendorPromise ||= import(new URL(VENDOR_ASSET, import.meta.url).href);
@@ -22,6 +25,16 @@ function clamp(value, minimum, maximum) {
 function ease(value) {
   const progress = clamp(value, 0, 1);
   return progress < 0.5 ? 4 * progress ** 3 : 1 - (-2 * progress + 2) ** 3 / 2;
+}
+
+function enqueueAffiliationChange(queue, change) {
+  if (queue.some((entry) => entry.id === change.id)) return false;
+  if (queue.length >= MAX_AFFILIATION_MOVES) {
+    // Retain the current trip and bounded FIFO; coalesce overflow into the final saved destination.
+    const previous = queue[queue.length - 2];
+    queue[queue.length - 1] = { ...change, fromGroupKey: previous.toGroupKey, from: previous.target };
+  } else queue.push(change);
+  return true;
 }
 
 function calculateFocusBounds(keys, nodes, movements) {
@@ -64,7 +77,7 @@ function createUnavailable(host, message, signal) {
   signal?.addEventListener?.('abort', dispose, { once: true });
   return Object.freeze({ available: false, setData: () => {}, setMode: () => {}, setCameraPhase: () => {},
     enterSystem: () => false, enterTalkgroup: () => false, showOverview: () => false, focus: () => false,
-    home: () => false,
+    home: () => false, focusAffiliation: () => false,
     moveManualCamera: () => false, enterFullscreen: async () => false, exitFullscreen: async () => false,
     dispose });
 }
@@ -139,6 +152,10 @@ async function createP25Renderer(options = {}) {
   const linkObjects = new Map();
   const labelElements = new Map();
   const movements = new Map();
+  const affiliationMoves = new Map();
+  const canonicalPositions = new Map();
+  let canonicalLinks = [];
+  let affiliationFocusKey = '';
   const geometries = new Map();
   const materials = new Map();
 
@@ -293,6 +310,7 @@ async function createP25Renderer(options = {}) {
       labelElements.get(key)?.remove();
       labelElements.delete(key);
       movements.delete(key);
+      affiliationMoves.delete(key);
     }
     for (const [key, object] of linkObjects) {
       if (linkIds.has(key)) continue;
@@ -302,10 +320,90 @@ async function createP25Renderer(options = {}) {
     }
   }
 
+  function publishGraph() {
+    const nextNodes = [...nodes.values()];
+    const presented = canonicalLinks.filter((link) => {
+      const trip = affiliationMoves.get(String(link.source));
+      return !trip || link.kind !== 'current' &&
+        !(link.kind === 'history' && (String(link.target) === trip.attachedGroupKey ||
+          trip.queue.some((change) => change.toGroupKey === String(link.target))));
+    });
+    for (const [radioKey, trip] of affiliationMoves) {
+      if (!trip.attachedGroupKey || !nodes.has(trip.attachedGroupKey)) continue;
+      presented.push({ id: `current:${radioKey}:${trip.attachedGroupKey}`, source: radioKey,
+        target: trip.attachedGroupKey, kind: 'current' });
+    }
+    const nextLinks = presented.map((incoming) => {
+      const previous = links.get(incoming.id);
+      return previous ? Object.assign(previous, incoming) : { ...incoming };
+    });
+    pruneObjects(nextNodes, nextLinks);
+    links.clear();
+    nextLinks.forEach((link) => links.set(link.id, link));
+    graph.graphData({ nodes: nextNodes, links: nextLinks });
+    updateSystemFog();
+    nextNodes.forEach((node) => applyNodeStyle(node));
+    nextLinks.forEach((link) => applyLinkStyle(link));
+  }
+
+  function clearAffiliationMoves() {
+    if (!affiliationMoves.size) return;
+    affiliationFocusKey = '';
+    for (const key of affiliationMoves.keys()) {
+      const node = nodes.get(key);
+      const target = canonicalPositions.get(key);
+      if (node && target) Object.assign(node, target, { fx: target.x, fy: target.y, fz: target.z });
+    }
+    affiliationMoves.clear();
+    if (graph && !disposed) publishGraph();
+  }
+
   function setData(value = {}, optionsValue = {}) {
     if (!graph || disposed) return;
-    const animate = optionsValue.animate !== false && !reducedMotion;
+    const animate = optionsValue.animate !== false && !reducedMotion && !documentValue.hidden;
     const now = performance.now();
+    const incomingNodes = new Map((Array.isArray(value.nodes) ? value.nodes : []).map((node) =>
+      [String(node.id), node]));
+    if (affiliationFocusKey && !incomingNodes.has(affiliationFocusKey)) {
+      stopCamera();
+      clearFocus();
+    }
+    for (const [key, trip] of affiliationMoves) {
+      if (!incomingNodes.has(key) || trip.queue.some((change) =>
+        !incomingNodes.has(change.fromGroupKey) || !incomingNodes.has(change.toGroupKey))) {
+        affiliationMoves.delete(key);
+        if (affiliationFocusKey === key) {
+          stopCamera();
+          clearFocus();
+        }
+      }
+    }
+    if (animate) for (const change of optionsValue.affiliationChanges || []) {
+      if (!nodes.has(change.radioKey) || incomingNodes.get(change.radioKey)?.type !== 'radio' ||
+          incomingNodes.get(change.fromGroupKey)?.type !== 'talkgroup' ||
+          incomingNodes.get(change.toGroupKey)?.type !== 'talkgroup' || !change.remainingMs) continue;
+      const descriptor = { ...change, expiresAt: now + Math.min(8_000, change.remainingMs) };
+      const trip = affiliationMoves.get(change.radioKey);
+      if (trip) enqueueAffiliationChange(trip.queue, descriptor);
+      else {
+        affiliationMoves.set(change.radioKey, { queue: [descriptor], phase: 'waiting',
+          startedAt: now + AFFILIATION_ATTACH_MS, from: change.from,
+          attachedGroupKey: change.fromGroupKey });
+        const node = nodes.get(change.radioKey);
+        Object.assign(node, change.from, { fx: change.from.x, fy: change.from.y, fz: change.from.z });
+      }
+      movements.delete(change.radioKey);
+    }
+    // Logout, stale catch-up and evidence from another scope may supersede a queued trip silently.
+    for (const [key, trip] of affiliationMoves) {
+      if (trip.queue.at(-1).toGroupKey !== incomingNodes.get(key)?.affiliationGroupKey) {
+        affiliationMoves.delete(key);
+        if (affiliationFocusKey === key) {
+          stopCamera();
+          clearFocus();
+        }
+      }
+    }
     const nextNodes = (Array.isArray(value.nodes) ? value.nodes : []).map((incoming) => {
       const id = String(incoming.id);
       const previous = nodes.get(id);
@@ -315,39 +413,35 @@ async function createP25Renderer(options = {}) {
       const target = { x: finite(incoming.x), y: finite(incoming.y), z: finite(incoming.z) };
       const distance = Math.hypot(target.x - original.x, target.y - original.y, target.z - original.z);
       const movement = movements.get(id);
+      const trip = affiliationMoves.get(id);
+      const affiliationChanged = previous.affiliationGroupKey !== incoming.affiliationGroupKey;
+      canonicalPositions.set(id, { ...target, groupKey: incoming.groupKey });
       const continuing = movement && !reducedMotion &&
         Math.hypot(target.x - movement.target.x, target.y - movement.target.y,
           target.z - movement.target.z) < 0.001;
       Object.assign(previous, incoming, { id });
-      if (continuing) {
+      if ((trip && !reducedMotion) || continuing) {
         // Highlight expiry and repeated observations must not restart an in-flight relocation.
         Object.assign(previous, original, { fx: original.x, fy: original.y, fz: original.z });
-      } else if (animate && previous.type === 'radio' && distance > 1) {
+      } else if (animate && !affiliationChanged && previous.type === 'radio' && distance > 1) {
         Object.assign(previous, original, { fx: original.x, fy: original.y, fz: original.z });
-        movements.set(id, { startedAt: now, duration: 1_100, from: original, target });
+        movements.set(id, { startedAt: now, duration: AFFILIATION_MOVE_MS, from: original, target });
       } else {
         movements.delete(id);
         Object.assign(previous, target, { fx: target.x, fy: target.y, fz: target.z });
       }
       return previous;
     });
-    const nextLinks = (Array.isArray(value.links) ? value.links : []).map((incoming) => {
+    canonicalLinks = (Array.isArray(value.links) ? value.links : []).map((incoming) => {
       const id = String(incoming.id);
-      const previous = links.get(id);
       const source = typeof incoming.source === 'object' ? incoming.source.id : incoming.source;
       const target = typeof incoming.target === 'object' ? incoming.target.id : incoming.target;
-      return previous ? Object.assign(previous, incoming, { source: String(source), target: String(target) }) :
-        { ...incoming, id, source: String(source), target: String(target) };
+      return { ...incoming, id, source: String(source), target: String(target) };
     });
-    pruneObjects(nextNodes, nextLinks);
     nodes.clear();
     nextNodes.forEach((node) => nodes.set(node.id, node));
-    links.clear();
-    nextLinks.forEach((link) => links.set(link.id, link));
-    graph.graphData({ nodes: nextNodes, links: nextLinks });
-    updateSystemFog();
-    nextNodes.forEach((node) => applyNodeStyle(node));
-    nextLinks.forEach((link) => applyLinkStyle(link));
+    for (const key of canonicalPositions.keys()) if (!nodes.has(key)) canonicalPositions.delete(key);
+    publishGraph();
   }
 
   function resize() {
@@ -409,6 +503,7 @@ async function createP25Renderer(options = {}) {
   function stopCamera() {
     if (cameraFrame) cancelAnimationFrame(cameraFrame);
     cameraFrame = 0;
+    affiliationFocusKey = '';
     programmatic = false;
     if (controls) controls.enabled = true;
     updateAutoRotate();
@@ -489,11 +584,15 @@ async function createP25Renderer(options = {}) {
   }
 
   function focus(keys, duration = 900) {
-    if (mode !== 'auto' || !['system', 'talkgroup'].includes(scope.level)) return false;
+    if (mode !== 'auto' || documentValue.hidden || !['system', 'talkgroup'].includes(scope.level)) return false;
     const bounds = boundsFor(Array.isArray(keys) ? keys : [keys]);
+    return focusBounds(bounds, Array.isArray(keys) ? keys : [keys], duration);
+  }
+
+  function focusBounds(bounds, keys, duration) {
     const system = systemNode();
     if (!bounds || !system) return false;
-    setFocus(Array.isArray(keys) ? keys : [keys]);
+    setFocus(keys);
     const inward = new library.Vector3(system.x - bounds.center.x, system.y - bounds.center.y,
       system.z - bounds.center.z);
     if (inward.lengthSq() < 0.001) inward.set(0.7, 0.35, 1);
@@ -501,6 +600,19 @@ async function createP25Renderer(options = {}) {
     const distance = clamp(bounds.radius * 3.2, 64, finite(system.radius, SYSTEM_RADIUS) * 0.72);
     return tweenCamera({ x: bounds.center.x + inward.x * distance, y: bounds.center.y + inward.y * distance,
       z: bounds.center.z + inward.z * distance }, bounds.center, duration);
+  }
+
+  function focusAffiliation(radioKey, duration = 900) {
+    if (mode !== 'auto' || reducedMotion || documentValue.hidden || scope.level !== 'system') return false;
+    const trip = affiliationMoves.get(String(radioKey));
+    if (!trip || trip.phase !== 'waiting') return false;
+    const keys = [String(radioKey), trip.attachedGroupKey];
+    // Frame the existing attachment, never the settled destination used by ordinary focus.
+    const bounds = calculateFocusBounds(keys, nodes, new Map());
+    if (!focusBounds(bounds, keys, duration)) return false;
+    trip.startedAt = performance.now() + Math.max(0, duration) + AFFILIATION_ATTACH_MS;
+    affiliationFocusKey = String(radioKey);
+    return true;
   }
 
   function frameOverview(immediate = false) {
@@ -520,6 +632,7 @@ async function createP25Renderer(options = {}) {
   }
 
   function enterSystem(systemKey, optionsValue = {}) {
+    clearAffiliationMoves();
     scope = { level: 'system', systemKey: String(systemKey || '') };
     updateSystemFog();
     const result = home(optionsValue.immediate ? 0 : finite(optionsValue.duration, 900));
@@ -529,6 +642,7 @@ async function createP25Renderer(options = {}) {
   }
 
   function enterTalkgroup(systemKey, groupKey, optionsValue = {}) {
+    clearAffiliationMoves();
     scope = { level: 'talkgroup', systemKey: String(systemKey || ''), groupKey: String(groupKey || '') };
     updateSystemFog();
     const result = home(optionsValue.immediate ? 0 : finite(optionsValue.duration, 900));
@@ -538,6 +652,7 @@ async function createP25Renderer(options = {}) {
   }
 
   function showOverview(optionsValue = {}) {
+    clearAffiliationMoves();
     scope = { level: 'overview', systemKey: '' };
     clearFocus();
     if (scene) scene.fog = null;
@@ -550,6 +665,7 @@ async function createP25Renderer(options = {}) {
     mode = value === 'manual' ? 'manual' : 'auto';
     if (mode === 'manual') {
       stopCamera();
+      clearAffiliationMoves();
       clearFocus();
     }
     updateAutoRotate();
@@ -557,7 +673,10 @@ async function createP25Renderer(options = {}) {
 
   function setCameraPhase(value) {
     cameraPhase = ['focus', 'hold', 'return', 'roam'].includes(value) ? value : 'roam';
-    if (cameraPhase === 'return' || cameraPhase === 'roam') clearFocus();
+    if (cameraPhase === 'return' || cameraPhase === 'roam') {
+      affiliationFocusKey = '';
+      clearFocus();
+    }
     updateAutoRotate();
   }
 
@@ -623,6 +742,65 @@ async function createP25Renderer(options = {}) {
     for (const [key, label] of labelElements) label.hidden = !visible.has(key);
   }
 
+  function animateAffiliations(at) {
+    let changed = false;
+    for (const [key, trip] of affiliationMoves) {
+      const node = nodes.get(key);
+      const change = trip.queue[0];
+      if (!node || !change || at >= change.expiresAt) {
+        const target = canonicalPositions.get(key);
+        if (node && target) Object.assign(node, target, { fx: target.x, fy: target.y, fz: target.z });
+        affiliationMoves.delete(key);
+        if (affiliationFocusKey === key) {
+          stopCamera();
+          clearFocus();
+        }
+        changed = true;
+        continue;
+      }
+      if (trip.phase === 'waiting') {
+        if (at < trip.startedAt) continue;
+        trip.phase = 'travel';
+        trip.from = { x: node.x, y: node.y, z: node.z };
+        trip.attachedGroupKey = '';
+        if (affiliationFocusKey === key) setFocus([key]);
+        changed = true;
+      }
+      const progress = clamp((at - trip.startedAt) / AFFILIATION_MOVE_MS, 0, 1);
+      const amount = ease(progress);
+      const before = { x: node.x, y: node.y, z: node.z };
+      node.x = trip.from.x + (change.target.x - trip.from.x) * amount;
+      node.y = trip.from.y + (change.target.y - trip.from.y) * amount;
+      node.z = trip.from.z + (change.target.z - trip.from.z) * amount;
+      node.fx = node.x;
+      node.fy = node.y;
+      node.fz = node.z;
+      if (affiliationFocusKey === key && !cameraFrame) {
+        // Translate camera and look-at together; the radio stays in view throughout its travel.
+        const delta = new library.Vector3(node.x - before.x, node.y - before.y, node.z - before.z);
+        graph.camera().position.add(delta);
+        controls.target.add(delta);
+        containSystemCamera();
+      }
+      if (progress >= 1) {
+        if (affiliationFocusKey === key) setFocus([key, change.toGroupKey]);
+        trip.queue.shift();
+        if (trip.queue.length) {
+          trip.phase = 'waiting';
+          trip.attachedGroupKey = change.toGroupKey;
+          trip.startedAt = at + AFFILIATION_ATTACH_MS;
+        } else {
+          affiliationMoves.delete(key);
+          // Keep following this radio during the accepted attention window if another fresh move arrives.
+          const target = canonicalPositions.get(key);
+          if (target) Object.assign(node, target, { fx: target.x, fy: target.y, fz: target.z });
+        }
+        changed = true;
+      }
+    }
+    if (changed) publishGraph();
+  }
+
   function animate(at) {
     frame = 0;
     if (disposed) return;
@@ -635,6 +813,7 @@ async function createP25Renderer(options = {}) {
         applyFocusStyles();
       }
     }
+    animateAffiliations(at);
     for (const [key, movement] of movements) {
       const node = nodes.get(key);
       if (!node) {
@@ -669,7 +848,11 @@ async function createP25Renderer(options = {}) {
   };
   const onVisibility = () => {
     if (!graph) return;
-    if (documentValue.hidden) graph.pauseAnimation();
+    if (documentValue.hidden) {
+      stopCamera();
+      clearAffiliationMoves();
+      graph.pauseAnimation();
+    }
     else graph.resumeAnimation();
     updateAutoRotate();
   };
@@ -737,6 +920,16 @@ async function createP25Renderer(options = {}) {
   const media = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)');
   const onMotion = () => {
     reducedMotion = Boolean(media?.matches);
+    if (reducedMotion) {
+      stopCamera();
+      clearAffiliationMoves();
+      for (const [key, movement] of movements) {
+        const node = nodes.get(key);
+        if (node) Object.assign(node, movement.target, { fx: movement.target.x,
+          fy: movement.target.y, fz: movement.target.z });
+      }
+      movements.clear();
+    }
     if (reducedMotion && focusAmount !== focusTarget) {
       focusAmount = focusTarget;
       updateFocusOpacity();
@@ -790,6 +983,9 @@ async function createP25Renderer(options = {}) {
     linkObjects.clear();
     labelElements.clear();
     movements.clear();
+    affiliationMoves.clear();
+    canonicalPositions.clear();
+    canonicalLinks = [];
   }
 
   options.signal?.addEventListener?.('abort', dispose, { once: true });
@@ -797,7 +993,7 @@ async function createP25Renderer(options = {}) {
   frame = requestAnimationFrame(animate);
 
   return Object.freeze({ available: true, setData, setMode, setCameraPhase, enterSystem, enterTalkgroup,
-    showOverview, focus, home, moveManualCamera, enterFullscreen, exitFullscreen, dispose });
+    showOverview, focus, focusAffiliation, home, moveManualCamera, enterFullscreen, exitFullscreen, dispose });
 }
 
-export { calculateFocusBounds, createP25Renderer };
+export { calculateFocusBounds, enqueueAffiliationChange, createP25Renderer };

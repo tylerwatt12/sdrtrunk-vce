@@ -1119,16 +1119,12 @@ export function createRadioReferenceImportWorkspace(dependencies) {
 
     const comparisonValue = (talkgroup, field, incoming) => {
       if (state.talkgroupStatus !== 'DIFFERENT') return incoming;
-      const current = talkgroup.current_alias || talkgroup.currentAlias;
       const value = node('span', 'ui-record-card-copy');
       const importedField = field === 'alpha_tag' ? 'name' : field === 'category' ? 'group' : field;
       const change = talkgroupChanges(talkgroup).find((entry) => entry.field === importedField);
       const changedValues = change ? importedChangeValues(change) : null;
-      const saved = changedValues?.before ??
-        textValue(current, field === 'alpha_tag' ? ['alpha_tag', 'alphaTag'] : [field], '—');
       if (change) value.append(uiPill('Changed', 'warning'));
-      value.append(node('span', '', `Current: ${saved}`),
-        node('small', 'muted', `RadioReference: ${changedValues?.after ?? (incoming || '—')}`));
+      value.append(node('span', '', changedValues?.after ?? (incoming || '—')));
       if (changedValues?.hiddenDifference) value.append(node('small', 'ui-field-detail',
         'Spacing or hidden characters differ; ␠ marks a space and escapes show hidden characters.'));
       return value;
@@ -1203,11 +1199,6 @@ export function createRadioReferenceImportWorkspace(dependencies) {
           const value = importStatus(talkgroup);
           const content = node('span', 'radioreference-talkgroup-status');
           content.append(uiPill(value.label, value.tone));
-          if (state.talkgroupStatus === 'DIFFERENT') {
-            const changed = talkgroupChanges(talkgroup).map((change) => IMPORTED_FIELD_LABELS[change.field]);
-            content.append(node('small', 'ui-field-detail', changed.length ?
-              `Changed: ${changed.join(', ')}` : 'Refresh talkgroups to load comparison details.'));
-          }
           return content;
         } }
       ], 'No talkgroups match these filters.',

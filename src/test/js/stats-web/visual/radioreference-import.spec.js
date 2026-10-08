@@ -1083,7 +1083,7 @@ for (const [name, theme, viewport] of [
 }
 
 
-test('comparison reuses the source catalog and Different shows complete current and incoming alias fields', async ({ page }) => {
+test('comparison reuses the source catalog and Different shows only incoming fields while preview retains changes', async ({ page }) => {
   await installWorkspace(page);
   await openSystem(page);
   await page.getByRole('button', { name: 'Talkgroups & Aliases', exact: true }).click();
@@ -1097,14 +1097,22 @@ test('comparison reuses the source catalog and Different shows complete current 
   await page.getByRole('button', { name: 'Different', exact: true }).click();
   const row = page.locator('.radioreference-talkgroup-table tbody tr');
   await expect(row).toHaveCount(1);
-  await expect(row).toContainText('Current: Fireground Two');
-  await expect(row).toContainText('RadioReference: Fireground 2');
-  await expect(row).toContainText('Current: Local fireground description');
-  await expect(row).toContainText('RadioReference: Fireground operations');
-  await expect(row).toContainText('Current: Operations');
-  await expect(row).toContainText('RadioReference: Fire');
+  await expect(row.locator('td[data-label="Alpha tag"]')).toContainText('Fireground 2');
+  await expect(row.locator('td[data-label="Description"]')).toContainText('Fireground operations');
+  await expect(row.locator('td[data-label="Category"]')).toContainText('Fire');
+  await expect(row).not.toContainText('Current:');
+  await expect(row).not.toContainText('RadioReference:');
+  await expect(row).not.toContainText('Fireground Two');
+  await expect(row).not.toContainText('Local fireground description');
+  await expect(row).not.toContainText('Operations');
   await expect(row.getByText('Changed', { exact: true })).toHaveCount(3);
-  await expect(row).toContainText('Changed: Alpha tag, Description, Category');
+  await expect(row.locator('td[data-label="Import status"]')).toHaveText('Different');
+  await row.getByRole('checkbox', { name: 'Select Fireground 2', exact: true }).check();
+  await page.getByRole('button', { name: 'Import selected', exact: true }).click();
+  const preview = page.getByRole('dialog', { name: 'Import 1 talkgroup', exact: true });
+  await expect(preview.locator('dt')).toHaveText(['Alpha tag', 'Description', 'Category']);
+  await expect(preview.locator('dd')).toHaveText(['Fireground Two→Fireground 2',
+    'Local fireground description→Fireground operations', 'Operations→Fire']);
 });
 
 for (const { theme, width } of [{ theme: 'light', width: 1280 }, { theme: 'dark', width: 390 }])
@@ -1119,10 +1127,13 @@ test(`Different highlights only changed imported fields and reveals visually equ
   await expect(row).toHaveCount(1);
   await expect(row.locator('td[data-label="Alpha tag"]').getByText('Changed', { exact: true })).toHaveCount(0);
   await expect(row.getByText('Changed', { exact: true })).toHaveCount(2);
-  await expect(row).toContainText('Changed: Description, Category');
-  await expect(row.locator('td[data-label="Description"]')).toContainText('Current: "County␠␠fire"');
-  await expect(row.locator('td[data-label="Description"]')).toContainText('RadioReference: "County␠fire"');
-  await expect(row.locator('td[data-label="Category"]')).toContainText('Current: "Fire\\u00a0"');
+  await expect(row.locator('td[data-label="Import status"]')).toHaveText('Different');
+  await expect(row.locator('td[data-label="Description"]')).toContainText('"County␠fire"');
+  await expect(row.locator('td[data-label="Category"]')).toContainText('"Fire"');
+  await expect(row).not.toContainText('Current:');
+  await expect(row).not.toContainText('RadioReference:');
+  await expect(row).not.toContainText('County␠␠fire');
+  await expect(row).not.toContainText('Fire\\u00a0');
   await expect(row.getByText(/Spacing or hidden characters differ/)).toHaveCount(2);
   await row.screenshot({ path: testInfo.outputPath(`hidden-character-row-${theme}-${width}.png`) });
   await row.getByRole('checkbox', { name: 'Select Fireground 2', exact: true }).check();
@@ -1160,7 +1171,7 @@ test('explicit refresh bypasses source caches while ordinary filtering and tab r
   expect(await page.evaluate(() => window.radioReferenceVisual.calls.filter(([path]) => path.includes('/systems/sites/catalog?')).length)).toBe(2);
 });
 
-for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
+for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
   test(`Different comparison remains readable in ${theme} at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await installWorkspace(page, theme);

@@ -18,7 +18,7 @@ const row = (id, timestamp = observedAt) => ({ id, observed_at_ms: timestamp, ac
 
 async function harness() {
   const history = await import(pathToFileURL(path.join(feature, 'history.js')).href);
-  const frames = [], delays = [], attention = [];
+  const frames = [], delays = [], attention = [], affiliationChanges = [];
   let callbacks;
   const context = {
     ...history, state: history.createP25HistoryState(), P25_ROUTINE_ACTIONS: history.P25_ROUTINE_ACTIONS,
@@ -34,8 +34,10 @@ async function harness() {
     status: { classList: { contains: () => false } }, setStatus() {},
     schedulePoll: (delay = 5_000) => delays.push(delay), loadSeed() {},
     applyAttention: (values) => attention.push(...values),
-    renderGraph: () => frames.push(history.buildP25Graph(context.state, 'system',
-      observedAt + context.serverTimeOffsetMs)),
+    renderGraph: (_animate, changes = []) => {
+      affiliationChanges.push(...changes);
+      frames.push(history.buildP25Graph(context.state, 'system', observedAt + context.serverTimeOffsetMs));
+    },
     dependencies: { subscribeActivity: (value) => { callbacks = value; return { close() {} }; } }
   };
   vm.createContext(context);
@@ -43,7 +45,7 @@ async function harness() {
     source.indexOf('  async function requestForwardPage(')), context);
   vm.runInContext(functions, context);
   context.connectLiveActivity(1);
-  return { context, frames, delays, attention, callbacks, history };
+  return { context, frames, delays, attention, affiliationChanges, callbacks, history };
 }
 
 test('saved activity bridges seed/subscription gap, deduplicates overlap and then updates without polling', async () => {
@@ -111,4 +113,22 @@ test('callbacks from a prior history scope or a closed visualizer cannot update 
   context.closed = true;
   callbacks.activityAppend({ rows: [row(1)], next_after_id: 1 });
   assert.equal(context.bufferedRowCount, 0);
+});
+
+test('live affiliation batches hand the renderer FIFO changes while exposing the latest canonical state', async () => {
+  const { context, frames, affiliationChanges, callbacks, history } = await harness();
+  const join = (id, group, atMs) => ({ ...row(id, atMs), action: 'JOIN', configuration_id: 'site-a',
+    target_identity_key: `v1-g-${group}` });
+  history.applyP25ActivityRows(context.state, [join(1, '101', observedAt - 100)], { initial: true });
+  context.liveReady = true;
+  callbacks.activityAppend({ rows: [join(3, '303', observedAt), join(2, '202', observedAt - 50)],
+    next_after_id: 3 });
+  assert.deepEqual(affiliationChanges.map((change) => [change.fromGroupKey, change.toGroupKey]),
+    [['system:v1-g-101', 'system:v1-g-202'], ['system:v1-g-202', 'system:v1-g-303']]);
+  assert.equal(frames.at(-1).links.find((link) => link.kind === 'current').target, 'system:v1-g-303');
+  assert.equal(context.cursor, 3);
+  const count = affiliationChanges.length;
+  callbacks.activityAppend({ rows: [join(4, '404', observedAt - 10_000)], next_after_id: 4 });
+  assert.equal(affiliationChanges.length, count, 'late older scoped evidence cannot add presentation moves');
+  assert.equal(frames.at(-1).links.find((link) => link.kind === 'current').target, 'system:v1-g-303');
 });

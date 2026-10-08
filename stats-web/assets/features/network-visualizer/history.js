@@ -13,6 +13,7 @@ const ACTIONS = new Set([...P25_HISTORY_ACTIONS, ...P25_ROUTINE_ACTIONS]);
 const MAX_EVENTS = 120;
 const MAX_SEEN_IDS = 30_000;
 const MAX_PRIOR_GROUPS = 3;
+const MAX_AFFILIATION_ORDER_SCOPES = 64;
 const REPEAT_FOCUS_MS = 60_000;
 const SYSTEM_RADIUS = 300;
 const GROUP_CLOUD_MARGIN = 76;
@@ -287,6 +288,7 @@ function ensureRadio(state, system, row, identityKey, role) {
       nativeId: nativeId(identityKey, role === 'source' ? row.source_native_id ?? row.source_radio_id :
         row.target_native_id ?? row.target_id), x: system.x + local.x, y: system.y + local.y,
       z: system.z + local.z, lastAtMs: 0, visualGroupKey: '', activityGroupKey: '', affiliations: new Map(),
+      affiliationOrder: new Map(),
       priorGroupKeys: [], signalAction: '', highlightUntilMs: 0 };
     state.radios.set(key, radio);
     system.radioKeys.add(key);
@@ -337,6 +339,24 @@ function eventDetail(action, radio, group, previousGroup) {
   return radio?.label || group?.label || 'P25 system activity';
 }
 
+function radioPosition(radio, parent, parentKey, systemRadius) {
+  const offset = localPosition(`${radio.key}:${parentKey || 'unaffiliated'}`,
+    parentKey ? 16 : systemRadius * 0.72, parentKey ? 40 : systemRadius * 0.82);
+  return { x: parent.x + offset.x, y: parent.y + offset.y, z: parent.z + offset.z };
+}
+
+function acceptAffiliationObservation(radio, scope, atMs, id) {
+  const previous = radio.affiliationOrder.get(scope) || radio.affiliations.get(scope);
+  if (previous && (atMs < previous.atMs || atMs === previous.atMs && id <= previous.id)) return false;
+  // Keep logout ordering separately: a tombstone must never become an active affiliation.
+  radio.affiliationOrder.delete(scope);
+  radio.affiliationOrder.set(scope, { atMs, id });
+  if (radio.affiliationOrder.size > MAX_AFFILIATION_ORDER_SCOPES) {
+    radio.affiliationOrder.delete(radio.affiliationOrder.keys().next().value);
+  }
+  return true;
+}
+
 function applyJoin(state, system, row, result, initial, ingestedAtMs, shouldHighlight) {
   const radioIdentity = sourceRadioKey(row);
   const groupIdentity = targetGroupKey(row, false);
@@ -348,8 +368,9 @@ function applyJoin(state, system, row, result, initial, ingestedAtMs, shouldHigh
   const id = Number(row.id) || 0;
   const scope = relationScope(row);
   const previous = scope ? radio.affiliations.get(scope) : null;
-  if (previous && (atMs < previous.atMs || atMs === previous.atMs && id <= previous.id)) return;
+  if (!acceptAffiliationObservation(radio, scope, atMs, id)) return;
   const firstPlacement = radio.affiliations.size === 0 && !radio.visualGroupKey;
+  const previousVisualGroup = state.groups.get(radio.visualGroupKey);
   const previousGroup = previous && previous.groupKey !== group.key ? state.groups.get(previous.groupKey) : null;
   if (scope) radio.affiliations.set(scope, { groupKey: group.key, atMs, id });
   const latestEvidence = [...radio.affiliations.values()].sort((left, right) => right.atMs - left.atMs ||
@@ -369,6 +390,14 @@ function applyJoin(state, system, row, result, initial, ingestedAtMs, shouldHigh
   const event = { key: `movement:${radio.key}`, category: 'movement', title: 'Observed affiliation change',
     detail: eventDetail('movement', radio, group, previousGroup), observedAtMs: atMs, systemKey: system.key,
     focusKeys: [radio.key, group.key], priority: CAMERA_PRIORITY.movement };
+  if (!initial && previousVisualGroup && previousVisualGroup.key !== radio.visualGroupKey &&
+      radio.visualGroupKey === group.key) {
+    result.affiliationChanges.push({ id: `affiliation:${id}:${radio.key}`, radioKey: radio.key,
+      systemKey: system.key, fromGroupKey: previousVisualGroup.key, toGroupKey: group.key,
+      from: radioPosition(radio, previousVisualGroup, previousVisualGroup.key, system.radius),
+      target: radioPosition(radio, group, group.key, system.radius), observedAtMs: atMs });
+    event.affiliationRadioKey = radio.key;
+  }
   const firstGroupedEvent = !state.events.has(event.key);
   upsertEvent(state, event);
   if (firstGroupedEvent) system.score += 4;
@@ -430,6 +459,7 @@ function applyLogout(state, system, row, result, initial, ingestedAtMs, shouldHi
   const atMs = finite(row.observed_at_ms);
   const previousVisualGroupKey = radio.visualGroupKey;
   const scope = relationScope(row);
+  if (!acceptAffiliationObservation(radio, scope, atMs, Number(row.id) || 0)) return;
   if (scope) radio.affiliations.delete(scope);
   const remaining = [...radio.affiliations.values()].sort((left, right) => right.atMs - left.atMs ||
     right.id - left.id)[0];
@@ -483,7 +513,7 @@ function applyP25ActivityRows(state, rows, options = {}) {
   const shouldHighlight = (category) => !highlighted || highlighted.has(category);
   const highlightDuration = (category) => category === 'call' ? grantActivityTimeoutMs :
     category === 'emergency' ? 12_000 : category === 'movement' ? 8_000 : 7_000;
-  const result = { changed: false, accepted: 0, ignored: 0, focusCandidates: [] };
+  const result = { changed: false, accepted: 0, ignored: 0, focusCandidates: [], affiliationChanges: [] };
   const ordered = (Array.isArray(rows) ? rows : []).slice().sort((left, right) =>
     finite(left?.observed_at_ms) - finite(right?.observed_at_ms) || finite(left?.id) - finite(right?.id));
   for (const row of ordered) {
@@ -516,7 +546,12 @@ function applyP25ActivityRows(state, rows, options = {}) {
     result.focusCandidates = result.focusCandidates.filter((event) => {
       return event.observedAtMs + highlightDuration(event.category) > ingestedAtMs;
     });
+    result.affiliationChanges = result.affiliationChanges.filter((change) =>
+      change.observedAtMs + highlightDuration('movement') > ingestedAtMs);
   }
+  result.affiliationChanges = result.affiliationChanges.map((change) => ({ ...change,
+    remainingMs: options.highlightAtObservationTime === true ?
+      Math.max(0, change.observedAtMs + highlightDuration('movement') - ingestedAtMs) : 8_000 }));
   result.focusCandidates.sort((left, right) => right.priority - left.priority ||
     right.observedAtMs - left.observedAtMs);
   return result;
@@ -588,13 +623,10 @@ function buildP25Graph(state, systemKey = '', atMs = Date.now(), focusGroupKey =
   groupedRadios.forEach((members, parentKey) => {
     const parent = groupPositions.get(parentKey) || system;
     members.forEach((radio) => {
-      const offset = localPosition(`${radio.key}:${parentKey || 'unaffiliated'}`,
-        parentKey ? 16 : system.radius * 0.72, parentKey ? 40 : system.radius * 0.82);
-      radio.x = parent.x + offset.x;
-      radio.y = parent.y + offset.y;
-      radio.z = parent.z + offset.z;
+      Object.assign(radio, radioPosition(radio, parent, parentKey, system.radius));
       nodes.push({ id: radio.key, type: 'radio', label: radio.label, x: radio.x, y: radio.y, z: radio.z,
-        radius: 6.5, systemKey, groupKey: parentKey, signalAction: visibleSignal(radio, atMs, highlighted) });
+        radius: 6.5, systemKey, groupKey: parentKey, affiliationGroupKey: radio.visualGroupKey,
+        signalAction: visibleSignal(radio, atMs, highlighted) });
     });
   });
 

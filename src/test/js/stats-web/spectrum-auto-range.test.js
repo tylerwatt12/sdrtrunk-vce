@@ -42,7 +42,11 @@ async function panelHarness({ auto = true } = {}) {
     dbFloor: -140, dbCeiling: -15, TUNER_SPECTRUM_MINIMUM_DISPLAY_SPAN_DB: 5,
     TUNER_SPECTRUM_PROFILES: { balanced: {} }, spectrumProfile: 'balanced', profileSelect: {},
     DIAGNOSTIC_FRAME_TYPES: { TUNER_FFT: 4 }, generation: -1, sequence: null, droppedFrames: 0,
-    fftValues: new Float32Array(), frameMetadata: null, hoverFlag: null, hoverRatio: null,
+    fftValues: new Float32Array(), smoothedFftValues: new Float32Array(), smoothInput: { checked: true },
+    frameMetadata: null, hoverFlag: null, hoverRatio: null,
+    spectrum: {}, canvasWidth: 100, preparations: 0,
+    prepareCanvas: () => { context.preparations++; return context.canvasWidth > 0 ?
+      { cssWidth: context.canvasWidth } : null; },
     fullViewport: { startHz: 148_800_000, endHz: 151_200_000 },
     viewport: { startHz: 148_800_000, endHz: 151_200_000 },
     analysisViewport: { startHz: 148_800_000, endHz: 151_200_000 }, awaitingViewportState: false, refining: false,
@@ -60,6 +64,7 @@ async function panelHarness({ auto = true } = {}) {
   for (const name of ['tunerFrameDomain', 'stateNumber', 'requestedViewport', 'stateViewport', 'sameViewport',
     'stateMatchesRequest', 'zoomAmount', 'spectrumDisplayFloorDb', 'waterfallDisplayFloorDb',
     'syncAutomaticDisplayRangeReadouts', 'resetAutomaticDisplayRange', 'applyAutomaticDisplayRange',
+    'visibleValuesFor', 'visibleSpectrumValues', 'displayedSpectrumValues',
     'acceptTunerState', 'acceptTunerFrame']) vm.runInContext(functionSource(name), context);
   vm.runInContext(bindingSource('const resetPlots = (message) =>') + ';', context);
   const confirm = ({ target = context.target, center = 150_000_000, generation = 1, revision = 1,
@@ -77,7 +82,7 @@ async function panelHarness({ auto = true } = {}) {
   return { context, confirm, frame, rebind };
 }
 
-test('lowest finite FFT reading sets the floor without changing the upper limit', async () => {
+test('lowest finite trace reading sets the floor without changing the upper limit', async () => {
   const { estimateSpectrumDisplayFloor } = await helper;
   const values = noise(-63);
   values[0] = -190;
@@ -87,6 +92,39 @@ test('lowest finite FFT reading sets the floor without changing the upper limit'
   assert.equal(estimateSpectrumDisplayFloor(values, 0), -190);
   assert.equal(estimateSpectrumDisplayFloor(noise(-108), 0), -108);
   assert.equal(estimateSpectrumDisplayFloor(noise(-41.7), -10), -42);
+});
+
+test('display pixel maxima prevent deep raw-bin nulls from setting the range', async () => {
+  const { estimateSpectrumDisplayFloor, spectrumTraceValue } = await helper;
+  const values = Float32Array.from({ length: 8192 }, (_value, index) =>
+    index % 8 === 0 ? -116 : -70 + index % 3);
+  assert.equal(estimateSpectrumDisplayFloor(values, 0), -116, 'raw-bin minimum reproduces the report');
+  const expected = Math.floor(Math.min(...Array.from({ length: 1000 }, (_, index) =>
+    spectrumTraceValue(values, index, 1000))));
+  assert.equal(estimateSpectrumDisplayFloor(values, 0, -200, 5, 1000), expected);
+  assert.ok(expected >= -70 && expected <= -68);
+  assert.equal(estimateSpectrumDisplayFloor(new Float32Array(100).fill(-196), 0), null);
+});
+
+test('shared panel samples visible pixels only after layout and freezes both floors until retune', async () => {
+  const { context: panel, confirm, frame } = await panelHarness();
+  confirm();
+  panel.canvasWidth = 0;
+  frame();
+  assert.equal(panel.fftAutoFloorDb, null);
+  assert.equal(panel.automaticDisplayRange.needsSample(), true);
+  panel.canvasWidth = 20;
+  panel.viewport = { startHz: 149_600_000, endHz: 150_400_000 };
+  const values = Float32Array.from({ length: 300 }, (_value, index) =>
+    index < 100 || index >= 200 || index % 8 === 0 ? -116 : -70);
+  frame({ sequence: 2, values });
+  assert.equal(panel.fftAutoFloorDb, -70, 'out-of-view margins and subpixel nulls do not select -116');
+  assert.equal(panel.waterfallAutoFloorDb, -70);
+  const preparations = panel.preparations;
+  panel.canvasWidth = 900;
+  frame({ sequence: 3, values });
+  assert.equal(panel.fftAutoFloorDb, -70);
+  assert.equal(panel.preparations, preparations, 'ordinary frames do not measure layout again');
 });
 
 test('invalid samples wait for valid data and bounds preserve the configured upper limit', async () => {

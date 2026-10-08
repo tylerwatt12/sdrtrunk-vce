@@ -9,15 +9,15 @@ import {
   nextP25HighlightExpiry,
   groupedP25Events,
   mostActiveP25System
-} from './history.js?v=9';
+} from './history.js?v=10';
 import { createP25CameraCoordinator } from './camera.js?v=4';
-import { createP25Renderer } from './renderer.js?v=6';
+import { createP25Renderer } from './renderer.js?v=7';
 import {
   P25_EVENT_SETTINGS,
   normalizeP25EventSettings,
   enabledP25EventCategories,
   routineP25ActivityEnabled
-} from './settings.js?v=1';
+} from './settings.js?v=2';
 
 const HOUR_MS = 60 * 60 * 1_000;
 const POLL_MS = 5_000;
@@ -272,8 +272,8 @@ function createP25Visualizer(dependencies = {}) {
     const save = textButton(node, 'Save choices', 'ui-button ui-button-primary');
     save.type = 'submit';
     form.append(node('p', 'modal-introduction',
-      'These choices are saved in this browser for the current web profile. Calls and grants are routine activity ' +
-      'and stay off until selected.'), settingsCardGrid(highlightCard, zoomCard), message,
+      'These choices are saved in this browser for the current web profile.'),
+      settingsCardGrid(highlightCard, zoomCard), message,
       modalFooter(cancel, save));
     const modal = openReadOnlyModal('P25 Visualizer settings', form, {
       id: 'p25-visualizer-settings', className: 'network-visualizer-settings-modal'
@@ -310,12 +310,12 @@ function createP25Visualizer(dependencies = {}) {
     });
   }
 
-  function renderGraph(animate = true) {
+  function renderGraph(animate = true, affiliationChanges = []) {
     if (!renderer) return;
     const graph = buildP25Graph(state, selectedSystemKey, Date.now() + serverTimeOffsetMs, selectedGroupKey,
       { highlightCategories: highlightedCategories });
     visibleNodeKeys = new Set(graph.nodes.map((value) => value.id));
-    renderer.setData(graph, { animate });
+    renderer.setData(graph, { animate, affiliationChanges });
     renderEvents();
     if (highlightTimer) window.clearTimeout(highlightTimer);
     const now = Date.now() + serverTimeOffsetMs;
@@ -397,7 +397,7 @@ function createP25Visualizer(dependencies = {}) {
   }
 
   function applyAttention(candidates) {
-    if (mode !== 'auto' || !selectedSystemKey) return;
+    if (mode !== 'auto' || !selectedSystemKey || document.hidden) return;
     for (const event of candidates.filter((candidate) => candidate.systemKey === selectedSystemKey &&
       autoZoomCategories.has(candidate.category))) {
       const focusKeys = event.focusKeys.filter((key) => visibleNodeKeys.has(key));
@@ -407,7 +407,10 @@ function createP25Visualizer(dependencies = {}) {
       if (!decision.accepted) continue;
       lastCameraPhase = 'focus';
       renderer?.setCameraPhase('focus');
-      if (!renderer?.focus(focusKeys, decision.state.timing.transitionMs)) {
+      const focused = event.affiliationRadioKey && renderer?.focusAffiliation?.(
+        event.affiliationRadioKey, decision.state.timing.transitionMs) ||
+        renderer?.focus(focusKeys, decision.state.timing.transitionMs);
+      if (!focused) {
         camera.cancel();
         lastCameraPhase = 'roam';
         renderer?.setCameraPhase('roam');
@@ -561,7 +564,7 @@ function createP25Visualizer(dependencies = {}) {
       highlightCategories: highlightedCategories, grantActivityTimeoutMs });
     if (result.changed) {
       if (state.systems.size) empty.hidden = true;
-      renderGraph(true);
+      renderGraph(true, result.affiliationChanges);
     }
     applyAttention(result.focusCandidates);
   }

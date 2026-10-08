@@ -27,7 +27,7 @@ import {
   createAliasList,
   createAliasListPopupTrigger as buildAliasListPopupTrigger
 } from './features/alias-list-create.js?v=5';
-import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=24';
+import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=25';
 import { createStreamingWorkspace } from './features/streaming.js?v=8';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=9';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=13';
@@ -36,7 +36,7 @@ import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMa
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=8';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
-import { createSpectrumAutoRange } from './features/spectrum-auto-range.js?v=2';
+import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=3';
 import { createAudioDock } from './core/audio-dock.js?v=14';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=4';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
@@ -15600,7 +15600,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const liveActivityAllowed = capabilityAllowed(ACCESS_CAPABILITIES.LIVE);
   idleChannelsControl.hidden = !liveActivityAllowed;
   const autoRangeToggle = optionToggle(spectrumDisplayPreferences.autoRangeEnabled(),
-    'Auto range display range on retune', 'Use the lowest FFT reading for both displays after each retune.');
+    'Auto range display range on retune');
   const autoRangeInput = autoRangeToggle.input;
   autoRangeInput.name = 'auto_range_on_retune';
   const autoRangeValue = node('output', 'ui-field-detail', `${initialFloor} to ${initialCeiling} dB`);
@@ -15997,12 +15997,15 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     syncAutomaticDisplayRangeReadouts();
   }
 
-  function applyAutomaticDisplayRange(values, frame) {
-    if (!autoRangeInput.checked) return;
+  function applyAutomaticDisplayRange(frame) {
+    if (!autoRangeInput.checked || !automaticDisplayRange.needsSample()) return;
     const requestedCenter = panelOptions.retunePending?.() ? Number(panelOptions.retuneFrequencyHz?.()) : null;
     const confirmedCenter = fullViewport ? (fullViewport.startHz + fullViewport.endHz) / 2 : null;
     if (requestedCenter > 0 && confirmedCenter > 0 && Math.abs(requestedCenter - confirmedCenter) > 10) return;
-    const floor = automaticDisplayRange.sample(values, frame.generation, dbCeiling);
+    const prepared = prepareCanvas(spectrum);
+    if (!prepared) return;
+    const points = Math.max(2, Math.round(prepared.cssWidth));
+    const floor = automaticDisplayRange.sample(visibleSpectrumValues(), frame.generation, dbCeiling, points);
     if (floor === null) return;
     fftAutoFloorDb = waterfallAutoFloorDb = floor;
     syncAutomaticDisplayRangeReadouts();
@@ -16188,13 +16191,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     context.beginPath();
     const points = Math.max(2, Math.round(cssWidth));
     for (let x = 0; x < points; x += 1) {
-      const first = Math.min(spectrumValues.length - 1, Math.floor(x * spectrumValues.length / points));
-      const last = Math.min(spectrumValues.length,
-        Math.max(first + 1, Math.ceil((x + 1) * spectrumValues.length / points)));
-      let raw = -Infinity;
-      for (let bin = first; bin < last; bin += 1) {
-        if (Number.isFinite(spectrumValues[bin])) raw = Math.max(raw, spectrumValues[bin]);
-      }
+      const raw = spectrumTraceValue(spectrumValues, x, points);
       const value = Number.isFinite(raw) ? Math.max(displayFloor, Math.min(dbCeiling, raw)) : displayFloor;
       const drawX = x * cssWidth / (points - 1);
       const y = (dbCeiling - value) / (dbCeiling - displayFloor) * cssHeight;
@@ -16627,7 +16624,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     updateSpectrumSmoothing(values, frame, domain);
     frameMetadata = frame;
     analysisViewport = nextAnalysis;
-    applyAutomaticDisplayRange(values, frame);
+    applyAutomaticDisplayRange(frame);
     updateSpectrumPeak();
     const now = performance.now();
     frameTimes.push(now);
@@ -19045,7 +19042,7 @@ function saveP25VisualizerEventSettings(value) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=36');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=37');
   const visualizerModule = await p25VisualizerModulePromise;
   if (!renderIsCurrent(renderContext)) return;
   const visualizer = visualizerModule.createP25Visualizer({
