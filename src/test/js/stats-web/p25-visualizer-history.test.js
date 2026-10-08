@@ -46,9 +46,9 @@ async function main() {
   ]);
   assert.deepEqual(history.P25_ROUTINE_ACTIONS, ['CALL', 'GRANT']);
   const defaults = settings.defaultP25EventSettings();
-  assert.deepEqual(defaults.call, { highlight: false, autoZoom: false },
-    'routine calls and grants must remain opt-in');
-  assert.equal(settings.routineP25ActivityEnabled(defaults), false);
+  assert.deepEqual(defaults.call, { highlight: true, autoZoom: false },
+    'routine calls and grants are highlighted by default without requesting camera attention');
+  assert.equal(settings.routineP25ActivityEnabled(defaults), true);
   const callsEnabled = settings.normalizeP25EventSettings({ call: { highlight: true, autoZoom: false } });
   assert.equal(settings.routineP25ActivityEnabled(callsEnabled), true);
   assert.equal(settings.enabledP25EventCategories(callsEnabled, 'highlight').has('call'), true);

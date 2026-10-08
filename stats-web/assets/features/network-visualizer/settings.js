@@ -22,7 +22,7 @@ const P25_EVENT_SETTINGS = Object.freeze([
     highlight: true, autoZoom: true }),
   Object.freeze({ id: 'call', label: 'Calls and grants',
     detail: 'Routine stored call and control-channel grant activity. This does not prove affiliation.',
-    highlight: false, autoZoom: false })
+    highlight: true, autoZoom: false })
 ]);
 
 function defaultP25EventSettings() {
