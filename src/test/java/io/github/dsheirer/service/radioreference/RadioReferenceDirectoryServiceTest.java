@@ -64,6 +64,9 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.LongSupplier;
 import org.junit.jupiter.api.Test;
 
 class RadioReferenceDirectoryServiceTest
@@ -720,6 +723,49 @@ class RadioReferenceDirectoryServiceTest
                 gateway.releaseCountries.countDown();
                 callers.shutdownNow();
             }
+        }
+    }
+
+    @Test
+    void rejectsCompletedResultsWhenTheCallerResumesAfterTheDeadline() throws Exception
+    {
+        FakeGateway gateway = populatedGateway();
+        AtomicLong now = new AtomicLong();
+        AtomicReference<RadioReferenceDirectoryService> directory = new AtomicReference<>();
+        Thread caller = Thread.currentThread();
+        LongSupplier nanoTime = () -> {
+            if(Thread.currentThread() == caller && gateway.countriesEntered.getCount() == 0)
+            {
+                try
+                {
+                    // Advance the caller's clock only after the remote Future has completed successfully.
+                    waitFor(() -> directory.get().runtimeStatus().activeRequests() == 0);
+                }
+                catch(Exception exception)
+                {
+                    throw new AssertionError(exception);
+                }
+                now.set(Duration.ofMillis(200).toNanos());
+            }
+            return now.get();
+        };
+        try(RadioReferenceDirectoryService service = new RadioReferenceDirectoryService(new FakeFactory(gateway),
+            1, 1, Duration.ofMillis(150), Duration.ofMillis(50), CLOCK, nanoTime))
+        {
+            directory.set(service);
+            assertEquals(AccountState.VALID_PREMIUM, service.login("user", "secret".toCharArray()).state());
+            gateway.blockCountries(false);
+            gateway.releaseCountries.countDown();
+            assertEquals(Code.TIMEOUT, assertThrows(RadioReferenceDirectoryException.class,
+                () -> service.countries("", 10)).code());
+            assertEquals(Duration.ofMillis(200).toNanos(), now.get(),
+                "the completed-result path must advance the caller clock beyond its deadline");
+            assertEquals(0, service.runtimeStatus().activeRequests());
+            assertEquals(0, service.runtimeStatus().waitingRequests());
+
+            gateway.blockCountries = false;
+            gateway.countriesEntered = new CountDownLatch(1);
+            assertFalse(service.countries("", 10).items().isEmpty());
         }
     }
 

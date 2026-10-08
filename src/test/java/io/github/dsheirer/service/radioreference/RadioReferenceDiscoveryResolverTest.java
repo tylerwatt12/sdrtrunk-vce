@@ -17,6 +17,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongSupplier;
 import org.junit.jupiter.api.Test;
 
 class RadioReferenceDiscoveryResolverTest
@@ -273,13 +275,16 @@ class RadioReferenceDiscoveryResolverTest
         FakeGateway gateway = new FakeGateway();
         gateway.rows = List.of(row(2001, FREQUENCY));
         gateway.systems.put(2001, p25(2001, 3001, "BEE00", "49F", 2, 12, FREQUENCY));
-        gateway.delayMillis = 100;
-        try(RadioReferenceDirectoryService directory = directory(gateway, Duration.ofSeconds(1)))
+        AtomicLong now = new AtomicLong();
+        gateway.afterLookup = () -> now.addAndGet(Duration.ofMillis(100).toNanos());
+        try(RadioReferenceDirectoryService directory = directory(gateway, Duration.ofSeconds(1), now::get))
         {
             directory.login("test", "cleared-password".toCharArray());
             assertEquals(RadioReferenceDirectoryException.Code.TIMEOUT,
                 assertThrows(RadioReferenceDirectoryException.class, () -> directory.p25DiscoverySystems(
                     0x49F, FREQUENCY, 10, system -> true, candidate -> true, Duration.ofMillis(150))).code());
+            assertEquals(List.of(0x49F), gateway.p25SystemIds);
+            assertEquals(1, gateway.searches.get());
         }
     }
 
@@ -312,13 +317,16 @@ class RadioReferenceDiscoveryResolverTest
             .mapToObj(RadioReferenceDiscoveryResolverTest::catalog).toList();
         gateway.rows = List.of(row(2001, FREQUENCY));
         gateway.systems.put(2001, p25(2001, 3001, "BEE00", "49F", 2, 12, FREQUENCY));
-        gateway.delayMillis = 100;
-        try(RadioReferenceDirectoryService directory = directory(gateway, Duration.ofSeconds(1)))
+        AtomicLong now = new AtomicLong();
+        gateway.afterLookup = () -> now.addAndGet(Duration.ofMillis(100).toNanos());
+        try(RadioReferenceDirectoryService directory = directory(gateway, Duration.ofSeconds(1), now::get))
         {
             directory.login("test", "cleared-password".toCharArray());
             assertEquals(RadioReferenceDirectoryException.Code.TIMEOUT,
                 assertThrows(RadioReferenceDirectoryException.class, () -> directory.p25DiscoverySystems(
                     0x49F, FREQUENCY, 10, system -> true, Duration.ofMillis(150))).code());
+            assertEquals(List.of(0x49F), gateway.p25SystemIds);
+            assertEquals(1, gateway.searches.get());
         }
     }
 
@@ -673,8 +681,13 @@ class RadioReferenceDiscoveryResolverTest
 
     private static RadioReferenceDirectoryService directory(FakeGateway gateway, Duration deadline)
     {
+        return directory(gateway, deadline, System::nanoTime);
+    }
+
+    private static RadioReferenceDirectoryService directory(FakeGateway gateway, Duration deadline, LongSupplier nanoTime)
+    {
         return new RadioReferenceDirectoryService((user, password) -> gateway, 1, 2, deadline,
-            Duration.ofMillis(100), Clock.systemUTC());
+            Duration.ofMillis(100), Clock.systemUTC(), nanoTime);
     }
 
     private static DiscoverySystem p25(int rrSystem, int rrSite, String wacn, String system, int rfss,
@@ -716,6 +729,7 @@ class RadioReferenceDiscoveryResolverTest
         final AtomicInteger searches = new AtomicInteger();
         volatile long delayMillis;
         volatile long siteDelayMillis;
+        Runnable afterLookup = () -> {};
         volatile RadioReferenceGatewayException.Kind failure;
         volatile RadioReferenceGatewayException.Kind frequencyFailure;
         volatile boolean nullSites;
@@ -738,6 +752,7 @@ class RadioReferenceDiscoveryResolverTest
                 Thread.currentThread().interrupt();
                 throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INTERRUPTED);
             }
+            afterLookup.run();
             return rows;
         }
         @Override public List<TrunkedSystem> p25SystemsBySystemId(int systemId)
@@ -751,6 +766,7 @@ class RadioReferenceDiscoveryResolverTest
                 Thread.currentThread().interrupt();
                 throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INTERRUPTED);
             }
+            afterLookup.run();
             return p25Candidates;
         }
         @Override public TrunkedSystemDetails trunkedSystemDetails(int id)

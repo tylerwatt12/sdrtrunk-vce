@@ -41,6 +41,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.function.LongSupplier;
 import java.util.function.Predicate;
 
 /**
@@ -87,6 +88,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     private final long mRequestDeadlineNanos;
     private final long mShutdownWaitNanos;
     private final Clock mClock;
+    private final LongSupplier mNanoTime;
     private volatile AccountStatus mAccountStatus = AccountStatus.signedOut();
     private volatile boolean mClosed;
     private Session mSession;
@@ -107,12 +109,21 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
                                    int maximumWaitingRequests, Duration requestDeadline, Duration shutdownWait,
                                    Clock clock)
     {
+        this(gatewayFactory, maximumRemoteConcurrency, maximumWaitingRequests, requestDeadline, shutdownWait,
+            clock, System::nanoTime);
+    }
+
+    RadioReferenceDirectoryService(RadioReferenceGatewayFactory gatewayFactory, int maximumRemoteConcurrency,
+                                   int maximumWaitingRequests, Duration requestDeadline, Duration shutdownWait,
+                                   Clock clock, LongSupplier nanoTime)
+    {
         mGatewayFactory = Objects.requireNonNull(gatewayFactory);
         mMaximumRemoteConcurrency = positive(maximumRemoteConcurrency, "maximumRemoteConcurrency");
         mMaximumWaitingRequests = positive(maximumWaitingRequests, "maximumWaitingRequests");
         mRequestDeadlineNanos = positiveNanos(requestDeadline, "requestDeadline");
         mShutdownWaitNanos = positiveNanos(shutdownWait, "shutdownWait");
         mClock = Objects.requireNonNull(clock);
+        mNanoTime = Objects.requireNonNull(nanoTime);
         ThreadFactory threadFactory = runnable -> {
             Thread thread = new Thread(runnable,
                 "sdrtrunk radioreference remote " + THREAD_SEQUENCE.incrementAndGet());
@@ -621,7 +632,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         {
             if(mDiscarded || Thread.currentThread().isInterrupted())
                 throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INTERRUPTED);
-            if(System.nanoTime() - expiresAtNanos >= 0)
+            if(mNanoTime.getAsLong() - expiresAtNanos >= 0)
                 throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.TIMEOUT);
         }
 
@@ -1473,6 +1484,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     private <T> T invokePremium(GatewayRequest<T> request, long requestDeadlineNanos, ThreadPoolExecutor executor,
                                DiscoveryCatalog catalog) throws RadioReferenceDirectoryException
     {
+        long expiresAtNanos = mNanoTime.getAsLong() + requestDeadlineNanos;
         Session session;
 
         synchronized(mSessionLock)
@@ -1495,25 +1507,8 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
 
         try
         {
-            long expiresAtNanos = System.nanoTime() + requestDeadlineNanos;
-            T result = invoke(() -> catalog == null ? request.execute(session.gateway()) :
-                catalog.execute(session, request, expiresAtNanos), requestDeadlineNanos, executor, session);
-
-            synchronized(mSessionLock)
-            {
-                if(mClosed)
-                {
-                    throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.CLOSED);
-                }
-
-                if(mSession != session)
-                {
-                    throw new RadioReferenceDirectoryException(
-                        RadioReferenceDirectoryException.Code.NOT_AUTHENTICATED);
-                }
-            }
-
-            return result;
+            return invoke(() -> catalog == null ? request.execute(session.gateway()) :
+                catalog.execute(session, request, expiresAtNanos), expiresAtNanos, executor, session);
         }
         catch(RadioReferenceDirectoryException exception)
         {
@@ -1549,22 +1544,10 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
 
     private <T> T invoke(RemoteRequest<T> request) throws RadioReferenceDirectoryException
     {
-        return invoke(request, mRequestDeadlineNanos);
+        return invoke(request, mNanoTime.getAsLong() + mRequestDeadlineNanos, mExecutor, null);
     }
 
-    private <T> T invoke(RemoteRequest<T> request, long requestDeadlineNanos)
-        throws RadioReferenceDirectoryException
-    {
-        return invoke(request, requestDeadlineNanos, mExecutor);
-    }
-
-    private <T> T invoke(RemoteRequest<T> request, long requestDeadlineNanos, ThreadPoolExecutor executor)
-        throws RadioReferenceDirectoryException
-    {
-        return invoke(request, requestDeadlineNanos, executor, null);
-    }
-
-    private <T> T invoke(RemoteRequest<T> request, long requestDeadlineNanos, ThreadPoolExecutor executor, Session session)
+    private <T> T invoke(RemoteRequest<T> request, long expiresAtNanos, ThreadPoolExecutor executor, Session session)
         throws RadioReferenceDirectoryException
     {
         if(mClosed)
@@ -1580,13 +1563,17 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
             {
                 ensureOpen();
                 requireCurrentSession(session);
+                requireWithinDeadline(expiresAtNanos);
                 future = executor.submit(() -> {
                     synchronized(mSessionLock)
                     {
                         ensureOpen();
                         requireCurrentSession(session);
+                        requireWithinDeadline(expiresAtNanos);
                     }
-                    return request.execute();
+                    T result = request.execute();
+                    requireWithinDeadline(expiresAtNanos);
+                    return result;
                 });
                 mRequests.add(future);
                 if(session != null) session.requests().add(future);
@@ -1601,7 +1588,15 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
 
         try
         {
-            return future.get(requestDeadlineNanos, TimeUnit.NANOSECONDS);
+            T result = future.get(Math.max(0, expiresAtNanos - mNanoTime.getAsLong()), TimeUnit.NANOSECONDS);
+            synchronized(mSessionLock)
+            {
+                ensureOpen();
+                requireCurrentSession(session);
+                // A completed Future can be read after its timeout; caller scheduling must not renew the budget.
+                requireWithinDeadline(expiresAtNanos);
+            }
+            return result;
         }
         catch(TimeoutException exception)
         {
@@ -1640,6 +1635,14 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         {
             mRequests.remove(future);
             if(session != null) session.requests().remove(future);
+        }
+    }
+
+    private void requireWithinDeadline(long expiresAtNanos) throws RadioReferenceDirectoryException
+    {
+        if(mNanoTime.getAsLong() - expiresAtNanos >= 0)
+        {
+            throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.TIMEOUT);
         }
     }
 
