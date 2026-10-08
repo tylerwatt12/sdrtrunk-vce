@@ -13,6 +13,27 @@ const storageFixture = () => {
     setItem: (key, value) => records.set(key, value) };
 };
 
+test('one display choice controls both plots with one browser write and preserves previous opt-outs', async () => {
+  const { createSpectrumDisplayPreferences } = await helper;
+  const storage = storageFixture();
+  let writes = 0;
+  const store = storage.setItem;
+  storage.setItem = (key, value) => { writes++; store(key, value); };
+  const first = createSpectrumDisplayPreferences({ identity: 'user-a', storage });
+  assert.equal(first.autoRangeEnabled(), true);
+  first.setAutoRangeEnabled(false);
+  assert.equal(writes, 1);
+  assert.equal(first.get(FFT), false);
+  assert.equal(first.get(WATERFALL), false);
+  const reopened = createSpectrumDisplayPreferences({ identity: 'user-a', storage });
+  assert.equal(reopened.autoRangeEnabled(), false);
+  reopened.setAutoRangeEnabled(true);
+  assert.equal(first.autoRangeEnabled(), true, 'shared panels read the saved choice');
+  first.set(FFT, false);
+  assert.equal(reopened.autoRangeEnabled(), false, 'a previous single-plot opt-out is preserved');
+  assert.throws(() => first.setAutoRangeEnabled('false'), /boolean/);
+});
+
 test('both automatic display options default on and persist independently in this browser', async () => {
   const { createSpectrumDisplayPreferences } = await helper;
   const storage = storageFixture();

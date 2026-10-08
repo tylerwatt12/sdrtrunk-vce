@@ -34,7 +34,26 @@ export function createSpectrumDisplayPreferences({ identity = null, storage = br
   const requireKey = (preference) => {
     if (!PREFERENCE_KEYS.includes(preference)) throw new TypeError('Unknown spectrum display preference.');
   };
+  const save = (next) => {
+    current = next;
+    try {
+      storage?.setItem(key, JSON.stringify(current));
+      unsaved = false;
+    } catch (_error) {
+      unsaved = true;
+      // A prior saved record must not overwrite this panel's choice after a failed write.
+    }
+  };
   return {
+    autoRangeEnabled() {
+      const saved = read();
+      return saved.fft_auto_range_on_retune && saved.waterfall_auto_range_on_retune;
+    },
+    setAutoRangeEnabled(enabled) {
+      if (typeof enabled !== 'boolean') throw new TypeError('Spectrum display preferences must be boolean.');
+      // Keep the prior record readable, preserve an existing opt-out, and update both plots atomically.
+      save({ ...read(), fft_auto_range_on_retune: enabled, waterfall_auto_range_on_retune: enabled });
+    },
     get(preference) {
       requireKey(preference);
       return read()[preference];
@@ -42,14 +61,7 @@ export function createSpectrumDisplayPreferences({ identity = null, storage = br
     set(preference, enabled) {
       requireKey(preference);
       if (typeof enabled !== 'boolean') throw new TypeError('Spectrum display preferences must be boolean.');
-      current = { ...read(), [preference]: enabled };
-      try {
-        storage?.setItem(key, JSON.stringify(current));
-        unsaved = false;
-      } catch (_error) {
-        unsaved = true;
-        // A prior saved record must not overwrite this panel's choice after a failed write.
-      }
+      save({ ...read(), [preference]: enabled });
     }
   };
 }
