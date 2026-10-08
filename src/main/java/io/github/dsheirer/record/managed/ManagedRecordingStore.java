@@ -363,7 +363,7 @@ final class ManagedRecordingStore implements AutoCloseable
         Objects.requireNonNull(filter);
         try(Connection connection = openReader())
         {
-            if(filter.transcript != null || !filter.identityNameMatches.isEmpty())
+            if(filter.transcript != null || !filter.identityNameMatches.isEmpty() || filter.radioIdentityMatch != null)
             {
                 long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
                 org.sqlite.ProgressHandler.setHandler(connection, 10000, new org.sqlite.ProgressHandler()
@@ -418,6 +418,7 @@ final class ManagedRecordingStore implements AutoCloseable
                 parameters.add(selectedSiteId);
             }
             addSystemPredicate(predicates, parameters, filter.systemKey, "sys.system_key=?");
+            addRadioIdentityPredicate(predicates, parameters, filter.radioIdentityMatch);
             if(filter.channelId != null && !filter.channelId.isBlank())
             {
                 predicates.add("ch.channel_uuid=?");
@@ -735,6 +736,11 @@ final class ManagedRecordingStore implements AutoCloseable
             }
             return List.copyOf(queries);
         }
+        if(filter.radioIdentityMatch != null && filter.talkgroupId == null && filter.sourceId == null &&
+            filter.talkgroupMin == null && filter.sourceMin == null && anyIds.isEmpty())
+        {
+            return nameIdentityCandidateQueries(filter, filter.radioIdentityMatch);
+        }
         boolean talkgroup = filter.talkgroupId != null;
         boolean radio = filter.sourceId != null;
         boolean any = !anyIds.isEmpty();
@@ -768,15 +774,8 @@ final class ManagedRecordingStore implements AutoCloseable
     private List<CandidateQuery> nameIdentityCandidateQueries(SearchFilter filter, IdentityNameMatch match)
     {
         List<Object> values = new ArrayList<>();
-        String source = nameRadioValue(match, "c.source_id", "c.source_home_wacn",
-            "c.source_home_system", "c.source_home_id", values);
-        String target = nameRadioValue(match, "c.target_id", "c.target_home_wacn",
-            "c.target_home_system", "c.target_home_id", values);
-        String member = nameRadioValue(match, "member.local_id", "nullif(member.home_wacn,-1)",
-            "nullif(member.home_system,-1)", "nullif(member.home_id,-1)", values);
-        String radio = "(" + source + " OR (c.call_type=3 AND " + target + ") OR " +
-            "EXISTS(SELECT 1 FROM recording_patch_member member WHERE member.call_id=c.id " +
-            "AND member.kind=2 AND " + member + "))";
+        //The scalar exact filter is already applied by candidateQuery; keep additional name owners independent.
+        String radio = match.equals(filter.radioIdentityMatch) ? "1" : radioIdentityPredicate(match, values);
         List<CandidateQuery> queries = new ArrayList<>(2);
         List<Object> parameters = new ArrayList<>();
         parameters.add(match.systemKey());
@@ -799,6 +798,28 @@ final class ManagedRecordingStore implements AutoCloseable
                 String.join(" AND ", conditions), parameters, "c.start_ms", "c.id"));
         }
         return List.copyOf(queries);
+    }
+
+    private static void addRadioIdentityPredicate(List<String> conditions, List<Object> parameters,
+                                                  IdentityNameMatch match)
+    {
+        if(match != null)
+        {
+            conditions.add("c.protocol IN(1,2) AND " + radioIdentityPredicate(match, parameters));
+        }
+    }
+
+    private static String radioIdentityPredicate(IdentityNameMatch match, List<Object> parameters)
+    {
+        String source = nameRadioValue(match, "c.source_id", "c.source_home_wacn",
+            "c.source_home_system", "c.source_home_id", parameters);
+        String target = nameRadioValue(match, "c.target_id", "c.target_home_wacn",
+            "c.target_home_system", "c.target_home_id", parameters);
+        String member = nameRadioValue(match, "member.local_id", "nullif(member.home_wacn,-1)",
+            "nullif(member.home_system,-1)", "nullif(member.home_id,-1)", parameters);
+        return "(" + source + " OR (c.call_type=3 AND " + target + ") OR " +
+            "EXISTS(SELECT 1 FROM recording_patch_member member WHERE member.call_id=c.id " +
+            "AND member.kind=2 AND " + member + "))";
     }
 
     /** Home metadata represents the permanent subscriber; its local ID may be a different Working ID. */
@@ -846,6 +867,7 @@ final class ManagedRecordingStore implements AutoCloseable
         parameters.add(filter.toMs);
         addSystemPredicate(conditions, parameters, filter.systemKey,
             "c.system_id=(SELECT id FROM recording_system WHERE system_key=?)");
+        addRadioIdentityPredicate(conditions, parameters, filter.radioIdentityMatch);
         if(filter.channelId != null && !filter.channelId.isBlank())
         {
             conditions.add("c.channel_id=(SELECT id FROM recording_channel WHERE channel_uuid=?)");

@@ -749,6 +749,84 @@ class ManagedRecordingStoreTest
     }
 
     @Test
+    void exactRadioIdentityFiltersEveryRoleWithoutConfusingWorkingIds() throws Exception
+    {
+        Path db = temporary.resolve("exact-radio.sqlite");
+        String system = "p25:00001:001";
+        Site site = new Site(1, 1, 1, 1);
+        IdentityNameMatch foreign = new IdentityNameMatch(777, system, 2, 2, false);
+        try(ManagedRecordingStore store = new ManagedRecordingStore(db, temporary.resolve("exact-audio")))
+        {
+            store.insert(metadata(1000, system, "local.mp3", 101, 1001,
+                ManagedRecordingCatalog.CALL_GROUP, site, List.of(site), List.of()));
+            store.insert(metadata(2000, system, "foreign-same-working.mp3", 101, 1001,
+                ManagedRecordingCatalog.CALL_GROUP, site, List.of(site), List.of()));
+            store.insert(metadata(3000, system, "foreign-other-working.mp3", 555, 1001,
+                ManagedRecordingCatalog.CALL_GROUP, site, List.of(site), List.of()));
+            store.insert(metadata(4000, system, "direct.mp3", 999, 888,
+                ManagedRecordingCatalog.CALL_DIRECT, site, List.of(site), List.of()));
+            store.insert(metadata(5000, system, "patch.mp3", 999, 1002,
+                ManagedRecordingCatalog.CALL_PATCH, site, List.of(site),
+                List.of(new Member("radio", 999, 2, 2, 777))));
+            store.insert(metadata(6000, system, "different-group.mp3", 555, 1002,
+                ManagedRecordingCatalog.CALL_GROUP, site, List.of(site), List.of()));
+            store.insert(metadata(7000, "p25:00002:002", "different-system.mp3", 555, 1001,
+                ManagedRecordingCatalog.CALL_GROUP, null, List.of(), List.of()));
+            store.insert(metadata(8000, system, "not-a-radio-target.mp3", 999, 777,
+                ManagedRecordingCatalog.CALL_GROUP, null, List.of(), List.of()));
+            try(var connection = DriverManager.getConnection("jdbc:sqlite:" + db);
+                var statement = connection.createStatement())
+            {
+                statement.executeUpdate("UPDATE recording_call SET source_home_wacn=2,source_home_system=2," +
+                    "source_home_id=777 WHERE start_ms IN(2000,3000,6000,7000)");
+                statement.executeUpdate("UPDATE recording_call SET target_home_wacn=2,target_home_system=2," +
+                    "target_home_id=777 WHERE start_ms IN(4000,8000)");
+            }
+            SearchFilter firstFilter = SearchFilter.builder().fromMs(0L).toMs(9000L).systemKey(system)
+                .radioIdentityMatch(foreign).limit(2).build();
+            SearchPage first = store.search(firstFilter);
+            assertEquals(List.of(6000L, 5000L), first.calls().stream().map(call -> call.startMs()).toList());
+            assertNotNull(first.nextCursor());
+            SearchPage second = store.search(SearchFilter.builder().fromMs(0L).toMs(9000L).systemKey(system)
+                .radioIdentityMatch(foreign).limit(2).cursor(first.nextCursor()).build());
+            assertEquals(List.of(4000L, 3000L), second.calls().stream().map(call -> call.startMs()).toList());
+            SearchPage third = store.search(SearchFilter.builder().fromMs(0L).toMs(9000L).systemKey(system)
+                .radioIdentityMatch(foreign).limit(2).cursor(second.nextCursor()).build());
+            assertEquals(List.of(2000L), third.calls().stream().map(call -> call.startMs()).toList());
+            assertNull(third.nextCursor());
+            assertEquals(List.of(1000L), store.search(SearchFilter.builder().fromMs(0L).toMs(9000L)
+                .systemKey(system).radioIdentityMatch(new IdentityNameMatch(101, system, 1, 1, true)).build())
+                .calls().stream().map(call -> call.startMs()).toList());
+            assertEquals(List.of(3000L, 2000L), store.search(SearchFilter.builder().fromMs(0L).toMs(5000L)
+                .systemKey(system).radioIdentityMatch(foreign).talkgroupId(1001).build())
+                .calls().stream().map(call -> call.startMs()).toList());
+            assertEquals(List.of(2000L), store.search(SearchFilter.builder().fromMs(0L).toMs(9000L)
+                .systemKey(system).radioIdentityMatch(foreign).talkgroupId(1001).sourceId(101).build())
+                .calls().stream().map(call -> call.startMs()).toList());
+            assertEquals(List.of(3000L), store.search(SearchFilter.builder().fromMs(0L).toMs(5000L)
+                .systemKey(system).radioIdentityMatch(foreign).sourceMin(500).sourceMax(600)
+                .talkgroupMin(1000).talkgroupMax(1001).anyIdentityId(1001)
+                .wacn(1).systemId(1).rfss(1).siteId(1).build())
+                .calls().stream().map(call -> call.startMs()).toList());
+            assertTrue(store.storeTranscript(third.calls().getFirst().id(), "witness statement", 2001L));
+            assertEquals(List.of(2000L), store.search(SearchFilter.builder().fromMs(0L).toMs(9000L)
+                .systemKey(system).radioIdentityMatch(foreign).transcript("witness").build())
+                .calls().stream().map(call -> call.startMs()).toList());
+            for(ManagedRecordingStore.CandidateQuery branch: store.singleIdentityCandidateQueries(firstFilter))
+            {
+                String details = plan(db, branch);
+                assertTrue(details.contains(branch.sql().contains("c INDEXED BY idx_recording_call_time") ?
+                    "SEARCH c USING INDEX idx_recording_call_time" :
+                    "SEARCH c USING INDEX idx_recording_call_system_time"), details);
+                assertFalse(details.contains("USE TEMP B-TREE"), details);
+            }
+        }
+        assertThrows(IllegalArgumentException.class, () -> SearchFilter.builder().radioIdentityMatch(foreign).build());
+        assertThrows(IllegalArgumentException.class, () -> SearchFilter.builder().systemKey("p25:00002:002")
+            .radioIdentityMatch(foreign).build());
+    }
+
+    @Test
     void manualRecountAndReindexDropMissingRowsWithoutImportingLooseFiles() throws Exception
     {
         Path root = temporary.resolve("managed");

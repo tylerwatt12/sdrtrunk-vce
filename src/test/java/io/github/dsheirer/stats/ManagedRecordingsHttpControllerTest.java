@@ -534,6 +534,55 @@ class ManagedRecordingsHttpControllerTest
     }
 
     @Test
+    void exactRadioKeyKeepsReceivingSystemAndOtherQueryConstraints() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDirectory.resolve(
+            "managed-recordings.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO recording_system(id,system_key) VALUES(501,'p25:00001:001')");
+            statement.executeUpdate("UPDATE recording_call SET system_id=501 WHERE id=1");
+            statement.executeUpdate("INSERT INTO recording_call(start_ms,end_ms,duration_ms,relative_path," +
+                "size_bytes,system_id,protocol,call_type,voice_type,source_id,target_id,source_home_wacn," +
+                "source_home_system,source_home_id) " +
+                "VALUES(1500,2500,1000,'foreign.mp3',5,501,1,1,1,101,4001,2,2,777)");
+            statement.executeUpdate("INSERT INTO recording_call(start_ms,end_ms,duration_ms,relative_path," +
+                "size_bytes,system_id,protocol,call_type,voice_type,source_id,target_id,source_home_wacn," +
+                "source_home_system,source_home_id) " +
+                "VALUES(1700,2700,1000,'working.mp3',5,501,1,1,1,555,4002,2,2,777)");
+            statement.executeUpdate("UPDATE catalog_metadata SET call_count=3,total_bytes=15 WHERE id=1");
+        }
+        String base = ManagedRecordingsHttpController.BROWSE_PATH +
+            "/calls?from_ms=0&to_ms=5000&system_key=p25:00001:001";
+        HttpResponse<String> local = send(request(base + "&radio_identity_key=v1-r-00001-001-101").GET());
+        assertEquals(200, local.statusCode(), local.body());
+        assertEquals(1, json(local).at("/data/calls").size());
+        assertEquals(1, json(local).at("/data/calls/0/id").longValue());
+        String foreign = base + "&radio_identity_key=v1-r-00002-002-777";
+        HttpResponse<String> everyWorkingId = send(request(foreign).GET());
+        assertEquals(200, everyWorkingId.statusCode(), everyWorkingId.body());
+        assertEquals(2, json(everyWorkingId).at("/data/calls").size());
+        HttpResponse<String> constrained = send(request(foreign + "&talkgroup_id=4001&q=4001").GET());
+        assertEquals(200, constrained.statusCode(), constrained.body());
+        assertEquals(1, json(constrained).at("/data/calls").size());
+        assertEquals(2, json(constrained).at("/data/calls/0/id").longValue());
+        assertEquals(0, json(send(request(foreign + "&q=unmatched-name").GET())).at("/data/calls").size());
+        for(String invalid: new String[]{"bad", "v1-g-00001-001-101", "v1-r-x-x-101",
+            "v1-r-00001-001-16777215"})
+        {
+            HttpResponse<String> response = send(request(base + "&radio_identity_key=" + invalid).GET());
+            assertEquals(400, response.statusCode(), response.body());
+            assertEquals("radio_identity_key", json(response).at("/error/field").textValue());
+        }
+        for(String scope: new String[]{"", "&system_key=channel:cccccccc-cccc-cccc-cccc-cccccccccccc",
+            "&system_key=p25:INVALID"})
+        {
+            HttpResponse<String> response = send(request(ManagedRecordingsHttpController.BROWSE_PATH +
+                "/calls?radio_identity_key=v1-r-00001-001-101" + scope).GET());
+            assertEquals(400, response.statusCode(), response.body());
+        }
+    }
+
+    @Test
     void numericAutocompleteReturnsUnaliasedTalkgroupsInSpecificAndGeneralFinders() throws Exception
     {
         String base = ManagedRecordingsHttpController.BROWSE_PATH + "/suggestions?q=4001";

@@ -727,6 +727,7 @@ public final class ManagedRecordingCatalog implements AutoCloseable
         public final Integer talkgroupMin;
         public final Integer talkgroupMax;
         public final Integer sourceId;
+        public final IdentityNameMatch radioIdentityMatch;
         public final Integer sourceMin;
         public final Integer sourceMax;
         public final Integer anyIdentityId;
@@ -763,6 +764,13 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             talkgroupMin = builder.talkgroupMin;
             talkgroupMax = builder.talkgroupMax;
             sourceId = builder.sourceId;
+            radioIdentityMatch = builder.radioIdentityMatch;
+            if(radioIdentityMatch != null && (!RadioSystemKey.isP25Native(systemKey) ||
+                !systemKey.equals(radioIdentityMatch.systemKey()) || radioIdentityMatch.homeWacn() == null ||
+                radioIdentityMatch.homeWacn() < 0))
+            {
+                throw new IllegalArgumentException("Exact recording radio requires its P25 receiving system");
+            }
             sourceMin = builder.sourceMin;
             sourceMax = builder.sourceMax;
             if(talkgroupMin != null && (talkgroupMax == null || talkgroupMin < 0 ||
@@ -813,6 +821,7 @@ public final class ManagedRecordingCatalog implements AutoCloseable
                 sourceId, sourceMin, sourceMax, anyIdentityId;
             private List<Integer> anyIdentityIds;
             private List<IdentityNameMatch> identityNameMatches;
+            private IdentityNameMatch radioIdentityMatch;
             private boolean sortAscending;
             private int limit = DEFAULT_PAGE_SIZE;
 
@@ -831,6 +840,7 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             public Builder talkgroupMin(Integer value) { talkgroupMin = value; return this; }
             public Builder talkgroupMax(Integer value) { talkgroupMax = value; return this; }
             public Builder sourceId(Integer value) { sourceId = value; return this; }
+            public Builder radioIdentityMatch(IdentityNameMatch value) { radioIdentityMatch = value; return this; }
             public Builder sourceMin(Integer value) { sourceMin = value; return this; }
             public Builder sourceMax(Integer value) { sourceMax = value; return this; }
             public Builder anyIdentityId(Integer value) { anyIdentityId = value; return this; }
