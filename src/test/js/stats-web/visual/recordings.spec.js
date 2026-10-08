@@ -1142,7 +1142,7 @@ for (const theme of ['light', 'dark']) {
     await expect(page.locator('.recordings-transcript-preview')).toHaveCount(2);
     await expect(page.locator('.recordings-library')).toHaveScreenshot(`recordings-approved-${theme}.png`, componentScreenshot);
     const firstCard = page.locator('.recordings-call').first();
-    await firstCard.locator('.recordings-card-play').click({ position: { x: 180, y: 20 } });
+    await firstCard.locator('.recordings-play-glyph').click();
     let chooser = page.getByRole('dialog', { name: 'Play recording', exact: true });
     await expect(chooser).toBeVisible();
     await expect(chooser.getByRole('button', { name: /Play once/ })).toContainText('then stop');

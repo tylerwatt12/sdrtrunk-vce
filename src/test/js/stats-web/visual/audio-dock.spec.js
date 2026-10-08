@@ -94,9 +94,9 @@ for (const viewport of [{ width: 320, height: 740 }, { width: 390, height: 844 }
   });
 }
 
-test('recording facts, transcript and entity links remain available in the full dock', async ({ page }) => {
+test('recording facts, transcript and scoped filters remain available in the full dock', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await openAudioApp(page);
+  const state = await openAudioApp(page);
   await chooseRecording(page);
   await fullControls(page);
   await selectPanel(page, 'Details');
@@ -117,10 +117,26 @@ test('recording facts, transcript and entity links remain available in the full 
   await expect(player).toContainText('Engine 4');
   await expect(player).toContainText('ENG 4');
   await expect(player).toContainText('North Ridge');
-  await expect(player.locator('a[href*="view=radio-system"]')).toHaveCount(1);
-  expect(await player.locator('a[href*="view=channel"]').count()).toBeGreaterThan(0);
-  expect(await player.locator('a[href*="view=radio&"]').count()).toBeGreaterThan(0);
-  expect(await player.locator('a[href*="view=group-identity"]').count()).toBeGreaterThan(0);
+  const factLink = (field) => player.locator('dt').filter({ hasText: new RegExp(`^${field}$`) })
+    .locator('xpath=following-sibling::dd[1]').getByRole('link');
+  for (const [field, filters] of [
+    ['Radio system', { system_key: recording.system_key }],
+    ['Saved channel', { channel_id: recording.channel_id }],
+    ['Source Radio ID', { system_key: recording.system_key, radio_identity_key: recording.source_entity_ref.identity_key }],
+    ['Talkgroup ID', { system_key: recording.system_key, talkgroup_id: String(recording.talkgroup_id) }]
+  ]) {
+    const link = factLink(field);
+    await expect(link).toHaveCount(1);
+    const query = new URL(await link.getAttribute('href'), page.url()).searchParams;
+    expect(Object.fromEntries(query)).toMatchObject({ view: 'recordings', ...filters });
+  }
+  await factLink('Radio system').click();
+  await expect.poll(() => state.requests.filter((request) => request.path === '/api/v1/recordings/calls')
+    .at(-1)?.query).toMatchObject({ system_key: recording.system_key });
+  await expect(page).toHaveURL(/view=recordings/);
+  await expect(player).toHaveAttribute('data-state', 'full');
+  await expect(player).toHaveAttribute('data-source', 'recordings');
+  await expect(player).toContainText('Engine 4');
   await selectPanel(page, 'Transcript');
   await expect(player).toContainText(transcript.text);
   await expect(player).toContainText('Transcribed');
