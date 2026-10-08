@@ -1424,6 +1424,7 @@ class StatsWebInteractionUiContractTest
         String systems = function(source, "function liveChannelsSection(onSelectionChange)");
         String settingsActivation = function(source, "async function activateLivePresentationSettings(button)");
         String showTable = function(systems, "const showTable = (tableId, closeMobilePicker = false) =>");
+        String reconcileSelection = function(systems, "const reconcileSelection = (displayed) =>");
         String updateVisibleRows = function(systems, "const updateVisibleRows = (value) =>");
         String live = function(source, "async function renderLive()");
         String resizer = function(source, "function liveWorkspaceResizer(workspace)");
@@ -1629,7 +1630,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(systems.contains("liveTable.tableController.replaceRows"));
         assertTrue(showTable.contains("displayed.control_active ? liveCurrentControlRow(displayed) : null"));
         assertTrue(showTable.contains("selectRow(displayed, currentControl)"));
-        assertTrue(updateVisibleRows.contains(
+        assertTrue(updateVisibleRows.contains("reconcileSelection(displayed)"));
+        assertTrue(updateVisibleRows.contains("liveTable.tableController.reconcileRows(displayed.rows)"));
+        assertTrue(reconcileSelection.contains(
             "liveDetailSelectionAfterRowsChanged(displayed, selection)"));
         assertTrue(rowsChangedSelection.contains(
             "selection.kind === LIVE_DETAIL_SELECTION_KINDS.CONTROL"));
