@@ -1090,7 +1090,7 @@ for (const width of [1280, 1440]) {
     });
 }
 
-test('managed Spectrum keeps one aligned toolbar and updates one persistent frequency rail', async ({ page }) => {
+test('managed Spectrum keeps organized toolbar rows and updates one persistent frequency rail', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   const state = { liveSpectrum: true };
   await install(page, state);
@@ -1149,14 +1149,34 @@ test('managed Spectrum keeps one aligned toolbar and updates one persistent freq
     const spectrum = document.querySelector('.spectrum-browse-panel').getBoundingClientRect();
     const actions = document.querySelector('.spectrum-browse-control-rail').getBoundingClientRect();
     const toolbar = document.querySelector('.spectrum-browse-toolbar');
-    const centers = [...toolbar.children].filter((child) => !child.hidden).map((child) => {
-      const bounds = child.getBoundingClientRect();
-      return bounds.top + bounds.height / 2;
-    });
+    const bounds = toolbar.getBoundingClientRect();
+    const tuner = toolbar.querySelector('.spectrum-browse-tuner').getBoundingClientRect();
+    const frequency = toolbar.querySelector('.spectrum-browse-center').getBoundingClientRect();
+    const commands = toolbar.querySelector('.spectrum-browse-command-cluster').getBoundingClientRect();
+    const state = toolbar.querySelector('.spectrum-browse-state').getBoundingClientRect();
+    const actionsRow = toolbar.querySelector('.spectrum-browse-actions').getBoundingClientRect();
+    const style = getComputedStyle(toolbar);
+    const gap = parseFloat(style.rowGap);
+    const inset = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom) +
+      parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
+    const center = (rect) => rect.top + rect.height / 2;
+    const controlsBounded = [...toolbar.querySelectorAll('button, select, summary')]
+      .filter((control) => control.getClientRects().length &&
+        getComputedStyle(control).visibility !== 'hidden').every((control) => {
+        const rect = control.getBoundingClientRect();
+        return rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1 &&
+          rect.top >= bounds.top - 1 && rect.bottom <= bounds.bottom + 1;
+      });
     return { aligned: Math.abs(actions.x - spectrum.x) <= 1,
       railStacked: actions.y >= spectrum.bottom,
-      toolbarAligned: Math.max(...centers) - Math.min(...centers) <= 1 };
-  })).toEqual({ aligned: true, railStacked: true, toolbarAligned: true });
+      tunerAndFrequencyAligned: Math.abs(center(tuner) - center(frequency)) <= 1,
+      commandsOnSecondRow: Math.abs(commands.top - Math.max(tuner.bottom, frequency.bottom) - gap) <= 1,
+      commandsAligned: Math.abs(center(state) - center(actionsRow)) <= 1,
+      exactlyTwoToolbarRows: Math.abs(bounds.height - Math.max(tuner.height, frequency.height) -
+        commands.height - gap - inset) <= 1,
+      controlsBounded };
+  })).toEqual({ aligned: true, railStacked: true, tunerAndFrequencyAligned: true,
+    commandsOnSecondRow: true, commandsAligned: true, exactlyTwoToolbarRows: true, controlsBounded: true });
   await panel.getByRole('img', { name: 'Tuner frequency spectrum', exact: true })
     .click({ position: { x: 180, y: 80 } });
   await expect.poll(() => rail.evaluate((element) => {
@@ -2195,7 +2215,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
   });
 }
 
-for (const width of [1280, 820, 390]) {
+for (const width of [1280, 943, 900, 820, 390, 320]) {
   test(`Browse Spectrum frequency width stays fixed through status changes at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await install(page, { liveSpectrum: true });

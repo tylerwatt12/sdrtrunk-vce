@@ -114,6 +114,7 @@ async function installDismissalHarness(page) {
     const state = { cleanups: 0, restorations: 0, loads: 0, actions: 0, renders: 0, parentCloses: 0 };
     const shared = new Function('node', 'valueNode', 'iconButton', 'routeFoundation', 'render',
       `let activeReadOnlyModal = null; let route = new URLSearchParams(location.search);
+       const aliasEditorWorkspaceController = null;
        ${source}\n${navigation}
        return { openReadOnlyModal, closeReadOnlyModal, confirmAction, navigateTo };`)(node,
       value => value instanceof Node ? value : document.createTextNode(String(value)), iconButton,
@@ -301,6 +302,8 @@ test('a child dialog preserves the parent draft, scroll, focus, and body lock', 
 });
 
 test('dirty navigation resumes the requested route after one discard decision', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', error => pageErrors.push(error.message));
   await installDismissalHarness(page);
   const draft = page.getByLabel('Draft name');
   await draft.fill('Keep this until accepted');
@@ -316,9 +319,10 @@ test('dirty navigation resumes the requested route after one discard decision', 
   await page.getByRole('button', { name: 'Open recordings' }).click();
   await confirmation.getByRole('button', { name: 'Discard changes' }).click();
   await expect(page.locator('.read-only-modal')).toHaveCount(0);
-  expect(new URL(page.url()).search).toBe('?view=recordings&group=42');
+  await expect.poll(() => new URL(page.url()).search).toBe('?view=recordings&group=42');
   expect(await page.evaluate(() => ({ renders: window.dismissalTest.renders,
     closed: window.dismissalTest.parentCloses }))).toEqual({ renders: 1, closed: 1 });
+  expect(pageErrors).toEqual([]);
 });
 
 test('dirty replacement waits to mount, restores cancellation, and preserves installed handlers and focus', async ({ page }) => {

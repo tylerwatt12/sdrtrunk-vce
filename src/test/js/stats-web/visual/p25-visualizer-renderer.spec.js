@@ -2,7 +2,11 @@
 
 const { test, expect } = require('@playwright/test');
 
-async function openRenderer(page, theme, width, reducedMotion = false) {
+async function openRenderer(page, theme, width, reducedMotion = false, controlledClock = false) {
+  if (controlledClock) {
+    await page.clock.install({ time: new Date('2026-10-01T12:00:00Z') });
+    await page.clock.pauseAt(new Date('2026-10-01T12:00:01Z'));
+  }
   await page.setViewportSize({ width, height: 844 });
   await page.emulateMedia({ reducedMotion: reducedMotion ? 'reduce' : 'no-preference' });
   await page.goto(`/design-system.html?theme=${theme}&view=health`);
@@ -50,20 +54,22 @@ async function openRenderer(page, theme, width, reducedMotion = false) {
     };
     window.visualizerFixture = { renderer, graph, data, mesh, refreshes: () => refreshes };
   });
+  if (controlledClock) await page.clock.runFor(100);
   await expect(page.locator('.network-visualizer-canvas')).toHaveAttribute('data-renderer-state', 'ready');
   await expect.poll(() => page.evaluate(() => !!window.visualizerFixture.mesh())).toBe(true);
 }
 
 for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
   test(`radio transitions retain rendered motion through activity updates ${theme} ${width}px`, async ({ page }) => {
-    await openRenderer(page, theme, width);
+    await openRenderer(page, theme, width, false, true);
     await page.evaluate(() => {
       const fixture = window.visualizerFixture;
       fixture.initialMesh = fixture.mesh();
       fixture.startedAt = performance.now();
       fixture.renderer.setData(fixture.data(140, 'call'));
     });
-    await page.waitForTimeout(250);
+    // Drive the actual renderer frames on an exact clock; wall-clock sleeps race GPU warm-up in CI.
+    await page.clock.runFor(250);
     const midpoint = await page.evaluate(() => window.visualizerFixture.mesh().position.x);
     expect(midpoint).toBeGreaterThan(0);
     expect(midpoint).toBeLessThan(140);
@@ -74,13 +80,13 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
       fixture.renderer.setData(fixture.data(140), { animate: false });
     });
     for (let update = 0; update < 4; update += 1) {
-      await page.waitForTimeout(180);
+      await page.clock.runFor(180);
       await page.evaluate(() => {
         const fixture = window.visualizerFixture;
         fixture.renderer.setData(fixture.data(140));
       });
     }
-    await page.waitForTimeout(180);
+    await page.clock.runFor(180);
     const settled = await page.evaluate(() => {
       const fixture = window.visualizerFixture;
       return { x: fixture.mesh().position.x, sameMesh: fixture.mesh() === fixture.initialMesh,
@@ -92,6 +98,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     expect(settled.dataX).toBeCloseTo(140, 1);
     expect(settled.sameMesh).toBe(true);
     expect(settled.refreshes).toBe(0);
+    await page.clock.resume();
     await expect(page.locator('.network-visualizer-stage')).toHaveScreenshot(
       `network-visualizer-motion-${theme}-${width}.png`);
     await page.evaluate(() => window.visualizerFixture.renderer.dispose());

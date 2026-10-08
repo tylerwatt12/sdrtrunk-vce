@@ -18,6 +18,34 @@ async function mockApplication(page, theme) {
   preferences.appearance.theme = theme;
   const now = Date.parse('2026-10-01T12:00:00Z');
   await page.clock.setFixedTime(new Date(now));
+  await page.addInitScript(() => {
+    const originalFetch = window.fetch.bind(window);
+    window.mobileSavedActivityBound = false;
+    window.mobileSavedActivityCaughtUp = false;
+    window.fetch = (input, options) => {
+      const url = new URL(typeof input === 'string' ? input : input.url, location.href);
+      if (url.pathname !== '/api/v1/live/multiplex') return originalFetch(input, options).then((response) => {
+        if (url.pathname === '/api/v1/activity' && Number(url.searchParams.get('after_id')) > 0 && response.ok) {
+          window.mobileSavedActivityCaughtUp = true;
+        }
+        return response;
+      });
+      const frame = (topic, event, data) => {
+        const payload = new TextEncoder().encode(JSON.stringify({ event, data }));
+        const bytes = new Uint8Array(16 + payload.length), header = new DataView(bytes.buffer);
+        header.setUint32(0, 0x534c4d58); header.setUint8(4, 2); header.setUint8(5, 1);
+        header.setUint16(6, topic); header.setUint32(8, payload.length); bytes.set(payload, 16);
+        return bytes;
+      };
+      return Promise.resolve(new Response(new ReadableStream({ start(controller) {
+        controller.enqueue(frame(0, 'ready', { client_id: url.searchParams.get('client_id') }));
+        window.mobileSendSavedActivitySource = (data) => {
+          controller.enqueue(frame(7, 'source_change', data));
+          window.mobileSavedActivityBound = true;
+        };
+      } }), { status: 200 }));
+    };
+  });
   const list = { alias_list_id: 1, id: 1, name: 'County Public Safety', family: 'P25',
     alias_count: 1, assigned_channel_count: 0 };
   const aliases = [{ alias_id: 101, alias_list_id: 1, name: 'Fire Dispatch', group: 'Fire',
@@ -37,6 +65,15 @@ async function mockApplication(page, theme) {
   const writes = [];
   await page.route('**/api/v1/**', async route => {
     const request = route.request(), url = new URL(request.url()), p = url.pathname;
+    if (p === '/api/v1/live/multiplex/control') {
+      const subscription = request.postDataJSON().subscriptions?.saved_activity;
+      await route.fulfill({ json: { data: { accepted: true } } });
+      if (subscription) await page.evaluate(({ subscription, now }) => window.mobileSendSavedActivitySource({
+        subscription_id: subscription.subscription_id, watermark_id: 16, server_time_ms: now,
+        traffic_grant_age_out_milliseconds: 1_000, collection_enabled: true
+      }), { subscription, now });
+      return;
+    }
     if (request.method() !== 'GET') writes.push(p);
     let data;
     if (p === '/api/v1/me/preferences') {
@@ -75,6 +112,12 @@ async function mockApplication(page, theme) {
     await route.fulfill({ status: data ? 200 : 404, json: data ? { data } : { error: { message: 'Fixture unavailable' } } });
   });
   return writes;
+}
+
+async function savedActivityReady(page) {
+  await expect.poll(() => page.evaluate(() => window.mobileSavedActivityBound)).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.mobileSavedActivityCaughtUp)).toBe(true);
+  await expect(page.locator('.network-visualizer-status')).toHaveText('Saved history');
 }
 
 async function dockSize(page, state) {
@@ -154,7 +197,7 @@ for (const theme of ['light', 'dark']) for (const [width, height] of sizes) {
     await page.keyboard.press('Escape');
 
     await page.goto('/app.html?view=network-visualizer');
-    await expect(page.locator('.network-visualizer-status')).toHaveText('Saved history');
+    await savedActivityReady(page);
     for (const state of ['collapsed', 'minimal']) {
       await dockSize(page, state);
       const toggle = page.getByRole('button', { name: 'Events', exact: true });
@@ -191,7 +234,7 @@ test('P25 Events retains its single list through a short-screen orientation chan
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApplication(page, 'light');
   await page.goto('/app.html?view=network-visualizer');
-  await expect(page.locator('.network-visualizer-status')).toHaveText('Saved history');
+  await savedActivityReady(page);
   await dockSize(page, 'collapsed');
   const toggle = page.getByRole('button', { name: 'Events', exact: true });
   await toggle.click();
@@ -250,7 +293,7 @@ test('resizing open P25 Events never replaces a different modal with unsaved cho
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApplication(page, 'light');
   await page.goto('/app.html?view=network-visualizer');
-  await expect(page.locator('.network-visualizer-status')).toHaveText('Saved history');
+  await savedActivityReady(page);
   await dockSize(page, 'collapsed');
   await page.getByRole('button', { name: 'Events', exact: true }).click();
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
@@ -273,7 +316,7 @@ test('short-screen P25 Events uses the shared modal inside the browser fullscree
   await page.setViewportSize({ width: 844, height: 390 });
   await mockApplication(page, 'dark');
   await page.goto('/app.html?view=network-visualizer');
-  await expect(page.locator('.network-visualizer-status')).toHaveText('Saved history');
+  await savedActivityReady(page);
   await page.getByRole('button', { name: 'Enter fullscreen', exact: true }).click();
   await expect.poll(() => page.evaluate(() => document.fullscreenElement?.className)).toBe('network-visualizer-layout');
   const toggle = page.getByRole('button', { name: 'Events', exact: true });

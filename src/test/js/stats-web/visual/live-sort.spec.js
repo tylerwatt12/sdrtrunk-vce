@@ -601,7 +601,8 @@ for (const theme of ['light', 'dark']) {
         }
         await page.goto('/app.html?view=live&channel=metro-north');
         await expect(table).toHaveAttribute('data-row-density', 'dense');
-        expect(await liveCallContents(page)).toEqual(contents);
+        // Saved density applies before the first coalesced Activity snapshot paint.
+        await expect.poll(() => liveCallContents(page)).toEqual(contents);
         dialog = await presentationDialog(page);
         await expect(rowDensity(dialog)).toHaveValue('dense');
         expect(app.receiverWrites).toEqual([]);

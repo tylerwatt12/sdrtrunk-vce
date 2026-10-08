@@ -359,12 +359,11 @@ for (const [theme, width] of [['light', 1440], ['dark', 1440], ['light', 320], [
       const resources = page.locator('.receiver-health-resource-bars .ui-metric');
       await expect(resources).toHaveCount(4);
       for (const card of await resources.all()) {
-        const inset = await card.evaluate((element) => {
+        await expect.poll(() => card.evaluate((element) => {
           const content = element.querySelector('.ui-metric-copy');
           return content.getBoundingClientRect().top - element.getBoundingClientRect().top -
             parseFloat(getComputedStyle(element).paddingTop) - parseFloat(getComputedStyle(element).borderTopWidth);
-        });
-        expect(Math.abs(inset)).toBeLessThan(1);
+        }).then(Math.abs)).toBeLessThan(1);
       }
       await expect(resources.nth(2)).toContainText('13ms in last sample');
       await expect(resources.nth(2)).toContainText('Total since startup 25925 ms');

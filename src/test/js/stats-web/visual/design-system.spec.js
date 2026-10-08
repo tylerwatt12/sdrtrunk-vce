@@ -793,59 +793,90 @@ test('tuner-spectrum-light-mobile', async ({ page }) => {
   await expect(page.locator('body')).toHaveScreenshot('tuner-spectrum-light-mobile.png', { fullPage: true });
 });
 
-test('tuner-spectrum-toolbar-stays-one-row-at-desktop-narrow-width', async ({ page }) => {
-  await page.setViewportSize({ width: 943, height: 750 });
-  await page.goto('/design-system.html?theme=light&view=tuner-spectrum');
-  const toolbar = page.locator('.visual-tuner-spectrum-example .spectrum-browse-toolbar');
-  const boxes = await toolbar.evaluate((element) => [...element.children].map((child) => {
-    const bounds = child.getBoundingClientRect();
-    return { top: bounds.top, bottom: bounds.bottom, center: bounds.top + bounds.height / 2 };
-  }));
-  expect(Math.max(...boxes.map((box) => box.center)) -
-    Math.min(...boxes.map((box) => box.center))).toBeLessThanOrEqual(1);
-  expect(Math.max(...boxes.map((box) => box.bottom)) -
-    Math.min(...boxes.map((box) => box.top))).toBeLessThanOrEqual(48);
-  const legend = await page.locator('.visual-tuner-spectrum-example .tuner-spectrum-display-controls').boundingBox();
-  const measurements = await page.locator(
-    '.visual-tuner-spectrum-example .tuner-spectrum-measurement-panel').boundingBox();
-  expect(measurements.y).toBeGreaterThanOrEqual(legend.y + legend.height);
-
-  await page.setViewportSize({ width: 820, height: 750 });
-  await page.goto('/design-system.html?theme=light&view=tuner-spectrum');
-  const compact = page.locator('.visual-tuner-spectrum-example');
-  const compactRows = await compact.locator('.spectrum-browse-toolbar').evaluate((toolbar) =>
-    [...toolbar.children].map((child) => {
-      const bounds = child.getBoundingClientRect();
-      return bounds.top + bounds.height / 2;
-    }));
-  expect(Math.max(...compactRows) - Math.min(...compactRows)).toBeLessThanOrEqual(1);
-  await expect(compact.locator('.tuners-center-value')).toBeVisible();
-  await expect(compact.locator('.tuners-center-lock-field')).toHaveCount(0);
-  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <=
-    document.documentElement.clientWidth)).toBe(true);
-
-  await page.setViewportSize({ width: 360, height: 750 });
-  await page.goto('/design-system.html?theme=light&view=tuner-spectrum');
-  const phone = page.locator('.visual-tuner-spectrum-example');
-  const phoneTuner = await phone.locator('.spectrum-browse-tuner').boundingBox();
-  const phoneFrequency = await phone.locator('.tuners-center-frequency').boundingBox();
-  const phoneState = await phone.locator('.spectrum-browse-state').boundingBox();
-  const phoneActions = await phone.locator('.spectrum-browse-actions').boundingBox();
-  expect(Math.abs((phoneState.y + phoneState.height / 2) -
-    (phoneTuner.y + phoneTuner.height / 2))).toBeLessThanOrEqual(1);
-  expect(phoneFrequency.y).toBeGreaterThanOrEqual(phoneTuner.y + phoneTuner.height);
-  await expect(phone.locator('.tuners-center-lock-field')).toHaveCount(0);
-  expect(phoneActions.y).toBeGreaterThanOrEqual(phoneFrequency.y + phoneFrequency.height);
-  await expect(phone.locator('.spectrum-browse-state > .badge')).toBeVisible();
-  await expect(phone.getByRole('button', { name: 'More spectrum actions', exact: true })).toBeVisible();
-  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <=
-    document.documentElement.clientWidth)).toBe(true);
-
-  await page.setViewportSize({ width: 320, height: 750 });
-  await page.goto('/design-system.html?theme=light&view=tuner-spectrum');
-  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <=
-    document.documentElement.clientWidth)).toBe(true);
-  await expect(page.getByRole('button', { name: 'More spectrum actions', exact: true })).toBeVisible();
+test('tuner-spectrum-toolbar-keeps-organized-bounded-rows-at-responsive-widths', async ({ page }) => {
+  for (const width of [1280, 943, 820, 360, 320]) {
+    await page.setViewportSize({ width, height: 750 });
+    await page.goto('/design-system.html?theme=light&view=tuner-spectrum');
+    const example = page.locator('.visual-tuner-spectrum-example');
+    const toolbar = example.locator('.spectrum-browse-toolbar');
+    const geometry = await toolbar.evaluate((element) => {
+      const bounds = (value) => {
+        const rect = value.getBoundingClientRect();
+        return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom,
+          height: rect.height, center: rect.top + rect.height / 2 };
+      };
+      const style = getComputedStyle(element);
+      const controls = [...element.querySelectorAll('button, select, summary')]
+        .filter((control) => control.getClientRects().length &&
+          getComputedStyle(control).visibility !== 'hidden').map(bounds);
+      const actionElement = element.querySelector('.spectrum-browse-actions');
+      const actionRows = [];
+      [...actionElement.children].filter((child) => child.getClientRects().length).map(bounds)
+        .forEach((child) => {
+          const row = actionRows.find((value) => Math.abs(value.center - child.center) <= 1);
+          if (row) {
+            row.top = Math.min(row.top, child.top);
+            row.bottom = Math.max(row.bottom, child.bottom);
+          } else actionRows.push({ top: child.top, bottom: child.bottom, center: child.center });
+        });
+      return { toolbar: bounds(element), tuner: bounds(element.querySelector('.spectrum-browse-tuner')),
+        frequency: bounds(element.querySelector('.tuners-center-frequency')),
+        center: bounds(element.querySelector('.spectrum-browse-center')),
+        commands: bounds(element.querySelector('.spectrum-browse-command-cluster')),
+        state: bounds(element.querySelector('.spectrum-browse-state')),
+        actions: bounds(actionElement), actionRows, controls,
+        actionGap: parseFloat(getComputedStyle(actionElement).rowGap),
+        gap: parseFloat(style.rowGap), inset: parseFloat(style.paddingTop) + parseFloat(style.paddingBottom) +
+          parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth),
+        rows: style.gridTemplateRows.split(' ').map(parseFloat) };
+    });
+    const { tuner, frequency, center, commands, state, actions } = geometry;
+    if (width > 1100) {
+      expect(Math.max(tuner.center, center.center, commands.center) -
+        Math.min(tuner.center, center.center, commands.center)).toBeLessThanOrEqual(1);
+      expect(geometry.toolbar.height).toBeLessThanOrEqual(
+        Math.max(tuner.height, center.height, commands.height) + geometry.inset + 2);
+    } else if (width > 760) {
+      // Tuner and frequency form the first row; the command cluster spans the second.
+      expect(Math.abs(tuner.center - center.center)).toBeLessThanOrEqual(1);
+      expect(commands.top - Math.max(tuner.bottom, center.bottom)).toBeCloseTo(geometry.gap, 0);
+      expect(Math.abs(state.center - actions.center)).toBeLessThanOrEqual(1);
+      expect(geometry.toolbar.height).toBeCloseTo(
+        Math.max(tuner.height, center.height) + commands.height + geometry.gap + geometry.inset, 0);
+    } else {
+      expect(Math.abs(state.center - tuner.center)).toBeLessThanOrEqual(1);
+      expect(frequency.top - Math.max(tuner.bottom, state.bottom)).toBeCloseTo(geometry.gap, 0);
+      expect(actions.top - frequency.bottom).toBeCloseTo(geometry.gap, 0);
+      expect(geometry.actionRows).toHaveLength(width === 320 ? 2 : 1);
+      expect(actions.height).toBeCloseTo(geometry.actionRows.reduce((height, row) =>
+        height + row.bottom - row.top, 0) + (geometry.actionRows.length - 1) * geometry.actionGap, 0);
+      if (geometry.actionRows.length === 2) expect(geometry.actionRows[1].top -
+        geometry.actionRows[0].bottom).toBeCloseTo(geometry.actionGap, 0);
+      // The named feedback track is empty until a notice is shown, but its grid gap remains.
+      expect(geometry.rows).toHaveLength(4);
+      expect(geometry.rows[3]).toBe(0);
+      expect(geometry.toolbar.height).toBeCloseTo(Math.max(tuner.height, state.height) +
+        frequency.height + actions.height + 3 * geometry.gap + geometry.inset, 0);
+      await expect(example.getByRole('button', { name: 'More spectrum actions', exact: true })).toBeVisible();
+    }
+    for (const control of geometry.controls) {
+      expect(control.left).toBeGreaterThanOrEqual(geometry.toolbar.left - 1);
+      expect(control.right).toBeLessThanOrEqual(geometry.toolbar.right + 1);
+      expect(control.top).toBeGreaterThanOrEqual(geometry.toolbar.top - 1);
+      expect(control.bottom).toBeLessThanOrEqual(geometry.toolbar.bottom + 1);
+    }
+    await expect(example.locator('.tuners-center-value')).toBeVisible();
+    await expect(example.locator('.tuners-center-lock-field')).toHaveCount(0);
+    await expect(example.locator('.spectrum-browse-state > .badge')).toBeVisible();
+    const legend = await example.locator('.tuner-spectrum-display-controls').boundingBox();
+    const measurements = await example.locator('.tuner-spectrum-measurement-panel').boundingBox();
+    if (width > 1100) {
+      expect(measurements.x).toBeGreaterThanOrEqual(legend.x + legend.width);
+      expect(Math.abs(measurements.y - legend.y)).toBeLessThanOrEqual(1);
+    } else expect(measurements.y).toBeGreaterThanOrEqual(legend.y + legend.height);
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <=
+      document.documentElement.clientWidth)).toBe(true);
+  }
 });
 
 for (const [name, theme, viewport] of [
