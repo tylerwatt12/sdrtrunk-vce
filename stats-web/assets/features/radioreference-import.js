@@ -1054,6 +1054,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     const tableController = {};
     let offset = 0;
     let catalog = [];
+    let catalogState = 'loading';
     let loadSequence = 0;
     const filter = uiSegmentedControl([
       { value: 'ALL', label: 'All' },
@@ -1090,13 +1091,22 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     const selected = state.selectedTalkgroups;
     const updateSelection = () => {
       const count = selected.size;
+      const ready = catalogState === 'ready';
       selectionBadge.querySelector('span').textContent = formatNumber(count) + ' selected';
       actions.hidden = count === 0;
       clear.disabled = count === 0;
-      importSelected.disabled = count === 0 || !aliasList.value || !state.talkgroupCatalogId;
-      importAll.disabled = !aliasList.value || !state.talkgroupCatalogId;
-      aliasList.disabled = count > 0 && Boolean(aliasList.value);
-      aliasList.title = aliasList.disabled ? 'Clear the current selection before changing Alias Lists.' : '';
+      importSelected.disabled = !ready || count === 0 || !aliasList.value || !state.talkgroupCatalogId;
+      importAll.disabled = !ready || !aliasList.value || !state.talkgroupCatalogId;
+      const selectionLocksAliasList = count > 0 && Boolean(aliasList.value);
+      aliasList.disabled = catalogState === 'loading' || selectionLocksAliasList;
+      aliasList.title = selectionLocksAliasList ? 'Clear the current selection before changing Alias Lists.' : '';
+      filter.dataset.value = state.talkgroupStatus;
+      filter.querySelectorAll('button').forEach((control) => {
+        const active = control.dataset.value === state.talkgroupStatus;
+        control.classList.toggle('active', active);
+        control.setAttribute('aria-pressed', String(active));
+        control.disabled = !aliasList.value && control.dataset.value !== 'ALL';
+      });
     };
     const categoryRows = rows(systemDocument?.talkgroup_categories || systemDocument?.categories ||
       systemDocument?.talkgroupCategories);
@@ -1131,9 +1141,14 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     };
 
     const draw = () => {
+      if (catalogState !== 'ready') {
+        updateSelection();
+        return;
+      }
       if (!catalog.length) {
         tableHost.replaceChildren(empty('No talkgroups',
           'RadioReference returned no talkgroups for this system.'));
+        updateSelection();
         return;
       }
       const term = search.value.trim().toLowerCase();
@@ -1221,7 +1236,8 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       const sequence = ++loadSequence;
       const selectedAliasListId = aliasList.value;
       const key = systemIdValue + ':' + (selectedAliasListId || 'raw');
-      aliasList.disabled = true;
+      catalogState = 'loading';
+      updateSelection();
       refresh.disabled = true;
       tableHost.replaceChildren(feedback(selectedAliasListId ? 'Comparing talkgroups with Alias List…' :
         'Loading all talkgroups for instant filtering…', 'loading'));
@@ -1271,15 +1287,13 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         const saved = state.talkgroupCatalogs.get(key);
         state.talkgroupCatalogId = saved.catalogId;
         catalog = saved.items;
+        catalogState = 'ready';
         if (refreshRemote) {
           const available = new Set(catalog.filter((item) => importStatus(item.row).tone !== 'danger')
             .map((item) => talkgroupId(item.row)));
           for (const id of selected) if (!available.has(id)) selected.delete(id);
         }
         refresh.disabled = false;
-        filter.querySelectorAll('button').forEach((control) => {
-          control.disabled = !aliasList.value && control.textContent !== 'All';
-        });
         if (refreshRemote || !categoryRows.length && saved.categories.length && category.options.length <= 1) {
           setOptions(category, saved.categories, state.talkgroupCategoryId, 'All categories', true);
         }
@@ -1296,6 +1310,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
           return;
         }
         refresh.disabled = false;
+        catalogState = 'error';
         tableHost.replaceChildren(feedback(error.message, 'error'));
         updateSelection();
       }
@@ -1344,9 +1359,6 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         .catch(() => {});
       if (!aliasList.value) {
         state.talkgroupStatus = 'ALL';
-        filter.querySelectorAll('button').forEach((control) => {
-          control.classList.toggle('active', control.textContent === 'All');
-        });
       }
       load();
     });

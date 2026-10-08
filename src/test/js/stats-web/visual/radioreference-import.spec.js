@@ -5,11 +5,15 @@ const app = readFileSync(resolve(__dirname, '../../../../..', 'stats-web/assets/
 const metricHelpers = app.slice(app.indexOf('function number('), app.indexOf('function hex(')) +
   app.slice(app.indexOf('function valueNode('), app.indexOf('function tableColumnKey(')) +
   app.slice(app.indexOf('const METRIC_ICONS ='), app.indexOf('function searchBar('));
+const segmentedHelpers = app.slice(app.indexOf('function uiSegmentedControl('),
+  app.indexOf('function channelSummaryCards('));
+const requestHelpers = app.slice(app.indexOf('async function requestJson('),
+  app.indexOf('function waitForRequestRetry('));
 
 async function installWorkspace(page, theme = 'light', large = false, slow = false, scenario = '') {
   await page.goto(`/design-system.html?theme=${theme}&view=gallery${large ? '&large=1' : ''}` +
     `${slow ? '&slow=1' : ''}${scenario ? `&scenario=${scenario}` : ''}`);
-  await page.evaluate(async (metricHelpers) => {
+  await page.evaluate(async ({ metricHelpers, segmentedHelpers, requestHelpers }) => {
     const { createRadioReferenceImportWorkspace } = await import(
       '/assets/features/radioreference-import.js?visual-test=1');
     const browsingWorkflows = await import('/assets/core/browsing-workflows.js');
@@ -58,19 +62,10 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
       return pill;
     };
     const uiStatus = (label, tone = 'neutral') => node('span', `ui-status ui-status-${tone}`, label);
-    const uiSegmentedControl = (entries, initial, onChange) => {
-      const group = node('div', 'ui-segmented');
-      entries.forEach((entry) => {
-        const button = node('button', `ui-segmented-option${entry.value === initial ? ' active' : ''}`, entry.label);
-        button.type = 'button';
-        button.addEventListener('click', () => {
-          [...group.children].forEach((candidate) => candidate.classList.toggle('active', candidate === button));
-          onChange(entry.value);
-        });
-        group.append(button);
-      });
-      return group;
-    };
+    const uiSegmentedControl = new Function('node', `${segmentedHelpers}; return uiSegmentedControl;`)(node);
+    const actualRequestJson = new Function('accessSession', 'activeRenderController', 'snakeCasePayload',
+      'systemLabels', `${requestHelpers}; return requestJson;`)({}, new AbortController(),
+      (value) => value, { rememberSystemNames: (value) => value });
     const table = (values, columns, emptyText, options = {}) => {
       options.controller?.layoutMenuCleanup?.();
       const wrapper = node('div', `table-wrap ui-table-wrap ${options.wrapperClass || ''}`.trim());
@@ -176,7 +171,8 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
     const scenario = new URLSearchParams(location.search).get('scenario');
     const hiddenChanges = [{ field: 'description', before: 'County  fire', after: 'County fire' },
       { field: 'group', before: 'Fire\u00a0', after: 'Fire' }];
-    const systemPreferences = new Map(scenario === 'saved-preference' ? [[2001, 10]] : []);
+    const systemPreferences = new Map(scenario === 'saved-preference' ? [[2001, 10]] :
+      scenario === 'network-catalog' ? [[2001, 7]] : []);
     let failPreferenceSave = scenario === 'preference-save-error';
     let preferenceGetCount = 0;
     window.radioReferenceVisual = { calls, popupTriggers, systemPreferences, openReadOnlyModal };
@@ -212,6 +208,9 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
     };
     const requestJson = async (path, options = {}) => {
       calls.push([path, options]);
+      if (scenario === 'network-catalog' && path.includes('/systems/talkgroups/catalog?')) {
+        return actualRequestJson(path, options);
+      }
       if (path.startsWith('/api/v1/admin/alias-lists')) return { revision: aliasRevision, alias_lists: [
         { alias_list_id: 7, name: 'County Public Safety', family: 'P25' },
         { alias_list_id: 10, name: 'Regional P25', family: 'P25' },
@@ -398,7 +397,7 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
     window.radioReferenceVisual.workspace = workspace;
     body.append(workspace.element);
     workspace.setConfiguration({ account: { state: 'VALID_PREMIUM' }, country_id: 1, state_id: 39, county_id: 49 });
-  }, metricHelpers);
+  }, { metricHelpers, segmentedHelpers, requestHelpers });
   if (scenario !== 'slow-initialize')
     await expect(page.getByRole('button', { name: 'Browse' })).toBeVisible();
 }
@@ -407,6 +406,30 @@ async function openSystem(page) {
   await expect(page.locator('.radioreference-directory-branch').first()).toHaveAttribute('open', '');
   await page.locator('.radioreference-result-open').first().click();
   await expect(page.getByText('Central Simulcast')).toBeVisible();
+}
+
+const networkCatalog = {
+  catalog_id: 'network-catalog', categories: [{ id: 9, name: 'Fire' }], items: [
+    { talkgroup: { id: 101, value: 101, category_id: 9, alpha_tag: 'Fire Dispatch',
+      description: 'Countywide fire' }, category: 'Fire', status: 'IDENTICAL' },
+    { talkgroup: { id: 102, value: 102, category_id: 9, alpha_tag: 'Fireground 2',
+      description: 'Fireground operations' }, category: 'Fire', status: 'DIFFERENT',
+      changes: [{ field: 'name', before: 'Fireground Two', after: 'Fireground 2' }] }
+  ]
+};
+
+async function holdNetworkCatalogs(page) {
+  const requests = [];
+  const failures = [];
+  page.on('requestfailed', (request) => {
+    if (request.url().includes('/systems/talkgroups/catalog?')) failures.push(request.failure().errorText);
+  });
+  await page.route('**/api/v1/admin/radioreference/systems/talkgroups/catalog?*', async (route) => {
+    const response = await new Promise((resolve) => requests.push({ url: route.request().url(), resolve }));
+    await route.fulfill({ status: response.status || 200, contentType: 'application/json',
+      body: JSON.stringify(response.status ? { error: response.error } : { data: response.data }) });
+  });
+  return { requests, failures, finish: (index, data = networkCatalog) => requests[index].resolve({ data }) };
 }
 
 async function installRealTalkgroupAliasCreator(page) {
@@ -1029,6 +1052,126 @@ test('slow talkgroup loading shows a spinner until the catalog arrives', async (
   const calls = await page.evaluate(() => window.radioReferenceVisual.calls
     .filter(([path]) => path.includes('/systems/talkgroups/catalog?')).length);
   expect(calls).toBe(1);
+});
+
+for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
+  test(`rapid import filters preserve the pending lookup and apply the final choice ${theme} ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    const network = await holdNetworkCatalogs(page);
+    await installWorkspace(page, theme, false, false, 'network-catalog');
+    await openSystem(page);
+    await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
+    await expect.poll(() => network.requests.length).toBe(1);
+    const loading = page.locator('.radioreference-talkgroup-table .ui-feedback-loading');
+    for (const name of ['Different', 'Identical', 'All', 'Different']) {
+      await page.getByRole('button', { name, exact: true }).click();
+      await expect(loading).toBeVisible();
+    }
+    await page.getByPlaceholder('Filter talkgroup ID, name, or description').fill('Fireground');
+    await page.locator('.radioreference-category-field select').selectOption('9');
+    await expect(loading).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'No talkgroups', exact: true })).toHaveCount(0);
+    await expect(page.getByLabel('Compare with Alias List')).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Import all system talkgroups' })).toBeDisabled();
+    expect(network.requests).toHaveLength(1);
+    expect(network.failures).toEqual([]);
+    await page.locator('.radioreference-system-workspace').screenshot({
+      path: testInfo.outputPath('pending-import-filter.png')
+    });
+    network.finish(0);
+    const group = page.getByRole('checkbox', { name: 'Select Fireground 2' });
+    await expect(group).toBeVisible();
+    await expect(page.getByRole('checkbox', { name: 'Select Fire Dispatch' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Different', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await group.check();
+    await page.getByPlaceholder('Filter talkgroup ID, name, or description').fill('');
+    await page.getByRole('button', { name: 'Identical', exact: true }).click();
+    await expect(page.getByRole('checkbox', { name: 'Select Fire Dispatch' })).toBeVisible();
+    await page.getByRole('button', { name: 'Different', exact: true }).click();
+    await expect(group).toBeChecked();
+    expect(network.requests).toHaveLength(1);
+    expect(network.failures).toEqual([]);
+  });
+}
+
+test('refresh filters keep stale rows and imports unavailable while selection changes remain consistent', async ({ page }) => {
+  const network = await holdNetworkCatalogs(page);
+  await installWorkspace(page, 'light', false, false, 'network-catalog');
+  await openSystem(page);
+  await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
+  await expect.poll(() => network.requests.length).toBe(1);
+  network.finish(0);
+  await page.getByRole('checkbox', { name: 'Select Fireground 2' }).check();
+  await page.getByRole('button', { name: 'Refresh talkgroups from RadioReference' }).click();
+  await expect.poll(() => network.requests.length).toBe(2);
+  await page.getByRole('button', { name: 'Different', exact: true }).click();
+  await page.getByPlaceholder('Filter talkgroup ID, name, or description').fill('Fireground');
+  await expect(page.locator('.radioreference-talkgroup-table .ui-feedback-loading')).toBeVisible();
+  await expect(page.getByRole('checkbox', { name: 'Select Fireground 2' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Import selected', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Import all system talkgroups' })).toBeDisabled();
+  await expect(page.getByLabel('Compare with Alias List')).toBeDisabled();
+  await page.getByRole('button', { name: 'Clear selection', exact: true }).click();
+  await expect(page.locator('.radioreference-talkgroup-actions')).toBeHidden();
+  await expect(page.getByLabel('Compare with Alias List')).toBeDisabled();
+  network.finish(1);
+  await expect(page.getByRole('checkbox', { name: 'Select Fireground 2' })).not.toBeChecked();
+  await expect(page.getByLabel('Compare with Alias List')).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Import all system talkgroups' })).toBeEnabled();
+  expect(new URL(network.requests[1].url).searchParams.get('refresh')).toBe('true');
+  expect(network.failures).toEqual([]);
+});
+
+test('filters preserve a failed catalog lookup and its retry applies the latest draft', async ({ page }) => {
+  const network = await holdNetworkCatalogs(page);
+  await installWorkspace(page, 'light', false, false, 'network-catalog');
+  await openSystem(page);
+  await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
+  await expect.poll(() => network.requests.length).toBe(1);
+  network.requests[0].resolve({ status: 503, error: 'RadioReference catalog is temporarily unavailable.' });
+  const error = page.locator('.radioreference-talkgroup-table .ui-feedback-error');
+  await expect(error).toHaveText('RadioReference catalog is temporarily unavailable.');
+  await page.getByRole('button', { name: 'Different', exact: true }).click();
+  await page.getByPlaceholder('Filter talkgroup ID, name, or description').fill('Fireground');
+  await page.locator('.radioreference-category-field select').selectOption('9');
+  await expect(error).toHaveText('RadioReference catalog is temporarily unavailable.');
+  await expect(page.getByRole('button', { name: 'Import all system talkgroups' })).toBeDisabled();
+  await page.getByRole('button', { name: 'Refresh talkgroups from RadioReference' }).click();
+  await expect.poll(() => network.requests.length).toBe(2);
+  network.finish(1);
+  await expect(page.getByRole('checkbox', { name: 'Select Fireground 2' })).toBeVisible();
+  await expect(page.getByRole('checkbox', { name: 'Select Fire Dispatch' })).toHaveCount(0);
+  expect(network.failures).toEqual([]);
+});
+
+test('empty lookup unlocks Alias List changes and clearing the list resets status during the next load', async ({ page }) => {
+  const network = await holdNetworkCatalogs(page);
+  await installWorkspace(page, 'light', false, false, 'network-catalog');
+  await openSystem(page);
+  await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
+  await expect.poll(() => network.requests.length).toBe(1);
+  network.finish(0, { ...networkCatalog, items: [] });
+  const aliasList = page.getByLabel('Compare with Alias List');
+  await expect(page.getByRole('heading', { name: 'No talkgroups', exact: true })).toBeVisible();
+  await expect(aliasList).toBeEnabled();
+  await aliasList.selectOption('10');
+  await expect.poll(() => network.requests.length).toBe(2);
+  await page.getByRole('button', { name: 'Different', exact: true }).click();
+  await expect(page.locator('.radioreference-talkgroup-table .ui-feedback-loading')).toBeVisible();
+  network.finish(1);
+  await expect(page.getByRole('checkbox', { name: 'Select Fireground 2' })).toBeVisible();
+  await aliasList.selectOption('');
+  await expect.poll(() => network.requests.length).toBe(3);
+  await expect(page.getByRole('button', { name: 'All', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  for (const name of ['Different', 'Identical', 'Not in list'])
+    await expect(page.getByRole('button', { name, exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'All', exact: true }).click();
+  await expect(page.locator('.radioreference-talkgroup-table .ui-feedback-loading')).toBeVisible();
+  network.finish(2, { ...networkCatalog, items: networkCatalog.items.map((row) => ({ ...row, status: 'UNCOMPARED' })) });
+  await expect(page.getByRole('checkbox', { name: 'Select Fire Dispatch' })).toBeVisible();
+  await expect(page.getByRole('checkbox', { name: 'Select Fireground 2' })).toBeVisible();
+  expect(new URL(network.requests[2].url).searchParams.has('alias_list_id')).toBe(false);
+  expect(network.failures).toEqual([]);
 });
 
 for (const [name, theme, viewport] of [
