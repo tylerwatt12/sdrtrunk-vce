@@ -6,6 +6,14 @@
     return JSON.parse(JSON.stringify(value));
   }
 
+  function freeze(value) {
+    if (value && typeof value === 'object') {
+      Object.values(value).forEach(freeze);
+      Object.freeze(value);
+    }
+    return value;
+  }
+
   function plainObject(value) {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
   }
@@ -41,6 +49,7 @@
       this.revision = null;
       this.preferences = copy(this.defaults);
       this.pending = Promise.resolve();
+      this.readSnapshot = null;
     }
 
     snapshot() {
@@ -52,7 +61,15 @@
       });
     }
 
+    // Rendering can read one immutable profile until a confirmed preference change.
+    // snapshot() continues to provide independent copies for drafts and callers that edit them.
+    read() {
+      if (!this.readSnapshot) this.readSnapshot = freeze(this.snapshot());
+      return this.readSnapshot;
+    }
+
     emit() {
+      this.readSnapshot = null;
       this.onChange(this.snapshot());
     }
 

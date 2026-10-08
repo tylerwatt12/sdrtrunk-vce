@@ -37,6 +37,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicLongArray;
 import java.util.function.LongSupplier;
+import java.util.function.BooleanSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -106,6 +107,21 @@ class ReceiverActivityWriter implements AutoCloseable
     private volatile long mLastRetentionCleanup;
     private volatile ReceiverActivityStatus.State mState = ReceiverActivityStatus.State.STOPPED;
     private volatile String mLastError;
+    private BooleanSupplier mLiveActivityDemand = () -> false;
+    private Runnable mAfterCommit = () -> {};
+
+    /** Installed before start; the callback only signals the independent saved-activity reader. */
+    void setLiveActivityObserver(BooleanSupplier demand, Runnable afterCommit)
+    {
+        mLiveActivityDemand = java.util.Objects.requireNonNull(demand);
+        mAfterCommit = java.util.Objects.requireNonNull(afterCommit);
+    }
+
+    static long collectionDeadline(long startedNanos, long normalMilliseconds, boolean liveDemand)
+    {
+        return startedNanos + TimeUnit.MILLISECONDS.toNanos(liveDemand ?
+            Math.min(normalMilliseconds, 200) : normalMilliseconds);
+    }
 
     ReceiverActivityWriter(Path databasePath, int retentionDays, boolean detailedEventHistoryEnabled)
     {
@@ -487,9 +503,9 @@ class ReceiverActivityWriter implements AutoCloseable
                     batch.add(pendingRecord.record());
                     pendingRecord = null;
 
-                    long batchDeadline = System.nanoTime() +
-                        TimeUnit.MILLISECONDS.toNanos(mDeletionJobs.isEmpty() ? mBatchCollectionMilliseconds :
-                            Math.min(mBatchCollectionMilliseconds, CLEANUP_OBSERVATION_BATCH_MILLISECONDS));
+                    long batchStarted = System.nanoTime();
+                    long normalCollection = mDeletionJobs.isEmpty() ? mBatchCollectionMilliseconds :
+                        Math.min(mBatchCollectionMilliseconds, CLEANUP_OBSERVATION_BATCH_MILLISECONDS);
 
                     while(batch.size() < mBatchSize && !requiresPromptCommit(batch.getLast()))
                     {
@@ -516,7 +532,9 @@ class ReceiverActivityWriter implements AutoCloseable
                             continue;
                         }
 
-                        long remainingNanoseconds = batchDeadline - System.nanoTime();
+                        // Recheck demand on each bounded queue poll, including a viewer opened during a long batch.
+                        long remainingNanoseconds = collectionDeadline(batchStarted, normalCollection,
+                            mLiveActivityDemand.getAsBoolean()) - System.nanoTime();
 
                         if(remainingNanoseconds <= 0)
                         {
@@ -1177,6 +1195,15 @@ class ReceiverActivityWriter implements AutoCloseable
             mWrittenRecords.addAndGet(writtenRecords);
             mLastSuccessfulWriteMs.set(successfulWrite);
             mLastError = null;
+            try
+            {
+                mAfterCommit.run();
+            }
+            catch(RuntimeException exception)
+            {
+                // A failed web observer cannot undo the completed transaction or stop history collection.
+                mLog.warn("Saved Activity observer notification failed", exception);
+            }
         }
         catch(SQLException e)
         {

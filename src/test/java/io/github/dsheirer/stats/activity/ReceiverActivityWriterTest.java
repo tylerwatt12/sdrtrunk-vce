@@ -312,6 +312,41 @@ class ReceiverActivityWriterTest
     }
 
     @Test
+    void liveActivityDemandCapsCollectionAndNotifiesAfterVisibleCommit() throws Exception
+    {
+        Path database = createDatabase(mTemporaryFolder.resolve("live-commit.sqlite"));
+        insertConfiguredChannel(database);
+        var committed = new java.util.concurrent.CountDownLatch(1);
+        var visibleRows = new java.util.concurrent.atomic.AtomicLong(-1);
+        var notifications = new java.util.concurrent.atomic.AtomicInteger();
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 16, 10, 10_000);
+        writer.setLiveActivityObserver(() -> true, () -> {
+            try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+            {
+                visibleRows.set(scalar(connection, "SELECT COUNT(*) FROM receiver_activity_event"));
+                notifications.incrementAndGet();
+            }
+            catch(Exception exception) { throw new IllegalStateException(exception); }
+            finally { committed.countDown(); }
+        });
+        writer.start();
+        try
+        {
+            writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, 1_700_000_000_400L));
+            assertTrue(committed.await(2, TimeUnit.SECONDS), "A live viewer must not wait for the ten-second batch");
+            assertEquals(1, visibleRows.get(), "The observer sees only durable committed rows");
+            assertEquals(1, notifications.get());
+        }
+        finally { writer.close(); }
+        assertEquals(TimeUnit.MILLISECONDS.toNanos(10_000) + 50,
+            ReceiverActivityWriter.collectionDeadline(50, 10_000, false));
+        assertEquals(TimeUnit.MILLISECONDS.toNanos(200) + 50,
+            ReceiverActivityWriter.collectionDeadline(50, 10_000, true));
+        assertEquals(TimeUnit.MILLISECONDS.toNanos(100) + 50,
+            ReceiverActivityWriter.collectionDeadline(50, 100, true), "Existing shorter deadlines are preserved");
+    }
+
+    @Test
     void sparseBatchWaitsForItsConfiguredDeadline() throws Exception
     {
         Path database = createDatabase(mTemporaryFolder.resolve("batch-deadline.sqlite"));

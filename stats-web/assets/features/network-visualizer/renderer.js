@@ -248,7 +248,6 @@ async function createP25Renderer(options = {}) {
   function applyFocusStyles() {
     nodes.forEach((node) => applyNodeStyle(node));
     links.forEach((link) => applyLinkStyle(link));
-    graph?.refresh();
   }
 
   function transitionFocus(value) {
@@ -315,12 +314,21 @@ async function createP25Renderer(options = {}) {
       const original = { x: finite(previous.x), y: finite(previous.y), z: finite(previous.z) };
       const target = { x: finite(incoming.x), y: finite(incoming.y), z: finite(incoming.z) };
       const distance = Math.hypot(target.x - original.x, target.y - original.y, target.z - original.z);
+      const movement = movements.get(id);
+      const continuing = movement && !reducedMotion &&
+        Math.hypot(target.x - movement.target.x, target.y - movement.target.y,
+          target.z - movement.target.z) < 0.001;
       Object.assign(previous, incoming, { id });
-      if (animate && previous.type === 'radio' && distance > 1) {
+      if (continuing) {
+        // Highlight expiry and repeated observations must not restart an in-flight relocation.
+        Object.assign(previous, original, { fx: original.x, fy: original.y, fz: original.z });
+      } else if (animate && previous.type === 'radio' && distance > 1) {
         Object.assign(previous, original, { fx: original.x, fy: original.y, fz: original.z });
         movements.set(id, { startedAt: now, duration: 1_100, from: original, target });
+      } else {
+        movements.delete(id);
+        Object.assign(previous, target, { fx: target.x, fy: target.y, fz: target.z });
       }
-      else Object.assign(previous, target, { fx: target.x, fy: target.y, fz: target.z });
       return previous;
     });
     const nextLinks = (Array.isArray(value.links) ? value.links : []).map((incoming) => {
@@ -340,7 +348,6 @@ async function createP25Renderer(options = {}) {
     updateSystemFog();
     nextNodes.forEach((node) => applyNodeStyle(node));
     nextLinks.forEach((link) => applyLinkStyle(link));
-    graph.refresh();
   }
 
   function resize() {
@@ -644,7 +651,6 @@ async function createP25Renderer(options = {}) {
       node.fz = node.z;
       if (progress >= 1) movements.delete(key);
     }
-    if (movements.size) graph.refresh();
     updateAutoRotate();
     renderLabels();
     frame = requestAnimationFrame(animate);
@@ -683,7 +689,8 @@ async function createP25Renderer(options = {}) {
       .nodeThreeObjectExtend(false).linkSource('source').linkTarget('target')
       .linkThreeObject((link) => linkObjects.get(link.id) || createLinkObject(link)).linkThreeObjectExtend(false)
       .linkPositionUpdate(updateLinkPosition).onNodeClick((node) => options.onNodeClick?.(node))
-      .onBackgroundClick(() => options.onBackgroundClick?.()).cooldownTicks(0).cooldownTime(0);
+      .onBackgroundClick(() => options.onBackgroundClick?.()).cooldownTicks(Infinity).cooldownTime(Infinity);
+    // With no forces and pinned coordinates, ticks only synchronize meshes and links with our tweens.
     graph.d3Force('link', null);
     graph.d3Force('charge', null);
     graph.d3Force('center', null);

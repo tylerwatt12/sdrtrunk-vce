@@ -5013,6 +5013,26 @@ class StatsWebDatabase
             currentHour + HOUR_MILLISECONDS, now);
     }
 
+    long savedActivityWatermark()
+    {
+        return read(connection -> scalarLong(connection, "SELECT COALESCE(MAX(id), 0) FROM receiver_activity_event"));
+    }
+
+    /** Reuses the existing indexed, bounded forward Activity query and its alias/entity enrichment. */
+    Map<String,Object> savedActivityAfter(long afterId, Long watermarkId)
+    {
+        long now = System.currentTimeMillis();
+        Map<String,String> parameters = new LinkedHashMap<>();
+        parameters.put("after_id", Long.toString(afterId));
+        if(watermarkId != null) parameters.put("watermark_id", Long.toString(watermarkId));
+        parameters.put("from_ms", Long.toString(Math.max(1, now - DAY_MILLISECONDS + 2_000)));
+        parameters.put("to_ms", Long.toString(now + 2_000));
+        parameters.put("actions", "ACKNOWLEDGE,ACTIVE,BUSY,CALL,CHECK,CHECK_ACK,CONTINUE,DATA,DENIAL," +
+            "EMERGENCY,GPS,GRANT,JOIN,LOGOUT,PAGE,PATCH,PATCH_CANCEL,PATCH_CREATE,QUEUED,REGISTER,REQUEST,STATUS,UNKNOWN");
+        parameters.put("limit", "64");
+        return activity(new StatsRequest(parameters));
+    }
+
     Map<String,Object> activity(StatsRequest request)
     {
         return activity(request, ignored -> { });

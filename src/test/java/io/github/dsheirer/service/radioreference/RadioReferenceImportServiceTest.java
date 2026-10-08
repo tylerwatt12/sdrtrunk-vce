@@ -17,6 +17,7 @@ import io.github.dsheirer.alias.AliasAdministrationServiceTestSupport;
 import io.github.dsheirer.alias.AliasFactory;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.channel.ChannelAdministrationServiceTestSupport;
 import io.github.dsheirer.channel.ChannelDefinition;
@@ -26,6 +27,7 @@ import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
+import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.stats.DiscoveryAliasImportService;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService.BoundedPage;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.ConventionalFrequency;
@@ -215,6 +217,40 @@ class RadioReferenceImportServiceTest
                 new RadioReferenceImportService.SiteImportRequest(10, 99999, aliasList(fixture, AliasListFamily.P25),
                     RadioReferenceImportService.FrequencySet.CONTROL, List.of(), null, null, null)));
             assertEquals(2, fixture.directory.siteCatalogReads, "a new preview obtains a fresh catalog");
+        }
+    }
+
+    @Test
+    void talkgroupComparisonIgnoresOuterWhitespaceAndReportsInvisibleInternalChanges() throws Exception
+    {
+        try(Fixture fixture = new Fixture(mTemporaryFolder))
+        {
+            long listId = aliasList(fixture, AliasListFamily.P25);
+            Alias current = new Alias(" Dispatch ");
+            current.setAliasListId(listId);
+            current.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 101));
+            current.setDescription(" Primary dispatch "); current.setGroup(" Public Safety ");
+            long id = fixture.aliases.createAlias(current).aliasIds().getFirst();
+            var initial = fixture.importer.talkgroupCatalog(10, listId, null);
+            var row = initial.items().getFirst();
+            assertEquals(RadioReferenceImportService.TalkgroupStatus.IDENTICAL, row.status());
+            assertEquals(id, row.existingAliasId());
+            assertTrue(row.changes().isEmpty());
+            assertEquals(" Dispatch ", row.currentAlias().alphaTag());
+            Alias changed = AliasFactory.copyOf(fixture.aliases.getAlias(id).alias());
+            changed.setDescription("Primary  dispatch");
+            fixture.aliases.replaceAlias(id, changed, fixture.aliases.currentRevision());
+            var compared = fixture.importer.talkgroupCatalog(10, listId, initial.catalogId()).items().getFirst();
+            assertEquals(RadioReferenceImportService.TalkgroupStatus.DIFFERENT, compared.status());
+            assertEquals(List.of(new io.github.dsheirer.alias.AliasImportService.Change("description",
+                "Primary  dispatch", "Primary dispatch")), compared.changes());
+            assertEquals("Primary  dispatch", compared.currentAlias().description());
+            var preview = fixture.importer.previewTalkgroups(new RadioReferenceImportService.TalkgroupImportRequest(
+                10, listId, false, List.of(1), initial.catalogId()));
+            assertEquals(compared.changes(), preview.rows().getFirst().changes());
+            fixture.importer.applyTalkgroups(preview.previewId());
+            assertEquals(RadioReferenceImportService.TalkgroupStatus.IDENTICAL,
+                fixture.importer.talkgroupCatalog(10, listId, initial.catalogId()).items().getFirst().status());
         }
     }
 

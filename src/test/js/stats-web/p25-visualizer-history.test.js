@@ -148,7 +148,7 @@ async function main() {
     state: timingState, selectedSystemKey: SYSTEM_A, selectedGroupKey: '', highlightedCategories,
     buildP25Graph: history.buildP25Graph, nextP25HighlightExpiry: history.nextP25HighlightExpiry,
     renderer: { setData: (graph) => frames.push(graph) }, renderEvents: () => {},
-    highlightTimer: 0, closed: false, Set, Date: { now: () => now },
+    highlightTimer: 0, closed: false, serverTimeOffsetMs: 0, Set, Date: { now: () => now },
     window: {
       setTimeout: (callback, delay) => { scheduled.set(++timerId, { callback, at: now + delay }); return timerId; },
       clearTimeout: (id) => scheduled.delete(id)
@@ -180,6 +180,26 @@ async function main() {
   });
   assert.equal(history.nextP25HighlightExpiry(timingState, 13_100), 14_300,
     'routine activity uses its own timeout rather than inheriting a longer prior event highlight');
+  const streamed = history.createP25HistoryState();
+  const streamedOptions = { atMs: 20_000, highlightAtObservationTime: true,
+    grantActivityTimeoutMs: 1_200, highlightCategories: new Set(['call']) };
+  const fresh = history.applyP25ActivityRows(streamed, [row(80, 'GRANT', { observed_at_ms: 19_800 })],
+    streamedOptions);
+  assert.equal(history.nextP25HighlightExpiry(streamed, 20_000), 21_000,
+    'stream delivery preserves the remaining global timeout after the observation');
+  assert.equal(fresh.focusCandidates.length, 1);
+  const stale = history.applyP25ActivityRows(streamed, [row(81, 'CALL', {
+    observed_at_ms: 18_000, target_identity_key: 'v1-g-303'
+  })], streamedOptions);
+  assert.equal(stale.focusCandidates.length, 0, 'old catch-up calls cannot replay camera attention');
+  assert.equal(history.buildP25Graph(streamed, SYSTEM_A, 20_000).nodes.find((value) =>
+    value.id === `${SYSTEM_A}:v1-g-303`).signalAction, '',
+  'old catch-up calls remain in history without receiving a fresh green highlight');
+  history.applyP25ActivityRows(streamed, [row(82, 'GRANT', { observed_at_ms: 20_700 })], {
+    ...streamedOptions, atMs: 20_900
+  });
+  assert.equal(history.nextP25HighlightExpiry(streamed, 20_900), 21_900,
+    'fresh subsequent grants keep activity continuously lit until the latest observation expires');
   const unknownSource = history.createP25HistoryState();
   history.applyP25ActivityRows(unknownSource, [row(52, 'GRANT', {
     source_identity_key: null, source_radio_id: null, source_alias_name: null

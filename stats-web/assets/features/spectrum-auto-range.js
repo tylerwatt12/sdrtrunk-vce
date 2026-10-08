@@ -1,13 +1,12 @@
-/** Estimate display contrast from a lower percentile, avoiding a single unusually weak FFT bin. */
+/** Use the lowest finite FFT reading as the display floor, rounded down to the nearest decibel. */
 export function estimateSpectrumDisplayFloor(values, ceilingDb, minimumDb = -200, minimumSpanDb = 5) {
   if (!values || typeof values[Symbol.iterator] !== 'function' ||
       !Number.isFinite(ceilingDb) || !Number.isFinite(minimumDb) ||
       !(minimumSpanDb > 0) || ceilingDb - minimumDb < minimumSpanDb) return null;
-  const finite = Array.from(values).filter(Number.isFinite).sort((left, right) => left - right);
-  if (!finite.length) return null;
-  const lowerPercentile = finite[Math.min(finite.length - 1, Math.floor(finite.length * 0.1))];
-  const paddedFloor = Math.floor((lowerPercentile - 5) / 5) * 5;
-  return Math.max(minimumDb, Math.min(ceilingDb - minimumSpanDb, paddedFloor));
+  let lowest = Infinity;
+  for (const value of values) if (Number.isFinite(value) && value < lowest) lowest = value;
+  if (!Number.isFinite(lowest)) return null;
+  return Math.max(minimumDb, Math.min(ceilingDb - minimumSpanDb, Math.floor(lowest)));
 }
 
 /** Capture one valid FFT after a confirmed tuner/center change, independently of producer restarts or zoom. */
@@ -50,6 +49,7 @@ export function createSpectrumAutoRange() {
       return true;
     },
     acceptsFrame(frameGeneration) { return live && frameGeneration === generation; },
+    requestSample() { pending = true; },
     sample(values, frameGeneration, ceilingDb) {
       if (!pending || !this.acceptsFrame(frameGeneration)) return null;
       const floor = estimateSpectrumDisplayFloor(values, ceilingDb);

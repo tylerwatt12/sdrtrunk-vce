@@ -1003,6 +1003,22 @@ async function main() {
     /listHost\.replaceChildren\(directoryState\(feedback\('Loading directory results…', 'loading'\)\)\)/,
     'RadioReference directory feedback should be inset without changing populated result geometry');
   assert.match(radioReferenceImportSource, /RadioReference fields changing/);
+  const importedChangeValues = vm.runInNewContext(`(function(change) ${
+    functionBinding(radioReferenceImportSource, 'importedChangeValues')})`);
+  for (const [before, after, visible] of [
+    ['County  fire', 'County fire', '␠␠'],
+    ['Fire\u00a0', 'Fire', '\\u00a0'],
+    ['Fire\u00ad', 'Fire', '\\u00ad'],
+    ['Fire\u2067', 'Fire', '\\u2067'],
+    ['Fire\u{E0001}', 'Fire', '\\udb40\\udc01']
+  ]) {
+    const comparison = importedChangeValues({ before, after });
+    assert.equal(comparison.hiddenDifference, true);
+    assert.ok(comparison.before.includes(visible), 'Hidden imported differences must become readable');
+  }
+  const visibleChange = importedChangeValues({ before: 'Fireground One', after: 'Fireground Two' });
+  assert.equal(visibleChange.hiddenDifference, false);
+  assert.equal(visibleChange.before, 'Fireground One');
   assert.match(radioReferenceImportSource, /mobileCards: true/);
   assert.match(radioReferenceImportSource, /imports\/site\/preview/);
   assert.match(radioReferenceImportSource, /imports\/conventional\/preview/);
@@ -1053,8 +1069,9 @@ async function main() {
     /node\('summary', 'ui-button ui-button-secondary ui-icon-button'\)[\s\S]+moreSummary\.setAttribute\('aria-label', 'More measurements'\)/);
   assert.doesNotMatch(tunerSpectrumPanel, /tuner-spectrum-labeled-action/);
   assert.match(tunerSpectrumPanel, /const optionToggle = \(checked, label, detail\)[\s\S]+preferenceCheckbox\('', label, checked, detail\)/);
-  assert.match(tunerSpectrumPanel, /settingsCard\('FFT', '', fftAutoRangeToggle.control, smoothControl/);
-  assert.match(tunerSpectrumPanel, /settingsCard\('Waterfall', '', waterfallAutoRangeToggle.control, speedControl/);
+  assert.match(tunerSpectrumPanel, /settingsCard\('Display', '', autoRangeToggle.control, rangeControl/);
+  assert.match(tunerSpectrumPanel, /settingsCard\('FFT', '', smoothControl/);
+  assert.match(tunerSpectrumPanel, /settingsCard\('Waterfall', '', speedControl/);
   assert.match(tunerSpectrumPanel, /tuner-spectrum-options-header/);
   assert.match(tunerSpectrumPanel, /uiSelectFrame\(targetSelect\)/);
   assert.match(functionBinding(appSource, 'renderActivity'), /browsingWorkflows\.createBrowsingPager\(/);
@@ -2094,14 +2111,26 @@ async function main() {
     onError: (error) => errors.push(error)
   });
   assert.equal(controller.snapshot().identity, null);
+  const initialRead = controller.read();
+  assert.equal(controller.read(), initialRead);
+  assert.ok(Object.isFrozen(initialRead.preferences.appearance));
+  assert.throws(() => { initialRead.preferences.appearance.theme = 'dark'; }, TypeError);
+  const independentDraft = controller.snapshot();
+  independentDraft.preferences.appearance.theme = 'dark';
+  assert.notEqual(controller.read().preferences.appearance.theme, 'dark');
   queuedResponses.push(response(200, { revision: 3, preferences: decodedDefaults }));
   await controller.activate('alice');
   assert.equal(controller.snapshot().revision, 3);
+  const loadedRead = controller.read();
+  assert.notEqual(loadedRead, initialRead);
+  assert.equal(controller.read(), loadedRead);
   const dark = { ...decodedDefaults, appearance: { theme: 'dark', hue: null } };
   queuedResponses.push(response(200, { revision: 4, preferences: dark }));
   await controller.update((profile) => { profile.appearance.theme = 'dark'; });
   assert.equal(requests.at(-1)[1].headers['If-Match'], '"3"');
   assert.equal(controller.snapshot().preferences.appearance.theme, 'dark');
+  assert.notEqual(controller.read(), loadedRead);
+  assert.equal(loadedRead.preferences.appearance.theme, decodedDefaults.appearance.theme);
 
   const slowThemeSave = deferred();
   queuedResponses.push(slowThemeSave, (_url, options) => {
@@ -2163,6 +2192,7 @@ async function main() {
     (error) => error.code === 'preference_conflict');
   assert.equal(controller.snapshot().revision, 10);
   assert.equal(controller.snapshot().preferences.scanner.detail_mode, 'engineer');
+  assert.equal(controller.read().preferences.scanner.detail_mode, 'engineer');
 
   const slow = deferred();
   queuedResponses.push(slow);
@@ -2171,6 +2201,7 @@ async function main() {
   slow.resolve(response(200, { revision: 9, preferences: dark }));
   assert.deepEqual(await obsolete, { state: 'stale' });
   assert.equal(controller.snapshot().identity, null);
+  assert.equal(controller.read().identity, null);
   assert.ok(changes.length >= 5);
   assert.equal(errors.at(-1).code, 'preference_conflict');
 }

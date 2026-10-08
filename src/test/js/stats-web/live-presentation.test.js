@@ -349,7 +349,7 @@ assert.match(channels, /liveDetailSelectionUnchanged\(selection, nextSelection\)
   'Repeated snapshots must not redispatch an unchanged selected row');
 assert.match(channels, /liveTable\.tableController\.reconcileRows\(displayed\.rows\)/,
   'Live updates must reconcile stable row cells instead of rebuilding the table body');
-assert.match(channels, /if \(!tableIds\.has\(tableId\)\) removeTable\(tableId\)/,
+assert.match(channels, /if \(!tableIds\.has\(tableId\)\) receiveRemoval\(tableId\)/,
   'A resync must remove local tables absent from the authoritative snapshot');
 assert.match(channels,
   /const nextSelection = liveDetailSelectionAfterRowsChanged\(displayed, selection\)/,
@@ -394,7 +394,7 @@ assert.match(channels,
   'Compact Live rows must represent decode quality with the shared signal-bar primitive');
 
 const renderRow = functionSource('renderTableRow');
-assert.match(renderRow, /cell\.dataset\.column = column\.id/,
+assert.match(functionSource('renderTableCell'), /cell\.dataset\.column = column\.id/,
   'Table cells expose stable semantic column identifiers for responsive layouts');
 assert.match(renderRow, /row\.setAttribute\('aria-selected'/,
   'Selectable rows expose their selected state');
@@ -404,6 +404,61 @@ assert.match(renderRow, /event\.key === 'Enter' \|\| event\.key === ' '/,
   'Selectable rows support keyboard activation');
 assert.match(renderRow, /'ArrowDown', 'ArrowUp', 'Home', 'End'/,
   'Selectable rows support roving keyboard navigation');
+
+// Exercise the actual presentation scheduler: data is updated immediately by the caller,
+// while repeated updates paint the latest value once and lifecycle changes cancel owned work.
+{
+  const listeners = new Map();
+  const frames = new Map();
+  let frameId = 0;
+  const target = (prefix) => ({
+    addEventListener(name, callback) { listeners.set(`${prefix}/${name}`, callback); },
+    removeEventListener(name, callback) {
+      if (listeners.get(`${prefix}/${name}`) === callback) listeners.delete(`${prefix}/${name}`);
+    }
+  });
+  const window = { ...target('window'),
+    requestAnimationFrame(callback) { frames.set(++frameId, callback); return frameId; },
+    cancelAnimationFrame(id) { frames.delete(id); } };
+  const document = { ...target('document'), hidden: false };
+  const createScheduler = vm.runInNewContext(`(${functionSource('createLivePresentationScheduler')})`,
+    { window, document });
+  const model = new Map();
+  const paints = [];
+  const scheduler = createScheduler((keys) => paints.push(Array.from(keys, key => [key, model.get(key)])));
+  const update = (key, value) => { model.set(key, value); scheduler.queue(key); };
+  const flush = () => { const callbacks = [...frames.values()]; frames.clear(); callbacks.forEach(fn => fn()); };
+  for (let index = 0; index < 500; index += 1) update('channel', index);
+  update('other', 1);
+  assert.equal(model.get('channel'), 499);
+  assert.equal(frames.size, 1);
+  flush();
+  assert.deepEqual(paints, [[['channel', 499], ['other', 1]]]);
+  update('channel', 500);
+  listeners.get('window/blur')();
+  assert.equal(frames.size, 0);
+  for (let index = 501; index < 1000; index += 1) update('channel', index);
+  assert.equal(model.get('channel'), 999);
+  assert.equal(frames.size, 0);
+  document.hidden = true;
+  listeners.get('document/visibilitychange')();
+  listeners.get('window/focus')();
+  assert.equal(frames.size, 0);
+  document.hidden = false;
+  listeners.get('document/visibilitychange')();
+  flush();
+  assert.deepEqual(paints.at(-1), [['channel', 999]]);
+  update('ephemeral', 1);
+  model.delete('ephemeral');
+  scheduler.discard('ephemeral');
+  update('channel', 1000);
+  scheduler.close();
+  flush();
+  scheduler.queue('channel');
+  assert.equal(frames.size, 0);
+  assert.equal(listeners.size, 0);
+  assert.equal(paints.length, 2);
+}
 
 const details = functionSource('liveEventsPanel');
 assert.doesNotMatch(details, /live-details-summary|live-event-selection|live-events-toolbar/,

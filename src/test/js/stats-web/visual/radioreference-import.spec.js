@@ -174,6 +174,8 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
     const calls = [];
     const popupTriggers = [];
     const scenario = new URLSearchParams(location.search).get('scenario');
+    const hiddenChanges = [{ field: 'description', before: 'County  fire', after: 'County fire' },
+      { field: 'group', before: 'Fire\u00a0', after: 'Fire' }];
     const systemPreferences = new Map(scenario === 'saved-preference' ? [[2001, 10]] : []);
     let failPreferenceSave = scenario === 'preference-save-error';
     let preferenceGetCount = 0;
@@ -323,6 +325,14 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
             index === 9999 ? 'DIFFERENT' : 'IDENTICAL'
         }))
       };
+      if (path.includes('/systems/talkgroups/catalog?') && scenario === 'comparison-whitespace') return {
+        catalog_id: 'loaded-catalog', total_items: 1, categories: [{ id: 9, name: 'Fire' }], items: [{
+          talkgroup: { id: 102, value: 102, category_id: 9, alpha_tag: 'Fireground 2', description: 'County fire' },
+          category: 'Fire', status: rawCatalog ? 'UNCOMPARED' : 'DIFFERENT', existing_alias_id: 701,
+          current_alias: { alpha_tag: ' Fireground 2 ', description: 'County  fire', category: 'Fire\u00a0' },
+          changes: hiddenChanges
+        }]
+      };
       if (path.includes('/systems/talkgroups/catalog?')) return { catalog_id: 'loaded-catalog',
         total_items: 2, categories: [{ id: 9, name: 'Fire' }],
         items: [
@@ -334,7 +344,9 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
             description: 'Fireground operations' },
             category: 'Fire', status: rawCatalog ? 'UNCOMPARED' : 'DIFFERENT', existing_alias_id: 701,
             current_alias: { alpha_tag: 'Fireground Two', description: 'Local fireground description', category: 'Operations' },
-            changes: [{ field: 'name', before: 'Fireground Two', after: 'Fireground 2' }] }
+            changes: [{ field: 'name', before: 'Fireground Two', after: 'Fireground 2' },
+              { field: 'description', before: 'Local fireground description', after: 'Fireground operations' },
+              { field: 'group', before: 'Operations', after: 'Fire' }] }
         ] };
       if (path.includes('/conventional/categories?')) return { items: [
         { sub_category_id: 44, category_name: 'Fire', sub_category_name: 'Dispatch' }
@@ -347,7 +359,10 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
         counts: { added: 0, updated: 1, unchanged: 0 }, rows: [{
           talkgroup: { id: 102, value: 102, alpha_tag: 'Fireground 2' }, status: 'DIFFERENT',
           existing_alias_id: 701,
-          changes: [{ field: 'name', before: 'Fireground Two', after: 'Fireground 2' }]
+          changes: scenario === 'comparison-whitespace' ? hiddenChanges :
+            [{ field: 'name', before: 'Fireground Two', after: 'Fireground 2' },
+            { field: 'description', before: 'Local fireground description', after: 'Fireground operations' },
+            { field: 'group', before: 'Operations', after: 'Fire' }]
         }] };
       if (path.endsWith('/imports/site/preview')) return { preview_id: 'site-preview', action: 'CREATE',
         detected_modulation: dmr ? null : 'CQPSK',
@@ -1088,6 +1103,36 @@ test('comparison reuses the source catalog and Different shows complete current 
   await expect(row).toContainText('RadioReference: Fireground operations');
   await expect(row).toContainText('Current: Operations');
   await expect(row).toContainText('RadioReference: Fire');
+  await expect(row.getByText('Changed', { exact: true })).toHaveCount(3);
+  await expect(row).toContainText('Changed: Alpha tag, Description, Category');
+});
+
+for (const { theme, width } of [{ theme: 'light', width: 1280 }, { theme: 'dark', width: 390 }])
+test(`Different highlights only changed imported fields and reveals visually equal whitespace in the table and preview ${theme} ${width}px`, async ({ page }, testInfo) => {
+  await page.setViewportSize({ width, height: 900 });
+  await installWorkspace(page, theme, false, false, 'comparison-whitespace');
+  await openSystem(page);
+  await page.getByRole('button', { name: 'Talkgroups & Aliases', exact: true }).click();
+  await page.getByLabel('Compare with Alias List').selectOption('7');
+  await page.getByRole('button', { name: 'Different', exact: true }).click();
+  const row = page.locator('.radioreference-talkgroup-table tbody tr');
+  await expect(row).toHaveCount(1);
+  await expect(row.locator('td[data-label="Alpha tag"]').getByText('Changed', { exact: true })).toHaveCount(0);
+  await expect(row.getByText('Changed', { exact: true })).toHaveCount(2);
+  await expect(row).toContainText('Changed: Description, Category');
+  await expect(row.locator('td[data-label="Description"]')).toContainText('Current: "County␠␠fire"');
+  await expect(row.locator('td[data-label="Description"]')).toContainText('RadioReference: "County␠fire"');
+  await expect(row.locator('td[data-label="Category"]')).toContainText('Current: "Fire\\u00a0"');
+  await expect(row.getByText(/Spacing or hidden characters differ/)).toHaveCount(2);
+  await row.screenshot({ path: testInfo.outputPath(`hidden-character-row-${theme}-${width}.png`) });
+  await row.getByRole('checkbox', { name: 'Select Fireground 2', exact: true }).check();
+  await page.getByRole('button', { name: 'Import selected', exact: true }).click();
+  const preview = page.getByRole('dialog', { name: 'Import 1 talkgroup', exact: true });
+  await expect(preview.locator('dt')).toHaveText(['Description', 'Category']);
+  await expect(preview).toContainText('"County␠␠fire"');
+  await expect(preview).toContainText('"Fire\\u00a0"');
+  await expect(preview.getByText(/Spacing or hidden characters differ/)).toHaveCount(2);
+  await preview.screenshot({ path: testInfo.outputPath(`hidden-character-preview-${theme}-${width}.png`) });
 });
 
 test('explicit refresh bypasses source caches while ordinary filtering and tab returns reuse them', async ({ page }) => {

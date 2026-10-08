@@ -16,3 +16,7 @@
 
 .ui-muted { color: var(--muted); }
 .ui-label { font-size: var(--font-size-label); }
+
+a.ui-link-text {
+  color: inherit;
+}

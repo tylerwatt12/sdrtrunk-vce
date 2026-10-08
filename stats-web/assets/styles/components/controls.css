@@ -463,17 +463,11 @@
 
 .ui-icon-button.is-loading {
   cursor: wait;
-  opacity: .75;
+  opacity: 1;
 }
 
-.ui-icon-button.is-loading::before {
-  content: '';
-  width: 16px;
-  height: 16px;
-  border: 2px solid currentColor;
-  border-right-color: transparent;
-  border-radius: 50%;
-  animation: ui-feedback-spin .8s linear infinite;
+.ui-icon-button.is-loading svg {
+  display: none;
 }
 
 .ui-toggle {
@@ -1339,16 +1333,20 @@
   border-radius: var(--radius-control);
 }
 
-.ui-feedback-loading::before {
+.ui-feedback-loading::before,
+.ui-icon-button.is-loading::before {
   content: "";
-  width: 16px;
-  height: 16px;
-  flex: none;
-  border: 2px solid var(--line);
-  border-top-color: var(--accent);
+  width: var(--icon-glyph-size);
+  height: var(--icon-glyph-size);
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  border: 2px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-top-color: currentColor;
   border-radius: 50%;
   animation: ui-feedback-spin .75s linear infinite;
 }
+
+.ui-feedback-loading::before { color: var(--accent); }
 
 @keyframes ui-feedback-spin {
   to { transform: rotate(360deg); }

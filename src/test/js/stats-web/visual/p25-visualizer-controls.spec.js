@@ -19,7 +19,14 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
       label.textContent = 'Dispatch · call activity';
       label.style.left = '50%';
       label.style.top = '65%';
-      stage.append(back, label);
+      const title = document.createElement('div');
+      title.className = 'network-visualizer-scope-title';
+      const link = document.createElement('a');
+      link.className = 'ui-link-text';
+      link.href = '#system-details';
+      link.textContent = 'Metro Public Safety';
+      title.append(link);
+      stage.append(back, title, label);
       document.querySelector('.visual-health-example').replaceChildren(stage);
     });
     const stage = page.locator('.network-visualizer-stage');
@@ -46,6 +53,35 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
       getComputedStyle(label).color.match(/\d+/g).map(Number));
     expect(callColor[1]).toBeGreaterThan(callColor[0]);
     expect(callColor[1]).toBeGreaterThan(callColor[2]);
+    const link = stage.getByRole('link', { name: 'Metro Public Safety' });
+    const inheritedColor = () => link.evaluate((element) =>
+      getComputedStyle(element).color === getComputedStyle(element.parentElement).color);
+    expect(await inheritedColor()).toBe(true);
+    await link.hover();
+    expect(await inheritedColor()).toBe(true);
+    await expect(link).toHaveCSS('text-decoration-line', 'underline');
+    await link.focus();
+    await expect(link).toBeFocused();
+    expect(await inheritedColor()).toBe(true);
     await expect(stage).toHaveScreenshot(`network-visualizer-controls-${theme}-${width}.png`);
+  });
+}
+
+for (const theme of ['light', 'dark']) {
+  test(`text-colored links inherit normal and muted context in ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`/design-system.html?theme=${theme}`);
+    const example = page.locator('.visual-text-links-example');
+    await example.scrollIntoViewIfNeeded();
+    const links = example.getByRole('link', { name: 'Metro Public Safety' });
+    for (const link of await links.all()) {
+      expect(await link.evaluate((element) => getComputedStyle(element).color ===
+        getComputedStyle(element.parentElement).color)).toBe(true);
+      await link.hover();
+      await expect(link).toHaveCSS('text-decoration-line', 'underline');
+      await link.focus();
+      await expect(link).toBeFocused();
+    }
+    await expect(example).toHaveScreenshot(`text-colored-links-${theme}.png`);
   });
 }

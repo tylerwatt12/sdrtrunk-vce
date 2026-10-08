@@ -248,6 +248,61 @@ class StatsWebMultiplexOutputTest
     }
 
     @Test
+    void savedActivityGapPreservesUnwrittenSourceBoundaryBeforeLaterAppends() throws Exception
+    {
+        RecordingOutputStream recording = new RecordingOutputStream(3);
+        StatsWebServerService.MultiplexOutput output = new StatsWebServerService.MultiplexOutput(recording);
+        var state = new SavedActivityLiveService.State(1, true, 11, 1, 1500, true);
+        try(output)
+        {
+            output.offerRecovery(7, LiveMultiplexFrame.json(7, "source_change", state.payload("view")).bytes(false));
+            output.offerEvent(7, LiveMultiplexFrame.json(7, "activity_append", Map.of("next_after_id", 11)).bytes(false));
+            StatsWebServerService.recoverSavedActivityGap(output, state, "view", 1);
+            output.offerEvent(7, LiveMultiplexFrame.json(7, "activity_append", Map.of("next_after_id", 12)).bytes(false));
+            output.start();
+            assertTrue(recording.mWrites.await(1, TimeUnit.SECONDS));
+            var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            List<String> events = new java.util.ArrayList<>();
+            for(byte[] envelope: recording.mEnvelopes)
+            {
+                var json = mapper.readTree(new String(envelope, LiveMultiplexFrame.HEADER_BYTES,
+                    envelope.length - LiveMultiplexFrame.HEADER_BYTES, StandardCharsets.UTF_8));
+                events.add(json.path("event").asText());
+                if("source_change".equals(json.path("event").asText()))
+                {
+                    assertEquals("view", json.at("/data/subscription_id").asText());
+                    assertEquals(1500, json.at("/data/traffic_grant_age_out_milliseconds").asInt());
+                }
+            }
+            assertEquals(List.of("live_gap", "source_change", "activity_append"), events);
+        }
+    }
+
+    @Test
+    void savedActivityRecoveryClearsItsOwnBoundedQueueAndLeavesOtherTopicsIntact() throws Exception
+    {
+        RecordingOutputStream recording = new RecordingOutputStream(3);
+        StatsWebServerService.MultiplexOutput output = new StatsWebServerService.MultiplexOutput(recording);
+        try(output)
+        {
+            for(int index = 0; index < 128; index++) output.offerEvent(7, new byte[]{7});
+            output.offerEvent(3, new byte[]{3});
+            assertEquals(64, output.eventDrops(7));
+            assertEquals(0, output.eventDrops(3));
+            output.offerRecovery(7, new byte[]{8});
+            output.offerEvent(7, new byte[]{9});
+            assertEquals(1, output.pendingEventBytes(7));
+            assertEquals(1, output.pendingEventBytes(3));
+            output.start();
+            assertTrue(recording.mWrites.await(1, TimeUnit.SECONDS));
+            assertEquals(List.of((byte)8), bytes(recording.mEnvelopes.getFirst()));
+            assertFalse(recording.mEnvelopes.stream().anyMatch(envelope -> envelope[0] == 7));
+            assertTrue(recording.mEnvelopes.stream().anyMatch(envelope -> envelope[0] == 9));
+            assertTrue(recording.mEnvelopes.stream().anyMatch(envelope -> envelope[0] == 3));
+        }
+    }
+
+    @Test
     void mixedTopicOverflowCannotEvictAnotherTopicsMetadata() throws Exception
     {
         RecordingOutputStream recording = new RecordingOutputStream(65);
@@ -508,7 +563,8 @@ class StatsWebMultiplexOutputTest
         assertFalse(source.contains("output.eventDrops() !="));
         assertFalse(source.contains("mLastChannelActivitySnapshot"));
         assertTrue(source.contains("private static final int TOPIC_FREQUENCY_AUDIO = 6"));
-        assertTrue(source.contains("private static final int TOPIC_MAXIMUM = TOPIC_FREQUENCY_AUDIO"));
+        assertTrue(source.contains("private static final int TOPIC_SAVED_ACTIVITY = 7"));
+        assertTrue(source.contains("private static final int TOPIC_MAXIMUM = TOPIC_SAVED_ACTIVITY"));
         assertFalse(source.contains("network_activity"));
     }
 

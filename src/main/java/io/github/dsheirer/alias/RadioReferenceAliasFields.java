@@ -26,7 +26,8 @@ public final class RadioReferenceAliasFields
             (!groupProvided || same(existing.getGroup(), group));
     }
 
-    private static boolean same(String left, String right)
+    /** Imported text ignores outer ASCII whitespace; case and internal whitespace remain meaningful. */
+    static boolean same(String left, String right)
     {
         return Objects.equals(left == null ? "" : left.trim(), right == null ? "" : right.trim());
     }

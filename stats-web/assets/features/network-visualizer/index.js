@@ -9,9 +9,9 @@ import {
   nextP25HighlightExpiry,
   groupedP25Events,
   mostActiveP25System
-} from './history.js?v=8';
+} from './history.js?v=9';
 import { createP25CameraCoordinator } from './camera.js?v=4';
-import { createP25Renderer } from './renderer.js?v=5';
+import { createP25Renderer } from './renderer.js?v=6';
 import {
   P25_EVENT_SETTINGS,
   normalizeP25EventSettings,
@@ -24,6 +24,7 @@ const POLL_MS = 5_000;
 const PAGE_LIMIT = 5_000;
 const MAX_SEED_ROWS = 250_000;
 const MAX_POLL_ROWS = 25_000;
+const MAX_BUFFERED_ACTIVITY_BATCHES = 64;
 const CLOCK_TOLERANCE_MS = 2_000;
 
 function textButton(node, label, className = 'ui-button ui-button-secondary') {
@@ -156,6 +157,14 @@ function createP25Visualizer(dependencies = {}) {
   let pollTimer = 0;
   let highlightTimer = 0;
   let grantActivityTimeoutMs = 1_000;
+  let serverTimeOffsetMs = 0;
+  let liveSource = null;
+  let liveBound = false;
+  let liveReady = false;
+  let collectionEnabled = true;
+  let catchupRequested = false;
+  let bufferedActivity = [];
+  let bufferedRowCount = 0;
   let introTimer = 0;
   let animationFrame = 0;
   let lastAnimationAt = performance.now();
@@ -303,13 +312,13 @@ function createP25Visualizer(dependencies = {}) {
 
   function renderGraph(animate = true) {
     if (!renderer) return;
-    const graph = buildP25Graph(state, selectedSystemKey, Date.now(), selectedGroupKey,
+    const graph = buildP25Graph(state, selectedSystemKey, Date.now() + serverTimeOffsetMs, selectedGroupKey,
       { highlightCategories: highlightedCategories });
     visibleNodeKeys = new Set(graph.nodes.map((value) => value.id));
     renderer.setData(graph, { animate });
     renderEvents();
     if (highlightTimer) window.clearTimeout(highlightTimer);
-    const now = Date.now();
+    const now = Date.now() + serverTimeOffsetMs;
     const expiresAt = nextP25HighlightExpiry(state, now, { highlightCategories: highlightedCategories });
     highlightTimer = expiresAt ? window.setTimeout(() => {
       highlightTimer = 0;
@@ -321,7 +330,7 @@ function createP25Visualizer(dependencies = {}) {
     const label = system.name || system.identity || system.label;
     const context = node('div', 'muted');
     const destination = dependencies.systemHref?.(system);
-    const systemText = destination ? node('a', '', label) : node('span', '', label);
+    const systemText = destination ? node('a', 'ui-link-text', label) : node('span', '', label);
     if (destination) systemText.href = destination;
     if (group) {
       context.append('System: ', systemText);
@@ -411,7 +420,7 @@ function createP25Visualizer(dependencies = {}) {
   }
 
   function historyBounds() {
-    const toMs = Date.now() + CLOCK_TOLERANCE_MS;
+    const toMs = Date.now() + serverTimeOffsetMs + CLOCK_TOLERANCE_MS;
     return { fromMs: toMs - historyHours * HOUR_MS, toMs };
   }
 
@@ -435,6 +444,11 @@ function createP25Visualizer(dependencies = {}) {
     if (introTimer) window.clearTimeout(introTimer);
     introTimer = 0;
     requestController?.abort();
+    liveSource?.close();
+    liveSource = null;
+    liveBound = liveReady = catchupRequested = false;
+    bufferedActivity = [];
+    bufferedRowCount = 0;
     const controller = new AbortController();
     requestController = controller;
     const abort = () => controller.abort();
@@ -517,6 +531,7 @@ function createP25Visualizer(dependencies = {}) {
       }
       const paused = history.available && !history.historyActive;
       setStatus(paused ? 'Saved history · updates paused' : 'Saved history', paused ? 'stale' : 'current');
+      connectLiveActivity(localGeneration);
       schedulePoll();
     } catch (error) {
       if (error?.name === 'AbortError' || closed || localGeneration !== generation) return;
@@ -538,12 +553,82 @@ function createP25Visualizer(dependencies = {}) {
     if (!closed) pollTimer = window.setTimeout(() => void poll(), delay);
   }
 
+  function applyActivityUpdate(rows) {
+    const selected = routineP25ActivityEnabled(eventSettings) ? rows :
+      rows.filter((row) => !P25_ROUTINE_ACTIONS.includes(String(row?.action || '').toUpperCase()));
+    const result = applyP25ActivityRows(state, selected, { initial: false,
+      atMs: Date.now() + serverTimeOffsetMs, highlightAtObservationTime: true,
+      highlightCategories: highlightedCategories, grantActivityTimeoutMs });
+    if (result.changed) {
+      if (state.systems.size) empty.hidden = true;
+      renderGraph(true);
+    }
+    applyAttention(result.focusCandidates);
+  }
+
+  function requestCatchup() {
+    liveReady = false;
+    catchupRequested = true;
+    if (!polling) schedulePoll(0);
+  }
+
+  function ingestLiveActivity(update) {
+    if (!Array.isArray(update?.rows) || update.rows.length > MAX_POLL_ROWS ||
+        !Number.isSafeInteger(update.next_after_id) || update.next_after_id < 0) return requestCatchup();
+    if (!liveReady || polling || catchupRequested) {
+      if (bufferedRowCount + update.rows.length > MAX_POLL_ROWS ||
+          bufferedActivity.length >= MAX_BUFFERED_ACTIVITY_BATCHES) {
+        bufferedActivity = [];
+        bufferedRowCount = 0;
+        return requestCatchup();
+      }
+      bufferedActivity.push(update);
+      bufferedRowCount += update.rows.length;
+      return;
+    }
+    applyActivityUpdate(update.rows);
+    cursor = Math.max(cursor, update.next_after_id, ...update.rows.map((row) =>
+      Number.isSafeInteger(row?.id) && row.id > 0 ? row.id : 0));
+  }
+
+  function connectLiveActivity(localGeneration) {
+    if (typeof dependencies.subscribeActivity !== 'function') return;
+    const current = () => !closed && localGeneration === generation;
+    liveSource = dependencies.subscribeActivity({
+      sourceChange: (value) => {
+        if (!current()) return;
+        const timing = value?.traffic_grant_age_out_milliseconds;
+        if (Number.isInteger(timing) && timing >= 100 && timing <= 15_000) grantActivityTimeoutMs = timing;
+        const serverTime = Number(value?.server_time_ms);
+        if (Number.isFinite(serverTime) && serverTime > 0) serverTimeOffsetMs = serverTime - Date.now();
+        if (typeof value?.collection_enabled === 'boolean') collectionEnabled = value.collection_enabled;
+        liveBound = true;
+        requestCatchup();
+      },
+      activityAppend: (value) => current() && ingestLiveActivity(value),
+      gap: () => {
+        if (!current()) return;
+        bufferedActivity = [];
+        bufferedRowCount = 0;
+        requestCatchup();
+      },
+      error: () => {
+        if (!current()) return;
+        liveBound = liveReady = false;
+        setStatus('History update delayed', 'error');
+        schedulePoll();
+      }
+    });
+  }
+
   async function poll() {
     if (closed || polling || document.hidden) return schedulePoll();
     polling = true;
+    catchupRequested = false;
     const localGeneration = generation;
     const controller = requestController;
     let reseed = false;
+    let recovered = false;
     try {
       const bounds = historyBounds();
       let afterId = cursor;
@@ -573,13 +658,10 @@ function createP25Visualizer(dependencies = {}) {
         if (!page.has_more) break;
       } while (!controller.signal.aborted);
       cursor = Math.max(cursor, afterId, watermarkId || 0);
-      const result = applyP25ActivityRows(state, pollRows, { initial: false, atMs: Date.now(),
-        highlightCategories: highlightedCategories, grantActivityTimeoutMs });
-      renderGraph(true);
-      result.focusCandidates.sort((left, right) => right.priority - left.priority ||
-        right.observedAtMs - left.observedAtMs);
-      applyAttention(result.focusCandidates);
-      if (status.classList.contains('state-error')) setStatus('Saved history', 'current');
+      applyActivityUpdate(pollRows);
+      recovered = true;
+      setStatus(collectionEnabled ? 'Saved history' : 'Saved history · updates paused',
+        collectionEnabled ? 'current' : 'stale');
     } catch (error) {
       if (error?.reseed && !closed && localGeneration === generation) {
         reseed = true;
@@ -590,7 +672,19 @@ function createP25Visualizer(dependencies = {}) {
       }
     } finally {
       polling = false;
-      if (!reseed) schedulePoll();
+      if (!closed && localGeneration === generation && !reseed) {
+        if (!recovered) schedulePoll();
+        else if (catchupRequested) schedulePoll(0);
+        else if (liveBound) {
+          liveReady = true;
+          const updates = bufferedActivity;
+          bufferedActivity = [];
+          bufferedRowCount = 0;
+          updates.forEach(ingestLiveActivity);
+          if (pollTimer) window.clearTimeout(pollTimer);
+          pollTimer = 0;
+        } else schedulePoll();
+      }
     }
   }
 
@@ -678,7 +772,8 @@ function createP25Visualizer(dependencies = {}) {
   stage.addEventListener('keydown', onKeyDown);
   window.addEventListener('keyup', onKeyUp);
   const onVisibilityChange = () => {
-    if (!document.hidden) schedulePoll(0);
+    if (document.hidden) liveReady = false;
+    else requestCatchup();
   };
   document.addEventListener('visibilitychange', onVisibilityChange);
 
@@ -706,6 +801,10 @@ function createP25Visualizer(dependencies = {}) {
     closed = true;
     generation += 1;
     requestController?.abort();
+    liveSource?.close();
+    liveSource = null;
+    bufferedActivity = [];
+    bufferedRowCount = 0;
     if (pollTimer) window.clearTimeout(pollTimer);
     if (highlightTimer) window.clearTimeout(highlightTimer);
     if (introTimer) window.clearTimeout(introTimer);

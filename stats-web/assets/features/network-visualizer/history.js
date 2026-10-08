@@ -481,6 +481,8 @@ function applyP25ActivityRows(state, rows, options = {}) {
   const grantActivityTimeoutMs = Math.max(100, Math.min(15_000, finite(options.grantActivityTimeoutMs, 1_000)));
   const highlighted = options.highlightCategories instanceof Set ? options.highlightCategories : null;
   const shouldHighlight = (category) => !highlighted || highlighted.has(category);
+  const highlightDuration = (category) => category === 'call' ? grantActivityTimeoutMs :
+    category === 'emergency' ? 12_000 : category === 'movement' ? 8_000 : 7_000;
   const result = { changed: false, accepted: 0, ignored: 0, focusCandidates: [] };
   const ordered = (Array.isArray(rows) ? rows : []).slice().sort((left, right) =>
     finite(left?.observed_at_ms) - finite(right?.observed_at_ms) || finite(left?.id) - finite(right?.id));
@@ -497,14 +499,23 @@ function applyP25ActivityRows(state, rows, options = {}) {
       continue;
     }
     const system = ensureSystem(state, row);
-    if (action === 'JOIN') applyJoin(state, system, row, result, initial, ingestedAtMs, shouldHighlight);
-    else if (action === 'LOGOUT') applyLogout(state, system, row, result, initial, ingestedAtMs, shouldHighlight);
+    const highlightAtMs = options.highlightAtObservationTime === true ?
+      Math.min(ingestedAtMs, finite(row.observed_at_ms, ingestedAtMs)) : ingestedAtMs;
+    const rowShouldHighlight = (category) => shouldHighlight(category) &&
+      (options.highlightAtObservationTime !== true || highlightAtMs + highlightDuration(category) > ingestedAtMs);
+    if (action === 'JOIN') applyJoin(state, system, row, result, initial, highlightAtMs, rowShouldHighlight);
+    else if (action === 'LOGOUT') applyLogout(state, system, row, result, initial, highlightAtMs, rowShouldHighlight);
     else if (P25_ROUTINE_ACTIONS.includes(action)) {
-      applyRoutineActivity(state, system, row, result, initial, action, ingestedAtMs, shouldHighlight,
+      applyRoutineActivity(state, system, row, result, initial, action, highlightAtMs, rowShouldHighlight,
         grantActivityTimeoutMs);
-    } else applySignal(state, system, row, result, initial, action, ingestedAtMs, shouldHighlight);
+    } else applySignal(state, system, row, result, initial, action, highlightAtMs, rowShouldHighlight);
     result.accepted += 1;
     result.changed = true;
+  }
+  if (options.highlightAtObservationTime === true) {
+    result.focusCandidates = result.focusCandidates.filter((event) => {
+      return event.observedAtMs + highlightDuration(event.category) > ingestedAtMs;
+    });
   }
   result.focusCandidates.sort((left, right) => right.priority - left.priority ||
     right.observedAtMs - left.observedAtMs);

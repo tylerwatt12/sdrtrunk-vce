@@ -2,6 +2,7 @@
 
 const { test, expect } = require('@playwright/test');
 const { installSiteStyleApplication } = require('./fixtures/site-style-app.cjs');
+const fs = require('node:fs');
 
 const channelA = '11111111-1111-4111-8111-111111111111';
 const channelB = '22222222-2222-4222-8222-222222222222';
@@ -51,6 +52,103 @@ async function openLive(page, theme) {
     window.fixtureSendLiveFrame(topic, name, data), { topic, name, data });
   return { fixture, controls, latest, send, acknowledge: value => { autoAcknowledge = value; } };
 }
+
+test('High-rate Live messages retain ordering, capture, row focus and bounded presentation work', async ({ page }, testInfo) => {
+  test.setTimeout(40_000);
+  const baseline = process.env.SDRTRUNK_LIVE_CPU_BASELINE;
+  if (baseline) await page.route('**/assets/app.js*', route => route.fulfill({
+    contentType: 'text/javascript', body: fs.readFileSync(baseline, 'utf8')
+  }));
+  const app = await openLive(page, 'light');
+  const selected = page.locator('.channels-live-table tr[data-id="source-0"]');
+  await selected.focus();
+  await selected.press('Enter');
+  await page.getByRole('tab', { name: 'Messages', exact: true }).click();
+  await expect.poll(() => app.latest().decode_messages?.configuration_id).toBe(channelA);
+  const messages = page.locator('.live-messages-table tbody tr[data-id]');
+  await page.getByRole('button', { name: 'Pause live details', exact: true }).click();
+  await page.evaluate(({ origin, filterKey }) => {
+    for (let index = 0; index < 2500; index += 1) window.fixtureSendLiveFrame(3, 'decode_message', {
+      ...origin, message_id: String(index), timestamp_ms: index + 1, valid: true, timeslot: 1,
+      filter_key: filterKey, text: `sample ${String(index).padStart(6, '0')}`
+    });
+  }, { origin: origins[0], filterKey: 'source/0/messages' });
+  await page.getByRole('button', { name: 'Resume live details', exact: true }).click();
+  await expect(messages).toHaveCount(200);
+  await expect(messages.first()).toContainText('sample 002499');
+  await selected.focus();
+  await page.evaluate(() => {
+    window.fixtureFocusedLiveRow = document.activeElement;
+    window.fixtureLivePaints = { tableBodyRebuilds: 0, pickerTitles: 0, createdCells: 0 };
+    const replace = Element.prototype.replaceChildren;
+    Element.prototype.replaceChildren = function(...values) {
+      if (this.matches('.live-messages-table tbody')) window.fixtureLivePaints.tableBodyRebuilds += 1;
+      if (this.matches('.channels-tab-title')) window.fixtureLivePaints.pickerTitles += 1;
+      return Reflect.apply(replace, this, values);
+    };
+    const create = document.createElement.bind(document);
+    document.createElement = (...values) => {
+      if (String(values[0]).toLowerCase() === 'td') window.fixtureLivePaints.createdCells += 1;
+      return create(...values);
+    };
+  });
+  const session = await page.context().newCDPSession(page);
+  await session.send('Performance.enable');
+  const before = (await session.send('Performance.getMetrics')).metrics;
+  await page.evaluate(({ origin, row }) => new Promise(resolve => {
+    let delivered = 0;
+    const start = performance.now();
+    const timer = setInterval(() => {
+      for (let batch = 0; batch < 25; batch += 1) {
+        const index = delivered++;
+        window.fixtureSendLiveFrame(3, 'decode_message', { ...origin, message_id: String(2500 + index),
+          timestamp_ms: 2501 + index, valid: true, timeslot: 1, filter_key: 'source/0/messages',
+          text: `sample ${String(2500 + index).padStart(6, '0')}` });
+        window.fixtureSendLiveFrame(1, 'activity_delta', { table_id: 'conventional', operation: 'upsert',
+          base_revision: index + 1, revision: index + 2,
+          rows: [{ ...row, signal_dbfs: -70 + index % 10 }] });
+      }
+      if (delivered === 1000) {
+        clearInterval(timer);
+        window.fixtureLivePaints.feedElapsedMs = performance.now() - start;
+        resolve();
+      }
+    }, 50);
+  }), { origin: origins[0], row: snapshot.tables[0].rows[0] });
+  await expect(messages.first()).toContainText('sample 003499');
+  await expect(messages.last()).toContainText('sample 003300');
+  await expect(selected.locator('[data-column="signal"]')).toContainText('-61.0');
+  await expect(selected).toBeFocused();
+  await expect(selected).toHaveAttribute('aria-selected', 'true');
+  expect(await page.evaluate(() => document.activeElement === window.fixtureFocusedLiveRow)).toBe(true);
+  const after = (await session.send('Performance.getMetrics')).metrics;
+  const metric = (values, name) => values.find(value => value.name === name)?.value || 0;
+  const result = await page.evaluate(() => ({ ...window.fixtureLivePaints }));
+  Object.assign(result, { variant: baseline ? 'baseline' : 'fixed', messageFrames: 1000, activityFrames: 1000,
+    taskCpuSeconds: metric(after, 'TaskDuration') - metric(before, 'TaskDuration'),
+    scriptCpuSeconds: metric(after, 'ScriptDuration') - metric(before, 'ScriptDuration'),
+    layoutCpuSeconds: metric(after, 'LayoutDuration') - metric(before, 'LayoutDuration') });
+  await testInfo.attach('live-cpu-measurement.json', { body: JSON.stringify(result, null, 2), contentType: 'application/json' });
+  if (!baseline) {
+    expect(result.tableBodyRebuilds).toBe(0);
+    expect(result.pickerTitles).toBe(0);
+    expect(result.createdCells).toBeLessThan(10_000);
+  }
+  // The capture keeps older rows outside the visible limit, and updates matching IDs without duplication.
+  await page.getByRole('button', { name: 'Filter messages', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Message filters', exact: true });
+  await dialog.getByPlaceholder('Search message text').fill('sample 000000');
+  await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+  await expect(messages).toHaveCount(1);
+  await expect(messages).toContainText('sample 000000');
+  await app.send(3, 'decode_message', message(origins[0], '0', 1, 'sample 000000 updated'));
+  await expect(messages).toHaveCount(1);
+  await expect(messages).toContainText('sample 000000 updated');
+  await page.goto('/app.html?view=dashboard');
+  await expect.poll(() => app.latest().decode_messages).toBeUndefined();
+  expect(app.fixture.pageErrors).toEqual([]);
+  expect(app.fixture.unexpected).toEqual([]);
+});
 
 for (const theme of ['light', 'dark']) for (const width of [1280, 390]) {
   test(`Conventional combined details, selection and lifecycle ${theme} ${width}px`, async ({ page }, testInfo) => {

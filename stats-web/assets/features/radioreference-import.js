@@ -218,6 +218,21 @@ function talkgroupChanges(value) {
   return value.changes.filter((change) => owned.has(textValue(change, ['field']).toLowerCase()));
 }
 
+const IMPORTED_FIELD_LABELS = { name: 'Alpha tag', description: 'Description', group: 'Category' };
+
+function importedChangeValues(change) {
+  const before = String(change?.before ?? '');
+  const after = String(change?.after ?? '');
+  const visibleText = (value) => value.replace(/\p{Cf}/gu, '').replace(/\s+/gu, ' ').trim();
+  const hiddenDifference = before !== after && visibleText(before) === visibleText(after);
+  const escaped = (value) => JSON.stringify(value).replace(/ /g, '␠')
+    .replace(/[\p{Cf}\p{White_Space}]/gu,
+      (character) => character.split('').map((unit) =>
+        `\\u${unit.charCodeAt(0).toString(16).padStart(4, '0')}`).join(''));
+  return { before: hiddenDifference ? escaped(before) : before || 'Empty',
+    after: hiddenDifference ? escaped(after) : after || 'Empty', hiddenDifference };
+}
+
 function frequencyId(value) {
   return integerValue(value, ['frequency_id', 'frequencyId', 'id']);
 }
@@ -578,11 +593,12 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         const list = node('dl');
         changed.forEach((change) => {
           const field = textValue(change, ['field']);
-          const before = textValue(change, ['before']) || 'Empty';
-          const after = textValue(change, ['after']) || 'Empty';
+          const { before, after, hiddenDifference } = importedChangeValues(change);
           const values = node('dd');
           values.append(node('span', '', before), node('span', 'muted', '→'), node('strong', '', after));
-          list.append(node('dt', '', `${field.charAt(0).toUpperCase()}${field.slice(1)}`), values);
+          if (hiddenDifference) values.append(node('small', 'ui-field-detail',
+            'Spacing or hidden characters differ; ␠ marks a space and escapes show hidden characters.'));
+          list.append(node('dt', '', IMPORTED_FIELD_LABELS[field]), values);
         });
         detail.append(list);
         wrapper.append(detail);
@@ -1105,9 +1121,16 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       if (state.talkgroupStatus !== 'DIFFERENT') return incoming;
       const current = talkgroup.current_alias || talkgroup.currentAlias;
       const value = node('span', 'ui-record-card-copy');
-      const saved = textValue(current, field === 'alpha_tag' ? ['alpha_tag', 'alphaTag'] : [field], '—');
+      const importedField = field === 'alpha_tag' ? 'name' : field === 'category' ? 'group' : field;
+      const change = talkgroupChanges(talkgroup).find((entry) => entry.field === importedField);
+      const changedValues = change ? importedChangeValues(change) : null;
+      const saved = changedValues?.before ??
+        textValue(current, field === 'alpha_tag' ? ['alpha_tag', 'alphaTag'] : [field], '—');
+      if (change) value.append(uiPill('Changed', 'warning'));
       value.append(node('span', '', `Current: ${saved}`),
-        node('small', 'muted', `RadioReference: ${incoming || '—'}`));
+        node('small', 'muted', `RadioReference: ${changedValues?.after ?? (incoming || '—')}`));
+      if (changedValues?.hiddenDifference) value.append(node('small', 'ui-field-detail',
+        'Spacing or hidden characters differ; ␠ marks a space and escapes show hidden characters.'));
       return value;
     };
 
@@ -1180,6 +1203,11 @@ export function createRadioReferenceImportWorkspace(dependencies) {
           const value = importStatus(talkgroup);
           const content = node('span', 'radioreference-talkgroup-status');
           content.append(uiPill(value.label, value.tone));
+          if (state.talkgroupStatus === 'DIFFERENT') {
+            const changed = talkgroupChanges(talkgroup).map((change) => IMPORTED_FIELD_LABELS[change.field]);
+            content.append(node('small', 'ui-field-detail', changed.length ?
+              `Changed: ${changed.join(', ')}` : 'Refresh talkgroups to load comparison details.'));
+          }
           return content;
         } }
       ], 'No talkgroups match these filters.',

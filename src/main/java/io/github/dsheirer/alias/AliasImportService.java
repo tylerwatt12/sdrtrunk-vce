@@ -118,7 +118,10 @@ public final class AliasImportService
                 Map<String,String> after = fields(alias, scans, options);
                 Map<String,String> before = old == null ? Map.of() : fields(old.alias(), old.scanListIds(), options);
                 List<Change> changes = after.entrySet().stream().filter(entry -> !entry.getKey().equals("format_version") &&
-                    !Objects.equals(before.get(entry.getKey()), entry.getValue()))
+                    (old != null && input.radioReference() ?
+                        Set.of("name", "description", "group").contains(entry.getKey()) &&
+                            !RadioReferenceAliasFields.same(before.get(entry.getKey()), entry.getValue()) :
+                        !Objects.equals(before.get(entry.getKey()), entry.getValue())))
                     .map(entry -> new Change(entry.getKey(), before.getOrDefault(entry.getKey(), ""), entry.getValue())).toList();
                 String result = old == null ? "added" : changes.isEmpty() ? "unchanged" : "updated";
                 rows.add(new Row(index, old != null ? old.alias().getId() : null, result, alias.getName(), changes,

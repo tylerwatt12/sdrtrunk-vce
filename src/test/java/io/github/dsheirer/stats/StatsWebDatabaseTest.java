@@ -2463,6 +2463,27 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void savedActivityPushUsesBoundedForwardRowsAndExistingIdentityEnrichment() throws Exception
+    {
+        seedActivityFilterRows();
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE receiver_activity_event SET observed_at_ms=" + System.currentTimeMillis());
+        }
+        long watermark = mDatabase.savedActivityWatermark();
+        Map<String,Object> page = mDatabase.savedActivityAfter(0, null);
+        assertEquals(64, page.get("limit"));
+        assertFalse(rows(page).isEmpty());
+        assertTrue(rows(page).stream().anyMatch(row -> "Shared P25".equals(row.get("system_name"))));
+        assertTrue(rows(page).stream().anyMatch(row -> "CALL".equals(row.get("action"))));
+        assertEquals(watermark, number(page.get("watermark_id")));
+        Map<String,Object> empty = mDatabase.savedActivityAfter(watermark, null);
+        assertTrue(rows(empty).isEmpty());
+        assertEquals(watermark, number(empty.get("next_after_id")));
+    }
+
+    @Test
     void activityGlobalActionWindowUsesStableForwardWatermark() throws Exception
     {
         seedActivityFilterRows();

@@ -1192,9 +1192,13 @@ class StatsWebInteractionUiContractTest
         assertFalse(events.contains("observedEventTypes"));
         assertFalse(addMessage.contains("replaceChildren"));
         assertFalse(addEvent.contains("replaceChildren"));
-        assertTrue(messages.contains(".filter((message) => message && matches(message))"));
+        assertTrue(messages.contains("if (message && matches(message)) rows.push(message)"));
         assertTrue(events.contains(".filter((event) => event && eventMatches(event))"));
-        assertTrue(messages.contains(".slice(0, liveDetailMatchingRowLimit())"));
+        assertTrue(messages.contains("const limit = liveDetailMatchingRowLimit()"));
+        assertTrue(messages.contains("if (rows.length >= limit) break"));
+        assertTrue(messages.contains("{ render: false }"));
+        assertTrue(messages.contains("messagesTable.tableController.reconcileRows(selection ? rows : [])"));
+        assertTrue(messages.contains("clockFormatter.format(date)"));
         assertTrue(events.contains(".slice(0, liveDetailMatchingRowLimit())"));
         assertTrue(catalog.contains("Array.isArray(value.groups)"));
         assertTrue(catalog.contains("candidate.children"));
@@ -1864,9 +1868,11 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("'Idle channel markers'"));
         assertTrue(tuner.contains("TUNER_SPECTRUM_IDLE_PREFERENCE, false"));
         assertTrue(tuner.contains("storeTunerBoolean(TUNER_SPECTRUM_IDLE_PREFERENCE, idleChannelsInput.checked)"));
-        assertTrue(tuner.contains("settingsCard('FFT', '', fftAutoRangeToggle.control, smoothControl"));
+        assertTrue(tuner.contains("settingsCard('Display', '', autoRangeToggle.control, rangeControl"));
+        assertTrue(tuner.contains("floorInput.disabled = ceilingInput.disabled = autoRangeInput.checked"));
+        assertTrue(tuner.contains("settingsCard('FFT', '', smoothControl"));
         assertTrue(tuner.contains("...(!basicOperator ? [idleChannelsControl] : [])"));
-        assertTrue(tuner.contains("settingsCard('Waterfall', '', waterfallAutoRangeToggle.control, speedControl)"));
+        assertTrue(tuner.contains("settingsCard('Waterfall', '', speedControl)"));
         assertTrue(tuner.contains("storeTunerChoice('session-target', targetSelect.value)"));
         assertTrue(tuner.contains("tunerStoredChoice('session-target', targets[0].id"));
         assertTrue(tuner.contains("const options = node('details', 'tuner-spectrum-options')"));
@@ -2053,7 +2059,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains("padding: 12px;"));
         assertTrue(css.contains(".tuner-spectrum-options[open] .tuner-spectrum-options-panel"));
         assertTrue(tuner.contains("preferenceCheckbox('', label, checked, detail)"));
-        assertTrue(tuner.contains("settingsCard('Display', '', rangeControl"));
+        assertTrue(tuner.contains("autoRangeInput.name = 'auto_range_on_retune'"));
         assertTrue(css.contains(".settings-card-body .settings-field-control"));
         assertTrue(css.contains(".settings-field-control {"));
         assertTrue(css.contains(".tuner-spectrum-active-flag.status-encrypted"));

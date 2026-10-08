@@ -476,6 +476,74 @@ class AliasImportServiceTest
         }
     }
 
+    @Test void radioReferenceIgnoresOuterWhitespaceWithoutChangingSavedValues() throws Exception
+    {
+        try(Fixture fixture = new Fixture(root))
+        {
+            Alias current = alias(fixture.list, 100, " Dispatch ");
+            current.setDescription("\tCounty fire\n"); current.setGroup(" Fire "); current.setColor(123);
+            long id = fixture.service.createAlias(current).aliasIds().getFirst();
+            Alias incoming = alias(fixture.list, 100, "Dispatch");
+            incoming.setDescription("County fire"); incoming.setGroup("Fire");
+            assertTrue(RadioReferenceAliasFields.identical(current, incoming.getName(), incoming.getDescription(),
+                incoming.getGroup(), true));
+            var importer = new AliasImportService(fixture.service);
+            var plan = importer.preview(fixture.list, AliasImportService.Mode.UPDATE_ADD,
+                List.of(new AliasImportService.Input(incoming, true, true, false, null, null, null)), null);
+            assertEquals("unchanged", plan.preview().rows().getFirst().result());
+            assertTrue(plan.preview().rows().getFirst().changes().isEmpty());
+            long revision = fixture.service.currentRevision();
+            importer.apply(plan);
+            assertEquals(revision, fixture.service.currentRevision());
+            Alias saved = fixture.service.getAlias(id).alias();
+            assertEquals(" Dispatch ", saved.getName());
+            assertEquals("\tCounty fire\n", saved.getDescription());
+            assertEquals(" Fire ", saved.getGroup());
+            assertEquals(123, saved.getColor());
+            var vce = importer.preview(fixture.list, AliasImportService.Mode.UPDATE_ADD,
+                List.of(new AliasImportService.Input(incoming, false, true, false, null, null, null)), null);
+            assertEquals("updated", vce.preview().rows().getFirst().result(),
+                "VCE transfer continues to compare exact configuration values");
+        }
+    }
+
+    @Test void radioReferenceReportsOnlyMeaningfulImportedChangesAndMatchesExactProtocolAndId() throws Exception
+    {
+        try(Fixture fixture = new Fixture(root))
+        {
+            Alias current = alias(fixture.list, 100, "Dispatch");
+            current.setDescription("County  fire"); current.setGroup("Fire\u00a0"); current.setColor(456);
+            long id = fixture.service.createAlias(current).aliasIds().getFirst();
+            Alias incoming = alias(fixture.list, 100, " Dispatch ");
+            incoming.setDescription("County fire"); incoming.setGroup("Fire");
+            Alias differentProtocol = AliasFactory.copyOf(incoming);
+            differentProtocol.setMatchIdentifier(new Talkgroup(Protocol.APCO25_PHASE2, 100));
+            Alias differentId = AliasFactory.copyOf(incoming);
+            differentId.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 101));
+            var importer = new AliasImportService(fixture.service);
+            var plan = importer.preview(fixture.list, AliasImportService.Mode.UPDATE_ADD,
+                List.of(incoming, differentProtocol, differentId).stream()
+                    .map(alias -> new AliasImportService.Input(alias, true, true, false, null, null, null)).toList(), null);
+            assertEquals(List.of("updated", "added", "added"),
+                plan.preview().rows().stream().map(AliasImportService.Row::result).toList());
+            assertEquals(id, plan.preview().rows().getFirst().aliasId());
+            assertEquals(List.of(new AliasImportService.Change("description", "County  fire", "County fire"),
+                new AliasImportService.Change("group", "Fire\u00a0", "Fire")),
+                plan.preview().rows().getFirst().changes());
+            importer.apply(plan);
+            Alias saved = fixture.service.getAlias(id).alias();
+            assertEquals(456, saved.getColor());
+            assertEquals("County fire", saved.getDescription());
+            assertEquals("Fire", saved.getGroup());
+            assertEquals(AliasTransferCsv.identity(current), AliasTransferCsv.identity(saved));
+            Alias unavailableCategory = alias(fixture.list, 100, saved.getName());
+            unavailableCategory.setDescription(saved.getDescription());
+            var withoutCategory = importer.preview(fixture.list, AliasImportService.Mode.UPDATE_ADD,
+                List.of(new AliasImportService.Input(unavailableCategory, true, false, false, null, null, null)), null);
+            assertEquals("unchanged", withoutCategory.preview().rows().getFirst().result());
+        }
+    }
+
     @Test void radioReferenceFallsBackToListDefaultsWhileVceRowsRemainAuthoritative() throws Exception
     {
         try(Fixture fixture = new Fixture(root))

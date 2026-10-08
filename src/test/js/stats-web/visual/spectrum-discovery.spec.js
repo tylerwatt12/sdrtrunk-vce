@@ -1272,7 +1272,7 @@ test('Spectrum display options remain reachable from desktop and mobile controls
 });
 
 for (const theme of ['light', 'dark']) for (const width of [1280, 390]) {
-  test(`boxed Spectrum display options retain independent retune settings in ${theme} at ${width}px`, async ({ page }) => {
+  test(`boxed Spectrum display options share one retune setting in ${theme} at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     const state = { theme, listening: true, liveSpectrum: true };
     await install(page, state);
@@ -1280,22 +1280,22 @@ for (const theme of ['light', 'dark']) for (const width of [1280, 390]) {
     await trigger.click();
     const panel = page.locator('.tuner-spectrum-options-panel');
     await expect(panel.locator('.settings-card-title')).toHaveText(['Display', 'FFT', 'Waterfall', 'Spectrum performance']);
-    const fft = panel.locator('.settings-card').filter({ has: page.getByRole('heading', { name: 'FFT', exact: true }) });
-    const waterfall = panel.locator('.settings-card').filter({ has: page.getByRole('heading', { name: 'Waterfall', exact: true }) });
-    const fftChoice = fft.getByRole('checkbox', { name: 'Auto range display range on retune', exact: true });
-    const waterfallChoice = waterfall.getByRole('checkbox', { name: 'Auto range display range on retune', exact: true });
-    await expect(fftChoice).toBeChecked();
-    await expect(waterfallChoice).toBeChecked();
-    await fftChoice.locator('..').click();
-    await expect(fftChoice).not.toBeChecked();
-    await expect(waterfallChoice).toBeChecked();
+    const display = panel.locator('.settings-card').filter({ has: page.getByRole('heading', { name: 'Display', exact: true }) });
+    const choice = display.getByRole('checkbox', { name: 'Auto range display range on retune', exact: true });
+    await expect(panel.getByRole('checkbox', { name: 'Auto range display range on retune', exact: true })).toHaveCount(1);
+    await expect(choice).toBeChecked();
+    await expect(panel.getByRole('slider', { name: 'Lower display limit' })).toBeDisabled();
+    await expect(panel.getByRole('slider', { name: 'Upper display limit' })).toBeDisabled();
+    await choice.locator('..').click();
+    await expect(choice).not.toBeChecked();
+    await expect(panel.getByRole('slider', { name: 'Lower display limit' })).toBeEnabled();
     expect(state.requests.filter((request) => request.path === '/api/v1/me/preferences' && request.method !== 'GET')).toHaveLength(0);
     const styles = await panel.locator('.settings-field-control, .admin-toggle-control').evaluateAll((controls) =>
       controls.filter((control) => !control.hidden).map((control) => {
         const style = getComputedStyle(control);
         return { border: style.borderTopWidth, background: style.backgroundColor };
       }));
-    expect(styles).toHaveLength(8);
+    expect(styles).toHaveLength(7);
     expect(styles.every((style) => style.border === '1px' && !['transparent', 'rgba(0, 0, 0, 0)'].includes(style.background))).toBe(true);
     const overflow = await panel.evaluate((element) => [element, ...element.querySelectorAll('*')]
       .filter((control) => control.clientWidth > 0 && control.scrollWidth > control.clientWidth + 1)
@@ -1317,8 +1317,10 @@ for (const theme of ['light', 'dark']) for (const width of [1280, 390]) {
       for (const control of await panel.locator('.settings-field-control, .admin-toggle-control').all()) {
         if (await control.isVisible()) await unobstructed(control);
       }
-      const fftControl = fft.locator('.admin-toggle-control').first();
-      const waterfallControl = waterfall.locator('.admin-toggle-control').first();
+      const fftControl = display.locator('.admin-toggle-control').first();
+      const waterfallControl = panel.locator('.settings-card').filter({
+        has: page.getByRole('heading', { name: 'Waterfall', exact: true })
+      }).locator('.settings-field-control').first();
       await unobstructed(fftControl);
       await expect(fftControl).toHaveScreenshot(`spectrum-options-${theme}-${width}-fft.png`);
       await unobstructed(waterfallControl);
@@ -1334,8 +1336,8 @@ for (const theme of ['light', 'dark']) for (const width of [1280, 390]) {
     await expect(trigger).toBeFocused();
     await page.reload();
     await trigger.click();
-    await expect(fftChoice).not.toBeChecked();
-    await expect(waterfallChoice).toBeChecked();
+    await expect(choice).not.toBeChecked();
+    await expect(panel.getByRole('slider', { name: 'Lower display limit' })).toBeEnabled();
   });
 }
 
@@ -2190,5 +2192,29 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     await page.goto(`/design-system.html?view=spectrum-discovery&theme=${theme}`);
     await expect(page.locator('.spectrum-discovery-modal')).toBeVisible();
     await expect(page.locator('.spectrum-discovery-modal')).toHaveScreenshot(`spectrum-discovery-p25-${theme}.png`);
+  });
+}
+
+for (const width of [1280, 820, 390]) {
+  test(`Browse Spectrum frequency width stays fixed through status changes at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await install(page, { liveSpectrum: true });
+    const frequency = page.locator('.spectrum-browse-center .tuners-center-frequency');
+    await expect(frequency).toBeVisible();
+    const measurements = await page.evaluate(() => {
+      const field = document.querySelector('.spectrum-browse-center .tuners-center-frequency');
+      const status = document.querySelector('.spectrum-browse-state .badge');
+      return ['Live', 'Unfocused', 'Loading', 'Unavailable', 'Reconnecting'].map((label) => {
+        status.textContent = label;
+        const rect = field.getBoundingClientRect();
+        return { width: rect.width, left: rect.left };
+      });
+    });
+    for (const value of measurements) {
+      expect(value.width).toBeCloseTo(measurements[0].width, 3);
+      expect(value.left).toBeCloseTo(measurements[0].left, 3);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <=
+      document.documentElement.clientWidth)).toBe(true);
   });
 }

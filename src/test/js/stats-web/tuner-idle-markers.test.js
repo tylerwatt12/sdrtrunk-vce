@@ -57,7 +57,7 @@ function harness(liveAllowed = true) {
   const context = {
     basicOperator: false,
     route: { get: () => '' }, initialFloor: -120, initialCeiling: -20,
-    getSpectrumAutoRangePreference: () => true, storeSpectrumAutoRangePreference: () => {},
+    spectrumDisplayPreferences: { autoRangeEnabled: () => true, setAutoRangeEnabled: () => {} },
     syncAutomaticDisplayRangeReadouts: () => {}, restoreWaterfallHistory: () => {}, scheduleDraw: () => {},
     refining: false,
     node: (...args) => new Element(...args),
@@ -413,9 +413,9 @@ test('FFT and waterfall settings are separate and idle markers remain per-user, 
   const h = harness();
   assert.equal(h.controls.idleChannelsInput.checked, false);
   assert.equal(h.controls.fftOptions.children[0].children[0].textContent, 'FFT');
-  assert.equal(h.controls.fftOptions.children[1].children.length, 3);
+  assert.equal(h.controls.fftOptions.children[1].children.length, 2);
   assert.equal(h.controls.waterfallOptions.children[0].children[0].textContent, 'Waterfall');
-  assert.equal(h.controls.waterfallOptions.children[1].children.length, 2);
+  assert.equal(h.controls.waterfallOptions.children[1].children.length, 1);
   const original = JSON.parse(JSON.stringify(h.preferences()));
   h.toggle(h.controls.idleChannelsInput, true);
   assert.deepEqual(h.preferences(), { tuner: { ...original.tuner, show_idle_channels: true } });

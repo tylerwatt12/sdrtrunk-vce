@@ -4,7 +4,7 @@ const { expect, test } = require('@playwright/test');
 
 async function installEditor(page, query = 'list=1&aliasTab=configure') {
   const lists = [
-    { alias_list_id: 1, name: 'County', family: 'P25', assigned_channel_count: 0,
+    { alias_list_id: 1, name: 'County', family: 'P25', assigned_channel_count: 1,
       new_alias_behavior: { recordable: true, scan_list_ids: [], broadcast_configuration_ids: [] } },
     { alias_list_id: 2, name: 'City', family: 'P25', assigned_channel_count: 0 }
   ];
@@ -54,7 +54,9 @@ async function installEditor(page, query = 'list=1&aliasTab=configure') {
     }
     if (path === '/api/v1/alias-lists') return send({ rows: countLists(), offset: 0, limit: 500, has_more: false });
     if (path === '/api/v1/admin/alias-lists') return send({ revision, alias_lists: countLists() });
-    if (path === '/api/v1/admin/channels') return send({ revision, channels: [] });
+    if (path === '/api/v1/admin/channels') return send({ revision, channels: [
+      { configuration_id: '10000000-0000-4000-8000-000000000001', alias_list_id: 1, name: 'County Control' }
+    ] });
     if (path === '/api/v1/admin/aliases/options') {
       const list = countLists().find((row) => row.alias_list_id === Number(url.searchParams.get('alias_list_id')));
       return send({ revision, alias_list: list, scan_lists: [], streams: [],
@@ -111,6 +113,40 @@ async function expectStableWorkspace(page, fixture) {
     document.querySelector('.alias-editor-workspace') && window.aliasRailIdentity ===
     document.querySelector('.alias-list-rail'))).toBe(true);
   expect(fixture.documentRequests()).toBe(1);
+}
+
+for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
+  test(`Alias headings use ordinary text and observed details link follows the title in ${theme} at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 850 });
+    await installEditor(page);
+    await page.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+    const headings = page.locator('.alias-list-summary h2, .alias-channel-usage h3');
+    await expect(headings).toHaveCount(2);
+    const colors = await headings.evaluateAll((elements) => elements.map((element) =>
+      ({ heading: getComputedStyle(element).color, normal: getComputedStyle(document.body).color })));
+    expect(colors.every((color) => color.heading === color.normal)).toBe(true);
+    const channel = page.locator('.alias-channel-usage').getByRole('link', { name: 'County Control', exact: true });
+    await expect(channel).toHaveAttribute('href', /view=channel-setup&channel=10000000-0000-4000-8000-000000000001/);
+    expect(await channel.evaluate((element) => getComputedStyle(element).color)).not.toBe(colors[0].normal);
+    await page.locator('.alias-discover-link').click();
+    const row = page.locator('.observed-group-identity-row').first();
+    await row.focus();
+    await page.keyboard.press('Enter');
+    const modal = page.getByRole('dialog', { name: 'Observed Talkgroup 1201', exact: true });
+    const heading = modal.getByRole('heading', { name: 'Observed Talkgroup 1201', exact: true });
+    const link = modal.getByRole('link', { name: 'Open talkgroup details in a new tab', exact: true });
+    expect(await heading.evaluate((element) => element.nextElementSibling?.tagName)).toBe('A');
+    const titleBounds = await heading.boundingBox();
+    const linkBounds = await link.boundingBox();
+    expect(linkBounds.x - titleBounds.x - titleBounds.width).toBeGreaterThanOrEqual(0);
+    expect(linkBounds.x - titleBounds.x - titleBounds.width).toBeLessThanOrEqual(9);
+    expect(linkBounds.x + linkBounds.width).toBeLessThanOrEqual(width);
+    await expect(modal).toHaveScreenshot(`alias-observed-title-${theme}-${width}.png`);
+    await link.focus();
+    await page.keyboard.press('Escape');
+    await expect(modal).toHaveCount(0);
+    await expect(row).toBeFocused();
+  });
 }
 
 for (const width of [1280, 390]) test(`Alias browsing and selection update in place at ${width}px`, async ({ page }) => {

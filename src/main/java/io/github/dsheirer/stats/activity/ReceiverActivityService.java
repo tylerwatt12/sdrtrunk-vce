@@ -109,11 +109,26 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     private final Runnable mBeforeWriterActivationForTest;
     private final WriterFactory mWriterFactory;
     private volatile ReceiverActivityWriter mWriter;
+    private final AtomicBoolean mLiveActivityDemand = new AtomicBoolean();
+    private final AtomicReference<Runnable> mSavedActivityCommitSignal = new AtomicReference<>(() -> {});
+
     private volatile boolean mCollectionEnabled;
     private volatile boolean mObservationWorkerStarted;
     private BoundedMpscPairQueue<Object,Object> mWorkerObservationIngress;
     private Path mCurrentDatabasePath;
     private ReceiverActivityWriter.WriterStatus mLastWriterStatus;
+
+    /** Web demand changes only writer batching; decoder callbacks retain their existing bounded handoff. */
+    public void setLiveActivityDemand(boolean active)
+    {
+        mLiveActivityDemand.set(active);
+    }
+
+    /** The supplied signal must be nonblocking and must not read, project, or fan out activity. */
+    public void setSavedActivityCommitSignal(Runnable signal)
+    {
+        mSavedActivityCommitSignal.set(signal != null ? signal : () -> {});
+    }
 
     public ReceiverActivityService(UserPreferences userPreferences)
     {
@@ -832,6 +847,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
         try
         {
             writer.setObservationDropProviders(mObservationDrops::get, mLastObservationDropMs::get);
+            writer.setLiveActivityObserver(mLiveActivityDemand::get, () -> mSavedActivityCommitSignal.get().run());
             writer.start();
             return writer;
         }

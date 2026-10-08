@@ -987,9 +987,11 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 }
 
 .spectrum-browse-state {
-  min-width: max-content;
+  inline-size: var(--spectrum-status-width);
+  flex: 0 0 var(--spectrum-status-width);
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   padding-inline: var(--space-1);
   white-space: nowrap;
 }
@@ -1268,8 +1270,12 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   .spectrum-browse-toolbar {
     --ui-control-height: var(--control-height-compact);
     --icon-action-size: var(--control-height-compact);
-    grid-template-columns: minmax(120px, .8fr) minmax(240px, 1.45fr) max-content;
+    grid-template-columns: minmax(120px, .8fr) minmax(240px, 1.45fr);
     justify-content: stretch;
+  }
+
+  .spectrum-browse-command-cluster {
+    grid-column: 1 / -1;
   }
 
   .spectrum-browse-message-routine {

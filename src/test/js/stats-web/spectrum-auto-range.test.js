@@ -26,7 +26,7 @@ function bindingSource(signature) {
 
 const functionSource = (name) => bindingSource(`function ${name}(`);
 
-async function panelHarness({ fft = true, waterfall = true } = {}) {
+async function panelHarness({ auto = true } = {}) {
   const { createSpectrumAutoRange } = await helper;
   const automaticDisplayRange = createSpectrumAutoRange();
   automaticDisplayRange.selectTarget('first');
@@ -34,8 +34,11 @@ async function panelHarness({ fft = true, waterfall = true } = {}) {
   const context = vm.createContext({
     automaticDisplayRange, target: 'first', selectedTargetId: () => context.target,
     panelOptions: {}, drag: null, basicOperator: false,
-    fftAutoRangeInput: { checked: fft }, waterfallAutoRangeInput: { checked: waterfall },
-    fftAutoRangeValue: {}, waterfallAutoRangeValue: {}, fftAutoFloorDb: null, waterfallAutoFloorDb: null,
+    autoRangeInput: { checked: auto },
+    floorInput: {}, ceilingInput: {}, rangeControl: { setAttribute: () => {} }, rangeHelp: {}, rangeValue: {},
+    rangeSlider: { style: { setProperty: () => {} } },
+    TUNER_SPECTRUM_MAXIMUM_DISPLAY_DB: 0, TUNER_SPECTRUM_MINIMUM_DISPLAY_DB: -200,
+    autoRangeValue: {}, fftAutoFloorDb: null, waterfallAutoFloorDb: null,
     dbFloor: -140, dbCeiling: -15, TUNER_SPECTRUM_MINIMUM_DISPLAY_SPAN_DB: 5,
     TUNER_SPECTRUM_PROFILES: { balanced: {} }, spectrumProfile: 'balanced', profileSelect: {},
     DIAGNOSTIC_FRAME_TYPES: { TUNER_FFT: 4 }, generation: -1, sequence: null, droppedFrames: 0,
@@ -74,16 +77,16 @@ async function panelHarness({ fft = true, waterfall = true } = {}) {
   return { context, confirm, frame, rebind };
 }
 
-test('lower percentile ignores isolated weak bins and strong carriers without assuming a typical floor', async () => {
+test('lowest finite FFT reading sets the floor without changing the upper limit', async () => {
   const { estimateSpectrumDisplayFloor } = await helper;
   const values = noise(-63);
   values[0] = -190;
   values[1] = NaN;
   values[2] = Infinity;
   for (let index = 90; index < values.length; index++) values[index] = -12;
-  assert.equal(estimateSpectrumDisplayFloor(values, 0), -70);
-  assert.equal(estimateSpectrumDisplayFloor(noise(-108), 0), -115);
-  assert.equal(estimateSpectrumDisplayFloor(noise(-41), -10), -50);
+  assert.equal(estimateSpectrumDisplayFloor(values, 0), -190);
+  assert.equal(estimateSpectrumDisplayFloor(noise(-108), 0), -108);
+  assert.equal(estimateSpectrumDisplayFloor(noise(-41.7), -10), -42);
 });
 
 test('invalid samples wait for valid data and bounds preserve the configured upper limit', async () => {
@@ -101,14 +104,14 @@ test('captures once initially and once after retune, with no recalibration on zo
   assert.equal(range.selectTarget('first'), true);
   assert.equal(range.confirm(state()), true);
   assert.equal(range.sample([NaN, Infinity], 1, 0), null);
-  assert.equal(range.sample(noise(-63), 1, 0), -70);
+  assert.equal(range.sample(noise(-63), 1, 0), -63);
   assert.equal(range.sample(noise(-90), 1, 0), null);
   range.confirm(state({ revision: 2, sampleRateHz: 300_000 }));
   assert.equal(range.sample(noise(-100), 1, 0), null);
   range.confirm(state({ generation: 2, revision: 1 }));
   assert.equal(range.sample(noise(-100), 2, 0), null, 'a restarted producer is not a retune');
   range.confirm(state({ generation: 2, revision: 2, centerFrequencyHz: 151_000_000 }));
-  assert.equal(range.sample(noise(-87), 2, -20), -95);
+  assert.equal(range.sample(noise(-87), 2, -20), -87);
   assert.equal(range.sample(noise(-110), 2, -20), null);
 });
 
@@ -124,7 +127,7 @@ test('stale generations, stale states, wrong targets and unavailable samples can
   range.confirm(state({ generation: 2, revision: 5, live: false }));
   assert.equal(range.sample(noise(-90), 2, 0), null);
   range.confirm(state({ generation: 2, revision: 6 }));
-  assert.equal(range.sample(noise(-63), 2, 0), -70);
+  assert.equal(range.sample(noise(-63), 2, 0), -63);
 });
 
 test('manual adjustments cancel capture until the next retune and a changed tuner starts a new capture', async () => {
@@ -137,11 +140,11 @@ test('manual adjustments cancel capture until the next retune and a changed tune
   range.confirm(state({ revision: 2 }));
   assert.equal(range.sample(noise(-63), 1, 0), null);
   range.confirm(state({ revision: 3, centerFrequencyHz: 151_000_000 }));
-  assert.equal(range.sample(noise(-63), 1, 0), -70);
+  assert.equal(range.sample(noise(-63), 1, 0), -63);
   assert.equal(range.selectTarget('second'), true);
   assert.equal(range.sample(noise(-90), 1, 0), null);
   range.confirm(state({ targetId: 'second' }));
-  assert.equal(range.sample(noise(-90), 1, 0), -95);
+  assert.equal(range.sample(noise(-90), 1, 0), -90);
   assert.equal(range.selectTarget('second'), false);
   assert.equal(range.sample(noise(-60), 1, 0), null);
 });
@@ -158,7 +161,7 @@ test('temporary empty selection pauses acceptance while retaining pending captur
   assert.equal(range.selectTarget('first'), false);
   assert.equal(range.acceptsFrame(1), false, 'a rebound tuner needs a current live confirmation');
   range.confirm(state({ generation: 2 }));
-  assert.equal(range.sample(noise(-63), 2, 0), -70, 'unfinished capture survives the temporary unbind');
+  assert.equal(range.sample(noise(-63), 2, 0), -63, 'unfinished capture survives the temporary unbind');
   range.confirm(state({ generation: 2, revision: 2, centerFrequencyHz: 151_000_000 }));
   range.discard();
   range.selectTarget('');
@@ -168,30 +171,50 @@ test('temporary empty selection pauses acceptance while retaining pending captur
   range.selectTarget('');
   assert.equal(range.selectTarget('second'), true);
   range.confirm(state({ targetId: 'second', generation: 4 }));
-  assert.equal(range.sample(noise(-90), 4, 0), -95, 'a genuinely different tuner begins a new capture');
+  assert.equal(range.sample(noise(-90), 4, 0), -90, 'a genuinely different tuner begins a new capture');
 });
 
-test('shared panel applies each enabled minimum once while leaving manual baseline and maximum unchanged', async () => {
-  const { context: panel, confirm, frame } = await panelHarness({ fft: false });
+test('one setting adjusts both plots and visible disabled manual controls, preserving the manual baseline', async () => {
+  const { context: panel, confirm, frame } = await panelHarness();
   confirm();
   frame({ values: new Float32Array(100).fill(NaN) });
   assert.equal(panel.waterfallAutoFloorDb, null);
   frame({ sequence: 2 });
-  assert.equal(panel.spectrumDisplayFloorDb(), -140);
-  assert.equal(panel.waterfallDisplayFloorDb(), -70);
+  assert.equal(panel.spectrumDisplayFloorDb(), -63);
+  assert.equal(panel.waterfallDisplayFloorDb(), -63);
   assert.equal(panel.dbFloor, -140);
   assert.equal(panel.dbCeiling, -15);
-  assert.equal(panel.waterfallAutoRangeValue.textContent, '-70 to -15 dB');
-  panel.fftAutoRangeInput.checked = true;
+  assert.equal(panel.floorInput.value, '-63');
+  assert.equal(panel.rangeValue.textContent, '-63 to -15 dB');
+  assert.equal(panel.floorInput.disabled, true);
+  assert.equal(panel.ceilingInput.disabled, true);
   frame({ sequence: 3, floor: -110 });
-  assert.equal(panel.spectrumDisplayFloorDb(), -140, 'enabling later waits for the next retune');
-  assert.equal(panel.waterfallDisplayFloorDb(), -70);
+  assert.equal(panel.spectrumDisplayFloorDb(), -63, 'ordinary frames never recalibrate');
+  panel.autoRangeInput.checked = false;
+  panel.syncAutomaticDisplayRangeReadouts();
+  assert.equal(panel.spectrumDisplayFloorDb(), -140);
+  assert.equal(panel.waterfallDisplayFloorDb(), -140);
+  assert.equal(panel.floorInput.disabled, false);
+  assert.equal(panel.ceilingInput.disabled, false);
+  assert.equal(panel.floorInput.value, '-140');
+  panel.autoRangeInput.checked = true;
   confirm({ center: 151_000_000, revision: 2 });
   frame({ center: 151_000_000, sequence: 4, floor: -87 });
-  assert.equal(panel.spectrumDisplayFloorDb(), -95);
-  assert.equal(panel.waterfallDisplayFloorDb(), -95);
-  panel.waterfallAutoRangeInput.checked = false;
-  assert.equal(panel.waterfallDisplayFloorDb(), -140, 'disabled mode preserves the manual range');
+  assert.equal(panel.spectrumDisplayFloorDb(), -87);
+  assert.equal(panel.waterfallDisplayFloorDb(), -87);
+});
+
+test('enabling after manual-mode samples captures the current window once', async () => {
+  const { context: panel, confirm, frame } = await panelHarness({ auto: false });
+  confirm();
+  frame();
+  assert.equal(panel.spectrumDisplayFloorDb(), -140);
+  assert.equal(panel.fftAutoFloorDb, null);
+  panel.autoRangeInput.checked = true;
+  frame({ sequence: 2, floor: -81 });
+  assert.equal(panel.spectrumDisplayFloorDb(), -81);
+  frame({ sequence: 3, floor: -110 });
+  assert.equal(panel.spectrumDisplayFloorDb(), -81);
 });
 
 test('shared panel rejects old FFT windows/generations and manual changes survive ordinary frames', async () => {
@@ -208,10 +231,10 @@ test('shared panel rejects old FFT windows/generations and manual changes surviv
   frame({ generation: 2, sequence: 4, floor: -50 });
   assert.equal(panel.spectrumDisplayFloorDb(), -120, 'old data cannot consume the pending capture');
   frame({ center: 151_000_000, generation: 2, sequence: 5, floor: -92 });
-  assert.equal(panel.spectrumDisplayFloorDb(), -100);
+  assert.equal(panel.spectrumDisplayFloorDb(), -92);
   confirm({ generation: 1, revision: 10 });
   frame({ generation: 1, sequence: 6, floor: -50 });
-  assert.equal(panel.spectrumDisplayFloorDb(), -100, 'a stale state cannot rearm an old tuner window');
+  assert.equal(panel.spectrumDisplayFloorDb(), -92, 'a stale state cannot rearm an old tuner window');
 });
 
 test('shared panel waits for an actual requested tune and a canceled preview never arms that target', async () => {
@@ -224,10 +247,10 @@ test('shared panel waits for an actual requested tune and a canceled preview nev
   assert.equal(panel.fftAutoFloorDb, null, 'old samples wait while a different tune is pending');
   pending = false;
   frame({ sequence: 2 });
-  assert.equal(panel.spectrumDisplayFloorDb(), -70);
+  assert.equal(panel.spectrumDisplayFloorDb(), -63);
   assert.equal(panel.fullViewport.startHz, 148_800_000, 'a preview cannot replace confirmed receiver state');
   frame({ sequence: 3, floor: -100 });
-  assert.equal(panel.spectrumDisplayFloorDb(), -70);
+  assert.equal(panel.spectrumDisplayFloorDb(), -63);
 });
 
 test('shared panel mode and lease rebinds retain captured minima, manual range, and unfinished retune capture', async () => {
@@ -237,12 +260,12 @@ test('shared panel mode and lease rebinds retain captured minima, manual range, 
   rebind('');
   frame({ sequence: 2, floor: -100 });
   assert.equal(panel.fftValues.length, 0, 'unbound frames cannot repopulate the plots');
-  assert.equal(panel.spectrumDisplayFloorDb(), -70);
+  assert.equal(panel.spectrumDisplayFloorDb(), -63);
   rebind('first');
   confirm({ generation: 2 });
   frame({ generation: 2, floor: -100 });
-  assert.equal(panel.spectrumDisplayFloorDb(), -70, 'same-frequency rebind keeps the captured minimum');
-  assert.equal(panel.waterfallDisplayFloorDb(), -70);
+  assert.equal(panel.spectrumDisplayFloorDb(), -63, 'same-frequency rebind keeps the captured minimum');
+  assert.equal(panel.waterfallDisplayFloorDb(), -63);
 
   panel.dbFloor = -120;
   panel.resetAutomaticDisplayRange();
@@ -258,7 +281,7 @@ test('shared panel mode and lease rebinds retain captured minima, manual range, 
   rebind('first');
   confirm({ center: 151_000_000, generation: 4 });
   frame({ center: 151_000_000, generation: 4, floor: -92 });
-  assert.equal(panel.spectrumDisplayFloorDb(), -100, 'retune capture still runs when its first FFT arrives');
+  assert.equal(panel.spectrumDisplayFloorDb(), -92, 'retune capture still runs when its first FFT arrives');
 });
 
 test('shared panel changes from an empty binding to a different tuner reset manual capture suppression', async () => {
@@ -271,7 +294,7 @@ test('shared panel changes from an empty binding to a different tuner reset manu
   rebind('second');
   confirm({ generation: 2 });
   frame({ generation: 2, floor: -87 });
-  assert.equal(panel.spectrumDisplayFloorDb(), -95);
-  assert.equal(panel.waterfallDisplayFloorDb(), -95);
+  assert.equal(panel.spectrumDisplayFloorDb(), -87);
+  assert.equal(panel.waterfallDisplayFloorDb(), -87);
   assert.equal(panel.dbFloor, -120);
 });

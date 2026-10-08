@@ -1,7 +1,7 @@
 import * as routeFoundation from './core/routes.js?v=9';
 import * as preferenceSchema from './core/preference-schema.js?v=7';
 import { formatSourceName } from './core/source-names.js?v=1';
-import { Controller as UserPreferenceController } from './core/user-preferences.js';
+import { Controller as UserPreferenceController } from './core/user-preferences.js?v=1';
 import * as tableLayouts from './core/table-layout.js';
 import * as tableDefaults from './core/table-defaults.js?v=16';
 import { createTableOverflow } from './core/table-overflow.js?v=1';
@@ -27,7 +27,7 @@ import {
   createAliasList,
   createAliasListPopupTrigger as buildAliasListPopupTrigger
 } from './features/alias-list-create.js?v=5';
-import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=23';
+import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=24';
 import { createStreamingWorkspace } from './features/streaming.js?v=8';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=9';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=13';
@@ -35,8 +35,8 @@ import { createRecordingsFeature } from './features/recordings.js?v=27';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=27';
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=8';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
-import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=1';
-import { createSpectrumAutoRange } from './features/spectrum-auto-range.js?v=1';
+import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
+import { createSpectrumAutoRange } from './features/spectrum-auto-range.js?v=2';
 import { createAudioDock } from './core/audio-dock.js?v=14';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=4';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
@@ -422,7 +422,7 @@ async function jsonDocumentFetch(path, options = {}) {
 }
 
 function activeUserPreferences() {
-  const snapshot = userPreferenceController.snapshot();
+  const snapshot = userPreferenceController.read();
   return snapshot.loaded ? snapshot.preferences : anonymousUserPreferences;
 }
 
@@ -1284,9 +1284,8 @@ function dateTime(value) {
   const timestamp = Number(value);
   const time = node('time', 'exact-time', exact);
   time.dateTime = new Date(timestamp).toISOString();
-  time.title = new Intl.DateTimeFormat([], {
-    dateStyle: 'full', timeStyle: 'long'
-  }).format(new Date(timestamp));
+  dateTime.formatter ||= new Intl.DateTimeFormat([], { dateStyle: 'full', timeStyle: 'long' });
+  time.title = dateTime.formatter.format(new Date(timestamp));
   return time;
 }
 
@@ -2748,6 +2747,19 @@ function compareTableValues(left, right) {
   return String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: 'base' });
 }
 
+function renderTableCell(data, column) {
+  const className = typeof column.className === 'function' ? column.className(data) : column.className;
+  const cell = node('td', className || '');
+  cell.dataset.label = column.fullLabel || column.label || '';
+  cell.dataset.column = column.id;
+  const title = typeof column.title === 'function' ? column.title(data) : column.title;
+  if (title) cell.title = String(title);
+  const value = column.render ? column.render(data) : data[column.key];
+  cell.append(valueNode(value));
+  if (typeof column.reconcileKey === 'function') cell.tableReconcileKey = column.reconcileKey(data);
+  return cell;
+}
+
 function renderTableRow(data, columns, rowKey, rowClass, onRowClick) {
   const row = node('tr');
   row.tableRowData = data;
@@ -2758,18 +2770,7 @@ function renderTableRow(data, columns, rowKey, rowClass, onRowClick) {
     if (value !== null && value !== undefined) row.dataset.id = String(value);
   }
   columns.forEach((column) => {
-    const className = typeof column.className === 'function' ? column.className(data) : column.className;
-    const cell = node('td', className || '');
-    cell.dataset.label = column.fullLabel || column.label || '';
-    cell.dataset.column = column.id;
-    const title = typeof column.title === 'function' ? column.title(data) : column.title;
-    if (title) cell.title = String(title);
-    const value = column.render ? column.render(data) : data[column.key];
-    cell.append(valueNode(value));
-    if (typeof column.reconcileKey === 'function') {
-      cell.tableReconcileKey = column.reconcileKey(data);
-    }
-    row.append(cell);
+    row.append(renderTableCell(data, column));
   });
   if (typeof onRowClick === 'function') {
     row.dataset.rowInteractive = 'true';
@@ -3172,24 +3173,33 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     const retained = new Set();
     orderedRows.forEach((data, index) => {
       const key = String(incomingKeys[index]);
-      const replacement = renderTableRow(data, columns, options.rowKey, options.rowClass, options.onRowClick);
       let current = existing.get(key);
       if (current) {
         retained.add(current);
         current.tableRowData = data;
-        current.className = replacement.className;
+        const classes = typeof options.rowClass === 'function' ? options.rowClass(data) : options.rowClass;
+        if (current.className !== (classes || '')) current.className = classes || '';
         const currentCells = [...current.children];
-        const replacementCells = [...replacement.children];
-        replacementCells.forEach((nextCell, cellIndex) => {
+        columns.forEach((column, cellIndex) => {
           const previousCell = currentCells[cellIndex];
-          const keyedMatch = nextCell.tableReconcileKey !== undefined &&
-            previousCell?.tableReconcileKey === nextCell.tableReconcileKey;
+          const reconcileKey = typeof column.reconcileKey === 'function' ? column.reconcileKey(data) : undefined;
+          if (reconcileKey !== undefined && previousCell?.tableReconcileKey === reconcileKey) {
+            const classes = typeof column.className === 'function' ? column.className(data) : column.className;
+            if (previousCell.className !== (classes || '')) previousCell.className = classes || '';
+            const title = typeof column.title === 'function' ? column.title(data) : column.title;
+            if (title) {
+              if (previousCell.title !== String(title)) previousCell.title = String(title);
+            } else if (previousCell.hasAttribute('title')) previousCell.removeAttribute('title');
+            return;
+          }
+          const nextCell = renderTableCell(data, column);
           if (!previousCell) current.append(nextCell);
-          else if (!keyedMatch && !previousCell.isEqualNode(nextCell)) previousCell.replaceWith(nextCell);
+          else if (!previousCell.isEqualNode(nextCell)) previousCell.replaceWith(nextCell);
+          else previousCell.tableReconcileKey = nextCell.tableReconcileKey;
         });
-        while (current.children.length > replacementCells.length) current.lastElementChild.remove();
+        while (current.children.length > columns.length) current.lastElementChild.remove();
       } else {
-        current = replacement;
+        current = renderTableRow(data, columns, options.rowKey, options.rowClass, options.onRowClick);
         retained.add(current);
       }
       if (current !== cursor) body.insertBefore(current, cursor);
@@ -3555,9 +3565,9 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
       dataRows = [...(rows || [])];
       renderBody(true);
     },
-    setEmptyText(value) {
+    setEmptyText(value, settings = {}) {
       emptyText = String(value || 'No rows');
-      renderBody();
+      if (settings.render !== false) renderBody();
     },
     setSortable(value) {
       const enabled = Boolean(value);
@@ -4219,7 +4229,7 @@ function aliasListChannelPreview(row, usage) {
 }
 
 function aliasListChannelUsageCard(selectedList, usage) {
-  const card = node('section', 'alias-channel-usage ui-summary-card');
+  const card = node('section', 'alias-channel-usage ui-surface');
   card.append(node('h3', '', 'Channels using this Alias List'));
   const body = node('div', 'alias-channel-usage-body');
   card.append(body);
@@ -7216,7 +7226,10 @@ function openObservedGroupIdentityDetail(row, selectedList) {
       'ui-button ui-button-secondary ui-icon-button');
     open.setAttribute('aria-label', label);
     open.title = label;
-    modal.dialog.querySelector('.modal-close').before(open);
+    const heading = modal.dialog.querySelector('.modal-header h2');
+    const titleGroup = node('div', 'modal-heading');
+    heading.before(titleGroup);
+    titleGroup.append(heading, open);
   }
 }
 
@@ -7341,7 +7354,7 @@ async function renderScanListMembers(main, scanListCatalog, scanList, renderCont
   let selectionScope = aliasSelectionScopeKey('scan-list-members', selectionFilters);
   synchronizeAliasEditorSelectionScope(selectionScope);
 
-  const summary = node('section', 'alias-list-summary scan-list-member-summary ui-summary-card');
+  const summary = node('section', 'alias-list-summary scan-list-member-summary ui-surface');
   const summaryCopy = node('div', 'alias-list-summary-copy');
   const summaryMetrics = node('span', 'muted scan-list-member-summary-metrics');
   summaryCopy.append(...[
@@ -7670,7 +7683,7 @@ async function renderAliases() {
   let selectionScope = aliasSelectionScopeKey('alias-list', selectionFilters);
   synchronizeAliasEditorSelectionScope(selectionScope);
 
-  const summary = node('section', 'alias-list-summary ui-summary-card');
+  const summary = node('section', 'alias-list-summary ui-surface');
   const summaryCopy = node('div', 'alias-list-summary-copy');
   const summaryMetrics = node('span', 'muted alias-list-summary-metrics');
   summaryCopy.append(node('h2', '', entityPageTitle('Alias List', selectedList.name)),
@@ -9652,7 +9665,8 @@ const LIVE_MULTIPLEX_TOPICS = Object.freeze({
   3: 'decode_messages',
   4: 'channel_diagnostics',
   5: 'tuner_diagnostics',
-  6: 'frequency_audio'
+  6: 'frequency_audio',
+  7: 'saved_activity'
 });
 const LIVE_MULTIPLEX_DECODER = new TextDecoder();
 
@@ -10119,7 +10133,10 @@ function recoverBrowserLiveDelivery() {
   browserLiveRecoveryTimer = window.setTimeout(() => {
     browserLiveRecoveryTimer = null;
     if (document.hidden) return;
-    liveMultiplexer.restart();
+    const deadline = liveMultiplexer.ready ? LIVE_MULTIPLEX_LIVENESS_TIMEOUT_MS : LIVE_MULTIPLEX_READY_TIMEOUT_MS;
+    const progressing = liveMultiplexer.controller && !liveMultiplexer.controller.signal.aborted &&
+      Date.now() - liveMultiplexer.lastFrameAt < deadline;
+    if (!progressing) liveMultiplexer.restart();
     webCallPlayer?.recoverFeed();
   }, 100);
 }
@@ -13016,6 +13033,9 @@ function liveDetailFilterController(options) {
 }
 
 function liveMessagesPane() {
+  const clockFormatter = new Intl.DateTimeFormat([], {
+    hour: '2-digit', minute: '2-digit', second: '2-digit'
+  });
   const messages = new Map();
   const order = [];
   let selection = null;
@@ -13050,22 +13070,24 @@ function liveMessagesPane() {
   gap.hidden = true;
   gap.setAttribute('role', 'status');
   const messagesTable = table([], [
-    { id: 'time', label: 'Time', render: (message) => {
+    { id: 'time', label: 'Time', reconcileKey: (message) => message.timestamp_ms, render: (message) => {
       const date = new Date(Number(message.timestamp_ms));
-      const text = Number.isFinite(date.getTime()) ? date.toLocaleTimeString([], {
-        hour: '2-digit', minute: '2-digit', second: '2-digit'
-      }) : '';
+      const text = Number.isFinite(date.getTime()) ? clockFormatter.format(date) : '';
       const value = node('span', '', text);
       if (text) value.title = exactDateTime(message.timestamp_ms);
       return value;
     } },
     { id: 'channel', label: 'Channel', className: 'live-event-stack',
-      render: (message) => liveDetailOrigin(message) },
+      render: (message) => liveDetailOrigin(message),
+      reconcileKey: (message) => JSON.stringify([message.channel_name,
+        message.source_frequency_hz || message.frequency_hz, message.timeslot]) },
     { id: 'context', label: 'Context', render: (message) => [
       message.protocol,
       timeslotLabel(message.timeslot)
-    ].filter(Boolean).join(' · ') },
-    { id: 'message', label: 'Message', className: 'live-message-text', render: (message) => {
+    ].filter(Boolean).join(' · '),
+      reconcileKey: (message) => JSON.stringify([message.protocol, message.timeslot]) },
+    { id: 'message', label: 'Message', className: 'live-message-text',
+      reconcileKey: (message) => message.text || '', render: (message) => {
       const value = node('span', '', message.text || '');
       value.title = message.text || '';
       return value;
@@ -13090,17 +13112,22 @@ function liveMessagesPane() {
 
   const render = () => {
     if (paused) return;
-    const rows = order.map((id) => messages.get(id)).filter((message) => message && matches(message))
-      .slice(0, liveDetailMatchingRowLimit());
+    const rows = [];
+    const limit = liveDetailMatchingRowLimit();
+    for (const id of order) {
+      const message = messages.get(id);
+      if (message && matches(message)) rows.push(message);
+      if (rows.length >= limit) break;
+    }
     messagesTable.tableController.setEmptyText(!selection ? 'Select a live row above' :
       (selection.kind === LIVE_DETAIL_SELECTION_KINDS.CONVENTIONAL || selection.bindingFrequencyHz ?
         'No matching messages have appeared in this view' :
-        'Select an active channel'));
-    messagesTable.tableController.replaceRows(selection ? rows : []);
+        'Select an active channel'), { render: false });
+    messagesTable.tableController.reconcileRows(selection ? rows : []);
   };
 
   scheduleRender = () => {
-    if (renderTimer !== null || paused) return;
+    if (renderTimer !== null || paused || !active || collapsed || document.hidden) return;
     const delay = Math.max(0, LIVE_DETAIL_REFRESH_INTERVAL_MILLISECONDS - (Date.now() - lastRenderAt));
     renderTimer = window.setTimeout(() => {
       renderTimer = null;
@@ -13147,8 +13174,11 @@ function liveMessagesPane() {
   const sync = () => {
     if (!shouldRun()) {
       closeStream();
+      if (renderTimer !== null) window.clearTimeout(renderTimer);
+      renderTimer = null;
       return;
     }
+    scheduleRender();
     if (stream) return;
     const epoch = ++streamEpoch;
     const parameters = liveDetailTransportParameters(selection);
@@ -15435,8 +15465,6 @@ function tunerResolvedScopeSegments(viewport, scopes = []) {
 function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const spectrumDisplayPreferences = createSpectrumDisplayPreferences({
     identity: userPreferenceController.snapshot().identity });
-  const getSpectrumAutoRangePreference = (key) => spectrumDisplayPreferences.get(key);
-  const storeSpectrumAutoRangePreference = (key, value) => spectrumDisplayPreferences.set(key, value);
   const frequencyScopes = snapPresetDocument?.scopes || [];
   const basicOperator = panelOptions.basicOperator === true;
   const frequencyCursor = !basicOperator || panelOptions.frequencyCursor === true;
@@ -15540,7 +15568,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   rangeSlider.append(floorInput, ceilingInput);
   rangeControl.append(rangeHeading, rangeSlider);
   const rangeHelp = node('span', 'tuner-spectrum-control-help',
-    'Moving a handle uses the manual range until the next retune when auto range is enabled.');
+    'Turn off auto range to adjust the display range.');
   const speedControl = node('label', 'settings-field-control tuner-spectrum-display-control tuner-spectrum-speed-control ui-field');
   const speedInput = node('input');
   speedInput.type = 'range';
@@ -15571,26 +15599,19 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const idleChannelsInput = idleToggle.input;
   const liveActivityAllowed = capabilityAllowed(ACCESS_CAPABILITIES.LIVE);
   idleChannelsControl.hidden = !liveActivityAllowed;
-  const fftAutoRangeToggle = optionToggle(getSpectrumAutoRangePreference('fft_auto_range_on_retune'),
-    'Auto range display range on retune', 'Adjust the lower display limit after the tuner changes frequency.');
-  const fftAutoRangeInput = fftAutoRangeToggle.input;
-  fftAutoRangeInput.name = 'fft_auto_range_on_retune';
-  const fftAutoRangeValue = node('output', 'ui-field-detail', `${initialFloor} to ${initialCeiling} dB`);
-  fftAutoRangeValue.setAttribute('aria-label', 'FFT display range');
-  fftAutoRangeToggle.control.querySelector('.admin-toggle-copy').append(fftAutoRangeValue);
-  const waterfallAutoRangeToggle = optionToggle(getSpectrumAutoRangePreference('waterfall_auto_range_on_retune'),
-    'Auto range display range on retune', 'Adjust the lower display limit after the tuner changes frequency.');
-  const waterfallAutoRangeInput = waterfallAutoRangeToggle.input;
-  waterfallAutoRangeInput.name = 'waterfall_auto_range_on_retune';
-  const waterfallAutoRangeValue = node('output', 'ui-field-detail', `${initialFloor} to ${initialCeiling} dB`);
-  waterfallAutoRangeValue.setAttribute('aria-label', 'Waterfall display range');
-  waterfallAutoRangeToggle.control.querySelector('.admin-toggle-copy').append(waterfallAutoRangeValue);
+  const autoRangeToggle = optionToggle(spectrumDisplayPreferences.autoRangeEnabled(),
+    'Auto range display range on retune', 'Use the lowest FFT reading for both displays after each retune.');
+  const autoRangeInput = autoRangeToggle.input;
+  autoRangeInput.name = 'auto_range_on_retune';
+  const autoRangeValue = node('output', 'ui-field-detail', `${initialFloor} to ${initialCeiling} dB`);
+  autoRangeValue.setAttribute('aria-label', 'FFT and waterfall display range');
+  autoRangeToggle.control.querySelector('.admin-toggle-copy').append(autoRangeValue);
   rangeControl.append(rangeHelp);
-  const displayOptions = settingsCard('Display', '', rangeControl,
+  const displayOptions = settingsCard('Display', '', autoRangeToggle.control, rangeControl,
     ...(!basicOperator ? [snapControl] : []));
-  const fftOptions = settingsCard('FFT', '', fftAutoRangeToggle.control, smoothControl,
+  const fftOptions = settingsCard('FFT', '', smoothControl,
     ...(!basicOperator ? [idleChannelsControl] : []));
-  const waterfallOptions = settingsCard('Waterfall', '', waterfallAutoRangeToggle.control, speedControl);
+  const waterfallOptions = settingsCard('Waterfall', '', speedControl);
   const profileControl = node('label', 'settings-field-control tuner-spectrum-profile-control ui-field');
   const profileLabel = node('span', '', basicOperator ? 'Quality' : 'Profile');
   const profileSelect = node('select', 'ui-select');
@@ -15945,18 +15966,29 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   }
 
   function spectrumDisplayFloorDb() {
-    return fftAutoRangeInput.checked && Number.isFinite(fftAutoFloorDb) ?
+    return autoRangeInput.checked && Number.isFinite(fftAutoFloorDb) ?
       Math.min(dbCeiling - TUNER_SPECTRUM_MINIMUM_DISPLAY_SPAN_DB, fftAutoFloorDb) : dbFloor;
   }
 
   function waterfallDisplayFloorDb() {
-    return waterfallAutoRangeInput.checked && Number.isFinite(waterfallAutoFloorDb) ?
+    return autoRangeInput.checked && Number.isFinite(waterfallAutoFloorDb) ?
       Math.min(dbCeiling - TUNER_SPECTRUM_MINIMUM_DISPLAY_SPAN_DB, waterfallAutoFloorDb) : dbFloor;
   }
 
   function syncAutomaticDisplayRangeReadouts() {
-    fftAutoRangeValue.textContent = `${spectrumDisplayFloorDb()} to ${dbCeiling} dB`;
-    waterfallAutoRangeValue.textContent = `${waterfallDisplayFloorDb()} to ${dbCeiling} dB`;
+    autoRangeValue.textContent = `FFT and waterfall: ${spectrumDisplayFloorDb()} to ${dbCeiling} dB`;
+    floorInput.disabled = ceilingInput.disabled = autoRangeInput.checked;
+    rangeControl.setAttribute('aria-disabled', String(autoRangeInput.checked));
+    rangeHelp.hidden = !autoRangeInput.checked;
+    floorInput.step = autoRangeInput.checked ? '1' : '5';
+    floorInput.value = String(spectrumDisplayFloorDb());
+    ceilingInput.value = String(dbCeiling);
+    rangeValue.textContent = `${spectrumDisplayFloorDb()} to ${dbCeiling} dB`;
+    const span = TUNER_SPECTRUM_MAXIMUM_DISPLAY_DB - TUNER_SPECTRUM_MINIMUM_DISPLAY_DB;
+    rangeSlider.style.setProperty('--range-lower',
+      `${(spectrumDisplayFloorDb() - TUNER_SPECTRUM_MINIMUM_DISPLAY_DB) / span * 100}%`);
+    rangeSlider.style.setProperty('--range-upper',
+      `${(dbCeiling - TUNER_SPECTRUM_MINIMUM_DISPLAY_DB) / span * 100}%`);
   }
 
   function resetAutomaticDisplayRange() {
@@ -15966,15 +15998,15 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   }
 
   function applyAutomaticDisplayRange(values, frame) {
+    if (!autoRangeInput.checked) return;
     const requestedCenter = panelOptions.retunePending?.() ? Number(panelOptions.retuneFrequencyHz?.()) : null;
     const confirmedCenter = fullViewport ? (fullViewport.startHz + fullViewport.endHz) / 2 : null;
     if (requestedCenter > 0 && confirmedCenter > 0 && Math.abs(requestedCenter - confirmedCenter) > 10) return;
     const floor = automaticDisplayRange.sample(values, frame.generation, dbCeiling);
     if (floor === null) return;
-    if (fftAutoRangeInput.checked) fftAutoFloorDb = floor;
-    if (waterfallAutoRangeInput.checked) waterfallAutoFloorDb = floor;
+    fftAutoFloorDb = waterfallAutoFloorDb = floor;
     syncAutomaticDisplayRangeReadouts();
-    if (waterfallAutoRangeInput.checked) restoreWaterfallHistory();
+    restoreWaterfallHistory();
   }
 
   function median(values) {
@@ -17459,6 +17491,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     setReadouts(true);
   });
   function updateDisplayRange(changedHandle = '', persist = false) {
+    if (changedHandle && autoRangeInput.checked) return;
     let floor = Number(floorInput.value);
     let ceiling = Number(ceilingInput.value);
     if (!Number.isFinite(floor) || !Number.isFinite(ceiling)) return;
@@ -17519,16 +17552,13 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     storeTunerBoolean(TUNER_SPECTRUM_IDLE_PREFERENCE, idleChannelsInput.checked);
     renderActiveChannels();
   });
-  const updateAutoRangePreference = (key, input) => {
-    storeSpectrumAutoRangePreference(key, input.checked);
+  autoRangeInput.addEventListener('change', () => {
+    spectrumDisplayPreferences.setAutoRangeEnabled(autoRangeInput.checked);
+    if (autoRangeInput.checked && !Number.isFinite(fftAutoFloorDb)) automaticDisplayRange.requestSample();
     syncAutomaticDisplayRangeReadouts();
     restoreWaterfallHistory();
     if (!refining) scheduleDraw();
-  };
-  fftAutoRangeInput.addEventListener('change', () =>
-    updateAutoRangePreference('fft_auto_range_on_retune', fftAutoRangeInput));
-  waterfallAutoRangeInput.addEventListener('change', () =>
-    updateAutoRangePreference('waterfall_auto_range_on_retune', waterfallAutoRangeInput));
+  });
   if (plotInteractions) [spectrum.canvas, waterfall.canvas].forEach(addPlotInteractions);
   const onVisibilityChange = () => {
     pageFocused = document.hasFocus();
@@ -18318,6 +18348,45 @@ function livePresentedTableRows(tableValue, presentation) {
     .map((row) => livePresentedRow(row, presentation));
 }
 
+function createLivePresentationScheduler(paint) {
+  const pending = new Set();
+  let frame = null;
+  let focused = true;
+  let closed = false;
+  const cancel = () => {
+    if (frame !== null) window.cancelAnimationFrame(frame);
+    frame = null;
+  };
+  const schedule = () => {
+    if (closed || !focused || document.hidden || frame !== null || !pending.size) return;
+    frame = window.requestAnimationFrame(() => {
+      frame = null;
+      if (closed || !focused || document.hidden) return;
+      const keys = [...pending];
+      pending.clear();
+      paint(keys);
+    });
+  };
+  const onBlur = () => { focused = false; cancel(); };
+  const onFocus = () => { focused = true; schedule(); };
+  const onVisibility = () => { if (document.hidden) cancel(); else schedule(); };
+  window.addEventListener('blur', onBlur);
+  window.addEventListener('focus', onFocus);
+  document.addEventListener('visibilitychange', onVisibility);
+  return {
+    queue(key) { if (!closed) { pending.add(key); schedule(); } },
+    discard(key) { pending.delete(key); },
+    close() {
+      closed = true;
+      cancel();
+      pending.clear();
+      window.removeEventListener('blur', onBlur);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    }
+  };
+}
+
 function liveChannelsSection(onSelectionChange) {
   const savedUiState = liveUiState();
   liveChannelActivityActiveTableId = String(savedUiState.active_channel_table_id || '').trim() || null;
@@ -18437,7 +18506,8 @@ function liveChannelsSection(onSelectionChange) {
       title: (row) => channelTagSet(row.tags).has('CONVENTIONAL') ? row.channel_name || '' : '',
       className: channelStateClass, sortValue: (row) =>
         channelTagSet(row.tags).has('CONVENTIONAL') ? (row.channel_name || '') : (row.lcn || ''),
-      reconcileKey: (row) => JSON.stringify([row.channel_name, row.lcn, row.remote_origin || null]) },
+      reconcileKey: (row) => JSON.stringify([row.channel_name, row.lcn, row.remote_origin || null,
+        row.tags, liveShowRowRemoteOrigin(tables.get(activeTableId))]) },
     { id: 'frequency', label: 'MHz', fullLabel: 'Frequency MHz',
       render: (row) => frequency(row.frequency_hz), className: channelStateClass,
       sortValue: (row) => Number(row.frequency_hz || 0) },
@@ -18494,6 +18564,7 @@ function liveChannelsSection(onSelectionChange) {
   let selectRow = () => {};
   let pickerTabSequence = 0;
   let selectedViewSignature = '';
+  let pickerSummaryDirty = false;
   const liveTable = table([], columns, presentation.show_only_active_trunked_channels ?
     'No active channels observed' : 'No channels observed', {
     type: 'live-channels', widthVariant: decodeDisplay.mode, rowKey: (row) => row.key,
@@ -18646,11 +18717,11 @@ function liveChannelsSection(onSelectionChange) {
     closePicker(true);
   });
 
-  const clearSelection = () => {
+  const clearSelection = (renderSelection = true) => {
     const hadSelection = Boolean(selection);
     selection = null;
     clearRowSelection.hidden = true;
-    if (hadSelection) liveTable.tableController.render();
+    if (hadSelection && renderSelection) liveTable.tableController.render();
     onSelectionChange(liveDetailViewSelection(tables.get(activeTableId), null));
   };
 
@@ -18688,15 +18759,19 @@ function liveChannelsSection(onSelectionChange) {
   };
   let requestedChannel = route.get('channel');
 
-  const updateVisibleRows = (value) => {
-    if (value.table_id !== activeTableId) return;
-    const displayed = { ...value, rows: livePresentedTableRows(value, presentation) };
+  const reconcileSelection = (displayed) => {
+    if (!selection) return;
     const nextSelection = liveDetailSelectionAfterRowsChanged(displayed, selection);
-    if (!nextSelection) clearSelection();
+    if (!nextSelection) clearSelection(false);
     else if (!liveDetailSelectionUnchanged(selection, nextSelection)) {
       selection = nextSelection;
       onSelectionChange(selection);
     }
+  };
+  const updateVisibleRows = (value) => {
+    if (value.table_id !== activeTableId) return;
+    const displayed = { ...value, rows: livePresentedTableRows(value, presentation) };
+    reconcileSelection(displayed);
     liveTable.tableController.reconcileRows(displayed.rows);
     updateSelectedView(value);
   };
@@ -18756,11 +18831,16 @@ function liveChannelsSection(onSelectionChange) {
     const select = tab.querySelector('.channels-tab-select');
     const title = tab.querySelector('.channels-tab-title');
     const meta = liveChannelViewMeta(value, label);
-    title.replaceChildren(document.createTextNode(label));
-    const remote = liveRemoteOriginBadge(value.remote_origin);
-    if (remote) title.append(remote);
-    tab.querySelector('.channels-tab-meta').textContent = meta;
-    tab.dataset.search = `${label} ${meta}`.toLowerCase();
+    const metadataSignature = JSON.stringify([label, meta, value.channel_running, value.remote_origin || null]);
+    if (metadataSignature !== tab.liveMetadataSignature) {
+      tab.liveMetadataSignature = metadataSignature;
+      title.replaceChildren(document.createTextNode(label));
+      const remote = liveRemoteOriginBadge(value.remote_origin);
+      if (remote) title.append(remote);
+      tab.querySelector('.channels-tab-meta').textContent = meta;
+      tab.dataset.search = `${label} ${meta}`.toLowerCase();
+      pickerSummaryDirty = true;
+    }
     const quality = tab.querySelector('.channels-tab-quality');
     const stateLabel = tab.querySelector('.channels-tab-state-label');
     const currentControl = liveCurrentControlRow(value);
@@ -18776,34 +18856,37 @@ function liveChannelsSection(onSelectionChange) {
     const operatingState = value.table_id === 'conventional' ? 'Live' : (stopped ? 'Stopped' : 'Running');
     const remoteLabel = liveRemoteOriginLabel(value.remote_origin);
     const originSuffix = remoteLabel ? ` · ${remoteLabel}` : '';
-    if (value.table_id === 'conventional') {
-      quality.className = 'channels-tab-quality ui-quality-bars ui-quality-neutral';
-      tab.title = `${label} · ${operatingState}${originSuffix}`;
-      select.setAttribute('aria-label', `Show live channels for ${label}, ${operatingState}${originSuffix}`);
-      stateLabel.textContent = operatingState;
-    } else if (signalStrength === null && decodeQuality === null) {
-      quality.className = 'channels-tab-quality ui-quality-bars ui-quality-unavailable';
-      tab.title = `${label} · ${operatingState} · Signal strength and decode quality unavailable${originSuffix}`;
-      select.setAttribute('aria-label',
-        `Show live channels for ${label}, ${operatingState}; signal strength and decode quality unavailable${originSuffix}`);
-      stateLabel.textContent = operatingState;
-    } else {
-      const level = signalBarLevel(signalStrength);
-      const state = decodeQuality === null ? 'unavailable' :
-        (decodeQuality >= DECODE_HEALTHY_MINIMUM_PERCENT ? 'healthy' :
-          (decodeQuality >= DECODE_DEGRADED_MINIMUM_PERCENT ? 'degraded' : 'poor'));
-      quality.className = `channels-tab-quality ui-quality-bars ui-quality-${state} ui-quality-level-${level}`;
-      const signalLabel = signalStrength === null ? 'Signal strength unavailable' :
-        `${signalStrength.toFixed(1)} dBFS signal strength`;
-      const qualityLabel = decodeQuality === null ? 'Decode quality unavailable' :
-        `${decodeQuality.toFixed(1)}% decode quality`;
-      tab.title = `${label} · ${operatingState} · ${signalLabel} · ${qualityLabel}${originSuffix}`;
-      select.setAttribute('aria-label',
-        `Show live channels for ${label}, ${operatingState}, ${signalLabel}, ${qualityLabel}${originSuffix}`);
-      stateLabel.textContent = operatingState;
+    const qualitySignature = JSON.stringify([label, operatingState, signalStrength, decodeQuality, remoteLabel]);
+    if (qualitySignature !== tab.liveQualitySignature) {
+      tab.liveQualitySignature = qualitySignature;
+      if (value.table_id === 'conventional') {
+        quality.className = 'channels-tab-quality ui-quality-bars ui-quality-neutral';
+        tab.title = `${label} · ${operatingState}${originSuffix}`;
+        select.setAttribute('aria-label', `Show live channels for ${label}, ${operatingState}${originSuffix}`);
+        stateLabel.textContent = operatingState;
+      } else if (signalStrength === null && decodeQuality === null) {
+        quality.className = 'channels-tab-quality ui-quality-bars ui-quality-unavailable';
+        tab.title = `${label} · ${operatingState} · Signal strength and decode quality unavailable${originSuffix}`;
+        select.setAttribute('aria-label',
+          `Show live channels for ${label}, ${operatingState}; signal strength and decode quality unavailable${originSuffix}`);
+        stateLabel.textContent = operatingState;
+      } else {
+        const level = signalBarLevel(signalStrength);
+        const state = decodeQuality === null ? 'unavailable' :
+          (decodeQuality >= DECODE_HEALTHY_MINIMUM_PERCENT ? 'healthy' :
+            (decodeQuality >= DECODE_DEGRADED_MINIMUM_PERCENT ? 'degraded' : 'poor'));
+        quality.className = `channels-tab-quality ui-quality-bars ui-quality-${state} ui-quality-level-${level}`;
+        const signalLabel = signalStrength === null ? 'Signal strength unavailable' :
+          `${signalStrength.toFixed(1)} dBFS signal strength`;
+        const qualityLabel = decodeQuality === null ? 'Decode quality unavailable' :
+          `${decodeQuality.toFixed(1)}% decode quality`;
+        tab.title = `${label} · ${operatingState} · ${signalLabel} · ${qualityLabel}${originSuffix}`;
+        select.setAttribute('aria-label',
+          `Show live channels for ${label}, ${operatingState}, ${signalLabel}, ${qualityLabel}${originSuffix}`);
+        stateLabel.textContent = operatingState;
+      }
+      tab.classList.toggle('stopped', stopped);
     }
-    tab.classList.toggle('stopped', stopped);
-    updatePickerSummary();
     const requestedMatch = liveRequestedChannelMatch(value, requestedChannel);
     if (requestedMatch) {
       if (activeTableId !== value.table_id) showTable(value.table_id);
@@ -18839,7 +18922,7 @@ function liveChannelsSection(onSelectionChange) {
     tables.delete(tableId);
     tabNodes.get(tableId)?.remove();
     tabNodes.delete(tableId);
-    updatePickerSummary();
+    pickerSummaryDirty = true;
     if (activeTableId === tableId) {
       activeTableId = null;
       clearSelection();
@@ -18850,23 +18933,59 @@ function liveChannelsSection(onSelectionChange) {
         updateSelectedView(null);
       }
     }
+    if (!applyingSnapshot) {
+      updatePickerSummary();
+      pickerSummaryDirty = false;
+    }
+  };
+
+  const presentationScheduler = createLivePresentationScheduler((tableIds) => {
+    applyingSnapshot = true;
+    tableIds.forEach((tableId) => {
+      const value = tables.get(tableId);
+      if (value) upsertTable(value);
+    });
+    tableIds.filter((tableId) => !tables.has(tableId)).forEach(removeTable);
+    applyingSnapshot = false;
+    showFallbackTable();
+    if (pickerSummaryDirty) {
+      updatePickerSummary();
+      pickerSummaryDirty = false;
+    }
+  });
+  pageConnections.add(presentationScheduler);
+  const receiveTable = (value) => {
+    if (!value?.table_id) return;
+    if (dismissedStoppedTables.has(value.table_id)) {
+      if (value.channel_running !== true) return;
+      dismissedStoppedTables.delete(value.table_id);
+    }
+    // Capture every ordered update immediately; only presentation is coalesced.
+    tables.set(value.table_id, value);
+    if (value.table_id === activeTableId && selection) {
+      reconcileSelection({ ...value, rows: livePresentedTableRows(value, presentation) });
+    }
+    presentationScheduler.queue(value.table_id);
+  };
+  const receiveRemoval = (tableId) => {
+    tables.delete(tableId);
+    if (tableId === activeTableId) clearSelection(false);
+    if (tabNodes.has(tableId)) presentationScheduler.queue(tableId);
+    else presentationScheduler.discard(tableId);
   };
 
   subscribeLiveChannelActivity({
     snapshot: (snapshot) => {
       const values = Array.isArray(snapshot?.tables) ? snapshot.tables : [];
       const tableIds = new Set(values.map((value) => String(value?.table_id || '')).filter(Boolean));
-      applyingSnapshot = true;
       [...tables.keys()].forEach((tableId) => {
-        if (!tableIds.has(tableId)) removeTable(tableId);
+        if (!tableIds.has(tableId)) receiveRemoval(tableId);
       });
-      values.forEach(upsertTable);
-      applyingSnapshot = false;
-      showFallbackTable();
+      values.forEach(receiveTable);
     },
     activityTable: (update) => {
-      if (update.operation === 'remove') removeTable(update.table_id);
-      else upsertTable(update.table);
+      if (update.operation === 'remove') receiveRemoval(update.table_id);
+      else receiveTable(update.table);
     },
     open: () => {
       connection.textContent = 'Live';
@@ -18926,7 +19045,7 @@ function saveP25VisualizerEventSettings(value) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=35');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=36');
   const visualizerModule = await p25VisualizerModulePromise;
   if (!renderIsCurrent(renderContext)) return;
   const visualizer = visualizerModule.createP25Visualizer({
@@ -18941,6 +19060,24 @@ async function renderP25Visualizer() {
     loadEventSettings: loadP25VisualizerEventSettings,
     saveEventSettings: saveP25VisualizerEventSettings,
     requestActivity: (parameters, options) => api('/api/v1/activity', parameters, options),
+    subscribeActivity: (callbacks) => {
+      const subscriptionId = randomLiveClientId();
+      const source = liveConnection('saved_activity', { subscription_id: subscriptionId });
+      for (const [event, callback] of [['source_change', callbacks.sourceChange],
+        ['activity_append', callbacks.activityAppend], ['live_gap', callbacks.gap]]) {
+        source.addEventListener(event, (value) => {
+          try {
+            const data = JSON.parse(value.data);
+            if (data?.subscription_id && data.subscription_id !== subscriptionId) return;
+            callback(data);
+          } catch (_) {
+            callbacks.gap();
+          }
+        });
+      }
+      source.onerror = callbacks.error;
+      return source;
+    },
     systemHref: (system) => capabilityAllowed(ACCESS_CAPABILITIES.RADIO) && system?.key ?
       href('radio-system', { radio_system_key: system.key, tab: 'info' }) : '',
     historyStatus: statsLoggingState(),
