@@ -78,6 +78,7 @@ for (const width of [320, 390, 430]) {
     for (const button of await transport.locator('button').all()) await expectWithin(button, transport);
     const volume = transport.getByRole('slider', { name: 'Browser playback volume' });
     await expectWithin(volume, transport);
+    await expectWithin(transport.locator('output'), transport);
     expect((await volume.boundingBox()).width).toBeGreaterThanOrEqual(100);
     const initialVolume = Number(await volume.inputValue());
     await volume.focus();
@@ -90,14 +91,31 @@ for (const width of [320, 390, 430]) {
       await expect(value).toHaveCSS('text-overflow', 'ellipsis');
       await expect(value).toHaveAttribute('title', await value.textContent());
     }
-    await transport.locator('.scanner-queue-trigger').click();
-    const queue = page.getByRole('dialog', { name: 'Queued calls', exact: true });
+    await expect(transport.locator('.scanner-queue-trigger, .scanner-queue-panel')).toHaveCount(0);
+    const disclosure = page.locator('.scanner-queue-disclosure');
+    await expect(disclosure).toHaveJSProperty('open', false);
+    const summary = disclosure.locator('summary');
+    await summary.focus();
+    await summary.press('Enter');
+    await expect(disclosure).toHaveJSProperty('open', true);
+    const queue = page.getByRole('list', { name: 'Queued calls', exact: true });
     await expect(queue).toBeVisible();
+    await expect(queue.locator('li')).toHaveCount(8);
     const queueBounds = await queue.boundingBox();
     expect(queueBounds.x).toBeGreaterThanOrEqual(0);
     expect(queueBounds.x + queueBounds.width).toBeLessThanOrEqual(width);
-    expect(queueBounds.y).toBeGreaterThanOrEqual(0);
-    expect(queueBounds.y + queueBounds.height).toBeLessThanOrEqual(844);
+    expect(queueBounds.height).toBeLessThanOrEqual(280);
+    expect(await queue.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+    await queue.focus();
+    await queue.press('End');
+    await page.mouse.move(0, 0);
+    await page.mouse.wheel(0, 844);
+    await expect(queue.locator('li').last()).toBeInViewport();
+    await expect.poll(async () => {
+      const last = await queue.locator('li').last().boundingBox();
+      const controls = await transport.boundingBox();
+      return last.y + last.height <= controls.y;
+    }).toBe(true);
   });
 }
 

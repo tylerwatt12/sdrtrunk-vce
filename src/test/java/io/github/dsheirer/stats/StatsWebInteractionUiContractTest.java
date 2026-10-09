@@ -1033,7 +1033,13 @@ class StatsWebInteractionUiContractTest
         assertTrue(scanner.contains("scanner-playback-transport"));
         assertTrue(scanner.contains("ui-listening-stage"));
         assertTrue(scanner.contains("scanner-up-next-list"));
-        assertTrue(scanner.contains("state.queue.slice(0, 3)"));
+        assertTrue(scanner.contains("const calls = state.queue;"));
+        assertFalse(scanner.contains("state.queue.slice("));
+        assertTrue(scanner.contains("ui-section-disclosure ui-listening-queue-disclosure scanner-queue-disclosure"));
+        assertTrue(scanner.contains("upNextList.tabIndex = 0;"));
+        assertTrue(scanner.contains("'aria-label', 'Queued calls'"));
+        assertFalse(function(source, "function arrangeScannerPlayback(bar, page, player, signal)")
+            .contains("scanner-queue-trigger"));
         assertTrue(scanner.contains("scanner-workspace"));
         assertTrue(scanner.contains("uiSelectFrame(modeSelect, 'scanner-view-modes')"));
         assertTrue(scanner.contains("Simple"));

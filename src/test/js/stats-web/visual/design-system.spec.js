@@ -982,8 +982,10 @@ test('scanner-light-desktop', async ({ page }) => {
   ]);
   await expect(scanner.locator('.scanner-now-playing > .scanner-status-bar')).toHaveCount(1);
   await expect(scanner.locator('.scanner-console')).toHaveClass(/ui-listening-stage/);
-  await expect(scanner.locator('.scanner-up-next-list > li:visible')).toHaveCount(3);
-  await expect(scanner.locator('.scanner-up-next-count')).toHaveText('3 queued');
+  await expect(scanner.locator('.scanner-queue-disclosure')).toHaveJSProperty('open', true);
+  await expect(scanner.locator('.scanner-up-next-list > li')).toHaveCount(8);
+  await expect(scanner.locator('.scanner-up-next-count')).toHaveText('8 queued');
+  await expect(scanner.locator('.scanner-queue-trigger, .scanner-queue-panel')).toHaveCount(0);
   await expect(scanner.locator('.scanner-transport-host > #scanner-playback-bar.ui-scanner-transport')).toHaveCount(1);
   await expect(scanner.locator('.playback-bar, .scanner-playback-more-trigger')).toHaveCount(0);
   await expect(scanner.locator('.scanner-field.ui-fact-row > dt')).toHaveCount(4);
@@ -1002,6 +1004,13 @@ test('scanner-light-desktop', async ({ page }) => {
   await expect(scanner.locator('.scanner-scan-rail')).toHaveCount(0);
   await expect(scanner.locator('.scanner-scan-trigger')).toBeVisible();
   await expect(page.locator('body')).toHaveScreenshot('scanner-light-desktop.png', { fullPage: true });
+  const queue = scanner.getByRole('list', { name: 'Queued calls' });
+  const geometry = await queue.evaluate(element => ({ height: element.clientHeight, scrollHeight: element.scrollHeight }));
+  expect(geometry.height).toBeLessThanOrEqual(280);
+  expect(geometry.scrollHeight).toBeGreaterThan(geometry.height);
+  await queue.focus();
+  await queue.press('End');
+  await expect(queue.locator('li').last()).toBeInViewport();
 });
 
 test('scanner-dark-mobile', async ({ page }) => {
@@ -1016,8 +1025,10 @@ test('scanner-dark-mobile', async ({ page }) => {
   await expect(scanner.locator('.scanner-scan-button')).toHaveCount(6);
   await expect(scanner.locator('.scanner-playback-controls > button')).toHaveCount(4);
   await expect(scanner.locator('.scanner-playback-secondary > button')).toHaveCount(4);
-  await expect(scanner.locator('.scanner-queue-trigger')).toBeVisible();
-  await expect(scanner.locator('.scanner-up-next-list > li:visible')).toHaveCount(1);
+  await expect(scanner.locator('.scanner-queue-trigger, .scanner-queue-panel')).toHaveCount(0);
+  await expect(scanner.locator('.scanner-queue-disclosure')).toHaveJSProperty('open', false);
+  await expect(scanner.locator('.scanner-up-next-preview')).toBeVisible();
+  await expect(scanner.locator('.scanner-up-next-list')).toBeHidden();
   await expect(scanner.locator('.scanner-quality-value')).toHaveText('84%');
   const unnamedPlaybackControls = await scanner.locator('#scanner-playback-bar button').evaluateAll((buttons) =>
     buttons.filter((button) => !button.getAttribute('aria-label') && !button.textContent.trim()).length);

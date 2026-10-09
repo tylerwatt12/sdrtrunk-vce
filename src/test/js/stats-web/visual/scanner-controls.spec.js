@@ -39,6 +39,9 @@ async function expectFullWidthScannerActions(page) {
     }
   }
   expect(rows[1].y).toBeGreaterThanOrEqual(rows[0].y + rows[0].height + 8);
+  const volume = await page.locator('#scanner-playback-bar .ui-audio-volume-control').boundingBox();
+  expect(volume.x).toBeCloseTo(bar.x + padding.left, 1);
+  expect(volume.x + volume.width).toBeCloseTo(bar.x + bar.width - padding.right, 1);
 }
 
 async function expectCompactDesktopScannerActions(page) {
@@ -60,7 +63,7 @@ async function expectCompactDesktopScannerActions(page) {
       parseFloat(style.paddingBottom) + parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth) };
   });
   expect(barHeight.height).toBeLessThanOrEqual(40 + barHeight.chrome);
-  const actions = await page.locator('#scanner-playback-bar > :not([popover])').evaluateAll(elements =>
+  const actions = await page.locator('#scanner-playback-bar > *').evaluateAll(elements =>
     elements.map(element => {
       const box = element.getBoundingClientRect();
       return { left: box.left, right: box.right, top: box.top, bottom: box.bottom };
@@ -84,6 +87,31 @@ async function completeCurrentCall(page) {
   });
 }
 
+async function expectQueueTailReachable(list, calls) {
+  await list.focus();
+  await list.press('End');
+  await expect.poll(() => list.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+  const last = calls.last();
+  await expect(last).toBeInViewport({ ratio: 1 });
+  const bounds = await list.boundingBox();
+  const tail = await last.boundingBox();
+  expect(tail.y).toBeGreaterThanOrEqual(bounds.y);
+  expect(tail.y + tail.height).toBeLessThanOrEqual(bounds.y + bounds.height + 1);
+  expect(await last.evaluate(element => {
+    const box = element.getBoundingClientRect();
+    const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+    return Boolean(hit && element.contains(hit));
+  })).toBe(true);
+}
+
+async function expectPhoneQueueFits(page, list) {
+  await expect.poll(async () => {
+    const bounds = await list.boundingBox();
+    const transport = await page.locator('#scanner-playback-bar').boundingBox();
+    return Boolean(bounds && bounds.y >= 0 && bounds.y + bounds.height <= transport.y + 1);
+  }).toBe(true);
+}
+
 for (const theme of ['light', 'dark']) {
   test(`Scanner direct actions control live playback ${theme}`, async ({ page }) => {
     const desktop = theme === 'light';
@@ -104,18 +132,21 @@ for (const theme of ['light', 'dark']) {
     } }));
     const primary = page.locator('.scanner-playback-primary');
     const title = page.locator('.scanner-call-title');
-    const queue = page.locator('.scanner-queue-trigger');
-    const panel = page.getByRole('dialog', { name: 'Queued calls', exact: true });
     const upNext = page.getByRole('complementary', { name: 'Up next', exact: true });
-    const previewCalls = upNext.locator('.scanner-up-next-list > li[title]');
-    const visiblePreview = upNext.locator('.scanner-up-next-list > li[title]:visible');
+    const count = upNext.locator('.scanner-up-next-count');
+    const disclosure = upNext.locator('.scanner-queue-disclosure');
+    const summary = upNext.locator('summary');
+    const teaser = upNext.locator('.scanner-up-next-preview');
+    const list = upNext.locator('.scanner-up-next-list');
+    const queuedCalls = list.locator(':scope > li[title]');
     for (const id of ['scanner-skip', 'scanner-replay', 'scanner-hold', 'scanner-stop',
       'scanner-avoid', 'scanner-clear-queue']) await expect(page.locator(`#${id}`)).toBeDisabled();
     await expect(page.locator('#scanner-avoid-list')).toBeEnabled();
     if (desktop) await expectCompactDesktopScannerActions(page);
     else await expectFullWidthScannerActions(page);
-    await expect(previewCalls).toHaveCount(0);
-    await expect(upNext.locator('.scanner-up-next-count')).toHaveText('0 queued');
+    await expect(queuedCalls).toHaveCount(0);
+    await expect(count).toHaveText('0 queued');
+    await expect(page.locator('.scanner-queue-trigger, .scanner-queue-panel')).toHaveCount(0);
 
     pending.push(call('Fire Dispatch', 'Engine 4'));
     await primary.click();
@@ -127,15 +158,46 @@ for (const theme of ['light', 'dark']) {
     await expect.poll(() => page.evaluate(() => window.audioTest.contexts.at(-1).state)).toBe('suspended');
     pending.push(call('Fire Dispatch', 'Engine 5'), call('Police Dispatch', 'Unit 7'),
       call('Fire Dispatch', 'Engine 6'), call('Medical Dispatch', 'Medic 1'));
-    await expect(queue).toHaveText('Queue · 4');
-    await expect(upNext.locator('.scanner-up-next-count')).toHaveText('4 queued');
-    await expect(previewCalls).toHaveCount(3);
-    await expect(visiblePreview).toHaveCount(desktop ? 3 : 1);
-    await expect(visiblePreview.first()).toContainText('Engine 5');
-    if (desktop) {
-      await expect(visiblePreview.nth(1)).toContainText('Engine 6');
-      await expect(visiblePreview.nth(2)).toContainText('Unit 7');
-      await expect(upNext).not.toContainText('Medic 1');
+    pending.push(...Array.from({ length: 95 }, (_, index) =>
+      call('Regional Dispatch', `Interoperability Unit ${index + 1}`)));
+    await expect(count).toHaveText('99 queued');
+    await expect(queuedCalls).toHaveCount(99);
+    await expect(queuedCalls.nth(0)).toContainText('Engine 5');
+    await expect(queuedCalls.nth(1)).toContainText('Engine 6');
+    await expect(queuedCalls.nth(2)).toContainText('Unit 7');
+    await expect(queuedCalls.nth(3)).toContainText('Medic 1');
+    if (!desktop) {
+      expect(await disclosure.evaluate(element => element.open)).toBe(false);
+      await expect(list).toBeHidden();
+      await expect(teaser).toBeVisible();
+      await expect(teaser).toContainText('Engine 5');
+      await expect(teaser).not.toContainText('Engine 6');
+      await summary.press('Enter');
+      await expect.poll(() => disclosure.evaluate(element => element.open)).toBe(true);
+      await expectPhoneQueueFits(page, list);
+    }
+    await expect(list).toBeVisible();
+    expect((await list.boundingBox()).height).toBeLessThanOrEqual(280);
+    await expectQueueTailReachable(list, queuedCalls);
+    await expect(queuedCalls.last()).toContainText('Interoperability Unit 95');
+    const queueScroll = await list.evaluate(element => element.scrollTop);
+    pending.push(call('Regional Dispatch', 'Interoperability Unit 96'));
+    await expect(count).toHaveText('100 queued');
+    await expect(queuedCalls).toHaveCount(100);
+    await expect.poll(() => list.evaluate(element => element.scrollTop)).toBe(queueScroll);
+    expect(await disclosure.evaluate(element => element.open)).toBe(true);
+    await expectQueueTailReachable(list, queuedCalls);
+    await expect(queuedCalls.last()).toContainText('Interoperability Unit 96');
+    if (!desktop) {
+      await page.setViewportSize({ width: 1280, height: 900 });
+      expect(await disclosure.evaluate(element => element.open)).toBe(true);
+      await page.setViewportSize({ width: 390, height: 844 });
+      await expect.poll(() => disclosure.evaluate(element => element.open)).toBe(true);
+      await summary.press('Space');
+      await expect.poll(() => disclosure.evaluate(element => element.open)).toBe(false);
+      await expect(list).toBeHidden();
+      await expect(teaser).toContainText('Engine 5');
+      await expect(summary).toBeFocused();
     }
     await primary.click();
     await expect(primary).toHaveAttribute('aria-label', /Pause audio/);
@@ -144,21 +206,13 @@ for (const theme of ['light', 'dark']) {
 
     await page.locator('#scanner-hold').click();
     await expect(page.locator('#scanner-hold')).toHaveAttribute('aria-pressed', 'true');
-    await expect(queue).toHaveText('Queue · 2');
-    await expect(upNext.locator('.scanner-up-next-count')).toHaveText('2 queued');
-    await expect(previewCalls).toHaveCount(2);
+    await expect(count).toHaveText('2 queued');
+    await expect(queuedCalls).toHaveCount(2);
     await expect(upNext).not.toContainText('Unit 7');
-    await queue.press('Enter');
-    await expect(panel).toBeVisible();
-    await expect(panel).toContainText('Engine 5');
-    await expect(panel).not.toContainText('Unit 7');
-    await page.keyboard.press('Escape');
-    await expect(panel).toBeHidden();
-    await expect(queue).toBeFocused();
+    await expect(queuedCalls.first()).toContainText('Engine 5');
     await page.locator('#scanner-clear-queue').click();
-    await expect(queue).toHaveText('Queue · 0');
-    await expect(previewCalls).toHaveCount(0);
-    await expect(upNext.locator('.scanner-up-next-count')).toHaveText('0 queued');
+    await expect(queuedCalls).toHaveCount(0);
+    await expect(count).toHaveText('0 queued');
     await expect(upNext).toContainText('Waiting for calls');
     await expect(title).toHaveText('Fire Dispatch');
     expect(await activeSourceCount(page)).toBe(1);
@@ -179,10 +233,10 @@ for (const theme of ['light', 'dark']) {
     pending.push(call('Police Dispatch', 'Unit 8'), call('Police Dispatch', 'Unit 9'),
       call('Medical Dispatch', 'Medic 2'));
     await expect(title).toHaveText('Police Dispatch');
-    await expect(queue).toHaveText('Queue · 2');
+    await expect(count).toHaveText('2 queued');
     await page.locator('#scanner-avoid').click();
     await expect(title).toHaveText('Medical Dispatch');
-    await expect(queue).toHaveText('Queue · 0');
+    await expect(count).toHaveText('0 queued');
     await expect(page.locator('#scanner-avoid-list')).toHaveAttribute('aria-label', 'View 1 browser avoid(s)');
     await page.locator('#scanner-avoid-list').click();
     const avoids = page.getByRole('dialog', { name: 'Avoid List', exact: true });
@@ -193,15 +247,12 @@ for (const theme of ['light', 'dark']) {
     await page.keyboard.press('Escape');
 
     pending.push(call('Police Dispatch', 'Unit 10'));
-    await expect(queue).toHaveText('Queue · 1');
-    await expect(visiblePreview).toHaveCount(1);
-    await expect(visiblePreview.first()).toContainText('Unit 10');
-    await queue.click();
-    await expect(panel).toContainText('Unit 10');
-    await page.keyboard.press('Escape');
+    await expect(count).toHaveText('1 queued');
+    await expect(queuedCalls).toHaveCount(1);
+    await expect(queuedCalls.first()).toContainText('Unit 10');
     await page.locator('#scanner-clear-queue').click();
-    await expect(queue).toHaveText('Queue · 0');
-    await expect(previewCalls).toHaveCount(0);
+    await expect(count).toHaveText('0 queued');
+    await expect(queuedCalls).toHaveCount(0);
     await expect(title).toHaveText('Medical Dispatch');
     await page.locator('#scanner-stop').click();
     await expect.poll(() => activeSourceCount(page)).toBe(0);
@@ -250,7 +301,7 @@ for (const [theme, viewport] of [
       'scanner-avoid', 'scanner-avoid-list', 'scanner-clear-queue', 'scanner-volume']) {
       await expect(page.locator(`#${id}`)).toBeVisible();
     }
-    await expect(page.locator('.scanner-queue-trigger')).toBeVisible();
+    await expect(page.locator('.scanner-queue-trigger, .scanner-queue-panel')).toHaveCount(0);
     await expect(page.locator('.scanner-playback-more-trigger')).toHaveCount(0);
     await expect(page.locator('#desktop-playback-slot #playback-volume')).toHaveCount(1);
     await expect(page.locator('#desktop-playback-slot #playback-skip')).toHaveCount(1);
@@ -281,20 +332,28 @@ for (const [theme, viewport] of [
     await expect(primary).toHaveAttribute('aria-label', 'Resume browser call audio');
     await primary.click();
     await expect(primary).toHaveAttribute('aria-label', /Pause audio/);
-    const queueTrigger = page.locator('.scanner-queue-trigger');
-    await queueTrigger.focus();
-    await queueTrigger.press('Enter');
-    const queuedCalls = page.getByRole('dialog', { name: 'Queued calls', exact: true });
-    await expect(queuedCalls).toBeVisible();
-    await expect(queueTrigger).toHaveAttribute('aria-expanded', 'true');
-    await expect(queuedCalls).toContainText('No queued calls');
-    const bounds = await queuedCalls.boundingBox();
-    expect(bounds.x).toBeGreaterThanOrEqual(0);
-    expect(bounds.x + bounds.width).toBeLessThanOrEqual(viewport.width);
-    expect(bounds.y + bounds.height).toBeLessThanOrEqual(viewport.height);
-    await page.keyboard.press('Escape');
-    await expect(queuedCalls).toBeHidden();
-    await expect(queueTrigger).toBeFocused();
+    const disclosure = page.locator('.scanner-queue-disclosure');
+    const summary = disclosure.locator('summary');
+    const queueList = disclosure.locator('.scanner-up-next-list');
+    await expect(page.getByRole('dialog', { name: 'Queued calls', exact: true })).toHaveCount(0);
+    await expect(page.locator('.scanner-up-next-count')).toHaveText('0 queued');
+    if (viewport.width <= 680) {
+      expect(await disclosure.evaluate(element => element.open)).toBe(false);
+      await expect(queueList).toBeHidden();
+      await summary.press('Enter');
+      await expect.poll(() => disclosure.evaluate(element => element.open)).toBe(true);
+      await expect(queueList).toBeVisible();
+      await expectPhoneQueueFits(page, queueList);
+      await summary.press('Tab');
+      await expect(queueList).toBeFocused();
+      await summary.press('Space');
+      await expect.poll(() => disclosure.evaluate(element => element.open)).toBe(false);
+      await expect(queueList).toBeHidden();
+      await expect(summary).toBeFocused();
+    } else {
+      expect(await disclosure.evaluate(element => element.open)).toBe(true);
+      await expect(queueList).toBeVisible();
+    }
     await modes.selectOption('engineer');
     await expect(page.locator('.scanner-page')).toHaveAttribute('data-scanner-mode', 'engineer');
     await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
@@ -309,9 +368,6 @@ for (const [theme, viewport] of [
     if (viewport.width <= 680) {
       const bar = await page.locator('#scanner-playback-bar').boundingBox();
       expect(bar.y + bar.height).toBe(viewport.height);
-      const volume = await page.locator('.scanner-playback-transport .ui-audio-volume-control').boundingBox();
-      const queue = await queueTrigger.boundingBox();
-      expect(volume.x + volume.width).toBeLessThanOrEqual(queue.x - 1);
       await expectFullWidthScannerActions(page);
       const reserve = await page.locator('.scanner-page').evaluate(element =>
         parseFloat(getComputedStyle(element).paddingBottom));
@@ -324,13 +380,7 @@ for (const [theme, viewport] of [
         const keyboardBar = await page.locator('#scanner-playback-bar').boundingBox();
         return keyboardBar.y + keyboardBar.height;
       }).toBe(viewport.height - 200);
-      await queueTrigger.click();
-      await expect(queueTrigger).toHaveAttribute('aria-expanded', 'true');
-      await expect.poll(async () => {
-        const keyboardQueue = await queuedCalls.boundingBox();
-        return keyboardQueue.y >= 0 && keyboardQueue.y + keyboardQueue.height <= viewport.height - 200;
-      }).toBe(true);
-      await page.keyboard.press('Escape');
+      await expectFullWidthScannerActions(page);
       await page.evaluate(() => {
         delete window.visualViewport.height;
         window.visualViewport.dispatchEvent(new Event('resize'));
@@ -451,10 +501,23 @@ test.describe('Landscape phone playback', () => {
     const bar = await page.locator('#scanner-playback-bar').boundingBox();
     expect(bar.y + bar.height).toBe(390);
     expect(await page.locator('#scanner-playback-bar').evaluate(element => getComputedStyle(element).position)).toBe('fixed');
-    const volume = await page.locator('.scanner-playback-transport .ui-audio-volume-control').boundingBox();
-    const queue = await page.locator('.scanner-queue-trigger').boundingBox();
-    expect(volume.x + volume.width).toBeLessThan(queue.x);
     await expectFullWidthScannerActions(page);
+    await expect(page.locator('.scanner-queue-trigger, .scanner-queue-panel')).toHaveCount(0);
+    const disclosure = page.locator('.scanner-queue-disclosure');
+    const summary = disclosure.locator('summary');
+    const queueList = disclosure.locator('.scanner-up-next-list');
+    expect(await disclosure.evaluate(element => element.open)).toBe(false);
+    await expect(queueList).toBeHidden();
+    await summary.press('Enter');
+    await expect.poll(() => disclosure.evaluate(element => element.open)).toBe(true);
+    await expect(queueList).toBeVisible();
+    await expectPhoneQueueFits(page, queueList);
+    expect((await queueList.boundingBox()).height).toBeLessThanOrEqual(390 * 0.4);
+    await summary.press('Tab');
+    await expect(queueList).toBeFocused();
+    await summary.press('Space');
+    await expect.poll(() => disclosure.evaluate(element => element.open)).toBe(false);
+    await expect(queueList).toBeHidden();
     const reserve = await page.locator('.scanner-page').evaluate(element =>
       parseFloat(getComputedStyle(element).paddingBottom));
     expect(reserve).toBeGreaterThan(bar.height);
@@ -487,7 +550,7 @@ for (const theme of ['light', 'dark']) {
   expect(await page.locator('.scanner-console').evaluate(element => element.offsetHeight)).toBeLessThan(tallHeight);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(scrollY);
   await page.locator('#scanner-clear-queue').click();
-  await expect(page.locator('.scanner-queue-trigger')).toHaveText('Queue · 0');
+  await expect(page.locator('.scanner-up-next-count')).toHaveText('0 queued');
   await page.locator('#scanner-avoid-list').click();
   await expect(page.getByRole('dialog', { name: 'Avoid List', exact: true })).toBeVisible();
   await page.keyboard.press('Escape');

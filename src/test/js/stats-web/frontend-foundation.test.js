@@ -1428,9 +1428,17 @@ async function main() {
   assert.match(scannerRenderer, /scanner-console-main/);
   assert.match(scannerRenderer, /scanner-now-playing/);
   assert.match(scannerRenderer, /consoleMain\.append\(nowPlaying, upNext\)/,
-    'Scanner must pair its listening stage with an Up next queue preview');
-  assert.match(scannerRenderer, /state\.queue\.slice\(0, 3\)/,
-    'The listening stage must preview the first three browser queued calls');
+    'Scanner must pair its listening stage with the browser queue');
+  assert.match(scannerRenderer, /const calls = state\.queue;/,
+    'The listening stage must render the complete scheduled browser queue');
+  assert.doesNotMatch(scannerRenderer, /state\.queue\.slice\(/,
+    'The listening stage must not truncate the scheduled queue');
+  assert.match(scannerRenderer, /node\('details', 'ui-section-disclosure ui-listening-queue-disclosure scanner-queue-disclosure'\)/,
+    'The browser queue must use the shared native disclosure');
+  assert.match(scannerRenderer, /upNextList\.tabIndex = 0;[\s\S]*'aria-label', 'Queued calls'/,
+    'The full queue must support keyboard scrolling with an accessible name');
+  assert.match(scannerRenderer, /queueViewport\.matches \? phoneQueueOpen : true/,
+    'Desktop must show the queue while preserving the phone disclosure state');
   assert.match(scannerRenderer, /ui-popover scanner-scan-lists/);
   assert.match(scannerRenderer, /bindAnchoredDropdown\(scanTrigger, scanPanel, renderContext\.signal\)/);
   assert.match(scannerRenderer, /scanner-coverage-action/);
@@ -1454,14 +1462,14 @@ async function main() {
     'The Scanner primary action must use the shared player directly');
   assert.match(scannerPlayback, /secondary\.append\(stop, avoid, avoids, clear\)/,
     'Secondary playback actions must remain directly visible');
-  assert.match(scannerPlayback, /ui-popover scanner-queue-panel[\s\S]*Queued calls/,
-    'Scanner must expose its queue through an accessible dedicated popover');
+  assert.doesNotMatch(scannerPlayback, /scanner-queue-trigger|scanner-queue-panel|queueTrigger|queuePanel/,
+    'Scanner transport must leave queued calls in the listening stage');
   assert.doesNotMatch(scannerPlayback, /document\.getElementById\('playback-|marker\.replaceWith|scanner-expanded/,
     'Scanner must own its controls without moving global player elements');
   assert.match(scannerPlayback, /window\.visualViewport/, 'The mobile controls must follow the visible viewport');
   assert.match(scannerPlayback, /ResizeObserver\(updateViewport\)/,
     'The page must reserve the actual mobile bar height');
-  assert.match(scannerPlayback, /observer\.disconnect\(\)[\s\S]*unsubscribe\(\)[\s\S]*closeQueue\(\)/,
+  assert.match(scannerPlayback, /observer\.disconnect\(\)[\s\S]*unsubscribe\(\)/,
     'Leaving Scanner must release viewport and player subscriptions');
   const scannerCallRenderer = functionBinding(appSource, 'renderScannerCall');
   assert.match(scannerCallRenderer,

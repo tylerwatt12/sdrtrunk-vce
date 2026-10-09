@@ -47,6 +47,9 @@
   --listening-stage-wash: color-mix(in srgb, var(--accent) 10%, var(--surface));
   --listening-queue-min-width: 260px;
   --listening-queue-list-min-height: 216px;
+  --listening-queue-list-max-height: 280px;
+  --listening-queue-phone-viewport: 40dvh;
+  --listening-queue-chevron-width: 14px;
   --audio-spectrum-bar-width: 2px;
   --audio-spectrum-frame-duration: 45ms;
   --audio-quality-meter-height: 28px;

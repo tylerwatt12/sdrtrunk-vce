@@ -54,7 +54,12 @@ for (const view of galleryViews) {
       if (view === 'focus') await page.locator('#visual-focus-target').focus();
       await expectNoHorizontalOverflow(page);
       if (process.env.STYLE_AUDIT_ASSERTIONS_ONLY !== '1') {
-        await expect(example).toHaveScreenshot(`${view}-${presentation.name}.png`);
+        // The phone Scanner transport spans the viewport beyond the inset example.
+        if (view === 'scanner' && presentation.viewport.width <= 680) {
+          await expect(page).toHaveScreenshot(`${view}-${presentation.name}.png`, { fullPage: true });
+        } else {
+          await expect(example).toHaveScreenshot(`${view}-${presentation.name}.png`);
+        }
       }
     });
   }
@@ -74,7 +79,11 @@ for (const { theme, name, viewport } of presentations) {
       .toHaveCount(0);
     await expectNoHorizontalOverflow(page);
     if (process.env.STYLE_AUDIT_ASSERTIONS_ONLY !== '1') {
-      await expect(page.locator('.visual-scanner-example')).toHaveScreenshot(`scanner-idle-${name}.png`);
+      if (viewport.width <= 680) {
+        await expect(page).toHaveScreenshot(`scanner-idle-${name}.png`, { fullPage: true });
+      } else {
+        await expect(page.locator('.visual-scanner-example')).toHaveScreenshot(`scanner-idle-${name}.png`);
+      }
     }
   });
 }

@@ -11,14 +11,14 @@ const entryStylesheet = path.resolve(process.argv[2]
 const EXPECTED_ENTRY_MANIFEST = [
   '@layer reset, tokens, components, compositions, features, utilities;',
   '@import url("./styles/base.css?v=2") layer(reset);',
-  '@import url("./styles/tokens.css?v=32") layer(tokens);',
+  '@import url("./styles/tokens.css?v=33") layer(tokens);',
   '@import url("./styles/components/semantic-text.css?v=6") layer(components);',
   '@import url("./styles/components/controls.css?v=33") layer(components);',
   '@import url("./styles/components/audio-controls.css?v=10") layer(components);',
   '@import url("./styles/compositions/workspaces.css?v=27") layer(compositions);',
   '@import url("./styles/compositions/tables.css?v=14") layer(compositions);',
   '@import url("./styles/compositions/browsing.css?v=1") layer(compositions);',
-  '@import url("./styles/compositions/app-chrome.css?v=18") layer(compositions);',
+  '@import url("./styles/compositions/app-chrome.css?v=19") layer(compositions);',
   '@import url("./styles/compositions/audio-dock.css?v=11") layer(compositions);',
   '@import url("./styles/compositions/charts.css?v=4") layer(compositions);',
   '@import url("./styles/compositions/modals.css?v=12") layer(compositions);',
@@ -33,7 +33,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/tuners.css?v=12") layer(features);',
   '@import url("./styles/features/listen-map.css?v=4") layer(features);',
   '@import url("./styles/features/network-visualizer.css?v=12") layer(features);',
-  '@import url("./styles/features/scanner.css?v=14") layer(features);',
+  '@import url("./styles/features/scanner.css?v=15") layer(features);',
   '@import url("./styles/features/aliases.css?v=19") layer(features);',
   '@import url("./styles/features/scan-lists.css?v=3") layer(features);',
   '@import url("./styles/features/dashboard.css?v=4") layer(features);',
@@ -749,6 +749,12 @@ function validateScannerFeature(stylesheets, entry) {
     'The call stage and Up next teaser must stack on phones');
   assert.match(chrome, /\.ui-listening-stage-main\s*\{/,
     'Scanner must reuse the shared listening-stage surface');
+  assert.match(scanner, /\.scanner-up-next-list\s*\{[^}]*max-height:[^}]*overflow-y:\s*auto/,
+    'The full browser queue must scroll within a bounded column');
+  assert.match(chrome, /\.ui-listening-queue-disclosure\s*\{/,
+    'The browser queue must reuse shared native disclosure presentation');
+  assert.doesNotMatch(scanner + chrome, /scanner-queue-trigger|scanner-queue-panel/,
+    'The bottom transport must not duplicate queue access');
   assert.match(scanner, /\.scanner-scan-lists\s*\{[\s\S]*--scanner-scan-menu-width/,
     'Scan-list selection must use a bounded header dropdown');
   assert.match(scanner, /@media \(max-width: 680px\), \(max-height: 500px\) and \(pointer: coarse\)[\s\S]*position:\s*fixed/,

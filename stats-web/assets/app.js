@@ -10841,29 +10841,11 @@ function arrangeScannerPlayback(bar, page, player, signal) {
   output.setAttribute('aria-hidden', 'true');
   volumeControl.append(volume, output);
 
-  const queueTrigger = node('button', 'ui-button ui-button-secondary scanner-queue-trigger', 'Queue · 0');
-  queueTrigger.type = 'button';
-  queueTrigger.setAttribute('popovertarget', 'scanner-queue');
-  queueTrigger.setAttribute('aria-controls', 'scanner-queue');
-  queueTrigger.setAttribute('aria-haspopup', 'dialog');
-  queueTrigger.setAttribute('aria-expanded', 'false');
-  const queuePanel = node('div', 'ui-popover scanner-queue-panel');
-  queuePanel.id = 'scanner-queue';
-  queuePanel.setAttribute('popover', 'auto');
-  queuePanel.setAttribute('role', 'dialog');
-  queuePanel.setAttribute('aria-label', 'Queued calls');
-  const queueList = node('ol', 'scanner-queue-list');
-  queuePanel.append(node('h3', 'ui-section-heading', 'Queued calls'), queueList);
-  bar.append(controls, secondary, volumeControl, queueTrigger, queuePanel);
-  const closeQueue = bindAnchoredDropdown(queueTrigger, queuePanel, signal, {
-    viewport: () => window.matchMedia('(max-width: 680px), (max-height: 500px) and (pointer: coarse)').matches ?
-      window.visualViewport : null
-  });
+  bar.append(controls, secondary, volumeControl);
   const label = (button, text) => {
     button.setAttribute('aria-label', text);
     button.title = text;
   };
-  let queueKey = '';
   const draw = (state) => {
     const access = allowed();
     const primaryLabel = state.stopped ?
@@ -10892,21 +10874,6 @@ function arrangeScannerPlayback(bar, page, player, signal) {
     const percentage = Math.round(state.volume * 100);
     volume.setAttribute('aria-valuetext', `${percentage} percent`);
     output.textContent = `${percentage}%`;
-    queueTrigger.disabled = !access;
-    queueTrigger.textContent = `Queue · ${state.queuedCount}`;
-    if (!access && queuePanel.matches(':popover-open')) queuePanel.hidePopover();
-    const nextQueueKey = JSON.stringify(state.queue.map(call => [call.call_id, player.callLabel(call),
-      player.callDetails(call)]));
-    if (queueKey !== nextQueueKey || !queueList.childNodes.length) {
-      queueKey = nextQueueKey;
-      queueList.replaceChildren();
-      state.queue.forEach(call => {
-        const item = node('li', 'scanner-queue-item');
-        item.append(node('strong', '', player.callLabel(call)), node('span', 'ui-muted', player.callDetails(call)));
-        queueList.append(item);
-      });
-      if (!state.queue.length) queueList.append(node('li', 'ui-muted', 'No queued calls'));
-    }
   };
   const unsubscribe = player.subscribeState(draw);
   const updateViewport = () => {
@@ -10914,7 +10881,6 @@ function arrangeScannerPlayback(bar, page, player, signal) {
     const offset = viewport ? Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop) : 0;
     bar.style.setProperty('--scanner-viewport-offset', `${Math.round(offset)}px`);
     page.style.setProperty('--scanner-playback-height', `${bar.offsetHeight}px`);
-    closeQueue.position();
   };
   const observer = new ResizeObserver(updateViewport);
   observer.observe(bar);
@@ -10924,7 +10890,6 @@ function arrangeScannerPlayback(bar, page, player, signal) {
   signal?.addEventListener('abort', () => {
     observer.disconnect();
     unsubscribe();
-    closeQueue();
   }, { once: true });
 }
 
@@ -11644,12 +11609,36 @@ function renderScanner() {
   nowPlaying.append(statusBar, displayShell);
   const upNext = node('aside', 'scanner-up-next ui-listening-queue');
   upNext.setAttribute('aria-label', 'Up next');
+  const queueDisclosure = node('details', 'ui-section-disclosure ui-listening-queue-disclosure scanner-queue-disclosure');
+  const queueSummary = node('summary', 'ui-section-summary scanner-up-next-summary');
   const upNextHeading = node('div', 'scanner-up-next-heading');
   const upNextCount = node('span', 'ui-label ui-muted scanner-up-next-count', '0 queued');
   upNextHeading.append(node('h3', 'ui-section-heading', 'Up next'), upNextCount);
+  const upNextPreview = node('div', 'ui-heading-group scanner-up-next-preview');
+  const upNextPreviewTitle = node('strong', 'ui-text-truncate', 'Waiting for calls');
+  const upNextPreviewDetail = node('span', 'ui-label ui-muted ui-text-truncate', '—');
+  upNextPreview.append(upNextPreviewTitle, upNextPreviewDetail);
+  queueSummary.append(upNextHeading, upNextPreview);
   const upNextList = node('ol', 'scanner-up-next-list');
+  upNextList.tabIndex = 0;
+  upNextList.setAttribute('aria-label', 'Queued calls');
   const upNextScope = node('span', 'ui-label ui-muted scanner-up-next-note');
-  upNext.append(upNextHeading, upNextList, upNextScope);
+  queueDisclosure.append(queueSummary, upNextList, upNextScope);
+  upNext.append(queueDisclosure);
+  const queueViewport = window.matchMedia('(max-width: 680px), (max-height: 500px) and (pointer: coarse)');
+  let phoneQueueOpen = false;
+  const updateQueueDisclosure = () => { queueDisclosure.open = queueViewport.matches ? phoneQueueOpen : true; };
+  queueDisclosure.addEventListener('toggle', () => {
+    if (!queueViewport.matches) return;
+    const opening = queueDisclosure.open && !phoneQueueOpen;
+    phoneQueueOpen = queueDisclosure.open;
+    if (opening) {
+      const overflow = queueDisclosure.getBoundingClientRect().bottom - transport.getBoundingClientRect().top;
+      if (overflow > 0) window.scrollBy(0, Math.ceil(overflow));
+    }
+  }, { signal: renderContext.signal });
+  queueViewport.addEventListener('change', updateQueueDisclosure, { signal: renderContext.signal });
+  updateQueueDisclosure();
 
   const scanChooser = node('div', 'scanner-scan-chooser');
   const scanTrigger = node('button', 'ui-button ui-button-secondary scanner-scan-trigger');
@@ -11710,15 +11699,20 @@ function renderScanner() {
   let displayedCallId = '';
   let upNextKey = '';
   const renderUpNext = (state) => {
-    const calls = state.queue.slice(0, 3);
+    const calls = state.queue;
     const scope = state.scanLists.filter(item => item.enabled && item.selected).map(item => item.name).join(' · ');
     upNextCount.textContent = `${state.queuedCount} queued`;
     upNextScope.textContent = scope;
+    const next = calls[0];
+    upNextPreviewTitle.textContent = next ? player.targetLabel(next) : 'Waiting for calls';
+    upNextPreviewDetail.textContent = next ? [scannerSourceAlias(next) || radioIdentifierText(next, next.source_id, 'source'),
+      scannerDuration(next.duration_ms)].filter(Boolean).join(' · ') : '—';
     const key = JSON.stringify([calls, scope]);
     if (upNextKey === key) return;
     upNextKey = key;
+    const scrollTop = upNextList.scrollTop;
     upNextList.replaceChildren();
-    for (let index = 0; index < 3; index++) {
+    for (let index = 0; index < Math.max(3, calls.length); index++) {
       const call = calls[index];
       const item = node('li', 'scanner-up-next-item ui-listening-queue-item');
       item.classList.toggle('ui-content-idle', !call);
@@ -11732,6 +11726,7 @@ function renderScanner() {
       item.append(order, copy);
       upNextList.append(item);
     }
+    upNextList.scrollTop = scrollTop;
   };
   const renderDetailMode = (mode) => {
     if (display.dataset.scannerMode !== mode) {

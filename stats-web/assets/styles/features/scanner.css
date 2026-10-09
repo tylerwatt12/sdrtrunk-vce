@@ -212,6 +212,16 @@ body[data-view="scanner"] .content {
   min-width: 0;
 }
 
+.scanner-queue-disclosure,
+.scanner-up-next-heading,
+.scanner-up-next-preview {
+  min-width: 0;
+}
+
+.scanner-up-next-preview {
+  display: none;
+}
+
 .scanner-up-next-heading {
   display: flex;
   align-items: center;
@@ -224,6 +234,9 @@ body[data-view="scanner"] .content {
   align-content: start;
   gap: var(--space-4);
   min-height: var(--listening-queue-list-min-height);
+  max-height: var(--listening-queue-list-max-height);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
   margin: var(--space-5) 0;
   padding: 0;
 }
@@ -277,23 +290,6 @@ body[data-view="scanner"] .content {
 
 .scanner-scan-empty {
   grid-column: 1 / -1;
-}
-
-.scanner-queue-panel {
-  width: min(var(--audio-dock-width), calc(100vw - var(--space-4)));
-}
-
-.scanner-queue-list {
-  margin: 0;
-  padding-inline-start: var(--space-5);
-  display: grid;
-  gap: var(--space-2);
-}
-
-.scanner-queue-item strong,
-.scanner-queue-item span {
-  display: block;
-  overflow-wrap: anywhere;
 }
 
 .scanner-list-modal {
@@ -392,6 +388,30 @@ body[data-view="scanner"] .content {
     bottom: var(--scanner-viewport-offset, 0px);
     z-index: var(--audio-dock-layer);
   }
+
+  .scanner-queue-disclosure:not([open]) .scanner-up-next-heading {
+    display: grid;
+    align-content: center;
+    gap: 0;
+  }
+
+  .scanner-up-next-list {
+    min-height: 0;
+    max-height: min(var(--listening-queue-list-max-height), var(--listening-queue-phone-viewport));
+    margin: var(--space-3) 0 0;
+  }
+
+  .scanner-up-next-item {
+    min-height: var(--control-height-comfortable);
+  }
+
+  .scanner-queue-disclosure:not([open]) .scanner-up-next-preview {
+    display: grid;
+  }
+
+  .scanner-up-next-note {
+    display: none;
+  }
 }
 
 @media (max-width: 680px) {
@@ -409,30 +429,6 @@ body[data-view="scanner"] .content {
 
   .scanner-up-next {
     min-height: calc(var(--control-height-comfortable) + var(--space-3) * 2);
-    display: grid;
-    grid-template-columns: max-content minmax(0, 1fr);
-    align-items: center;
-    gap: var(--space-3);
-  }
-
-  .scanner-up-next-heading {
-    display: grid;
-    align-content: center;
-    gap: 0;
-  }
-
-  .scanner-up-next-list {
-    min-height: 0;
-    margin: 0;
-  }
-
-  .scanner-up-next-item {
-    min-height: var(--control-height-comfortable);
-  }
-
-  .scanner-up-next-item:not(:first-child),
-  .scanner-up-next-note {
-    display: none;
   }
 
   .scanner-display[data-scanner-mode="normal"] .scanner-field-grid {
