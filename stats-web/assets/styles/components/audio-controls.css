@@ -1,4 +1,4 @@
-/* Shared audio surfaces and controls, used by the dock and its gallery. */
+/* Shared audio surfaces and controls, used by the dock, Scanner, and gallery. */
 .ui-audio-handle {
   width: 100%;
   min-height: var(--audio-handle-height);
@@ -155,3 +155,42 @@
 .ui-audio-progress::-webkit-progress-value { background: var(--audio-accent); }
 .ui-audio-progress::-moz-progress-bar { background: var(--audio-accent); }
 .ui-audio-range { accent-color: var(--audio-accent); }
+
+.ui-audio-transport-action {
+  width: 100%;
+  min-width: 0;
+  padding-inline: var(--space-2);
+}
+
+.ui-audio-volume-control {
+  min-width: 0;
+  min-height: var(--control-height-comfortable);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--transport-muted);
+  font-size: var(--font-size-label);
+}
+
+.ui-audio-volume-label {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  white-space: nowrap;
+}
+
+.ui-audio-volume-control .ui-audio-range {
+  width: 100%;
+  min-width: 0;
+  height: var(--control-height-comfortable);
+  flex: 1 1 auto;
+  margin: 0;
+  accent-color: var(--transport-accent);
+}
+
+.ui-audio-volume-output {
+  flex: 0 0 var(--audio-volume-output-width);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}

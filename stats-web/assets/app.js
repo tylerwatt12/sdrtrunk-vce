@@ -10828,11 +10828,28 @@ function arrangeScannerPlayback(bar, page, player, signal) {
   ['playback-skip', 'playback-replay', 'playback-hold'].forEach((id) =>
     move(document.getElementById(id), controls));
   controls.append(more);
+  const actions = [...controls.querySelectorAll('button')];
+  actions.forEach((button) => button.classList.add('ui-audio-transport-action'));
   move(document.getElementById('playback-play'), panel);
   move(bar.querySelector('.playback-command-group'), panel);
   move(document.getElementById('playback-clear-queue'), panel);
   transport.append(controls);
-  move(bar.querySelector('.playback-volume'), transport);
+  const volumeControl = bar.querySelector('.playback-volume');
+  const volumeLabel = volumeControl.querySelector('.playback-volume-label');
+  const volumeInput = volumeControl.querySelector('input');
+  const originalVolumeClasses = volumeControl.className;
+  const originalLabelClasses = volumeLabel.className;
+  const originalLabelText = volumeLabel.textContent;
+  const originalInputClasses = volumeInput.className;
+  volumeControl.classList.replace('playback-volume', 'ui-audio-volume-control');
+  volumeLabel.classList.replace('playback-volume-label', 'ui-audio-volume-label');
+  volumeLabel.textContent = 'Volume';
+  volumeInput.classList.add('ui-range', 'ui-audio-range');
+  const volumeOutput = node('output', 'ui-audio-volume-output');
+  volumeOutput.htmlFor = volumeInput.id;
+  volumeOutput.setAttribute('aria-hidden', 'true');
+  volumeControl.append(volumeOutput);
+  move(volumeControl, transport);
   bar.prepend(transport);
   bar.append(panel);
   const closeDropdown = bindAnchoredDropdown(more, panel, signal, {
@@ -10846,6 +10863,8 @@ function arrangeScannerPlayback(bar, page, player, signal) {
         'Pause audio and keep collecting calls (queue is limited)');
     primary.disabled = !capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO);
     document.getElementById('playback-play').hidden = state.stopped;
+    const volume = Number.isFinite(Number(state.volume)) ? Number(state.volume) : Number(volumeInput.value);
+    volumeOutput.textContent = `${Math.round(Math.max(0, Math.min(1, volume)) * 100)}%`;
   };
   const unsubscribe = player.subscribeState(draw);
   const updateViewport = () => {
@@ -10867,7 +10886,14 @@ function arrangeScannerPlayback(bar, page, player, signal) {
     observer.disconnect();
     unsubscribe();
     closeDropdown();
+    actions.forEach((button) => button.classList.remove('ui-audio-transport-action'));
+    volumeOutput.remove();
+    volumeControl.className = originalVolumeClasses;
+    volumeLabel.className = originalLabelClasses;
+    volumeLabel.textContent = originalLabelText;
+    volumeInput.className = originalInputClasses;
     moved.forEach(({ element, marker }) => marker.replaceWith(element));
+    player.renderVolume();
     document.getElementById('playback-play').hidden = false;
     transport.remove();
     panel.remove();

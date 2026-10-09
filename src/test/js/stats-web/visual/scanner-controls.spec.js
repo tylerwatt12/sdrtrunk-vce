@@ -6,10 +6,42 @@ const { pathToFileURL } = require('node:url');
 const { installSiteStyleApplication } = require('./fixtures/site-style-app.cjs');
 const { openAudioApp } = require('./fixtures/audio-dock-app.cjs');
 
+async function expectFullWidthScannerActions(page) {
+  const controls = page.locator('.scanner-playback-controls');
+  const row = await controls.boundingBox();
+  const bar = await page.locator('#playback-bar').boundingBox();
+  const padding = await page.locator('#playback-bar').evaluate(element => {
+    const style = getComputedStyle(element);
+    return { left: parseFloat(style.paddingLeft), right: parseFloat(style.paddingRight) };
+  });
+  expect(row.x).toBeCloseTo(bar.x + padding.left, 1);
+  expect(row.x + row.width).toBeCloseTo(bar.x + bar.width - padding.right, 1);
+  const buttons = await controls.locator(':scope > button').evaluateAll(elements =>
+    elements.map(element => {
+      const box = element.getBoundingClientRect();
+      const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+      return { left: box.left, right: box.right, width: box.width, height: box.height,
+        reachable: Boolean(hit && element.contains(hit)) };
+    }));
+  expect(buttons).toHaveLength(5);
+  expect(buttons[0].left).toBeCloseTo(row.x, 1);
+  expect(buttons.at(-1).right).toBeCloseTo(row.x + row.width, 1);
+  for (const button of buttons) {
+    expect(button.width).toBeCloseTo((row.width - 4 * 8) / 5, 1);
+    expect(button.height).toBeGreaterThanOrEqual(40);
+    expect(button.reachable).toBe(true);
+  }
+  for (let index = 1; index < buttons.length; index += 1) {
+    expect(buttons[index].left - buttons[index - 1].right).toBeCloseTo(8, 1);
+  }
+}
+
 for (const [theme, viewport] of [
   ['light', { width: 1280, height: 900 }],
   ['dark', { width: 390, height: 844 }],
+  ['light', { width: 390, height: 844 }],
   ['light', { width: 320, height: 568 }],
+  ['dark', { width: 320, height: 568 }],
   ['dark', { width: 844, height: 390 }]
 ]) {
   test(`Scanner controls ${theme} ${viewport.width}`, async ({ page }) => {
@@ -93,23 +125,10 @@ for (const [theme, viewport] of [
     if (viewport.width <= 680) {
       const bar = await page.locator('#playback-bar').boundingBox();
       expect(bar.y + bar.height).toBe(viewport.height);
-      const volume = await page.locator('.scanner-playback-transport .playback-volume').boundingBox();
+      const volume = await page.locator('.scanner-playback-transport .ui-audio-volume-control').boundingBox();
       const queue = await page.locator('.playback-queue').boundingBox();
       expect(volume.x + volume.width).toBeLessThanOrEqual(queue.x - 1);
-      const controls = await page.locator('.scanner-playback-controls > button').evaluateAll(elements =>
-        elements.map(element => {
-          const box = element.getBoundingClientRect();
-          const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
-          return { left: box.left, right: box.right, reachable: Boolean(hit && element.contains(hit)) };
-        }));
-      for (const control of controls) {
-        expect(control.left).toBeGreaterThanOrEqual(bar.x);
-        expect(control.right).toBeLessThanOrEqual(bar.x + bar.width);
-        expect(control.reachable).toBe(true);
-      }
-      for (let index = 1; index < controls.length; index += 1) {
-        expect(controls[index].left - controls[index - 1].right).toBe(8);
-      }
+      await expectFullWidthScannerActions(page);
       const reserve = await page.locator('.scanner-page').evaluate(element =>
         parseFloat(getComputedStyle(element).paddingBottom));
       expect(reserve).toBeGreaterThan(bar.height);
@@ -183,6 +202,50 @@ test('Scanner scan-list loading, retry and selection limit', async ({ page }) =>
   expect(fixture.pageErrors).toEqual([]);
 });
 
+for (const theme of ['light', 'dark']) {
+  for (const width of [320, 390]) {
+    test(`Scanner native volume ${theme} ${width}`, async ({ page }) => {
+      await page.setViewportSize({ width, height: width === 320 ? 568 : 844 });
+      const state = await openAudioApp(page, { view: 'scanner', theme, volume: 0.75, feedCallsEnabled: false });
+      const volume = page.locator('#playback-volume');
+      const output = page.locator('.ui-audio-volume-output');
+      await expect(volume).toHaveClass(/ui-range ui-audio-range/);
+      await expect(page.locator('.ui-audio-volume-label')).toHaveText('Volume');
+      await expect(output).toHaveText('75%');
+      await expectFullWidthScannerActions(page);
+      const bounds = await volume.boundingBox();
+      expect(bounds.height).toBe(40);
+      await expect(page.locator('.ui-audio-volume-control')).toHaveCSS('background-image', 'none');
+      await volume.click({ position: { x: bounds.width / 2, y: bounds.height / 2 } });
+      await expect(volume).toHaveValue('0.5');
+      await expect(output).toHaveText('50%');
+      await volume.press('ArrowRight');
+      await expect(volume).toHaveValue('0.55');
+      await expect(output).toHaveText('55%');
+      await expect(volume).toHaveAttribute('aria-valuetext', '55 percent');
+      await expect.poll(() => state.preferenceWrites.at(-1)?.playback?.volume).toBe(0.55);
+      await page.reload();
+      await expect(volume).toHaveValue('0.55');
+      await expect(output).toHaveText('55%');
+      await page.screenshot({ path: test.info().outputPath(`scanner-proportions-${theme}-${width}.png`) });
+      const input = await volume.elementHandle();
+      await page.locator('.brand').click();
+      await expect(page.locator('body')).toHaveAttribute('data-view', 'dashboard');
+      expect(await input.evaluate(element => element.isConnected)).toBe(true);
+      expect(await input.evaluate(element => element.parentElement.className)).toBe('playback-volume');
+      expect(await input.evaluate(element => element.className)).toBe('');
+      expect(await input.evaluate(element => element.value)).toBe('0.55');
+      expect(await input.evaluate(element => element.getAttribute('aria-valuetext'))).toBe('55 percent');
+      await expect(page.locator('.ui-audio-volume-output')).toHaveCount(0);
+      await expect(page.locator('.playback-volume-label')).toHaveText('VOL');
+      await page.locator('.primary-nav a[data-view="scanner"]').evaluate(element => element.click());
+      await expect(output).toHaveCount(1);
+      await expect(output).toHaveText('55%');
+      expect(await input.evaluate(element => element.isConnected)).toBe(true);
+    });
+  }
+}
+
 test.describe('Landscape phone playback', () => {
   test.use({ hasTouch: true, isMobile: true, viewport: { width: 844, height: 390 } });
   test('keeps the transport at the bottom in a short coarse-pointer viewport', async ({ page }) => {
@@ -193,12 +256,14 @@ test.describe('Landscape phone playback', () => {
     const bar = await page.locator('#playback-bar').boundingBox();
     expect(bar.y + bar.height).toBe(390);
     expect(await page.locator('#playback-bar').evaluate(element => getComputedStyle(element).position)).toBe('fixed');
-    const volume = await page.locator('.scanner-playback-transport .playback-volume').boundingBox();
+    const volume = await page.locator('.scanner-playback-transport .ui-audio-volume-control').boundingBox();
     const queue = await page.locator('.playback-queue').boundingBox();
     expect(volume.x + volume.width).toBeLessThan(queue.x);
+    await expectFullWidthScannerActions(page);
     const reserve = await page.locator('.scanner-page').evaluate(element =>
       parseFloat(getComputedStyle(element).paddingBottom));
     expect(reserve).toBeGreaterThan(bar.height);
+    await page.screenshot({ path: test.info().outputPath('scanner-coarse-landscape.png') });
   });
 });
 

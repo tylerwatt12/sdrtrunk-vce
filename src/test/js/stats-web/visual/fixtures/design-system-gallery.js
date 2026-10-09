@@ -1138,6 +1138,13 @@ if (view === 'activity-filters' || view === 'scanner') {
     bindVisualAnchoredPopover('.scanner-playback-more-trigger', '#visual-scanner-more');
     const scannerPage = document.querySelector('.visual-scanner-example .scanner-page');
     const scannerBar = scannerPage.querySelector('.playback-bar');
+    const volume = scannerBar.querySelector('.ui-audio-range');
+    const volumeOutput = scannerBar.querySelector('.ui-audio-volume-output');
+    volume.addEventListener('input', () => {
+      const percent = Math.round(Number(volume.value) * 100);
+      volume.setAttribute('aria-valuetext', `${percent} percent`);
+      volumeOutput.textContent = `${percent}%`;
+    });
     const reserveControls = () => scannerPage.style.setProperty('--scanner-playback-height', `${scannerBar.offsetHeight}px`);
     new ResizeObserver(reserveControls).observe(scannerBar);
     reserveControls();
