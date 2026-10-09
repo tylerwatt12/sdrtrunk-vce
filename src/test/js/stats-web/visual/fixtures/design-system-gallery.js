@@ -1148,6 +1148,24 @@ if (view === 'activity-filters' || view === 'scanner') {
     const reserveControls = () => scannerPage.style.setProperty('--scanner-playback-height', `${scannerBar.offsetHeight}px`);
     new ResizeObserver(reserveControls).observe(scannerBar);
     reserveControls();
+    if (parameters.get('state') === 'idle') {
+      const display = scannerPage.querySelector('.scanner-display');
+      const height = display.getBoundingClientRect().height;
+      display.classList.add('is-idle', 'ui-content-idle');
+      display.querySelectorAll('.scanner-call-kind, .scanner-call-title, .scanner-call-subtitle, ' +
+        '.scanner-field-value, .scanner-field-link').forEach(value => {
+        value.style.minHeight = `${value.getBoundingClientRect().height}px`;
+        value.textContent = value.classList.contains('scanner-call-title') ? 'Waiting for a call' : '—';
+      });
+      display.querySelectorAll('button').forEach(button => { button.disabled = true; });
+      display.querySelectorAll('.scanner-quality-bars i').forEach(bar => bar.classList.remove('active'));
+      display.querySelector('.scanner-quality-bars').setAttribute('aria-label', 'Voice quality not measured');
+      display.querySelector('.scanner-audio-wave').classList.add('paused');
+      display.querySelector('.scanner-audio-wave').setAttribute('aria-label', 'Voice spectrum idle');
+      display.querySelectorAll('.scanner-audio-wave i').forEach(bar => { bar.style.height = '3px'; });
+      display.style.minHeight = `${height}px`;
+      scannerPage.querySelector('.scanner-relative-age').textContent = 'Waiting for a call';
+    }
   }
 }
 if(view === 'access-landing' || view === 'access-login-modal') {

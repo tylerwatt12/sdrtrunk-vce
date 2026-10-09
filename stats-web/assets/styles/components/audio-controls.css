@@ -162,13 +162,18 @@
   padding-inline: var(--space-2);
 }
 
+.ui-audio-transport-inline {
+  --playback-surface: transparent;
+  --playback-rule: transparent;
+}
+
 .ui-audio-volume-control {
   min-width: 0;
   min-height: var(--control-height-comfortable);
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  color: var(--transport-muted);
+  color: var(--audio-volume-text, var(--transport-muted));
   font-size: var(--font-size-label);
 }
 
@@ -186,7 +191,7 @@
   height: var(--control-height-comfortable);
   flex: 1 1 auto;
   margin: 0;
-  accent-color: var(--transport-accent);
+  accent-color: var(--audio-volume-accent, var(--transport-accent));
 }
 
 .ui-audio-volume-output {

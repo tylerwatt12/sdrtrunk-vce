@@ -37,7 +37,7 @@ import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, di
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=3';
-import { createAudioDock } from './core/audio-dock.js?v=15';
+import { createAudioDock } from './core/audio-dock.js?v=16';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=4';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=14';
@@ -10792,6 +10792,7 @@ function placePlaybackBar() {
 }
 
 function arrangeScannerPlayback(bar, page, player, signal) {
+  bar.classList.add('ui-audio-transport-inline');
   const transport = node('div', 'scanner-playback-transport');
   const controls = node('div', 'scanner-playback-controls');
   controls.setAttribute('role', 'group');
@@ -10897,6 +10898,7 @@ function arrangeScannerPlayback(bar, page, player, signal) {
     document.getElementById('playback-play').hidden = false;
     transport.remove();
     panel.remove();
+    bar.classList.remove('ui-audio-transport-inline');
     bar.style.removeProperty('--scanner-viewport-offset');
   };
   signal?.addEventListener('abort', cleanup, { once: true });
@@ -11027,6 +11029,7 @@ function synchronizePlaybackAccess(accessChanged = false) {
 const SCANNER_DETAIL_LEVELS = Object.freeze({ simple: 0, normal: 1, advanced: 2, engineer: 3 });
 const SCANNER_CHANNEL_CACHE_LIMIT = 64;
 const scannerChannelCache = new Map();
+const scannerCallTemplates = new WeakMap();
 let scannerDetailMode = 'normal';
 let scannerDetailModeRenderer = null;
 let pendingScannerDetailMode = null;
@@ -11278,8 +11281,14 @@ function scannerCallRenderKey(call, state, site) {
 }
 
 function renderScannerCall(host, state, channelMetadata) {
-  const call = state.displayCall || state.current;
-  const renderKey = scannerCallRenderKey(call, state, channelMetadata);
+  const displayedCall = state.displayCall || state.current;
+  const idle = !displayedCall;
+  if (displayedCall) scannerCallTemplates.set(host, { call: displayedCall, channel: channelMetadata });
+  const template = scannerCallTemplates.get(host);
+  const call = displayedCall || template?.call || { target_alias: '—', source_alias: '—' };
+  if (idle) channelMetadata = template?.channel || null;
+  const renderKey = scannerCallRenderKey(displayedCall, state, channelMetadata) +
+    (idle ? `:${Math.round(host.clientWidth)}` : '');
   const detailLevel = scannerDetailLevel();
   host.dataset.scannerMode = scannerDetailMode;
   if (host.dataset.renderKey === renderKey && host.childNodes.length) {
@@ -11291,17 +11300,10 @@ function renderScannerCall(host, state, channelMetadata) {
     return;
   }
   host.dataset.renderKey = renderKey;
-  host.classList.toggle('is-idle', !call);
+  host.classList.toggle('is-idle', idle);
+  host.classList.toggle('ui-content-idle', idle);
+  host.style.removeProperty('min-height');
   host.replaceChildren();
-  if (!call) {
-    const idle = node('div', 'scanner-idle');
-    idle.append(node('strong', '', state.stopped ? 'Ready to listen' : state.paused ? 'Playback paused' : 'Scanning selected lists'),
-      node('span', '', state.paused ? 'Calls continue queuing. Press Resume to listen; older calls may expire.' :
-        state.stopped ? 'Press Play to receive completed calls.' :
-        'The next matching completed call will appear here.'));
-    host.append(idle);
-    return;
-  }
 
   const intro = node('div', 'scanner-call-intro');
   const copy = node('div');
@@ -11323,6 +11325,8 @@ function renderScannerCall(host, state, channelMetadata) {
 
   const fields = node('div', 'scanner-field-grid');
   const open = (destination) => () => scannerNavigate(call, channelMetadata, destination);
+  const field = (label, value, level, action, wide = false) =>
+    scannerField(label, idle && !template ? '—' : value, level, action, wide);
   const participants = node('div', 'scanner-participant-grid');
   const visibleParticipants = [];
   if (!analog && detailLevel >= SCANNER_DETAIL_LEVELS.normal) {
@@ -11339,16 +11343,16 @@ function renderScannerCall(host, state, channelMetadata) {
   const nac = scannerIsP25(call) ? scannerHex(call.nac, 3) : '';
   const modulation = channelMetadata?.p25_decoder_mode || call.modulation || '';
   [
-    scannerField('Matched Scan Lists', scannerMatchedScanLists(call, state), 1),
-    scannerField('Channel', call.channel, 1, open('channel')),
-    scannerField('Frequency', scannerFrequency(call), 1, open('frequency')),
-    scannerField('System', systemName, 2, open('system')),
-    scannerField('Site', call.site, 2, open('site')),
-    scannerField('Network / Site', networkSiteIdentity, 2, open('site'), true),
-    scannerField('NAC', nac, 2, open('identifier')),
-    scannerField('LCN', call.lcn, 2, open('lcn')),
-    scannerField('Decoder', call.decoder, 2, open('decoder')),
-    scannerField('Modulation', modulation ? `${modulation} · configured` : '', 2, open('decoder'))
+    field('Matched Scan Lists', scannerMatchedScanLists(call, state), 1),
+    field('Channel', call.channel, 1, open('channel')),
+    field('Frequency', scannerFrequency(call), 1, open('frequency')),
+    field('System', systemName, 2, open('system')),
+    field('Site', call.site, 2, open('site')),
+    field('Network / Site', networkSiteIdentity, 2, open('site'), true),
+    field('NAC', nac, 2, open('identifier')),
+    field('LCN', call.lcn, 2, open('lcn')),
+    field('Decoder', call.decoder, 2, open('decoder')),
+    field('Modulation', modulation ? `${modulation} · configured` : '', 2, open('decoder'))
   ].filter(Boolean).forEach((field) => fields.append(field));
 
   const engineer = node('div', 'scanner-engineer-grid');
@@ -11371,6 +11375,27 @@ function renderScannerCall(host, state, channelMetadata) {
   if (participants.childNodes.length) host.append(participants);
   if (fields.childNodes.length) host.append(fields);
   if (engineer.childNodes.length) host.append(engineer);
+  if (idle) {
+    const height = host.getBoundingClientRect().height;
+    const values = [...host.querySelectorAll('.scanner-call-kind, .scanner-call-title, .scanner-call-subtitle, ' +
+      '.scanner-field-value, .scanner-field-link, .scanner-engineer-item strong, .ui-metric-copy > strong')];
+    [...host.querySelectorAll('.scanner-call-intro, .scanner-participant-grid, .scanner-participant, ' +
+      '.scanner-participant-fields, .scanner-field-grid, .scanner-field, .scanner-engineer-grid, ' +
+      '.scanner-engineer-item, .ui-metric'), ...values]
+      .map(element => ({ element, height: element.getBoundingClientRect().height }))
+      .forEach(({ element, height: elementHeight }) => { element.style.minHeight = `${elementHeight}px`; });
+    values.forEach((value) => {
+      value.textContent = value.classList.contains('scanner-call-title') ?
+        (state.stopped ? 'Ready to listen' : state.paused ? 'Playback paused' : 'Waiting for a call') : '—';
+    });
+    host.querySelectorAll('button').forEach((button) => { button.disabled = true; });
+    host.querySelectorAll('.scanner-quality-bars i').forEach((bar) => bar.classList.remove('active'));
+    host.querySelector('.scanner-quality-bars')?.setAttribute('aria-label', 'Voice quality not measured');
+    const wave = host.querySelector('.scanner-audio-wave');
+    wave?.classList.add('paused');
+    wave?.setAttribute('aria-label', 'Voice spectrum idle');
+    host.style.minHeight = `${height}px`;
+  }
 }
 
 function openPlaybackAvoidList(player = webCallPlayer) {
@@ -11527,8 +11552,8 @@ function renderScanner() {
   const playbackStatus = node('strong', 'ui-pill scanner-live-status', 'Ready');
   const age = node('output', 'scanner-relative-age', 'Time unavailable');
   statusCopy.append(node('span', 'scanner-section-label', 'Now Playing'), playbackStatus);
-  statusBar.append(statusCopy, age);
   const playerHost = node('div', 'scanner-player-host');
+  statusBar.append(statusCopy, playerHost, age);
   const consoleMain = node('div', 'scanner-console-main');
   const nowPlaying = node('section', 'scanner-now-playing');
   nowPlaying.setAttribute('aria-label', 'Now playing');
@@ -11576,7 +11601,7 @@ function renderScanner() {
   bindAnchoredDropdown(scanTrigger, scanPanel, renderContext.signal);
 
   consoleMain.append(nowPlaying);
-  chassis.append(statusBar, playerHost, consoleMain);
+  chassis.append(statusBar, consoleMain);
   page.append(chassis);
   const heading = pageHeader('Scanner', 'Listen to completed calls from this receiver');
   const headingActions = node('div', 'scanner-header-actions');
@@ -11682,7 +11707,7 @@ function renderScanner() {
   const draw = (state) => {
     latestState = state;
     const nextCallId = String((state.displayCall || state.current)?.call_id || '');
-    if (nextCallId !== displayedCallId) page.style.minHeight = '';
+    if (nextCallId && nextCallId !== displayedCallId) page.style.minHeight = '';
     displayedCallId = nextCallId;
     const nextConfigurationId = String((state.displayCall || state.current)?.configuration_id || '');
     const channelChanged = nextConfigurationId !== currentConfigurationId;
@@ -11710,6 +11735,11 @@ function renderScanner() {
   };
   const unsubscribe = player.subscribeState(draw);
   renderContext.signal?.addEventListener('abort', unsubscribe, { once: true });
+  const idleLayoutObserver = new ResizeObserver(() => {
+    if (display.classList.contains('is-idle')) renderScannerCall(display, latestState, currentChannel);
+  });
+  idleLayoutObserver.observe(display);
+  renderContext.signal?.addEventListener('abort', () => idleLayoutObserver.disconnect(), { once: true });
   const spectrumLevels = new Float32Array(64);
   let spectrumFrame = null;
   const drawSpectrum = () => {

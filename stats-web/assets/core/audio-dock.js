@@ -272,7 +272,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const animatePresentation = (from, to, template, target) => {
     if (reducedMotion.matches || !from.width || !from.height || !to.width || !to.height) return;
     const tokens = getComputedStyle(document.documentElement);
-    const durationToken = tokens.getPropertyValue('--audio-presentation-motion-duration').trim();
+    const durationToken = tokens.getPropertyValue(target === restore ?
+      '--audio-presentation-collapse-motion-duration' : '--audio-presentation-motion-duration').trim();
     const duration = Number.parseFloat(durationToken) * (durationToken.endsWith('ms') ? 1 : 1_000);
     const easing = tokens.getPropertyValue('--audio-presentation-motion-easing').trim();
     if (!Number.isFinite(duration) || duration <= 0 || !easing) return;

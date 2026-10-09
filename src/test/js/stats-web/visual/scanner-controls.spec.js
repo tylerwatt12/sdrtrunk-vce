@@ -4,7 +4,7 @@ const { test, expect } = require('@playwright/test');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { installSiteStyleApplication } = require('./fixtures/site-style-app.cjs');
-const { openAudioApp } = require('./fixtures/audio-dock-app.cjs');
+const { openAudioApp, liveCall } = require('./fixtures/audio-dock-app.cjs');
 
 async function expectFullWidthScannerActions(page) {
   const controls = page.locator('.scanner-playback-controls');
@@ -34,6 +34,19 @@ async function expectFullWidthScannerActions(page) {
   for (let index = 1; index < buttons.length; index += 1) {
     expect(buttons[index].left - buttons[index - 1].right).toBeCloseTo(8, 1);
   }
+}
+
+async function expectCompactDesktopScannerActions(page) {
+  const widths = await page.locator('.scanner-playback-controls > button').evaluateAll(buttons =>
+    buttons.map(button => button.getBoundingClientRect().width));
+  expect(widths).toEqual([40, 40, 40, 40, 64]);
+  const volume = await page.locator('.scanner-playback-transport .ui-audio-volume-control').boundingBox();
+  expect(volume.width).toBe(220);
+  const status = await page.locator('.scanner-status-copy').boundingBox();
+  const transport = await page.locator('.scanner-playback-transport').boundingBox();
+  expect(status.x + status.width).toBeLessThanOrEqual(transport.x);
+  expect(Math.abs(status.y + status.height / 2 - transport.y - transport.height / 2)).toBeLessThanOrEqual(8);
+  expect(await page.locator('#playback-bar').evaluate(element => element.offsetHeight)).toBeLessThanOrEqual(64);
 }
 
 for (const [theme, viewport] of [
@@ -73,6 +86,7 @@ for (const [theme, viewport] of [
       await expect(page.locator(`#${id}`)).toBeVisible();
     }
     await expect(page.locator('#playback-queued')).toBeVisible();
+    if (viewport.width >= 1181) await expectCompactDesktopScannerActions(page);
     await page.screenshot({ path: test.info().outputPath(`scanner-${theme}-${viewport.width}.png`), fullPage: true });
     await expect(page.locator('.scanner-scan-rail')).toHaveCount(0);
     await page.locator('.scanner-scan-trigger').click();
@@ -323,3 +337,117 @@ test('Revoked call-audio access closes selection and blocks stale checkbox event
   });
   expect(state.preferenceWrites.length).toBe(writes);
 });
+
+for (const [theme, viewport, mode] of [
+  ['light', { width: 1280, height: 900 }, 'normal'],
+  ['dark', { width: 1280, height: 900 }, 'engineer'],
+  ['light', { width: 390, height: 844 }, 'normal'],
+  ['dark', { width: 390, height: 844 }, 'engineer'],
+  ['light', { width: 320, height: 568 }, 'simple'],
+  ['dark', { width: 320, height: 568 }, 'advanced']
+]) {
+  test(`Scanner idle preserves call space ${theme} ${viewport.width} ${mode}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.clock.install();
+    await openAudioApp(page, { view: 'scanner', theme, feedCallsEnabled: false });
+    const pending = [];
+    let cursor = 0;
+    await page.route('**/api/v1/calls/feed*', route => route.fulfill({ json: {
+      data: { cursor: String(++cursor), reset: false, calls: pending.splice(0) }
+    } }));
+    await page.getByRole('combobox', { name: 'Scanner detail level', exact: true }).selectOption(mode);
+    const display = page.locator('.scanner-display');
+    await expect(display.getByText('Source', { exact: true })).toBeVisible();
+    await expect(display.locator('.scanner-audio-wave')).toHaveCount(mode === 'simple' ? 0 : 1);
+    await expect(display.getByText('Target', { exact: true })).toHaveCount(mode === 'simple' ? 0 : 1);
+    await expect(display.getByText('Call Quality', { exact: true })).toHaveCount(mode === 'engineer' ? 1 : 0);
+    await expect(display.locator('button:enabled, a[href]')).toHaveCount(0);
+    if (viewport.width >= 1181) await expectCompactDesktopScannerActions(page);
+    else await expectFullWidthScannerActions(page);
+
+    const call = { ...liveCall,
+      call_id: `idle-density-${theme}-${viewport.width}-${mode}`,
+      target_alias: 'County Fire Dispatch and Emergency Operations Coordination',
+      source_alias: 'Engine 4 — Regional Emergency Response Unit',
+      channel: 'North Ridge Regional Emergency Operations Simulcast Channel',
+      system: 'Metropolitan Public Safety Interoperability Network', site: 'North Ridge Simulcast',
+      protocol: 'APCO25_PHASE2', wacn: 1, system_id: 1, rfss_id: 1, site_id: 2, nac: 293,
+      source_description: 'Regional fire engine response crew', source_group: 'Field units',
+      target_description: 'County fire dispatch operations', target_group: 'Fire',
+      vc_quality_pct: 100, vc_decoded_frames: 100, vc_repeated_frames: 0,
+      vc_concealed_frames: 0, vc_missing_frames: 0, vc_fec_errors: 0, vc_fec_protected_bits: 6400
+    };
+    pending.push(call);
+    await page.locator('.scanner-playback-primary').click();
+    await expect(page.locator('.scanner-call-title')).toHaveText(call.target_alias);
+    await expect.poll(() => page.evaluate(() =>
+      window.audioTest.liveSources.filter(source => source.active).length)).toBe(1);
+    expect(await display.locator('button:enabled').count()).toBeGreaterThan(0);
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    const before = await display.evaluate(element => {
+      const host = element.getBoundingClientRect();
+      const sections = [...element.children].map(section => {
+        const box = section.getBoundingClientRect();
+        return { name: section.className, top: box.top - host.top, width: box.width, height: box.height };
+      });
+      return { height: host.height, sections, scrollY: window.scrollY };
+    });
+    await page.evaluate(() => {
+      const source = window.audioTest.liveSources.find(value => value.active);
+      if (!source?.onended) throw new Error('Expected an active fixture call to complete.');
+      source.active = false;
+      source.onended();
+    });
+    await expect.poll(() => page.evaluate(() =>
+      window.audioTest.liveSources.filter(source => source.active).length)).toBe(0);
+    await expect(page.locator('.scanner-call-title')).toHaveText(call.target_alias);
+    await page.clock.fastForward(5_001);
+    await expect(display).not.toContainText(call.target_alias);
+    await expect(display).not.toContainText(call.source_alias);
+    await expect(display).not.toContainText(call.channel);
+    await expect(display).not.toContainText('851.01250 MHz');
+    await expect(display.locator('button:enabled, a[href]')).toHaveCount(0);
+    const idle = await display.evaluate(element => {
+      const host = element.getBoundingClientRect();
+      const sections = [...element.children].map(section => {
+        const box = section.getBoundingClientRect();
+        return { name: section.className, top: box.top - host.top, width: box.width, height: box.height };
+      });
+      return { height: host.height, sections, scrollY: window.scrollY };
+    });
+    expect(idle.height).toBeCloseTo(before.height, 1);
+    expect(idle.sections).toHaveLength(before.sections.length);
+    for (let index = 0; index < before.sections.length; index += 1) {
+      for (const dimension of ['top', 'width', 'height']) {
+        expect(idle.sections[index][dimension],
+          `${mode} ${before.sections[index].name} ${dimension}`).toBeCloseTo(before.sections[index][dimension], 1);
+      }
+    }
+    expect(idle.scrollY).toBe(before.scrollY);
+    const placeholders = await display.locator(
+      '.scanner-field-link, .scanner-field-value, .scanner-engineer-item strong').allTextContents();
+    expect(placeholders.length).toBeGreaterThan(0);
+    expect(placeholders.every(value => value.trim() === '—')).toBe(true);
+    await page.mouse.move(0, 0);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: test.info().outputPath(
+      `scanner-idle-${theme}-${viewport.width}-${mode}.png`) });
+    await page.screenshot({ path: test.info().outputPath(
+      `scanner-idle-full-${theme}-${viewport.width}-${mode}.png`), fullPage: true });
+    await page.locator('.scanner-playback-more-trigger').click();
+    await page.getByRole('dialog', { name: 'More playback controls', exact: true })
+      .getByRole('button', { name: 'Stop browser call audio', exact: true }).click();
+    await expect(display).not.toContainText(call.target_alias);
+    expect(await display.evaluate(element => element.getBoundingClientRect().height)).toBeCloseTo(before.height, 1);
+    pending.push({ ...call, call_id: `${call.call_id}-next`,
+      target_alias: 'Next dispatch call', source_alias: 'Engine 5',
+      started_at_ms: call.started_at_ms + 60_000, completed_at_ms: call.completed_at_ms + 60_000 });
+    await page.locator('.scanner-playback-primary').click();
+    await expect(page.locator('.scanner-call-title')).toHaveText('Next dispatch call');
+    const navigation = display.locator('.scanner-field-link:enabled').first();
+    await expect(navigation).toBeEnabled();
+    await navigation.click();
+    await expect(page.getByRole('dialog', { name: 'Details unavailable', exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
+  });
+}

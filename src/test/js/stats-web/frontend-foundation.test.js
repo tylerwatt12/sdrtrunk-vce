@@ -1464,7 +1464,7 @@ async function main() {
   assert.match(functionBinding(appSource, 'scannerParticipant'),
     /scannerField\('ID', alias \? identifier : null, 2/,
     'Advanced Scanner mode must add raw identifiers without duplicating fallback identities');
-  assert.match(scannerCallRenderer, /scannerField\('Decoder', call\.decoder, 2/,
+  assert.match(scannerCallRenderer, /field\('Decoder', call\.decoder, 2/,
     'Advanced Scanner mode must add decoder diagnostics');
   assert.match(scannerCallRenderer, /scannerDetailMode === 'engineer'[\s\S]*scannerCallQuality\(call\)/,
     'Engineer Scanner mode must retain raw call-quality diagnostics');

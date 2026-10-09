@@ -61,6 +61,23 @@ for (const view of galleryViews) {
 }
 
 for (const { theme, name, viewport } of presentations) {
+  test(`gallery Scanner idle preserves call space ${name}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto(`/design-system.html?view=scanner&theme=${theme}`);
+    const display = page.locator('.visual-scanner-example .scanner-display');
+    const activeHeight = (await display.boundingBox()).height;
+    await page.goto(`/design-system.html?view=scanner&theme=${theme}&state=idle`);
+    await expect(display.locator('.scanner-call-title')).toHaveText('Waiting for a call');
+    expect((await display.boundingBox()).height).toBeCloseTo(activeHeight, 1);
+    await expect(display.locator('.scanner-field-link:enabled')).toHaveCount(0);
+    await expectNoHorizontalOverflow(page);
+    if (process.env.STYLE_AUDIT_ASSERTIONS_ONLY !== '1') {
+      await expect(page.locator('.visual-scanner-example')).toHaveScreenshot(`scanner-idle-${name}.png`);
+    }
+  });
+}
+
+for (const { theme, name, viewport } of presentations) {
   test(`shared controls preserve typography and interaction states ${name}`, async ({ page }) => {
     await page.setViewportSize(viewport);
     await page.goto(`/design-system.html?view=control-states&theme=${theme}`);

@@ -446,14 +446,20 @@ test('minimize and expand animate between panel and header without changing audi
     const motion = await page.evaluate((label) => {
       document.querySelector(`button[aria-label="${label}"]`).click();
       const ghost = document.querySelector('.audio-dock-motion');
-      const frames = ghost.getAnimations()[0].effect.getKeyframes();
+      const effect = ghost.getAnimations()[0].effect;
+      const frames = effect.getKeyframes();
+      const target = document.querySelector(label === 'Hide audio player' ?
+        '.ui-audio-header-restore' : '.audio-dock');
       return { inert: ghost.inert, hidden: ghost.getAttribute('aria-hidden'),
-        ids: ghost.querySelectorAll('[id]').length, frames: frames.map((frame) => frame.transform) };
+        ids: ghost.querySelectorAll('[id]').length, frames: frames.map((frame) => frame.transform),
+        durations: [effect.getTiming().duration, target.getAnimations()[0].effect.getTiming().duration] };
     }, name);
     expect(motion.inert).toBe(true);
     expect(motion.hidden).toBe('true');
     expect(motion.ids).toBe(0);
     expect(motion.frames[0]).not.toBe(motion.frames[1]);
+    const duration = name === 'Hide audio player' ? 600 : 320;
+    expect(motion.durations).toEqual([duration, duration]);
     await expect(page.locator('.audio-dock-motion')).toHaveCount(0);
     expect(await page.evaluate(() => window.audioTest.recordings)).toEqual(transport);
     expect(state.preferenceWrites).toEqual(writes);
