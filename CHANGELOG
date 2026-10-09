@@ -1,3 +1,8 @@
+Historical upstream sdrtrunk changelog
+
+The entries below describe older upstream releases, not current VCE requirements or features.
+For VCE release notes and downloads, see https://github.com/tylerwatt12/sdrtrunk-vce/releases
+
 0.4.0 20200404
  - Release includes embedded Java 14 & JavaFX 13 runtime
  - Adds Polyphase Channelizer with 2x channel oversampling and redesigned source management

@@ -1,7 +1,12 @@
 # SQLite Activity Database Guidelines
 
-These rules apply to SDRTrunk statistics, activity history, site state, and website-facing SQLite data. The database is
-part of the receiver hot path and may grow for months on small nodes, so storage and query cost are product constraints.
+This is a technical reference for maintaining VCE's statistics, activity history, site state, and web data. It explains
+how to keep storage bounded and queries responsive during continuous receiving. For setup, backups, and everyday
+use, start with the [documentation guide](README.md) and [portable startup and storage guide](portable-startup-and-storage.md).
+
+Activity storage uses a bounded queue and background writer. Real-time receiver callbacks never wait for SQLite.
+The database may grow for months on small computers, so storage, background write cost, and query cost are product
+constraints.
 
 ## Required Purpose Before Schema Growth
 
@@ -76,8 +81,9 @@ rows when counters in an existing talkgroup, site, frequency, or time bucket ans
   number alone is not globally unique.
 - Keep chart payloads coarse and predictable. Zero-fill missing buckets in the bounded API response rather than storing
   empty database rows.
-- Do not make dashboard requests scan detailed event history. Dashboards and directory pages must use summaries and
-  buckets only.
+- Use summaries and buckets for dashboard totals, charts, and directory activity. Do not scan unrelated detailed
+  history. The existing action-specific radio ranking and historical Alias evidence paths below document their
+  bounded, indexed exceptions.
 
 ### Alias Editor large-list indexes
 

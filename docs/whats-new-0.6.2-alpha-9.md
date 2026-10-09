@@ -1,5 +1,8 @@
 # What’s New in sdrtrunk-vce 0.6.2 Alpha 9
 
+> **Historical release notes:** These instructions describe 0.6.2-alpha-9, including its setup screens and upgrade rules.
+> For current VCE features and setup, use the [project README](../README.md) and [documentation guide](README.md).
+
 ## What
 
 Alpha 9 is a focused bugfix release for playback and tuner stability. It prevents calls that should not be heard from

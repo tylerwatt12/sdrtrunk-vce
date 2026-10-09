@@ -1,34 +1,96 @@
-# Alias list CSV import and export
+# Alias CSV import and export
 
-In the web Alias Editor, select a list and choose **Import aliases…** or **Export aliases…**. Administrator access is
-required; exporting the current filtered results also requires CSV export access. These focused dialogs transfer alias configuration. They do not import activity, counters, credentials,
-channels, or Alias List Defaults. The existing table **Download table report** action remains a reporting export;
-choose **Export aliases…**, then **Download CSV**, for a file that can be imported again.
+Use CSV files to back up an Alias List, transfer its aliases to another VCE installation, or import talkgroup names
+from RadioReference. Open **Manage > Aliases**, select a list, and choose **Import aliases…** or **Export aliases…**.
 
-## Import modes and review
+This guide describes current Nightly. Administrator access is required. Exporting **Current filtered results** also
+requires CSV export access.
 
-**Add new aliases and update matches** is the recommended default. It matches the complete matcher identity in the
-selected list, updates matching aliases, adds new aliases, and keeps aliases absent from the file. Names and database
-row IDs are not identity keys. **Replace this list's aliases** performs the same matching, then deletes aliases absent
-from the file. Matching aliases retain their existing IDs. Neither mode deletes the list or changes its defaults.
-Empty imports are rejected.
+## Choose the right file
 
-Drop or choose a UTF-8 CSV. The dialog detects VCE exports and RadioReference talkgroup files from their headers; an
-unrecognized header displays the explicit file-type choice. Choose the import behavior, then select **Review import**.
-Files are limited to 128 MiB; there is no 10,000-alias row limit. Review shows filterable Added, Updated, Unchanged, Removed, and Errors
-counts. Expand a row to see configuration values or current/proposed field differences. Results are paged in groups
-of 100. Replace requires checking the confirmation naming the destination list only when the review contains removals.
+| File | What it transfers |
+| --- | --- |
+| **VCE alias export** | Names, descriptions, identifier matching, colors/icons, recording choices, Scan List memberships, streaming destinations, and Stream As overrides. |
+| **RadioReference talkgroup CSV** | Talkgroup IDs, names, descriptions, and categories. New aliases use your chosen local defaults; existing aliases keep their local settings. |
+| **Download table report** | A reporting spreadsheet for the Alias table. Use Export aliases when you need a file that can be imported again. |
 
-Incompatible or invalid matchers and unresolved assignments prevent applying the entire import. Repeated exact
-matchers are preserved: the importer pairs identical configurations first, then pairs remaining occurrences to
-existing aliases in stable database-ID order, and adds any excess occurrences. Fix other file errors and preview
-again. Syntax errors
-identify the first invalid CSV record; configuration errors appear in review. Range overlaps are distinct from
-duplicate identities and remain subject to the Alias Editor's existing overlap diagnostics.
+Alias files do not include channels, activity, counters, credentials, or Call Handling Defaults. Select the destination
+Alias List explicitly when importing. A source list's name is shown for review; importing does not create, rename, or
+switch lists.
 
-Changes are saved in one transaction. A changed file, changed options, or changed configuration requires a new
-preview. A failed save does not partially import the list. Completion reports added, updated, deleted, and
-unchanged counts. Reimporting an unchanged file does not create duplicates.
+## Export aliases for backup or transfer
+
+1. Select the source Alias List and choose **Export aliases…**.
+2. Choose **All aliases in this Alias List** or **Current filtered results**.
+3. Use the download button to save the CSV.
+
+A filtered export includes every result matching the current search and filters, including results beyond the
+visible table page.
+
+For transfer to another receiver, first create a compatible destination Alias List and any needed Scan Lists or
+streaming destinations. The CSV refers to those assignments by exact name. It cannot create them, and missing or
+ambiguous names block import. Rename duplicate destination names before transferring.
+
+## Import and review changes
+
+1. Select the destination Alias List and choose **Import aliases…**.
+2. Drop or choose a UTF-8 CSV file. VCE recognizes its own exports and RadioReference talkgroup CSV headers.
+   If the format is not recognized, check the file and choose its type explicitly.
+3. Choose **Add new aliases and update matches** for a normal import.
+4. For a RadioReference file, review the new-alias defaults and optionally override them for this import.
+5. Select **Review import**. Check Added, Updated, Unchanged, Removed, and Errors; expand rows to inspect the values
+   or field changes.
+6. Resolve any errors, review again, and choose **Import changes**.
+
+Files can be up to **128 MiB**. Review has filters and pages of 100 rows. A change to the file, options, or destination
+configuration requires a fresh review. A failed save does not partially import the list.
+
+### Choose add/update or replace
+
+**Add new aliases and update matches** keeps aliases absent from the file. A match uses the complete identifier
+definition, including its protocol and exact ID or range. Alias names do not decide whether entries match.
+
+**Replace this list's aliases** also deletes aliases absent from the file. Check the Removed rows carefully; when
+there are deletions, the dialog requires confirmation naming the destination list. Replace keeps the list and its
+Call Handling Defaults. Empty imports are rejected.
+
+Matching aliases retain their existing IDs and activity. New aliases begin without observed activity. Reimporting
+an unchanged file does not add more duplicate aliases.
+
+### Know which settings will change
+
+A **VCE export** is a complete per-alias configuration. Updating a match applies the file's supplied settings,
+including replacing Scan List and streaming memberships. Empty optional values clear those fields. New aliases also
+use the file's choices.
+
+A **RadioReference CSV** updates only an existing alias's name, description, and group. Recording, Scan Lists,
+streaming, appearance, and Stream As stay intact. New entries use **Call Handling Defaults > New Aliases**, unless
+you choose an import-specific override.
+
+New fully encrypted RadioReference talkgroups have recording, Scan Lists, and streaming disabled. Partially
+encrypted talkgroups use the chosen defaults. Review shows the assignments before saving.
+
+## If an import is blocked
+
+- Check that the destination list's protocol family matches the file.
+- Create the named Scan Lists and streaming destinations first, or correct their names in the file.
+- Rename ambiguous destinations instead of guessing which one should receive calls.
+- Check Errors in review for invalid identifiers, icons, or other configuration.
+- Download a fresh VCE export if a spreadsheet changed its headers or encoding.
+
+Repeated exact identifiers are allowed and preserved. Overlapping ranges still appear in the Alias Editor's overlap
+diagnostics. The technical details below explain how repeated matches and file encoding are handled.
+
+<details>
+<summary>CSV format and matching details</summary>
+
+Repeated exact matchers are paired with identical existing configurations first. Remaining occurrences are paired
+in stable existing-ID order, and excess occurrences are added. Names and row IDs are not matching keys. Range
+overlaps are distinct from repeated exact identities.
+
+Syntax errors identify the first invalid CSV record; configuration errors appear in review. Invalid or incompatible
+identifiers and unresolved assignments block the entire import. Changes save in one transaction, and completion
+reports added, updated, deleted, and unchanged counts. There is no 10,000-alias row limit; the file limit is 128 MiB.
 
 ## VCE configuration CSV, version 3
 
@@ -78,9 +140,9 @@ double an initial literal apostrophe. Quoted commas, line breaks, and Unicode te
 
 For new aliases, the VCE row is authoritative: its appearance, recording choice, scan-list memberships, streaming
 destinations, stream-as value, and matcher are used directly. The modal does not ask for redundant assignment
-choices. This makes an export/import round trip preserve all current per-alias configuration. Database IDs and
-derived `streamable`/overlap state are intentionally not exported. Within the documented 128 MiB import safety
-limit, an export/import round trip preserves all current per-alias configuration. Activity counters and timestamps are
+choices. Database IDs and derived `streamable`/overlap state are not exported. Within the 128 MiB file limit, a
+round trip preserves the exported per-alias configuration when the destination list and named assignments are
+compatible. Activity counters and timestamps are
 omitted: matching aliases keep their existing activity, while newly imported aliases begin with no observed activity.
 
 Large exports are read from the database and encoded in bounded batches. The server validates the complete CSV in a
@@ -104,7 +166,7 @@ The list supplies the protocol; the file cannot establish which system the talkg
 destination list. Supported mode labels are `A`, `D`, `T`, `M`, `AE`, `Ae`, `DE`, `De`, `TE`, and `Te`.
 
 Existing aliases update only name, description, and group. Their recording, scan lists, stream destinations,
-appearance, and stream-as override remain intact. New aliases use the selected destination list's Alias List Defaults.
+appearance, and stream-as override remain intact. New aliases use **Call Handling Defaults > New Aliases** in the selected destination list.
 The modal shows those effective defaults before previewing. Its optional override section can replace recording,
 scan-list, or streaming defaults for this one import; leaving an override unset keeps that field's list default.
 Enabling a scan-list or streaming override with no choices explicitly assigns none. Overrides use exact configured
@@ -113,3 +175,7 @@ names and do not create configuration objects.
 New fully encrypted talkgroups (uppercase `E` suffix) have recording, scan-list memberships, and streaming disabled.
 Partially encrypted modes (lowercase `e`) use the chosen defaults. Existing aliases retain their local settings
 regardless of mode. Review shows the resulting assignments before saving.
+
+</details>
+
+[Browse the documentation index](README.md).

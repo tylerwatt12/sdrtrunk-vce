@@ -1,55 +1,53 @@
 ---
-name: Bug Report
-about: Create a report to help us improve sdrtrunk-vce
+name: Bug report
+about: Tell us what went wrong in VCE
 title: ''
 labels: bug
 assignees: ''
 
 ---
 
-## sdrtrunk-vce version
+## VCE version
 
-Provide the numbered Alpha version/tag, or the Nightly build date and commit ID. If you built from source, include the
-branch and exact commit ID.
+Include the Alpha version or Nightly build number. If you are unsure, paste the name of the ZIP you downloaded,
+or the VCE Version and Build Timestamp lines from the start of the application log.
 
-## Describe the bug
+For a build from source, include the branch and commit ID.
 
-Clearly describe what happened and what part of sdrtrunk-vce was affected.
+## What happened?
 
-## Steps to reproduce
+Describe the problem and where you saw it, such as Live, browser playback, recordings, or channel setup.
+Include whether VCE recovered on its own or needed a restart.
 
-Steps to reproduce the behavior:
+## How can we reproduce it?
 
-1. Start or open `...`
-2. Select `...`
-3. Change `...`
-4. Observe `...`
+List the steps that led to the problem. If it happens only sometimes, say how often.
 
-## Expected behavior
+1. First step…
+2. Next step…
+3. Where the problem appears…
 
-Describe what you expected to happen.
+## What did you expect?
 
-## Actual behavior
+Describe what you expected VCE to do instead.
 
-Describe what happened instead, including whether the application recovered or had to be restarted.
+## Your setup
 
-## Application log
+- Operating system and version:
+- SDR model and driver, if relevant:
+- Other useful details, such as the number of channels or whether listening was local or from another device:
 
-Attach the relevant log section when available. Include enough lines before and after the error to show its context.
+For a performance or startup problem, include processor and memory details if you know them. Release packages include
+Java; if you use a separate Java installation, include its version.
 
-Before posting logs, screenshots, configuration, or recordings, remove credentials and private operational details.
-This includes passwords, API keys, access tokens, private hostnames or network addresses, usernames, personal local
-paths, and identifying radio-system, site, frequency, talkgroup, or radio information that is not safe to publish.
-Replace redacted values with clear neutral placeholders so the report remains understandable.
+## Screenshots or logs
 
-## Desktop
+Add a screenshot or the relevant log excerpt if it helps explain the problem. Include a few lines before and after
+an error for context.
 
-- Operating system and version: [for example, Windows 11, Ubuntu 24.04, or macOS 15]
-- Java version: [for example, Java 25]
-- Processor: [model and core count]
-- Memory: [for example, 8 GB]
-- Receiver hardware and driver: [if relevant]
+Remove passwords, API keys, access tokens, personal paths, private network addresses, and any radio details you cannot
+share publicly. Use clear placeholders where needed.
 
-## Additional context
+## Anything else?
 
-Add any other information that may help reproduce or diagnose the problem.
+Mention recent changes, workarounds you tried, or another detail that might help.

@@ -1,10 +1,106 @@
-# Database Migration Contract
+# Moving and updating VCE data
 
-This document is the implementation contract for the bundled Application Migrator. It supersedes the former
-immediately-previous-release, external-candidate, and sequential-upgrade design. This source contains the global
-format catalog, complete Alpha 8-to-current chain, deterministic format fixture factories, and safety integration
-described here. Numbered Alpha distributions keep version-matched release notes; rolling Nightlies use the bundled
-current documentation and the migrator's preflight and completion reports.
+VCE can update supported older settings during startup or copy them into a new installation. The Setup Wizard runs
+the bundled **Application Migrator** for you. You do not need a separate download or each intervening VCE release.
+
+If you are coming from mainline sdrtrunk, use **Import legacy XML** to bring in a playlist. For first-run choices and
+the rest of setup, see [Setup, updates, and your saved data](portable-startup-and-storage.md). Related guides are in
+the [documentation index](README.md).
+
+## Choose the right operation
+
+| What you want to do | Where to start | What changes |
+| --- | --- | --- |
+| Use a newer build with the same active VCE data folder | Accept the database **Update** offered during startup | The active database is updated in place, with a recovery backup selected by default. |
+| Bring a previous VCE installation into a new download | **Copy a previous VCE installation / data folder** in first-run setup | A checked copy is installed in the new data folder. Available vault, JMBE, and optional module files are also copied. |
+| Start a new installation from a VCE database file | **Import a SQLite database only** in first-run setup | Only the selected database contents are imported. Neighboring files and saved output paths are not moved. |
+| Replace the settings in an installation you already use | **File → Import SQLite Database…**, or **Help → Setup Wizard… → Replace settings from a SQLite database** | The whole application database is replaced after backing up the current one. This does not merge profiles. |
+| Add another supported XML playlist | **Help → Setup Wizard… → Import a legacy XML playlist** | Supported configuration is added; existing configuration is retained and conflicting imported names are renamed. |
+
+VCE database imports support recognized formats from **Alpha 8 onward**, up to the format understood by the running
+build. Alpha and Nightly share one forward-only format history. An older build cannot open a database already updated
+to a newer format. Pre-Alpha 8 databases, the retired `webfirst` formats, and unknown or unsafe layouts are unsupported.
+The selected database's structure determines compatibility; its filename or release label does not.
+
+## Before you begin
+
+Keep the previous installation until the new one receives normally and its recording and streaming settings are
+checked. For a manual backup, stop VCE and copy the complete `data` folder, plus any output folders you placed
+elsewhere. Keep the matching build if you may need to return to it. Close a previous installation before importing
+from it so its settings and supporting files stay consistent during review.
+
+The automatic recovery backup covers the SQLite database being updated or replaced. It does not include every
+recording, log, voice library, or vault file. Backup locations appear in the report; application database backups are
+under `data/database/backups`. Leave **Create a recovery backup first** selected for an active-profile update unless
+you intend to rely on another recovery copy. Database replacement always retains a backup of the previous active
+database.
+
+## Review, update, and check the result
+
+1. Choose the folder or file that holds your previous settings. A folder import is the most complete choice for
+   moving an existing VCE profile.
+2. Select **Review import** for an external source, or review the update plan shown for the active profile. Check
+   the source, destination, and declared repairs, activity resets, or retired settings that may be removed.
+3. Confirm the import or update. Receiving has not started, and the active data folder stays locked while the
+   database work runs.
+4. Read the completion report. It gives the actual preserved, repaired, defaulted, reset, and skipped-item counts.
+   **Copy Message** saves it to the clipboard; the visible continuation countdown keeps running.
+5. Finish setup review. Check channels and aliases, account access, recording and streaming routes, output folders,
+   digital voice libraries, and channel auto-start selections before relying on the new installation.
+
+An active-profile update uses one transaction in the existing database. A failure before commit rolls back the
+changes. External imports and replacements update and validate a private copy, then install it only after the checks
+pass; the selected source stays unchanged. Replacement restarts into unfinished setup review so imported settings
+are checked before reception can start.
+
+## What is kept, copied, or reset
+
+Usable channels, aliases, accounts, credentials, and settings are preserved or converted to the current format.
+Some older activity, signal history, or cached information may be reset when it cannot be carried forward reliably;
+new reception rebuilds those observations. An unusable setting or configuration component may be repaired, defaulted,
+or skipped independently. The plan describes these possibilities and the final report names the actual effects.
+
+A full installation/data-folder import also attempts to copy the encryption vault, JMBE files, and optional modules.
+Missing or unusable optional files are reported; you can select or set them up again. Logs, recordings, screenshots,
+event logs, streaming output, and the separate Managed Recordings catalog are not copied and stay at their existing
+locations. They are not transferred by the application database import.
+
+For a folder import, saved paths inside the previous data folder are changed to the corresponding new locations.
+Shared folders outside it keep their paths. A SQLite-only import or replacement keeps stored paths unchanged and
+copies no neighboring files; the destination's existing non-database files stay in place. Check the effective output
+folders on **Review & finish**.
+
+Managed Recordings has a separate audio library and catalog. Its supported older catalog can be updated independently
+before receiving starts, preserving the indexed calls. If that optional update fails, retry or continue receiving with
+Managed Recordings unavailable. See the [storage guide](portable-startup-and-storage.md#where-files-are-stored-and-how-to-back-them-up)
+for backing up the audio and catalog together.
+
+## If an update or import fails
+
+Keep the source and use **Copy error** or the expandable details to retain the reason. Close another instance if the
+data folder is already in use, free disk space if requested, or choose the correct source folder/file and review again.
+An unknown, newer, mixed, structurally incomplete, or physically damaged database is refused rather than guessed.
+Do not delete the database to bypass the error.
+
+An active-profile failure before commit can be retried after correcting the cause. A failed external import does not
+install a partial copy. Replacement attempts to restore its retained database backup if final installed-data checks
+fail; if a safe final state cannot be proven, VCE leaves the error and backup for recovery instead of restarting
+automatically.
+
+After a successful active-profile update, the recovery backup remains for manual restoration. There is no automatic
+downgrade. If the report says the update completed with a cleanup warning, do not repeat it as if conversion failed.
+Returning to an older build requires its compatible older data or backup.
+
+## Technical migration reference
+
+<details>
+<summary>Format catalog, historical conversion policies, execution guarantees, and required tests</summary>
+
+The following is the implementation contract for the bundled Application Migrator. It records the global format
+catalog, complete Alpha 8-to-current chain, deterministic format fixtures, and safety integration. These are
+implementation and maintenance requirements, not extra setup steps for listeners. Numbered Alpha distributions
+keep version-matched release notes; rolling Nightlies use their bundled current documentation and the migrator's
+preflight and completion reports.
 
 ## Support Boundary
 
@@ -14,7 +110,8 @@ they are not separate migration tracks. Each previously distributed format must 
 omitting it from the catalog does not make it an allowed support exception.
 
 - A valid exact current-format database is accepted without mutation. A structurally exact current database with
-  recoverable row-level damage can be repaired only by the staged Application Migrator, with every change itemized.
+  recoverable row-level damage can be repaired only by the Application Migrator, with every change itemized.
+  The owned current profile uses its in-place transaction; an explicitly selected external source uses a staged copy.
 - A structurally recognized older format is migrated forward through the linear chain. Recoverable row-level damage
   does not disqualify the whole database: each configuration component is preserved, repaired, defaulted, or skipped
   independently and the completion report gives non-secret counts.
@@ -28,7 +125,7 @@ nightly builds, which may not contain durable release provenance.
 
 ## Legacy Inventory Gate
 
-The first replacement change must perform a one-time audit of Alpha 8-and-later release tags, recoverable nightly and
+The retained legacy inventory comes from the audit of Alpha 8-and-later release tags, recoverable nightly and
 schema-changing commits, archived artifacts, and available deployed database samples. The runtime format catalog is
 also the checked-in legacy manifest; do not create a second hand-copied inventory. Each legacy entry records:
 
@@ -117,7 +214,7 @@ converted preferences to that account, and only then removes the superseded stor
 
 The format 5-to-6 step resets receiver-derived activity instead of translating the old external RadioResolve-based
 conventional owner into the saved channel's configuration UUID. This avoids rejecting an otherwise valid profile over
-ambiguous, conflicting, or malformed derived identities that current format 15 discards anyway. Administrator-owned
+ambiguous, conflicting, or malformed derived identities that the later format-15 migration discards. Administrator-owned
 channel configuration is unchanged, and live traffic rebuilds activity using canonical configuration UUID ownership.
 
 The format 6-to-7 step upgrades every complete per-user browser preference document from version 1 to version 2. It
@@ -169,13 +266,11 @@ The format 12-to-13 step adds the one bounded `setup_wizard` progress record des
 existing setting and marks an upgraded profile as previously configured while still requiring runtime readiness
 checks for settings such as JMBE and the administrator account.
 
-## Replacement Boundary
+## Shared Upgrade And Import Boundary
 
-This is one replacement, not a second migrator layered beside the existing one. Replace the Alpha-specific source
-classification, current-versus-Alpha state model, subsystem-tuple routing, and direct legacy-to-current dispatch with
-the global format catalog and chain runner. Remove the old gate instead of retaining it as a fallback. Existing
-transformation logic that is still correct is assigned to the appropriate adjacent step rather than exposed as an
-alternate path.
+The global format catalog and adjacent chain runner are the shared migration path. Alpha-specific source
+classification, current-versus-Alpha state, subsystem-tuple routing, and direct legacy-to-current dispatch are not
+alternate fallbacks. Retained historical transformations belong to their corresponding adjacent steps.
 
 Current-profile graphical and headless upgrades share one in-place transaction with an optional recovery snapshot.
 Explicitly selected external imports retain the launcher, private child process, source approval, staged-copy
@@ -686,7 +781,9 @@ release cannot claim Alpha 8+ compatibility unless all retained source fixtures 
 
 ## Explicit Non-Goals
 
-The replacement does not support pre-Alpha 8 databases, down-migration, the retired `webfirst` managed-recording
+The migration chain does not support pre-Alpha 8 databases, down-migration, the retired `webfirst` managed-recording
 catalog, or perfect preservation of expensive derived history. It does not reintroduce retired product features. An
 older build is recovered by reopening or restoring the preserved older data, not by converting a newer database
 backward.
+
+</details>

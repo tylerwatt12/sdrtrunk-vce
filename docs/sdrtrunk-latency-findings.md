@@ -1,15 +1,35 @@
-# SDRTrunk control-to-voice latency findings
+# Understanding call-start delay: a P25 receiver study
 
-Date: 2026-07-17
+This report records a **July 17, 2026 investigation** into whether a receiver starts following a P25 voice call too
+late to capture its opening audio. Its measurements describe the tested systems and experimental builds at that
+time. They are not a benchmark of current Nightly or a guarantee for every radio system.
 
-## Current conclusion
+For everyday listening, start with the [browser listening guide](browser-listening-and-scan-lists.md). Browser playback
+waits for completed calls and may also have calls queued ahead of them. That listening delay is separate from the
+receiver setup delay measured here.
 
-The measured development receiver and low-spec reference receiver do not show a present problem with SDRTrunk
-starting traffic decoders too late to recover the beginning of normal P25 voice calls.
+## What listeners can take from the study
+
+The tested receivers began decoding traffic early enough for the normal P25 calls examined. Faster sample delivery
+helped some intermediate measurements, but had a much smaller effect on when decoded audio became available.
+A brief delay before hearing a call is not, by itself, evidence that the beginning of its speech was lost.
+
+If a call sounds clipped, compare browser playback with the saved recording when one is available, check signal and
+decode quality, and review receiver-status issues. These observations help distinguish playback waiting time from
+missing received audio. An actual reception problem needs evidence from the affected call, rather than a buffer
+setting chosen from this study alone.
+
+The technical findings below preserve the original measurements and experiment limits. The suggested experiments are
+historical research options, not installation steps or settings you need to change.
+
+## What the investigation found
+
+The measured development receiver and low-spec reference receiver did not show traffic decoders starting too late
+to recover the beginning of the normal P25 voice calls examined.
 
 There are measurable places where the software can be made faster, but the tested improvements save tens of
-milliseconds inside a normal setup margin of several hundred milliseconds. They are not currently expected to change
-whether normal conversations are clipped.
+milliseconds inside a normal setup margin of several hundred milliseconds. In those tests, they were not expected to
+change whether normal conversations were clipped.
 
 No latency experiment code was merged into `main` when this document was created. The experiment branch was closed
 after its results were condensed here. The production installations were restored after every test.
@@ -189,7 +209,7 @@ accumulate. Future web features should preserve this separation and should not i
 
 Reopen this investigation when production evidence shows one or more of the following:
 
-- control-grant age grows continuously instead of remaining near the measured 3–13 ms range;
+- control-grant age grows continuously instead of remaining in a short, stable range;
 - traffic first-IQ delay develops a long tail during sustained load;
 - native receiver or channelizer buffers are discarded after startup and continue being discarded;
 - a valid P25 header or voice LDU begins before the traffic decoder receives IQ;
@@ -201,7 +221,7 @@ Reopen this investigation when production evidence shows one or more of the foll
 When this happens, collect the control grant and voice frequency from one wideband IQ recording whenever possible.
 That places control and traffic events on the same RF clock and distinguishes software delay from transmitter timing.
 
-## Recommended future research order
+## Research options recorded with the study
 
 1. Add long-running production counters for grant age, steady-state buffer discards, physical retunes, active calls
    affected by a retune, and time to first traffic IQ.
@@ -220,8 +240,13 @@ delay, and the measurements did not show a continuing control backlog. Do not mo
 thread solely because it is synchronous; first demonstrate construction outliers large enough to justify the added
 ordering, cancellation, and lifecycle complexity.
 
-## Final decision
+## Decision at the time of the study
 
-Latency is not considered an active problem for the measured deployments. The highest-value preventative rule is to
-keep web and other slow work off decoder threads. If a future symptom appears, measure grant age, physical retuning,
-first decoder IQ, and actual voice onset before changing buffer policies.
+Call-start latency was not considered an active problem for the measured deployments. The highest-value preventative
+rule is to keep web and other slow work off decoder threads. If a future symptom appears, measure grant age, physical
+retuning, first decoder IQ, and actual voice onset before changing buffer policies.
+
+## Related guides
+
+- [Documentation guide](README.md)
+- [Browser listening and Scan Lists](browser-listening-and-scan-lists.md)

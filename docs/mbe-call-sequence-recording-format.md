@@ -2,6 +2,11 @@
 
 Status: implemented format, version 2
 
+An `.mbe` file saves the received digital voice frames before conversion to ordinary audio. This reference is for
+people inspecting recordings or building tools that read them. For listening to calls in a browser, start with the
+[browser listening guide](browser-listening-and-scan-lists.md); other user guides are in the
+[documentation index](README.md).
+
 This document defines the JSON `.mbe` call-sequence format written by `sdrtrunk-vce`. The format stores ordered
 vocoder frames and signaling metadata captured from radio transmissions. It does not store encryption keys or define
 decryption behavior.
@@ -78,11 +83,9 @@ half-rate default. `sdrtrunk-vce` does not currently convert NXDN full-rate `.mb
 
 ### Meaning of `encrypted`
 
-`encrypted: true` describes the call as a whole. It does not guarantee that a usable context marker is present. A
-receiver can enter a call late or fail to decode the signaling that carried the algorithm, key ID, or IV.
-
-`encrypted: true` can therefore appear without complete encryption metadata when the receiver enters a call late or
-does not decode the applicable signaling. Missing optional metadata does not make the file structurally invalid.
+`encrypted: true` describes the call as a whole. A receiver can enter a call late or fail to decode the signaling
+that carried the algorithm, key ID, or IV, so this value can appear without a complete encryption context marker.
+Missing optional metadata does not make the file structurally invalid.
 
 ## Voice-Frame Object
 

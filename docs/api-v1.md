@@ -1,10 +1,14 @@
 # Web API v1
 
+This reference is for people connecting scripts, dashboards, or other tools to VCE. It explains the resources,
+identifiers, access rules, and response limits used by the web interface. For listening and receiver setup, start
+with the [documentation guide](README.md) or [browser listening guide](browser-listening-and-scan-lists.md).
+
 > **Release scope:** This document describes the current `main` and Nightly interface. Numbered Alpha builds may omit
 > newer endpoints or website features; use the documentation shipped with the installed Alpha.
 
-The supported web API is rooted at `/api/v1`. This is a hard version boundary. Earlier unversioned read, export,
-live, and call-audio paths are not registered.
+All supported web API routes begin with `/api/v1`. Earlier unversioned read, export, live, and call-audio paths are
+not registered.
 
 ## JSON contract
 
@@ -29,9 +33,10 @@ Errors have one shape:
 {"error": {"code": "invalid_parameter", "message": "limit must be between 1 and 500", "status": 400, "field": "limit"}}
 ```
 
-Field names and query parameters are `snake_case`. Unknown or repeated parameters, malformed UTF-8, unsupported
-sort fields, ambiguous identifiers, and invalid booleans are rejected. Path segments are decoded once. A literal
-`+` remains a plus, and encoded separators are rejected.
+Field names and query parameters are `snake_case`. Unknown parameters, malformed UTF-8, unsupported
+sort fields, ambiguous identifiers, and invalid booleans are rejected. Repeated parameters are rejected except where
+a resource explicitly accepts them, such as `scan_list_id` on the browser call feed. Path segments are decoded once.
+A literal `+` remains a plus, and encoded separators are rejected.
 
 ## Identity model
 
@@ -120,13 +125,17 @@ instead of guessing a resource type from whichever fields happen to be present.
 | `GET /api/v1/activity/radios` | Paged SOURCE-radio aggregation across retained matching activity events. Radio access is required. |
 | `GET /api/v1/calls/feed` | Live-edge, cursor-based completed-call announcements for selected Scan Lists. |
 | `GET /api/v1/calls/{id}/audio` | WAV audio for one call still in the shared bounded ring. |
+| `GET /api/v1/recordings/status` | Recording mode, catalog availability, and whether indexed recordings exist. |
+| `GET /api/v1/recordings/calls` | Cursor-paged Managed Recordings search. |
+| `GET /api/v1/recordings/calls/{id}` | One indexed recording, its current labels, and transcription status or stored text. |
+| `GET /api/v1/recordings/calls/{id}/audio` | Audio for one indexed Managed Recording. |
 | `GET /api/v1/listen/map` | Bounded receiver-observed locations and ten-point track histories. |
 | `GET /api/v1/listen/map/icons/{slug}` | One allowlisted bundled map icon. |
 | `GET /api/v1/diagnostics/tuners` | Passive tuner diagnostic targets. Administrator access is required. |
 | `GET /api/v1/receiver-health` | Bounded receiver-health snapshot. Administrator access is required. |
 
-Common collection parameters are `limit`, `offset`, `q`, `sort`, and `direction`. `limit` defaults to 100 and must be
-between 1 and 500; `offset` must be between 0 and 100,000. Detailed activity uses the positive `before_id` cursor.
+Common statistics collection parameters are `limit`, `offset`, `q`, `sort`, and `direction`. `limit` defaults to 100
+and must be between 1 and 500; `offset` must be between 0 and 100,000. Detailed activity uses the positive `before_id` cursor.
 Bounded global forward Activity reads are the sole exception and allow up to 5,000 rows. Every database materializer
 also has a 20,000-row emergency ceiling. Normal endpoint and export limits are lower.
 
@@ -358,6 +367,28 @@ talkgroup Hold/Avoid target.
 Audio is fetched from `/api/v1/calls/{id}/audio`. While a feed is active, one shared ring holds at most 512 calls or
 128 MiB. Entries expire after 30 minutes and one WAV cannot exceed 16 MiB. At most 16 feed requests and 16 audio
 responses are active at once. These are safety bounds, not a replay-history guarantee.
+
+## Managed Recordings
+
+Managed Recordings use a separate saved catalog. Its recording IDs and `/api/v1/recordings/calls/{id}/audio` URLs
+belong to that catalog; the browser call feed above uses its own temporary ring and IDs. The `recordings` capability controls
+catalog search, status, detail, and playback, according to the administrator's access policy.
+
+`GET /api/v1/recordings/status` reports the selected mode and catalog availability even when the catalog is
+unavailable. Search, detail, and audio requests require an available catalog. Classic recording files are not
+automatically indexed by these resources.
+
+`GET /api/v1/recordings/calls` returns a `data` object containing `calls` and an optional `next_cursor`. Pass that
+cursor as `cursor` with the same filters to continue. The search returns at most 100 rows per page and uses
+`sort=asc|desc`, rather than the statistics catalog's separate `sort` field and `direction`. Filters include
+`from_ms`, `to_ms`, `system_key`, `channel_id`, `talkgroup_id`, `radio_id`, `protocol`, `q`, and `transcript`.
+Without a time range, it searches the previous 24 hours. Labels are resolved from current Alias configuration;
+`transcript` searches stored transcript text.
+
+`GET /api/v1/recordings/calls/{id}` includes a `transcription` object. Its displayed status can be `pending`,
+`complete`, `failed`, `disabled`, or `too_short`; stored text is present when transcription has completed. Browsing
+access does not grant recording deletion, settings changes, maintenance, or transcription retries. Those actions
+require the primary administrator through `/api/v1/admin/recordings`.
 
 ## Authentication and administration
 

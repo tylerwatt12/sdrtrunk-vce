@@ -1,312 +1,103 @@
-# How Talker Aliases Work in sdrtrunk-vce
+# Talker aliases: names sent by radios
 
-This guide explains how `sdrtrunk-vce` receives, checks, stores, and displays P25 talker aliases. It uses ordinary
-language and focuses on what happens to the information rather than on the source code.
+A talker alias is a name transmitted over the air by a radio system. VCE can display that name beside a radio ID,
+which helps you recognize who is transmitting without naming every radio yourself.
 
-## What a Talker Alias Is
+This guide covers the P25 Motorola and L3Harris formats handled by current Nightly. Numbered Alpha builds may behave
+differently; use the documentation for the release you installed.
 
-A talker alias is a short, human-readable name transmitted by a radio system. Examples include:
+## Talker aliases and your Alias Lists
 
-- `DEMO-UNIT-01`
-- `DEMO-MEDIC-02`
-- `DEMO-SUPERVISOR`
+A radio might transmit the name `DEMO-ENGINE-4` with its radio ID. That name is a **talker alias**, also shown in some
+VCE tables as **OTA Alias**. OTA means “over the air.”
 
-Every radio already has a numeric radio ID, such as the fictional `1001001`. The talker alias gives that number a
-useful name. A successful alias transmission can therefore tell SDRTrunk:
+An **Alias List** contains the names and settings you maintain in VCE, such as `Engine 4` or `Fire Dispatch`.
+Receiving a talker alias does not create or overwrite one of those configured entries.
 
-> Radio 1001001 identifies itself as “DEMO-UNIT-01.”
+Both names can be useful. A transmitted name may describe a radio you have not named yet, while a configured alias
+lets you use your own consistent labels. The transmitted text is whatever the system sends.
 
-This information comes from the radio network. It is separate from a name that an operator manually enters in an
-SDRTrunk alias list. A transmitted talker alias can be useful even when there is no manually maintained name for that
-radio.
+## Find received names
 
-## The Numbers That Identify a Radio
+Open **Listen > Main** and use the **Radio Directory** to open a P25 system. Its **Talker Aliases** tab lists retained
+names, radio identities, and the time each alias was last observed. You can also open a radio's detail page to see
+its talker alias and related activity. Access to these pages depends on the permissions for your account.
 
-Several identifiers can be involved in one alias observation:
+To choose which name is used for a call's source display, open **My Settings > Change Source Names**:
 
-- **Radio ID** identifies the individual subscriber radio.
-- **Talkgroup ID** identifies the group conversation the radio is using.
-- **System ID** identifies the P25 radio system.
-- **WACN** identifies the larger P25 network containing the system.
+| Choice | What you see |
+| --- | --- |
+| **Talker Alias preferred** | The received name, with your configured source alias used when it is unavailable. |
+| **Source Alias preferred** | Your configured source alias, with the received name used when it is unavailable. |
+| **Both** | Each distinct name once. |
 
-A radio ID is not always unique across every P25 system. The fuller identity is effectively:
+This changes presentation for your account. It does not edit Alias Lists or change listening, recording, or streaming
+choices.
 
-```text
-WACN + system ID + radio ID
-```
+## Why a name may be missing
 
-For example, a fictional observation may identify WACN `0xABCDE`, system `0x123`, radio `1001001`, and alias
-`DEMO-UNIT-01`. Keeping the network and system information with the radio ID prevents an alias from being attached to
-a similarly numbered radio on another system.
+Talker aliases depend on what the system transmits and what VCE can receive. A blank field can mean:
 
-## Why the Alias Arrives in Pieces
+- The system or radio does not transmit a name.
+- VCE joined the call after part of the name had already been sent.
+- Reception errors or a missed message prevented a usable result.
+- The name could not be associated safely with the transmitting radio and call.
+- Activity collection was off, so the receiver did not save the observation for the directory.
 
-Motorola P25 Phase 1 does not carry the complete alias in one ordinary message. It divides the information into a
-header followed by several numbered data blocks.
+A later transmission can provide another opportunity to receive the name. Good audio alone does not guarantee a
+complete alias: the name travels in signaling messages, which have their own reception and validation requirements.
 
-Think of it as a small numbered package:
+A retained name and its observation time describe what VCE last accepted. They do not prove that the radio is
+currently transmitting, affiliated with a talkgroup, or still using that name.
 
-1. The header describes what is coming.
-2. Data block 1 carries the first piece.
-3. Data block 2 carries the next piece.
-4. More blocks follow when the alias needs them.
-5. A checksum allows the receiver to verify the completed package.
+## Keep the radio's system with its ID
 
-A transmission may look like this:
+A radio ID is not globally unique. Different P25 systems can use the same number for unrelated radios. A complete
+P25 subscriber identity includes the home **WACN**, **System ID**, and **Radio ID**.
 
-```text
-Header: fictional talkgroup 101, sequence 1, five blocks coming
-Block 1
-Block 2
-Block 3
-Block 4
-Block 5
-```
+For example, fictional radio `1001001` on one system must remain separate from radio `1001001` on another. When a radio
+roams through ISSI, VCE also distinguishes its home identity from the temporary Working ID observed on the visited
+system. Received names are associated with the available system and subscriber context rather than copied to every
+radio with the same number.
 
-These messages can arrive very quickly, but SDRTrunk still has to collect every required piece before it can use the
-alias.
+## How VCE checks and keeps the name
 
-## What the Header Says
+Motorola and L3Harris use different formats. VCE follows the requirements of the decoded format, then checks that the
+text is usable and that any available radio and call context agree.
 
-The header supplies the instructions needed to assemble the data. It includes information such as:
+For Motorola, the receiver collects a header and numbered blocks, keeps compatible sequences together, reconstructs
+the text, and checks the completed checksum. A complete Motorola observation also contains the radio's P25 identity.
+Phase 1 and Phase 2 carry the pieces in different messages; Phase 2 also keeps the two timeslots separate.
 
-- The talkgroup associated with the transmission.
-- A sequence number.
-- The number of data blocks that should follow.
-- The text format used by the alias.
+L3Harris text does not carry the same independently verifiable radio-and-talkgroup information. VCE uses the associated
+traffic and call context and rejects conflicting source-radio information rather than guessing. The Motorola
+header, sequence, and checksum rules should not be applied as a description of every L3Harris alias.
 
-The sequence number works like a package tracking number. If SDRTrunk is collecting sequence 4 and receives a block
-from sequence 5, it must not mix those pieces. They may belong to different alias transmissions or different radios.
+An accepted name can update the receiver's live alias cache. Applying it to a current call requires the appropriate
+radio, destination, time, and system context. A late name is not allowed to replace the name on an unrelated call
+that has since started on the same frequency.
 
-When the sequence changes, the holding area is reset so incompatible pieces cannot be combined into a false name.
+Saving the observation also requires a matching call with usable system context and enabled activity collection. Those observations
+are handed to the activity service; they are not direct database writes from the decoder. Retained summaries keep the
+latest accepted name and its observation time with the corresponding radio. Repeated observations update that
+information without creating a new radio for every transmission.
 
-## What the Data Blocks Contain
+<details>
+<summary>Implementation references</summary>
 
-After the numbered blocks are placed in order and joined together, the combined data contains:
+These sources are useful when investigating a particular format or identity mismatch:
 
-- WACN
-- System ID
-- Radio ID
-- Encoded alias text
-- Checksum
+- [P25 traffic-channel alias handling](../src/main/java/io/github/dsheirer/module/decode/p25/P25TrafficChannelManager.java)
+- [Live alias cache and system-scoped identity matching](../src/main/java/io/github/dsheirer/identifier/alias/TalkerAliasManager.java)
+- [Motorola Phase 1 assembler](../src/main/java/io/github/dsheirer/module/decode/p25/phase1/message/lc/motorola/LCMotorolaTalkerAliasAssembler.java)
+- [Motorola Phase 2 assembler](../src/main/java/io/github/dsheirer/module/decode/p25/phase2/message/mac/structure/motorola/MotorolaTalkerAliasAssembler.java)
+- [L3Harris Phase 1 assembler](../src/main/java/io/github/dsheirer/module/decode/p25/phase1/message/lc/l3harris/HarrisTalkerAliasAssembler.java)
+- [Activity collection](../src/main/java/io/github/dsheirer/stats/activity/ReceiverActivityService.java)
 
-The alias is not sent as ordinary readable letters. Motorola applies its own representation to the text. SDRTrunk
-reverses that representation and reconstructs the characters that make up the name.
+</details>
 
-Some internal messages show a prefix such as `TA-`. That prefix identifies the type of information inside SDRTrunk. It
-is not part of the name stored in the statistics table. For example, an internal identifier shown as
-`TA-DEMO-UNIT-01` is stored and displayed as `DEMO-UNIT-01`.
+## More help
 
-## The Checksum Protects the Result
-
-Radio reception is imperfect. A weak signal, interference, or a decoding error can change one or more bits. SDRTrunk
-might receive every numbered block but still have incorrect contents.
-
-The checksum lets SDRTrunk answer this question:
-
-> Do the collected pieces mathematically agree with the check value sent by the radio?
-
-If they agree, the completed alias is accepted. If they do not agree, the result is rejected instead of being written
-to the tables.
-
-An alias therefore needs all of the following before it can be accepted:
-
-- A usable header.
-- Every required block number.
-- Compatible sequence numbers.
-- A valid checksum.
-- A usable radio identity.
-- Non-empty alias text.
-
-This is why seeing one or more alias blocks does not necessarily produce a table entry. It is safer to show no alias
-than to attach a damaged or incorrect name to a radio.
-
-## The Alias Assembler
-
-The part that holds and joins the pieces is called an assembler. It is simply a small holding area for an incomplete
-alias.
-
-For a P25 Phase 1 traffic decoder, it remembers information similar to:
-
-```text
-Current header
-Current sequence number
-Block 1
-Block 2
-Block 3
-...
-```
-
-Whenever another block arrives, the assembler checks whether all required block numbers are present. If something is
-still missing, it waits.
-
-When the complete set is available, it:
-
-1. Places the blocks in numerical order.
-2. Joins their bits together.
-3. Removes unused padding from the end.
-4. Checks the checksum.
-5. Extracts the network, system, and radio IDs.
-6. Converts the alias data back into readable text.
-7. Produces one completed talker-alias observation.
-8. Clears the temporary pieces so it is ready for the next alias.
-
-## Traffic Frequencies and Their Decoders
-
-A trunked P25 system normally has a control channel and several traffic frequencies.
-
-The control channel directs radios to an available traffic frequency for each call. One call might use one configured
-traffic channel, while another uses a different configured traffic channel.
-
-SDRTrunk creates a traffic decoder for a frequency being used. In this context, a decoder is the part listening to and
-understanding that frequency. It handles voice-related signaling as well as the audio itself.
-
-Each Phase 1 traffic decoder has its own Motorola alias assembler. Related blocks normally arrive together through
-that decoder, so it is the natural place to hold the partial alias.
-
-Ending a call and ending a decoder are separate actions. The call record can be closed when the conversation is over
-while the frequency decoder remains available for trailing signaling and later calls. Keeping these responsibilities
-separate also lets the assembler retain the pieces it needs until a full alias has been received.
-
-## When a Complete Alias Is Accepted
-
-Once an assembler produces a complete, checksum-valid alias, the result moves through several parts of VCE.
-
-### 1. Update the Live Radio-to-Alias Map
-
-While SDRTrunk is running, it keeps a fast in-memory map similar to:
-
-```text
-1001001 -> DEMO-UNIT-01
-1001002 -> DEMO-UNIT-02
-1001003 -> DEMO-MEDIC-02
-```
-
-This allows later calls from a known radio to be labeled immediately, even when the later call does not carry another
-complete alias transmission.
-
-### 2. Announce the Completed Observation
-
-VCE creates a completed-alias notification containing:
-
-- The full radio identity.
-- The readable alias.
-- The talkgroup and other available call context.
-- The time the alias was observed.
-- The monitored channel and radio-system context.
-
-This notification is separate from the lifetime of the call record. Talker-alias information can arrive near the end
-of a conversation, so saving it must not depend on the call still being active.
-
-### 3. Store the Alias in SQLite
-
-The statistics service receives the notification and records the alias against the correct radio and system.
-
-The stored radio information includes values such as:
-
-- The latest talker alias.
-- When that alias was last observed.
-- The most recently associated talkgroup.
-- The P25 system identity.
-- Existing radio activity and call counts.
-
-Repeated receptions of the same alias refresh its last-seen time. They do not need to create a new radio row for every
-transmission. If the radio later sends a different alias, the latest accepted value becomes the current displayed
-alias.
-
-### 4. Display It in the Application and Website
-
-The Java application and embedded website read the stored information and display it in their tables.
-
-The full path is:
-
-```text
-Radio transmission
-    -> Alias header and blocks received
-    -> Blocks assembled
-    -> Checksum accepted
-    -> Radio and alias identified
-    -> Live alias map updated
-    -> Alias observation stored
-    -> Tables display the result
-```
-
-The tables are the last part of this process. They display information that has already been received, checked, and
-stored; they do not create the alias themselves.
-
-## Why Both Memory and Database Storage Are Used
-
-The live map and the SQLite database serve different purposes.
-
-The live map is fast. It helps label calls immediately while the application is running:
-
-> This call is from fictional radio 1001001, which is currently known as DEMO-UNIT-01.
-
-The database is durable. It supports statistics tables, historical inspection, and information that remains useful
-after the alias was first received.
-
-Using both gives VCE fast live labeling and persistent operator-facing records.
-
-## Phase 1 and Phase 2
-
-P25 Phase 1 and Phase 2 carry Motorola talker aliases in different kinds of messages.
-
-Phase 1 uses link-control messages handled by the Phase 1 traffic decoder and its alias assembler.
-
-Phase 2 uses a different message format and has two timeslots on one radio frequency. Its assembler understands the
-Phase 2 message structure and keeps the timeslot information associated with the result.
-
-After either type produces a complete alias, both follow the same general VCE path:
-
-```text
-Check the completed alias
-    -> Update the live radio-to-alias map
-    -> Announce the observation
-    -> Store it in SQLite
-    -> Display it in tables
-```
-
-The collection details differ, but storage and display are shared.
-
-## Motorola and L3Harris Talker Aliases
-
-Motorola and L3Harris systems do not carry their aliases in exactly the same form, so they use separate assemblers.
-
-Motorola's completed data includes the radio's full P25 identity. This provides a direct connection between the name
-and the radio that sent it.
-
-L3Harris alias handling can depend more on the radio identity already known from the current call. Its messages are
-collected and interpreted according to the L3Harris format.
-
-Once either format produces a usable alias and radio association, the result enters the same VCE live-map,
-notification, database, and table path.
-
-## Reasons an Alias May Not Appear
-
-An alias can legitimately be absent when:
-
-- The radio system does not transmit talker aliases.
-- An agency has disabled the feature.
-- A particular radio is not configured with an alias.
-- SDRTrunk begins listening after the header or an early block.
-- One required block is missed.
-- A block cannot be corrected after a reception error.
-- Blocks have incompatible sequence numbers.
-- The completed checksum fails.
-- The radio stops transmitting before the sequence is complete.
-- The received text is empty or otherwise unusable.
-
-On an active system, repeated transmissions usually provide additional opportunities to receive a complete sequence.
-However, VCE intentionally requires a complete and trustworthy result before placing a name in the tables.
-
-## Summary
-
-Talker-alias handling has three main responsibilities:
-
-1. A format-specific assembler collects the radio messages and produces a checked radio-and-name result.
-2. VCE keeps that result available for live calls and stores an independent observation in SQLite.
-3. The Java application and website display the stored alias with the corresponding radio and system information.
-
-Keeping collection, storage, and display as separate responsibilities makes the information useful even when the alias
-arrives at the end of a call, and it prevents incomplete or damaged transmissions from becoming incorrect table
-entries.
+- [Documentation guide](README.md)
+- [Browser listening and Scan Lists](browser-listening-and-scan-lists.md)
+- [Activity and identity storage reference](dmr-nxdn-site-tracking-storage.md)

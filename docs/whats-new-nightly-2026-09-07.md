@@ -1,5 +1,8 @@
 # What’s New in Nightly — September 7, 2026
 
+> **Historical Nightly notes:** This document describes the September 7, 2026 build. The rolling Nightly has advanced
+> since then. Use the [project README](../README.md) and [documentation guide](README.md) for current features and setup.
+
 This rolling Nightly contains the complete net change from the previous successfully published Nightly at
 `d031c110` on September 3, 2026. It advances the portable database from format 10 to format 15. Back up the complete
 portable data folder before upgrading and use the bundled Application Migrator; an older build cannot open a database

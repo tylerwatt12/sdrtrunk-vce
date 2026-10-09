@@ -1,5 +1,8 @@
 # What’s New in sdrtrunk-vce 0.6.2 Alpha 8
 
+> **Historical release notes:** These instructions describe 0.6.2-alpha-8, including its setup screens and upgrade rules.
+> For current VCE features and setup, use the [project README](../README.md) and [documentation guide](README.md).
+
 **Alpha 8 brings DMR and NXDN much closer to P25 in the activity database and web interface, adds a searchable Alias
 Catalog and CSV exports, introduces voice-call quality diagnostics, and fixes decoder, recording, streaming, tuner,
 RadioReference, and RadioResolve problems reported during Alpha 7 testing.**

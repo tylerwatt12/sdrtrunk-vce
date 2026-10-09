@@ -44,7 +44,7 @@ The web interface brings receiver controls and listening together, without needi
 - **Scan Lists:** Create listening groups such as Fire, Police, or Transit. Combine aliases from different systems
   and Alias Lists, choose how unmatched talkgroups are handled, and let each listener select one or more lists.
 - **Personal playback controls:** Pause, skip, hold, avoid, replay the last call, and manage queued calls.
-  Optional Conversation Mode helps keep related calls together when several conversations are waiting.
+  Optional call grouping helps keep related calls together when several conversations are waiting.
 - **Phone and tablet support:** The interface and player adapt to smaller screens, with light and dark themes.
 - **Multiple users:** Give listeners their own accounts and control access to listening, radio activity, and
   administration. Each listener can make their own listening choices.
@@ -199,6 +199,7 @@ decisions, and it supports VCE rather than the original sdrtrunk project.
 
 ## Help and more information
 
+- [Documentation guide](docs/README.md)
 - [Report a problem or request a feature](https://github.com/tylerwatt12/sdrtrunk-vce/issues)
 - [Release notes and downloads](https://github.com/tylerwatt12/sdrtrunk-vce/releases)
 - [Browser listening and Scan Lists](docs/browser-listening-and-scan-lists.md)

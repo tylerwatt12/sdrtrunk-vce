@@ -1,5 +1,10 @@
 # Radio System, Site, and Activity Storage
 
+This reference explains how VCE organizes receiver observations for the Radio pages, activity history, and signal
+quality charts. It is useful when you need to understand why two sites share a system, why an identity stays tied to
+one saved channel, or how retained history is cleaned up. Start with the [documentation guide](README.md) for setup
+and listening; the [Web API reference](api-v1.md) describes the corresponding resources.
+
 ## Purpose
 
 The activity database supports a small set of bounded website and runtime queries:
@@ -10,7 +15,7 @@ The activity database supports a small set of bounded website and runtime querie
 4. show carrier- and timeslot-specific activity for conventional channels; and
 5. remove old activity without deleting administrator-owned channel or Alias configuration.
 
-The current model has two plain ownership levels. A `receiver_channel` is one saved channel configuration. A
+The current model has two ownership levels. A `receiver_channel` is one saved channel configuration. A
 `radio_system` is a trunked system identity. Every site, quality, conventional, and detailed-activity row belongs to a
 receiver channel through its numeric `channel_id`. System-wide trunked summaries belong to a radio system through
 `radio_system_id`. Retained detailed events store their observed radio-system and canonical identity references when
@@ -93,6 +98,12 @@ under the fallback stays attached to that exact saved-channel identity and is sh
 relabeled under a native system that had not yet been proven. Site snapshots and current radio-presence state are
 cleared when the current assignment changes, then rebuilt from new observations. A changed system generation uses the
 assignment watermark so delayed observations cannot move the channel back to an older system.
+
+Channels added from confirmed DMR or NXDN discovery can also retain their verified system and site identity in the
+saved channel document as `trunkedDiscoveryIdentity`. This is configuration evidence, separate from retained activity:
+restarting, clearing Statistics, or pruning history does not remove it. A new channel copy has no inherited discovery
+confirmation, and a receiving source or decoder change clears that confirmation. Existing channels without the field
+remain unknown; VCE does not backfill it from historical activity.
 
 Deleting a DMR or NXDN configuration cascades its channel-scoped fallback and its retained history coherently. A
 detached fallback otherwise remains only while retained facts still refer to it, then bounded maintenance removes it.
@@ -427,7 +438,8 @@ channel shares the system. A full statistics reset deletes derived activity but 
 aliases, credentials, preferences, recordings, or ordinary log files.
 
 Fresh databases create these exact tables in the single current-schema routine. Existing databases are changed only
-by the backed-up, staged Application Migrator. Startup validates the current schema and never repairs it silently.
+by the bundled Application Migrator. Current-profile upgrades use one in-place transaction with an optional recovery
+snapshot; external imports use a staged copy. Startup validates the current schema and never repairs it silently.
 
 ## Query-plan requirements
 
@@ -440,5 +452,7 @@ Representative-volume tests must show indexed searches for:
 - patch-member Activity through its member index and parent event key; and
 - every time-first retention selection, including quality buckets.
 
-Every website list remains server-bounded. A system, site, talkgroup, radio, quality, or discovery query must not scan
-optional detailed Activity, and admission checks must use the owning primary-key prefix.
+Every website list remains server-bounded. System totals, site facts, quality charts, and discovery use summaries and
+buckets. Identity labels and friendly-name filters can use indexed historical Alias evidence when compact evidence
+is unavailable; they must not scan unrelated detailed Activity. Admission checks use the owning primary-key prefix.
+See the measured evidence paths in [SQLite Activity Database Guidelines](sqlite-activity-database-guidelines.md).

@@ -1,238 +1,195 @@
-# How Browser Listening and Scan Lists Work
+# Browser listening and Scan Lists
 
-> **Release scope:** This guide describes current `main` and Nightly behavior. Numbered Alpha builds may omit these
-> newer browser-listening and Alias features.
+Scan Lists let you choose what to hear from VCE in a browser. A list can combine police and fire talkgroups from one
+system, transit from another, and conventional dispatch channels. Each listener chooses their own lists while the
+receiver continues monitoring its configured channels.
 
-`sdrtrunk-vce` receives and decodes calls continuously. Browser listening begins with a completed call: after the
-receiver finishes a call, the call is matched to published Scan Lists and offered to browser listeners who selected
-one of those lists.
+This guide describes current Nightly. Numbered Alpha builds may have different controls or fewer features.
 
-This differs from upstream SDRTrunk, which sends live audio segments to its desktop playback outputs while each call
-is still being produced.
+## Start listening
 
-## The Short Version
+1. Open **Listen > Scanner** in the website.
+2. Select one or more available Scan Lists. You can select up to 16.
+3. Press the play button (**Listen live**).
+4. Use the playback controls to pause, skip, hold, or avoid calls. You can continue browsing the website while audio
+   plays in the player.
 
-1. Each saved channel can be assigned one compatible Alias List.
-2. A matching Alias, or the Alias List Defaults when no destination Alias matches, assigns the call to Scan Lists.
-3. While at least one browser is playing or has just finished a feed request, the receiver places one browser copy of
-   each eligible completed call in a shared bounded feed. Each playing browser fetches that announcement and either
-   plays it or places it in that tab's local waiting queue.
+Selecting a list saves your choice but does not start audio. If you press play without an available list selected,
+VCE selects the list marked as the default.
 
-## From a Call to the Browser
+Browser audio plays **completed calls**. You hear a call after the receiver finishes receiving it, so listening has a
+delay. When calls overlap, they can wait in your browser's queue instead of playing over each other. Browser listening
+does not change recordings, external streams, or another listener's audio.
 
-```mermaid
-flowchart TD
-    call[Received voice call] --> channel[Saved receiver channel]
-    channel --> list[Assigned Alias List]
-    list --> match{Exact or range destination Alias?}
-    match -- Yes --> alias[Use the matching Alias]
-    match -- No --> defaults[Use Alias List Defaults]
-    alias --> outputs[Recording and external-stream choices]
-    defaults --> outputs
-    alias --> complete[Call finishes]
-    defaults --> complete
-    complete --> resolve[Resolve duplicate receiver legs to one completed call]
-    resolve --> routes[Combine and deduplicate published Scan List memberships]
-    routes --> active{Any browser feed active or recently active?}
-    active -- No --> done[Do no browser work]
-    active -- Yes --> feed[Add one browser copy to the shared bounded feed]
-    feed --> selected{Playing browser selected a matching Scan List?}
-    selected -- Yes --> busy{Browser player busy?}
-    busy -- No --> play[Play the call]
-    busy -- Yes --> queue[Wait in this browser's queue]
-    queue --> play
-```
+## Playback controls
 
-The diagram shows the normal destination-talkgroup path. Other matching Aliases, such as a source-radio Alias, can
-add Scan List memberships. Recording and external streaming use their own outputs and do not pass through the browser
-queue.
+| Control | What it does |
+| --- | --- |
+| **Pause / Resume** | Pause your audio while new calls continue to join the queue. Resume continues the current call, then the waiting calls. |
+| **Skip** | Move past the current call. |
+| **Hold / Release hold** | Keep listening to the current playback target until you release it. |
+| **Avoid** | Skip the current target and future calls from it. Remove it from the **Avoid List** when you want to hear it again. |
+| **Replay last call** | Replay the last call kept in this browser tab. It is unavailable while paused. |
+| **Clear queue** | Remove waiting calls. |
+| **Stop** | End listening and clear the current call and queue. Playing again starts with new calls. |
 
-## What Decides Which Calls Play
+The playback target is usually a trunked talkgroup or a conventional channel. The call's details can still show a
+digital talkgroup or radio ID. For conventional DMR, each timeslot is a separate target. A trunked DMR talkgroup keeps
+the same target across timeslots. Identical talkgroup numbers on different systems stay separate.
 
-### Channel and Alias List
+Open **Scanner settings** to change **Group calls by playback target**. With grouping enabled, calls already waiting
+for the same target play together before another target gets a turn. **Calls before switching targets** accepts
+1–20 calls and defaults to four. With grouping disabled, waiting calls play in order of their start time. These
+settings affect waiting calls; they cannot change audio that has already started.
 
-Each saved channel can be assigned one Alias List. Traffic channels created from a trunked control channel inherit
-that saved channel's assignment. `sdrtrunk-vce` keeps Alias Lists compatible with one
-protocol family:
+### The queue has limits
 
-- P25
-- DMR
-- NXDN
-- NBFM, which also covers conventional AM
+Each browser tab can hold **100 waiting calls**, separate from the current call. At the limit, the oldest waiting
+call is removed to make room for a new one. A long pause therefore cannot guarantee complete catch-up.
 
-A channel needs a compatible Alias List assignment for its Alias List Defaults to apply.
+Refreshing the page, opening a new browser document, or losing playback access clears the queue. A temporary
+connection interruption preserves calls already queued, but calls can be missed before the connection returns.
+Changing Scan Lists, Hold, Avoid, Skip, or Clear queue can remove or bypass waiting calls.
 
-### Matching Alias or Alias List Defaults
+Queued audio can also expire from the receiver's temporary cache. If a call is unavailable or fails to load, the
+player skips it and continues. Use [Managed Recordings](../README.md#find-and-replay-recordings) for saved-call browsing;
+the listening queue and Replay last call are not an archive.
 
-When the destination talkgroup matches an exact or range Alias, that Alias supplies its Scan List memberships. Other
-matched Aliases can add more memberships to the same call.
+## Create a Scan List
 
-When no exact or range destination Alias matches, the assigned Alias List's Defaults supply the recording, external
-streaming, and Scan List choices. An exact or range destination match suppresses this unmatched fallback, even when
-the matching Alias belongs to no Scan List. A source-radio match alone does not suppress the fallback.
+An administrator sets up the lists listeners can choose:
 
-Changing Alias List Defaults does not rewrite existing Aliases. The defaults become the starting choices for new
-talkgroup and talkgroup-range Aliases.
+1. Open **Manage > Scan Lists** and create a list, such as `Dispatch`.
+2. Leave **Available to listeners** enabled when the list is ready to use.
+3. Open **Manage > Aliases**, select the appropriate Alias List, and add the wanted aliases to that Scan List.
+   Bulk editing can assign several aliases together.
+4. Repeat with aliases from other Alias Lists if you want to combine systems or protocols.
+5. Open Scanner, select the list, and press play to check it.
 
-### Scan Lists
+An alias can belong to several Scan Lists. If a call matches more than one of your selected lists, the browser offers
+it once. Hiding a Scan List removes it from listener choices while leaving it available for administrators to edit.
 
-A Scan List is a reusable group of Alias routes. One Alias can belong to several Scan Lists, and one Scan List can
-contain Aliases from different systems and Alias Lists, including Aliases used by conventional channels.
+For example, `Dispatch` could include police and fire talkgroups from a P25 system, transit from another trunked
+system, and an AM or NBFM dispatch channel. A listener can select `Dispatch` together with another list without
+changing the channels the receiver monitors.
 
-A browser listener can select up to 16 published Scan Lists. If a call matches several selected lists, the feed
-returns that call once with all of its matching Scan List IDs. The browser also remembers recent call IDs so an
-overlapping selection cannot enqueue the same call twice.
+## Choose how unmatched calls and new aliases behave
 
-### What Hold and Avoid Control
+Each saved channel uses one compatible Alias List: **P25**, **DMR**, **NXDN**, or **Analog** (AM/NBFM). Traffic channels
+created from a trunked control channel inherit its assignment. Check that assignment in **Manage > Channels** if a
+call is not reaching the lists you expect.
 
-The call display and the Hold/Avoid target are deliberately separate. A call can show a real digital group identity
-while Hold or Avoid controls the stable channel or radio-system identity that produced it.
+In **Manage > Aliases**, select the list and open **Call Handling Defaults**. It has two independent tabs:
 
-- Conventional AM and NBFM calls use the saved channel's `configuration_id`. The browser shows the channel label as
-  the primary call identity instead of presenting the configured analog routing number as a talkgroup. Renaming the
-  channel does not change the target.
-- Conventional DMR calls use the saved channel plus timeslot, so traffic on slots 1 and 2 can be controlled
-  separately. Other conventional digital calls use the saved channel, while their real talkgroup can still appear in
-  the call details.
-- Trunked calls use `radio_system_key` plus the talkgroup, patch group, or radio identity. The same talkgroup number on
-  two radio systems therefore remains two separate Hold/Avoid targets. Native P25 systems use their WACN and System ID
-  in the stable radio-system key, so saved channels that discover the same P25 system share Hold and Avoid state.
-  Standard DMR Tier III uses its model (`tiny`, `small`, `large`, or `huge`) and Network ID, and NXDN Type-C uses its
-  location category (`global`, `regional`, or `local`) and System ID. Saved channels share Hold and Avoid state only
-  inside this receiver profile and only after the decoder has learned those complete identities. Capacity Plus,
-  Connect Plus, Capacity Max, Hytera Tier III, unknown or incomplete DMR, incomplete NXDN Type-C, and NXDN Type-D
-  remain separate for each saved channel.
-- On trunked DMR, the timeslot says which radio resource carried the call. It does not split the radio system or the
-  talkgroup Hold/Avoid target. Conventional DMR still uses the saved channel plus timeslot as described above.
+- **Unmatched Calls** chooses recording, Scan Lists, and external streaming when the destination talkgroup or patch
+  group has no exact alias or covering talkgroup range.
+- **New Aliases** supplies the starting recording, Scan List, and streaming choices for new aliases created manually
+  or imported from RadioReference. Changing these defaults does not rewrite existing aliases.
 
-The API returns this exact control target in `playback_target`. Its `label` is user-facing text; its `key` is the identity used
-for selection. Channel names, Alias names, and RadioResolve IDs are never used as the key. For system-scoped targets, the
-browser Avoid List also shows the system label and stable `radio_system_key`, so identical Alias text and numeric IDs on
-different systems remain visibly distinguishable.
+A matching destination alias supplies its own choices. If it belongs to no Scan List, the unmatched-call choices do
+not fill in for it. Other matching aliases, such as a source-radio alias, can add Scan List memberships; a source-radio
+match alone does not turn off the unmatched-call fallback.
 
-## The Default Setup
+Choose catch-all external streaming carefully: **Unmatched Calls** can send traffic you have not reviewed to a
+third-party service. Leave its Streaming choices empty if only individually approved talkgroups should be uploaded.
 
-A fresh setup contains:
+New fully encrypted RadioReference talkgroups are created with recording, Scan Lists, and external streaming
+disabled. Partial or unknown encryption status uses the chosen new-alias defaults. Updating an existing
+RadioReference alias preserves its local listening, recording, and streaming settings. A
+[VCE configuration CSV import](alias-import-export.md) instead uses the per-alias choices stored in the file.
 
-- one published Scan List named `Default`;
-- `Default P25`, `Default DMR`, `Default NXDN`, and `Default Analog` (AM/NBFM) Alias Lists; and
-- an unmatched-talkgroup route from each factory Alias List to `Default`.
+## What a fresh setup includes
 
-Upgrading a database older than format 11 restores missing factory Alias Lists once, including previously deleted
-defaults. An analog-family list named `Default NBFM` becomes `Default Analog` if the new name is available. Existing
-custom lists and routing stay intact. A custom list occupying a factory name for another protocol is preserved under
-a unique name, and only channels without a selected Alias List receive a compatible default.
-Later startups do not recreate lists you delete after the upgrade.
+VCE creates a Scan List named **Default** and four Alias Lists: **Default P25**, **Default DMR**, **Default NXDN**, and
+**Default Analog**. Their unmatched-call choices route clear calls to Default, so you can begin listening without
+naming every talkgroup first.
 
-New channels created in the Channel editor and new RadioReference trunked-site imports initially use the matching
-factory Alias List. Another compatible Alias List can be selected instead. RadioReference agency-frequency imports
-do not assign an Alias List automatically.
+New channels created in the Channel editor and RadioReference trunked-site imports initially use the matching
+factory Alias List when it is available. You can choose another compatible list. RadioReference agency-frequency
+imports do not assign an Alias List automatically; review those channels before listening.
 
-A newly created custom Alias List starts with no Scan List, recording, or external-streaming defaults. An
-administrator can opt into those routes through Alias List Defaults. The four canonical factory Alias Lists retain
-their unmatched-talkgroup route to `Default`, including when a canonical list is manually recreated.
+A new custom Alias List starts without recording, external streaming, or Scan List defaults. Open **Call Handling
+Defaults** to choose them. Importing a mainline sdrtrunk XML playlist adds listening-enabled aliases to the current
+default Scan List; aliases marked **Do Not Monitor** remain outside it. Supported imported channels without an Alias
+List receive a compatible factory list.
 
-With these factory settings, an Alias List does not need an entry for every talkgroup. Clear calls from unmatched
-talkgroups are eligible for the `Default` Scan List through the Alias List Defaults.
+## If a call is missing
 
-New talkgroup and talkgroup-range Aliases normally inherit their Alias List Defaults. A newly imported RadioReference
-talkgroup marked fully encrypted is instead created with browser playback, recording, and external streaming
-disabled. Partial or unknown encryption status continues to inherit the normal defaults. This exception applies only
-when a new Alias is imported; updating an existing RadioReference Alias preserves its Scan List, recording, and
-streaming choices.
+- Check that the channel is receiving and decoding the traffic in **Listen > Live**.
+- Check the channel's Alias List and the destination alias's Scan List memberships.
+- For a talkgroup without an alias, check **Call Handling Defaults > Unmatched Calls**.
+- Check that the Scan List is **Available to listeners** and selected in Scanner.
+- Release Hold or remove an entry from Avoid List if it excludes the call.
+- Check the player for skipped-call notices. Queue limits, connection gaps, and expired audio can lose calls.
 
-Selecting a published Scan List saves the selection in that user's preferences but does not start playback; press
-**Play** when ready. If no available Scan List is selected when Play is pressed, the browser selects and saves the
-published Scan List currently marked as default. At the API level, omitting `scan_list_id` selects that same default.
+<details>
+<summary>Technical playback scope and delivery limits</summary>
 
-When importing legacy upstream SDRTrunk XML, listening-enabled Aliases are placed in the current default Scan List,
-while Do Not Monitor Aliases remain outside it. Supported imported channels with no Alias List assignment receive the
-compatible factory Alias List.
+Hold and Avoid use stable identities, so renaming a channel or alias does not change their target:
 
-## What the Browser Queue Does
+- Conventional AM/NBFM and other conventional digital calls use the saved channel's `configuration_id`.
+  Conventional DMR adds the timeslot.
+- Trunked calls use a `radio_system_key` and a talkgroup, patch-group, or radio identity. P25 uses WACN and System ID;
+  standard DMR Tier III uses its model and Network ID; NXDN Type-C uses its location category and System ID.
+- Saved channels share a system target only inside this receiver profile and after complete system identity is
+  learned. Capacity Plus, Connect Plus, Capacity Max, Hytera Tier III, unknown or incomplete DMR, incomplete NXDN
+  Type-C, and NXDN Type-D remain separate for each saved channel.
 
-A browser starts at the feed's live edge. Calls already in the shared ring are not replayed or backfilled when Play is
-pressed.
+The API supplies the target in `playback_target`. Its `label` is displayed to the listener and its `key` controls
+selection. Channel names, alias names, and RadioResolve IDs are not target keys. System-scoped Avoid entries include
+system context to distinguish repeated names or IDs.
 
-Each browser tab owns its own in-memory waiting queue:
+After duplicate-call resolution, the receiver combines eligible Scan List memberships and offers one completed call
+to selected listeners. Recording and external streaming have their own outputs and do not use the browser queue.
 
-- If the player is listening and idle, the next matching completed call becomes the current call immediately.
-- If another call is playing or buffering, the new call waits.
-- The call currently playing or buffering is separate from the waiting-call count.
-- The limit is 100 waiting calls per browser.
-- When a new call arrives at the limit, the oldest waiting call is removed and the new call is kept. This keeps the
-  player closer to current activity.
-- **Stop** ends feed requests, stops the current call, and clears the tab's waiting queue. Pressing Play again starts
-  at the then-current live edge instead of replaying calls received while stopped.
-- **Pause / Resume** in the full website's Scanner and playback bar freezes the current audio position without
-  clearing the queue. Incoming calls continue queuing up to the same 100-call limit. Resume continues the current
-  call and then the waiting calls; Stop still clears both, even while paused. Pause affects only this browser,
-  not receiver decoding, recordings, external streams, or other listeners.
-- While paused, the status shows the waiting-call count. The shared audio cache can still evict older calls, and
-  queue overflow or unavailable audio produces the existing skipped-call notice. A long pause does not guarantee
-  complete catch-up. Replay Last Call is disabled until Resume or Stop; Skip, Hold, Avoid, and Clear Queue remain
-  available without resuming audio.
-- Refreshing the page, opening a new browser document, or losing playback access also clears the tab's queue. A
-  temporary connection interruption preserves calls already in the queue, although calls can be missed before the
-  feed resumes. Hold, Avoid, Scan List changes, Skip, and Clear Queue can also remove or bypass waiting calls.
-- **Replay Last Call** keeps exactly one decoded call in that tab and replays it locally. It does not ask the receiver
-  to retain or retrieve browser listening history.
+Play starts at the live edge: calls already in the receiver's cache are not backfilled. Each tab owns its waiting
+queue and Replay last call audio. It fetches queued audio when playback reaches that call. A fetch exceeding
+15 seconds, unavailable audio, or a decoding failure causes that call to be skipped.
 
-With **Conversation Mode** off, the browser plays the oldest known waiting call by call start time. With it on, calls
-remain ordered by start time within each conversation, but the browser may keep playing the same conversation while
-other calls are waiting. The per-user **Calls before switching** setting allows 1 through 20 calls and defaults to
-four, after which another waiting conversation gets a turn. Both choices are in the Scanner page's playback-settings
-panel. This regrouping applies only after calls have built up in the local queue; it cannot reorder audio that has
-already started.
+While a browser feed is active, the receiver's shared temporary cache holds at most 512 calls or 128 MiB of audio;
+entries expire after 30 minutes. After the last feed request and a five-second grace period, receiver maintenance
+releases the cache. Pause keeps requesting calls and therefore keeps that shared cache active.
 
-The browser queue stores call announcements and audio URLs rather than WAV audio. The browser fetches a call's audio
-when that call reaches playback. While a browser feed remains active, the shared server ring holds at most 512 calls
-or 128 MiB, and entries expire after 30 minutes. After the last feed request and a five-second handoff grace period,
-the existing receiver-health maintenance pass releases the ring. These are safety bounds, not a replay-history
-promise. A queued call can therefore become unavailable before the browser reaches it. If the audio is unavailable,
-its fetch exceeds 15 seconds, or fetching or decoding fails, the player skips that call and continues.
+Receiver callbacks do not wait for browser matching or WAV encoding. One low-priority worker handles that work; no
+per-listener playback queue is kept on the server. The receiver handoff, cache, network, and browser queue each have
+limits, so the 100-call browser limit is not a delivery guarantee. A detected feed gap continues with valid new calls.
+See [Web API v1](api-v1.md) for the complete API contract.
 
-The browser has no server-side listener queue or playback session. It makes one bounded call-feed request at a time;
-one low-priority worker performs Scan List matching, metadata projection, and WAV encoding away from receiver
-callbacks. A paused scanner that continues collecting calls keeps this shared worker and ring active, just as an
-active listener does; pausing does not create a separate server-side audio archive. When no browser is requesting
-calls, completed calls bypass that browser worker and ring entirely. Receiver decoding,
-the bounded handoff, the shared ring, and the network are separately bounded, so the 100-call browser limit is not an
-end-to-end delivery guarantee. When the feed detects a gap, the browser continues with valid new calls. See
-[Web API v1](api-v1.md) for the technical limits.
+</details>
 
-## Example: A Cleveland Scan List
+<details>
+<summary>Older default-list upgrades</summary>
 
-An administrator could create a Scan List named `Cleveland` and add:
+The upgrade from database formats older than 11 restores missing factory Alias Lists once, including previously
+deleted defaults. A same-family `Default NBFM` becomes `Default Analog` when that name is available. Existing custom
+lists and routes are preserved; a factory-name collision with another protocol family is renamed uniquely. Only
+channels without a selected Alias List receive a compatible default. Later startups do not recreate deleted lists.
+The canonical factory lists retain their unmatched-call route to Default when manually recreated.
 
-- police and fire talkgroup Aliases from one P25 system;
-- transit talkgroup Aliases from another trunked system; and
-- dispatch Aliases used by conventional AM or NBFM channels.
+</details>
 
-A listener selects `Cleveland` to hear that combined group. The receiver configuration and the systems being decoded
-do not change when the listener switches to another Scan List.
+<details>
+<summary>Comparison with mainline sdrtrunk</summary>
 
-## Compared With Upstream SDRTrunk
-
-`sdrtrunk-vce` is derived from [upstream SDRTrunk](https://github.com/DSheirer/sdrtrunk), maintained by Dennis Sheirer
-and contributors. This comparison was checked against upstream `master` at
+This comparison was checked against upstream `master` at
 [`80360029`](https://github.com/DSheirer/sdrtrunk/commit/80360029efb008dca993938d1e34ad4a7a8c15bd)
-on August 28, 2026.
+on August 28, 2026. Later mainline releases may differ.
 
-| Behavior | Upstream SDRTrunk | `sdrtrunk-vce` |
+| Behavior | Mainline sdrtrunk at that revision | VCE browser listening |
 | --- | --- | --- |
-| Audio handoff | Sends an audio segment to desktop playback while the call is still being produced. | Sends a resolved, completed call to browser playback. |
-| Overlapping calls | Assigns active segments to available audio output channels. A completed segment that remains unassigned is removed instead of building a growing completed-call backlog. | Lets eligible completed calls wait in each browser's bounded queue. |
-| Listener selection | Uses a Listen switch and optional playback priority on each Alias. | Uses reusable Scan List memberships; each browser listener chooses one or more published lists. |
-| No destination talkgroup Alias match | An unmatched destination does not change playback priority. If no other matching Alias changes it, the segment remains enabled at the default listening priority. | Uses the assigned Alias List Defaults for recording, external streaming, and Scan List routing. |
-| Alias List protocol scope | One Alias List can index identifiers from multiple protocols. | Each Alias List belongs to the P25, DMR, NXDN, or NBFM protocol family. |
-| Fresh defaults | Does not create Scan Lists; local audio remains enabled at the default playback priority unless a matching Alias changes it. | Creates `Default` plus four factory Alias Lists whose unmatched talkgroups route to it. |
+| Audio | Sends an audio segment to desktop playback while a call is being received. | Plays a resolved, completed call. |
+| Overlapping calls | Assigns active segments to available audio outputs; unassigned completed segments are removed. | Eligible completed calls can wait in each browser's bounded queue. |
+| Listener choices | Listen switch and optional playback priority on each alias. | Reusable Scan Lists chosen by each browser listener. |
+| Unmatched destination | Default playback priority applies unless another matching alias changes it. | Unmatched-call defaults choose recording, external streaming, and Scan Lists. |
+| Alias List protocols | A list can contain identifiers from multiple protocols. | A list uses the P25, DMR, NXDN, or analog family. |
 
-Recording and external streaming remain separate actions in both projects. The completed-call queue described here is
-specifically the `sdrtrunk-vce` browser-listening path.
+Recording and external streaming are separate from playback in both projects. VCE also retains receiver-local audio
+playback; the completed-call queue in this guide describes browser listening.
 
-## Related Documentation
+</details>
 
-- [Web API v1](api-v1.md)
-- [Alias Discovery and Unmatched Talkgroup Storage](alias-discovery-storage.md)
-- [How Talker Aliases Work](talker-alias-implementation.md)
+## Related guides
+
+- [Alias CSV import and export](alias-import-export.md)
+- [Talker aliases](talker-alias-implementation.md)
+- [Documentation index](README.md)

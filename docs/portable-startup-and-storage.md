@@ -1,234 +1,158 @@
-# Portable Startup And Storage
+# Setup, updates, and your saved data
 
-SDRTrunk-VCE keeps each extracted distribution independent from stock SDRTrunk and from other VCE copies.
+This guide describes the current Nightly build. For a numbered Alpha, use its bundled documentation and
+version-matched release notes.
 
-## Data Location
+Each extracted SDRTrunk VCE download has its own `data` folder. This keeps its settings separate from mainline
+sdrtrunk and from other VCE installations. Keep this folder when updating or moving your receiver: it contains your
+channels, aliases, accounts, preferences, and other saved data. See the [documentation index](README.md) for related guides.
 
-- Windows, Linux, and macOS distributions: `<install>/data`
-- Development launches: `<working-directory>/data`, unless `sdrtrunk.vce.data.root` is set
+## Choose a starting point
 
-The data directory owns the SQLite database, vault, preferences, logs, recordings, event logs, screenshots, streaming
-files, JMBE libraries, and optional modules. Java Preferences are stored in the SQLite
-`application_settings` table; the operating-system Java preference store is not used by the normal application.
+Launch VCE normally to open the Setup Wizard. On a new installation, choose the option that matches what you have:
 
-## First Launch And Application Migration
+| Your starting point | Choose | What to expect |
+| --- | --- | --- |
+| You are new to VCE | **Start fresh** | Create a new profile, then set up your administrator account, web access, audio, and radios. |
+| You already use VCE | **Copy a previous VCE installation / data folder** | Bring over its database and available voice libraries, optional modules, and encryption vault. This is the most complete import choice. |
+| You have a VCE database file | **Import a SQLite database only** | Bring over settings and history stored in that file. Other files and saved output paths are not moved. |
+| You use mainline sdrtrunk or an older XML playlist | **Import legacy XML** | Bring over supported channels, aliases, and streaming settings from the playlist. The XML file stays unchanged. |
 
-When `data/database/sdrtrunk.sqlite` is absent, a graphical launch first looks beside the current install folder for
-portable data from an earlier sdrtrunk-vce build. The unified Setup Wizard offers four radio-card choices:
+For a previous VCE installation, select a nearby installation or browse to its folder. Click **Review import**, read
+the plan, then click **Confirm import**. VCE checks and updates the copied database with its bundled Application
+Migrator; there is no separate tool to download. Supported older macOS `.app` installations can also be selected.
 
-- **Start fresh** is recommended for new users.
-- **Copy a previous VCE installation / data folder** includes the database and supported portable assets. Choose a
-  discovered nearby installation or browse explicitly; legacy macOS `.app` sources remain supported.
-- **Import a SQLite database only** imports only that file's contents. It does not copy a vault, JMBE library,
-  optional modules, or neighboring files, and does not remap stored output paths.
-- **Import legacy XML** reads supported configuration from an older playlist without modifying the source XML.
+The previous installation stays unchanged. Keep it until you have checked the new installation and confirmed that
+your channels receive and your recordings or streams work as expected.
 
-Source-selection controls appear only for the selected import option. Start fresh does not require a file or folder;
-nearby installations are offered with the folder option, and older XML playlists with the XML option.
-For a previous VCE installation, choose its folder, select **Review import**, then **Confirm import** after checking
-the plan. The main application's Setup Wizard runs the built-in import and upgrade automatically; no separate
-program or download is needed.
+## Work through setup
 
-The wizard's fixed sequence is Starting point, Administrator, Web access, Digital audio, RadioReference,
-Statistics & history, Recordings, Your radios, Optimize decoding, and Review & finish. Every step remains visible. Valid imported
-settings are marked **Carried over** and skipped by Continue; click a completed step to review or edit it. Deferred
-and failed steps are not shown as successful. Exit preserves accepted settings, but never saves password drafts.
+The wizard takes you through Starting point, Administrator, Web access, Digital audio, RadioReference,
+Statistics & history, Recordings, Your radios, Optimize decoding, and Review & finish. Usable imported choices show
+**Carried over**. Continue skips those completed steps; select any step to review or change it.
 
-The sun/moon button at the top of the wizard switches between Light and Dark without losing entered values.
-It works before choosing a starting point without creating a database. An explicit choice is saved once the profile
-is created or imported; otherwise the imported theme is preserved. More theme presets remain available under
-Settings → Application → Appearance.
+- **Administrator:** Create the password for the fixed `admin` account if the imported profile does not already have
+  a usable one. Imported accounts are retained when valid. Changing an existing administrator password requires
+  the current password or account recovery.
+- **Web access:** New profiles use HTTPS on port **8090**, accessible from this computer. Choose **Other devices**
+  if you want remote access. This makes the service reachable through the computer's network interfaces, subject
+  to its firewall; it does not open firewall or router ports. An imported disabled web server is enabled locally,
+  with the change shown in setup.
+- **Digital audio:** Set up JMBE to hear supported digital voice calls. Use an existing library or allow the wizard
+  to download and build it. If that fails, retry or set it up later; digital voice needs a working library.
+- **RadioReference:** Connect your account if you want directory lookups and imports. A saved password and a
+  successfully tested connection are shown separately. You can set this up later.
+- **Statistics & history:** New profiles collect summary statistics. Saving individual activity events is optional.
+  Time-based activity retention defaults to 30 days and can be set from 1 to 365 days. This does not control recording
+  retention or ordinary log files; imported Off choices stay Off.
+- **Recordings:** Choose Managed Recordings for searchable call details and browser playback, or Classic for ordinary
+  audio files. Imported recording choices are preserved. Review the recording folder before starting reception.
+- **Your radios:** A device marked **Detected** has been found; reception has not been tested. No hardware or a missing
+  driver does not prevent completing setup. Use **Rescan** after connecting hardware or fixing its driver.
+- **Optimize decoding:** Run the recommended tests to choose efficient signal processing for this computer. Pause
+  CPU-heavy work first. Completed valid results are reused; Retry keeps them. **Skip this time** allows you to continue.
 
-New profiles default to HTTPS on localhost port **8090**. The web interface remains available for alias editing;
-there is no desktop-only/disabled choice. An imported disabled web server is enabled on localhost and the adjustment
-is disclosed. Network access is never automatically enabled. Choosing **Other devices** binds reachable network
-interfaces under the host firewall; it is not a guaranteed LAN-only boundary and does not open firewall/router ports.
-Existing administrator credentials are preserved. Changing an imported administrator password requires the current
-password or the established account recovery workflow.
+The sun/moon button changes Light or Dark appearance without losing entered settings. Downloads, library building,
+and decoding tests show progress in the wizard. Navigation waits for a running operation to finish, fail, or stop
+safely. Exit keeps accepted settings and discards unsaved password entries.
 
-Digital audio setup recommends setting up JMBE so supported digital radio calls can be heard. It validates an existing
-JMBE library or downloads and builds one inline after explicit download/compile consent. A successful installation
-is confirmed on the page before Continue; a failed attempt offers retry, an existing library, or setup later.
-RadioReference distinguishes stored credentials from a verified connection; passwords stay masked. Both are optional.
-Fresh profiles collect summary statistics; detailed activity history is opt-in. Imported Off choices remain Off.
-Time-based activity retention defaults to 30 days (1–365 days); these controls do not change recordings or ordinary logs.
+On **Review & finish**, check the actual output folders, web access, and channels selected to start automatically.
+Unlock the vault if requested. Reception starts after required setup and decoding preparation finish. Import and
+update reports have **Copy Message** and a visible ten-second continuation countdown; copying the report does not
+pause the countdown.
 
-Tuner discovery lists physical devices as **Detected**, not Ready. It only enumerates descriptors/identities; it does
-not open, configure, tune, or start receiving from a tuner. **Skip discovery** is available only during a scan and
-waits for discovery to stop safely. Afterward, use **Rescan** or **Continue**; having no hardware or a missing driver
-does not prevent setup. Discovery runs again when revisiting the page rather than reusing an imported inventory.
+## What an import brings over
 
-**Optimize decoding** helps sdrtrunk-vce choose the fastest supported way to process radio signals on this computer;
-it is not a general-purpose computer performance score. Running it during setup is recommended. Close other
-applications and pause CPU-heavy background work first. Existing valid per-test results are reused; missing, reset,
-or updated tests run individually. A changed CPU/JVM environment can
-invalidate all tests. Retry keeps completed valid results. **Skip this time** does not permanently suppress future
-prompts. Digital audio setup and decoding optimization display progress within the wizard; once started, navigation
-waits until completion, failure, or acknowledged cancellation. Cancellation takes effect between optimization tests.
+| Saved item | Copy an installation / data folder | Import a SQLite database only |
+| --- | --- | --- |
+| Channels, aliases, accounts, preferences, and application activity stored in the database | Imported, with any required conversion and declared repairs or resets | Imported, with the same conversion policy |
+| Encryption vault, JMBE library in `jmbe`, and optional files in `modules` | Copied when present and usable; missing or skipped items appear in the report | Not copied |
+| Logs, call audio, event logs, screenshots, streaming output, and the separate Managed Recordings catalog | Not copied; stay at their existing locations | Not copied; stay at their existing locations |
+| Saved output and library paths inside the previous data folder | Changed to the matching location in the new data folder | Kept as stored |
+| Deliberately shared paths outside the previous data folder | Kept as stored | Kept as stored |
 
-Review lists effective output folders, web access, and existing auto-start selections. Applicable release information
-and vault-unlock controls appear here. The listener is checked before setup completes, and receiver construction
-follows calibration. Migration completion includes **Copy Message** and a visible ten-second continuation countdown;
-copying does not reset it. Other preparation pages do not automatically start work.
+The migration plan names possible activity resets and retired settings that will be removed. The completion report
+gives the actual repair, reset, and skipped-item counts. Usable configuration is carried over; an unusable component
+may need to be set up again without preventing other settings from importing.
 
-Use **Help → Setup Wizard…** to reopen setup after an explicit restart confirmation, or launch graphically with
-`--setup-wizard`. Completed profiles normally launch without optional setup pages unless required preparation changes.
-When explicitly reopened with an existing profile, the same Starting point page offers **Keep my current settings**,
-**Replace settings from a SQLite database**, and **Import a legacy XML playlist**. No extra step is inserted. Merely
-selecting an option or returning with Back never imports or replaces data; each import has a separate preview and
-confirmation. Fresh-start and folder-copy choices remain exclusive to new installations. **File → Import SQLite
-Database…** also restarts into the same wizard's database-replacement flow. After an import completes, Starting point
-becomes a results review for that session.
+A database-only import can still point to absolute folders in the previous installation. Relative paths resolve
+inside the new `data` folder. Check the folders on **Review & finish** before recording or streaming. If you need old
+call audio or logs in the new installation, keep and copy those files separately after stopping the applications;
+the settings import does not transfer them.
 
-The wizard uses the bundled Application Migrator, the only supported release database-migration entry point. An upgrade of the
-current profile uses one transaction before receiving starts. The recovery-backup checkbox defaults to on and saves
-one timestamped SQLite-aware snapshot before changes; skipping it uses the same conversion and final checks. A
-failure before commit rolls back the transaction. After commit, the optional backup remains for manual recovery.
-External imports and post-setup replacement keep their private staged-copy validation and atomic installation;
-the selected source database and previous installation remain unchanged. The saved vault, JMBE libraries, and
-optional module files are copied when present during a full portable-data import. Logs, recordings, event logs,
-screenshots, and streaming output remain in the previous data folder instead of being duplicated.
+## Update an existing profile
 
-For full-folder migration, saved output and library paths inside the previous data folder are changed to the matching
-location inside the new data folder. Deliberately shared paths outside it are left alone. SQLite-only imports preserve
-stored paths without remapping: absolute paths may still refer to the old installation, while portable-relative paths
-resolve under the destination data root. Check the effective folders on Review before starting channels.
+When a new build finds an older supported database in its active `data` folder, setup offers **Update** before
+receiving starts. Leave **Create a recovery backup first** selected unless you already have the recovery copy you
+intend to use. The backup is saved under `data/database/backups`; its exact location is reported.
 
-### Alpha 8+ Database Compatibility
+This updates the active database in place. All required changes run in one transaction. If conversion or final
+validation fails before completion, that transaction rolls back. A successful update may make the database
+incompatible with the previous build. Its recovery backup remains for manual restoration; VCE does not automatically
+switch the database back after a completed update. A healthy database already at this build's format needs no update
+or upgrade backup.
 
-Numbered Alpha and Nightly builds can have different application features, but they share one forward-only database-
-format history. A channel name never selects a different schema or migration route.
+Alpha and Nightly share one forward-only database history. Supported VCE sources start at Alpha 8; you do not need
+to install every intervening build. An older build cannot open a database already converted to a newer format.
+Keep separate data folders when comparing builds, and retain the older installation or a backup for going back.
+For a numbered Alpha, also read its version-matched release notes. See [Moving and updating VCE data](database-migration.md)
+for the support boundary and detailed conversion contract.
 
-This source tree contains the Alpha 8+ format catalog, linear migration chain, and deterministic format fixtures.
-Numbered Alpha builds document their migration behavior in version-matched release notes. Rolling Nightlies use their
-bundled current documentation and the migrator's preflight and completion reports.
+## Review setup or import more settings later
 
-Global database format 3 resets receiver-derived activity before adding its P25 site projection fields. Global format
-4/P25 activity schema v28 resets receiver-derived activity again for direct format-3 sources, then stores one
-system-level logical call separately from each distinct learned P25 site observation. Its adjacent migration step
-records a fresh collection boundary and does not backfill counters, identities, topology, quality, or physical call
-activity.
+Use **Help → Setup Wizard…** and accept the restart prompt. Receiving stops while you review setup. The Starting
+point page then offers:
 
-Global database format 5 introduced normalized web users, exact password verifiers and roles,
-per-user browser preferences, configurable access overrides, a receiver-settings revision, and canonical saved-channel
-identities. Active conventional channels use their configuration UUID; active trunked channels use both their
-configuration UUID and nonblank RadioResolve ID. The format 4-to-5 step preserves supported accounts, access,
-receiver preferences, and active channel configuration; rebuilds reproducible channel query projections from each
-authoritative channel document even when the old derived columns are stale; moves personal browser choices into each
-account; and drops and counts recognized retired MPT-1327 and sound-card rows, retired web-policy overrides, and
-superseded personal setting storage. Malformed or ambiguous administrator-owned channel documents, identities,
-credentials, access policy, and shared preferences are refused rather than repaired or guessed.
-An Alpha profile with no account may still contain the older shared presentation choices. Those values are retained
-through migration and assigned to the primary administrator when setup creates it; their legacy storage is removed
-only after that account safely owns the converted preferences.
+- **Keep my current settings:** Review the existing profile without importing anything.
+- **Import a legacy XML playlist:** Add supported channels, aliases, and streaming settings. Existing configuration
+  stays in place; conflicting imported names are renamed. VCE saves a database backup before committing the import.
+- **Replace settings from a SQLite database:** Replace the complete application database, including channels,
+  aliases, accounts, preferences, and stored activity. This does not merge two profiles.
 
-Global database format 6 resets receiver-derived activity instead of rekeying old configured-conventional owners from
-the former external RadioResolve ID. Administrator-owned channels remain intact, and live traffic rebuilds activity
-under the saved channel configuration UUID. Conflicting or malformed derived owner identities therefore cannot block
-an otherwise valid upgrade.
+**File → Import SQLite Database…** opens the same replacement flow. Review its warning and plan before confirming.
+VCE backs up the current database, updates and checks a private copy of the selected file, installs it, and restarts
+into setup review. The selected source is unchanged. Files beside it are not copied; the active `data` folder's
+non-database files remain in place, and stored paths are not remapped. An imported profile without a usable
+administrator account asks for a new password before reception starts.
 
-Global database format 7 adds Conversation Mode. Its format 6-to-7 step upgrades each exact per-user browser
-preference document to add Conversation Mode and the bounded calls-before-switching value. It preserves every other
-personal preference, increments that user's preference revision, and removes the five retired receiver-wide browser
-audio capacity keys. Unknown or incomplete preference documents and exhausted revisions are refused rather than
-defaulted. A version-1 user with more than 16 selected Scan Lists is refused rather than silently truncated; reduce
-that user's selection in the previous build and run the migration again.
+Selecting an option or going Back does not import anything. After an import finishes, Starting point shows its
+results instead of offering to repeat it. A replacement that cannot establish a safe final state does not restart
+automatically; keep its error and reported recovery backup for troubleshooting.
 
-Global database format 8 added per-user health-alert visibility. Its format 7-to-8 step upgrades each exact per-user browser
-preference document to add the bounded list of receiver-health alerts that account has turned off. The new list is
-empty for every migrated account, preserving the existing behavior where all alerts are on. Every other personal
-preference is preserved and the user's preference revision is incremented. Unknown or incomplete preference
-documents and exhausted revisions are refused rather than repaired or defaulted.
+## Where files are stored and how to back them up
 
-Global database format 9 added three per-user Live presentation choices in its format 8-to-9 step.
-Active-trunked-channel filtering defaults off. Retaining the last call on idle rows and clearing idle voice quality
-inherit the previous receiver-wide values for every existing account, defaulting false when those shared values are
-absent. The two obsolete shared keys are removed while traffic-grant age-out, the receiver-settings revision, and every
-unrelated portable preference remain intact.
+Windows, Linux, and current macOS downloads use `<install>/data`. The application database is
+`data/database/sdrtrunk.sqlite`. Settings, the encryption vault, JMBE libraries, and optional modules belong to this
+profile. Recording and other output folders can be changed, so their effective locations may be elsewhere.
 
-Global database format 13 adds one bounded setup-progress record in the existing `application_settings` table. The
-12-to-13 migration marks existing installations as previously configured without changing their other settings;
-the wizard revalidates actual readiness. New/copy-imported destinations get their own incomplete setup session.
-The record contains only completion and finite step states, not passwords, hardware inventories, benchmark results,
-or job logs. No new tables or separate database-version scheme are introduced.
+To make a complete manual backup, stop VCE and copy its entire `data` folder. Also copy any recording or output
+folders you deliberately placed outside it. Keep the backup with the matching VCE build if you may need to restore
+that version. The automatic migration backup covers the database being updated, not every file in the profile.
 
-Supported Alpha 8-or-newer macOS `.app` releases remain migration sources. The setup workflow finds or opens
-the old bundle and uses its sibling `<app-name>-data` folder without changing that old installation. Current macOS
-console packages store their active data only under `<install>/data`, unless an explicit
-`sdrtrunk.vce.data.root` override is supplied.
+Classic recordings are ordinary files in the configured recording directory. Managed Recordings uses its configured
+audio directory plus the separate `data/database/managed-recordings.sqlite` catalog. Preserve both the audio and
+catalog when backing up that library. Managed recording retention is independent of activity retention; Classic
+recordings have no automatic retention.
 
-The bundled migrator accepts every verified successfully published database format from Alpha 8 through the format
-used by the running build. Alpha and Nightly builds share one global integer format and one linear forward migration
-chain; the build label does not choose the route. Alpha 8, Alpha 9, and Alpha 10 share one legacy signature
-and enter at the same baseline. Known-unpublished developer layouts are refused rather than guessed.
+An older supported Managed Recordings catalog gets its own backed-up update before receiving starts. Its recording
+entries are preserved. If the catalog update fails, retry or choose **Continue without managed recordings**;
+ordinary receiving can continue while that library is unavailable. The retired `webfirst` catalog is unsupported.
 
-Preflight validates the complete schema, expected metadata, and critical invariants; resolves the source format;
-and lists every step plus any declared reset or dropped retired state. Pre-Alpha 8, unknown, mixed, partially migrated,
-newer-than-the-app, and retired `webfirst` databases are refused without mutation. See the
-[Database Migration Contract](database-migration.md). Numbered Alpha builds also provide a version-matched What's New
-document; rolling Nightlies report exact preservation, repair, reset, and skip behavior in the migrator's preflight
-and completion reports.
+Only one VCE process can use a given `data` folder. If you see **already in use**, close the other instance before
+trying again. Keep the source and copy the error if an import is refused as unsupported, newer, mixed, or damaged.
+Do not remove the database to get past the error. If the destination already contains data, choose a separate new
+installation or preserve the existing folder before changing its location.
 
-### Format Change And Safe Execution Rule
+<details>
+<summary>Command-line setup and storage reference</summary>
 
-Every persisted schema or semantic change lands with its global format bump, in-repository adjacent migration step,
-deterministic prior-format fixture, and tests. The bundled chain retains those steps back to the Alpha 8 baseline, so
-a verified older Alpha or Nightly database does not require sequential installation of skipped builds.
-Ordinary application services remain validation-only.
+Development launches use `<working-directory>/data`. The Java property `sdrtrunk.vce.data.root` selects an explicit
+data folder for any launch. Java Preferences are stored in the application database's `application_settings` table,
+not the operating-system Java preference store. Legacy macOS `.app` imports use the old bundle's sibling
+`<app-name>-data` folder. XML discovery checks the mainline sdrtrunk playlist folder for `default.xml`, then
+`playlist_v2.xml`; it reads the selected XML without changing it.
 
-When startup recognizes an older format, the Setup Wizard offers to update the saved settings using the bundled
-Application Migrator. The main receiver window and receiving have not started. With the profile locked, the migrator takes the optional
-backup under `data/database/backups`, applies all required adjacent steps to the existing database in one transaction,
-checks the exact final schema and bounded configuration, then commits. It avoids repeated copies, full-history scans,
-and compaction. If conversion or validation fails before commit, the transaction rolls back and setup offers retry.
-Explicit inspection and external imports retain fuller integrity checks. A healthy current-format profile needs no
-upgrade or backup.
-
-For a numbered Alpha, see its version-matched release notes for accepted sources and migration behavior. For a rolling
-Nightly, use its bundled documentation and read the migrator's preflight and completion reports. An Alpha with an
-older database format cannot open data already used by a newer Nightly. Keep separate installation and data folders
-when comparing channels, and never copy a newer database into an older build.
-
-## Recording Storage
-
-Both supported release channels keep Classic call recording in the administrator-configured recording directory.
-Current Nightly builds also offer optional Managed Recordings, with audio in a separate managed directory and a
-separate `managed-recordings.sqlite` catalog for browsing and playback. The catalog has its own format version and
-does not change the application database's format version. Managed recording retention is controlled separately;
-Classic recordings remain administrator-owned files without automatic retention.
-
-When an existing profile's Managed Recordings catalog needs a format update, graphical setup offers a backed-up update
-before receiving starts. Headless startup of that profile requires an explicit `--upgrade-current` or
-`--upgrade-managed-recordings` run. If the main database is absent but an older catalog remains, add
-`--upgrade-managed-recordings` to `--fresh`, `--import-xml`, or `--upgrade-data`; setup prepares the main database and
-administrator first, then updates the catalog before receiving starts. `--no-upgrade-backup` omits the optional
-recovery snapshot for either upgrade flag. A catalog upgrade failure allows ordinary receiving to continue with
-Managed Recordings unavailable; graphical setup also offers retry.
-
-The retired `webfirst` development branch used an incompatible managed-recording catalog. Its database is not a
-supported migration input for either active channel, so an old `webfirst` data directory must remain separate.
-
-If no portable database is found, startup still searches `${user.home}/SDRTrunk/playlist` for `default.xml` and then
-`playlist_v2.xml`. The legacy XML is read only.
-
-After setup, **Help > Setup Wizard… > Import a legacy XML playlist** can merge another supported playlist into the
-active profile.
-Existing configuration is retained, imported name conflicts are renamed, and a validated timestamped database backup
-is created before the configuration snapshot is committed. The source XML remains read only.
-
-**Help > Setup Wizard… > Replace settings from a SQLite database** can instead replace the complete active database
-from a supported Alpha 8-or-newer SQLite file. This is a replacement, not a merge. Receiving is already stopped by
-restarting into setup. A bold red warning and migration plan are shown before confirmation. SDRTrunk then closes its
-setup preferences, preserves the current database as a timestamped safety backup, migrates and validates
-a staged copy of the selected file, installs it atomically, and restarts. Only SQLite contents are imported; files
-beside the source database are not copied, current non-database portable files remain in place, and the selected source
-is never changed. Stored portable paths are not remapped. If the imported database has no administrator, setup asks
-for a new administrator password after restart. Every replacement saves an unfinished destination review before
-promotion, so even an interrupted restart returns to setup. Valid imported settings are checked off; missing setup
-and Review & finish are shown before reception can start. The success report can be copied and continues automatically after
-its visible countdown; an unconfirmed failed replacement does not restart automatically.
-
-Headless launches require one explicit option when the database is absent:
+Headless launches need an explicit starting option when the database is absent:
 
 ```text
 --fresh
@@ -236,30 +160,32 @@ Headless launches require one explicit option when the database is absent:
 --upgrade-data <previous-install-data-folder-or-sqlite-file>
 ```
 
-Current `main` and Nightly builds require a password for the fixed `admin` web account before a new installation can
-start. Numbered Alpha builds may omit this newer startup feature; use that Alpha's version-matched documentation. In a
-build that includes it, the graphical setup wizard collects and confirms the password. For an unattended headless
-setup, put only the password in a protected UTF-8 file and add:
+Use only one of these options. Fresh creation and XML import create and validate a temporary current-format database
+before installing it. `--upgrade-data` imports a supported external folder or SQLite file with the same scope rules
+as graphical setup; it cannot replace a database already in the active data folder.
+
+For a new profile without a usable administrator credential, add:
 
 ```text
 --admin-password-file <path>
 ```
 
-The password must contain 7-256 characters. Remove or secure the input file after setup. The application stores only
-the salted PBKDF2 verifier in the portable database. Existing installations are not retroactively forced through this
-step; copied profiles retain an already configured administrator.
+The protected UTF-8 file should contain only the password, which must be 7–256 characters. Secure or remove the input
+file afterward. VCE stores a salted password verifier. Numbered Alpha builds may predate this setup requirement;
+follow the documentation bundled with that build.
 
-Fresh creation and XML import build the complete current schema in a temporary database, validate it, and then install
-it atomically. Older binaries apply the source compatibility stated in their bundled documentation and, for numbered
-Alpha builds, their version-matched release notes. `--upgrade-data` is the non-graphical equivalent of choosing a
-verified Alpha 8-or-newer SQLite file or portable data source and authorizes the same bundled migration chain. A
-SQLite-file source contains no vault, JMBE library,
-optional modules, or other external profile files, so the completion report will identify those items as not copied.
+For an existing active database, `--upgrade-current` authorizes the in-place update and any recoverable bounded
+configuration repairs. It retains a recovery snapshot by default. Add `--no-upgrade-backup` only if you intend to
+omit that snapshot; this does not change the conversion or final checks.
 
-For an existing older database already in the active data path, headless startup uses `--upgrade-current` as the
-explicit authorization to run the migrator. That flag authorizes any verified older format in the bundled Alpha
-8-to-current chain. It also explicitly checks and repairs unusable bounded configuration in an already-current
-profile. Add `--no-upgrade-backup` to omit its default recovery snapshot.
+`--upgrade-current` also authorizes a required Managed Recordings catalog update. To update only that catalog, use
+`--upgrade-managed-recordings`. If the main database is absent but an older catalog remains, combine
+`--upgrade-managed-recordings` with the chosen `--fresh`, `--import-xml`, or `--upgrade-data` option. The main profile
+and administrator are prepared first. `--no-upgrade-backup` applies to these catalog updates too. A failed optional
+catalog update is reported and receiving can continue with Managed Recordings unavailable.
 
-Once a portable database exists, the app holds an operating-system lock for that data folder until shutdown. A second
-sdrtrunk-vce process receives a clear “already in use” error before it can validate, upgrade, or write the same data.
+Use `--setup-wizard` for a graphical setup review; it requires a desktop. Normal startup validates existing databases.
+Only the bundled Application Migrator changes their formats. The format catalog, adjacent conversion requirements,
+and historical data policies are retained in the [technical migration reference](database-migration.md#technical-migration-reference).
+
+</details>

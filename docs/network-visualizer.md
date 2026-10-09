@@ -1,83 +1,118 @@
 # P25 Visualizer
 
-P25 Visualizer is a three-dimensional view of noteworthy P25 activity retained by VCE. Open it from **Listen > P25
-Visualizer**. The existing `?view=network-visualizer` URL remains valid.
+P25 Visualizer shows P25 systems, talkgroups, radios, and their observed relationships in an interactive 3D scene.
+Open **Listen > P25 Visualizer** to explore activity saved by your receiver.
 
-The visualizer reads the same stored Activity history as the Activity page. It does not subscribe to live decoder
-messages, channel snapshots, call audio, or the completed-call queue. Newly recorded events normally appear after the
-next history poll, so this view intentionally trails over-the-air signaling by the normal storage and polling delay.
+This guide describes current Nightly. The scene uses stored activity history, so new events appear after the normal
+saving and refresh delay.
 
-Detailed P25 activity history must be enabled, and the browser session must be allowed to view Radio activity. An
-empty view can mean that history is disabled, outside the selected time range, or contains no supported P25 records.
+## Get started
 
-## Reading the scene
+1. Choose **1h** or **24h** for the history to display. The default is one hour.
+2. Select a system sphere to enter it, then select a talkgroup to look more closely at its radios.
+3. Open **Events** to read noteworthy activity.
+4. Choose **Auto** to let the camera follow selected new events, or **Manual** to explore at your own pace.
+5. Use **Settings** to choose which events highlight the scene or move the automatic camera.
 
-- A wireframe sphere is one canonical P25 radio system.
-- A cube inside the sphere is a talkgroup observed in retained history.
-- A triangular node is a canonical subscriber radio. Numeric IDs from different systems remain separate.
-- A solid relationship records the latest accepted affiliation observed for a radio.
-- A faint relationship records an earlier accepted talkgroup relationship within the selected window.
+Use **← System** to leave a talkgroup view and **← All systems** to return to the overview. The fullscreen control
+gives the scene more room.
 
-Positions express logical relationships, not subscriber location, geography, RF coverage, or proof that a radio is
-currently listening. A radio never moves between system spheres.
+Detailed activity history must be enabled under **Administration > Activity settings**, and your account must have
+access to radio activity. Conventional channels, DMR, and NXDN are not included in this P25 view.
 
-Accepted P25 affiliation history establishes a radio's relationship to a talkgroup. The first accepted observation in
-the selected window establishes its initial placement. A later comparable accepted observation for another talkgroup
-is shown as an **Observed affiliation change**. Requests and denials never move a radio, and an affiliation inferred
-only from ordinary voice traffic is not presented as proven.
+## Read the scene
 
-The activity drawer is deliberately limited to grouped noteworthy history:
+| Shape or line | Meaning |
+| --- | --- |
+| **Sphere** | One P25 radio system. |
+| **Cube** | A talkgroup observed in the selected history. |
+| **Triangle** | A radio, with its system identity kept separate from radios using the same number elsewhere. |
+| **Solid line** | The latest accepted talkgroup affiliation observed for that radio. |
+| **Faint line** | An earlier accepted affiliation within the selected time range. |
+| **Dashed line** | Call or grant activity involving that radio and talkgroup. It does not prove affiliation. |
+
+An affiliation is a radio's accepted association with a talkgroup. The first accepted affiliation in the selected
+history places the radio. A later comparable accepted affiliation to another talkgroup appears as an **Observed
+affiliation change**. A request, denial, or ordinary voice call does not prove that change.
+
+Positions represent radio relationships. They do not show geography, coverage, or proof that a radio is currently
+listening. Use the website's **Map** page for decoded geographic positions when available.
+
+## Choose highlights and camera behavior
+
+**Settings** has separate choices for **Scene highlights** and **Automatic camera**. For example, you can highlight
+routine calls while letting only emergencies and affiliation changes move the camera. Choices are saved in this
+browser for the current web profile.
+
+Calls and grants are highlighted by default, with automatic camera attention disabled for them. Their dashed lines
+show heard activity separately from accepted affiliations. Turn off both Calls and grants choices to exclude routine
+activity from the visualizer.
+
+In **Auto**, the camera slowly orbits inside a system while idle. An enabled new event can briefly focus its radio or
+talkgroup before returning to the centered view. Attention stays inside the system you are viewing.
+
+In **Manual**, the camera stays under your control. Focus the scene, then use:
+
+| Input | Movement |
+| --- | --- |
+| **W / S** | Forward / backward |
+| **A / D** | Left / right |
+| **Q / E** | Down / up |
+| **Arrow keys** | Turn the view |
+| **Mouse drag** | Orbit |
+| **Mouse wheel** | Zoom at the cursor |
+
+Nodes cannot be dragged to new positions.
+
+## Read noteworthy events
+
+The **Events** panel groups:
 
 - observed affiliation changes and explicit logout;
 - emergency observations;
-- denials associated with a canonical radio identity;
+- denials associated with an identified radio;
 - busy or queued responses;
 - pages/call alerts and radio checks; and
-- explicit patch activity when the stored record establishes it.
+- patch activity supported by the stored record.
 
-Repeated denials for the same system-scoped radio are combined into one current entry. The view omits ordinary grants,
-calls, active-channel updates, generic acknowledgements, registration noise, and unresolved events.
+Repeated denials for the same radio and system are combined into one current entry. Routine calls and grants can
+appear in the scene without filling this noteworthy-events panel.
 
-Stored history does not currently retain enough detail to distinguish inhibit/uninhibit commands, remote-monitor
-commands, call-preemption reasons, or individual denial reasons. P25 Visualizer does not guess at those meanings.
-Emergency records also do not establish a reliable emergency-clear time, so an emergency is presented as an observed
-event rather than persistent state.
+An emergency means an emergency event was observed. Stored history does not establish a reliable clear time, so it
+does not indicate a continuing emergency state. The history also lacks enough detail to identify individual denial
+reasons, inhibit/uninhibit commands, remote-monitor commands, or call-preemption reasons.
 
-## Time range and updates
+## If the scene is empty
 
-Choose **1 hour** or **24 hours**. One hour is the default. Changing the range rebuilds the scene from a bounded,
-filtered history query.
+- Try **24h** if the last hour has little activity.
+- Check **Administration > Activity settings** to confirm detailed history is enabled.
+- Check your radio-activity access and that the receiver has saved supported P25 trunked activity.
+- In Visualizer **Settings**, enable Calls and grants if you want ordinary traffic included.
+- If the page says the range contains too much activity to load, choose **1h**.
 
-Initial history is reduced chronologically into the current scene without replaying animations or interrupting the
-camera. After that initial load, the browser polls forward from its stored high-water mark. Overlapping records are
-deduplicated, and every accepted record updates the graph even when it does not qualify for camera attention.
+Only systems with supported observations in the selected history appear. Saved channels without such activity do
+not create empty system spheres.
 
-After loading, the view automatically enters the system with the most supported noteworthy activity. It never creates
-spheres for saved systems that had no qualifying history in the selected window.
+<details>
+<summary>How history updates and automatic attention work</summary>
 
-## Camera controls
+The visualizer reads retained Activity history rather than live decoder messages, channel snapshots, or audio.
+Initial history builds the current scene without replaying old camera animations. Later refreshes read forward,
+deduplicate overlapping records, and update relationships even when an event does not receive camera attention.
+The existing `?view=network-visualizer` URL remains valid.
 
-**Auto** is the default. Inside a system it slowly orbits while idle. A qualifying newly stored event produces one
-deliberate pan and zoom, a five-second hold, and a smooth return to the centered orbit. Automatic attention stays in
-the currently viewed system and uses this priority:
+After loading, the view automatically enters the system with the most supported activity. Changing the time range
+rebuilds the scene. Radios stay within their system spheres.
 
-1. emergency;
-2. observed affiliation change;
-3. denial;
-4. other supported noteworthy activity.
+An automatic focus holds for five seconds and returns smoothly. Emergencies have highest priority; affiliation
+changes and denials share the next priority, followed by patch/busy/queued activity, then pages/checks/logout.
+Routine calls have the lowest priority when their camera choice is enabled. An eight-second cooldown suppresses
+equal- or lower-priority attention; a higher-priority event can interrupt. Suppressing camera movement does not
+suppress the saved graph or Events panel.
 
-At most one equal-priority focus begins during the eight-second cooldown. A strictly higher-priority event may
-interrupt; equal- or lower-priority requests are discarded rather than queued. Camera throttling never suppresses the
-underlying graph or activity-drawer update.
+The visualizer does not change receiver decoding, Hold/Avoid, Scan Lists, aliases, or stored history. Leaving the
+page releases its rendering and refresh resources.
 
-**Manual** disables all automatic camera movement. With the canvas focused, W/S move forward and backward, A/D
-strafe, the arrow keys turn the view, mouse drag orbits, and the wheel zooms. Nodes are not draggable.
+</details>
 
-Selecting a system enters its sphere. The back control returns to the shared system overview without replacing the
-canvas. Renderer resources, polling, timers, and input listeners are released when leaving the page.
-
-## Data scope
-
-This view intentionally supports canonical P25 trunked-system history only. Conventional channels, DMR, and NXDN are
-not projected into P25 system spheres. The stored Activity rows remain the source of truth; P25 Visualizer does not
-change receiver decoding, Hold/Avoid state, scan lists, aliases, or persisted activity.
+[Browse the documentation index](README.md).

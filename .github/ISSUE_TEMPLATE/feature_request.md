@@ -1,20 +1,24 @@
 ---
 name: Feature request
-about: Suggest an idea for this project
+about: Suggest an improvement to VCE
 title: ''
 labels: feature
 assignees: ''
 
 ---
 
-**Is your feature request related to a problem? Please describe.**
-A clear and concise description of what the problem is. Ex. I'm always frustrated when [...]
+## What would you like to do?
 
-**Describe the solution you'd like**
-A clear and concise description of what you want to happen.
+Describe the task or problem this improvement would help with. An example from your listening or receiver setup is useful.
 
-**Describe alternatives you've considered**
-A clear and concise description of any alternative solutions or features you've considered.
+## How should it work?
 
-**Additional context**
-Add any other context or screenshots about the feature request here.
+Explain what you would like VCE to do. You do not need to propose code or a technical design.
+
+## What have you tried?
+
+If there is a workaround or a similar feature elsewhere, describe it here. This section is optional.
+
+## Examples or screenshots
+
+Add anything that helps explain the idea. Remove credentials and private information before posting.

@@ -1,5 +1,10 @@
 # ISSI Foreign-System Band Storage
 
+The ISSI pages can show band plans advertised for P25 systems other than the one being monitored. This reference
+explains how VCE retains that received evidence and identifies the channel that heard it. For the related radio and
+Working-ID resources, see the [Web API reference](api-v1.md); setup and listening guides are in the
+[documentation index](README.md).
+
 ## User-visible purpose
 
 A P25 Phase 1 control channel can advertise a band plan for a different WACN and System ID. Each fact remains stored
@@ -57,7 +62,8 @@ Statistics removes both tables through the same channel-owned lifecycle. The nor
 is 30 days and existing validated profile settings are preserved; the maintenance path enforces at least one day.
 
 New databases create the exact current definitions in the global startup schema routine. Existing supported
-databases change only through the backed-up Application Migrator. Normal application startup validates and never
+databases change only through the bundled Application Migrator. Current-profile upgrades offer an optional recovery
+snapshot; external imports use a staged copy. Normal application startup validates and never
 creates or repairs these tables.
 
 ## Query access path
