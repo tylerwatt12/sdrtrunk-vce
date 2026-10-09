@@ -35,7 +35,6 @@ for advanced troubleshooting or development.
 | [ISSI foreign-system bands](issi-foreign-system-band-storage.md) | Frequency-band information advertised for another P25 system. |
 | [MBE recording format](mbe-call-sequence-recording-format.md) | The diagnostic voice-frame file format and conversion limits. |
 | [Activity database guidelines](sqlite-activity-database-guidelines.md) | Storage bounds, indexed queries, retention, and writer requirements. |
-| [P25 call-start delay study](sdrtrunk-latency-findings.md) | Historical measurements and limits of a July 2026 receiver investigation. |
 
 The [upgrade guide](database-migration.md) also includes the technical migration contract beneath the operator
 instructions.
