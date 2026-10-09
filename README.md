@@ -12,9 +12,9 @@ or tablet. If you already use sdrtrunk, VCE can import your existing playlist so
 [Support development](https://github.com/sponsors/tylerwatt12) ·
 [Report an issue](https://github.com/tylerwatt12/sdrtrunk-vce/issues)
 
-![VCE Live view showing radio activity grouped by system and site](docs/screenshots/readme-live.png)
+![VCE Live view showing radio activity grouped by system and site](docs/screenshots/readme-live.jpg)
 
-*Screenshots use illustrative sample data.*
+*Screenshots show real activity from a running VCE receiver.*
 
 ## Download VCE
 
@@ -54,6 +54,10 @@ listener hears while the receiver continues monitoring its configured channels.
 
 [Read the Scan List and listening guide](docs/browser-listening-and-scan-lists.md).
 
+![VCE Scanner with Scan List selection and call playback controls](docs/screenshots/readme-scanner.jpg)
+
+*Select your Scan Lists and follow calls with the browser's Scanner controls.*
+
 ### See what your receiver is hearing
 
 Understand activity across conventional channels and trunked systems, from the calls happening now to trends collected
@@ -72,7 +76,7 @@ over time.
   signal, symbol, event, and message views to investigate.
 - **Radio location map:** View decoded positions and recent trails when received radio traffic includes location data.
 
-![VCE dashboard with call activity and receiver statistics](docs/screenshots/readme-dashboard.png)
+![VCE Calls dashboard with totals and a 24-hour activity chart](docs/screenshots/readme-dashboard.jpg)
 
 ### Find and replay recordings
 
@@ -86,7 +90,7 @@ over time.
 Managed Recordings and transcription are optional. Transcription requires a separately configured service.
 Classic per-call file recording is also available.
 
-![VCE Managed Recordings library with named talkgroups and playback controls](docs/screenshots/readme-recordings.png)
+![VCE Managed Recordings with search filters, named talkgroups, and transcript previews](docs/screenshots/readme-recordings.jpg)
 
 ### Set up channels and keep aliases useful
 
@@ -104,7 +108,7 @@ Classic per-call file recording is also available.
 
 RadioReference imports require a RadioReference account with access to its data service.
 
-![VCE Browser Spectrum and waterfall showing radio signals](docs/screenshots/readme-spectrum.png)
+![VCE Browser Spectrum and waterfall showing radio signals](docs/screenshots/readme-spectrum.jpg)
 
 ### Stream calls and combine P25 reception from multiple sites
 
@@ -122,6 +126,10 @@ status and activity available in the website.
 - **ISSI and roaming identities:** Track a P25 radio's home-system identity separately from the temporary ID it uses
   on another system, keeping radios with similar local numbers distinguishable.
 
+![VCE Call Matching monitor showing duplicate P25 call observations](docs/screenshots/readme-call-matching.jpg)
+
+*The Call Matching monitor explains how copies of a call are compared and selected.*
+
 ### Explore P25 activity in 3D
 
 **P25 Visualizer** shows systems, talkgroups, and radios in an interactive 3D scene. Each system has its own space,
@@ -130,6 +138,10 @@ emergencies, denials, pages, and radio checks, draw attention as new history arr
 
 Enable detailed P25 activity history to populate the scene. It shows logical relationships rather than geographic locations.
 [See how to read the visualizer](docs/network-visualizer.md).
+
+![VCE P25 Visualizer showing systems, talkgroups, and radios in a 3D scene](docs/screenshots/readme-visualizer.jpg)
+
+*Explore the relationships between P25 systems, talkgroups, and radios.*
 
 ## Get started
 
