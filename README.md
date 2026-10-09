@@ -1,219 +1,214 @@
-# VCE
+# SDRTrunk VCE
 
-VCE (`sdrtrunk-vce`) is an independent, enhanced version of
-[SDRTrunk](https://github.com/DSheirer/sdrtrunk). It keeps SDRTrunk's receiving, decoding, recording, and streaming
-capabilities while adding a built-in website, portable storage, browser scan-list listening, long-term statistics,
-and performance improvements.
+SDRTrunk VCE is an enhanced fork of [sdrtrunk](https://github.com/DSheirer/sdrtrunk) for receiving, listening to,
+recording, and streaming radio traffic. It adds a built-in web interface, flexible Scan Lists, searchable recordings,
+and detailed activity and signal history, alongside improvements to decoding and receiver reliability.
 
-This project is currently pre-release software with two intentionally different release lines. Numbered **Alpha**
-builds are the more conservative line; **Nightly** builds contain the current `main` feature set. Back up your
-receiver data before installing or upgrading.
+Run VCE on the computer connected to your SDR, then listen and manage it from a browser on your computer, phone,
+or tablet. If you already use sdrtrunk, VCE can import your existing playlist so you can try it with a familiar setup.
 
-- [Download the numbered Alpha](https://github.com/tylerwatt12/sdrtrunk-vce/releases/latest)
-- [Download the current Nightly](https://github.com/tylerwatt12/sdrtrunk-vce/releases/tag/nightly)
-- [Choose a release channel](docs/release-channels.md)
-- [Sponsor development](https://github.com/sponsors/tylerwatt12)
-- [Report a problem or request a feature](https://github.com/tylerwatt12/sdrtrunk-vce/issues)
+**[Download Nightly](https://github.com/tylerwatt12/sdrtrunk-vce/releases/tag/nightly)** ·
+[Numbered Alpha releases](https://github.com/tylerwatt12/sdrtrunk-vce/releases?q=alpha) ·
+[Support development](https://github.com/sponsors/tylerwatt12) ·
+[Report an issue](https://github.com/tylerwatt12/sdrtrunk-vce/issues)
 
-> **More features, less overhead.**
->
-> In the project's same-receiver test, VCE used **8.5% less CPU** and had **25% fewer Java cleanup pauses** than the
-> latest tested official SDRTrunk build. Results will vary depending on your computer, tuners, channels, and enabled
-> features.
+![VCE Live view showing radio activity grouped by system and site](docs/screenshots/readme-live.png)
 
-## Highlights
+*Screenshots use illustrative sample data.*
 
-- **Stable browser activity screen:** Live keeps conventional channels and each active trunked site in stable groups.
-  Frequencies stay in place instead of constantly moving around.
-- **Built-in webserver and scanner:** New profiles start the website on local-only HTTPS by default, while preserving
-  an operator's saved enabled or disabled choice. View Live activity, the Radio Directory, Channels, group identities,
-  radios, history, and statistics from a browser. Subscribe to one or more administrator-defined
-  [Scan Lists](docs/browser-listening-and-scan-lists.md); assign normal Aliases or Alias List Defaults to them.
-  Unknown Alias Behavior handles unmatched calls, while New Alias Behavior supplies the starting choices for new
-  talkgroup Aliases. Overlapping routes are deduplicated before completed calls enter each browser's local
-  queue, where optional Conversation Mode can regroup calls that are already waiting.
-- **Portable setup:** Each VCE installation keeps its own database, settings, tuners, JMBE library, logs, recordings,
-  statistics, and web files. It does not rely on the sdrtrunk in the userprofile, so you can rest assured it will not overwrite files from previous versions of sdrtrunk
-- **Safe importing and upgrades:** The main application's Setup Wizard can import an SDRTrunk XML playlist or copy
-  settings from a previous VCE installation. Its built-in import and upgrade handles the database automatically.
-- **Clear channel types:** Conventional P25, DMR, and NXDN are kept separate from trunked systems, while one
-  conventional analog Alias-list family serves both AM and NBFM channels.
-- **Responsive desktop and mobile listening:** One browser interface adapts its navigation, Live activity, scanner,
-  and playback controls for desktop and touch screens. Queue order, Hold, Skip, Replay Last, Avoid, and Stop remain
-  local to each browser rather than creating a server-side playback session.
+## Download VCE
 
-## Current Nightly Feature Set
+VCE is free and open-source, with packages for **Windows, macOS, and Linux** on **Intel/AMD 64-bit and ARM64**.
+Java is included in the download.
 
-Current `main` and Nightly builds expand the built-in website and strengthen P25 decoding. Numbered Alpha builds may
-omit these newer features until they are deliberately included in that release line.
-
-- **Secure web administration** adds automatic HTTPS, Public/User/Admin access tiers, one primary administrator,
-  listener accounts, and custom certificate import without manually stopping the server.
-- **Alias management moves into the website**, including bulk editing, per-list unmatched-talkgroup behavior, observed
-  talkgroup discovery, and RadioReference site, conventional-channel, and bulk talkgroup imports.
-- **Live diagnostics add Events, Messages, and bounded Signal and Symbols views**, plus a demand-driven whole-tuner
-  FFT and waterfall with zoom, smoothing, persistent country-aware FFT band indicators, optional frequency snapping,
-  and channel flags.
-- **[P25 Visualizer](docs/network-visualizer.md) reconstructs a shared 3D scene** from retained noteworthy P25
-  activity, including accepted affiliation changes, emergencies, denials, busy/queued responses, pages, and checks.
-- **Channel discovery** finds and checks supported P25, DMR, and NXDN trunked signals with an available tuner.
-  Add selected channels from Channel Setup or Spectrum, match RadioReference names, and optionally import talkgroup
-  names into an Alias List.
-- **ISSI radio details** distinguish a radio's permanent home-system identity from the Working ID used on another
-  system. Friendly system names and short local radio IDs keep activity readable.
-- **Remote P25 Links** let trusted VCE receivers share decoded P25 signals for receiving on another installation.
-- **Optional Managed Recordings** adds a searchable recording library with browser playback and transcription.
-  Classic recording remains available, and upgrades keep the existing recording choice.
-- **Status icon choices are personal:** show or hide each receiver issue type in your status icon. Shared monitoring,
-  detailed measurements, and current and recently cleared issues remain available.
-- **The Java receiver window is deliberately smaller:** it opens the website and shows receiver status. Channel
-  Setup, Tuners, Streaming, and RadioReference are now managed in the website, alongside Map and signal diagnostics.
-  Setup, database import, file access, and debug recording remain available from the local window.
-- **P25 NAC, CRC, and error-correction handling is stricter**, while bounded weak-voice recovery preserves usable
-  Phase 1 audio and late encryption details remain attached to the correct call.
-- **The exact Alpha 8/Alpha 9 database layout uses the built-in migrator.** Alpha 8 and Alpha 9 shipped the same
-  schema, so the database cannot identify which release created it. Supported administrator configuration is
-  preserved; retired fully-qualified P25 Alias rows are removed, while activity, counters, affiliations, identities,
-  learned site observations, and quality history restart from zero and rebuild from new traffic.
-
-This section describes the rolling Nightly line, not Alpha 10. For shipped Alpha behavior, use the version-matched
-[Alpha release notes](https://github.com/tylerwatt12/sdrtrunk-vce/releases). The checked-in
-[Alpha 10 What’s New](docs/whats-new-0.6.2-alpha-10.md) remains the historical document for that exact release.
-
-## Which Release Channel Should I Use?
-
-| Channel | What you get | Download |
+| Release | Choose it when… | Download |
 | --- | --- | --- |
-| **Numbered Alpha** | A more conservative feature set that advances through reviewed fixes and release preparation. | [Latest Alpha](https://github.com/tylerwatt12/sdrtrunk-vce/releases/latest) |
-| **Nightly** | The latest completed `main` build, including newer features that may not be in Alpha yet. | [Current Nightly](https://github.com/tylerwatt12/sdrtrunk-vce/releases/tag/nightly) |
+| **Nightly** | You want the features described here and the newest improvements. | [Download Nightly](https://github.com/tylerwatt12/sdrtrunk-vce/releases/tag/nightly) |
+| **Numbered Alpha** | You prefer the more conservative release line and its version-specific feature set. | [Browse Alpha releases](https://github.com/tylerwatt12/sdrtrunk-vce/releases?q=alpha) |
 
-These are the only active release channels. See [Release Channels](docs/release-channels.md) for updater and database
-compatibility details.
+Both release lines are pre-release software. **The features and screenshots here describe current Nightly; Alpha
+may have fewer features or a different interface.** Read the notes on the release you choose.
 
-## Coming From Regular SDRTrunk?
+On the release page, open **Assets** and choose the ZIP for your operating system and processor. For Nightly, use the
+build number identified at the top of the release page to find the current ZIP. Apple Silicon Macs use ARM64; Intel
+Macs and most Intel/AMD PCs use the 64-bit x86 package. See the [release-channel guide](docs/release-channels.md) for
+more detail.
 
-Your existing SDRTrunk installation and XML files are safe. VCE only **reads** XML during import. It does not overwrite,
-move, rename, delete, or write changes back to the XML.
+## What VCE adds
 
-The easiest way to switch is:
+### Listen and manage from your browser
 
-1. Leave regular SDRTrunk where it is.
-2. Extract VCE.
-3. Start VCE. In the Setup Wizard, choose **Import legacy XML** and select your playlist.
-4. Choose **Import XML**, then review the imported channels and file locations.
-5. Keep the old installation until VCE has been tested.
+The web interface brings receiver controls and listening together, without needing remote desktop access.
 
-VCE normally finds:
+- **Remote management:** Set up channels, tuners, aliases, recordings, and streaming destinations from the website.
+- **Scan Lists:** Create listening groups such as Fire, Police, or Transit. Combine aliases from different systems
+  and Alias Lists, choose how unmatched talkgroups are handled, and let each listener select one or more lists.
+- **Personal playback controls:** Pause, skip, hold, avoid, replay the last call, and manage queued calls.
+  Optional Conversation Mode helps keep related calls together when several conversations are waiting.
+- **Phone and tablet support:** The interface and player adapt to smaller screens, with light and dark themes.
+- **Multiple users:** Give listeners their own accounts and control access to listening, radio activity, and
+  administration. Each listener can make their own listening choices.
 
-```text
-${user.home}/SDRTrunk/playlist/default.xml
-${user.home}/SDRTrunk/playlist/playlist_v2.xml
-```
+Browser audio plays completed calls, so it follows reception with a delay. Switching Scan Lists changes what that
+listener hears while the receiver continues monitoring its configured channels.
 
-You can also choose another XML file. First-launch import creates a new SQLite configuration. To add another playlist
-later, use **Help > Setup Wizard…**, then **Import a legacy XML playlist** on Starting point. VCE previews the supported
-contents, keeps existing configuration, renames imported name conflicts, and creates a timestamped database backup
-before applying the import. Your original
-XML remains unchanged and regular SDRTrunk can continue using it.
+[Read the Scan List and listening guide](docs/browser-listening-and-scan-lists.md).
 
-To replace the active profile from a supported database after setup, use **File > Import SQLite Database…**.
-VCE shows the migration plan and an explicit replacement warning, retains the current database as a safety backup,
-migrates only a staged copy of the selected file, validates it, and restarts. This imports only SQLite contents; it
-does not copy files beside the selected database or remap stored portable paths. If no usable administrator credential
-can be preserved, setup asks for a new administrator password after restart. Every successful replacement returns to
-setup to review the imported settings and output folders before receiving resumes. A failed replacement does not restart
-automatically when the final active-database state cannot be confirmed.
+### See what your receiver is hearing
 
-After importing:
+Understand activity across conventional channels and trunked systems, from the calls happening now to trends collected
+over time.
 
-- Check that P25 and DMR channels have the correct Conventional or Trunked type.
-- Check tuner assignments and auto-start channels.
-- If JMBE needs attention later, use the main window's **Settings > Decoder > JMBE Audio Library**.
-- Check recording, event-log, screenshot, and streaming folders.
-- Back up the new VCE data folder.
+- **Live activity:** See active calls and idle channels grouped by system and site, with signal strength and decode
+  quality alongside the activity.
+- **Dashboards and charts:** Review call counts, recordings, streaming activity, and usage over time for both
+  conventional and trunked channels.
+- **Searchable activity history:** Explore systems, sites, talkgroups, and radios by name or ID. Open their detail
+  pages to follow calls, affiliations, patches, and other observed activity.
+- **Signal history:** Compare retained signal-strength and decode-quality measurements to spot changes in reception.
+- **Alias activity:** See observed talkgroups that still need names, and compare actual use with your existing aliases
+  before cleaning up old or unused entries.
+- **Receiver health:** Monitor issues that can interrupt audio or control-channel reception, then open detailed
+  signal, symbol, event, and message views to investigate.
+- **Radio location map:** View decoded positions and recent trails when received radio traffic includes location data.
 
-## Updating VCE
+![VCE dashboard with call activity and receiver statistics](docs/screenshots/readme-dashboard.png)
 
-VCE checks for a newer build on the installed package's release channel when the desktop app starts. You can also use
-**Help > Check for Updates**. An Alpha package checks only the Alpha feed; a Nightly package checks only the Nightly
-feed.
+### Find and replay recordings
 
-The update check does **not** download, install, replace files, change the database, restart VCE, or switch channels.
-You always choose when to install an update. Alpha 10 and older Nightlies used the same legacy update identity, so
-entering the separated channels requires one manual download from the Alpha or Nightly link above.
+**Managed Recordings** turns saved calls into a library you can browse and play in the website.
 
-Recommended update steps:
+- Find calls by time, system, site, talkgroup, or radio, using names and aliases as well as IDs.
+- Queue calls for playback and download audio.
+- Connect a compatible transcription service to read transcripts and search for words or phrases.
+- Set automatic age-based cleanup for managed calls.
 
-1. Close the old VCE version.
-2. Back up its complete data folder.
-3. Extract the new version into a new empty folder.
-4. Use **Start VCE**. In the Setup Wizard, choose **Copy a previous VCE installation / data folder**.
-5. Choose a nearby installation or browse to the old installation or data folder, then select **Review import**.
-6. Review what will be copied and choose **Confirm import**.
-7. Check your channels, tuners, JMBE library, file locations, web settings, and auto-start behavior before finishing setup.
+Managed Recordings and transcription are optional. Transcription requires a separately configured service.
+Classic per-call file recording is also available.
 
-VCE's built-in import copies the setup, upgrades a separate copy of the database, and checks it before receiving
-starts. No separate program or download is needed. Within a recognized older database it works component by component: valid channels,
-aliases, accounts, and providers can still migrate when an unrelated row is unusable. Safe defaults and skipped rows
-are listed with counts in the completion report. The old installation is left unchanged, making it easy to go back.
+![VCE Managed Recordings library with named talkgroups and playback controls](docs/screenshots/readme-recordings.png)
 
-Existing logs, recordings, screenshots, event logs, and streaming output are not copied into the new installation.
-Check the saved folder locations before deleting an old version.
+### Set up channels and keep aliases useful
 
-> **Database compatibility in this source:** The bundled Application Migrator supports every verified successfully
-> published database format from Alpha 8 through the current format across alpha and nightly builds, without
-> installing skipped releases first. It refuses pre-Alpha 8, retired `webfirst`, known-unpublished developer,
-> unknown-schema, format-marker-mismatched, structurally mixed or partial, physically corrupt, and newer-than-the-app
-> databases without changing the source. A recognized older structure is migrated on a best-effort, per-component
-> basis and is installed only if the result passes the exact current schema, integrity, configuration, and foreign-key
-> checks. Numbered Alpha builds document compatibility in their version-matched release notes; rolling Nightlies use
-> the current bundled documentation and the migrator's preflight and completion reports. See the
-> [Database Migration Contract](docs/database-migration.md).
+- **Add from the waterfall:** Open **Hardware > Browser Spectrum**, select a frequency, and create a channel from the signal
+  you are looking at.
+- **Find trunked systems:** Use **Manage > Channels > Find Trunked Systems** to search with an available tuner,
+  check supported P25, DMR, and NXDN signals, and add selected channels.
+- **RadioReference imports:** Bookmark systems and agencies, import sites and conventional channels, and preview
+  talkgroup additions or updates. Updating names and descriptions preserves your local listening, recording,
+  streaming, color, and icon choices.
+- **Bulk alias tools:** Edit multiple aliases together and use [CSV import and export](docs/alias-import-export.md)
+  to maintain your lists.
+- **P25 band-plan overrides:** Enter a band plan manually when a system does not broadcast usable channel information,
+  with overrides for a system or an individual site.
 
-Alpha and Nightly are different feature channels, not different database universes. For a numbered Alpha, follow its
-version-matched upgrade notes. For a Nightly, use the documentation bundled with that build and read the migrator's
-preflight and completion reports. Database changes are forward-only: never open or copy a database used by a newer
-build into an older build, including when switching from Nightly to Alpha.
+RadioReference imports require a RadioReference account with access to its data service.
 
-## Where VCE Stores Data
+![VCE Browser Spectrum and waterfall showing radio signals](docs/screenshots/readme-spectrum.png)
 
-- Windows, Linux, and macOS packages: `<install>/data`
-- Development builds: `<working-directory>/data`
+### Stream calls and combine P25 reception from multiple sites
 
-This data folder contains the active database, settings, tuner setup, vault, JMBE library, optional modules, logs,
-recordings, screenshots, event logs, streaming files, statistics, and editable website files.
+VCE supports external destinations including **Broadcastify, Rdio Scanner, OpenMHz, and RadioResolve**, with streaming
+status and activity available in the website.
 
-VCE does not store its active setup in `~/SDRTrunk`, AppData, the registry, or your operating system's Java preferences.
-The old `~/SDRTrunk` folder is used only as a possible source for XML import.
+- **Site-based Broadcastify Calls:** Assign a Broadcastify Calls destination to a trunked site and send eligible calls
+  heard on that site. Sites can share an Alias List, so you do not need duplicate lists just to keep site uploads
+  separate.
+- **Remote P25 Links:** Share P25 feeds between trusted VCE installations. A receiving installation can process local
+  and linked feeds together, collecting their activity and statistics in one place.
+- **Duplicate-call selection:** When several trunked sites of the same P25 system hear the same call, VCE compares
+  the received voice evidence and selects the best-quality copy for listening, recording, and streaming. The
+  Call Matching monitor shows which copies were combined and why one was selected.
+- **ISSI and roaming identities:** Track a P25 radio's home-system identity separately from the temporary ID it uses
+  on another system, keeping radios with similar local numbers distinguishable.
 
-For more detail, see [Portable Startup And Storage](docs/portable-startup-and-storage.md).
+### Explore P25 activity in 3D
 
-## Supported And Removed Features
+**P25 Visualizer** shows systems, talkgroups, and radios in an interactive 3D scene. Each system has its own space,
+with radios arranged around their observed talkgroup affiliations. Noteworthy events, such as affiliation changes,
+emergencies, denials, pages, and radio checks, draw attention as new history arrives.
 
-These older or experimental features are not included:
+Enable detailed P25 activity history to populate the scene. It shows logical relationships rather than geographic locations.
+[See how to read the visualizer](docs/network-visualizer.md).
 
-- Receiver-local tuner Spectrum/Waterfall panels and separate spectrum windows; web diagnostics remain supported
-- Local alias actions and the Actions editor
+## Get started
+
+You need a supported SDR and any drivers it requires, plus an antenna suitable for the signals you want to receive.
+
+1. **Download and extract VCE** into a new writable folder.
+2. **Run the Start VCE launcher:** `Start VCE.bat` on Windows, `Start VCE.command` on macOS, or `Start VCE.sh` on Linux.
+3. **Follow setup.** Start fresh, import a mainline sdrtrunk XML playlist, or copy a previous VCE installation.
+   Set up your administrator account, web access, and JMBE digital audio library when prompted.
+4. **Review channels and tuners.** Check your imported settings or add channels in the website.
+5. **Start receiving and listening.** Open the website from the receiver window, choose a Scan List, and press Play.
+
+New setups initially make the website available only on the receiver computer. Choose **Other devices** during setup
+if you want access from another device, and configure your network and firewall as needed.
+
+### Coming from mainline sdrtrunk
+
+You can keep your existing installation while trying VCE. Playlist import reads your XML without changing it, and
+VCE stores its own setup in a `data` folder beside the extracted application.
+
+A few differences are useful to know:
+
+- **Most receiver management is in the website.** The smaller local window opens it and provides setup, file access,
+  and local tools.
+- **Scan Lists control browser listening.** Aliases imported with listening enabled join the default Scan List;
+  each browser listener can then choose the lists they want.
+- **Alias Lists are organized by protocol family:** P25, DMR, NXDN, or analog AM/NBFM.
+- **Some older sdrtrunk features are retired.** Check the compatibility list below if your setup depends on them.
+
+<details>
+<summary>Features not included in VCE</summary>
+
 - LTR Standard, LTR-Net, Passport, and MPT-1327 decoders
-- Funcube Dongle Pro/Pro+ tuners
-- Legacy named Channel Maps formerly used by MPT-1327; decoder-embedded DMR and NXDN channel maps remain supported
+- Funcube Dongle Pro/Pro+ tuners and sound-card capture sources
+- Local alias actions and the desktop Actions editor
+- Legacy MPT-1327 named Channel Maps; DMR and NXDN channel maps remain supported
 - Heterodyne channelization
-- Sound-card capture sources
 - Shoutcast v2/Ultravox streaming
+- Desktop tuner Spectrum/Waterfall panels and separate spectrum windows; use the web Spectrum tools instead
 
-## Installation
+</details>
 
-1. Choose a [numbered Alpha](https://github.com/tylerwatt12/sdrtrunk-vce/releases/latest) or the
-   [current Nightly](https://github.com/tylerwatt12/sdrtrunk-vce/releases/tag/nightly).
-2. Extract it into a new writable folder.
-3. Use the `Start VCE` launcher in the extracted folder. Its extension identifies Windows (`.bat`), macOS
-   (`.command`), or Linux (`.sh`).
-4. Import XML, migrate a previous VCE setup, or start fresh.
-5. Review the imported channels and file locations before enabling auto-start.
+## Updating and backing up
 
-Java is included in release packages. You do not need to install it separately.
+Back up your complete `data` folder before an upgrade. Extract the new version into a new folder, run **Start VCE**,
+and choose **Copy a previous VCE installation / data folder** in setup. Review the import plan and output folders
+before receiving resumes.
 
-## Building From Source
+The built-in import upgrades a copy of supported settings and leaves the previous installation unchanged.
+Existing recordings and logs are not copied. Check their saved folder locations and keep the old installation until
+you have checked what you need.
+
+Update checks follow your installed release channel and let you choose when to download and install.
+**Do not use a newer version's data with an older build**, including when switching from Nightly to Alpha.
+
+Read the [portable setup and storage guide](docs/portable-startup-and-storage.md) and
+[upgrade compatibility guide](docs/database-migration.md) for details.
+
+## Support development
+
+If VCE makes your radio setup more useful, **[support its development through GitHub Sponsors](https://github.com/sponsors/tylerwatt12)**.
+
+Contributions help offset the AI-assisted development costs of this independent fork, including Codex subscriptions,
+coding tools, and model/API usage. Unused funds are saved for those future costs. Sponsorship is optional; VCE remains
+free and open-source. It does not purchase features, support, priority, early access, or influence over project
+decisions, and it supports VCE rather than the original sdrtrunk project.
+
+## Help and more information
+
+- [Report a problem or request a feature](https://github.com/tylerwatt12/sdrtrunk-vce/issues)
+- [Release notes and downloads](https://github.com/tylerwatt12/sdrtrunk-vce/releases)
+- [Browser listening and Scan Lists](docs/browser-listening-and-scan-lists.md)
+- [P25 Visualizer](docs/network-visualizer.md)
+- [Portable setup, importing, and storage](docs/portable-startup-and-storage.md)
+- [Talker aliases](docs/talker-alias-implementation.md)
+- [Official sdrtrunk wiki](https://github.com/DSheirer/sdrtrunk/wiki)
+
+<details>
+<summary>Building from source</summary>
 
 Development builds require Java 25.
 
@@ -222,59 +217,22 @@ Development builds require Java 25.
 ./gradlew clean build -PprojectVersion=local-dev -PupdateTrack=none -PupdateBuild=0
 ```
 
-Use an explicit non-public version such as `local-dev` for development packages. Numbered package tasks stop while
-their version-matched release notes are still marked as a draft.
-
-Build every supported package with one command:
+To build all six operating-system and processor archives under `build/image`:
 
 ```bash
 ./gradlew --no-configuration-cache clean runtimeZipAll -PprojectVersion=local-dev -PupdateTrack=none -PupdateBuild=0
 ```
 
-This creates all six OS and CPU archives under `build/image`. Target Java runtimes are downloaded once, verified, and
-kept in the Gradle user cache for later builds.
+Use a non-public version such as `local-dev` for development packages. Target Java runtimes are downloaded, verified,
+and cached for later builds.
 
-### Live web-only previews
+</details>
 
-When a change only affects files under `stats-web/`, you may copy the matching HTML, CSS, or JavaScript into a running
-installation's `stats-web/` directory and refresh the browser to review it without rebuilding or restarting SDRTrunk.
-That edit is only a temporary preview. Make the matching source edit in this repository, update an asset version or
-import query when browser caching would otherwise retain an old file, and verify the refreshed page.
+## Credits and license
 
-For the change to persist, commit the canonical `stats-web/` source files in their own focused Git commit. Do not add
-files from a running installation to Git or combine the web-only persistence commit with unrelated work.
+sdrtrunk was created by **Dennis Sheirer**. VCE builds on work from the
+[official sdrtrunk community](https://github.com/DSheirer/sdrtrunk) and the
+[W6BAZ/bazineta experimental fork](https://github.com/bazineta/sdrtrunk), with additional VCE features and improvements.
 
-## More Information
-
-- [Release channels](docs/release-channels.md)
-- [Release notes](https://github.com/tylerwatt12/sdrtrunk-vce/releases)
-- [Portable startup and storage](docs/portable-startup-and-storage.md)
-- [How browser listening and Scan Lists work](docs/browser-listening-and-scan-lists.md)
-- [How P25 Visualizer represents retained noteworthy activity](docs/network-visualizer.md)
-- [How talker aliases work](docs/talker-alias-implementation.md)
-- [Listening-delay findings](docs/sdrtrunk-latency-findings.md)
-
-## Sponsor Development
-
-If VCE is useful to you, you can
-[sponsor development through GitHub Sponsors](https://github.com/sponsors/tylerwatt12).
-
-Sponsorships are optional and are used only to offset the AI-assisted development costs of building and maintaining
-this fork, including Codex subscriptions, coding-agent tools, and usage-based AI model/API charges. Unused funds are
-saved for the same future development costs.
-
-Sponsorship does not buy software, features, support, priority, early access, or influence over project decisions. VCE
-remains free and open-source. Sponsorship supports this independent fork, not the original SDRTrunk project or other
-upstream projects.
-
-## Credits And License
-
-SDRTrunk was created by Dennis Sheirer. VCE includes work from the official SDRTrunk community and
-optimization and platform work from the W6BAZ/bazineta experimental fork, followed by VCE-specific changes.
-
-- [Official SDRTrunk project](https://github.com/DSheirer/sdrtrunk)
-- [Official SDRTrunk wiki](https://github.com/DSheirer/sdrtrunk/wiki)
-- [W6BAZ/bazineta fork](https://github.com/bazineta/sdrtrunk)
-
-This project uses the GNU General Public License version 3. See [LICENSE](LICENSE) and [NOTICE](NOTICE). It is an
-independent modified distribution and is not an official SDRTrunk release or support channel.
+VCE is an independent modified distribution, with its own releases and support. It uses the **GNU General Public
+License version 3**. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
