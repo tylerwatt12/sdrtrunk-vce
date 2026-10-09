@@ -1416,6 +1416,84 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         }
     }
 
+    /** Captures an existing tracked call for audio metadata without making either decoder wait. */
+    public P25TrafficChannelEventTracker getP2TrafficCallForAudio(long frequency, int timeslot,
+                                                                 IdentifierCollection identifiers, long timestamp)
+    {
+        if(frequency <= 0 || (timeslot != TimeslotMessage.TIMESLOT_1 && timeslot != TimeslotMessage.TIMESLOT_2) ||
+            identifiers == null || !mLock.tryLock())
+        {
+            return null;
+        }
+
+        try
+        {
+            P25TrafficChannelEventTracker tracker = getTracker(frequency, timeslot);
+            return tracker != null && tracker.isStarted() && !tracker.isComplete() &&
+                timestamp >= tracker.getEvent().getTimeStart() &&
+                hasEligibleP25AudioDestinations(tracker, identifiers) &&
+                hasCompatibleP25AudioNac(tracker, identifiers) &&
+                tracker.isSameCallCheckingToAndFrom(identifiers, timestamp) ? tracker : null;
+        }
+        finally
+        {
+            mLock.unlock();
+        }
+    }
+
+    /**
+     * Supplies only a missing audio source from the exact captured call. A completed tracker remains eligible because
+     * decoder state consumes End PTT before the audio module completes its builder. Replaced trackers are never used.
+     */
+    public Identifier getP2TrafficCallSourceForAudio(P25TrafficChannelEventTracker expected, long frequency,
+                                                    int timeslot, IdentifierCollection identifiers, long timestamp)
+    {
+        if(expected == null || frequency <= 0 ||
+            (timeslot != TimeslotMessage.TIMESLOT_1 && timeslot != TimeslotMessage.TIMESLOT_2) || identifiers == null ||
+            identifiers.getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM) != null || !mLock.tryLock())
+        {
+            return null;
+        }
+
+        try
+        {
+            if(getTracker(frequency, timeslot) != expected || !expected.isStarted() || expected.isStale(timestamp) ||
+                timestamp < expected.getEvent().getTimeStart() || !hasEligibleP25AudioDestinations(expected, identifiers) ||
+                !expected.hasMatchingDestination(identifiers) ||
+                !hasCompatibleP25AudioNac(expected, identifiers))
+            {
+                return null;
+            }
+
+            Identifier source = expected.getEvent().getIdentifierCollection()
+                .getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM);
+            return isEligibleP25EndFrameIdentifier(Protocol.APCO25_PHASE2, source) ? source : null;
+        }
+        finally
+        {
+            mLock.unlock();
+        }
+    }
+
+    private static boolean hasEligibleP25AudioDestinations(P25TrafficChannelEventTracker tracker,
+                                                          IdentifierCollection identifiers)
+    {
+        Identifier current = identifiers.getToIdentifier();
+        Identifier tracked = tracker.getEvent().getIdentifierCollection().getToIdentifier();
+
+        return isEligibleP25EndFrameIdentifier(Protocol.APCO25_PHASE2, current) &&
+            isEligibleP25EndFrameIdentifier(Protocol.APCO25_PHASE2, tracked);
+    }
+
+    private static boolean hasCompatibleP25AudioNac(P25TrafficChannelEventTracker tracker,
+                                                    IdentifierCollection identifiers)
+    {
+        Identifier current = identifiers.getIdentifier(IdentifierClass.NETWORK, Form.NETWORK_ACCESS_CODE, Role.BROADCAST);
+        Identifier tracked = tracker.getEvent().getIdentifierCollection()
+            .getIdentifier(IdentifierClass.NETWORK, Form.NETWORK_ACCESS_CODE, Role.BROADCAST);
+        return current == null || tracked == null || current.equals(tracked);
+    }
+
     /**
      * TEMPORARY encryption-repeat diagnostic hook for a raw Phase 2 push-to-talk encryption identifier.
      */

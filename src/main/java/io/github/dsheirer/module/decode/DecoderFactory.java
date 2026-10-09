@@ -281,8 +281,10 @@ public class DecoderFactory
         modules.add(decoderState1);
         modules.add(decoderState2);
         CallLegSource callLegSource = createCallLegSource(channel, aliasList);
-        modules.add(new P25P2AudioModule(userPreferences, P25P2Message.TIMESLOT_1, aliasList, callLegSource));
-        modules.add(new P25P2AudioModule(userPreferences, P25P2Message.TIMESLOT_2, aliasList, callLegSource));
+        modules.add(new P25P2AudioModule(userPreferences, P25P2Message.TIMESLOT_1, aliasList, callLegSource,
+            p25TrafficChannelManager));
+        modules.add(new P25P2AudioModule(userPreferences, P25P2Message.TIMESLOT_2, aliasList, callLegSource,
+            p25TrafficChannelManager));
 
         //Add a channel rotation monitor when control channel rotation is configured or can be learned at runtime
         if(channel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency sctmf &&

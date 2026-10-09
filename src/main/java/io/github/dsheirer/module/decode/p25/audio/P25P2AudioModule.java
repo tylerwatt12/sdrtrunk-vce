@@ -35,9 +35,13 @@ import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceFrameDecryptorFactory;
 import io.github.dsheirer.audio.squelch.SquelchState;
 import io.github.dsheirer.audio.squelch.SquelchStateEvent;
 import io.github.dsheirer.bits.BinaryMessage;
+import io.github.dsheirer.identifier.Form;
+import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierUpdateNotification;
 import io.github.dsheirer.identifier.IdentifierUpdateProvider;
 import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
 import io.github.dsheirer.identifier.tone.AmbeTone;
 import io.github.dsheirer.identifier.tone.P25ToneIdentifier;
 import io.github.dsheirer.identifier.tone.Tone;
@@ -46,6 +50,8 @@ import io.github.dsheirer.identifier.tone.ToneIdentifierMessage;
 import io.github.dsheirer.identifier.tone.ToneSequence;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.message.IMessageProvider;
+import io.github.dsheirer.module.decode.p25.P25TrafficChannelEventTracker;
+import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
 import io.github.dsheirer.module.decode.p25.phase2.message.EncryptionSynchronizationSequence;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacMessage;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacPduType;
@@ -83,6 +89,10 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
     private VoiceFrameDecryptorFactory mVoiceFrameDecryptorFactory;
     private VoiceFrameDecryptor mVoiceFrameDecryptor;
     private Listener<IMessage> mMessageListener;
+    private final P25TrafficChannelManager mTrafficChannelManager;
+    private P25TrafficChannelEventTracker mTrafficCall;
+    private long mTrafficCallFrequency;
+    private boolean mTrafficCallBindingAttempted;
 
     private record DecodedVoiceFrame(IAudioWithMetadata audioWithMetadata, long carrierTimestamp,
                                      long voiceFrameFingerprint)
@@ -97,7 +107,14 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
     public P25P2AudioModule(UserPreferences userPreferences, int timeslot, AliasList aliasList,
                             CallLegSource callLegSource)
     {
+        this(userPreferences, timeslot, aliasList, callLegSource, null);
+    }
+
+    public P25P2AudioModule(UserPreferences userPreferences, int timeslot, AliasList aliasList,
+                            CallLegSource callLegSource, P25TrafficChannelManager trafficChannelManager)
+    {
         super(userPreferences, aliasList, timeslot, callLegSource);
+        mTrafficChannelManager = trafficChannelManager;
         mEncryptionKeyResolver = new VoiceEncryptionKeyResolver(userPreferences.getEncryptionKeyPreference());
         mVoiceFrameDecryptorFactory = new VoiceFrameDecryptorFactory(userPreferences
             .getVoiceDecryptionModulePreference().getModuleManager());
@@ -131,6 +148,7 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
 
         mToneMetadataProcessor.reset();
         mQueuedAudioTimeslots.clear();
+        clearTrafficCallBinding();
 
         resetEncryptionTracking();
     }
@@ -168,6 +186,8 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
 
             if(message instanceof AbstractVoiceTimeslot abstractVoiceTimeslot)
             {
+                bindTrafficCall(message.getTimestamp());
+
                 if(mEncryptionState.isKnown())
                 {
                     if(mEncryptionState.isClear())
@@ -202,6 +222,9 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
                     {
                         closeCurrentAudioSegment(message.getTimestamp());
                     }
+
+                    clearTrafficCallBinding();
+                    bindTrafficCall(message.getTimestamp());
 
                     mToneMetadataProcessor.reset();
                     clearPendingVoiceTimeslots();
@@ -334,7 +357,61 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
     private void closeCurrentAudioSegment(long timestamp)
     {
         endCurrentAudioBurst(timestamp);
-        super.closeAudioSegment(timestamp);
+        closeAudioSegment(timestamp);
+        clearTrafficCallBinding();
+    }
+
+    @Override
+    protected void closeAudioSegment(long timestamp)
+    {
+        synchronized(this)
+        {
+            MutableAudioCallBuilder audioCall = getCurrentAudioCall();
+
+            if(audioCall != null && mTrafficCall != null && getTrafficFrequency() == mTrafficCallFrequency)
+            {
+                Identifier source = mTrafficChannelManager.getP2TrafficCallSourceForAudio(mTrafficCall,
+                    mTrafficCallFrequency, getTimeslot(), audioCall.getIdentifierCollection(), timestamp);
+
+                if(source != null)
+                {
+                    //Apply ordinary alias/recording metadata to this builder only, never the next caller's cache.
+                    audioCall.receive(new IdentifierUpdateNotification(source,
+                        IdentifierUpdateNotification.Operation.ADD, getTimeslot()));
+                }
+            }
+
+            //Automatic segment splits retain the burst binding; explicit PTT/end/reset boundaries clear it.
+            super.closeAudioSegment(timestamp);
+        }
+    }
+
+    /** Bind once at the burst boundary; a later grant must not bind this audio to a replacement tracker. */
+    private void bindTrafficCall(long timestamp)
+    {
+        if(mTrafficCallBindingAttempted || mTrafficChannelManager == null)
+        {
+            return;
+        }
+
+        mTrafficCallBindingAttempted = true;
+        mTrafficCallFrequency = getTrafficFrequency();
+        mTrafficCall = mTrafficChannelManager.getP2TrafficCallForAudio(mTrafficCallFrequency, getTimeslot(),
+            mIdentifierCollection, timestamp);
+    }
+
+    private long getTrafficFrequency()
+    {
+        Identifier frequency = mIdentifierCollection.getIdentifier(IdentifierClass.CONFIGURATION,
+            Form.CHANNEL_FREQUENCY, Role.ANY);
+        return frequency instanceof FrequencyConfigurationIdentifier configured ? configured.getValue() : 0L;
+    }
+
+    private void clearTrafficCallBinding()
+    {
+        mTrafficCall = null;
+        mTrafficCallFrequency = 0L;
+        mTrafficCallBindingAttempted = false;
     }
 
     private void resetEncryptionTracking()

@@ -236,9 +236,7 @@ public class P25TrafficChannelEventTracker
      */
     public boolean isSameCallCheckingToOnly(IdentifierCollection toCompare, long timestamp)
     {
-        Identifier currentTO = getEvent().getIdentifierCollection().getToIdentifier();
-        Identifier nextTO = toCompare.getToIdentifier();
-        return !isComplete() && matchesCallIdentifier(currentTO, nextTO) && !isStale(timestamp);
+        return !isComplete() && hasMatchingDestination(toCompare) && !isStale(timestamp);
     }
 
     /**
@@ -246,10 +244,15 @@ public class P25TrafficChannelEventTracker
      */
     public boolean isSameControlContinuationCheckingToOnly(IdentifierCollection toCompare, long timestamp)
     {
+        return !isComplete() && hasMatchingDestination(toCompare) && !isStaleControlContinuation(timestamp);
+    }
+
+    /** Compares destination identities independently of completion, including abbreviated and qualified forms. */
+    boolean hasMatchingDestination(IdentifierCollection toCompare)
+    {
         Identifier currentTO = getEvent().getIdentifierCollection().getToIdentifier();
-        Identifier nextTO = toCompare.getToIdentifier();
-        return !isComplete() && matchesCallIdentifier(currentTO, nextTO) &&
-            !isStaleControlContinuation(timestamp);
+        Identifier nextTO = toCompare != null ? toCompare.getToIdentifier() : null;
+        return matchesCallIdentifier(currentTO, nextTO);
     }
 
     /**
