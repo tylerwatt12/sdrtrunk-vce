@@ -861,6 +861,83 @@ class P25TrafficChannelManagerTest
         assertGrantTrafficEnrichmentKeepsOneCallStart(true);
     }
 
+    @Test
+    void phaseTwoMacGrantRecoversLateRadioAndKeepsTalkersSeparate() throws Exception
+    {
+        assertPhaseTwoGrantRecoversLateRadio(false);
+    }
+
+    @Test
+    void phaseTwoTsbkGrantRecoversLateRadioAndKeepsTalkersSeparate() throws Exception
+    {
+        assertPhaseTwoGrantRecoversLateRadio(true);
+    }
+
+    private static void assertPhaseTwoGrantRecoversLateRadio(boolean phaseOneControl) throws Exception
+    {
+        for(int timeslot: List.of(TimeslotMessage.TIMESLOT_1, TimeslotMessage.TIMESLOT_2))
+        {
+            Channel parent = new Channel("Control", Channel.ChannelType.STANDARD);
+            parent.setDecodeConfiguration(phaseOneControl ? new DecodeConfigP25Phase1() : new DecodeConfigP25Phase2());
+            parent.setSourceConfiguration(new SourceConfigRemote());
+            P25TrafficChannelManager manager = new P25TrafficChannelManager(parent);
+            P25FrequencyBand band = new P25FrequencyBand(0, 851_012_500L, -45_000_000L, 12_500L, 12_500, 2);
+            manager.processFrequencyBand(band);
+            manager.processFrequencyBand(band);
+            APCO25Channel channel = APCO25Channel.create(0, timeslot - 1);
+            channel.setFrequencyBand(band);
+            assertEquals(timeslot, channel.getTimeslot());
+            long frequency = channel.getDownlinkFrequency();
+            RadioIdentifier firstSource = APCO25RadioIdentifier.createFrom(700_001);
+            RadioIdentifier nextSource = APCO25RadioIdentifier.createFrom(700_002);
+
+            grantPhaseTwoCall(manager, channel, phaseOneControl, null, 1_000L);
+            P25TrafficChannelEventTracker initial = trafficTrackers(manager, timeslot).get(frequency);
+            assertNotNull(initial);
+            assertNull(initial.getEvent().getIdentifierCollection().getFromIdentifier());
+
+            grantPhaseTwoCall(manager, channel, phaseOneControl, firstSource, 1_300L);
+            assertSame(initial, trafficTrackers(manager, timeslot).get(frequency));
+            assertEquals(firstSource, initial.getEvent().getIdentifierCollection().getFromIdentifier());
+
+            if(phaseOneControl)
+            {
+                manager.processP1ControlAnnouncedTrafficUpdate(channel, null, identifiers(1201, null),
+                    Opcode.OSP_GROUP_VOICE_CHANNEL_GRANT_UPDATE, 1_400L);
+            }
+            else
+            {
+                manager.processP2ChannelUpdate(channel, null, identifiers(1201, null),
+                    MacOpcode.PHASE1_42_GROUP_VOICE_CHANNEL_GRANT_UPDATE_IMPLICIT, 1_400L);
+            }
+
+            assertSame(initial, trafficTrackers(manager, timeslot).get(frequency));
+            assertEquals(firstSource, initial.getEvent().getIdentifierCollection().getFromIdentifier());
+
+            grantPhaseTwoCall(manager, channel, phaseOneControl, nextSource, 1_500L);
+            P25TrafficChannelEventTracker next = trafficTrackers(manager, timeslot).get(frequency);
+            assertNotSame(initial, next);
+            assertEquals(nextSource, next.getEvent().getIdentifierCollection().getFromIdentifier());
+            assertEquals(1_500L, next.getEvent().getTimeStart());
+            assertEquals(firstSource, initial.getEvent().getIdentifierCollection().getFromIdentifier());
+        }
+    }
+
+    private static void grantPhaseTwoCall(P25TrafficChannelManager manager, APCO25Channel channel,
+                                          boolean phaseOneControl, RadioIdentifier source, long timestamp)
+    {
+        if(phaseOneControl)
+        {
+            manager.processP1ControlDirectedChannelGrant(channel, VoiceServiceOptions.createUnencrypted(),
+                identifiers(1201, source), Opcode.OSP_GROUP_VOICE_CHANNEL_GRANT, timestamp);
+        }
+        else
+        {
+            manager.processP2ChannelGrant(channel, VoiceServiceOptions.createUnencrypted(), identifiers(1201, source),
+                MacOpcode.PHASE1_40_GROUP_VOICE_CHANNEL_GRANT_IMPLICIT, timestamp);
+        }
+    }
+
     private static void assertGrantTrafficEnrichmentKeepsOneCallStart(boolean phaseTwo) throws Exception
     {
         Channel parent = new Channel("Control", Channel.ChannelType.STANDARD);

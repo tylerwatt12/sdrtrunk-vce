@@ -2561,6 +2561,9 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 broadcast(tracker, timestamp);
             }
 
+            //The tracked event can have an empty FROM identifier at start of call ... update here
+            tracker.addIdentifierIfMissing(from);
+
             //update the ending timestamp so that the duration value is correctly calculated
             tracker.updateDurationControl(timestamp);
 
