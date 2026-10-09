@@ -21,7 +21,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   let presentationMotion = null;
   let source = 'live';
-  let panel = 'details';
+  let panel = null;
   let liveState = {};
   let recordingState = recordings.viewState();
   let previousRecordingActive = false;
@@ -31,12 +31,19 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   let panelKey = '';
   let renderedPanel = '';
   const disclosureStates = new Map();
-  const lastVolume = { live: 1, recordings: 1 };
+  let destroyed = false;
+  let progressTimer = null;
+  let spectrumFrame = null;
+  let sidebarKey = '';
+  let selectedQueueKey = null;
+  let contextInvoker = null;
+  let volumeInvoker = null;
+  let volumeReturnFocus = true;
   let sharedQueueKey = '';
 
   const command = (label, icon, action, primary = false) => {
     const button = iconButton(`icon-${icon}`, label,
-      `ui-button ui-button-secondary ui-icon-button ui-audio-command${primary ? ' ui-audio-command-primary' : ''}`);
+      `ui-button ui-icon-button${primary ? ' ui-button-primary ui-audio-command-primary audio-dock-play' : ' ui-button-quiet'}`);
     button.addEventListener('click', action);
     return button;
   };
@@ -75,9 +82,12 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     if (target !== undefined && target !== null && target !== '') return `${kind} ${kind === 'Radio' ? targetId(call) : target}`;
     return call.playback_target?.label || call.channel_name || call.channel || 'Recorded call';
   };
-  const sourceName = (call) => formatSourceName(call?.source_alias || call?.radio_alias,
-    call?.source_ota_alias || call?.source_ota_ta || call?.talker_alias || call?.ota_alias, getSourceNameDisplay()) ||
-    (call?.source_id !== undefined && call?.source_id !== null ? `Radio ${sourceId(call)}` : '');
+  const sourceName = (call) => {
+    const name = formatSourceName(call?.source_alias || call?.radio_alias,
+      call?.source_ota_alias || call?.source_ota_ta || call?.talker_alias || call?.ota_alias, getSourceNameDisplay());
+    const id = sourceId(call);
+    return name || (id !== undefined && id !== null && id !== '' ? `Radio ${id}` : '');
+  };
   const sourceSummary = (call) => {
     if (!call) return '';
     const alias = call.source_alias || call.radio_alias;
@@ -100,15 +110,16 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       call?.destination_radio_description || '').trim();
     return text && text.toLocaleLowerCase() !== String(title(call)).trim().toLocaleLowerCase() ? text : '';
   };
-  const subtitle = (call) => [sourceSummary(call), call?.channel || call?.channel_name]
+  const subtitle = (call) => [sourceName(call), call?.channel || call?.channel_name]
     .filter(Boolean).join(' · ');
   const queueCount = () => source === 'live' ? Number(liveState.queuedCount) || 0 : recordingState.queue?.length || 0;
   const isAllowed = () => Boolean(access()[source]);
   const setSize = (value) => {
+    closeVolume(false);
     cancelPresentationMotion();
     const returnFocus = dock.contains(document.activeElement);
     size = value; panelKey = ''; render();
-    if (returnFocus) handle.focus({ preventScroll: true });
+    if (returnFocus) (size === 'collapsed' ? slimExpand : handle).focus({ preventScroll: true });
   };
   const sizes = ['collapsed', 'minimal', 'full'];
   const shiftSize = (direction) => setSize(sizes[Math.max(0, Math.min(2, sizes.indexOf(size) + direction))]);
@@ -116,9 +127,10 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     if (source === value || !access()[value]) return;
     if (source === 'recordings') recordings.stop();
     else if (getLivePlayer() && !liveState.stopped) void getLivePlayer().togglePlayback();
+    closeVolume(false);
     source = value;
-    if (panel === 'transcript' && source === 'live') panel = 'details';
-    if (['listening', 'settings'].includes(panel) && source === 'recordings') panel = 'details';
+    panel = null;
+    selectedQueueKey = null;
     panelKey = '';
     render();
   };
@@ -136,19 +148,14 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const changeVolume = (value, persist = true) => {
     const bounded = Math.max(0, Math.min(1, Number(value)));
     if (!Number.isFinite(bounded)) return;
-    if (bounded > 0) lastVolume[source] = bounded;
     if (source === 'recordings') recordings.setVolume(bounded);
     else getLivePlayer()?.setVolume(bounded, persist);
     render();
   };
-  const mute = () => {
-    const volume = Number(state().volume);
-    if (volume > 0) { lastVolume[source] = volume; changeVolume(0); }
-    else changeVolume(lastVolume[source] || 1);
-  };
 
   const handle = node('button', 'ui-audio-handle');
   handle.type = 'button';
+  handle.id = 'audio-dock-size-handle';
   handle.setAttribute('aria-label', 'Change audio player size');
   handle.setAttribute('aria-controls', 'audio-dock-content');
   handle.setAttribute('aria-describedby', 'audio-dock-size-hint');
@@ -159,28 +166,29 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const collapsedTitle = node('strong', 'audio-dock-single-line');
   const collapsedMeta = node('span', 'audio-dock-meta audio-dock-collapsed-meta');
   handle.append(grip, sizeHint);
+  const wireSizeControl = (control, activate) => {
   let gesture = null;
   let suppressClick = false;
-  handle.addEventListener('pointerdown', (event) => {
+  control.addEventListener('pointerdown', (event) => {
     if (!event.isPrimary || event.button !== 0) return;
     suppressClick = false;
     gesture = { id: event.pointerId, x: event.clientX, y: event.clientY };
-    handle.setPointerCapture(event.pointerId);
+    control.setPointerCapture(event.pointerId);
   });
-  handle.addEventListener('pointermove', (event) => {
+  control.addEventListener('pointermove', (event) => {
     if (!gesture || gesture.id !== event.pointerId) return;
     if (Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) > 8) {
       dock.dataset.dragging = 'true';
       suppressClick = true;
     }
   });
-  handle.addEventListener('pointerup', (event) => {
+  control.addEventListener('pointerup', (event) => {
     if (!gesture || gesture.id !== event.pointerId) return;
     const vertical = event.clientY - gesture.y;
     const horizontal = event.clientX - gesture.x;
     gesture = null;
     delete dock.dataset.dragging;
-    if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+    if (control.hasPointerCapture(event.pointerId)) control.releasePointerCapture(event.pointerId);
     if (Math.abs(vertical) >= 32 && Math.abs(vertical) > Math.abs(horizontal)) {
       suppressClick = true;
       shiftSize(vertical < 0 ? 1 : -1);
@@ -191,19 +199,22 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     gesture = null;
     delete dock.dataset.dragging;
   };
-  handle.addEventListener('pointercancel', cancelGesture);
-  handle.addEventListener('lostpointercapture', cancelGesture);
-  handle.addEventListener('click', (event) => {
+  control.addEventListener('pointercancel', cancelGesture);
+  control.addEventListener('lostpointercapture', cancelGesture);
+  control.addEventListener('click', (event) => {
     if (suppressClick && event.detail !== 0) { suppressClick = false; return; }
     suppressClick = false;
-    setSize(sizes[(sizes.indexOf(size) + 1) % sizes.length]);
+    activate();
   });
-  handle.addEventListener('keydown', (event) => {
+  control.addEventListener('keydown', (event) => {
     if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
     event.preventDefault();
     if (event.key === 'Home' || event.key === 'End') setSize(event.key === 'Home' ? 'collapsed' : 'full');
     else shiftSize(event.key === 'ArrowUp' ? 1 : -1);
   });
+
+  };
+  wireSizeControl(handle, () => setSize(sizes[(sizes.indexOf(size) + 1) % sizes.length]));
 
   const header = node('div', 'audio-dock-header');
   const sourceButtons = node('div', 'ui-segmented ui-audio-sources');
@@ -248,7 +259,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       if (event.target.getClientRects().length) focusedSourceControl = null;
     });
   });
-  const compactSourceLayout = window.matchMedia('(max-width: 359px)');
+  const compactSourceLayout = mobileLayout;
   const updateSourceFocus = () => {
     if (dock.hidden || (superCollapsed && !mobileLayout.matches) || size === 'collapsed') return;
     if (compactSourceLayout.matches && sourceButtons.contains(focusedSourceControl)) {
@@ -258,9 +269,10 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     }
   };
   compactSourceLayout.addEventListener('change', updateSourceFocus);
-  const count = textButton('Queue 0', () => { panel = 'queue'; setSize('full'); });
-  count.classList.add('ui-audio-count');
-  const headerStart = node('div', 'audio-dock-header-start');
+  const count = textButton('0 queued', () => openPanel('queue', count));
+  count.className = 'link-button audio-dock-queue-count';
+  count.setAttribute('aria-label', 'Open queue');
+  const headerStart = node('div', 'audio-dock-header-start audio-dock-source-choice');
   const headerEnd = node('div', 'audio-dock-header-end');
   const cancelPresentationMotion = () => {
     const motion = presentationMotion;
@@ -309,6 +321,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   };
   const setSuperCollapsed = (value) => {
     if (mobileLayout.matches || superCollapsed === value) return;
+    closeVolume(false);
     cancelPresentationMotion();
     const from = (value ? dock : restore).getBoundingClientRect();
     const template = value ? dock.cloneNode(true) : null;
@@ -318,14 +331,15 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     const to = target.getBoundingClientRect();
     // Use the restored panel content in both directions without changing engines.
     animatePresentation(from, to, template || dock, target);
-    (value ? restore : hide).focus({ preventScroll: true });
+    (value ? restore : size === 'collapsed' ? slimHide : hide).focus({ preventScroll: true });
   };
-  const hide = iconButton('icon-close', 'Hide audio player',
+  const hide = iconButton('icon-close', 'Minimize player to header',
     'ui-disclosure-button ui-icon-button ui-audio-dismiss');
-  hide.title = 'Hide audio player. Audio keeps playing.';
+  hide.title = 'Minimize player to header';
+  hide.id = 'audio-dock-hide';
   hide.setAttribute('aria-controls', presentation.id);
   hide.addEventListener('click', () => setSuperCollapsed(true));
-  const restore = iconButton('icon-maximize-corners', 'Show audio player',
+  const restore = iconButton('icon-maximize-corners', 'Restore player',
     'ui-button ui-button-header ui-audio-header-restore');
   restore.prepend(node('span', '', 'Player'));
   restore.setAttribute('aria-controls', presentation.id);
@@ -338,38 +352,155 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     });
   });
   const updatePresentationLayout = () => {
+    closeVolume(false);
     cancelPresentationMotion();
     const returnFocus = dock.contains(document.activeElement) || Boolean(focusedPresentationControl || focusedSourceControl);
     render();
     if (!returnFocus || (restore.hidden && dock.hidden)) return;
     if (superCollapsed && !mobileLayout.matches) restore.focus({ preventScroll: true });
     else if (focusedPresentationControl || !document.activeElement.getClientRects().length) {
-      handle.focus({ preventScroll: true });
+      (size === 'collapsed' ? slimExpand : handle).focus({ preventScroll: true });
       focusedPresentationControl = null;
     }
   };
-  headerStart.append(collapsedTitle, sourceButtons, sourcePicker);
-  headerEnd.append(collapsedMeta, count, hide);
+
+  const appendIcon = (target, name) => target.append(iconButton(`icon-${name}`, '', '').querySelector('svg'));
+  sourceButtons.classList.add('audio-dock-source-segments');
+  const sourceFrame = node('label', 'ui-select-frame audio-dock-source-native');
+  sourceFrame.append(node('span', 'visually-hidden', 'Audio source'), sourcePicker);
+  appendIcon(sourceFrame, 'chevron-down');
+  headerStart.append(sourceButtons, sourceFrame);
+  const contextButton = (label, icon, name, id, classes = '') => {
+    const button = iconButton(`icon-${icon}`, label, `ui-button ui-button-secondary ui-audio-context-trigger ${classes}`);
+    button.id = id;
+    const text = node('span', 'audio-dock-scan-label', label);
+    const badge = node('span', 'ui-pill ui-pill-compact ui-audio-context-count');
+    button.append(text, badge);
+    button.addEventListener('click', () => openPanel(name, button));
+    return { button, badge };
+  };
+  const desktopLists = contextButton('Lists', 'scan-lists', 'listening', 'audio-dock-source-context', 'audio-dock-desktop-scanlists audio-dock-lists-trigger');
+  const mobileLists = contextButton('Lists', 'scan-lists', 'listening', 'audio-dock-mobile-lists', 'audio-dock-mobile-scanlists audio-dock-lists-trigger');
+  const library = iconButton('icon-recording', 'Browse recording library', 'ui-button ui-button-secondary ui-audio-context-trigger audio-dock-library-control');
+  library.append(node('span', 'audio-dock-scan-label', 'Library'));
+  library.addEventListener('click', () => { closeVolume(false); openRecordings?.(); });
+  const settingsButton = iconButton('icon-playback-controls', 'Listening settings', 'ui-disclosure-button ui-icon-button');
+  settingsButton.id = 'audio-dock-settings';
+  settingsButton.addEventListener('click', () => openPanel('settings', settingsButton));
+  const shrink = iconButton('icon-chevron-down', 'Make player compact', 'ui-disclosure-button ui-icon-button');
+  shrink.id = 'audio-dock-shrink';
+  shrink.addEventListener('click', () => setSize(size === 'full' ? 'minimal' : 'collapsed'));
+  headerEnd.append(desktopLists.button, mobileLists.button, library, settingsButton, shrink, hide);
   header.append(headerStart, handle, headerEnd);
 
-  const body = node('div', 'audio-dock-body');
-  body.id = 'audio-dock-content';
-  const now = node('div', 'audio-dock-now');
-  const copy = node('div', 'audio-dock-copy');
-  const nowTitle = node('strong', 'audio-dock-title');
-  const nowDescription = node('span', 'audio-dock-description');
-  const nowSubtitle = node('span', 'audio-dock-meta');
-  const nowSystem = node('span', 'audio-dock-meta audio-dock-system');
-  const status = node('span', 'audio-dock-status');
-  status.setAttribute('role', 'status');
-  copy.append(nowTitle, nowDescription, nowSubtitle, nowSystem, status);
+  const createSpectrum = (classes, backdrop = false) => {
+    const wave = node('span', `ui-audio-spectrum ${classes}${backdrop ? ' ui-audio-spectrum-backdrop' : ''}`);
+    if (backdrop) wave.setAttribute('aria-hidden', 'true');
+    else { wave.setAttribute('role', 'img'); wave.setAttribute('aria-label', 'Voice spectrum idle'); }
+    for (let index = 0; index < 64; index++) wave.append(node('i'));
+    return wave;
+  };
+  const compact = node('div', 'audio-dock-compact');
+  const now = node('div', 'audio-dock-now audio-dock-compact-now');
+  const compactCopy = node('button', 'audio-dock-compact-copy');
+  compactCopy.type = 'button'; compactCopy.setAttribute('aria-label', 'Expand player');
+  compactCopy.addEventListener('click', () => setSize('full'));
+  const compactWave = createSpectrum('audio-dock-mini-wave', true);
+  const compactTitle = node('strong', 'audio-dock-title audio-dock-single-line');
+  const compactSubtitle = node('span', 'ui-muted ui-label');
+  compactCopy.append(compactWave, compactTitle, compactSubtitle);
   const miniControls = node('div', 'audio-dock-mini-controls');
   const miniPlay = command('Play audio', 'play', toggle, true);
   const miniNext = command('Next call', 'skip', next);
-  const miniMute = command('Mute audio', 'speaker', mute);
-  miniControls.append(miniPlay, miniNext, miniMute);
-  now.append(copy, miniControls);
+  const makeVolumeTrigger = (id) => {
+    const button = iconButton('icon-speaker', 'Volume', 'ui-button ui-button-quiet ui-audio-volume-trigger');
+    button.id = id; button.dataset.volumeTrigger = '';
+    button.setAttribute('popovertarget', 'audio-dock-volume-popover');
+    button.setAttribute('aria-controls', 'audio-dock-volume-popover'); button.setAttribute('aria-expanded', 'false');
+    const value = node('span'); value.dataset.volumeValue = ''; button.append(value);
+    button.addEventListener('click', () => { volumeInvoker = button; volumeReturnFocus = true; });
+    return button;
+  };
+  const miniVolume = makeVolumeTrigger('audio-dock-compact-volume');
+  miniControls.append(miniPlay, miniNext, miniVolume);
+  now.append(compactCopy, miniControls);
+  const compactTiming = node('div', 'audio-dock-compact-bottom');
+  const compactElapsed = node('span', 'audio-dock-time');
+  const compactProgress = node('progress', 'ui-audio-progress');
+  compactProgress.max = 1; compactProgress.value = 0; compactProgress.setAttribute('aria-label', 'Call progress');
+  const compactDuration = node('span', 'audio-dock-time');
+  compactTiming.append(compactElapsed, compactProgress, compactDuration, count);
+  compact.append(now, compactTiming);
 
+  const slim = node('div', 'audio-dock-slim');
+  const slimCopy = node('button', 'audio-dock-slim-copy');
+  slimCopy.type = 'button'; slimCopy.setAttribute('aria-label', 'Expand player');
+  slimCopy.addEventListener('click', () => setSize('minimal'));
+  const slimWave = createSpectrum('audio-dock-mini-wave', true);
+  slimCopy.append(slimWave, collapsedTitle, collapsedMeta);
+  const slimPlay = command('Play audio', 'play', toggle, true);
+  const slimHide = iconButton('icon-close', 'Minimize player to header', 'ui-disclosure-button ui-icon-button');
+  slimHide.id = 'audio-dock-slim-hide'; slimHide.title = 'Minimize player to header';
+  slimHide.setAttribute('aria-controls', presentation.id);
+  slimHide.addEventListener('click', () => setSuperCollapsed(true));
+  const slimExpand = iconButton('icon-maximize-corners', 'Expand player', 'ui-disclosure-button ui-icon-button ui-audio-size-action');
+  slimExpand.id = 'audio-dock-slim-expand'; wireSizeControl(slimExpand, () => setSize('minimal'));
+  slim.append(slimCopy, slimPlay, slimHide, slimExpand);
+
+  const body = node('div', 'audio-dock-body audio-dock-expanded'); body.id = 'audio-dock-content';
+  const main = node('div', 'audio-dock-player-main ui-listening-stage-main');
+  const mainScroll = node('div', 'audio-dock-main-scroll');
+  const hero = node('div', 'audio-dock-hero');
+  const listeningStatus = node('div', 'audio-dock-listening-status');
+  const status = node('span', 'ui-pill'); status.setAttribute('role', 'status');
+  const callContext = node('div', 'audio-dock-call-context');
+  const age = node('span', 'ui-muted ui-label'); age.id = 'audio-dock-call-age';
+  const transcriptButton = iconButton('icon-messages', 'Transcript', 'ui-disclosure-button ui-icon-button ui-audio-transcript-action');
+  transcriptButton.id = 'audio-dock-call-transcript'; transcriptButton.title = 'Transcript';
+  transcriptButton.addEventListener('click', () => openPanel('transcript', transcriptButton));
+  const detailsButton = iconButton('icon-info-circle', 'Call details', 'ui-disclosure-button ui-icon-button ui-audio-info-action');
+  detailsButton.id = 'audio-dock-call-details'; detailsButton.title = 'Call details';
+  detailsButton.addEventListener('click', () => openPanel('details', detailsButton));
+  callContext.append(age, transcriptButton, detailsButton); listeningStatus.append(status, callContext);
+  const identity = node('div', 'audio-dock-identity');
+  const kind = node('span', 'ui-muted ui-label');
+  const nowTitle = node('h2', 'audio-dock-title');
+  const nowDescription = node('span', 'audio-dock-description ui-muted');
+  const nowSystem = node('span', 'ui-muted');
+  identity.append(kind, nowTitle, nowDescription, nowSystem);
+  const audioHeading = node('div', 'audio-dock-audio-heading ui-listening-audio-heading');
+  const quality = node('span', 'ui-muted ui-label');
+  const qualityValue = node('strong'); quality.append('Voice quality ', qualityValue);
+  audioHeading.append(node('span', 'ui-muted ui-label', 'Audio spectrum'), quality);
+  const fullWave = createSpectrum('audio-dock-wave');
+  const transmitting = node('div', 'audio-dock-transmitting ui-listening-source');
+  const transmittingCopy = node('div');
+  const transmittingName = node('strong');
+  transmittingCopy.append(node('span', 'ui-muted ui-label', 'Transmitting'), transmittingName);
+  const targetGroup = node('span', 'ui-pill'); transmitting.append(transmittingCopy, targetGroup);
+  const technical = node('div', 'audio-dock-technical ui-muted ui-label');
+  const playbackFeedback = node('p', 'ui-feedback audio-dock-playback-feedback');
+  hero.append(listeningStatus, identity, audioHeading, fullWave, transmitting, technical, playbackFeedback);
+  const context = node('section', 'audio-dock-context'); context.hidden = true;
+  const contextHeader = node('div', 'audio-dock-context-heading');
+  const back = iconButton('icon-chevron-left', 'Back to player', 'ui-disclosure-button ui-icon-button');
+  back.id = 'audio-dock-context-back'; back.addEventListener('click', closePanel);
+  const contextCopy = node('div', 'ui-heading-group');
+  const contextTitle = node('h3', 'ui-section-heading'); contextTitle.id = 'audio-dock-context-title';
+  const contextSubtitle = node('span', 'ui-muted ui-label');
+  contextCopy.append(contextTitle, contextSubtitle); contextHeader.append(back, contextCopy);
+  const panelHost = node('div', 'audio-dock-panel audio-dock-context-body');
+  panelHost.id = 'audio-dock-panel'; panelHost.setAttribute('role', 'region'); panelHost.setAttribute('aria-labelledby', contextTitle.id);
+  context.append(contextHeader, panelHost);
+  const teaser = node('button', 'audio-dock-next-teaser');
+  teaser.type = 'button'; teaser.setAttribute('aria-label', 'Open queue');
+  teaser.addEventListener('click', () => openPanel('queue', teaser));
+  const nextLabel = node('span', 'audio-dock-next-label'); const teaserCount = node('span', 'ui-muted ui-label');
+  nextLabel.append(node('strong', '', 'Up next'), teaserCount);
+  const nextCopy = node('span', 'audio-dock-next-copy'); const nextTitle = node('strong'); const nextSubtitle = node('span', 'ui-muted ui-label');
+  nextCopy.append(nextTitle, nextSubtitle); teaser.append(nextLabel, nextCopy); appendIcon(teaser, 'chevron-right');
+  mainScroll.append(hero, context, teaser);
+  const controls = node('footer', 'audio-dock-controls');
   const timing = node('div', 'audio-dock-timing');
   const elapsed = node('span', 'audio-dock-time');
   const seek = node('input', 'ui-range ui-audio-range');
@@ -378,89 +509,113 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   seek.addEventListener('input', () => recordings.seek(Number(seek.value)));
   const progress = node('progress', 'ui-audio-progress');
   progress.max = 1; progress.value = 0; progress.setAttribute('aria-label', 'Live call progress');
-  const duration = node('span', 'audio-dock-time');
-  timing.append(elapsed, seek, progress, duration);
-
-  const transport = node('div', 'audio-dock-transport');
-  transport.setAttribute('role', 'group');
-  transport.setAttribute('aria-label', 'Audio controls');
+  const duration = node('span', 'audio-dock-time'); timing.append(elapsed, seek, progress, duration);
+  const transport = node('div', 'audio-dock-transport audio-dock-primary-controls');
+  const transportMain = node('div', 'audio-dock-transport-main');
+  transportMain.setAttribute('role', 'group'); transportMain.setAttribute('aria-label', 'Playback controls');
   const previous = command('Previous recording', 'previous', () => void recordings.previous());
   const rewind = command('Back 10s', 'rewind', () => recordings.skipSeconds(-10));
   const replay = command('Replay last call', 'replay', () => void getLivePlayer()?.replayLastCall());
   const play = command('Play audio', 'play', toggle, true);
   const forward = command('Forward 10s', 'forward', () => recordings.skipSeconds(10));
   const skip = command('Next call', 'skip', next);
-  const stop = command('Stop recording', 'stop', () => recordings.stop());
-  transport.append(previous, rewind, replay, play, forward, skip, stop);
-
-  const volumeRow = node('div', 'audio-dock-volume');
-  const volumeMute = command('Mute audio', 'speaker', mute);
-  const volumeLabel = node('label', 'audio-dock-meta', 'Volume');
-  const volume = node('input', 'ui-range ui-audio-range');
-  volume.id = 'audio-dock-volume'; volume.type = 'range'; volume.min = '0'; volume.max = '1'; volume.step = '0.05';
-  volumeLabel.htmlFor = volume.id;
-  volume.addEventListener('input', () => changeVolume(volume.value, false));
-  volume.addEventListener('change', () => { if (source === 'live') getLivePlayer()?.writePreferences({ volume: true }); });
-  const volumeOutput = node('output', 'audio-dock-meta');
-  volumeOutput.htmlFor = volume.id;
-  volumeRow.append(volumeMute, volumeLabel, volume, volumeOutput);
-
-  const actions = node('div', 'audio-dock-actions');
-  const stopLive = textButton('Stop listening', () => void getLivePlayer()?.togglePlayback());
-  const hold = textButton('Hold', () => getLivePlayer()?.toggleHold());
-  const avoid = textButton('Avoid', () => getLivePlayer()?.avoidCurrent());
-  const copyLink = textButton('Copy call link', () => void share(false, true));
-  const shareCall = textButton('Share call', () => void share(true, true));
-  actions.append(stopLive, hold, avoid, copyLink, shareCall);
-
-  const tabs = node('div', 'ui-audio-tabs');
-  tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Audio information');
-  const tabButtons = {};
-  const panelHost = node('div', 'audio-dock-panel');
-  panelHost.id = 'audio-dock-panel'; panelHost.setAttribute('role', 'tabpanel'); panelHost.tabIndex = 0;
-  Object.entries({ details: 'Details', transcript: 'Transcript', queue: 'Queue', listening: 'Scan Lists',
-    settings: 'Settings' }).forEach(([value, label]) => {
-    const button = node('button', 'ui-audio-tab', label);
-    button.type = 'button'; button.id = `audio-dock-tab-${value}`;
-    button.setAttribute('role', 'tab'); button.setAttribute('aria-controls', panelHost.id);
-    button.addEventListener('click', () => { panel = value; panelKey = ''; render(); });
-    button.addEventListener('keydown', (event) => {
-      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-      event.preventDefault();
-      const available = Object.values(tabButtons).filter((tab) => !tab.hidden);
-      const index = available.indexOf(button);
-      const target = event.key === 'Home' ? available[0] : event.key === 'End' ? available.at(-1) :
-        available[(index + (event.key === 'ArrowRight' ? 1 : -1) + available.length) % available.length];
-      target.click(); target.focus();
-    });
-    tabButtons[value] = button; tabs.append(button);
+  const stop = command('Stop listening', 'stop', () => {
+    if (source === 'recordings') recordings.stop();
+    else if (!liveState.stopped) void getLivePlayer()?.togglePlayback();
   });
-  body.append(now, timing, transport, volumeRow, actions, tabs, panelHost);
-  presentation.append(header, body);
-  dock.append(presentation);
+  transportMain.append(previous, rewind, replay, play, forward, skip, stop);
+  const options = node('div', 'audio-dock-transport-options');
+  options.setAttribute('role', 'group'); options.setAttribute('aria-label', 'Additional playback controls');
+  const hold = textButton('H', () => getLivePlayer()?.toggleHold());
+  hold.className = 'ui-button ui-button-quiet ui-icon-button audio-dock-hold';
+  const avoids = node('div', 'audio-dock-avoid-actions'); avoids.setAttribute('role', 'group'); avoids.setAttribute('aria-label', 'Avoid controls');
+  const avoid = textButton('Avoid', () => getLivePlayer()?.avoidCurrent()); avoid.className = 'ui-button ui-button-quiet audio-dock-avoid-action';
+  const avoidList = iconButton('icon-chevron-down', 'Open Avoid List', 'ui-button ui-button-quiet ui-icon-button');
+  avoidList.addEventListener('click', () => openPanel('avoids', avoidList)); avoids.append(avoid, avoidList);
+  const expandedVolume = makeVolumeTrigger('audio-dock-expanded-volume'); options.append(hold, avoids, expandedVolume);
+  transport.append(transportMain, options); controls.append(timing, transport); main.append(mainScroll, controls);
+
+  const sidebar = node('aside', 'audio-dock-up-next ui-listening-queue');
+  const queueHeading = node('div', 'audio-dock-queue-heading');
+  const sidebarCount = node('span', 'ui-muted ui-label'); queueHeading.append(node('h3', 'ui-section-heading', 'Up next'), sidebarCount);
+  const sidebarList = node('ol', 'audio-dock-queue-list');
+  sidebarList.tabIndex = 0; sidebarList.setAttribute('aria-label', 'Queued calls');
+  const inspector = node('div', 'audio-dock-queue-inspector'); inspector.hidden = true;
+  const queueFooter = node('div', 'audio-dock-queue-footer');
+  const clearQueue = textButton('Clear queue', () => source === 'recordings' ? recordings.clearQueue() : getLivePlayer()?.clearQueue());
+  clearQueue.className = 'link-button ui-label'; queueFooter.append(clearQueue);
+  const sidebarClickMode = clickModeField('audio-dock-click-mode');
+  sidebar.append(queueHeading, sidebarList, inspector, queueFooter, sidebarClickMode); body.append(main, sidebar);
+  presentation.append(header, compact, slim, body); dock.append(presentation);
   document.querySelector('.app-shell').append(dock);
   const headerControls = document.querySelector('.app-shell .header-controls');
   headerControls.insertBefore(restore, headerControls.querySelector('#receiver-health-indicator'));
 
+  const volumePopover = node('div', 'ui-popover ui-audio-volume-popover audio-dock-volume-popover');
+  volumePopover.id = 'audio-dock-volume-popover'; volumePopover.setAttribute('popover', 'auto');
+  volumePopover.setAttribute('role', 'dialog'); volumePopover.setAttribute('aria-label', 'Volume controls');
+  const volumeFill = node('label', 'ui-audio-volume-fill audio-dock-volume');
+  const volume = node('input', 'ui-range ui-audio-range ui-audio-volume-fill-range');
+  volume.id = 'audio-dock-volume'; volume.type = 'range'; volume.min = '0'; volume.max = '1'; volume.step = '0.05';
+  volume.autofocus = true; volume.setAttribute('aria-label', 'Volume');
+  volume.addEventListener('input', () => changeVolume(volume.value, false));
+  volume.addEventListener('change', () => { if (source === 'live') getLivePlayer()?.writePreferences({ volume: true }); });
+  const volumeOutput = node('output', 'ui-audio-volume-fill-output'); volumeOutput.htmlFor = volume.id;
+  volumeFill.append(node('span', 'ui-audio-volume-fill-label', 'Volume'), volume, volumeOutput); volumePopover.append(volumeFill);
+  document.querySelector('.app-shell').append(volumePopover);
+  const syncVolumeExpanded = (open) => [miniVolume, expandedVolume].forEach(button => button.setAttribute('aria-expanded', String(open && button === volumeInvoker)));
+  function closeVolume(returnFocus = false) {
+    if (!volumePopover.matches(':popover-open')) { syncVolumeExpanded(false); return; }
+    volumeReturnFocus = returnFocus; volumePopover.hidePopover(); volumeReturnFocus = true;
+  }
+  function positionVolume() {
+    if (!volumeInvoker || !volumePopover.matches(':popover-open')) return;
+    const viewport = window.visualViewport;
+    const bounds = { left: viewport?.offsetLeft || 0, top: viewport?.offsetTop || 0,
+      width: viewport?.width || innerWidth, height: viewport?.height || innerHeight };
+    const gap = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--space-2')) || 8;
+    volumePopover.style.width = `${Math.min(300, bounds.width - gap * 2)}px`;
+    volumePopover.style.maxHeight = `${Math.max(0, bounds.height - gap * 2)}px`;
+    const anchor = volumeInvoker.getBoundingClientRect(), rect = volumePopover.getBoundingClientRect();
+    volumePopover.style.left = `${Math.max(bounds.left + gap, Math.min(anchor.left, bounds.left + bounds.width - rect.width - gap))}px`;
+    volumePopover.style.top = `${Math.max(bounds.top + gap, Math.min(anchor.top - rect.height - gap, bounds.top + bounds.height - rect.height - gap))}px`;
+  }
+  volumePopover.addEventListener('beforetoggle', event => {
+    if (event.newState === 'closed') {
+      syncVolumeExpanded(false);
+      if (volumeReturnFocus && volumePopover.contains(document.activeElement) && volumeInvoker?.isConnected && volumeInvoker.getClientRects().length) volumeInvoker.focus({ preventScroll: true });
+    }
+  });
+  volumePopover.addEventListener('toggle', () => {
+    const open = volumePopover.matches(':popover-open'); syncVolumeExpanded(open);
+    if (open) { positionVolume(); volume.focus({ preventScroll: true }); }
+  });
   const message = (text, error = false) => {
     const item = node('p', `ui-feedback${error ? ' ui-feedback-error' : ''}`, text);
-    item.setAttribute('role', error ? 'alert' : 'status');
-    return item;
+    item.setAttribute('role', error ? 'alert' : 'status'); return item;
   };
-  async function share(useNative, oneCall = false) {
-    const call = recordingState.current;
-    const path = oneCall && call ? href('recordings', { recording_queue: String(call.id) }) : recordings.queueHref();
-    if (!path) return;
-    const url = new URL(path, window.location.origin).href;
-    try {
-      if (useNative && navigator.share) await navigator.share({ title: oneCall ? String(title(call)) : 'Recording queue', url });
-      else { await navigator.clipboard.writeText(url); status.textContent = oneCall ? 'Call link copied' : 'Queue link copied'; }
-    } catch (error) {
-      if (error?.name !== 'AbortError') {
-        const link = node('a', 'ui-button', 'Open shareable link'); link.href = path;
-        panelHost.prepend(message('The link could not be copied. Open it to copy the address.'), link);
-      }
-    }
+  function openPanel(value, invoker) {
+    if (!isAllowed() || source === 'recordings' && ['listening', 'settings', 'avoids'].includes(value)) return;
+    closeVolume(false); contextInvoker = invoker || contextInvoker; panel = value; panelKey = ''; setSize('full');
+    back.focus({ preventScroll: true });
+  }
+  function closePanel() {
+    closeVolume(false); panel = null; panelKey = ''; render();
+    (contextInvoker?.getClientRects().length ? contextInvoker : handle).focus({ preventScroll: true });
+  }
+  function clickModeField(id) {
+    const label = node('label', 'ui-field ui-audio-queue-setting audio-dock-click-mode');
+    const frame = node('span', 'ui-select-frame'); const select = node('select', 'ui-select');
+    select.id = id; select.dataset.clickMode = ''; select.setAttribute('aria-label', 'When a call is clicked');
+    [['queue', 'Queue clicked calls'], ['once', 'Play once'], ['continue', 'Continue matching calls']].forEach(([value, text]) => {
+      const option = node('option', '', text); option.value = value; select.append(option);
+    });
+    select.addEventListener('change', () => {
+      recordings.setClickMode(select.value);
+      dock.querySelectorAll('[data-click-mode]').forEach(control => { control.value = recordingState.clickMode; });
+    });
+    frame.append(select); appendIcon(frame, 'chevron-down'); label.append(node('span', 'ui-field-label', 'When a call is clicked'), frame);
+    return label;
   }
   function factList(rows, { empty = false, includeEmpty = false } = {}) {
     const list = node('dl', 'ui-fact-list audio-dock-facts');
@@ -479,7 +634,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     const list = factList(rows, options);
     if (!list.children.length) return;
     const disclosure = node('details', 'ui-section-disclosure');
-    disclosure.append(node('summary', 'ui-section-summary', label), list);
+    const body = node('div', 'ui-section-body'); body.append(list);
+    disclosure.append(node('summary', 'ui-section-summary', label), body);
     panelHost.append(disclosure);
   }
   function renderLiveDetails() {
@@ -490,7 +646,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       ['Source', sourceName(call), call.source_entity_ref], ['Source ID', sourceId(call), call.source_entity_ref],
       ['System', systemLabel(call), call.radio_system_entity_ref], ['Channel', call.channel, call.entity_ref],
       ['Started', date(call)], ['Duration', call.duration_ms !== undefined ? `${Number(call.duration_ms) / 1000}s` : null],
-      ['Scan lists', (liveState.scanLists || []).filter((item) => (call._matchedScanListIds || call.scan_list_ids || [])
+      ['Lists', (liveState.scanLists || []).filter((item) => (call._matchedScanListIds || call.scan_list_ids || [])
         .map(String).includes(String(item.id))).map((item) => item.name).join(', ')]
     ], options));
     group('Identity & aliases', [
@@ -517,94 +673,155 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     group('Call', [
       ['Call ID', call.call_id], ['Identifier', call.id], ['Configuration ID', call.configuration_id, call.entity_ref],
       ['Radio system key', call.radio_system_key, call.radio_system_entity_ref],
-      ['Scan List IDs', Array.isArray(call.scan_list_ids) ? call.scan_list_ids.join(', ') : null],
+      ['List IDs', Array.isArray(call.scan_list_ids) ? call.scan_list_ids.join(', ') : null],
       ['Start timestamp', call.started_at_ms],
       ['Completed', Number.isFinite(Number(call.completed_at_ms)) && Number(call.completed_at_ms) > 0 ?
         new Date(Number(call.completed_at_ms)).toLocaleString() : null],
       ['Completion timestamp', call.completed_at_ms]
     ], options);
   }
-  function renderQueue() {
-    const tools = node('div', 'audio-dock-queue-tools');
-    if (source === 'recordings') {
-      const label = node('label', 'audio-dock-meta', 'When a call is clicked');
-      const select = node('select', 'ui-select'); select.id = 'audio-dock-click-mode';
-      select.setAttribute('aria-label', 'When a call is clicked');
-      [['queue', 'Queue clicked calls'], ['once', 'Play once'], ['continue', 'Continue matching calls']].forEach(([value, text]) => {
-        const option = node('option', '', text); option.value = value; select.append(option);
-      });
-      select.value = recordingState.clickMode;
-      select.addEventListener('change', () => recordings.setClickMode(select.value));
-      label.append(select); tools.append(label);
-      const shareQueue = textButton('Share queue', () => void share(true));
-      shareQueue.disabled = !recordings.queueHref(); tools.append(shareQueue);
+
+  const queueEntryKey = (call, index) => String(call?._queueEntryKey ?? call?.id ?? call?.call_id ?? index);
+  const queueRows = () => state().queue || [];
+  function queueItem(call, index, { currentRow = false, detailed = false } = {}) {
+    const row = node('li');
+    const button = node('button', 'audio-dock-queue-item ui-listening-queue-item'); button.type = 'button';
+    const key = queueEntryKey(call, index); button.dataset.queueKey = key;
+    button.setAttribute('aria-label', `View ${currentRow ? 'playing' : 'queued'} call ${title(call)}`);
+    button.setAttribute('aria-pressed', String(selectedQueueKey === key));
+    const copy = node('span', 'audio-dock-queue-copy ui-heading-group');
+    copy.append(node('strong', '', String(title(call))), node('span', 'ui-muted ui-label',
+      [sourceName(call), call.duration_ms ? `${Number(call.duration_ms) / 1000}s` : ''].filter(Boolean).join(' · ') || '—'));
+    if (currentRow) copy.prepend(node('span', 'ui-muted ui-label', state().stopped ? 'Last played' : state().paused ? 'Paused' : 'Now playing'));
+    if (detailed) {
+      const frequency = Number(call.frequency_hz);
+      const names = (liveState.scanLists || []).filter(item => (call._matchedScanListIds || call.scan_list_ids || [])
+        .map(String).includes(String(item.id))).map(item => item.name).join(', ');
+      copy.append(node('span', 'ui-muted ui-label', [date(call), call.channel_name || call.channel,
+        frequency > 0 ? `${(frequency / 1e6).toFixed(5)} MHz` : '', call.decoder || call.protocol,
+        call.timeslot !== undefined && call.timeslot !== null ? `Slot ${call.timeslot}` : '',
+        typeof call.encrypted === 'boolean' ? call.encrypted ? 'Encrypted' : 'Unencrypted' : '', source === 'live' ? names : '']
+        .filter(Boolean).join(' · ')));
     }
-    const clear = textButton('Clear queue', () => source === 'recordings' ? recordings.clearQueue() : getLivePlayer()?.clearQueue());
-    clear.disabled = !queueCount() && !state().continuation; tools.append(clear);
-    panelHost.append(tools);
-    if (recordingState.continuation && source === 'recordings') panelHost.append(message('Continuing through matching calls. More calls are loaded as you listen.'));
-    const playingCall = state().current;
-    const rows = [playingCall, ...(state().queue || [])].filter(Boolean);
-    if (!rows.length) { panelHost.append(message('Queue is empty.')); return; }
-    const list = node('ol', 'audio-dock-queue-list');
-    rows.forEach((call, index) => {
-      const row = node('li', 'audio-dock-queue-row');
-      const copy = node('div', 'audio-dock-copy');
-      copy.append(node('span', 'audio-dock-meta', index === 0 && playingCall ? state().stopped ? 'Last played' : state().paused ? 'Paused' : 'Now playing' : 'Up next'),
-        node('strong', '', String(title(call))), node('span', 'audio-dock-meta', subtitle(call)),
-        node('span', 'audio-dock-meta', [date(call), call.duration_ms ? `${Number(call.duration_ms) / 1000}s` : ''].filter(Boolean).join(' · ')));
-      if (source === 'live') {
-        const frequency = Number(call.frequency_hz);
-        const names = (liveState.scanLists || []).filter((item) => (call._matchedScanListIds || call.scan_list_ids || [])
-          .map(String).includes(String(item.id))).map((item) => item.name).join(', ');
-        copy.append(node('span', 'audio-dock-meta', [frequency > 0 ? `${(frequency / 1e6).toFixed(5)} MHz` : '',
-          call.decoder || call.protocol, call.timeslot !== undefined && call.timeslot !== null ? `Slot ${call.timeslot}` : '',
-          typeof call.encrypted === 'boolean' ? call.encrypted ? 'Encrypted' : 'Unencrypted' : '', names]
-          .filter(Boolean).join(' · ')));
-      }
-      row.append(copy);
-      if (source === 'recordings' && !(index === 0 && playingCall)) {
-        const entryKey = call._queueEntryKey || call.id;
-        row.append(command(`Play ${title(call)}`, 'play', () => recordings.playQueued(entryKey)),
-          command(`Remove ${title(call)} from queue`, 'close', () => recordings.removeQueued(entryKey)));
-      }
-      list.append(row);
+    button.append(node('span', 'audio-dock-queue-order ui-listening-order', currentRow ? '•' : String(index + 1)), copy);
+    button.addEventListener('click', () => { selectedQueueKey = selectedQueueKey === key ? null : key; sidebarKey = ''; panelKey = ''; render(); });
+    row.append(button);
+    if (source === 'recordings' && !currentRow && detailed) {
+      const actions = node('div', 'audio-dock-inspector-actions');
+      actions.append(command(`Play ${title(call)}`, 'play', () => recordings.playQueued(call._queueEntryKey || call.id)),
+        command(`Remove ${title(call)} from queue`, 'close', () => recordings.removeQueued(call._queueEntryKey || call.id)));
+      row.append(actions);
+    }
+    return row;
+  }
+  function preserveContent(host, draw, focusFallback = () => host === panelHost ? back : host) {
+    const focused = host.contains(document.activeElement) ? document.activeElement : null;
+    const focusId = focused?.id, name = focused?.getAttribute('aria-label') || focused?.textContent, tag = focused?.tagName;
+    const scrollTop = host.scrollTop, mainTop = mainScroll.scrollTop;
+    host.replaceChildren(); draw();
+    if (focused) {
+      const replacement = [...host.querySelectorAll('button, input, select, a, summary, [tabindex]')].find(control =>
+        focusId ? control.id === focusId : control.tagName === tag && (control.getAttribute('aria-label') || control.textContent) === name);
+      (replacement || focusFallback()).focus({ preventScroll: true });
+    }
+    host.scrollTop = scrollTop; mainScroll.scrollTop = mainTop;
+  }
+  function renderSidebar() {
+    const calls = queueRows(); const next = calls[0];
+    const summary = `${queueCount()} queued`;
+    sidebarCount.textContent = teaserCount.textContent = summary;
+    count.replaceChildren(document.createTextNode(summary)); appendIcon(count, 'chevron-right'); count.title = `${queueCount()} calls queued`;
+    teaser.title = `${queueCount()} calls queued`; nextTitle.textContent = next ? title(next) : 'Nothing queued';
+    nextSubtitle.textContent = next ? [sourceName(next), next.duration_ms ? `${Number(next.duration_ms) / 1000}s` : ''].filter(Boolean).join(' · ') : 'Choose a call to listen';
+    clearQueue.disabled = !isAllowed() || !queueCount() && !state().continuation;
+    sidebarClickMode.hidden = source !== 'recordings';
+    const nextKey = JSON.stringify([source, calls, selectedQueueKey, getSourceNameDisplay()]);
+    if (sidebarKey === nextKey) return; sidebarKey = nextKey;
+    const previousSelectedIndex = [...sidebarList.querySelectorAll('[data-queue-key]')]
+      .findIndex(button => button.dataset.queueKey === selectedQueueKey);
+    preserveContent(sidebarList, () => {
+      calls.forEach((call, index) => sidebarList.append(queueItem(call, index)));
+      if (!calls.length) sidebarList.append(node('li', 'ui-muted ui-label', state().continuation ? 'More matching calls are loading…' : 'Nothing queued'));
     });
-    panelHost.append(list);
+    const index = calls.findIndex((call, index) => queueEntryKey(call, index) === selectedQueueKey);
+    const call = calls[index];
+    preserveContent(inspector, () => {
+      inspector.hidden = !call;
+      if (!call) return;
+      inspector.append(node('p', '', `${title(call)} · ${sourceName(call)}`),
+        node('p', 'ui-muted ui-label', [call.channel || call.channel_name, systemLabel(call), date(call),
+          Number(call.frequency_hz) > 0 ? `${(Number(call.frequency_hz) / 1e6).toFixed(5)} MHz` : ''].filter(Boolean).join(' · ')));
+      if (source === 'recordings') {
+        const actions = node('div', 'audio-dock-inspector-actions');
+        const playNow = textButton('Play now', () => recordings.playQueued(call._queueEntryKey || call.id));
+        const remove = textButton('Remove', () => recordings.removeQueued(call._queueEntryKey || call.id));
+        playNow.className = remove.className = 'link-button'; actions.append(playNow, remove); inspector.append(actions);
+      }
+    }, () => {
+      const rows = [...sidebarList.querySelectorAll('[data-queue-key]')];
+      return rows.find(button => button.dataset.queueKey === selectedQueueKey) ||
+        rows[Math.min(Math.max(0, previousSelectedIndex), rows.length - 1)] || sidebarList;
+    });
+  }
+  function renderQueue() {
+    const tools = node('div', 'audio-dock-queue-heading');
+    const clear = textButton('Clear queue', () => source === 'recordings' ? recordings.clearQueue() : getLivePlayer()?.clearQueue());
+    clear.className = 'link-button'; clear.disabled = !queueCount() && !state().continuation;
+    tools.append(node('span', 'ui-muted ui-label', `${queueCount()} queued`), clear); panelHost.append(tools);
+    if (recordingState.continuation && source === 'recordings') panelHost.append(message('Continuing through matching calls. More calls are loaded as you listen.'));
+    const list = node('ol', 'audio-dock-context-body-list'); const playingCall = state().current;
+    if (playingCall) list.append(queueItem(playingCall, -1, { currentRow: true, detailed: true }));
+    queueRows().forEach((call, index) => list.append(queueItem(call, index, { detailed: true })));
+    if (!list.children.length) panelHost.append(message('Queue is empty.')); else panelHost.append(list);
+    if (source === 'recordings') panelHost.append(clickModeField('audio-dock-context-click-mode'));
   }
   function renderListening() {
-    const lists = liveState.scanLists || [];
-    const maximum = liveState.maximumSelectedScanLists || 16;
-    const selected = lists.filter((item) => item.selected).length;
-    panelHost.append(node('p', 'audio-dock-meta audio-dock-selection-summary', `${selected} selected · Up to ${maximum} lists`));
+    const lists = liveState.scanLists || [], maximum = liveState.maximumSelectedScanLists || 16;
+    const selected = lists.filter(item => item.selected).length;
+    panelHost.append(node('p', 'ui-muted ui-label audio-dock-selection-summary', 'Only selected lists add calls to your Live queue.'));
     if (!liveState.scanListCatalogReady) panelHost.append(message(liveState.scanListCatalogState === 'unavailable' ?
-      'Scan lists are unavailable. Try listening again when the receiver is available.' : 'Scan lists are loading…'));
-    else if (!lists.length) panelHost.append(message('No scan lists are available.'));
-    const choices = node('div');
-    lists.forEach((item) => {
-      const label = node('label', 'ui-select-list-item');
+      'Lists are unavailable. Try listening again when the receiver is available.' : 'Lists are loading…'));
+    else if (!lists.length) panelHost.append(message('No lists are available.'));
+    const choices = node('div', 'ui-surface audio-dock-selection-list');
+    lists.forEach(item => {
+      const label = node('label', 'ui-select-list-item ui-audio-selection-row audio-dock-selection-row');
       const checkbox = node('input', 'ui-selection-check'); checkbox.type = 'checkbox'; checkbox.checked = item.selected;
       checkbox.id = `audio-dock-scan-list-${item.id}`;
-      checkbox.disabled = !item.enabled || (selected >= maximum && !item.selected);
+      checkbox.disabled = !isAllowed() || !item.enabled || selected >= maximum && !item.selected;
       checkbox.addEventListener('change', () => getLivePlayer()?.setScanListSelected(item.id, checkbox.checked));
-      const copy = node('span', 'audio-dock-copy'); copy.append(node('strong', '', item.name));
-      if (item.description) copy.append(node('small', 'muted', item.description));
+      const copy = node('span', 'ui-heading-group audio-dock-selection-copy'); copy.append(node('strong', '', item.name));
+      if (item.description) copy.append(node('span', 'ui-muted ui-label', item.description));
       label.append(checkbox, copy); choices.append(label);
     });
-    panelHost.append(choices);
-    const avoidList = node('section', 'audio-dock-subsection');
-    avoidList.append(node('h3', '', 'Avoid List'));
-    panelHost.append(avoidList);
-    const avoids = liveState.avoids || [];
-    if (!avoids.length) avoidList.append(message('No targets avoided.'));
-    avoids.forEach((item) => {
-      const row = node('div', 'audio-dock-queue-row');
-      const copy = node('div', 'audio-dock-copy');
-      copy.append(node('strong', '', item.label || item.key), node('span', 'muted',
-        systemLabel(item) || item.system_scope || item.systemName || 'All systems'));
-      row.append(copy, command(`Remove ${item.label || item.key} from avoid list`, 'close', () => getLivePlayer()?.removeAvoid(item.key)));
-      avoidList.append(row);
-    });
+    if (lists.length) panelHost.append(choices);
+    if (liveState.scanListCatalogReady && lists.length && !selected) panelHost.append(message('Select a List to start adding live calls.'));
+    const footer = node('div', 'audio-dock-context-footer');
+    footer.append(node('span', 'ui-muted ui-label', `Up to ${maximum} lists`));
+    const button = textButton('Avoid List', () => openPanel('avoids', button));
+    button.className = 'ui-button ui-button-quiet ui-audio-context-trigger'; button.append(node('span', 'ui-pill ui-pill-compact', String((liveState.avoids || []).length)));
+    footer.append(button); panelHost.append(footer);
+  }
+  function renderAvoids() {
+    const items = liveState.avoids || [];
+    if (!items.length) {
+      const empty = node('div', 'ui-empty-state ui-empty-state-quiet');
+      empty.append(node('h3', '', 'No avoided targets'), node('p', 'ui-label', 'Use Avoid during a live call to skip that target. Remove a target here to hear it again.'));
+      panelHost.append(empty);
+    } else {
+      panelHost.append(node('p', 'ui-muted ui-label', 'These targets are skipped during Live listening.'));
+      const list = node('div', 'ui-surface audio-dock-selection-list');
+      items.forEach(item => {
+        const section = node('section', 'ui-record-section'), row = node('div', 'ui-record-card-header audio-dock-avoid-row');
+        const copy = node('div', 'ui-record-card-copy');
+        copy.append(node('strong', '', item.label || item.key), node('span', 'ui-muted ui-label', systemLabel(item) || item.system_scope || item.systemName || 'All systems'));
+        row.append(copy, command(`Remove ${item.label || item.key} from Avoid List`, 'close', () => getLivePlayer()?.removeAvoid(item.key)));
+        section.append(row); list.append(section);
+      }); panelHost.append(list);
+    }
+    const footer = node('div', 'audio-dock-context-footer'); footer.append(node('span', 'ui-muted ui-label', 'Live listening'));
+    const button = textButton('Lists', () => openPanel('listening', button)); button.className = 'ui-button ui-button-quiet ui-audio-context-trigger';
+    button.append(node('span', 'ui-pill ui-pill-compact', String((liveState.scanLists || []).filter(item => item.selected).length)));
+    footer.append(button); panelHost.append(footer);
   }
   function renderSettings() {
     const settings = node('div', 'audio-dock-settings');
@@ -633,202 +850,207 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     });
     settings.append(titleField);
   }
+
+  function relativeAge(call) {
+    const timestamp = call?.completed_at_ms ?? call?.started_at_ms ?? call?.start_ms;
+    if (!Number.isFinite(Number(timestamp)) || Number(timestamp) <= 0) return call ? 'Time unavailable' : 'Waiting for a call';
+    const seconds = Math.max(0, Math.floor((Date.now() - Number(timestamp)) / 1000));
+    if (seconds < 5) return 'Just now'; if (seconds < 60) return `${seconds}s ago`;
+    const minutes = Math.floor(seconds / 60); if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60); return hours < 24 ? `${hours}h ago` : `${Math.floor(hours / 24)}d ago`;
+  }
+  function updateAge() { age.textContent = relativeAge(current()); }
   function updateProgress() {
-    if (dock.hidden || (superCollapsed && !mobileLayout.matches) || size === 'collapsed') return;
+    if (dock.hidden || superCollapsed && !mobileLayout.matches || size === 'collapsed') return;
     const snapshot = source === 'live' ? getLivePlayer()?.viewState() || liveState : recordings.viewState();
-    const total = Math.max(0, Number(snapshot.duration) || 0);
-    const position = Math.max(0, Number(snapshot.currentTime) || 0);
-    elapsed.textContent = time(position); duration.textContent = time(total);
-    progress.value = total ? Math.min(1, position / total) : 0;
-    seek.max = String(total || 1);
-    if (document.activeElement !== seek) seek.value = String(Math.min(position, total));
-    seek.disabled = !isAllowed() || !total;
-    seek.setAttribute('aria-valuetext', `${time(position)} of ${time(total)}`);
+    const total = Math.max(0, Number(snapshot.duration) || 0), position = Math.max(0, Number(snapshot.currentTime) || 0);
+    elapsed.textContent = compactElapsed.textContent = time(position); duration.textContent = compactDuration.textContent = time(total);
+    progress.value = compactProgress.value = total ? Math.min(1, position / total) : 0;
+    seek.max = String(total || 1); if (document.activeElement !== seek) seek.value = String(Math.min(position, total));
+    seek.disabled = !isAllowed() || !total; seek.setAttribute('aria-valuetext', `${time(position)} of ${time(total)}`);
+  }
+  const spectrumLevels = new Float32Array(64);
+  const spectrumNodes = [fullWave, compactWave, slimWave];
+  function drawSpectrum() {
+    spectrumFrame = null;
+    if (destroyed || dock.hidden || document.hidden || source !== 'live' || !isAllowed()) return;
+    const playing = Boolean(getLivePlayer()?.readAudioSpectrum?.(spectrumLevels, 8_000));
+    spectrumNodes.forEach(wave => {
+      if (!wave.getClientRects().length) return;
+      wave.classList.toggle('paused', !playing);
+      const height = Math.max(0, wave.clientHeight - 8);
+      [...wave.children].forEach((bar, index) => { bar.style.height = `${playing ? Math.round(3 + spectrumLevels[index] * height) : 3}px`; });
+    });
+    fullWave.setAttribute('aria-label', playing ? 'Voice frequency spectrum' : 'Voice spectrum idle');
+    spectrumFrame = window.requestAnimationFrame(drawSpectrum);
+  }
+  function synchronizeLoops() {
+    const visible = !destroyed && !dock.hidden && !document.hidden;
+    if (visible && progressTimer === null) progressTimer = window.setInterval(() => { updateProgress(); updateAge(); }, 250);
+    else if (!visible && progressTimer !== null) { window.clearInterval(progressTimer); progressTimer = null; }
+    if (visible && source === 'live' && isAllowed()) {
+      if (spectrumFrame === null) spectrumFrame = window.requestAnimationFrame(drawSpectrum);
+    } else if (spectrumFrame !== null) { window.cancelAnimationFrame(spectrumFrame); spectrumFrame = null; }
+  }
+  function renderPanel() {
+    context.hidden = !panel; hero.hidden = Boolean(panel);
+    if (!panel || size !== 'full' || dock.hidden) return;
+    const active = state(), call = current();
+    const selected = (liveState.scanLists || []).filter(item => item.selected).length;
+    const names = { details: 'Call details', transcript: 'Transcript', queue: 'Queue', listening: 'Lists', settings: 'Listening settings', avoids: 'Avoid List' };
+    contextTitle.textContent = names[panel];
+    contextSubtitle.textContent = panel === 'listening' ? `${selected} of ${(liveState.scanLists || []).length} selected` :
+      panel === 'queue' ? `${queueCount()} queued` : panel === 'avoids' ? `${(liveState.avoids || []).length} avoided` : panel === 'settings' ? 'Live listening preferences' :
+      source === 'live' && panel === 'details' && !active.current ? 'Waiting for a call' : title(call);
+    const panelState = panel === 'listening' ? [active.scanLists, active.maximumSelectedScanLists, active.scanListCatalogReady, active.scanListCatalogState] :
+      panel === 'avoids' ? [liveState.avoids, liveState.scanLists] : panel === 'settings' ? [liveState.targetGrouping, liveState.targetBurstLimit, getTitlePreference()] :
+      panel === 'queue' ? [active.current, active.queue, active.scanLists, active.continuation, active.stopped, active.paused, selectedQueueKey] :
+      panel === 'transcript' ? [call?.id, call?.transcription, active.detailsLoading, active.detailsError] :
+      [active.current, call, active.stopped, active.scanLists, active.detailsLoading, active.detailsError];
+    const nextKey = JSON.stringify([source, panel, getSourceNameDisplay(), ...panelState]);
+    if (panelKey === nextKey) return; panelKey = nextKey;
+    panelHost.querySelectorAll('details').forEach(item => disclosureStates.set(`${renderedPanel}:${item.querySelector('summary')?.textContent}`, item.open));
+    preserveContent(panelHost, () => {
+      renderedPanel = `${source}:${panel}`;
+      if (panel === 'details') {
+        if (source === 'recordings') {
+          const mount = node('div'); panelHost.append(mount);
+          recordings.renderDetails(mount, active.current, { shell: true, empty: !active.current || active.stopped });
+          mount.querySelectorAll('details > dl').forEach(list => {
+            list.classList.remove('ui-form-section'); const wrapper = node('div', 'ui-section-body'); list.replaceWith(wrapper); wrapper.append(list);
+          });
+        } else renderLiveDetails();
+      } else if (panel === 'transcript') { const mount = node('div'); panelHost.append(mount); recordings.renderTranscript(mount); }
+      else if (panel === 'queue') renderQueue(); else if (panel === 'listening') renderListening();
+      else if (panel === 'avoids') renderAvoids(); else renderSettings();
+      panelHost.querySelectorAll('details').forEach(item => {
+        const key = `${renderedPanel}:${item.querySelector('summary')?.textContent}`; item.open = disclosureStates.get(key) === true;
+        item.addEventListener('toggle', () => { if (item.isConnected && panelHost.contains(item)) disclosureStates.set(key, item.open); });
+      });
+    });
   }
   function render() {
+    if (destroyed) return;
     const permissions = access();
-    if (!permissions[source] && (permissions.live || permissions.recordings)) {
-      source = permissions.live ? 'live' : 'recordings';
-    }
-    const unavailable = document.body.dataset.view === 'scanner' || document.body.dataset.view === 'access-landing' ||
-      (!permissions.live && !permissions.recordings);
-    const compact = superCollapsed && !mobileLayout.matches;
-    dock.hidden = unavailable || compact;
+    if (!permissions[source] && (permissions.live || permissions.recordings)) { closeVolume(false); source = permissions.live ? 'live' : 'recordings'; panelKey = ''; }
+    const unavailable = document.body.dataset.view === 'scanner' || document.body.dataset.view === 'access-landing' || !permissions.live && !permissions.recordings;
+    const hiddenToHeader = superCollapsed && !mobileLayout.matches;
+    dock.hidden = unavailable || hiddenToHeader;
+    if (dock.hidden) closeVolume(false);
     if (unavailable) cancelPresentationMotion();
-    dock.dataset.superCollapsed = String(compact);
-    dock.dataset.state = size; dock.dataset.source = source;
+    dock.dataset.superCollapsed = String(hiddenToHeader); dock.dataset.state = size; dock.dataset.source = source;
     document.body.classList.toggle('has-audio-dock', !unavailable);
-    presentation.hidden = compact;
-    restore.hidden = unavailable || !compact;
-    hide.hidden = mobileLayout.matches;
-    [hide, restore].forEach((button) => button.setAttribute('aria-expanded', String(!compact)));
+    presentation.hidden = hiddenToHeader; restore.hidden = unavailable || !hiddenToHeader;
+    hide.hidden = slimHide.hidden = mobileLayout.matches;
+    [hide, restore, slimHide].forEach(button => button.setAttribute('aria-expanded', String(!hiddenToHeader)));
     if (unavailable) focusedPresentationControl = null;
-    collapsedTitle.hidden = collapsedMeta.hidden = size !== 'collapsed';
-    sourceButtons.hidden = sourcePicker.hidden = count.hidden = size === 'collapsed';
-    body.hidden = compact || size === 'collapsed';
-    if (dock.hidden || compact || size === 'collapsed') focusedSourceControl = null;
+    header.hidden = size === 'collapsed'; compact.hidden = size !== 'minimal'; slim.hidden = size !== 'collapsed'; body.hidden = size !== 'full';
+    if (dock.hidden || size === 'collapsed') focusedSourceControl = null;
     handle.setAttribute('aria-expanded', String(size !== 'collapsed'));
-    const sizeDescription = { collapsed: 'Collapsed player', minimal: 'Minimal controls', full: 'Full controls' }[size];
-    sizeHint.textContent = `${sizeDescription}. Drag up or down, or click to change player size.`;
+    sizeHint.textContent = `${{ collapsed: 'Collapsed player', minimal: 'Compact player', full: 'Expanded player' }[size]}. Drag up or down, or click to change player size.`;
     handle.title = sizeHint.textContent;
-    const call = current(); const active = state();
-    const name = String(title(call));
-    collapsedTitle.textContent = name;
-    collapsedMeta.textContent = `${source === 'live' ? 'Live audio' : 'Recording'} · ${queueCount()} queued`;
-    collapsedTitle.title = name;
-    count.textContent = `Queue ${queueCount()}`;
-    count.title = `${queueCount()} calls queued`;
-    Object.entries(sourceControls).forEach(([value, button]) => {
-      button.disabled = !permissions[value]; button.setAttribute('aria-pressed', String(source === value));
-      sourceOptions[value].disabled = !permissions[value];
-    });
-    const sourceLabel = source === 'live' ? 'Live' : 'Recordings';
-    if (currentSourceChoice.textContent !== sourceLabel) currentSourceChoice.textContent = sourceLabel;
-    if (sourcePicker.value !== '') sourcePicker.value = '';
-    sourcePicker.disabled = !permissions.live && !permissions.recordings;
-    nowTitle.textContent = name; nowTitle.title = name;
-    nowDescription.textContent = description(call);
-    nowDescription.hidden = size !== 'full' || !nowDescription.textContent;
-    nowSubtitle.textContent = subtitle(call) || (source === 'live' ? 'Select a scan list' : 'Choose a recording to play');
-    nowSubtitle.title = nowSubtitle.textContent;
-    nowSystem.textContent = call ? systemLabel(call) : '';
-    nowSystem.hidden = size !== 'full' || !nowSystem.textContent;
-    status.textContent = [active.status, size === 'full' ? date(call) : ''].filter(Boolean).join(' · ');
-    const playing = source === 'live' ? !active.stopped && !active.paused : active.playing;
-    const playLabel = playing ? source === 'live' ? 'Pause live audio' : 'Pause recording' : source === 'live' ?
-      active.paused ? 'Resume live audio' : 'Listen live' : 'Play recording';
-    [play, miniPlay].forEach((button) => {
-      setLabel(button, playLabel, playing ? 'pause' : 'play');
-      button.disabled = !isAllowed() || (source === 'recordings' && !active.current && !queueCount());
-    });
-    [miniNext, skip].forEach((button) => { button.disabled = !isAllowed() || (source === 'recordings' ?
-      !active.canNext : !active.current && !queueCount()); });
-    previous.disabled = !active.canPrevious;
-    rewind.disabled = forward.disabled = !active.current || !active.duration;
-    replay.disabled = !liveState.lastCallReady || liveState.paused;
-    stop.disabled = !active.current && !queueCount();
-    [previous, rewind, forward, stop].forEach((button) => { button.hidden = source !== 'recordings'; });
-    replay.hidden = source !== 'live';
-    transport.hidden = volumeRow.hidden = actions.hidden = tabs.hidden = panelHost.hidden = size !== 'full';
-    miniControls.hidden = size === 'full';
-    seek.hidden = source !== 'recordings'; progress.hidden = source !== 'live';
-    stopLive.hidden = hold.hidden = avoid.hidden = source !== 'live';
-    copyLink.hidden = shareCall.hidden = source !== 'recordings';
-    stopLive.disabled = active.stopped;
-    hold.disabled = !liveState.currentReady && !liveState.holdTarget;
-    hold.textContent = liveState.holdTarget ? 'Release hold' : 'Hold';
-    hold.setAttribute('aria-pressed', String(Boolean(liveState.holdTarget)));
-    avoid.disabled = !liveState.currentReady || liveState.replayingLast;
-    copyLink.disabled = shareCall.disabled = !recordingState.current;
-    const muted = !(Number(active.volume) > 0);
-    [miniMute, volumeMute].forEach((button) => { setLabel(button, muted ? 'Unmute audio' : 'Mute audio', muted ? 'speaker-muted' : 'speaker'); button.setAttribute('aria-pressed', String(muted)); button.disabled = !isAllowed(); });
-    if (document.activeElement !== volume) volume.value = String(active.volume ?? 1);
-    volumeOutput.textContent = `${Math.round(Number(active.volume ?? 1) * 100)}%`;
-    if ((source === 'live' && panel === 'transcript') || (source === 'recordings' && ['listening', 'settings'].includes(panel))) panel = 'details';
-    Object.entries(tabButtons).forEach(([value, button]) => {
-      button.hidden = (value === 'transcript' && source !== 'recordings') ||
-        (['listening', 'settings'].includes(value) && source !== 'live');
-      button.setAttribute('aria-selected', String(panel === value)); button.tabIndex = panel === value ? 0 : -1;
-    });
-    panelHost.setAttribute('aria-labelledby', tabButtons[panel].id);
-    if (size === 'full' && !dock.hidden && !compact) {
-      const panelState = panel === 'listening' ? [active.scanLists, active.avoids,
-        active.maximumSelectedScanLists, active.scanListCatalogReady, active.scanListCatalogState] :
-        panel === 'settings' ? [liveState.targetGrouping, liveState.targetBurstLimit, getTitlePreference()] :
-        panel === 'queue' ? [active.current, active.queue,
-        active.scanLists, active.clickMode, active.continuation, active.stopped, active.paused] : panel === 'transcript' ?
-        [call?.id, call?.transcription, active.detailsLoading, active.detailsError] :
-        [active.current, active.stopped, active.scanLists, active.detailsLoading, active.detailsError];
-      const nextKey = JSON.stringify([source, panel, getSourceNameDisplay(), ...panelState]);
-      if (panelKey !== nextKey) {
-        panelKey = nextKey;
-        const scrollTop = panelHost.scrollTop;
-        const focused = panelHost.contains(document.activeElement) ? document.activeElement : null;
-        const focusId = focused?.id;
-        const focusName = focused?.getAttribute('aria-label') || focused?.textContent;
-        const focusTag = focused?.tagName;
-        panelHost.querySelectorAll('details').forEach((item) => {
-          disclosureStates.set(`${renderedPanel}:${item.querySelector('summary')?.textContent}`, item.open);
-        });
-        panelHost.replaceChildren();
-        renderedPanel = `${source}:${panel}`;
-        if (panel === 'details') {
-          if (source === 'recordings') {
-            if (active.detailsLoading) panelHost.append(message('Loading call details…'));
-            if (active.detailsError) panelHost.append(message(active.detailsError, true));
-            recordings.renderDetails(panelHost, active.current, { shell: true, empty: !active.current || active.stopped });
-          } else renderLiveDetails();
-        } else if (panel === 'transcript') recordings.renderTranscript(panelHost);
-        else if (panel === 'queue') renderQueue();
-        else if (panel === 'listening') renderListening();
-        else renderSettings();
-        panelHost.querySelectorAll('details').forEach((item) => {
-          const key = `${renderedPanel}:${item.querySelector('summary')?.textContent}`;
-          item.open = disclosureStates.get(key) === true;
-          item.addEventListener('toggle', () => {
-            if (item.isConnected && panelHost.contains(item)) disclosureStates.set(key, item.open);
-          });
-        });
-        if (focused) {
-          const restored = [...panelHost.querySelectorAll('button, input, select, a, summary, [tabindex]')].find((control) =>
-            focusId ? control.id === focusId : control.tagName === focusTag &&
-              (control.getAttribute('aria-label') || control.textContent) === focusName);
-          (restored || tabButtons[panel]).focus({ preventScroll: true });
-        }
-        panelHost.scrollTop = scrollTop;
-      }
-    }
-    updateProgress(); measure();
+    const call = current(), active = state(), name = String(title(call));
+    compactTitle.textContent = collapsedTitle.textContent = nowTitle.textContent = name;
+    compactTitle.title = collapsedTitle.title = nowTitle.title = name;
+    collapsedMeta.textContent = `${source === 'live' ? 'Live' : 'Recording'} · ${queueCount()} queued`;
+    compactSubtitle.textContent = subtitle(call) || (source === 'live' ? 'Select a List to listen' : 'Choose a recording to play');
+    compactSubtitle.title = [sourceSummary(call), call?.channel || call?.channel_name].filter(Boolean).join(' · ') || compactSubtitle.textContent;
+    Object.entries(sourceControls).forEach(([value, button]) => { button.disabled = !permissions[value]; button.setAttribute('aria-pressed', String(source === value)); sourceOptions[value].disabled = !permissions[value]; });
+    const sourceLabel = source === 'live' ? 'Live' : 'Recordings'; currentSourceChoice.textContent = sourceLabel;
+    if (sourcePicker.value !== '') sourcePicker.value = ''; sourcePicker.disabled = !permissions.live && !permissions.recordings;
+    const live = source === 'live';
+    desktopLists.button.hidden = mobileLists.button.hidden = settingsButton.hidden = !live; library.hidden = live;
+    const selected = (liveState.scanLists || []).filter(item => item.selected && item.enabled).length;
+    [desktopLists, mobileLists].forEach(({button, badge}) => { badge.textContent = String(selected); button.setAttribute('aria-label', `Lists, ${selected} selected`); button.disabled = !permissions.live; });
+    shrink.querySelector('use').setAttribute('href', mobileLayout.matches ? '#icon-close' : '#icon-chevron-down');
+    setLabel(shrink, size === 'full' ? 'Make player compact' : 'Collapse player');
+    transcriptButton.hidden = live; transcriptButton.disabled = !permissions.recordings;
+    detailsButton.disabled = !isAllowed();
+    kind.textContent = [call?.decoder || call?.protocol, live ? 'Voice' : 'Recorded call'].filter(Boolean).join(' · ');
+    nowDescription.textContent = description(call); nowDescription.hidden = !nowDescription.textContent;
+    nowSystem.textContent = call ? [systemLabel(call), call.channel_name || call.channel].filter(Boolean).join(' · ') : (live ? 'Select a List to start listening' : 'Choose a recording to play');
+    transmittingName.textContent = sourceName(call) || '—'; targetGroup.textContent = call?.target_group || call?.group_name || ''; targetGroup.hidden = !targetGroup.textContent;
+    transmittingName.title = sourceSummary(call) || transmittingName.textContent;
+    transmitting.hidden = false;
+    technical.replaceChildren();
+    [Number(call?.frequency_hz) > 0 ? `${(Number(call.frequency_hz) / 1e6).toFixed(5)} MHz` : '', call?.site,
+      call?.alias_list || call?.alias_list_name].filter(Boolean).forEach(value => technical.append(node('span', '', String(value))));
+    if (!technical.children.length) technical.append(node('span', '', '—'));
+    audioHeading.hidden = fullWave.hidden = !live; compactWave.hidden = slimWave.hidden = !live;
+    const qualityNumber = Number(call?.vc_quality_pct); quality.hidden = !call || call.vc_quality_pct === null ||
+      call.vc_quality_pct === undefined || call.vc_quality_pct === '' || !Number.isFinite(qualityNumber);
+    qualityValue.textContent = quality.hidden ? '' : `${Math.round(qualityNumber)}%`;
+    const playing = live ? !active.stopped && !active.paused : active.playing;
+    status.textContent = active.stopped ? 'Stopped' : active.paused ? 'Paused' : live && active.holdTarget ? 'Holding' : active.loading ? 'Loading' : playing ? 'Listening' : 'Ready';
+    status.classList.toggle('ui-pill-success', playing); status.title = active.status || status.textContent;
+    const engineStatus = String(active.status || '').trim().replace(/\bscan lists\b/gi, 'Lists').replace(/\bscan list\b/gi, 'List');
+    playbackFeedback.textContent = engineStatus;
+    const ordinaryStatus = engineStatus.toLocaleLowerCase().replace(/[.!]$/, '');
+    playbackFeedback.hidden = !engineStatus || engineStatus === status.textContent ||
+      ['listening', 'paused', 'stopped', 'playing recording', 'ready to play', 'ready', 'playback finished'].includes(ordinaryStatus) ||
+      /^paused\s*[—-]/i.test(engineStatus);
+    updateAge();
+    const playLabel = playing ? live ? 'Pause live audio' : 'Pause recording' : live ? active.paused ? 'Resume live audio' : 'Listen live' : 'Play recording';
+    [play, miniPlay, slimPlay].forEach(button => { setLabel(button, playLabel, playing ? 'pause' : 'play'); button.disabled = !isAllowed() || !live && !active.current && !queueCount(); });
+    [miniNext, skip].forEach(button => { button.disabled = !isAllowed() || (live ? !active.current && !queueCount() : !active.canNext); });
+    previous.disabled = !isAllowed() || !active.canPrevious; rewind.disabled = forward.disabled = !isAllowed() || !active.current || !active.duration;
+    replay.disabled = !isAllowed() || !liveState.lastCallReady || liveState.paused;
+    [previous, rewind, forward].forEach(button => { button.hidden = live; }); replay.hidden = !live;
+    stop.disabled = !isAllowed() || (live ? Boolean(active.stopped) : !active.current && !queueCount()); setLabel(stop, live ? 'Stop listening' : 'Stop recording');
+    hold.hidden = avoids.hidden = !live;
+    hold.disabled = !isAllowed() || !liveState.currentReady && !liveState.holdTarget;
+    setLabel(hold, liveState.holdTarget ? 'Release hold' : 'Hold this talkgroup'); hold.setAttribute('aria-pressed', String(Boolean(liveState.holdTarget)));
+    avoid.disabled = !isAllowed() || !liveState.currentReady || liveState.replayingLast;
+    seek.hidden = live; progress.hidden = !live;
+    const level = Math.max(0, Math.min(1, Number(active.volume ?? 1))), percent = Math.round(level * 100);
+    [miniVolume, expandedVolume].forEach(button => { setLabel(button, `Volume, ${percent} percent`, level ? 'speaker' : 'speaker-muted'); button.querySelector('[data-volume-value]').textContent = `${percent}%`; button.disabled = !isAllowed(); });
+    if (document.activeElement !== volume) volume.value = String(level); volume.disabled = !isAllowed();
+    volume.setAttribute('aria-valuetext', level ? `${percent} percent` : 'Muted, 0 percent'); volumeOutput.textContent = `${percent}%`; volumeFill.style.setProperty('--audio-volume-percent', `${percent}%`);
+    if (source === 'live' && panel === 'transcript' || source === 'recordings' && ['listening', 'settings', 'avoids'].includes(panel)) { panel = null; panelKey = ''; }
+    renderSidebar(); renderPanel(); dock.querySelectorAll('[data-click-mode]').forEach(select => { if (select.value !== recordingState.clickMode) select.value = recordingState.clickMode; });
+    updateProgress(); measure(); synchronizeLoops();
   }
-  function measure() {
-    // Measured geometry reserves the actual dock height, including safe-area padding.
-    const height = dock.hidden ? 0 : Math.ceil(dock.getBoundingClientRect().height);
-    document.documentElement.style.setProperty('--audio-dock-height', `${height}px`);
-  }
+  function measure() { const height = dock.hidden ? 0 : Math.ceil(dock.getBoundingClientRect().height); document.documentElement.style.setProperty('--audio-dock-height', `${height}px`); }
   const resizeObserver = new ResizeObserver(measure); resizeObserver.observe(dock);
+  const viewportChanged = () => { closeVolume(false); cancelPresentationMotion(); measure(); };
+  const visibilityChanged = () => { if (document.hidden) closeVolume(false); synchronizeLoops(); };
+  const escapeContext = event => { if (event.key === 'Escape' && !volumePopover.matches(':popover-open') && panel) { event.preventDefault(); closePanel(); } };
   mobileLayout.addEventListener('change', updatePresentationLayout);
   reducedMotion.addEventListener('change', cancelPresentationMotion);
-  window.addEventListener('resize', cancelPresentationMotion);
-  const routeObserver = new MutationObserver(() => { cancelPresentationMotion(); panelKey = ''; render(); });
+  window.addEventListener('resize', viewportChanged); window.visualViewport?.addEventListener('resize', viewportChanged); window.visualViewport?.addEventListener('scroll', viewportChanged);
+  document.addEventListener('visibilitychange', visibilityChanged); dock.addEventListener('keydown', escapeContext);
+  const routeObserver = new MutationObserver(() => { closeVolume(false); cancelPresentationMotion(); panelKey = ''; render(); });
   routeObserver.observe(document.body, { attributes: true, attributeFilter: ['data-view'] });
-  const progressTimer = window.setInterval(() => { if (!document.hidden) updateProgress(); }, 250);
-  const unsubscribeRecordings = recordings.subscribeState((value) => {
+  const unsubscribeRecordings = recordings.subscribeState(value => {
     recordingState = value;
     const queueOnly = !value.current && value.queue?.length && liveState.stopped !== false;
     const active = Boolean(value.playing || value.loading || queueOnly);
-    if (active && !previousRecordingActive && access().recordings) { source = 'recordings'; panelKey = ''; }
-    previousRecordingActive = active;
-    render();
+    if (active && !previousRecordingActive && access().recordings) { closeVolume(false); source = 'recordings'; panelKey = ''; }
+    previousRecordingActive = active; render();
   });
   function synchronize() {
     if (!access().recordings) sharedQueueKey = '';
     const player = getLivePlayer();
     if (player !== boundLive) {
       unsubscribeLive(); boundLive = player;
-      unsubscribeLive = player?.subscribeState((value) => {
+      unsubscribeLive = player?.subscribeState(value => {
         liveState = value;
-        if (!value.stopped && !previousLiveActive && access().live) { source = 'live'; panelKey = ''; }
-        previousLiveActive = !value.stopped;
-        render();
+        if (!value.stopped && !previousLiveActive && access().live) { closeVolume(false); source = 'live'; panelKey = ''; }
+        previousLiveActive = !value.stopped; render();
       }) || (() => {});
     }
     render();
-    const params = new URLSearchParams(window.location.search);
-    const queue = params.get('recording_queue');
-    if (access().recordings && queue && queue !== sharedQueueKey) {
-      sharedQueueKey = queue; source = 'recordings'; size = 'full'; panel = 'queue';
-      void recordings.loadSharedQueue(params).then(render);
-    }
+    const params = new URLSearchParams(window.location.search), queue = params.get('recording_queue');
+    if (access().recordings && queue && queue !== sharedQueueKey) { sharedQueueKey = queue; closeVolume(false); source = 'recordings'; size = 'full'; panel = 'queue'; void recordings.loadSharedQueue(params).then(render); }
   }
   synchronize();
   return { synchronize, destroy() {
-    compactSourceLayout.removeEventListener('change', updateSourceFocus);
-    mobileLayout.removeEventListener('change', updatePresentationLayout);
-    reducedMotion.removeEventListener('change', cancelPresentationMotion);
-    window.removeEventListener('resize', cancelPresentationMotion);
-    cancelPresentationMotion(); restore.remove();
-    unsubscribeLive(); unsubscribeRecordings(); resizeObserver.disconnect(); routeObserver.disconnect();
-    window.clearInterval(progressTimer); dock.remove(); document.body.classList.remove('has-audio-dock');
-    document.documentElement.style.removeProperty('--audio-dock-height');
+    closeVolume(false); destroyed = true; synchronizeLoops();
+    compactSourceLayout.removeEventListener('change', updateSourceFocus); mobileLayout.removeEventListener('change', updatePresentationLayout);
+    reducedMotion.removeEventListener('change', cancelPresentationMotion); window.removeEventListener('resize', viewportChanged);
+    window.visualViewport?.removeEventListener('resize', viewportChanged); window.visualViewport?.removeEventListener('scroll', viewportChanged);
+    document.removeEventListener('visibilitychange', visibilityChanged); dock.removeEventListener('keydown', escapeContext);
+    cancelPresentationMotion(); restore.remove(); volumePopover.remove(); unsubscribeLive(); unsubscribeRecordings();
+    resizeObserver.disconnect(); routeObserver.disconnect(); dock.remove(); document.body.classList.remove('has-audio-dock'); document.documentElement.style.removeProperty('--audio-dock-height');
   } };
 }

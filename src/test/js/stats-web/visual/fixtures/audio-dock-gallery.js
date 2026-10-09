@@ -135,6 +135,11 @@ export async function mountAudioDockGallery(parameters) {
     togglePause: async () => { liveState.paused = !liveState.paused;
       liveState.status = liveState.paused ? 'Paused · collecting calls' : 'Listening'; notifyLive(); },
     setVolume: (value) => { liveState.volume = value; notifyLive(); },
+    readAudioSpectrum: (levels) => {
+      const playing = !liveState.stopped && !liveState.paused && Boolean(liveState.current);
+      levels.forEach((_, index) => { levels[index] = playing ? (25 + (index * 29 + index % 5 * 11) % 58) / 100 : 0; });
+      return playing;
+    },
     skip: () => { liveState.current = liveState.displayCall = liveState.queue.shift() || null;
       liveState.queuedCount = liveState.queue.length; liveState.currentReady = Boolean(liveState.current); notifyLive(); },
     replayLastCall: async () => { liveState.currentTime = 0; notifyLive(); },
@@ -198,7 +203,17 @@ export async function mountAudioDockGallery(parameters) {
   if (size !== 'minimal') handle.dispatchEvent(new KeyboardEvent('keydown', {
     key: size === 'collapsed' ? 'Home' : 'End', bubbles: true }));
   const panel = parameters.get('audioPanel');
-  if (size === 'full' && panel) clickNamed(panel === 'listening' ? 'Scan Lists' : panel[0].toUpperCase() + panel.slice(1));
-  if (parameters.get('audioHidden') === 'true') clickNamed('Hide audio player');
+  if (size === 'full' && panel) {
+    const labels = { details: 'Call details', transcript: 'Transcript', listening: 'Lists',
+      avoids: 'Open Avoid List', settings: 'Listening settings', queue: 'Open queue' };
+    const selector = panel === 'listening' ? '#audio-dock-source-context, #audio-dock-mobile-lists' : null;
+    if (panel === 'queue' && ![...dock.querySelectorAll('button')].some((button) =>
+      button.getClientRects().length && button.getAttribute('aria-label') === 'Open queue')) {
+      handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    }
+    if (selector) [...dock.querySelectorAll(selector)].find((button) => button.getClientRects().length)?.click();
+    else clickNamed(labels[panel]);
+  }
+  if (parameters.get('audioHidden') === 'true') clickNamed('Minimize player to header');
   document.querySelector('.visual-audio-dock-example').dataset.ready = 'true';
 }

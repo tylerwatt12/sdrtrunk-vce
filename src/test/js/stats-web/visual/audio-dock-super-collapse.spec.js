@@ -1,13 +1,14 @@
 'use strict';
 
 const { expect, test } = require('@playwright/test');
+const { selectAudioPanel, openAudioVolume } = require('./audio-dock-controls.cjs');
 const { openAudioApp, liveCall } = require('./fixtures/audio-dock-app.cjs');
 const { selectDockSource } = require('./fixtures/audio-dock-source.cjs');
 
 const dock = (page) => page.locator('#audio-dock');
-const hide = (page) => page.getByRole('button', { name: 'Hide audio player', exact: true });
-const restore = (page) => page.getByRole('button', { name: 'Show audio player', exact: true });
-const handle = (page) => dock(page).getByRole('button', { name: 'Change audio player size', exact: true });
+const hide = (page) => page.getByRole('button', { name: 'Minimize player to header', exact: true });
+const restore = (page) => page.getByRole('button', { name: 'Restore player', exact: true });
+const handle = (page) => dock(page).locator('#audio-dock-size-handle:visible, #audio-dock-slim-expand:visible');
 
 async function size(page, value) {
   await handle(page).press(value === 'full' ? 'End' : 'Home');
@@ -67,7 +68,7 @@ async function expectExpandedCloseControl(page) {
   await expect(hide(page)).toHaveAttribute('aria-expanded', 'true');
   await expect(hide(page)).toHaveAttribute('aria-controls', 'audio-dock-presentation');
   await expect.poll(() => hide(page).evaluate((element) => element.dataset.uiHint || element.title))
-    .toBe('Hide audio player. Audio keeps playing.');
+    .toBe('Minimize player to header');
   await expect(hide(page).locator('svg')).toHaveAttribute('aria-hidden', 'true');
   await expect(hide(page).locator('use')).toHaveAttribute('href', '#icon-close');
   const appearance = await hide(page).evaluate((element) => {
@@ -94,7 +95,7 @@ async function expectExpandedCloseControl(page) {
   const placement = await hide(page).evaluate((element) => {
     const bounds = element.getBoundingClientRect();
     const hit = document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
-    const siblings = [...element.closest('.audio-dock-header').querySelectorAll('button, input, select')]
+    const siblings = [...element.closest('.audio-dock-header, .audio-dock-slim').querySelectorAll('button, input, select')]
       .filter((control) => control !== element && control.getClientRects().length);
     const overlaps = siblings.filter((control) => {
       const other = control.getBoundingClientRect();
@@ -147,7 +148,7 @@ for (const theme of ['light', 'dark']) {
       const state = await openApp(page, { theme });
       await size(page, 'full');
       await selectDockSource(dock(page), 'recordings');
-      await dock(page).getByRole('tab', { name: 'Queue', exact: true }).click();
+      await selectAudioPanel(dock(page), 'Queue');
       await size(page, value);
       await expectExpandedCloseControl(page);
       if (value === 'collapsed') await page.screenshot({ path: testInfo.outputPath(`thin-expanded-${theme}.png`) });
@@ -182,7 +183,7 @@ for (const theme of ['light', 'dark']) {
       expect(await page.evaluate(() => window.audioTest.recordings)).toEqual(transport);
       expect(state.preferenceWrites).toEqual(writes);
       if (value !== 'full') await size(page, 'full');
-      await expect(dock(page).getByRole('tab', { name: 'Queue', exact: true })).toHaveAttribute('aria-selected', 'true');
+      await expect(dock(page).locator('#audio-dock-context-title')).toHaveText('Queue');
     });
   }
 }
@@ -193,12 +194,13 @@ test('hidden recording playback advances time and automatically plays the queued
   await chooseRecording(page, 0);
   await chooseRecording(page, 1, 'Add to queue');
   await size(page, 'full');
-  await dock(page).getByRole('tab', { name: 'Transcript', exact: true }).click();
-  const volume = dock(page).getByRole('slider', { name: 'Volume', exact: true });
+  await selectAudioPanel(dock(page), 'Transcript');
+  const volume = await openAudioVolume(page);
   await volume.press('Home');
   for (let i = 0; i < 13; i++) await volume.press('ArrowRight');
   await expect(volume).toHaveValue('0.65');
-  await expect(dock(page).getByRole('button', { name: 'Queue 1', exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(dock(page).locator('.audio-dock-up-next')).toContainText('1 queued');
   const transport = await page.evaluate(() => [...window.audioTest.recordings]);
   await hide(page).click();
   await expectSuperCollapsed(page);
@@ -212,7 +214,7 @@ test('hidden recording playback advances time and automatically plays the queued
   await expect(restore(page)).toBeVisible();
   await restore(page).click();
   await expect(dock(page).getByRole('slider', { name: 'Recording position', exact: true })).toHaveValue('9');
-  await expect(dock(page).getByRole('tab', { name: 'Transcript', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(dock(page).locator('#audio-dock-context-title')).toHaveText('Transcript');
   await expect(dock(page).getByRole('button', { name: 'Pause recording', exact: true })).toBeVisible();
   await hide(page).click();
   await page.evaluate(() => {
@@ -229,8 +231,9 @@ test('hidden recording playback advances time and automatically plays the queued
   await restore(page).click();
   await expect(dock(page)).toHaveAttribute('data-state', 'full');
   await expect(dock(page)).toHaveAttribute('data-source', 'recordings');
-  await expect(dock(page).getByRole('button', { name: 'Queue 0', exact: true })).toBeVisible();
-  await expect(volume).toHaveValue('0.65');
+  await expect(dock(page).locator('.audio-dock-up-next').getByText('0 queued', { exact: true })).toBeVisible();
+  await expect(await openAudioVolume(page)).toHaveValue('0.65');
+  await page.keyboard.press('Escape');
   await expect(dock(page)).toContainText('ENG 5');
 });
 
@@ -243,7 +246,7 @@ test('live calls continue arriving and auto-advancing while hidden without chang
     await route.fulfill({ json: { data: { cursor: String(feed.requests), reset: false, calls: feed.pending.splice(0) } } });
   });
   await size(page, 'full');
-  await dock(page).getByRole('tab', { name: 'Scan Lists', exact: true }).click();
+  await selectAudioPanel(dock(page), 'Scan Lists');
   await dock(page).getByRole('checkbox', { name: /County Fire and Emergency Medical Services/ }).check();
   feed.pending.push(liveCall);
   await dock(page).getByRole('button', { name: 'Listen live', exact: true }).click();
@@ -273,8 +276,9 @@ test('live calls continue arriving and auto-advancing while hidden without chang
   await restore(page).click();
   await expect(dock(page)).toContainText('Engine 5');
   await expect(dock(page).getByRole('button', { name: 'Pause live audio', exact: true })).toBeVisible();
-  await expect(dock(page).getByRole('slider', { name: 'Volume', exact: true })).toHaveValue('0.65');
-  await expect(dock(page).getByRole('tab', { name: 'Scan Lists', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(await openAudioVolume(page)).toHaveValue('0.65');
+  await page.keyboard.press('Escape');
+  await expect(dock(page).locator('#audio-dock-context-title')).toHaveText('Lists');
   await expect(dock(page).getByRole('checkbox', { name: /County Fire and Emergency Medical Services/ })).toBeChecked();
   expect(state.preferenceWrites.length).toBe(before.writes);
 });
@@ -369,8 +373,8 @@ test('short desktop full player hides every control and restores in its original
   await expect(dock(page).getByRole('tab')).toHaveCount(0);
   await restore(page).click();
   await expect(dock(page)).toHaveAttribute('data-state', 'full');
-  await expect(dock(page).getByRole('slider', { name: 'Volume', exact: true })).toBeVisible();
   await expect(hide(page)).toBeFocused();
+  await expect(await openAudioVolume(page)).toBeVisible();
 });
 
 test('recording completion while hidden preserves detail disclosures and keeps the idle dock hidden', async ({ page }) => {
@@ -378,7 +382,7 @@ test('recording completion while hidden preserves detail disclosures and keeps t
   await openApp(page);
   await chooseRecording(page, 0);
   await size(page, 'full');
-  await dock(page).getByRole('tab', { name: 'Details', exact: true }).click();
+  await selectAudioPanel(dock(page), 'Details');
   const identities = dock(page).locator('details').filter({ has: page.locator('summary', { hasText: 'Source & target identities' }) });
   await identities.locator('summary').click();
   await expect(identities).toHaveJSProperty('open', true);
@@ -394,12 +398,12 @@ test('recording completion while hidden preserves detail disclosures and keeps t
   await expect.poll(() => page.evaluate(() => window.audioTest.recordingPlayer.src)).toBe('');
   await expectSuperCollapsed(page);
   await restore(page).click();
-  await expect(dock(page).getByRole('tab', { name: 'Details', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(dock(page).locator('#audio-dock-context-title')).toHaveText('Call details');
   await expect(identities).toHaveJSProperty('open', true);
   expect(await dock(page).locator('#audio-dock-panel dt').allTextContents()).toEqual(fieldLabels);
   await expect.poll(async () => (await dock(page).locator('#audio-dock-panel dd').allTextContents())
     .every((value) => !/[A-Za-z0-9]/.test(value))).toBe(true);
-  await expect(dock(page)).toContainText('Playback finished.');
+  await expect(dock(page)).toContainText('Nothing queued');
   await expect(dock(page).getByRole('button', { name: 'Play recording', exact: true })).toBeVisible();
   expect(await page.evaluate(() => window.audioTest.recordings.filter((entry) => entry.action === 'play').length)).toBe(1);
 });
@@ -442,13 +446,13 @@ test('minimize and expand animate between panel and header without changing audi
   await chooseRecording(page, 0);
   const writes = [...state.preferenceWrites];
   const transport = await page.evaluate(() => [...window.audioTest.recordings]);
-  for (const name of ['Hide audio player', 'Show audio player']) {
+  for (const name of ['Minimize player to header', 'Restore player']) {
     const motion = await page.evaluate((label) => {
       document.querySelector(`button[aria-label="${label}"]`).click();
       const ghost = document.querySelector('.audio-dock-motion');
       const effect = ghost.getAnimations()[0].effect;
       const frames = effect.getKeyframes();
-      const target = document.querySelector(label === 'Hide audio player' ?
+      const target = document.querySelector(label === 'Minimize player to header' ?
         '.ui-audio-header-restore' : '.audio-dock');
       return { inert: ghost.inert, hidden: ghost.getAttribute('aria-hidden'),
         ids: ghost.querySelectorAll('[id]').length, frames: frames.map((frame) => frame.transform),
@@ -458,7 +462,7 @@ test('minimize and expand animate between panel and header without changing audi
     expect(motion.hidden).toBe('true');
     expect(motion.ids).toBe(0);
     expect(motion.frames[0]).not.toBe(motion.frames[1]);
-    const duration = name === 'Hide audio player' ? 600 : 320;
+    const duration = name === 'Minimize player to header' ? 600 : 320;
     expect(motion.durations).toEqual([duration, duration]);
     await expect(page.locator('.audio-dock-motion')).toHaveCount(0);
     expect(await page.evaluate(() => window.audioTest.recordings)).toEqual(transport);
@@ -480,8 +484,8 @@ test('reduced motion restores immediately and resize or repeated activation remo
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const copies = await page.evaluate(() => {
-    document.querySelector('button[aria-label="Hide audio player"]').click();
-    document.querySelector('button[aria-label="Show audio player"]').click();
+    document.querySelector('button[aria-label="Minimize player to header"]').click();
+    document.querySelector('button[aria-label="Restore player"]').click();
     return document.querySelectorAll('.audio-dock-motion').length;
   });
   expect(copies).toBe(1);

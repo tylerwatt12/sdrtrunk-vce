@@ -1,23 +1,24 @@
 'use strict';
 
 const { expect, test } = require('@playwright/test');
+const { selectAudioPanel, openAudioVolume } = require('./audio-dock-controls.cjs');
 const { openAudioApp, recording, transcript } = require('./fixtures/audio-dock-app.cjs');
 
 function dock(page) { return page.locator('#audio-dock'); }
 
 async function selectPanel(page, name) {
-  await dock(page).getByRole('tab', { name, exact: true }).click();
+  await selectAudioPanel(dock(page), name);
 }
 
 async function fullControls(page) {
   const player = dock(page);
-  await player.getByRole('button', { name: 'Change audio player size', exact: true }).press('End');
+  await player.locator('#audio-dock-size-handle:visible, #audio-dock-slim-expand:visible').press('End');
   await expect(player).toHaveAttribute('data-state', 'full');
 }
 
 async function chooseRecording(page, index = 0, mode = 'Play once') {
   if (await dock(page).getAttribute('data-state') === 'full') {
-    await dock(page).getByRole('button', { name: 'Change audio player size', exact: true }).press('ArrowDown');
+    await dock(page).locator('#audio-dock-size-handle:visible, #audio-dock-slim-expand:visible').press('ArrowDown');
   }
   await page.locator('.recordings-play-glyph').nth(index).click();
   await page.getByRole('dialog', { name: 'Play recording', exact: true })
@@ -26,27 +27,28 @@ async function chooseRecording(page, index = 0, mode = 'Play once') {
 }
 
 async function expectReachableControls(player) {
-  const controls = player.locator('button:visible, input:visible, select:visible');
-  for (let index = 0; index < await controls.count(); index++) {
-    const input = controls.nth(index);
-    const control = await input.evaluate((element) => element.matches('.ui-toggle input')) ?
-      input.locator('..') : input;
-    await control.scrollIntoViewIfNeeded();
-    const bounds = await control.evaluate((element) => {
+  // Measure one settled presentation in one browser turn. Native instant
+  // scrolling reveals overflow controls without repeated driver round trips.
+  const measurements = await player.locator('button:visible, input:visible, select:visible').evaluateAll(inputs =>
+    inputs.map(input => {
+      const element = input.matches('.ui-toggle input') ? input.parentElement : input;
+      element.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
       const rect = element.getBoundingClientRect();
       const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
-      return { x: rect.x, right: rect.right, top: rect.top, bottom: rect.bottom,
+      return { label: input.getAttribute('aria-label') || element.textContent.trim(),
+        x: rect.x, right: rect.right, top: rect.top, bottom: rect.bottom,
         width: rect.width, height: rect.height, viewportWidth: window.innerWidth,
         viewportHeight: window.innerHeight, covered: !hit || !element.contains(hit) };
-    });
-    expect(bounds.width).toBeGreaterThan(0);
-    expect(bounds.height).toBeGreaterThan(0);
-    expect(bounds.x).toBeGreaterThanOrEqual(-1);
-    expect(bounds.right).toBeLessThanOrEqual(bounds.viewportWidth + 1);
-    expect(bounds.top).toBeGreaterThanOrEqual(-1);
-    expect(bounds.bottom).toBeLessThanOrEqual(bounds.viewportHeight + 1);
-    expect(bounds.covered, `Control ${await control.getAttribute('aria-label') || await control.textContent()} is covered`)
-      .toBe(false);
+    }));
+  expect(measurements.length).toBeGreaterThan(0);
+  for (const bounds of measurements) {
+    expect(bounds.width, bounds.label).toBeGreaterThan(0);
+    expect(bounds.height, bounds.label).toBeGreaterThan(0);
+    expect(bounds.x, bounds.label).toBeGreaterThanOrEqual(-1);
+    expect(bounds.right, bounds.label).toBeLessThanOrEqual(bounds.viewportWidth + 1);
+    expect(bounds.top, bounds.label).toBeGreaterThanOrEqual(-1);
+    expect(bounds.bottom, bounds.label).toBeLessThanOrEqual(bounds.viewportHeight + 1);
+    expect(bounds.covered, `Control ${bounds.label} is covered`).toBe(false);
   }
 }
 
@@ -59,17 +61,17 @@ for (const viewport of [{ width: 320, height: 740 }, { width: 390, height: 844 }
     await expect(player).toBeVisible();
     await fullControls(page);
     await player.getByRole('button', { name: 'Listen live', exact: true }).click();
-    await expect(player.getByRole('button', { name: 'Hold', exact: true })).toBeEnabled();
+    await expect(player.getByRole('button', { name: 'Hold this talkgroup', exact: true })).toBeEnabled();
     for (const panel of ['Details', 'Queue', 'Scan Lists', 'Settings']) {
       await selectPanel(page, panel);
       await expectReachableControls(player);
     }
-    await player.getByRole('button', { name: 'Change audio player size', exact: true }).press('Home');
+    await player.locator('#audio-dock-size-handle:visible, #audio-dock-slim-expand:visible').press('Home');
     await expect(player).toHaveAttribute('data-state', 'collapsed');
     await expect(player.getByRole('slider')).toHaveCount(0);
     await expect(player.getByRole('tab')).toHaveCount(0);
     await expectReachableControls(player);
-    await player.getByRole('button', { name: 'Change audio player size', exact: true }).click();
+    await player.locator('#audio-dock-size-handle:visible, #audio-dock-slim-expand:visible').click();
     await expect(player).toHaveAttribute('data-state', 'minimal');
     await expectReachableControls(player);
     const bounds = await player.boundingBox();
@@ -84,8 +86,8 @@ for (const viewport of [{ width: 320, height: 740 }, { width: 390, height: 844 }
     }
     await chooseRecording(page);
     await fullControls(page);
-    await expect(player.getByRole('tab', { name: 'Scan Lists', exact: true })).toHaveCount(0);
-    await expect(player.getByRole('tab', { name: 'Settings', exact: true })).toHaveCount(0);
+    await expect(player.locator('.audio-dock-lists-trigger:visible')).toHaveCount(0);
+    await expect(player.locator('#audio-dock-settings:visible')).toHaveCount(0);
     for (const panel of ['Details', 'Transcript', 'Queue']) {
       await selectPanel(page, panel);
       await expectReachableControls(player);
@@ -232,7 +234,7 @@ test('Scan Lists and Settings keep keyboard focus and values while calls arrive 
   const burst = dock(page).getByRole('spinbutton', { name: 'Calls per target' });
   await burst.focus();
   state.feedCallsEnabled = true;
-  await expect(dock(page).getByRole('button', { name: 'Hold', exact: true })).toBeEnabled();
+  await expect(dock(page).getByRole('button', { name: 'Hold this talkgroup', exact: true })).toBeEnabled();
   await expect(burst).toBeFocused();
   await burst.fill('7');
   await burst.dispatchEvent('change');
@@ -243,7 +245,7 @@ test('Scan Lists and Settings keep keyboard focus and values while calls arrive 
   await chooseRecording(page, 0, 'Continue from here');
   await fullControls(page);
   await selectPanel(page, 'Queue');
-  const clickedCallMode = dock(page).getByRole('combobox', { name: 'When a call is clicked' });
+  const clickedCallMode = dock(page).locator('#audio-dock-panel').getByRole('combobox', { name: 'When a call is clicked' });
   await clickedCallMode.focus();
   await clickedCallMode.selectOption('once');
   await expect(clickedCallMode).toBeFocused();
@@ -254,8 +256,8 @@ test('adding a recording to the queue preserves live playback and its selected s
   await openAudioApp(page);
   await fullControls(page);
   await dock(page).getByRole('button', { name: 'Listen live', exact: true }).click();
-  await expect(dock(page).getByRole('button', { name: 'Hold', exact: true })).toBeEnabled();
-  await dock(page).getByRole('button', { name: 'Change audio player size', exact: true }).press('ArrowDown');
+  await expect(dock(page).getByRole('button', { name: 'Hold this talkgroup', exact: true })).toBeEnabled();
+  await dock(page).locator('#audio-dock-size-handle:visible, #audio-dock-slim-expand:visible').press('ArrowDown');
   await page.locator('.recordings-play-glyph').first().click();
   await page.getByRole('dialog', { name: 'Play recording', exact: true })
     .getByRole('button', { name: /Add to queue/ }).click();
@@ -266,7 +268,7 @@ test('adding a recording to the queue preserves live playback and its selected s
   await dock(page).getByRole('button', { name: 'Recordings', exact: true }).click();
   await fullControls(page);
   await selectPanel(page, 'Queue');
-  await expect(dock(page).locator('.audio-dock-queue-row')).toContainText('Fire Dispatch');
+  await expect(dock(page).locator('#audio-dock-panel .audio-dock-queue-item')).toContainText('Fire Dispatch');
 });
 
 for (const [name, capabilities, expected] of [
@@ -293,16 +295,11 @@ test('live volume updates immediately during dragging and persists only the fina
   const state = await openAudioApp(page, { volume: 0.65 });
   await fullControls(page);
   await dock(page).getByRole('button', { name: 'Listen live', exact: true }).click();
-  await expect(dock(page).getByRole('button', { name: 'Hold', exact: true })).toBeEnabled();
+  await expect(dock(page).getByRole('button', { name: 'Hold this talkgroup', exact: true })).toBeEnabled();
   await expect.poll(() => state.preferenceWrites.length).toBeGreaterThan(0);
-  const volume = dock(page).getByRole('slider', { name: 'Volume', exact: true });
+  const volume = await openAudioVolume(page);
   await expect(volume).toHaveValue('0.65');
-  const beforeMute = state.preferenceWrites.length;
-  await dock(page).getByRole('button', { name: 'Mute audio', exact: true }).click();
-  await expect(volume).toHaveValue('0');
-  await dock(page).getByRole('button', { name: 'Unmute audio', exact: true }).click();
-  await expect(volume).toHaveValue('0.65');
-  await expect.poll(() => state.preferenceWrites.length).toBe(beforeMute + 2);
+  await expect(dock(page).getByRole('button', { name: /^(Mute|Unmute) audio$/ })).toHaveCount(0);
   const before = state.preferenceWrites.length;
   await volume.evaluate((element) => {
     for (const value of [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.75]) {
@@ -318,24 +315,85 @@ test('live volume updates immediately during dragging and persists only the fina
   expect(state.preferenceWrites.at(-1).playback.volume).toBe(0.75);
 });
 
-test('each source restores its own volume after muting and switching sources', async ({ page }) => {
+test('native volume keeps zero and independent levels when switching sources', async ({ page }) => {
   await openAudioApp(page, { volume: 0.65 });
   await fullControls(page);
   const player = dock(page);
-  const volume = player.getByRole('slider', { name: 'Volume', exact: true });
+  let volume = await openAudioVolume(page);
   await expect(volume).toHaveValue('0.65');
-  await player.getByRole('button', { name: 'Mute audio', exact: true }).click();
+  await volume.press('Home');
   await expect(volume).toHaveValue('0');
+  await expect(volume).toHaveAttribute('aria-valuetext', 'Muted, 0 percent');
+  await expect(page.locator('#audio-dock-volume-popover output')).toHaveText('0%');
+  await page.keyboard.press('Escape');
+  await expect(player.locator('[data-volume-trigger]:visible')).toBeFocused();
   await player.getByRole('button', { name: 'Recordings', exact: true }).click();
+  volume = await openAudioVolume(page);
   await expect(volume).toHaveValue('1');
-  await player.getByRole('button', { name: 'Mute audio', exact: true }).click();
-  await expect(volume).toHaveValue('0');
+  await volume.press('Home');
+  for (let index = 0; index < 8; index++) await volume.press('ArrowRight');
+  await expect(volume).toHaveValue('0.4');
+  await page.keyboard.press('Escape');
   await player.getByRole('button', { name: 'Live', exact: true }).click();
-  await player.getByRole('button', { name: 'Unmute audio', exact: true }).click();
-  await expect(volume).toHaveValue('0.65');
+  volume = await openAudioVolume(page);
+  await expect(volume).toHaveValue('0');
+  await volume.press('ArrowRight');
+  await expect(volume).toHaveValue('0.05');
+  await page.keyboard.press('Escape');
   await player.getByRole('button', { name: 'Recordings', exact: true }).click();
-  await player.getByRole('button', { name: 'Unmute audio', exact: true }).click();
-  await expect(volume).toHaveValue('1');
+  volume = await openAudioVolume(page);
+  await expect(volume).toHaveValue('0.4');
+});
+
+test('sidebar inspector retains keyboard focus through queue advances and removes to a surviving row', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const calls = Array.from({ length: 12 }, (_, index) => ({ ...recording, id: 17 + index,
+    start_ms: recording.start_ms + index * 60_000, end_ms: recording.end_ms + index * 60_000,
+    source_alias: `Engine ${4 + index}`, source_ota_alias: `ENG ${4 + index}` }));
+  await openAudioApp(page, { calls });
+  await page.evaluate(() => {
+    const play = window.Audio.prototype.play;
+    window.Audio.prototype.play = function (...args) {
+      window.audioTest.recordingPlayer = this;
+      return play.apply(this, args);
+    };
+  });
+  await chooseRecording(page, 0, 'Continue from here');
+  await fullControls(page);
+  const sidebar = dock(page).locator('.audio-dock-up-next');
+  const list = sidebar.getByRole('list', { name: 'Queued calls', exact: true });
+  const rows = list.locator('button');
+  await expect(rows).toHaveCount(11);
+  const key = await rows.nth(2).getAttribute('data-queue-key');
+  await rows.nth(2).click();
+  const selected = list.locator(`[data-queue-key="${key}"]`);
+  await expect(selected).toHaveAttribute('aria-pressed', 'true');
+  const inspector = sidebar.locator('.audio-dock-queue-inspector');
+  await expect(inspector).toContainText('ENG 7');
+  for (const [action, nextId, count] of [['Play now', 18, 10], ['Remove', 19, 9]]) {
+    const control = inspector.getByRole('button', { name: action, exact: true });
+    await control.focus();
+    await list.evaluate(element => { element.scrollTop = 40; });
+    const scrollTop = await list.evaluate(element => element.scrollTop);
+    expect(scrollTop).toBeGreaterThan(0);
+    await page.evaluate(() => {
+      const audio = window.audioTest.recordingPlayer;
+      audio.currentTime = audio.duration;
+      audio.paused = true;
+      audio.dispatchEvent(new Event('ended'));
+    });
+    await expect.poll(() => page.evaluate(() => window.audioTest.recordingPlayer.src)).toMatch(new RegExp(`/${nextId}/audio$`));
+    await expect(rows).toHaveCount(count);
+    await expect(selected).toHaveAttribute('aria-pressed', 'true');
+    await expect(control).toBeFocused();
+    expect(await list.evaluate(element => element.scrollTop)).toBe(scrollTop);
+  }
+  await inspector.getByRole('button', { name: 'Remove', exact: true }).press('Enter');
+  await expect(selected).toHaveCount(0);
+  await expect(inspector).toBeHidden();
+  await expect(rows).toHaveCount(8);
+  await expect(rows.first()).toBeFocused();
+  expect(await page.evaluate(() => window.audioTest.recordingPlayer.src)).toMatch(/\/19\/audio$/);
 });
 
 test('repeated recordings retain separate queue row actions', async ({ page }) => {
@@ -346,14 +404,14 @@ test('repeated recordings retain separate queue row actions', async ({ page }) =
   await fullControls(page);
   await selectPanel(page, 'Queue');
   const player = dock(page);
-  await expect(player.locator('.audio-dock-queue-row')).toHaveCount(3);
+  await expect(player.locator('#audio-dock-panel .audio-dock-queue-item')).toHaveCount(3);
   const remove = player.getByRole('button', { name: 'Remove Fire Dispatch from queue', exact: true });
   await expect(remove).toHaveCount(2);
   await remove.nth(1).click();
-  await expect(player.locator('.audio-dock-queue-row')).toHaveCount(2);
+  await expect(player.locator('#audio-dock-panel .audio-dock-queue-item')).toHaveCount(2);
   await expect(remove).toHaveCount(1);
   await player.getByRole('button', { name: 'Play Fire Dispatch', exact: true }).click();
-  await expect(player.locator('.audio-dock-queue-row')).toHaveCount(1);
+  await expect(player.locator('#audio-dock-panel .audio-dock-queue-item')).toHaveCount(1);
   await expect(remove).toHaveCount(0);
 });
 

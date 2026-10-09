@@ -66,8 +66,8 @@ for (const [name, capabilities, allowed, blocked] of [
   test(`narrow ${name} picker preserves playback permissions`, async ({ page }) => {
     await openSourceApp(page, { capabilities });
     await expectPickerSource(page, allowed);
-    await expect(picker(page).locator(`option[value="${allowed}"]`)).toBeEnabled();
-    await expect(picker(page).locator(`option[value="${blocked}"]`)).toBeDisabled();
+    await expect(picker(page).locator(`option[value="${allowed}"]`)).toHaveJSProperty('disabled', false);
+    await expect(picker(page).locator(`option[value="${blocked}"]`)).toHaveJSProperty('disabled', true);
     await picker(page).focus();
     await picker(page).press(blocked === 'recordings' ? 'r' : 'l');
     await expectPickerSource(page, allowed);
@@ -80,7 +80,7 @@ for (const source of ['live', 'recordings']) {
     await openSourceApp(page);
     await selectDockSource(player(page), source);
     await picker(page).focus();
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 1280, height: 900 });
     const selected = player(page).getByRole('button', { name: source === 'live' ? 'Live' : 'Recordings', exact: true });
     await expect(group(page)).toBeVisible();
     await expect(picker(page)).toBeHidden();
@@ -96,7 +96,7 @@ for (const source of ['live', 'recordings']) {
   });
 }
 
-for (const width of [390, 1280]) {
+for (const width of [1050, 1280]) {
   for (const theme of ['light', 'dark']) {
     test(`segmented source labels have comfortable insets and spacing at ${width}px in ${theme}`, async ({ page }) => {
       await openSourceApp(page, { width, theme });
@@ -118,30 +118,30 @@ for (const width of [390, 1280]) {
               bottom: container.bottom - bounds.bottom };
           }) };
       });
-      for (const inset of layout.padding) expect(inset).toBeGreaterThanOrEqual(4);
+      for (const inset of layout.padding) expect(inset).toBeGreaterThanOrEqual(2);
       expect(layout.gap).toBeGreaterThanOrEqual(2);
       for (const item of layout.items) {
         expect(item.height).toBeGreaterThanOrEqual(36);
         expect(item.height).toBeLessThanOrEqual(40);
         expect(item.labelLeft).toBeGreaterThanOrEqual(8);
         expect(item.labelRight).toBeGreaterThanOrEqual(8);
-        expect(item.top).toBeGreaterThanOrEqual(4);
-        expect(item.bottom).toBeGreaterThanOrEqual(4);
+        expect(item.top).toBeGreaterThanOrEqual(2);
+        expect(item.bottom).toBeGreaterThanOrEqual(2);
       }
     });
   }
 }
 
-test('source-control breakpoint keeps both labels, the center grip and queue clear', async ({ page }) => {
+test('mobile source picker and desktop source segments keep the centered grip clear', async ({ page }) => {
   await openSourceApp(page, { width: 359 });
-  for (const width of [359, 360, 390]) {
+  for (const width of [320, 390, 900, 901, 1280]) {
     await page.setViewportSize({ width, height: 844 });
-    const source = width < 360 ? picker(page) : group(page);
+    const source = width <= 900 ? picker(page) : group(page);
     const handle = player(page).getByRole('button', { name: 'Change audio player size', exact: true });
-    const queue = player(page).getByRole('button', { name: 'Queue 0', exact: true });
+    const context = player(page).locator('.audio-dock-header-end');
     await expect(source).toBeVisible();
     const [dock, left, center, right] = await Promise.all([
-      player(page).boundingBox(), source.boundingBox(), handle.boundingBox(), queue.boundingBox(),
+      player(page).boundingBox(), source.boundingBox(), handle.boundingBox(), context.boundingBox(),
     ]);
     expect(Math.abs(center.x + center.width / 2 - (dock.x + dock.width / 2))).toBeLessThanOrEqual(1);
     expect(left.x + left.width).toBeLessThanOrEqual(center.x);

@@ -37,7 +37,7 @@ import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, di
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=3';
-import { createAudioDock } from './core/audio-dock.js?v=16';
+import { createAudioDock } from './core/audio-dock.js?v=17';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=4';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=14';

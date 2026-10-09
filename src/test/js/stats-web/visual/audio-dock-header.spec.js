@@ -1,20 +1,22 @@
 'use strict';
 
 const { expect, test } = require('@playwright/test');
+const { selectAudioPanel, openAudioVolume } = require('./audio-dock-controls.cjs');
 const { openAudioApp } = require('./fixtures/audio-dock-app.cjs');
 const { dockSourceControl, selectDockSource } = require('./fixtures/audio-dock-source.cjs');
 
 const viewports = [{ width: 1280, height: 900 }, { width: 320, height: 740 }, { width: 390, height: 844 }];
-const handle = (dock) => dock.getByRole('button', { name: 'Change audio player size', exact: true });
+const handle = (dock) => dock.locator('#audio-dock-size-handle:visible, #audio-dock-slim-expand:visible');
 
 async function setSize(dock, state) {
-  await handle(dock).press('Home');
-  if (state === 'minimal') await handle(dock).press('ArrowUp');
-  if (state === 'full') await handle(dock).press('End');
+  if (state === 'collapsed') await handle(dock).press('Home');
+  else if (state === 'full') await handle(dock).press('End');
+  else { await handle(dock).press('Home'); await handle(dock).press('ArrowUp'); }
   await expect(dock).toHaveAttribute('data-state', state);
 }
 
 async function openGallery(page, source, state = 'full', stress = false) {
+  await page.clock.setFixedTime( new Date('2026-09-30T14:24:18Z'));
   if (stress) {
     // Only the gallery's synthetic call data changes. The mounted production
     // component and all playback/size interactions remain unchanged.
@@ -38,61 +40,45 @@ async function openGallery(page, source, state = 'full', stress = false) {
 }
 
 async function expectSingleRow(dock, state, source, queued, title) {
-  const header = dock.locator('.audio-dock-header');
-  const grip = header.locator('.ui-audio-grip');
-  const left = state === 'collapsed' ? header.locator('.audio-dock-single-line') : await dockSourceControl(dock);
-  const right = state === 'collapsed' ? header.locator('.audio-dock-meta') :
-    header.getByRole('button', { name: `Queue ${queued}`, exact: true });
-  await expect(handle(dock)).toHaveCount(1);
+  const row = dock.locator(state === 'collapsed' ? '.audio-dock-slim' : '.audio-dock-header');
+  const resize = handle(dock);
+  const left = state === 'collapsed' ? row.locator('.audio-dock-slim-copy') : await dockSourceControl(dock);
+  const right = state === 'collapsed' ? resize : row.locator('.audio-dock-header-end');
+  await expect(resize).toHaveCount(1);
   await expect(left).toBeVisible();
   await expect(right).toBeVisible();
   if (state === 'collapsed') {
-    await expect(left).toHaveText(title);
-    await expect(left).toHaveAttribute('title', title);
-    await expect(right).toHaveText(`${source === 'live' ? 'Live audio' : 'Recording'} · ${queued} queued`);
-    await expect(header.getByRole('group', { name: 'Audio source', exact: true })).toBeHidden();
-    await expect(header.getByRole('combobox', { name: 'Audio source', exact: true })).toBeHidden();
+    await expect(row.locator('.audio-dock-single-line')).toHaveText(title);
+    await expect(row.locator('.audio-dock-single-line')).toHaveAttribute('title', title);
+    await expect(row.locator('.audio-dock-collapsed-meta')).toHaveText(`${source === 'live' ? 'Live' : 'Recording'} · ${queued} queued`);
+    await expect(dock.getByRole('group', { name: 'Audio source', exact: true })).toBeHidden();
+    await expect(dock.getByRole('combobox', { name: 'Audio source', exact: true })).toBeHidden();
     await expect(dock.getByRole('slider')).toHaveCount(0);
   } else {
-    const labels = await header.getByRole('combobox', { name: 'Audio source', exact: true }).isVisible() ?
-      [`Queue ${queued}`] : ['Live', 'Recordings', `Queue ${queued}`];
-    for (const label of labels) {
-      const button = header.getByRole('button', { name: label, exact: true });
-      const textFits = await button.evaluate((element) => {
-        const range = document.createRange();
-        range.selectNodeContents(element);
-        const text = range.getBoundingClientRect();
-        const bounds = element.getBoundingClientRect();
-        return text.left >= bounds.left - 1 && text.right <= bounds.right + 1;
-      });
-      expect(textFits, `${label} remains inside its button`).toBe(true);
-    }
+    await expect(row.locator('[data-volume-trigger]')).toHaveCount(0);
+    if (state === 'minimal') await expect(dock.locator('.audio-dock-queue-count')).toContainText(`${queued} queued`);
+    else await expect(dock.locator('.audio-dock-up-next')).toContainText(`${queued} queued`);
   }
-  const [d, h, g, l, r, control] = await Promise.all([
-    dock.boundingBox(), header.boundingBox(), grip.boundingBox(), left.boundingBox(), right.boundingBox(),
-    handle(dock).boundingBox(),
+  const [d, h, l, r, control] = await Promise.all([
+    dock.boundingBox(), row.boundingBox(), left.boundingBox(), right.boundingBox(), resize.boundingBox(),
   ]);
-  for (const bounds of [h, g, l, r, control]) {
+  for (const bounds of [h, l, r, control]) {
     expect(bounds).not.toBeNull();
     expect(bounds.width).toBeGreaterThan(0);
     expect(bounds.height).toBeGreaterThan(0);
+    expect(bounds.x).toBeGreaterThanOrEqual(h.x - 1);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(h.x + h.width + 1);
   }
-  // The grip stays centered on the entire dock, even when the two sides have
-  // different text widths. All three elements share the same horizontal row.
-  expect(Math.abs(g.x + g.width / 2 - (d.x + d.width / 2))).toBeLessThanOrEqual(1.5);
-  expect(Math.abs(g.y + g.height / 2 - (l.y + l.height / 2))).toBeLessThanOrEqual(2);
-  expect(Math.abs(g.y + g.height / 2 - (r.y + r.height / 2))).toBeLessThanOrEqual(2);
-  expect(l.x).toBeGreaterThanOrEqual(h.x);
-  expect(r.x + r.width).toBeLessThanOrEqual(h.x + h.width);
   expect(l.x + l.width).toBeLessThanOrEqual(control.x + 1);
-  expect(control.x + control.width).toBeLessThanOrEqual(r.x + 1);
-  expect(await header.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
-  if (state === 'collapsed') {
-    // Metadata remains readable; the title has a hover hint when it is
-    // intentionally ellipsized on a narrow screen.
-    expect(await right.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+  if (state !== 'collapsed') {
+    const g = await row.locator('.ui-audio-grip').boundingBox();
+    expect(Math.abs(g.x + g.width / 2 - (d.x + d.width / 2))).toBeLessThanOrEqual(1.5);
+    expect(Math.abs(g.y + g.height / 2 - (l.y + l.height / 2))).toBeLessThanOrEqual(2);
+    expect(Math.abs(g.y + g.height / 2 - (r.y + r.height / 2))).toBeLessThanOrEqual(2);
+    expect(control.x + control.width).toBeLessThanOrEqual(r.x + 1);
   }
-  const reachable = await handle(dock).evaluate((element) => {
+  expect(await row.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+  const reachable = await resize.evaluate((element) => {
     const r = element.getBoundingClientRect();
     const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
     return Boolean(hit && element.contains(hit));
@@ -102,7 +88,7 @@ async function expectSingleRow(dock, state, source, queued, title) {
 
 for (const viewport of viewports) {
   for (const source of ['live', 'recordings']) {
-    test(`${source} header keeps title/source, center grip and queue in one row at ${viewport.width}px`, async ({ page }) => {
+    test(`${source} player keeps identity, source and resize controls reachable at ${viewport.width}px`, async ({ page }) => {
       await page.setViewportSize(viewport);
       const dock = await openGallery(page, source);
       for (const state of ['collapsed', 'minimal', 'full']) {
@@ -111,7 +97,7 @@ for (const viewport of viewports) {
       }
     });
 
-    test(`long ${source} title and four-digit queue keep the grip clear at ${viewport.width}px`, async ({ page }) => {
+    test(`long ${source} title and four-digit queue keep the resize control clear at ${viewport.width}px`, async ({ page }) => {
       await page.setViewportSize(viewport);
       const dock = await openGallery(page, source, 'collapsed', true);
       for (const state of ['collapsed', 'minimal', 'full']) {
@@ -159,8 +145,8 @@ for (const viewport of viewports) {
     await expect(page).toHaveURL(/view=recordings/);
     await expect(dock).toHaveAttribute('data-source', 'recordings');
     await expect(dock).toHaveAttribute('data-state', 'full');
-    await dock.getByRole('button', { name: 'Queue 0', exact: true }).click();
-    await expect(dock.getByRole('tab', { name: 'Queue', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await selectAudioPanel(dock, 'Queue');
+    await expect(dock.locator('#audio-dock-context-title')).toHaveText('Queue');
     await expect(dock).toHaveAttribute('data-state', 'full');
     await selectDockSource(dock, 'live');
     await expect(dock).toHaveAttribute('data-source', 'live');

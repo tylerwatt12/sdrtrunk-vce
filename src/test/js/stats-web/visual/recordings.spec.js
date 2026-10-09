@@ -1167,7 +1167,10 @@ for (const theme of ['light', 'dark']) {
     await chooser.getByRole('button', { name: /Add to queue/ }).click();
     await expect(chooser).toBeHidden();
     await expect(page.locator('#audio-dock')).toHaveAttribute('data-source', 'recordings');
-    await expect(page.locator('#audio-dock').getByRole('button', { name: 'Queue 1', exact: true })).toBeVisible();
+    const queue = page.locator('#audio-dock .audio-dock-queue-count');
+  await expect(queue).toHaveAccessibleName('Open queue');
+  await expect(queue).toBeVisible();
+  await expect(queue).toContainText('1 queued');
   });
 }
 

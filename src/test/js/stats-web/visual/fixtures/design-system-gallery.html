@@ -179,12 +179,12 @@
     <div class="visual-grid">
       <section class="visual-section visual-audio-guidance">
         <h2>Global audio player</h2>
-        <p class="visual-section-copy">One dock for live calls and recordings, with collapsed, minimal and full controls. Full controls keep details, transcripts, queues and listening preferences together.</p>
+        <p class="visual-section-copy">One player for live calls and recordings, with a compact listening bar and an expanded view for playback, queued calls and call information.</p>
         <div class="visual-row">
           <a class="ui-button ui-button-secondary" href="/design-system.html?view=audio-dock&amp;audioState=collapsed">Collapsed</a>
-          <a class="ui-button ui-button-secondary" href="/design-system.html?view=audio-dock&amp;audioState=minimal">Minimal</a>
-          <a class="ui-button ui-button-primary" href="/design-system.html?view=audio-dock">Full live controls</a>
-          <a class="ui-button ui-button-secondary" href="/design-system.html?view=audio-dock&amp;audioSource=recordings">Recording details</a>
+          <a class="ui-button ui-button-secondary" href="/design-system.html?view=audio-dock&amp;audioState=minimal">Compact</a>
+          <a class="ui-button ui-button-primary" href="/design-system.html?view=audio-dock">Expanded live player</a>
+          <a class="ui-button ui-button-secondary" href="/design-system.html?view=audio-dock&amp;audioSource=recordings">Recording player</a>
           <a class="ui-button ui-button-secondary" href="/design-system.html?view=audio-dock&amp;audioHidden=true">Desktop restore button</a>
         </div>
       </section>
@@ -1658,13 +1658,6 @@
     <section class="ui-section"><div class="ui-section-title">Filters, result pages, and availability</div><div class="modal-content"><p class="ui-field-detail">Catalogs use Clear filters, an active filter count, and a phone Filters sheet. Selection has its own Clear selection action. Availability is a neutral category.</p><div class="ui-badge-group" data-workflow-availability></div></div><div data-workflow-pager></div></section>
   </main>
 
-  <script>
-    const scannerPlaybackMenu = document.querySelector('.visual-scanner-example .playback-control-menu');
-    const scannerDesktopPlayback = window.matchMedia('(min-width: 1181px)');
-    const updateScannerPlaybackMenu = () => { scannerPlaybackMenu.open = scannerDesktopPlayback.matches; };
-    updateScannerPlaybackMenu();
-    scannerDesktopPlayback.addEventListener('change', updateScannerPlaybackMenu);
-  </script>
   <main class="visual-control-states-example editor-workspace">
     <header class="ui-page-header"><div><h1 class="page-title">Shared control states</h1><p class="page-subtitle">The same controls retain their typography and clear interaction states in every workspace.</p></div></header>
     <section class="ui-section"><header class="ui-section-title">Actions and selection</header><div class="visual-state-grid">

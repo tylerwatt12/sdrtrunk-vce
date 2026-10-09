@@ -1,15 +1,16 @@
 'use strict';
 
 const { expect, test } = require('@playwright/test');
+const { selectAudioPanel, openAudioVolume } = require('./audio-dock-controls.cjs');
 const { openAudioApp, liveCall } = require('./fixtures/audio-dock-app.cjs');
 
 const liveFields = ['Target', 'Target ID', 'Source', 'Source ID', 'System', 'Channel', 'Started', 'Duration',
-  'Scan lists', 'Target type', 'Target description', 'Target group', 'Source type', 'Source description',
+  'Lists', 'Target type', 'Target description', 'Target group', 'Source type', 'Source description',
   'Source group', 'Talker Alias', 'Alias List', 'Playback target', 'Patch group', 'Protocol', 'Decoder',
   'Modulation', 'Frequency', 'Site', 'Network ID', 'Site identity', 'WACN', 'SysID', 'RFSS', 'Site ID',
   'RAN', 'NAC', 'LCN', 'Timeslot', 'Encrypted', 'Quality', 'Decoded frames', 'Repeated frames',
   'Concealed frames', 'Missing frames', 'FEC errors', 'FEC protected bits', 'Call ID', 'Identifier',
-  'Configuration ID', 'Radio system key', 'Scan List IDs', 'Start timestamp', 'Completed', 'Completion timestamp'];
+  'Configuration ID', 'Radio system key', 'List IDs', 'Start timestamp', 'Completed', 'Completion timestamp'];
 const recordingFields = ['Target', 'Source', 'Latest OTA name', 'Radio system', 'Saved channel', 'Winning site',
   'Also received on', 'Started', 'Duration', 'Call type', 'Voice type', 'Decoder', 'Frequency', 'Timeslot',
   'Encrypted', 'Alias List', 'Matched Scan Lists', 'Source Radio ID', 'Source alias', 'Source group',
@@ -20,7 +21,7 @@ const recordingFields = ['Target', 'Source', 'Latest OTA name', 'Radio system', 
   'Source home system', 'Source home identity', 'Target home WACN', 'Target home system', 'Target home identity'];
 
 const player = (page) => page.locator('#audio-dock');
-const handle = (page) => player(page).getByRole('button', { name: 'Change audio player size', exact: true });
+const handle = (page) => player(page).locator('#audio-dock-size-handle:visible, #audio-dock-slim-expand:visible');
 
 async function size(page, value) {
   const key = value === 'full' ? 'End' : value === 'collapsed' ? 'Home' : null;
@@ -34,7 +35,7 @@ async function size(page, value) {
 }
 
 async function panel(page, name) {
-  await player(page).getByRole('tab', { name, exact: true }).click();
+  await selectAudioPanel(player(page), name);
 }
 
 async function openApp(page, options = {}) {
@@ -207,8 +208,8 @@ test('source and queue controls keep their own actions without cycling the heade
   await player(page).getByRole('button', { name: 'Live', exact: true }).click();
   await expect(player(page)).toHaveAttribute('data-source', 'live');
   await expect(player(page)).toHaveAttribute('data-state', 'full');
-  await player(page).getByRole('button', { name: 'Queue 0', exact: true }).click();
-  await expect(player(page).getByRole('tab', { name: 'Queue', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await panel(page, 'Queue');
+  await expect(player(page).locator('#audio-dock-context-title')).toHaveText('Queue');
   await expect(player(page)).toHaveAttribute('data-state', 'full');
 });
 
@@ -302,13 +303,14 @@ test('recording Details retains static and received-site labels but clears value
   expect(await labels(page)).toEqual(activeLabels);
 });
 
-test('disclosure choices remain separate by source and survive tab and size changes', async ({ page }) => {
+test('disclosure choices remain separate by source and survive context and size changes', async ({ page }) => {
   await openApp(page);
   await size(page, 'full');
   await panel(page, 'Details');
   await disclosure(page, 'Identity & aliases', true);
   await disclosure(page, 'Radio & channel', false);
   await player(page).getByRole('button', { name: 'Recordings', exact: true }).click();
+  await panel(page, 'Details');
   await disclosure(page, 'Source & target identities', false);
   await disclosure(page, 'Protocol & signaling', true);
   await panel(page, 'Queue');
@@ -318,6 +320,7 @@ test('disclosure choices remain separate by source and survive tab and size chan
   await expect(player(page).locator('details').filter({ has: page.locator('summary', { hasText: 'Protocol & signaling' }) }))
     .toHaveJSProperty('open', true);
   await player(page).getByRole('button', { name: 'Live', exact: true }).click();
+  await panel(page, 'Details');
   await expect(player(page).locator('details').filter({ has: page.locator('summary', { hasText: 'Identity & aliases' }) }))
     .toHaveJSProperty('open', true);
   await expect(player(page).locator('details').filter({ has: page.locator('summary', { hasText: 'Radio & channel' }) }))
@@ -330,7 +333,7 @@ for (const viewport of [{ width: 320, height: 740 }, { width: 844, height: 390 }
     const state = await openApp(page);
     await size(page, 'full');
     await panel(page, 'Scan Lists');
-    await expect(player(page).getByRole('heading', { name: 'Avoid List', exact: true })).toHaveCount(1);
+    await expect(player(page).getByRole('button', { name: /^Avoid List/ })).toHaveCount(1);
     await expect(player(page).getByRole('checkbox', { name: 'Group calls by target', exact: true })).toHaveCount(0);
     await expect(player(page).getByRole('spinbutton', { name: 'Calls per target', exact: true })).toHaveCount(0);
     await expect(player(page).getByRole('checkbox', { name: 'Playing call in page title', exact: true })).toHaveCount(0);
@@ -381,12 +384,13 @@ for (const viewport of [{ width: 320, height: 740 }, { width: 844, height: 390 }
     await expect(burst).toHaveValue('7');
     await player(page).getByRole('button', { name: 'Avoid', exact: true }).click();
     await panel(page, 'Scan Lists');
-    const remove = player(page).getByRole('button', { name: 'Remove Fire Dispatch from avoid list', exact: true });
+    await player(page).getByRole('button', { name: /^Avoid List/ }).click();
+    const remove = player(page).getByRole('button', { name: 'Remove Fire Dispatch from Avoid List', exact: true });
     await expect(remove).toBeVisible();
     await expectReachable(remove);
     await remove.click();
     await expect(remove).toHaveCount(0);
-    await expect(player(page)).toContainText('No targets avoided.');
+    await expect(player(page)).toContainText('No avoided targets');
     for (const control of await player(page).locator('#audio-dock-panel input:visible, #audio-dock-panel button:visible').all()) {
       await expectReachable(control);
     }
