@@ -1,5 +1,6 @@
 /* Final-layer accessibility overrides for the opt-in design system. */
 @media (prefers-reduced-motion: reduce) {
+  .audio-dock-motion { display: none; }
   .ui-disclosure-button > svg,
   .ui-disclosure-toggle::before {
     transition: none;

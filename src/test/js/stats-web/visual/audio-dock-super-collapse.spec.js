@@ -37,7 +37,11 @@ async function chooseRecording(page, index, mode = 'Play once') {
 
 async function navigate(page, view) {
   const destination = page.locator(`#primary-navigation a[href="/?view=${view}"]`);
-  if (!await destination.isVisible()) await page.locator('[data-nav-group="listen"] summary').click();
+  if (!await destination.isVisible()) {
+    const navigation = page.locator('#navigation-toggle');
+    if (await navigation.isVisible() && await navigation.getAttribute('aria-expanded') !== 'true') await navigation.click();
+    if (!await destination.isVisible()) await page.locator('[data-nav-group="listen"] summary').click();
+  }
   await destination.click();
   await expect(page).toHaveURL(new RegExp(`view=${view}`));
 }
@@ -47,14 +51,14 @@ async function expectPlayerPill(control, expanded) {
   await expect(control).toHaveAttribute('aria-expanded', String(expanded));
   await expect(control).toHaveAttribute('aria-controls', 'audio-dock-presentation');
   await expect(control.locator('svg')).toHaveAttribute('aria-hidden', 'true');
-  await expect(control.locator('use')).toHaveAttribute('href', '#icon-chevron-down');
+  await expect(control.locator('use')).toHaveAttribute('href', '#icon-maximize-corners');
   expect(await control.locator('use').evaluate((icon) => Boolean(document.getElementById(icon.getAttribute('href').slice(1)))))
     .toBe(true);
   expect(await control.evaluate((element) => ({ tag: element.tagName, type: element.type })))
     .toEqual({ tag: 'BUTTON', type: 'button' });
-  // The shared chevron path points down; the collapsed pill rotates it up.
+  // The corner glyph stays upright in the application header.
   expect(await control.locator('svg').evaluate((icon) => getComputedStyle(icon).transform))
-    .toBe(expanded ? 'none' : 'matrix(-1, 0, 0, -1, 0, 0)');
+    .toBe('none');
 }
 
 async function expectExpandedCloseControl(page) {
@@ -104,7 +108,7 @@ async function expectExpandedCloseControl(page) {
 }
 
 async function expectSuperCollapsed(page) {
-  await expect(dock(page)).toBeVisible();
+  await expect(dock(page)).toBeHidden();
   await expect(dock(page)).toHaveAttribute('data-super-collapsed', 'true');
   await expect(dock(page).locator('.audio-dock-header')).toBeHidden();
   await expect(dock(page).locator('#audio-dock-content')).toBeHidden();
@@ -112,42 +116,28 @@ async function expectSuperCollapsed(page) {
   await expectPlayerPill(restore(page), false);
   await expect(page.locator('#audio-dock-presentation')).toHaveJSProperty('hidden', true);
   await expect(hide(page)).toBeHidden();
-  await expect(dock(page).getByRole('button')).toHaveCount(1);
+  await expect(dock(page).getByRole('button')).toHaveCount(0);
   const geometry = await restore(page).evaluate((element) => {
     const bounds = element.getBoundingClientRect();
-    const style = getComputedStyle(element);
+    const header = element.closest('.header-controls');
+    const headerBounds = header.getBoundingClientRect();
+    const health = header.querySelector('#receiver-health-indicator');
     const hit = document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
-    return { width: bounds.width, height: bounds.height, right: innerWidth - bounds.right,
-      bottom: innerHeight - bounds.bottom, radius: parseFloat(style.borderTopLeftRadius),
+    return { width: bounds.width, height: bounds.height,
+      actionSize: Number.parseFloat(getComputedStyle(element).getPropertyValue('--icon-action-size')),
+      withinHeader: bounds.left >= headerBounds.left && bounds.right <= headerBounds.right &&
+        bounds.top >= headerBounds.top && bounds.bottom <= headerBounds.bottom,
+      beforeHeartbeat: element.nextElementSibling === health,
       reachable: Boolean(hit && element.contains(hit)), text: element.textContent.trim(),
       icon: element.querySelector('use')?.getAttribute('href') };
   });
   expect(geometry.width).toBeGreaterThanOrEqual(44);
-  expect(geometry.height).toBeGreaterThanOrEqual(44);
-  expect(geometry.width).toBeGreaterThan(geometry.height);
-  // The computed radius can be a percentage or a resolved pixel radius.
-  expect(geometry.radius).toBeGreaterThanOrEqual(geometry.height / 2 - 1);
-  expect(geometry.right).toBeGreaterThanOrEqual(8);
-  expect(geometry.right).toBeLessThanOrEqual(24);
-  expect(geometry.bottom).toBeGreaterThanOrEqual(8);
-  expect(geometry.bottom).toBeLessThanOrEqual(24);
+  expect(geometry.height).toBe(geometry.actionSize);
+  expect(geometry.withinHeader).toBe(true);
+  expect(geometry.beforeHeartbeat).toBe(true);
   expect(geometry.reachable).toBe(true);
   expect(geometry.text).toBe('Player');
-  expect(geometry.icon).toBe('#icon-chevron-down');
-  // Resolve the semantic primary color through a temporary CSS color parser rather
-  // than assuming that computed rgb() serializes like the hex token.
-  const primaryColor = await page.evaluate(() => {
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d');
-    context.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--primary-control').trim();
-    return context.fillStyle;
-  });
-  const buttonColor = await restore(page).evaluate((element) => {
-    const context = document.createElement('canvas').getContext('2d');
-    context.fillStyle = getComputedStyle(element).backgroundColor;
-    return context.fillStyle;
-  });
-  expect(buttonColor).toBe(primaryColor);
+  expect(geometry.icon).toBe('#icon-maximize-corners');
 }
 
 for (const theme of ['light', 'dark']) {
@@ -317,6 +307,7 @@ test('super collapse keeps desktop page geometry unchanged and remains hidden th
     paddingBottom: getComputedStyle(content).paddingBottom,
     spacer: getComputedStyle(content, '::after').content,
     documentHeight: document.documentElement.scrollHeight,
+    scrollPaddingTop: getComputedStyle(document.documentElement).scrollPaddingTop,
     scrollPaddingBottom: getComputedStyle(document.documentElement).scrollPaddingBottom,
   }));
   const before = await geometry();
@@ -443,3 +434,56 @@ for (const [name, capabilities] of [
     expect(state.requests.some((request) => request.path === '/api/v1/calls/feed')).toBe(false);
   });
 }
+
+
+test('minimize and expand animate between panel and header without changing audio', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const state = await openApp(page);
+  await chooseRecording(page, 0);
+  const writes = [...state.preferenceWrites];
+  const transport = await page.evaluate(() => [...window.audioTest.recordings]);
+  for (const name of ['Hide audio player', 'Show audio player']) {
+    const motion = await page.evaluate((label) => {
+      document.querySelector(`button[aria-label="${label}"]`).click();
+      const ghost = document.querySelector('.audio-dock-motion');
+      const frames = ghost.getAnimations()[0].effect.getKeyframes();
+      return { inert: ghost.inert, hidden: ghost.getAttribute('aria-hidden'),
+        ids: ghost.querySelectorAll('[id]').length, frames: frames.map((frame) => frame.transform) };
+    }, name);
+    expect(motion.inert).toBe(true);
+    expect(motion.hidden).toBe('true');
+    expect(motion.ids).toBe(0);
+    expect(motion.frames[0]).not.toBe(motion.frames[1]);
+    await expect(page.locator('.audio-dock-motion')).toHaveCount(0);
+    expect(await page.evaluate(() => window.audioTest.recordings)).toEqual(transport);
+    expect(state.preferenceWrites).toEqual(writes);
+  }
+  await expect(hide(page)).toBeFocused();
+});
+
+test('reduced motion restores immediately and resize or repeated activation removes animation copies', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openApp(page);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await hide(page).click();
+  await expectSuperCollapsed(page);
+  await expect(page.locator('.audio-dock-motion')).toHaveCount(0);
+  await restore(page).click();
+  await expectExpandedCloseControl(page);
+  await expect(page.locator('.audio-dock-motion')).toHaveCount(0);
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const copies = await page.evaluate(() => {
+    document.querySelector('button[aria-label="Hide audio player"]').click();
+    document.querySelector('button[aria-label="Show audio player"]').click();
+    return document.querySelectorAll('.audio-dock-motion').length;
+  });
+  expect(copies).toBe(1);
+  await page.setViewportSize({ width: 901, height: 900 });
+  await expect(page.locator('.audio-dock-motion')).toHaveCount(0);
+  await hide(page).click();
+  await expectSuperCollapsed(page);
+  await navigate(page, 'scanner');
+  await expect(restore(page)).toBeHidden();
+  await expect(page.locator('.audio-dock-motion')).toHaveCount(0);
+});

@@ -1426,17 +1426,32 @@ async function main() {
   assert.match(scannerRenderer, /scanner-workspace scanner-console ui-surface/);
   assert.match(scannerRenderer, /scanner-console-main/);
   assert.match(scannerRenderer, /scanner-now-playing/);
-  assert.match(scannerRenderer, /scanner-scan-lists scanner-scan-rail/);
+  assert.match(scannerRenderer, /ui-popover scanner-scan-lists/);
+  assert.match(scannerRenderer, /bindAnchoredDropdown\(scanTrigger, scanPanel, renderContext\.signal\)/);
   assert.match(scannerRenderer, /scanner-coverage-action/);
   assert.match(scannerRenderer, /page\.dataset\.scannerMode = scannerDetailMode/);
   assert.match(scannerRenderer, /chassis\.dataset\.scannerMode = scannerDetailMode/);
   assert.match(scannerRenderer, /display\.dataset\.scannerMode = scannerDetailMode/);
-  assert.match(scannerRenderer, /button\.setAttribute\('aria-pressed', String\(scannerDetailMode === id\)\)/,
-    'Scanner detail mode buttons must expose their selected state');
+  assert.match(scannerRenderer, /modeSelect\.setAttribute\('aria-label', 'Scanner detail level'\)/,
+    'Scanner detail dropdown must expose its accessible name');
+  assert.match(scannerRenderer, /modeSelect\.value = mode/,
+    'Preference rollbacks must restore the selected dropdown value');
+  assert.match(scannerRenderer, /page\.style\.minHeight = .*visibleExtent/,
+    'A shorter detail mode must preserve the current scrolled page extent');
   assert.match(scannerRenderer, /scanner-scan-check/);
   assert.match(scannerRenderer, /scanner-scan-copy/);
   assert.doesNotMatch(scannerRenderer, /scannerControl\(|scanner-controls|scanner-utility-row/,
     'Scanner must reuse the shared playback transport instead of duplicating oversized controls');
+  const scannerPlayback = functionBinding(appSource, 'arrangeScannerPlayback');
+  assert.match(scannerPlayback, /\['playback-skip', 'playback-replay', 'playback-hold'\]/,
+    'Skip, Replay and Hold must remain directly visible');
+  assert.match(scannerPlayback, /state\.stopped \? 'playback-play' : 'playback-pause'/,
+    'The Scanner primary action must reuse the existing playback controller');
+  assert.match(scannerPlayback, /marker\.replaceWith\(element\)/,
+    'Leaving Scanner must restore the original transport controls');
+  assert.match(scannerPlayback, /window\.visualViewport/, 'The mobile controls must follow the visible viewport');
+  assert.match(scannerPlayback, /ResizeObserver\(updateViewport\)/,
+    'The page must reserve the actual mobile bar height');
   const scannerCallRenderer = functionBinding(appSource, 'renderScannerCall');
   assert.match(scannerCallRenderer,
     /detailLevel >= SCANNER_DETAIL_LEVELS\.normal[\s\S]*scanner-audio-wave/,
@@ -1472,7 +1487,7 @@ async function main() {
     'Scanner state refreshes must not replace focused scan-list controls');
   assert.match(scannerRenderer, /scanner-scan-button\[data-scan-list-id\]/);
   assert.match(scannerRenderer, /scanButtons\.insertBefore\(button, current \|\| null\)/,
-    'Scanner scan-list controls must reconcile stable keyed buttons in place');
+    'Scanner scan-list controls must reconcile stable keyed checkboxes in place');
   assert.match(scannerRenderer,
     /const mutation = \+\+scannerDetailModeMutation[\s\S]*mutation !== scannerDetailModeMutation/,
     'Queued Scanner mode saves must not repaint over a newer local choice');

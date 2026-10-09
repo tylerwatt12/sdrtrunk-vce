@@ -87,3 +87,86 @@ assert.deepEqual(plain(context.resolvedPage([], 'recent', 4)), {
   limit: 5,
   has_more: false
 });
+
+context.number = (value) => String(value);
+vm.runInContext(`
+  ${functionSource('function receiverHealthText(value, fallback = \'—\')')}
+  ${functionSource('function receiverHealthSeverity(value)')}
+  ${functionSource('function receiverHealthCount(value, fallback = 0)')}
+  ${functionSource('function normalizeReceiverHealthSnapshot(value)')}
+  ${functionSource('function receiverHealthComputerFacts(computer)')}
+  globalThis.computerFacts = receiverHealthComputerFacts;
+  globalThis.normalizeHealth = normalizeReceiverHealthSnapshot;
+`, context);
+
+const computer = {
+  application: 'VCE', version: 'nightly', update_track: 'nightly', update_build: '123456',
+  build_timestamp: '2026-10-09T12:00:00.000+0000', operating_system: 'Test OS', operating_system_version: '1.2',
+  architecture: 'aarch64', cpu_model: 'Example processor', processors_available: 8,
+  installed_memory_bytes: 32 * 1073741824, jvm_memory_limit_bytes: 2 * 1073741824,
+  java_version: '25.0.1', java_vendor: 'Example Java', application_uptime_ms: 93780000,
+  hostname: 'must-not-be-rendered', network_address: 'must-not-be-copied'
+};
+const normalizedComputer = plain(context.normalizeHealth({ computer }).computer);
+assert.equal(normalizedComputer.hostname, undefined);
+assert.equal(normalizedComputer.network_address, undefined);
+const facts = plain(context.computerFacts(normalizedComputer));
+const factValue = (label, values = facts) => values.find(([name]) => name === label)?.[1];
+assert.equal(factValue('Installed RAM'), '32.0 GiB');
+assert.equal(factValue('VCE memory limit'), '2.0 GiB');
+assert.equal(factValue('Application uptime'), '1d 2h 3m');
+assert.equal(factValue('Logical processors available to VCE'), '8');
+assert.equal(factValue('Operating system'), 'Test OS · 1.2');
+const unavailableFacts = plain(context.computerFacts({ installed_memory_bytes: 'Unavailable',
+  jvm_memory_limit_bytes: 2 * 1073741824, application_uptime_ms: -1, processors_available: Number.NaN,
+  system_memory_bytes: 16 * 1073741824 }));
+assert.equal(factValue('Installed RAM', unavailableFacts), 'Unavailable', 'Heap limit never substitutes for RAM.');
+assert.equal(factValue('RAM available to the operating system', unavailableFacts), '16.0 GiB');
+assert.equal(factValue('Application uptime', unavailableFacts), 'Unavailable');
+assert.equal(factValue('Logical processors available to VCE', unavailableFacts), 'Unavailable');
+assert.equal(factValue('Operating system', unavailableFacts), 'Unavailable');
+
+function fakeNode(tag, className = '', textContent = '') {
+  return { tag, className, textContent, children: [], dataset: {}, classList: { add() {} },
+    append(...items) { this.children.push(...items); }, setAttribute() {} };
+}
+let copied = '';
+let denyCopy = false;
+let authorized = true;
+context.node = fakeNode;
+context.keyValues = (entries) => Object.assign(fakeNode('dl'), { entries: plain(entries) });
+context.uiActionButton = (label, icon, click) => Object.assign(fakeNode('button', '', label), { click });
+context.receiverHealthSection = (key, title, body, action) => ({ key, title, body, action });
+context.navigator = { clipboard: { async writeText(value) {
+  if (denyCopy) throw new Error('Denied');
+  copied = value;
+} } };
+context.receiverHealthController = { authorized: () => authorized, pageHost: {},
+  computerCopyBusy: false, computerCopyState: '', updatePage() {} };
+vm.runInContext(`
+  ${functionSource('function receiverHealthComputerOverview(snapshot)')}
+  globalThis.computerOverview = receiverHealthComputerOverview;
+`, context);
+
+async function verifyComputerCopy() {
+  const overview = context.computerOverview({ computer: normalizedComputer });
+  assert.equal(overview.title, 'Computer & version');
+  assert.equal(overview.action.textContent, 'Copy details');
+  await overview.action.click();
+  assert.match(copied, /Installed RAM: 32\.0 GiB/);
+  assert.match(copied, /VCE memory limit: 2\.0 GiB/);
+  assert.doesNotMatch(copied, /must-not-be-/);
+  assert.equal(context.receiverHealthController.computerCopyState, 'success');
+  denyCopy = true;
+  await overview.action.click();
+  assert.equal(context.receiverHealthController.computerCopyState, 'error');
+  assert.equal(context.receiverHealthController.computerCopyBusy, false);
+  const errorOverview = context.computerOverview({ computer: normalizedComputer });
+  assert.match(errorOverview.body.children.at(-1).textContent, /The browser could not copy/);
+  authorized = false;
+  context.receiverHealthController.computerCopyState = '';
+  await overview.action.click();
+  assert.equal(context.receiverHealthController.computerCopyState, '', 'Unauthorized sessions cannot copy host details.');
+}
+
+verifyComputerCopy().catch((error) => { throw error; });

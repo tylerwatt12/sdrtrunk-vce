@@ -752,7 +752,7 @@ function initializeCompactRecords() {
 }
 initializeCompactRecords();
 
-function initializeReceiverHealth() {
+async function initializeReceiverHealth() {
   const host = document.querySelector('[data-visual-receiver-health]');
   if (!host) return;
   const node = (tag, className, text) => {
@@ -856,6 +856,60 @@ function initializeReceiverHealth() {
     metric('Free storage space', '6', { unit: '%', progress: 6, detail: 'Free 18 GB of 300 GB',
       status: 'Action needed', tone: 'danger', icon: 'recording' }));
   resources.classList.add('receiver-health-resource-bars');
+  const computerSample = {
+    application: 'VCE', version: '0.6.2-nightly', update_track: 'nightly', update_build: '123456',
+    build_timestamp: '2026-10-09T12:00:00.000+0000', operating_system: 'Windows 11',
+    operating_system_version: '10.0', architecture: 'amd64', cpu_model: 'Intel Core i7-12700',
+    processors_available: 16, installed_memory_bytes: 34359738368, jvm_memory_limit_bytes: 2147483648,
+    java_version: '25.0.1', java_vendor: 'Eclipse Adoptium', application_uptime_ms: 93780000
+  };
+  // Mount the real computer renderer so the gallery also covers production Copy details and its failure feedback.
+  const source = await fetch('/assets/app.js').then(response => response.text());
+  const functionSource = (signature) => {
+    const start = source.indexOf(signature);
+    if (start < 0) throw new Error(`Missing ${signature}`);
+    const openingBrace = source.indexOf('{', start + signature.length);
+    let depth = 0;
+    for (let index = openingBrace; index < source.length; index += 1) {
+      if (source[index] === '{') depth += 1;
+      else if (source[index] === '}' && --depth === 0) return source.slice(start, index + 1);
+    }
+    throw new Error(`Unterminated ${signature}`);
+  };
+  const keyValues = (entries) => {
+    const facts = node('dl', 'key-values ui-facts');
+    entries.forEach(([label, value]) => {
+      const fact = node('div', 'key-value-item ui-fact');
+      fact.append(node('dt', '', label), node('dd', '', value));
+      facts.append(fact);
+    });
+    return facts;
+  };
+  const uiActionButton = (label, _icon, click, className) => {
+    const action = node('button', className, label);
+    action.type = 'button';
+    action.addEventListener('click', click);
+    return action;
+  };
+  let computerSection;
+  let computerOpen = false;
+  const computerController = { authorized: () => true, pageHost: host, computerCopyState: '', computerCopyBusy: false,
+    updatePage: () => {
+      computerOpen = computerSection.querySelector('.ui-disclosure-toggle').getAttribute('aria-expanded') === 'true';
+      const replacement = renderComputer({ computer: computerSample });
+      computerSection.replaceWith(replacement);
+      computerSection = replacement;
+      computerSection.querySelector('[data-receiver-health-focus="computer-copy"]').focus();
+    } };
+  const renderComputer = new Function('node', 'keyValues', 'uiActionButton', 'number', 'receiverHealthSection',
+    'receiverHealthController', `
+      ${functionSource("function receiverHealthText(value, fallback = '—')")}
+      ${functionSource('function receiverHealthComputerFacts(computer)')}
+      ${functionSource('function receiverHealthComputerOverview(snapshot)')}
+      return receiverHealthComputerOverview;
+    `)(node, keyValues, uiActionButton, value => String(value),
+      (key, title, body, action) => section(key, title, body, { action, closed: !computerOpen }), computerController);
+  computerSection = renderComputer({ computer: computerSample });
   const activity = grid(3,
     metric('Activity summaries', 'On', { text: true, icon: 'activity' }),
     metric('Individual events', 'On', { text: true, icon: 'activity' }),
@@ -933,9 +987,10 @@ function initializeReceiverHealth() {
   diagnostics.append(diagnosticsHeading, groups);
   host.append(section('current', 'Receiver overview', overview, { action: button('Check again') }),
     section('resources', 'Computer resources', resources),
+    computerSection,
     section('activity', 'Saved activity', activity, { action: button('Open Activity settings') }), issues, diagnostics);
 }
-initializeReceiverHealth();
+void initializeReceiverHealth();
 {
   const workspace = document.querySelector('.visual-admin-navigation-example');
   const navigation = workspace.querySelector('[data-visual-admin-navigation]');
@@ -1040,8 +1095,8 @@ if (view === 'activity-action-tooltip') {
   positionTooltip();
   window.addEventListener('resize', () => { applyWidths(); positionTooltip(); });
 }
-if (view === 'activity-filters') {
-  const bindVisualActivityPopover = (triggerId, panelId) => {
+if (view === 'activity-filters' || view === 'scanner') {
+  const bindVisualAnchoredPopover = (triggerId, panelId) => {
     const trigger = document.querySelector(triggerId);
     const panel = document.querySelector(panelId);
     const position = () => {
@@ -1075,8 +1130,18 @@ if (view === 'activity-filters') {
     });
     window.addEventListener('resize', position);
   };
-  bindVisualActivityPopover('#visual-activity-destination-trigger', '#visual-activity-destination-popover');
-  bindVisualActivityPopover('#visual-activity-more-trigger', '#visual-activity-more-panel');
+  if (view === 'activity-filters') {
+    bindVisualAnchoredPopover('#visual-activity-destination-trigger', '#visual-activity-destination-popover');
+    bindVisualAnchoredPopover('#visual-activity-more-trigger', '#visual-activity-more-panel');
+  } else {
+    bindVisualAnchoredPopover('.scanner-scan-trigger', '#visual-scanner-scan-lists');
+    bindVisualAnchoredPopover('.scanner-playback-more-trigger', '#visual-scanner-more');
+    const scannerPage = document.querySelector('.visual-scanner-example .scanner-page');
+    const scannerBar = scannerPage.querySelector('.playback-bar');
+    const reserveControls = () => scannerPage.style.setProperty('--scanner-playback-height', `${scannerBar.offsetHeight}px`);
+    new ResizeObserver(reserveControls).observe(scannerBar);
+    reserveControls();
+  }
 }
 if(view === 'access-landing' || view === 'access-login-modal') {
   const example = document.querySelector(view === 'access-landing' ?

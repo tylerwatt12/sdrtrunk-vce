@@ -822,8 +822,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.contains("id=\"playback-control-menu\" class=\"playback-control-menu\" open"));
         assertTrue(css.contains(".playback-control-menu[open] > " +
             ".playback-control-menu-panel"));
-        assertTrue(css.contains(":is(.desktop-playback-slot, .scanner-player-host) " +
-            ".playback-control-menu-panel .playback-volume"));
+        assertTrue(css.contains(".desktop-playback-slot .playback-control-menu-panel .playback-volume"));
+        assertTrue(css.contains(".scanner-playback-transport {"));
+        assertTrue(css.contains(".scanner-expanded > .playback-control-menu {\n  display: none;"));
         assertFalse(css.contains(".playback-controls .playback-command:not(#playback-play)"));
         assertFalse(html.contains("id=\"playback-capacity\""));
         assertFalse(source.contains("Matching calls are delivered once"));
@@ -1028,7 +1029,7 @@ class StatsWebInteractionUiContractTest
         assertFalse(html.contains("id=\"playback-clear\""));
         assertTrue(scanner.contains("scanner-player-host"));
         assertTrue(scanner.contains("scanner-workspace"));
-        assertTrue(scanner.contains("ui-segmented scanner-view-modes"));
+        assertTrue(scanner.contains("uiSelectFrame(modeSelect, 'scanner-view-modes')"));
         assertTrue(scanner.contains("Simple"));
         assertTrue(scanner.contains("Normal"));
         assertTrue(scanner.contains("Advanced"));
@@ -1077,7 +1078,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains(".scanner-workspace {"));
         assertTrue(css.contains(".scanner-field-grid {"));
         assertTrue(css.contains(".scanner-display.is-idle {\n  min-height: 280px;"));
-        assertTrue(css.contains("max-height: clamp(300px, 43vh, 460px);"));
+        assertTrue(css.contains("width: min(var(--scanner-scan-menu-width), calc(100vw - var(--space-4)));"));
         assertTrue(css.contains(".scanner-scan-buttons {"));
         assertTrue(css.contains(".scanner-idle {\n  height: 100%;"));
         assertTrue(css.contains(".scanner-call-quality-values {"));
@@ -1094,14 +1095,14 @@ class StatsWebInteractionUiContractTest
         assertTrue(scanner.contains("window.cancelAnimationFrame(spectrumFrame)"));
         assertFalse(css.contains("@keyframes scanner-audio-wave"));
         assertFalse(css.contains("linear-gradient(145deg, #e8e2bd 0%, #d4d1b1 50%, #eee8c5 100%)"));
-        assertTrue(css.contains("grid-template-columns: minmax(0, 1fr) minmax(300px, 340px);"));
+        assertTrue(css.contains(".scanner-console-main {\n  min-width: 0;\n  display: grid;\n  grid-template-columns: minmax(0, 1fr);"));
         assertFalse(css.contains(":root[data-theme=\"dark\"] #content .scanner-display {"));
         assertFalse(css.contains(".scanner-quality-track {"));
         assertTrue(css.contains(".scanner-participant-grid {"));
         assertTrue(function(css, ".scanner-field-value,")
             .contains("font-size: var(--font-size-secondary);"));
         assertFalse(source.contains("ui-button ${styleClass} scanner-key"));
-        assertTrue(scanner.contains("ui-choice-card scanner-scan-button"));
+        assertTrue(scanner.contains("ui-select-list-item scanner-scan-button"));
         assertFalse(css.contains(":root[data-theme=\"dark\"] #content .scanner-key {"));
         assertTrue(css.contains("body[data-view=\"scanner\"] .page-header {"));
         assertTrue(css.contains("flex: 1 0 100%;"));

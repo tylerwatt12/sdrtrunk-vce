@@ -1,7 +1,7 @@
 import { systemLabel } from './system-labels.js?v=1';
 import { formatSourceName } from './source-names.js?v=1';
 
-/* Reuse map: global workspace composition; ui-button/ui-audio-visibility/ui-disclosure-button/ui-icon-button, ui-segmented, ui-select,
+/* Reuse map: global workspace composition; ui-button/ui-button-header/ui-disclosure-button/ui-icon-button, ui-segmented, ui-select,
  * ui-range, ui-feedback, ui-fact-list, ui-select-list-item, ui-toggle-field and ui-section-disclosure. Existing scanner
  * and recording-choice modal retain their lifecycle. One live engine and one
  * recording adapter; the dock owns presentation only, in light/dark and all sizes. */
@@ -18,6 +18,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   // Desktop hiding is presentation only: retain the size, source and both engines.
   let superCollapsed = false;
   const mobileLayout = window.matchMedia('(max-width: 900px), (max-height: 500px) and (pointer: coarse)');
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  let presentationMotion = null;
   let source = 'live';
   let panel = 'details';
   let liveState = {};
@@ -103,6 +105,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const queueCount = () => source === 'live' ? Number(liveState.queuedCount) || 0 : recordingState.queue?.length || 0;
   const isAllowed = () => Boolean(access()[source]);
   const setSize = (value) => {
+    cancelPresentationMotion();
     const returnFocus = dock.contains(document.activeElement);
     size = value; panelKey = ''; render();
     if (returnFocus) handle.focus({ preventScroll: true });
@@ -259,10 +262,61 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   count.classList.add('ui-audio-count');
   const headerStart = node('div', 'audio-dock-header-start');
   const headerEnd = node('div', 'audio-dock-header-end');
+  const cancelPresentationMotion = () => {
+    const motion = presentationMotion;
+    presentationMotion = null;
+    if (!motion) return;
+    motion.animations.forEach((animation) => animation.cancel());
+    motion.ghost.remove();
+  };
+  const animatePresentation = (from, to, template, target) => {
+    if (reducedMotion.matches || !from.width || !from.height || !to.width || !to.height) return;
+    const tokens = getComputedStyle(document.documentElement);
+    const durationToken = tokens.getPropertyValue('--audio-presentation-motion-duration').trim();
+    const duration = Number.parseFloat(durationToken) * (durationToken.endsWith('ms') ? 1 : 1_000);
+    const easing = tokens.getPropertyValue('--audio-presentation-motion-easing').trim();
+    if (!Number.isFinite(duration) || duration <= 0 || !easing) return;
+    const ghost = template.cloneNode(true);
+    ghost.classList.add('audio-dock-motion');
+    ghost.hidden = false;
+    ghost.setAttribute('aria-hidden', 'true');
+    ghost.inert = true;
+    // The decorative copy must never duplicate IDs or become an audio control.
+    [ghost, ...ghost.querySelectorAll('[id]')].forEach((element) => element.removeAttribute('id'));
+    ghost.querySelectorAll('[aria-controls], [aria-describedby]').forEach((element) => {
+      element.removeAttribute('aria-controls'); element.removeAttribute('aria-describedby');
+    });
+    const panel = ghost.querySelector('.audio-dock-presentation');
+    if (panel) panel.hidden = false;
+    const base = target === dock ? to : from;
+    const transform = value => `translate(${value.x - base.x}px, ${value.y - base.y}px) scale(${value.width / base.width}, ${value.height / base.height})`;
+    // Geometry comes from the two real controls, including the responsive header.
+    ghost.style.left = `${base.x}px`; ghost.style.top = `${base.y}px`;
+    ghost.style.width = `${base.width}px`; ghost.style.height = `${base.height}px`;
+    ghost.dataset.superCollapsed = 'false';
+    document.querySelector('.app-shell').append(ghost);
+    const animation = ghost.animate([
+      { transform: transform(from), opacity: 1 },
+      { transform: transform(to), opacity: 0 }
+    ], { duration, easing });
+    const targetAnimation = target.animate([{ opacity: 0 }, { opacity: 1 }], { duration, easing });
+    const motion = { ghost, animations: [animation, targetAnimation] };
+    presentationMotion = motion;
+    void animation.finished.then(() => {
+      if (presentationMotion === motion) cancelPresentationMotion();
+    }, () => {});
+  };
   const setSuperCollapsed = (value) => {
-    if (mobileLayout.matches) return;
+    if (mobileLayout.matches || superCollapsed === value) return;
+    cancelPresentationMotion();
+    const from = (value ? dock : restore).getBoundingClientRect();
+    const template = value ? dock.cloneNode(true) : null;
     superCollapsed = value;
     render();
+    const target = value ? restore : dock;
+    const to = target.getBoundingClientRect();
+    // Use the restored panel content in both directions without changing engines.
+    animatePresentation(from, to, template || dock, target);
     (value ? restore : hide).focus({ preventScroll: true });
   };
   const hide = iconButton('icon-close', 'Hide audio player',
@@ -270,8 +324,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   hide.title = 'Hide audio player. Audio keeps playing.';
   hide.setAttribute('aria-controls', presentation.id);
   hide.addEventListener('click', () => setSuperCollapsed(true));
-  const restore = iconButton('icon-chevron-down', 'Show audio player',
-    'ui-button ui-button-primary ui-audio-visibility ui-audio-restore');
+  const restore = iconButton('icon-maximize-corners', 'Show audio player',
+    'ui-button ui-button-header ui-audio-header-restore');
   restore.prepend(node('span', '', 'Player'));
   restore.setAttribute('aria-controls', presentation.id);
   restore.addEventListener('click', () => setSuperCollapsed(false));
@@ -283,9 +337,10 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     });
   });
   const updatePresentationLayout = () => {
+    cancelPresentationMotion();
     const returnFocus = dock.contains(document.activeElement) || Boolean(focusedPresentationControl || focusedSourceControl);
     render();
-    if (!returnFocus || dock.hidden) return;
+    if (!returnFocus || (restore.hidden && dock.hidden)) return;
     if (superCollapsed && !mobileLayout.matches) restore.focus({ preventScroll: true });
     else if (focusedPresentationControl || !document.activeElement.getClientRects().length) {
       handle.focus({ preventScroll: true });
@@ -381,8 +436,10 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   });
   body.append(now, timing, transport, volumeRow, actions, tabs, panelHost);
   presentation.append(header, body);
-  dock.append(presentation, restore);
+  dock.append(presentation);
   document.querySelector('.app-shell').append(dock);
+  const headerControls = document.querySelector('.app-shell .header-controls');
+  headerControls.insertBefore(restore, headerControls.querySelector('#receiver-health-indicator'));
 
   const message = (text, error = false) => {
     const item = node('p', `ui-feedback${error ? ' ui-feedback-error' : ''}`, text);
@@ -592,17 +649,19 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     if (!permissions[source] && (permissions.live || permissions.recordings)) {
       source = permissions.live ? 'live' : 'recordings';
     }
-    dock.hidden = document.body.dataset.view === 'scanner' || document.body.dataset.view === 'access-landing' ||
+    const unavailable = document.body.dataset.view === 'scanner' || document.body.dataset.view === 'access-landing' ||
       (!permissions.live && !permissions.recordings);
     const compact = superCollapsed && !mobileLayout.matches;
+    dock.hidden = unavailable || compact;
+    if (unavailable) cancelPresentationMotion();
     dock.dataset.superCollapsed = String(compact);
     dock.dataset.state = size; dock.dataset.source = source;
-    document.body.classList.toggle('has-audio-dock', !dock.hidden);
+    document.body.classList.toggle('has-audio-dock', !unavailable);
     presentation.hidden = compact;
-    restore.hidden = !compact;
+    restore.hidden = unavailable || !compact;
     hide.hidden = mobileLayout.matches;
     [hide, restore].forEach((button) => button.setAttribute('aria-expanded', String(!compact)));
-    if (dock.hidden) focusedPresentationControl = null;
+    if (unavailable) focusedPresentationControl = null;
     collapsedTitle.hidden = collapsedMeta.hidden = size !== 'collapsed';
     sourceButtons.hidden = sourcePicker.hidden = count.hidden = size === 'collapsed';
     body.hidden = compact || size === 'collapsed';
@@ -727,7 +786,9 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   }
   const resizeObserver = new ResizeObserver(measure); resizeObserver.observe(dock);
   mobileLayout.addEventListener('change', updatePresentationLayout);
-  const routeObserver = new MutationObserver(() => { panelKey = ''; render(); });
+  reducedMotion.addEventListener('change', cancelPresentationMotion);
+  window.addEventListener('resize', cancelPresentationMotion);
+  const routeObserver = new MutationObserver(() => { cancelPresentationMotion(); panelKey = ''; render(); });
   routeObserver.observe(document.body, { attributes: true, attributeFilter: ['data-view'] });
   const progressTimer = window.setInterval(() => { if (!document.hidden) updateProgress(); }, 250);
   const unsubscribeRecordings = recordings.subscribeState((value) => {
@@ -762,6 +823,9 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   return { synchronize, destroy() {
     compactSourceLayout.removeEventListener('change', updateSourceFocus);
     mobileLayout.removeEventListener('change', updatePresentationLayout);
+    reducedMotion.removeEventListener('change', cancelPresentationMotion);
+    window.removeEventListener('resize', cancelPresentationMotion);
+    cancelPresentationMotion(); restore.remove();
     unsubscribeLive(); unsubscribeRecordings(); resizeObserver.disconnect(); routeObserver.disconnect();
     window.clearInterval(progressTimer); dock.remove(); document.body.classList.remove('has-audio-dock');
     document.documentElement.style.removeProperty('--audio-dock-height');

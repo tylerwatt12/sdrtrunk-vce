@@ -21,6 +21,27 @@ class StatsWebReceiverHealthUiContractTest
     private static final Path INDEX_HTML = Path.of("stats-web", "index.html");
 
     @Test
+    void showsComputerFactsWithSharedDisclosureAndCopyFeedback() throws Exception
+    {
+        String source = readText(APP_JAVASCRIPT);
+        String overview = block(source, "function receiverHealthComputerOverview(snapshot)");
+        String facts = block(source, "function receiverHealthComputerFacts(computer)");
+        String page = block(source, "function renderReceiverHealthPage(host, snapshot, stale, lastError)");
+        assertTrue(page.contains("receiverHealthComputerOverview(snapshot)"));
+        assertTrue(overview.contains("keyValues(entries)"));
+        assertTrue(overview.contains("ui-facts-embedded"));
+        assertTrue(overview.contains("receiverHealthSection('computer', 'Computer & version'"));
+        assertTrue(overview.contains("uiActionButton('Copy details', 'icon-copy'"));
+        assertTrue(overview.contains("receiverHealthController.authorized()"));
+        assertTrue(overview.contains("navigator.clipboard.writeText"));
+        assertTrue(overview.contains("ui-feedback-${state}"));
+        assertTrue(facts.contains("['Installed RAM', memory('installed_memory_bytes')]"));
+        assertTrue(facts.contains("['VCE memory limit', memory('jvm_memory_limit_bytes')]"));
+        assertTrue(facts.contains("Logical processors available to VCE"));
+        assertFalse(facts.contains("hostname"));
+    }
+
+    @Test
     void exposesReceiverHealthOnlyToAuthorizedAdministrators() throws Exception
     {
         String source = readText(APP_JAVASCRIPT);

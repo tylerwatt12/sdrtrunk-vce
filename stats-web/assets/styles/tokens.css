@@ -30,6 +30,12 @@
   --audio-progress-height: 4px;
   --audio-tab-rule: 3px;
   --audio-focus-width: 2px;
+  --audio-presentation-motion-duration: 320ms;
+  --audio-presentation-motion-easing: cubic-bezier(.22, .8, .28, 1);
+  --scanner-playback-gap: var(--space-2);
+  --scanner-playback-reserve: 132px;
+  --scanner-scan-menu-width: 320px;
+  --scanner-mode-width: 160px;
   --audio-panel-height: 304px;
   --audio-volume-output-width: 34px;
   --audio-burst-width: 76px;

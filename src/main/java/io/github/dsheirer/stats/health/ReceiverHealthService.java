@@ -5,6 +5,7 @@
  */
 package io.github.dsheirer.stats.health;
 
+import io.github.dsheirer.application.ComputerInformation;
 import io.github.dsheirer.audio.broadcast.AudioStreamingManager;
 import io.github.dsheirer.audio.call.AudioCallCoordinator;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
@@ -236,6 +237,7 @@ public final class ReceiverHealthService implements AutoCloseable
         response.put("active", active);
         response.put("resolved", mIncidents.resolved());
         response.put("measurements", List.copyOf(measurements));
+        response.put("computer", ComputerInformation.current().snapshot());
         response.put("radioresolve_accepted_calls", mRadioResolveAcceptedCalls.getAsLong());
         mSnapshot = Map.copyOf(response);
     }

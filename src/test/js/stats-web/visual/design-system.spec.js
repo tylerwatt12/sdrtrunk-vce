@@ -977,16 +977,15 @@ test('scanner-light-desktop', async ({ page }) => {
   ]);
   await expect(scanner.locator('.scanner-player-host > .playback-bar.scanner-expanded')).toHaveCount(1);
   await expect(scanner.locator('.scanner-controls, .scanner-utility-row')).toHaveCount(0);
-  await expect(scanner.locator('.scanner-view-modes [data-mode]')).toHaveCount(4);
-  await expect(scanner.locator('.scanner-view-modes [data-mode="normal"]')).toHaveAttribute('aria-pressed', 'true');
-  await expect(scanner.locator('.scanner-scan-summary')).toHaveText('2 of 6 listening');
-  await expect(scanner.locator('.scanner-scan-button[aria-pressed="true"]')).toHaveCount(2);
+  await expect(scanner.getByRole('combobox', { name: 'Scanner detail level' })).toHaveValue('normal');
+  await expect(scanner.locator('.scanner-view-modes option')).toHaveCount(4);
+  await expect(scanner.locator('.scanner-scan-trigger .scanner-scan-summary')).toHaveText('Scan Lists · 2');
+  await expect(scanner.locator('.scanner-scan-check:checked')).toHaveCount(2);
   await expect(scanner.locator('.scanner-coverage-action')).toHaveAttribute('aria-label', 'View scan-list coverage');
   const nowPlaying = await scanner.locator('.scanner-now-playing').boundingBox();
-  const scanRail = await scanner.locator('.scanner-scan-rail').boundingBox();
   expect(nowPlaying).not.toBeNull();
-  expect(scanRail).not.toBeNull();
-  expect(scanRail.x).toBeGreaterThan(nowPlaying.x + nowPlaying.width - 1);
+  await expect(scanner.locator('.scanner-scan-rail')).toHaveCount(0);
+  await expect(scanner.locator('.scanner-scan-trigger')).toBeVisible();
   await expect(page.locator('body')).toHaveScreenshot('scanner-light-desktop.png', { fullPage: true });
 });
 
@@ -995,21 +994,21 @@ test('scanner-dark-mobile', async ({ page }) => {
   await page.goto('/design-system.html?theme=dark&view=scanner');
   const scanner = page.locator('.visual-scanner-example');
   const nowPlaying = await scanner.locator('.scanner-now-playing').boundingBox();
-  const scanRail = await scanner.locator('.scanner-scan-rail').boundingBox();
   expect(nowPlaying).not.toBeNull();
-  expect(scanRail).not.toBeNull();
-  expect(scanRail.y).toBeGreaterThanOrEqual(nowPlaying.y + nowPlaying.height - 1);
+  const player = await scanner.locator('.scanner-player-host > .playback-bar').boundingBox();
+  expect(player.y + player.height).toBe(844);
+  await expect(scanner.locator('.scanner-scan-trigger')).toBeVisible();
   await expect(scanner.locator('.scanner-scan-button')).toHaveCount(6);
-  await expect(scanner.locator('.playback-command')).toHaveCount(8);
+  await expect(scanner.locator('.playback-command')).toHaveCount(9);
   const unnamedPlaybackControls = await scanner.locator('.playback-command').evaluateAll((buttons) =>
-    buttons.filter((button) => !button.getAttribute('aria-label')).length);
+    buttons.filter((button) => !button.getAttribute('aria-label') && !button.textContent.trim()).length);
   expect(unnamedPlaybackControls).toBe(0);
   await expect(page.locator('body')).toHaveScreenshot('scanner-dark-mobile.png', { fullPage: true });
 });
 
 for (const theme of ['light', 'dark']) {
   for (const width of [1001, 1180, 1280]) {
-    test(`scanner quality metric labels fit beside the scan rail in ${theme} at ${width}px`, async ({ page }) => {
+    test(`scanner quality metric labels fit the full call workspace in ${theme} at ${width}px`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
       await page.goto(`/design-system.html?theme=${theme}&view=scanner`);
       await page.evaluate(() => {
@@ -1032,8 +1031,8 @@ for (const theme of ['light', 'dark']) {
       ]);
       await expectMetricGridSpacing(quality, { inset: 0, sectionInset: false });
       const nowPlaying = await scanner.locator('.scanner-now-playing').boundingBox();
-      const scanRail = await scanner.locator('.scanner-scan-rail').boundingBox();
-      expect(scanRail.x).toBeGreaterThanOrEqual(nowPlaying.x + nowPlaying.width - 1);
+      const workspace = await scanner.locator('.scanner-console-main').boundingBox();
+      expect(nowPlaying.width).toBe(workspace.width);
       const measurements = await quality.locator('.ui-metric').evaluateAll((cards) => cards.map((card) => {
         const label = card.querySelector('.ui-metric-label');
         const bounds = card.getBoundingClientRect();
@@ -1409,12 +1408,15 @@ test('settings-dark-mobile', async ({ page }) => {
 test('receiver-health-light-desktop', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/design-system.html?theme=light&view=health');
+  await page.getByRole('button', { name: 'Computer & version', exact: true }).click();
+  await expect(page.locator('[data-receiver-health-section="computer"] .ui-fact')).toHaveCount(14);
   await expect(page.locator('body')).toHaveScreenshot('receiver-health-light-desktop.png', { fullPage: true });
 });
 
 test('receiver-health-dark-mobile', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/design-system.html?theme=dark&view=health');
+  await page.getByRole('button', { name: 'Computer & version', exact: true }).click();
   await expect(page.locator('body')).toHaveScreenshot('receiver-health-dark-mobile.png', { fullPage: true });
 });
 
@@ -1425,9 +1427,34 @@ for (const [name, theme, viewport] of [
   test(name, async ({ page }) => {
     await page.setViewportSize(viewport);
     await page.goto(`/design-system.html?theme=${theme}&view=health`);
+    await page.getByRole('button', { name: 'Computer & version', exact: true }).click();
     await expect(page.locator('body')).toHaveScreenshot(`${name}.png`, { fullPage: true });
   });
 }
+
+test('receiver health computer details copy success and failure', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.computerCopyText = '';
+    window.computerCopyDenied = false;
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { async writeText(text) {
+      if (window.computerCopyDenied) throw new Error('Clipboard denied');
+      window.computerCopyText = text;
+    } } });
+  });
+  await page.goto('/design-system.html?theme=light&view=health');
+  const computer = page.locator('[data-receiver-health-section="computer"]');
+  await computer.getByRole('button', { name: 'Computer & version', exact: true }).click();
+  await computer.getByRole('button', { name: 'Copy details', exact: true }).click();
+  await expect(computer.getByRole('status')).toHaveText('Computer and version details copied.');
+  expect(await page.evaluate(() => window.computerCopyText)).toContain('Installed RAM: 32.0 GiB');
+  expect(await page.evaluate(() => window.computerCopyText)).toContain('VCE memory limit: 2.0 GiB');
+  await page.evaluate(() => { window.computerCopyDenied = true; });
+  await computer.getByRole('button', { name: 'Copy details', exact: true }).click();
+  await expect(computer.getByRole('status')).toHaveText(
+    'The browser could not copy these details. Try again or select the text to copy it.');
+  await expect(computer.getByRole('button', { name: 'Copy details', exact: true })).toBeEnabled();
+  await expectNoHorizontalOverflow(page);
+});
 
 for (const [theme, viewport] of [
   ['light', { width: 1280, height: 900 }], ['dark', { width: 1280, height: 900 }],

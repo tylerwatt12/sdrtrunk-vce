@@ -798,12 +798,12 @@
     overflow: visible;
   }
 
-  :is(.desktop-playback-slot, .scanner-player-host) .playback-control-menu {
+  .desktop-playback-slot .playback-control-menu {
     position: relative;
     display: block;
   }
 
-  :is(.desktop-playback-slot, .scanner-player-host) .playback-control-menu > summary {
+  .desktop-playback-slot .playback-control-menu > summary {
     width: var(--icon-action-size);
     height: var(--icon-action-size);
     display: grid;
@@ -813,11 +813,11 @@
     list-style: none;
   }
 
-  :is(.desktop-playback-slot, .scanner-player-host) .playback-control-menu > summary::-webkit-details-marker {
+  .desktop-playback-slot .playback-control-menu > summary::-webkit-details-marker {
     display: none;
   }
 
-  :is(.desktop-playback-slot, .scanner-player-host) .playback-control-menu > summary svg {
+  .desktop-playback-slot .playback-control-menu > summary svg {
     width: var(--icon-glyph-size);
     height: var(--icon-glyph-size);
     fill: none;
@@ -827,11 +827,11 @@
     stroke-linejoin: round;
   }
 
-  :is(.desktop-playback-slot, .scanner-player-host) .playback-control-menu:not([open]) > .playback-control-menu-panel {
+  .desktop-playback-slot .playback-control-menu:not([open]) > .playback-control-menu-panel {
     display: none;
   }
 
-  :is(.desktop-playback-slot, .scanner-player-host) .playback-control-menu[open] > .playback-control-menu-panel {
+  .desktop-playback-slot .playback-control-menu[open] > .playback-control-menu-panel {
     position: absolute;
     top: calc(100% + var(--space-2));
     left: 0;
@@ -846,12 +846,12 @@
     box-shadow: var(--shadow-modal);
   }
 
-  :is(.desktop-playback-slot, .scanner-player-host) .playback-control-menu-panel .playback-controls {
+  .desktop-playback-slot .playback-control-menu-panel .playback-controls {
     display: flex;
     flex-wrap: wrap;
   }
 
-  :is(.desktop-playback-slot, .scanner-player-host) .playback-control-menu-panel .playback-volume {
+  .desktop-playback-slot .playback-control-menu-panel .playback-volume {
     width: 100%;
     display: block;
   }
@@ -971,7 +971,7 @@
 .playback-command,
 .playback-subscriptions summary,
 .playback-queue summary,
-:is(.desktop-playback-slot, .scanner-player-host) .playback-control-menu > summary {
+.desktop-playback-slot .playback-control-menu > summary {
   height: var(--icon-action-size);
   min-height: var(--icon-action-size);
   color: var(--transport-ink);
@@ -992,7 +992,7 @@
 .playback-command.active,
 .playback-subscriptions[open] summary,
 .playback-queue[open] summary,
-:is(.desktop-playback-slot, .scanner-player-host) .playback-control-menu[open] > summary {
+.desktop-playback-slot .playback-control-menu[open] > summary {
   color: var(--transport-accent);
   background: var(--transport-control-active);
   border-color: color-mix(in srgb, var(--transport-accent) 45%, var(--transport-control-active));
@@ -1001,7 +1001,7 @@
 .playback-command:focus-visible,
 .playback-subscriptions summary:focus-visible,
 .playback-queue summary:focus-visible,
-:is(.desktop-playback-slot, .scanner-player-host) .playback-control-menu > summary:focus-visible {
+.desktop-playback-slot .playback-control-menu > summary:focus-visible {
   outline: 2px solid var(--transport-accent);
   outline-offset: 2px;
 }
@@ -1018,15 +1018,60 @@
   border-color: transparent;
 }
 
-@media (min-width: 1181px) {
-  .scanner-player-host .playback-control-menu[open] > .playback-control-menu-panel {
-    width: 100%;
-    display: flex;
-    align-items: center;
+/* Scanner reuses the transport controls with primary actions always visible. */
+.scanner-expanded > .playback-control-menu {
+  display: none;
+}
+
+.scanner-playback-transport {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--scanner-playback-gap);
+}
+
+.scanner-playback-controls,
+.scanner-playback-more-panel:popover-open {
+  display: flex;
+  align-items: center;
+  gap: var(--scanner-playback-gap);
+}
+
+.scanner-playback-more-trigger {
+  padding-inline: var(--space-2);
+}
+
+.scanner-playback-transport .playback-volume {
+  margin-inline-start: auto;
+}
+
+@media (max-width: 680px), (max-height: 500px) and (pointer: coarse) {
+  .scanner-playback-transport {
+    display: contents;
   }
 
-  .scanner-player-host .playback-control-menu-panel .playback-volume {
-    margin-inline-start: auto;
+  .scanner-playback-controls {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .scanner-playback-transport .playback-volume {
+    grid-column: 1;
+    grid-row: 2;
+    width: 100%;
+    margin-inline-start: 0;
+  }
+
+  .scanner-expanded .playback-queue {
+    grid-column: 2;
+    grid-row: 2;
+    align-self: end;
+  }
+
+  .scanner-expanded .playback-queue-list {
+    top: auto;
+    bottom: calc(100% + var(--scanner-playback-gap));
+    max-height: 50dvh;
   }
 }
 

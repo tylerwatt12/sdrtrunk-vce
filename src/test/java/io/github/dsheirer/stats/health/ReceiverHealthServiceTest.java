@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.dsheirer.application.ComputerInformation;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivitySnapshot;
 import io.github.dsheirer.dsp.filter.channelizer.PolyphaseChannelManager;
@@ -36,6 +37,25 @@ class ReceiverHealthServiceTest
 {
     @TempDir
     Path mTemporaryDirectory;
+
+    @Test
+    void includesCachedSafeComputerFactsOnlyAfterObserverSampling()
+    {
+        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, () -> 1000L))
+        {
+            assertFalse(service.snapshot().containsKey("computer"), "Construction must not discover host metadata");
+            service.sampleNow();
+            @SuppressWarnings("unchecked")
+            Map<String,Object> computer = (Map<String,Object>)service.snapshot().get("computer");
+            Map<String,Object> shared = ComputerInformation.current().snapshot();
+            shared.forEach((key, value) -> {
+                if(!"application_uptime_ms".equals(key)) assertEquals(value, computer.get(key));
+            });
+            assertTrue(computer.containsKey("installed_memory_bytes"));
+            assertTrue(computer.containsKey("jvm_memory_limit_bytes"));
+            assertFalse(computer.containsKey("hostname"));
+        }
+    }
 
     @Test
     void channelizerMeasurementIncludesQueueAndDropEvidence()

@@ -27,6 +27,9 @@ assert.match(application, /A full history can take longer and create a large upl
 assert.match(application, /Prepare support report/);
 assert.match(application, /Submit report/);
 assert.match(application, /Information to include/);
+assert.match(application, /Additional application measurements/);
+assert.match(application, /Computer and version details are always included/);
+assert.match(application, /Current VCE memory use and saved-data size/);
 assert.match(application, /admin-form-field ui-field/);
 assert.match(application, /admin-toggle-control ui-field-row/);
 assert.match(application, /support-report-warning ui-notice ui-notice-warning/);

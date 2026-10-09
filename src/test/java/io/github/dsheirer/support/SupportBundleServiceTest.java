@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
@@ -70,6 +71,14 @@ class SupportBundleServiceTest
             Map<String,String> entries = unzip(download.path());
             assertTrue(entries.containsKey("report.json"));
             assertTrue(entries.containsKey("application-and-computer.json"));
+            var mapper = new ObjectMapper();
+            var computer = mapper.readTree(entries.get("report.json")).get("computer_and_version");
+            var application = mapper.readTree(entries.get("application-and-computer.json"));
+            assertTrue(computer.has("cpu_model"));
+            assertTrue(computer.has("installed_memory_bytes"));
+            assertTrue(computer.has("jvm_memory_limit_bytes"));
+            computer.fields().forEachRemaining(entry -> assertEquals(entry.getValue(), application.get(entry.getKey())));
+            assertFalse(application.has("memory_available_bytes"), "Heap limit must not be labeled available RAM");
             assertTrue(entries.containsKey("receiver-setup/database-metadata.csv"));
             assertTrue(entries.containsKey("aliases-and-listening/alias-list.csv"));
             assertTrue(entries.containsKey("recent-activity-history/receiver-activity-event.csv"));
@@ -84,6 +93,30 @@ class SupportBundleServiceTest
             service.cancel(id);
             assertFalse(Files.exists(download.path()));
             assertEquals("cancelled", service.status(id).state());
+        }
+    }
+
+    @Test
+    void baseComputerDetailsAreIncludedWithoutOptionalApplicationMeasurements() throws Exception
+    {
+        Path database = mTemporaryDirectory.resolve("unused.sqlite");
+        Path logs = Files.createDirectories(mTemporaryDirectory.resolve("base-logs"));
+        SupportBundleService.Request request = new SupportBundleService.Request("Status issue", "a@example.com",
+            "Other", "Something else", "Check the status.", "Open Receiver status.",
+            EnumSet.of(SupportBundleService.Section.HEALTH));
+        try(SupportBundleService service = new SupportBundleService(database, logs, Map::of))
+        {
+            String id = service.generate(request);
+            assertEquals("ready", awaitReady(service, id).state());
+            Map<String,String> entries = unzip(service.download(id).path());
+            assertFalse(entries.containsKey("application-and-computer.json"));
+            var computer = new ObjectMapper().readTree(entries.get("report.json")).get("computer_and_version");
+            assertTrue(computer.has("version"));
+            assertTrue(computer.has("build_timestamp"));
+            assertTrue(computer.has("application_uptime_ms"));
+            assertFalse(computer.has("hostname"));
+            assertFalse(computer.has("user_name"));
+            assertFalse(computer.has("database_size_bytes"));
         }
     }
 

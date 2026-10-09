@@ -11,7 +11,7 @@
 package io.github.dsheirer.support;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.github.dsheirer.application.ApplicationInfo;
+import io.github.dsheirer.application.ComputerInformation;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import java.io.BufferedWriter;
 import java.io.IOException;
@@ -186,7 +186,8 @@ public final class SupportBundleService implements AutoCloseable
             job.path = path;
             try(OutputStream file = Files.newOutputStream(path); ZipOutputStream zip = new ZipOutputStream(file))
             {
-                writeJson(zip, "report.json", report(job.request));
+                Map<String,Object> computer = ComputerInformation.current().snapshot();
+                writeJson(zip, "report.json", report(job.request, computer));
                 update(job, State.GENERATING, 10, "Adding app and computer details…",
                     "Added issue details");
                 checkCancelled(job);
@@ -194,7 +195,7 @@ public final class SupportBundleService implements AutoCloseable
                 Map<String,Object> health = safeHealthSnapshot();
                 if(job.request.sections.contains(Section.APPLICATION))
                 {
-                    writeJson(zip, "application-and-computer.json", machineInformation());
+                    writeJson(zip, "application-and-computer.json", machineInformation(computer));
                     job.included.add(Section.APPLICATION.id);
                 }
                 if(job.request.sections.contains(Section.HEALTH))
@@ -408,7 +409,7 @@ public final class SupportBundleService implements AutoCloseable
         }
     }
 
-    private Map<String,Object> report(Request request)
+    private Map<String,Object> report(Request request, Map<String,Object> computer)
     {
         LinkedHashMap<String,Object> report = new LinkedHashMap<>();
         report.put("title", request.title);
@@ -418,24 +419,15 @@ public final class SupportBundleService implements AutoCloseable
         report.put("description", request.description);
         report.put("steps_to_reproduce", request.steps);
         report.put("created_at", Instant.now().toString());
+        report.put("computer_and_version", computer);
         return report;
     }
 
-    private Map<String,Object> machineInformation()
+    private Map<String,Object> machineInformation(Map<String,Object> computer)
     {
         Runtime runtime = Runtime.getRuntime();
-        LinkedHashMap<String,Object> information = new LinkedHashMap<>();
-        information.put("application", ApplicationInfo.getDisplayName());
-        information.put("version", ApplicationInfo.getVersion());
-        information.put("update_track", ApplicationInfo.getUpdateTrack());
-        information.put("update_build", ApplicationInfo.getUpdateBuild());
-        information.put("operating_system", System.getProperty("os.name"));
-        information.put("operating_system_version", System.getProperty("os.version"));
-        information.put("architecture", System.getProperty("os.arch"));
-        information.put("java_version", System.getProperty("java.version"));
-        information.put("processors", runtime.availableProcessors());
-        information.put("memory_available_bytes", runtime.maxMemory());
-        information.put("memory_in_use_bytes", runtime.totalMemory() - runtime.freeMemory());
+        LinkedHashMap<String,Object> information = new LinkedHashMap<>(computer);
+        information.put("jvm_memory_in_use_bytes", runtime.totalMemory() - runtime.freeMemory());
         information.put("database_size_bytes", fileSize(mDatabasePath));
         return information;
     }

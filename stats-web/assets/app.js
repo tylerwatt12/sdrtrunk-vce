@@ -37,7 +37,7 @@ import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, di
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=3';
-import { createAudioDock } from './core/audio-dock.js?v=14';
+import { createAudioDock } from './core/audio-dock.js?v=15';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=4';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=14';
@@ -2690,18 +2690,26 @@ function bindAnchoredDropdown(trigger, panel, signal = null, options = {}) {
       return;
     }
     const anchorRect = trigger.getBoundingClientRect();
-    if (anchorRect.bottom <= 0 || anchorRect.top >= window.innerHeight ||
-        anchorRect.right <= 0 || anchorRect.left >= window.innerWidth) {
+    const visibleViewport = options.viewport?.();
+    const viewportLeft = Number(visibleViewport?.offsetLeft) || 0;
+    const viewportTop = Number(visibleViewport?.offsetTop) || 0;
+    const viewportWidth = Number(visibleViewport?.width) || window.innerWidth;
+    const viewportHeight = Number(visibleViewport?.height) || window.innerHeight;
+    if (anchorRect.bottom <= viewportTop || anchorRect.top >= viewportTop + viewportHeight ||
+        anchorRect.right <= viewportLeft || anchorRect.left >= viewportLeft + viewportWidth) {
       if (panel.matches(':popover-open')) panel.hidePopover();
       return;
     }
     panel.style.maxHeight = '';
-    const placement = anchoredDropdownPlacement(anchorRect, panel.getBoundingClientRect(), {
-      width: window.innerWidth,
-      height: window.innerHeight
+    const placement = anchoredDropdownPlacement({
+      left: anchorRect.left - viewportLeft, right: anchorRect.right - viewportLeft,
+      top: anchorRect.top - viewportTop, bottom: anchorRect.bottom - viewportTop
+    }, panel.getBoundingClientRect(), {
+      width: viewportWidth,
+      height: viewportHeight
     });
-    panel.style.left = `${placement.left}px`;
-    panel.style.top = `${placement.top}px`;
+    panel.style.left = `${placement.left + viewportLeft}px`;
+    panel.style.top = `${placement.top + viewportTop}px`;
     panel.style.maxHeight = `${placement.maxHeight}px`;
   };
   const trackViewportScroll = (event) => {
@@ -9333,6 +9341,14 @@ function normalizeReceiverHealthSnapshot(value) {
   let severity = receiverHealthSeverity(reported.severity);
   if (criticalCount > 0) severity = 'critical';
   else if (warningCount > 0 || activeCount > 0) severity = 'warning';
+  const rawComputer = value.computer && typeof value.computer === 'object' && !Array.isArray(value.computer) ?
+    value.computer : {};
+  const computer = Object.fromEntries([
+    'application', 'version', 'update_track', 'update_build', 'build_timestamp', 'operating_system',
+    'operating_system_version', 'architecture', 'cpu_model', 'processors_available', 'installed_memory_bytes',
+    'system_memory_bytes', 'jvm_memory_limit_bytes', 'java_version', 'java_vendor', 'application_uptime_ms'
+  ].filter((key) => typeof rawComputer[key] === 'string' || typeof rawComputer[key] === 'number')
+    .map((key) => [key, typeof rawComputer[key] === 'string' ? rawComputer[key].slice(0, 256) : rawComputer[key]]));
   return {
     started_at_ms: Number(value.started_at_ms) || 0,
     generated_at_ms: Number(value.generated_at_ms) || 0,
@@ -9340,7 +9356,8 @@ function normalizeReceiverHealthSnapshot(value) {
       critical_count: criticalCount },
     active,
     resolved,
-    measurements
+    measurements,
+    computer
   };
 }
 
@@ -9387,6 +9404,8 @@ class ReceiverHealthController {
     this.pageHost = null;
     this.resolvedSort = 'recent';
     this.resolvedPage = 0;
+    this.computerCopyState = '';
+    this.computerCopyBusy = false;
     this.openHealthSections = new Set(['host-overview', 'current', 'saved-activity', 'active']);
     this.expandedResolvedIncidents = new Set();
   }
@@ -9412,6 +9431,8 @@ class ReceiverHealthController {
       this.stale = false;
       this.lastError = '';
       this.resolvedPage = 0;
+      this.computerCopyState = '';
+      this.computerCopyBusy = false;
       this.openHealthSections = new Set(['host-overview', 'current', 'saved-activity', 'active']);
       this.expandedResolvedIncidents.clear();
     } else if (!this.desktopEnabled()) {
@@ -9449,6 +9470,7 @@ class ReceiverHealthController {
   bindPage(host) {
     if (this.pageHost !== host) {
       this.resolvedPage = 0;
+      this.computerCopyState = '';
       this.openHealthSections = new Set(['host-overview', 'current', 'saved-activity', 'active']);
     }
     this.pageHost = host;
@@ -10739,10 +10761,14 @@ window.addEventListener('beforeunload', (event) => {
   liveConnections.clear();
 });
 
+let scannerPlaybackCleanup = null;
+
 function restorePlaybackBarBeforeRender() {
   const bar = document.getElementById('playback-bar');
   const slot = document.getElementById('desktop-playback-slot');
   if (!bar || !slot || !content.contains(bar)) return;
+  scannerPlaybackCleanup?.();
+  scannerPlaybackCleanup = null;
   bar.classList.remove('scanner-expanded');
   bar.querySelectorAll('details:not(.playback-control-menu)').forEach((panel) => { panel.open = false; });
   const controlMenu = bar.querySelector('.playback-control-menu');
@@ -10763,6 +10789,92 @@ function placePlaybackBar() {
     .forEach((panel) => { panel.open = false; });
   const controlMenu = bar.querySelector('.playback-control-menu');
   if (controlMenu) controlMenu.open = !navigationUsesDrawer();
+}
+
+function arrangeScannerPlayback(bar, page, player, signal) {
+  const transport = node('div', 'scanner-playback-transport');
+  const controls = node('div', 'scanner-playback-controls');
+  controls.setAttribute('role', 'group');
+  controls.setAttribute('aria-label', 'Playback controls');
+  const primary = iconButton('icon-play', 'Play browser call audio',
+    'ui-button ui-button-secondary ui-icon-button playback-command playback-icon-command scanner-playback-primary');
+  primary.addEventListener('click', () => {
+    const state = player.viewState();
+    document.getElementById(state.stopped ? 'playback-play' : 'playback-pause')?.click();
+  });
+  const more = node('button', 'ui-button ui-button-secondary playback-command scanner-playback-more-trigger', 'More');
+  more.type = 'button';
+  more.setAttribute('popovertarget', 'scanner-playback-more');
+  more.setAttribute('aria-controls', 'scanner-playback-more');
+  more.setAttribute('aria-haspopup', 'dialog');
+  more.setAttribute('aria-expanded', 'false');
+  const panel = node('div', 'ui-popover scanner-playback-more-panel');
+  panel.id = 'scanner-playback-more';
+  panel.setAttribute('popover', 'auto');
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-label', 'More playback controls');
+  panel.addEventListener('click', (event) => {
+    if (event.target.closest('button') && panel.matches(':popover-open')) panel.hidePopover();
+  });
+  const moved = [];
+  const move = (element, destination) => {
+    if (!element) return;
+    const marker = document.createComment('Scanner playback control');
+    element.before(marker);
+    moved.push({ element, marker });
+    destination.append(element);
+  };
+  controls.append(primary);
+  ['playback-skip', 'playback-replay', 'playback-hold'].forEach((id) =>
+    move(document.getElementById(id), controls));
+  controls.append(more);
+  move(document.getElementById('playback-play'), panel);
+  move(bar.querySelector('.playback-command-group'), panel);
+  move(document.getElementById('playback-clear-queue'), panel);
+  transport.append(controls);
+  move(bar.querySelector('.playback-volume'), transport);
+  bar.prepend(transport);
+  bar.append(panel);
+  const closeDropdown = bindAnchoredDropdown(more, panel, signal, {
+    viewport: () => window.matchMedia('(max-width: 680px), (max-height: 500px) and (pointer: coarse)').matches ?
+      window.visualViewport : null
+  });
+  const draw = (state) => {
+    const paused = state.stopped || state.paused;
+    setIconButton(primary, paused ? 'icon-play' : 'icon-pause', state.stopped ?
+      'Play browser call audio' : state.paused ? 'Resume browser call audio' :
+        'Pause audio and keep collecting calls (queue is limited)');
+    primary.disabled = !capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO);
+    document.getElementById('playback-play').hidden = state.stopped;
+  };
+  const unsubscribe = player.subscribeState(draw);
+  const updateViewport = () => {
+    const viewport = window.visualViewport;
+    const offset = viewport ? Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop) : 0;
+    bar.style.setProperty('--scanner-viewport-offset', `${Math.round(offset)}px`);
+    page.style.setProperty('--scanner-playback-height', `${bar.offsetHeight}px`);
+    closeDropdown.position();
+  };
+  const observer = new ResizeObserver(updateViewport);
+  observer.observe(bar);
+  window.visualViewport?.addEventListener('resize', updateViewport, { signal });
+  window.visualViewport?.addEventListener('scroll', updateViewport, { signal });
+  updateViewport();
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    observer.disconnect();
+    unsubscribe();
+    closeDropdown();
+    moved.forEach(({ element, marker }) => marker.replaceWith(element));
+    document.getElementById('playback-play').hidden = false;
+    transport.remove();
+    panel.remove();
+    bar.style.removeProperty('--scanner-viewport-offset');
+  };
+  signal?.addEventListener('abort', cleanup, { once: true });
+  return cleanup;
 }
 
 function initializePlaybackHeader() {
@@ -11377,17 +11489,11 @@ function renderScanner() {
     return;
   }
 
-  const modeBar = node('div', 'ui-segmented scanner-view-modes');
-  modeBar.setAttribute('role', 'group');
-  modeBar.setAttribute('aria-label', 'Scanner detail level');
-  Object.entries({ simple: 'Simple', normal: 'Normal', advanced: 'Advanced', engineer: 'Engineer' })
-    .forEach(([id, label]) => {
-      const button = node('button', `ui-segmented-option${scannerDetailMode === id ? ' active' : ''}`, label);
-      button.type = 'button';
-      button.dataset.mode = id;
-      button.setAttribute('aria-pressed', String(scannerDetailMode === id));
-      modeBar.append(button);
-    });
+  const modeSelect = preferenceSelect('scanner-detail-mode', [
+    ['simple', 'Simple'], ['normal', 'Normal'], ['advanced', 'Advanced'], ['engineer', 'Engineer']
+  ], scannerDetailMode);
+  modeSelect.setAttribute('aria-label', 'Scanner detail level');
+  const modeBar = uiSelectFrame(modeSelect, 'scanner-view-modes');
   const chassis = node('section', 'scanner-workspace scanner-console ui-surface');
   chassis.dataset.scannerMode = scannerDetailMode;
   const statusBar = node('div', 'scanner-status-bar');
@@ -11406,18 +11512,44 @@ function renderScanner() {
   displayShell.append(display);
   nowPlaying.append(displayShell);
 
-  const scanPanel = node('section', 'scanner-scan-lists scanner-scan-rail');
+  const scanChooser = node('div', 'scanner-scan-chooser');
+  const scanTrigger = node('button', 'ui-button ui-button-secondary scanner-scan-trigger');
+  scanTrigger.type = 'button';
+  scanTrigger.setAttribute('popovertarget', 'scanner-scan-lists');
+  scanTrigger.setAttribute('aria-haspopup', 'dialog');
+  scanTrigger.setAttribute('aria-controls', 'scanner-scan-lists');
+  scanTrigger.setAttribute('aria-expanded', 'false');
+  scanTrigger.append(node('span', 'scanner-scan-summary', 'Scan Lists'), iconGlyph('icon-chevron-down'));
+  const scanPanel = node('div', 'ui-popover scanner-scan-lists');
+  scanPanel.id = 'scanner-scan-lists';
+  scanPanel.setAttribute('popover', 'auto');
+  scanPanel.setAttribute('role', 'dialog');
+  scanPanel.setAttribute('aria-label', 'Listen to scan lists');
   const scanHeading = node('div', 'scanner-scan-heading ui-surface-header');
   const scanCopy = node('div');
-  scanCopy.append(node('strong', '', 'Scan Lists'), node('span', 'scanner-scan-summary', 'Loading'));
+  scanCopy.append(node('strong', '', 'Scan Lists'));
   const coverage = iconButton('icon-scan-lists', 'View scan-list coverage',
     'ui-button ui-button-secondary ui-icon-button scanner-coverage-action');
-  coverage.addEventListener('click', () => openPlaybackScanListCoverage(player));
+  coverage.addEventListener('click', () => {
+    if (!capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO)) return;
+    if (scanPanel.matches(':popover-open')) scanPanel.hidePopover();
+    openPlaybackScanListCoverage(player);
+  });
   scanHeading.append(scanCopy, coverage);
   const scanButtons = node('div', 'scanner-scan-buttons');
-  scanPanel.append(scanHeading, scanButtons);
+  const scanStatus = node('div', 'ui-feedback ui-feedback-loading scanner-scan-status', 'Loading available scan lists…');
+  scanStatus.setAttribute('role', 'status');
+  const scanRetry = node('button', 'ui-button ui-button-secondary', 'Retry scan lists');
+  scanRetry.type = 'button';
+  scanRetry.hidden = true;
+  scanRetry.addEventListener('click', () => {
+    if (capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO)) void refreshPlaybackScanLists(true);
+  });
+  scanPanel.append(scanHeading, scanButtons, scanStatus, scanRetry);
+  scanChooser.append(scanTrigger, scanPanel);
+  bindAnchoredDropdown(scanTrigger, scanPanel, renderContext.signal);
 
-  consoleMain.append(nowPlaying, scanPanel);
+  consoleMain.append(nowPlaying);
   chassis.append(statusBar, playerHost, consoleMain);
   page.append(chassis);
   const heading = pageHeader('Scanner', 'Listen to completed calls from this receiver');
@@ -11426,25 +11558,30 @@ function renderScanner() {
     'ui-button ui-button-secondary ui-icon-button scanner-settings');
   scannerSettings.id = 'scanner-settings';
   scannerSettings.addEventListener('click', () => void activateScannerSettings(scannerSettings));
-  headingActions.append(modeBar, scannerSettings);
+  headingActions.append(modeBar, scanChooser, scannerSettings);
   heading.append(headingActions);
   const host = node('div', 'scanner-page-host');
   host.append(page);
   if (!beginPage(renderContext, heading, host)) return;
   placePlaybackBar();
+  scannerPlaybackCleanup = arrangeScannerPlayback(document.getElementById('playback-bar'), page, player,
+    renderContext.signal);
 
   let latestState = player.viewState();
   let currentConfigurationId = '';
   let currentChannel = null;
+  let displayedCallId = '';
   const renderDetailMode = (mode) => {
+    if (display.dataset.scannerMode !== mode) {
+      const pageTop = page.getBoundingClientRect().top + window.scrollY;
+      const bottomInset = parseFloat(getComputedStyle(content).paddingBottom) || 0;
+      const visibleExtent = Math.max(0, window.scrollY + window.innerHeight - pageTop - bottomInset);
+      page.style.minHeight = window.scrollY > 0 ? `${Math.ceil(visibleExtent)}px` : '';
+    }
     page.dataset.scannerMode = mode;
     chassis.dataset.scannerMode = mode;
     display.dataset.scannerMode = mode;
-    modeBar.querySelectorAll('button').forEach((item) => {
-      const active = item.dataset.mode === mode;
-      item.classList.toggle('active', active);
-      item.setAttribute('aria-pressed', String(active));
-    });
+    modeSelect.value = mode;
     renderScannerCall(display, latestState, currentChannel);
   };
   scannerDetailModeRenderer = renderDetailMode;
@@ -11457,33 +11594,53 @@ function renderScanner() {
       'Waiting for a call';
   };
   const renderScanButtons = (state) => {
+    const allowed = capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO);
+    scanTrigger.disabled = !allowed;
+    coverage.disabled = !allowed;
+    scanRetry.disabled = !allowed;
+    if (!allowed && scanPanel.matches(':popover-open')) scanPanel.hidePopover();
     const selectedCount = state.scanLists.filter((item) => item.selected && item.enabled).length;
-    scanCopy.querySelector('.scanner-scan-summary').textContent = state.scanListCatalogReady ?
-      `${selectedCount} of ${state.scanLists.length} listening` : 'Loading available lists';
+    const selectionFull = selectedCount >= state.maximumSelectedScanLists;
+    const unavailable = state.scanListCatalogState === 'unavailable';
+    scanStatus.hidden = state.scanListCatalogReady;
+    scanStatus.classList.toggle('ui-feedback-loading', !unavailable);
+    scanStatus.classList.toggle('ui-feedback-error', unavailable);
+    scanStatus.textContent = unavailable ? 'Unable to load scan lists. Try again.' : 'Loading available scan lists…';
+    scanRetry.hidden = !unavailable;
+    scanTrigger.querySelector('.scanner-scan-summary').textContent = state.scanListCatalogReady ?
+      `Scan Lists · ${selectedCount}` : 'Scan Lists · Loading';
+    scanTrigger.setAttribute('aria-label', state.scanListCatalogReady ?
+      `Scan Lists, ${selectedCount} of ${state.scanLists.length} listening` : 'Scan Lists, loading available lists');
     const existing = new Map([...scanButtons.querySelectorAll('.scanner-scan-button[data-scan-list-id]')]
       .map((button) => [button.dataset.scanListId, button]));
     const desired = state.scanLists.map((item) => {
       const id = String(item.id);
       let button = existing.get(id);
       if (!button) {
-        button = node('button', 'ui-choice-card scanner-scan-button');
-        button.type = 'button';
+        button = node('label', 'ui-select-list-item scanner-scan-button');
         button.dataset.scanListId = id;
-        const marker = node('span', 'scanner-scan-check');
-        marker.setAttribute('aria-hidden', 'true');
+        const marker = node('input', 'ui-selection-check scanner-scan-check');
+        marker.type = 'checkbox';
         const copy = node('span', 'scanner-scan-copy');
         copy.append(node('strong'), node('small'));
-        button.append(marker, copy);
-        button.addEventListener('click', () => player.setScanListSelected(button.dataset.scanListId,
-          button.getAttribute('aria-pressed') !== 'true'));
+        button.append(copy, marker);
+        marker.addEventListener('change', () => {
+          if (!capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO) || marker.disabled) {
+            renderScanButtons(player.viewState());
+            return;
+          }
+          player.setScanListSelected(button.dataset.scanListId, marker.checked);
+        });
       }
       existing.delete(id);
-      button.disabled = !item.enabled;
-      button.setAttribute('aria-pressed', String(item.selected));
-      button.querySelector('.scanner-scan-check').textContent = item.selected ? '✓' : '';
+      const marker = button.querySelector('.scanner-scan-check');
+      marker.disabled = !allowed || !state.scanListCatalogReady || !item.enabled ||
+        (selectionFull && !item.selected);
+      marker.checked = item.selected;
+      marker.setAttribute('aria-label', item.name);
       button.querySelector('.scanner-scan-copy strong').textContent = item.name;
       button.querySelector('.scanner-scan-copy small').textContent =
-        item.description || (item.default ? 'Default list' : 'Available');
+        item.description || (item.default ? 'Default list' : 'Available to listeners');
       return button;
     });
     existing.forEach((button) => button.remove());
@@ -11498,6 +11655,9 @@ function renderScanner() {
   };
   const draw = (state) => {
     latestState = state;
+    const nextCallId = String((state.displayCall || state.current)?.call_id || '');
+    if (nextCallId !== displayedCallId) page.style.minHeight = '';
+    displayedCallId = nextCallId;
     const nextConfigurationId = String((state.displayCall || state.current)?.configuration_id || '');
     const channelChanged = nextConfigurationId !== currentConfigurationId;
     if (channelChanged) {
@@ -11544,8 +11704,8 @@ function renderScanner() {
     if (spectrumFrame !== null) window.cancelAnimationFrame(spectrumFrame);
   }, { once: true });
   pageInterval(updateAge, 1_000);
-  modeBar.querySelectorAll('button').forEach((button) => button.addEventListener('click', () => {
-    const selectedMode = setScannerDetailMode(button.dataset.mode);
+  modeSelect.addEventListener('change', () => {
+    const selectedMode = setScannerDetailMode(modeSelect.value);
     const mutation = ++scannerDetailModeMutation;
     pendingScannerDetailMode = selectedMode;
     void settleUserPreferenceMutation((preferences) => {
@@ -11555,7 +11715,7 @@ function renderScanner() {
       pendingScannerDetailMode = null;
       setScannerDetailMode(savedPreferences?.scanner?.detail_mode || activeUserPreferences().scanner.detail_mode);
     });
-  }));
+  });
 }
 
 function pageParameters(extra = {}) {
@@ -28097,6 +28257,77 @@ function receiverHealthHostResourceOverview(snapshot) {
   return receiverHealthSection('host-overview', 'Computer resources', body);
 }
 
+function receiverHealthComputerFacts(computer) {
+  const text = (key) => receiverHealthText(computer?.[key], 'Unavailable');
+  const memory = (key) => {
+    const value = computer?.[key];
+    return typeof value === 'number' && Number.isFinite(value) && value > 0 ?
+      `${(value / 1073741824).toFixed(1)} GiB` : 'Unavailable';
+  };
+  const uptime = computer?.application_uptime_ms;
+  const seconds = typeof uptime === 'number' && Number.isFinite(uptime) && uptime >= 0 ? Math.floor(uptime / 1000) : null;
+  const uptimeText = seconds === null ? 'Unavailable' :
+    `${Math.floor(seconds / 86400)}d ${Math.floor(seconds % 86400 / 3600)}h ${Math.floor(seconds % 3600 / 60)}m`;
+  const processors = computer?.processors_available;
+  const operatingSystem = ['operating_system', 'operating_system_version'].map(text)
+    .filter((value) => value !== 'Unavailable').join(' · ') || 'Unavailable';
+  const facts = [
+    ['Application', text('application')], ['Version', text('version')],
+    ['Update track', text('update_track')], ['Build', text('update_build')],
+    ['Built at', text('build_timestamp')],
+    ['Operating system', operatingSystem],
+    ['Architecture', text('architecture')], ['Processor model', text('cpu_model')],
+    ['Logical processors available to VCE', typeof processors === 'number' && Number.isInteger(processors) &&
+      processors > 0 ? number(processors) : 'Unavailable'],
+    ['Installed RAM', memory('installed_memory_bytes')],
+    ['VCE memory limit', memory('jvm_memory_limit_bytes')],
+    ['Java version', text('java_version')], ['Java vendor', text('java_vendor')],
+    ['Application uptime', uptimeText]
+  ];
+  if (typeof computer?.system_memory_bytes === 'number' && computer.system_memory_bytes > 0) {
+    facts.splice(10, 0, ['RAM available to the operating system', memory('system_memory_bytes')]);
+  }
+  return facts;
+}
+
+function receiverHealthComputerOverview(snapshot) {
+  const entries = receiverHealthComputerFacts(snapshot.computer);
+  const facts = keyValues(entries);
+  facts.classList.add('ui-facts-embedded');
+  const body = node('div');
+  body.append(facts);
+  const copy = uiActionButton('Copy details', 'icon-copy', async () => {
+    if (!receiverHealthController.authorized() || receiverHealthController.computerCopyBusy) return;
+    const host = receiverHealthController.pageHost;
+    receiverHealthController.computerCopyState = '';
+    receiverHealthController.computerCopyBusy = true;
+    receiverHealthController.updatePage();
+    let state;
+    try {
+      await navigator.clipboard.writeText(entries.map(([label, value]) => `${label}: ${value}`).join('\n'));
+      state = 'success';
+    } catch (_) {
+      state = 'error';
+    } finally {
+      receiverHealthController.computerCopyBusy = false;
+      if (receiverHealthController.authorized() && receiverHealthController.pageHost === host) {
+        receiverHealthController.computerCopyState = state;
+        receiverHealthController.updatePage();
+      }
+    }
+  }, 'ui-button ui-button-secondary');
+  copy.dataset.receiverHealthFocus = 'computer-copy';
+  copy.disabled = receiverHealthController.computerCopyBusy;
+  const state = receiverHealthController.computerCopyState;
+  if (state) {
+    const feedback = node('p', `ui-feedback ui-feedback-${state}`, state === 'success' ?
+      'Computer and version details copied.' : 'The browser could not copy these details. Try again or select the text to copy it.');
+    feedback.setAttribute('role', 'status');
+    body.append(feedback);
+  }
+  return receiverHealthSection('computer', 'Computer & version', body, copy);
+}
+
 function receiverHealthMeasurementRow(row) {
   const severity = receiverHealthSeverity(row.severity);
   const item = node('div', `ui-record-section receiver-health-measurement-row receiver-health-${severity}`);
@@ -28242,6 +28473,7 @@ function renderReceiverHealthPage(host, snapshot, stale, lastError) {
     receiverHealthResolvedSection(snapshot.resolved));
   host.append(receiverHealthSection('current', 'Receiver overview', overview, receiverHealthRefreshButton()),
     receiverHealthHostResourceOverview(snapshot),
+    receiverHealthComputerOverview(snapshot),
     receiverHealthSavedActivitySection(),
     issues);
   const diagnostics = node('section', 'receiver-health-diagnostics');
@@ -30442,8 +30674,8 @@ const supportReportCategories = Object.freeze([
 ]);
 
 const supportReportSections = Object.freeze([
-  ['application', 'Application and computer details',
-    'App version, operating system, processor, memory, and storage.'],
+  ['application', 'Additional application measurements',
+    'Current VCE memory use and saved-data size. Computer and version details are always included.'],
   ['health', 'Current receiver status',
     'Current and recently cleared issues, receiver load, recordings, streams, and web access.'],
   ['hardware', 'Tuners and USB devices',
@@ -30531,7 +30763,7 @@ function renderAdminSupportReport() {
   choiceList.append(fullWarning);
   choices.append(choiceList);
   const diagnosticsCard = settingsCard('Information for support',
-    'Passwords, service keys, and private service details are excluded.', choices);
+    'Computer and version details are always included. Passwords, service keys, and private service details are excluded.', choices);
   diagnosticsCard.classList.add('support-report-diagnostics-card');
   const cardGrid = settingsCardGrid(issueCard, narrativeCard, diagnosticsCard);
   cardGrid.classList.add('support-report-card-grid');

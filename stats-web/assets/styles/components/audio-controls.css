@@ -34,24 +34,10 @@
   border-radius: var(--audio-radius);
   box-shadow: var(--audio-shadow);
 }
-.ui-audio-surface[data-super-collapsed="true"] {
-  background: transparent;
-  border: 0;
-  box-shadow: none;
-}
-.ui-audio-visibility {
-  --ui-control-height: var(--audio-handle-height);
-  --ui-control-radius: var(--radius-pill);
-  flex: 0 0 auto;
+.ui-audio-header-restore {
   white-space: nowrap;
 }
-.ui-audio-visibility[aria-expanded="false"] svg {
-  transform: rotate(180deg);
-}
 .ui-audio-dismiss { margin-inline-start: var(--space-2); }
-.ui-audio-restore {
-  box-shadow: var(--audio-shadow);
-}
 .ui-audio-command {
   --icon-action-size: var(--audio-action-size);
   color: var(--audio-ink);

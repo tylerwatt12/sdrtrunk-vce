@@ -15,16 +15,19 @@ async function openGallery(page, { theme = 'light', source = 'live', state = 'fu
 }
 
 for (const theme of ['light', 'dark']) {
-  test(`audio dock desktop Player pill ${theme}`, async ({ page }) => {
+  test(`audio dock desktop header Player button ${theme}`, async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     const dock = await openGallery(page, { theme, hidden: true });
-    await expect(dock.getByRole('button')).toHaveCount(1);
-    const show = dock.getByRole('button', { name: 'Show audio player', exact: true });
+    await expect(dock).toBeHidden();
+    await expect(dock.getByRole('button')).toHaveCount(0);
+    const show = page.locator('.visual-audio-dock-example .header-controls').getByRole('button', { name: 'Show audio player', exact: true });
     await expect(show).toBeFocused();
     await expect(show).toHaveText('Player');
     await expect(show).toHaveAttribute('aria-expanded', 'false');
     await expect(show).toHaveAttribute('aria-controls', 'audio-dock-presentation');
-    await expect(show.locator('use')).toHaveAttribute('href', '#icon-chevron-down');
+    await expect(show.locator('use')).toHaveAttribute('href', '#icon-maximize-corners');
+    expect(await show.evaluate((element) => element.nextElementSibling?.id)).toBe('receiver-health-indicator');
+    await expect(page.locator('.audio-dock-motion')).toHaveCount(0);
     await expect(page).toHaveScreenshot(`super-collapsed-${theme}-desktop.png`);
     await show.press('Space');
     await expect(dock).toHaveAttribute('data-state', 'full');
@@ -81,7 +84,7 @@ for (const theme of ['light', 'dark']) {
             await expect(close.locator('use')).toHaveAttribute('href', '#icon-close');
           } else {
             await expect(dock.getByRole('button', { name: 'Hide audio player', exact: true })).toBeHidden();
-            await expect(dock.getByRole('button', { name: 'Show audio player', exact: true })).toBeHidden();
+            await expect(page.getByRole('button', { name: 'Show audio player', exact: true })).toBeHidden();
           }
           await expect(dock).toHaveScreenshot(`${source}-${state}-${theme}-${device}.png`);
           if (source === 'live' && state === 'full') {
