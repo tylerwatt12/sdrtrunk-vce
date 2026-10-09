@@ -156,17 +156,6 @@
 .ui-audio-progress::-moz-progress-bar { background: var(--audio-accent); }
 .ui-audio-range { accent-color: var(--audio-accent); }
 
-.ui-audio-transport-action {
-  width: 100%;
-  min-width: 0;
-  padding-inline: var(--space-2);
-}
-
-.ui-audio-transport-inline {
-  --playback-surface: transparent;
-  --playback-rule: transparent;
-}
-
 .ui-audio-volume-control {
   min-width: 0;
   min-height: var(--control-height-comfortable);

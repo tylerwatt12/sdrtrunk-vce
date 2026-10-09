@@ -403,7 +403,8 @@ test('icon actions show hints on hover and keyboard-visible focus only', async (
   await page.goto('/design-system.html?theme=light&view=app-chrome');
   await expect(page.locator('.visual-app-chrome-example .theme-toggle')).toHaveCSS('width', '40px');
   await page.goto('/design-system.html?theme=light&view=scanner');
-  await expect(page.locator('.visual-scanner-example .playback-icon-command').first()).toHaveCSS('width', '40px');
+  await expect(page.locator('.visual-scanner-example .scanner-playback-controls > .ui-icon-button').first())
+    .toHaveCSS('width', '40px');
 });
 
 test('disabled icon hint stays visible outside a table', async ({ page }) => {
@@ -558,25 +559,29 @@ test('Scanner transport controls share one compact surface language', async ({ p
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto('/design-system.html?theme=dark&view=scanner');
   const example = page.locator('.visual-scanner-example');
-  const command = example.locator('.playback-command').first();
-  const volume = example.locator('.playback-volume');
-  const avoidGroup = example.locator('.playback-command-group');
+  const command = example.locator('.scanner-playback-controls > button').first();
+  const volume = example.locator('.ui-audio-volume-control');
+  const avoidGroup = example.locator('.scanner-playback-secondary');
   await expect(volume).toHaveCSS('height', '40px');
-  await expect(volume).toHaveCSS('border-top-width', '1px');
-  await expect(avoidGroup).toHaveCSS('border-top-width', '1px');
+  await expect(volume).toHaveCSS('background-image', 'none');
+  await expect(avoidGroup.locator('button')).toHaveCount(4);
   const [commandBounds, volumeBounds] = await Promise.all([command.boundingBox(), volume.boundingBox()]);
   expect(Math.abs((commandBounds.y + commandBounds.height / 2) -
     (volumeBounds.y + volumeBounds.height / 2))).toBeLessThanOrEqual(2);
-  await volume.evaluate((element) => {
-    element.style.setProperty('--playback-volume-level', '0%');
+  await volume.locator('input').evaluate((element) => {
+    element.value = '0';
+    element.dispatchEvent(new Event('input', { bubbles: true }));
   });
-  await expect(volume.locator('.playback-volume-label')).toHaveCSS('background-clip', 'text');
+  await expect(volume.locator('.ui-audio-volume-output')).toHaveText('0%');
+  await expect(volume.locator('.ui-audio-volume-label')).toHaveText('Volume');
   await expect(volume).toHaveScreenshot('scanner-volume-empty-dark-desktop.png');
   await volume.locator('input').focus();
-  await expect(volume).toHaveCSS('outline-style', 'solid');
-  await volume.evaluate((element) => {
-    element.style.setProperty('--playback-volume-level', '75%');
+  await expect(volume.locator('input')).toHaveCSS('outline-style', 'solid');
+  await volume.locator('input').evaluate((element) => {
+    element.value = '0.75';
+    element.dispatchEvent(new Event('input', { bubbles: true }));
   });
+  await expect(volume.locator('.ui-audio-volume-output')).toHaveText('75%');
 
 });
 
@@ -973,9 +978,19 @@ test('scanner-light-desktop', async ({ page }) => {
   await expect(scanner.locator('.scanner-audio-wave > i')).toHaveCount(64);
   expect(await scanner.locator('.scanner-console > *').evaluateAll((elements) =>
     elements.map((element) => element.className))).toEqual([
-    'scanner-status-bar', 'scanner-player-host', 'scanner-console-main'
+    'scanner-console-main', 'scanner-transport-host'
   ]);
-  await expect(scanner.locator('.scanner-player-host > .playback-bar.scanner-expanded')).toHaveCount(1);
+  await expect(scanner.locator('.scanner-now-playing > .scanner-status-bar')).toHaveCount(1);
+  await expect(scanner.locator('.scanner-console')).toHaveClass(/ui-listening-stage/);
+  await expect(scanner.locator('.scanner-up-next-list > li:visible')).toHaveCount(3);
+  await expect(scanner.locator('.scanner-up-next-count')).toHaveText('3 queued');
+  await expect(scanner.locator('.scanner-transport-host > #scanner-playback-bar.ui-scanner-transport')).toHaveCount(1);
+  await expect(scanner.locator('.playback-bar, .scanner-playback-more-trigger')).toHaveCount(0);
+  await expect(scanner.locator('.scanner-field.ui-fact-row > dt')).toHaveCount(4);
+  await expect(scanner.locator('.scanner-field.ui-fact-row > dd')).toHaveCount(4);
+  await expect(scanner.locator('.scanner-participant-grid')).toHaveCount(0);
+  await expect(scanner.locator('.scanner-source-fields dt')).toHaveText('Transmitting');
+  await expect(scanner.locator('.scanner-field-grid dt')).toHaveText(['Frequency', 'Channel', 'Scan Lists']);
   await expect(scanner.locator('.scanner-controls, .scanner-utility-row')).toHaveCount(0);
   await expect(scanner.getByRole('combobox', { name: 'Scanner detail level' })).toHaveValue('normal');
   await expect(scanner.locator('.scanner-view-modes option')).toHaveCount(4);
@@ -995,12 +1010,16 @@ test('scanner-dark-mobile', async ({ page }) => {
   const scanner = page.locator('.visual-scanner-example');
   const nowPlaying = await scanner.locator('.scanner-now-playing').boundingBox();
   expect(nowPlaying).not.toBeNull();
-  const player = await scanner.locator('.scanner-player-host > .playback-bar').boundingBox();
+  const player = await scanner.locator('#scanner-playback-bar').boundingBox();
   expect(player.y + player.height).toBe(844);
   await expect(scanner.locator('.scanner-scan-trigger')).toBeVisible();
   await expect(scanner.locator('.scanner-scan-button')).toHaveCount(6);
-  await expect(scanner.locator('.playback-command')).toHaveCount(9);
-  const unnamedPlaybackControls = await scanner.locator('.playback-command').evaluateAll((buttons) =>
+  await expect(scanner.locator('.scanner-playback-controls > button')).toHaveCount(4);
+  await expect(scanner.locator('.scanner-playback-secondary > button')).toHaveCount(4);
+  await expect(scanner.locator('.scanner-queue-trigger')).toBeVisible();
+  await expect(scanner.locator('.scanner-up-next-list > li:visible')).toHaveCount(1);
+  await expect(scanner.locator('.scanner-quality-value')).toHaveText('84%');
+  const unnamedPlaybackControls = await scanner.locator('#scanner-playback-bar button').evaluateAll((buttons) =>
     buttons.filter((button) => !button.getAttribute('aria-label') && !button.textContent.trim()).length);
   expect(unnamedPlaybackControls).toBe(0);
   await expect(page.locator('body')).toHaveScreenshot('scanner-dark-mobile.png', { fullPage: true });
@@ -1008,21 +1027,18 @@ test('scanner-dark-mobile', async ({ page }) => {
 
 for (const theme of ['light', 'dark']) {
   for (const width of [1001, 1180, 1280]) {
-    test(`scanner quality metric labels fit the full call workspace in ${theme} at ${width}px`, async ({ page }) => {
+    test(`scanner quality metric labels fit the listening stage in ${theme} at ${width}px`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
       await page.goto(`/design-system.html?theme=${theme}&view=scanner`);
       await page.evaluate(() => {
         const cards = document.querySelector('.design-system-gallery .scanner-call-quality-values').cloneNode(true);
-        const engineer = document.createElement('div');
-        engineer.className = 'scanner-engineer-grid';
         const quality = document.createElement('section');
         quality.className = 'scanner-call-quality';
-        const heading = document.createElement('span');
-        heading.className = 'scanner-call-quality-heading';
+        const heading = document.createElement('h3');
+        heading.className = 'ui-section-heading scanner-call-quality-heading';
         heading.textContent = 'Call Quality';
         quality.append(heading, cards);
-        engineer.append(quality);
-        document.querySelector('.visual-scanner-example .scanner-display').append(engineer);
+        document.querySelector('.visual-scanner-example .scanner-display').append(quality);
       });
       const scanner = page.locator('.visual-scanner-example');
       const quality = scanner.locator('.scanner-call-quality-values');
@@ -1032,7 +1048,9 @@ for (const theme of ['light', 'dark']) {
       await expectMetricGridSpacing(quality, { inset: 0, sectionInset: false });
       const nowPlaying = await scanner.locator('.scanner-now-playing').boundingBox();
       const workspace = await scanner.locator('.scanner-console-main').boundingBox();
-      expect(nowPlaying.width).toBe(workspace.width);
+      const upNext = await scanner.locator('.scanner-up-next').boundingBox();
+      expect(nowPlaying.width + upNext.width).toBeCloseTo(workspace.width, 1);
+      expect(nowPlaying.width).toBeGreaterThan(upNext.width);
       const measurements = await quality.locator('.ui-metric').evaluateAll((cards) => cards.map((card) => {
         const label = card.querySelector('.ui-metric-label');
         const bounds = card.getBoundingClientRect();

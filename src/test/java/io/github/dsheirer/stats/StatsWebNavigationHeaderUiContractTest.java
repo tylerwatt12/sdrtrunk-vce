@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /** Protects the shared navigation, compact header, and playback-popover contracts. */
@@ -123,7 +124,18 @@ class StatsWebNavigationHeaderUiContractTest
         assertTrue(source.contains("const NAVIGATION_HOVER_MEDIA = '(min-width: 1181px) and (hover: hover)'"));
         assertTrue(css.contains("@media (max-width: 1180px)"));
         assertTrue(css.contains("@media (min-width: 1181px) and (max-width: 1250px)"));
-        assertFalse(css.contains("@media (max-width: 980px)"));
+        String scannerBreakpoint = "@media (max-width: 980px)";
+        for(int offset = css.indexOf(scannerBreakpoint); offset >= 0;
+            offset = css.indexOf(scannerBreakpoint, offset + scannerBreakpoint.length()))
+        {
+            String compactRules = block(css.substring(offset), scannerBreakpoint);
+            for(String selector: List.of(".primary-nav", ".navigation-toggle", ".topbar", ".header-controls",
+                ".app-header"))
+            {
+                assertFalse(compactRules.contains(selector),
+                    () -> "Navigation must not return to the narrower Scanner breakpoint: " + selector);
+            }
+        }
         assertFalse(css.contains("@media (min-width: 981px)"));
 
         assertTrue(accessibility.contains("navigation.toggleAttribute('inert', hiddenDrawer)"));
@@ -174,7 +186,7 @@ class StatsWebNavigationHeaderUiContractTest
     }
 
     @Test
-    void keepsPlaybackPanelsExclusiveAndExpandsControlsForTheScanner() throws Exception
+    void keepsGlobalPlaybackPanelsExclusiveWithoutScannerRelocation() throws Exception
     {
         String source = readText(APP_JAVASCRIPT);
         String player = readText(WEB_CALL_PLAYER);
@@ -188,10 +200,10 @@ class StatsWebNavigationHeaderUiContractTest
         assertTrue(header.contains("if (panel.open && !panel.contains(event.target)) panel.open = false"));
         assertTrue(header.contains("controlMenu.open = !navigationUsesDrawer()"));
         assertTrue(header.contains("controlMenu?.open && !controlMenu.contains(event.target)"));
-        assertTrue(placement.contains("bar.classList.toggle('scanner-expanded', Boolean(scannerHost))"));
-        assertTrue(placement.contains("(scannerHost || slot).append(bar)"));
+        assertTrue(placement.contains("slot.append(bar)"));
+        assertFalse(placement.contains("scannerHost"));
+        assertFalse(placement.contains("scanner-expanded"));
         assertTrue(placement.contains("panel.open = false"));
-        assertTrue(controls.contains("panel.closest('.playback-bar')?.classList.contains('scanner-expanded')"));
         assertTrue(controls.contains("if (panel.open && !expanded)"));
     }
 

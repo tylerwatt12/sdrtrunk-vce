@@ -545,14 +545,14 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
   display: flex;
 }
 
-.visual-scanner-wave i:nth-child(8n + 1) { height: 8px; }
-.visual-scanner-wave i:nth-child(8n + 2) { height: 18px; }
-.visual-scanner-wave i:nth-child(8n + 3) { height: 28px; }
-.visual-scanner-wave i:nth-child(8n + 4) { height: 15px; }
-.visual-scanner-wave i:nth-child(8n + 5) { height: 33px; }
-.visual-scanner-wave i:nth-child(8n + 6) { height: 22px; }
-.visual-scanner-wave i:nth-child(8n + 7) { height: 10px; }
-.visual-scanner-wave i:nth-child(8n) { height: 25px; }
+.visual-scanner-wave i:nth-child(8n + 1) { height: 22%; }
+.visual-scanner-wave i:nth-child(8n + 2) { height: 48%; }
+.visual-scanner-wave i:nth-child(8n + 3) { height: 78%; }
+.visual-scanner-wave i:nth-child(8n + 4) { height: 40%; }
+.visual-scanner-wave i:nth-child(8n + 5) { height: 92%; }
+.visual-scanner-wave i:nth-child(8n + 6) { height: 62%; }
+.visual-scanner-wave i:nth-child(8n + 7) { height: 28%; }
+.visual-scanner-wave i:nth-child(8n) { height: 72%; }
 
 .visual-spectrum-plot,
 .visual-waterfall {

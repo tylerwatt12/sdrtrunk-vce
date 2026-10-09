@@ -54,7 +54,7 @@
     transition: none;
   }
 
-  .scanner-audio-wave i {
+  .ui-audio-spectrum > i {
     transition: none;
   }
 

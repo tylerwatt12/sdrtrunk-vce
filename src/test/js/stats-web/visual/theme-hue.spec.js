@@ -84,7 +84,7 @@ async function colors(page) {
     if (!quality) {
       quality = document.createElement('span');
       quality.id = 'theme-hue-scanner-quality';
-      quality.className = 'scanner-quality-bars';
+      quality.className = 'scanner-quality-bars ui-audio-quality-meter';
       quality.setAttribute('role', 'img');
       quality.setAttribute('aria-label', 'Fixture voice quality 100 percent');
       const bar = document.createElement('i');

@@ -70,6 +70,8 @@ for (const { theme, name, viewport } of presentations) {
     await expect(display.locator('.scanner-call-title')).toHaveText('Waiting for a call');
     expect((await display.boundingBox()).height).toBeCloseTo(activeHeight, 1);
     await expect(display.locator('.scanner-field-link:enabled')).toHaveCount(0);
+    await expect(display.locator('.scanner-field-link[title], .scanner-field-value[title], .scanner-group-value[aria-label]'))
+      .toHaveCount(0);
     await expectNoHorizontalOverflow(page);
     if (process.env.STYLE_AUDIT_ASSERTIONS_ONLY !== '1') {
       await expect(page.locator('.visual-scanner-example')).toHaveScreenshot(`scanner-idle-${name}.png`);

@@ -823,8 +823,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains(".playback-control-menu[open] > " +
             ".playback-control-menu-panel"));
         assertTrue(css.contains(".desktop-playback-slot .playback-control-menu-panel .playback-volume"));
-        assertTrue(css.contains(".scanner-playback-transport {"));
-        assertTrue(css.contains(".scanner-expanded > .playback-control-menu {\n  display: none;"));
+        assertTrue(css.contains(".ui-scanner-transport {"));
+        assertFalse(css.contains(".scanner-expanded > .playback-control-menu"));
         assertFalse(css.contains(".playback-controls .playback-command:not(#playback-play)"));
         assertFalse(html.contains("id=\"playback-capacity\""));
         assertFalse(source.contains("Matching calls are delivered once"));
@@ -1027,7 +1027,13 @@ class StatsWebInteractionUiContractTest
         assertFalse(html.contains("Choose scan lists"));
         assertFalse(html.contains("class=\"playback-field\">Now</span>"));
         assertFalse(html.contains("id=\"playback-clear\""));
-        assertTrue(scanner.contains("scanner-player-host"));
+        assertTrue(scanner.contains("scanner-transport-host"));
+        assertTrue(scanner.contains("scanner-playback-bar"));
+        assertTrue(scanner.contains("ui-scanner-transport"));
+        assertTrue(scanner.contains("scanner-playback-transport"));
+        assertTrue(scanner.contains("ui-listening-stage"));
+        assertTrue(scanner.contains("scanner-up-next-list"));
+        assertTrue(scanner.contains("state.queue.slice(0, 3)"));
         assertTrue(scanner.contains("scanner-workspace"));
         assertTrue(scanner.contains("uiSelectFrame(modeSelect, 'scanner-view-modes')"));
         assertTrue(scanner.contains("Simple"));
@@ -1044,12 +1050,15 @@ class StatsWebInteractionUiContractTest
         assertFalse(coverageTree.contains("alias.alias_list_id ?? alias.alias_list"));
         assertTrue(source.contains("scannerParticipant('Target'"));
         assertTrue(source.contains("scannerParticipant('Source'"));
-        assertTrue(scannerCall.contains("scannerField('Network / Site'"));
-        assertTrue(source.contains("scannerField('Frequency'"));
-        assertTrue(source.contains("scannerField('Modulation'"));
+        assertTrue(scannerCall.contains("field('Network / Site'"));
+        assertTrue(scannerCall.contains("field('Frequency'"));
+        assertTrue(scannerCall.contains("field('Modulation'"));
         assertTrue(source.contains("function scannerVoiceMeter(call)"));
         assertTrue(source.contains("function scannerParticipant("));
-        assertTrue(source.contains("scannerField('Matched Scan Lists'"));
+        assertTrue(scannerCall.contains("field('Scan Lists'"));
+        assertTrue(scannerCall.contains("scannerField('Transmitting'"));
+        assertTrue(scannerCall.contains("ui-fact-list ui-fact-list-grid scanner-field-grid"));
+        assertTrue(scannerCall.contains("link-button ui-listening-title-action"));
         assertTrue(networkSite.contains("`${wacn}-${system}`"));
         assertTrue(networkSite.contains("`${rfss}-${site}`"));
         assertTrue(networkSite.contains(".join(' · ')"));
@@ -1060,7 +1069,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(networkSite.contains("family.includes('DMR')"));
         assertTrue(networkSite.contains("`Network ${network}`"));
         assertTrue(networkSite.contains("`Site ${site}`"));
-        assertTrue(scannerCall.contains("engineer.append(scannerCallQuality(call))"));
+        assertTrue(scannerCall.contains("host.append(scannerCallQuality(call))"));
         for(String field: List.of("Decoded", "Repeated", "Concealed", "Missing", "FEC Errors", "FEC Protected"))
         {
             assertTrue(callQuality.contains("['" + field + "'"), () -> "Missing grouped quality field " + field);
@@ -1074,33 +1083,36 @@ class StatsWebInteractionUiContractTest
         assertFalse(scanner.contains("Squelch"));
         assertFalse(scanner.contains("Tune"));
         assertFalse(scanner.contains("RF Signal"));
-        assertTrue(css.contains(".scanner-player-host > .playback-bar.scanner-expanded {"));
+        assertTrue(css.contains(".scanner-transport-host,"));
+        assertFalse(css.contains("scanner-player-host"));
         assertTrue(css.contains(".scanner-workspace {"));
         assertTrue(css.contains(".scanner-field-grid {"));
-        assertTrue(css.contains(".scanner-display.is-idle {\n  min-height: 280px;"));
+        assertTrue(scannerCall.contains("ui-content-idle"));
+        assertTrue(scannerCall.contains("value.textContent"));
         assertTrue(css.contains("width: min(var(--scanner-scan-menu-width), calc(100vw - var(--space-4)));"));
         assertTrue(css.contains(".scanner-scan-buttons {"));
-        assertTrue(css.contains(".scanner-idle {\n  height: 100%;"));
+        assertFalse(css.contains(".scanner-idle {"));
         assertTrue(css.contains(".scanner-call-quality-values {"));
         assertFalse(css.contains(".scanner-quality-meter {"));
-        assertTrue(css.contains(".scanner-quality-bars {"));
+        assertTrue(css.contains(".ui-audio-quality-meter {"));
         assertFalse(voiceMeter.contains("Voice Quality"));
         assertFalse(voiceMeter.contains("Measured from decoded voice frames"));
         assertFalse(voiceMeter.contains("node('strong'"));
         assertTrue(scannerCall.contains("for (let index = 0; index < 64; index++) wave.append(node('i'))"));
-        assertTrue(scannerCall.contains("node('div', 'scanner-call-instruments')"));
-        assertTrue(scannerCall.contains("intro.append(copy, instruments)"));
+        assertTrue(scannerCall.contains("scanner-call-instruments"));
+        assertTrue(scannerCall.contains("audioHeading.append(instruments)"));
+        assertTrue(scannerCall.contains("scanner-quality-value"));
         assertTrue(scannerCall.contains("host.dataset.renderKey === renderKey"));
         assertTrue(scanner.contains("player.readAudioSpectrum(spectrumLevels, 8_000)"));
         assertTrue(scanner.contains("window.cancelAnimationFrame(spectrumFrame)"));
         assertFalse(css.contains("@keyframes scanner-audio-wave"));
         assertFalse(css.contains("linear-gradient(145deg, #e8e2bd 0%, #d4d1b1 50%, #eee8c5 100%)"));
-        assertTrue(css.contains(".scanner-console-main {\n  min-width: 0;\n  display: grid;\n  grid-template-columns: minmax(0, 1fr);"));
+        assertTrue(css.contains("grid-template-columns: minmax(0, 2fr) minmax(var(--listening-queue-min-width), 1fr);"));
         assertFalse(css.contains(":root[data-theme=\"dark\"] #content .scanner-display {"));
         assertFalse(css.contains(".scanner-quality-track {"));
         assertTrue(css.contains(".scanner-participant-grid {"));
-        assertTrue(function(css, ".scanner-field-value,")
-            .contains("font-size: var(--font-size-secondary);"));
+        assertTrue(function(source, "function scannerField(label, value, level, action, wide = false)")
+            .contains("ui-fact-row"));
         assertFalse(source.contains("ui-button ${styleClass} scanner-key"));
         assertTrue(scanner.contains("ui-select-list-item scanner-scan-button"));
         assertFalse(css.contains(":root[data-theme=\"dark\"] #content .scanner-key {"));
@@ -1108,7 +1120,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains("flex: 1 0 100%;"));
         assertTrue(source.contains("restorePlaybackBarBeforeRender();"));
         assertTrue(function(source, "function placePlaybackBar()")
-            .contains("(scannerHost || slot).append(bar)"));
+            .contains("slot.append(bar)"));
         assertTrue(function(source, "function initializePlaybackHeader()")
             .contains("!panel.contains(event.target)"));
         assertTrue(css.contains("@media (max-width: 1180px)"));

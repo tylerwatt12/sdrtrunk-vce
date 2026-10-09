@@ -17,6 +17,15 @@
 .ui-muted { color: var(--muted); }
 .ui-label { font-size: var(--font-size-label); }
 
+.ui-text-truncate {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ui-content-idle { filter: grayscale(1); }
 .ui-content-idle > * { opacity: var(--content-idle-opacity); }
 

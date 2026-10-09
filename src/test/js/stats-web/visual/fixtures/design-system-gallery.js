@@ -1135,9 +1135,9 @@ if (view === 'activity-filters' || view === 'scanner') {
     bindVisualAnchoredPopover('#visual-activity-more-trigger', '#visual-activity-more-panel');
   } else {
     bindVisualAnchoredPopover('.scanner-scan-trigger', '#visual-scanner-scan-lists');
-    bindVisualAnchoredPopover('.scanner-playback-more-trigger', '#visual-scanner-more');
+    bindVisualAnchoredPopover('.scanner-queue-trigger', '#scanner-queue');
     const scannerPage = document.querySelector('.visual-scanner-example .scanner-page');
-    const scannerBar = scannerPage.querySelector('.playback-bar');
+    const scannerBar = scannerPage.querySelector('#scanner-playback-bar');
     const volume = scannerBar.querySelector('.ui-audio-range');
     const volumeOutput = scannerBar.querySelector('.ui-audio-volume-output');
     volume.addEventListener('input', () => {
@@ -1152,9 +1152,15 @@ if (view === 'activity-filters' || view === 'scanner') {
       const display = scannerPage.querySelector('.scanner-display');
       const height = display.getBoundingClientRect().height;
       display.classList.add('is-idle', 'ui-content-idle');
-      display.querySelectorAll('.scanner-call-kind, .scanner-call-title, .scanner-call-subtitle, ' +
-        '.scanner-field-value, .scanner-field-link').forEach(value => {
-        value.style.minHeight = `${value.getBoundingClientRect().height}px`;
+      const values = [...display.querySelectorAll('.scanner-call-kind, .scanner-call-title, .scanner-call-subtitle, ' +
+        '.scanner-field-value, .scanner-field-link, .scanner-quality-value, .scanner-group-value')];
+      [...display.querySelectorAll('.scanner-call-intro, .scanner-participant-grid, .scanner-participant, ' +
+        '.scanner-participant-fields, .scanner-source-row, .scanner-field-grid, .scanner-field'), ...values]
+        .map(element => ({ element, height: element.getBoundingClientRect().height }))
+        .forEach(({ element, height: elementHeight }) => { element.style.minHeight = `${elementHeight}px`; });
+      values.forEach(value => {
+        value.removeAttribute('title');
+        if (value.classList.contains('scanner-group-value')) value.removeAttribute('aria-label');
         value.textContent = value.classList.contains('scanner-call-title') ? 'Waiting for a call' : '—';
       });
       display.querySelectorAll('button').forEach(button => { button.disabled = true; });

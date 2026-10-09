@@ -1424,8 +1424,13 @@ async function main() {
     /const SCANNER_DETAIL_LEVELS = Object\.freeze\(\{ simple: 0, normal: 1, advanced: 2, engineer: 3 \}\)/,
     'Scanner detail modes must retain four ordered disclosure levels');
   assert.match(scannerRenderer, /scanner-workspace scanner-console ui-surface/);
+  assert.match(scannerRenderer, /ui-listening-stage/);
   assert.match(scannerRenderer, /scanner-console-main/);
   assert.match(scannerRenderer, /scanner-now-playing/);
+  assert.match(scannerRenderer, /consoleMain\.append\(nowPlaying, upNext\)/,
+    'Scanner must pair its listening stage with an Up next queue preview');
+  assert.match(scannerRenderer, /state\.queue\.slice\(0, 3\)/,
+    'The listening stage must preview the first three browser queued calls');
   assert.match(scannerRenderer, /ui-popover scanner-scan-lists/);
   assert.match(scannerRenderer, /bindAnchoredDropdown\(scanTrigger, scanPanel, renderContext\.signal\)/);
   assert.match(scannerRenderer, /scanner-coverage-action/);
@@ -1441,26 +1446,36 @@ async function main() {
   assert.match(scannerRenderer, /scanner-scan-check/);
   assert.match(scannerRenderer, /scanner-scan-copy/);
   assert.doesNotMatch(scannerRenderer, /scannerControl\(|scanner-controls|scanner-utility-row/,
-    'Scanner must reuse the shared playback transport instead of duplicating oversized controls');
+    'Scanner must avoid bespoke oversized controls');
   const scannerPlayback = functionBinding(appSource, 'arrangeScannerPlayback');
-  assert.match(scannerPlayback, /\['playback-skip', 'playback-replay', 'playback-hold'\]/,
+  assert.match(scannerPlayback, /controls\.append\(primary, skip, replay, hold\)/,
     'Skip, Replay and Hold must remain directly visible');
-  assert.match(scannerPlayback, /state\.stopped \? 'playback-play' : 'playback-pause'/,
-    'The Scanner primary action must reuse the existing playback controller');
-  assert.match(scannerPlayback, /marker\.replaceWith\(element\)/,
-    'Leaving Scanner must restore the original transport controls');
+  assert.match(scannerPlayback, /player\.togglePlayback\(\)[\s\S]*player\.togglePause\(\)/,
+    'The Scanner primary action must use the shared player directly');
+  assert.match(scannerPlayback, /secondary\.append\(stop, avoid, avoids, clear\)/,
+    'Secondary playback actions must remain directly visible');
+  assert.match(scannerPlayback, /ui-popover scanner-queue-panel[\s\S]*Queued calls/,
+    'Scanner must expose its queue through an accessible dedicated popover');
+  assert.doesNotMatch(scannerPlayback, /document\.getElementById\('playback-|marker\.replaceWith|scanner-expanded/,
+    'Scanner must own its controls without moving global player elements');
   assert.match(scannerPlayback, /window\.visualViewport/, 'The mobile controls must follow the visible viewport');
   assert.match(scannerPlayback, /ResizeObserver\(updateViewport\)/,
     'The page must reserve the actual mobile bar height');
+  assert.match(scannerPlayback, /observer\.disconnect\(\)[\s\S]*unsubscribe\(\)[\s\S]*closeQueue\(\)/,
+    'Leaving Scanner must release viewport and player subscriptions');
   const scannerCallRenderer = functionBinding(appSource, 'renderScannerCall');
   assert.match(scannerCallRenderer,
     /detailLevel >= SCANNER_DETAIL_LEVELS\.normal[\s\S]*scanner-audio-wave/,
     'Simple Scanner mode must omit the audio spectrum');
   assert.match(scannerCallRenderer,
-    /!analog && detailLevel >= SCANNER_DETAIL_LEVELS\.normal/,
-    'Simple Scanner mode must omit the secondary target card');
+    /detailLevel >= SCANNER_DETAIL_LEVELS\.advanced[\s\S]*scannerParticipant\('Target'/,
+    'Target and source diagnostic cards must appear from Advanced mode');
+  assert.match(scannerCallRenderer, /scannerField\('Transmitting', sourceAlias \|\| sourceId \|\| '—', 0/,
+    'Every Scanner mode must keep the transmitting radio alias or fallback ID visible');
+  assert.match(scannerCallRenderer, /detailLevel >= SCANNER_DETAIL_LEVELS\.normal[\s\S]*Target group[\s\S]*Source group/,
+    'Normal Scanner mode must retain participant groups in the source row');
   assert.match(functionBinding(appSource, 'scannerParticipant'), /scannerField\('Group', group, 1\)/,
-    'Normal Scanner mode must add participant grouping');
+    'Participant diagnostics must retain grouping');
   assert.match(functionBinding(appSource, 'scannerParticipant'),
     /scannerField\('ID', alias \? identifier : null, 2/,
     'Advanced Scanner mode must add raw identifiers without duplicating fallback identities');
@@ -1471,9 +1486,32 @@ async function main() {
   assert.match(functionBinding(appSource, 'scannerField'),
     /value === null \|\| value === undefined \|\| String\(value\)\.trim\(\) === ''/,
     'Compact Scanner modes must omit unavailable fields instead of rendering placeholders');
+  const scannerField = functionBinding(appSource, 'scannerField');
+  assert.match(scannerField, /ui-fact-row scanner-field[\s\S]*node\('dt'[\s\S]*node\('dd'/,
+    'Scanner facts must reuse shared flat rows and semantic term/value markup');
+  assert.match(scannerField, /action && capabilityAllowed\(ACCESS_CAPABILITIES\.RADIO\)/,
+    'Scanner drilldowns must honor Radio access permission');
+  assert.match(functionBinding(appSource, 'scannerParticipant'),
+    /ui-section-heading ui-surface-header scanner-participant-heading[\s\S]*ui-fact-list ui-fact-list-grid/,
+    'Scanner diagnostic groups must reuse shared headings and flat facts');
+  assert.match(scannerCallRenderer, /link-button ui-listening-title-action[\s\S]*open\(analog \? 'channel' : 'target'\)/,
+    'The listening headline must preserve its channel or target drilldown');
+  assert.match(scannerCallRenderer, /scanner-quality-value[\s\S]*scannerVoiceMeter\(call\)/,
+    'The listening stage must pair numeric voice quality with its meter');
+  assert.match(scannerCallRenderer,
+    /scannerDetailMode === 'normal'[\s\S]*ui-text-truncate[\s\S]*value\.title = value\.textContent/,
+    'Normal metadata truncation must preserve the full channel and scan-list text in a title');
+  assert.match(scannerCallRenderer,
+    /values\.forEach\(\(value\) => \{\s*value\.removeAttribute\('title'\)/,
+    'Idle call placeholders must clear retained metadata tooltips');
+  assert.match(scannerCallRenderer,
+    /scanner-group-value[^;]*removeAttribute\('aria-label'\)/,
+    'Idle call placeholders must clear previous participant group names');
   assert.match(functionBinding(appSource, 'placePlaybackBar'),
-    /details:not\(\.playback-control-menu\)[\s\S]*panel\.open = false/,
-    'Scanner must keep secondary shared playback panels closed in the compact console');
+    /slot\.append\(bar\)/,
+    'The global player must keep its own desktop slot');
+  assert.doesNotMatch(functionBinding(appSource, 'placePlaybackBar'), /scannerHost|scanner-expanded/,
+    'Scanner must not relocate the global playback bar');
   assert.doesNotMatch(functionBinding(appSource, 'initializePlaybackHeader'),
     /scanner-expanded/,
     'Responsive Scanner playback popovers must coordinate and dismiss like the shared header controls');

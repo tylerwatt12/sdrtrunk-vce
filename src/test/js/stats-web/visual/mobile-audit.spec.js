@@ -67,24 +67,37 @@ for (const width of [320, 390, 430]) {
     expect(await form.evaluate((element) => element.scrollLeft)).toBe(0);
   });
 
-  test(`scanner playback controls and volume fit the popup at ${width}px`, async ({ page }) => {
+  test(`Scanner playback controls, volume and queue fit at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
     await page.goto('/design-system.html?theme=light&view=scanner');
-    const menu = page.locator('.scanner-player-host .playback-control-menu');
-    await menu.locator('summary').click();
-    const panel = menu.locator('.playback-control-menu-panel');
-    await expect(panel).toBeVisible();
-    const panelBounds = await panel.boundingBox();
-    expect(panelBounds.x).toBeGreaterThanOrEqual(0);
-    expect(panelBounds.x + panelBounds.width).toBeLessThanOrEqual(width);
-    for (const button of await panel.locator('button').all()) await expectWithin(button, panel);
-    const volume = panel.getByRole('slider', { name: 'Browser playback volume' });
-    await expectWithin(volume, panel);
-    expect((await volume.boundingBox()).width).toBeGreaterThanOrEqual(120);
+    const transport = page.locator('#scanner-playback-bar');
+    await expect(transport).toBeVisible();
+    const transportBounds = await transport.boundingBox();
+    expect(transportBounds.x).toBeGreaterThanOrEqual(0);
+    expect(transportBounds.x + transportBounds.width).toBeLessThanOrEqual(width);
+    for (const button of await transport.locator('button').all()) await expectWithin(button, transport);
+    const volume = transport.getByRole('slider', { name: 'Browser playback volume' });
+    await expectWithin(volume, transport);
+    expect((await volume.boundingBox()).width).toBeGreaterThanOrEqual(100);
     const initialVolume = Number(await volume.inputValue());
     await volume.focus();
     await volume.press('ArrowLeft');
     expect(Number(await volume.inputValue())).toBeCloseTo(initialVolume - 0.05);
+    const truncatedMetadata = page.locator('.scanner-field-grid .ui-text-truncate');
+    await expect(truncatedMetadata).toHaveCount(2);
+    for (const value of await truncatedMetadata.all()) {
+      await expect(value).toHaveCSS('white-space', 'nowrap');
+      await expect(value).toHaveCSS('text-overflow', 'ellipsis');
+      await expect(value).toHaveAttribute('title', await value.textContent());
+    }
+    await transport.locator('.scanner-queue-trigger').click();
+    const queue = page.getByRole('dialog', { name: 'Queued calls', exact: true });
+    await expect(queue).toBeVisible();
+    const queueBounds = await queue.boundingBox();
+    expect(queueBounds.x).toBeGreaterThanOrEqual(0);
+    expect(queueBounds.x + queueBounds.width).toBeLessThanOrEqual(width);
+    expect(queueBounds.y).toBeGreaterThanOrEqual(0);
+    expect(queueBounds.y + queueBounds.height).toBeLessThanOrEqual(844);
   });
 }
 

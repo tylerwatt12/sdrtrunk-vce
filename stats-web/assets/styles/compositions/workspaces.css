@@ -289,6 +289,31 @@
   overflow-wrap: anywhere;
 }
 
+.ui-fact-list-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.ui-fact-row {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: var(--space-1);
+}
+
+.ui-fact-row > dt {
+  color: var(--muted);
+  font-size: var(--font-size-label);
+}
+
+.ui-fact-row > dd {
+  min-width: 0;
+  margin: 0;
+  font-size: var(--ui-fact-value-size, var(--font-size-body));
+  font-weight: var(--ui-fact-value-weight, var(--font-weight-medium));
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 560px) {
   .ui-facts {
     grid-template-columns: minmax(0, 1fr);
@@ -563,6 +588,13 @@
   display: grid;
   min-width: 0;
   gap: var(--space-1);
+}
+
+.ui-section-heading {
+  margin: 0;
+  font-size: var(--font-size-section-title);
+  font-weight: var(--font-weight-heading);
+  line-height: var(--line-height-body);
 }
 
 .ui-heading-group > :where(h2, h3) {
