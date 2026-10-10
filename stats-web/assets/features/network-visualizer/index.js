@@ -165,13 +165,12 @@ function createP25Visualizer(dependencies = {}) {
   let catchupRequested = false;
   let bufferedActivity = [];
   let bufferedRowCount = 0;
-  let introTimer = 0;
   let animationFrame = 0;
   let lastAnimationAt = performance.now();
   let closed = false;
   let polling = false;
+  let seedReady = false;
   let lastCameraPhase = 'roam';
-  let navigationRevision = 0;
   let eventsModal = null;
   const shortViewport = window.matchMedia('(max-height: 640px)');
   const pressedKeys = new Set();
@@ -345,9 +344,6 @@ function createP25Visualizer(dependencies = {}) {
   function enterSystem(systemKey, optionsValue = {}) {
     const system = state.systems.get(String(systemKey || ''));
     if (!system || !renderer) return false;
-    if (introTimer) window.clearTimeout(introTimer);
-    introTimer = 0;
-    if (optionsValue.automatic !== true) navigationRevision += 1;
     selectedSystemKey = system.key;
     selectedGroupKey = '';
     back.hidden = false;
@@ -365,7 +361,6 @@ function createP25Visualizer(dependencies = {}) {
   function enterTalkgroup(groupKey) {
     const group = state.groups.get(String(groupKey || ''));
     if (!group || group.systemKey !== selectedSystemKey || !renderer) return false;
-    navigationRevision += 1;
     selectedGroupKey = group.key;
     back.hidden = false;
     back.textContent = '← System';
@@ -381,9 +376,6 @@ function createP25Visualizer(dependencies = {}) {
 
   function showOverview() {
     if (!renderer) return;
-    if (introTimer) window.clearTimeout(introTimer);
-    introTimer = 0;
-    navigationRevision += 1;
     selectedSystemKey = '';
     selectedGroupKey = '';
     back.hidden = true;
@@ -433,19 +425,34 @@ function createP25Visualizer(dependencies = {}) {
       [...P25_HISTORY_ACTIONS, ...P25_ROUTINE_ACTIONS] : P25_HISTORY_ACTIONS;
     const page = validPage(await requestActivity({ from_ms: fromMs, to_ms: toMs,
       actions: actions.join(','), after_id: afterId, watermark_id: watermarkId,
-      limit: PAGE_LIMIT }, { signal }));
+      limit: PAGE_LIMIT, projection: 'p25_visualizer' }, { signal }));
     const timing = page.traffic_grant_age_out_milliseconds;
     if (Number.isInteger(timing) && timing >= 100 && timing <= 15_000) grantActivityTimeoutMs = timing;
     return page;
   }
 
+  function waitForRenderer(signal) {
+    return new Promise((resolve, reject) => {
+      const abort = () => reject(signal.reason || new DOMException('Loading canceled.', 'AbortError'));
+      if (signal.aborted) return abort();
+      signal.addEventListener('abort', abort, { once: true });
+      rendererReady.then(() => {
+        signal.removeEventListener('abort', abort);
+        resolve();
+      }, (error) => {
+        signal.removeEventListener('abort', abort);
+        reject(error);
+      });
+    });
+  }
+
   async function loadSeed() {
     const localGeneration = ++generation;
-    navigationRevision += 1;
+    seedReady = false;
+    if (pollTimer) window.clearTimeout(pollTimer);
+    pollTimer = 0;
     if (highlightTimer) window.clearTimeout(highlightTimer);
     highlightTimer = 0;
-    if (introTimer) window.clearTimeout(introTimer);
-    introTimer = 0;
     requestController?.abort();
     liveSource?.close();
     liveSource = null;
@@ -508,6 +515,8 @@ function createP25Visualizer(dependencies = {}) {
         afterId = next;
         if (!page.has_more) break;
       } while (!controller.signal.aborted);
+      // Download saved history while the renderer loads, but apply only the current complete seed.
+      await waitForRenderer(controller.signal);
       if (closed || localGeneration !== generation) return;
       applyP25ActivityRows(state, seedRows, { initial: true, highlightCategories: highlightedCategories });
       cursor = Math.max(afterId, watermarkId || 0, state.latestId);
@@ -520,20 +529,11 @@ function createP25Visualizer(dependencies = {}) {
             'Enable calls and grants in Visualizer settings to include routine activity.');
       } else {
         empty.hidden = true;
-        selectedSystemKey = '';
-        renderGraph(false);
-        renderer?.showOverview({ immediate: true });
-        const expectedNavigation = navigationRevision;
-        introTimer = window.setTimeout(() => {
-          introTimer = 0;
-          if (!closed && localGeneration === generation && navigationRevision === expectedNavigation &&
-              !selectedSystemKey) {
-            enterSystem(mostActive.key, { automatic: true, animate: false });
-          }
-        }, 2_500);
+        enterSystem(mostActive.key, { animate: false, immediate: true });
       }
       const paused = history.available && !history.historyActive;
       setStatus(paused ? 'Saved history · updates paused' : 'Saved history', paused ? 'stale' : 'current');
+      seedReady = true;
       connectLiveActivity(localGeneration);
       schedulePoll();
     } catch (error) {
@@ -553,7 +553,8 @@ function createP25Visualizer(dependencies = {}) {
 
   function schedulePoll(delay = POLL_MS) {
     if (pollTimer) window.clearTimeout(pollTimer);
-    if (!closed) pollTimer = window.setTimeout(() => void poll(), delay);
+    pollTimer = 0;
+    if (!closed && seedReady) pollTimer = window.setTimeout(() => void poll(), delay);
   }
 
   function applyActivityUpdate(rows) {
@@ -625,6 +626,7 @@ function createP25Visualizer(dependencies = {}) {
   }
 
   async function poll() {
+    if (!seedReady) return;
     if (closed || polling || document.hidden) return schedulePoll();
     polling = true;
     catchupRequested = false;
@@ -796,7 +798,8 @@ function createP25Visualizer(dependencies = {}) {
         }
       } });
     if (closed) return renderer.dispose();
-    void loadSeed();
+    renderer.setMode(mode);
+    renderer.setCameraPhase(mode === 'auto' ? 'roam' : 'disabled');
   }
 
   const close = () => {
@@ -810,7 +813,6 @@ function createP25Visualizer(dependencies = {}) {
     bufferedRowCount = 0;
     if (pollTimer) window.clearTimeout(pollTimer);
     if (highlightTimer) window.clearTimeout(highlightTimer);
-    if (introTimer) window.clearTimeout(introTimer);
     if (animationFrame) cancelAnimationFrame(animationFrame);
     window.removeEventListener('keyup', onKeyUp);
     shortViewport.removeEventListener('change', ensureEventsSpace);
@@ -821,7 +823,8 @@ function createP25Visualizer(dependencies = {}) {
   };
   dependencies.signal?.addEventListener?.('abort', close, { once: true });
   animationFrame = requestAnimationFrame(animate);
-  void initialize();
+  const rendererReady = initialize();
+  void loadSeed();
 
   return Object.freeze({ element: layout, close });
 }

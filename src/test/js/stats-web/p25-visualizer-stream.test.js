@@ -22,7 +22,7 @@ async function harness() {
   let callbacks;
   const context = {
     ...history, state: history.createP25HistoryState(), P25_ROUTINE_ACTIONS: history.P25_ROUTINE_ACTIONS,
-    generation: 1, closed: false, cursor: 0, grantActivityTimeoutMs: 1_000, serverTimeOffsetMs: 0,
+    generation: 1, closed: false, seedReady: true, cursor: 0, grantActivityTimeoutMs: 1_000, serverTimeOffsetMs: 0,
     empty: { hidden: false },
     liveSource: null, liveBound: false, liveReady: false, collectionEnabled: true, catchupRequested: false,
     bufferedActivity: [], bufferedRowCount: 0, polling: false, pollTimer: 0,
