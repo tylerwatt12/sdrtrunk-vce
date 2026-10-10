@@ -1,5 +1,6 @@
 import { systemLabel } from './system-labels.js?v=1';
 import { formatSourceName } from './source-names.js?v=1';
+import { formatHexDecimal, formatVoiceQuality } from './call-value-format.js?v=1';
 
 /* Reuse map: global workspace composition; ui-button/ui-button-header/ui-disclosure-button/ui-icon-button, ui-segmented, ui-select,
  * ui-range, ui-feedback, ui-fact-list, ui-select-list-item, ui-toggle-field and ui-section-disclosure. Existing scanner
@@ -217,9 +218,6 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   wireSizeControl(handle, () => setSize(sizes[(sizes.indexOf(size) + 1) % sizes.length]));
 
   const header = node('div', 'audio-dock-header');
-  const sourceButtons = node('div', 'ui-segmented ui-audio-sources');
-  sourceButtons.setAttribute('role', 'group');
-  sourceButtons.setAttribute('aria-label', 'Audio source');
   const chooseSource = (value) => {
     if (!access()[value] || (value === 'recordings' && openRecordings?.() === false)) {
       render();
@@ -236,39 +234,20 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   currentSourceChoice.value = ''; currentSourceChoice.hidden = true;
   sourcePicker.append(currentSourceChoice);
   sourcePicker.addEventListener('change', () => chooseSource(sourcePicker.value));
-  const sourceControls = {};
   const sourceOptions = {};
   ['live', 'recordings'].forEach((value) => {
     const label = value === 'live' ? 'Live' : 'Recordings';
-    const button = node('button', 'ui-segmented-option', label);
-    button.type = 'button';
-    button.addEventListener('click', () => chooseSource(value));
     const option = node('option', '', label);
     option.value = value;
-    sourceControls[value] = button;
     sourceOptions[value] = option;
-    sourceButtons.append(button);
     sourcePicker.append(option);
   });
   let focusedSourceControl = null;
-  [sourceButtons, sourcePicker].forEach((control) => {
-    control.addEventListener('focusin', (event) => { focusedSourceControl = event.target; });
-    control.addEventListener('focusout', (event) => {
-      // Resizing can hide the focused control before the media-query callback.
-      // Retain that focus long enough to transfer it to the visible counterpart.
-      if (event.target.getClientRects().length) focusedSourceControl = null;
-    });
+  sourcePicker.addEventListener('focusin', (event) => { focusedSourceControl = event.target; });
+  sourcePicker.addEventListener('focusout', (event) => {
+    // Retain focus when a presentation change temporarily hides the picker.
+    if (event.target.getClientRects().length) focusedSourceControl = null;
   });
-  const compactSourceLayout = mobileLayout;
-  const updateSourceFocus = () => {
-    if (dock.hidden || (superCollapsed && !mobileLayout.matches) || size === 'collapsed') return;
-    if (compactSourceLayout.matches && sourceButtons.contains(focusedSourceControl)) {
-      sourcePicker.focus({ preventScroll: true });
-    } else if (!compactSourceLayout.matches && focusedSourceControl === sourcePicker) {
-      sourceControls[source].focus({ preventScroll: true });
-    }
-  };
-  compactSourceLayout.addEventListener('change', updateSourceFocus);
   const count = textButton('0 queued', () => openPanel('queue', count));
   count.className = 'link-button audio-dock-queue-count';
   count.setAttribute('aria-label', 'Open queue');
@@ -365,11 +344,10 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   };
 
   const appendIcon = (target, name) => target.append(iconButton(`icon-${name}`, '', '').querySelector('svg'));
-  sourceButtons.classList.add('audio-dock-source-segments');
   const sourceFrame = node('label', 'ui-select-frame audio-dock-source-native');
   sourceFrame.append(node('span', 'visually-hidden', 'Audio source'), sourcePicker);
   appendIcon(sourceFrame, 'chevron-down');
-  headerStart.append(sourceButtons, sourceFrame);
+  headerStart.append(sourceFrame);
   const contextButton = (label, icon, name, id, classes = '') => {
     const button = iconButton(`icon-${icon}`, label, `ui-button ui-button-secondary ui-audio-context-trigger ${classes}`);
     button.id = id;
@@ -660,12 +638,13 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       ['Frequency', Number(call.frequency_hz) > 0 ? `${(Number(call.frequency_hz) / 1e6).toFixed(5)} MHz` : null],
       ['Site', call.site], ['Network ID', call.network_id ?? call.network], ['Site identity', call.site_identity],
       ['Model', call.model ?? call.network_model], ['Location category', call.location_category],
-      ['WACN', call.wacn], ['SysID', call.system_id], ['RFSS', call.rfss_id], ['Site ID', call.site_id], ['RAN', call.ran],
-      ['NAC', call.nac], ['LCN', call.logical_channel_number ?? call.lcn], ['Timeslot', call.timeslot],
+      ['WACN', formatHexDecimal(call.wacn, 5)], ['SysID', formatHexDecimal(call.system_id ?? call.sysid, 3)],
+      ['RFSS', formatHexDecimal(call.rfss_id ?? call.rfss, 2)], ['Site ID', formatHexDecimal(call.site_id, 2)], ['RAN', call.ran],
+      ['NAC', formatHexDecimal(call.nac, 3)], ['LCN', call.logical_channel_number ?? call.lcn], ['Timeslot', call.timeslot],
       ['Encrypted', typeof call.encrypted === 'boolean' ? call.encrypted ? 'Yes' : 'No' : null]
     ], options);
     group('Voice quality', [
-      ['Quality', call.vc_quality_pct !== undefined ? `${call.vc_quality_pct}%` : null],
+      ['Quality', formatVoiceQuality(call.vc_quality_pct)],
       ['Decoded frames', call.vc_decoded_frames], ['Repeated frames', call.vc_repeated_frames],
       ['Concealed frames', call.vc_concealed_frames], ['Missing frames', call.vc_missing_frames],
       ['FEC errors', call.vc_fec_errors], ['FEC protected bits', call.vc_fec_protected_bits]
@@ -826,24 +805,35 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   function renderSettings() {
     const settings = node('div', 'audio-dock-settings');
     panelHost.append(settings);
-    const groupField = uiToggleField('Group calls by target', liveState.targetGrouping !== false);
+    const groupField = uiToggleField('Group calls by target', liveState.targetGrouping !== false,
+      'Group calls by target', 'Keeps calls for the same group together to preserve conversationality');
     const grouping = groupField.querySelector('input'); grouping.id = 'audio-dock-target-grouping';
+    const groupHelp = groupField.querySelector('.ui-toggle-copy small');
+    if (groupHelp) { groupHelp.id = 'audio-dock-grouping-help'; grouping.setAttribute('aria-describedby', groupHelp.id); }
     grouping.addEventListener('change', () => {
       const player = getLivePlayer(); if (!player) return;
       player.applyPreferences({ target_grouping: grouping.checked }); player.writePreferences();
     });
     settings.append(groupField);
-    const burstLabel = node('label', 'ui-field', 'Calls per target');
+    const burstLabel = node('label', 'ui-toggle-field'); burstLabel.htmlFor = 'audio-dock-target-burst';
+    const burstCopy = node('span', 'ui-toggle-copy');
+    const burstHelp = node('small', '', 'When grouping is on, switch to another waiting target after this many consecutive calls.');
+    burstHelp.id = 'audio-dock-burst-help';
+    burstCopy.append(node('strong', '', 'Calls per target'), burstHelp);
     const burst = node('input', 'ui-input'); burst.id = 'audio-dock-target-burst'; burst.type = 'number'; burst.min = '1'; burst.max = '20'; burst.value = liveState.targetBurstLimit || 4;
     burst.setAttribute('aria-label', 'Calls per target');
+    burst.setAttribute('aria-describedby', burstHelp.id);
     burst.addEventListener('change', () => {
       if (!burst.checkValidity()) { burst.reportValidity(); return; }
       const player = getLivePlayer(); if (!player) return;
       player.applyPreferences({ target_burst_limit: Number(burst.value) }); player.writePreferences();
     });
-    burstLabel.append(burst); settings.append(burstLabel);
-    const titleField = uiToggleField('Playing call in page title', getTitlePreference());
+    burstLabel.append(burstCopy, burst); settings.append(burstLabel);
+    const titleField = uiToggleField('Playing call in page title', getTitlePreference(),
+      'Playing call in page title', 'Show the playing Live call in browser tab titles outside Scanner.');
     const prepend = titleField.querySelector('input'); prepend.id = 'audio-dock-title-preference';
+    const titleHelp = titleField.querySelector('.ui-toggle-copy small');
+    if (titleHelp) { titleHelp.id = 'audio-dock-title-help'; prepend.setAttribute('aria-describedby', titleHelp.id); }
     prepend.addEventListener('change', () => {
       const refresh = () => { panelKey = ''; render(); };
       void Promise.resolve(setTitlePreference(prepend.checked)).then(refresh, refresh);
@@ -955,7 +945,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     collapsedMeta.textContent = `${source === 'live' ? 'Live' : 'Recording'} · ${queueCount()} queued`;
     compactSubtitle.textContent = subtitle(call) || (source === 'live' ? 'Select a List to listen' : 'Choose a recording to play');
     compactSubtitle.title = [sourceSummary(call), call?.channel || call?.channel_name].filter(Boolean).join(' · ') || compactSubtitle.textContent;
-    Object.entries(sourceControls).forEach(([value, button]) => { button.disabled = !permissions[value]; button.setAttribute('aria-pressed', String(source === value)); sourceOptions[value].disabled = !permissions[value]; });
+    Object.entries(sourceOptions).forEach(([value, option]) => { option.disabled = !permissions[value]; });
     const sourceLabel = source === 'live' ? 'Live' : 'Recordings'; currentSourceChoice.textContent = sourceLabel;
     if (sourcePicker.value !== '') sourcePicker.value = ''; sourcePicker.disabled = !permissions.live && !permissions.recordings;
     const live = source === 'live';
@@ -979,7 +969,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     audioHeading.hidden = fullWave.hidden = !live; compactWave.hidden = slimWave.hidden = !live;
     const qualityNumber = Number(call?.vc_quality_pct); quality.hidden = !call || call.vc_quality_pct === null ||
       call.vc_quality_pct === undefined || call.vc_quality_pct === '' || !Number.isFinite(qualityNumber);
-    qualityValue.textContent = quality.hidden ? '' : `${Math.round(qualityNumber)}%`;
+    qualityValue.textContent = quality.hidden ? '' : formatVoiceQuality(qualityNumber);
     const playing = live ? !active.stopped && !active.paused : active.playing;
     status.textContent = active.stopped ? 'Stopped' : active.paused ? 'Paused' : live && active.holdTarget ? 'Holding' : active.loading ? 'Loading' : playing ? 'Listening' : 'Ready';
     status.classList.toggle('ui-pill-success', playing); status.title = active.status || status.textContent;
@@ -1046,7 +1036,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   synchronize();
   return { synchronize, destroy() {
     closeVolume(false); destroyed = true; synchronizeLoops();
-    compactSourceLayout.removeEventListener('change', updateSourceFocus); mobileLayout.removeEventListener('change', updatePresentationLayout);
+    mobileLayout.removeEventListener('change', updatePresentationLayout);
     reducedMotion.removeEventListener('change', cancelPresentationMotion); window.removeEventListener('resize', viewportChanged);
     window.visualViewport?.removeEventListener('resize', viewportChanged); window.visualViewport?.removeEventListener('scroll', viewportChanged);
     document.removeEventListener('visibilitychange', visibilityChanged); dock.removeEventListener('keydown', escapeContext);

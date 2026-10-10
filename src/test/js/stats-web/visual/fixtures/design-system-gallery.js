@@ -454,7 +454,7 @@ if (view === 'setup-guide') {
   const { openReadOnlyModal } = await createGalleryModalFoundation();
   const introduction = openSetupGuide({ node, openReadOnlyModal }, {
     title: 'Add your first channel', choices: [
-      { button: newChannel, description: 'Set up a channel manually using a known frequency.' },
+      { button: newChannel, description: 'Import a channel from RadioReference or set it up using a known frequency.' },
       { button: findSystems, description: 'Search for trunked radio systems your tuner can receive.' }
     ]
   });

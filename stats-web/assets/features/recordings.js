@@ -2,6 +2,7 @@ import { createDualRange } from '../core/dual-range.js?v=1';
 import { systemLabel, systemName } from '../core/system-labels.js?v=1';
 import { formatP25RadioIdentifier } from '../core/radio-labels.js?v=4';
 import { formatSourceName } from '../core/source-names.js?v=1';
+import { formatHexDecimal } from '../core/call-value-format.js?v=1';
 
 const CALLS = '/api/v1/recordings/calls';
 const SUGGESTIONS = '/api/v1/recordings/suggestions';
@@ -218,7 +219,8 @@ function siteText(site) {
   if (name) return String(name);
   const rfss = value(site, 'rfss_id', 'rfss');
   const id = value(site, 'site_id');
-  return [rfss !== null ? `RFSS ${rfss}` : '', id !== null ? `Site ${id}` : '']
+  return [rfss !== null ? `RFSS ${formatHexDecimal(rfss, 2)}` : '',
+    id !== null ? `Site ${formatHexDecimal(id, 2)}` : '']
     .filter(Boolean).join(' · ');
 }
 
@@ -851,13 +853,6 @@ export function createRecordingsFeature(deps) {
     else if (modal) focusPreferred();
   }
 
-  function hexIdentity(identity, width) {
-    if (identity === null || identity === undefined || identity === '') return '';
-    const numeric = Number(identity);
-    return Number.isInteger(numeric) && numeric >= 0 ? numeric.toString(16).toUpperCase().padStart(width, '0') :
-      String(identity);
-  }
-
   function fileSize(bytes) {
     if (bytes === null || bytes === undefined || bytes === '') return '';
     const count = Number(bytes);
@@ -931,13 +926,14 @@ export function createRecordingsFeature(deps) {
         ['Destination description', value(row, 'destination_radio_description')], ['Patch members', patchMembers(row)]
       ]],
       ['Protocol & signaling', [
-        ['WACN', hexIdentity(value(row, 'wacn'), 5)],
-        ['SysID', hexIdentity(value(row, 'system_id', 'sysid'), 3)],
+        ['WACN', formatHexDecimal(value(row, 'wacn'), 5)],
+        ['SysID', formatHexDecimal(value(row, 'system_id', 'sysid'), 3)],
         ['Network ID', value(row, 'network_id', 'network')],
         ['Model', value(row, 'model', 'network_model')],
         ['Location category', value(row, 'location_category')],
-        ['RFSS', value(row, 'rfss_id', 'rfss')], ['Site ID', value(row, 'site_id')],
-        ['NAC', hexIdentity(value(row, 'nac'), 3)], ['Tone kind', value(row, 'tone_kind')],
+        ['RFSS', formatHexDecimal(value(row, 'rfss_id', 'rfss'), 2)],
+        ['Site ID', formatHexDecimal(value(row, 'site_id'), 2)],
+        ['NAC', formatHexDecimal(value(row, 'nac'), 3)], ['Tone kind', value(row, 'tone_kind')],
         ['Tone', value(row, 'tone')], ['PL', value(row, 'pl')], ['DPL', value(row, 'dpl')]
       ]],
       ['Recording identifiers', [
@@ -949,13 +945,13 @@ export function createRecordingsFeature(deps) {
         ['Raw target ID', value(row, 'target_id'), 'target_entity_ref'],
         ['Source home system name', value(row, 'source_home_system_name') || systemName(row?.source_home_system),
           row?.source_home_system?.entity_ref],
-        ['Source home WACN', hexIdentity(value(row, 'source_home_wacn'), 5)],
-        ['Source home system', hexIdentity(value(row, 'source_home_system_id'), 3)],
+        ['Source home WACN', formatHexDecimal(value(row, 'source_home_wacn'), 5)],
+        ['Source home system', formatHexDecimal(value(row, 'source_home_system_id'), 3)],
         ['Source home identity', value(row, 'source_home_id'), 'source_entity_ref'],
         ['Target home system name', value(row, 'target_home_system_name') || systemName(row?.target_home_system),
           row?.target_home_system?.entity_ref],
-        ['Target home WACN', hexIdentity(value(row, 'target_home_wacn'), 5)],
-        ['Target home system', hexIdentity(value(row, 'target_home_system_id'), 3)],
+        ['Target home WACN', formatHexDecimal(value(row, 'target_home_wacn'), 5)],
+        ['Target home system', formatHexDecimal(value(row, 'target_home_system_id'), 3)],
         ['Target home identity', value(row, 'target_home_id'), 'target_entity_ref']
       ]]
     ];
@@ -966,9 +962,10 @@ export function createRecordingsFeature(deps) {
       return [[`${prefix} name`, siteText(site), 'site_entity_ref', { ...row, audio_from: site }],
         [`${prefix} system name`, systemName(site) || systemName(site.system_identity),
           site.radio_system_entity_ref || site.system_identity?.entity_ref],
-        [`${prefix} WACN`, hexIdentity(value(site, 'wacn'), 5)],
-        [`${prefix} SysID`, hexIdentity(value(site, 'system_id', 'sysid'), 3)],
-        [`${prefix} RFSS`, value(site, 'rfss_id', 'rfss')], [`${prefix} ID`, value(site, 'site_id')]];
+        [`${prefix} WACN`, formatHexDecimal(value(site, 'wacn'), 5)],
+        [`${prefix} SysID`, formatHexDecimal(value(site, 'system_id', 'sysid'), 3)],
+        [`${prefix} RFSS`, formatHexDecimal(value(site, 'rfss_id', 'rfss'), 2)],
+        [`${prefix} ID`, formatHexDecimal(value(site, 'site_id'), 2)]];
     })]);
     const members = value(row, 'patch_members', 'patch_talkgroups');
     if (Array.isArray(members) && members.length) groups.push(['Patch member identities', members.flatMap((member, index) => {
@@ -979,8 +976,8 @@ export function createRecordingsFeature(deps) {
         [`${prefix} alias`, value(member, 'alias', 'name', 'ota_alias'), member.entity_ref],
         [`${prefix} home system name`, value(member, 'home_system_name') || systemName(member.home_system),
           member.home_system?.entity_ref],
-        [`${prefix} home WACN`, hexIdentity(value(member, 'home_wacn'), 5)],
-        [`${prefix} home system`, hexIdentity(value(member, 'home_system_id'), 3)],
+        [`${prefix} home WACN`, formatHexDecimal(value(member, 'home_wacn'), 5)],
+        [`${prefix} home system`, formatHexDecimal(value(member, 'home_system_id'), 3)],
         [`${prefix} home identity`, value(member, 'home_identity_id'), member.entity_ref]];
     })]);
     return groups.map(([title, facts]) => [title, facts.filter(([, detail]) => includeEmpty ||

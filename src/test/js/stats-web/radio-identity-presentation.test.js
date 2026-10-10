@@ -4,6 +4,24 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const callFormatsSource = fs.readFileSync(path.resolve(__dirname,
+  '../../../../stats-web/assets/core/call-value-format.js'), 'utf8');
+const callFormats = vm.runInNewContext(callFormatsSource.replace(/^export /gm, '') +
+  '\n({formatHexDecimal, formatVoiceQuality});');
+assert.equal(callFormats.formatHexDecimal(0xBEE00, 5), '0xBEE00 (781824)');
+assert.equal(callFormats.formatHexDecimal('0x293', 3), '0x293 (659)');
+assert.equal(callFormats.formatHexDecimal('BEE00', 5), '0xBEE00 (781824)');
+assert.equal(callFormats.formatHexDecimal(0, 2), '0x00 (0)', 'Zero remains a reported identity.');
+assert.equal(callFormats.formatHexDecimal(0xFF, 2), '0xFF (255)');
+assert.equal(callFormats.formatHexDecimal('Unavailable', 3), 'Unavailable', 'Unknown text is preserved.');
+for (const missing of [null, undefined, '', ' ']) {
+  assert.equal(callFormats.formatHexDecimal(missing, 3), '');
+  assert.equal(callFormats.formatVoiceQuality(missing), '', 'Missing quality is never fabricated as zero.');
+}
+assert.equal(callFormats.formatVoiceQuality(97.45678), '97.46%');
+assert.equal(callFormats.formatVoiceQuality(0), '0.00%');
+assert.equal(callFormats.formatVoiceQuality(100), '100.00%');
+assert.equal(callFormats.formatVoiceQuality('unknown'), '');
 
 const source = fs.readFileSync(path.resolve(process.argv[2] ||
   path.resolve(__dirname, '../../../../stats-web/assets/app.js')), 'utf8');

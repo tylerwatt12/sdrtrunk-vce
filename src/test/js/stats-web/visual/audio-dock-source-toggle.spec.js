@@ -20,8 +20,8 @@ async function openSourceApp(page, { width = 320, ...options } = {}) {
   await expect(player(page)).toHaveAttribute('data-state', 'minimal');
 }
 
-test('narrow source picker switches playback sources and opens Recordings without resizing', async ({ page }) => {
-  await openSourceApp(page);
+test('desktop native source picker switches playback sources and opens Recordings without resizing', async ({ page }) => {
+  await openSourceApp(page, { width: 1280 });
   await expect(picker(page)).toBeVisible();
   await expect(group(page)).toBeHidden();
   await expectPickerSource(page, 'live');
@@ -76,16 +76,15 @@ for (const [name, capabilities, allowed, blocked] of [
 }
 
 for (const source of ['live', 'recordings']) {
-  test(`${source} selection and keyboard focus survive the responsive source-control swap`, async ({ page }) => {
+  test(`${source} native source selection and keyboard focus survive desktop and mobile resizing`, async ({ page }) => {
     await openSourceApp(page);
     await selectDockSource(player(page), source);
     await picker(page).focus();
     await page.setViewportSize({ width: 1280, height: 900 });
-    const selected = player(page).getByRole('button', { name: source === 'live' ? 'Live' : 'Recordings', exact: true });
-    await expect(group(page)).toBeVisible();
-    await expect(picker(page)).toBeHidden();
-    await expect(selected).toHaveAttribute('aria-pressed', 'true');
-    await expect(selected).toBeFocused();
+    await expect(picker(page)).toBeVisible();
+    await expect(picker(page)).toBeFocused();
+    await expectPickerSource(page, source);
+    await expect(group(page)).toHaveCount(0);
     await expect(player(page)).toHaveAttribute('data-state', 'minimal');
     await page.setViewportSize({ width: 320, height: 844 });
     await expect(picker(page)).toBeVisible();
@@ -98,45 +97,33 @@ for (const source of ['live', 'recordings']) {
 
 for (const width of [1050, 1280]) {
   for (const theme of ['light', 'dark']) {
-    test(`segmented source labels have comfortable insets and spacing at ${width}px in ${theme}`, async ({ page }) => {
+    test(`desktop native source dropdown is readable and comfortable at ${width}px in ${theme}`, async ({ page }) => {
       await openSourceApp(page, { width, theme });
-      await expect(group(page)).toBeVisible();
-      await expect(picker(page)).toBeHidden();
-      const layout = await group(page).evaluate((element) => {
-        const container = element.getBoundingClientRect();
-        const style = getComputedStyle(element);
-        return { padding: [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft].map(parseFloat),
-          gap: parseFloat(style.columnGap),
-          items: [...element.querySelectorAll('button')].map((button) => {
-            const bounds = button.getBoundingClientRect();
-            const text = document.createRange();
-            text.selectNodeContents(button);
-            const label = text.getBoundingClientRect();
-            return { height: bounds.height, labelLeft: label.left - bounds.left,
-              labelRight: bounds.right - label.right, left: bounds.left - container.left,
-              right: container.right - bounds.right, top: bounds.top - container.top,
-              bottom: container.bottom - bounds.bottom };
-          }) };
+      await expect(picker(page)).toBeVisible();
+      await expect(group(page)).toHaveCount(0);
+      const layout = await picker(page).evaluate(element => {
+        const style = getComputedStyle(element), bounds = element.getBoundingClientRect();
+        const canvas = document.createElement('canvas'), context = canvas.getContext('2d');
+        context.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+        return { height: bounds.height, width: bounds.width,
+          start: parseFloat(style.paddingInlineStart), end: parseFloat(style.paddingInlineEnd),
+          labelWidth: context.measureText('Recordings').width,
+          reachable: element.contains(document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)) };
       });
-      for (const inset of layout.padding) expect(inset).toBeGreaterThanOrEqual(2);
-      expect(layout.gap).toBeGreaterThanOrEqual(2);
-      for (const item of layout.items) {
-        expect(item.height).toBeGreaterThanOrEqual(36);
-        expect(item.height).toBeLessThanOrEqual(40);
-        expect(item.labelLeft).toBeGreaterThanOrEqual(8);
-        expect(item.labelRight).toBeGreaterThanOrEqual(8);
-        expect(item.top).toBeGreaterThanOrEqual(2);
-        expect(item.bottom).toBeGreaterThanOrEqual(2);
-      }
+      expect(layout.height).toBeGreaterThanOrEqual(40);
+      expect(layout.start).toBeGreaterThanOrEqual(8);
+      expect(layout.end).toBeGreaterThanOrEqual(16);
+      expect(layout.labelWidth + layout.start + layout.end).toBeLessThanOrEqual(layout.width + 1);
+      expect(layout.reachable).toBe(true);
     });
   }
 }
 
-test('mobile source picker and desktop source segments keep the centered grip clear', async ({ page }) => {
+test('native source dropdown keeps the centered grip clear at every width', async ({ page }) => {
   await openSourceApp(page, { width: 359 });
   for (const width of [320, 390, 900, 901, 1280]) {
     await page.setViewportSize({ width, height: 844 });
-    const source = width <= 900 ? picker(page) : group(page);
+    const source = picker(page);
     const handle = player(page).getByRole('button', { name: 'Change audio player size', exact: true });
     const context = player(page).locator('.audio-dock-header-end');
     await expect(source).toBeVisible();

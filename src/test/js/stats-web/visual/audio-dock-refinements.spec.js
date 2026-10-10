@@ -1,7 +1,8 @@
 'use strict';
 
 const { expect, test } = require('@playwright/test');
-const { selectAudioPanel, openAudioVolume } = require('./audio-dock-controls.cjs');
+const { selectAudioPanel, openAudioVolume, expectAudioSettings } = require('./audio-dock-controls.cjs');
+const { selectDockSource } = require('./fixtures/audio-dock-source.cjs');
 const { openAudioApp, liveCall } = require('./fixtures/audio-dock-app.cjs');
 
 const liveFields = ['Target', 'Target ID', 'Source', 'Source ID', 'System', 'Channel', 'Started', 'Duration',
@@ -202,10 +203,10 @@ test('vertical header drags resize once; horizontal, short and canceled drags do
 test('source and queue controls keep their own actions without cycling the header', async ({ page }) => {
   await openApp(page, { view: 'dashboard' });
   await size(page, 'full');
-  await player(page).getByRole('button', { name: 'Recordings', exact: true }).click();
+  await selectDockSource(player(page), 'recordings');
   await expect(page).toHaveURL(/view=recordings/);
   await expect(player(page)).toHaveAttribute('data-state', 'full');
-  await player(page).getByRole('button', { name: 'Live', exact: true }).click();
+  await selectDockSource(player(page), 'live');
   await expect(player(page)).toHaveAttribute('data-source', 'live');
   await expect(player(page)).toHaveAttribute('data-state', 'full');
   await panel(page, 'Queue');
@@ -222,7 +223,7 @@ test('Recordings navigates from another page even when that source is already se
   await page.locator('#primary-navigation a[href="/?view=dashboard"]').click();
   await expect(page).toHaveURL(/view=dashboard/);
   await expect(player(page)).toHaveAttribute('data-source', 'recordings');
-  await player(page).getByRole('button', { name: 'Recordings', exact: true }).click();
+  await selectDockSource(player(page), 'recordings');
   await expect(page).toHaveURL(/view=recordings/);
   await expect(player(page).getByRole('button', { name: 'Pause recording', exact: true })).toBeVisible();
   await expect(player(page)).toHaveAttribute('data-state', 'full');
@@ -241,9 +242,16 @@ test('live Details keeps every label and disclosure state through active, paused
   await disclosure(page, 'Voice quality', true);
   await disclosure(page, 'Call', false);
   state.feed.pending.push({ ...liveCall, target_description: 'County fire dispatch', source_description: 'Response team',
-    vc_quality_pct: 98, vc_decoded_frames: 84, vc_missing_frames: 0, talker_alias: 'ENG 4' });
+    vc_quality_pct: 98.237, vc_decoded_frames: 84, vc_missing_frames: 0, talker_alias: 'ENG 4',
+    wacn: 1, system_id: 1, rfss_id: 1, site_id: 2 });
   await player(page).getByRole('button', { name: 'Listen live', exact: true }).click();
   await expect(player(page)).toContainText('ENG 4');
+  for (const [field, value] of [['Quality', '98.24%'], ['WACN', '0x00001 (1)'],
+    ['SysID', '0x001 (1)'], ['RFSS', '0x01 (1)'], ['Site ID', '0x02 (2)']]) {
+    await expect(player(page).locator('#audio-dock-panel dt').filter({ hasText: new RegExp(`^${field}$`) })
+      .locator('xpath=following-sibling::dd[1]')).toHaveText(value);
+  }
+  await expect(player(page).locator('.audio-dock-audio-heading strong')).toHaveText('98.24%');
   expect(await labels(page)).toEqual(idleLabels);
   await disclosure(page, 'Identity & aliases', true);
   await disclosure(page, 'Voice quality', true);
@@ -274,7 +282,7 @@ test('live Details keeps every label and disclosure state through active, paused
 test('recording Details retains static and received-site labels but clears values after end or stop', async ({ page }) => {
   await openApp(page);
   await size(page, 'full');
-  await player(page).getByRole('button', { name: 'Recordings', exact: true }).click();
+  await selectDockSource(player(page), 'recordings');
   await panel(page, 'Details');
   expect(await labels(page)).toEqual(expect.arrayContaining(recordingFields));
   await expectBlankFacts(page);
@@ -309,7 +317,7 @@ test('disclosure choices remain separate by source and survive context and size 
   await panel(page, 'Details');
   await disclosure(page, 'Identity & aliases', true);
   await disclosure(page, 'Radio & channel', false);
-  await player(page).getByRole('button', { name: 'Recordings', exact: true }).click();
+  await selectDockSource(player(page), 'recordings');
   await panel(page, 'Details');
   await disclosure(page, 'Source & target identities', false);
   await disclosure(page, 'Protocol & signaling', true);
@@ -319,7 +327,7 @@ test('disclosure choices remain separate by source and survive context and size 
   await size(page, 'full');
   await expect(player(page).locator('details').filter({ has: page.locator('summary', { hasText: 'Protocol & signaling' }) }))
     .toHaveJSProperty('open', true);
-  await player(page).getByRole('button', { name: 'Live', exact: true }).click();
+  await selectDockSource(player(page), 'live');
   await panel(page, 'Details');
   await expect(player(page).locator('details').filter({ has: page.locator('summary', { hasText: 'Identity & aliases' }) }))
     .toHaveJSProperty('open', true);
@@ -345,6 +353,7 @@ for (const viewport of [{ width: 320, height: 740 }, { width: 844, height: 390 }
     await scan.check();
     await expect(scan).toBeFocused();
     await panel(page, 'Settings');
+    await expectAudioSettings(player(page));
     await expect(scan).toHaveCount(0);
     const grouping = player(page).getByRole('checkbox', { name: 'Group calls by target', exact: true });
     // Use the visible shared toggle, as a person would, rather than clicking its

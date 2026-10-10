@@ -12,7 +12,7 @@ import { formatP25RadioIdentifier, p25ServingSystemKey } from './core/radio-labe
 import * as pageLifecycle from './core/page-lifecycle.js';
 import { installIconHints } from './core/icon-hints.js?v=5';
 import { createFormWorkflow } from './core/form-workflows.js?v=2';
-import { createChannelSetupGuide } from './features/channel-setup-guide.js?v=3';
+import { createChannelSetupGuide } from './features/channel-setup-guide.js?v=4';
 import { applyThemeHue } from './core/theme.js?v=1';
 import * as browsingWorkflows from './core/browsing-workflows.js?v=1';
 import {
@@ -31,13 +31,13 @@ import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from
 import { createStreamingWorkspace } from './features/streaming.js?v=8';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=9';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=13';
-import { createRecordingsFeature } from './features/recordings.js?v=27';
+import { createRecordingsFeature } from './features/recordings.js?v=28';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=27';
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=8';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=3';
-import { createAudioDock } from './core/audio-dock.js?v=17';
+import { createAudioDock } from './core/audio-dock.js?v=18';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=4';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=14';
@@ -24069,7 +24069,7 @@ async function renderModernChannelCatalog(renderContext) {
     statusHost.setAttribute('role', 'status');
     statusHost.setAttribute('aria-live', 'polite');
     const newChannelButton = uiActionButton('New channel', 'icon-plus', () =>
-      openChannelEditorModal('create', null, { protocols, options }), 'ui-button ui-button-primary');
+      openChannelCreationChoice({ protocols, options }), 'ui-button ui-button-primary');
     toolbar.append(newChannelButton);
     const findSystemsButton = capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_TUNERS) ? uiActionButton('Find Trunked Systems',
       'icon-scan-search', () => openSpectrumSearchWizard({ node, openReadOnlyModal, requestJson, uiActionButton, iconButton,
@@ -25071,6 +25071,58 @@ function channelSquelchTuner(profile, channel, entry, advancedFields) {
     stopAudio();
   };
   return { element: panel, start, close };
+}
+
+async function openChannelCreationChoice(prefetched = null) {
+  if (!viewAllowed('channel-setup')) return;
+  const body = node('div', 'ui-confirmation-content');
+  let modal;
+  const choices = [
+    { id: 'import', title: 'Import from RadioReference',
+      description: 'Find radio systems and channels in your area using the RadioReference database.',
+      help: 'A RadioReference Premium subscription is required.', view: 'radioreference',
+      action: () => navigateTo(href('radioreference', { from: 'channel-setup' })) },
+    { id: 'manual', title: 'Create a channel from scratch',
+      description: 'Enter a known frequency and configure the channel yourself.', view: 'channel-setup',
+      action: () => void openChannelEditorModal('create', null, prefetched) }
+  ];
+  for (const choice of choices) {
+    const button = node('button', 'ui-choice-card');
+    button.type = 'button';
+    button.setAttribute('aria-label', choice.title);
+    button.disabled = !viewAllowed(choice.view);
+    const copy = node('span', 'ui-toggle-copy');
+    const description = node('small', 'ui-field-detail', choice.description);
+    description.id = `channel-create-${choice.id}-description`;
+    const describedBy = [description.id];
+    copy.append(node('strong', '', choice.title), description);
+    if (choice.help) {
+      const help = node('small', 'ui-field-detail', choice.help);
+      help.id = `channel-create-${choice.id}-help`;
+      describedBy.push(help.id);
+      copy.append(help);
+    }
+    if (button.disabled) {
+      const restriction = node('small', 'ui-field-detail', 'RadioReference import is unavailable for this account.');
+      restriction.id = `channel-create-${choice.id}-restriction`;
+      describedBy.push(restriction.id);
+      copy.append(restriction);
+    }
+    button.setAttribute('aria-describedby', describedBy.join(' '));
+    button.append(copy);
+    button.addEventListener('click', () => {
+      if (!viewAllowed(choice.view)) return;
+      const proceed = () => { if (viewAllowed(choice.view)) choice.action(); };
+      if (modal.close(proceed)) proceed();
+    });
+    body.append(button);
+  }
+  modal = openReadOnlyModal('How would you like to create a channel?', body, {
+    id: 'create-channel-choice', className: 'modal-size-small',
+    returnFocusSelector: '.channel-admin-toolbar .ui-button-primary'
+  });
+  if (!modal || !await modal.ready) return;
+  modal.focus(body.querySelector('button:not([disabled])'));
 }
 
 async function openChannelEditorModal(mode = 'create', configurationId = null, prefetched = null) {

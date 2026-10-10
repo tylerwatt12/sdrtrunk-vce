@@ -39,7 +39,7 @@ export function createChannelSetupGuide({ ui, account, dismissalScope, channels,
       if (!isCurrent() || !empty() || !hasUsableSetupTuner(tuners)) { close(); return; }
       if (guide || dismissed() || !canPresent()) return;
       guide = openSetupGuide(ui, { title: 'Add your first channel', onDismiss: remember, choices: [
-        { button: newChannelButton, description: 'Set up a channel manually using a known frequency.' },
+        { button: newChannelButton, description: 'Import a channel from RadioReference or set it up using a known frequency.' },
         { button: findSystemsButton, description: 'Search for trunked radio systems your tuner can receive.' }
       ] });
     } catch (_) {

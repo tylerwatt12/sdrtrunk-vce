@@ -48,7 +48,7 @@
   --audio-source-font-size: var(--font-size-control);
 }
 .audio-dock-source-native {
-  display: none;
+  display: inline-flex;
   width: var(--audio-dock-source-width);
   max-width: 100%;
   --ui-control-radius: var(--radius-compact);
@@ -178,7 +178,8 @@
 .audio-dock-context-footer .ui-button { min-height: var(--control-height-comfortable); }
 .audio-dock-avoid-row { padding: var(--space-3); }
 .audio-dock-avoid-row .ui-record-card-copy { overflow-wrap: anywhere; }
-.audio-dock-settings-field { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); min-height: var(--audio-handle-height); padding-block: var(--space-2); }
+.audio-dock-settings { display: grid; gap: var(--space-3); padding-bottom: var(--space-2); }
+.audio-dock-settings .ui-input { flex: 0 0 auto; }
 .audio-dock-context .ui-input { width: var(--audio-burst-width); }
 .audio-dock-context-body > p { margin-block: var(--space-2); }
 .audio-dock-context-body > .ui-notice { margin-top: var(--space-3); }
@@ -225,7 +226,6 @@
   .audio-dock-expanded { grid-template-columns: minmax(0, 1fr); }
   .audio-dock-up-next { display: none; }
   .audio-dock-header { grid-template-columns: minmax(0, 1fr) var(--audio-handle-height) minmax(0, 1fr); gap: var(--space-1); padding-inline: var(--space-2); }
-  .audio-dock-source-segments,
   .audio-dock-desktop-scanlists { display: none; }
   .audio-dock-source-native,
   .audio-dock-mobile-scanlists { display: inline-flex; }

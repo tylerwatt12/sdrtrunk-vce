@@ -1,7 +1,8 @@
 'use strict';
 
 const { expect, test } = require('@playwright/test');
-const { selectAudioPanel, openAudioVolume } = require('./audio-dock-controls.cjs');
+const { selectAudioPanel, openAudioVolume, expectAudioSettings } = require('./audio-dock-controls.cjs');
+const { selectDockSource } = require('./fixtures/audio-dock-source.cjs');
 const { openAudioApp, recording, transcript } = require('./fixtures/audio-dock-app.cjs');
 
 function dock(page) { return page.locator('#audio-dock'); }
@@ -121,6 +122,13 @@ test('recording facts, transcript and scoped filters remain available in the ful
   await expect(player).toContainText('North Ridge');
   const factLink = (field) => player.locator('dt').filter({ hasText: new RegExp(`^${field}$`) })
     .locator('xpath=following-sibling::dd[1]').getByRole('link');
+  for (const [field, value] of [['WACN', '0x00001 (1)'], ['SysID', '0x001 (1)'],
+    ['RFSS', '0x01 (1)'], ['Site ID', '0x02 (2)'], ['NAC', '0x125 (293)'],
+    ['Source home WACN', '0x00001 (1)'], ['Target home system', '0x001 (1)'],
+    ['Winning site ID', '0x02 (2)'], ['Received site 1 ID', '0x03 (3)']]) {
+    await expect(player.locator('dt').filter({ hasText: new RegExp(`^${field}$`) })
+      .locator('xpath=following-sibling::dd[1]')).toHaveText(value);
+  }
   for (const [field, filters] of [
     ['Radio system', { system_key: recording.system_key }],
     ['Saved channel', { channel_id: recording.channel_id }],
@@ -207,12 +215,12 @@ test('live and recording playback stop one another without clearing the recordin
   await openAudioApp(page);
   await chooseRecording(page, 0, 'Continue from here');
   await fullControls(page);
-  await dock(page).getByRole('button', { name: 'Live', exact: true }).click();
+  await selectDockSource(dock(page), 'live');
   await dock(page).getByRole('button', { name: 'Listen live', exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.audioTest.liveSources.filter((source) => source.active).length))
     .toBe(1);
   await expect.poll(() => page.evaluate(() => window.audioTest.recordings.at(-1).action)).toBe('pause');
-  await dock(page).getByRole('button', { name: 'Recordings', exact: true }).click();
+  await selectDockSource(dock(page), 'recordings');
   await dock(page).getByRole('button', { name: /Play recording|Resume recording/ }).click();
   await expect.poll(() => page.evaluate(() => window.audioTest.liveSources.filter((source) => source.active).length))
     .toBe(0);
@@ -231,6 +239,7 @@ test('Scan Lists and Settings keep keyboard focus and values while calls arrive 
   await expect(scanList).toBeChecked();
   await dock(page).getByRole('button', { name: 'Listen live', exact: true }).click();
   await selectPanel(page, 'Settings');
+  await expectAudioSettings(dock(page));
   const burst = dock(page).getByRole('spinbutton', { name: 'Calls per target' });
   await burst.focus();
   state.feedCallsEnabled = true;
@@ -265,7 +274,7 @@ test('adding a recording to the queue preserves live playback and its selected s
   await expect(dock(page).getByRole('button', { name: 'Pause live audio', exact: true })).toBeEnabled();
   expect(await page.evaluate(() => window.audioTest.liveSources.filter((source) => source.active).length)).toBe(1);
   expect(await page.evaluate(() => window.audioTest.recordings.some((event) => event.action === 'play'))).toBe(false);
-  await dock(page).getByRole('button', { name: 'Recordings', exact: true }).click();
+  await selectDockSource(dock(page), 'recordings');
   await fullControls(page);
   await selectPanel(page, 'Queue');
   await expect(dock(page).locator('#audio-dock-panel .audio-dock-queue-item')).toContainText('Fire Dispatch');
@@ -279,9 +288,11 @@ for (const [name, capabilities, expected] of [
     await openAudioApp(page, { view: 'dashboard', capabilities });
     await expect(dock(page)).toBeVisible();
     await fullControls(page);
-    await expect(dock(page).getByRole('button', { name: expected, exact: true })).toBeEnabled();
-    await expect(dock(page).getByRole('button', { name: expected === 'Live' ? 'Recordings' : 'Live', exact: true }))
-      .toBeDisabled();
+    const source = dock(page).getByRole('combobox', { name: 'Audio source', exact: true });
+    await expect(source).toBeEnabled();
+    await expect(source.locator(`option[value="${expected.toLowerCase()}"]`)).toHaveJSProperty('disabled', false);
+    await expect(source.locator(`option[value="${expected === 'Live' ? 'recordings' : 'live'}"]`))
+      .toHaveJSProperty('disabled', true);
   });
 }
 
@@ -327,20 +338,20 @@ test('native volume keeps zero and independent levels when switching sources', a
   await expect(page.locator('#audio-dock-volume-popover output')).toHaveText('0%');
   await page.keyboard.press('Escape');
   await expect(player.locator('[data-volume-trigger]:visible')).toBeFocused();
-  await player.getByRole('button', { name: 'Recordings', exact: true }).click();
+  await selectDockSource(player, 'recordings');
   volume = await openAudioVolume(page);
   await expect(volume).toHaveValue('1');
   await volume.press('Home');
   for (let index = 0; index < 8; index++) await volume.press('ArrowRight');
   await expect(volume).toHaveValue('0.4');
   await page.keyboard.press('Escape');
-  await player.getByRole('button', { name: 'Live', exact: true }).click();
+  await selectDockSource(player, 'live');
   volume = await openAudioVolume(page);
   await expect(volume).toHaveValue('0');
   await volume.press('ArrowRight');
   await expect(volume).toHaveValue('0.05');
   await page.keyboard.press('Escape');
-  await player.getByRole('button', { name: 'Recordings', exact: true }).click();
+  await selectDockSource(player, 'recordings');
   volume = await openAudioVolume(page);
   await expect(volume).toHaveValue('0.4');
 });

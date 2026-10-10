@@ -63,10 +63,12 @@ async function main() {
   const labelsUrl = pathToFileURL(path.resolve(path.dirname(modulePath), '../core/system-labels.js')).href;
   const radioLabelsUrl = pathToFileURL(path.resolve(path.dirname(modulePath), '../core/radio-labels.js')).href;
   const sourceNamesUrl = pathToFileURL(path.resolve(path.dirname(modulePath), '../core/source-names.js')).href;
+  const callValueFormatUrl = pathToFileURL(path.resolve(path.dirname(modulePath), '../core/call-value-format.js')).href;
   const executable = source.replace(/^import .*dual-range.*;\r?\n/m, 'const createDualRange = () => {};\n')
     .replace(/from '\.\.\/core\/system-labels\.js\?v=\d+'/, `from '${labelsUrl}'`)
     .replace(/from '\.\.\/core\/radio-labels\.js\?v=\d+'/, `from '${radioLabelsUrl}'`)
-    .replace(/from '\.\.\/core\/source-names\.js\?v=\d+'/, `from '${sourceNamesUrl}'`);
+    .replace(/from '\.\.\/core\/source-names\.js\?v=\d+'/, `from '${sourceNamesUrl}'`)
+    .replace(/from '\.\.\/core\/call-value-format\.js\?v=\d+'/, `from '${callValueFormatUrl}'`);
   const { createRecordingsFeature, recordingSuggestionFilters, recordingResultFilter } = await import(
     `data:text/javascript;base64,${Buffer.from(executable).toString('base64')}`);
   const previousFilters = Object.freeze({ q: 'Previous name', system_key: 'p25:00002:002',
@@ -386,6 +388,7 @@ async function main() {
 
     const richCall = { ...call(8), end_ms: 31_000, size_bytes: 88_000, timeslot: 1,
       system_name: 'GCRCN', system_key: 'p25:bee00:49f',
+      wacn: 0xBEE00, system_id: 0x49F, rfss_id: 10, site_id: 11, nac: 293,
       source_home_system_name: 'Home Network', target_home_system_name: 'Home Network',
       source_home_wacn: 0xBEE00, source_home_system_id: 0x4A2, source_home_id: 1863924,
       target_home_wacn: 0xBEE00, target_home_system_id: 0x4A2, target_home_id: 1201,
@@ -406,6 +409,27 @@ async function main() {
     }
     assert.ok(descendants(details).some((child) => child.attributes?.get('href') === '/entity/member'),
       'Patch member identities must preserve available drilldown links');
+    const detailFact = (name) => {
+      for (const list of descendants(details).filter((child) => child.tagName === 'dl')) {
+        const index = list.children.findIndex((child) => child.tagName === 'dt' && child.textContent === name);
+        if (index >= 0) return text(list.children[index + 1]).trim();
+      }
+      return null;
+    };
+    for (const [name, expected] of Object.entries({
+      WACN: '0xBEE00 (781824)', SysID: '0x49F (1183)', RFSS: '0x0A (10)',
+      'Site ID': '0x0B (11)', NAC: '0x125 (293)',
+      'Source home WACN': '0xBEE00 (781824)', 'Source home system': '0x4A2 (1186)',
+      'Target home WACN': '0xBEE00 (781824)', 'Target home system': '0x4A2 (1186)',
+      'Winning site WACN': '0xBEE00 (781824)', 'Winning site SysID': '0x4A2 (1186)',
+      'Winning site RFSS': '0x01 (1)', 'Winning site ID': '0x03 (3)',
+      'Received site 1 ID': '0x04 (4)',
+      'Member 1 home WACN': '0xBEE00 (781824)', 'Member 1 home system': '0x4A2 (1186)',
+      Timeslot: '1', 'Source home identity': '1863924', 'Target home identity': '1201'
+    })) {
+      assert.equal(detailFact(name), expected,
+        `Recording ${name} must retain its identity with the appropriate display format`);
+    }
 
     const primaryFact = (recording, name) => {
       sharing.renderDetails(details, recording);

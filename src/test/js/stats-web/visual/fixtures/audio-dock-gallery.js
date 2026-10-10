@@ -32,12 +32,13 @@ export async function mountAudioDockGallery(parameters) {
     button.append(svg);
     return button;
   };
-  const uiToggleField = (labelText, checked) => {
+  const uiToggleField = (labelText, checked, accessibleLabel = labelText, detail = '') => {
     const field = node('div', 'ui-toggle-field');
     const copy = node('span', 'ui-toggle-copy'); copy.append(node('strong', '', labelText));
+    if (detail) copy.append(node('small', '', detail));
     const toggle = node('label', 'ui-toggle');
     const input = node('input'); input.type = 'checkbox'; input.checked = checked;
-    input.setAttribute('aria-label', labelText);
+    input.setAttribute('aria-label', accessibleLabel);
     const track = node('span', 'ui-toggle-track'); track.append(node('span', 'ui-toggle-thumb'));
     const state = node('span', 'ui-toggle-state', checked ? 'On' : 'Off');
     input.addEventListener('change', () => { state.textContent = input.checked ? 'On' : 'Off'; });

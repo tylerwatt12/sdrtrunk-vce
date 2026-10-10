@@ -15,6 +15,7 @@ async function openGallery(page, { theme = 'light', source = 'live', state = 'fu
   expect(missingIcons).toEqual([]);
   if (state === 'full' && panel) await selectAudioPanel(dock, { details: 'Details', transcript: 'Transcript',
     listening: 'Scan Lists', settings: 'Settings', queue: 'Queue' }[panel]);
+  await page.mouse.move(0, 0);
   return dock;
 }
 
@@ -94,6 +95,7 @@ for (const theme of ['light', 'dark']) {
           if (source === 'live' && state === 'full') {
             for (const [name, key] of [['Scan Lists', 'scan-lists'], ['Settings', 'settings']]) {
               await selectAudioPanel(dock, name);
+              await page.mouse.move(0, 0);
               expect(await dock.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
               await expect(dock).toHaveScreenshot(`live-${key}-${theme}-${device}.png`);
             }

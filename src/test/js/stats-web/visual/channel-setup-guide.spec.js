@@ -83,6 +83,10 @@ async function openChannels(page, options = {}) {
   if (options.noTunerAccess) await page.route('**/api/v1/auth/session', route => route.fulfill({ json: { data: {
     configured: true, authenticated: true, username: 'fixture-admin', tier: 'admin', primary: true,
     csrf_token: 'fixture-csrf', capabilities: { 'admin-channels': true, 'admin-tuners': false, 'user-settings': true } } } }));
+  if (options.noRadioReferenceAccess) await page.route('**/api/v1/auth/session', route => route.fulfill({ json: { data: {
+    configured: true, authenticated: true, username: 'fixture-admin', tier: 'admin', primary: true,
+    csrf_token: 'fixture-csrf', capabilities: { 'admin-channels': true, 'admin-tuners': true,
+      'admin-aliases': false, 'user-settings': true } } } }));
   await page.goto('/app.html?view=channel-setup');
   await expect(page.getByRole('heading', { name: 'Channels', exact: true }).first()).toBeVisible();
   return { fixture, state };
@@ -138,7 +142,7 @@ test('setup guide keeps keyboard focus and remembers dismissal after reload', as
   const { fixture } = await openChannels(page);
   await expect(guide(page)).toBeVisible();
   await expect(guide(page)).toContainText('Search for trunked radio systems your tuner can receive.');
-  await expect(guide(page)).toContainText('Set up a channel manually using a known frequency.');
+  await expect(guide(page)).toContainText('Import a channel from RadioReference or set it up using a known frequency.');
   await expect(page.getByRole('button', { name: 'New channel', exact: true })).toHaveCount(1);
   const focusNames = new Set();
   for (let index = 0; index < 6; index++) {
@@ -203,6 +207,12 @@ for (const [action, destination] of [['New channel', 'Create Channel'], ['Find T
     await expect(guide(page)).toBeVisible();
     await toolbarAction(page, action).click();
     await expect(guide(page)).toHaveCount(0);
+    if (action === 'New channel') {
+      const chooser = page.getByRole('dialog', { name: 'How would you like to create a channel?', exact: true });
+      await expect(chooser).toBeVisible();
+      await chooser.getByRole('button', { name: 'Create a channel from scratch', exact: true }).click();
+      await expect(chooser).toHaveCount(0);
+    }
     const workflow = page.getByRole('dialog', { name: destination, exact: true });
     await expect(workflow).toBeVisible();
     if (action === 'New channel') await expect(workflow.getByRole('button', { name: 'Create channel', exact: true })).toBeVisible();
@@ -213,6 +223,77 @@ for (const [action, destination] of [['New channel', 'Create Channel'], ['Find T
     expect(fixture.pageErrors).toEqual([]);
   });
 }
+
+for (const { theme, viewport, entry } of [
+  { theme: 'light', viewport: { width: 1280, height: 800 }, entry: 'toolbar' },
+  { theme: 'dark', viewport: { width: 320, height: 740 }, entry: 'setup guide' }
+]) {
+  test(`new channel choices open RadioReference from the ${entry} ${theme}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    const editorRequests = [];
+    page.on('request', request => {
+      const path = new URL(request.url()).pathname;
+      if (/\/admin\/channels\/protocols\/[^/]+\/template$/.test(path) ||
+          path === '/api/v1/admin/channels' && request.method() === 'POST') editorRequests.push(path);
+    });
+    const { fixture } = await openChannels(page, { theme, ...(entry === 'toolbar' ? { tuners: [] } : {}) });
+    if (entry === 'setup guide') await expect(guide(page)).toBeVisible();
+    const newChannel = toolbarAction(page, 'New channel');
+    await newChannel.focus();
+    await page.keyboard.press('Enter');
+    const chooser = page.getByRole('dialog', { name: 'How would you like to create a channel?', exact: true });
+    await expect(guide(page)).toHaveCount(0);
+    await expect(chooser).toBeVisible();
+    const importChoice = chooser.getByRole('button', { name: 'Import from RadioReference', exact: true });
+    const manualChoice = chooser.getByRole('button', { name: 'Create a channel from scratch', exact: true });
+    await expect(importChoice).toBeFocused();
+    await expect(importChoice).toBeEnabled();
+    await expect(importChoice).toHaveAccessibleDescription(
+      'Find radio systems and channels in your area using the RadioReference database. ' +
+      'A RadioReference Premium subscription is required.');
+    await expect(manualChoice).toBeEnabled();
+    await expect(manualChoice).toHaveAccessibleDescription('Enter a known frequency and configure the channel yourself.');
+    await expectWithinViewport(chooser, viewport);
+    await expectWithinViewport(importChoice, viewport);
+    await expectWithinViewport(manualChoice, viewport);
+    await expect(chooser).toHaveScreenshot(`new-channel-choice-${theme}-${entry === 'toolbar' ? 'desktop' : 'mobile'}.png`);
+    await page.screenshot({ path: test.info().outputPath(`new-channel-choice-${theme}-viewport.png`) });
+    await page.keyboard.press('Escape');
+    await expect(chooser).toHaveCount(0);
+    await expect(newChannel).toBeFocused();
+    expect(editorRequests).toEqual([]);
+    await page.keyboard.press('Enter');
+    await expect(importChoice).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(chooser).toHaveCount(0);
+    await expect(page).toHaveURL(/view=radioreference&from=channel-setup$/);
+    await expect(page.getByRole('heading', { name: 'Connect your account', exact: true })).toBeVisible();
+    // The visual server mounts the app at /app.html and uses / for the gallery.
+    await page.goto(`/app.html${new URL(page.url()).search}`);
+    await expect(page).toHaveURL(/view=radioreference&from=channel-setup$/);
+    await expect(page.getByRole('heading', { name: 'Connect your account', exact: true })).toBeVisible();
+    expect(editorRequests).toEqual([]);
+    expect(fixture.pageErrors).toEqual([]);
+  });
+}
+
+test('new channel keeps manual creation available without RadioReference access', async ({ page }) => {
+  const { fixture } = await openChannels(page, { tuners: [], noRadioReferenceAccess: true });
+  await toolbarAction(page, 'New channel').click();
+  const chooser = page.getByRole('dialog', { name: 'How would you like to create a channel?', exact: true });
+  const manualChoice = chooser.getByRole('button', { name: 'Create a channel from scratch', exact: true });
+  await expect(chooser.getByRole('button', { name: 'Import from RadioReference', exact: true })).toBeDisabled();
+  await expect(chooser).toContainText('RadioReference import is unavailable for this account.');
+  await expect(manualChoice).toBeFocused();
+  await page.keyboard.press('Enter');
+  const editor = page.getByRole('dialog', { name: 'Create Channel', exact: true });
+  await expect(chooser).toHaveCount(0);
+  await expect(editor.getByRole('button', { name: 'Create channel', exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(editor).toHaveCount(0);
+  await expect(toolbarAction(page, 'New channel')).toBeFocused();
+  expect(fixture.pageErrors).toEqual([]);
+});
 
 for (const [name, options] of [
   ['no tuners', { tuners: [] }],

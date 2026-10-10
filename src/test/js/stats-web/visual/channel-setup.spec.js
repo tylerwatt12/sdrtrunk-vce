@@ -137,6 +137,8 @@ test('channel editor refreshes the voice-module override and renders the effecti
   expect(protocolRequests).toBe(1);
 
   await page.getByRole('button', { name: 'New channel' }).click();
+  await page.getByRole('dialog', { name: 'How would you like to create a channel?', exact: true })
+    .getByRole('button', { name: 'Create a channel from scratch', exact: true }).click();
   const encryptedSkip = page.getByRole('checkbox', {
     name: 'Skip encrypted traffic channels (performance)'
   });
@@ -148,6 +150,8 @@ test('channel editor refreshes the voice-module override and renders the effecti
   await page.getByRole('button', { name: 'Cancel' }).click();
   moduleLoaded = false;
   await page.getByRole('button', { name: 'New channel' }).click();
+  await page.getByRole('dialog', { name: 'How would you like to create a channel?', exact: true })
+    .getByRole('button', { name: 'Create a channel from scratch', exact: true }).click();
   await expect(encryptedSkip).toBeEnabled();
   await expect(encryptedSkip).toBeChecked();
   await expect(encryptedSkip.locator('xpath=..').locator('.ui-toggle-state')).toHaveText('On');
