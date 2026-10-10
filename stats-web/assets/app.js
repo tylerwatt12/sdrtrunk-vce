@@ -11165,7 +11165,7 @@ function scannerField(label, value, level, action, wide = false) {
 
 function scannerParticipant(title, alias, identifier, description, group, aliasAction, identifierAction) {
   const participant = node('section', 'scanner-participant');
-  participant.append(node('h3', 'ui-section-heading ui-surface-header scanner-participant-heading', title));
+  participant.append(node('h3', 'ui-section-heading scanner-participant-heading', title));
   const fields = node('dl', 'ui-fact-list ui-fact-list-grid scanner-participant-fields');
   const primaryIdentity = alias || identifier;
   const visibleFields = [

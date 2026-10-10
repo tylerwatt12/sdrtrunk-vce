@@ -1502,7 +1502,7 @@ async function main() {
   assert.match(scannerField, /action && capabilityAllowed\(ACCESS_CAPABILITIES\.RADIO\)/,
     'Scanner drilldowns must honor Radio access permission');
   assert.match(functionBinding(appSource, 'scannerParticipant'),
-    /ui-section-heading ui-surface-header scanner-participant-heading[\s\S]*ui-fact-list ui-fact-list-grid/,
+    /ui-section-heading scanner-participant-heading[\s\S]*ui-fact-list ui-fact-list-grid/,
     'Scanner diagnostic groups must reuse shared headings and flat facts');
   assert.match(scannerCallRenderer, /link-button ui-listening-title-action[\s\S]*open\(analog \? 'channel' : 'target'\)/,
     'The listening headline must preserve its channel or target drilldown');
