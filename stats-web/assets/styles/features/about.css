@@ -1,4 +1,20 @@
 /* Credits and licensing page. */
+.about-page {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  padding: var(--space-5);
+  border-radius: var(--radius-card);
+  background: var(--access-scene-background);
+}
+
+.about-content {
+  position: relative;
+  z-index: 1;
+  max-width: var(--access-layout-width);
+  margin: auto;
+}
+
 .credits-copy {
   max-width: 880px;
   padding: var(--space-3) var(--space-4);
@@ -24,6 +40,10 @@
 }
 
 @media (max-width: 560px) {
+  .about-page {
+    padding: var(--space-3);
+  }
+
   .credits-list {
     columns: 1;
   }

@@ -32028,21 +32028,35 @@ function renderAccessDenied(view, renderContext = captureRenderContext()) {
 
 function renderCredits() {
   const renderContext = captureRenderContext();
+  const page = node('div', 'about-page');
+  const canvas = node('canvas', 'access-scene-canvas');
+  canvas.setAttribute('aria-hidden', 'true');
+  const scrim = node('div', 'access-scene-scrim');
+  scrim.setAttribute('aria-hidden', 'true');
+  const panels = node('div', 'about-content');
+  page.append(canvas, scrim, panels);
   if (!beginPage(renderContext,
-    pageHeader('Credits & Licensing', 'Open-source authorship, source lineage, and license terms'))) return;
+    pageHeader('About VCE', 'VCE development, credits, and open-source licenses.'), page)) return;
+
+  const development = node('div', 'credits-copy');
+  const developer = node('p');
+  developer.append(node('strong', '', 'VCE developer and maintainer'), ': Tyler Watthanaphand ',
+    externalAnchor('(@tylerwatt12)', 'https://github.com/tylerwatt12'));
+  development.append(developer,
+    node('p', '', 'Tyler leads VCE development, including its web interface, browser listening tools, ' +
+      'receiver management, and releases.'),
+    node('p', '', 'VCE additions include Scan Lists, Managed Recordings and transcription, activity history ' +
+      'and dashboards, remote P25 links, call matching, and P25 Visualizer.'));
+  panels.append(section('VCE development', development));
 
   const project = node('div', 'credits-copy');
-  project.append(node('p', '', 'Copyright © 2014-2026 Dennis Sheirer and respective contributors.'));
   const lineage = node('p');
-  lineage.append('VCE is a modified version of ',
+  lineage.append('VCE builds on ',
     externalAnchor('SDRTrunk', 'https://github.com/DSheirer/sdrtrunk'),
     ', created by Dennis Sheirer. It includes work from SDRTrunk contributors and optimization and platform work ',
     'associated with the ', externalAnchor('W6BAZ experimental fork', 'https://github.com/bazineta/sdrtrunk'), '.');
-  const webInterface = node('p');
-  webInterface.append('Web interface by Tyler Watthanaphand ',
-    externalAnchor('@tylerwatt12', 'https://github.com/tylerwatt12'), '.');
-  project.append(lineage, webInterface);
-  content.append(section('Project', project));
+  project.append(lineage, node('p', '', 'Copyright © 2014-2026 Dennis Sheirer and respective contributors.'));
+  panels.append(section('SDRTrunk and upstream contributors', project));
 
   const license = node('div', 'credits-copy');
   const licenseText = node('p');
@@ -32056,7 +32070,7 @@ function renderCredits() {
   licenseFiles.append(externalAnchor('Read the complete GNU GPL v3 license', '/LICENSE.txt'), ' · ',
     externalAnchor('Read the project notice', '/NOTICE.txt'));
   license.append(licenseFiles);
-  content.append(section('GNU GPL v3', license));
+  panels.append(section('GNU GPL v3', license));
 
   const projects = node('ul', 'credits-list');
   [
@@ -32081,7 +32095,8 @@ function renderCredits() {
   acknowledgements.append(node('p', '', 'This application builds on open-source libraries and radio-decoding work ' +
     'maintained by their respective authors. Each component remains under its own copyright and license terms.'),
     projects);
-  content.append(section('Open-source acknowledgements', acknowledgements));
+  panels.append(section('Open-source acknowledgements', acknowledgements));
+  pageConnections.add({ close: mountAccessWireframe(canvas) });
 }
 
 function activateNavigation(view) {

@@ -118,6 +118,7 @@ for (const [name, query, selector, content] of cases) {
     test(`actual ${name} ${presentation.name}`, async ({ page }) => {
       await page.setViewportSize(presentation.viewport);
       const fixture = await installSiteStyleApplication(page, presentation.theme);
+      if (name === 'credits') await page.emulateMedia({ reducedMotion: 'reduce' });
       await page.goto(`/app.html?${query}`);
       if (presentation.theme === 'dark') await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
       else await expect(page.locator('html')).not.toHaveAttribute('data-theme', 'dark');
