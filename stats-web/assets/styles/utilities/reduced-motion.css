@@ -5,7 +5,8 @@
   .ui-disclosure-toggle::before {
     transition: none;
   }
-  .ui-data-table .activity-row-new > td {
+  .ui-data-table:not(.ui-record-list) .activity-row-new > td,
+  .ui-record-list tbody tr.activity-row-new:not(.selected) {
     background: var(--accent-soft);
     animation: none;
   }

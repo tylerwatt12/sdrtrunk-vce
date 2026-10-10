@@ -31404,32 +31404,59 @@ function callMatchingComparison(decision, signal) {
   const copies = callMatchingCopies(decision);
   const runnerUp = copies.find((copy) => copy.copy_index === decision.winner?.runner_up_copy_index);
   const body = node('div', 'call-matching-comparison');
-  const intro = node('div', 'call-matching-comparison-intro');
-  intro.append(callMatchingIdentitySummary(identity),
-    callMatchingIdentitySummary(identity, false),
-    node('span', 'muted', `${callMatchingDuration(Number(identity.end_timestamp || 0) -
+  const intro = node('header', 'call-matching-comparison-intro');
+  for (const [label, destination] of [['Target', true], ['Radio', false]]) {
+    const group = node('div', 'ui-heading-group');
+    const identitySummary = callMatchingIdentitySummary(identity, destination);
+    const primary = identitySummary.querySelector('.identity-summary-primary');
+    const title = node('h3', 'ui-record-title');
+    title.append(...primary.childNodes);
+    primary.replaceWith(title);
+    group.title = identitySummary.title;
+    group.append(node('span', 'ui-label ui-muted', label), ...identitySummary.childNodes);
+    intro.append(group);
+  }
+  intro.append(node('span', 'ui-label ui-muted call-matching-comparison-meta',
+    `${callMatchingDuration(Number(identity.end_timestamp || 0) -
       Number(identity.start_timestamp || 0))} · ${copies.length} receiver copies`));
   body.append(intro);
 
-  const summary = keyValues([
-    ['System', radioSystemLink(identity.radio_system_entity_ref,
-      radioSystemDisplayName(callMatchingIdentitySystem(identity)))],
-    ['Radio home system', radioSystemLink(callMatchingIdentitySystem(identity, false).radio_system_entity_ref,
-      radioSystemDisplayName(callMatchingIdentitySystem(identity, false)))],
-    ['Radio identity', identity.source_value || '—'],
-    ['WACN', identity.wacn == null ? '—' : hexDecimalPair(identity.wacn, 5)],
-    ['System ID', identity.system == null ? '—' : hexDecimalPair(identity.system, 3)],
-    ['Home WACN', identity.source_home_wacn == null ? '—' : hexDecimalPair(identity.source_home_wacn, 5)],
-    ['Home System ID', identity.source_home_system_id == null ? '—' : hexDecimalPair(identity.source_home_system_id, 3)],
-    ['Why matched', callMatchingProof(decision)],
-    ['Why this copy was selected', callMatchingCriterion(decision.winner?.criterion)],
-    ['Selected site', winner ? callMatchingCopySite(winner) : 'Unavailable'],
-    ['Runner-up site', runnerUp ? callMatchingCopySite(runnerUp) : 'Unavailable'],
-    ['Best measurement', decision.winner?.winner_value?.display || '—'],
-    ['Runner-up measurement', decision.winner?.runner_up_value?.display || '—'],
-    ['Selected for', callMatchingOutputTags(decision.output_policy)]
-  ]);
-  summary.classList.add('ui-admin-facts', 'call-matching-comparison-summary');
+  const summary = node('div', 'call-matching-comparison-summary');
+  for (const [title, entries] of [
+    ['Selection and matching', [
+      ['Why this copy was selected', callMatchingCriterion(decision.winner?.criterion)],
+      ['Why matched', callMatchingProof(decision)],
+      ['Selected site', winner ? callMatchingCopySite(winner) : 'Unavailable'],
+      ['Runner-up site', runnerUp ? callMatchingCopySite(runnerUp) : 'Unavailable'],
+      ['Best measurement', decision.winner?.winner_value?.display || '—'],
+      ['Runner-up measurement', decision.winner?.runner_up_value?.display || '—'],
+      ['Selected for', callMatchingOutputTags(decision.output_policy)]
+    ]],
+    ['System identifiers', [
+      ['System', radioSystemLink(identity.radio_system_entity_ref,
+        radioSystemDisplayName(callMatchingIdentitySystem(identity)))],
+      ['Radio home system', radioSystemLink(callMatchingIdentitySystem(identity, false).radio_system_entity_ref,
+        radioSystemDisplayName(callMatchingIdentitySystem(identity, false)))],
+      ['Radio identity', identity.source_value || '—'],
+      ['WACN', identity.wacn == null ? '—' : hexDecimalPair(identity.wacn, 5)],
+      ['System ID', identity.system == null ? '—' : hexDecimalPair(identity.system, 3)],
+      ['Home WACN', identity.source_home_wacn == null ? '—' : hexDecimalPair(identity.source_home_wacn, 5)],
+      ['Home System ID', identity.source_home_system_id == null ? '—' : hexDecimalPair(identity.source_home_system_id, 3)]
+    ]]
+  ]) {
+    const group = node('section', 'call-matching-comparison-group');
+    group.append(node('h3', 'ui-section-heading', title));
+    const facts = node('dl', 'ui-fact-list ui-fact-list-grid call-matching-comparison-facts');
+    for (const [label, value] of entries) {
+      const fact = node('div', 'ui-fact-row');
+      const detail = node('dd');
+      detail.append(valueNode(value));
+      fact.append(node('dt', '', label), detail);
+      facts.append(fact);
+    }
+    group.append(facts);
+    summary.append(group);
+  }
   body.append(summary);
   const heading = node('header', 'ui-table-titlebar');
   const headingText = node('div', 'ui-heading-group');
@@ -31583,8 +31610,18 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
           candidate.classList.remove('selected'));
         button.closest('tr')?.classList.add('selected');
         const comparisonAbort = new AbortController();
-        const comparisonHost = row.details_available === false ?
-          node('div', 'loading', 'Loading matched call details…') : callMatchingComparison(row, comparisonAbort.signal);
+        const comparisonSessionId = latest?.session_id;
+        const comparisonHost = node('div', 'call-matching-comparison-host');
+        comparisonHost.setAttribute('aria-busy', 'false');
+        const showComparisonLoading = () => {
+          const loading = node('div', 'loading', 'Loading matched call details…');
+          loading.setAttribute('role', 'status');
+          comparisonHost.setAttribute('aria-busy', 'true');
+          comparisonHost.replaceChildren(loading);
+          return loading;
+        };
+        if (row.details_available === false) showComparisonLoading();
+        else comparisonHost.append(callMatchingComparison(row, comparisonAbort.signal));
         const modal = openReadOnlyModal('Matched call details', comparisonHost, {
           id: 'call-matching-details', className: 'call-matching-modal',
           returnFocusSelector: `.call-matching-compare[data-decision-sequence="${row.decision_sequence}"]`,
@@ -31594,20 +31631,39 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
         selectedModal = modal;
         if (!modal) comparisonAbort.abort();
         else if (row.details_available === false) {
-          const loadComparison = async () => {
+          const loadComparison = async (retry = false) => {
+            if (comparisonAbort.signal.aborted) return;
+            const loading = showComparisonLoading();
+            if (retry) {
+              loading.tabIndex = 0;
+              modal.focus(loading);
+            }
             try {
               const detail = await api('/api/v1/admin/call-matching', {
-                decision_sequence: row.decision_sequence, session_id: latest.session_id
+                decision_sequence: row.decision_sequence, session_id: comparisonSessionId
               }, { signal: comparisonAbort.signal, page: false });
-              if (!comparisonAbort.signal.aborted) comparisonHost.replaceChildren(
-                callMatchingComparison(detail, comparisonAbort.signal));
+              if (!comparisonAbort.signal.aborted) {
+                const restoreFocus = document.activeElement === loading;
+                comparisonHost.replaceChildren(callMatchingComparison(detail, comparisonAbort.signal));
+                if (restoreFocus) {
+                  comparisonHost.tabIndex = 0;
+                  modal.focus(comparisonHost);
+                }
+              }
             } catch (error) {
               if (comparisonAbort.signal.aborted || error?.name === 'AbortError') return;
-              comparisonHost.replaceChildren(asyncSectionFailure(error,
-                'Matched call details could not be loaded.', loadComparison));
+              const restoreFocus = document.activeElement === loading;
+              const failure = asyncSectionFailure(error,
+                'Matched call details could not be loaded.', () => loadComparison(true));
+              comparisonHost.replaceChildren(failure);
+              if (restoreFocus) modal.focus(failure.querySelector('.async-section-retry'));
+            } finally {
+              comparisonHost.setAttribute('aria-busy', 'false');
             }
           };
-          void modal.ready.then(() => { if (!comparisonAbort.signal.aborted) void loadComparison(); });
+          void modal.ready.then((shown) => {
+            if (shown && !comparisonAbort.signal.aborted) void loadComparison();
+          });
         }
       });
       return button;

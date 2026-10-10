@@ -339,7 +339,8 @@
   to { background-color: transparent; }
 }
 
-.ui-data-table .activity-row-new > td {
+.ui-data-table:not(.ui-record-list) .activity-row-new > td,
+.ui-record-list tbody tr.activity-row-new:not(.selected) {
   animation: activity-row-highlight 8s ease-out;
 }
 

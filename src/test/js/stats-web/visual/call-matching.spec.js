@@ -231,7 +231,7 @@ test('administrator sees only confirmed duplicates and compares receiver copies'
   await expect(dialog).toContainText('Matching voice frames');
   await expect(dialog).toContainText('27101');
   await expect(dialog).toContainText('1204185');
-  await expect(dialog.locator('.call-matching-comparison-summary .ui-fact')).toHaveCount(14);
+  await expect(dialog.locator('.call-matching-comparison-summary .ui-fact-row')).toHaveCount(14);
   await expect(dialog.locator('.call-matching-comparison-table tbody tr')).toHaveCount(16);
   await expect(dialog.locator('.call-matching-comparison-table thead th.ui-data-table-selected-column'))
     .toHaveCount(1);
@@ -307,11 +307,32 @@ test('new duplicate calls use the shared row fade across refreshes', async ({ pa
   const added = table.locator('tbody tr[data-id="72"]');
   await expect(added).toHaveClass(/activity-row-new/, { timeout: 3500 });
   await expect(initial).not.toHaveClass(/activity-row-new/);
-  expect(await added.locator('td').first().evaluate((cell) => getComputedStyle(cell).animationName))
+  expect(await added.evaluate((row) => getComputedStyle(row).animationName))
     .toBe('activity-row-highlight');
+  expect(await added.locator('td').evaluateAll((cells) => cells.map((cell) => ({
+    animation: getComputedStyle(cell).animationName,
+    background: getComputedStyle(cell).backgroundColor
+  })))).toEqual(Array.from({ length: 8 }, () => ({ animation: 'none', background: 'rgba(0, 0, 0, 0)' })));
   await expect.poll(() => app.requests()).toBeGreaterThanOrEqual(3);
   await expect(added).toHaveClass(/activity-row-new/);
+  await added.getByRole('button', { name: 'Compare matched call 72' }).click();
+  await expect(added).toHaveClass(/selected/);
+  const selectedAppearance = async () => added.evaluate((row) => {
+    const probe = document.createElement('span');
+    probe.style.backgroundColor = 'var(--accent-soft)';
+    row.append(probe);
+    const accent = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return { background: getComputedStyle(row).backgroundColor,
+      animation: getComputedStyle(row).animationName, accent };
+  });
+  const selected = await selectedAppearance();
+  expect(selected.background).toBe(selected.accent);
+  expect(selected.animation).toBe('none');
   await expect(added).not.toHaveClass(/activity-row-new/, { timeout: 10_000 });
+  await expect(added).toHaveClass(/selected/);
+  expect((await selectedAppearance()).background).toBe(selected.accent);
+  await page.keyboard.press('Escape');
 });
 
 test('confirmed duplicate history paginates and clamps after live history shrinks', async ({ page }) => {
@@ -593,11 +614,16 @@ test('a new receiver session resets history paging and closes old comparisons', 
 
 test('cursor summaries retain history, fetch comparison on demand, and stop hidden requests', async ({ page }) => {
   const requests = [];
+  let releaseDetails;
+  const detailsReady = new Promise((resolve) => { releaseDetails = resolve; });
   let newest = 71;
   const app = await openApp(page, { matching: async (_count, route) => {
     const query = new URL(route.request().url()).searchParams;
     requests.push(Object.fromEntries(query));
-    if (query.has('decision_sequence')) return { data: duplicate(Number(query.get('decision_sequence'))) };
+    if (query.has('decision_sequence')) {
+      await detailsReady;
+      return { data: duplicate(Number(query.get('decision_sequence'))) };
+    }
     const rows = query.get('after') === String(newest) ? [] : [{ ...duplicate(newest),
       legs: [duplicate(newest).legs.find((copy) => copy.selected)], copy_count: 2, details_available: false }];
     return { data: { ...snapshot(rows), incremental: query.has('after'), cursor: newest, first_sequence: 71 } };
@@ -611,9 +637,21 @@ test('cursor summaries retain history, fetch comparison on demand, and stop hidd
   await expect(rows).toHaveCount(2);
   await expect(rows.first()).toHaveAttribute('data-id', '72');
   await page.getByRole('button', { name: 'Pause call matching monitor', exact: true }).click();
-  await page.getByRole('button', { name: 'Compare matched call 71', exact: true }).click();
-  await expect(page.getByRole('dialog', { name: 'Matched call details' })).toContainText('Cuyahoga Simulcast');
-  expect(requests.some((query) => query.decision_sequence === '71')).toBe(true);
+  const dialog = page.getByRole('dialog', { name: 'Matched call details' });
+  try {
+    await page.getByRole('button', { name: 'Compare matched call 71', exact: true }).click();
+    await expect(dialog.getByRole('status')).toHaveText('Loading matched call details…');
+    await expect(dialog.locator('.call-matching-comparison-host')).toHaveAttribute('aria-busy', 'true');
+    await expect(dialog.getByRole('button', { name: 'Close Matched call details', exact: true })).toBeEnabled();
+    await expect.poll(() => requests.some((query) => query.decision_sequence === '71' &&
+      query.session_id === 'diagnostic-session')).toBe(true);
+  } finally {
+    releaseDetails();
+  }
+  await expect(dialog.locator('.call-matching-comparison-table tbody tr')).toHaveCount(16);
+  await expect(dialog).toContainText('Elyria');
+  await expect(dialog.locator('.call-matching-comparison-host')).toHaveAttribute('aria-busy', 'false');
+  await expect(dialog.locator('.ui-feedback-loading')).toHaveCount(0);
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Resume call matching monitor', exact: true }).click();
   await page.evaluate(() => {

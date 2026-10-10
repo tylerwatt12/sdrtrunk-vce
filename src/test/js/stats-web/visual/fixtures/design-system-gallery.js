@@ -717,8 +717,9 @@ function initializeCompactRecords() {
     order.forEach((id) => headings.append(node('th', '', fields[id][0])));
     head.append(headings);
     const body = node('tbody');
-    rows.forEach((record) => {
-      const row = node('tr');
+    rows.forEach((record, index) => {
+      const row = node('tr', parameters.get('highlight') === '1' ?
+        `activity-row-new${index === 0 ? ' selected' : ''}` : '');
       order.forEach((id) => {
         const cell = node('td', `call-matching-field-${fields[id][1]}${id === 'talkgroup' ? ' ui-record-title' : ''}${
           id === 'action' ? ' ui-record-action' : ''}`);

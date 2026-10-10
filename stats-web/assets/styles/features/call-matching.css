@@ -64,15 +64,31 @@
   gap: var(--space-1);
 }
 
+.call-matching-comparison-host,
 .call-matching-comparison {
   min-width: 0;
+}
+
+.call-matching-comparison,
+.call-matching-comparison-summary {
   display: grid;
   gap: var(--space-4);
 }
 
 .call-matching-comparison-intro {
   display: grid;
-  gap: var(--space-1);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.call-matching-comparison-meta {
+  grid-column: 1 / -1;
+}
+
+.call-matching-comparison-group {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-3);
 }
 
 .call-matching-comparison-table {
@@ -121,6 +137,11 @@
 }
 
 @media (max-width: 560px) {
+  .call-matching-comparison-intro,
+  .call-matching-comparison-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .call-matching-field-match,
   .call-matching-field-outputs {
     grid-column: 1 / -1;
