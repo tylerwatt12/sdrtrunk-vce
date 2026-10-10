@@ -400,7 +400,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     private static CompletedAudioCall withoutAudio(CompletedAudioCall call)
     {
         return call != null ? new CompletedAudioCall(call.logicalCallId(), call.snapshot(), List.of(),
-            call.resolvedPolicy(), call.callLegSummaries()) : null;
+            call.resolvedPolicy(), call.callLegSummaries(), call.recordingIdentifierCollection()) : null;
     }
 
     private void processResolvedCall(CompletedAudioCall call)

@@ -21,6 +21,7 @@ package io.github.dsheirer.module.decode.p25.identifier.radio;
 
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
+import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
 import io.github.dsheirer.protocol.Protocol;
 
@@ -122,6 +123,20 @@ public class APCO25FullyQualifiedRadioIdentifier extends FullyQualifiedRadioIden
                                                                                ResolvedRadioIdentity.Evidence evidence)
     {
         return new APCO25FullyQualifiedRadioIdentifier(workingAddress, wacn, system, id, role, evidence);
+    }
+
+    private APCO25FullyQualifiedRadioIdentifier(APCO25FullyQualifiedRadioIdentifier retained,
+                                                RadioIdentifier recordingIdentifier)
+    {
+        super(retained.getValue(), retained.getWacn(), retained.getSystem(), retained.getRadio(), retained.getRole(),
+            retained.hasExplicitWorkingAddress(), retained.getResolutionEvidence(), recordingIdentifier);
+    }
+
+    /** Copies proven identity facts while carrying the independent protocol observation used by recordings. */
+    public static APCO25FullyQualifiedRadioIdentifier withRecordingIdentifier(
+        APCO25FullyQualifiedRadioIdentifier retained, RadioIdentifier recordingIdentifier)
+    {
+        return new APCO25FullyQualifiedRadioIdentifier(retained, recordingIdentifier);
     }
 
 }

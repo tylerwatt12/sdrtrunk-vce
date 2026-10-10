@@ -93,13 +93,13 @@ public class AudioMetadataUtils
         {
             StringBuilder sb;
 
-            Identifier to = identifierCollection.getToIdentifier();
+            Identifier to = BasicRecordingContract.recordingIdentifier(identifierCollection.getToIdentifier());
             if(to != null)
             {
                 sb = new StringBuilder();
                 sb.append(BasicRecordingContract.targetIdentifier(to));
 
-                List<Alias> toAliases = aliasList != null ? aliasList.getAliases(to) : List.of();
+                List<Alias> toAliases = BasicRecordingContract.recordingAliases(aliasList, to);
 
                 if(!toAliases.isEmpty())
                 {
@@ -109,13 +109,13 @@ public class AudioMetadataUtils
                 audioMetadata.put(AudioMetadata.TRACK_TITLE, sb.toString());
             }
 
-            Identifier from = identifierCollection.getFromIdentifier();
+            Identifier from = BasicRecordingContract.recordingIdentifier(identifierCollection.getFromIdentifier());
             if(from != null)
             {
                 sb = new StringBuilder();
                 sb.append(BasicRecordingContract.sourceIdentifier(from));
 
-                List<Alias> fromAliases = aliasList != null ? aliasList.getAliases(from) : List.of();
+                List<Alias> fromAliases = BasicRecordingContract.recordingAliases(aliasList, from);
 
                 for(Alias alias: fromAliases)
                 {

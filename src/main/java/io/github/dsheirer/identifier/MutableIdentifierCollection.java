@@ -23,6 +23,7 @@ import io.github.dsheirer.identifier.configuration.AliasListConfigurationIdentif
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.sample.Listener;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -200,6 +201,7 @@ public class MutableIdentifierCollection extends IdentifierCollection implements
 
             if(existing != null)
             {
+                identifier = retainWorkingAddressWithRecordingObservation(existing, identifier);
                 //Always replace a radio identifier with a fully qualified variant of itself
                 if(shouldReplace(existing, identifier) ||
                         (existing instanceof RadioIdentifier &&
@@ -233,6 +235,7 @@ public class MutableIdentifierCollection extends IdentifierCollection implements
 
             if(existing != null)
             {
+                identifier = retainWorkingAddressWithRecordingObservation(existing, identifier);
                 if(shouldReplace(existing, identifier))
                 {
                     silentRemove(existing);
@@ -244,6 +247,35 @@ public class MutableIdentifierCollection extends IdentifierCollection implements
                 silentAdd(identifier);
             }
         }
+    }
+
+    /**
+     * A direct canonical-only observation can change the upstream recording representation while omitting a
+     * working-address field. Retain the confirmed assignment and carry that raw observation separately.
+     */
+    private static Identifier retainWorkingAddressWithRecordingObservation(Identifier existing, Identifier candidate)
+    {
+        if(existing instanceof APCO25FullyQualifiedRadioIdentifier retained &&
+            candidate instanceof FullyQualifiedRadioIdentifier observed &&
+            retained.getResolutionEvidence() == ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT &&
+            observed.getResolutionEvidence() == ResolvedRadioIdentity.Evidence.DIRECT &&
+            observed.getWorkingAddress() == null && retained.equals(observed))
+        {
+            RadioIdentifier recordingIdentifier = observed.getRecordingIdentifier();
+            return sameRecordingObservation(retained.getRecordingIdentifier(), recordingIdentifier) ? retained :
+                APCO25FullyQualifiedRadioIdentifier.withRecordingIdentifier(retained, recordingIdentifier);
+        }
+        return candidate;
+    }
+
+    private static boolean sameRecordingObservation(RadioIdentifier first, RadioIdentifier second)
+    {
+        if(first == second) return true;
+        if(!first.equals(second) || !first.getValue().equals(second.getValue())) return false;
+        return !(first instanceof FullyQualifiedRadioIdentifier firstQualified &&
+            second instanceof FullyQualifiedRadioIdentifier secondQualified) ||
+            firstQualified.hasExplicitWorkingAddress() == secondQualified.hasExplicitWorkingAddress() &&
+                firstQualified.getResolutionEvidence() == secondQualified.getResolutionEvidence();
     }
 
     /**
@@ -263,7 +295,9 @@ public class MutableIdentifierCollection extends IdentifierCollection implements
             candidate instanceof FullyQualifiedRadioIdentifier candidateRadio)
         {
             Integer candidateWorkingAddress = candidateRadio.getWorkingAddress();
-            return candidateWorkingAddress != null &&
+            return candidateRadio.getRecordingIdentifier() != candidateRadio &&
+                !sameRecordingObservation(existingRadio.getRecordingIdentifier(), candidateRadio.getRecordingIdentifier()) ||
+                candidateWorkingAddress != null &&
                 (!candidateWorkingAddress.equals(existingRadio.getWorkingAddress()) ||
                     candidateRadio.getResolutionEvidence() == ResolvedRadioIdentity.Evidence.DIRECT &&
                     existingRadio.getResolutionEvidence() == ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT);

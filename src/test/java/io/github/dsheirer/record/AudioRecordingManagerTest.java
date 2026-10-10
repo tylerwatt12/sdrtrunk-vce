@@ -15,9 +15,16 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.mpatric.mp3agic.ID3v24Tag;
+import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
+import io.github.dsheirer.alias.AliasListDefinition;
+import io.github.dsheirer.alias.AliasListFamily;
+import io.github.dsheirer.alias.id.radio.P25Subscriber;
+import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.audio.call.AudioCallId;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
 import io.github.dsheirer.audio.call.CallEncryptionState;
@@ -25,9 +32,16 @@ import io.github.dsheirer.audio.call.CallLegId;
 import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
+import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.configuration.ChannelNameConfigurationIdentifier;
+import io.github.dsheirer.identifier.configuration.SiteConfigurationIdentifier;
+import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier;
+import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.record.RecordingMode;
+import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog;
 import io.github.dsheirer.util.TimeStamp;
 import java.io.IOException;
@@ -192,6 +206,106 @@ class AudioRecordingManagerTest
             scheduler.shutdownNow();
             preferences.getDirectoryPreference().setDirectoryRecording(originalDirectory);
             preferences.getRecordPreference().setAudioRecordFormat(originalFormat);
+        }
+    }
+
+    @Test
+    void classicMp3FilenameAndArtistKeepObservedRadioWhenOnlyAssignmentCacheQualifiedIt() throws Exception
+    {
+        UserPreferences preferences = new UserPreferences();
+        Path originalDirectory = preferences.getDirectoryPreference().getDirectoryRecording();
+        RecordFormat originalFormat = preferences.getRecordPreference().getAudioRecordFormat();
+        RecordingMode originalMode = preferences.getRecordPreference().getRecordingMode();
+        ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
+        List<Path> written = new ArrayList<>();
+        AtomicInteger recorded = new AtomicInteger();
+        AudioRecordingManager manager = new AudioRecordingManager(preferences,
+            ignored -> recorded.incrementAndGet(), scheduler, (call, path, format, userPreferences) -> {
+                AudioCallRecorder.write(call, path, format, userPreferences);
+                written.add(path);
+            });
+        AliasList aliases = new AliasList(new AliasListDefinition("SyntheticAliases", AliasListFamily.P25));
+        Alias local = new Alias("Local Unit");
+        local.setMatchIdentifier(new Radio(Protocol.APCO25, 85610));
+        aliases.addAlias(local);
+        Alias working = new Alias("Working Unit");
+        working.setMatchIdentifier(new Radio(Protocol.APCO25, 501));
+        aliases.addAlias(working);
+        Alias canonical = new Alias("Canonical Unit");
+        canonical.setMatchIdentifier(new P25Subscriber(0xBEE00, 0x687, 85610));
+        aliases.addAlias(canonical);
+        List<RadioRecordingFixture> fixtures = List.of(
+            new RadioRecordingFixture(APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(
+                85610, 0xBEE00, 0x687, 85610, Role.FROM, ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT),
+                "85610", "85610 Local Unit"),
+            new RadioRecordingFixture(APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(
+                501, 0xBEE00, 0x687, 85610, Role.FROM, ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT),
+                "501", "501 Working Unit"),
+            new RadioRecordingFixture(APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
+                85610, 0xBEE00, 0x687, 85610),
+                "781824_1671_85610", "781824.1671.85610 Canonical Unit"),
+            new RadioRecordingFixture(APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
+                501, 0xBEE00, 0x687, 85610),
+                "501_781824_1671_85610", "501(781824.1671.85610) Canonical Unit"));
+        List<CompletedAudioCall> calls = new ArrayList<>();
+
+        try
+        {
+            preferences.getDirectoryPreference().setDirectoryRecording(mTemporaryFolder);
+            preferences.getRecordPreference().setAudioRecordFormat(RecordFormat.MP3);
+            preferences.getRecordPreference().setRecordingMode(RecordingMode.CLASSIC);
+            manager.start();
+            for(int index = 0; index < fixtures.size(); index++)
+            {
+                RadioRecordingFixture fixture = fixtures.get(index);
+                MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+                identifiers.update(SystemConfigurationIdentifier.create("SyntheticSystem"));
+                identifiers.update(SiteConfigurationIdentifier.create("SyntheticSite"));
+                identifiers.update(ChannelNameConfigurationIdentifier.create("SyntheticChannel"));
+                identifiers.update(APCO25Talkgroup.create(48530));
+                identifiers.update(fixture.source());
+                long completedAt = System.currentTimeMillis();
+                long startedAt = completedAt - 1_000;
+                AudioCallId callId = new AudioCallId(1L, index + 1L, 1);
+                AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, aliases, identifiers, Set.of(),
+                    startedAt, completedAt, 1, 1, startedAt, completedAt, false, true,
+                    CallEncryptionState.CLEAR, true, null, VoiceCallQuality.EMPTY, CallLegId.from(callId), null, null);
+                List<float[]> audioBuffers = new ArrayList<>();
+                for(int frame = 0; frame < 50; frame++) audioBuffers.add(new float[160]);
+                CompletedAudioCall call = new CompletedAudioCall(snapshot, audioBuffers);
+                calls.add(call);
+                manager.receive(call);
+                assertEquals(index + 1, manager.getQueueStatus().queuedCalls());
+                assertEquals(0, manager.getQueueStatus().droppedRecordings());
+            }
+            manager.stop();
+
+            assertEquals(fixtures.size(), recorded.get());
+            assertEquals(fixtures.size(), written.size());
+            for(int index = 0; index < fixtures.size(); index++)
+            {
+                RadioRecordingFixture fixture = fixtures.get(index);
+                Path path = written.get(index);
+                assertTrue(path.getFileName().toString().matches("\\d{8}_\\d{6}_SyntheticSystem_SyntheticSite_" +
+                    "SyntheticChannel__TO_48530_FROM_" + fixture.filenameSource() + "\\.mp3"));
+                byte[] bytes = Files.readAllBytes(path);
+                ID3v24Tag tag = new ID3v24Tag(bytes);
+                assertEquals(fixture.artist(), tag.getArtist());
+                assertEquals("48530", tag.getTitle());
+                int tagSize = 10 + ((bytes[6] & 0x7F) << 21) + ((bytes[7] & 0x7F) << 14) +
+                    ((bytes[8] & 0x7F) << 7) + (bytes[9] & 0x7F);
+                assertTrue(bytes.length > tagSize, "recording must contain encoded audio after its ID3 tag");
+                assertSame(fixture.source(), calls.get(index).snapshot().identifierCollection().getFromIdentifier(),
+                    "recording compatibility must preserve canonical identity facts in the call snapshot");
+            }
+        }
+        finally
+        {
+            manager.stop();
+            scheduler.shutdownNow();
+            preferences.getDirectoryPreference().setDirectoryRecording(originalDirectory);
+            preferences.getRecordPreference().setAudioRecordFormat(originalFormat);
+            preferences.getRecordPreference().setRecordingMode(originalMode);
         }
     }
 
@@ -524,4 +638,7 @@ class AudioRecordingManagerTest
             return super.scheduleAtFixedRate(command, 1, 1, TimeUnit.DAYS);
         }
     }
+
+    private record RadioRecordingFixture(APCO25FullyQualifiedRadioIdentifier source, String filenameSource,
+                                         String artist) {}
 }

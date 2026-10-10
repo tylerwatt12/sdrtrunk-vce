@@ -11,6 +11,7 @@
 
 package io.github.dsheirer.audio.call;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
@@ -22,12 +23,26 @@ import java.util.List;
 /**
  * Final immutable representation of one resolved logical call.  The elected receiver leg owns the audio and
  * snapshot.  All physical receiver legs remain represented by compact summaries so that site observations can be
- * counted without treating each received copy as another system call.
+ * counted without treating each received copy as another system call. Standard recording filenames and tags use
+ * the winner's observed identifiers, retained separately from identities promoted by the logical-call resolver.
  */
 public record CompletedAudioCall(LogicalCallId logicalCallId, AudioCallSnapshot snapshot,
                                  List<float[]> audioBuffers, ResolvedCallPolicy resolvedPolicy,
-                                 List<CallLegSummary> callLegSummaries)
+                                 List<CallLegSummary> callLegSummaries,
+                                 @JsonIgnore IdentifierCollection recordingIdentifierCollection)
 {
+    /**
+     * Existing callers without a logical-call identity promotion use their snapshot's recording observations.
+     * The full constructor deliberately preserves a null recording collection when the winning leg had none.
+     */
+    public CompletedAudioCall(LogicalCallId logicalCallId, AudioCallSnapshot snapshot,
+                              List<float[]> audioBuffers, ResolvedCallPolicy resolvedPolicy,
+                              List<CallLegSummary> callLegSummaries)
+    {
+        this(logicalCallId, snapshot, audioBuffers, resolvedPolicy, callLegSummaries,
+            snapshot != null ? snapshot.identifierCollection() : null);
+    }
+
     /**
      * Creates an independent one-leg logical call.  This is used by conventional receivers and bounded component
      * tests that do not pass through the multi-site resolver.

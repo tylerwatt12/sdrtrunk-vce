@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.identifier.radio;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import io.github.dsheirer.identifier.Role;
 import java.util.Objects;
 
@@ -35,6 +36,7 @@ public abstract class FullyQualifiedRadioIdentifier extends RadioIdentifier
     private int mRadio;
     private final boolean mExplicitWorkingAddress;
     private final ResolvedRadioIdentity.Evidence mResolutionEvidence;
+    private final RadioIdentifier mRecordingIdentifier;
 
     /**
      * Constructs an instance
@@ -63,12 +65,30 @@ public abstract class FullyQualifiedRadioIdentifier extends RadioIdentifier
     protected FullyQualifiedRadioIdentifier(int localAddress, int wacn, int system, int id, Role role,
                                             boolean explicitWorkingAddress, ResolvedRadioIdentity.Evidence evidence)
     {
+        this(localAddress, wacn, system, id, role, explicitWorkingAddress, evidence, null);
+    }
+
+    protected FullyQualifiedRadioIdentifier(int localAddress, int wacn, int system, int id, Role role,
+                                            boolean explicitWorkingAddress, ResolvedRadioIdentity.Evidence evidence,
+                                            RadioIdentifier recordingIdentifier)
+    {
         super(localAddress, role);
         mWacn = wacn;
         mSystem = system;
         mRadio = id;
         mExplicitWorkingAddress = explicitWorkingAddress;
         mResolutionEvidence = Objects.requireNonNull(evidence);
+        mRecordingIdentifier = recordingIdentifier;
+    }
+
+    /**
+     * Raw recording observation retained independently when an identity-only protocol update leaves the proven
+     * working-address facts intact. Ordinary observations export themselves.
+     */
+    @JsonIgnore
+    public RadioIdentifier getRecordingIdentifier()
+    {
+        return mRecordingIdentifier != null ? mRecordingIdentifier : this;
     }
 
     public ResolvedRadioIdentity.Evidence getResolutionEvidence()

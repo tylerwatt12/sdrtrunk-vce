@@ -28,8 +28,13 @@ import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.radio.Radio;
+import io.github.dsheirer.alias.id.radio.RadioRange;
+import io.github.dsheirer.alias.id.radio.P25Subscriber;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.MutableIdentifierCollection;
+import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
 import io.github.dsheirer.identifier.configuration.ChannelNameConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.DecoderTypeConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
@@ -92,6 +97,62 @@ class AudioMetadataUtilsTest
 
         assertIdentities(AudioMetadataUtils.getMetadataMap(identifiers, null),
             "781824.1671.2115288", "703710.1110.9001");
+    }
+
+    @Test
+    void assignmentOnlyIdentityUsesObservedRadioAndItsAliasInMp3AndWaveTags() throws Exception
+    {
+        AliasList aliases = aliasList();
+        addAlias(aliases, "Observed Source", new Radio(Protocol.APCO25, 85610));
+        addAlias(aliases, "Observed Target", new Radio(Protocol.APCO25, 501));
+        addAlias(aliases, "Canonical Subscriber", new P25Subscriber(0xBEE00, 0x687, 85610));
+        IdentifierCollection identifiers = new IdentifierCollection(List.of(
+            APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(85610, 0xBEE00, 0x687, 85610,
+                Role.FROM, ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT),
+            APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(501, 0xBEE00, 0x687, 85610,
+                Role.TO, ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT)));
+
+        assertIdentities(AudioMetadataUtils.getMetadataMap(identifiers, aliases),
+            "85610 Observed Source", "501\"Observed Target\"");
+    }
+
+    @Test
+    void directQualifiedRadiosAndPatchMembersMatchOnlyQualifiedAliases() throws Exception
+    {
+        AliasList aliases = aliasList();
+        addAlias(aliases, "Local Unit", new Radio(Protocol.APCO25, 85610));
+        addAlias(aliases, "Working Range", new RadioRange(Protocol.APCO25, 500, 599));
+        var source = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(85610, 0xBEE00,
+            0x687, 85610);
+        var target = APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(501, 0xBEE00,
+            0x687, 85610);
+        assertIdentities(AudioMetadataUtils.getMetadataMap(new IdentifierCollection(List.of(source, target)), aliases),
+            "781824.1671.85610", "ROAM 501(781824.1671.85610)");
+
+        PatchGroup patch = new PatchGroup(APCO25Talkgroup.create(48530));
+        patch.addPatchedRadio(target);
+        assertIdentities(AudioMetadataUtils.getMetadataMap(new IdentifierCollection(List.of(APCO25PatchGroup.create(patch))),
+            aliases), null, "P:48530 [ROAM 501(781824.1671.85610)]");
+
+        addAlias(aliases, "Canonical Unit", new P25Subscriber(0xBEE00, 0x687, 85610));
+        assertIdentities(AudioMetadataUtils.getMetadataMap(new IdentifierCollection(List.of(source, target)), aliases),
+            "781824.1671.85610 Canonical Unit", "ROAM 501(781824.1671.85610)\"Canonical Unit\"");
+    }
+
+    @Test
+    void laterDirectCanonicalObservationKeepsItsUpstreamArtistWithoutErasingWorkingAssignment() throws Exception
+    {
+        AliasList aliases = aliasList();
+        addAlias(aliases, "Working Unit", new Radio(Protocol.APCO25, 501));
+        addAlias(aliases, "Canonical Unit", new P25Subscriber(0xBEE00, 0x687, 85610));
+        var identifiers = new MutableIdentifierCollection(List.of(
+            APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(501, 0xBEE00, 0x687, 85610,
+                Role.FROM, ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT)));
+        identifiers.update(APCO25FullyQualifiedRadioIdentifier.createFrom(85610, 0xBEE00, 0x687, 85610));
+
+        assertIdentities(AudioMetadataUtils.getMetadataMap(identifiers, aliases),
+            "781824.1671.85610 Canonical Unit", null);
+        assertEquals(501, ((APCO25FullyQualifiedRadioIdentifier)identifiers.getFromIdentifier()).getWorkingAddress());
     }
 
     @Test

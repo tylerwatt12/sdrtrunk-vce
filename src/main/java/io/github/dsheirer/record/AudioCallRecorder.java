@@ -54,7 +54,7 @@ public class AudioCallRecorder
     public static void write(CompletedAudioCall completedAudioCall, Path path, RecordFormat recordFormat,
                              UserPreferences userPreferences) throws IOException
     {
-        write(completedAudioCall, path, recordFormat, userPreferences, completedAudioCall.snapshot().identifierCollection());
+        write(completedAudioCall, path, recordFormat, userPreferences, completedAudioCall.recordingIdentifierCollection());
     }
 
     public static void write(CompletedAudioCall completedAudioCall, Path path, RecordFormat recordFormat,

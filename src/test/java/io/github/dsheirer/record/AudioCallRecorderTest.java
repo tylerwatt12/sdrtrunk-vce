@@ -21,6 +21,8 @@ import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.record.RecordingMode;
 import io.github.dsheirer.record.wave.WaveWriter;
@@ -101,6 +103,35 @@ class AudioCallRecorderTest
         ID3v24Tag tag = new ID3v24Tag(waveChunk(Files.readAllBytes(path), "id3 "));
         assertEquals("501(781824.1671.70001)", tag.getArtist());
         assertFalse(tag.getComment().contains("VC "));
+    }
+
+    @Test
+    void finalMp3AndWaveTagsUseOriginalWinnerIdentifiersAfterCanonicalCallResolution() throws Exception
+    {
+        CompletedAudioCall resolved = callWithQuality();
+        IdentifierCollection observed = new IdentifierCollection(List.of(
+            SystemConfigurationIdentifier.create("SyntheticSystem"),
+            APCO25RadioIdentifier.createFrom(501), APCO25Talkgroup.create(48530)));
+        CompletedAudioCall call = new CompletedAudioCall(resolved.logicalCallId(), resolved.snapshot(),
+            resolved.audioBuffers(), resolved.resolvedPolicy(), resolved.callLegSummaries(), observed);
+
+        for(RecordFormat format: RecordFormat.values())
+        {
+            Path path = mDirectory.resolve("winner" + format.getExtension());
+            AudioCallRecorder.write(call, path, format, new UserPreferences());
+            byte[] bytes = Files.readAllBytes(path);
+            ID3v24Tag tag = new ID3v24Tag(format == RecordFormat.MP3 ? bytes : waveChunk(bytes, "id3 "));
+            assertEquals("501", tag.getArtist());
+            assertEquals("48530", tag.getTitle());
+            if(format == RecordFormat.WAVE)
+            {
+                String info = new String(waveChunk(bytes, "LIST"), StandardCharsets.UTF_8);
+                assertFalse(info.contains("781824.1671"));
+                assertFalse(info.contains("703710.1110"));
+            }
+        }
+        assertTrue(call.snapshot().identifierCollection().getFromIdentifier() instanceof
+            APCO25FullyQualifiedRadioIdentifier, "Call matching retains the resolved canonical identity");
     }
 
     @Test

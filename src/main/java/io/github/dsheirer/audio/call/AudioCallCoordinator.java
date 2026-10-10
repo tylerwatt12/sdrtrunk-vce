@@ -1279,7 +1279,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                 positiveTimeslot(leg.snapshot.timeslot()))).toList();
 
         return new CompletedAudioCall(new LogicalCallId(mCoordinatorId, mNextLogicalCallSequence++),
-            resolvedSnapshot, winner.audioBuffers, policy, summaries);
+            resolvedSnapshot, winner.audioBuffers, policy, summaries, winnerSnapshot.identifierCollection());
     }
 
     private void recordResolvedDecision(CompletedAudioCall resolvedCall, List<CompletedReceiverLeg> legs,

@@ -201,7 +201,7 @@ public class AudioRecordingManager
                 boolean writeStarted = false;
                 long writerTimestamp = System.currentTimeMillis();
                 int unknownIndex = mUnknownAudioRecordingIndex;
-                if(!managed && completedAudioCall.snapshot().identifierCollection() == null)
+                if(!managed && completedAudioCall.recordingIdentifierCollection() == null)
                 {
                     if(++mUnknownAudioRecordingIndex <= 0) mUnknownAudioRecordingIndex = 1;
                 }
@@ -210,7 +210,7 @@ public class AudioRecordingManager
                 {
                     path = managed ? getManagedRecordingPath(completedAudioCall) :
                         BasicRecordingContract.nextPath(getRecordingBasePath(),
-                            completedAudioCall.snapshot().identifierCollection(), recordFormat, writerTimestamp,
+                            completedAudioCall.recordingIdentifierCollection(), recordFormat, writerTimestamp,
                             unknownIndex);
 
                     if(managed)
@@ -232,7 +232,7 @@ public class AudioRecordingManager
                         {
                             if(managed || attempt >= 31) throw collision;
                             path = BasicRecordingContract.nextPath(getRecordingBasePath(),
-                                completedAudioCall.snapshot().identifierCollection(), recordFormat, writerTimestamp,
+                                completedAudioCall.recordingIdentifierCollection(), recordFormat, writerTimestamp,
                                 unknownIndex);
                         }
                     }
@@ -254,7 +254,7 @@ public class AudioRecordingManager
                         CompletedAudioCall observedCall = mRecordedCallConsumer != null ?
                             new CompletedAudioCall(completedAudioCall.logicalCallId(),
                                 completedAudioCall.snapshot(), List.of(), completedAudioCall.resolvedPolicy(),
-                                completedAudioCall.callLegSummaries()) : null;
+                                completedAudioCall.callLegSummaries(), completedAudioCall.recordingIdentifierCollection()) : null;
                         if(mManagedRecordingSink != null &&
                             mManagedRecordingSink.submit(path, completedAudioCall, fileSize,
                                 observedCall != null ? () -> notifyRecorded(observedCall) : null))

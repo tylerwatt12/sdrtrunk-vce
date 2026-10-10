@@ -4,18 +4,26 @@
  */
 package io.github.dsheirer.record;
 
+import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.application.ApplicationInfo;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
+import io.github.dsheirer.identifier.radio.RadioIdentifier;
+import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
 import io.github.dsheirer.identifier.string.StringIdentifier;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.identifier.tone.Tone;
 import io.github.dsheirer.identifier.tone.ToneIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.util.StringUtils;
 import io.github.dsheirer.util.TimeStamp;
 import java.io.IOException;
@@ -26,18 +34,68 @@ import java.util.List;
 
 /**
  * Basic/Classic recording compatibility with DSheirer/sdrtrunk a9120ed65e5b9f91cf460544efdab4863d7e4b45.
+ * Filename and standard metadata sources verified unchanged through 728a83a82d952125d93c675280a74a81b94e810e.
  *
  * <p>External importers depend on Basic filenames and existing ID3/WAV fields in every recording/export mode.
  * Do not change their schema or values
  * to follow application branding, display labels, or additional identity facts. New metadata must use new fields.
- * Qualified addresses deliberately retain the upstream decimal, local-address-first representation.</p>
+ * Directly decoded qualified addresses retain the upstream decimal, local-address-first representation.
+ * VCE assignment enrichment must not turn an ordinary over-air radio into a qualified recording identity.
+ * Call resolution must likewise retain the audio winner's original recording identifiers.</p>
  */
 public final class BasicRecordingContract
 {
     private BasicRecordingContract() {}
 
+    /** Restores the over-air identifier for both upstream text and Alias List lookup. */
+    public static Identifier<?> recordingIdentifier(Identifier<?> identifier)
+    {
+        if(identifier instanceof FullyQualifiedRadioIdentifier radio)
+        {
+            if(radio.getRecordingIdentifier() != radio)
+            {
+                return recordingIdentifier(radio.getRecordingIdentifier());
+            }
+            if(radio.getResolutionEvidence() == ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT)
+            {
+                return new APCO25RadioIdentifier(radio.getValue(), radio.getRole());
+            }
+        }
+        return identifier;
+    }
+
+    /** Mainline qualified-radio tags match a qualified Alias only, without a local working-ID fallback. */
+    public static List<Alias> recordingAliases(AliasList aliases, Identifier<?> identifier)
+    {
+        return aliases != null && identifier != null ? aliases.getAliases(aliasLookupIdentifier(identifier)) : List.of();
+    }
+
+    private static Identifier<?> aliasLookupIdentifier(Identifier<?> identifier)
+    {
+        identifier = recordingIdentifier(identifier);
+        if(identifier instanceof FullyQualifiedRadioIdentifier radio)
+        {
+            //An identity-only lookup retains the exact home tuple while disabling VCE's working-address fallback.
+            return new APCO25FullyQualifiedRadioIdentifier(0, radio.getWacn(), radio.getSystem(), radio.getRadio(),
+                radio.getRole());
+        }
+        if(identifier instanceof PatchGroupIdentifier patch && patch.getValue() != null)
+        {
+            PatchGroup original = patch.getValue();
+            PatchGroup lookup = new PatchGroup(original.getPatchGroup(), original.getVersion());
+            lookup.addPatchedTalkgroups(original.getPatchedTalkgroupIdentifiers());
+            for(RadioIdentifier radio: original.getPatchedRadioIdentifiers())
+            {
+                lookup.addPatchedRadio((RadioIdentifier)aliasLookupIdentifier(radio));
+            }
+            return APCO25PatchGroup.create(lookup);
+        }
+        return identifier;
+    }
+
     private static String identifierText(Identifier<?> identifier)
     {
+        identifier = recordingIdentifier(identifier);
         if(identifier instanceof FullyQualifiedRadioIdentifier radio)
         {
             String home = radio.getWacn() + "." + radio.getSystem() + "." + radio.getRadio();
