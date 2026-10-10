@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="440" viewBox="0 0 1600 440" role="img" aria-labelledby="header-title header-description">
+  <title id="header-title">VCE</title>
+  <desc id="header-description">The VCE wordmark surrounded by wireframe cubes, a sphere, and pyramids on a dark blue background.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1600" y2="440" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#081923"/>
+      <stop offset=".55" stop-color="#07111d"/>
+      <stop offset="1" stop-color="#0b2430"/>
+    </linearGradient>
+    <linearGradient id="grid-fade" x1="0" y1="0" x2="1600" y2="0" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#55d6c5" stop-opacity=".16"/>
+      <stop offset=".35" stop-color="#55d6c5" stop-opacity=".025"/>
+      <stop offset=".65" stop-color="#55d6c5" stop-opacity=".025"/>
+      <stop offset="1" stop-color="#55d6c5" stop-opacity=".16"/>
+    </linearGradient>
+    <clipPath id="frame"><rect width="1600" height="440" rx="18"/></clipPath>
+  </defs>
+  <g clip-path="url(#frame)">
+    <rect width="1600" height="440" fill="url(#background)"/>
+    <g fill="none" stroke="url(#grid-fade)" stroke-width="1.2">
+      <path d="M-140 80 620 440 M-140 -60 920 440 M-140 220 320 440 M940 0 1740 380 M1230 0 1740 240 M1520 0 1740 100"/>
+      <path d="M-140 420 730 0 M-140 280 430 0 M-140 140 140 0 M840 440 1740 0 M1130 440 1740 140 M1420 440 1740 280"/>
+      <path d="M98 0V440 M366 0V440 M1240 0V440 M1510 0V440"/>
+    </g>
+    <!-- Wireframe cube: three front faces and the quieter rear edges. -->
+    <g fill="none" stroke="#55d6c5" stroke-width="1.8" stroke-linejoin="round">
+      <path d="M68 131 217 62 365 133 216 206Z M68 131V299L216 373V206 M216 373 365 302V133" opacity=".8"/>
+      <path d="M217 62V230 M68 299 217 230 365 302" opacity=".3"/>
+    </g>
+    <!-- A smaller wireframe pyramid balances the foreground cube. -->
+    <g fill="none" stroke="#55d6c5" stroke-width="1.5" stroke-linejoin="round">
+      <path d="M418 278 339 395 487 421Z M418 278 406 382 339 395 M406 382 487 421" opacity=".64"/>
+    </g>
+    <!-- Longitude and latitude lines keep the system sphere entirely wireframe. -->
+    <g transform="translate(1314 176) rotate(-17)" fill="none" stroke="#55d6c5" stroke-width="1.5" opacity=".47">
+      <circle r="139"/>
+      <ellipse rx="107" ry="139"/>
+      <ellipse rx="57" ry="139"/>
+      <path d="M0-139V139"/>
+      <ellipse rx="139" ry="50"/>
+      <path d="M-128-55C-95-99 95-99 128-55 M-128-55C-89-27 89-27 128-55 M-128 55C-89 27 89 27 128 55 M-128 55C-95 99 95 99 128 55"/>
+    </g>
+    <g fill="none" stroke="#55d6c5" stroke-width="1.8" stroke-linejoin="round">
+      <path d="M1158 247 1063 384 1291 412Z M1158 247 1140 372 1063 384 M1140 372 1291 412" opacity=".82"/>
+    </g>
+    <g fill="none" stroke="#55d6c5" stroke-width="1.5" stroke-linejoin="round">
+      <path d="M1460 309 1530 277 1600 311 1530 345Z M1460 309V387L1530 422V345 M1530 422 1600 389V311" opacity=".5"/>
+      <path d="M1530 277V354 M1460 387 1530 354 1600 389" opacity=".2"/>
+    </g>
+    <!-- Original VCE vector geometry, unchanged. -->
+    <path d="M0 6 C0 3 2 1 17 1 H89 C105 1 114 5 120 14 L247 199 360 43 C382 14 412 1 447 1 H677 L689 3 C687 11 678 17 671 26 L643 63 C635 73 627 78 612 78 H459 C437 78 424 94 414 107 L287 280 C281 289 275 293 267 293 H206 C197 293 191 288 187 281 L8 18 C4 13 1 9 0 6 Z M406 151 360 214 C379 261 415 290 463 292 L568 293 C593 293 620 276 635 256 L749 104 C763 86 779 76 799 76 L963 77 C983 77 995 76 1004 64 L1048 1 770 0 C736 0 705 17 686 43 L596 165 C585 179 576 194 567 202 C555 218 540 222 520 222 H497 C457 222 428 197 414 159 L411 148 408 148 Z M723 176 C722 178 723 180 725 180 H918 C930 180 938 173 941 161 L962 135 C966 129 968 124 967 118 H779 C768 118 762 127 756 135 Z M704 219 H943 C963 219 979 226 991 239 L1015 266 C1024 276 1031 286 1033 289 V292 H629 V289 L653 264 678 231 C685 223 694 219 704 219 Z" fill="#f2f5f7" fill-rule="evenodd" transform="translate(501 136) scale(.57)"/>
+  </g>
+</svg>
