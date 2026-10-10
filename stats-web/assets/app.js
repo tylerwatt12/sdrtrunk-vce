@@ -25078,16 +25078,16 @@ async function openChannelCreationChoice(prefetched = null) {
   const body = node('div', 'ui-confirmation-content');
   let modal;
   const choices = [
-    { id: 'import', title: 'Import from RadioReference',
+    { id: 'import', title: 'Import from RadioReference', icon: 'icon-radioreference',
       description: 'Find radio systems and channels in your area using the RadioReference database.',
       help: 'A RadioReference Premium subscription is required.', view: 'radioreference',
       action: () => navigateTo(href('radioreference', { from: 'channel-setup' })) },
-    { id: 'manual', title: 'Create a channel from scratch',
+    { id: 'manual', title: 'Create a channel from scratch', icon: 'icon-edit',
       description: 'Enter a known frequency and configure the channel yourself.', view: 'channel-setup',
       action: () => void openChannelEditorModal('create', null, prefetched) }
   ];
   for (const choice of choices) {
-    const button = node('button', 'ui-choice-card');
+    const button = node('button', 'ui-choice-card ui-choice-card-with-icon');
     button.type = 'button';
     button.setAttribute('aria-label', choice.title);
     button.disabled = !viewAllowed(choice.view);
@@ -25109,7 +25109,7 @@ async function openChannelCreationChoice(prefetched = null) {
       copy.append(restriction);
     }
     button.setAttribute('aria-describedby', describedBy.join(' '));
-    button.append(copy);
+    button.append(iconGlyph(choice.icon), copy);
     button.addEventListener('click', () => {
       if (!viewAllowed(choice.view)) return;
       const proceed = () => { if (viewAllowed(choice.view)) choice.action(); };

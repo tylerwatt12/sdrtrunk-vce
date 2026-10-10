@@ -102,6 +102,7 @@
 }
 
 .ui-button svg,
+.ui-choice-card-with-icon > svg,
 .ui-segmented-option-icon svg,
 .ui-pill svg,
 .ui-icon-tile svg,
@@ -959,6 +960,14 @@
 .ui-choice-card:hover:not(:disabled) {
   border-color: var(--accent);
   background: var(--surface);
+}
+
+.ui-choice-card-with-icon {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-3);
+  text-align: start;
 }
 
 .ui-choice-card[aria-pressed="true"],
