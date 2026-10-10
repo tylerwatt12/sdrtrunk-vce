@@ -1,5 +1,7 @@
 # SDRTrunk VCE
 
+![VCE logo with blue-green wireframe shapes](docs/assets/vce-readme-header.svg)
+
 SDRTrunk VCE is an enhanced fork of [sdrtrunk](https://github.com/DSheirer/sdrtrunk) for receiving, listening to,
 recording, and streaming radio traffic. It adds a built-in web interface, flexible Scan Lists, searchable recordings,
 and detailed activity and signal history, alongside improvements to decoding and receiver reliability.
