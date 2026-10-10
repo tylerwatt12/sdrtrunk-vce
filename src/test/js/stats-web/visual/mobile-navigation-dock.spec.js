@@ -102,7 +102,7 @@ for (const viewport of viewports) {
       await expect(personalActions.locator('button > svg[aria-hidden="true"]')).toHaveCount(3);
       const actionsBox = await personalActions.boundingBox();
       const summaryBox = await page.locator('.user-settings-summary .settings-card').first().boundingBox();
-      expect(actionsBox.y + actionsBox.height).toBeLessThanOrEqual(summaryBox.y);
+      expect(summaryBox.y - (actionsBox.y + actionsBox.height)).toBeGreaterThanOrEqual(16);
       await expect(statusIcon).toBeVisible();
       await expect(reset).toBeVisible();
       await reset.click();

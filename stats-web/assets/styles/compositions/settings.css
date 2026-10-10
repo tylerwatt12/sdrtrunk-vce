@@ -374,6 +374,10 @@
   background: var(--surface-2);
 }
 
+.user-settings-summary {
+  display: grid;
+}
+
 .settings-card-grid {
   width: 100%;
   display: grid;
