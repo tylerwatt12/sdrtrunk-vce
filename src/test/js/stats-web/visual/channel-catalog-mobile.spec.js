@@ -66,13 +66,31 @@ async function expectPointerReachable(button) {
   })).toBe(true);
 }
 
+async function expectHeaderContentsCentered(table) {
+  const headers = await table.locator('thead th').evaluateAll((cells) => cells
+    .filter((cell) => cell.getClientRects().length)
+    .map((cell) => {
+      const child = cell.querySelector('.ui-selection-check, .table-column-label');
+      const bounds = cell.getBoundingClientRect();
+      const content = child.getBoundingClientRect();
+      return { label: cell.dataset.column,
+        offset: Math.abs(content.y + content.height / 2 - bounds.y - bounds.height / 2) };
+    }));
+  expect(headers.length).toBeGreaterThan(0);
+  for (const { label, offset } of headers) {
+    expect(offset, `${label} header content should be vertically centered`).toBeLessThanOrEqual(1);
+  }
+}
+
 for (const theme of ['light', 'dark']) {
-  for (const width of [320, 390]) {
-    test(`mobile Channel Setup cards fit frequencies and startup controls ${theme} ${width}`, async ({ page }) => {
+  for (const width of [320, 390, 1280]) {
+    test(`Channel Setup catalog centers headers and fits frequencies and startup controls ${theme} ${width}`, async ({ page }) => {
       await page.setViewportSize({ width, height: 844 });
       const fixture = await openChannelCatalog(page, theme);
-      const row = page.locator('.channel-catalog-table tr[data-id="mobile-simulcast"]');
+      const table = page.locator('.channel-catalog-table');
+      const row = table.locator('tr[data-id="mobile-simulcast"]');
       await expect(row).toBeVisible();
+      await expectHeaderContentsCentered(table);
       const frequencies = row.locator('td[data-column="frequency"]');
       const textGeometry = await frequencies.evaluate((cell) => {
         const bounds = cell.getBoundingClientRect();
@@ -103,7 +121,7 @@ for (const theme of ['light', 'dark']) {
       await expect(row.locator('.channel-order-number')).toHaveText('18');
       expect(fixture.moves).toEqual(['EARLIER', 'LATER']);
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
-      await row.screenshot({ path: test.info().outputPath(`channel-card-${theme}-${width}.png`) });
+      await table.screenshot({ path: test.info().outputPath(`channel-catalog-${theme}-${width}.png`) });
     });
   }
 }

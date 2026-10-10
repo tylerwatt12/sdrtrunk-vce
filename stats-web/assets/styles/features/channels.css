@@ -50,6 +50,7 @@
 
 .channel-catalog-table thead th {
   height: var(--control-height-comfortable);
+  vertical-align: middle;
 }
 
 .channel-catalog-table tbody tr {
