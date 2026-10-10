@@ -1,3 +1,5 @@
+import { radioReferenceLocalityCache } from './radioreference-locality-cache.js?v=1';
+
 const API_ROOT = '/api/v1/admin/radioreference';
 
 export const RADIO_REFERENCE_IMPORT_PATHS = Object.freeze({
@@ -1848,19 +1850,23 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         county.disabled = false;
         return;
       }
-      const response = await api(query(RADIO_REFERENCE_IMPORT_PATHS.counties,
-        { state_id: region.value, offset: 0, limit: 500 }));
+      const stateId = region.value;
+      const items = await radioReferenceLocalityCache.load(`counties:${stateId}`, async () =>
+        rows(await api(query(RADIO_REFERENCE_IMPORT_PATHS.counties,
+          { state_id: stateId, offset: 0, limit: 500 }), { page: false })));
       if (sequence !== locationSequence || initializeSequence !== state.initializeSequence) return;
-      setOptions(county, rows(response), selected, 'All counties', true);
+      setOptions(county, items, selected, 'All counties', true);
       county.disabled = false;
     };
     const loadStates = async (selectedRegion = null, selectedCounty = null, sequence = locationSequence) => {
       region.disabled = true;
       county.disabled = true;
       setOptions(region, [], null, 'Loading regions…', true);
-      const response = await api(query(RADIO_REFERENCE_IMPORT_PATHS.states, { country_id: country.value }));
+      const countryId = country.value;
+      const items = await radioReferenceLocalityCache.load(`states:${countryId}`, async () =>
+        rows(await api(query(RADIO_REFERENCE_IMPORT_PATHS.states, { country_id: countryId }), { page: false })));
       if (sequence !== locationSequence || initializeSequence !== state.initializeSequence) return;
-      setOptions(region, rows(response), selectedRegion, 'All states or regions', true);
+      setOptions(region, items, selectedRegion, 'All states or regions', true);
       region.disabled = false;
       await loadCounties(selectedCounty, sequence);
     };
@@ -1956,7 +1962,8 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     try {
       const [aliasesDocument, countriesDocument, bookmarksDocument, preferencesResult] = await Promise.all([
         requestJson('/api/v1/admin/alias-lists?include_counts=false', { csrf: false }),
-        api(RADIO_REFERENCE_IMPORT_PATHS.countries),
+        radioReferenceLocalityCache.load('countries', async () =>
+          rows(await api(RADIO_REFERENCE_IMPORT_PATHS.countries, { page: false }))),
         api(RADIO_REFERENCE_IMPORT_PATHS.bookmarks),
         api(RADIO_REFERENCE_IMPORT_PATHS.systemPreferences)
           .then((value) => ({ value }), (error) => ({ error }))

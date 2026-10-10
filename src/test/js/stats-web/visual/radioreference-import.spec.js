@@ -477,6 +477,42 @@ test('country picker follows desktop priority, name, and ID order', async ({ pag
     .toEqual(['1', '2', '3', '4', '5', '10', '11', '8', '9']);
 });
 
+test('country, state and county lists survive reload while directory results stay fresh', async ({ page }) => {
+  const localityCalls = () => page.evaluate(() => window.radioReferenceVisual.calls
+    .filter(([path]) => /\/(countries|states|counties)(?:\?|$)/.test(path)));
+  const directoryCalls = () => page.evaluate(() => window.radioReferenceVisual.calls
+    .filter(([path]) => path.includes('/browse/catalog?')).length);
+  await installWorkspace(page);
+  await expect(page.getByRole('combobox', { name: 'County', exact: true })).toHaveValue('49');
+  await expect(page.locator('.radioreference-result-open').first()).toBeVisible();
+  const initialCalls = await localityCalls();
+  expect(initialCalls).toHaveLength(3);
+  expect(initialCalls.every(([, options]) => options.page === false)).toBe(true);
+  expect(await directoryCalls()).toBe(1);
+  await installWorkspace(page);
+  await expect(page.getByRole('combobox', { name: 'Country', exact: true })).toHaveValue('1');
+  await expect(page.getByRole('combobox', { name: 'State or region', exact: true })).toHaveValue('39');
+  await expect(page.getByRole('combobox', { name: 'County', exact: true })).toHaveValue('49');
+  await expect(page.locator('.radioreference-result-open').first()).toBeVisible();
+  expect(await localityCalls()).toHaveLength(0);
+  expect(await directoryCalls()).toBe(1);
+  await page.evaluate(() => {
+    const key = 'sdrtrunk-vce-radioreference-localities-v1';
+    const record = JSON.parse(localStorage.getItem(key));
+    for (const entry of record.entries) entry.storedAt -= 31 * 24 * 60 * 60 * 1000;
+    localStorage.setItem(key, JSON.stringify(record));
+  });
+  await installWorkspace(page);
+  await expect(page.getByRole('combobox', { name: 'County', exact: true })).toHaveValue('49');
+  await expect(page.locator('.radioreference-result-open').first()).toBeVisible();
+  expect(await localityCalls()).toHaveLength(3);
+  await page.evaluate(() => window.radioReferenceVisual.workspace.setConfiguration({
+    account: { state: 'SIGNED_OUT' }
+  }));
+  await expect(page.getByRole('heading', { name: 'Connect RadioReference to import', exact: true })).toBeVisible();
+  await expect(page.getByRole('combobox', { name: 'Country', exact: true })).toHaveCount(0);
+});
+
 test('Alias List creation updates every import picker without losing talkgroup selections', async ({ page }) => {
   await installWorkspace(page, 'light', false, false, 'alias-create');
   await openSystem(page);

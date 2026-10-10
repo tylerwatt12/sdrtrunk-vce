@@ -27,7 +27,8 @@ import {
   createAliasList,
   createAliasListPopupTrigger as buildAliasListPopupTrigger
 } from './features/alias-list-create.js?v=5';
-import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=27';
+import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=28';
+import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
 import { createStreamingWorkspace } from './features/streaming.js?v=8';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=9';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=13';
@@ -27172,12 +27173,14 @@ async function renderAdminRadioReferenceSettings() {
     state.disabled = true;
     regionWorkflow.setReady(false);
     replaceRadioReferenceOptions(state, [], null, 'Loading states or regions…');
-    const response = await requestJson(`/api/v1/admin/radioreference/states?country_id=${
-      encodeURIComponent(countryId)}`, { csrf: false,
-      timeoutMs: RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS });
+    const items = await radioReferenceLocalityCache.load(`states:${countryId}`, async () => {
+      const response = await requestJson(`/api/v1/admin/radioreference/states?country_id=${
+        encodeURIComponent(countryId)}`, { csrf: false, page: false,
+        timeoutMs: RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS });
+      return Array.isArray(response?.items) ? response.items : [];
+    });
     if (sequence !== regionLoadSequence || country.value !== String(countryId) ||
         configuration?.account?.state !== 'VALID_PREMIUM') return null;
-    const items = Array.isArray(response?.items) ? response.items : [];
     const selected = items.some((item) => String(item.id) === String(selectedStateId)) ?
       String(selectedStateId) : '';
     state.replaceChildren(...uiSelect(items.map((item) => ({ value: item.id,
@@ -27196,10 +27199,13 @@ async function renderAdminRadioReferenceSettings() {
     regionWorkflow.setReady(false);
     regionWorkflow.showFeedback('loading', 'Loading lookup region…');
     try {
-      const response = await requestJson('/api/v1/admin/radioreference/countries', { csrf: false,
-        timeoutMs: RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS });
+      const countries = await radioReferenceLocalityCache.load('countries', async () => {
+        const response = await requestJson('/api/v1/admin/radioreference/countries', { csrf: false, page: false,
+          timeoutMs: RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS });
+        return Array.isArray(response?.items) ? response.items : [];
+      });
       if (sequence !== regionLoadSequence || configuration?.account?.state !== 'VALID_PREMIUM') return;
-      const items = sortRadioReferenceCountries(response?.items);
+      const items = sortRadioReferenceCountries(countries);
       const savedCountryAvailable = items.some((item) => String(item.id) === String(configuration?.country_id));
       const available = replaceRadioReferenceOptions(country, items, configuration?.country_id,
         'No countries available');

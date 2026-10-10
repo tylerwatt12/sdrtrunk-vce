@@ -433,6 +433,8 @@ async function checkAliasCoverageIndependentCount() {
 }
 
 async function main() {
+  await require('./radioreference-locality-cache.test').checkLocalityCache(
+    path.resolve(core, '../features/radioreference-locality-cache.js'));
   const [routes, preferences, preferenceSchema, tableLayouts, tableDefaults, pageTitles, entityRefs, playerModule] =
     await Promise.all([
     'routes', 'user-preferences', 'preference-schema', 'table-layout', 'table-defaults', 'page-title', 'entity-ref',
