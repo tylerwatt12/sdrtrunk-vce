@@ -31404,6 +31404,16 @@ function callMatchingComparison(decision, signal) {
   const copies = callMatchingCopies(decision);
   const runnerUp = copies.find((copy) => copy.copy_index === decision.winner?.runner_up_copy_index);
   const body = node('div', 'call-matching-comparison');
+  const disclosure = (label, open = false) => {
+    const group = node('details', 'ui-section-disclosure ui-section-disclosure-flat call-matching-comparison-group');
+    group.open = open;
+    const heading = node('summary', 'ui-section-summary', label);
+    heading.tabIndex = 0;
+    const content = node('div', 'ui-section-body');
+    group.append(heading, content);
+    return { group, content };
+  };
+  const callIdentity = disclosure('Call identity', true);
   const intro = node('header', 'call-matching-comparison-intro');
   for (const [label, destination] of [['Target', true], ['Radio', false]]) {
     const group = node('div', 'ui-heading-group');
@@ -31419,7 +31429,8 @@ function callMatchingComparison(decision, signal) {
   intro.append(node('span', 'ui-label ui-muted call-matching-comparison-meta',
     `${callMatchingDuration(Number(identity.end_timestamp || 0) -
       Number(identity.start_timestamp || 0))} · ${copies.length} receiver copies`));
-  body.append(intro);
+  callIdentity.content.append(intro);
+  body.append(callIdentity.group);
 
   const summary = node('div', 'call-matching-comparison-summary');
   for (const [title, entries] of [
@@ -31444,8 +31455,7 @@ function callMatchingComparison(decision, signal) {
       ['Home System ID', identity.source_home_system_id == null ? '—' : hexDecimalPair(identity.source_home_system_id, 3)]
     ]]
   ]) {
-    const group = node('section', 'call-matching-comparison-group');
-    group.append(node('h3', 'ui-section-heading', title));
+    const group = disclosure(title, title === 'Selection and matching');
     const facts = node('dl', 'ui-fact-list ui-fact-list-grid call-matching-comparison-facts');
     for (const [label, value] of entries) {
       const fact = node('div', 'ui-fact-row');
@@ -31454,19 +31464,16 @@ function callMatchingComparison(decision, signal) {
       fact.append(node('dt', '', label), detail);
       facts.append(fact);
     }
-    group.append(facts);
-    summary.append(group);
+    group.content.append(facts);
+    summary.append(group.group);
   }
   body.append(summary);
-  const heading = node('header', 'ui-table-titlebar');
-  const headingText = node('div', 'ui-heading-group');
-  headingText.append(node('h3', '', 'Copy comparison'));
-  heading.append(headingText);
+  const comparison = disclosure('Copy comparison');
   const tableActions = node('div', 'ui-table-actions');
-  heading.append(tableActions);
-  body.append(heading);
+  comparison.content.append(tableActions);
+  body.append(comparison.group);
   if (!copies.length) {
-    body.append(node('div', 'empty', 'No comparison details are available for this call.'));
+    comparison.content.append(node('div', 'empty', 'No comparison details are available for this call.'));
     return body;
   }
   const wrap = node('div', 'call-matching-comparison-scroll ui-table-wrap');
@@ -31541,7 +31548,7 @@ function callMatchingComparison(decision, signal) {
   wrap.append(matrix);
   createTableOverflow({ wrapper: wrap, table: matrix, actionsHost: tableActions,
     iconButton, signal, label: 'Copy comparison' });
-  body.append(wrap, node('p', 'muted call-matching-comparison-hint',
+  comparison.content.append(wrap, node('p', 'muted call-matching-comparison-hint',
     'Matching configuration numbers mean the same saved channel. Time overlap measures call timing.'));
   return body;
 }

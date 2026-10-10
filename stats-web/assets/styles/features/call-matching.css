@@ -87,8 +87,6 @@
 
 .call-matching-comparison-group {
   min-width: 0;
-  display: grid;
-  gap: var(--space-3);
 }
 
 .call-matching-comparison-table {
