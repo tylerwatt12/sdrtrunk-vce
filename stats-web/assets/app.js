@@ -32,7 +32,7 @@ import { radioReferenceLocalityCache } from './features/radioreference-locality-
 import { createStreamingWorkspace } from './features/streaming.js?v=8';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=9';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=13';
-import { createRecordingsFeature } from './features/recordings.js?v=28';
+import { createRecordingsFeature } from './features/recordings.js?v=29';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=27';
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=8';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
@@ -32209,7 +32209,7 @@ applicationRoutes = routeFoundation.createRegistry({
 }, routeDefinitionAllowed);
 
 const recordingsFeature = createRecordingsFeature({
-  node, requestJson, openReadOnlyModal, closeReadOnlyModal, section, pageHeader, beginPage, uiToggleField, metrics, browsingWorkflows,
+  node, iconButton, requestJson, openReadOnlyModal, closeReadOnlyModal, section, pageHeader, beginPage, uiToggleField, metrics, browsingWorkflows,
   modalFooter: aliasModalFooter,
   captureRenderContext, renderIsCurrent, content, href, anchor, entityRefHref,
   canViewRadio: () => capabilityAllowed(ACCESS_CAPABILITIES.RADIO),

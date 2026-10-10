@@ -81,6 +81,19 @@ function filterLink(host, name) {
   return host.getByRole('link', { name, exact: false }).first();
 }
 
+async function openRecordingFilters(page) {
+  await expect(page.locator('#recordings-filters-toggle')).toBeVisible();
+  if (!await page.getByRole('combobox', { name: 'Radio system', exact: true }).isVisible()) {
+    await page.getByRole('button', { name: /^Filters/ }).click();
+  }
+  const properties = page.locator('details.recordings-search-properties').filter({
+    has: page.locator('summary', { hasText: /^Call properties$/ })
+  });
+  if (await properties.count() && !await properties.evaluate((element) => element.open)) {
+    await properties.locator('summary').click();
+  }
+}
+
 async function expectRecordingQuery(page, state, filters) {
   await expect.poll(() => state.requests.at(-1)).toMatchObject(filters);
   await expect(page.getByRole('heading', { name: 'Recordings', exact: true })).toBeVisible();
@@ -106,7 +119,7 @@ test('talkgroup clicks preserve applied search, dates, transcript, duration, sou
   await page.getByLabel('To', { exact: true }).fill('2026-09-29T00:00');
   await page.getByRole('combobox', { name: 'Find a call' }).fill('dispatch');
   await page.getByRole('combobox', { name: 'Find a call' }).press('Escape');
-  await page.getByRole('button', { name: /^Filters/ }).click();
+  await openRecordingFilters(page);
   await page.getByRole('combobox', { name: 'Radio ID', exact: true }).fill('30914');
   await page.getByRole('combobox', { name: 'Radio ID', exact: true }).press('Escape');
   await page.getByLabel('Transcript text', { exact: true }).fill('arriving');
@@ -118,7 +131,12 @@ test('talkgroup clicks preserve applied search, dates, transcript, duration, sou
   await page.getByRole('combobox', { name: 'Sort calls' }).selectOption('asc');
   await expect.poll(() => state.requests.at(-1).sort).toBe('asc');
   const applied = { ...state.requests.at(-1) };
-  await page.locator('.recordings-pager').getByRole('button', { name: 'Next', exact: true }).click();
+  const next = page.locator('.recordings-pager').getByRole('button', { name: 'Next', exact: true });
+  await next.evaluate((element) => element.scrollIntoView({ block: 'end', behavior: 'instant' }));
+  const pagerBounds = await next.boundingBox();
+  const dockBounds = await page.locator('#audio-dock').boundingBox();
+  expect(pagerBounds.y + pagerBounds.height).toBeLessThanOrEqual(dockBounds.y - 4);
+  await next.click();
   await expect(page.locator('.recordings-call')).toHaveCount(5);
   await page.getByRole('checkbox', { name: 'Select all calls on this page', exact: true }).check();
   // Clicking a result refines the applied query, not unsubmitted edits in the form.
@@ -288,9 +306,9 @@ test('patch member detail links use the member identity, not the parent patch or
   const state = await openRecordings(page, { call: patch });
   await page.locator('.recordings-call-info').click();
   const detail = page.getByRole('dialog', { name: 'Call details' });
-  const members = detail.locator('details').filter({ has: page.locator('summary', {
-    hasText: /^Patch member identities$/ }) });
-  await members.locator('summary').click();
+  await detail.getByRole('tab', { name: 'Identities', exact: true }).click();
+  const members = detail.getByRole('tabpanel', { name: 'Identities', exact: true }).locator('section').filter({
+    has: page.getByRole('heading', { name: 'Patch member identities', exact: true }) });
   await filterLink(members, 'Fireground').click();
   await expect(detail).toBeHidden();
   await expectRecordingQuery(page, state, { talkgroup_id: '1202', system_key: systemKey });
@@ -306,9 +324,9 @@ test('patch member detail links use the member identity, not the parent patch or
   });
   await page.locator('.recordings-call-info').click();
   const radioDetail = page.getByRole('dialog', { name: 'Call details' });
-  const radioMembers = radioDetail.locator('details').filter({ has: page.locator('summary', {
-    hasText: /^Patch member identities$/ }) });
-  await radioMembers.locator('summary').click();
+  await radioDetail.getByRole('tab', { name: 'Identities', exact: true }).click();
+  const radioMembers = radioDetail.getByRole('tabpanel', { name: 'Identities', exact: true }).locator('section').filter({
+    has: page.getByRole('heading', { name: 'Patch member identities', exact: true }) });
   await filterLink(radioMembers, 'Patch unit').click();
   await request;
   await expect(radioDetail).toBeHidden();
@@ -329,9 +347,8 @@ test('unknown references and home-system names stay readable without incorrect n
   await expect(card.getByRole('link', { name: 'ENG 4', exact: true })).toHaveCount(0);
   await card.locator('.recordings-call-info').click();
   const detail = page.getByRole('dialog', { name: 'Call details' });
-  const identifiers = detail.locator('details').filter({ has: page.locator('summary', {
-    hasText: /^Recording identifiers$/ }) });
-  await identifiers.locator('summary').click();
+  await detail.getByRole('tab', { name: 'Recording', exact: true }).click();
+  const identifiers = detail.getByRole('tabpanel', { name: 'Recording', exact: true });
   await expect(identifiers).toContainText('Foreign Home Network');
   await expect(identifiers.getByRole('link', { name: 'Foreign Home Network', exact: true })).toHaveCount(0);
   expect(state.requests).toHaveLength(1);

@@ -215,6 +215,17 @@
 .audio-dock-volume-popover { width: var(--audio-volume-popover-width); max-width: calc(100vw - var(--space-4)); }
 .audio-dock-notice { position: absolute; inset: auto var(--space-3) calc(100% + var(--space-2)); z-index: calc(var(--audio-dock-layer) + 1); padding: var(--space-2) var(--space-3); font-size: var(--font-size-label); }
 :root:has(body.has-audio-dock) { scroll-padding-top: calc(var(--app-header-offset, 0px) + var(--space-2)); }
+@media (min-width: 901px) {
+  body.has-audio-dock[data-view="recordings"] .content::after {
+    content: "";
+    display: block;
+    flex: 0 0 auto;
+    height: calc(var(--audio-dock-height, 0px) + var(--audio-dock-inset) + var(--space-5));
+  }
+  :root:has(body.has-audio-dock[data-view="recordings"]) {
+    scroll-padding-bottom: calc(var(--audio-dock-height, 0px) + var(--audio-dock-inset) + var(--space-2));
+  }
+}
 @media (max-width: 900px), (max-height: 500px) and (pointer: coarse) {
   body.has-audio-dock .content::after { content: ""; display: block; flex: 0 0 auto; height: calc(var(--audio-dock-height, 0px) + var(--space-5)); }
   :root:has(body.has-audio-dock) { scroll-padding-bottom: calc(var(--audio-dock-height, 0px) + var(--space-2)); }

@@ -276,9 +276,9 @@ function select(node, options, labelText) {
   return control;
 }
 
-// Reuse map: the shared page header and section shells frame a compact data
-// workspace with desktop filter/results columns; ui-input, ui-select, ui-dual-range,
-// ui-button, ui-choice-card, ui-feedback, and
+// Reuse map: the shared page header, catalog toolbar and record cards frame a
+// desktop filter/results workspace; ui-input, ui-select, ui-dual-range,
+// ui-button, ui-segmented, ui-choice-card, ui-feedback, and
 // the application's modal foundation own controls and feedback. This module
 // owns only recordings geometry and the historical audio lifecycle. Administration
 // reuses section shells, ui-field/ui-toggle, ui-action-row, ui-admin-facts, and
@@ -286,7 +286,7 @@ function select(node, options, labelText) {
 export function createRecordingsFeature(deps) {
   const { node, requestJson, openReadOnlyModal, section, pageHeader, beginPage,
     captureRenderContext, renderIsCurrent, content, isPrimaryAdmin, canViewRadio,
-    entityRefHref, stopLiveAudio, href, anchor, uiToggleField, metrics, browsingWorkflows, modalFooter, closeReadOnlyModal,
+    entityRefHref, stopLiveAudio, href, anchor, iconButton, uiToggleField, metrics, browsingWorkflows, modalFooter, closeReadOnlyModal,
     getSourceNameDisplay = () => 'talker_alias' } = deps;
   const search = {
     q: '', transcript: '', from_ms: '', to_ms: '', system_key: '', site: '', talkgroup_id: '', radio_id: '',
@@ -355,7 +355,7 @@ export function createRecordingsFeature(deps) {
           });
           currentFilters = effectiveFilters();
           appliedSuggestions = new Map(selectedSuggestions);
-          pageHost.querySelector('.recordings-search')?.replaceWith(makeSearchForm());
+          replaceSearchForm();
           cursors = [null];
           nextCursor = null;
           currentPage = 0;
@@ -375,6 +375,15 @@ export function createRecordingsFeature(deps) {
 
   function query(filters, extra = {}) {
     return queryPath(CALLS, { ...filters, ...extra, limit: PAGE_SIZE });
+  }
+
+  function replaceSearchForm() {
+    const previous = pageHost?.querySelector('.recordings-search');
+    if (!previous) return;
+    const results = previous.querySelector('.recordings-results-panel');
+    const next = makeSearchForm();
+    if (results) next.querySelector('.recordings-browser').append(results);
+    previous.replaceWith(next);
   }
 
   function effectiveFilters() {
@@ -503,8 +512,9 @@ export function createRecordingsFeature(deps) {
   }
 
   function drawQueue() {
-    if (!playbackObservers.size) return;
+    if (!playbackObservers.size && !resultHost?.isConnected) return;
     const snapshot = playbackState();
+    drawResultPlayback(snapshot);
     playbackObservers.forEach((observer) => {
       try { observer(snapshot); } catch (_error) { /* Playback must outlive its presentation. */ }
     });
@@ -1078,14 +1088,74 @@ export function createRecordingsFeature(deps) {
         ...(detail?.transcription ? { transcription: detail.transcription } : {}) };
       const heading = node('div', 'recordings-detail-heading');
       heading.append(node('h3', '', label(call)), node('span', '', dateTime(millis(call))));
-      const facts = node('div', 'ui-editor-sections recordings-detail-facts');
-      renderDetails(facts, call);
-      const transcript = node('section', 'recordings-transcript');
-      transcript.append(node('h4', '', 'Transcript'));
-      const transcriptBody = node('div', '');
-      renderTranscript(transcriptBody, call);
-      transcript.append(transcriptBody);
-      body.replaceChildren(heading, facts, transcript);
+      const tabs = node('nav', 'ui-segmented recordings-detail-tabs');
+      tabs.setAttribute('role', 'tablist');
+      tabs.setAttribute('aria-label', 'Call information');
+      const definitions = [['overview', 'Overview'], ['transcript', 'Transcript'],
+        ['identities', 'Identities'], ['technical', 'Technical'], ['recording', 'Recording']];
+      const panels = new Map();
+      const controls = new Map();
+      const activate = (id) => {
+        for (const [key, panel] of panels) {
+          panel.hidden = key !== id;
+          controls.get(key).setAttribute('aria-selected', String(key === id));
+          controls.get(key).tabIndex = key === id ? 0 : -1;
+        }
+      };
+      for (const [id, title] of definitions) {
+        const panel = node('section', 'ui-editor-sections recordings-detail-facts recordings-detail-panel');
+        if (id === 'transcript') panel.classList.add('recordings-transcript');
+        panel.id = `recording-${row.id}-panel-${id}`;
+        panel.setAttribute('role', 'tabpanel');
+        const tab = button(node, title, () => activate(id), 'ui-segmented-option');
+        tab.id = `recording-${row.id}-tab-${id}`;
+        tab.setAttribute('role', 'tab');
+        tab.setAttribute('aria-controls', panel.id);
+        panel.setAttribute('aria-labelledby', tab.id);
+        tab.addEventListener('keydown', (event) => {
+          if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+          event.preventDefault();
+          const index = definitions.findIndex(([key]) => key === id);
+          const next = event.key === 'Home' ? 0 : event.key === 'End' ? definitions.length - 1 :
+            (index + (event.key === 'ArrowRight' ? 1 : -1) + definitions.length) % definitions.length;
+          const key = definitions[next][0];
+          activate(key);
+          modal.focus(controls.get(key));
+        });
+        panels.set(id, panel);
+        controls.set(id, tab);
+        tabs.append(tab);
+      }
+      const locations = { 'Source & target identities': 'identities', 'Patch member identities': 'identities',
+        'Protocol & signaling': 'technical', 'Received site identities': 'technical',
+        'Recording identifiers': 'recording' };
+      for (const [title, facts] of factGroups(call)) {
+        const group = node('section', 'ui-form-section');
+        if (title) group.append(node('h4', 'ui-section-heading', title));
+        const list = node('dl', 'ui-fact-list');
+        facts.forEach(([name, detail]) => appendFact(node, list, name, detail));
+        group.append(list);
+        panels.get(locations[title] || 'overview').append(group);
+      }
+      renderTranscript(panels.get('transcript'), call);
+      for (const [id, panel] of panels) {
+        if (!panel.childNodes.length) panel.append(makeNotice(
+          `No ${id === 'identities' ? 'identity' : id} details were recorded for this call.`));
+      }
+      const download = anchor('Download recording', audioUrl(call), 'ui-button ui-button-secondary');
+      download.setAttribute('download', '');
+      const playAfterClose = (mode) => {
+        let started = false;
+        const start = () => { if (!started) { started = true; playbackAction(call, mode); } };
+        if (modal.close(start)) start();
+      };
+      const footer = modalFooter(download,
+        button(node, 'Add to queue', () => playAfterClose('queue')),
+        button(node, 'Continue from here', () => playAfterClose('continue')),
+        button(node, 'Play once', () => playAfterClose('once'), 'ui-button ui-button-primary'));
+      activate('overview');
+      body.replaceChildren(heading, tabs, ...panels.values(), footer);
+      modal.focus(controls.get('overview'));
     } catch (error) {
       if (modal.dialog.isConnected) body.replaceChildren(makeNotice(error.message ||
         'Call details are unavailable. Refresh the results and try again.', 'error'));
@@ -1120,13 +1190,26 @@ export function createRecordingsFeature(deps) {
   }
 
   function callCard(row) {
-    const card = node('article', 'recordings-call');
-    const play = button(node, '', () => choosePlayback(row), 'ui-card-play recordings-card-play');
-    play.setAttribute('aria-label', `Choose playback for ${label(row)} at ${dateTime(millis(row))}`);
-    play.title = 'Playback options';
-    const glyph = node('span', 'ui-card-play-glyph recordings-play-glyph', '▶');
-    glyph.setAttribute('aria-hidden', 'true');
-    play.append(glyph);
+    const card = node('article', 'ui-record-card recordings-call');
+    card.dataset.recordingId = String(row.id);
+    const action = (icon, glyph, labelText, hint, perform, className) => {
+      const control = iconButton ? iconButton(icon, labelText, className) : button(node, glyph, null, className);
+      control.setAttribute('aria-label', labelText);
+      control.title = hint;
+      control.addEventListener('click', perform);
+      return control;
+    };
+    const description = `${label(row)} at ${dateTime(millis(row))}`;
+    const play = action('icon-play', '▶', `Choose playback for ${description}`, 'Playback options',
+      () => choosePlayback(row), 'ui-button ui-button-primary ui-icon-button recordings-card-play');
+    const queue = action('icon-plus', '+', `Add ${description} to queue`, 'Add to queue',
+      () => playbackAction(row, 'queue'), 'ui-button ui-button-secondary ui-icon-button recordings-call-queue');
+    const info = action('icon-info-circle', 'ⓘ', `Call details for ${description}`, 'Call details',
+      () => void openDetails(row), 'ui-button ui-button-secondary ui-icon-button recordings-call-info');
+    const actions = node('div', 'recordings-call-actions');
+    actions.setAttribute('role', 'group');
+    actions.setAttribute('aria-label', `Actions for ${description}`);
+    actions.append(play, queue, info);
     const time = node('div', 'recordings-call-time');
     time.title = dateTime(millis(row));
     time.append(node('strong', '', timeOnly(millis(row))));
@@ -1152,29 +1235,43 @@ export function createRecordingsFeature(deps) {
       identity.append(entityLink(`${value(row, 'call_type') === 'PATCH' ? 'Patch' : 'TG'} ${id}`,
         row.target_entity_ref, row, 'target'));
       heading.append(identity);
+    } else if (!analog && id === null && value(row, 'destination_radio_id') !== null &&
+        value(row, 'destination_radio_alias', 'destination_radio_ota_alias')) {
+      const identity = node('span', 'recordings-call-id');
+      identity.append(entityLink(`Radio ${recordingRadioId(row, 'target', value(row, 'destination_radio_id'))}`,
+        row.target_entity_ref, row, 'target'));
+      heading.append(identity);
     }
+    const playbackStatus = node('span', 'ui-pill ui-pill-compact recordings-call-status');
+    playbackStatus.hidden = true;
+    heading.append(playbackStatus);
     main.append(heading);
+    if (source && !sharedDetails.has('source')) {
+      const sourceId = recordingRadioId(row, 'source', value(row, 'source_id', 'radio_id'));
+      const sourceText = sourceIsTitle ? sourceId !== null && source !== `Radio ${sourceId}` ? `Radio ${sourceId}` : '' :
+        sourceLabel(row, getSourceNameDisplay());
+      if (sourceText) {
+        const sourceLine = node('div', 'recordings-call-source');
+        sourceLine.title = `Source radio: ${sourceLabel(row, getSourceNameDisplay())}`;
+        sourceLine.append(entityLink(sourceText, row.source_entity_ref, row, 'source'));
+        main.append(sourceLine);
+      }
+    }
     const meta = node('div', 'recordings-call-meta');
     const addContext = (name, text, ref, key) => {
       if (!text) return;
       const item = node('span', `recordings-call-context recordings-context-${key}`);
-      item.title = `${name}: ${key === 'source' ? sourceLabel(row, getSourceNameDisplay()) : text}`;
+      item.title = `${name}: ${text}`;
       item.append(entityLink(text, ref, row, key));
       meta.append(item);
     };
-    if (source && !sourceIsTitle && !sharedDetails.has('source')) {
-      addContext('Source radio', source, row.source_entity_ref, 'source');
-    }
     resultDetails(row).filter(([key]) => !sharedDetails.has(key) &&
       ['system', 'site'].includes(key)).forEach(([key, name, text, ref]) => addContext(name, text, ref, key));
+    addContext('Decoder', protocolLabel(value(row, 'protocol')), null, 'protocol');
+    addContext('Frequency', frequency(row), null, 'frequency');
     if (meta.childNodes.length) main.append(meta);
     const excerpt = value(row, 'transcript_excerpt');
     if (excerpt) main.append(node('p', 'recordings-transcript-preview', String(excerpt)));
-    const info = button(node, 'ⓘ', () => void openDetails(row),
-      'ui-disclosure-button ui-icon-button recordings-call-info');
-    info.setAttribute('aria-label', `Call details for ${label(row)} at ${dateTime(millis(row))}`);
-    info.title = 'Call details';
-    card.append(play);
     if (isPrimaryAdmin()) {
       const checkbox = node('input', 'recordings-call-select ui-selection-check');
       checkbox.type = 'checkbox';
@@ -1187,8 +1284,24 @@ export function createRecordingsFeature(deps) {
       });
       card.append(checkbox);
     }
-    card.append(time, main, info);
+    card.append(time, main, actions);
     return card;
+  }
+
+  function drawResultPlayback(snapshot = player ? playbackState() : null) {
+    if (!resultHost?.isConnected) return;
+    const queued = new Set((snapshot?.queue || []).map((row) => String(row.id)));
+    resultHost.querySelectorAll('.recordings-call').forEach((card) => {
+      const active = snapshot?.current && !snapshot.stopped &&
+        String(snapshot.current.id) === card.dataset.recordingId;
+      const waiting = queued.has(card.dataset.recordingId);
+      const status = card.querySelector('.recordings-call-status');
+      const text = active ? snapshot.loading ? 'Loading' : snapshot.paused ? 'Paused' :
+        snapshot.playing ? 'Playing' : '' : waiting ? 'Queued' : '';
+      card.classList.toggle('recordings-call-playing', Boolean(active));
+      card.classList.toggle('recordings-call-queued', waiting);
+      if (status) { status.textContent = text; status.hidden = !text; }
+    });
   }
 
   function drawSharedContext() {
@@ -1251,31 +1364,69 @@ export function createRecordingsFeature(deps) {
     if (!selectedFiltersHost) return;
     selectedFiltersHost.replaceChildren();
     if (searchHint) searchHint.hidden = Boolean(search.system_key);
-    if (filterCountHost) {
-      const groups = [['system_key'], ['site', 'rfss', 'site_id'],
-        ['talkgroup_id', 'talkgroup_min', 'talkgroup_max'], ['radio_id', 'radio_identity_key', 'radio_min', 'radio_max'],
-        ['channel_id'], ['alias_list_id'], ['transcript'], ['min_duration_ms', 'max_duration_ms'], ['frequency_hz'],
-        ['call_type'], ['voice_type'], ['protocol']];
-      const count = groups.filter((keys) => keys.some((key) => currentFilters[key])).length +
-        (search.range && search.range !== '24h' ? 1 : 0);
-      filterCountHost.textContent = String(count);
-      filterCountHost.hidden = count === 0;
+    const chips = [];
+    const represented = new Set();
+    const groups = [
+      ['system_key', ['system_key'], 'System'],
+      ['site', ['site', 'wacn', 'sysid', 'rfss', 'site_id'], 'Site'],
+      ['talkgroup_id', ['talkgroup_id', 'talkgroup_min', 'talkgroup_max'], 'Talkgroup'],
+      ['radio_id', ['radio_id', 'radio_identity_key', 'radio_min', 'radio_max'], 'Radio'],
+      ['channel_id', ['channel_id'], 'Channel'], ['alias_list_id', ['alias_list_id'], 'Alias List']
+    ];
+    for (const [key, keys, title] of groups) {
+      const suggestion = appliedSuggestions.get(key);
+      const applied = [...new Set([...keys, ...(suggestion?.appliedKeys || [])])];
+      if (!applied.some((name) => currentFilters[name])) continue;
+      const text = suggestion?.label || suggestion?.id || keys.map((name) => currentFilters[name])
+        .filter(Boolean).join('–');
+      chips.push({ key, keys: applied, text: `${title}: ${text}` });
+      applied.forEach((name) => represented.add(name));
     }
-    for (const [key, suggestion] of selectedSuggestions) {
-      if (!search[key] && !suggestion.appliedKeys?.some((applied) => search[applied])) continue;
-      const remove = button(node, `${suggestion.label || suggestion.id} ×`, () => {
-        suggestion.appliedKeys?.forEach((applied) => {
-          search[applied] = '';
-          const appliedInput = searchInputs.get(applied);
-          if (appliedInput) appliedInput.value = '';
-        });
-        search[key] = '';
-        selectedSuggestions.delete(key);
-        const input = searchInputs.get(key);
-        if (input) input.value = '';
-        drawSelectedFilters();
+    const simple = [['q', 'Search'], ['transcript', 'Transcript'], ['frequency_hz', 'Frequency'],
+      ['call_type', 'Call type'], ['voice_type', 'Voice type'], ['protocol', 'Protocol']];
+    for (const [key, title] of simple) {
+      if (!currentFilters[key] || represented.has(key)) continue;
+      const text = key === 'frequency_hz' ? `${Number(currentFilters[key]) / 1_000_000} MHz` :
+        key === 'protocol' ? protocolLabel(currentFilters[key]) :
+          ['call_type', 'voice_type'].includes(key) ? prettify(currentFilters[key]) : currentFilters[key];
+      chips.push({ key, keys: [key], text: `${title}: ${text}` });
+    }
+    if (currentFilters.min_duration_ms || currentFilters.max_duration_ms) {
+      const from = currentFilters.min_duration_ms ? `${Number(currentFilters.min_duration_ms) / 1000}s` : '<1s';
+      const to = currentFilters.max_duration_ms ? Number(currentFilters.max_duration_ms) < 1000 ? '<1s' :
+        `${Number(currentFilters.max_duration_ms) / 1000}s` : '30s+';
+      chips.push({ key: 'duration', keys: ['min_duration_ms', 'max_duration_ms'], text: `Call length: ${from}–${to}` });
+    }
+    if (appliedRange !== '24h') {
+      const label = { '7d': 'Past 7d', '30d': 'Past 30d', '10y': 'Past 10y' }[appliedRange] ||
+        `${dateTime(Number(currentFilters.from_ms))} – ${dateTime(Number(currentFilters.to_ms))}`;
+      chips.push({ key: 'range', keys: ['from_ms', 'to_ms'], text: label });
+    }
+    if (filterCountHost) {
+      filterCountHost.textContent = String(chips.length);
+      filterCountHost.hidden = chips.length === 0;
+    }
+    for (const chip of chips) {
+      const remove = button(node, `${chip.text} ×`, () => {
+        chip.keys.forEach((key) => { delete currentFilters[key]; search[key] = ''; });
+        for (const suggestions of [appliedSuggestions, selectedSuggestions]) {
+          for (const [key, suggestion] of suggestions) {
+            if (key === chip.key || suggestion.appliedKeys?.some((name) => chip.keys.includes(name)))
+              suggestions.delete(key);
+          }
+        }
+        if (chip.key === 'range') {
+          search.range = appliedRange = '24h';
+          currentFilters.from_ms = search.from_ms = String(Date.now() - 86_400_000);
+          currentFilters.to_ms = search.to_ms = String(Date.now());
+        }
+        replaceSearchForm();
+        pageHost.querySelector('#recordings-input-q')?.focus();
+        cursors = [null]; currentPage = 0; nextCursor = null;
+        selection.clear();
+        void loadPage(0);
       }, 'ui-button ui-button-secondary recordings-filter-chip');
-      remove.setAttribute('aria-label', `Remove ${suggestion.label || suggestion.id} filter`);
+      remove.setAttribute('aria-label', `Remove ${chip.text} filter`);
       selectedFiltersHost.append(remove);
     }
   }
@@ -1350,6 +1501,7 @@ export function createRecordingsFeature(deps) {
         'No matches in this batch. More calls may match; select Next to continue.' :
         'No matching calls. Try a wider time range or fewer filters.', 'empty'));
     } else currentResults.forEach((row) => resultHost.append(callCard(row)));
+    drawResultPlayback();
     const showCount = Boolean(currentResults.length || nextCursor);
     const showPager = currentPage > 0 || Boolean(nextCursor);
     if (countHost) {
@@ -1586,7 +1738,7 @@ export function createRecordingsFeature(deps) {
 
   function makeSearchForm() {
     const form = node('form', 'recordings-search');
-    const primary = node('div', 'recordings-search-primary');
+    const primary = node('div', 'ui-catalog-toolbar recordings-search-primary');
     searchInputs = new Map();
     const queryField = autocompleteFilter('q', 'Find a call', '',
       'System, site, talkgroup, radio, or channel');
@@ -1601,18 +1753,32 @@ export function createRecordingsFeature(deps) {
     const customDates = node('div', 'recordings-custom-dates');
     customDates.hidden = range.value !== 'custom';
     customDates.append(field('From', from), field('To', to));
-    range.addEventListener('change', () => { customDates.hidden = range.value !== 'custom'; });
+    range.addEventListener('change', () => {
+      search.range = range.value;
+      customDates.hidden = range.value !== 'custom';
+    });
+    from.addEventListener('input', () => {
+      const timestamp = new Date(from.value).getTime();
+      search.from_ms = Number.isFinite(timestamp) ? String(timestamp) : '';
+    });
+    to.addEventListener('input', () => {
+      const timestamp = new Date(to.value).getTime();
+      search.to_ms = Number.isFinite(timestamp) ? String(timestamp + 59_999) : '';
+    });
     const rangeField = field('Date & time', range);
-    primary.append(rangeField, queryField);
-    const advanced = node('div', 'recordings-search-advanced');
-    advanced.hidden = true;
-    const advancedFields = node('div', 'recordings-search-fields');
+    primary.append(queryField, rangeField);
+    const advanced = node('div', 'ui-section-body recordings-search-advanced');
+    const commonFields = node('div', 'recordings-search-fields recordings-search-common');
     SEARCH_FIELDS.forEach(([key, title, kind, placeholder]) =>
-      advancedFields.append(autocompleteFilter(key, title, kind, placeholder)));
+      commonFields.append(autocompleteFilter(key, title, kind, placeholder)));
     const transcript = textInput('Words or phrase in a transcript');
     transcript.value = search.transcript;
     transcript.maxLength = 240;
-    advancedFields.append(field('Transcript text', transcript));
+    transcript.addEventListener('input', () => { search.transcript = transcript.value; });
+    commonFields.append(field('Transcript text', transcript));
+    const properties = node('details', 'ui-section-disclosure ui-section-disclosure-flat recordings-search-properties');
+    properties.append(node('summary', 'ui-section-summary', 'Call properties'));
+    const propertyFields = node('div', 'recordings-search-fields recordings-search-property-fields');
     const durationCeiling = 30;
     const minimumSeconds = Math.min(durationCeiling, Number(search.min_duration_ms || 0) / 1000);
     const maximumSeconds = search.max_duration_ms ?
@@ -1622,12 +1788,20 @@ export function createRecordingsFeature(deps) {
       min: 0, max: durationCeiling, step: 1,
       lower: minimumSeconds, upper: maximumSeconds,
       format: (seconds, endpoint) => endpoint === 'upper' && seconds === durationCeiling ?
-        '30s+' : seconds === 0 ? '<1s' : `${seconds}s` });
+        '30s+' : seconds === 0 ? '<1s' : `${seconds}s`,
+      onChange: (values) => {
+        search.min_duration_ms = values.lower > 0 ? String(Math.round(values.lower * 1000)) : '';
+        search.max_duration_ms = values.upper < durationCeiling ?
+          String(values.upper === 0 ? 999 : Math.round(values.upper * 1000)) : '';
+      } });
     callDuration.field.classList.add('recordings-field');
     const frequencyInput = textInput('MHz', 'number');
     frequencyInput.step = '0.0001';
     frequencyInput.min = '0';
     frequencyInput.value = search.frequency_hz ? String(Number(search.frequency_hz) / 1_000_000) : '';
+    frequencyInput.addEventListener('input', () => {
+      search.frequency_hz = frequencyInput.value ? String(Math.round(Number(frequencyInput.value) * 1_000_000)) : '';
+    });
     const callType = select(node, [['', 'Any call type'], ['CONVENTIONAL', 'Conventional'],
       ['GROUP', 'Group'], ['DIRECT', 'Direct'], ['PATCH', 'Patch']], 'Call type');
     callType.value = search.call_type;
@@ -1638,9 +1812,14 @@ export function createRecordingsFeature(deps) {
       ['APCO25_PHASE2', 'P25 Phase 2'], ['DMR', 'DMR'], ['NXDN', 'NXDN'],
       ['NBFM', 'Analog FM'], ['AM', 'Analog AM'], ['DCS', 'DCS']], 'Protocol');
     protocol.value = search.protocol;
-    advancedFields.append(callDuration.field, field('Frequency', frequencyInput),
+    for (const [key, control] of [['call_type', callType], ['voice_type', voiceType], ['protocol', protocol]])
+      control.addEventListener('change', () => { search[key] = control.value; });
+    properties.open = ['min_duration_ms', 'max_duration_ms', 'frequency_hz', 'call_type', 'voice_type', 'protocol']
+      .some((key) => Boolean(search[key]));
+    propertyFields.append(callDuration.field, field('Frequency', frequencyInput),
       field('Call type', callType), field('Voice type', voiceType), field('Protocol', protocol));
-    advanced.append(advancedFields);
+    properties.append(propertyFields);
+    advanced.append(commonFields, properties);
     const actions = node('div', 'recordings-search-actions');
     const submit = button(node, 'Search', null, 'ui-button ui-button-primary');
     submit.type = 'submit';
@@ -1653,6 +1832,8 @@ export function createRecordingsFeature(deps) {
     const clear = button(node, 'Clear filters', () => {
       Object.keys(search).forEach((key) => { search[key] = ''; });
       selectedSuggestions.clear();
+      appliedSuggestions.clear();
+      appliedRange = '24h';
       selection.clear();
       pageHost.replaceChildren();
       renderSearchPage();
@@ -1661,10 +1842,17 @@ export function createRecordingsFeature(deps) {
     primary.append(actions);
     advanced.append(clear);
     selectedFiltersHost = node('div', 'recordings-selected-filters');
-    form.append(primary, selectedFiltersHost, customDates, advanced);
+    const browser = node('div', 'recordings-browser');
+    const searchSection = node('section', 'ui-surface recordings-search-panel');
+    searchSection.setAttribute('aria-label', 'Filter calls');
+    const filterHeading = node('div', 'ui-surface-heading');
+    filterHeading.append(node('h2', 'ui-section-heading', 'Filters'));
+    searchSection.append(filterHeading, advanced);
+    browser.append(searchSection);
+    form.append(primary, selectedFiltersHost, customDates, browser);
     browsingWorkflows.createFilterDisclosure({ node, openReadOnlyModal, form, panel: advanced,
-      fields: [rangeField, customDates, advancedFields], button: filters, clearAction: clear,
-      returnFocusSelector: '#recordings-filters-toggle', id: 'recordings-filters' });
+      fields: [rangeField, customDates, commonFields, properties], button: filters, clearAction: clear,
+      initialExpanded: true, returnFocusSelector: '#recordings-filters-toggle', id: 'recordings-filters' });
     drawSelectedFilters();
     form.addEventListener('submit', (event) => {
       event.preventDefault();
@@ -1782,15 +1970,12 @@ export function createRecordingsFeature(deps) {
     if (status?.mode === 'CLASSIC') host.append(node('p', 'ui-notice recordings-mode-notice',
       'Classic mode is saving new calls in the flat recordings folder. Earlier Managed calls remain searchable here.'));
     const form = makeSearchForm();
-    const searchSection = node('section', 'section ui-section recordings-search-panel');
-    searchSection.setAttribute('aria-label', 'Search calls');
-    const filterTitle = node('div', 'section-title ui-section-title', 'Filters');
-    searchSection.append(filterTitle, form);
-    const browser = node('div', 'recordings-browser');
-    const resultSection = node('section', 'section ui-section recordings-results-panel');
-    const titleBar = node('div', 'section-title ui-section-title');
-    titleBar.append(node('span', '', 'Calls'));
-    const titleActions = node('div', 'ui-section-actions');
+    const browser = form.querySelector('.recordings-browser');
+    const resultSection = node('section', 'recordings-results-panel');
+    resultSection.setAttribute('aria-label', 'Call results');
+    const titleBar = node('div', 'ui-surface-heading recordings-results-heading');
+    titleBar.append(node('h2', 'ui-section-heading', 'Calls'));
+    const titleActions = node('div', 'ui-action-row');
     sortControl = select(node, [['desc', 'Newest first'], ['asc', 'Oldest first']], 'Sort calls');
     sortControl.value = parameters.get('recording_filters') === '1' && parameters.get('sort') === 'asc' ? 'asc' : 'desc';
     sortControl.addEventListener('change', () => {
@@ -1801,7 +1986,7 @@ export function createRecordingsFeature(deps) {
     titleActions.append(sortControl);
     titleBar.append(titleActions);
     const body = node('div', 'recordings-results-body');
-    sharedHost = node('div', 'recordings-shared');
+    sharedHost = node('div', 'ui-surface-inset recordings-shared');
     selectedHost = node('div', 'recordings-selected ui-selection-bar');
     selectedHost.hidden = true;
     countHost = node('div', 'recordings-result-count');
@@ -1826,13 +2011,13 @@ export function createRecordingsFeature(deps) {
     }
     resultStatus = node('div', 'recordings-result-status');
     resultStatus.setAttribute('role', 'status');
-    resultHost = node('div', 'recordings-results');
+    resultHost = node('div', 'ui-record-grid recordings-results recordings-call-list');
     pagerHost = browsingWorkflows.createBrowsingPager({ node, className: 'recordings-pager',
       ariaLabel: 'Call result pages' });
     body.append(sharedHost, selectedHost, countHost, resultStatus, resultHost, pagerHost);
     resultSection.append(titleBar, body);
-    browser.append(searchSection, resultSection);
-    host.append(browser);
+    browser.append(resultSection);
+    host.append(form);
     if (Object.values(search).every((item) => !item)) search.from_ms = String(Date.now() - 86_400_000);
     currentFilters = effectiveFilters();
     appliedSuggestions = new Map(selectedSuggestions);
