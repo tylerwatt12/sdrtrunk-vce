@@ -11,6 +11,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -24,6 +25,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.regex.Pattern;
 import java.util.zip.GZIPOutputStream;
 
 /** Reusable, bounded representations for static browser files. Never caches receiver data. */
@@ -32,10 +34,13 @@ public final class StaticWebAssetResponse
     private static final long MAXIMUM_CACHE_BYTES = 16L * 1024 * 1024;
     private static final int MAXIMUM_CACHE_ENTRIES = 96;
     private static final long MAXIMUM_ASSET_BYTES = 4L * 1024 * 1024;
+    private static final String PUBLIC_ORIGIN_MARKER = "__VCE_PUBLIC_ORIGIN__";
+    private static final Pattern HTTP_AUTHORITY = Pattern.compile(
+        "(?:[A-Za-z0-9.-]+|\\[[A-Fa-f0-9:.]+\\])(?::[0-9]{1,5})?");
     private final long mMaximumCacheBytes;
     private final int mMaximumCacheEntries;
     private final long mMaximumAssetBytes;
-    private final Map<Path,Asset> mCache = new LinkedHashMap<>(16, 0.75f, true);
+    private final Map<AssetKey,Asset> mCache = new LinkedHashMap<>(16, 0.75f, true);
     private long mCacheBytes;
 
     public StaticWebAssetResponse()
@@ -55,7 +60,51 @@ public final class StaticWebAssetResponse
     /** The caller resolves the public asset path and prepares security headers before calling this method. */
     public void send(HttpExchange exchange, Path file, String contentType, String webClientRevision) throws IOException
     {
-        Asset asset = asset(file.toAbsolutePath().normalize(), compressible(contentType));
+        send(exchange, file, contentType, webClientRevision, null);
+    }
+
+    /** Render only the public document's origin markers; never use forwarding headers or receiver data. */
+    public void sendIndex(HttpExchange exchange, Path file, String contentType, String webClientRevision)
+        throws IOException
+    {
+        String origin = publicOrigin(WebRequestSecurity.isSecureTransport(exchange),
+            exchange.getRequestHeaders().get("Host"));
+        if(origin == null)
+        {
+            exchange.sendResponseHeaders(400, -1);
+            exchange.close();
+            return;
+        }
+        send(exchange, file, contentType, webClientRevision, origin);
+    }
+
+    static String publicOrigin(boolean secure, List<String> authorities)
+    {
+        if(authorities == null || authorities.size() != 1) return null;
+        String authority = authorities.getFirst();
+        if(authority == null || authority.length() > 320 || !HTTP_AUTHORITY.matcher(authority).matches()) return null;
+        try
+        {
+            String scheme = secure ? "https" : "http";
+            URI origin = URI.create(scheme + "://" + authority);
+            int port = origin.getPort();
+            if(origin.getHost() == null || origin.getRawUserInfo() != null ||
+                !origin.getRawPath().isEmpty() || origin.getRawQuery() != null || origin.getRawFragment() != null ||
+                port == 0 || port > 65_535) return null;
+            boolean defaultPort = port == (secure ? 443 : 80);
+            return scheme + "://" + origin.getHost().toLowerCase(Locale.ROOT) +
+                (port >= 0 && !defaultPort ? ":" + port : "");
+        }
+        catch(IllegalArgumentException exception)
+        {
+            return null;
+        }
+    }
+
+    private void send(HttpExchange exchange, Path file, String contentType, String webClientRevision,
+                      String publicOrigin) throws IOException
+    {
+        Asset asset = asset(file.toAbsolutePath().normalize(), compressible(contentType), publicOrigin);
         Headers headers = exchange.getResponseHeaders();
         headers.set("Content-Type", contentType);
         // Even version query values are reused during local previews. Revalidate rather than assume immutability.
@@ -103,8 +152,9 @@ public final class StaticWebAssetResponse
         }
     }
 
-    private synchronized Asset asset(Path file, boolean compressible) throws IOException
+    private synchronized Asset asset(Path file, boolean compressible, String publicOrigin) throws IOException
     {
+        AssetKey key = new AssetKey(file, publicOrigin);
         FileStamp stamp;
         try
         {
@@ -115,12 +165,23 @@ public final class StaticWebAssetResponse
             remove(file);
             throw exception;
         }
-        Asset previous = mCache.get(file);
+        Asset previous = mCache.get(key);
         if(previous != null && previous.stamp().equals(stamp)) return previous;
-        remove(file);
+        for(var iterator = mCache.entrySet().iterator(); iterator.hasNext();)
+        {
+            var entry = iterator.next();
+            if(entry.getKey().file().equals(file) && !entry.getValue().stamp().equals(stamp))
+            {
+                mCacheBytes -= entry.getValue().bytes();
+                iterator.remove();
+            }
+        }
         // Large files stream directly; they cannot occupy the browser-script compression cache.
         if(stamp.size() > mMaximumAssetBytes)
+        {
+            if(publicOrigin != null) throw new IOException("Public web document exceeds the bounded asset size");
             return new Asset(stamp, null, null, "W/" + etag(stamp.toString().getBytes(StandardCharsets.UTF_8)), null);
+        }
 
         byte[] identity;
         try(InputStream input = Files.newInputStream(file))
@@ -129,8 +190,26 @@ public final class StaticWebAssetResponse
         }
         FileStamp afterRead = stamp(file);
         if(identity.length > mMaximumAssetBytes)
+        {
+            if(publicOrigin != null) throw new IOException("Public web document exceeds the bounded asset size");
             return new Asset(afterRead, null, null,
                 "W/" + etag(afterRead.toString().getBytes(StandardCharsets.UTF_8)), null);
+        }
+        if(publicOrigin != null)
+        {
+            String escapedOrigin = publicOrigin.replace("&", "&amp;").replace("\"", "&quot;")
+                .replace("'", "&#39;").replace("<", "&lt;").replace(">", "&gt;");
+            String template = new String(identity, StandardCharsets.UTF_8);
+            long renderedBytes = identity.length;
+            for(int offset = template.indexOf(PUBLIC_ORIGIN_MARKER); offset >= 0;
+                offset = template.indexOf(PUBLIC_ORIGIN_MARKER, offset + PUBLIC_ORIGIN_MARKER.length()))
+                renderedBytes += escapedOrigin.length() - PUBLIC_ORIGIN_MARKER.length();
+            if(renderedBytes > mMaximumAssetBytes)
+                throw new IOException("Rendered public web document exceeds the bounded asset size");
+            identity = template.replace(PUBLIC_ORIGIN_MARKER, escapedOrigin).getBytes(StandardCharsets.UTF_8);
+            if(identity.length > mMaximumAssetBytes)
+                throw new IOException("Rendered public web document exceeds the bounded asset size");
+        }
         if(!stamp.equals(afterRead))
         {
             // Preview replacement raced this request; retry on the next request without caching a mixed snapshot.
@@ -152,7 +231,7 @@ public final class StaticWebAssetResponse
         {
             while(!mCache.isEmpty() && (mCache.size() >= mMaximumCacheEntries ||
                 mCacheBytes + bytes > mMaximumCacheBytes)) remove(mCache.keySet().iterator().next());
-            mCache.put(file, asset);
+            mCache.put(key, asset);
             mCacheBytes += bytes;
         }
         return asset;
@@ -160,7 +239,20 @@ public final class StaticWebAssetResponse
 
     private void remove(Path file)
     {
-        Asset asset = mCache.remove(file);
+        for(var iterator = mCache.entrySet().iterator(); iterator.hasNext();)
+        {
+            var entry = iterator.next();
+            if(entry.getKey().file().equals(file))
+            {
+                mCacheBytes -= entry.getValue().bytes();
+                iterator.remove();
+            }
+        }
+    }
+
+    private void remove(AssetKey key)
+    {
+        Asset asset = mCache.remove(key);
         if(asset != null) mCacheBytes -= asset.bytes();
     }
 
@@ -257,6 +349,7 @@ public final class StaticWebAssetResponse
     }
 
     private enum Encoding { IDENTITY, GZIP, UNACCEPTABLE }
+    private record AssetKey(Path file, String publicOrigin) { }
     private record FileStamp(long size, FileTime modified, FileTime created, Object fileKey) { }
     private record Asset(FileStamp stamp, byte[] identity, byte[] gzip, String etag, String gzipEtag)
     {

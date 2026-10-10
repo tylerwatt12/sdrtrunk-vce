@@ -589,7 +589,40 @@ async function main() {
   assert.match(indexSource,
     /id="preference-status" class="preference-status ui-notice" role="status" aria-live="polite" hidden/);
   assert.match(indexSource, /id="global-status" class="visually-hidden"/);
-  assert.match(indexSource, /<title>VCE<\/title>/);
+  const shareTitle = 'SDRTrunk VCE — Radio in your browser';
+  const shareDescription = 'Listen to live radio, browse recordings, and explore radio activity from your computer, phone, or tablet.';
+  const head = indexSource.slice(0, indexSource.indexOf('</head>'));
+  const metadata = (key) => {
+    const tags = [...head.matchAll(/<meta\b[^>]*(?:name|property)="([^"]+)"[^>]*content="([^"]*)"[^>]*>/g)]
+      .filter((tag) => tag[1] === key);
+    assert.equal(tags.length, 1, `${key} must have one server-rendered metadata value`);
+    return tags[0][2];
+  };
+  assert.equal(head.match(/<title>([^<]+)<\/title>/)?.[1], shareTitle);
+  assert.equal(metadata('description'), shareDescription);
+  for (const prefix of ['og', 'twitter']) {
+    assert.equal(metadata(`${prefix}:title`), shareTitle);
+    assert.equal(metadata(`${prefix}:description`), metadata('description'));
+  }
+  assert.equal(metadata('og:type'), 'website');
+  assert.equal(metadata('og:site_name'), 'SDRTrunk VCE');
+  assert.equal(metadata('twitter:card'), 'summary_large_image');
+  const canonical = head.match(/<link rel="canonical" href="([^"]+)"/)?.[1];
+  assert.equal(canonical, '__VCE_PUBLIC_ORIGIN__/',
+    'Canonical navigation must use the request origin marker and exclude routes, queries and fragments');
+  assert.equal(metadata('og:url'), canonical);
+  assert.equal(metadata('twitter:image'), metadata('og:image'));
+  assert.equal(metadata('twitter:image:alt'), metadata('og:image:alt'));
+  assert.ok(metadata('og:image:alt').trim(), 'The share image must have an accessible description');
+  assert.match(metadata('og:image'), /^__VCE_PUBLIC_ORIGIN__\/assets\/vce-social-card\.png(?:\?v=\d+)?$/);
+  assert.equal(metadata('og:image:type'), 'image/png');
+  const shareImage = fs.readFileSync(path.resolve(core, '../vce-social-card.png'));
+  assert.equal(shareImage.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+  assert.equal(shareImage.toString('ascii', 12, 16), 'IHDR');
+  const shareDimensions = [shareImage.readUInt32BE(16), shareImage.readUInt32BE(20)];
+  assert.deepEqual(shareDimensions, [1200, 630]);
+  assert.deepEqual([Number(metadata('og:image:width')), Number(metadata('og:image:height'))], shareDimensions,
+    'Open Graph dimensions must match the actual share image');
   assert.match(indexSource,
     /<meta name="theme-color" content="#202a33" media="\(prefers-color-scheme: light\)">/);
   assert.match(indexSource,

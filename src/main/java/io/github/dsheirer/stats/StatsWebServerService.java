@@ -2592,7 +2592,14 @@ public class StatsWebServerService implements AutoCloseable
             return;
         }
 
-        mStaticWebAssetResponse.send(exchange, file, contentType(file), webClientRevision);
+        if(file.equals(root.resolve("index.html").normalize()))
+        {
+            mStaticWebAssetResponse.sendIndex(exchange, file, contentType(file), webClientRevision);
+        }
+        else
+        {
+            mStaticWebAssetResponse.send(exchange, file, contentType(file), webClientRevision);
+        }
     }
 
     private void sendMissingAssetsPage(HttpExchange exchange, Path root) throws IOException
