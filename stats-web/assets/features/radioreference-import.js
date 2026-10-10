@@ -980,6 +980,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
             textValue(site, ['number', 'site_number']) ? `Site ${textValue(site, ['number', 'site_number'])}` : '']
             .filter(Boolean).join(' · ');
           if (context) identity.append(node('small', 'muted', context));
+          if (matchingCounty({ site })) identity.append(uiPill('Your county', 'neutral'));
           return identity;
         } },
         { id: 'system', label: 'Type', fullLabel: 'System type', render: (site) => {
@@ -1133,7 +1134,11 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       const importedField = field === 'alpha_tag' ? 'name' : field === 'category' ? 'group' : field;
       const change = talkgroupChanges(talkgroup).find((entry) => entry.field === importedField);
       const changedValues = change ? importedChangeValues(change) : null;
-      if (change) value.append(uiPill('Changed', 'warning'));
+      if (change) {
+        const pill = uiPill('Changed', 'warning');
+        pill.title = `${IMPORTED_FIELD_LABELS[importedField]}: ${changedValues.before} → ${changedValues.after}`;
+        value.append(pill);
+      }
       value.append(node('span', '', changedValues?.after ?? (incoming || '—')));
       if (changedValues?.hiddenDifference) value.append(node('small', 'ui-field-detail',
         'Spacing or hidden characters differ; ␠ marks a space and escapes show hidden characters.'));

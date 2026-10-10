@@ -3,6 +3,7 @@
 const { expect, test } = require('@playwright/test');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { expectRoundedCorners } = require('./fixtures/surface-geometry.cjs');
 
 // The global player is covered separately; these snapshots isolate recording components.
 const componentScreenshot = { stylePath: path.resolve(__dirname, 'fixtures/hide-global-audio-dock.css') };
@@ -288,6 +289,7 @@ for (const theme of ['light', 'dark']) {
     await page.setViewportSize({ width: 1280, height: 900 });
     await openRecordings(page, { theme });
     await expect(page.locator('.recordings-call')).toHaveCount(1);
+    await expectRoundedCorners(page.locator('.recordings-search-panel > .ui-section-title'));
     const rowSelection = page.locator('.recordings-call-select');
     await expect(rowSelection).toHaveClass(/ui-selection-check/);
     await expect(rowSelection).toHaveCSS('appearance', 'none');

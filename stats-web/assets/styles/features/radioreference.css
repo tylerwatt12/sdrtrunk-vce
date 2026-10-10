@@ -151,6 +151,7 @@
 .radioreference-directory-results {
   display: flex;
   flex-direction: column;
+  overflow: clip;
 }
 
 .radioreference-directory-tabs {

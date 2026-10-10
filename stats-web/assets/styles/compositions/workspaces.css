@@ -571,6 +571,13 @@
   border-bottom: 1px solid var(--line);
 }
 
+/* Edge headers follow the surface without clipping menus or focus outside it. */
+.ui-surface > .ui-surface-header:first-child,
+.ui-section > .ui-section-title:first-child {
+  border-top-left-radius: inherit;
+  border-top-right-radius: inherit;
+}
+
 /* A standalone section introduction with a primary action beside its title and copy. */
 .ui-surface-heading {
   display: flex;

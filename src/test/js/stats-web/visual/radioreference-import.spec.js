@@ -1,6 +1,7 @@
 const { expect, test } = require('@playwright/test');
 const { readFileSync } = require('node:fs');
 const { resolve } = require('node:path');
+const { expectRoundedCorners } = require('./fixtures/surface-geometry.cjs');
 const app = readFileSync(resolve(__dirname, '../../../../..', 'stats-web/assets/app.js'), 'utf8');
 const metricHelpers = app.slice(app.indexOf('function number('), app.indexOf('function hex(')) +
   app.slice(app.indexOf('function valueNode('), app.indexOf('function tableColumnKey(')) +
@@ -889,6 +890,9 @@ test('location results show their scope and bookmarks show their route', async (
   await page.getByRole('button', { name: /Bookmarks/ }).click();
   await expect(page.getByText('Ohio (OH) > Franklin County')).toBeVisible();
   await expect(page.getByText('Central County P25', { exact: true })).toBeVisible();
+  await page.locator('.radioreference-directory-item .radioreference-result-open').click();
+  await expect(page.locator('.radioreference-directory-item')).toHaveClass(/is-active/);
+  await expectRoundedCorners(page.locator('.radioreference-directory-results'), 'bottom');
 });
 
 test('directory sorts supported systems and filters types without another API request', async ({ page }) => {
@@ -927,6 +931,14 @@ for (const [name, theme, viewport] of [
     await expect(list.locator(':scope > .radioreference-directory-state')).toHaveCount(0);
     const [listBox, treeBox] = await Promise.all([list.boundingBox(), tree.boundingBox()]);
     expect(Math.abs(listBox.x - treeBox.x)).toBeLessThanOrEqual(1);
+    const branch = tree.locator('.radioreference-directory-branch').last();
+    const summary = branch.locator('summary');
+    await summary.focus();
+    await summary.press('Enter');
+    await expect(branch).not.toHaveAttribute('open', '');
+    await expectRoundedCorners(results, 'bottom');
+    await summary.press('Enter');
+    await expect(branch).toHaveAttribute('open', '');
 
     await page.getByLabel('Filter system type').selectOption('DMR');
     await expect(list.locator(':scope > .radioreference-directory-state .ui-empty-state')).toBeVisible();
@@ -956,12 +968,22 @@ test('bookmarks keep breadcrumb and name readable on a narrow screen', async ({ 
 test('site sorting and preview use the RadioReference database system ID', async ({ page }) => {
   await installWorkspace(page);
   await openSystem(page);
-  await expect(page.locator('.radioreference-sites-list tbody tr').first()).toContainText('Central Simulcast');
+  const sites = page.locator('.radioreference-sites-list tbody tr');
+  const yourCounty = sites.locator('.ui-pill').filter({ hasText: /^Your county$/ });
+  await expect(sites.first()).toContainText('Central Simulcast');
+  await expect(yourCounty).toHaveCount(1);
+  await expect(sites.filter({ hasText: 'Central Simulcast' }).locator('.ui-pill')
+    .filter({ hasText: /^Your county$/ })).toBeVisible();
+  await expect(sites.filter({ hasText: 'Alpha Site' }).locator('.ui-pill')
+    .filter({ hasText: /^Your county$/ })).toHaveCount(0);
+  await page.screenshot({ path: test.info().outputPath('radioreference-your-county.png') });
   await page.getByLabel('Sort sites').selectOption('alphabetical');
-  await expect(page.locator('.radioreference-sites-list tbody tr').first()).toContainText('Central Simulcast');
+  await expect(sites.first()).toContainText('Central Simulcast');
+  await expect(yourCounty).toHaveCount(1);
   await page.locator('.radioreference-browse-fields > label:nth-child(3) select').selectOption('');
   await openSystem(page);
-  await expect(page.locator('.radioreference-sites-list tbody tr').first()).toContainText('Alpha Site');
+  await expect(sites.first()).toContainText('Alpha Site');
+  await expect(yourCounty).toHaveCount(0);
   await page.getByRole('button', { name: 'Alpha Site' }).click();
   const importModal = page.getByRole('dialog', { name: /Import Alpha Site/ });
   await expect(importModal.locator('.radioreference-site-facts dt'))
@@ -1182,6 +1204,7 @@ for (const [name, theme, viewport] of [
     await page.setViewportSize(viewport);
     await installWorkspace(page, theme);
     await openSystem(page);
+    await expectRoundedCorners(page.locator('.radioreference-detail-header'));
     await expect(page.locator('body')).toHaveScreenshot(`${name}.png`, { fullPage: true });
   });
 }
@@ -1249,6 +1272,12 @@ test('comparison reuses the source catalog and Different shows only incoming fie
   await expect(row).not.toContainText('Local fireground description');
   await expect(row).not.toContainText('Operations');
   await expect(row.getByText('Changed', { exact: true })).toHaveCount(3);
+  await expect(row.locator('td[data-label="Alpha tag"]').locator('.ui-pill').filter({ hasText: /^Changed$/ }))
+    .toHaveAttribute('title', 'Alpha tag: Fireground Two → Fireground 2');
+  await expect(row.locator('td[data-label="Description"]').locator('.ui-pill').filter({ hasText: /^Changed$/ }))
+    .toHaveAttribute('title', 'Description: Local fireground description → Fireground operations');
+  await expect(row.locator('td[data-label="Category"]').locator('.ui-pill').filter({ hasText: /^Changed$/ }))
+    .toHaveAttribute('title', 'Category: Operations → Fire');
   await expect(row.locator('td[data-label="Import status"]')).toHaveText('Different');
   await row.getByRole('checkbox', { name: 'Select Fireground 2', exact: true }).check();
   await page.getByRole('button', { name: 'Import selected', exact: true }).click();
@@ -1270,6 +1299,10 @@ test(`Different highlights only changed imported fields and reveals visually equ
   await expect(row).toHaveCount(1);
   await expect(row.locator('td[data-label="Alpha tag"]').getByText('Changed', { exact: true })).toHaveCount(0);
   await expect(row.getByText('Changed', { exact: true })).toHaveCount(2);
+  await expect(row.locator('td[data-label="Description"]').locator('.ui-pill').filter({ hasText: /^Changed$/ }))
+    .toHaveAttribute('title', 'Description: "County␠␠fire" → "County␠fire"');
+  await expect(row.locator('td[data-label="Category"]').locator('.ui-pill').filter({ hasText: /^Changed$/ }))
+    .toHaveAttribute('title', 'Category: "Fire\\u00a0" → "Fire"');
   await expect(row.locator('td[data-label="Import status"]')).toHaveText('Different');
   await expect(row.locator('td[data-label="Description"]')).toContainText('"County␠fire"');
   await expect(row.locator('td[data-label="Category"]')).toContainText('"Fire"');
