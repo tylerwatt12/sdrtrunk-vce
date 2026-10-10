@@ -95,6 +95,7 @@ import io.github.dsheirer.web.http.ApplicationLogHttpController;
 import io.github.dsheirer.web.http.TunerAdminHttpController;
 import io.github.dsheirer.web.http.WebUserAdminHttpController;
 import io.github.dsheirer.web.http.WebUserPreferencesHttpController;
+import io.github.dsheirer.web.http.StaticWebAssetResponse;
 import io.github.dsheirer.web.auth.WebUserPreferencesService;
 import io.github.dsheirer.web.settings.SpectrumSnapSettingsService;
 import io.github.dsheirer.web.settings.OperationalPreferencesService;
@@ -209,6 +210,7 @@ public class StatsWebServerService implements AutoCloseable
     private final Listener<DecodeEventViewService.EventView> mDecodeEventViewListener =
         event -> mDecodeEventHub.publish("decode_event", event);
     private final StatsWebCallService mWebCallService;
+    private final StaticWebAssetResponse mStaticWebAssetResponse = new StaticWebAssetResponse();
     private final Semaphore mDecodeMessageClients = new Semaphore(16);
     private final Semaphore mDiagnosticClients = new Semaphore(32);
     private final Semaphore mMultiplexClientPermits = new Semaphore(MAXIMUM_MULTIPLEX_CLIENTS);
@@ -2577,6 +2579,7 @@ public class StatsWebServerService implements AutoCloseable
 
         if(!Files.isRegularFile(file))
         {
+            mStaticWebAssetResponse.invalidate(file);
             if("/index.html".equals(requestPath))
             {
                 sendMissingAssetsPage(exchange, root);
@@ -2589,29 +2592,7 @@ public class StatsWebServerService implements AutoCloseable
             return;
         }
 
-        Headers headers = exchange.getResponseHeaders();
-        headers.set("Content-Type", contentType(file));
-        headers.set("Cache-Control", "no-cache");
-
-        if(webClientRevision != null)
-        {
-            headers.set("X-Sdrtrunk-Web-Revision", webClientRevision);
-        }
-
-        long length = Files.size(file);
-        exchange.sendResponseHeaders(200, "HEAD".equals(exchange.getRequestMethod()) ? -1 : length);
-
-        if(!"HEAD".equals(exchange.getRequestMethod()))
-        {
-            try(OutputStream outputStream = exchange.getResponseBody())
-            {
-                Files.copy(file, outputStream);
-            }
-        }
-        else
-        {
-            exchange.close();
-        }
+        mStaticWebAssetResponse.send(exchange, file, contentType(file), webClientRevision);
     }
 
     private void sendMissingAssetsPage(HttpExchange exchange, Path root) throws IOException
