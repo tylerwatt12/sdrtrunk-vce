@@ -95,6 +95,14 @@ for (const viewport of viewports) {
       await expect(page.locator('#navigation-toggle')).toHaveAttribute('aria-expanded', 'false');
       const statusIcon = page.getByRole('button', { name: 'Change Status Icon', exact: true });
       const reset = page.getByRole('button', { name: 'Reset All Personal Preferences', exact: true });
+      const personalActions = page.locator('.user-settings-summary > .ui-action-row');
+      await expect(personalActions.getByRole('button')).toHaveText([
+        'Change Appearance', 'Change Source Names', 'Change Status Icon'
+      ]);
+      await expect(personalActions.locator('button > svg[aria-hidden="true"]')).toHaveCount(3);
+      const actionsBox = await personalActions.boundingBox();
+      const summaryBox = await page.locator('.user-settings-summary .settings-card').first().boundingBox();
+      expect(actionsBox.y + actionsBox.height).toBeLessThanOrEqual(summaryBox.y);
       await expect(statusIcon).toBeVisible();
       await expect(reset).toBeVisible();
       await reset.click();

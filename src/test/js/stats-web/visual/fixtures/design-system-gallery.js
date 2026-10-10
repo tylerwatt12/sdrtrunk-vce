@@ -1,4 +1,4 @@
-import { applyThemeHue } from '/assets/core/theme.js?v=1';
+import { applyThemeHue } from '/assets/core/theme.js?v=2';
 import * as tableDefaults from '/assets/core/table-defaults.js';
 import * as tableLayouts from '/assets/core/table-layout.js';
 import { createTableOverflow } from '/assets/core/table-overflow.js?v=1';

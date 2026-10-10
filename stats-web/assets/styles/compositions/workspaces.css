@@ -645,8 +645,8 @@
 }
 
 .ui-icon-tile-blue {
-  color: var(--info);
-  background: var(--info-soft);
+  color: var(--accent-secondary);
+  background: var(--accent-secondary-soft);
 }
 
 .ui-icon-tile-secondary {

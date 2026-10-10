@@ -5,6 +5,12 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
 let defaults;
+const schemes = [
+  ['Teal', null], ['Ocean', 220], ['Blue', 250], ['Indigo', 285],
+  ['Plum', 315], ['Rose', 350], ['Amber', 75], ['Forest', 145]
+];
+const schemeChoice = (dialog, name) => dialog.getByRole('radio', { name, exact: true });
+const chooseScheme = (dialog, name) => schemeChoice(dialog, name).check();
 test.beforeAll(async () => {
   defaults = (await import(pathToFileURL(path.resolve(__dirname,
     '../../../../../stats-web/assets/core/preference-schema.js')).href)).defaults;
@@ -74,7 +80,8 @@ async function openEditor(page) {
   await page.getByRole('button', { name: 'Change Appearance', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Appearance', exact: true });
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByRole('slider', { name: 'Hue', exact: true })).toBeFocused();
+  const checked = dialog.getByRole('radio', { checked: true });
+  await expect(await checked.count() ? checked : dialog.getByRole('radio').first()).toBeFocused();
   return dialog;
 }
 
@@ -128,21 +135,34 @@ for (const theme of ['light', 'dark']) {
         page: 'rgb(16, 22, 28)', header: 'rgb(9, 14, 19)', surface: 'rgb(23, 32, 41)'
       });
       const dialog = await openEditor(page);
-      const hue = dialog.getByRole('slider', { name: 'Hue', exact: true });
       const save = dialog.getByRole('button', { name: 'Save appearance', exact: true });
+      await expect(dialog.getByRole('radiogroup', { name: 'Color scheme', exact: true })).toBeVisible();
+      await expect(dialog.getByRole('radio')).toHaveCount(8);
+      for (const [name] of schemes) await expect(schemeChoice(dialog, name)).toBeVisible();
+      const swatches = await dialog.locator('.ui-palette-swatch').evaluateAll((elements) => {
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = 1;
+        const context = canvas.getContext('2d', { willReadFrequently: true });
+        return elements.map((element) => {
+          const background = getComputedStyle(element).backgroundColor;
+          context.clearRect(0, 0, 1, 1);
+          context.fillStyle = background;
+          context.fillRect(0, 0, 1, 1);
+          return { background, alpha: context.getImageData(0, 0, 1, 1).data[3] };
+        });
+      });
+      expect(new Set(swatches.map(({ background }) => background)).size).toBe(8);
+      expect(swatches.map(({ alpha }) => alpha)).toEqual(Array(8).fill(255));
       await expect(save).toBeDisabled();
-      await expect(dialog.locator('output')).toHaveText('Original colors');
-      await hue.press('End');
-      await expect(hue).toHaveValue('359');
-      await expect(hue).toHaveAttribute('aria-valuetext', '359 degrees');
+      await expect(schemeChoice(dialog, 'Teal')).toBeChecked();
+      await page.keyboard.press('ArrowRight');
+      await expect(schemeChoice(dialog, 'Ocean')).toBeChecked();
+      await expect(page.locator('html')).toHaveAttribute('data-custom-hue', '');
       await expect(save).toBeEnabled();
-      const red = await colors(page);
-      expect(red.header).not.toBe(original.header);
-      expect(red.status).toBe(original.status);
-      expect(red.quality).toBe(original.quality);
-      expect(red.qualityBorder).toBe(original.qualityBorder);
-      for (const value of ['0', '120', '215', '285']) {
-        await hue.fill(value);
+      expect((await colors(page)).header).not.toBe(original.header);
+      for (const [name] of schemes.slice(1)) {
+        await chooseScheme(dialog, name);
+        await expect(schemeChoice(dialog, name)).toBeChecked();
         const preview = await colors(page);
         expect(preview.status).toBe(original.status);
         expect(preview.quality).toBe(original.quality);
@@ -153,11 +173,11 @@ for (const theme of ['light', 'dark']) {
       }
       await expect(dialog).toHaveScreenshot(`appearance-custom-${theme}-${size}.png`);
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
-      await dialog.getByRole('button', { name: 'Use original colors', exact: true }).click();
-      await expect(dialog.locator('output')).toHaveText('Original colors');
+      await chooseScheme(dialog, 'Teal');
+      await expect(schemeChoice(dialog, 'Teal')).toBeChecked();
       await expect(save).toBeDisabled();
       expect(await colors(page)).toEqual(original);
-      await hue.fill('215');
+      await chooseScheme(dialog, 'Ocean');
       await discardPreview(page, dialog);
       expect(await colors(page)).toEqual(original);
       expect(state.writes).toHaveLength(0);
@@ -169,17 +189,17 @@ for (const theme of ['light', 'dark']) {
 test('saved hue persists across reload and follows the signed-in account', async ({ page }) => {
   const state = await openAppearanceApp(page);
   let dialog = await openEditor(page);
-  await dialog.getByRole('slider', { name: 'Hue', exact: true }).fill('215');
+  await chooseScheme(dialog, 'Ocean');
   await dialog.getByRole('button', { name: 'Save appearance', exact: true }).click();
   await expect(dialog).toBeHidden();
-  expect(state.writes[0].preferences.appearance).toEqual({ theme: 'light', hue: 215 });
+  expect(state.writes[0].preferences.appearance).toEqual({ theme: 'light', hue: 220 });
   expect(state.writes[0].revision).toBe('"1"');
   const saved = await colors(page);
   await page.reload();
   await expect(page.getByRole('heading', { name: 'My Settings', exact: true })).toBeVisible();
   expect((await colors(page)).header).toBe(saved.header);
   dialog = await openEditor(page);
-  await expect(dialog.getByRole('slider', { name: 'Hue', exact: true })).toHaveValue('215');
+  await expect(schemeChoice(dialog, 'Ocean')).toBeChecked();
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
   await page.getByRole('button', { name: 'Sign Out', exact: true }).click();
   await expect(page.locator('#auth-action')).toHaveText('Sign In');
@@ -192,37 +212,36 @@ test('saved hue persists across reload and follows the signed-in account', async
   await expect(login).toBeHidden();
   await page.getByRole('button', { name: 'Open My Settings for second', exact: true }).click();
   dialog = await openEditor(page);
-  await expect(dialog.getByRole('slider', { name: 'Hue', exact: true })).toHaveValue('285');
+  await expect(schemeChoice(dialog, 'Indigo')).toBeChecked();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-  await dialog.getByRole('button', { name: 'Use original colors', exact: true }).click();
+  await chooseScheme(dialog, 'Teal');
   await dialog.getByRole('button', { name: 'Save appearance', exact: true }).click();
   await expect(dialog).toBeHidden();
   expect(state.writes[1].username).toBe('second');
   expect(state.profiles.second.appearance).toEqual({ theme: 'dark', hue: null });
-  expect(state.profiles.listener.appearance).toEqual({ theme: 'light', hue: 215 });
+  expect(state.profiles.listener.appearance).toEqual({ theme: 'light', hue: 220 });
 });
 
 test('appearance save blocks dismissal and duplicate submits, preserving the draft for retry', async ({ page }) => {
   const state = await openAppearanceApp(page, { holdSaves: true });
   const dialog = await openEditor(page);
-  const hue = dialog.getByRole('slider', { name: 'Hue', exact: true });
+  const indigo = schemeChoice(dialog, 'Indigo');
   const save = dialog.getByRole('button', { name: 'Save appearance', exact: true });
-  await hue.fill('285');
+  await chooseScheme(dialog, 'Indigo');
   const preview = await colors(page);
   await save.click();
   await expect.poll(() => state.pending.length).toBe(1);
   await expect(dialog).toHaveAttribute('aria-busy', 'true');
-  await expect(hue).toBeDisabled();
+  for (const [name] of schemes) await expect(schemeChoice(dialog, name)).toBeDisabled();
   await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeDisabled();
-  await expect(dialog.getByRole('button', { name: 'Use original colors', exact: true })).toBeDisabled();
   await page.keyboard.press('Escape');
   await expect(dialog).toBeVisible();
   await dialog.locator('form').evaluate((form) => form.dispatchEvent(new Event('submit', { cancelable: true })));
   expect(state.writes).toHaveLength(1);
   state.pending.shift()(503);
-  await expect(dialog.getByRole('alert')).toHaveText('Appearance could not be saved. Your hue is still here. Try saving again.');
-  await expect(hue).toBeEnabled();
-  await expect(hue).toHaveValue('285');
+  await expect(dialog.getByRole('alert')).toHaveText('Appearance could not be saved. Your color choice is still here. Try saving again.');
+  await expect(indigo).toBeEnabled();
+  await expect(indigo).toBeChecked();
   expect(await colors(page)).toEqual(preview);
   expect(state.profiles.listener.appearance.hue).toBeNull();
   await save.click();
@@ -234,34 +253,46 @@ test('appearance save blocks dismissal and duplicate submits, preserving the dra
   expect(state.writes[1].revision).toBe('"1"');
 });
 
-test('conflicting hue save loads the latest saved hue before another edit', async ({ page }) => {
+test('saved custom colors remain unchanged until a choice, and conflicts load the latest saved colors', async ({ page }) => {
   const state = await openAppearanceApp(page, { hue: 215, holdSaves: true });
-  const dialog = await openEditor(page);
-  const hue = dialog.getByRole('slider', { name: 'Hue', exact: true });
+  const original = await colors(page);
+  await expect(page.getByText('Saved custom color', { exact: true })).toBeVisible();
+  let dialog = await openEditor(page);
+  await expect(dialog.getByRole('radio', { checked: true })).toHaveCount(0);
+  await expect(dialog.getByText('Saved custom color. Choose a scheme to replace it.', { exact: true })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Save appearance', exact: true })).toBeDisabled();
+  expect(await colors(page)).toEqual(original);
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(dialog).toBeHidden();
+  expect(state.writes).toHaveLength(0);
+  expect(state.profiles.listener.appearance.hue).toBe(215);
+  expect(await colors(page)).toEqual(original);
+  dialog = await openEditor(page);
   const save = dialog.getByRole('button', { name: 'Save appearance', exact: true });
-  await hue.fill('285');
+  await chooseScheme(dialog, 'Indigo');
   await save.click();
   await expect.poll(() => state.pending.length).toBe(1);
   state.profiles.listener.appearance.hue = 35;
   state.revisions.listener = 4;
   state.pending.shift()(409);
-  await expect(dialog.locator('.admin-form-message')).toHaveText('Appearance changed in another session. The saved hue was loaded.');
-  await expect(hue).toHaveValue('35');
+  await expect(dialog.locator('.admin-form-message')).toHaveText('Appearance changed in another session. The saved colors were loaded.');
+  await expect(dialog.getByRole('radio', { checked: true })).toHaveCount(0);
+  await expect(dialog.getByText('Saved custom color. Choose a scheme to replace it.', { exact: true })).toBeVisible();
   await expect(save).toBeDisabled();
-  await hue.fill('215');
+  await chooseScheme(dialog, 'Ocean');
   await save.click();
   await expect.poll(() => state.pending.length).toBe(1);
   expect(state.writes[1].revision).toBe('"4"');
   state.pending.shift()(200);
   await expect(dialog).toBeHidden();
-  expect(state.profiles.listener.appearance.hue).toBe(215);
+  expect(state.profiles.listener.appearance.hue).toBe(220);
 });
 
 test('an account change during save clears the preview and leaves the next account untouched', async ({ page }) => {
   await page.clock.install();
   const state = await openAppearanceApp(page, { holdSaves: true });
   const dialog = await openEditor(page);
-  await dialog.getByRole('slider', { name: 'Hue', exact: true }).fill('35');
+  await chooseScheme(dialog, 'Amber');
   await dialog.getByRole('button', { name: 'Save appearance', exact: true }).click();
   await expect.poll(() => state.pending.length).toBe(1);
   state.session = session('second');
@@ -272,14 +303,14 @@ test('an account change during save clears the preview and leaves the next accou
   expect(state.profiles.second.appearance).toEqual({ theme: 'dark', hue: 285 });
   expect(state.writes).toHaveLength(1);
   const secondDialog = await openEditor(page);
-  await expect(secondDialog.getByRole('slider', { name: 'Hue', exact: true })).toHaveValue('285');
+  await expect(schemeChoice(secondDialog, 'Indigo')).toBeChecked();
 });
 
 test('an account change closes the former account editor and its discard confirmation', async ({ page }) => {
   await page.clock.install();
   const state = await openAppearanceApp(page);
   const dialog = await openEditor(page);
-  await dialog.getByRole('slider', { name: 'Hue', exact: true }).fill('35');
+  await chooseScheme(dialog, 'Amber');
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
   const confirmation = page.getByRole('alertdialog', { name: 'Discard unsaved changes', exact: true });
   await expect(confirmation).toBeVisible();
@@ -292,16 +323,16 @@ test('an account change closes the former account editor and its discard confirm
   expect(state.writes).toHaveLength(0);
   expect(state.profiles.listener.appearance.hue).toBeNull();
   const secondDialog = await openEditor(page);
-  await expect(secondDialog.getByRole('slider', { name: 'Hue', exact: true })).toHaveValue('285');
+  await expect(schemeChoice(secondDialog, 'Indigo')).toBeChecked();
   await expect(secondDialog.getByRole('button', { name: 'Save appearance', exact: true })).toBeDisabled();
 });
 
 test('failed conflict reload retains the hue draft and a save retry loads the current revision', async ({ page }) => {
   const state = await openAppearanceApp(page, { hue: 215, holdSaves: true });
   const dialog = await openEditor(page);
-  const hue = dialog.getByRole('slider', { name: 'Hue', exact: true });
+  const indigo = schemeChoice(dialog, 'Indigo');
   const save = dialog.getByRole('button', { name: 'Save appearance', exact: true });
-  await hue.fill('285');
+  await chooseScheme(dialog, 'Indigo');
   const draft = await colors(page);
   await save.click();
   await expect.poll(() => state.pending.length).toBe(1);
@@ -309,18 +340,19 @@ test('failed conflict reload retains the hue draft and a save retry loads the cu
   state.revisions.listener = 4;
   state.preferenceLoadFailures = 1;
   state.pending.shift()(409);
-  await expect(dialog.getByRole('alert')).toHaveText('Appearance changed in another session, but the saved hue could not be loaded. Try saving again or reload the page.');
-  await expect(hue).toHaveValue('285');
+  await expect(dialog.getByRole('alert')).toHaveText('Appearance changed in another session, but the saved colors could not be loaded. Try saving again or reload the page.');
+  await expect(indigo).toBeChecked();
   await expect(save).toBeEnabled();
   expect(await colors(page)).toEqual(draft);
   await save.click();
   await expect.poll(() => state.pending.length).toBe(1);
   expect(state.writes[1].revision).toBe('"1"');
   state.pending.shift()(409);
-  await expect(dialog.locator('.admin-form-message')).toHaveText('Appearance changed in another session. The saved hue was loaded.');
-  await expect(hue).toHaveValue('35');
+  await expect(dialog.locator('.admin-form-message')).toHaveText('Appearance changed in another session. The saved colors were loaded.');
+  await expect(dialog.getByRole('radio', { checked: true })).toHaveCount(0);
+  await expect(dialog.getByText('Saved custom color. Choose a scheme to replace it.', { exact: true })).toBeVisible();
   await expect(save).toBeDisabled();
-  await hue.fill('285');
+  await chooseScheme(dialog, 'Indigo');
   await save.click();
   await expect.poll(() => state.pending.length).toBe(1);
   expect(state.writes[2].revision).toBe('"4"');
@@ -334,7 +366,7 @@ for (const theme of ['light', 'dark']) {
     await openAppearanceApp(page, { theme });
     await colors(page);
     const result = await page.evaluate(async () => {
-      const { applyThemeHue } = await import('/assets/core/theme.js?v=1');
+      const { applyThemeHue } = await import('/assets/core/theme.js?v=2');
       const root = document.documentElement;
       const button = document.createElement('button');
       button.className = 'ui-button ui-button-primary';
@@ -342,7 +374,11 @@ for (const theme of ['light', 'dark']) {
       link.href = '#';
       const tile = document.createElement('span');
       tile.className = 'ui-icon-tile ui-icon-tile-secondary';
-      document.querySelector('#content').append(button, link, tile);
+      const primaryToken = document.createElement('span');
+      primaryToken.style.color = 'var(--accent)';
+      const secondaryToken = document.createElement('span');
+      secondaryToken.style.color = 'var(--accent-secondary)';
+      document.querySelector('#content').append(button, link, tile, primaryToken, secondaryToken);
       const canvas = document.createElement('canvas');
       canvas.width = canvas.height = 1;
       const context = canvas.getContext('2d', { willReadFrequently: true });
@@ -367,22 +403,26 @@ for (const theme of ['light', 'dark']) {
       const qualityBorder = getComputedStyle(qualityBar).borderColor;
       const minima = { general: Infinity, muted: Infinity, link: Infinity, primary: Infinity };
       const statusChanges = [];
-      const companionColors = new Set();
+      const primaryColors = new Set();
+      const secondaryColors = new Set();
       const paletteMismatches = [];
       for (let hue = 0; hue < 360; hue++) {
         applyThemeHue(hue);
         const palette = getComputedStyle(root);
         const token = (name) => palette.getPropertyValue(name).trim();
         const primary = getComputedStyle(button);
-        const companion = getComputedStyle(link).color;
-        companionColors.add(companion);
-        if (companion === primary.backgroundColor || getComputedStyle(tile).color !== companion) {
+        const linkColor = getComputedStyle(link).color;
+        const tileColor = getComputedStyle(tile).color;
+        primaryColors.add(linkColor);
+        secondaryColors.add(tileColor);
+        if (linkColor !== getComputedStyle(primaryToken).color ||
+            tileColor !== getComputedStyle(secondaryToken).color || tileColor === linkColor) {
           paletteMismatches.push(hue);
         }
         const pairs = {
           general: [token('--ink'), token('--bg')],
           muted: [token('--muted'), token('--surface-2')],
-          link: [companion, token('--surface')],
+          link: [linkColor, token('--surface')],
           primary: [primary.color, primary.backgroundColor]
         };
         for (const [name, pair] of Object.entries(pairs)) minima[name] = Math.min(minima[name], contrast(...pair));
@@ -393,12 +433,16 @@ for (const theme of ['light', 'dark']) {
       button.remove();
       link.remove();
       tile.remove();
+      primaryToken.remove();
+      secondaryToken.remove();
       applyThemeHue(null);
-      return { original, minima, statusChanges, companionColors: companionColors.size, paletteMismatches };
+      return { original, minima, statusChanges, primaryColors: primaryColors.size,
+        secondaryColors: secondaryColors.size, paletteMismatches };
     });
     expect(result.original).toBe(theme === 'light' ? '#edf1f4' : '#10161c');
     expect(result.statusChanges).toEqual([]);
-    expect(result.companionColors).toBeGreaterThan(12);
+    expect(result.primaryColors).toBeGreaterThan(12);
+    expect(result.secondaryColors).toBeGreaterThan(12);
     expect(result.paletteMismatches).toEqual([]);
     for (const [name, minimum] of Object.entries(result.minima)) {
       expect(minimum, `${theme} ${name} must stay readable at every hue`).toBeGreaterThanOrEqual(4.5);

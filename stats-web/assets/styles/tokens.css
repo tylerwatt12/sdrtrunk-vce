@@ -114,6 +114,8 @@
   --accent-soft: #d9efec;
   --accent-secondary: var(--info);
   --accent-secondary-soft: var(--info-soft);
+  --palette-swatch-lightness: 62%;
+  --palette-swatch-chroma: 0.12;
   --warning: #945d0d;
   --danger: #b23948;
   --control: #b23948;
@@ -467,30 +469,43 @@
   --network-label-shadow: 0 9px 28px rgb(0 0 0 / 42%);
 }
 
-/* Custom accents form a split-complementary pair; chrome is restrained and body text stays neutral.
+/* Custom accents share neighboring hues; chrome and body surfaces carry only a quiet tint.
    Semantic success, voice quality, warning, danger and chart-category colors keep their original meaning. */
 :root[data-custom-hue] {
-  --theme-secondary-hue: calc(var(--theme-hue) + 150);
-  --theme-chrome-hue: calc(var(--theme-hue) - 24);
-  --muted: #5d6d7d;
-  --header: oklch(28% 0.024 var(--theme-chrome-hue));
-  --header-line: oklch(43% 0.024 var(--theme-chrome-hue));
-  --header-control: oklch(33% 0.027 var(--theme-chrome-hue));
-  --header-control-hover: oklch(39% 0.03 var(--theme-chrome-hue));
+  --theme-secondary-hue: calc(var(--theme-hue) + 24);
+  --theme-chrome-hue: var(--theme-hue);
+  --bg: oklch(96% 0.006 var(--theme-chrome-hue));
+  --surface: oklch(100% 0 var(--theme-chrome-hue));
+  --surface-2: oklch(97% 0.006 var(--theme-chrome-hue));
+  --ink: oklch(26% 0.009 var(--theme-chrome-hue));
+  --muted: oklch(50% 0.009 var(--theme-chrome-hue));
+  --line: oklch(84% 0.009 var(--theme-chrome-hue));
+  --line-dark: oklch(72% 0.012 var(--theme-chrome-hue));
+  --header: oklch(28% 0.012 var(--theme-chrome-hue));
+  --header-line: oklch(43% 0.014 var(--theme-chrome-hue));
+  --header-control: oklch(33% 0.014 var(--theme-chrome-hue));
+  --header-control-hover: oklch(39% 0.016 var(--theme-chrome-hue));
   --header-nav-active: oklch(77% 0.1 var(--theme-hue));
-  --transport-surface: oklch(28% 0.024 var(--theme-chrome-hue));
-  --transport-control: oklch(36% 0.027 var(--theme-chrome-hue));
+  --status-header: var(--header);
+  --status-header-line: var(--header-line);
+  --transport-surface: oklch(28% 0.012 var(--theme-chrome-hue));
+  --transport-control: oklch(36% 0.014 var(--theme-chrome-hue));
   --transport-control-active: oklch(42% 0.045 var(--theme-hue));
   --transport-ink: var(--header-ink);
   --transport-muted: var(--header-muted);
   --transport-accent: oklch(78% 0.1 var(--theme-hue));
   --accent: oklch(47% 0.115 var(--theme-hue));
   --accent-soft: oklch(94% 0.027 var(--theme-hue));
-  --accent-secondary: oklch(47% 0.105 var(--theme-secondary-hue));
-  --accent-secondary-soft: oklch(95% 0.025 var(--theme-secondary-hue));
-  --link: var(--accent-secondary);
+  --accent-secondary: oklch(47% 0.07 var(--theme-secondary-hue));
+  --accent-secondary-soft: oklch(95% 0.02 var(--theme-secondary-hue));
+  --link: var(--accent);
+  --primary-control: var(--accent);
+  --primary-control-hover: color-mix(in srgb, var(--accent) 85%, black);
+  --primary-control-ink: oklch(100% 0 var(--theme-chrome-hue));
   --section-header: oklch(95% 0.006 var(--theme-chrome-hue));
-  --table-hover: oklch(97% 0.012 var(--theme-secondary-hue));
+  --table-rule: oklch(89% 0.006 var(--theme-chrome-hue));
+  --table-column-rule: oklch(91% 0.006 var(--theme-chrome-hue));
+  --table-hover: oklch(97% 0.012 var(--theme-hue));
   --chart-grid: oklch(88% 0.022 var(--theme-hue));
   --interactive-border: oklch(65% 0.018 var(--theme-chrome-hue));
   --focus-ring: oklch(47% 0.115 var(--theme-hue));
@@ -504,7 +519,7 @@
   --access-accent-soft: oklch(35% 0.045 var(--theme-hue));
   --access-accent: oklch(78% 0.1 var(--theme-hue));
   --access-accent-hover: oklch(84% 0.08 var(--theme-hue));
-  --access-accent-ink: oklch(25% 0.008 255);
+  --access-accent-ink: oklch(25% 0.008 var(--theme-chrome-hue));
   --access-scene-background: radial-gradient(ellipse 55% 75% at 48% 62%, oklch(30% 0.065 var(--theme-secondary-hue)) 0%, transparent 75%), linear-gradient(120deg, oklch(23% 0.024 var(--theme-chrome-hue)), oklch(20% 0.018 var(--theme-chrome-hue)) 58%, oklch(16% 0.01 var(--theme-chrome-hue)));
   --access-scene-scrim: radial-gradient(ellipse 34% 37% at 27% 51%, oklch(15% 0.015 var(--theme-chrome-hue) / 72%), transparent 100%), linear-gradient(90deg, transparent 34%, oklch(13% 0.012 var(--theme-chrome-hue) / 19%) 65%, oklch(12% 0.01 var(--theme-chrome-hue) / 44%)), repeating-linear-gradient(0deg, transparent 0 3px, oklch(78% 0.085 var(--theme-secondary-hue) / 1%) 4px 5px);
   --access-scene-scrim-mobile: radial-gradient(ellipse 88% 55% at 50% 44%, oklch(15% 0.015 var(--theme-chrome-hue) / 65%), transparent 100%), linear-gradient(0deg, oklch(12% 0.01 var(--theme-chrome-hue) / 30%), transparent 65%);
@@ -513,25 +528,26 @@
 }
 
 :root[data-custom-hue][data-theme="dark"] {
-  --bg: oklch(21% 0.006 255);
-  --surface: oklch(26% 0.008 255);
-  --surface-2: oklch(31% 0.009 255);
-  --muted: #9eabb6;
+  --bg: oklch(21% 0.006 var(--theme-chrome-hue));
+  --surface: oklch(26% 0.008 var(--theme-chrome-hue));
+  --surface-2: oklch(31% 0.009 var(--theme-chrome-hue));
+  --ink: oklch(94% 0.006 var(--theme-chrome-hue));
+  --muted: oklch(73% 0.009 var(--theme-chrome-hue));
   --line: oklch(39% 0.012 var(--theme-chrome-hue));
   --line-dark: oklch(50% 0.014 var(--theme-chrome-hue));
-  --header: oklch(18% 0.016 var(--theme-chrome-hue));
+  --header: oklch(18% 0.01 var(--theme-chrome-hue));
   --accent: oklch(78% 0.1 var(--theme-hue));
   --accent-soft: oklch(35% 0.045 var(--theme-hue));
-  --accent-secondary: oklch(78% 0.09 var(--theme-secondary-hue));
-  --accent-secondary-soft: oklch(33% 0.035 var(--theme-secondary-hue));
+  --accent-secondary: oklch(78% 0.065 var(--theme-secondary-hue));
+  --accent-secondary-soft: oklch(33% 0.03 var(--theme-secondary-hue));
   --section-header: oklch(30% 0.013 var(--theme-chrome-hue));
   --table-rule: oklch(39% 0.012 var(--theme-chrome-hue));
   --table-column-rule: oklch(36% 0.01 var(--theme-chrome-hue));
-  --table-hover: oklch(35% 0.015 var(--theme-secondary-hue));
+  --table-hover: oklch(35% 0.015 var(--theme-hue));
   --chart-grid: oklch(40% 0.045 var(--theme-hue));
   --interactive-border: oklch(58% 0.018 var(--theme-chrome-hue));
   --focus-ring: oklch(82% 0.1 var(--theme-hue));
   --primary-control: oklch(78% 0.1 var(--theme-hue));
   --primary-control-hover: oklch(84% 0.08 var(--theme-hue));
-  --primary-control-ink: oklch(25% 0.008 255);
+  --primary-control-ink: oklch(25% 0.008 var(--theme-chrome-hue));
 }
