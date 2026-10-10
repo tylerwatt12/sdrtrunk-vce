@@ -17,7 +17,7 @@ import {
   normalizeP25EventSettings,
   enabledP25EventCategories,
   routineP25ActivityEnabled
-} from './settings.js?v=2';
+} from './settings.js?v=3';
 
 const HOUR_MS = 60 * 60 * 1_000;
 const POLL_MS = 5_000;
