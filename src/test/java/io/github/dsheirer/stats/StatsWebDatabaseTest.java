@@ -2566,6 +2566,105 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void p25VisualizerProjectionFiltersBeforePagingAndPreservesOwnedLabelsAndCanonicalIdentities() throws Exception
+    {
+        seedActivityFilterRows();
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA foreign_keys=ON");
+            statement.executeUpdate("INSERT INTO p25_subscriber_identity(id,home_wacn,home_system_id,subscriber_id) " +
+                "VALUES(9901,0x12345,0x123,777)");
+            statement.executeUpdate("UPDATE radio_system_identity_summary SET p25_subscriber_identity_id=9901," +
+                "last_talker_alias='Unit OTA',last_talker_alias_seen_ms=13000 WHERE id=7102");
+            statement.executeUpdate("UPDATE receiver_activity_event SET source_observed_working_id=202 " +
+                "WHERE source_identity_summary_id=7102");
+            statement.executeUpdate("INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,value) " +
+                "VALUES(9901,71,'North Unit','RADIO_ID','APCO25',202)," +
+                "(9902,72,'South Unit','RADIO_ID','APCO25',202)");
+            statement.executeUpdate("UPDATE configuration_channel SET decoder_type='P25_CONVENTIONAL' " +
+                "WHERE configuration_id='" + ANALOG_CHANNEL + "'");
+            statement.executeUpdate("UPDATE configuration_channel SET decoder_type='P25_PHASE2' " +
+                "WHERE configuration_id='" + P25_CHANNEL_B + "'");
+            statement.executeUpdate("UPDATE receiver_channel SET radio_system_id=NULL," +
+                "radio_system_assigned_at_ms=NULL WHERE id=71");
+            statement.executeUpdate("INSERT INTO radio_system(id,system_key,configuration_id,protocol_code," +
+                "address_domain_code,first_seen_ms,last_seen_ms) VALUES(99,'dmr:channel:" + DMR_CHANNEL +
+                "','" + DMR_CHANNEL + "',3,0,1000,15000)");
+            // Interleave unrelated conventional/P25 and DMR observations ahead of the relevant page boundary.
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_event(id,channel_id,radio_system_id,observed_at_ms,action_code)
+                WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM rows WHERE n<2000)
+                SELECT 10000+n,CASE WHEN n%2=0 THEN 73 ELSE 74 END,71,12500,4 FROM rows
+                """);
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_event(id,channel_id,radio_system_id,observed_at_ms,action_code,
+                    source_observed_local_id,target_observed_local_id,target_kind_code,
+                    source_identity_summary_id,target_identity_summary_id,source_observed_working_id)
+                VALUES(12001,72,71,14500,4,202,101,1,7102,7101,202)
+                """);
+            statement.executeUpdate("INSERT INTO receiver_activity_event(id,channel_id,radio_system_id," +
+                "observed_at_ms,action_code) VALUES(12002,71,99,14501,4)");
+            statement.executeUpdate("ANALYZE");
+        }
+        String query = "/?from_ms=9000&to_ms=15001&actions=CALL,DENIAL&after_id=0&limit=3";
+        Map<String,Object> full = mDatabase.activity(request(query.replace("limit=3", "limit=5000")));
+        List<Map<String,Object>> expected = rows(full).stream().filter(row ->
+            "TRUNKED_SITE".equals(row.get("channel_kind")) &&
+                number(row.get("protocol_code")) == 1).toList();
+        StatsWebDatabase.ActivityQuery[] observedQuery = new StatsWebDatabase.ActivityQuery[1];
+        Map<String,Object> first = mDatabase.activity(request(query + "&projection=p25_visualizer"),
+            selected -> observedQuery[0] = selected);
+        assertEquals(List.of(10000L,12000L,13000L), activityTimes(first));
+        assertTrue((Boolean)first.get("has_more"));
+        Map<String,Object> second = mDatabase.activity(request("/?from_ms=9000&to_ms=15001&actions=CALL,DENIAL" +
+            "&after_id=" + first.get("next_after_id") + "&watermark_id=" + first.get("watermark_id") +
+            "&limit=3&projection=p25_visualizer"));
+        assertEquals(List.of(14000L,14500L), activityTimes(second),
+            "Non-P25 and conventional rows must not consume the compact page limit");
+        assertFalse((Boolean)second.get("has_more"));
+        assertEquals(first.get("watermark_id"),second.get("next_after_id"));
+        List<Map<String,Object>> actual = new ArrayList<>(rows(first));
+        actual.addAll(rows(second));
+        assertEquals(expected.stream().map(row -> row.get("id")).toList(),
+            actual.stream().map(row -> row.get("id")).toList());
+        for(int index=0;index<expected.size();index++)
+        {
+            assertEquals(p25VisualizerRows(List.of(expected.get(index))),p25VisualizerRows(List.of(actual.get(index))),
+                "Compact labels and canonical identity must match ordinary Activity presentation");
+        }
+        assertEquals("North Unit",actual.getFirst().get("source_alias_name"));
+        assertEquals(RADIO_SYSTEM_KEY,actual.getFirst().get("radio_system_key"),
+            "A channel reassignment must not remove retained event-owned system evidence");
+        assertEquals("South Unit",actual.getLast().get("source_alias_name"));
+        assertEquals("Fireground",actual.getLast().get("target_alias_name"));
+        assertEquals(777, StatsApiV1Payload.present(actual.getFirst())
+            .at("/source_canonical_identity/subscriber_id").intValue());
+        assertEquals(777, StatsApiV1Payload.present(actual.get(1))
+            .at("/target_canonical_identity/subscriber_id").intValue());
+        assertFalse(actual.getFirst().containsKey("frequency_hz"));
+        assertFalse(actual.getFirst().containsKey("event_type"));
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            List<String> plan = explain(connection,observedQuery[0].sql(),observedQuery[0].parameters().toArray());
+            assertTrue(plan.stream().anyMatch(detail -> detail.contains("INTEGER PRIMARY KEY (rowid>")),
+                () -> "Compact forward history must keep the bounded row-id seek: " + plan);
+            assertFalse(plan.stream().anyMatch(detail ->
+                detail.equals("SCAN candidate") || detail.startsWith("SCAN candidate ")),
+                () -> "Compact candidate selection must not scan retained history: " + plan);
+        }
+        Map<String,Object> reset = mDatabase.activity(request("/?from_ms=9000&to_ms=15001&actions=CALL" +
+            "&after_id=999999&projection=p25_visualizer"));
+        assertEquals(true,reset.get("reset_required"));
+        assertTrue(rows(reset).isEmpty());
+    }
+
+    private Object p25VisualizerRows(List<Map<String,Object>> rows)
+    {
+        return StatsApiV1Payload.p25Visualizer(StatsApiV1Payload.present(mDatabase.enrichSystemNames(rows)));
+    }
+
+    @Test
     void activityGlobalWindowAndForwardParametersStayBounded()
     {
         Map<String,Object> extendedPage = mDatabase.activity(request(
@@ -2592,6 +2691,14 @@ class StatsWebDatabaseTest
         StatsApiException oversizedPage = assertThrows(StatsApiException.class, () -> mDatabase.activity(
             request("/?from_ms=1&to_ms=1000&actions=JOIN&after_id=0&limit=5001")));
         assertEquals("limit", oversizedPage.field());
+        for(String query: List.of("/?projection=unexpected", "/?projection=p25_visualizer",
+            "/?projection=p25_visualizer&from_ms=1&to_ms=1000&actions=JOIN",
+            "/?projection=p25_visualizer&from_ms=1&to_ms=86400002&actions=JOIN&after_id=0"))
+        {
+            StatsApiException invalidProjection = assertThrows(StatsApiException.class,
+                () -> mDatabase.activity(request(query)));
+            assertEquals("projection",invalidProjection.field());
+        }
     }
 
     @Test

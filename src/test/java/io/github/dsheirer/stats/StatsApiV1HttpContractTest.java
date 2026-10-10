@@ -853,6 +853,37 @@ class StatsApiV1HttpContractTest
     {
     }
 
+    @Test
+    void p25VisualizerProjectionReturnsCompactEquivalentLabelsAndForwardMetadata() throws Exception
+    {
+        String query = "?from_ms=1&to_ms=86400001&actions=GRANT&after_id=0&limit=5000";
+        HttpResponse<String> ordinaryResponse = get(StatsApiV1.ACTIVITY + query);
+        HttpResponse<String> compactResponse = get(StatsApiV1.ACTIVITY + query + "&projection=p25_visualizer");
+        assertEquals(200, compactResponse.statusCode(), compactResponse.body());
+        JsonNode ordinary = OBJECT_MAPPER.readTree(ordinaryResponse.body());
+        JsonNode compact = OBJECT_MAPPER.readTree(compactResponse.body());
+        assertEquals(1, compact.path("data").size());
+        assertEquals(StatsApiV1Payload.p25Visualizer(ordinary.path("data")), compact.path("data"));
+        assertEquals(ordinary.path("meta"), compact.path("meta"));
+        JsonNode row = compact.at("/data/0");
+        assertEquals("p25", row.path("protocol").asText());
+        assertEquals("trunked_site", row.path("channel_kind").asText());
+        assertEquals("GCRCN", row.path("system_name").asText());
+        assertEquals("CuyCO Jail 35", row.path("target_alias_name").asText());
+        assertEquals("Unit 2 OTA", row.path("source_talker_alias").asText());
+        assertFalse(row.has("system_identity"));
+        assertFalse(row.has("source_entity_ref"));
+        assertFalse(row.has("target_alias_description"));
+        assertFalse(row.has("frequency_hz"));
+        assertTrue(compactResponse.body().length() < ordinaryResponse.body().length() * 0.75,
+            "Compact history must remove repeated detail payload");
+        System.out.printf("P25 visualizer fixture JSON: ordinary=%d bytes, compact=%d bytes%n",
+            ordinaryResponse.body().getBytes(StandardCharsets.UTF_8).length,
+            compactResponse.body().getBytes(StandardCharsets.UTF_8).length);
+        assertStructuredError(get(StatsApiV1.ACTIVITY + query + "&projection=invalid"),
+            400, "invalid_parameter", "projection");
+    }
+
     private static void seedSystemDirectory(Path database) throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);

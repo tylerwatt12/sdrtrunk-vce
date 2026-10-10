@@ -130,10 +130,12 @@ final class StatsApiV1Controller
                     "radio_system_key", "configuration_id", "hide_grants", "limit", "from_ms", "to_ms",
                     "action", "actions", "event_type", "encryption", "radio_role", "group_match", "source_identity_key",
                     "target_identity_key", "source_id", "target_id", "target_kind", "frequency_hz", "lcn",
-                    "timeslot");
+                    "timeslot", "projection");
                 Map<String,Object> activity = new LinkedHashMap<>(mDatabase.activity(request));
                 activity.put("traffic_grant_age_out_milliseconds", mTrafficGrantAgeOutMilliseconds.getAsInt());
-                return page(activity);
+                JsonBody body = page(activity);
+                return "p25_visualizer".equals(request.text("projection")) ?
+                    new JsonBody(body.data(), body.meta(), true) : body;
             })));
         create(server, StatsApiV1.ACTIVITY_ACTIONS, WebCapability.DASHBOARD_VIEW,
             exchange -> handleJson(exchange, StatsApiV1.ACTIVITY_ACTIONS, (request, segments) -> {
@@ -487,9 +489,11 @@ final class StatsApiV1Controller
 
             if(result instanceof JsonBody body)
             {
+                Object data = StatsApiV1Payload.present(
+                    mDatabase.enrichSystemNames(StatsApiV1Payload.source(body.data())));
+                if(body.p25Visualizer()) data = StatsApiV1Payload.p25Visualizer(data);
                 ApiHttpResponse.sendDataWithMeta(exchange, 200,
-                    StatsApiV1Payload.present(mDatabase.enrichSystemNames(StatsApiV1Payload.source(body.data()))),
-                    StatsApiV1Payload.present(body.meta()));
+                    data, StatsApiV1Payload.present(body.meta()));
             }
             else
             {
@@ -884,7 +888,11 @@ final class StatsApiV1Controller
         Object handle(StatsRequest request, List<String> segments);
     }
 
-    private record JsonBody(Object data, Map<String,Object> meta)
+    private record JsonBody(Object data, Map<String,Object> meta, boolean p25Visualizer)
     {
+        private JsonBody(Object data, Map<String,Object> meta)
+        {
+            this(data, meta, false);
+        }
     }
 }

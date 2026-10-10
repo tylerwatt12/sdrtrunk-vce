@@ -26,6 +26,14 @@ import java.util.Set;
 final class StatsApiV1Payload
 {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final Set<String> P25_VISUALIZER_FIELDS = Set.of(
+        "id", "configuration_id", "observed_at_ms", "channel_kind", "protocol", "action",
+        "source_radio_id", "target_id", "source_identity_key", "target_identity_key",
+        "source_native_id", "target_native_id", "source_canonical_identity", "target_canonical_identity",
+        "source_observed_working_id", "target_observed_working_id", "target_kind",
+        "source_alias_name", "target_alias_name", "source_talker_alias", "target_talker_alias",
+        "source_home_system_name", "target_home_system_name", "system_name", "system_names",
+        "radio_system_key", "radio_system_entity_ref", "wacn", "system_id");
     private static final Set<String> INTERNAL_FIELDS = Set.of(
         "radio_system_id", "channel_id", "identity_summary_id", "radio_identity_summary_id",
         "group_identity_summary_id", "affiliated_talkgroup_identity_summary_id",
@@ -72,6 +80,17 @@ final class StatsApiV1Payload
     static JsonNode present(Object value)
     {
         return transform(source(value), StatsApiProtocol.UNKNOWN);
+    }
+
+    /** Trim only after shared name/canonical/Alias presentation so the compact graph preserves its labels. */
+    static JsonNode p25Visualizer(Object value)
+    {
+        JsonNode rows = source(value);
+        for(JsonNode row: rows)
+        {
+            if(row instanceof ObjectNode object) object.retain(P25_VISUALIZER_FIELDS);
+        }
+        return rows;
     }
 
     /** Preserves producer field casing before optional read-side enrichment. */

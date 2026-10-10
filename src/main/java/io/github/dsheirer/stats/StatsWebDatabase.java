@@ -396,6 +396,31 @@ class StatsWebDatabase
         LEFT JOIN p25_subscriber_identity target_canonical
           ON target_canonical.id = target_directory.p25_subscriber_identity_id
         """;
+    /** Only graph identity, label and affiliation evidence; internal columns support the shared Alias resolver. */
+    private static final String P25_VISUALIZER_PROJECTION_SQL = """
+        SELECT activity.id, activity.configuration_id, activity.observed_at_ms,
+            activity.channel_kind, activity.protocol, activity.action,
+            activity.source_observed_local_id AS source_radio_id,
+            activity.target_observed_local_id AS target_id,
+            activity.source_identity_key, activity.target_identity_key,
+            activity.source_identity_id AS source_native_id,
+            activity.target_identity_id AS target_native_id,
+            source_canonical.home_wacn AS source_canonical_wacn,
+            source_canonical.home_system_id AS source_canonical_system_id,
+            source_canonical.subscriber_id AS source_canonical_subscriber_id,
+            source_directory.p25_subscriber_identity_id AS source_p25_subscriber_identity_id,
+            activity.source_observed_working_id,
+            target_canonical.home_wacn AS target_canonical_wacn,
+            target_canonical.home_system_id AS target_canonical_system_id,
+            target_canonical.subscriber_id AS target_canonical_subscriber_id,
+            target_directory.p25_subscriber_identity_id AS target_p25_subscriber_identity_id,
+            activity.target_observed_working_id, activity.target_kind_code, activity.target_kind,
+            nullif(trim(config.system_name), '') AS system_name, config.alias_list_id,
+            activity.resolved_system_key AS radio_system_key,
+            coalesce(system.protocol_code, activity.protocol_code) AS protocol_code,
+            activity.resolved_wacn AS wacn, activity.resolved_system_id AS system_id,
+            source_directory.last_talker_alias AS source_talker_alias
+        """;
     static final String ACTIVITY_SELECT_SQL = ACTIVITY_PROJECTION_SQL + """
         FROM receiver_activity_event_resolved activity
         """ + ACTIVITY_RELATED_JOINS_SQL + """
@@ -5040,6 +5065,13 @@ class StatsWebDatabase
 
     Map<String,Object> activity(StatsRequest request, Consumer<ActivityQuery> queryObserver)
     {
+        String projection = request.text("projection");
+        boolean p25Visualizer = "p25_visualizer".equals(projection);
+        if(projection != null && !p25Visualizer)
+        {
+            throw new StatsApiException(400, "invalid_parameter",
+                "projection must be p25_visualizer", "projection");
+        }
         long beforeId = request.beforeId();
         Long afterId = request.optionalLong("after_id");
         Long requestedWatermarkId = request.optionalLong("watermark_id");
@@ -5164,6 +5196,12 @@ class StatsWebDatabase
             fromMilliseconds != null && toMilliseconds != null &&
             toMilliseconds - fromMilliseconds <= DAY_MILLISECONDS && actionCodes != null;
 
+        if(p25Visualizer && (!globalActivityWindow || afterId == null))
+        {
+            throw new StatsApiException(400, "invalid_parameter",
+                "p25_visualizer requires a bounded global forward Activity window", "projection");
+        }
+
         if(hasNewFilter && systemKey == null && configurationId == null && !globalActivityWindow)
         {
             throw new StatsApiException(400, "invalid_parameter",
@@ -5271,13 +5309,16 @@ class StatsWebDatabase
                 radioIdentitySummaryId, radioRole, sourceIdentitySummaryId, targetIdentitySummaryId,
                 fromMilliseconds, toMilliseconds, actionCode, actionCodes, eventTypeCode, encryption, sourceId, targetId,
                 targetKind, frequencyHertz, lcn.band(), lcn.number(), timeslot, hideGrants, beforeTimestamp,
-                beforeId, afterId, watermarkId, forwardFloorId, limit);
+                beforeId, afterId, watermarkId, forwardFloorId, limit, p25Visualizer);
             ActivityQuery query = buildActivityQuery(connection, filters);
             queryObserver.accept(query);
             List<Map<String,Object>> rows = queryRows(connection, query.sql(), query.parameters().toArray());
             mAliasResolver.enrichActivity(connection, rows);
-            enrichActivityEncryption(rows);
-            enrichActivityEntityReferences(rows);
+            if(!p25Visualizer)
+            {
+                enrichActivityEncryption(rows);
+                enrichActivityEntityReferences(rows);
+            }
             return afterId != null ? forwardCursorPage(rows, limit, watermarkId) : cursorPage(rows, limit);
         });
     }
@@ -5347,7 +5388,7 @@ class StatsWebDatabase
         }
 
         sql.append("\n)\n")
-            .append(ACTIVITY_PROJECTION_SQL)
+            .append(filters.p25Visualizer() ? P25_VISUALIZER_PROJECTION_SQL : ACTIVITY_PROJECTION_SQL)
             .append("FROM activity_candidates candidate_match\n")
             .append("JOIN receiver_activity_event_resolved activity ON activity.id = candidate_match.id\n")
             .append(ACTIVITY_RELATED_JOINS_SQL)
@@ -5422,6 +5463,24 @@ class StatsWebDatabase
         StringBuilder sql = new StringBuilder("SELECT candidate.id, candidate.observed_at_ms\nFROM ")
             .append(fromClause).append("\nWHERE 1 = 1");
         List<Object> parameters = new ArrayList<>();
+
+        if(filters.p25Visualizer())
+        {
+            // Match Activity's event-owned API protocol and saved-channel kind before paging. A channel's
+            // current system assignment must not reassign retained history.
+            sql.append("""
+
+                  AND candidate.radio_system_id IS NOT NULL
+                  AND EXISTS (SELECT 1 FROM radio_system visualizer_system
+                      WHERE visualizer_system.id = candidate.radio_system_id
+                        AND visualizer_system.protocol_code = 1)
+                  AND EXISTS (SELECT 1 FROM receiver_channel visualizer_channel
+                      JOIN configuration_channel visualizer_config
+                        ON visualizer_config.configuration_id = visualizer_channel.configuration_id
+                      WHERE visualizer_channel.id = candidate.channel_id
+                        AND visualizer_config.channel_kind = 'TRUNKED')
+                """);
+        }
 
         appendActivityPredicate(sql, parameters, "candidate.radio_system_id = ?", filters.radioSystemId());
         appendActivityPredicate(sql, parameters, "candidate.channel_id = ?", filters.channelId());
@@ -8196,7 +8255,8 @@ class StatsWebDatabase
                                    Integer encryption, Integer sourceId,
                                    Integer targetId, Integer targetKind, Long frequencyHertz, Integer lcnBand,
                                    Integer lcnNumber, Integer timeslot, boolean hideGrants, Long beforeTimestamp,
-                                   long beforeId, Long afterId, long watermarkId, Long forwardFloorId, int limit)
+                                   long beforeId, Long afterId, long watermarkId, Long forwardFloorId, int limit,
+                                   boolean p25Visualizer)
     {
     }
 
