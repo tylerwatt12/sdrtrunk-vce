@@ -70,6 +70,8 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
     protected P25P2MessageFramer mMessageFramer;
     protected IRealFilter mIBasebandFilter;
     protected IRealFilter mQBasebandFilter;
+    protected IRealFilter mIMatchedFilter;
+    protected IRealFilter mQMatchedFilter;
     private DecodeConfigP25Phase2 mDecodeConfigP25Phase2;
     private final boolean mControlNACGuardEnabled;
 
@@ -120,6 +122,13 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
         float[] filterTaps = getBasebandFilter(sampleRate);
         mIBasebandFilter = FilterFactory.getRealFilter(filterTaps);
         mQBasebandFilter = FilterFactory.getRealFilter(filterTaps);
+
+        //Root-raised-cosine matched filter, alpha 0.2, 8 symbols each side.  Note: getRootRaisedCosine() halves its
+        //samples-per-symbol argument, so getRRC() passes twice the actual value to design the filter at the 6000 baud
+        //symbol rate.
+        float[] matchedFilterTaps = FilterFactory.getRRC(getSampleRate() / getSymbolRate(), 16, 0.2f);
+        mIMatchedFilter = FilterFactory.getRealFilter(matchedFilterTaps);
+        mQMatchedFilter = FilterFactory.getRealFilter(matchedFilterTaps);
         mCostasLoop = new CostasLoop(getSampleRate(), getSymbolRate());
 
         mInterpolatingSampleBuffer = new InterpolatingSampleBuffer(getSamplesPerSymbol(), SYMBOL_TIMING_GAIN);
@@ -158,8 +167,8 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
     @Override
     public void receive(ComplexSamples samples)
     {
-        float[] i = mIBasebandFilter.filter(samples.i());
-        float[] q = mQBasebandFilter.filter(samples.q());
+        float[] i = mIMatchedFilter.filter(mIBasebandFilter.filter(samples.i()));
+        float[] q = mQMatchedFilter.filter(mQBasebandFilter.filter(samples.q()));
 
         //Process the buffer for power measurements
         mPowerMonitor.process(i, q);
