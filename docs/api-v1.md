@@ -164,6 +164,12 @@ The browser opens **System → ISSI → Current Assignments** by default. Assign
 System ID; the displayed channel, RFSS, and site identify where the evidence was heard. They do not prove a radio's
 present location or that it is transmitting. **History** retains best-effort observations and never repopulates the
 receiver's current mapping. **Recent Changes** is a bounded list for this receiver process, not a permanent audit.
+Confirmed assignment history is saved independently of optional activity statistics. Each retained pair updates
+its existing summary rather than adding one row per message, and follows the configured activity retention period.
+History subscribers include `last_advertised_lease_minutes` (`null` if not received, `0` for no expiry) and
+`last_assignment_expires_at_ms`, captured with the latest accepted assignment evidence. A null advertised lifetime
+with a known expiry identifies VCE's fallback timer; it is not an advertised duration. No-expiry timestamps and
+unrecorded older timestamps are null. Later site broadcasts do not rewrite saved assignment timing.
 
 The current collections accept `q`, `configuration_id`, `roaming_only`, `home_wacn`, `home_system_id`, `subscriber_id`,
 `sort`, `direction`, `limit`, and `offset`. Identity filters use decimal values and an exact home-system tuple.

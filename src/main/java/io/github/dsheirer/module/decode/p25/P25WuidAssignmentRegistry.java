@@ -18,6 +18,7 @@ import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
+import io.github.dsheirer.module.decode.p25.reference.P25WuidLifetime;
 import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.protocol.Protocol;
@@ -47,12 +48,12 @@ import java.util.concurrent.locks.ReentrantLock;
 public final class P25WuidAssignmentRegistry
 {
     /** Shortest standards-valid temporary-WUID lease used when no site lease has been observed. */
-    static final int DEFAULT_LEASE_MINUTES = 270;
+    static final int DEFAULT_LEASE_MINUTES = P25WuidLifetime.MINIMUM_MINUTES;
     /** Explicit System Service Broadcast value for a WUID that does not expire. */
-    static final int NO_EXPIRY_LEASE_MINUTES = 0;
+    static final int NO_EXPIRY_LEASE_MINUTES = P25WuidLifetime.NO_EXPIRY_MINUTES;
     static final long DEFAULT_LEASE_MILLISECONDS = DEFAULT_LEASE_MINUTES * 60_000L;
     /** Longest standards-valid temporary-WUID lease. */
-    public static final int MAX_LEASE_MINUTES = 7_890;
+    public static final int MAX_LEASE_MINUTES = P25WuidLifetime.MAXIMUM_MINUTES;
     public static final long MAX_LEASE_MILLISECONDS = MAX_LEASE_MINUTES * 60_000L;
     private static final int DEFAULT_SLOT_COUNT = 1 << 18;
     private static final int DEFAULT_PROBE_COUNT = 8;
@@ -94,17 +95,26 @@ public final class P25WuidAssignmentRegistry
 
     /**
      * Positive result from a successful process-local registration or affiliation refresh. This is observation
-     * data, not a promise that it has been saved. The normal statistics pipeline may retain it on a best-effort basis
+     * data, not a promise that it has been saved. The observer pipeline may retain it on a best-effort basis
      * without feeding any persistence result back into this registry.
      */
     public record AssignmentObservation(int servingWacn, int servingSystem, int workingId,
                                         P25SubscriberIdentity subscriber, long observedAt, long expiresAt,
-                                        Evidence evidence)
+                                        Evidence evidence, Integer advertisedLeaseMinutes)
     {
+        /** Compatibility observations have no captured advertised lifetime. */
+        public AssignmentObservation(int servingWacn, int servingSystem, int workingId,
+                                     P25SubscriberIdentity subscriber, long observedAt, long expiresAt,
+                                     Evidence evidence)
+        {
+            this(servingWacn, servingSystem, workingId, subscriber, observedAt, expiresAt, evidence, null);
+        }
+
         public AssignmentObservation
         {
             if(!validServingSystem(servingWacn, servingSystem) || validWorkingId(workingId) == null ||
-                subscriber == null || observedAt <= 0 || expiresAt < observedAt || evidence == null)
+                subscriber == null || observedAt <= 0 || expiresAt < observedAt || evidence == null ||
+                advertisedLeaseMinutes != null && !P25WuidLifetime.isValidMinutes(advertisedLeaseMinutes))
             {
                 throw new IllegalArgumentException("Invalid P25 WUID assignment observation");
             }
@@ -152,7 +162,7 @@ public final class P25WuidAssignmentRegistry
         }
     }
 
-    private record ObservationContext(P25SiteIdentity site, String configurationId, LeaseSource leaseSource) {}
+    private record ObservationContext(P25SiteIdentity site, String configurationId, Integer advertisedLeaseMinutes) {}
     private record SourceObservation(String configurationId, P25SiteIdentity site, long activeSince,
                                      long observedAt, boolean active) {}
     private record SystemGap(int wacn, int system, long gapAt) {}
@@ -248,7 +258,7 @@ public final class P25WuidAssignmentRegistry
 
             Assignment assignment = register(mLookupState, cacheEpoch, servingSite.wacn(), servingSite.system(),
                 presence.workingId(), presence.subscriber(), confirmedAt, expiresAt,
-                new ObservationContext(servingSite, configurationId, leaseSource(leaseMinutes)));
+                new ObservationContext(servingSite, configurationId, P25WuidLifetime.advertisedMinutes(leaseMinutes)));
             if(assignment != null)
             {
                 recordChange(assignment, ChangeReason.REGISTERED, null, confirmedAt);
@@ -308,7 +318,7 @@ public final class P25WuidAssignmentRegistry
 
             Assignment assignment = refresh(mLookupState, cacheEpoch, servingSite.wacn(), servingSite.system(),
                 presence.workingId(), presence.subscriber(), confirmedAt, expiresAt,
-                new ObservationContext(servingSite, configurationId, leaseSource(leaseMinutes)));
+                new ObservationContext(servingSite, configurationId, P25WuidLifetime.advertisedMinutes(leaseMinutes)));
             if(assignment != null)
             {
                 recordChange(assignment, ChangeReason.REFRESHED, null, confirmedAt);
@@ -682,8 +692,7 @@ public final class P25WuidAssignmentRegistry
 
     private static LeaseSource leaseSource(Integer minutes)
     {
-        return minutes != null && (minutes == NO_EXPIRY_LEASE_MINUTES ||
-            minutes >= DEFAULT_LEASE_MINUTES && minutes <= MAX_LEASE_MINUTES && minutes % 30 == 0) ?
+        return P25WuidLifetime.isValidMinutes(minutes) ?
             LeaseSource.ADVERTISED : LeaseSource.FALLBACK;
     }
 
@@ -693,7 +702,7 @@ public final class P25WuidAssignmentRegistry
         return new Entry(assignment.servingWacn(), assignment.servingSystem(), assignment.workingId(),
             assignment.subscriber(), assignment.establishedAt(), assignment.observedAt(), assignment.expiresAt(),
             assignment.evidencePriority() == EVIDENCE_REGISTRATION ? Evidence.REGISTRATION : Evidence.AFFILIATION,
-            context != null ? context.leaseSource() : LeaseSource.FALLBACK,
+            context != null ? leaseSource(context.advertisedLeaseMinutes()) : LeaseSource.FALLBACK,
             context != null ? context.site() : null, context != null ? context.configurationId() : null);
     }
 
@@ -1090,7 +1099,8 @@ public final class P25WuidAssignmentRegistry
         Evidence evidence = assignment.evidencePriority() == EVIDENCE_REGISTRATION ? Evidence.REGISTRATION :
             Evidence.AFFILIATION;
         return new AssignmentObservation(assignment.servingWacn(), assignment.servingSystem(),
-            assignment.workingId(), assignment.subscriber(), assignment.observedAt(), assignment.expiresAt(), evidence);
+            assignment.workingId(), assignment.subscriber(), assignment.observedAt(), assignment.expiresAt(), evidence,
+            assignment.context() != null ? assignment.context().advertisedLeaseMinutes() : null);
     }
 
     private static Assignment forwardTombstone(Assignment assignment, long clearedAt, long expiresAt,
@@ -1297,8 +1307,7 @@ public final class P25WuidAssignmentRegistry
             return Long.MAX_VALUE;
         }
 
-        int minutes = leaseMinutes != null && leaseMinutes >= DEFAULT_LEASE_MINUTES &&
-            leaseMinutes <= MAX_LEASE_MINUTES && leaseMinutes % 30 == 0 ? leaseMinutes : DEFAULT_LEASE_MINUTES;
+        int minutes = P25WuidLifetime.isValidMinutes(leaseMinutes) ? leaseMinutes : DEFAULT_LEASE_MINUTES;
         long leaseMilliseconds = minutes * 60_000L;
         return observedAt > Long.MAX_VALUE - leaseMilliseconds ? Long.MAX_VALUE : observedAt + leaseMilliseconds;
     }

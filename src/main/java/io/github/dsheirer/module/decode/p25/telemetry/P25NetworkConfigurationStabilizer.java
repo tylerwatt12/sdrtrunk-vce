@@ -26,6 +26,7 @@ import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentSkipListMap;
@@ -190,8 +191,16 @@ public class P25NetworkConfigurationStabilizer
 
             noteFreshPatchScopeObservation(timestamp);
 
+            P25NetworkConfigurationSnapshot.Network previousNetwork = mNetwork.getStableValue();
+            P25NetworkConfigurationSnapshot.CurrentSite previousSite = mCurrentSite.getStableValue();
             observeIdentity(mNetwork, observation.network(), timestamp);
             observeIdentity(mCurrentSite, observation.currentSite(), timestamp);
+            if(servingScopeChanged(previousNetwork, previousSite))
+            {
+                //Every retained status value was broadcast by the previous serving site. In particular, its WUID
+                //lifetime must not become an advertisement from the newly confirmed system or site.
+                mSiteStatus.reset();
+            }
 
             if(observation.siteStatus() != null)
             {
@@ -544,6 +553,20 @@ public class P25NetworkConfigurationStabilizer
             tracker.observe(value, timestamp,
                 isDiscoveryMode(timestamp) ? IMMEDIATE_DISCOVERY_POLICY : GUARDED_STATIC_POLICY, ignored -> true);
         }
+    }
+
+    private boolean servingScopeChanged(P25NetworkConfigurationSnapshot.Network previousNetwork,
+                                        P25NetworkConfigurationSnapshot.CurrentSite previousSite)
+    {
+        P25NetworkConfigurationSnapshot.Network network = mNetwork.getStableValue();
+        P25NetworkConfigurationSnapshot.CurrentSite site = mCurrentSite.getStableValue();
+        return previousNetwork != null && network != null &&
+            (!Objects.equals(previousNetwork.wacn(), network.wacn()) ||
+                !Objects.equals(previousNetwork.system(), network.system())) ||
+            previousSite != null && site != null &&
+                (!Objects.equals(previousSite.system(), site.system()) ||
+                    !Objects.equals(previousSite.rfss(), site.rfss()) ||
+                    !Objects.equals(previousSite.site(), site.site()));
     }
 
     private <T> void observeGuarded(Map<String,StableFactTracker<T,T>> trackers, String key, T value, long timestamp)

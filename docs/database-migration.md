@@ -177,7 +177,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -634,6 +634,19 @@ remove that identity. Receiving-setting edits and copied channels cannot inherit
 relationship or retained row is added by this semantic step. Formats 45 and 46 share the exact DDL fingerprint and
 require the authoritative global marker; the prior populated format-45 fixture remains supported.
 
+The format 46-to-47 step preserves P25 association summaries and adds only nullable last advertised lifetime
+and effective absolute expiry to each existing pair. Previous rows retain unknown timing; no historical calls or
+site broadcasts are used to invent it. Future accepted registrations and refreshes retain their own timing, evidence,
+and source together, independently of optional statistics collection. The table remains bounded historical evidence
+and is never loaded into the live decoder registry after restart.
+
+The same step corrects the existing site lifetime constraint to accept finite advertised values from 240 through
+7860 minutes in 30-minute steps and explicit no-expiry zero. The previous decoder's raw-255 sentinel was saved as
+7890; only those rows become zero, and their obsolete snapshot hash is cleared. The report counts these normalizations.
+Every other site value, child relationship, index, counter, administrator setting and allocator is preserved.
+Format 46 keeps its frozen schema. Fresh format 47 and the adjacent migrated schema match exactly; runtime startup
+validates without repairing or migrating either table.
+
 ## Schema-Change Rule
 
 The optional Managed Recordings catalog is a separate SQLite file with its own adjacent format chain. Its format 2
@@ -644,7 +657,7 @@ counters, and adds no transcript rows. Catalog format 3 adds a constrained `tran
 transcript, marking calls with an existing transcript `complete` and other calls `pending`. Short calls stay pending;
 the background worker applies its configured minimum duration when selecting work. A failed call is retried only by
 an administrator action. Fresh format-3 catalogs use the same status default and index. The main application database
-is independently at format 46; transcript-catalog migrations do not change it. Recognized older catalogs are backed up
+is independently at format 47; transcript-catalog migrations do not change it. Recognized older catalogs are backed up
 and updated in one transaction at the pre-receiver setup boundary, with an optional SQLite-aware recovery snapshot
 before changes. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with
 Managed Recordings unavailable, so optional catalog trouble does not prevent ordinary receiving.

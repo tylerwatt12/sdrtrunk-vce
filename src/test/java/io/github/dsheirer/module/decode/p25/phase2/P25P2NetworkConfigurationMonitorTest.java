@@ -30,6 +30,7 @@ import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.SNDCPDa
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.SecondaryControlChannelBroadcastExplicit;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.SecondaryControlChannelBroadcastImplicit;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.SynchronizationBroadcast;
+import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.SystemServiceBroadcast;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationStabilizer;
 import java.time.Instant;
@@ -38,6 +39,26 @@ import org.junit.jupiter.api.Test;
 
 class P25P2NetworkConfigurationMonitorTest
 {
+    @Test
+    void capturesReceivedWuidLifetimeAcrossFiniteAndNoExpiryTransitions()
+    {
+        P25P2NetworkConfigurationMonitor monitor = new P25P2NetworkConfigurationMonitor();
+        assertNull(monitor.getSnapshot().siteStatus());
+        int offset = MacMessageFactory.DEFAULT_MAC_STRUCTURE_INDEX;
+        int[] received = {0, 1, 254, 255, 0};
+        int[] minutes = {240, 270, 7_860, 0, 240};
+        for(int index = 0; index < received.length; index++)
+        {
+            CorrectedBinaryMessage bits = new CorrectedBinaryMessage(96);
+            bits.setInt(0x78, IntField.length8(offset));
+            bits.setInt(received[index], IntField.length8(8 + offset));
+            SystemServiceBroadcast structure = new SystemServiceBroadcast(bits, offset);
+            MacMessage message = new MacMessage(1, DataUnitID.UNSCRAMBLED_LCCH, bits, 1_000L + index, structure);
+            assertEquals(minutes[index], monitor.processMacMessage(message).siteStatus().wuidLeaseMinutes());
+            assertEquals(minutes[index], monitor.getSnapshot().siteStatus().wuidLeaseMinutes());
+        }
+    }
+
     @Test
     void acceptsSecondaryControlOnlyForTheStabilizedSite()
     {

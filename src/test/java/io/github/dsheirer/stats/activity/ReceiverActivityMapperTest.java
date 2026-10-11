@@ -124,7 +124,8 @@ class ReceiverActivityMapperTest
         assertEquals(ReceiverActivityRecords.P25IdentityState.ORDINARY, record.p25SourceIdentity().state());
         assertEquals(ReceiverActivityRecords.P25IdentityState.ORDINARY,
             record.radioPresenceUpdate().radioIdentity().state());
-        assertNull(record.p25WuidObservation());
+        assertNull(new ReceiverActivityMapper().mapAssignment(
+            io.github.dsheirer.metadata.site.SiteReceiverContext.capture(channel, event.getProtocol()), event));
     }
 
     @Test
@@ -153,13 +154,16 @@ class ReceiverActivityMapperTest
             record.p25SourceIdentity().state());
         assertEquals(0xFFFD26, record.radioPresenceUpdate().radioId());
         assertNull(record.radioPresenceUpdate().talkgroupId());
-        assertEquals(0xABCDE, record.p25WuidObservation().servingWacn());
-        assertEquals(0x123, record.p25WuidObservation().servingSystem());
-        assertEquals(0xFFFD26, record.p25WuidObservation().workingId());
-        assertEquals(subscriber, record.p25WuidObservation().subscriber());
-        assertEquals(2_000L, record.p25WuidObservation().expiresAtEpochMilliseconds());
+        ReceiverActivityRecords.P25AssignmentObservation assignment = new ReceiverActivityMapper().mapAssignment(
+            io.github.dsheirer.metadata.site.SiteReceiverContext.capture(channel, event.getProtocol()), event);
+        assertEquals(1_000L, assignment.observedAtEpochMilliseconds());
+        assertEquals(0xABCDE, assignment.assignment().servingWacn());
+        assertEquals(0x123, assignment.assignment().servingSystem());
+        assertEquals(0xFFFD26, assignment.assignment().workingId());
+        assertEquals(subscriber, assignment.assignment().subscriber());
+        assertEquals(2_000L, assignment.assignment().expiresAtEpochMilliseconds());
         assertEquals(ReceiverActivityRecords.RadioPresenceEvidence.REGISTRATION,
-            record.p25WuidObservation().evidence());
+            assignment.assignment().evidence());
     }
 
     @Test

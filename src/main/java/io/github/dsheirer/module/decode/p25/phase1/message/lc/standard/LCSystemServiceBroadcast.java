@@ -23,15 +23,18 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.LinkControlWord;
+import io.github.dsheirer.module.decode.p25.reference.P25WuidLifetime;
 import io.github.dsheirer.module.decode.p25.reference.Service;
 import java.util.Collections;
 import java.util.List;
 
 /**
- * Termination or cancellation of a call and release of the channel.
+ * System services broadcast.
  */
 public class LCSystemServiceBroadcast extends LinkControlWord
 {
+    /** TIA-102.AABF-D (April 2015), 7.3.13: Twuid_validity occupies octet 1. */
+    private static final IntField TWUID_VALIDITY = IntField.length8(8);
     private static final IntField REQUEST_PRIORITY_LEVEL = IntField.length4(OCTET_2_BIT_16 + 4);
     private static final IntField AVAILABLE_SERVICES = IntField.length24(OCTET_3_BIT_24);
     private static final IntField SUPPORTED_SERVICES = IntField.length24(OCTET_6_BIT_48);
@@ -53,7 +56,19 @@ public class LCSystemServiceBroadcast extends LinkControlWord
         sb.append(" REQUEST PRIORITY LEVEL:").append(getRequestPriorityLevel());
         sb.append(" AVAILABLE SERVICES ").append(getAvailableServices());
         sb.append(" SUPPORTED SERVICES ").append(getSupportedServices());
+        sb.append(" ").append(getTemporaryWUIDValidity());
         return sb.toString();
+    }
+
+    /** Received WUID validity, normalized to minutes; zero denotes a received no-expiry value. */
+    public Integer getTemporaryWUIDValidityMinutes()
+    {
+        return P25WuidLifetime.decodeMinutes(getInt(TWUID_VALIDITY));
+    }
+
+    public String getTemporaryWUIDValidity()
+    {
+        return P25WuidLifetime.describe(getInt(TWUID_VALIDITY));
     }
 
     /**

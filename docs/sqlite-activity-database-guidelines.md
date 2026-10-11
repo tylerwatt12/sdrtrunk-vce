@@ -63,8 +63,9 @@ rows when counters in an existing talkgroup, site, frequency, or time bucket ans
 ## Write-Path Rules
 
 - Decoder, tuner, recording, and streaming threads must never perform SQLite work directly.
-- Route activity records, including best-effort P25 Working-ID observations, through the bounded statistics queue and
-  single background writer. Live Working-ID assignments stay in receiver memory and never wait for SQLite.
+- Route activity records and accepted P25 Working-ID observations through one bounded observer queue and single
+  background writer. Association records are independent of the statistics switch. Live Working-ID assignments
+  stay in receiver memory and never wait for SQLite.
 - Batch related writes in one transaction and use atomic upserts for counters and summaries.
 - A single observed call/output must increment each intended aggregate once. Patch-group fan-out, retries, or provider
   delivery attempts must not multiply the original-call count.
@@ -142,10 +143,12 @@ identity lookup, including old local links, so display labels never decide datab
 
 `p25_wuid_assignment_observation_summary` keeps one bounded aggregate for each observed
 `(radio_system_id, working_id, p25_subscriber_identity_id)` relationship. It records first and last observation,
-registration and affiliation counts, last evidence, and nullable saved-channel provenance. It never claims that a
+registration and affiliation counts, last evidence, nullable saved-channel provenance, and the winning observation's
+nullable advertised lifetime and effective absolute expiry. It never claims that a
 relationship is current and is never read by the decoder. Reuse and reassignment legitimately leave several
 historical pairs. Admission is capped at 500,000 pairs per radio system and ordinary activity retention removes old
-rows in indexed batches. The table starts empty on upgrade; legacy radio numbers are never guessed into it.
+rows in indexed batches. Format 32 introduced this table empty; subsequent migrations preserve it. Legacy radio
+numbers are never guessed into it.
 Repeated messages update the existing pair, so new rows per hour equal newly observed distinct pairs rather than the
 message rate. An isolated 10,000-pair SQLite sample with millisecond timestamps and all three indexes occupied
 1,294,336 bytes (about 129 bytes per pair), projecting roughly 62 MiB at the per-system cap. This is a planning
@@ -156,6 +159,34 @@ The live decoder registry is bounded, process-local state. Accepted registration
 affiliation can refresh an exact mapping, and deregistration clears it. Decoder reads remain fixed-cost and database
 or statistics-queue loss can only lose history. A new app process deliberately starts with no Working-ID mappings and
 relearns them from new signaling.
+
+Format 47 keeps association history even when optional statistics collection is off. Each accepted assignment enters
+the shared bounded queue and one association-record path; enabling statistics does not write it a second time.
+Queue loss can lose historical evidence but never blocks receiving or changes live identity resolution. Ordinary
+statistics and detailed events remain optional. Existing indexed retention and explicit statistics clears still apply.
+
+The two added nullable integers serve the ISSI History lifetime and expiry display without adding a table, index or
+event log. `last_advertised_lease_minutes` is null when no valid lifetime was received, zero for advertised no expiry,
+or 240 through 7860 in 30-minute steps. `last_expires_at_ms` stores the effective absolute receiver expiry used for
+that accepted observation, including `Long.MAX_VALUE` for no expiry; the API renders that sentinel as null. A known
+expiry beside an unknown advertised lifetime represents VCE's fallback, not a claimed broadcast value. Older rows
+keep both columns null. Timing, evidence and saved-channel source always come from the same newest winning accepted
+observation; a later unrelated broadcast does not rewrite historical timing. No expiry selects a current assignment
+or allows restoring the live registry after restart.
+
+Row admission remains at most 500,000 distinct pairs per system; message rate only updates existing pairs. Retention
+remains 1 through 365 days by last observation, with no new TTL-based pruning. The two integer payloads add variable
+SQLite record-header and integer-width overhead to existing rows and no index entries. Their worst-case serialized
+integer payload is 10 bytes per pair (about 4.8 MiB at the cap), plus record headers and page occupancy; null or small
+advertised values occupy less. Existing system/time, subscriber/time and retention indexes support these reads.
+Representative plans retain `SEARCH ... USING INDEX idx_p25_wuid_assignment_observation_system_time
+(radio_system_id=?)` and `SEARCH ... USING COVERING INDEX idx_p25_wuid_assignment_observation_retention
+(last_observed_ms<?)`; no detailed-event scan is introduced.
+
+The adjacent migration also corrects the existing site snapshot's advertised-lifetime domain without retaining extra
+site observations. It accepts explicit zero and finite values from 240 through 7860 in 30-minute steps. Only the former
+raw-255 value 7890 is normalized to zero, with its obsolete hash invalidated and exact row count reported. All other
+site facts, descendants, indexes and allocator state survive. Frozen historical creators keep the prior constraint.
 
 ### Historical P25 alias evidence
 

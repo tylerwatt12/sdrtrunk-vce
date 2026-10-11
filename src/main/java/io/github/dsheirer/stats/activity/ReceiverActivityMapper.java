@@ -30,6 +30,7 @@ import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
+import io.github.dsheirer.metadata.site.SiteReceiverContext;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.dmr.DMRConventionalCallEvent;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
@@ -683,7 +684,6 @@ class ReceiverActivityMapper
         Integer targetObservedWorkingId = p25WorkingAddress(targetIdentifier);
 
         ReceiverActivityRecords.RadioPresenceUpdate radioPresenceUpdate = radioPresenceUpdate(affiliationEvent);
-        ReceiverActivityRecords.P25WuidObservation p25WuidObservation = p25WuidObservation(affiliationEvent);
         boolean metricsEncrypted = facts.encrypted() && event instanceof P25ChannelGrantEvent grantEvent &&
             P25EncryptionConfirmationTracker.isConfirmed(grantEvent, facts.encryptionAlgorithmId(),
                 facts.encryptionKeyId());
@@ -734,7 +734,7 @@ class ReceiverActivityMapper
             radioPresenceUpdate, configuredIdentityDomain, p25TargetIdentity,
             p25SourceIdentity,
             facts.p25PatchMemberIdentities(), radioSystemKey, sourceObservedWorkingId,
-            targetObservedWorkingId, p25WuidObservation);
+            targetObservedWorkingId);
     }
 
     /** Identity enrichment is a meaningful observation even when the displayed radio number is unchanged. */
@@ -1069,13 +1069,15 @@ class ReceiverActivityMapper
         };
     }
 
-    private static ReceiverActivityRecords.P25WuidObservation p25WuidObservation(
-        P25AffiliationEvent affiliationEvent)
+    ReceiverActivityRecords.P25AssignmentObservation mapAssignment(SiteReceiverContext receiverContext,
+                                                                  P25AffiliationEvent affiliationEvent)
     {
         P25WuidAssignmentRegistry.AssignmentObservation observation = affiliationEvent != null ?
             affiliationEvent.getAssignmentObservation() : null;
 
-        if(observation == null)
+        if(observation == null || receiverContext == null || receiverContext.configurationId() == null ||
+            !receiverContext.isStandardChannel() || !receiverContext.isTrunked() ||
+            !isP25Decoder(receiverContext.decoderType()))
         {
             return null;
         }
@@ -1086,9 +1088,11 @@ class ReceiverActivityMapper
             case AFFILIATION -> ReceiverActivityRecords.RadioPresenceEvidence.AFFILIATION;
         };
 
-        return new ReceiverActivityRecords.P25WuidObservation(observation.servingWacn(),
-            observation.servingSystem(), observation.workingId(), observation.subscriber(),
-            observation.expiresAt(), evidence);
+        ReceiverActivityRecords.P25WuidObservation assignment = new ReceiverActivityRecords.P25WuidObservation(
+            observation.servingWacn(), observation.servingSystem(), observation.workingId(), observation.subscriber(),
+            observation.expiresAt(), evidence, observation.advertisedLeaseMinutes());
+        return new ReceiverActivityRecords.P25AssignmentObservation(observation.observedAt(), receiverContext,
+            assignment);
     }
 
     private static ReceiverActivityRecords.P25Identity p25Identity(P25RadioPresence presence)

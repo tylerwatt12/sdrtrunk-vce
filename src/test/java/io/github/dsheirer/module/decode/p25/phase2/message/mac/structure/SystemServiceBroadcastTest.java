@@ -14,13 +14,19 @@ import org.junit.jupiter.api.Test;
 class SystemServiceBroadcastTest
 {
     @Test
-    void keepsNoExpiryDistinctFromAnAbsentLease()
+    void decodesTheFiniteEndpointsAndNoExpiryAtTheMacOffset()
     {
-        CorrectedBinaryMessage message = new CorrectedBinaryMessage(80);
-        SystemServiceBroadcast broadcast = new SystemServiceBroadcast(message, 0);
-        assertEquals(0, broadcast.getTemporaryWUIDValidityMinutes());
-
-        message.setInt(1, IntField.length8(8));
-        assertEquals(270, broadcast.getTemporaryWUIDValidityMinutes());
+        int offset = 16;
+        CorrectedBinaryMessage message = new CorrectedBinaryMessage(96);
+        SystemServiceBroadcast broadcast = new SystemServiceBroadcast(message, offset);
+        int[] received = {0, 1, 254, 255};
+        int[] minutes = {240, 270, 7_860, 0};
+        String[] descriptions = {"4:00 HOURS", "4:30 HOURS", "131:00 HOURS", " NO EXPIRY"};
+        for(int index = 0; index < received.length; index++)
+        {
+            message.setInt(received[index], IntField.length8(8 + offset));
+            assertEquals(minutes[index], broadcast.getTemporaryWUIDValidityMinutes());
+            assertEquals("ROAMING WUIDS VALID FOR:" + descriptions[index], broadcast.getTemporaryWUIDValidity());
+        }
     }
 }

@@ -23,7 +23,7 @@ class Format45To46DatabaseMigrationTest
     @TempDir Path mTemporaryFolder;
 
     @Test
-    void preservesEveryStoredValueWithoutInventingDiscoveryIdentityAndCurrentIsNoOp() throws Exception
+    void preservesEveryStoredValueWithoutInventingDiscoveryIdentityAtItsAdjacentBoundary() throws Exception
     {
         Path database = Format45TestDatabase.create(mTemporaryFolder.resolve("source45.sqlite"));
         try(Connection connection = open(database))
@@ -32,15 +32,12 @@ class Format45To46DatabaseMigrationTest
             assertFalse(before.get("configuration_channel").isEmpty(), "Use a populated prior-format fixture");
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);
             connection.setAutoCommit(false);
-            var report = DatabaseMigrationChain.migrate(connection);
+            new Format45To46DatabaseMigration().migrate(connection);
+            DatabaseFormatCatalog.stamp(connection, 46);
             connection.commit();
-            assertEquals("format-45-to-46", report.steps().getFirst().id());
-            assertEquals(1, report.steps().size());
             assertEquals(before, contents(connection));
-            assertEquals(fingerprint, DatabaseFormatCatalog.current().fingerprint());
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
-            assertTrue(DatabaseMigrationChain.migrate(connection).steps().isEmpty());
-            assertEquals(before, contents(connection));
+            assertEquals(fingerprint, DatabaseFormatCatalog.requireVersion(46).fingerprint());
+            assertEquals(46, DatabaseFormatCatalog.inspect(connection).version());
         }
     }
 
