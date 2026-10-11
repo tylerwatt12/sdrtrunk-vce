@@ -1,6 +1,6 @@
 import { createDualRange } from '../core/dual-range.js?v=1';
 import { systemLabel, systemName } from '../core/system-labels.js?v=1';
-import { formatP25RadioIdentifier } from '../core/radio-labels.js?v=4';
+import { formatP25RadioIdentifier } from '../core/radio-labels.js?v=5';
 import { formatSourceName } from '../core/source-names.js?v=1';
 import { formatHexDecimal } from '../core/call-value-format.js?v=1';
 

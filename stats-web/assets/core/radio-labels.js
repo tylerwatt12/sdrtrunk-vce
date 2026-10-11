@@ -40,7 +40,7 @@ function formatP25RadioIdentifier(identity, { servingSystemKey = '', homeSystemN
   const name = text(homeSystemName);
   const fullIdentity = `${wacn.toString(16).toUpperCase().padStart(5, '0')}.` +
     `${systemId.toString(16).toUpperCase().padStart(3, '0')}.${subscriberId}`;
-  const label = local && !differentWorkingId ? String(subscriberId) :
+  const label = local ? String(subscriberId) :
     name ? `${name} · ${subscriberId}` : fullIdentity;
   return differentWorkingId ? `${label} (Working ID ${observedId})` : label;
 }

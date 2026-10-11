@@ -455,7 +455,7 @@ async function main() {
     sourceMode = 'talker_alias';
     assert.equal(primaryFact({ ...namedSource, source_ota_alias: '' }, 'Source'), 'Engine 4 · Radio 1863924');
     assert.equal(primaryFact({ ...localRadio, source_home_id: 12345 }, 'Source'),
-      'Radio BEE00.348.12345 (Working ID 1863924)', 'A different observed Working ID retains home context');
+      'Radio 12345 (Working ID 1863924)', 'A local radio retains the permanent and different working numbers');
     const foreignRadio = { ...localRadio, source_home_system_id: 0x4A2 };
     assert.equal(primaryFact({ ...foreignRadio, source_home_system_name: 'Home Network' }, 'Source'),
       'Radio Home Network · 1863924', 'Foreign recording radios use their friendly home system name');

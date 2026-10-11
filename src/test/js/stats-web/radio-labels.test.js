@@ -33,9 +33,10 @@ async function main() {
   assert.equal(formatP25RadioIdentifier(home), 'BEE00.348.4326018',
     'Without the receiving system, the full home identity remains available.');
   assert.equal(formatP25RadioIdentifier(home, { homeSystemName: 'Home System' }), 'Home System · 4326018');
-  assert.equal(formatP25RadioIdentifier(home, { ...local, workingId: 501 }), 'Home System · 4326018 (Working ID 501)');
+  assert.equal(formatP25RadioIdentifier(home, { ...local, workingId: 501 }), '4326018 (Working ID 501)',
+    'A different Working ID does not make matching home-system context useful.');
   assert.equal(formatP25RadioIdentifier(home, { ...local, homeSystemName: '', workingId: 501 }),
-    'BEE00.348.4326018 (Working ID 501)', 'Different working and permanent numbers retain home context.');
+    '4326018 (Working ID 501)', 'Local identities retain the permanent and different working numbers.');
   assert.equal(formatP25RadioIdentifier(home, { ...foreign, workingId: 501 }),
     'Home System · 4326018 (Working ID 501)');
   assert.equal(formatP25RadioIdentifier(home, { workingId: 501 }), 'BEE00.348.4326018 (Working ID 501)');
