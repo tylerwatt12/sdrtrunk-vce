@@ -46,10 +46,11 @@ class Format44To45DatabaseMigrationTest
             Map<String,TableContents> before = contents(connection);
             Map<String,String> schema = schemaDefinitions(connection);
             connection.setAutoCommit(false);
-            var effects = new Format44To45DatabaseMigration().migrateAndReport(connection);
-            DatabaseFormatCatalog.stamp(connection, 45);
+            var report = DatabaseMigrationChain.migrate(connection);
             connection.commit();
-            assertCounts(effects);
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 44, report.steps().size());
+            assertEquals("format-44-to-45", report.steps().getFirst().id());
+            assertCounts(report.steps().getFirst().effects());
             Map<String,TableContents> after = contents(connection);
             before.forEach((table, rows) -> {
                 if(!CONSOLIDATED_TABLES.contains(table)) assertEquals(rows, after.get(table), table);
@@ -63,16 +64,10 @@ class Format44To45DatabaseMigrationTest
             });
             assertNotEquals(schema.get("view:receiver_activity_event_resolved"),
                 targetSchema.get("view:receiver_activity_event_resolved"));
-            assertEquals(DatabaseFormatCatalog.requireVersion(45).fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+            assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
             assertConsolidated(connection);
-            assertEquals(45, DatabaseFormatCatalog.inspect(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
             assertHealthy(connection);
-        }
-        try(Connection connection = open(database))
-        {
-            connection.setAutoCommit(false);
-            DatabaseMigrationChain.migrate(connection);
-            connection.commit();
         }
         SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database);
         SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
@@ -129,18 +124,16 @@ class Format44To45DatabaseMigrationTest
                 WHEN OLD.id=5000000010 BEGIN SELECT RAISE(ABORT,'Injected consolidation interruption'); END
                 """);
             connection.setAutoCommit(false);
-            SQLException failure = assertThrows(SQLException.class, () ->
-                new Format44To45DatabaseMigration().migrateAndReport(connection));
+            SQLException failure = assertThrows(SQLException.class, () -> DatabaseMigrationChain.migrate(connection));
             assertTrue(failure.getMessage().contains("Injected consolidation interruption"));
             connection.rollback();
             assertEquals(44, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(before, contents(connection));
             assertHealthy(connection);
             statement.execute("DROP TRIGGER fail_home_radio_merge");
-            var retry = new Format44To45DatabaseMigration().migrateAndReport(connection);
-            DatabaseFormatCatalog.stamp(connection, 45);
+            var retry = DatabaseMigrationChain.migrate(connection);
             connection.commit();
-            assertCounts(retry);
+            assertCounts(retry.steps().getFirst().effects());
             assertConsolidated(connection);
             assertHealthy(connection);
         }

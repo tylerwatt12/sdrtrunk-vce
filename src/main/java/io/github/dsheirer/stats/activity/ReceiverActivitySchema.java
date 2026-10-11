@@ -204,13 +204,7 @@ public class ReceiverActivitySchema
 
     public static void create(Connection connection) throws SQLException
     {
-        create(connection, MAXIMUM_OBSERVED_SITE, true, true, EVENT_TYPES, true, true, true);
-        createEncryptedActivityFilterIndexes(connection);
-        createSourceWorkingEvidenceIndex(connection);
-        createIdentityRetentionIndexes(connection);
-        createIdentityLocalAddressEvidenceIndexes(connection);
-        createRemainingQueryLookupIndexes(connection);
-        rebuildTargetIdentityForeignKeyIndex(connection);
+        createFormat42(connection);
         rebuildP25HomeIdentityKeyView(connection);
     }
 
@@ -361,12 +355,6 @@ public class ReceiverActivitySchema
         }
     }
 
-    /** Adds nullable assignment timing only through the adjacent format-46-to-47 Application Migrator. */
-    public static void addFormat47P25WuidLeaseHistory(Connection connection) throws SQLException
-    {
-        RadioSystemSchema.addP25WuidLeaseHistory(connection);
-    }
-
     /** Adds the nullable canonical-subscriber reference without disturbing retained identity descendants. */
     public static void addFormat32P25SubscriberIdentityReference(Connection connection) throws SQLException
     {
@@ -406,27 +394,17 @@ public class ReceiverActivitySchema
                                List<ReceiverActivityCodes.EventTypeCode> eventTypes, boolean canonicalP25Subscribers,
                                boolean currentEvidenceIndexes) throws SQLException
     {
-        create(connection, maximumObservedSite, allowNxdnNullGroup, includeActivityFilterIndexes, eventTypes,
-            canonicalP25Subscribers, currentEvidenceIndexes, false);
-    }
-
-    private static void create(Connection connection, int maximumObservedSite, boolean allowNxdnNullGroup,
-                               boolean includeActivityFilterIndexes,
-                               List<ReceiverActivityCodes.EventTypeCode> eventTypes, boolean canonicalP25Subscribers,
-                               boolean currentEvidenceIndexes, boolean assignmentTiming) throws SQLException
-    {
         try(Statement statement = connection.createStatement())
         {
             statement.executeUpdate(receiverChannelSql());
             statement.executeUpdate(receiverActivityEventSql(maximumObservedSite, eventTypes, canonicalP25Subscribers));
             statement.executeUpdate(createActivityEventIdentityMemberSql(currentEvidenceIndexes));
             createTrunkedCallTables(statement, canonicalP25Subscribers);
-            if(canonicalP25Subscribers && assignmentTiming) RadioSystemSchema.create(statement);
-            else if(canonicalP25Subscribers) RadioSystemSchema.createFormat46(statement);
+            if(canonicalP25Subscribers) RadioSystemSchema.create(statement);
             else RadioSystemSchema.createFormat31(statement);
             createConventionalTables(statement, eventTypes);
             createConventionalCallIdentityTable(statement, allowNxdnNullGroup);
-            createP25SiteTables(statement, assignmentTiming);
+            createP25SiteTables(statement);
             createControlChannelQualityTable(statement);
             statement.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS statistics_status (
@@ -454,7 +432,6 @@ public class ReceiverActivitySchema
         List<SqliteSchemaValidator.Definition> exactDefinitions =
             new ArrayList<>(RadioSystemSchema.definitions());
         exactDefinitions.addAll(List.of(
-            new SqliteSchemaValidator.Definition("table", "p25_site_snapshot", p25SiteSnapshotSql(true)),
             new SqliteSchemaValidator.Definition("table", "receiver_channel", receiverChannelSql()),
             new SqliteSchemaValidator.Definition("table", "receiver_activity_event",
                 receiverActivityEventSql()),
@@ -626,20 +603,6 @@ public class ReceiverActivitySchema
             statement.setInt(1, SdrTrunkDatabaseSchema.MAXIMUM_RECEIVER_HEALTH_INCIDENTS);
             statement.executeUpdate();
         }
-    }
-
-    /** Resolves only the configured P25 trunked source for a separately captured accepted assignment. */
-    static long assignmentObservationChannel(Connection connection,
-                                              ReceiverActivityRecords.P25AssignmentObservation observation)
-        throws SQLException
-    {
-        if(observation == null || !configurationAccepts(connection, observation.configurationId(),
-            RECEIVER_TRUNKED_SITE, TrunkedIdentityPolicy.PROTOCOL_P25, TrunkedIdentityDomain.STANDARD))
-        {
-            return 0;
-        }
-        return upsertReceiverChannel(connection, new ReceiverChannelMetadata(observation.configurationId(),
-            observation.observedAtEpochMilliseconds(), observation.observedAtEpochMilliseconds()), true);
     }
 
     static Long recordActivity(Connection connection, ReceiverActivityRecords.ActivityEvent activity,
@@ -2803,18 +2766,9 @@ public class ReceiverActivitySchema
             """.formatted(identityConstraint);
     }
 
-    /** Creates only the corrected parent table during the adjacent format-46-to-47 migration. */
-    public static void createFormat47P25SiteSnapshotTable(Connection connection) throws SQLException
+    private static void createP25SiteTables(Statement statement) throws SQLException
     {
-        try(Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate(p25SiteSnapshotSql(true));
-        }
-    }
-
-    private static String p25SiteSnapshotSql(boolean normalizedLease)
-    {
-        return """
+        statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_snapshot (
                 channel_id INTEGER PRIMARY KEY REFERENCES receiver_channel(id) ON DELETE CASCADE
                     CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
@@ -2849,7 +2803,8 @@ public class ReceiverActivitySchema
                         ('Autonomous', 'Request Only', 'Autonomous and by Request'))),
                 wuid_lease_minutes INTEGER CHECK(wuid_lease_minutes IS NULL OR
                     (typeof(wuid_lease_minutes) = 'integer'
-                        AND %s)),
+                        AND wuid_lease_minutes BETWEEN 270 AND 7890
+                        AND wuid_lease_minutes % 30 = 0)),
                 registration_service INTEGER CHECK(registration_service IS NULL OR
                     (typeof(registration_service) = 'integer' AND registration_service IN (0, 1))),
                 tdma INTEGER CHECK(tdma IS NULL OR (typeof(tdma) = 'integer' AND tdma IN (0, 1))),
@@ -2864,14 +2819,7 @@ public class ReceiverActivitySchema
                         (typeof(active_rfss_network_connection) = 'integer'
                             AND active_rfss_network_connection IN (0, 1)))
             )
-            """.formatted(normalizedLease ?
-            "(wuid_lease_minutes = 0 OR (wuid_lease_minutes BETWEEN 240 AND 7860 AND wuid_lease_minutes % 30 = 0))" :
-            "wuid_lease_minutes BETWEEN 270 AND 7890\n                        AND wuid_lease_minutes % 30 = 0");
-    }
-
-    private static void createP25SiteTables(Statement statement, boolean normalizedLease) throws SQLException
-    {
-        statement.executeUpdate(p25SiteSnapshotSql(normalizedLease));
+            """);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_channel (
                 channel_id INTEGER NOT NULL CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
@@ -4236,7 +4184,7 @@ public class ReceiverActivitySchema
             setBoolean(statement, 14, status != null ? status.dataService() : null);
             statement.setString(15, status != null ? status.dataAccess() : null);
             Integer wuidLeaseMinutes = status != null ? status.wuidLeaseMinutes() : null;
-            setInteger(statement, 16, wuidLeaseMinutes != null && wuidLeaseMinutes >= 0 ? wuidLeaseMinutes : null);
+            setInteger(statement, 16, wuidLeaseMinutes != null && wuidLeaseMinutes > 0 ? wuidLeaseMinutes : null);
             setBoolean(statement, 17, status != null ? status.registrationService() : null);
             setBoolean(statement, 18, snapshot.tdma());
             setBoolean(statement, 19, status != null ? status.voiceService() : null);

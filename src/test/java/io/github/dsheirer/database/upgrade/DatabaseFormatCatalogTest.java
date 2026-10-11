@@ -365,22 +365,7 @@ class DatabaseFormatCatalogTest
     }
 
     @Test
-    void markerlessSharedFormat46IsRefusedWithoutChangingItsSchema() throws Exception
-    {
-        Path database = Format46TestDatabase.create(mTemporaryFolder.resolve("markerless-shared46.sqlite"));
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            String fingerprint = SqliteSchemaValidator.fingerprint(connection);
-            assertEquals(1, statement.executeUpdate(
-                "DELETE FROM database_metadata WHERE key='database_format_version'"));
-            assertThrows(SQLException.class, () -> DatabaseFormatCatalog.inspect(connection));
-            assertThrows(SQLException.class, () -> DatabaseMigrationChain.migrate(connection));
-            assertEquals(fingerprint, SqliteSchemaValidator.fingerprint(connection));
-        }
-    }
-
-    @Test
-    void uniqueCurrentFormatStillRequiresMigratorMarkerAdoptionBeforeStartup() throws Exception
+    void markerlessSharedCurrentFormatIsRefusedWithoutChangingItsSchema() throws Exception
     {
         Path database = CurrentFormatTestDatabase.create(mTemporaryFolder.resolve("markerless-current.sqlite"));
         try(Connection connection = open(database); Statement statement = connection.createStatement())
@@ -388,14 +373,8 @@ class DatabaseFormatCatalogTest
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);
             assertEquals(1, statement.executeUpdate(
                 "DELETE FROM database_metadata WHERE key='database_format_version'"));
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.inspect(connection).version());
-            assertThrows(SQLException.class, () -> DatabaseFormatCatalog.requireCurrent(connection));
-            assertEquals(fingerprint, SqliteSchemaValidator.fingerprint(connection));
-            connection.setAutoCommit(false);
-            var report = DatabaseMigrationChain.migrate(connection);
-            connection.commit();
-            assertEquals(List.of("adopt-global-format-marker"), report.steps().stream().map(step -> step.id()).toList());
-            assertTrue(DatabaseFormatCatalog.requireCurrent(connection).markerPresent());
+            assertThrows(SQLException.class, () -> DatabaseFormatCatalog.inspect(connection));
+            assertThrows(SQLException.class, () -> DatabaseMigrationChain.migrate(connection));
             assertEquals(fingerprint, SqliteSchemaValidator.fingerprint(connection));
         }
     }

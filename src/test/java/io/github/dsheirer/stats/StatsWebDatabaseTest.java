@@ -21,7 +21,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.preference.application.ApplicationPreference;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
@@ -3735,71 +3734,6 @@ class StatsWebDatabaseTest
     }
 
 
-
-    @Test
-    void retainedIssiTimingUsesLatestPairAndPreservesUnknownFallbackAndNoExpiry() throws Exception
-    {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
-            Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("""
-                INSERT INTO p25_subscriber_identity(id,home_wacn,home_system_id,subscriber_id) VALUES
-                    (9701,0x92498,0x926,97001), (9702,0x92498,0x926,97002),
-                    (9703,0x92498,0x926,97003), (9704,0x92498,0x926,97004)
-                """);
-            statement.executeUpdate("""
-                INSERT INTO p25_wuid_assignment_observation_summary(
-                    radio_system_id,working_id,p25_subscriber_identity_id,
-                    first_observed_ms,last_observed_ms,last_registration_ms,
-                    registration_count,last_evidence_code,last_channel_id,
-                    last_advertised_lease_minutes,last_expires_at_ms)
-                VALUES
-                    (71,197001,9701,1000,2000,2000,1,1,71,0,9223372036854775807),
-                    (71,197002,9701,3000,4000,4000,1,1,72,240,14404000),
-                    (71,197003,9702,1000,2000,2000,1,1,71,0,9223372036854775807),
-                    (71,197004,9703,1000,2000,2000,1,1,71,NULL,14402000),
-                    (71,197005,9704,1000,2000,2000,1,1,71,NULL,NULL)
-                """);
-        }
-
-        //A new read model must recover history from SQLite without borrowing process-local live assignments.
-        ApplicationPreference disabled = new ApplicationPreference(type -> {})
-        {
-            @Override
-            public boolean isStatsLoggingEnabled()
-            {
-                return false;
-            }
-        };
-        UserPreferences preferences = new UserPreferences()
-        {
-            @Override
-            public ApplicationPreference getApplicationPreference()
-            {
-                return disabled;
-            }
-        };
-        assertFalse(preferences.getApplicationPreference().isStatsLoggingEnabled());
-        StatsWebDatabase reopened = new StatsWebDatabase(preferences, mDatabasePath);
-        List<Map<String,Object>> subscribers = rows(reopened.radioSystemIssiSubscribers(
-            RADIO_SYSTEM_KEY, request("/?limit=20")));
-        Map<String,Object> finite = rowWith(subscribers, "canonical_subscriber_id", 97001);
-        assertEquals(197002, number(finite.get("last_observed_working_id")));
-        assertEquals(240, number(finite.get("last_advertised_lease_minutes")));
-        assertEquals(14404000, number(finite.get("last_assignment_expires_at_ms")));
-        assertEquals(P25_CHANNEL_B, map(finite, "observed_on").get("configuration_id"));
-        assertEquals(2, number(finite.get("registration_observation_count")));
-
-        Map<String,Object> noExpiry = rowWith(subscribers, "canonical_subscriber_id", 97002);
-        assertEquals(0, number(noExpiry.get("last_advertised_lease_minutes")));
-        assertNull(noExpiry.get("last_assignment_expires_at_ms"));
-        Map<String,Object> fallback = rowWith(subscribers, "canonical_subscriber_id", 97003);
-        assertNull(fallback.get("last_advertised_lease_minutes"));
-        assertEquals(14402000, number(fallback.get("last_assignment_expires_at_ms")));
-        Map<String,Object> legacy = rowWith(subscribers, "canonical_subscriber_id", 97004);
-        assertNull(legacy.get("last_advertised_lease_minutes"));
-        assertNull(legacy.get("last_assignment_expires_at_ms"));
-    }
 
     @Test
     void assignmentOnlyIssiSubscribersUseOnlyTheirExactChannelAliasList() throws Exception

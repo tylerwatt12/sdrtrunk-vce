@@ -189,29 +189,21 @@ final class RadioSystemSchema
 
     static void create(Statement statement) throws SQLException
     {
-        create(statement, true, true);
-    }
-
-    /** Creates the frozen canonical-subscriber schema before format 47 retained assignment timing. */
-    static void createFormat46(Statement statement) throws SQLException
-    {
-        create(statement, true, false);
+        create(statement, true);
     }
 
     /** Creates the predecessor radio-system objects for exact format-15-through-31 fixtures. */
     static void createFormat31(Statement statement) throws SQLException
     {
-        create(statement, false, false);
+        create(statement, false);
     }
 
-    private static void create(Statement statement, boolean currentSchema, boolean assignmentTiming) throws SQLException
+    private static void create(Statement statement, boolean currentSchema) throws SQLException
     {
         for(SqliteSchemaValidator.Definition definition:
             currentSchema ? definitions() : format31Definitions())
         {
-            statement.executeUpdate(!assignmentTiming &&
-                definition.name().equals("p25_wuid_assignment_observation_summary") ?
-                p25WuidAssignmentObservationSummarySql(false) : definition.sql());
+            statement.executeUpdate(definition.sql());
         }
 
         statement.executeUpdate("""
@@ -326,12 +318,7 @@ final class RadioSystemSchema
     static void createP25SubscriberIdentityTables(Statement statement) throws SQLException
     {
         statement.executeUpdate(p25SubscriberIdentitySql());
-        statement.executeUpdate(p25WuidAssignmentObservationSummarySql(false));
-        createP25WuidObservationIndexes(statement);
-    }
-
-    private static void createP25WuidObservationIndexes(Statement statement) throws SQLException
-    {
+        statement.executeUpdate(p25WuidAssignmentObservationSummarySql());
         statement.executeUpdate("""
             CREATE INDEX IF NOT EXISTS idx_p25_wuid_assignment_observation_system_time
             ON p25_wuid_assignment_observation_summary(radio_system_id, last_observed_ms DESC, working_id,
@@ -603,11 +590,6 @@ final class RadioSystemSchema
 
     private static String p25WuidAssignmentObservationSummarySql()
     {
-        return p25WuidAssignmentObservationSummarySql(true);
-    }
-
-    private static String p25WuidAssignmentObservationSummarySql(boolean assignmentTiming)
-    {
         return """
             CREATE TABLE IF NOT EXISTS p25_wuid_assignment_observation_summary (
                 radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE
@@ -636,39 +618,12 @@ final class RadioSystemSchema
                 last_channel_id INTEGER REFERENCES receiver_channel(id) ON DELETE SET NULL
                     CHECK(last_channel_id IS NULL OR
                         (typeof(last_channel_id) = 'integer' AND last_channel_id > 0)),
-                %s
                 PRIMARY KEY(radio_system_id, working_id, p25_subscriber_identity_id),
                 CHECK(registration_count + affiliation_count > 0),
                 CHECK((registration_count = 0) = (last_registration_ms IS NULL)),
                 CHECK((affiliation_count = 0) = (last_affiliation_ms IS NULL))
             ) WITHOUT ROWID
-            """.formatted(assignmentTiming ? """
-                last_advertised_lease_minutes INTEGER CHECK(last_advertised_lease_minutes IS NULL OR
-                    (typeof(last_advertised_lease_minutes) = 'integer' AND
-                        (last_advertised_lease_minutes = 0 OR
-                            (last_advertised_lease_minutes BETWEEN 240 AND 7860
-                                AND last_advertised_lease_minutes % 30 = 0)))),
-                last_expires_at_ms INTEGER CHECK(last_expires_at_ms IS NULL OR
-                    (typeof(last_expires_at_ms) = 'integer' AND last_expires_at_ms > 0)),
-                """ : "");
-    }
-
-    /** Migrator-only replacement preserves all prior fields and leaves previously unrecorded timing unknown. */
-    static void addP25WuidLeaseHistory(Connection connection) throws SQLException
-    {
-        String columns = "radio_system_id, working_id, p25_subscriber_identity_id, first_observed_ms, " +
-            "last_observed_ms, last_registration_ms, last_affiliation_ms, registration_count, " +
-            "affiliation_count, last_evidence_code, last_channel_id";
-        try(Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("ALTER TABLE p25_wuid_assignment_observation_summary " +
-                "RENAME TO format46_p25_wuid_assignment_observation_summary");
-            statement.executeUpdate(p25WuidAssignmentObservationSummarySql());
-            statement.executeUpdate("INSERT INTO p25_wuid_assignment_observation_summary(" + columns + ") " +
-                "SELECT " + columns + " FROM format46_p25_wuid_assignment_observation_summary");
-            statement.executeUpdate("DROP TABLE format46_p25_wuid_assignment_observation_summary");
-            createP25WuidObservationIndexes(statement);
-        }
+            """;
     }
 
     private static String radioGroupSummarySql()
@@ -846,7 +801,7 @@ final class RadioSystemSchema
             new SqliteSchemaValidator.Table("p25_wuid_assignment_observation_summary", "radio_system_id",
                 "working_id", "p25_subscriber_identity_id", "first_observed_ms", "last_observed_ms",
                 "last_registration_ms", "last_affiliation_ms", "registration_count", "affiliation_count",
-                "last_evidence_code", "last_channel_id", "last_advertised_lease_minutes", "last_expires_at_ms"),
+                "last_evidence_code", "last_channel_id"),
             new SqliteSchemaValidator.Table("radio_system_identity_summary", identityColumns),
             new SqliteSchemaValidator.Table("trunked_radio_group_summary", relationshipColumns),
             new SqliteSchemaValidator.Table("trunked_radio_affiliation", "radio_system_id", "radio_kind_code",
@@ -1001,8 +956,19 @@ final class RadioSystemSchema
     static RadioSystem recordActivity(Connection connection, ReceiverActivityRecords.ActivityEvent activity,
                                       long channelId, ActivityBatch batch) throws SQLException
     {
+        ReceiverActivityRecords.P25WuidObservation wuidObservation = activity.p25WuidObservation();
+        Integer observedWacn = activity.wacn();
+        Integer observedSystem = activity.systemId();
+        if(wuidObservation != null &&
+            (observedWacn == null || observedWacn == wuidObservation.servingWacn()) &&
+            (observedSystem == null || observedSystem == wuidObservation.servingSystem()))
+        {
+            observedWacn = wuidObservation.servingWacn();
+            observedSystem = wuidObservation.servingSystem();
+        }
+
         RadioSystem radioSystem = ensureRadioSystem(connection, channelId, activity.observedAtEpochMilliseconds(),
-            activity.identityDomain(), activity.wacn(), activity.systemId(), activity.radioSystemKey(), batch);
+            activity.identityDomain(), observedWacn, observedSystem, activity.radioSystemKey(), batch);
 
         if(radioSystem == null ||
             (radioSystem.protocolCode() != TrunkedIdentityPolicy.PROTOCOL_P25 &&
@@ -1010,6 +976,10 @@ final class RadioSystemSchema
         {
             return null;
         }
+
+        recordP25WuidObservation(connection, radioSystem, channelId,
+            activity.observedAtEpochMilliseconds(), wuidObservation,
+            MAX_WUID_ASSIGNMENT_OBSERVATIONS_PER_SYSTEM);
 
         if(activity.action() == null ||
             activity.action() == ReceiverActivityRecords.Action.UNKNOWN)
@@ -1062,23 +1032,6 @@ final class RadioSystemSchema
         return radioSystem;
     }
 
-    /** Writes one accepted assignment through its independent input without incrementing general statistics. */
-    static boolean recordAssignmentObservation(Connection connection,
-                                               ReceiverActivityRecords.P25AssignmentObservation observation)
-        throws SQLException
-    {
-        long channelId = ReceiverActivitySchema.assignmentObservationChannel(connection, observation);
-        if(channelId <= 0)
-        {
-            return false;
-        }
-        ReceiverActivityRecords.P25WuidObservation assignment = observation.assignment();
-        RadioSystem system = ensureRadioSystem(connection, channelId, observation.observedAtEpochMilliseconds(),
-            TrunkedIdentityDomain.STANDARD, assignment.servingWacn(), assignment.servingSystem());
-        return recordP25WuidObservation(connection, system, channelId, observation.observedAtEpochMilliseconds(),
-            assignment, MAX_WUID_ASSIGNMENT_OBSERVATIONS_PER_SYSTEM);
-    }
-
     /**
      * Records positive WUID evidence as bounded observation history.  This table is never consulted to resolve a
      * later radio identity; only explicit identity evidence carried by that later event may do that.
@@ -1124,9 +1077,8 @@ final class RadioSystemSchema
             INSERT INTO p25_wuid_assignment_observation_summary (
                 radio_system_id, working_id, p25_subscriber_identity_id,
                 first_observed_ms, last_observed_ms, last_registration_ms, last_affiliation_ms,
-                registration_count, affiliation_count, last_evidence_code, last_channel_id,
-                last_advertised_lease_minutes, last_expires_at_ms
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                registration_count, affiliation_count, last_evidence_code, last_channel_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(radio_system_id, working_id, p25_subscriber_identity_id) DO UPDATE SET
                 first_observed_ms = min(
                     p25_wuid_assignment_observation_summary.first_observed_ms,
@@ -1170,32 +1122,6 @@ final class RadioSystemSchema
                                         excluded.last_channel_id + 1))))
                     THEN excluded.last_channel_id
                     ELSE p25_wuid_assignment_observation_summary.last_channel_id
-                END,
-                last_advertised_lease_minutes = CASE
-                    WHEN excluded.last_observed_ms > p25_wuid_assignment_observation_summary.last_observed_ms
-                      OR (excluded.last_observed_ms = p25_wuid_assignment_observation_summary.last_observed_ms
-                          AND (excluded.last_evidence_code <
-                                  p25_wuid_assignment_observation_summary.last_evidence_code
-                            OR (excluded.last_evidence_code =
-                                    p25_wuid_assignment_observation_summary.last_evidence_code
-                                AND excluded.last_channel_id <
-                                    coalesce(p25_wuid_assignment_observation_summary.last_channel_id,
-                                        excluded.last_channel_id + 1))))
-                    THEN excluded.last_advertised_lease_minutes
-                    ELSE p25_wuid_assignment_observation_summary.last_advertised_lease_minutes
-                END,
-                last_expires_at_ms = CASE
-                    WHEN excluded.last_observed_ms > p25_wuid_assignment_observation_summary.last_observed_ms
-                      OR (excluded.last_observed_ms = p25_wuid_assignment_observation_summary.last_observed_ms
-                          AND (excluded.last_evidence_code <
-                                  p25_wuid_assignment_observation_summary.last_evidence_code
-                            OR (excluded.last_evidence_code =
-                                    p25_wuid_assignment_observation_summary.last_evidence_code
-                                AND excluded.last_channel_id <
-                                    coalesce(p25_wuid_assignment_observation_summary.last_channel_id,
-                                        excluded.last_channel_id + 1))))
-                    THEN excluded.last_expires_at_ms
-                    ELSE p25_wuid_assignment_observation_summary.last_expires_at_ms
                 END
             """))
         {
@@ -1210,9 +1136,7 @@ final class RadioSystemSchema
             statement.setInt(index++, registration);
             statement.setInt(index++, affiliation);
             statement.setInt(index++, observation.evidence().code());
-            statement.setLong(index++, channelId);
-            setInteger(statement, index++, observation.advertisedLeaseMinutes());
-            statement.setLong(index, observation.expiresAtEpochMilliseconds());
+            statement.setLong(index, channelId);
             statement.executeUpdate();
         }
 

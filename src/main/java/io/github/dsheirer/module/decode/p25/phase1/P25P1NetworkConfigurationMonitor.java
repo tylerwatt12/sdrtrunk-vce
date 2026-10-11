@@ -198,8 +198,7 @@ public class P25P1NetworkConfigurationMonitor
                 if(tsbk instanceof SystemServiceBroadcast)
                 {
                     mTSBKSystemServiceBroadcast = (SystemServiceBroadcast)tsbk;
-                    return statusObservation(serviceStatus(mTSBKSystemServiceBroadcast.getAvailableServices(),
-                        mTSBKSystemServiceBroadcast.getTemporaryWUIDValidityMinutes()));
+                    return statusObservation(serviceStatus(mTSBKSystemServiceBroadcast.getAvailableServices()));
                 }
                 break;
             case OSP_RFSS_STATUS_BROADCAST:
@@ -412,8 +411,7 @@ public class P25P1NetworkConfigurationMonitor
                     if(lcw instanceof LCSystemServiceBroadcast)
                     {
                         mLCSystemServiceBroadcast = (LCSystemServiceBroadcast)lcw;
-                        return statusObservation(serviceStatus(mLCSystemServiceBroadcast.getAvailableServices(),
-                            mLCSystemServiceBroadcast.getTemporaryWUIDValidityMinutes()));
+                        return statusObservation(serviceStatus(mLCSystemServiceBroadcast.getAvailableServices()));
                     }
                     break;
             }
@@ -558,7 +556,7 @@ public class P25P1NetworkConfigurationMonitor
     {
         mSiteStatus = mSiteStatus == null ? status : mSiteStatus.merge(status);
         return new P25NetworkConfigurationSnapshot("P25_PHASE_1", network, currentSite, channels, neighborSites,
-            frequencyBands, Collections.emptyList(), Collections.emptyList(), status);
+            frequencyBands, Collections.emptyList(), Collections.emptyList(), mSiteStatus);
     }
 
     private P25NetworkConfigurationSnapshot statusObservation(P25NetworkConfigurationSnapshot.SiteStatus status)
@@ -813,11 +811,6 @@ public class P25P1NetworkConfigurationMonitor
 
     private P25NetworkConfigurationSnapshot.SiteStatus serviceStatus(List<Service> services)
     {
-        return serviceStatus(services, null);
-    }
-
-    private P25NetworkConfigurationSnapshot.SiteStatus serviceStatus(List<Service> services, Integer wuidLeaseMinutes)
-    {
         if(services == null)
         {
             return null;
@@ -826,7 +819,7 @@ public class P25P1NetworkConfigurationMonitor
         boolean data = services.contains(Service.GROUP_DATA) || services.contains(Service.INDIVIDUAL_DATA);
         boolean voice = services.contains(Service.GROUP_VOICE) || services.contains(Service.INDIVIDUAL_VOICE) ||
             services.contains(Service.PSTN_TO_UNIT_VOICE) || services.contains(Service.UNIT_TO_PSTN_VOICE);
-        return new P25NetworkConfigurationSnapshot.SiteStatus(null, null, data, null, wuidLeaseMinutes,
+        return new P25NetworkConfigurationSnapshot.SiteStatus(null, null, data, null, null,
             services.contains(Service.UNIT_REGISTRATION), null, voice);
     }
 

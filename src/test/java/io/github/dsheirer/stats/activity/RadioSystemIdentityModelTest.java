@@ -24,8 +24,6 @@ import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.configuration.ConfigurationRepository;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
-import io.github.dsheirer.metadata.site.SiteReceiverContext;
-import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
@@ -1108,7 +1106,7 @@ class RadioSystemIdentityModelTest
             assertTrue(ReceiverActivitySchema.recordResolvedLogicalCall(connection,
                 p25Call(P25_B, 41, 1_200, 0xBEE00, 0x3A9, null, 123)));
             assertEquals(0, scalar(connection, """
-                SELECT COUNT(*)
+                SELECT source_logical_call_count
                 FROM radio_system_identity_summary
                 WHERE home_wacn=0xABCDE AND home_system_id=0x321 AND identity_id=0xF12345
                   AND p25_subscriber_identity_id IS NOT NULL
@@ -1863,16 +1861,21 @@ class RadioSystemIdentityModelTest
             ReceiverActivityRecords.P25Identity.ORDINARY, List.of(), update);
     }
 
-    private static ReceiverActivityRecords.P25AssignmentObservation p25WuidObservation(
+    private static ReceiverActivityRecords.ActivityEvent p25WuidObservation(
         String configurationId, long observedAt, int workingId, P25SubscriberIdentity subscriber,
         ReceiverActivityRecords.RadioPresenceEvidence evidence)
     {
-        Channel channel = new Channel("P25", Channel.ChannelType.STANDARD);
-        channel.setConfigurationId(configurationId);
-        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
-        return new ReceiverActivityRecords.P25AssignmentObservation(observedAt,
-            SiteReceiverContext.capture(channel, Protocol.APCO25),
-            new ReceiverActivityRecords.P25WuidObservation(0xBEE00, 0x3A9, workingId,
+        ReceiverActivityRecords.P25Identity identity = ReceiverActivityRecords.P25Identity.fullyQualifiedRadio(
+            subscriber.homeWacn(), subscriber.homeSystemId(), subscriber.subscriberId());
+        ReceiverActivityRecords.RadioPresenceUpdate presence =
+            ReceiverActivityRecords.RadioPresenceUpdate.confirmed(workingId, null, evidence, identity,
+                ReceiverActivityRecords.P25Identity.UNKNOWN);
+        return new ReceiverActivityRecords.ActivityEvent(observedAt, configurationId,
+            ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25", ReceiverActivityRecords.Action.REGISTER,
+            "REGISTER", Integer.toString(workingId), null, null, List.of(), 851_012_500L, "0-1", 1,
+            false, null, null, 0xBEE00, 0x3A9, null, null, null, null, false, null, presence,
+            TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.UNKNOWN, identity, List.of(), null,
+            workingId, null, new ReceiverActivityRecords.P25WuidObservation(0xBEE00, 0x3A9, workingId,
                 subscriber, observedAt + 270L * 60_000L, evidence));
     }
 
@@ -2007,12 +2010,6 @@ class RadioSystemIdentityModelTest
     private static void record(Connection connection, ReceiverActivityRecords.ActivityEvent event) throws SQLException
     {
         ReceiverActivitySchema.recordActivity(connection, event, true);
-    }
-
-    private static void record(Connection connection, ReceiverActivityRecords.P25AssignmentObservation observation)
-        throws SQLException
-    {
-        assertTrue(RadioSystemSchema.recordAssignmentObservation(connection, observation));
     }
 
     private static long channelId(Connection connection, String configurationId) throws SQLException

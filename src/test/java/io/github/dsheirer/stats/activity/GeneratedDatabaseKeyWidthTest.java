@@ -8,11 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.dsheirer.audio.call.LogicalCallId;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.identifier.Form;
-import io.github.dsheirer.controller.channel.Channel;
-import io.github.dsheirer.metadata.site.SiteReceiverContext;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
-import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
-import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest.ScopedData;
@@ -44,8 +40,6 @@ class GeneratedDatabaseKeyWidthTest
         {
             ReceiverActivitySchema.recordActivityBatch(connection, List.of(registration(1_000),
                 registration(2_000)), true);
-            assertTrue(RadioSystemSchema.recordAssignmentObservation(connection, assignment(1_000)));
-            assertTrue(RadioSystemSchema.recordAssignmentObservation(connection, assignment(2_000)));
 
             RadioSystemSchema.RadioSystem system = RadioSystemSchema.ensureP25RadioSystem(connection,
                 0xBEE00, 0x3A9, 2_000);
@@ -238,17 +232,7 @@ class GeneratedDatabaseKeyWidthTest
             "REGISTER", Integer.toString(WORKING_ID), null, null, List.of(), 851_012_500L, "0-1", 1,
             false, null, null, 0xBEE00, 0x3A9, null, null, null, null, false, null, presence,
             TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.UNKNOWN, RADIO, List.of(), null,
-            WORKING_ID, null);
-    }
-
-    private static ReceiverActivityRecords.P25AssignmentObservation assignment(long observedAt)
-    {
-        Channel channel = new Channel("Control", Channel.ChannelType.STANDARD);
-        channel.setConfigurationId(CHANNEL);
-        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
-        return new ReceiverActivityRecords.P25AssignmentObservation(observedAt,
-            SiteReceiverContext.capture(channel, Protocol.APCO25),
-            new ReceiverActivityRecords.P25WuidObservation(0xBEE00, 0x3A9, WORKING_ID,
+            WORKING_ID, null, new ReceiverActivityRecords.P25WuidObservation(0xBEE00, 0x3A9, WORKING_ID,
                 SUBSCRIBER, observedAt + 60_000, ReceiverActivityRecords.RadioPresenceEvidence.REGISTRATION));
     }
 

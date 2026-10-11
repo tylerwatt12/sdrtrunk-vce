@@ -18,13 +18,10 @@ import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25FrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.standard.LCSecondaryControlChannelBroadcast;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.standard.LCSecondaryControlChannelBroadcastExplicit;
-import io.github.dsheirer.module.decode.p25.phase1.message.lc.standard.LCSystemServiceBroadcast;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.motorola.osp.MotorolaBaseStationId;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.SNDCPDataChannelAnnouncementExplicit;
-import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.RFSSStatusBroadcast;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.SecondaryControlChannelBroadcast;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.SecondaryControlChannelBroadcastExplicit;
-import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.SystemServiceBroadcast;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationStabilizer;
 import java.util.List;
@@ -32,63 +29,6 @@ import org.junit.jupiter.api.Test;
 
 class P25P1NetworkConfigurationMonitorTest
 {
-    @Test
-    void siteServiceClassDoesNotReplayAnEarlierAdvertisedLifetime()
-    {
-        P25P1NetworkConfigurationMonitor monitor = new P25P1NetworkConfigurationMonitor(Modulation.C4FM);
-        CorrectedBinaryMessage serviceBits = new CorrectedBinaryMessage(96);
-        serviceBits.setInt(56, IntField.length6(2));
-        serviceBits.setInt(255, IntField.length8(16));
-        assertEquals(0, monitor.process(new SystemServiceBroadcast(P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1,
-            serviceBits, 0x346, 1_000L)).siteStatus().wuidLeaseMinutes());
-
-        CorrectedBinaryMessage siteBits = new CorrectedBinaryMessage(96);
-        siteBits.setInt(58, IntField.length6(2));
-        siteBits.setInt(0x348, IntField.length12(28));
-        siteBits.setInt(2, IntField.length8(40));
-        siteBits.setInt(8, IntField.length8(48));
-        RFSSStatusBroadcast site = new RFSSStatusBroadcast(P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1,
-            siteBits, 0x346, 2_000L);
-        P25NetworkConfigurationSnapshot fresh = monitor.process(site);
-        assertNotNull(fresh.siteStatus());
-        assertNull(fresh.siteStatus().wuidLeaseMinutes(),
-            "A site service-class broadcast carries no WUID lifetime of its own");
-    }
-
-    @Test
-    void capturesReceivedWuidLifetimeAcrossTsbkAndLinkControl()
-    {
-        P25P1NetworkConfigurationMonitor tsbkMonitor = new P25P1NetworkConfigurationMonitor(Modulation.C4FM);
-        P25P1NetworkConfigurationMonitor lcMonitor = new P25P1NetworkConfigurationMonitor(Modulation.C4FM);
-        assertNull(tsbkMonitor.getSnapshot().siteStatus());
-        assertNull(lcMonitor.getSnapshot().siteStatus());
-
-        int[] received = {0, 1, 254, 255, 0};
-        int[] minutes = {240, 270, 7_860, 0, 240};
-        for(int index = 0; index < received.length; index++)
-        {
-            CorrectedBinaryMessage tsbkBits = new CorrectedBinaryMessage(96);
-            tsbkBits.setInt(56, IntField.length6(2));
-            tsbkBits.setInt(received[index], IntField.length8(16));
-            SystemServiceBroadcast tsbk = new SystemServiceBroadcast(P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1,
-                tsbkBits, 0x346, 1_000L + index);
-            assertEquals(minutes[index], tsbk.getTemporaryWUIDValidityMinutes());
-            assertEquals(minutes[index], tsbkMonitor.process(tsbk).siteStatus().wuidLeaseMinutes());
-            assertEquals(minutes[index], tsbkMonitor.getSnapshot().siteStatus().wuidLeaseMinutes());
-
-            CorrectedBinaryMessage lcBits = new CorrectedBinaryMessage(72);
-            lcBits.set(1); //Standard link-control format; octet 1 is the WUID lifetime, not an MFID.
-            lcBits.setInt(32, IntField.length6(2));
-            lcBits.setInt(received[index], IntField.length8(8));
-            LCSystemServiceBroadcast lc = new LCSystemServiceBroadcast(lcBits);
-            lc.setValid(true);
-            assertEquals(minutes[index], lc.getTemporaryWUIDValidityMinutes());
-            assertEquals(minutes[index], lcMonitor.process(lc).siteStatus().wuidLeaseMinutes());
-            assertEquals(minutes[index], lcMonitor.getSnapshot().siteStatus().wuidLeaseMinutes());
-            assertEquals(tsbk.getTemporaryWUIDValidity(), lc.getTemporaryWUIDValidity());
-        }
-    }
-
     @Test
     void ignoresProtectedMotorolaBaseStationIdCiphertext()
     {

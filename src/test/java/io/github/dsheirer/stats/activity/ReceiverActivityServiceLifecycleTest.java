@@ -64,9 +64,6 @@ import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelLookup;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
-import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
-import io.github.dsheirer.module.decode.p25.P25RadioPresence;
-import io.github.dsheirer.module.decode.p25.P25WuidAssignmentRegistry;
 import io.github.dsheirer.module.decode.p25.P25ConventionalCallUpdateEvent;
 import io.github.dsheirer.module.decode.p25.P25ChannelGrantEvent;
 import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
@@ -83,7 +80,6 @@ import io.github.dsheirer.module.decode.p25.identifier.channel.P25Channel;
 import io.github.dsheirer.module.decode.p25.identifier.channel.StandardChannel;
 import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
-import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
@@ -91,7 +87,6 @@ import io.github.dsheirer.module.decode.p25.phase1.message.P25FrequencyBand;
 import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartTracker;
-import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
@@ -128,381 +123,6 @@ class ReceiverActivityServiceLifecycleTest
 
     @TempDir
     Path mTemporaryFolder;
-
-    @Test
-    void confirmedAssignmentsPersistWithStatsDisabledAndSurviveReopen() throws Exception
-    {
-        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
-        SdrTrunkTestDatabase.create(database);
-        Channel channel = p25TrunkedChannel(ACTIVITY_CONFIGURATION_ID);
-        persistChannels(database, channel);
-        TestUserPreferences preferences = new TestUserPreferences(new TestApplicationPreference(false, 30, true),
-            new TestDirectoryPreference(mTemporaryFolder));
-        ReceiverActivityService service = fastWriterService(preferences);
-        long observedAt = System.currentTimeMillis();
-        try
-        {
-            service.getDecodeEventListener().accept(channel, assignment(observedAt, 101, null,
-                P25WuidAssignmentRegistry.Evidence.REGISTRATION));
-            service.getDecodeEventListener().accept(channel, assignment(observedAt + 1, 102, 240,
-                P25WuidAssignmentRegistry.Evidence.AFFILIATION));
-            service.getDecodeEventListener().accept(channel, assignment(observedAt + 2, 103, 0,
-                P25WuidAssignmentRegistry.Evidence.REGISTRATION));
-            //An ordinary registration supplies no confirmed association and remains optional statistics input.
-            service.getDecodeEventListener().accept(channel, new P25AffiliationEvent(DecodeEventType.REGISTER,
-                observedAt + 3, P25AffiliationEvent.Outcome.ACCEPTED, new P25RadioPresence(null, 104),
-                APCO25RadioIdentifier.createTo(104), null));
-            assertTrue(service.awaitObservationDrain(5, TimeUnit.SECONDS));
-        }
-        finally
-        {
-            disposeAndAwait(service);
-        }
-        assertEquals(3, count(database, "p25_wuid_assignment_observation_summary"));
-        assertEquals(0, count(database, "receiver_activity_event"));
-        assertEquals(0, count(database, "radio_system_identity_summary"));
-        assertEquals(observedAt, scalar(database,
-            "SELECT last_observed_ms FROM p25_wuid_assignment_observation_summary WHERE working_id=101"));
-        assertEquals(1, scalar(database, "SELECT COUNT(*) FROM p25_wuid_assignment_observation_summary " +
-            "WHERE working_id=101 AND last_advertised_lease_minutes IS NULL"));
-        assertEquals(240, scalar(database,
-            "SELECT last_advertised_lease_minutes FROM p25_wuid_assignment_observation_summary WHERE working_id=102"));
-        assertEquals(observedAt + 1 + TimeUnit.MINUTES.toMillis(240), scalar(database,
-            "SELECT last_expires_at_ms FROM p25_wuid_assignment_observation_summary WHERE working_id=102"));
-        assertEquals(Long.MAX_VALUE, scalar(database,
-            "SELECT last_expires_at_ms FROM p25_wuid_assignment_observation_summary WHERE working_id=103"));
-        ReceiverActivityService reopened = fastWriterService(preferences);
-        try
-        {
-            assertTrue(reopened.awaitObservationDrain(5, TimeUnit.SECONDS));
-            assertEquals(3, count(database, "p25_wuid_assignment_observation_summary"));
-            assertEquals(2, scalar(database,
-                "SELECT SUM(registration_count) FROM p25_wuid_assignment_observation_summary"));
-            assertEquals(1, scalar(database,
-                "SELECT SUM(affiliation_count) FROM p25_wuid_assignment_observation_summary"));
-        }
-        finally
-        {
-            disposeAndAwait(reopened);
-        }
-    }
-
-    @Test
-    void confirmedAssignmentHasOnePersistencePathWhenStatsAreEnabled() throws Exception
-    {
-        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
-        SdrTrunkTestDatabase.create(database);
-        Channel channel = p25TrunkedChannel(ACTIVITY_CONFIGURATION_ID);
-        persistChannels(database, channel);
-        ReceiverActivityService service = fastWriterService(new TestUserPreferences(
-            new TestApplicationPreference(true, 30, true), new TestDirectoryPreference(mTemporaryFolder)));
-        long observedAt = System.currentTimeMillis();
-        try
-        {
-            service.getDecodeEventListener().accept(channel, assignment(observedAt, 101, 240,
-                P25WuidAssignmentRegistry.Evidence.REGISTRATION));
-            service.getDecodeEventListener().accept(channel, assignment(observedAt + 1, 101, 240,
-                P25WuidAssignmentRegistry.Evidence.AFFILIATION));
-            assertTrue(service.awaitObservationDrain(5, TimeUnit.SECONDS));
-        }
-        finally
-        {
-            disposeAndAwait(service);
-        }
-        assertEquals(1, count(database, "p25_wuid_assignment_observation_summary"));
-        assertEquals(1, scalar(database, "SELECT registration_count FROM p25_wuid_assignment_observation_summary"));
-        assertEquals(1, scalar(database, "SELECT affiliation_count FROM p25_wuid_assignment_observation_summary"));
-        assertEquals(2, count(database, "receiver_activity_event"));
-    }
-
-    @Test
-    void statsToggleRetainsQueuedAssociationsAndDiscardsOldOptionalStatistics() throws Exception
-    {
-        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
-        SdrTrunkTestDatabase.create(database);
-        Channel channel = p25TrunkedChannel(ACTIVITY_CONFIGURATION_ID);
-        persistChannels(database, channel);
-        TestApplicationPreference application = new TestApplicationPreference(true, 30, true);
-        ReceiverActivityService service = fastWriterService(new TestUserPreferences(application,
-            new TestDirectoryPreference(mTemporaryFolder)));
-        CountDownLatch entered = new CountDownLatch(1);
-        CountDownLatch release = new CountDownLatch(1);
-        long observedAt = System.currentTimeMillis();
-        try
-        {
-            service.getDecodeEventListener().accept(channel, blockingDecodeEvent(observedAt, entered, release));
-            assertTrue(entered.await(2, TimeUnit.SECONDS));
-            service.getDecodeEventListener().accept(channel, assignment(observedAt + 1, 101, 240,
-                P25WuidAssignmentRegistry.Evidence.REGISTRATION));
-            service.getDecodeEventListener().accept(channel,
-                DecodeEvent.builder(DecodeEventType.REGISTER, observedAt + 2).protocol(Protocol.APCO25).build());
-            var sharedIngress = service.getObservationIngressForTest();
-            application.setCollectionEnabled(false);
-            service.preferenceUpdated(PreferenceType.APPLICATION);
-            application.setCollectionEnabled(true);
-            service.preferenceUpdated(PreferenceType.APPLICATION);
-            assertTrue(sharedIngress == service.getObservationIngressForTest(),
-                "optional stats toggles must preserve the independent association handoff");
-            release.countDown();
-            assertTrue(service.awaitObservationDrain(5, TimeUnit.SECONDS));
-            awaitCount(database, "p25_wuid_assignment_observation_summary", 1);
-            assertEquals(1, scalar(database,
-                "SELECT registration_count FROM p25_wuid_assignment_observation_summary"));
-            assertEquals(0, count(database, "receiver_activity_event"));
-
-            service.getDecodeEventListener().accept(channel, assignment(observedAt + 3, 102, 240,
-                P25WuidAssignmentRegistry.Evidence.REGISTRATION));
-            assertTrue(service.awaitObservationDrain(5, TimeUnit.SECONDS));
-        }
-        finally
-        {
-            release.countDown();
-            disposeAndAwait(service);
-        }
-        assertEquals(2, count(database, "p25_wuid_assignment_observation_summary"));
-        assertEquals(1, count(database, "receiver_activity_event"));
-        assertEquals(102, scalar(database, "SELECT source_observed_working_id FROM receiver_activity_event"));
-    }
-
-    @Test
-    void assignmentHandoffRemainsBoundedWithStatsDisabledAndBlockedObserver() throws Exception
-    {
-        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
-        SdrTrunkTestDatabase.create(database);
-        Channel channel = p25TrunkedChannel(ACTIVITY_CONFIGURATION_ID);
-        persistChannels(database, channel);
-        ReceiverActivityService service = fastWriterService(new TestUserPreferences(
-            new TestApplicationPreference(false, 30, true), new TestDirectoryPreference(mTemporaryFolder)));
-        CountDownLatch entered = new CountDownLatch(1);
-        CountDownLatch release = new CountDownLatch(1);
-        AtomicReference<Thread> mappingThread = new AtomicReference<>();
-        P25AffiliationEvent blocked = blockingAssignment(System.currentTimeMillis(), Thread.currentThread(),
-            entered, release, mappingThread);
-        try
-        {
-            service.getDecodeEventListener().accept(channel, blocked);
-            assertTrue(entered.await(2, TimeUnit.SECONDS));
-            long started = System.nanoTime();
-            P25AffiliationEvent ordinary = assignment(System.currentTimeMillis(), 102, 240,
-                P25WuidAssignmentRegistry.Evidence.REGISTRATION);
-            for(int x = 0; x < ReceiverActivityService.OBSERVATION_QUEUE_SIZE + 16; x++)
-            {
-                service.getDecodeEventListener().accept(channel, ordinary);
-            }
-            assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) < 500,
-                "association handoffs must not wait behind the observer");
-            assertTrue(service.getObservationDropCount() > 0);
-            assertEquals(ReceiverActivityService.OBSERVATION_QUEUE_SIZE, service.getPendingObservationCount());
-            assertFalse(Thread.currentThread() == mappingThread.get());
-            assertFalse(service.disposeAndAwait(25, TimeUnit.MILLISECONDS),
-                "a blocked observer must remain visible to the bounded stop boundary");
-            release.countDown();
-        }
-        finally
-        {
-            release.countDown();
-            disposeAndAwait(service);
-        }
-        assertEquals(0, count(database, "receiver_activity_event"));
-        assertEquals(0, count(database, "p25_wuid_assignment_observation_summary"));
-        service.getDecodeEventListener().accept(channel, ordinaryAssignment());
-        assertEquals(0, service.getPendingObservationCount());
-    }
-
-    @Test
-    void delayedAssignmentKeepsItsCapturedReceiverContextAfterChannelEdit() throws Exception
-    {
-        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
-        SdrTrunkTestDatabase.create(database);
-        Channel channel = p25TrunkedChannel(ACTIVITY_CONFIGURATION_ID);
-        persistChannels(database, channel, p25TrunkedChannel(LEARNED_P25_CONFIGURATION_ID));
-        ReceiverActivityService service = fastWriterService(new TestUserPreferences(
-            new TestApplicationPreference(false, 30, true), new TestDirectoryPreference(mTemporaryFolder)));
-        CountDownLatch entered = new CountDownLatch(1);
-        CountDownLatch release = new CountDownLatch(1);
-        long observedAt = System.currentTimeMillis();
-        try
-        {
-            service.getDecodeEventListener().accept(channel, blockingAssignment(observedAt, Thread.currentThread(),
-                entered, release, new AtomicReference<>()));
-            assertTrue(entered.await(2, TimeUnit.SECONDS));
-            service.getDecodeEventListener().accept(channel, assignment(observedAt + 1, 102, 240,
-                P25WuidAssignmentRegistry.Evidence.REGISTRATION));
-            channel.setConfigurationId(LEARNED_P25_CONFIGURATION_ID);
-            channel.setSourceConfiguration(tuner(852_012_500L));
-            release.countDown();
-            assertTrue(service.awaitObservationDrain(5, TimeUnit.SECONDS));
-        }
-        finally
-        {
-            release.countDown();
-            disposeAndAwait(service);
-        }
-        assertEquals(2, scalar(database, "SELECT COUNT(*) FROM p25_wuid_assignment_observation_summary observation " +
-            "JOIN receiver_channel channel ON channel.id=observation.last_channel_id " +
-            "WHERE channel.configuration_id='" + ACTIVITY_CONFIGURATION_ID + "'"));
-        assertEquals(0, scalar(database, "SELECT COUNT(*) FROM receiver_channel " +
-            "WHERE configuration_id='" + LEARNED_P25_CONFIGURATION_ID + "'"));
-    }
-
-    @Test
-    void statsResetOrdersDisabledCollectionAssignmentsAndFencesDelayedOldEvidence() throws Exception
-    {
-        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
-        SdrTrunkTestDatabase.create(database);
-        Channel channel = p25TrunkedChannel(ACTIVITY_CONFIGURATION_ID);
-        persistChannels(database, channel);
-        ReceiverActivityService service = fastWriterService(new TestUserPreferences(
-            new TestApplicationPreference(false, 30, true), new TestDirectoryPreference(mTemporaryFolder)));
-        CountDownLatch entered = new CountDownLatch(1);
-        CountDownLatch release = new CountDownLatch(1);
-        long oldObservedAt = System.currentTimeMillis() - 10_000;
-        try
-        {
-            service.getDecodeEventListener().accept(channel, blockingAssignment(oldObservedAt, Thread.currentThread(),
-                entered, release, new AtomicReference<>()));
-            assertTrue(entered.await(2, TimeUnit.SECONDS));
-            StatsDatabaseMaintenanceRequest reset = StatsDatabaseMaintenanceRequest.forOperation(
-                ReceiverActivityMaintenance.Operation.RESET_STATS);
-            service.receiveMaintenanceRequest(reset);
-            assertFalse(reset.result().isDone(), "reset must wait for the disabled-collection association ingress");
-            release.countDown();
-            reset.result().get(5, TimeUnit.SECONDS);
-            service.getDecodeEventListener().accept(channel, assignment(oldObservedAt, 102, 240,
-                P25WuidAssignmentRegistry.Evidence.REGISTRATION));
-            service.getDecodeEventListener().accept(channel, assignment(System.currentTimeMillis() + 1, 103, 240,
-                P25WuidAssignmentRegistry.Evidence.REGISTRATION));
-            assertTrue(service.awaitObservationDrain(5, TimeUnit.SECONDS));
-        }
-        finally
-        {
-            release.countDown();
-            disposeAndAwait(service);
-        }
-        assertEquals(1, count(database, "p25_wuid_assignment_observation_summary"));
-        assertEquals(103, scalar(database, "SELECT working_id FROM p25_wuid_assignment_observation_summary"));
-    }
-
-    @Test
-    void assignmentPausedAcrossDatabaseRebindCannotEnterReplacementWriter() throws Exception
-    {
-        Path firstDatabase = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
-        Path secondRoot = mTemporaryFolder.resolve("assignment-replacement");
-        Path secondDatabase = SdrTrunkDatabasePath.getDatabasePath(secondRoot);
-        SdrTrunkTestDatabase.create(firstDatabase);
-        SdrTrunkTestDatabase.create(secondDatabase);
-        Channel channel = p25TrunkedChannel(ACTIVITY_CONFIGURATION_ID);
-        persistChannels(firstDatabase, channel);
-        persistChannels(secondDatabase, channel);
-        TestDirectoryPreference directory = new TestDirectoryPreference(mTemporaryFolder);
-        CountDownLatch captured = new CountDownLatch(1);
-        CountDownLatch release = new CountDownLatch(1);
-        AtomicBoolean pauseFirst = new AtomicBoolean(true);
-        Runnable pauseAfterSnapshot = () -> {
-            if(pauseFirst.compareAndSet(true, false))
-            {
-                captured.countDown();
-                try
-                {
-                    release.await();
-                }
-                catch(InterruptedException exception)
-                {
-                    Thread.currentThread().interrupt();
-                }
-            }
-        };
-        ReceiverActivityService service = new ReceiverActivityService(new TestUserPreferences(
-            new TestApplicationPreference(false, 30, true), directory), 2, TimeUnit.SECONDS,
-            pauseAfterSnapshot, null, FAST_WRITER_FACTORY);
-        AtomicReference<Throwable> failure = new AtomicReference<>();
-        Thread producer = observationProducer(service, channel, ordinaryAssignment(), failure,
-            "assignment from retired receiver epoch");
-        try
-        {
-            producer.start();
-            assertTrue(captured.await(2, TimeUnit.SECONDS));
-            directory.setRoot(secondRoot);
-            service.preferenceUpdated(PreferenceType.DIRECTORY);
-            awaitWriterTransition(service, secondDatabase);
-            release.countDown();
-            producer.join(TimeUnit.SECONDS.toMillis(2));
-            assertFalse(producer.isAlive());
-            assertNull(failure.get());
-            service.getDecodeEventListener().accept(channel, assignment(System.currentTimeMillis(), 102, 240,
-                P25WuidAssignmentRegistry.Evidence.REGISTRATION));
-            assertTrue(service.awaitObservationDrain(5, TimeUnit.SECONDS));
-        }
-        finally
-        {
-            release.countDown();
-            producer.join(TimeUnit.SECONDS.toMillis(2));
-            disposeAndAwait(service);
-        }
-        assertEquals(0, count(firstDatabase, "p25_wuid_assignment_observation_summary"));
-        assertEquals(1, count(secondDatabase, "p25_wuid_assignment_observation_summary"));
-        assertEquals(102, scalar(secondDatabase, "SELECT working_id FROM p25_wuid_assignment_observation_summary"));
-    }
-
-    private static P25AffiliationEvent ordinaryAssignment()
-    {
-        return assignment(System.currentTimeMillis(), 101, 240, P25WuidAssignmentRegistry.Evidence.REGISTRATION);
-    }
-
-    private static P25AffiliationEvent assignment(long observedAt, int workingId, Integer advertisedMinutes,
-                                                   P25WuidAssignmentRegistry.Evidence evidence)
-    {
-        APCO25FullyQualifiedRadioIdentifier radio = APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(
-            workingId, 0xABCDE, 0x321, 9_001);
-        long expiresAt = advertisedMinutes != null && advertisedMinutes == 0 ? Long.MAX_VALUE :
-            observedAt + TimeUnit.MINUTES.toMillis(advertisedMinutes != null ? advertisedMinutes : 30);
-        P25WuidAssignmentRegistry.AssignmentObservation observation =
-            new P25WuidAssignmentRegistry.AssignmentObservation(0xBEE00, 0x3A9, workingId,
-                new P25SubscriberIdentity(0xABCDE, 0x321, 9_001), observedAt, expiresAt, evidence, advertisedMinutes);
-        P25AffiliationEvent event = new P25AffiliationEvent(
-            evidence == P25WuidAssignmentRegistry.Evidence.REGISTRATION ? DecodeEventType.REGISTER :
-                DecodeEventType.AFFILIATE, observedAt, P25AffiliationEvent.Outcome.ACCEPTED,
-            P25RadioPresence.from(radio, workingId), observation, radio, null);
-        event.setIdentifierCollection(new MutableIdentifierCollection(List.of(radio,
-            APCO25Wacn.create(0xBEE00), APCO25System.create(0x3A9))));
-        event.end(observedAt + 5_000);
-        return event;
-    }
-
-    private static P25AffiliationEvent blockingAssignment(long observedAt, Thread producer,
-        CountDownLatch entered, CountDownLatch release, AtomicReference<Thread> mappingThread)
-    {
-        P25AffiliationEvent original = assignment(observedAt, 101, 240,
-            P25WuidAssignmentRegistry.Evidence.REGISTRATION);
-        return new P25AffiliationEvent(original.getEventType(), observedAt, original.getOutcome(),
-            original.getRadioPresence(), original.getAssignmentObservation(), original.getRadioIdentifier(), null)
-        {
-            @Override
-            public P25WuidAssignmentRegistry.AssignmentObservation getAssignmentObservation()
-            {
-                if(Thread.currentThread() != producer)
-                {
-                    mappingThread.compareAndSet(null, Thread.currentThread());
-                    entered.countDown();
-                    try
-                    {
-                        release.await();
-                    }
-                    catch(InterruptedException exception)
-                    {
-                        Thread.currentThread().interrupt();
-                    }
-                }
-                return super.getAssignmentObservation();
-            }
-
-            @Override
-            public IdentifierCollection getIdentifierCollection()
-            {
-                throw new AssertionError("association persistence does not format unrelated identifiers");
-            }
-        };
-    }
 
     @Test
     void shutdownBarrierPersistsImmediatelyAcceptedLogicalCallAndOutputsOnce() throws Exception
@@ -1268,17 +888,13 @@ class ReceiverActivityServiceLifecycleTest
     }
 
     @Test
-    void writerRebindCannotFalselyCompleteRetiredDrainBarrier() throws Exception
+    void observationEpochChangeCannotFalselyCompleteRetiredDrainBarrier() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
-        Path replacementRoot = mTemporaryFolder.resolve("drain-rebind");
-        Path replacementDatabase = SdrTrunkDatabasePath.getDatabasePath(replacementRoot);
         SdrTrunkTestDatabase.create(database);
-        SdrTrunkTestDatabase.create(replacementDatabase);
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
-        TestDirectoryPreference directoryPreference = new TestDirectoryPreference(mTemporaryFolder);
         TestUserPreferences userPreferences =
-            new TestUserPreferences(applicationPreference, directoryPreference);
+            new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
         ReceiverActivityService service = fastWriterService(userPreferences);
         Channel channel = new Channel("Retired drain epoch", Channel.ChannelType.STANDARD);
         channel.setDecodeConfiguration(new DecodeConfigNBFM());
@@ -1300,16 +916,17 @@ class ReceiverActivityServiceLifecycleTest
             drainCaller.start();
             awaitPendingObservationCount(service, 1);
 
-            directoryPreference.setRoot(replacementRoot);
-            service.preferenceUpdated(PreferenceType.DIRECTORY);
+            applicationPreference.setCollectionEnabled(false);
+            service.preferenceUpdated(PreferenceType.APPLICATION);
+            applicationPreference.setCollectionEnabled(true);
+            service.preferenceUpdated(PreferenceType.APPLICATION);
             assertFalse(retiredIngress == service.getObservationIngressForTest(),
-                "a database rebind must publish a distinct writer observation epoch");
+                "disable/re-enable must publish a distinct observation epoch");
             releaseProjection.countDown();
 
             assertTrue(drainReturned.await(2, TimeUnit.SECONDS), "the retired drain barrier did not time out");
             assertEquals(Boolean.FALSE, drainResult.get(),
-                "a barrier from a retired writer epoch must never report a successful drain");
-            awaitWriterTransition(service, replacementDatabase);
+                "a barrier from a retired collection epoch must never report a successful drain");
         }
         finally
         {
@@ -1321,17 +938,13 @@ class ReceiverActivityServiceLifecycleTest
     }
 
     @Test
-    void queuedDeletionFailsWhenItsWriterEpochIsRetired() throws Exception
+    void queuedDeletionFailsWhenItsObservationEpochIsRetired() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
-        Path replacementRoot = mTemporaryFolder.resolve("deletion-rebind");
-        Path replacementDatabase = SdrTrunkDatabasePath.getDatabasePath(replacementRoot);
         SdrTrunkTestDatabase.create(database);
-        SdrTrunkTestDatabase.create(replacementDatabase);
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
-        TestDirectoryPreference directoryPreference = new TestDirectoryPreference(mTemporaryFolder);
         TestUserPreferences userPreferences =
-            new TestUserPreferences(applicationPreference, directoryPreference);
+            new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
         ReceiverActivityService service = fastWriterService(userPreferences);
         Channel channel = new Channel("Blocked deletion epoch", Channel.ChannelType.STANDARD);
         channel.setDecodeConfiguration(new DecodeConfigNBFM());
@@ -1349,11 +962,9 @@ class ReceiverActivityServiceLifecycleTest
             service.receiveMaintenanceRequest(request);
             awaitPendingObservationCount(service, 1);
 
-            directoryPreference.setRoot(replacementRoot);
-            service.preferenceUpdated(PreferenceType.DIRECTORY);
+            applicationPreference.setCollectionEnabled(false);
+            service.preferenceUpdated(PreferenceType.APPLICATION);
             assertThrows(ExecutionException.class, () -> request.result().get(2, TimeUnit.SECONDS));
-            releaseProjection.countDown();
-            awaitWriterTransition(service, replacementDatabase);
         }
         finally
         {
@@ -1715,8 +1326,6 @@ class ReceiverActivityServiceLifecycleTest
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
         CountDownLatch oldEpochCaptured = new CountDownLatch(1);
         CountDownLatch releaseOldOutput = new CountDownLatch(1);
-        CountDownLatch currentProjectionEntered = new CountDownLatch(1);
-        CountDownLatch releaseCurrentProjection = new CountDownLatch(1);
         AtomicBoolean pauseNextOutput = new AtomicBoolean();
         Runnable pauseAfterSnapshot = () -> {
             if(pauseNextOutput.compareAndSet(true, false))
@@ -1765,7 +1374,7 @@ class ReceiverActivityServiceLifecycleTest
                     ReceiverActivityRecords.CallOutput.RECORDED).configurationId(),
                 scalarText(database, "SELECT configuration_id FROM receiver_channel LIMIT 1"));
 
-            var sharedIngress = service.getObservationIngressForTest();
+            var retiredIngress = service.getObservationIngressForTest();
             pauseNextOutput.set(true);
             staleProducer.start();
             assertTrue(oldEpochCaptured.await(2, TimeUnit.SECONDS));
@@ -1779,26 +1388,13 @@ class ReceiverActivityServiceLifecycleTest
             staleProducer.join(TimeUnit.SECONDS.toMillis(2));
             assertFalse(staleProducer.isAlive());
             assertEquals(null, producerFailure.get());
-            assertEquals(0, service.getPendingObservationCount(),
-                "the optional handoff from an old statistics token must be rejected");
-
-            service.getDecodeEventListener().accept(channel,
-                blockingDecodeEvent(start + 3_000L, currentProjectionEntered, releaseCurrentProjection));
-            assertTrue(currentProjectionEntered.await(2, TimeUnit.SECONDS));
-            service.receiveRecordedCall(current);
-            var currentOutput = sharedIngress.poll();
-            assertTrue(currentOutput != null &&
-                currentOutput.second() instanceof ReceiverActivityService.ObservationPair,
+            var retiredOutput = retiredIngress.poll();
+            assertTrue(retiredOutput != null && retiredOutput.first() instanceof CompletedAudioCall,
                 "the bounded statistics queue must retain the resolved logical-call metadata");
-            ReceiverActivityService.ObservationPair pair =
-                (ReceiverActivityService.ObservationPair)currentOutput.second();
-            assertTrue(pair.first() instanceof CompletedAudioCall);
-            assertFalse(((CompletedAudioCall)pair.first()).hasAudio(),
+            assertFalse(((CompletedAudioCall)retiredOutput.first()).hasAudio(),
                 "completed-call audio buffers must never be retained by statistics ingress");
 
-            //The inspected item was removed while the worker was blocked; submit its metadata once for persistence.
             service.receiveRecordedCall(current);
-            releaseCurrentProjection.countDown();
             awaitScalar(database,
                 "SELECT COALESCE(SUM(recorded_count), 0) FROM conventional_activity_summary", 1);
             assertEquals(1, scalar(database,
@@ -1807,7 +1403,6 @@ class ReceiverActivityServiceLifecycleTest
         finally
         {
             releaseOldOutput.countDown();
-            releaseCurrentProjection.countDown();
             staleProducer.join(TimeUnit.SECONDS.toMillis(2));
             disposeAndAwait(service);
         }

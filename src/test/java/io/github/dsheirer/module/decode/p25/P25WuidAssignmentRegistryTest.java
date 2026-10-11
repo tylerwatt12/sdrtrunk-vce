@@ -33,32 +33,6 @@ import org.junit.jupiter.api.Test;
 
 class P25WuidAssignmentRegistryTest
 {
-    @Test
-    void trafficManagerCannotReuseAdvertisedLifetimeAfterAChangedServingSystemOrSite()
-    {
-        P25SiteIdentity[] changed = {
-            new P25SiteIdentity(SERVING_SITE.wacn() + 1, SERVING_SITE.system(), SERVING_SITE.rfss(), SERVING_SITE.site()),
-            new P25SiteIdentity(SERVING_SITE.wacn(), SERVING_SITE.system() + 1, SERVING_SITE.rfss(), SERVING_SITE.site()),
-            new P25SiteIdentity(SERVING_SITE.wacn(), SERVING_SITE.system(), SERVING_SITE.rfss() + 1, SERVING_SITE.site()),
-            new P25SiteIdentity(SERVING_SITE.wacn(), SERVING_SITE.system(), SERVING_SITE.rfss(), SERVING_SITE.site() + 1)
-        };
-        for(P25SiteIdentity next: changed)
-        {
-            P25WuidAssignmentRegistry registry = new P25WuidAssignmentRegistry(128, 8);
-            P25TrafficChannelManager manager = new P25TrafficChannelManager(new Channel("Unbound site"),
-                P25BandplanOverrideRegistry.empty(), registry);
-            manager.processNetworkConfigurationIdentity(SERVING_SITE, 0, 1_000L);
-            manager.processNetworkConfigurationIdentity(next, null, 2_000L);
-            P25WuidAssignmentRegistry.AssignmentObservation observation = manager.processP25RadioPresence(
-                P25AffiliationEvent.Outcome.ACCEPTED, DecodeEventType.REGISTER, assignmentPresence(), 2_100L);
-            assertNotNull(observation);
-            assertEquals(next.wacn(), observation.servingWacn());
-            assertEquals(next.system(), observation.servingSystem());
-            assertNull(observation.advertisedLeaseMinutes());
-            assertEquals(2_100L + 240L * 60_000L, observation.expiresAt());
-        }
-    }
-
     private static final P25SiteIdentity SERVING_SITE = new P25SiteIdentity(0xBEE00, 0x348, 1, 1);
     private static final int WORKING_ID = 501;
     private static final int HOME_WACN = 0xABCDE;
@@ -81,7 +55,6 @@ class P25WuidAssignmentRegistryTest
         assertEquals(1_000L, observation.observedAt());
         assertEquals(1_000L + 300L * 60_000L, observation.expiresAt());
         assertEquals(P25WuidAssignmentRegistry.Evidence.REGISTRATION, observation.evidence());
-        assertEquals(300, observation.advertisedLeaseMinutes());
     }
 
     @Test
@@ -93,63 +66,8 @@ class P25WuidAssignmentRegistryTest
 
         assertNotNull(observation);
         assertEquals(Long.MAX_VALUE, observation.expiresAt());
-        assertEquals(0, observation.advertisedLeaseMinutes());
         assertInstanceOf(APCO25FullyQualifiedRadioIdentifier.class,
             enrich(registry, SERVING_SITE, WORKING_ID, Long.MAX_VALUE - 1));
-    }
-
-    @Test
-    void missingAndInvalidLifetimesNeverBecomeAdvertisedValues()
-    {
-        Integer[] unknown = {null, -30, 239, 241, 7_890};
-        for(Integer minutes: unknown)
-        {
-            P25WuidAssignmentRegistry registry = new P25WuidAssignmentRegistry(128, 8);
-            P25WuidAssignmentRegistry.AssignmentObservation observation = registry.register(SERVING_SITE,
-                assignmentPresence(), 1_000L, minutes);
-            assertNotNull(observation);
-            assertNull(observation.advertisedLeaseMinutes());
-            assertEquals(1_000L + 240L * 60_000L, observation.expiresAt());
-            assertEquals(P25WuidAssignmentRegistry.LeaseSource.FALLBACK,
-                registry.snapshot(1_001L).assignments().getFirst().leaseSource());
-        }
-    }
-
-    @Test
-    void acceptsTheCorrectFiniteLifetimeEndpoints()
-    {
-        for(int minutes: new int[]{240, 7_860})
-        {
-            P25WuidAssignmentRegistry registry = new P25WuidAssignmentRegistry(128, 8);
-            P25WuidAssignmentRegistry.AssignmentObservation observation = registry.register(SERVING_SITE,
-                assignmentPresence(), 1_000L, minutes);
-            assertNotNull(observation);
-            assertEquals(minutes, observation.advertisedLeaseMinutes());
-            assertEquals(1_000L + minutes * 60_000L, observation.expiresAt());
-            assertEquals(P25WuidAssignmentRegistry.LeaseSource.ADVERTISED,
-                registry.snapshot(1_001L).assignments().getFirst().leaseSource());
-        }
-    }
-
-    @Test
-    void refreshCapturesItsOwnLifetimeWithoutChangingEarlierObservations()
-    {
-        P25WuidAssignmentRegistry registry = new P25WuidAssignmentRegistry(128, 8);
-        P25WuidAssignmentRegistry.AssignmentObservation first = registry.register(SERVING_SITE,
-            assignmentPresence(), 1_000L, 300);
-        P25WuidAssignmentRegistry.AssignmentObservation noExpiry = registry.refresh(SERVING_SITE,
-            new P25RadioPresence(null, WORKING_ID), 2_000L, 0);
-        assertNotNull(noExpiry);
-        assertEquals(0, noExpiry.advertisedLeaseMinutes());
-        assertEquals(Long.MAX_VALUE, noExpiry.expiresAt());
-        assertEquals(300, first.advertisedLeaseMinutes());
-        assertEquals(1_000L + 300L * 60_000L, first.expiresAt());
-
-        P25WuidAssignmentRegistry.AssignmentObservation fallback = registry.refresh(SERVING_SITE,
-            new P25RadioPresence(null, WORKING_ID), 3_000L, null);
-        assertNotNull(fallback);
-        assertNull(fallback.advertisedLeaseMinutes());
-        assertEquals(3_000L + 240L * 60_000L, fallback.expiresAt());
     }
 
     @Test
@@ -194,41 +112,6 @@ class P25WuidAssignmentRegistryTest
         assertEquals(WORKING_ID, observation.workingId());
         assertEquals(P25WuidAssignmentRegistry.Evidence.AFFILIATION, observation.evidence());
         assertEquals(1_400L + 300L * 60_000L, observation.expiresAt());
-        assertEquals(300, observation.advertisedLeaseMinutes());
-    }
-
-    @Test
-    void trafficManagerRetainsOnlyValidReceivedLifetimeAndNeverAdvertisesItsFallback()
-    {
-        P25WuidAssignmentRegistry registry = new P25WuidAssignmentRegistry(128, 8);
-        Channel channel = new Channel("Site");
-        channel.setP25SiteIdentity(SERVING_SITE);
-        P25TrafficChannelManager manager = new P25TrafficChannelManager(channel,
-            P25BandplanOverrideRegistry.empty(), registry);
-        manager.processNetworkConfigurationIdentity(SERVING_SITE, null, 1_000L);
-        P25WuidAssignmentRegistry.AssignmentObservation unknown = manager.processP25RadioPresence(
-            P25AffiliationEvent.Outcome.ACCEPTED, DecodeEventType.REGISTER, assignmentPresence(), 1_100L);
-        assertNotNull(unknown);
-        assertNull(unknown.advertisedLeaseMinutes());
-        assertEquals(1_100L + 240L * 60_000L, unknown.expiresAt());
-
-        manager.processNetworkConfigurationIdentity(SERVING_SITE, 240, 1_200L);
-        manager.processNetworkConfigurationIdentity(SERVING_SITE, 7_890, 1_300L);
-        manager.processNetworkConfigurationIdentity(SERVING_SITE, null, 1_400L);
-        P25WuidAssignmentRegistry.AssignmentObservation finite = manager.processP25RadioPresence(
-            P25AffiliationEvent.Outcome.CONFIRMED, DecodeEventType.AFFILIATE,
-            new P25RadioPresence(null, WORKING_ID), 1_500L);
-        assertNotNull(finite);
-        assertEquals(240, finite.advertisedLeaseMinutes());
-        assertEquals(1_500L + 240L * 60_000L, finite.expiresAt());
-
-        manager.processNetworkConfigurationIdentity(SERVING_SITE, 0, 1_600L);
-        P25WuidAssignmentRegistry.AssignmentObservation noExpiry = manager.processP25RadioPresence(
-            P25AffiliationEvent.Outcome.CONFIRMED, DecodeEventType.AFFILIATE,
-            new P25RadioPresence(null, WORKING_ID), 1_700L);
-        assertNotNull(noExpiry);
-        assertEquals(0, noExpiry.advertisedLeaseMinutes());
-        assertEquals(Long.MAX_VALUE, noExpiry.expiresAt());
     }
 
     @Test
@@ -352,7 +235,7 @@ class P25WuidAssignmentRegistryTest
     }
 
     @Test
-    void advertisedLifetimeMustBeReceivedAgainAfterServingSourceChanges()
+    void advertisedLeaseFollowsServingSystemRatherThanSite()
     {
         P25WuidAssignmentRegistry registry = new P25WuidAssignmentRegistry();
         Channel channel = new Channel("Runtime identity");
@@ -362,34 +245,18 @@ class P25WuidAssignmentRegistryTest
         P25SiteIdentity secondSite = new P25SiteIdentity(0xBEE00, 0x348, 2, 2);
         P25SiteIdentity otherSystem = new P25SiteIdentity(0xBEE00, 0x349, 1, 1);
 
-        manager.processNetworkConfigurationIdentity(firstSite, 300, 500L);
-        manager.processNetworkConfigurationIdentity(secondSite, null, 700L);
-        P25WuidAssignmentRegistry.AssignmentObservation second = manager.processP25RadioPresence(
-            P25AffiliationEvent.Outcome.ACCEPTED, DecodeEventType.REGISTER, assignmentPresence(), 1_000L);
-        //TIA-102.AABD-B (November 2014), 6.6.3 provisions this timer at the RFSS. A different RFSS/site's
-        //advertisement is not proof of the timer at the new receiving source, even within the same system.
-        assertNull(second.advertisedLeaseMinutes());
-        assertEquals(1_000L + 240L * 60_000L, second.expiresAt());
-        long beforeExpiry = 1_000L + 239L * 60_000L;
-        long afterExpiry = 1_000L + 241L * 60_000L;
-        observeContinuousControlSource(manager, 1_000L, beforeExpiry);
+        manager.processNetworkConfigurationIdentity(firstSite, 300);
+        manager.processNetworkConfigurationIdentity(secondSite, null);
+        manager.processP25RadioPresence(P25AffiliationEvent.Outcome.ACCEPTED, DecodeEventType.REGISTER,
+            assignmentPresence(), 1_000L);
         assertInstanceOf(APCO25FullyQualifiedRadioIdentifier.class,
-            enrich(registry, secondSite, WORKING_ID, beforeExpiry));
-        observeContinuousControlSource(manager, beforeExpiry, afterExpiry);
-        assertInstanceOf(APCO25RadioIdentifier.class,
-            enrich(registry, secondSite, WORKING_ID, afterExpiry));
+            enrich(registry, secondSite, WORKING_ID, 1_000L + 299L * 60_000L));
 
-        long otherObservedAt = afterExpiry + 2_000L;
-        manager.processNetworkConfigurationIdentity(otherSystem, null, otherObservedAt - 500L);
-        P25WuidAssignmentRegistry.AssignmentObservation other = manager.processP25RadioPresence(
-            P25AffiliationEvent.Outcome.ACCEPTED, DecodeEventType.REGISTER,
-            new P25RadioPresence(subscriber(), 502), otherObservedAt);
-        assertNull(other.advertisedLeaseMinutes());
-        assertEquals(otherObservedAt + 240L * 60_000L, other.expiresAt());
-        long otherAfterExpiry = otherObservedAt + 241L * 60_000L;
-        observeContinuousControlSource(manager, otherObservedAt, otherAfterExpiry);
+        manager.processNetworkConfigurationIdentity(otherSystem, null);
+        manager.processP25RadioPresence(P25AffiliationEvent.Outcome.ACCEPTED, DecodeEventType.REGISTER,
+            new P25RadioPresence(subscriber(), 502), 2_000L);
         assertInstanceOf(APCO25RadioIdentifier.class,
-            enrich(registry, otherSystem, 502, otherAfterExpiry));
+            enrich(registry, otherSystem, 502, 2_000L + 271L * 60_000L));
     }
 
     @Test
@@ -760,16 +627,6 @@ class P25WuidAssignmentRegistryTest
         MutableIdentifierCollection identifiers = ordinary(workingId);
         registry.enrich(site, identifiers, timestamp);
         return identifiers.getFromIdentifier();
-    }
-
-    /** Other valid control traffic preserves coverage without refreshing this subscriber's lease. */
-    private static void observeContinuousControlSource(P25TrafficChannelManager manager, long from, long through)
-    {
-        for(long timestamp = from + 30_000L; timestamp <= through; timestamp += 30_000L)
-        {
-            manager.observeControlSource(timestamp);
-        }
-        manager.observeControlSource(through);
     }
 
     private static void await(CountDownLatch latch)

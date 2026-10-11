@@ -22,7 +22,6 @@ package io.github.dsheirer.module.decode.p25.phase2.message.mac.structure;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
-import io.github.dsheirer.module.decode.p25.reference.P25WuidLifetime;
 import io.github.dsheirer.module.decode.p25.reference.Service;
 import java.util.Collections;
 import java.util.List;
@@ -78,7 +77,18 @@ public class SystemServiceBroadcast extends MacStructure
      */
     public String getTemporaryWUIDValidity()
     {
-        return P25WuidLifetime.describe(getInt(TWUID_VALIDITY));
+        int duration = getInt(TWUID_VALIDITY);
+
+        if(duration > 0)
+        {
+            int hours = 4 + (duration / 2);
+            String minutes = (duration % 2 == 1) ? ":30" : ":00";
+            return "ROAMING WUIDS VALID FOR:" + hours + minutes + " HOURS";
+        }
+        else
+        {
+            return "ROAMING WUIDS VALID FOR: NO EXPIRY";
+        }
     }
 
     /**
@@ -86,7 +96,8 @@ public class SystemServiceBroadcast extends MacStructure
      */
     public Integer getTemporaryWUIDValidityMinutes()
     {
-        return P25WuidLifetime.decodeMinutes(getInt(TWUID_VALIDITY));
+        int duration = getInt(TWUID_VALIDITY);
+        return duration > 0 ? 240 + (duration * 30) : 0;
     }
 
     public List<Service> getAvailableServices()

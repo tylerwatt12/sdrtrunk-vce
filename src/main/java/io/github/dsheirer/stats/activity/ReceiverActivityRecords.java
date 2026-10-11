@@ -13,9 +13,7 @@ package io.github.dsheirer.stats.activity;
 
 import io.github.dsheirer.audio.call.LogicalCallId;
 import io.github.dsheirer.channel.metadata.activity.ChannelTag;
-import io.github.dsheirer.metadata.site.SiteReceiverContext;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
-import io.github.dsheirer.module.decode.p25.reference.P25WuidLifetime;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
@@ -370,51 +368,21 @@ final class ReceiverActivityRecords
     }
 
     /**
-     * One accepted over-the-air WUID assignment observation. This is bounded, best-effort association input; the
+     * One accepted over-the-air WUID assignment observation. This is ordinary, best-effort statistics input; the
      * live decoder registry remains process-local and never restores this value from SQLite.
      */
     record P25WuidObservation(int servingWacn, int servingSystem, int workingId,
                               P25SubscriberIdentity subscriber, long expiresAtEpochMilliseconds,
-                              RadioPresenceEvidence evidence, Integer advertisedLeaseMinutes)
+                              RadioPresenceEvidence evidence)
     {
-        P25WuidObservation(int servingWacn, int servingSystem, int workingId, P25SubscriberIdentity subscriber,
-                           long expiresAtEpochMilliseconds, RadioPresenceEvidence evidence)
-        {
-            this(servingWacn, servingSystem, workingId, subscriber, expiresAtEpochMilliseconds, evidence, null);
-        }
-
         P25WuidObservation
         {
             if(servingWacn < 0 || servingWacn > 0xFFFFF || servingSystem < 0 || servingSystem > 0xFFF ||
                 workingId < 1 || workingId > RadioSystemIdentityKey.MAX_P25_WORKING_UNIT_ID || subscriber == null ||
-                expiresAtEpochMilliseconds <= 0 || evidence == null ||
-                advertisedLeaseMinutes != null && !P25WuidLifetime.isValidMinutes(advertisedLeaseMinutes))
+                expiresAtEpochMilliseconds <= 0 || evidence == null)
             {
                 throw new IllegalArgumentException("Invalid P25 WUID assignment observation");
             }
-        }
-    }
-
-    /** Confirmed association with the immutable receiving context captured before asynchronous mapping. */
-    record P25AssignmentObservation(long observedAtEpochMilliseconds, SiteReceiverContext receiverContext,
-                                     P25WuidObservation assignment)
-        implements ReceiverActivityRecord
-    {
-        P25AssignmentObservation
-        {
-            if(observedAtEpochMilliseconds <= 0 || receiverContext == null ||
-                receiverContext.configurationId() == null || !receiverContext.isStandardChannel() ||
-                !receiverContext.isTrunked() ||
-                (receiverContext.protocol() != Protocol.APCO25 && receiverContext.protocol() != Protocol.APCO25_PHASE2) ||
-                assignment == null || assignment.expiresAtEpochMilliseconds() < observedAtEpochMilliseconds)
-            {
-                throw new IllegalArgumentException("P25 association requires a saved receiving context");
-            }
-        }
-
-        String configurationId()
-        {
-            return receiverContext.configurationId();
         }
     }
 
@@ -479,7 +447,8 @@ final class ReceiverActivityRecords
                          P25Identity p25SourceIdentity,
                          List<P25PatchMemberIdentity> p25PatchMemberIdentities,
                          String radioSystemKey,
-                         Integer sourceObservedWorkingId, Integer targetObservedWorkingId)
+                         Integer sourceObservedWorkingId, Integer targetObservedWorkingId,
+                         P25WuidObservation p25WuidObservation)
         implements ReceiverActivityRecord
     {
         ActivityEvent(long observedAtEpochMilliseconds, String configurationId, ReceiverKind receiverKind,
@@ -496,7 +465,25 @@ final class ReceiverActivityRecords
                 sourceRadioId, targetId, targetKind, patchMemberTalkgroupIds, frequencyHertz, lcn, timeslot,
                 encrypted, encryptionAlgorithmId, encryptionKeyId, wacn, systemId, nac, rfss, site, talkerAlias,
                 countedCall, dedupeKey, radioPresenceUpdate, identityDomain, p25TargetIdentity, p25SourceIdentity,
-                p25PatchMemberIdentities, radioSystemKey, null, null);
+                p25PatchMemberIdentities, radioSystemKey, null, null, null);
+        }
+
+        ActivityEvent(long observedAtEpochMilliseconds, String configurationId, ReceiverKind receiverKind,
+                      String protocol, Action action, String eventType, String sourceRadioId, String targetId,
+                      String targetKind, List<Integer> patchMemberTalkgroupIds, Long frequencyHertz, String lcn,
+                      Integer timeslot, boolean encrypted, Integer encryptionAlgorithmId, Integer encryptionKeyId,
+                      Integer wacn, Integer systemId, Integer nac, Integer rfss, Integer site,
+                      String talkerAlias, boolean countedCall, String dedupeKey,
+                      RadioPresenceUpdate radioPresenceUpdate, TrunkedIdentityDomain identityDomain,
+                      P25Identity p25TargetIdentity, P25Identity p25SourceIdentity,
+                      List<P25PatchMemberIdentity> p25PatchMemberIdentities, String radioSystemKey,
+                      Integer sourceObservedWorkingId, Integer targetObservedWorkingId)
+        {
+            this(observedAtEpochMilliseconds, configurationId, receiverKind, protocol, action, eventType,
+                sourceRadioId, targetId, targetKind, patchMemberTalkgroupIds, frequencyHertz, lcn, timeslot,
+                encrypted, encryptionAlgorithmId, encryptionKeyId, wacn, systemId, nac, rfss, site, talkerAlias,
+                countedCall, dedupeKey, radioPresenceUpdate, identityDomain, p25TargetIdentity, p25SourceIdentity,
+                p25PatchMemberIdentities, radioSystemKey, sourceObservedWorkingId, targetObservedWorkingId, null);
         }
 
         ActivityEvent
@@ -528,7 +515,8 @@ final class ReceiverActivityRecords
                 eventType, source != null ? Integer.toString(source) : null, target, kind, members, frequencyHertz,
                 lcn, timeslot, encrypted, encryptionAlgorithmId, encryptionKeyId, wacn, systemId, nac, rfss, site,
                 talkerAlias, countedCall, dedupeKey, radioPresenceUpdate, identityDomain, targetIdentity,
-                sourceIdentity, p25PatchMemberIdentities, radioSystemKey, sourceWorkingId, targetWorkingId);
+                sourceIdentity, p25PatchMemberIdentities, radioSystemKey, sourceWorkingId, targetWorkingId,
+                p25WuidObservation);
         }
 
     }

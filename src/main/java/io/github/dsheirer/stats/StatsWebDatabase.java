@@ -2678,9 +2678,6 @@ class StatsWebDatabase
                         identity.home_system_id AS canonical_system_id,
                         identity.subscriber_id AS canonical_subscriber_id,
                         choice.working_id AS last_observed_working_id,
-                        choice.last_advertised_lease_minutes,
-                        nullif(choice.last_expires_at_ms, 9223372036854775807)
-                            AS last_assignment_expires_at_ms,
                         CASE choice.last_evidence_code WHEN 1 THEN 'registration'
                             WHEN 2 THEN 'affiliation' END AS last_assignment_evidence,
                         min(choice.assignment_first_seen_ms,
@@ -2752,10 +2749,7 @@ class StatsWebDatabase
                         identity.home_wacn AS canonical_wacn,
                         identity.home_system_id AS canonical_system_id,
                         identity.subscriber_id AS canonical_subscriber_id,
-                        NULL AS last_observed_working_id,
-                        NULL AS last_advertised_lease_minutes,
-                        NULL AS last_assignment_expires_at_ms,
-                        NULL AS last_assignment_evidence,
+                        NULL AS last_observed_working_id, NULL AS last_assignment_evidence,
                         directory.first_seen_ms, directory.last_seen_ms,
                         NULL AS last_mapping_observed_ms,
                         NULL AS last_registration_ms, NULL AS last_affiliation_ms,

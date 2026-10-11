@@ -78,7 +78,6 @@ import io.github.dsheirer.module.decode.p25.phase2.P25P2ScrambleParametersPreloa
 import io.github.dsheirer.module.decode.p25.phase2.enumeration.ScrambleParameters;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacOpcode;
 import io.github.dsheirer.module.decode.p25.reference.DataServiceOptions;
-import io.github.dsheirer.module.decode.p25.reference.P25WuidLifetime;
 import io.github.dsheirer.module.decode.p25.reference.ServiceOptions;
 import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
 import io.github.dsheirer.module.decode.traffic.TrafficChannelManager;
@@ -714,7 +713,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
     /**
      * Updates the stable serving identity and latest advertised temporary-WUID lease. A missing lease retains the
-     * last explicit value; when no value has ever been advertised the registry uses the conservative 240-minute
+     * last explicit value; when no value has ever been advertised the registry uses the conservative 270-minute
      * standards-valid minimum.
      */
     public void processNetworkConfigurationIdentity(P25SiteIdentity identity, Integer wuidLeaseMinutes)
@@ -727,14 +726,16 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         if(identity != null)
         {
             P25SiteIdentity previous = mStabilizedRuntimeIdentity;
-            if(previous != null && !previous.equals(identity))
+            if(previous != null && (previous.wacn() != identity.wacn() || previous.system() != identity.system()))
             {
                 mWuidLeaseMinutes = null;
             }
             mStabilizedRuntimeIdentity = identity;
         }
 
-        if(P25WuidLifetime.isValidMinutes(wuidLeaseMinutes))
+        if(wuidLeaseMinutes != null && (wuidLeaseMinutes == P25WuidAssignmentRegistry.NO_EXPIRY_LEASE_MINUTES ||
+            wuidLeaseMinutes >= P25WuidAssignmentRegistry.DEFAULT_LEASE_MINUTES &&
+                wuidLeaseMinutes <= 7_890 && wuidLeaseMinutes % 30 == 0))
         {
             mWuidLeaseMinutes = wuidLeaseMinutes;
         }

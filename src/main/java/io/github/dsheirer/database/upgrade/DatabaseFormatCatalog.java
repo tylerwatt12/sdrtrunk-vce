@@ -36,7 +36,7 @@ import java.util.Map;
 public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
-    public static final int CURRENT_VERSION = 47;
+    public static final int CURRENT_VERSION = 46;
     static final String RETIRED_TRUNKED_IDENTITY_BOUNDARY_KEY = "trunked_identity_metrics_started_at_ms";
     static final List<String> RETIRED_SUBSYSTEM_VERSION_KEYS = List.of(
         "alias_schema_version", "configuration_schema_version", "settings_schema_version", "icon_schema_version",
@@ -104,7 +104,6 @@ public final class DatabaseFormatCatalog
     private static final String FORMAT_43_FINGERPRINT = FORMAT_42_FINGERPRINT;
     private static final String FORMAT_44_FINGERPRINT = "c2d192d86163383407e72d50491d0cbc804ec8765239461fbf8f23f93f910e2e";
     private static final String FORMAT_45_FINGERPRINT = "4e2d76530ef91009959cbf0d19fc0008e2798380d4464002e79dfc59152202ff";
-    private static final String FORMAT_47_FINGERPRINT = "b1168e6a4bf5edf7c0b7abf3c86212d0f091a880621e02af15ae6e7b5fa1ef9e";
 
     private static final FormatDescriptor FORMAT_1 = descriptor(1, "alpha8-shared",
         "Shared Alpha 8, Alpha 9, and Alpha 10 database format", FORMAT_1_FINGERPRINT,
@@ -544,24 +543,12 @@ public final class DatabaseFormatCatalog
             "Store future receiver-confirmed discovery identity in the existing channel document without another table or relationship",
             "Keep format-45 schema unchanged and require the authoritative format marker for this shared semantic layout"));
 
-    private static final FormatDescriptor FORMAT_47 = new FormatDescriptor(47, "p25-association-lease-history-v1",
-        "P25 association history collected independently of optional statistics", FORMAT_47_FINGERPRINT, Map.of(),
-        List.of("main format 47"),
-        "src/test/java/io/github/dsheirer/database/upgrade/Format47TestDatabase.java", List.of(
-            "Preserve all P25 observation pairs, counters, evidence, saved-channel sources and unrelated retained data",
-            "Add nullable advertised lifetime and effective absolute expiry from the same latest accepted assignment",
-            "Leave prior unrecorded timing unknown without historical backfill or restoring live decoder assignments",
-            "Correct site lifetime storage to preserve explicit no expiry and finite values from 240 through 7860 minutes",
-            "Normalize only former raw-255 site lifetimes 7890 to no-expiry zero and clear their obsolete snapshot hash",
-            "Retain bounded association history independently of optional statistics collection using the existing writer and retention"));
-
     private static final List<FormatDescriptor> FORMATS =
         List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7, FORMAT_8, FORMAT_9,
             FORMAT_10, FORMAT_11, FORMAT_12, FORMAT_13, FORMAT_14, FORMAT_15, FORMAT_16, FORMAT_17, FORMAT_18,
             FORMAT_19, FORMAT_20, FORMAT_21, FORMAT_22, FORMAT_23, FORMAT_24, FORMAT_25, FORMAT_26, FORMAT_27,
             FORMAT_28, FORMAT_29, FORMAT_30, FORMAT_31, FORMAT_32, FORMAT_33, FORMAT_34, FORMAT_35, FORMAT_36,
-            FORMAT_37, FORMAT_38, FORMAT_39, FORMAT_40, FORMAT_41, FORMAT_42, FORMAT_43, FORMAT_44, FORMAT_45, FORMAT_46,
-            FORMAT_47);
+            FORMAT_37, FORMAT_38, FORMAT_39, FORMAT_40, FORMAT_41, FORMAT_42, FORMAT_43, FORMAT_44, FORMAT_45, FORMAT_46);
 
     private static final Map<Integer,FormatDescriptor> BY_VERSION = FORMATS.stream().collect(
         java.util.stream.Collectors.toUnmodifiableMap(FormatDescriptor::version, descriptor -> descriptor));
@@ -742,7 +729,7 @@ public final class DatabaseFormatCatalog
     /** Current catalog descriptor. */
     public static FormatDescriptor current()
     {
-        return FORMAT_47;
+        return FORMAT_46;
     }
 
     /** Ordered manifest used by completeness tests and migration UX. */
@@ -1051,7 +1038,7 @@ public final class DatabaseFormatCatalog
             case 31, 32, 33, 34 -> 8;
             case 35 -> 9;
             case 36, 37, 38, 39, 40, 41, 42 -> 10;
-            case 43, 44, 45, 46 -> 11;
+            case 43, 44, 45 -> 11;
             default -> throw new IllegalArgumentException("No web preference version for database format " +
                 descriptor.version());
         };

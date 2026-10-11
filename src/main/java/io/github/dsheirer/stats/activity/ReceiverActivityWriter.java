@@ -353,7 +353,6 @@ class ReceiverActivityWriter implements AutoCloseable
                 record instanceof ReceiverActivityRecords.DmrConventionalCall ||
                 record instanceof ReceiverActivityRecords.NxdnConventionalCall) return CALLS;
             if(record instanceof ReceiverActivityRecords.ControlChannelQuality) return QUALITY;
-            if(record instanceof ReceiverActivityRecords.P25AssignmentObservation) return SIGNALING;
             if(record instanceof ReceiverActivityRecords.SiteSnapshot ||
                 record instanceof ReceiverActivityRecords.TrunkedSiteSnapshot ||
                 record instanceof ReceiverActivityRecords.ChannelFact) return SITE_METADATA;
@@ -1064,14 +1063,7 @@ class ReceiverActivityWriter implements AutoCloseable
                 ReceiverActivitySchema.recordActivityBatch(connection, activityEvents, mDetailedEventHistoryEnabled);
                 activityEvents.clear();
 
-                if(record instanceof ReceiverActivityRecords.P25AssignmentObservation assignment)
-                {
-                    if(RadioSystemSchema.recordAssignmentObservation(connection, assignment))
-                    {
-                        writtenRecords++;
-                    }
-                }
-                else if(record instanceof ReceiverActivityRecords.SiteSnapshot siteSnapshot)
+                if(record instanceof ReceiverActivityRecords.SiteSnapshot siteSnapshot)
                 {
                     ReceiverActivitySchema.insertSite(connection, siteSnapshot);
                     writtenRecords++;

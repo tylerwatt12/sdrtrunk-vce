@@ -25,7 +25,6 @@ import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.dmr.DMRConventionalCallEvent;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.nxdn.NXDNConventionalCallEvent;
-import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
 import io.github.dsheirer.module.decode.p25.P25ConventionalCallUpdateEvent;
 import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
@@ -87,16 +86,13 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     private final Map<String,Long> mRecentDedupeKeys = new LinkedHashMap<>(256, 0.75f, true);
     private final Map<String,Long> mRecentLogicalNotifications = new LinkedHashMap<>(1024, 0.75f, true);
     private long mConventionalCollectionEpoch = 1;
-    /* Worker-owned reset fence; another database starts with its own observation history. */
-    private long mAssignmentObservationFloor;
     private volatile long mObservationCollectionStartedAt = System.currentTimeMillis();
     private final Map<String,TrunkedSiteEvidence> mObservedTrunkedSites = new ConcurrentHashMap<>();
     private final Map<StatsDatabaseMaintenanceRequest,BoundedMpscPairQueue<Object,Object>>
         mPendingDeletionRequests = new ConcurrentHashMap<>();
-    /* One preallocated queue per writer epoch preserves callback order across all observation types. */
+    /* One preallocated queue per collection epoch preserves callback order across all observation types. */
     private volatile BoundedMpscPairQueue<Object,Object> mObservationIngress =
         new BoundedMpscPairQueue<>(OBSERVATION_QUEUE_SIZE);
-    private volatile StatisticsEpoch mStatisticsEpoch = new StatisticsEpoch();
     private final ExecutorService mObservationWorker = Executors.newSingleThreadExecutor(
         new ObserverThreadFactory("sdrtrunk activity observation mapper"));
     private final Semaphore mObservationWakeup = new Semaphore(0);
@@ -119,16 +115,6 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     private volatile boolean mCollectionEnabled;
     private volatile boolean mObservationWorkerStarted;
     private BoundedMpscPairQueue<Object,Object> mWorkerObservationIngress;
-    private StatisticsEpoch mWorkerStatisticsEpoch;
-
-    /** Optional statistics use an identity token; independent associations keep the shared writer queue. */
-    private static final class StatisticsEpoch
-    {
-    }
-
-    record ObservationPair(Object first, Object second)
-    {
-    }
     private Path mCurrentDatabasePath;
     private ReceiverActivityWriter.WriterStatus mLastWriterStatus;
 
@@ -254,7 +240,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
                     replaceWriterOnWorker(writerTransition);
                     continue;
                 }
-                else if(isObservationIngressActive())
+                else if(mCollectionEnabled)
                 {
                     drainObservationsSafely();
                 }
@@ -265,7 +251,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
 
                 try
                 {
-                    if(isObservationIngressActive())
+                    if(mCollectionEnabled)
                     {
                         mObservationWakeup.tryAcquire(10, TimeUnit.MILLISECONDS);
                     }
@@ -347,7 +333,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
      * <p>This method is for bounded lifecycle coordination and must never be called from a decoder or receiver
      * callback.</p>
      *
-     * @return true when the barrier was processed, or false when the service changed writer epochs, was disposed,
+     * @return true when the barrier was processed, or false when the service changed collection epochs, was disposed,
      * or did not drain within the supplied timeout
      */
     public boolean awaitObservationDrain(long timeout, TimeUnit unit)
@@ -365,7 +351,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
                 return false;
             }
 
-            if(!isObservationIngressActive())
+            if(!mCollectionEnabled)
             {
                 return true;
             }
@@ -380,7 +366,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
             long elapsedNanos = System.nanoTime() - startedNanos;
 
             if(elapsedNanos >= timeoutNanos || Thread.currentThread().isInterrupted() ||
-                ingress != mObservationIngress || !isObservationIngressActive())
+                ingress != mObservationIngress || !mCollectionEnabled || mDisposed.get())
             {
                 return false;
             }
@@ -391,7 +377,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
 
         mObservationWakeup.release();
 
-        if(ingress != mObservationIngress || !isObservationIngressActive())
+        if(ingress != mObservationIngress || !mCollectionEnabled || mDisposed.get())
         {
             return false;
         }
@@ -402,7 +388,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
         try
         {
             boolean drained = barrier.await(remainingNanos, TimeUnit.NANOSECONDS);
-            return drained && ingress == mObservationIngress && isObservationIngressActive();
+            return drained && ingress == mObservationIngress && mCollectionEnabled && !mDisposed.get();
         }
         catch(InterruptedException exception)
         {
@@ -761,7 +747,6 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
         mCurrentDatabasePath = transition.databasePath();
         mWriter = writer;
         mObservationIngress = new BoundedMpscPairQueue<>(OBSERVATION_QUEUE_SIZE);
-        mStatisticsEpoch = new StatisticsEpoch();
         mObservationCollectionStartedAt = System.currentTimeMillis();
         mCollectionEnabled = transition.collectionEnabled();
         mLog.info("Stats database writer started for collection and retention maintenance [{}]",
@@ -774,7 +759,6 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
         //epoch. The observer worker owns state clearing and writer replacement.
         BoundedMpscPairQueue<Object,Object> retiredIngress = mObservationIngress;
         mCollectionEnabled = false;
-        mStatisticsEpoch = new StatisticsEpoch();
         mObservationIngress = new BoundedMpscPairQueue<>(OBSERVATION_QUEUE_SIZE);
         failPendingDeletionRequests(retiredIngress);
         mWriterTransitionActive.set(true);
@@ -784,20 +768,20 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
 
     private void updateCollectionEpoch(boolean collectionEnabled)
     {
-        if(mCollectionEnabled != collectionEnabled)
+        if(mCollectionEnabled && !collectionEnabled)
         {
-            //Changing optional collection invalidates only its token. Accepted associations keep their shared queue.
+            BoundedMpscPairQueue<Object,Object> retiredIngress = mObservationIngress;
             mCollectionEnabled = false;
-            mStatisticsEpoch = new StatisticsEpoch();
-            if(collectionEnabled)
-            {
-                mObservationCollectionStartedAt = System.currentTimeMillis();
-            }
-            else
-            {
-                requestObservationStateClear();
-            }
-            mCollectionEnabled = collectionEnabled;
+            mObservationIngress = new BoundedMpscPairQueue<>(OBSERVATION_QUEUE_SIZE);
+            failPendingDeletionRequests(retiredIngress);
+            requestObservationStateClear();
+        }
+        else if(!mCollectionEnabled && collectionEnabled)
+        {
+            //Never reuse the disabled queue: a callback may have captured it before observing the disabled flag.
+            mObservationIngress = new BoundedMpscPairQueue<>(OBSERVATION_QUEUE_SIZE);
+            mObservationCollectionStartedAt = System.currentTimeMillis();
+            mCollectionEnabled = true;
             mObservationWakeup.release();
         }
     }
@@ -805,7 +789,6 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     private void replaceWriterOnWorker(WriterTransition transition)
     {
         clearObservationStateOnWorker();
-        mAssignmentObservationFloor = 0;
         mObservationStateClearRequested.set(false);
         stopWriter();
 
@@ -829,7 +812,6 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
                     mWriter = nextWriter;
                     //The inactive transition queue is always abandoned. Publish a distinct active epoch before enabling.
                     mObservationIngress = new BoundedMpscPairQueue<>(OBSERVATION_QUEUE_SIZE);
-                    mStatisticsEpoch = new StatisticsEpoch();
                     mObservationCollectionStartedAt = System.currentTimeMillis();
                     mCollectionEnabled = transition.collectionEnabled();
                     mWriterTransitionActive.set(false);
@@ -930,70 +912,17 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     private void receiveDecodeEvent(Channel channel, IDecodeEvent event)
     {
         BoundedMpscPairQueue<Object,Object> ingress = mObservationIngress;
-        StatisticsEpoch statisticsEpoch = mStatisticsEpoch;
         afterIngressSnapshotForTest();
 
-        if(channel == null || event == null || !isObservationIngressActive())
+        if(channel == null || event == null || !mCollectionEnabled || mDisposed.get())
         {
             return;
         }
 
-        boolean accepted;
-        if(event instanceof P25AffiliationEvent affiliation && affiliation.getAssignmentObservation() != null)
-        {
-            //Capture only compact immutable receiver facts here. Identifier projection and every database operation
-            //remain on the observer/writer workers, even when ordinary statistics collection is disabled.
-            SiteReceiverContext context = SiteReceiverContext.capture(channel, event.getProtocol());
-            accepted = ingress.offer(new AssignmentIngress(channel, affiliation, context, statisticsEpoch),
-                SINGLE_OBSERVATION);
-            if(accepted)
-            {
-                mObservationWakeup.release();
-            }
-        }
-        else
-        {
-            if(!mCollectionEnabled || statisticsEpoch != mStatisticsEpoch)
-            {
-                return;
-            }
-            accepted = ingress.offer(statisticsEpoch, new ObservationPair(channel, event));
-        }
-
-        if(!accepted)
+        if(!ingress.offer(channel, event))
         {
             mObservationDrops.incrementAndGet();
             mLastObservationDropMs.set(System.currentTimeMillis());
-        }
-    }
-
-    private record AssignmentIngress(Channel channel, P25AffiliationEvent event, SiteReceiverContext receiverContext,
-                                      StatisticsEpoch statisticsEpoch)
-    {
-    }
-
-    private void processAssignment(AssignmentIngress ingress)
-    {
-        ReceiverActivityWriter writer = getAssociationWriter();
-        if(writer == null)
-        {
-            return;
-        }
-
-        ReceiverActivityRecords.P25AssignmentObservation record =
-            mMapper.mapAssignment(ingress.receiverContext(), ingress.event());
-        if(record == null || record.observedAtEpochMilliseconds() < mAssignmentObservationFloor)
-        {
-            return;
-        }
-        enqueueObservation(writer, record);
-
-        //An optional Activity row has no assignment payload. A later receiver edit must not relabel its old event.
-        if(mCollectionEnabled && ingress.statisticsEpoch() == mStatisticsEpoch && ingress.receiverContext() != null &&
-            ingress.receiverContext().matchesCurrentSiteEvidenceGeneration(ingress.channel()))
-        {
-            mWorkerStatisticsEpoch = ingress.statisticsEpoch();
-            processDecodeEvent(ingress.channel(), ingress.event());
         }
     }
 
@@ -1008,7 +937,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
 
         ReceiverActivityRecords.ActivityEvent record = mMapper.map(channel, event);
 
-        if(record != null && mCollectionEnabled && mWorkerStatisticsEpoch == mStatisticsEpoch && shouldLog(record))
+        if(record != null && shouldLog(record))
         {
             enqueueObservation(writer, record);
         }
@@ -1022,17 +951,14 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     private void offerObservation(Object first, Object second)
     {
         BoundedMpscPairQueue<Object,Object> ingress = mObservationIngress;
-        StatisticsEpoch statisticsEpoch = mStatisticsEpoch;
         afterIngressSnapshotForTest();
 
-        if(first == null || second == null || !mCollectionEnabled || statisticsEpoch != mStatisticsEpoch ||
-            mDisposed.get())
+        if(first == null || second == null || !mCollectionEnabled || mDisposed.get())
         {
             return;
         }
 
-        Object payload = second == SINGLE_OBSERVATION ? first : new ObservationPair(first, second);
-        if(!ingress.offer(statisticsEpoch, payload))
+        if(!ingress.offer(first, second))
         {
             mObservationDrops.incrementAndGet();
             mLastObservationDropMs.set(System.currentTimeMillis());
@@ -1101,10 +1027,6 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
 
         while(!mDisposed.get() && drained++ < MAXIMUM_DRAIN_PER_RUN)
         {
-            if(mObservationStateClearRequested.compareAndSet(true, false))
-            {
-                clearObservationStateOnWorker();
-            }
             BoundedMpscPairQueue.Entry<Object,Object> observation = ingress.poll();
 
             if(observation == null)
@@ -1112,7 +1034,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
                 break;
             }
 
-            if(ingress != mObservationIngress || !isObservationIngressActive())
+            if(ingress != mObservationIngress || !mCollectionEnabled)
             {
                 break;
             }
@@ -1121,44 +1043,25 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
 
             try
             {
-                if(observation.first() instanceof StatisticsEpoch statisticsEpoch)
-                {
-                    if(mCollectionEnabled && statisticsEpoch == mStatisticsEpoch)
-                    {
-                        mWorkerStatisticsEpoch = statisticsEpoch;
-                        if(observation.second() instanceof ObservationPair pair)
-                        {
-                            processObservationPair(pair);
-                        }
-                        else
-                        {
-                            processObservation(observation.second());
-                        }
-                    }
-                }
-                else if(observation.second() == SINGLE_OBSERVATION)
+                if(observation.second() == SINGLE_OBSERVATION)
                 {
                     processObservation(observation.first());
+                }
+                else if(observation.first() instanceof Channel channel &&
+                    observation.second() instanceof IDecodeEvent event)
+                {
+                    processDecodeEvent(channel, event);
+                }
+                else if(observation.first() instanceof CompletedAudioCall call &&
+                    observation.second() instanceof ReceiverActivityRecords.CallOutput output)
+                {
+                    processCallOutput(call, output);
                 }
             }
             finally
             {
                 mWorkerObservationIngress = null;
-                mWorkerStatisticsEpoch = null;
             }
-        }
-    }
-
-    private void processObservationPair(ObservationPair pair)
-    {
-        if(pair.first() instanceof Channel channel && pair.second() instanceof IDecodeEvent event)
-        {
-            processDecodeEvent(channel, event);
-        }
-        else if(pair.first() instanceof CompletedAudioCall call &&
-            pair.second() instanceof ReceiverActivityRecords.CallOutput output)
-        {
-            processCallOutput(call, output);
         }
     }
 
@@ -1166,10 +1069,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     {
         synchronized(this)
         {
-            if(writer != null && record != null && writer == mWriter &&
-                (record instanceof ReceiverActivityRecords.P25AssignmentObservation ||
-                    mCollectionEnabled && mWorkerStatisticsEpoch == mStatisticsEpoch) &&
-                !mDisposed.get() &&
+            if(writer != null && record != null && writer == mWriter && mCollectionEnabled && !mDisposed.get() &&
                 !mWriterTransitionActive.get() && mWorkerObservationIngress == mObservationIngress)
             {
                 if(record instanceof ReceiverActivityRecords.ConventionalCallObservation conventional)
@@ -1183,11 +1083,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
 
     private void processObservation(Object observation)
     {
-        if(observation instanceof AssignmentIngress assignment)
-        {
-            processAssignment(assignment);
-        }
-        else if(observation instanceof ObservationDrainBarrier barrier)
+        if(observation instanceof ObservationDrainBarrier barrier)
         {
             barrier.complete();
         }
@@ -1599,7 +1495,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     {
         synchronized(this)
         {
-            ReceiverActivityWriter writer = getAssociationWriter();
+            ReceiverActivityWriter writer = getCollectionWriter();
             if(mPendingDeletionRequests.remove(request, mWorkerObservationIngress) && writer != null &&
                 !mWriterTransitionActive.get() && mWorkerObservationIngress == mObservationIngress)
             {
@@ -1608,7 +1504,6 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
                 {
                     mConventionalCollectionEpoch++;
                     mObservationCollectionStartedAt = Math.max(mObservationCollectionStartedAt, resetBoundary);
-                    mAssignmentObservationFloor = Math.max(mAssignmentObservationFloor, resetBoundary);
                 }
                 writer.submitMaintenance(request);
             }
@@ -1641,7 +1536,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
                 new IllegalStateException("Statistics database is changing; try again"));
         }
         else if(writer != null &&
-            requiresObservationBarrier && isObservationIngressActive())
+            requiresObservationBarrier && mCollectionEnabled)
         {
             // This is called by an administrator request, never a decoder callback. A non-droppable control
             // item must enter the bounded mapper queue before it is safe to place maintenance on the writer.
@@ -1652,7 +1547,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
             mPendingDeletionRequests.put(request, ingress);
             while(true)
             {
-                if(ingress != mObservationIngress || !isObservationIngressActive() ||
+                if(ingress != mObservationIngress || !mCollectionEnabled || mDisposed.get() ||
                     Thread.currentThread().isInterrupted())
                 {
                     failPendingDeletionRequest(request);
@@ -1668,7 +1563,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
                 LockSupport.parkNanos(this, DRAIN_BARRIER_RETRY_NANOS);
             }
             mObservationWakeup.release();
-            if(ingress != mObservationIngress || !isObservationIngressActive())
+            if(ingress != mObservationIngress || !mCollectionEnabled || mDisposed.get())
             {
                 failPendingDeletionRequest(request);
             }
@@ -1725,16 +1620,6 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     private ReceiverActivityWriter getCollectionWriter()
     {
         return mCollectionEnabled && !mDisposed.get() ? mWriter : null;
-    }
-
-    private ReceiverActivityWriter getAssociationWriter()
-    {
-        return isObservationIngressActive() ? mWriter : null;
-    }
-
-    private boolean isObservationIngressActive()
-    {
-        return mWriter != null && !mWriterTransitionActive.get() && !mDisposed.get();
     }
 
     private boolean shouldLog(ReceiverActivityRecords.ActivityEvent record)
