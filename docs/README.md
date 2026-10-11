@@ -13,6 +13,7 @@ check the notes for the version you install.
 | Choose Alpha or Nightly and understand updates | [Choosing a release](release-channels.md) |
 | Install VCE, import a playlist, or move an existing setup | [Setup, importing, and storage](portable-startup-and-storage.md) |
 | Check what an upgrade or database import preserves | [Upgrades and database imports](database-migration.md) |
+| Understand tuner selection, bandwidth, retunes, and channel failures | [How VCE uses your tuners](how-vce-uses-tuners.md) |
 | Listen in the browser and create listening groups | [Browser listening and Scan Lists](browser-listening-and-scan-lists.md) |
 | Transfer aliases or import a RadioReference CSV | [Alias CSV import and export](alias-import-export.md) |
 | Understand names transmitted by radios | [Talker aliases](talker-alias-implementation.md) |

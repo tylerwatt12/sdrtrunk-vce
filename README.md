@@ -216,6 +216,7 @@ decisions, and it supports VCE rather than the original sdrtrunk project.
 - [Documentation guide](docs/README.md)
 - [Report a problem or request a feature](https://github.com/tylerwatt12/sdrtrunk-vce/issues)
 - [Release notes and downloads](https://github.com/tylerwatt12/sdrtrunk-vce/releases)
+- [How VCE uses your tuners](docs/how-vce-uses-tuners.md)
 - [Browser listening and Scan Lists](docs/browser-listening-and-scan-lists.md)
 - [P25 Visualizer](docs/network-visualizer.md)
 - [Portable setup, importing, and storage](docs/portable-startup-and-storage.md)
