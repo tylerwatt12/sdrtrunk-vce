@@ -1,0 +1,459 @@
+/*
+ * Copyright (C) 2026 Dennis Sheirer
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+package io.github.dsheirer.record;
+
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import com.mpatric.mp3agic.ID3v24Tag;
+import io.github.dsheirer.audio.call.AudioCallId;
+import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.CallEncryptionState;
+import io.github.dsheirer.audio.call.CallLegId;
+import io.github.dsheirer.audio.call.CallLegSource;
+import io.github.dsheirer.audio.call.CallLegSummary;
+import io.github.dsheirer.audio.call.CompletedAudioCall;
+import io.github.dsheirer.audio.call.VoiceCallQuality;
+import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.configuration.ChannelNameConfigurationIdentifier;
+import io.github.dsheirer.identifier.configuration.DecoderTypeConfigurationIdentifier;
+import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
+import io.github.dsheirer.identifier.configuration.SiteConfigurationIdentifier;
+import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier;
+import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25Nac;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
+import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.record.wave.AudioMetadata;
+import io.github.dsheirer.record.wave.AudioMetadataUtils;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+/** Verifies the independently parsed bytes of completed MP3/WAV recordings, including compatibility fields. */
+class VceRecordingMetadataFileTest
+{
+    private static final VoiceCallQuality QUALITY = new VoiceCallQuality(480, 8, 4, 8, 144, 72_000);
+    private static final CallLegSource SOURCE = source(DecoderType.P25_PHASE2, 0xBEE00, 0x456, 1, 7);
+    @TempDir Path mDirectory;
+
+    @Test
+    void everyAvailableFieldSurvivesInActualMp3AndWaveWithoutChangingStandardFields() throws Exception
+    {
+        CompletedAudioCall call = call(groupIdentifiers(), SOURCE, QUALITY, CallEncryptionState.CLEAR, 1);
+        Map<String, String> expected = fullGroupFields();
+
+        for(RecordFormat format: RecordFormat.values())
+        {
+            Recording recording = writeAndRead(call, "complete", format, null);
+            assertEquals(expected, recording.vceFields());
+            assertExistingFieldsUnchanged(call, call.recordingIdentifierCollection(), recording);
+            ID3v24Tag standard = new ID3v24Tag(recording.id3());
+            assertEquals("120045(703710.291.7654321)", standard.getArtist());
+            assertEquals("3101", standard.getTitle());
+            assertEquals("Synthetic System", standard.getGrouping());
+            assertEquals("Synthetic Voice", standard.getAlbum());
+            assertTrue(standard.getComment().endsWith("System:Synthetic System;Site:Synthetic Site;" +
+                "Name:Synthetic Voice;Decoder:P25 Phase 2;Frequency:851012500;"));
+        }
+    }
+
+    @Test
+    void radioDestinationAndMeasuredZerosRemainDistinctFromGroupAndUnknownValues() throws Exception
+    {
+        IdentifierCollection identifiers = identifiers(APCO25RadioIdentifier.createFrom(120045),
+            APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(220078, 0xBCDEF, 0x321, 987654));
+        CompletedAudioCall call = call(identifiers, CallLegSource.UNKNOWN,
+            new VoiceCallQuality(50, 0, 0, 0, 0, 6_850), CallEncryptionState.ENCRYPTED, 0);
+        Map<String, String> expected = Map.ofEntries(
+            Map.entry("VCE_P25_WUID", "120045"),
+            Map.entry("VCE_P25_DEST_WUID", "220078"),
+            Map.entry("VCE_P25_DEST_SUID", "BCDEF.321.987654"),
+            Map.entry("VCE_PROTOCOL", "APCO25"),
+            Map.entry("VCE_ENCRYPTION", "ENCRYPTED"),
+            Map.entry("VCE_VOICE_DECODED_FRAMES", "50"),
+            Map.entry("VCE_VOICE_REPEATED_FRAMES", "0"),
+            Map.entry("VCE_VOICE_CONCEALED_FRAMES", "0"),
+            Map.entry("VCE_VOICE_MISSING_FRAMES", "0"),
+            Map.entry("VCE_VOICE_FEC_ERRORS", "0"),
+            Map.entry("VCE_VOICE_FEC_PROTECTED_BITS", "6850"),
+            Map.entry("VCE_VOICE_FEC_CORRECTION_PERCENT", "0.000000"));
+
+        for(RecordFormat format: RecordFormat.values())
+        {
+            Recording recording = writeAndRead(call, "private", format, null);
+            assertEquals(expected, recording.vceFields());
+            assertExistingFieldsUnchanged(call, identifiers, recording);
+        }
+    }
+
+    @Test
+    void patchDestinationIsNotExportedAsAnOrdinaryTalkgroupOrRadio() throws Exception
+    {
+        IdentifierCollection identifiers = identifiers(APCO25RadioIdentifier.createFrom(501),
+            APCO25PatchGroup.create(45001));
+        CompletedAudioCall call = call(identifiers, CallLegSource.UNKNOWN, VoiceCallQuality.EMPTY,
+            CallEncryptionState.UNKNOWN, 0);
+        Map<String, String> expected = Map.of("VCE_P25_WUID", "501", "VCE_PATCH_GROUP", "45001",
+            "VCE_PROTOCOL", "APCO25");
+        for(RecordFormat format: RecordFormat.values())
+        {
+            Recording recording = writeAndRead(call, "patch", format, null);
+            assertEquals(expected, recording.vceFields());
+            assertExistingFieldsUnchanged(call, identifiers, recording);
+            assertEquals("P:45001", new ID3v24Tag(recording.id3()).getTitle());
+        }
+    }
+
+    @Test
+    void identityOnlyObservationDoesNotInventAWorkingAddressAndUnknownFactsAreOmitted() throws Exception
+    {
+        IdentifierCollection identifiers = identifiers(
+            APCO25FullyQualifiedRadioIdentifier.createFrom(7654321, 0xABCDE, 0x123, 7654321));
+        CompletedAudioCall call = call(identifiers, CallLegSource.UNKNOWN, VoiceCallQuality.EMPTY,
+            CallEncryptionState.UNKNOWN, 0);
+        for(RecordFormat format: RecordFormat.values())
+        {
+            Recording recording = writeAndRead(call, "identity-only", format, null);
+            assertEquals(Map.of("VCE_P25_SUID", "ABCDE.123.7654321", "VCE_PROTOCOL", "APCO25"),
+                recording.vceFields());
+            assertExistingFieldsUnchanged(call, identifiers, recording);
+        }
+
+        CompletedAudioCall unknown = call(new IdentifierCollection(), CallLegSource.UNKNOWN,
+            VoiceCallQuality.EMPTY, CallEncryptionState.UNKNOWN, 0);
+        for(RecordFormat format: RecordFormat.values())
+        {
+            Recording recording = writeAndRead(unknown, "unknown", format, null);
+            assertTrue(recording.vceFields().isEmpty(), "No facts must produce no placeholder TXXX frames");
+            assertExistingFieldsUnchanged(unknown, unknown.recordingIdentifierCollection(), recording);
+        }
+    }
+
+    @Test
+    void recordingFactsExcludePromotedIdentityLosingReceiverAndCohortAdjustedQuality() throws Exception
+    {
+        IdentifierCollection observed = identifiers(APCO25RadioIdentifier.createFrom(120045),
+            APCO25Talkgroup.create(3101), APCO25Nac.create(0x3A7));
+        IdentifierCollection promoted = groupIdentifiers();
+        CompletedAudioCall original = call(promoted, SOURCE,
+            new VoiceCallQuality(999, 99, 99, 0, 999, 999), CallEncryptionState.CLEAR, 1);
+        CallLegSummary winner = new CallLegSummary(original.snapshot().callLegId(), SOURCE, 1_000, 2_000,
+            QUALITY, 8_000, false, false, true, null, observed.getFromIdentifier(), observed.getToIdentifier(),
+            List.of(), 851012500L, 1);
+        CallLegSummary loser = new CallLegSummary(new CallLegId(2, 1, 2),
+            source(DecoderType.P25_PHASE1, 0x11111, 0x222, 2, 9), 1_000, 2_000,
+            new VoiceCallQuality(900, 90, 90, 90, 900, 900), 0, false, false, false, null,
+            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(333, 0x11111, 0x222, 444),
+            APCO25Talkgroup.create(555), List.of(), 852000000L, 2);
+        CompletedAudioCall call = new CompletedAudioCall(original.logicalCallId(), original.snapshot(),
+            original.audioBuffers(), original.resolvedPolicy(), List.of(winner, loser), observed);
+        Map<String, String> expected = fullGroupFields();
+        expected.remove("VCE_P25_SUID");
+        for(RecordFormat format: RecordFormat.values())
+        {
+            Recording recording = writeAndRead(call, "winner", format, null);
+            assertEquals(expected, recording.vceFields());
+            assertExistingFieldsUnchanged(call, observed, recording);
+            assertEquals("120045", new ID3v24Tag(recording.id3()).getArtist());
+        }
+    }
+
+    @Test
+    void explicitStreamingTagIdentifiersDoNotReplaceCapturedVceFacts() throws Exception
+    {
+        CompletedAudioCall call = call(groupIdentifiers(), SOURCE, QUALITY, CallEncryptionState.CLEAR, 1);
+        IdentifierCollection remapped = identifiers(APCO25RadioIdentifier.createFrom(99),
+            APCO25Talkgroup.create(88), FrequencyConfigurationIdentifier.create(852000000L),
+            DecoderTypeConfigurationIdentifier.create(DecoderType.P25_PHASE1));
+        for(RecordFormat format: RecordFormat.values())
+        {
+            Recording recording = writeAndRead(call, "streaming", format, remapped);
+            assertEquals(fullGroupFields(), recording.vceFields());
+            assertExistingFieldsUnchanged(call, remapped, recording);
+            assertEquals("99", new ID3v24Tag(recording.id3()).getArtist());
+            assertEquals("88", new ID3v24Tag(recording.id3()).getTitle());
+        }
+    }
+
+    @Test
+    void homeSystemSimplificationAndStandaloneWaveRetainOriginalStandardMetadata() throws Exception
+    {
+        IdentifierCollection identifiers = identifiers(
+            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(120045, 0xBEE00, 0x456, 120045),
+            APCO25Talkgroup.create(3101));
+        CompletedAudioCall call = call(identifiers, SOURCE, new VoiceCallQuality(50, 0, 0, 0, 0, 0),
+            CallEncryptionState.CLEAR, 1);
+        for(RecordFormat format: RecordFormat.values())
+        {
+            Recording recording = writeAndRead(call, "home", format, null);
+            assertEquals("120045", new ID3v24Tag(recording.id3()).getArtist());
+            assertEquals("120045", recording.vceFields().get("VCE_P25_WUID"));
+            assertEquals("BEE00.456.120045", recording.vceFields().get("VCE_P25_SUID"));
+            assertFalse(recording.vceFields().containsKey("VCE_VOICE_FEC_ERRORS"));
+            assertFalse(recording.vceFields().containsKey("VCE_VOICE_FEC_CORRECTION_PERCENT"));
+            assertExistingFieldsUnchanged(call, identifiers, recording);
+        }
+        Path standalone = mDirectory.resolve("standalone.wav");
+        AudioCallRecorder.recordWAVE(call, standalone, identifiers);
+        Recording recording = readRecording(Files.readAllBytes(standalone), RecordFormat.WAVE);
+        assertEquals("BEE00.456.120045", recording.vceFields().get("VCE_P25_SUID"));
+        assertExistingFieldsUnchanged(call, identifiers, recording);
+        assertTrue(BasicRecordingContract.filename(identifiers, RecordFormat.MP3, 1_000, 1, 1,
+            BasicRecordingContract.servingSystemKey(call)).endsWith("_TO_3101_FROM_120045.mp3"));
+    }
+
+    private Recording writeAndRead(CompletedAudioCall call, String name, RecordFormat format,
+                                    IdentifierCollection standardIdentifiers) throws Exception
+    {
+        Path path = mDirectory.resolve(name + format.getExtension());
+        if(standardIdentifiers == null)
+        {
+            AudioCallRecorder.write(call, path, format, new UserPreferences());
+        }
+        else
+        {
+            AudioCallRecorder.write(call, path, format, new UserPreferences(), standardIdentifiers);
+        }
+        return readRecording(Files.readAllBytes(path), format);
+    }
+
+    private static Recording readRecording(byte[] bytes, RecordFormat format)
+    {
+        Map<String, byte[]> chunks = new LinkedHashMap<>();
+        byte[] id3 = bytes;
+        if(format == RecordFormat.WAVE)
+        {
+            assertEquals("RIFF", new String(bytes, 0, 4, StandardCharsets.US_ASCII));
+            assertEquals("WAVE", new String(bytes, 8, 4, StandardCharsets.US_ASCII));
+            assertEquals(bytes.length - 8, littleEndianInt(bytes, 4));
+            int offset = 12;
+            while(offset < bytes.length)
+            {
+                assertTrue(offset + 8 <= bytes.length, "Complete RIFF chunk header");
+                String name = new String(bytes, offset, 4, StandardCharsets.US_ASCII);
+                int size = littleEndianInt(bytes, offset + 4);
+                assertTrue(size >= 0 && offset + 8L + size <= bytes.length, "Valid RIFF chunk size");
+                assertFalse(chunks.containsKey(name), "Each RIFF chunk must be unique");
+                chunks.put(name, Arrays.copyOfRange(bytes, offset + 8, offset + 8 + size));
+                offset += 8 + size + (size & 1);
+            }
+            assertEquals(bytes.length, offset, "RIFF chunks and alignment consume the complete file");
+            assertNotNull(chunks.get("fmt "));
+            assertEquals(16_000, chunks.get("data").length, "One second of 8 kHz 16-bit mono PCM survives");
+            id3 = chunks.get("id3 ");
+            assertNotNull(id3);
+            assertEquals(0, id3.length % 4, "Embedded ID3 keeps the existing WAV padding contract");
+        }
+
+        List<Frame> frames = readFrames(id3);
+        int id3End = 10 + synchsafe(id3, 6);
+        if(format == RecordFormat.MP3)
+        {
+            assertTrue(bytes.length > id3End + 4, "Encoded audio follows the complete ID3 block");
+            assertEquals(0xFF, bytes[id3End] & 0xFF, "First MPEG audio frame sync");
+            assertEquals(0xE0, bytes[id3End + 1] & 0xE0, "First MPEG audio frame sync");
+        }
+        else
+        {
+            for(int offset = id3End; offset < id3.length; offset++)
+            {
+                assertEquals(0, id3[offset], "ID3 chunk alignment contains zero padding");
+            }
+        }
+
+        Map<String, String> fields = new LinkedHashMap<>();
+        for(Frame frame: frames)
+        {
+            if(!"TXXX".equals(frame.name())) continue;
+            byte[] payload = frame.payload();
+            assertTrue(payload.length > 2);
+            assertEquals(3, payload[0], "Every VCE description and value is ID3v2.4 UTF-8");
+            int separator = 1;
+            while(separator < payload.length && payload[separator] != 0) separator++;
+            assertTrue(separator < payload.length, "TXXX description has a NUL terminator");
+            String name = new String(payload, 1, separator - 1, StandardCharsets.UTF_8);
+            String value = new String(payload, separator + 1, payload.length - separator - 1,
+                StandardCharsets.UTF_8);
+            assertTrue(name.startsWith("VCE_"));
+            assertFalse(value.isEmpty(), "Unknown facts must be omitted instead of encoded as empty values");
+            assertFalse(value.contains("\u0000"));
+            assertFalse(fields.containsKey(name), "Named TXXX fields occur exactly once: " + name);
+            fields.put(name, value);
+        }
+        assertFalse(fields.keySet().stream().anyMatch(key -> key.contains("RSSI") || key.contains("SNR") ||
+            key.contains("BER")), "Unavailable signal measurements must never be manufactured");
+        return new Recording(id3, frames, chunks, fields);
+    }
+
+    private static void assertExistingFieldsUnchanged(CompletedAudioCall call, IdentifierCollection identifiers,
+                                                      Recording recording) throws Exception
+    {
+        ID3v24Tag actual = new ID3v24Tag(recording.id3());
+        String date = actual.getDate();
+        assertTrue(date.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}"));
+        Map<AudioMetadata, String> original = AudioMetadataUtils.getMetadataMap(identifiers,
+            call.snapshot().aliasList(), BasicRecordingContract.servingSystemKey(call));
+        // The legacy writer stamps the current clock. Normalize only that value before comparing exact bytes.
+        original.put(AudioMetadata.DATE_CREATED, date);
+        original.put(AudioMetadata.YEAR, date.substring(0, 4));
+        original.put(AudioMetadata.COMMENTS,
+            original.get(AudioMetadata.COMMENTS).replaceFirst("Date:[^;]+;", "Date:" + date + ";"));
+        List<Frame> baseline = readFrames(AudioMetadataUtils.getMP3ID3(original));
+        List<Frame> standard = recording.frames().stream().filter(frame -> !"TXXX".equals(frame.name())).toList();
+        assertEquals(baseline.size(), standard.size(), "Standard ID3 frame count is unchanged");
+        for(Frame expected: baseline)
+        {
+            List<Frame> matches = standard.stream().filter(frame -> expected.name().equals(frame.name())).toList();
+            assertEquals(1, matches.size(), "Standard frame remains present once: " + expected.name());
+            assertArrayEquals(expected.bytes(), matches.getFirst().bytes(),
+                "Existing ID3 frame bytes remain unchanged: " + expected.name());
+        }
+        if(recording.waveChunks().containsKey("LIST"))
+        {
+            byte[] list = AudioMetadataUtils.getLISTChunk(original).array();
+            assertArrayEquals(Arrays.copyOfRange(list, 8, list.length), recording.waveChunks().get("LIST"),
+                "Existing LIST/INFO chunk bytes remain unchanged");
+        }
+    }
+
+    /** Parses the ID3v2.4 framing independently of the production ID3 library. */
+    private static List<Frame> readFrames(byte[] id3)
+    {
+        assertTrue(id3.length >= 10);
+        assertEquals("ID3", new String(id3, 0, 3, StandardCharsets.US_ASCII));
+        assertEquals(4, id3[3]);
+        assertEquals(0, id3[4]);
+        assertEquals(0, id3[5]);
+        int end = 10 + synchsafe(id3, 6);
+        assertTrue(end <= id3.length, "ID3 header size fits the actual file");
+        List<Frame> frames = new ArrayList<>();
+        int offset = 10;
+        while(offset < end && id3[offset] != 0)
+        {
+            assertTrue(offset + 10 <= end);
+            String name = new String(id3, offset, 4, StandardCharsets.US_ASCII);
+            assertTrue(name.matches("[A-Z0-9]{4}"));
+            int size = synchsafe(id3, offset + 4);
+            assertTrue(size > 0 && offset + 10L + size <= end, "Complete frame payload: " + name);
+            assertEquals(0, id3[offset + 8]);
+            assertEquals(0, id3[offset + 9]);
+            frames.add(new Frame(name, Arrays.copyOfRange(id3, offset, offset + 10 + size),
+                Arrays.copyOfRange(id3, offset + 10, offset + 10 + size)));
+            offset += 10 + size;
+        }
+        for(; offset < end; offset++) assertEquals(0, id3[offset], "ID3 tag padding is zero");
+        return frames;
+    }
+
+    private static int synchsafe(byte[] bytes, int offset)
+    {
+        int value = 0;
+        for(int index = offset; index < offset + 4; index++)
+        {
+            assertEquals(0, bytes[index] & 0x80, "ID3v2.4 sizes use synchsafe bytes");
+            value = (value << 7) | (bytes[index] & 0x7F);
+        }
+        return value;
+    }
+
+    private static int littleEndianInt(byte[] bytes, int offset)
+    {
+        return ByteBuffer.wrap(bytes, offset, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
+    }
+
+    private static Map<String, String> fullGroupFields()
+    {
+        return new LinkedHashMap<>(Map.ofEntries(
+            Map.entry("VCE_P25_WUID", "120045"),
+            Map.entry("VCE_P25_SUID", "ABCDE.123.7654321"),
+            Map.entry("VCE_P25_RX_WACN", "BEE00"),
+            Map.entry("VCE_P25_RX_SYSID", "456"),
+            Map.entry("VCE_P25_RX_RFSS", "1"),
+            Map.entry("VCE_P25_RX_SITE", "7"),
+            Map.entry("VCE_P25_NAC", "3A7"),
+            Map.entry("VCE_TALKGROUP", "3101"),
+            Map.entry("VCE_FREQUENCY_HZ", "851012500"),
+            Map.entry("VCE_PROTOCOL", "APCO25"),
+            Map.entry("VCE_P25_PHASE", "2"),
+            Map.entry("VCE_TIMESLOT", "1"),
+            Map.entry("VCE_ENCRYPTION", "CLEAR"),
+            Map.entry("VCE_VOICE_DECODED_FRAMES", "480"),
+            Map.entry("VCE_VOICE_REPEATED_FRAMES", "8"),
+            Map.entry("VCE_VOICE_CONCEALED_FRAMES", "4"),
+            Map.entry("VCE_VOICE_MISSING_FRAMES", "8"),
+            Map.entry("VCE_VOICE_FEC_ERRORS", "144"),
+            Map.entry("VCE_VOICE_FEC_PROTECTED_BITS", "72000"),
+            Map.entry("VCE_VOICE_FEC_CORRECTION_PERCENT", "0.200000")));
+    }
+
+    private static IdentifierCollection groupIdentifiers()
+    {
+        return identifiers(SystemConfigurationIdentifier.create("Synthetic System"),
+            SiteConfigurationIdentifier.create("Synthetic Site"),
+            ChannelNameConfigurationIdentifier.create("Synthetic Voice"),
+            DecoderTypeConfigurationIdentifier.create(DecoderType.P25_PHASE2),
+            FrequencyConfigurationIdentifier.create(851012500L), APCO25Nac.create(0x3A7),
+            APCO25Wacn.create(0xBEE00), APCO25System.create(0x456),
+            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(120045, 0xABCDE, 0x123, 7654321),
+            APCO25Talkgroup.create(3101));
+    }
+
+    private static IdentifierCollection identifiers(Identifier<?>... identifiers)
+    {
+        return new IdentifierCollection(new ArrayList<Identifier>(Arrays.asList(identifiers)));
+    }
+
+    private static CallLegSource source(DecoderType decoder, int wacn, int sysid, int rfss, int site)
+    {
+        return new CallLegSource(decoder, null, null, null, 0,
+            new P25SiteIdentity(wacn, sysid, rfss, site), TrunkedIdentityDomain.STANDARD, null, false);
+    }
+
+    private static CompletedAudioCall call(IdentifierCollection identifiers, CallLegSource source,
+                                           VoiceCallQuality quality, CallEncryptionState encryption, int timeslot)
+    {
+        AudioCallId callId = new AudioCallId(1, 1, timeslot);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null, identifiers, Set.of(),
+            1_000, 2_000, 1, 1, 1_000, 2_000, false, true, encryption, true, null, quality,
+            CallLegId.from(callId), source, null);
+        List<float[]> audio = new ArrayList<>();
+        for(int frame = 0; frame < 50; frame++)
+        {
+            float[] samples = new float[160];
+            for(int index = 0; index < samples.length; index++)
+            {
+                samples[index] = (float)(0.2 * Math.sin((frame * 160 + index) * Math.PI / 10));
+            }
+            audio.add(samples);
+        }
+        return new CompletedAudioCall(snapshot, audio);
+    }
+
+    private record Frame(String name, byte[] bytes, byte[] payload) {}
+    private record Recording(byte[] id3, List<Frame> frames, Map<String, byte[]> waveChunks,
+                             Map<String, String> vceFields) {}
+}

@@ -20,7 +20,9 @@
 package io.github.dsheirer.record.wave;
 
 import com.google.common.base.Joiner;
+import com.mpatric.mp3agic.ID3v24Frame;
 import com.mpatric.mp3agic.ID3v24Tag;
+import com.mpatric.mp3agic.ID3v2FrameSet;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.identifier.Form;
@@ -193,6 +195,15 @@ public class AudioMetadataUtils
      */
     public static byte[] getMP3ID3(Map<AudioMetadata,String> metadataMap)
     {
+        return getMP3ID3(metadataMap, Map.of());
+    }
+
+    /**
+     * Adds named UTF-8 TXXX fields without changing the standard metadata map or WAV LIST fields.
+     * Each description identifies one independent user-defined text frame (ID3v2.4 section 4.2.6).
+     */
+    public static byte[] getMP3ID3(Map<AudioMetadata,String> metadataMap, Map<String,String> namedFields)
+    {
         ID3v24Tag tag = new ID3v24Tag();
 
         for(Map.Entry<AudioMetadata, String> entry : metadataMap.entrySet())
@@ -227,6 +238,21 @@ public class AudioMetadataUtils
                     tag.setYear(entry.getValue());
                     break;
             }
+        }
+
+        ID3v2FrameSet userTextFrames = new ID3v2FrameSet("TXXX");
+        for(Map.Entry<String,String> entry : namedFields.entrySet())
+        {
+            byte[] description = entry.getKey().getBytes(UTF_8);
+            byte[] value = entry.getValue().getBytes(UTF_8);
+            ByteBuffer payload = ByteBuffer.allocate(2 + description.length + value.length);
+            payload.put((byte)3); //ID3v2.4 UTF-8 text encoding.
+            payload.put(description).put(NULL_TERMINATOR).put(value);
+            userTextFrames.addFrame(new ID3v24Frame("TXXX", payload.array()));
+        }
+        if(!userTextFrames.getFrames().isEmpty())
+        {
+            tag.getFrameSets().put("TXXX", userTextFrames);
         }
 
         try

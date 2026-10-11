@@ -331,6 +331,40 @@ class AudioMetadataUtilsTest
     }
 
     @Test
+    void namedTextFramesRetainAllStandardFramesAndUseIndependentUtf8Descriptions() throws Exception
+    {
+        Map<AudioMetadata,String> metadata = fixedMetadata();
+        ID3v24Tag standard = new ID3v24Tag(AudioMetadataUtils.getMP3ID3(metadata));
+        Map<String,String> fields = new LinkedHashMap<>();
+        fields.put("VCE_P25_SUID", "BEE00.687.70001");
+        fields.put("VCE_TEST_TEXT", "R\u00e9ception \u6771");
+        byte[] bytes = AudioMetadataUtils.getMP3ID3(metadata, fields);
+        ID3v24Tag extended = new ID3v24Tag(bytes);
+
+        for(String identifier : standard.getFrameSets().keySet())
+        {
+            assertEquals(standard.getFrameSets().get(identifier), extended.getFrameSets().get(identifier),
+                "Adding named text must preserve each existing frame, including its payload bytes");
+        }
+        assertEquals(List.of("COMM", "TALB", "TCOM", "TCON", "TDAT", "TIT1", "TIT2", "TPE1",
+            "TXXX", "TXXX", "TYER"), id3FrameIds(bytes));
+        Map<String,String> decoded = new LinkedHashMap<>();
+        for(var frame : extended.getFrameSets().get("TXXX").getFrames())
+        {
+            byte[] payload = frame.getData();
+            assertEquals(3, payload[0], "TXXX uses ID3v2.4 UTF-8 encoding");
+            int separator = 1;
+            while(separator < payload.length && payload[separator] != 0) separator++;
+            assertTrue(separator < payload.length);
+            decoded.put(new String(payload, 1, separator - 1, StandardCharsets.UTF_8),
+                new String(payload, separator + 1, payload.length - separator - 1, StandardCharsets.UTF_8));
+        }
+        assertEquals(fields, decoded);
+        assertArrayEquals(AudioMetadataUtils.getMP3ID3(metadata),
+            AudioMetadataUtils.getMP3ID3(metadata, Map.of()));
+    }
+
+    @Test
     void waveListAndId3ChunkPreserveUpstreamValuesAndOrder() throws Exception
     {
         Map<AudioMetadata, String> metadata = fixedMetadata();
