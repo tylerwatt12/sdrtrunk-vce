@@ -36,6 +36,12 @@ Conventional channels and trunking control channels need the bandwidth **immedia
 start**. That bandwidth can come from existing coverage or an allowed retune during startup. If no tuner can supply
 the source then, the channel cannot start.
 
+A trunking voice channel requests bandwidth when the control channel announces a call. It can use a tuner whose
+current window covers the voice frequency, an idle tuner that can retune, or a tuner already in use that can shift
+while keeping every existing channel and the new voice channel inside its usable window. Each option must respect
+the tuner's frequency limits and center lock. If none works, the voice channel cannot be allocated. VCE does not
+tune away from active control or voice channels to take an incompatible call.
+
 For ordinary channel requests, VCE tries these choices in order:
 
 1. **Use existing coverage.** Check eligible tuners whose current windows already cover the requested channel.
