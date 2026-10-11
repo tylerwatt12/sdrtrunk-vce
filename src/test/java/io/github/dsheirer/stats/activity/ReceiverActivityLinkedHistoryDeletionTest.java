@@ -24,35 +24,35 @@ class ReceiverActivityLinkedHistoryDeletionTest
     private static final String FOREIGN_RADIO = "v1-r-abcde-321-9001";
 
     @Test
-    void radioPreviewOffersProvenAssociatedHistoryAndDefaultsToKeepingIt() throws Exception
+    void radioSummaryDeletionIncludesProvenAssociatedHistoryAutomatically() throws Exception
     {
         try(Connection connection = open())
         {
             seedP25(connection, 2);
-            var preview = ReceiverActivityMaintenance.preview(connection, radio(false));
-            assertEquals(2, preview.associatedIssiHistoryRows());
-            assertEquals(1, preview.rowsTotal());
-            assertFalse(preview.countsByPart().containsKey("issi_assignment_history"));
-            finish(connection, StatsDatabaseMaintenanceRequest.delete(radio(false)));
+            var preview = ReceiverActivityMaintenance.preview(connection, radio());
+            assertEquals(2, preview.countsByPart().get("issi_assignment_history"));
+            assertEquals(3, preview.rowsTotal());
+            assertEquals(2, preview.countsByPart().get("issi_assignment_history"));
+            finish(connection, StatsDatabaseMaintenanceRequest.delete(radio()));
             assertEquals(0, scalar(connection, "SELECT count(*) FROM radio_system_identity_summary WHERE id=1"));
-            assertEquals(4, scalar(connection, "SELECT count(*) FROM p25_wuid_assignment_observation_summary"));
+            assertEquals(2, scalar(connection, "SELECT count(*) FROM p25_wuid_assignment_observation_summary"));
             assertEquals(2, scalar(connection, "SELECT count(*) FROM p25_subscriber_identity"));
             assertEquals(1, scalar(connection, "SELECT count(*) FROM alias_p25_subscriber_identity"));
         }
     }
 
     @Test
-    void includedHistoryUsesProvenSubscriberAndReceivingSystemNotRepeatedRadioOrWorkingIdNumbers() throws Exception
+    void associatedHistoryUsesProvenSubscriberAndReceivingSystemNotRepeatedRadioOrWorkingIdNumbers() throws Exception
     {
         try(Connection connection = open())
         {
             seedP25(connection, 2);
-            var preview = ReceiverActivityMaintenance.preview(connection, radio(true));
-            assertEquals(2, preview.associatedIssiHistoryRows());
+            var preview = ReceiverActivityMaintenance.preview(connection, radio());
+            assertEquals(2, preview.countsByPart().get("issi_assignment_history"));
             assertEquals(2, preview.countsByPart().get("issi_assignment_history"));
             assertEquals(1, preview.countsByPart().get("summary"));
             assertEquals(3, preview.rowsTotal());
-            finish(connection, StatsDatabaseMaintenanceRequest.delete(radio(true)));
+            finish(connection, StatsDatabaseMaintenanceRequest.delete(radio()));
             assertEquals(2, scalar(connection, "SELECT count(*) FROM p25_wuid_assignment_observation_summary"));
             assertEquals(1, scalar(connection, "SELECT count(*) FROM p25_wuid_assignment_observation_summary " +
                 "WHERE radio_system_id=2 AND p25_subscriber_identity_id=1"));
@@ -76,44 +76,58 @@ class ReceiverActivityLinkedHistoryDeletionTest
             execute(connection, "UPDATE p25_subscriber_identity SET home_system_id=291 WHERE id=1");
             execute(connection, "UPDATE radio_system_identity_summary SET home_system_id=291 WHERE id=1");
             ScopedData local = new ScopedData("radio_system", SYSTEM, null, null,
-                "radios", "v1-r-x-x-9001", List.of("summary"), null, null, null, true);
-            assertEquals(2, ReceiverActivityMaintenance.preview(connection, local).associatedIssiHistoryRows());
+                "radios", "v1-r-x-x-9001", List.of("summary"));
+            assertEquals(2, ReceiverActivityMaintenance.preview(connection, local).countsByPart().get("issi_assignment_history"));
             finish(connection, StatsDatabaseMaintenanceRequest.delete(local));
             assertEquals(2, scalar(connection, "SELECT count(*) FROM p25_wuid_assignment_observation_summary"));
         }
     }
 
     @Test
-    void optInRejectsUnqualifiedUnknownNonP25AndNonIndividualRadioTargets() throws Exception
+    void unprovenUnknownAndNonP25RadioDeletionNeverGuessesAnAssociatedSubscriber() throws Exception
     {
-        assertThrows(IllegalArgumentException.class, () -> new ScopedData("radio_system", SYSTEM, null, null,
-            "radios", null, List.of("summary"), null, null, null, true));
-        assertThrows(IllegalArgumentException.class, () -> new ScopedData("radio_system", SYSTEM, null, null,
-            "talkgroups", "v1-g-x-x-45", List.of("summary"), null, null, null, true));
-        assertThrows(IllegalArgumentException.class, () -> new ScopedData("radio_system", SYSTEM, CHANNEL,
-            "site", "radios", FOREIGN_RADIO, List.of("summary"), null, null, null, true));
-        assertThrows(IllegalArgumentException.class, () -> new ScopedData("radio_system", SYSTEM, null, null,
-            "radios", FOREIGN_RADIO, List.of("events"), null, null, null, true));
-        assertThrows(IllegalArgumentException.class, () -> new ScopedData("saved_channel", CHANNEL, null, null,
-            "radios", "451000000:1:9001", List.of("summary"), null, null, null, true));
         try(Connection connection = open())
         {
             seedP25(connection, 2);
             ScopedData unproven = new ScopedData("radio_system", SYSTEM, null, null,
-                "radios", "v1-r-x-x-9002", List.of("summary"), null, null, null, true);
-            assertThrows(IllegalArgumentException.class, () -> ReceiverActivityMaintenance.preview(connection, unproven));
-            ScopedData unknown = new ScopedData("radio_system", SYSTEM, null, null,
-                "radios", "v1-r-x-x-9999", List.of("summary"), null, null, null, true);
-            assertThrows(IllegalArgumentException.class, () -> ReceiverActivityMaintenance.preview(connection, unknown));
-            ScopedData ordinary = new ScopedData("radio_system", SYSTEM, null, null,
                 "radios", "v1-r-x-x-9002", List.of("summary"));
-            assertEquals(0, ReceiverActivityMaintenance.preview(connection, ordinary).associatedIssiHistoryRows());
+            var preview = ReceiverActivityMaintenance.preview(connection, unproven);
+            assertFalse(preview.countsByPart().containsKey("issi_assignment_history"));
+            assertEquals(1, preview.rowsTotal());
+            finish(connection, StatsDatabaseMaintenanceRequest.delete(unproven));
+            ScopedData unknown = new ScopedData("radio_system", SYSTEM, null, null,
+                "radios", "v1-r-x-x-9999", List.of("summary"));
+            assertFalse(ReceiverActivityMaintenance.preview(connection, unknown).countsByPart().containsKey("issi_assignment_history"));
+            assertEquals(0, ReceiverActivityMaintenance.preview(connection, unknown).rowsTotal());
             execute(connection, "INSERT INTO radio_system(id,system_key,protocol_code,dmr_model_code,dmr_network_id," +
                 "first_seen_ms,last_seen_ms) VALUES(3,'dmr:tier3:small:42',3,2,42,1000,1000)");
+            execute(connection, "INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_kind_code,identity_id," +
+                "first_seen_ms,last_seen_ms) VALUES(4,3,2,9001,1000,1000)");
             ScopedData dmr = new ScopedData("radio_system", "dmr:tier3:small:42", null, null,
-                "radios", "v1-r-x-x-9001", List.of("summary"), null, null, null, true);
-            assertThrows(IllegalArgumentException.class, () -> ReceiverActivityMaintenance.preview(connection, dmr));
+                "radios", "v1-r-x-x-9001", List.of("summary"));
+            assertFalse(ReceiverActivityMaintenance.preview(connection, dmr).countsByPart().containsKey("issi_assignment_history"));
+            finish(connection, StatsDatabaseMaintenanceRequest.delete(dmr));
+            assertEquals(0, scalar(connection, "SELECT count(*) FROM radio_system_identity_summary WHERE id IN (3,4)"));
             assertEquals(4, scalar(connection, "SELECT count(*) FROM p25_wuid_assignment_observation_summary"));
+        }
+    }
+
+    @Test
+    void deletingOnlySelectedRadioEventsKeepsItsSummaryAndAssignmentHistory() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            seedP25(connection, 2);
+            execute(connection, "INSERT INTO receiver_activity_event(channel_id,radio_system_id,observed_at_ms,action_code," +
+                "source_identity_summary_id) VALUES(1,1,1000,4,1)");
+            ScopedData events = new ScopedData("radio_system", SYSTEM, null, null,
+                "radios", FOREIGN_RADIO, List.of("events"));
+            var preview = ReceiverActivityMaintenance.preview(connection, events);
+            assertFalse(preview.countsByPart().containsKey("issi_assignment_history"));
+            finish(connection, StatsDatabaseMaintenanceRequest.delete(events));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM radio_system_identity_summary WHERE id=1"));
+            assertEquals(4, scalar(connection, "SELECT count(*) FROM p25_wuid_assignment_observation_summary"));
+            assertEquals(0, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
         }
     }
 
@@ -127,10 +141,10 @@ class ReceiverActivityLinkedHistoryDeletionTest
                 "FROM p25_wuid_assignment_observation_summary INDEXED BY idx_p25_wuid_assignment_observation_subscriber " +
                 "WHERE radio_system_id=1 " +
                 "AND p25_subscriber_identity_id=1 AND last_observed_ms<=1000 " +
-                "ORDER BY last_observed_ms DESC LIMIT 512");
+                "ORDER BY p25_subscriber_identity_id,last_observed_ms DESC LIMIT 512");
             assertTrue(plan.contains("idx_p25_wuid_assignment_observation_subscriber"), plan);
             assertFalse(plan.contains("TEMP B-TREE"), plan);
-            StatsDatabaseMaintenanceRequest request = StatsDatabaseMaintenanceRequest.delete(radio(true));
+            StatsDatabaseMaintenanceRequest request = StatsDatabaseMaintenanceRequest.delete(radio());
             assertNull(ReceiverActivityMaintenance.deleteRetainedStatsPass(connection, null, request, 0));
             assertEquals(512, request.progress().rowsDeleted());
             long cutoff = request.progress().cutoffMs();
@@ -154,6 +168,37 @@ class ReceiverActivityLinkedHistoryDeletionTest
             assertEquals(2, scalar(connection, "SELECT registration_count FROM p25_wuid_assignment_observation_summary " +
                 "WHERE radio_system_id=1 AND p25_subscriber_identity_id=1 AND working_id=1500"));
             assertEquals(1, scalar(connection, "SELECT count(*) FROM alias_p25_subscriber_identity"));
+        }
+    }
+
+    @Test
+    void bulkRadioSummaryDeletionClearsOnlyHistoryWithProvenOwnersInTheReceivingSystem() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            seedP25(connection, 2);
+            var target = new ScopedData("radio_system", SYSTEM, null, null, "radios", null, List.of("summary"));
+            var preview = ReceiverActivityMaintenance.preview(connection, target);
+            assertEquals(2, preview.countsByPart().get("issi_assignment_history"));
+            assertEquals(4, preview.rowsTotal());
+            String plan = queryPlan(connection, "SELECT radio_system_id,working_id,p25_subscriber_identity_id " +
+                "FROM p25_wuid_assignment_observation_summary INDEXED BY idx_p25_wuid_assignment_observation_subscriber " +
+                "WHERE radio_system_id=1 AND p25_subscriber_identity_id IN " +
+                "(SELECT p25_subscriber_identity_id FROM radio_system_identity_summary WHERE radio_system_id=1 " +
+                "AND identity_kind_code=2 AND p25_subscriber_identity_id IS NOT NULL) AND last_observed_ms<=1000 " +
+                "ORDER BY p25_subscriber_identity_id,last_observed_ms DESC LIMIT 512");
+            assertTrue(plan.contains("idx_p25_wuid_assignment_observation_subscriber"), plan);
+            assertFalse(plan.contains("TEMP B-TREE"), plan);
+            finish(connection, StatsDatabaseMaintenanceRequest.delete(target));
+            assertEquals(0, scalar(connection, "SELECT count(*) FROM radio_system_identity_summary WHERE radio_system_id=1"));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM radio_system_identity_summary WHERE radio_system_id=2"));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM p25_wuid_assignment_observation_summary " +
+                "WHERE radio_system_id=2 AND p25_subscriber_identity_id=1"));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM p25_wuid_assignment_observation_summary " +
+                "WHERE radio_system_id=1 AND p25_subscriber_identity_id=2"));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM alias_p25_subscriber_identity"));
+            assertEquals("ok", text(connection, "PRAGMA quick_check"));
+            assertEquals(0, scalar(connection, "SELECT count(*) FROM pragma_foreign_key_check"));
         }
     }
 
@@ -213,10 +258,10 @@ class ReceiverActivityLinkedHistoryDeletionTest
         }
     }
 
-    private static ScopedData radio(boolean included)
+    private static ScopedData radio()
     {
         return new ScopedData("radio_system", SYSTEM, null, null, "radios", FOREIGN_RADIO,
-            List.of("summary"), null, null, null, included);
+            List.of("summary"));
     }
 
     private static ScopedData calls(List<String> parts)

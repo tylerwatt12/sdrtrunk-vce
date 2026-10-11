@@ -57,19 +57,14 @@ public final class ReceiverActivityMaintenance
 
     /** Read-only preview. Counts describe directly matched rows; effects describe FK cascades. */
     public record Preview(DeletionOutcome outcome, Map<String,Integer> countsByPart, int rowsTotal,
-                          List<String> effects, long associatedIssiHistoryRows)
+                          List<String> effects)
     {
-        public Preview(DeletionOutcome outcome, Map<String,Integer> countsByPart, int rowsTotal, List<String> effects)
-        {
-            this(outcome, countsByPart, rowsTotal, effects, 0);
-        }
     }
 
     public static Preview preview(Connection connection, ScopedData target) throws SQLException
     {
         ReceiverActivityScopedDeletion.Preview preview = ReceiverActivityScopedDeletion.preview(connection, target);
-        return new Preview(preview.outcome(), preview.countsByPart(), preview.rowsTotal(), preview.effects(),
-            preview.associatedIssiHistoryRows());
+        return new Preview(preview.outcome(), preview.countsByPart(), preview.rowsTotal(), preview.effects());
     }
 
     public record Result(Operation operation, int rowsDeleted, String checkResult, long databaseBytesBefore,

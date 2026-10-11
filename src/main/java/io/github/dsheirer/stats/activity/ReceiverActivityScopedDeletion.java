@@ -61,7 +61,7 @@ final class ReceiverActivityScopedDeletion
     }
 
     record Preview(ReceiverActivityMaintenance.DeletionOutcome outcome, Map<String,Integer> countsByPart,
-                   int rowsTotal, List<String> effects, long associatedIssiHistoryRows)
+                   int rowsTotal, List<String> effects)
     {
     }
 
@@ -267,8 +267,6 @@ final class ReceiverActivityScopedDeletion
             default -> throw new IllegalArgumentException("Data type is invalid");
         };
         if(!allowed.containsAll(target.parts())) throw new IllegalArgumentException("Part is unavailable for data type");
-        if(target.includeIssiHistory() && scope.protocol != 1)
-            throw new IllegalArgumentException("Associated ISSI history requires P25");
         if(scope.conventional && Set.of("site_state", "band_plans", "foreign_band_plans", "neighbors",
             "patches", "control_quality", "relationships", "affiliations").contains(type))
             throw new IllegalArgumentException("Data type requires a trunked system");
@@ -659,28 +657,32 @@ final class ReceiverActivityScopedDeletion
         }
         if(has(target, "summary"))
         {
-            if(radio && scope.protocol == 1 && key != null)
+            if(radio && scope.protocol == 1)
             {
-                long subscriberId = scalar(plan.connection,
-                    "SELECT p25_subscriber_identity_id FROM radio_system_identity_summary " +
-                        "WHERE id=? AND radio_system_id=? AND identity_kind_code=2",
-                    List.of(summaryId, scope.systemId));
-                if(subscriberId > 0)
+                if(key == null)
                 {
-                    // A local radio number is not evidence of a subscriber or a Working ID. Only the
-                    // selected row's proven canonical reference owns associated assignment history.
-                    plan.associatedIssiHistory = new Step("issi_assignment_history",
-                        "p25_wuid_assignment_observation_summary",
-                        "radio_system_id=? AND p25_subscriber_identity_id=?",
-                        List.of(scope.systemId, subscriberId), null);
-                    if(target.includeIssiHistory())
+                    plan.system("issi_assignment_history", "p25_wuid_assignment_observation_summary",
+                        "p25_subscriber_identity_id IN (SELECT p25_subscriber_identity_id " +
+                            "FROM radio_system_identity_summary WHERE radio_system_id=? " +
+                            "AND identity_kind_code=2 AND p25_subscriber_identity_id IS NOT NULL)",
+                        List.of(scope.systemId));
+                    plan.effects.add("Associated ISSI assignment history for these radios in this system is removed.");
+                }
+                else
+                {
+                    long subscriberId = scalar(plan.connection,
+                        "SELECT p25_subscriber_identity_id FROM radio_system_identity_summary " +
+                            "WHERE id=? AND radio_system_id=? AND identity_kind_code=2",
+                        List.of(summaryId, scope.systemId));
+                    if(subscriberId > 0)
                     {
-                        plan.steps.add(plan.associatedIssiHistory);
+                        // A local radio number is not evidence of a subscriber or a Working ID. Only the
+                        // selected row's proven canonical reference owns associated assignment history.
+                        plan.system("issi_assignment_history", "p25_wuid_assignment_observation_summary",
+                            "p25_subscriber_identity_id=?", List.of(subscriberId));
                         plan.effects.add("Associated ISSI assignment history for this radio in this system is removed.");
                     }
                 }
-                else if(target.includeIssiHistory())
-                    throw new IllegalArgumentException("Associated ISSI history requires a radio with a proven subscriber identity");
             }
             plan.system("summary", "radio_system_identity_summary", predicate, args);
             plan.effects.add("Also deletes linked hourly history, detailed events, and radio relationships.");
@@ -938,7 +940,6 @@ final class ReceiverActivityScopedDeletion
         private final List<BatchStep> steps;
         private final long cutoffMs;
         private final Map<String,Integer> countsByPart;
-        private final long associatedIssiHistoryRows;
         private final long rowsTotal;
         private int cursor;
         private boolean removedOwnSnapshot;
@@ -955,20 +956,11 @@ final class ReceiverActivityScopedDeletion
             if(outcome != ReceiverActivityMaintenance.DeletionOutcome.DELETED)
             {
                 rowsTotal = 0;
-                associatedIssiHistoryRows = 0;
                 return;
             }
             if("alias_activity".equals(target.sourceKind())) addAliasReset(plan, target, cutoffMs);
             addFinalReferences(plan, target);
             Metadata metadata = new Metadata(connection);
-            if(plan.associatedIssiHistory != null)
-            {
-                Step associated = boundedByTime(connection, plan.associatedIssiHistory,
-                    metadata.tables.get(plan.associatedIssiHistory.table), cutoffMs);
-                associatedIssiHistoryRows = count(connection, lookupTable(associated), associated.predicate,
-                    associated.parameters);
-            }
-            else associatedIssiHistoryRows = 0;
             Map<String,Step> expanded = new LinkedHashMap<>();
             for(Step step: plan.steps) expand(step, metadata, expanded, new LinkedHashSet<>());
             List<Step> ordered = new ArrayList<>(expanded.values());
@@ -1017,8 +1009,7 @@ final class ReceiverActivityScopedDeletion
                 if(target.frequencyHz() != null && "hourly_history".equals(target.dataType()))
                     effects.add("Frequency filtering omits hourly totals without frequency attribution.");
             }
-            return new Preview(outcome, Map.copyOf(countsByPart), Math.toIntExact(rowsTotal), List.copyOf(effects),
-                associatedIssiHistoryRows);
+            return new Preview(outcome, Map.copyOf(countsByPart), Math.toIntExact(rowsTotal), List.copyOf(effects));
         }
 
         /** Called inside one writer transaction. Cursor changes only after successful statements. */
@@ -1195,7 +1186,7 @@ final class ReceiverActivityScopedDeletion
             // The subscriber/time index is the exact associated-history seek. Its order avoids
             // walking every unrelated Working ID in the receiving system on each small pass.
             String order = "issi_assignment_history".equals(step.part) ?
-                "last_observed_ms DESC" : keys;
+                "p25_subscriber_identity_id,last_observed_ms DESC" : keys;
             String statement = (step.updateSet == null ? "DELETE FROM " + step.table :
                 "UPDATE " + step.table + " SET " + step.updateSet) + " WHERE " + tuple + " IN (SELECT " + keys +
                 " FROM " + lookupTable(step) + " WHERE (" + step.predicate + ")" + guards +
@@ -1316,7 +1307,6 @@ final class ReceiverActivityScopedDeletion
         private final List<Step> steps = new ArrayList<>();
         private final Set<String> keys = new LinkedHashSet<>();
         private final List<String> effects = new ArrayList<>();
-        private Step associatedIssiHistory;
 
         private Plan(Scope scope)
         {

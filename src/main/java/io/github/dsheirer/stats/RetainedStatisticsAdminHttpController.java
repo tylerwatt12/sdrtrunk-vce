@@ -126,7 +126,6 @@ final class RetainedStatisticsAdminHttpController
                 });
                 response.put("counts_by_part", preview.countsByPart());
                 response.put("rows_total", preview.rowsTotal());
-                response.put("associated_issi_history_rows", preview.associatedIssiHistoryRows());
                 response.put("effects", preview.effects());
                 ApiHttpResponse.sendData(exchange, 200, response);
             }
@@ -219,14 +218,6 @@ final class RetainedStatisticsAdminHttpController
         {
             ApiHttpResponse.sendData(exchange, 202, snapshot(job));
             return;
-        }
-        if(target instanceof ScopedData scoped && scoped.includeIssiHistory())
-        {
-            // Confirm subscriber ownership before accepting this optional related-history removal.
-            if(mCatalog.preview(scoped).outcome() != ReceiverActivityMaintenance.DeletionOutcome.DELETED)
-            {
-                throw invalid("include_issi_history", "Select an observed P25 subscriber to remove its ISSI history");
-            }
         }
         String label = mCatalog.jobLabel(target);
         StatsDatabaseMaintenanceRequest request = null;
@@ -466,7 +457,7 @@ final class RetainedStatisticsAdminHttpController
             case "scoped_data" -> {
                 requireAllowedFields(target, Set.of("kind", "source_kind", "source_key",
                     "site_configuration_id", "expected_site_key", "data_type", "record_key", "parts",
-                    "from_ms", "to_ms", "frequency_hz", "include_issi_history"));
+                    "from_ms", "to_ms", "frequency_hz"));
                 for(String field: List.of("source_kind", "data_type", "parts"))
                 {
                     if(!target.has(field)) throw invalid(field, field + " is required");
@@ -505,7 +496,7 @@ final class RetainedStatisticsAdminHttpController
                     optionalText(target, "expected_site_key", 256),
                     dataType,
                     optionalText(target, "record_key", 128), List.copyOf(parts),
-                    fromMs, toMs, frequencyHz, optionalBoolean(target, "include_issi_history"));
+                    fromMs, toMs, frequencyHz);
             }
             case "frequency" -> {
                 requireFields(target, Set.of("kind", "site_configuration_id", "expected_site_key", "frequency_hz"));
@@ -684,11 +675,6 @@ final class RetainedStatisticsAdminHttpController
             throw invalid(field, field + " must be true or false");
         }
         return value.booleanValue();
-    }
-
-    private static boolean optionalBoolean(JsonNode object, String field)
-    {
-        return object.has(field) && requiredBoolean(object, field);
     }
 
     private static void requireMethod(HttpExchange exchange, String method)

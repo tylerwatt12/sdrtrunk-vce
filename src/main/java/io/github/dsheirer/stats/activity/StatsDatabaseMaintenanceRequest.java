@@ -286,7 +286,7 @@ public final class StatsDatabaseMaintenanceRequest
     /** A bounded, source-owned family of retained observations. No configuration rows are targets. */
     public record ScopedData(String sourceKind, String sourceKey, String siteConfigurationId,
                              String expectedSiteKey, String dataType, String recordKey, List<String> parts,
-                             Long fromMs, Long toMs, Long frequencyHz, boolean includeIssiHistory)
+                             Long fromMs, Long toMs, Long frequencyHz)
         implements DeletionTarget
     {
         private static final Set<String> SOURCE_KINDS = Set.of("radio_system", "saved_channel", "alias_activity");
@@ -300,15 +300,7 @@ public final class StatsDatabaseMaintenanceRequest
                           String dataType, String recordKey, List<String> parts)
         {
             this(sourceKind, sourceKey, siteConfigurationId, expectedSiteKey, dataType, recordKey, parts,
-                null, null, null, false);
-        }
-
-        public ScopedData(String sourceKind, String sourceKey, String siteConfigurationId, String expectedSiteKey,
-                          String dataType, String recordKey, List<String> parts, Long fromMs, Long toMs,
-                          Long frequencyHz)
-        {
-            this(sourceKind, sourceKey, siteConfigurationId, expectedSiteKey, dataType, recordKey, parts,
-                fromMs, toMs, frequencyHz, false);
+                null, null, null);
         }
 
         public ScopedData
@@ -346,9 +338,6 @@ public final class StatsDatabaseMaintenanceRequest
             if(parts == null || parts.isEmpty() || parts.size() > 4 || !PARTS.containsAll(parts))
                 throw new IllegalArgumentException("Select supported retained-data parts");
             parts = parts.stream().distinct().sorted().toList();
-            if(includeIssiHistory && (!"radio_system".equals(sourceKind) || siteConfigurationId != null ||
-                !"radios".equals(dataType) || recordKey == null || !parts.contains("summary")))
-                throw new IllegalArgumentException("Associated ISSI history requires an individual radio summary in a P25 system");
             if("alias_activity".equals(dataType) && !parts.equals(List.of("summary")))
                 throw new IllegalArgumentException("Alias Activity has only a summary part");
             if("issi_assignment_history".equals(dataType) &&

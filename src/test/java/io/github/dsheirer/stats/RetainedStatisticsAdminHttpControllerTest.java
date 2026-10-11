@@ -206,7 +206,7 @@ class RetainedStatisticsAdminHttpControllerTest
     }
 
     @Test
-    void radioRemovalOffersAssociatedIssiHistoryAndRetainsTheOptInAcrossJobRecovery() throws Exception
+    void radioRemovalIncludesAssociatedIssiHistoryAndRetainsItsTargetAcrossJobRecovery() throws Exception
     {
         seedAssociatedIssiHistory();
         Session admin = login();
@@ -214,19 +214,10 @@ class RetainedStatisticsAdminHttpControllerTest
         Map<String,Object> target = radioTarget();
         HttpResponse<String> original = preview(admin, target);
         assertEquals(200, original.statusCode(), original.body());
-        assertEquals(1, json(original).at("/data/rows_total").longValue());
-        assertEquals(2, json(original).at("/data/associated_issi_history_rows").longValue());
-        assertFalse(json(original).at("/data/counts_by_part").has("issi_assignment_history"),
-            "Related history remains optional for existing radio deletion requests");
-
-        target.put("include_issi_history", false);
-        assertEquals(json(original).get("data"), json(preview(admin, target)).get("data"));
-        target.put("include_issi_history", true);
-        HttpResponse<String> included = preview(admin, target);
-        assertEquals(200, included.statusCode(), included.body());
-        assertEquals(3, json(included).at("/data/rows_total").longValue());
-        assertEquals(1, json(included).at("/data/counts_by_part/summary").longValue());
-        assertEquals(2, json(included).at("/data/counts_by_part/issi_assignment_history").longValue());
+        assertEquals(3, json(original).at("/data/rows_total").longValue());
+        assertEquals(1, json(original).at("/data/counts_by_part/summary").longValue());
+        assertEquals(2, json(original).at("/data/counts_by_part/issi_assignment_history").longValue(),
+            "Deleting one proven subscriber automatically removes its assignment history in this system");
 
         String id = UUID.randomUUID().toString();
         String body = MAPPER.writeValueAsString(Map.of("request_id", id, "target", target));
@@ -234,10 +225,11 @@ class RetainedStatisticsAdminHttpControllerTest
             .POST(HttpRequest.BodyPublishers.ofString(body)));
         assertEquals(202, accepted.statusCode(), accepted.body());
         StatsDatabaseMaintenanceRequest first = mDispatched.get();
-        assertTrue(((StatsDatabaseMaintenanceRequest.ScopedData)first.deletionTarget()).includeIssiHistory());
+        assertEquals(new StatsDatabaseMaintenanceRequest.ScopedData("radio_system", SYSTEM, null, null,
+            "radios", "v1-r-bee00-49f-202", List.of("summary")), first.deletionTarget());
         JsonNode recovered = json(send(request(base + "/deletions/" + id)
             .header("Cookie", admin.cookie()).GET())).get("data");
-        assertTrue(recovered.at("/target/include_issi_history").booleanValue());
+        assertFalse(recovered.get("target").has("include_issi_history"));
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabase);
             Statement statement = connection.createStatement())
@@ -249,10 +241,10 @@ class RetainedStatisticsAdminHttpControllerTest
             MAPPER.writeValueAsString(Map.of("request_id", id, "target", recovered.get("target")))))).statusCode(),
             "A retry returns its original job even if subscriber qualification has since changed");
         assertEquals(1, mDispatchCount.get());
-        target.put("include_issi_history", false);
+        target.put("record_key", "v1-r-bee01-49f-202");
         assertEquals(409, send(mutation(base + "/deletions", admin).POST(HttpRequest.BodyPublishers.ofString(
             MAPPER.writeValueAsString(Map.of("request_id", id, "target", target))))).statusCode(),
-            "Changing the optional related history creates a different deletion target");
+            "Changing the selected radio creates a different deletion target");
 
         writerProgress(first, "initializeProgress", new Class<?>[]{long.class, long.class, long.class},
             3L, 4000L, 0L);
@@ -263,31 +255,31 @@ class RetainedStatisticsAdminHttpControllerTest
         assertEquals(202, send(mutation(base + "/deletions/" + id + "/resume", admin)
             .POST(HttpRequest.BodyPublishers.ofString("{}"))).statusCode());
         assertEquals(first.deletionTarget(), mDispatched.get().deletionTarget());
-        assertTrue(((StatsDatabaseMaintenanceRequest.ScopedData)mDispatched.get().deletionTarget())
-            .includeIssiHistory());
         assertEquals(4000, mDispatched.get().progress().cutoffMs());
     }
 
     @Test
-    void associatedIssiHistoryRequiresAnExplicitBooleanAndOneQualifiedP25RadioSummary() throws Exception
+    void associatedIssiHistoryHasNoOptionAndOnlyUsesQualifiedP25RadioSummaries() throws Exception
     {
         seedAssociatedIssiHistory();
         Session admin = login();
-        for(Object invalid: new Object[]{"true", 1, null})
+        for(Object invalid: new Object[]{true, false, "true", 1, null})
         {
             Map<String,Object> target = radioTarget();
             target.put("include_issi_history", invalid);
             HttpResponse<String> response = preview(admin, target);
             assertEquals(400, response.statusCode(), response.body());
             assertEquals("include_issi_history", json(response).at("/error/field").textValue());
+            assertEquals(400, send(mutation(RetainedStatisticsAdminHttpController.PATH + "/deletions", admin)
+                .POST(HttpRequest.BodyPublishers.ofString(MAPPER.writeValueAsString(Map.of(
+                    "request_id", UUID.randomUUID().toString(), "target", target))))).statusCode(),
+                "A stale option is rejected instead of silently changing deletion scope");
         }
 
-        for(String invalidScope: List.of("bulk", "site", "talkgroup", "events", "unqualified",
-            "unknown_radio", "unknown_system", "dmr", "saved_channel"))
+        for(String scope: List.of("bulk", "site", "talkgroup", "events", "unqualified", "saved_channel"))
         {
             Map<String,Object> target = radioTarget();
-            target.put("include_issi_history", true);
-            switch(invalidScope)
+            switch(scope)
             {
                 case "bulk" -> target.remove("record_key");
                 case "site" -> {
@@ -296,27 +288,39 @@ class RetainedStatisticsAdminHttpControllerTest
                 }
                 case "talkgroup" -> {
                     target.put("data_type", "talkgroups");
-                    target.put("record_key", "v1-t-bee00-49f-101");
+                    target.put("record_key", "v1-g-bee00-49f-101");
                 }
                 case "events" -> target.put("parts", List.of("events"));
                 case "unqualified" -> target.put("record_key", "v1-r-bee01-49f-202");
-                case "unknown_radio" -> target.put("record_key", "v1-r-bee00-49f-999");
-                case "unknown_system" -> target.put("source_key", "p25:bee00:999");
-                case "dmr" -> target.put("source_key", "dmr:tier3:small:42");
                 case "saved_channel" -> {
                     target.put("source_kind", "saved_channel");
                     target.put("source_key", DMR_CHANNEL);
                     target.put("record_key", "460012500:2:202");
                 }
             }
-            String body = MAPPER.writeValueAsString(Map.of("request_id", UUID.randomUUID().toString(),
-                "target", target));
-            assertEquals(400, send(mutation(RetainedStatisticsAdminHttpController.PATH + "/deletions", admin)
-                .POST(HttpRequest.BodyPublishers.ofString(body))).statusCode(), invalidScope);
-            if(!"unknown_system".equals(invalidScope))
-                assertEquals(400, preview(admin, target).statusCode(), invalidScope);
+            HttpResponse<String> response = preview(admin, target);
+            if("site".equals(scope))
+            {
+                assertEquals(400, response.statusCode(), "Radio summaries are owned by the whole system");
+                continue;
+            }
+            assertEquals(200, response.statusCode(), scope + ": " + response.body());
+            if("bulk".equals(scope))
+            {
+                assertEquals(2, json(response).at("/data/counts_by_part/issi_assignment_history").longValue());
+            }
+            else
+            {
+                assertFalse(json(response).at("/data/counts_by_part").has("issi_assignment_history"), scope);
+            }
         }
-        assertEquals(0, mDispatchCount.get(), "Invalid optional history scope must never reach the writer");
+        assertEquals(0, mDispatchCount.get(), "Previews and unsupported options must not reach the writer");
+        Map<String,Object> unqualified = radioTarget();
+        unqualified.put("record_key", "v1-r-bee01-49f-202");
+        assertEquals(202, send(mutation(RetainedStatisticsAdminHttpController.PATH + "/deletions", admin)
+            .POST(HttpRequest.BodyPublishers.ofString(MAPPER.writeValueAsString(Map.of(
+                "request_id", UUID.randomUUID().toString(), "target", unqualified))))).statusCode(),
+            "An unqualified radio remains deletable without inferring assignment-history ownership");
     }
 
     @Test
@@ -333,7 +337,7 @@ class RetainedStatisticsAdminHttpControllerTest
             "Channel call totals and both radio/talkgroup summaries are counted together");
         assertEquals(1, json(response).at("/data/counts_by_part/buckets").longValue());
         assertEquals(6, json(response).at("/data/rows_total").longValue());
-        assertEquals(0, json(response).at("/data/associated_issi_history_rows").longValue());
+        assertFalse(json(response).at("/data/counts_by_part").has("issi_assignment_history"));
     }
 
     @Test
