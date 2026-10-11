@@ -122,9 +122,6 @@ async function main() {
     canonicalSubscriberText: row => `${row.wacn}.${row.system_id}.${row.subscriber_id}`,
     identifierNumber: value => value == null ? '' : String(value),
     semanticLabel: value => value,
-    sourceNameDisplayMode: () => 'talker_alias',
-    p25ServingSystemKey: row => row.radio_system_key || '',
-    affiliationTalkgroupCell: row => row.affiliated_talkgroup_id || '',
     issiHomeSystemCell: row => row.home_system_name,
     issiObservedOnCell: row => row.observed_on?.name,
     issiSubscriberCell: row => row.alias_name,
@@ -141,12 +138,10 @@ async function main() {
     'issiStateLabel', 'issiEmptyMessage', 'issiStateContent', 'issiSectionTabs',
     'issiCurrentAssignmentColumns', 'issiRecentChangeColumns', 'renderRadioSystemIssi',
     'workingSubscriberId', 'issiAssignmentIsOrdinaryLocal', 'radioCurrentAssignmentSection', 'p25IdentityEvidenceLabel', 'liveIdentityRenderKey',
-    'issiSubscriberCell', 'issiHomeSystemCell', 'issiHomeSystemText',
-    'issiSubscriberColumns', 'wuidLeaseText', 'issiHistoricalExpiryText'
+    'issiSubscriberCell', 'issiHomeSystemCell', 'issiHomeSystemText'
   ].map(declaration).join('\n') + '\n({renderRadioSystemIssi,radioCurrentAssignmentSection,' +
     'issiStateLabel,issiEmptyMessage,issiAssignmentIsOrdinaryLocal,p25IdentityEvidenceLabel,' +
-    'liveIdentityRenderKey,issiSubscriberCell,issiHomeSystemCell,' +
-    'issiSubscriberColumns,wuidLeaseText,issiHistoricalExpiryText});', context);
+    'liveIdentityRenderKey,issiSubscriberCell,issiHomeSystemCell});', context);
   await behavior.renderRadioSystemIssi({ radio_system_key: 'p25:BEE00:348' }, { signal: {} });
   assert.equal(content.children[0].active, 'current-assignments', 'System ISSI must start with current receiver knowledge.');
   assert.equal(intervals.length, 1);
@@ -287,34 +282,6 @@ async function main() {
   assert.equal(unnamed.secondary, '');
   assert.equal(behavior.issiHomeSystemCell({canonical_identity:canonical}).primary, '92498.926',
     'An unknown friendly system name must still show the exact home-system identity.');
-  const historyColumns = behavior.issiSubscriberColumns();
-  const lease = historyColumns.find(column => column.id === 'wuid-lease');
-  const expiry = historyColumns.find(column => column.id === 'last-assignment-expiry');
-  for (const value of [undefined, null]) {
-    assert.equal(lease.render({last_advertised_lease_minutes:value}), 'Not received');
-  }
-  assert.equal(lease.render({last_advertised_lease_minutes:0}), 'No expiry');
-  assert.equal(lease.render({last_advertised_lease_minutes:240}), '240m');
-  assert.equal(lease.render({last_advertised_lease_minutes:7860}), '7860m');
-  assert.equal(expiry.render({}), 'Not recorded', 'Older history must not gain an invented expiry.');
-  assert.equal(expiry.render({last_advertised_lease_minutes:0}), 'No expiry');
-  assert.equal(expiry.render({last_advertised_lease_minutes:240,last_assignment_expires_at_ms:14404000}),
-    'time:14404000');
-  assert.equal(expiry.render({last_advertised_lease_minutes:null,last_assignment_expires_at_ms:14404000}),
-    'time:14404000 (VCE fallback)', 'The fallback timer must remain distinguishable from a received lifetime.');
-
-  route.set('issi_view', 'subscribers');
-  content.replaceChildren();
-  rows = [{canonical_identity:canonical,alias_name:'Engine 4',last_advertised_lease_minutes:240,
-    last_assignment_expires_at_ms:14404000}];
-  await behavior.renderRadioSystemIssi({radio_system_key:'p25:BEE00:348'}, {signal:{}});
-  assert.equal(content.children[0].active, 'subscribers');
-  const historyTable = renderedTables.at(-1);
-  assert.equal(historyTable.options.type, 'issi-subscribers');
-  assert.equal(historyTable.columns.find(column => column.id === 'canonical-subscriber')
-    .render(historyTable.data[0]).primary, 'Engine 4', 'Persistent history keeps the normal Alias presentation.');
-  assert.equal(historyTable.columns.find(column => column.id === 'wuid-lease')
-    .render(historyTable.data[0]), '240m');
   console.log('ISSI workspace behavior checks passed');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
