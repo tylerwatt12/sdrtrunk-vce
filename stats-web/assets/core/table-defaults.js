@@ -66,7 +66,9 @@ const TABLE_DEFAULTS = Object.freeze({
   'issi-subscribers': {
     widths: { 'canonical-subscriber': 220, 'working-id': 170, 'home-system': 230,
       'talker-alias': 220, evidence: 150, affiliation: 220, 'observed-on': 260,
+      'wuid-lease': 140, 'last-assignment-expiry': 235,
       'last-mapping-seen': 180, 'last-seen': 180 },
+    hidden: ['last-assignment-expiry'],
     grow: ['canonical-subscriber', 'home-system', 'talker-alias', 'observed-on']
   },
   'issi-foreign-systems': {

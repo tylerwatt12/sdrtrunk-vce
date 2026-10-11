@@ -3,7 +3,7 @@ import * as preferenceSchema from './core/preference-schema.js?v=7';
 import { formatSourceName } from './core/source-names.js?v=1';
 import { Controller as UserPreferenceController } from './core/user-preferences.js?v=1';
 import * as tableLayouts from './core/table-layout.js';
-import * as tableDefaults from './core/table-defaults.js?v=16';
+import * as tableDefaults from './core/table-defaults.js?v=17';
 import { createTableOverflow } from './core/table-overflow.js?v=1';
 import { Controller as PageTitleController } from './core/page-title.js?v=2';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
@@ -20180,6 +20180,10 @@ function issiSubscriberColumns() {
     { id: 'talker-alias', label: 'OTA Alias', key: 'last_talker_alias', className: 'alias-cell' },
     { id: 'evidence', label: 'Last Confirmed By', render: (row) =>
       semanticLabel(row.last_assignment_evidence) },
+    { id: 'wuid-lease', label: 'WUID Lease', fullLabel: 'Advertised WUID Lease',
+      render: (row) => wuidLeaseText(row.last_advertised_lease_minutes) },
+    { id: 'last-assignment-expiry', label: 'Last Assignment Expiry',
+      render: issiHistoricalExpiryText },
     { id: 'affiliation', label: 'Affiliation', render: affiliationTalkgroupCell,
       className: 'alias-cell' },
     { id: 'observed-on', label: 'Heard On', render: issiObservedOnCell,
@@ -20199,6 +20203,19 @@ function issiSubscriberColumns() {
       render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen',
       sortValue: (row) => Number(row.last_seen_ms || 0) }
   ];
+}
+
+function wuidLeaseText(minutes) {
+  if (minutes == null) return 'Not received';
+  if (minutes === 0) return 'No expiry';
+  return `${number(minutes)}m`;
+}
+
+function issiHistoricalExpiryText(row) {
+  if (row.last_advertised_lease_minutes === 0) return 'No expiry';
+  if (row.last_assignment_expires_at_ms == null) return 'Not recorded';
+  const expiry = dateTime(row.last_assignment_expires_at_ms);
+  return row.last_advertised_lease_minutes == null ? `${expiry} (VCE fallback)` : expiry;
 }
 
 function issiForeignSystemColumns() {
@@ -21037,8 +21054,7 @@ function p25ChannelDetailRows(channel) {
     ['Configured Decoder Mode', p25DecoderMode(channel.p25_decoder_mode)],
     ['Broadcast Clock', dateTime(channel.broadcast_clock_ms)],
     ['Data', yesNoKnown(channel.data_service)], ['Data Access', channel.data_access],
-    ['Working Unit ID Lease Time', channel.wuid_lease_minutes == null ? '' :
-      `${number(channel.wuid_lease_minutes)}m`],
+    ['Working Unit ID Lease Time', wuidLeaseText(channel.wuid_lease_minutes)],
     ['Unit registration over control channel', yesNoKnown(channel.registration_service)],
     ['TDMA', yesNoKnown(channel.tdma)], ['u-Slots', channel.micro_slots == null ? '' : number(channel.micro_slots)],
     ['Voice', yesNoKnown(channel.voice_service)]
