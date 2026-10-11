@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="482" viewBox="0 0 760 482" role="img" aria-labelledby="title desc">
+<title id="title">One tuner receives one frequency window</title><desc id="desc">At 2.4 MS/s an R820T-family RTL-SDR has 2.352 MHz usable bandwidth. Control at 771.0125 MHz and voice at 771.5125 and 772.0125 MHz fit at a center of 771.6125 MHz. Edge margins and a tiny center gap are unusable.</desc>
+<rect width="760" height="100%" fill="#ffffff"/>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#17324d} .number{font-variant-numeric:tabular-nums}</style>
+<text x="40.00" y="45.00" font-size="29" text-anchor="start" font-weight="700" style="fill:#17324d">One tuner receives one frequency window</text>
+<text x="40.00" y="81.00" font-size="23" text-anchor="start" font-weight="400" style="fill:#536577">RTL-SDR at 2.4 MS/s · about 2.35 MHz usable</text>
+<rect x="115.45" y="198.00" width="523.64" height="48.00" rx="0" fill="#e8edf0"/>
+<rect x="120.69" y="198.00" width="513.16" height="48.00" rx="0" fill="#ccebf0"/>
+<rect x="376.18" y="198.00" width="2.18" height="48.00" rx="0" fill="#ffffff"/>
+<text x="80.00" y="151.00" font-size="22" text-anchor="start" font-weight="400" style="fill:#17324d">Edge margin</text>
+<line x1="123.00" y1="161.00" x2="118.07" y2="198.00" stroke="#c8d4db" stroke-width="1.5"/>
+<text x="377.27" y="139.00" font-size="22" text-anchor="middle" font-weight="400" style="fill:#17324d">Center gap</text>
+<line x1="377.27" y1="151.00" x2="377.27" y2="198.00" stroke="#c8d4db" stroke-width="1.5"/>
+<text x="680.00" y="151.00" font-size="22" text-anchor="end" font-weight="400" style="fill:#17324d">Edge margin</text>
+<line x1="638.00" y1="161.00" x2="636.47" y2="198.00" stroke="#c8d4db" stroke-width="1.5"/>
+<circle cx="246.36" cy="222.00" r="9" fill="#2454a6" stroke="#2454a6" stroke-width="3"/>
+<line x1="246.36" y1="236.00" x2="246.36" y2="257.00" stroke="#c8d4db" stroke-width="1.5"/>
+<text x="246.36" y="281.00" font-size="25" text-anchor="middle" font-weight="400" style="fill:#17324d">Control</text>
+<text x="246.36" y="310.00" font-size="22" text-anchor="middle" font-weight="400" style="fill:#17324d">771.0125 MHz</text>
+<rect x="346.45" y="213.00" width="18" height="18" fill="#187563" stroke="#187563" stroke-width="3"/>
+<line x1="355.45" y1="236.00" x2="355.45" y2="321.00" stroke="#c8d4db" stroke-width="1.5"/>
+<text x="355.45" y="345.00" font-size="25" text-anchor="middle" font-weight="400" style="fill:#17324d">Voice call</text>
+<text x="355.45" y="374.00" font-size="22" text-anchor="middle" font-weight="400" style="fill:#17324d">771.5125 MHz</text>
+<rect x="455.55" y="213.00" width="18" height="18" fill="#187563" stroke="#187563" stroke-width="3"/>
+<line x1="464.55" y1="236.00" x2="464.55" y2="257.00" stroke="#c8d4db" stroke-width="1.5"/>
+<text x="464.55" y="281.00" font-size="25" text-anchor="middle" font-weight="400" style="fill:#17324d">Voice call</text>
+<text x="464.55" y="310.00" font-size="22" text-anchor="middle" font-weight="400" style="fill:#17324d">772.0125 MHz</text>
+<text x="380.00" y="421.00" font-size="23" text-anchor="middle" font-weight="400" style="fill:#17324d">Control and nearby voice calls share the window.</text>
+<text x="380.00" y="449.00" font-size="20" text-anchor="middle" font-weight="400" style="fill:#536577">Channel markers are enlarged for visibility.</text>
+</svg>

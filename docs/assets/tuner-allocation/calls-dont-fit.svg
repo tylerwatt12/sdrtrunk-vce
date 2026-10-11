@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="705" viewBox="0 0 760 705" role="img" aria-labelledby="title desc">
+<title id="title">Enough tuners but no room for this call</title><desc id="desc">Current voice calls use tuner A at 851.0125 and 853.0125 MHz, and tuner B at 852.0125 and 854.0125 MHz. A new 855.0125 MHz call cannot fit either group. A different grouping could receive all five with the same hardware, but current VCE does not move ongoing calls between tuners to create it.</desc>
+<rect width="760" height="100%" fill="#ffffff"/>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#17324d} .number{font-variant-numeric:tabular-nums}</style>
+<text x="40.00" y="45.00" font-size="29" text-anchor="start" font-weight="700" style="fill:#17324d">Enough tuners but no room for this call</text>
+<text x="40.00" y="82.00" font-size="22" text-anchor="start" font-weight="400" style="fill:#536577">New call: 855.0 MHz · all frequency labels are rounded</text>
+<text x="40.00" y="130.00" font-size="25" text-anchor="start" font-weight="700" style="fill:#17324d">Calls being received</text>
+<text x="70.00" y="198.00" font-size="26" text-anchor="start" font-weight="700" style="fill:#17324d">A</text>
+<rect x="175.24" y="166.00" width="243.75" height="48.00" rx="0" fill="#ccebf0"/>
+<rect x="296.60" y="166.00" width="1.04" height="48.00" rx="0" fill="#ffffff"/>
+<rect x="174.11" y="181.00" width="18" height="18" fill="#187563" stroke="#187563" stroke-width="3"/>
+<rect x="381.39" y="181.00" width="18" height="18" fill="#187563" stroke="#187563" stroke-width="3"/>
+<path d="M597.66,178.00 L609.66,190.00 L597.66,202.00 L585.66,190.00 Z" fill="#ffffff" stroke="#bd5414" stroke-width="3"/>
+<line x1="590.66" y1="183.00" x2="604.66" y2="197.00" stroke="#bd5414" stroke-width="3"/>
+<line x1="590.66" y1="197.00" x2="604.66" y2="183.00" stroke="#bd5414" stroke-width="3"/>
+<text x="70.00" y="278.00" font-size="26" text-anchor="start" font-weight="700" style="fill:#17324d">B</text>
+<rect x="278.87" y="246.00" width="243.75" height="48.00" rx="0" fill="#ccebf0"/>
+<rect x="400.23" y="246.00" width="1.04" height="48.00" rx="0" fill="#ffffff"/>
+<rect x="277.75" y="261.00" width="18" height="18" fill="#187563" stroke="#187563" stroke-width="3"/>
+<rect x="485.02" y="261.00" width="18" height="18" fill="#187563" stroke="#187563" stroke-width="3"/>
+<path d="M597.66,258.00 L609.66,270.00 L597.66,282.00 L585.66,270.00 Z" fill="#ffffff" stroke="#bd5414" stroke-width="3"/>
+<line x1="590.66" y1="263.00" x2="604.66" y2="277.00" stroke="#bd5414" stroke-width="3"/>
+<line x1="590.66" y1="277.00" x2="604.66" y2="263.00" stroke="#bd5414" stroke-width="3"/>
+<text x="183.11" y="325.00" font-size="22" text-anchor="middle" font-weight="400" style="fill:#17324d">851.0</text>
+<text x="286.75" y="325.00" font-size="22" text-anchor="middle" font-weight="400" style="fill:#17324d">852.0</text>
+<text x="390.39" y="325.00" font-size="22" text-anchor="middle" font-weight="400" style="fill:#17324d">853.0</text>
+<text x="494.02" y="325.00" font-size="22" text-anchor="middle" font-weight="400" style="fill:#17324d">854.0</text>
+<text x="597.66" y="325.00" font-size="22" text-anchor="middle" font-weight="400" style="fill:#17324d">855.0</text>
+<text x="677.00" y="239.00" font-size="20" text-anchor="middle" font-weight="400" style="fill:#bd5414">Cannot fit</text>
+<line x1="40.00" y1="350.00" x2="720.00" y2="350.00" stroke="#c8d4db" stroke-width="1.5"/>
+<text x="40.00" y="389.00" font-size="25" text-anchor="start" font-weight="700" style="fill:#17324d">The same tuners could cover these call groups</text>
+<text x="70.00" y="454.00" font-size="26" text-anchor="start" font-weight="700" style="fill:#17324d">A</text>
+<rect x="175.24" y="422.00" width="243.75" height="48.00" rx="0" fill="#ccebf0"/>
+<rect x="296.60" y="422.00" width="1.04" height="48.00" rx="0" fill="#ffffff"/>
+<rect x="174.11" y="437.00" width="18" height="18" fill="#187563" stroke="#187563" stroke-width="3"/>
+<rect x="277.75" y="437.00" width="18" height="18" fill="#187563" stroke="#187563" stroke-width="3"/>
+<rect x="381.39" y="437.00" width="18" height="18" fill="#187563" stroke="#187563" stroke-width="3"/>
+<text x="70.00" y="534.00" font-size="26" text-anchor="start" font-weight="700" style="fill:#17324d">B</text>
+<rect x="434.33" y="502.00" width="243.75" height="48.00" rx="0" fill="#ccebf0"/>
+<rect x="555.69" y="502.00" width="1.04" height="48.00" rx="0" fill="#ffffff"/>
+<rect x="485.02" y="517.00" width="18" height="18" fill="#187563" stroke="#187563" stroke-width="3"/>
+<path d="M597.66,514.00 L609.66,526.00 L597.66,538.00 L585.66,526.00 Z" fill="#bd5414" stroke="#bd5414" stroke-width="3"/>
+<text x="183.11" y="581.00" font-size="22" text-anchor="middle" font-weight="400" style="fill:#17324d">851.0</text>
+<text x="286.75" y="581.00" font-size="22" text-anchor="middle" font-weight="400" style="fill:#17324d">852.0</text>
+<text x="390.39" y="581.00" font-size="22" text-anchor="middle" font-weight="400" style="fill:#17324d">853.0</text>
+<text x="494.02" y="581.00" font-size="22" text-anchor="middle" font-weight="400" style="fill:#17324d">854.0</text>
+<text x="597.66" y="581.00" font-size="22" text-anchor="middle" font-weight="400" style="fill:#17324d">855.0</text>
+<text x="701.00" y="612.00" font-size="20" text-anchor="end" font-weight="400" style="fill:#536577">MHz</text>
+<text x="380.00" y="640.00" font-size="24" text-anchor="middle" font-weight="400" style="fill:#17324d">Current VCE does not move ongoing calls</text>
+<text x="380.00" y="668.00" font-size="24" text-anchor="middle" font-weight="400" style="fill:#17324d">between tuners to create this grouping.</text>
+</svg>

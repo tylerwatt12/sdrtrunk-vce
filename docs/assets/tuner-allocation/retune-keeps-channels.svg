@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="700" viewBox="0 0 760 700" role="img" aria-labelledby="title desc">
+<title id="title">A retune must keep control and current calls</title><desc id="desc">The RTL-SDR window moves from center 771.2125 to 772.1125 MHz. Control at 771.0125 and an existing voice call at 771.5125 remain covered. New voice at 773.0125 becomes covered. A permitted retune may briefly disturb decoding.</desc>
+<rect width="760" height="100%" fill="#ffffff"/>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#17324d} .number{font-variant-numeric:tabular-nums}</style>
+<text x="40.00" y="45.00" font-size="29" text-anchor="start" font-weight="700" style="fill:#17324d">A retune must keep control and current calls</text>
+<text x="40.00" y="113.00" font-size="25" text-anchor="start" font-weight="700" style="fill:#17324d">Before · center 771.2125 MHz</text>
+<rect x="91.26" y="207.00" width="403.20" height="48.00" rx="0" fill="#ccebf0"/>
+<rect x="292.00" y="207.00" width="1.71" height="48.00" rx="0" fill="#ffffff"/>
+<circle cx="258.57" cy="231.00" r="9" fill="#2454a6" stroke="#2454a6" stroke-width="3"/>
+<text x="258.57" y="162.00" font-size="24" text-anchor="middle" font-weight="400" style="fill:#17324d">Control</text>
+<text x="258.57" y="191.00" font-size="22" text-anchor="middle" font-weight="400" style="fill:#17324d">771.0125</text>
+<line x1="258.57" y1="198.00" x2="258.57" y2="217.00" stroke="#c8d4db" stroke-width="1.5"/>
+<rect x="335.29" y="222.00" width="18" height="18" fill="#187563" stroke="#187563" stroke-width="3"/>
+<line x1="344.29" y1="243.00" x2="344.29" y2="271.00" stroke="#c8d4db" stroke-width="1.5"/>
+<text x="344.29" y="294.00" font-size="24" text-anchor="middle" font-weight="400" style="fill:#17324d">Current call</text>
+<text x="344.29" y="323.00" font-size="22" text-anchor="middle" font-weight="400" style="fill:#17324d">771.5125</text>
+<path d="M601.43,219.00 L613.43,231.00 L601.43,243.00 L589.43,231.00 Z" fill="#ffffff" stroke="#bd5414" stroke-width="3"/>
+<text x="601.43" y="162.00" font-size="24" text-anchor="middle" font-weight="400" style="fill:#17324d">New call</text>
+<text x="601.43" y="191.00" font-size="22" text-anchor="middle" font-weight="400" style="fill:#17324d">773.0125</text>
+<line x1="601.43" y1="198.00" x2="601.43" y2="217.00" stroke="#c8d4db" stroke-width="1.5"/>
+<text x="601.43" y="285.00" font-size="21" text-anchor="middle" font-weight="400" style="fill:#536577">Outside window</text>
+<text x="40.00" y="372.00" font-size="25" text-anchor="start" font-weight="700" style="fill:#17324d">After · center 772.1125 MHz</text>
+<rect x="245.54" y="466.00" width="403.20" height="48.00" rx="0" fill="#ccebf0"/>
+<rect x="446.29" y="466.00" width="1.71" height="48.00" rx="0" fill="#ffffff"/>
+<circle cx="258.57" cy="490.00" r="9" fill="#2454a6" stroke="#2454a6" stroke-width="3"/>
+<text x="258.57" y="421.00" font-size="24" text-anchor="middle" font-weight="400" style="fill:#17324d">Control</text>
+<text x="258.57" y="450.00" font-size="22" text-anchor="middle" font-weight="400" style="fill:#17324d">771.0125</text>
+<line x1="258.57" y1="457.00" x2="258.57" y2="476.00" stroke="#c8d4db" stroke-width="1.5"/>
+<rect x="335.29" y="481.00" width="18" height="18" fill="#187563" stroke="#187563" stroke-width="3"/>
+<line x1="344.29" y1="502.00" x2="344.29" y2="530.00" stroke="#c8d4db" stroke-width="1.5"/>
+<text x="344.29" y="553.00" font-size="24" text-anchor="middle" font-weight="400" style="fill:#17324d">Current call</text>
+<text x="344.29" y="582.00" font-size="22" text-anchor="middle" font-weight="400" style="fill:#17324d">771.5125</text>
+<path d="M601.43,478.00 L613.43,490.00 L601.43,502.00 L589.43,490.00 Z" fill="#bd5414" stroke="#bd5414" stroke-width="3"/>
+<text x="601.43" y="421.00" font-size="24" text-anchor="middle" font-weight="400" style="fill:#17324d">New call</text>
+<text x="601.43" y="450.00" font-size="22" text-anchor="middle" font-weight="400" style="fill:#17324d">773.0125</text>
+<line x1="601.43" y1="457.00" x2="601.43" y2="476.00" stroke="#c8d4db" stroke-width="1.5"/>
+<line x1="540.00" y1="354.00" x2="680.00" y2="354.00" stroke="#536577" stroke-width="2"/>
+<path d="M668,346 L680,354 L668,362" fill="none" stroke="#536577" stroke-width="2"/>
+<text x="610.00" y="343.00" font-size="21" text-anchor="middle" font-weight="400" style="fill:#17324d">Window shifts</text>
+<text x="380.00" y="629.00" font-size="24" text-anchor="middle" font-weight="400" style="fill:#17324d">Control and current calls stay in range.</text>
+<text x="380.00" y="660.00" font-size="23" text-anchor="middle" font-weight="400" style="fill:#17324d">The retune can still briefly disturb decoding.</text>
+</svg>

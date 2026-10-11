@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="666" viewBox="0 0 760 666" role="img" aria-labelledby="title desc">
+<title id="title">One dongle or two for distant bands</title><desc id="desc">One RTL-SDR keeps control at 771.0125 MHz but cannot receive voice at 851.0125 MHz. With an eligible idle second tuner, one receives control and the other tunes for voice. The large frequency gap is compressed in this schematic.</desc>
+<rect width="760" height="100%" fill="#ffffff"/>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#17324d} .number{font-variant-numeric:tabular-nums}</style>
+<text x="40.00" y="45.00" font-size="29" text-anchor="start" font-weight="700" style="fill:#17324d">One dongle or two for distant bands</text>
+<text x="190.00" y="109.00" font-size="25" text-anchor="middle" font-weight="700" style="fill:#17324d">Control</text>
+<text x="190.00" y="140.00" font-size="23" text-anchor="middle" font-weight="400" style="fill:#17324d">771.0125 MHz</text>
+<text x="566.00" y="109.00" font-size="25" text-anchor="middle" font-weight="700" style="fill:#17324d">Voice call</text>
+<text x="566.00" y="140.00" font-size="23" text-anchor="middle" font-weight="400" style="fill:#17324d">851.0125 MHz</text>
+<text x="40.00" y="191.00" font-size="26" text-anchor="start" font-weight="700" style="fill:#17324d">One RTL-SDR</text>
+<text x="190.00" y="223.00" font-size="22" text-anchor="middle" font-weight="400" style="fill:#17324d">Tuner A</text>
+<text x="566.00" y="223.00" font-size="22" text-anchor="middle" font-weight="400" style="fill:#17324d">Outside tuner A</text>
+<rect x="62.00" y="242.00" width="256.00" height="54.00" rx="0" fill="#ccebf0"/>
+<rect x="438.00" y="242.00" width="256.00" height="54.00" rx="0" fill="#e8edf0"/>
+<circle cx="190.00" cy="269.00" r="9" fill="#2454a6" stroke="#2454a6" stroke-width="3"/>
+<path d="M566.00,257.00 L578.00,269.00 L566.00,281.00 L554.00,269.00 Z" fill="#ffffff" stroke="#bd5414" stroke-width="3"/>
+<line x1="559.00" y1="262.00" x2="573.00" y2="276.00" stroke="#bd5414" stroke-width="3"/>
+<line x1="559.00" y1="276.00" x2="573.00" y2="262.00" stroke="#bd5414" stroke-width="3"/>
+<line x1="318.00" y1="269.00" x2="348.00" y2="269.00" stroke="#c8d4db" stroke-width="1.5"/>
+<line x1="410.00" y1="269.00" x2="438.00" y2="269.00" stroke="#c8d4db" stroke-width="1.5"/>
+<line x1="363.00" y1="282.00" x2="379.00" y2="256.00" stroke="#536577" stroke-width="2"/>
+<line x1="384.00" y1="282.00" x2="400.00" y2="256.00" stroke="#536577" stroke-width="2"/>
+<text x="381.00" y="235.00" font-size="20" text-anchor="middle" font-weight="400" style="fill:#536577">80 MHz gap</text>
+<text x="190.00" y="334.00" font-size="24" text-anchor="middle" font-weight="400" style="fill:#17324d">Control stays</text>
+<text x="566.00" y="334.00" font-size="24" text-anchor="middle" font-weight="400" style="fill:#17324d">Voice cannot start</text>
+<line x1="40.00" y1="361.00" x2="720.00" y2="361.00" stroke="#c8d4db" stroke-width="1.5"/>
+<text x="40.00" y="407.00" font-size="26" text-anchor="start" font-weight="700" style="fill:#17324d">Two RTL-SDRs</text>
+<text x="190.00" y="440.00" font-size="22" text-anchor="middle" font-weight="400" style="fill:#17324d">Tuner A</text>
+<text x="566.00" y="440.00" font-size="22" text-anchor="middle" font-weight="400" style="fill:#17324d">Tuner B</text>
+<rect x="62.00" y="458.00" width="256.00" height="54.00" rx="0" fill="#ccebf0"/>
+<rect x="438.00" y="458.00" width="256.00" height="54.00" rx="0" fill="#ccebf0"/>
+<circle cx="190.00" cy="485.00" r="9" fill="#2454a6" stroke="#2454a6" stroke-width="3"/>
+<path d="M566.00,473.00 L578.00,485.00 L566.00,497.00 L554.00,485.00 Z" fill="#bd5414" stroke="#bd5414" stroke-width="3"/>
+<line x1="318.00" y1="485.00" x2="348.00" y2="485.00" stroke="#c8d4db" stroke-width="1.5"/>
+<line x1="410.00" y1="485.00" x2="438.00" y2="485.00" stroke="#c8d4db" stroke-width="1.5"/>
+<line x1="363.00" y1="498.00" x2="379.00" y2="472.00" stroke="#536577" stroke-width="2"/>
+<line x1="384.00" y1="498.00" x2="400.00" y2="472.00" stroke="#536577" stroke-width="2"/>
+<text x="190.00" y="550.00" font-size="24" text-anchor="middle" font-weight="400" style="fill:#17324d">Control continues</text>
+<text x="566.00" y="550.00" font-size="24" text-anchor="middle" font-weight="400" style="fill:#17324d">Voice received</text>
+<text x="380.00" y="601.00" font-size="22" text-anchor="middle" font-weight="400" style="fill:#17324d">An eligible idle second tuner can tune when the call arrives.</text>
+<text x="380.00" y="631.00" font-size="20" text-anchor="middle" font-weight="400" style="fill:#536577">Schematic: the frequency gap is compressed.</text>
+</svg>
