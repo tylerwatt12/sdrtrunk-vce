@@ -29,6 +29,7 @@ import io.github.dsheirer.audio.call.AudioCallId;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
 import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.audio.call.CallLegId;
+import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
@@ -37,8 +38,13 @@ import io.github.dsheirer.identifier.configuration.ChannelNameConfigurationIdent
 import io.github.dsheirer.identifier.configuration.SiteConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier;
 import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
+import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.record.RecordingMode;
 import io.github.dsheirer.protocol.Protocol;
@@ -206,6 +212,87 @@ class AudioRecordingManagerTest
             scheduler.shutdownNow();
             preferences.getDirectoryPreference().setDirectoryRecording(originalDirectory);
             preferences.getRecordPreference().setAudioRecordFormat(originalFormat);
+        }
+    }
+
+    @Test
+    void classicFilenameRetryAndActualTagsUseCapturedWinnerSystemOverForeignNetworkIdentifiers() throws Exception
+    {
+        UserPreferences preferences = new UserPreferences();
+        Path originalDirectory = preferences.getDirectoryPreference().getDirectoryRecording();
+        RecordFormat originalFormat = preferences.getRecordPreference().getAudioRecordFormat();
+        RecordingMode originalMode = preferences.getRecordPreference().getRecordingMode();
+        ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
+        List<Path> attempted = new ArrayList<>();
+        AtomicInteger recorded = new AtomicInteger();
+        AudioRecordingManager manager = new AudioRecordingManager(preferences,
+            ignored -> recorded.incrementAndGet(), scheduler, (call, path, format, userPreferences) -> {
+                attempted.add(path);
+                //Simulate another writer claiming the chosen path after its existence check.
+                if(attempted.size() == 1) Files.write(path, new byte[]{9}, StandardOpenOption.CREATE_NEW);
+                AudioCallRecorder.write(call, path, format, userPreferences);
+            });
+        AliasList aliases = new AliasList(new AliasListDefinition("SyntheticAliases", AliasListFamily.P25));
+        Alias canonical = new Alias("Canonical Unit");
+        canonical.setMatchIdentifier(new P25Subscriber(0xBEE00, 0x687, 70001));
+        aliases.addAlias(canonical);
+        Alias working = new Alias("Working Unit");
+        working.setMatchIdentifier(new Radio(Protocol.APCO25, 501));
+        aliases.addAlias(working);
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(APCO25Wacn.create(0xABCDE));
+        identifiers.update(APCO25System.create(0x456));
+        identifiers.update(APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(501,
+            0xBEE00, 0x687, 70001));
+        identifiers.update(APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(70002,
+            0xBEE00, 0x687, 70002));
+        CallLegSource winner = new CallLegSource(DecoderType.P25_PHASE1, null, null, null, 0,
+            new P25SiteIdentity(0xABCDE, 0x456, 1, 1), TrunkedIdentityDomain.STANDARD, null, false,
+            "p25:bee00:687");
+        AudioCallId callId = new AudioCallId(1L, 1L, 1);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, aliases, identifiers, Set.of(),
+            1_000L, 2_000L, 1, 1, 1_000L, 2_000L, false, true,
+            CallEncryptionState.CLEAR, true, null, VoiceCallQuality.EMPTY, CallLegId.from(callId), winner, null);
+        List<float[]> audio = new ArrayList<>();
+        for(int frame = 0; frame < 50; frame++) audio.add(new float[160]);
+        try
+        {
+            preferences.getDirectoryPreference().setDirectoryRecording(mTemporaryFolder);
+            preferences.getRecordPreference().setAudioRecordFormat(RecordFormat.MP3);
+            preferences.getRecordPreference().setRecordingMode(RecordingMode.CLASSIC);
+            manager.start();
+            manager.receive(new CompletedAudioCall(snapshot, audio));
+            manager.stop();
+
+            assertEquals(2, attempted.size());
+            assertEquals(1, recorded.get());
+            assertTrue(attempted.getFirst().getFileName().toString().matches(
+                "\\d{8}_\\d{6}__TO_70002_FROM_501\\.mp3"));
+            assertTrue(attempted.get(1).getFileName().toString().matches(
+                "\\d{8}_\\d{6}__TO_70002_FROM_501_V2\\.mp3"));
+            for(Path path: attempted)
+            {
+                String filename = path.getFileName().toString();
+                assertTrue(filename.matches(
+                    "[0-9]{8}_[0-9]{6}__TO_[0-9]+_FROM_[0-9]+(?:_V[0-9]+)?\\.mp3"));
+                assertFalse(filename.substring(filename.indexOf("__TO_")).contains("70001"));
+                assertFalse(filename.contains("Working_ID"));
+            }
+            assertArrayEquals(new byte[]{9}, Files.readAllBytes(attempted.getFirst()));
+            ID3v24Tag tag = new ID3v24Tag(Files.readAllBytes(attempted.get(1)));
+            assertEquals("501 Canonical Unit", tag.getArtist());
+            assertEquals("70002", tag.getTitle());
+            assertFalse(tag.getArtist().contains("70001"));
+            assertFalse(tag.getArtist().contains("Working ID"));
+            assertEquals(0, manager.getQueueStatus().droppedRecordings());
+        }
+        finally
+        {
+            manager.stop();
+            scheduler.shutdownNow();
+            preferences.getDirectoryPreference().setDirectoryRecording(originalDirectory);
+            preferences.getRecordPreference().setAudioRecordFormat(originalFormat);
+            preferences.getRecordPreference().setRecordingMode(originalMode);
         }
     }
 

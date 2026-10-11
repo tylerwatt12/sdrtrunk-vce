@@ -43,6 +43,8 @@ import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier
 import io.github.dsheirer.identifier.decoder.DecoderLogicalChannelNameIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
 import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
@@ -60,8 +62,8 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /**
- * Frozen external metadata fixtures from DSheirer/sdrtrunk a9120ed65e5b9f91cf460544efdab4863d7e4b45.
- * Expected identifier text deliberately does not use the application's display formatter.
+ * Mainline metadata fixtures plus the explicit same-system radio-label simplification.
+ * Alias ownership, standard frames and non-radio values retain their existing recording contract.
  */
 class AudioMetadataUtilsTest
 {
@@ -97,6 +99,64 @@ class AudioMetadataUtilsTest
 
         assertIdentities(AudioMetadataUtils.getMetadataMap(identifiers, null),
             "781824.1671.2115288", "703710.1110.9001");
+    }
+
+    @Test
+    void matchingHomeSystemShortensArtistAndRadioTitleWithoutChangingQualifiedAliasSelection() throws Exception
+    {
+        AliasList aliases = aliasList();
+        addAlias(aliases, "Numeric Unit", new Radio(Protocol.APCO25, 85610));
+        addAlias(aliases, "Working Unit", new Radio(Protocol.APCO25, 501));
+        addAlias(aliases, "Canonical Unit", new P25Subscriber(0xBEE00, 0x687, 85610));
+        IdentifierCollection identifiers = new IdentifierCollection(List.of(
+            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(85610, 0xBEE00, 0x687, 85610),
+            APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(501, 0xBEE00, 0x687, 85610)));
+
+        assertIdentities(AudioMetadataUtils.getMetadataMap(identifiers, aliases, "p25:bee00:687"),
+            "85610 Canonical Unit", "501\"Canonical Unit\"");
+        assertIdentities(AudioMetadataUtils.getMetadataMap(identifiers, aliases, "p25:abcde:456"),
+            "781824.1671.85610 Canonical Unit", "ROAM 501(781824.1671.85610)\"Canonical Unit\"");
+        assertIdentities(AudioMetadataUtils.getMetadataMap(identifiers, aliases, null),
+            "781824.1671.85610 Canonical Unit", "ROAM 501(781824.1671.85610)\"Canonical Unit\"");
+    }
+
+    @Test
+    void networkContextShortensSameSystemRadiosButIncompleteContextKeepsQualification() throws Exception
+    {
+        var source = APCO25FullyQualifiedRadioIdentifier.createFrom(0, 0xBEE00, 0x687, 85610);
+        assertIdentities(AudioMetadataUtils.getMetadataMap(new IdentifierCollection(List.of(source,
+            APCO25Wacn.create(0xBEE00), APCO25System.create(0x687))), null), "85610", null);
+        assertIdentities(AudioMetadataUtils.getMetadataMap(new IdentifierCollection(List.of(source,
+            APCO25Wacn.create(0xBEE00))), null), "781824.1671.85610", null);
+        assertIdentities(AudioMetadataUtils.getMetadataMap(new IdentifierCollection(List.of(source,
+            SystemConfigurationIdentifier.create("BEE00.687"))), null), "781824.1671.85610", null);
+    }
+
+    @Test
+    void matchingSystemDoesNotPromoteCachedAssignmentIntoStandardTags() throws Exception
+    {
+        AliasList aliases = aliasList();
+        addAlias(aliases, "Working Unit", new Radio(Protocol.APCO25, 501));
+        addAlias(aliases, "Canonical Unit", new P25Subscriber(0xBEE00, 0x687, 85610));
+        IdentifierCollection identifiers = new IdentifierCollection(List.of(
+            APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(501, 0xBEE00, 0x687, 85610,
+                Role.FROM, ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT)));
+        assertIdentities(AudioMetadataUtils.getMetadataMap(identifiers, aliases, "p25:bee00:687"),
+            "501 Working Unit", null);
+    }
+
+    @Test
+    void sameSystemPatchRadioShortensWithoutChangingTalkgroupQualificationOrAliasDelimiters() throws Exception
+    {
+        AliasList aliases = aliasList();
+        addAlias(aliases, "Canonical Unit", new P25Subscriber(0xBEE00, 0x687, 85610));
+        PatchGroup patch = new PatchGroup(
+            APCO25FullyQualifiedTalkgroupIdentifier.createTo(77, 0xBEE00, 0x687, 1201));
+        patch.addPatchedRadio(APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(501,
+            0xBEE00, 0x687, 85610));
+        assertIdentities(AudioMetadataUtils.getMetadataMap(
+            new IdentifierCollection(List.of(APCO25PatchGroup.create(patch))), aliases, "p25:bee00:687"),
+            null, "P:77(781824.1671.1201) [501]\"Canonical Unit\"");
     }
 
     @Test

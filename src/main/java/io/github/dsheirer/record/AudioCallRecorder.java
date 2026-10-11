@@ -83,7 +83,7 @@ public class AudioCallRecorder
                 StandardOpenOption.WRITE))
             {
                 Map<AudioMetadata,String> metadataMap = AudioMetadataUtils.getMetadataMap(identifierCollection,
-                    completedAudioCall.snapshot().aliasList());
+                    completedAudioCall.snapshot().aliasList(), BasicRecordingContract.servingSystemKey(completedAudioCall));
 
                 byte[] id3Bytes = AudioMetadataUtils.getMP3ID3(metadataMap);
                 outputStream.write(id3Bytes);
@@ -122,7 +122,7 @@ public class AudioCallRecorder
                 }
 
                 Map<AudioMetadata,String> metadataMap = AudioMetadataUtils.getMetadataMap(identifierCollection,
-                    completedAudioCall.snapshot().aliasList());
+                    completedAudioCall.snapshot().aliasList(), BasicRecordingContract.servingSystemKey(completedAudioCall));
 
                 ByteBuffer listChunk = AudioMetadataUtils.getLISTChunk(metadataMap);
                 byte[] id3Bytes = AudioMetadataUtils.getMP3ID3(metadataMap);

@@ -11,20 +11,33 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.mpatric.mp3agic.ID3v24Tag;
+import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasList;
+import io.github.dsheirer.alias.AliasListDefinition;
+import io.github.dsheirer.alias.AliasListFamily;
+import io.github.dsheirer.alias.id.radio.P25Subscriber;
+import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.audio.AudioFormats;
 import io.github.dsheirer.audio.call.AudioCallId;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
 import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.audio.call.CallLegId;
+import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier;
+import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.record.RecordingMode;
+import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.record.wave.WaveWriter;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -135,6 +148,84 @@ class AudioCallRecorderTest
     }
 
     @Test
+    void finalTagsUseWinnerReceivingSystemAndKeepQualifiedAliasesInBothRecordingModes() throws Exception
+    {
+        AliasList aliases = new AliasList(new AliasListDefinition("P25", AliasListFamily.P25));
+        Alias canonical = new Alias("Canonical Unit");
+        canonical.setMatchIdentifier(new P25Subscriber(0xBEE00, 0x687, 70001));
+        aliases.addAlias(canonical);
+        Alias numeric = new Alias("Numeric Unit");
+        numeric.setMatchIdentifier(new Radio(Protocol.APCO25, 70001));
+        aliases.addAlias(numeric);
+        Alias working = new Alias("Working Unit");
+        working.setMatchIdentifier(new Radio(Protocol.APCO25, 501));
+        aliases.addAlias(working);
+        IdentifierCollection observed = new IdentifierCollection(List.of(
+            SystemConfigurationIdentifier.create("SyntheticSystem"),
+            APCO25Wacn.create(0xABCDE), APCO25System.create(0x456),
+            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(70001, 0xBEE00, 0x687, 70001),
+            APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(501, 0xBEE00, 0x687, 70001)));
+        CallLegSource winner = new CallLegSource(DecoderType.P25_PHASE1, null, null, null, 0,
+            new P25SiteIdentity(0xABCDE, 0x456, 1, 1), TrunkedIdentityDomain.STANDARD, null, false,
+            "p25:bee00:687");
+        CompletedAudioCall call = callWithContext(winner, observed, observed, aliases);
+        UserPreferences preferences = new UserPreferences();
+        RecordingMode originalMode = preferences.getRecordPreference().getRecordingMode();
+        try
+        {
+            for(RecordingMode mode: RecordingMode.values())
+            {
+                preferences.getRecordPreference().setRecordingMode(mode);
+                for(RecordFormat format: RecordFormat.values())
+                {
+                    Path path = mDirectory.resolve("same-system-" + mode + format.getExtension());
+                    AudioCallRecorder.write(call, path, format, preferences);
+                    byte[] bytes = Files.readAllBytes(path);
+                    ID3v24Tag tag = new ID3v24Tag(format == RecordFormat.MP3 ? bytes : waveChunk(bytes, "id3 "));
+                    assertEquals("70001 Canonical Unit", tag.getArtist());
+                    assertEquals("501\"Canonical Unit\"", tag.getTitle());
+                    assertEquals("SyntheticSystem", tag.getGrouping());
+                    assertFalse(tag.getArtist().contains("Numeric Unit"));
+                    assertFalse(tag.getTitle().contains("Working Unit"));
+                    assertFalse(tag.getTitle().contains("70001"),
+                        "A different local address must not emit a second permanent unit number");
+                    assertFalse(tag.getArtist().contains("Working ID"));
+                    assertFalse(tag.getTitle().contains("Working ID"));
+                    if(format == RecordFormat.WAVE)
+                    {
+                        String info = new String(waveChunk(bytes, "LIST"), StandardCharsets.UTF_8);
+                        assertTrue(info.contains("70001 Canonical Unit"));
+                        assertTrue(info.contains("501\"Canonical Unit\""));
+                        assertFalse(info.contains("781824.1671"));
+                    }
+                }
+            }
+        }
+        finally
+        {
+            preferences.getRecordPreference().setRecordingMode(originalMode);
+        }
+    }
+
+    @Test
+    void finalTagsNeverInferWinnerSystemFromPromotedLogicalIdentifiers() throws Exception
+    {
+        IdentifierCollection observed = new IdentifierCollection(List.of(
+            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(70001, 0xBEE00, 0x687, 70001)));
+        IdentifierCollection resolved = new IdentifierCollection(List.of(
+            APCO25Wacn.create(0xBEE00), APCO25System.create(0x687), APCO25RadioIdentifier.createFrom(70001)));
+        CompletedAudioCall call = callWithContext(CallLegSource.UNKNOWN, observed, resolved, null);
+        for(RecordFormat format: RecordFormat.values())
+        {
+            Path path = mDirectory.resolve("unknown-winner" + format.getExtension());
+            AudioCallRecorder.write(call, path, format, new UserPreferences());
+            byte[] bytes = Files.readAllBytes(path);
+            ID3v24Tag tag = new ID3v24Tag(format == RecordFormat.MP3 ? bytes : waveChunk(bytes, "id3 "));
+            assertEquals("781824.1671.70001", tag.getArtist());
+        }
+    }
+
+    @Test
     void existingFinalWavReportsCollisionWithoutChangingBytes() throws Exception
     {
         Path path = mDirectory.resolve("existing.wav");
@@ -177,6 +268,21 @@ class AudioCallRecorderTest
             audio.add(samples);
         }
         return new CompletedAudioCall(snapshot, audio);
+    }
+
+    private static CompletedAudioCall callWithContext(CallLegSource source, IdentifierCollection observed,
+                                                       IdentifierCollection resolved, AliasList aliases)
+    {
+        CompletedAudioCall base = callWithQuality();
+        AudioCallSnapshot old = base.snapshot();
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(old.callId(), old.linkedCallId(), aliases, resolved,
+            old.broadcastChannels(), old.startTimestamp(), old.lastActivityTimestamp(), old.burstCount(),
+            old.burstGeneration(), old.lastBurstStartTimestamp(), old.lastBurstEndTimestamp(), old.burstActive(),
+            old.complete(), old.encryptionState(), old.recordAudio(), null, old.voiceCallQuality(),
+            old.callLegId(), source, old.callEncryptionEvidence());
+        CompletedAudioCall oneLeg = new CompletedAudioCall(snapshot, base.audioBuffers());
+        return new CompletedAudioCall(oneLeg.logicalCallId(), snapshot, oneLeg.audioBuffers(), oneLeg.resolvedPolicy(),
+            oneLeg.callLegSummaries(), observed);
     }
 
     private static byte[] waveChunk(byte[] bytes, String name)

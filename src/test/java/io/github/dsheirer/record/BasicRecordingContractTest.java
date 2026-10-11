@@ -6,8 +6,16 @@ package io.github.dsheirer.record;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.dsheirer.audio.call.AudioCallId;
+import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.CallEncryptionState;
+import io.github.dsheirer.audio.call.CallLegId;
+import io.github.dsheirer.audio.call.CallLegSource;
+import io.github.dsheirer.audio.call.CompletedAudioCall;
+import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.Role;
@@ -25,21 +33,25 @@ import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.P25RadioPresence;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.P25WuidAssignmentRegistry;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
 import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-/** Frozen external recording contract from DSheirer/sdrtrunk a9120ed65e5b9f91cf460544efdab4863d7e4b45. */
+/** Mainline recording contract with the explicit same-system radio-label simplification. */
 class BasicRecordingContractTest
 {
     private static final long WRITER_TIME = LocalDateTime.of(2026, 10, 7, 12, 34, 56)
@@ -71,6 +83,140 @@ class BasicRecordingContractTest
         //The legacy export predicate is numeric inequality, including canonical-only constructor callers.
         assertEquals("501(781824.1671.70001)", BasicRecordingContract.sourceIdentifier(
             APCO25FullyQualifiedRadioIdentifier.createFrom(501, 0xBEE00, 0x687, 70001)));
+    }
+
+    @Test
+    void sameSystemRadioUsesObservedLocalScalarOrHomeUnitWhenLocalIsAbsent()
+    {
+        for(int local: List.of(0, 70001, 501))
+        {
+            var radio = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(local,
+                0xBEE00, 0x687, 70001);
+            assertEquals(local == 501 ? "501" : "70001",
+                BasicRecordingContract.sourceIdentifier(radio, "p25:bee00:687"));
+            assertEquals(local == 501 ? "501" : "70001",
+                BasicRecordingContract.targetIdentifier(radio, "p25:bee00:687"));
+            assertEquals(local == 501 ? "501" : "70001",
+                BasicRecordingContract.filenameIdentifier(radio, "p25:bee00:687"));
+            assertTrue(BasicRecordingContract.filenameIdentifier(radio, "p25:bee00:687").matches("[0-9]+"),
+                "Same-system radio filename identifiers retain the ordinary scalar grammar");
+        }
+        assertEquals("501", BasicRecordingContract.sourceIdentifier(
+            APCO25FullyQualifiedRadioIdentifier.createFrom(501, 0xBEE00, 0x687, 70001), "p25:bee00:687"));
+    }
+
+    @Test
+    void foreignPartialMismatchAndUnknownSystemKeepQualification()
+    {
+        var radio = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(501,
+            0xBEE00, 0x687, 70001);
+        for(String serving: new String[]{null, "p25:bee01:687", "p25:bee00:688", "p25:abcde:456"})
+        {
+            assertEquals("501(781824.1671.70001)", BasicRecordingContract.sourceIdentifier(radio, serving));
+            assertEquals("ROAM 501(781824.1671.70001)", BasicRecordingContract.targetIdentifier(radio, serving));
+            assertEquals("501_781824_1671_70001", BasicRecordingContract.filenameIdentifier(radio, serving));
+        }
+    }
+
+    @Test
+    void networkBroadcastPairIsRequiredAndRadioHomeNeverSuppliesServingSystem()
+    {
+        var radio = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(70001,
+            0xBEE00, 0x687, 70001);
+        for(IdentifierCollection incomplete: List.of(new IdentifierCollection(List.of(radio)),
+            new IdentifierCollection(List.of(radio, APCO25Wacn.create(0xBEE00))),
+            new IdentifierCollection(List.of(radio, APCO25System.create(0x687)))))
+        {
+            assertNull(BasicRecordingContract.servingSystemKey(incomplete));
+            assertEquals("20261007_123456__FROM_781824_1671_70001.mp3",
+                BasicRecordingContract.filename(incomplete, RecordFormat.MP3, WRITER_TIME, 1, 1));
+        }
+
+        IdentifierCollection configuredName = new IdentifierCollection(List.of(radio,
+            SystemConfigurationIdentifier.create("BEE00.687")));
+        assertNull(BasicRecordingContract.servingSystemKey(configuredName));
+        assertEquals("20261007_123456_BEE00.687__FROM_781824_1671_70001.mp3",
+            BasicRecordingContract.filename(configuredName, RecordFormat.MP3, WRITER_TIME, 1, 1));
+
+        IdentifierCollection complete = new IdentifierCollection(List.of(radio,
+            APCO25Wacn.create(0xBEE00), APCO25System.create(0x687)));
+        assertEquals("p25:bee00:687", BasicRecordingContract.servingSystemKey(complete));
+        assertEquals("20261007_123456__FROM_70001.mp3",
+            BasicRecordingContract.filename(complete, RecordFormat.MP3, WRITER_TIME, 1, 1));
+        assertNull(BasicRecordingContract.servingSystemKey(new IdentifierCollection(List.of(
+            APCO25Wacn.create(0x100000), APCO25System.create(0x687)))));
+        assertNull(BasicRecordingContract.servingSystemKey(new IdentifierCollection(List.of(
+            APCO25Wacn.create(0xBEE00), APCO25System.create(-1)))));
+    }
+
+    @Test
+    void winnerNativeKeyTakesPriorityOverSiteAndNetworkAndUnknownIgnoresResolvedIdentifiers()
+    {
+        IdentifierCollection observed = new IdentifierCollection(List.of(APCO25Wacn.create(0xABCDE),
+            APCO25System.create(0x456)));
+        CallLegSource nativeSource = new CallLegSource(DecoderType.P25_PHASE1, null, null, null, 0,
+            new P25SiteIdentity(0x12345, 0x123, 1, 1), TrunkedIdentityDomain.STANDARD, null, false,
+            "p25:bee00:687");
+        assertEquals("p25:bee00:687", BasicRecordingContract.servingSystemKey(call(nativeSource, observed)));
+
+        CallLegSource learnedSource = new CallLegSource(DecoderType.P25_PHASE1, null, null, null, 0,
+            new P25SiteIdentity(0xBEE00, 0x687, 1, 1), TrunkedIdentityDomain.STANDARD, null, false);
+        assertEquals("p25:bee00:687", BasicRecordingContract.servingSystemKey(call(learnedSource, observed)));
+        assertEquals("p25:abcde:456", BasicRecordingContract.servingSystemKey(call(CallLegSource.UNKNOWN, observed)));
+        assertNull(BasicRecordingContract.servingSystemKey(call(CallLegSource.UNKNOWN, null)),
+            "Promoted logical identifiers must not establish the winner's receiving system");
+    }
+
+    @Test
+    void sameSystemRadioSimplificationRecursesThroughPatchButLeavesTalkgroupsQualified()
+    {
+        var primary = APCO25FullyQualifiedTalkgroupIdentifier.createTo(77, 0xBEE00, 0x687, 1201);
+        var patch = new PatchGroup(primary);
+        patch.addPatchedRadio(APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(501,
+            0xBEE00, 0x687, 70001));
+        patch.addPatchedRadio(APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(502,
+            0xABCDE, 0x456, 70002));
+        var identifier = APCO25PatchGroup.create(patch);
+        assertEquals("P:77(781824.1671.1201) [501, ROAM 502(703710.1110.70002)]",
+            BasicRecordingContract.targetIdentifier(identifier, "p25:bee00:687"));
+        assertEquals("P77_781824_1671_1201 [501, 502_703710_1110_70002]",
+            BasicRecordingContract.filenameIdentifier(identifier, "p25:bee00:687"));
+    }
+
+    @Test
+    void sameSystemFilenameUsesObservedWorkingScalarAndCollisionSuffix() throws Exception
+    {
+        IdentifierCollection identifiers = new IdentifierCollection(List.of(APCO25Talkgroup.create(48530),
+            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(501, 0xBEE00, 0x687, 70001)));
+        Path first = BasicRecordingContract.nextPath(mDirectory, identifiers, RecordFormat.MP3,
+            WRITER_TIME, 1, "p25:bee00:687");
+        assertEquals("20261007_123456__TO_48530_FROM_501.mp3", first.getFileName().toString());
+        Files.writeString(first, "first recording");
+        Path second = BasicRecordingContract.nextPath(mDirectory, identifiers, RecordFormat.MP3,
+            WRITER_TIME, 1, "p25:bee00:687");
+        assertEquals("20261007_123456__TO_48530_FROM_501_V2.mp3",
+            second.getFileName().toString());
+        for(Path path: List.of(first, second))
+        {
+            assertTrue(path.getFileName().toString().matches(
+                "[0-9]{8}_[0-9]{6}__TO_[0-9]+_FROM_[0-9]+(?:_V[0-9]+)?\\.mp3"));
+            assertFalse(path.getFileName().toString().contains("70001"));
+            assertFalse(path.getFileName().toString().contains("Working_ID"));
+        }
+        assertEquals("first recording", Files.readString(first));
+    }
+
+    private static CompletedAudioCall call(CallLegSource source, IdentifierCollection observed)
+    {
+        AudioCallId id = new AudioCallId(1, 1, 0);
+        IdentifierCollection resolved = new IdentifierCollection(List.of(APCO25Wacn.create(0xBEE00),
+            APCO25System.create(0x687)));
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(id, null, null, resolved, Set.of(),
+            1_000L, 2_000L, 1, 1, 1_000L, 2_000L, false, true, CallEncryptionState.CLEAR, true,
+            null, null, CallLegId.from(id), source, null);
+        CompletedAudioCall oneLeg = new CompletedAudioCall(snapshot, List.of());
+        return new CompletedAudioCall(oneLeg.logicalCallId(), snapshot, List.of(), oneLeg.resolvedPolicy(),
+            oneLeg.callLegSummaries(), observed);
     }
 
     @Test

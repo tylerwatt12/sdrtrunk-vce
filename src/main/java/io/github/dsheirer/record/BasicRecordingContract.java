@@ -7,6 +7,8 @@ package io.github.dsheirer.record;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.application.ApplicationInfo;
+import io.github.dsheirer.audio.call.CallLegSource;
+import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
@@ -24,6 +26,7 @@ import io.github.dsheirer.identifier.tone.ToneIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.util.StringUtils;
 import io.github.dsheirer.util.TimeStamp;
 import java.io.IOException;
@@ -37,15 +40,41 @@ import java.util.List;
  * Filename and standard metadata sources verified unchanged through 728a83a82d952125d93c675280a74a81b94e810e.
  *
  * <p>External importers depend on Basic filenames and existing ID3/WAV fields in every recording/export mode.
- * Do not change their schema or values
- * to follow application branding, display labels, or additional identity facts. New metadata must use new fields.
- * Directly decoded qualified addresses retain the upstream decimal, local-address-first representation.
+ * Preserve their schema and values except for the approved home-system radio display rule: use the existing plain
+ * local radio-ID form when the captured receiving system matches the radio's home WACN and System ID. A zero local
+ * address falls back to the home Unit ID; it does not invent a working-address assignment. New metadata must use
+ * new fields. Unknown or foreign receiving systems retain the upstream representation.
+ * Foreign or unknown directly decoded qualified addresses retain the complete upstream decimal representation.
  * VCE assignment enrichment must not turn an ordinary over-air radio into a qualified recording identity.
  * Call resolution must likewise retain the audio winner's original recording identifiers.</p>
  */
 public final class BasicRecordingContract
 {
     private BasicRecordingContract() {}
+
+    /** Receiving system captured by the audio winner, independent of logical-call identity promotion. */
+    public static String servingSystemKey(CompletedAudioCall call)
+    {
+        if(call == null) return null;
+        CallLegSource source = call.snapshot().callLegSource();
+        if(source != null)
+        {
+            if(RadioSystemKey.isP25Native(source.radioSystemKey())) return source.radioSystemKey();
+            if(source.p25SiteIdentity() != null) return RadioSystemKey.p25(source.p25SiteIdentity());
+        }
+        return servingSystemKey(call.recordingIdentifierCollection());
+    }
+
+    /** Only a complete over-air network broadcast can supply context when no call source is available. */
+    public static String servingSystemKey(IdentifierCollection identifiers)
+    {
+        if(identifiers == null) return null;
+        Identifier<?> wacn = identifiers.getIdentifier(IdentifierClass.NETWORK, Form.WACN, Role.BROADCAST);
+        Identifier<?> system = identifiers.getIdentifier(IdentifierClass.NETWORK, Form.SYSTEM, Role.BROADCAST);
+        return wacn != null && wacn.getValue() instanceof Integer wacnValue &&
+            system != null && system.getValue() instanceof Integer systemValue ?
+            RadioSystemKey.p25(wacnValue, systemValue) : null;
+    }
 
     /** Restores the over-air identifier for both upstream text and Alias List lookup. */
     public static Identifier<?> recordingIdentifier(Identifier<?> identifier)
@@ -93,11 +122,17 @@ public final class BasicRecordingContract
         return identifier;
     }
 
-    private static String identifierText(Identifier<?> identifier)
+    private static String identifierText(Identifier<?> identifier, String servingSystemKey)
     {
         identifier = recordingIdentifier(identifier);
         if(identifier instanceof FullyQualifiedRadioIdentifier radio)
         {
+            boolean homeSystem = servingSystemKey != null &&
+                servingSystemKey.equals(RadioSystemKey.p25(radio.getWacn(), radio.getSystem()));
+            if(homeSystem)
+            {
+                return Integer.toString(radio.getValue() != 0 ? radio.getValue() : radio.getRadio());
+            }
             String home = radio.getWacn() + "." + radio.getSystem() + "." + radio.getRadio();
             return radio.getValue() != 0 && radio.getValue() != radio.getRadio() ?
                 "ROAM " + radio.getValue() + "(" + home + ")" : "ISSI " + home;
@@ -111,11 +146,11 @@ public final class BasicRecordingContract
         if(identifier instanceof PatchGroupIdentifier patch)
         {
             var group = patch.getValue();
-            String value = "P:" + identifierText(group.getPatchGroup());
+            String value = "P:" + identifierText(group.getPatchGroup(), servingSystemKey);
             if(group.hasPatchedTalkgroups()) value += " " + group.getPatchedTalkgroupIdentifiers().stream()
-                .map(BasicRecordingContract::identifierText).toList();
+                .map(member -> identifierText(member, servingSystemKey)).toList();
             if(group.hasPatchedRadios()) value += " " + group.getPatchedRadioIdentifiers().stream()
-                .map(BasicRecordingContract::identifierText).toList();
+                .map(member -> identifierText(member, servingSystemKey)).toList();
             return value;
         }
         return identifier != null ? identifier.toString() : "";
@@ -123,17 +158,32 @@ public final class BasicRecordingContract
 
     public static String sourceIdentifier(Identifier<?> identifier)
     {
-        return identifierText(identifier).replace("ISSI ", "").replace("ROAM ", "");
+        return sourceIdentifier(identifier, null);
+    }
+
+    public static String sourceIdentifier(Identifier<?> identifier, String servingSystemKey)
+    {
+        return identifierText(identifier, servingSystemKey).replace("ISSI ", "").replace("ROAM ", "");
     }
 
     public static String targetIdentifier(Identifier<?> identifier)
     {
-        return identifierText(identifier).replace("ISSI ", "");
+        return targetIdentifier(identifier, null);
+    }
+
+    public static String targetIdentifier(Identifier<?> identifier, String servingSystemKey)
+    {
+        return identifierText(identifier, servingSystemKey).replace("ISSI ", "");
     }
 
     static String filenameIdentifier(Identifier<?> identifier)
     {
-        return sourceIdentifier(identifier).replace(":", "").replace(".", "_")
+        return filenameIdentifier(identifier, null);
+    }
+
+    static String filenameIdentifier(Identifier<?> identifier, String servingSystemKey)
+    {
+        return sourceIdentifier(identifier, servingSystemKey).replace(":", "").replace(".", "_")
             .replace("(", "_").replace(")", "");
     }
 
@@ -152,9 +202,16 @@ public final class BasicRecordingContract
     static Path nextPath(Path directory, IdentifierCollection identifiers, RecordFormat format,
                          long writerTimestamp, int unknownIndex) throws IOException
     {
+        return nextPath(directory, identifiers, format, writerTimestamp, unknownIndex, servingSystemKey(identifiers));
+    }
+
+    static Path nextPath(Path directory, IdentifierCollection identifiers, RecordFormat format,
+                         long writerTimestamp, int unknownIndex, String servingSystemKey) throws IOException
+    {
         for(int version = 1; version > 0; version++)
         {
-            Path path = directory.resolve(filename(identifiers, format, writerTimestamp, unknownIndex, version));
+            Path path = directory.resolve(filename(identifiers, format, writerTimestamp, unknownIndex, version,
+                servingSystemKey));
             if(!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return path;
         }
         throw new IOException("No unused Basic recording filename is available");
@@ -162,6 +219,12 @@ public final class BasicRecordingContract
 
     static String filename(IdentifierCollection identifiers, RecordFormat format, long writerTimestamp,
                            int unknownIndex, int version)
+    {
+        return filename(identifiers, format, writerTimestamp, unknownIndex, version, servingSystemKey(identifiers));
+    }
+
+    static String filename(IdentifierCollection identifiers, RecordFormat format, long writerTimestamp,
+                           int unknownIndex, int version, String servingSystemKey)
     {
         StringBuilder body = new StringBuilder();
         if(identifiers == null)
@@ -181,7 +244,7 @@ public final class BasicRecordingContract
                 List<Identifier> targets = identifiers.getIdentifiers(Role.TO);
                 if(!targets.isEmpty()) target = targets.getFirst();
             }
-            if(target != null) body.append("_TO_").append(filenameIdentifier(target));
+            if(target != null) body.append("_TO_").append(filenameIdentifier(target, servingSystemKey));
             Identifier<?> source = identifiers.getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM);
             if(source == null)
             {
@@ -190,7 +253,7 @@ public final class BasicRecordingContract
                     if(candidate.getForm() != Form.TONE) { source = candidate; break; }
                 }
             }
-            if(source != null) body.append("_FROM_").append(filenameIdentifier(source));
+            if(source != null) body.append("_FROM_").append(filenameIdentifier(source, servingSystemKey));
             List<Identifier> tones = identifiers.getIdentifiers(IdentifierClass.USER, Form.TONE);
             if(!tones.isEmpty() && tones.getFirst() instanceof ToneIdentifier tone && tone.getValue() != null &&
                 tone.getValue().hasTones())

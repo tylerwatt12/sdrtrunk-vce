@@ -78,9 +78,16 @@ public class AudioMetadataUtils
      */
     public static Map<AudioMetadata, String> getMetadataMap(IdentifierCollection identifierCollection, AliasList aliasList)
     {
+        return getMetadataMap(identifierCollection, aliasList, BasicRecordingContract.servingSystemKey(identifierCollection));
+    }
+
+    /** Formats home-system radios using receiving context captured with the call; alias ownership is unchanged. */
+    public static Map<AudioMetadata, String> getMetadataMap(IdentifierCollection identifierCollection, AliasList aliasList,
+                                                           String servingSystemKey)
+    {
         Map<AudioMetadata, String> audioMetadata = new EnumMap<>(AudioMetadata.class);
         StringBuilder comments = new StringBuilder();
-        //The same upstream tag contract applies to recordings, streams, and audio conversion exports.
+        //Standard frames retain their upstream meanings, with the approved home-system radio display exception.
         audioMetadata.put(AudioMetadata.COMPOSER, BasicRecordingContract.composer());
         LocalDateTime now = LocalDateTime.now();
         String dateCreated = SDF.format(now);
@@ -97,7 +104,7 @@ public class AudioMetadataUtils
             if(to != null)
             {
                 sb = new StringBuilder();
-                sb.append(BasicRecordingContract.targetIdentifier(to));
+                sb.append(BasicRecordingContract.targetIdentifier(to, servingSystemKey));
 
                 List<Alias> toAliases = BasicRecordingContract.recordingAliases(aliasList, to);
 
@@ -113,7 +120,7 @@ public class AudioMetadataUtils
             if(from != null)
             {
                 sb = new StringBuilder();
-                sb.append(BasicRecordingContract.sourceIdentifier(from));
+                sb.append(BasicRecordingContract.sourceIdentifier(from, servingSystemKey));
 
                 List<Alias> fromAliases = BasicRecordingContract.recordingAliases(aliasList, from);
 
