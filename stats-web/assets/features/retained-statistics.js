@@ -907,10 +907,15 @@ export function createRetainedStatisticsWorkspace(deps) {
         const counts = preview.counts_by_part || {};
         const partIcons = { current: 'icon-spectrum', summary: 'icon-dashboard',
           buckets: 'icon-replay', events: 'icon-scan-lists' };
-        const list = metrics(target.parts.map((part) => [
+        const countRows = target.parts.map((part) => [
           partLabel(target.source_kind, target.data_type, part), counts[part] ?? 0,
           undefined, { icon: partIcons[part] }
-        ]), true);
+        ]);
+        if (Number(counts.issi_assignment_history) > 0) countRows.push([
+          'ISSI assignment history', counts.issi_assignment_history ?? 0,
+          undefined, { icon: 'icon-replay' }
+        ]);
+        const list = metrics(countRows, true);
         list.classList.add('retained-statistics-preview-counts');
         const total = node('strong', 'retained-statistics-preview-total',
           `${formatNumber(preview.rows_total ?? 0)} directly matched records`);

@@ -30,7 +30,7 @@ import {
 import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=28';
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
 import { createStreamingWorkspace } from './features/streaming.js?v=8';
-import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=9';
+import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=10';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=13';
 import { createRecordingsFeature } from './features/recordings.js?v=30';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=27';

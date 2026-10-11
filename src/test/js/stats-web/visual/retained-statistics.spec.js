@@ -28,10 +28,18 @@ async function openStatistics(page, options = {}) {
     batches_completed: 8, can_resume: false } : null;
   let jobMissing = false;
   let firstPollRelease;
+  let previewRelease;
+  let deletionRelease;
+  let heldPreview = false;
+  let heldDeletion = false;
   let actionFailed = false;
+  let deletionFailed = false;
   requests.setJob = (updates) => { currentJob = { ...currentJob, ...updates }; };
   requests.forgetJob = () => { jobMissing = true; };
   requests.releaseFirstPoll = () => firstPollRelease?.();
+  requests.releasePreview = () => previewRelease?.();
+  requests.releaseDeletion = () => deletionRelease?.();
+  requests.snapshotJob = () => structuredClone(currentJob);
   let failedPreview = false;
   const bands = Array.from({ length: 6 }, (_, index) => ({
     label: `Band ${index}`, band: index, base_hz: 851_000_000 + index * 1_000_000,
@@ -64,7 +72,8 @@ async function openStatistics(page, options = {}) {
     entity_ref: { kind: 'radio', radio_system_key: SYSTEM,
       identity_key: `v1-r-00001-001-${index === 29 ? 1234 : 3000 + index}` },
     target: scoped('radio_system', 'radios', ['summary', 'buckets', 'events'],
-      { record_key: `v1-r-00001-001-${index === 29 ? 1234 : 3000 + index}` })
+      { record_key: `v1-r-00001-001-${index === 29 ? 1234 : 3000 + index}`,
+        ...options.radioTarget })
   }));
   const aliases = Array.from({ length: 30 }, (_, index) => ({
     label: index === 29 ? 'Dispatch Console' : `Alias ${index + 1}`,
@@ -134,7 +143,10 @@ async function openStatistics(page, options = {}) {
             channel_kind: 'CONVENTIONAL', entity_ref: { kind: 'channel', key: CHANNEL },
             target: scoped('saved_channel', 'frequencies', ['summary', 'buckets', 'events'],
               { record_key: '155115000' }) }] :
-            dataType === 'radios' ? radios :
+            ['radios', 'talkgroups'].includes(dataType) ? radios.map((row) => ({
+              ...row, target: { ...row.target, source_kind: kind,
+                source_key: kind === 'saved_channel' ? CHANNEL : SYSTEM, data_type: dataType }
+            })) :
               dataType === 'alias_activity' ? aliases :
                 [{ label: dataType === 'all' ? 'All retained data' :
                   dataType === 'hourly_history' ? 'Hourly history' :
@@ -150,6 +162,13 @@ async function openStatistics(page, options = {}) {
     } else if (pathname.endsWith('/retained-statistics/preview')) {
       const target = JSON.parse(route.request().postData() || '{}').target;
       requests.previews.push(target);
+      if (options.holdPreview && !heldPreview) {
+        heldPreview = true;
+        await new Promise((resolve) => { previewRelease = resolve; });
+      }
+      const associatedRows = target.source_kind === 'radio_system' && target.data_type === 'radios' &&
+        target.parts.includes('summary') &&
+        (options.systemProtocol || 'P25') === 'P25' ? options.associatedIssiRows || 0 : 0;
       if (options.previewTooLarge) {
         await route.fulfill({ json: wrap({ outcome: 'too_large',
           counts_by_part: { summary: 100_001 }, rows_total: 100_001,
@@ -159,8 +178,11 @@ async function openStatistics(page, options = {}) {
         await route.fulfill({ status: 500, json: { error: { status: 500,
           message: 'Preview unavailable' } } });
       } else await route.fulfill({ json: wrap({ outcome: 'found',
-        counts_by_part: Object.fromEntries(target.parts.map((part) => [part, options.largeJob ? 213_000 : 2])),
-        rows_total: options.largeJob ? 213_000 : target.parts.length * 2,
+        counts_by_part: { ...Object.fromEntries(target.parts.map((part) => [part,
+          options.largeJob ? 213_000 : 2])), ...(associatedRows ?
+          { issi_assignment_history: associatedRows } : {}) },
+        rows_total: (options.largeJob ? 213_000 : target.parts.length * 2) +
+          associatedRows,
         effects: target.data_type === 'issi_assignment_history' ?
           ['Saved Working ID assignments and their observation counts are removed.',
             'Current assignments, radio IDs and aliases remain. Receiving can create new assignment history.'] :
@@ -169,6 +191,15 @@ async function openStatistics(page, options = {}) {
       route.request().method() === 'POST') {
       const body = JSON.parse(route.request().postData() || '{}');
       requests.writes.push(body);
+      if (options.holdDeletion && !heldDeletion) {
+        heldDeletion = true;
+        await new Promise((resolve) => { deletionRelease = resolve; });
+      }
+      if (options.deletionFailsOnce && !deletionFailed) {
+        deletionFailed = true;
+        return route.fulfill({ status: 500,
+          json: { error: { status: 500, message: 'Cleanup unavailable' } } });
+      }
       if (currentJob) currentJob.target = body.target;
       await route.fulfill({ status: 202, json: wrap(currentJob ? { ...currentJob, rows_deleted: 0 } :
         { job_id: 'job-1', state: 'running' }) });
@@ -356,6 +387,147 @@ test('radio names and IDs link to details, with server search before pagination'
     .toHaveText('Delete…');
   expect(requests.results).toContainEqual(expect.objectContaining({ dataType: 'radios',
     q: 'Engine 12', offset: 0 }));
+});
+
+async function openRadioDeletion(page, options = {}, { conventional = false,
+  type = 'radios', summary = true, bulk = false } = {}) {
+  const requests = await openStatistics(page, options);
+  const workspace = page.locator('.retained-statistics-page');
+  if (conventional) {
+    await workspace.getByRole('button', { name: 'Conventional channel', exact: true }).click();
+    await workspace.getByRole('combobox', { name: 'Conventional channel' }).selectOption(CHANNEL);
+  } else await workspace.getByRole('combobox', { name: 'Radio system' }).selectOption(SYSTEM);
+  const label = bulk ? 'All retained data in scope' : type === 'talkgroups' ?
+    'Talkgroups' : conventional ? 'DMR radio IDs' : 'Radio IDs';
+  await workspace.getByRole('button', { name: label, exact: true }).click();
+  if (!summary) await workspace.getByRole('checkbox', { name: 'Identity summary' }).uncheck();
+  await workspace.getByRole('button', { name: `Delete statistics for ${bulk ?
+    'All retained data' : 'Radio 3000'}`, exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  if (!options.holdPreview && !options.previewFailsOnce) {
+    await expect(dialog.getByText(/\d directly matched records/)).toBeVisible();
+  }
+  return { requests, workspace, dialog };
+}
+
+for (const theme of ['light', 'dark']) for (const mobile of [false, true]) {
+  test(`associated ISSI cleanup preview fits ${theme} ${mobile ? 'mobile' : 'desktop'}`,
+    async ({ page }, testInfo) => {
+      const width = mobile ? 390 : 1440;
+      await page.setViewportSize({ width, height: mobile ? 844 : 1000 });
+      const { requests, workspace, dialog } = await openRadioDeletion(page,
+        { theme, associatedIssiRows: 3 });
+      await expect(dialog.getByRole('checkbox')).toHaveCount(0);
+      await expect(dialog.getByText('9 directly matched records')).toBeVisible();
+      const cards = dialog.locator('.retained-statistics-preview-counts .ui-metric');
+      await expect(cards).toHaveCount(4);
+      await expect(cards.locator('strong')).toHaveText(['2', '2', '2', '3']);
+      await expect(cards.getByText('ISSI assignment history', { exact: true })).toBeVisible();
+      const dialogBounds = await dialog.boundingBox();
+      const bounds = await cards.evaluateAll((items) => items.map((item) => {
+        const rect = item.getBoundingClientRect();
+        return { left: rect.left, right: rect.right };
+      }));
+      bounds.forEach((card) => {
+        expect(card.left).toBeGreaterThan(dialogBounds.x);
+        expect(card.right).toBeLessThan(dialogBounds.x + dialogBounds.width);
+      });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+      await dialog.screenshot({ path: testInfo.outputPath(`associated-issi-${theme}-${mobile ? 'mobile' : 'desktop'}.png`) });
+      await dialog.getByRole('button', { name: 'Delete statistics', exact: true }).click();
+      await expect(workspace.getByText('Statistics deleted.')).toBeVisible();
+      expect(requests.writes[0].target).not.toHaveProperty('include_issi_history');
+      expect(requests.writes[0].target).toEqual(requests.previews[0]);
+      expect(requests.previews).toHaveLength(1);
+    });
+}
+
+for (const [name, options, scope] of [
+  ['no history', { associatedIssiRows: 0 }, {}],
+  ['missing history count', {}, {}],
+  ['non-P25', { associatedIssiRows: 3, systemProtocol: 'NXDN' }, {}],
+  ['unqualified radio', { associatedIssiRows: 0,
+    radioTarget: { record_key: 'v1-r-_-_-3000' } }, {}],
+  ['talkgroup', { associatedIssiRows: 3 }, { type: 'talkgroups' }],
+  ['conventional radio', { associatedIssiRows: 3 }, { conventional: true }],
+  ['summary unchecked', { associatedIssiRows: 3 }, { summary: false }],
+  ['bulk cleanup', { associatedIssiRows: 3 }, { bulk: true }]
+]) {
+  test(`associated ISSI cleanup is absent for ${name}`, async ({ page }) => {
+    const { requests, dialog } = await openRadioDeletion(page, options, scope);
+    await expect(dialog.getByRole('checkbox')).toHaveCount(0);
+    await expect(dialog.getByText('ISSI assignment history', { exact: true })).toHaveCount(0);
+    expect(requests.previews[0]).not.toHaveProperty('include_issi_history');
+    expect(requests.writes).toHaveLength(0);
+  });
+}
+
+test('associated ISSI cleanup is included in radio summaries without an individual target', async ({ page }) => {
+  const { requests, dialog } = await openRadioDeletion(page,
+    { associatedIssiRows: 3, radioTarget: { record_key: null } });
+  await expect(dialog.getByText('9 directly matched records')).toBeVisible();
+  await expect(dialog.getByText('ISSI assignment history', { exact: true })).toBeVisible();
+  await expect(dialog.getByRole('checkbox')).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Delete statistics', exact: true }).click();
+  expect(requests.writes[0].target).toEqual(requests.previews[0]);
+  expect(requests.writes[0].target).not.toHaveProperty('include_issi_history');
+});
+
+test('associated ISSI cleanup requires a successful preview', async ({ page }) => {
+  const { requests, dialog } = await openRadioDeletion(page,
+    { associatedIssiRows: 3, holdPreview: true, previewFailsOnce: true });
+  const confirm = dialog.getByRole('button', { name: 'Delete statistics', exact: true });
+  await expect(confirm).toBeDisabled();
+  await expect(dialog.getByText('Checking affected records…')).toBeVisible();
+  await expect.poll(() => requests.previews.length).toBe(1);
+  requests.releasePreview();
+  await expect(dialog.getByText('Affected records could not be checked.')).toBeVisible();
+  await expect(confirm).toBeDisabled();
+  expect(requests.writes).toHaveLength(0);
+  await dialog.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect(dialog.getByText('9 directly matched records')).toBeVisible();
+  await expect(confirm).toBeEnabled();
+  expect(requests.previews.at(-1)).not.toHaveProperty('include_issi_history');
+  await confirm.click();
+  await expect.poll(() => requests.writes.length).toBe(1);
+  expect(requests.writes[0].target).toEqual(requests.previews.at(-1));
+});
+
+test('associated ISSI cleanup target stays fixed during submission and retry', async ({ page }) => {
+  const { requests, dialog } = await openRadioDeletion(page,
+    { associatedIssiRows: 3, holdDeletion: true, deletionFailsOnce: true });
+  const confirm = dialog.getByRole('button', { name: 'Delete statistics', exact: true });
+  await expect(dialog.getByText('9 directly matched records')).toBeVisible();
+  await confirm.click();
+  await expect(confirm).toBeDisabled();
+  await expect(dialog).toHaveAttribute('aria-busy', 'true');
+  await expect.poll(() => requests.writes.length).toBe(1);
+  requests.releaseDeletion();
+  await expect(dialog.getByText('Cleanup unavailable')).toBeVisible();
+  await expect(confirm).toBeEnabled();
+  await expect(dialog.getByRole('checkbox')).toHaveCount(0);
+  await confirm.click();
+  requests.releaseDeletion();
+  await expect.poll(() => requests.writes.length).toBe(2);
+  expect(requests.writes[1]).toEqual(requests.writes[0]);
+  expect(requests.writes[1].target).not.toHaveProperty('include_issi_history');
+  await expect(dialog).not.toBeVisible();
+});
+
+test('associated ISSI cleanup survives cancel resume and page refresh', async ({ page }) => {
+  const { requests, workspace, dialog } = await openRadioDeletion(page,
+    { associatedIssiRows: 3, largeJob: true });
+  await expect(dialog.getByText('213,003 directly matched records')).toBeVisible();
+  await dialog.getByRole('button', { name: 'Delete statistics', exact: true }).click();
+  await workspace.getByRole('button', { name: 'Stop cleanup' }).click();
+  await expect(workspace.getByRole('button', { name: 'Resume cleanup' })).toBeVisible();
+  await page.reload();
+  await page.locator('.retained-statistics-page').getByRole('button', { name: 'Resume cleanup' }).click();
+  await expect(page.locator('.retained-statistics-page').getByRole('button', { name: 'Stop cleanup' })).toBeVisible();
+  expect(requests.snapshotJob().target).toEqual(requests.writes[0].target);
+  expect(requests.snapshotJob().target).not.toHaveProperty('include_issi_history');
+  expect(requests.actions).toEqual(['cancel', 'resume']);
+  expect(requests.writes).toHaveLength(1);
 });
 
 test('Alias Activity supports individual reset and an explicit global reset', async ({ page }) => {
