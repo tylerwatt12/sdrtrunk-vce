@@ -206,6 +206,137 @@ class RetainedStatisticsAdminHttpControllerTest
     }
 
     @Test
+    void radioRemovalOffersAssociatedIssiHistoryAndRetainsTheOptInAcrossJobRecovery() throws Exception
+    {
+        seedAssociatedIssiHistory();
+        Session admin = login();
+        String base = RetainedStatisticsAdminHttpController.PATH;
+        Map<String,Object> target = radioTarget();
+        HttpResponse<String> original = preview(admin, target);
+        assertEquals(200, original.statusCode(), original.body());
+        assertEquals(1, json(original).at("/data/rows_total").longValue());
+        assertEquals(2, json(original).at("/data/associated_issi_history_rows").longValue());
+        assertFalse(json(original).at("/data/counts_by_part").has("issi_assignment_history"),
+            "Related history remains optional for existing radio deletion requests");
+
+        target.put("include_issi_history", false);
+        assertEquals(json(original).get("data"), json(preview(admin, target)).get("data"));
+        target.put("include_issi_history", true);
+        HttpResponse<String> included = preview(admin, target);
+        assertEquals(200, included.statusCode(), included.body());
+        assertEquals(3, json(included).at("/data/rows_total").longValue());
+        assertEquals(1, json(included).at("/data/counts_by_part/summary").longValue());
+        assertEquals(2, json(included).at("/data/counts_by_part/issi_assignment_history").longValue());
+
+        String id = UUID.randomUUID().toString();
+        String body = MAPPER.writeValueAsString(Map.of("request_id", id, "target", target));
+        HttpResponse<String> accepted = send(mutation(base + "/deletions", admin)
+            .POST(HttpRequest.BodyPublishers.ofString(body)));
+        assertEquals(202, accepted.statusCode(), accepted.body());
+        StatsDatabaseMaintenanceRequest first = mDispatched.get();
+        assertTrue(((StatsDatabaseMaintenanceRequest.ScopedData)first.deletionTarget()).includeIssiHistory());
+        JsonNode recovered = json(send(request(base + "/deletions/" + id)
+            .header("Cookie", admin.cookie()).GET())).get("data");
+        assertTrue(recovered.at("/target/include_issi_history").booleanValue());
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabase);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE radio_system_identity_summary SET p25_subscriber_identity_id=NULL " +
+                "WHERE id=7102");
+        }
+        assertEquals(202, send(mutation(base + "/deletions", admin).POST(HttpRequest.BodyPublishers.ofString(
+            MAPPER.writeValueAsString(Map.of("request_id", id, "target", recovered.get("target")))))).statusCode(),
+            "A retry returns its original job even if subscriber qualification has since changed");
+        assertEquals(1, mDispatchCount.get());
+        target.put("include_issi_history", false);
+        assertEquals(409, send(mutation(base + "/deletions", admin).POST(HttpRequest.BodyPublishers.ofString(
+            MAPPER.writeValueAsString(Map.of("request_id", id, "target", target))))).statusCode(),
+            "Changing the optional related history creates a different deletion target");
+
+        writerProgress(first, "initializeProgress", new Class<?>[]{long.class, long.class, long.class},
+            3L, 4000L, 0L);
+        writerProgress(first, "setResumable", new Class<?>[]{boolean.class}, true);
+        first.result().complete(new ReceiverActivityMaintenance.Result(
+            ReceiverActivityMaintenance.Operation.DELETE_RETAINED_STATS, 0, null, 0, 0, 0, 0,
+            ReceiverActivityMaintenance.DeletionOutcome.INTERRUPTED));
+        assertEquals(202, send(mutation(base + "/deletions/" + id + "/resume", admin)
+            .POST(HttpRequest.BodyPublishers.ofString("{}"))).statusCode());
+        assertEquals(first.deletionTarget(), mDispatched.get().deletionTarget());
+        assertTrue(((StatsDatabaseMaintenanceRequest.ScopedData)mDispatched.get().deletionTarget())
+            .includeIssiHistory());
+        assertEquals(4000, mDispatched.get().progress().cutoffMs());
+    }
+
+    @Test
+    void associatedIssiHistoryRequiresAnExplicitBooleanAndOneQualifiedP25RadioSummary() throws Exception
+    {
+        seedAssociatedIssiHistory();
+        Session admin = login();
+        for(Object invalid: new Object[]{"true", 1, null})
+        {
+            Map<String,Object> target = radioTarget();
+            target.put("include_issi_history", invalid);
+            HttpResponse<String> response = preview(admin, target);
+            assertEquals(400, response.statusCode(), response.body());
+            assertEquals("include_issi_history", json(response).at("/error/field").textValue());
+        }
+
+        for(String invalidScope: List.of("bulk", "site", "talkgroup", "events", "unqualified",
+            "unknown_radio", "unknown_system", "dmr", "saved_channel"))
+        {
+            Map<String,Object> target = radioTarget();
+            target.put("include_issi_history", true);
+            switch(invalidScope)
+            {
+                case "bulk" -> target.remove("record_key");
+                case "site" -> {
+                    target.put("site_configuration_id", SITE_A);
+                    target.put("expected_site_key", RetainedSiteKey.p25(1, 1, 71, 71L, 1000));
+                }
+                case "talkgroup" -> {
+                    target.put("data_type", "talkgroups");
+                    target.put("record_key", "v1-t-bee00-49f-101");
+                }
+                case "events" -> target.put("parts", List.of("events"));
+                case "unqualified" -> target.put("record_key", "v1-r-bee01-49f-202");
+                case "unknown_radio" -> target.put("record_key", "v1-r-bee00-49f-999");
+                case "unknown_system" -> target.put("source_key", "p25:bee00:999");
+                case "dmr" -> target.put("source_key", "dmr:tier3:small:42");
+                case "saved_channel" -> {
+                    target.put("source_kind", "saved_channel");
+                    target.put("source_key", DMR_CHANNEL);
+                    target.put("record_key", "460012500:2:202");
+                }
+            }
+            String body = MAPPER.writeValueAsString(Map.of("request_id", UUID.randomUUID().toString(),
+                "target", target));
+            assertEquals(400, send(mutation(RetainedStatisticsAdminHttpController.PATH + "/deletions", admin)
+                .POST(HttpRequest.BodyPublishers.ofString(body))).statusCode(), invalidScope);
+            if(!"unknown_system".equals(invalidScope))
+                assertEquals(400, preview(admin, target).statusCode(), invalidScope);
+        }
+        assertEquals(0, mDispatchCount.get(), "Invalid optional history scope must never reach the writer");
+    }
+
+    @Test
+    void conventionalCallTotalsPreviewIncludesRadioAndTalkgroupSummaries() throws Exception
+    {
+        var page = mCatalog.results("saved_channel", DMR_CHANNEL, "call_activity", null, null, 10, 0);
+        assertEquals(1, page.totalCount());
+        @SuppressWarnings("unchecked")
+        Map<String,Object> target = new LinkedHashMap<>((Map<String,Object>)page.rows().getFirst().get("target"));
+        target.put("parts", List.of("summary", "buckets"));
+        HttpResponse<String> response = preview(login(), target);
+        assertEquals(200, response.statusCode(), response.body());
+        assertEquals(5, json(response).at("/data/counts_by_part/summary").longValue(),
+            "Channel call totals and both radio/talkgroup summaries are counted together");
+        assertEquals(1, json(response).at("/data/counts_by_part/buckets").longValue());
+        assertEquals(6, json(response).at("/data/rows_total").longValue());
+        assertEquals(0, json(response).at("/data/associated_issi_history_rows").longValue());
+    }
+
+    @Test
     void catalogRequiresSourceAndSiteAndPagesExactOwnedTargets() throws Exception
     {
         RetainedStatisticsCatalog.Page sources = mCatalog.sources("radio_system", null, 10, 0);
@@ -859,6 +990,44 @@ class RetainedStatisticsAdminHttpControllerTest
         target.put("data_type", "control_quality");
         target.put("parts", List.of("buckets"));
         return target;
+    }
+
+    private static Map<String,Object> radioTarget()
+    {
+        Map<String,Object> target = new LinkedHashMap<>();
+        target.put("kind", "scoped_data");
+        target.put("source_kind", "radio_system");
+        target.put("source_key", SYSTEM);
+        target.put("data_type", "radios");
+        target.put("record_key", "v1-r-bee00-49f-202");
+        target.put("parts", List.of("summary"));
+        return target;
+    }
+
+    private HttpResponse<String> preview(Session admin, Map<String,Object> target) throws Exception
+    {
+        return send(mutation(RetainedStatisticsAdminHttpController.PATH + "/preview", admin)
+            .POST(HttpRequest.BodyPublishers.ofString(MAPPER.writeValueAsString(Map.of("target", target)))));
+    }
+
+    private void seedAssociatedIssiHistory() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabase);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA foreign_keys=ON");
+            statement.executeUpdate("INSERT INTO p25_subscriber_identity(id,home_wacn,home_system_id,subscriber_id) " +
+                "VALUES(71,0xBEE00,0x49F,202),(72,0xBEE01,0x49F,202)");
+            statement.executeUpdate("UPDATE radio_system_identity_summary SET p25_subscriber_identity_id=71 " +
+                "WHERE id=7102");
+            statement.executeUpdate("INSERT INTO p25_wuid_assignment_observation_summary " +
+                "(radio_system_id,working_id,p25_subscriber_identity_id,first_observed_ms,last_observed_ms," +
+                "last_registration_ms,registration_count,last_evidence_code,last_channel_id) " +
+                "VALUES(71,77,71,1000,4000,4000,4,1,71),(71,78,71,1000,4000,4000,1,1,72)," +
+                "(71,77,72,1000,4000,4000,1,1,71),(73,77,71,1000,4000,4000,1,1,73)");
+            statement.executeUpdate("INSERT INTO radio_system(id,system_key,protocol_code,dmr_model_code,dmr_network_id," +
+                "first_seen_ms,last_seen_ms) VALUES(75,'dmr:tier3:small:42',3,2,42,1000,1000)");
+        }
     }
 
     /** Stand-in for the background writer; the HTTP controller only reads these counters. */

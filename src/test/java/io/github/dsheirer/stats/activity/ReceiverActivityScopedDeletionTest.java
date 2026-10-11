@@ -236,7 +236,7 @@ class ReceiverActivityScopedDeletionTest
                 "radios", "v1-r-x-x-321", List.of("summary"));
             ReceiverActivityMaintenance.Preview preview = ReceiverActivityMaintenance.preview(connection, target);
             assertEquals(3, preview.rowsTotal());
-            assertTrue(preview.effects().stream().anyMatch(effect -> effect.contains("foreign keys")));
+            assertTrue(preview.effects().stream().anyMatch(effect -> effect.contains("linked hourly history")));
             assertEquals(1, ReceiverActivityDeletion.delete(connection, target).rowsDeleted());
             assertEquals(0, count(connection, "radio_system_identity_summary"));
             assertEquals(0, count(connection, "trunked_logical_call_identity_bucket"));
