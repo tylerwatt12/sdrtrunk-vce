@@ -7,7 +7,7 @@ const vm = require('node:vm');
 const radioLabelsSource = fs.readFileSync(path.resolve(__dirname,
   '../../../../stats-web/assets/core/radio-labels.js'), 'utf8');
 const radioLabels = vm.runInNewContext(radioLabelsSource.replace(/^export .*;$/m, '') +
-  '\n({formatP25RadioIdentifier});');
+  '\n({formatP25RadioIdentifier,p25ServingSystemKey});');
 const source = fs.readFileSync(path.resolve(__dirname, '../../../../stats-web/assets/app.js'), 'utf8');
 
 function declaration(name) {
@@ -20,6 +20,10 @@ function declaration(name) {
     if (quote) {
       if (char === '\\') index++;
       else if (char === quote) quote = '';
+    } else if (char === '/' && source[index + 1] === '/') {
+      index = source.indexOf('\n', index);
+    } else if (char === '/' && source[index + 1] === '*') {
+      index = source.indexOf('*/', index + 2) + 1;
     } else if (['\'', '"', '`'].includes(char)) quote = char;
     else if (char === '{') depth++;
     else if (char === '}' && --depth === 0) {
@@ -32,7 +36,8 @@ function declaration(name) {
 
 class Element {
   constructor(tag, className = '', text = '') {
-    this.tag = tag; this.className = className; this.textContent = text;
+    this.tag = tag; this.tagName = tag.toUpperCase(); this.dataset = {};
+    this.className = className; this.textContent = text;
     this.children = []; this.isConnected = true; this.listeners = {};
     this.classList = { add: (...values) => { this.className = [this.className, ...values].filter(Boolean).join(' '); } };
   }
@@ -42,6 +47,8 @@ class Element {
   prepend(...values) { this.children.unshift(...values); }
   setAttribute(name, value) { this[name] = value; }
   addEventListener(name, handler) { this.listeners[name] = handler; }
+  focus(options) { this.focused = true; this.focusOptions = options; }
+  querySelector() { return null; }
 }
 
 function descendant(element, tag) {
@@ -57,6 +64,200 @@ function facts(element) {
   const result = descendant(element, 'dl');
   assert.ok(result, 'Expected identity or receiver status facts.');
   return result.values;
+}
+
+async function siteBandPlanChecks() {
+  const entityRefSource = fs.readFileSync(path.resolve(__dirname,
+    '../../../../stats-web/assets/core/entity-ref.js'), 'utf8');
+  const entityRefs = vm.runInNewContext(entityRefSource.replace(/^export .*;$/m, '') +
+    '\n({href});', { URLSearchParams });
+  const browsingSource = fs.readFileSync(path.resolve(__dirname,
+    '../../../../stats-web/assets/core/browsing-workflows.js'), 'utf8');
+  const browsingWorkflows = vm.runInNewContext(browsingSource.replace(/^export /gm, '') +
+    '\n({createBrowsingPager,pageRangeText});');
+  const configurationId = '11111111-1111-4111-8111-111111111111';
+  const otherConfigurationId = '22222222-2222-4222-8222-222222222222';
+  const route = new URLSearchParams({ tab: 'frequencies', configuration_id: otherConfigurationId,
+    offset: '500', q: 'unrelated search', sort: 'base_hz', direction: 'desc' });
+  const originalRoute = route.toString();
+  const channel = { configuration_id: configurationId, radio_system_key: 'p25:bee00:348',
+    protocol: 'P25', name: 'A very long configured site name that must keep its exact site identity',
+    site_name: 'A different long broadcast site name', rfss: 1, site_id: 7 };
+  const calls = [], sections = [], renderedTables = [], homeTables = [];
+  const content = new Element('main');
+  const signal = { aborted: false };
+  const renderContext = { signal };
+  let current = true, failure = false, delayedResponse = null, mayViewRadio = true;
+  let frequencyLoads = 0;
+  const node = (...args) => new Element(...args);
+  const fragment = (...children) => { const result = node('fragment'); result.append(...children); return result; };
+  const rows = Array.from({ length: 101 }, (_, index) => ({ foreign_wacn: 0xBEE00,
+    foreign_system_id: 0x100 + index, band: 2, base_hz: 851000000, spacing_hz: 12500,
+    observed_on: { ...channel, entity_ref: { kind: 'channel', key: configurationId } } }));
+  const context = {
+    URLSearchParams, route, content, node, fragment, browsingWorkflows,
+    renderIsCurrent: () => current && !signal.aborted,
+    radioSystemApiPath: (key, suffix) => `/api/v1/radio-systems/${key}/${suffix}`,
+    channelApiPath: (key, suffix) => `/api/v1/channels/${key}/${suffix}`,
+    apiPage: async (url, parameters, options) => {
+      calls.push({ url, parameters: { ...parameters }, options });
+      if (failure) throw new Error('Connection lost');
+      if (delayedResponse) await delayedResponse;
+      const offset = parameters.offset;
+      return { rows: rows.slice(offset, offset + 100), offset, limit: 100, total_count: rows.length,
+        has_more: offset === 0, next_offset: offset === 0 ? 100 : null };
+    },
+    api: async () => ({ home_bands: [{ band: 3 }] }),
+    createAsyncSection: (title, options) => {
+      const host = node('div'), titleActions = node('div');
+      if (options.action) titleActions.append(options.action);
+      const element = options.bare ? host : node('section', 'ui-section', title);
+      if (!options.bare) element.append(host, titleActions);
+      const section = { host, element, titleActions, tableController: {}, options,
+        load: async (loader, present) => {
+          if (!current || signal.aborted) return { state: 'stale' };
+          try {
+            const result = await loader();
+            if (!current || signal.aborted) return { state: 'stale' };
+            host.replaceChildren(present(result));
+            return { state: 'ready' };
+          } catch (error) {
+            if (!current || signal.aborted) return { state: 'stale' };
+            host.replaceChildren(node('error', '', options.errorMessage));
+            return { state: 'error', error };
+          }
+        } };
+      sections.push(section); return section;
+    },
+    table: (data, columns, empty, options) => {
+      const result = node('table'); Object.assign(result, { data, columns, empty, options });
+      renderedTables.push(result); return result;
+    },
+    tableSection: (title, data, columns, empty, options) => {
+      const result = node('section', '', title); Object.assign(result, { data, columns, empty, options });
+      homeTables.push(result); return result;
+    },
+    anchor: (label, target, className) => { const result = node('a', className, label); result.href = target; return result; },
+    href: (view, values) => `/?${new URLSearchParams({ view, ...values })}`,
+    entityRefHref: entityRefs.href,
+    capabilityAllowed: () => mayViewRadio, ACCESS_CAPABILITIES: { RADIO: 'radio' },
+    valueNode: value => node('text', '', String(value)),
+    isP25: value => value.protocol === 'P25', protocolFamily: value => value.protocol,
+    hex: (value, width) => value == null ? '' : Number(value).toString(16).toUpperCase().padStart(width, '0'),
+    identifierNumber: value => value == null ? '' : String(value), number: value => String(value),
+    semanticLabel: value => value, frequency: value => value / 1000000,
+    dateTime: value => value, stackedDateTime: value => value, yesNo: value => value ? 'Yes' : 'No',
+    badge: value => value, compactStateBadge: value => value,
+    systemLabels: { systemName: () => '' },
+    trunkedChannelTabItems: () => [{ id: 'info' }, { id: 'frequencies' }],
+    channelDisplayParts: value => ({ primary: value.name, secondary: value.site_name }),
+    trunkedVariant: () => '', radioSystemPrimaryName: () => '', channelLocationIdentity: () => '',
+    pageHeader: title => node('header', '', title), entityPageTitle: (kind, value) => `${kind}: ${value}`,
+    channelValue: value => value.name, trunkedChannelTabs: () => node('tabs'),
+    beginPage: (context, ...children) => {
+      if (!current || signal.aborted) return false;
+      content.replaceChildren(...children); return true;
+    },
+    channelCapability: (value, capability) => value[capability] !== false,
+    renderTrunkedChannelFrequencies: async (value, context, host) => {
+      frequencyLoads++; host.append(node('frequency-table'));
+    },
+    renderTrunkedChannelInfo: async () => {}, isSavedChannelRadioSystem: () => false
+  };
+  const names = ['renderTrunkedChannelIssiBandPlans', 'renderTrunkedChannel', 'renderTrunkedChannelBandPlans',
+    'issiBandColumns', 'issiObservedOnCell', 'issiHomeSystemCell', 'issiHomeSystemText',
+    'presenceChannelDisplayParts', 'presenceChannelIdentity', 'identitySummaryValue',
+    'normalizedSiteText', 'sameSiteText'];
+  const behavior = vm.runInNewContext(names.map(declaration).join('\n') +
+    '\n({renderTrunkedChannel,renderTrunkedChannelIssiBandPlans,issiObservedOnCell});', context);
+  await behavior.renderTrunkedChannel(channel, configurationId, renderContext);
+  assert.equal(calls.length, 1, 'The site must reuse one ISSI collection request.');
+  assert.equal(calls[0].url, '/api/v1/radio-systems/p25:bee00:348/issi/frequency-bands');
+  assert.deepEqual(calls[0].parameters, { configuration_id: configurationId, offset: 0,
+    limit: 100, sort: 'identity', direction: 'asc' },
+  'Site ISSI must use its exact saved channel and an independent first page, regardless of route filters.');
+  assert.equal(calls[0].options.signal, signal, 'Navigation cancellation must apply to the ISSI request.');
+  const directory = sections.find(section => section.element.textContent === 'ISSI Advertised Band Plans');
+  const frequencyLayout = content.children.find(element => element.className.startsWith('channel-frequency-layout'));
+  assert.equal(content.children.at(-1), directory.element,
+    'The wide ISSI table must sit outside the frequency and home-band columns.');
+  assert.equal(homeTables.length, 1, 'The home-band response must not create a second foreign-band panel.');
+  assert.equal(homeTables[0].textContent, 'Home System Band Plan');
+  const destination = new URL(descendant(directory.titleActions, 'a').href, 'https://fixture.invalid');
+  assert.equal(destination.searchParams.get('configuration_id'), configurationId);
+  assert.equal(destination.searchParams.get('issi_view'), 'frequency-bands');
+  assert.equal(destination.searchParams.get('radio_system_key'), channel.radio_system_key);
+  assert.equal(renderedTables[0].options.type, 'issi-frequency-bands.channel');
+  assert.equal(renderedTables[0].options.mobileCards, true);
+  assert.equal(renderedTables[0].options.serverSort, false);
+  assert.equal(renderedTables[0].options.sortable, false,
+    'A bounded site table must not imply that sorting one page sorts the full collection.');
+  assert.equal(renderedTables[0].options.layoutMenuHost, directory.titleActions);
+  assert.equal(renderedTables[0].data.length, 100);
+  assert.notEqual(renderedTables[0].data[0].foreign_system_id, renderedTables[0].data[1].foreign_system_id,
+    'Equal band numbers from different foreign systems must retain separate identities.');
+  const pagerButton = action => descendant(directory.host, 'nav').children[1].children
+    .find(button => button.dataset.pageAction === action);
+  assert.equal(pagerButton('previous').disabled, true);
+  await pagerButton('next').onclick();
+  assert.equal(calls.at(-1).parameters.offset, 100);
+  assert.equal(calls.at(-1).parameters.configuration_id, configurationId);
+  assert.equal(renderedTables.at(-1).data.length, 1);
+  assert.equal(directory.host.focused, true, 'Paging must return keyboard focus to the updated ISSI section.');
+  assert.equal(directory.host.tabIndex, -1);
+  assert.equal(pagerButton('next').disabled, true);
+  await pagerButton('previous').onclick();
+  assert.equal(calls.at(-1).parameters.offset, 0);
+  assert.equal(route.toString(), originalRoute, 'Local paging must not change the frequency-table route.');
+  assert.equal(frequencyLoads, 1, 'ISSI paging must leave the frequency table in place.');
+  assert.equal(content.children.find(element => element === frequencyLayout), frequencyLayout);
+
+  const heardOn = renderedTables[0].columns.find(column => column.id === 'observed-on').render(rows[0]);
+  assert.equal(heardOn.className, 'identity-summary', 'Long names must reuse the shared compact identity presentation.');
+  const siteLink = descendant(heardOn, 'a');
+  assert.equal(siteLink.textContent, channel.name);
+  assert.equal(new URL(siteLink.href, 'https://fixture.invalid').searchParams.get('configuration_id'), configurationId,
+    'Heard On must link to the exact observed site entity.');
+  assert.match(heardOn.title, /RFSS 01 · Site 07/);
+  assert.match(heardOn.title, /different long broadcast site name/);
+  assert.equal(descendant(behavior.issiObservedOnCell({ observed_on: { ...channel } }), 'a'), null,
+    'A matching site name without a typed entity reference must not manufacture a link.');
+  mayViewRadio = false;
+  assert.equal(descendant(behavior.issiObservedOnCell(rows[0]), 'a'), null);
+  mayViewRadio = true;
+
+  failure = true;
+  await pagerButton('next').onclick();
+  assert.equal(descendant(directory.host, 'error').textContent, directory.options.errorMessage);
+  assert.equal(frequencyLoads, 1, 'An ISSI request failure must remain within its own section.');
+  assert.equal(homeTables.length, 1);
+  failure = false;
+  for (const unsupported of [{ ...channel, protocol: 'DMR' }, { ...channel, radio_system_key: null },
+    { ...channel, frequency_bands: false }]) {
+    const before = calls.length;
+    await behavior.renderTrunkedChannel(unsupported, configurationId, renderContext);
+    assert.equal(calls.length, before, 'Only a P25 site with band plans and a system identity may request ISSI bands.');
+  }
+  route.set('tab', 'info');
+  const beforeInfo = calls.length;
+  await behavior.renderTrunkedChannel(channel, configurationId, renderContext);
+  assert.equal(calls.length, beforeInfo, 'The site Info tab must not fetch frequency-band data.');
+  current = false;
+  await behavior.renderTrunkedChannelIssiBandPlans(channel, renderContext);
+  assert.equal(calls.length, beforeInfo, 'A stale site render must not start an ISSI request.');
+  current = true;
+  let release;
+  delayedResponse = new Promise(resolve => { release = resolve; });
+  const pendingRender = behavior.renderTrunkedChannelIssiBandPlans(channel, renderContext);
+  const pendingDirectory = sections.at(-1);
+  current = false;
+  content.replaceChildren(node('new-page'));
+  const beforeLateResponse = renderedTables.length;
+  release();
+  await pendingRender;
+  assert.equal(renderedTables.length, beforeLateResponse, 'A completed old request must not repaint after navigation.');
+  assert.equal(pendingDirectory.host.children.length, 0);
+  assert.equal(content.children[0].tag, 'new-page');
 }
 
 async function main() {
@@ -77,6 +278,7 @@ async function main() {
   const context = {
     ...radioLabels,
     URLSearchParams, route, document, content, node, fragment,
+    sourceNameDisplayMode: () => 'alias',
     radioSystemApiPath: (key, suffix) => `/api/v1/radio-systems/${key}/${suffix}`,
     renderIsCurrent: () => current,
     apiPage: async (url, parameters) => {
@@ -282,6 +484,7 @@ async function main() {
   assert.equal(unnamed.secondary, '');
   assert.equal(behavior.issiHomeSystemCell({canonical_identity:canonical}).primary, '92498.926',
     'An unknown friendly system name must still show the exact home-system identity.');
+  await siteBandPlanChecks();
   console.log('ISSI workspace behavior checks passed');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

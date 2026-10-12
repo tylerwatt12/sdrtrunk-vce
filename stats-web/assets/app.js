@@ -21335,35 +21335,55 @@ function renderTrunkedChannelBandPlans(channel, data) {
   );
   const bandSource = badge(overrideActive ? 'P25 override' : 'OTA band plan',
     overrideActive ? 'state-current' : '');
-  const issiTarget = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) && channel.radio_system_key ?
-    href('radio-system', { radio_system_key: channel.radio_system_key, tab: 'issi',
-      issi_view: 'frequency-bands', configuration_id: channel.configuration_id }) : '';
-  const issiContext = node('p', 'ui-section-note',
-    'These foreign band plans are advertisements heard on this channel. ');
-  if (issiTarget) issiContext.append(anchor('View this system’s ISSI Band Plans', issiTarget));
-  return fragment(issiContext, tableSection('Home System Band Plan', data.home_bands || [], homeBandColumns,
+  return tableSection('Home System Band Plan', data.home_bands || [], homeBandColumns,
     'No home-system band plan recorded', { type: overrideActive ? 'channel-frequency-bands-override' :
-      'channel-frequency-bands', tableClass: 'ui-data-table-calm' }, null, bandSource),
-  data.foreign_bands?.length ? tableSection('ISSI Advertised Band Plans', data.foreign_bands, [
-    { id: 'system', label: 'System', fullLabel: 'Foreign System', render: (row) => relatedRadioSystemLink(row),
-      sortValue: (row) => radioSystemDisplayName(relatedRadioSystem(row)) },
-    { id: 'band', label: 'Band', key: 'band', className: 'numeric' },
-    { id: 'mode', label: 'Mode', render: (row) => semanticLabel(row.access_mode) },
-    { id: 'base', label: 'Base', fullLabel: 'Base MHz', render: (row) => frequency(row.base_hz), className: 'numeric', sortValue: (row) => Number(row.base_hz || 0) },
-    { id: 'spacing', label: 'Space', fullLabel: 'Spacing kHz', render: (row) => row.spacing_hz ? (row.spacing_hz / 1000).toFixed(3) : '', className: 'numeric', sortValue: (row) => Number(row.spacing_hz || 0) },
-    { id: 'bandwidth', label: 'BW Hz', fullLabel: 'Bandwidth Hz', key: 'bandwidth_hz', className: 'numeric' },
-    { id: 'offset', label: 'Offset', fullLabel: 'Offset MHz', render: (row) => row.transmit_offset_hz ? (row.transmit_offset_hz / 1000000).toFixed(5) : '', className: 'numeric', sortValue: (row) => Number(row.transmit_offset_hz || 0) },
-    { id: 'slots', label: 'Slots', key: 'timeslots', className: 'numeric' },
-    { id: 'voice-rate', label: 'Voice Rate', render: (row) => semanticLabel(row.voice_rate) },
-    { id: 'state', label: 'State', render: (row) => compactStateBadge(row.state), sortValue: (row) => row.state || '' },
-    { id: 'observations', label: 'Obs', fullLabel: 'Observations',
-      render: (row) => number(row.observation_count), className: 'numeric',
-      sortValue: (row) => Number(row.observation_count || 0) },
-    { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => stackedDateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
-  ], 'No ISSI-advertised band plans recorded', { type: 'channel-foreign-frequency-bands',
-    tableClass: 'ui-data-table-calm' }) :
-    section('ISSI Advertised Band Plans',
-      node('p', 'muted channel-frequency-note', 'No ISSI-advertised band plans recorded')));
+      'channel-frequency-bands', tableClass: 'ui-data-table-calm' }, null, bandSource);
+}
+
+async function renderTrunkedChannelIssiBandPlans(channel, renderContext) {
+  if (!renderIsCurrent(renderContext)) return;
+  const directory = createAsyncSection('ISSI Advertised Band Plans', {
+    action: anchor('View in ISSI', href('radio-system', {
+      radio_system_key: channel.radio_system_key, tab: 'issi', issi_view: 'frequency-bands',
+      configuration_id: channel.configuration_id
+    }), 'ui-button ui-button-secondary'),
+    loadingMessage: 'Loading ISSI-advertised band plans…',
+    errorMessage: 'The ISSI-advertised band plans could not be loaded.'
+  });
+  content.append(directory.element);
+  // Reuse the system's ISSI collection and identity cells. Keep this table full-width
+  // with its own paging so long names and navigation cannot crowd the frequency grid.
+  const load = async (offset = 0, focusAfterPage = false) => {
+    if (!renderIsCurrent(renderContext)) return;
+    const result = await directory.load(
+      () => apiPage(radioSystemApiPath(channel.radio_system_key, 'issi/frequency-bands'), {
+        configuration_id: channel.configuration_id, offset, limit: 100, sort: 'identity', direction: 'asc'
+      }, { signal: renderContext.signal }),
+      (page) => fragment(
+        table(page.rows, issiBandColumns(), 'No ISSI-advertised band plans heard on this site.', {
+          type: 'issi-frequency-bands.channel', mobileCards: true, sortable: false, serverSort: false,
+          tableClass: 'ui-data-table-calm', controller: directory.tableController,
+          layoutMenuHost: directory.titleActions
+        }),
+        browsingWorkflows.createBrowsingPager({ node, ariaLabel: 'Site ISSI band-plan pages',
+          countText: browsingWorkflows.pageRangeText({ offset: page.offset, visible: page.rows.length,
+            total: page.total_count, label: 'Band plans', format: number }),
+          previous: { enabled: page.offset > 0,
+            onClick: () => load(Math.max(0, page.offset - page.limit), true) },
+          next: { enabled: page.has_more, onClick: () => load(page.next_offset, true) }
+        })),
+      renderContext);
+    if (focusAfterPage && renderIsCurrent(renderContext) && directory.host.isConnected) {
+      if (result?.state === 'ready') {
+        directory.host.tabIndex = -1;
+        directory.host.focus({ preventScroll: true });
+      } else if (result?.state === 'error') {
+        directory.host.querySelector('.async-section-retry')?.focus();
+      }
+    }
+    return result;
+  };
+  await load();
 }
 
 async function renderTrunkedChannel(channel, configurationId, renderContext) {
@@ -21407,6 +21427,9 @@ async function renderTrunkedChannel(channel, configurationId, renderContext) {
       layout.append(bandPlanColumn);
       tasks.push(bands.load(() => api(channelApiPath(configurationId, 'frequency-bands')),
         (data) => renderTrunkedChannelBandPlans(channel, data), renderContext));
+      if (isP25(channel) && channel.radio_system_key) {
+        tasks.push(renderTrunkedChannelIssiBandPlans(channel, renderContext));
+      }
     }
     await Promise.all(tasks);
   } else if (tab === 'neighbors') {
