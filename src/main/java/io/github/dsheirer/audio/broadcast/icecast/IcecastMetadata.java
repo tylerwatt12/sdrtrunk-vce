@@ -22,6 +22,7 @@ import com.google.common.base.Joiner;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.audio.broadcast.BroadcastIdentifierFormatter;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
@@ -40,6 +41,13 @@ public class IcecastMetadata
      * Creates the title for a metadata update
      */
     public static String getTitle(IdentifierCollection identifierCollection, AliasModel AliasModel)
+    {
+        return getTitle(identifierCollection, AliasModel,
+            BroadcastIdentifierFormatter.servingSystemKey(identifierCollection));
+    }
+
+    public static String getTitle(IdentifierCollection identifierCollection, AliasModel AliasModel,
+                                  String servingSystemKey)
     {
         StringBuilder sb = new StringBuilder();
 
@@ -76,7 +84,7 @@ public class IcecastMetadata
                 }
                 else
                 {
-                    sb.append("TO:").append(to);
+                    sb.append("TO:").append(BroadcastIdentifierFormatter.format(to, servingSystemKey));
 
                     if(!aliases.isEmpty())
                     {
@@ -103,7 +111,7 @@ public class IcecastMetadata
 
             if(from != null)
             {
-                sb.append(" FROM:").append(from);
+                sb.append(" FROM:").append(BroadcastIdentifierFormatter.format(from, servingSystemKey));
 
                 List<Alias> aliases = aliasList.getAliases(from);
 

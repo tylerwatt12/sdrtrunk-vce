@@ -12,7 +12,6 @@ package io.github.dsheirer.audio.broadcast.radioresolve;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.gson.JsonObject;
@@ -347,7 +346,7 @@ class RadioResolveCallEnvelopeTest
     }
 
     @Test
-    void canonicalSourceObservationRetainsOnlyAnExplicitWorkingAddress()
+    void canonicalSourceObservationPreservesLegacyNumericLocalId()
     {
         Identifier<?> identityOnly = APCO25FullyQualifiedRadioIdentifier.createFrom(900_001,
             RadioResolveTestFixtures.WACN, RadioResolveTestFixtures.SYSTEM, 900_001);
@@ -355,7 +354,7 @@ class RadioResolveCallEnvelopeTest
             recordingWithSource(identityOnly, true), RadioResolveTestFixtures.SUBMISSION_ID)
             .envelope().reception().source();
         assertEquals(900_001L, withoutWorking.canonicalId());
-        assertNull(withoutWorking.localId());
+        assertEquals(900_001L, withoutWorking.localId());
 
         Identifier<?> equalWorking = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(900_001,
             RadioResolveTestFixtures.WACN, RadioResolveTestFixtures.SYSTEM, 900_001);
@@ -367,11 +366,11 @@ class RadioResolveCallEnvelopeTest
     }
 
     @Test
-    void directCanonicalSourceFallbackRetainsOnlyAnExplicitWorkingAddress()
+    void directCanonicalSourceFallbackPreservesLegacyNumericLocalId()
     {
         Identifier<?> identityOnly = APCO25FullyQualifiedRadioIdentifier.createFrom(900_001,
             RadioResolveTestFixtures.WACN, RadioResolveTestFixtures.SYSTEM, 900_001);
-        assertNull(RadioResolveCallEnvelope.create(recordingWithSource(identityOnly, false),
+        assertEquals(900_001L, RadioResolveCallEnvelope.create(recordingWithSource(identityOnly, false),
             RadioResolveTestFixtures.SUBMISSION_ID).envelope().reception().source().localId());
 
         Identifier<?> distinctWorking = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(700_001,
@@ -386,6 +385,30 @@ class RadioResolveCallEnvelopeTest
             RadioResolveTestFixtures.WACN, RadioResolveTestFixtures.SYSTEM, 900_001);
         assertEquals(900_001L, RadioResolveCallEnvelope.create(recordingWithSource(equalWorking, false),
             RadioResolveTestFixtures.SUBMISSION_ID).envelope().reception().source().localId());
+    }
+
+    @Test
+    void zeroSourceLocalIdIsSerializedAlongsideItsCanonicalIdentity()
+    {
+        Identifier<?> source = APCO25FullyQualifiedRadioIdentifier.createFrom(0,
+            RadioResolveTestFixtures.WACN, RadioResolveTestFixtures.SYSTEM, 900_001);
+
+        for(boolean retainSummaryObservation : List.of(true, false))
+        {
+            RadioResolveCallEnvelope.BuildResult build = RadioResolveCallEnvelope.create(
+                recordingWithSource(source, retainSummaryObservation), RadioResolveTestFixtures.SUBMISSION_ID);
+            assertTrue(build.accepted(), build.rejectionReason());
+            JsonObject root = RadioResolveJson.GSON.toJsonTree(build.envelope()).getAsJsonObject();
+
+            for(String scope : List.of("call", "reception"))
+            {
+                JsonObject projected = root.getAsJsonObject(scope).getAsJsonObject("source");
+                assertEquals(0L, projected.get("local_id").getAsLong());
+                assertEquals(900_001L, projected.get("canonical_id").getAsLong());
+                assertEquals(RadioResolveTestFixtures.WACN, projected.get("home_wacn").getAsInt());
+                assertEquals(RadioResolveTestFixtures.SYSTEM, projected.get("home_system_id").getAsInt());
+            }
+        }
     }
 
     @Test
@@ -551,6 +574,13 @@ class RadioResolveCallEnvelopeTest
             .map(RadioResolveCallEnvelope.Party::type).toList());
         assertEquals(List.of(12_346L, 900_002L), projected.members().stream()
             .map(RadioResolveCallEnvelope.Party::canonicalId).toList());
+        JsonObject radio = RadioResolveJson.GSON.toJsonTree(envelope).getAsJsonObject()
+            .getAsJsonObject("reception").getAsJsonObject("destination").getAsJsonArray("members")
+            .get(1).getAsJsonObject();
+        assertEquals(700_002L, radio.get("local_id").getAsLong());
+        assertEquals(900_002L, radio.get("canonical_id").getAsLong());
+        assertEquals(RadioResolveTestFixtures.WACN, radio.get("home_wacn").getAsInt());
+        assertEquals(RadioResolveTestFixtures.SYSTEM, radio.get("home_system_id").getAsInt());
     }
 
     @Test

@@ -57,6 +57,7 @@ public abstract class AudioStreamingBroadcaster<T extends BroadcastConfiguration
     protected int mInlineRemaining = -1;
 
     private int mTimeOverrun = 0;
+    private volatile String mInputServingSystemKey;
 
     /**
      * AudioBroadcaster for streaming audio recordings to a remote streaming audio server.  Audio recordings are
@@ -103,6 +104,12 @@ public abstract class AudioStreamingBroadcaster<T extends BroadcastConfiguration
      */
     protected abstract IBroadcastMetadataUpdater getMetadataUpdater();
 
+    /** Serving system captured with the recording currently being streamed. */
+    protected String getInputServingSystemKey()
+    {
+        return mInputServingSystemKey;
+    }
+
     /**
      * Broadcasts the next song's audio metadata prior to streaming the next song.
      *
@@ -114,7 +121,7 @@ public abstract class AudioStreamingBroadcaster<T extends BroadcastConfiguration
 
         if(metadataUpdater != null)
         {
-            metadataUpdater.update(identifierCollection);
+            metadataUpdater.update(identifierCollection, getInputServingSystemKey());
         }
     }
 
@@ -140,6 +147,8 @@ public abstract class AudioStreamingBroadcaster<T extends BroadcastConfiguration
      */
     public void stop()
     {
+        mInputServingSystemKey = null;
+
         if(mStreaming.compareAndSet(true, false))
         {
             if(mRecordingQueueProcessorFuture != null)
@@ -224,6 +233,7 @@ public abstract class AudioStreamingBroadcaster<T extends BroadcastConfiguration
 
             if(!connected())
             {
+                mInputServingSystemKey = null;
                 //Reset inline metadata
                 mInlineRemaining = -1;
                 //Remove all pending audio recordings
@@ -306,6 +316,7 @@ public abstract class AudioStreamingBroadcaster<T extends BroadcastConfiguration
 
                     if((mInputFrames == null || !mInputFrames.hasNextFrame()) && timeSent < PROCESSOR_RUN_INTERVAL_MS)
                     {
+                        mInputServingSystemKey = null;
                         long silenceDurationMs = (long)PROCESSOR_RUN_INTERVAL_MS - mTimeOverrun - timeSent;
                         AudioFrames silenceFrames = mSilenceGenerator.generate(silenceDurationMs);
                         while(silenceFrames.hasNextFrame())
@@ -320,6 +331,7 @@ public abstract class AudioStreamingBroadcaster<T extends BroadcastConfiguration
                 }
                 catch(Throwable t)
                 {
+                    mInputServingSystemKey = null;
                     mLog.error("Error while processing audio streaming queue", t);
                 }
 
@@ -344,6 +356,7 @@ public abstract class AudioStreamingBroadcaster<T extends BroadcastConfiguration
 
             mInputFrames = null;
             mInputIdentifierCollection = null;
+            mInputServingSystemKey = null;
 
             //Peek at the next recording but don't remove it from the queue yet, so we can inspect the start time for
             //age limits and/or delay elapsed
@@ -381,11 +394,14 @@ public abstract class AudioStreamingBroadcaster<T extends BroadcastConfiguration
                             {
                                 throw new IllegalArgumentException("Unsupported broadcast format [" + mBroadcastFormat + "]");
                             }
-                            mInputIdentifierCollection = nextRecording.getIdentifierCollection();
+                            mInputIdentifierCollection = BroadcastIdentifierFormatter.streamIdentifiers(
+                                nextRecording.getCompletedCallMetadata(), nextRecording.getIdentifierCollection());
+                            mInputServingSystemKey = BroadcastIdentifierFormatter.servingSystemKey(
+                                nextRecording.getCompletedCallMetadata(), mInputIdentifierCollection);
 
                             if(connected())
                             {
-                                broadcastMetadata(nextRecording.getIdentifierCollection());
+                                broadcastMetadata(mInputIdentifierCollection);
                             }
 
                             metadataUpdateRequired = false;
@@ -399,6 +415,7 @@ public abstract class AudioStreamingBroadcaster<T extends BroadcastConfiguration
 
                     mInputFrames = null;
                     mInputIdentifierCollection = null;
+                    mInputServingSystemKey = null;
                     metadataUpdateRequired = false;
                 }
 

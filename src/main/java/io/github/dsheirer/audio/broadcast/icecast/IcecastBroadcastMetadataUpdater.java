@@ -22,6 +22,7 @@ import com.google.common.base.Joiner;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.audio.broadcast.BroadcastIdentifierFormatter;
 import io.github.dsheirer.audio.broadcast.IBroadcastMetadataUpdater;
 import io.github.dsheirer.audio.broadcast.icecast.IcecastConfiguration;
 import io.github.dsheirer.audio.broadcast.icecast.IcecastMetadata;
@@ -75,6 +76,12 @@ public class IcecastBroadcastMetadataUpdater implements IBroadcastMetadataUpdate
      */
     public void update(IdentifierCollection identifierCollection)
     {
+        update(identifierCollection, BroadcastIdentifierFormatter.servingSystemKey(identifierCollection));
+    }
+
+    @Override
+    public void update(IdentifierCollection identifierCollection, String servingSystemKey)
+    {
         if(mIcecastConfiguration.hasInline())
         {
             // Never send out-of-band metadata if inline metadata is enabled.
@@ -92,7 +99,8 @@ public class IcecastBroadcastMetadataUpdater implements IBroadcastMetadataUpdate
             sb.append("/admin/metadata?mode=updinfo&mount=");
             sb.append(URLEncoder.encode(mIcecastConfiguration.getMountPoint(), UTF8));
             sb.append("&charset=UTF%2d8");
-            sb.append("&song=").append(URLEncoder.encode(IcecastMetadata.getTitle(identifierCollection, mAliasModel), UTF8));
+            sb.append("&song=").append(URLEncoder.encode(
+                IcecastMetadata.getTitle(identifierCollection, mAliasModel, servingSystemKey), UTF8));
         }
         catch(UnsupportedEncodingException uee)
         {

@@ -94,7 +94,8 @@ public class IcecastHTTPAudioBroadcaster extends IcecastAudioBroadcaster<Icecast
 
             if(mInlineActive)
             {
-                byte[] metadata = IcecastMetadata.formatInline(IcecastMetadata.getTitle(identifierCollection, mAliasModel)).getBytes();
+                byte[] metadata = IcecastMetadata.formatInline(IcecastMetadata.getTitle(identifierCollection,
+                    mAliasModel, getInputServingSystemKey())).getBytes();
                 buffer.setAutoExpand(true);
                 if (mInlineRemaining == -1)
                 {

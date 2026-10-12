@@ -28,4 +28,16 @@ public interface IBroadcastMetadataUpdater
      * @param identifierCollection containing metadata attributes
      */
     void update(IdentifierCollection identifierCollection);
+
+    /**
+     * Updates metadata with the serving system captured for the recording being streamed.
+     * Existing updaters may continue to consume only the identifier collection.
+     *
+     * @param identifierCollection containing metadata attributes
+     * @param servingSystemKey captured native receiving-system key, or null when unknown
+     */
+    default void update(IdentifierCollection identifierCollection, String servingSystemKey)
+    {
+        update(identifierCollection);
+    }
 }

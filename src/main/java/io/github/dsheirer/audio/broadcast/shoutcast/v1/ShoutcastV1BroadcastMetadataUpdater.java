@@ -23,6 +23,7 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.audio.broadcast.IBroadcastMetadataUpdater;
+import io.github.dsheirer.audio.broadcast.BroadcastIdentifierFormatter;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
@@ -119,7 +120,13 @@ public class ShoutcastV1BroadcastMetadataUpdater implements IBroadcastMetadataUp
      */
     public void update(IdentifierCollection identifierCollection)
     {
-        mMetadataQueue.offer(getSong(identifierCollection));
+        update(identifierCollection, BroadcastIdentifierFormatter.servingSystemKey(identifierCollection));
+    }
+
+    @Override
+    public void update(IdentifierCollection identifierCollection, String servingSystemKey)
+    {
+        mMetadataQueue.offer(getSong(identifierCollection, servingSystemKey));
 
         if(mUpdating.compareAndSet(false, true))
         {
@@ -176,7 +183,7 @@ public class ShoutcastV1BroadcastMetadataUpdater implements IBroadcastMetadataUp
     /**
      * Creates the song information for a metadata update
      */
-    private String getSong(IdentifierCollection identifierCollection)
+    String getSong(IdentifierCollection identifierCollection, String servingSystemKey)
     {
         StringBuilder sb = new StringBuilder();
 
@@ -213,7 +220,7 @@ public class ShoutcastV1BroadcastMetadataUpdater implements IBroadcastMetadataUp
                 }
                 else
                 {
-                    sb.append("TO:").append(to);
+                    sb.append("TO:").append(BroadcastIdentifierFormatter.format(to, servingSystemKey));
                 }
 
                 if(!aliases.isEmpty())
@@ -240,7 +247,7 @@ public class ShoutcastV1BroadcastMetadataUpdater implements IBroadcastMetadataUp
 
             if(from != null)
             {
-                sb.append(" FROM:").append(from);
+                sb.append(" FROM:").append(BroadcastIdentifierFormatter.format(from, servingSystemKey));
 
                 List<Alias> aliases = aliasList.getAliases(from);
 

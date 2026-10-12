@@ -527,10 +527,8 @@ public record RadioResolveCallEnvelope(int schemaVersion, String submissionId, l
         }
         else if(identifier instanceof FullyQualifiedRadioIdentifier fqRadio)
         {
-            Integer workingAddress = fqRadio.getWorkingAddress();
-            return new Party("radio", workingAddress != null ? workingAddress.longValue() : null,
-                (long)fqRadio.getRadio(), fqRadio.getWacn(),
-                fqRadio.getSystem(), List.of());
+            return new Party("radio", fqRadio.getValue().longValue(), (long)fqRadio.getRadio(),
+                fqRadio.getWacn(), fqRadio.getSystem(), List.of());
         }
         else if(identifier instanceof TalkgroupIdentifier talkgroup && talkgroup.getValue() != null)
         {
@@ -580,17 +578,7 @@ public record RadioResolveCallEnvelope(int schemaVersion, String submissionId, l
 
         long canonicalId = observation.homeIdentityId() != null ? observation.homeIdentityId() :
             observation.observedLocalId();
-        Long localId;
-        if(observation.form() == Form.RADIO && observation.homeIdentityId() != null)
-        {
-            localId = observation.observedWorkingId() != null ?
-                observation.observedWorkingId().longValue() : null;
-        }
-        else
-        {
-            localId = Integer.valueOf(observation.observedLocalId()).longValue();
-        }
-        return new Party(type, localId, canonicalId, observation.homeWacn(),
+        return new Party(type, (long)observation.observedLocalId(), canonicalId, observation.homeWacn(),
             observation.homeSystemId(), List.copyOf(members));
     }
 

@@ -115,7 +115,8 @@ public class IcecastTCPAudioBroadcaster extends IcecastAudioBroadcaster<IcecastT
                     {
                         mInlineRemaining = mInlineInterval;
 
-                        byte[] metadata = IcecastMetadata.formatInline(IcecastMetadata.getTitle(identifierCollection, mAliasModel)).getBytes();
+                        byte[] metadata = IcecastMetadata.formatInline(IcecastMetadata.getTitle(identifierCollection,
+                            mAliasModel, getInputServingSystemKey())).getBytes();
 
                         if(mVerboseLogging)
                         {
