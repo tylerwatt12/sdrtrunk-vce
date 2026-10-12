@@ -461,6 +461,8 @@ async function main() {
       'Radio Home Network · 1863924', 'Foreign recording radios use their friendly home system name');
     assert.equal(primaryFact(foreignRadio, 'Source'), 'Radio BEE00.4A2.1863924',
       'An unnamed foreign recording radio must retain its full home address');
+    assert.equal(primaryFact({ ...foreignRadio, serving_system_key: null }, 'Source'), 'Radio 1863924',
+      'Captured unknown receiving context must suppress a home prefix despite a retained routing key');
     assert.equal(primaryFact({ ...foreignRadio, source_home_id: null }, 'Source'), 'Radio 1863924',
       'An incomplete saved home address must not imply a permanent radio ID');
     const { rememberSystemNames } = await import(labelsUrl);

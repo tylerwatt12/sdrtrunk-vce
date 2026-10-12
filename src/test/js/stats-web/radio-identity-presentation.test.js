@@ -25,6 +25,9 @@ assert.equal(callFormats.formatVoiceQuality('unknown'), '');
 
 const source = fs.readFileSync(path.resolve(process.argv[2] ||
   path.resolve(__dirname, '../../../../stats-web/assets/app.js')), 'utf8');
+assert.ok(source.includes('liveDetailCaptureRow(events, order, event,'),
+  'Live capture retains the event directly instead of inferring scope from a table selection.');
+assert.ok(!source.includes('liveEventCaptured'), 'Live capture needs no passthrough presentation wrapper.');
 const labelsSource = fs.readFileSync(path.resolve(__dirname,
   '../../../../stats-web/assets/core/system-labels.js'), 'utf8');
 const systemLabels = vm.runInNewContext(labelsSource.replace(/^export .*;$/m, '') +
@@ -32,7 +35,7 @@ const systemLabels = vm.runInNewContext(labelsSource.replace(/^export .*;$/m, ''
 const radioLabelsSource = fs.readFileSync(path.resolve(__dirname,
   '../../../../stats-web/assets/core/radio-labels.js'), 'utf8');
 const radioLabels = vm.runInNewContext(radioLabelsSource.replace(/^export .*;$/m, '') +
-  '\n({formatP25RadioIdentifier, p25ServingSystemKey});');
+  '\n({formatP25RadioIdentifier, formatP25QualifiedIdentifierText, p25ServingSystemKey});');
 const sourceNamesSource = fs.readFileSync(path.resolve(__dirname,
   '../../../../stats-web/assets/core/source-names.js'), 'utf8');
 const sourceNames = vm.runInNewContext(sourceNamesSource.replace(/^export /m, '') + '\n({formatSourceName});');
@@ -147,7 +150,6 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('p25IdentityEvidenceLabel')}
   ${functionSource('liveIdentityFacts')}
   ${functionSource('liveIdentifierAliasValue')}
-  ${functionSource('liveEventCaptured')}
   ${functionSource('liveEventRadioRow')}
   ${functionSource('liveEventReplaceRadioText')}
   ${functionSource('liveEventIdentifierText')}
@@ -160,23 +162,23 @@ const behavior = vm.runInNewContext(`(() => {
     scannerNetworkSiteIdentity, observedGroupIdentityKey, radioIdentifierText, liveIdentityActionTitle,
     activityIdentifier, activitySourceAlias, activitySourceTalkerAlias, activityTargetAlias,
     activityIdentitySuggestion, activityIdentityInitialSelection, liveIdentityFacts, liveIdentifierAliasValue,
-    liveEventCaptured, liveEventRadioRow, liveEventIdentifierText, liveEventPartyText, liveEventDetailsText,
+    liveEventRadioRow, liveEventIdentifierText, liveEventPartyText, liveEventDetailsText,
     liveEventMatchesQuery };
 })()`, { URLSearchParams, systemLabels, ...radioLabels, ...sourceNames });
 
 assert.equal(behavior.radioIdentifierText({
   protocol: 'P25', canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 9_601_699 },
   working_subscriber_id: 130_001
-}, 130_001), 'BEE00.348.9601699 (Working ID 130001)');
+}, 130_001), '9601699 (Working ID 130001)');
 assert.equal(behavior.radioIdentifierText({
   protocol: 'P25', canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 2_115_288 },
   observed_working_id: 501
-}, 2_115_288), 'BEE00.348.2115288 (Working ID 501)');
+}, 2_115_288), '2115288 (Working ID 501)');
 assert.equal(behavior.radioIdentifierText({
   protocol: 'APCO25', source_canonical_identity: {
     wacn: 0xBEE00, system_id: 0x348, subscriber_id: 9_601_699
   }, source_id: 130_001, source_observed_working_id: 130_001
-}, 130_001, 'source'), 'BEE00.348.9601699 (Working ID 130001)');
+}, 130_001, 'source'), '9601699 (Working ID 130001)');
 assert.equal(behavior.radioIdentifierText({
   protocol: 'P25', home_wacn: 0xBEE00, home_system_id: 0x348, native_id: 130_001
 }, 130_001), '130001',
@@ -185,12 +187,12 @@ assert.equal(behavior.radioIdentifierText({
   protocol: 'P25', source_canonical_identity: {
     wacn: 0x92498, system_id: 0x926, subscriber_id: 34_006
   }, source_id: 130_002, source_observed_working_id: 130_002
-}, 130_002), '92498.926.34006 (Working ID 130002)');
+}, 130_002), '34006 (Working ID 130002)');
 assert.equal(behavior.radioIdentifierText({
   protocol: 'P25', target_canonical_identity: {
     wacn: 0xBEE00, system_id: 0x348, subscriber_id: 0xFFFFFC
   }, target_id: 130_003, target_observed_working_id: 130_003
-}, 130_003), 'BEE00.348.16777212 (Working ID 130003)');
+}, 130_003), '16777212 (Working ID 130003)');
 assert.equal(behavior.radioIdentifierText({
   protocol: 'P25', target_canonical_identity: {
     wacn: 0xBEE00, system_id: 0x348, subscriber_id: 0xFFFFFD
@@ -205,26 +207,26 @@ for (const missing of [null, undefined, '', ' ']) {
   'A partial scalar identity must not fabricate a zero home system.');
 }
 assert.equal(behavior.radioIdentifierText({ protocol: 'P25', canonical_wacn: 0,
-  canonical_system_id: 0, canonical_subscriber_id: 501 }, 501), '00000.000.501',
+  canonical_system_id: 0, canonical_subscriber_id: 501 }, 501), '501',
   'Explicit numeric zero home values are retained.');
 assert.equal(behavior.radioIdentifierText({
   protocol: 'P25', canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 501 },
   observed_working_id: 0
-}, 501), 'BEE00.348.501', 'Zero must not be appended as an observed working ID.');
+}, 501), '501', 'Zero must not be appended as an observed working ID.');
 assert.equal(behavior.radioIdentifierText({
   protocol: 'P25', canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 501 },
   observed_working_id: 0xFFFFFD
-}, 501), 'BEE00.348.501', 'Reserved addresses must not be appended as observed working IDs.');
+}, 501), '501', 'Reserved addresses must not be appended as observed working IDs.');
 assert.equal(behavior.radioIdentifierText({
   protocol: 'P25', canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 501 },
   observed_working_id: 501
-}, 501), 'BEE00.348.501',
+}, 501), '501',
   'An equal Working ID must not repeat the subscriber number in the radio label.');
 assert.equal(behavior.liveIdentityActionTitle({
   protocol: 'APCO25', source_form: 'RADIO', source_id: 130_001,
   source_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 9_601_699 },
   source_observed_working_id: 130_001
-}, 'source'), 'Radio BEE00.348.9601699 (Working ID 130001)',
+}, 'source'), 'Radio 9601699 (Working ID 130001)',
   'The Live action dialog title must retain the canonical subscriber and explicit working ID.');
 assert.match(functionSource('liveIdentityActionLink'),
   /openReadOnlyModal\(liveIdentityActionTitle\(row, kind, label\),/,
@@ -248,21 +250,21 @@ const dockCall = {
   target_canonical_identity: { wacn: 0x92498, system_id: 0x926, subscriber_id: 16_777_212 },
   target_observed_working_id: 130_002
 };
-assert.equal(dock.sourceSummary(dockCall), 'Engine 42 · Radio BEE00.348.9601699 (Working ID 130001)');
+assert.equal(dock.sourceSummary(dockCall), 'Engine 42 · Radio 9601699 (Working ID 130001)');
 const namedDockCall = { ...dockCall, talker_alias: 'ENG 42' };
 assert.equal(dock.sourceName(namedDockCall), 'ENG 42');
-assert.equal(dock.sourceSummary(namedDockCall), 'ENG 42 · Radio BEE00.348.9601699 (Working ID 130001)',
+assert.equal(dock.sourceSummary(namedDockCall), 'ENG 42 · Radio 9601699 (Working ID 130001)',
   'The audio dock prefers the talker alias while retaining the full radio identity');
 sourceMode = 'source_alias';
 assert.equal(dock.sourceName(namedDockCall), 'Engine 42');
 sourceMode = 'both';
 assert.equal(dock.sourceName(namedDockCall), 'Engine 42 · ENG 42');
-assert.equal(dock.sourceSummary(namedDockCall), 'Engine 42 · ENG 42 · Radio BEE00.348.9601699 (Working ID 130001)');
+assert.equal(dock.sourceSummary(namedDockCall), 'Engine 42 · ENG 42 · Radio 9601699 (Working ID 130001)');
 assert.equal(dock.sourceName({ ...namedDockCall, talker_alias: 'engine 42' }), 'Engine 42');
 sourceMode = 'talker_alias';
-assert.equal(dock.sourceId(dockCall), 'BEE00.348.9601699 (Working ID 130001)');
-assert.equal(dock.targetId(dockCall), '92498.926.16777212 (Working ID 130002)');
-assert.equal(dock.title(dockCall), 'Radio 92498.926.16777212 (Working ID 130002)');
+assert.equal(dock.sourceId(dockCall), '9601699 (Working ID 130001)');
+assert.equal(dock.targetId(dockCall), '16777212 (Working ID 130002)');
+assert.equal(dock.title(dockCall), 'Radio 16777212 (Working ID 130002)');
 assert.equal(dock.title({ target_id: 1201, target_form: 'TALKGROUP' }), 'TGID 1201');
 assert.equal(dock.title({ destination_radio_id: 501 }), 'Radio 501');
 assert.equal(dock.sourceSummary({}), '', 'Missing source facts remain empty in the audio player.');
@@ -273,7 +275,7 @@ assert.match(dockSource, /JSON\.stringify\(\[source, panel, getSourceNameDisplay
 assert.equal(behavior.activityIdentifier({
   protocol: 'P25', source_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 16_777_212 },
   source_observed_working_id: 130_001
-}, 16_777_212, 'radio', null, false, 'source'), 'BEE00.348.16777212 (Working ID 130001)',
+}, 16_777_212, 'radio', null, false, 'source'), '16777212 (Working ID 130001)',
 'An explicit permanent subscriber tuple takes precedence over a bare special-number interpretation.');
 assert.equal(behavior.activityIdentifier({ protocol: 'P25' }, 16_777_212, 'radio', null, false).textContent, 'FNE',
   'Bare special signaling remains labeled FNE.');
@@ -479,7 +481,7 @@ const foreignRadio = { ...localRadio, radio_system_key: 'p25:00001:047', home_sy
 assert.equal(behavior.radioIdentifierText(foreignRadio, 4326018), 'County Radio · 4326018',
   'Foreign radios retain their home system even when the numeric IDs match.');
 assert.equal(behavior.radioIdentifierText({ ...foreignRadio, home_system_name: '', radio_system_key: '' },
-  4326018), 'BEE00.348.4326018', 'Unknown serving context retains a full address.');
+  4326018), '4326018', 'Unknown serving context cannot add a home prefix.');
 assert.equal(behavior.radioIdentifierText({ ...localRadio, radio_system_key: 'p25:00001:348' },
   4326018), 'BEE00.348.4326018', 'Matching SysID alone does not establish local ownership.');
 const prefixedLocal = { protocol: 'P25', radio_system_key: localRadio.radio_system_key,
@@ -500,13 +502,13 @@ assert.equal(behavior.liveIdentifierAliasValue({ ...liveSource,
 assert.equal(behavior.liveIdentifierAliasValue({ ...liveSource, source_observed_working_id: 501 }, 'source'),
   '4326018 (Working ID 501)');
 assert.equal(behavior.liveIdentifierAliasValue({ ...liveSource, source_entity_ref: null }, 'source'),
-  'County Radio · 4326018', 'Retained rows without safe navigation must not inherit the current table scope.');
+  '4326018', 'Retained rows without safe navigation must not inherit the current table scope.');
 const liveTarget = { protocol: 'P25', target_id: 4326018, target_form: 'RADIO',
   target_canonical_identity: localRadio.canonical_identity, target_home_system_name: 'County Radio',
   target_entity_ref: liveSource.source_entity_ref };
 assert.equal(behavior.liveIdentifierAliasValue(liveTarget, 'target'), '4326018');
 assert.equal(behavior.liveIdentifierAliasValue({ ...liveTarget, target_entity_ref: null,
-  source_entity_ref: liveSource.source_entity_ref }, 'target'), 'County Radio · 4326018',
+  source_entity_ref: liveSource.source_entity_ref }, 'target'), '4326018',
   'A target radio must never borrow the source radio serving scope.');
 assert.equal(behavior.liveIdentifierAliasValue({ ...liveSource, radio_system_key: 'p25:00001:047' }, 'source'),
   'County Radio · 4326018', 'Explicit receiving scope wins over a conflicting endpoint reference.');
@@ -515,17 +517,22 @@ const eventRadio = { text: 'BEE00.348.4326018 (Working ID 4326018)', form: 'RADI
 const rawEvent = { protocol: 'APCO25', from_party: [eventRadio], from_identifiers: eventRadio.text,
   to_party: [{ text: '91', form: 'TALKGROUP', protocol: 'APCO25' }, eventRadio],
   to_identifiers: `91, ${eventRadio.text}`, details: `ACCEPTED UNIT REGISTRATION - UNIT ID:${eventRadio.text}` };
-const capturedEvent = behavior.liveEventCaptured(rawEvent, { radioSystemKey: 'p25:bee00:348' });
+const capturedEvent = rawEvent;
+assert.equal(capturedEvent.radio_system_key, undefined,
+  'A live table selection must not invent serving-system facts for a captured event.');
+assert.equal(behavior.liveEventPartyText({ ...rawEvent, serving_system_key: null,
+  radio_system_key: 'p25:00001:047' }, 'from'), '4326018',
+  'Captured unknown context takes precedence over a routing scope.');
 assert.equal(behavior.liveEventPartyText(capturedEvent, 'from'), '4326018',
   'Events use complete radio facts instead of displaying decoder-formatted text.');
 assert.equal(behavior.liveEventPartyText(capturedEvent, 'to'), '91, 4326018',
   'Mixed talkgroup and radio parties retain the talkgroup unchanged.');
 assert.equal(behavior.liveEventDetailsText(capturedEvent), 'ACCEPTED UNIT REGISTRATION - UNIT ID:4326018');
 assert.equal(capturedEvent.details, rawEvent.details, 'Original decoder detail text remains available for inspection.');
-assert.equal(behavior.liveEventCaptured({ ...rawEvent, radio_system_key: 'p25:00001:047' },
-  { radioSystemKey: 'p25:bee00:348' }).radio_system_key, 'p25:00001:047');
-assert.equal(behavior.liveEventPartyText(behavior.liveEventCaptured(rawEvent, {}), 'from'),
-  'BEE00.348.4326018', 'Unknown serving scope retains the home prefix but omits an equal Working ID.');
+assert.equal(behavior.liveEventPartyText({ ...rawEvent, radio_system_key: 'p25:00001:047' }, 'from'),
+  'BEE00.348.4326018', 'Legacy events retain their explicit receiving scope.');
+assert.equal(behavior.liveEventPartyText(rawEvent, 'from'),
+  '4326018', 'Unknown serving scope suppresses the home prefix and omits an equal Working ID.');
 assert.equal(behavior.liveEventPartyText({ ...capturedEvent, from_party: [
   { ...eventRadio, observed_working_id: 501 }] }, 'from'), '4326018 (Working ID 501)');
 assert.equal(behavior.liveEventPartyText({ ...capturedEvent, from_party: [
@@ -542,7 +549,7 @@ assert.equal(behavior.liveEventPartyText({ ...rawEvent, from_party: undefined },
 assert.equal(behavior.liveEventPartyText({ ...rawEvent, from_party: [] }, 'from'), eventRadio.text,
   'Legacy producers with an empty typed list still display their original party text.');
 assert.equal(behavior.liveEventDetailsText({ ...rawEvent, from_party: {}, to_party: null }), rawEvent.details);
-const immutableScope = behavior.liveEventCaptured(rawEvent, { radioSystemKey: 'p25:bee00:348' });
+const immutableScope = { ...rawEvent, serving_system_key: 'p25:bee00:348' };
 assert.equal(behavior.liveEventPartyText(immutableScope, 'from'), '4326018',
   'A captured event retains its receiving system independently of later table changes.');
 const patchRadio = { ...eventRadio, observed_working_id: 501,
@@ -566,6 +573,19 @@ assert.equal(behavior.liveEventPartyText({ ...patchEvent, to_party: [{ ...struct
   talkgroup_members_truncated: true, radio_members_truncated: true }] }, 'to'),
   'P:91 [92, …] [4326018, 4326018 (Working ID 501), …]',
   'A capped member list ends after a whole identity and marks the omitted members.');
+const qualifiedPatch = { ...structuredPatch, patch_group: 'ISSI 77(781824.840.7001)',
+  talkgroup_members: ['ISSI 781824.840.7002', 'ISSI 79(781824.840.7003)'], radio_members: [],
+  text: 'P:ISSI 77(781824.840.7001) [ISSI 781824.840.7002, ISSI 79(781824.840.7003)]' };
+for (const servingKey of [null, 'p25:bee00:348']) {
+  const event = { ...patchEvent, serving_system_key: servingKey, to_party: [qualifiedPatch],
+    details: qualifiedPatch.text };
+  assert.equal(behavior.liveEventPartyText(event, 'to'), 'P:77 [7002, 79]');
+  assert.equal(behavior.liveEventDetailsText(event), 'P:77 [7002, 79]');
+  assert.equal(behavior.liveEventMatchesQuery(event, '781824.840.7001'), true,
+    'The raw full destination remains searchable after its visible prefix is suppressed.');
+}
+assert.equal(behavior.liveEventPartyText({ ...patchEvent, serving_system_key: 'p25:bee00:349',
+  to_party: [qualifiedPatch] }, 'to'), qualifiedPatch.text);
 const pickerContext = { radioSystemKey: localRadio.radio_system_key };
 const suggestion = behavior.activityIdentitySuggestion({ ...localRadio, native_id: 4326018,
   identity_key: 'v1-r-bee00-348-4326018', alias_name: 'Engine 42' }, 'radio', pickerContext);

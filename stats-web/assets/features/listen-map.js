@@ -1,7 +1,7 @@
 'use strict';
 
 import { systemLabel, systemName, systemIdentity } from '../core/system-labels.js?v=1';
-import { formatP25RadioIdentifier, parseP25RadioIdentifier, p25ServingSystemKey } from '../core/radio-labels.js?v=5';
+import { formatP25RadioIdentifier, parseP25RadioIdentifier, p25ServingSystemKey } from '../core/radio-labels.js?v=6';
 import { createTableOverflow } from '../core/table-overflow.js?v=1';
 
 const TILE_SIZE = 256;
@@ -71,7 +71,8 @@ function mapRadioIdentifier(entity, servingSystem) {
   const homeKey = `p25:${Number(identity.wacn).toString(16).padStart(5, '0')}:` +
     Number(identity.system_id).toString(16).padStart(3, '0');
   return formatP25RadioIdentifier(identity, {
-    servingSystemKey: p25ServingSystemKey(entity) || p25ServingSystemKey(servingSystem) || servingSystem?.key || '',
+    servingSystemKey: Object.prototype.hasOwnProperty.call(entity, 'serving_system_key') ?
+      p25ServingSystemKey(entity) : p25ServingSystemKey(entity) || p25ServingSystemKey(servingSystem) || servingSystem?.key || '',
     homeSystemName: String(entity.home_system_name || '').trim() || systemName(entity.home_system) || systemName(homeKey),
     workingId: entity.observed_working_id ?? (matchingText ? parsed.observed_working_id : null)
   });

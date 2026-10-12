@@ -7,7 +7,7 @@ const { pathToFileURL } = require('node:url');
 async function main() {
   const modulePath = path.resolve(process.argv[2] ||
     path.resolve(__dirname, '../../../../stats-web/assets/core/radio-labels.js'));
-  const { formatP25RadioIdentifier, p25ServingSystemKey, parseP25RadioIdentifier } =
+  const { formatP25RadioIdentifier, formatP25QualifiedIdentifierText, p25ServingSystemKey, parseP25RadioIdentifier } =
     await import(pathToFileURL(modulePath).href);
   const home = { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 4_326_018 };
   const local = { servingSystemKey: 'p25:bee00:348', homeSystemName: 'Home System' };
@@ -30,24 +30,24 @@ async function main() {
   assert.equal(formatP25RadioIdentifier({ ...home, wacn: 0xBEE01 }, local), 'Home System · 4326018',
     'Both WACN and SysID must match before shortening a local identity.');
   assert.equal(formatP25RadioIdentifier(home, { ...foreign, homeSystemName: '' }), 'BEE00.348.4326018');
-  assert.equal(formatP25RadioIdentifier(home), 'BEE00.348.4326018',
-    'Without the receiving system, the full home identity remains available.');
-  assert.equal(formatP25RadioIdentifier(home, { homeSystemName: 'Home System' }), 'Home System · 4326018');
+  assert.equal(formatP25RadioIdentifier(home), '4326018',
+    'Unknown receiving context cannot establish a foreign home system.');
+  assert.equal(formatP25RadioIdentifier(home, { homeSystemName: 'Home System' }), '4326018');
   assert.equal(formatP25RadioIdentifier(home, { ...local, workingId: 501 }), '4326018 (Working ID 501)',
     'A different Working ID does not make matching home-system context useful.');
   assert.equal(formatP25RadioIdentifier(home, { ...local, homeSystemName: '', workingId: 501 }),
     '4326018 (Working ID 501)', 'Local identities retain the permanent and different working numbers.');
   assert.equal(formatP25RadioIdentifier(home, { ...foreign, workingId: 501 }),
     'Home System · 4326018 (Working ID 501)');
-  assert.equal(formatP25RadioIdentifier(home, { workingId: 501 }), 'BEE00.348.4326018 (Working ID 501)');
+  assert.equal(formatP25RadioIdentifier(home, { workingId: 501 }), '4326018 (Working ID 501)');
   assert.equal(formatP25RadioIdentifier(home, { servingSystemKey: ' P25:BEE00:348 ' }), '4326018');
   assert.equal(formatP25RadioIdentifier({ wacn: 1, system_id: 1, subscriber_id: 501 }, {
     servingSystemKey: 'p25:00001:001'
   }), '501', 'Equivalent padded hexadecimal keys identify the same system.');
 
   for (const scope of ['', 'p25:bee00:', 'p25:100000:348', 'p25:bee00:1000', 'dmr:bee00:348']) {
-    assert.equal(formatP25RadioIdentifier(home, { servingSystemKey: scope }), 'BEE00.348.4326018',
-      'Missing or invalid serving identities must not shorten a home identity.');
+    assert.equal(formatP25RadioIdentifier(home, { servingSystemKey: scope }), '4326018',
+      'Missing or invalid serving identities cannot add a home prefix.');
   }
   for (const field of ['wacn', 'system_id', 'subscriber_id']) {
     for (const value of [null, undefined, '', ' ', '\t', false, true, [], {}, -1, 1.5, Infinity, NaN]) {
@@ -59,7 +59,7 @@ async function main() {
   assert.equal(formatP25RadioIdentifier({ ...home, system_id: 0x1000 }), '');
   assert.equal(formatP25RadioIdentifier({ ...home, subscriber_id: 0 }), '');
   assert.equal(formatP25RadioIdentifier({ ...home, subscriber_id: 0xFFFFFD }), '');
-  assert.equal(formatP25RadioIdentifier({ wacn: 0, system_id: 0, subscriber_id: 501 }), '00000.000.501');
+  assert.equal(formatP25RadioIdentifier({ wacn: 0, system_id: 0, subscriber_id: 501 }), '501');
   assert.equal(formatP25RadioIdentifier({ wacn: 0, system_id: 0, subscriber_id: 501 }, {
     servingSystemKey: 'p25:00000:000'
   }), '501', 'Explicit zero home fields remain distinct from missing fields.');
@@ -103,6 +103,24 @@ async function main() {
     'source'), 'p25:00001:047');
   assert.equal(p25ServingSystemKey({ source_home_system_entity_ref: sourceRef }, 'source'), '',
     'Home-system context cannot substitute for a receiving system.');
+  assert.equal(p25ServingSystemKey({ serving_system_key: null, radio_system_key: 'p25:00001:047',
+    playback_target: { radio_system_key: 'p25:bee00:348' } }), '',
+    'A captured unknown serving system must remain authoritative over routing or playback keys.');
+  assert.equal(p25ServingSystemKey({ serving_system_key: 'p25:bee00:348', radio_system_key: 'p25:00001:047' }),
+    'p25:bee00:348');
+  const group = 'ISSI 2002(781824.840.1001)';
+  const patch = `P:${group} [ISSI 781824.840.3003, ISSI 0(781824.840.3004)]`;
+  for (const scope of ['', 'p25:bee00:348', 'p25:unknown', 'dmr:tier3:small:1']) {
+    assert.equal(formatP25QualifiedIdentifierText(group, scope), '2002');
+    assert.equal(formatP25QualifiedIdentifierText(patch, scope), 'P:2002 [3003, 3004]');
+  }
+  assert.equal(formatP25QualifiedIdentifierText(patch, 'p25:00001:047'), patch);
+  assert.equal(formatP25QualifiedIdentifierText(group, 'p25:bee00:349'), group);
+  assert.equal(formatP25QualifiedIdentifierText(group, 'p25:bee01:348'), group);
+  for (const value of ['ISSI 2002(781824.840.1001', 'ISSI 2002(1048576.840.1001)',
+    'ISSI 2002(781824.4096.1001)', 'ISSI 781824.840.1001x', '192.168.1.100']) {
+    assert.equal(formatP25QualifiedIdentifierText(value), value, 'Malformed or unrelated text is preserved.');
+  }
   console.log('P25 radio labels: local scope, foreign names, Working IDs and incomplete identities passed.');
 }
 

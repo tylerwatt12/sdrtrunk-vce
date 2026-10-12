@@ -332,12 +332,12 @@ async function main() {
       source_form: 'RADIO', source_id: 501,
       source_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 2_115_288 },
       source_observed_working_id: 501
-    }), 'TGID 91 ← BEE00.348.2115288 (Working ID 501)');
+    }), 'TGID 91 ← 2115288 (Working ID 501)');
     assert.equal(labels.callLabel({
       protocol: 'P25', target_form: 'TALKGROUP', target_id: 91,
       source_form: 'RADIO', source_id: 2_115_288,
       source_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 2_115_288 }
-    }), 'TGID 91 ← BEE00.348.2115288');
+    }), 'TGID 91 ← 2115288');
     for (const homeField of ['wacn', 'system_id']) {
       for (const missing of [null, undefined, '', ' ', '\t']) {
         assert.equal(labels.canonicalRadioLabel({ source_canonical_identity: {
@@ -347,7 +347,7 @@ async function main() {
     }
     assert.equal(labels.canonicalRadioLabel({ source_canonical_identity: {
       wacn: 0, system_id: 0, subscriber_id: 501
-    } }, 'source'), '00000.000.501', 'Explicit numeric zero remains a valid home ID.');
+    } }, 'source'), '501', 'Explicit numeric zero remains a valid home ID.');
     const equalWorkingTarget = {
       protocol: 'P25', target_form: 'RADIO', target_id: 2_115_288, target_alias: 'Dispatch',
       target_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 2_115_288 },
@@ -355,9 +355,9 @@ async function main() {
       playback_target: { kind: 'radio', label: 'Radio 2115288' }
     };
     assert.equal(labels.callLabel(equalWorkingTarget),
-      'Dispatch · BEE00.348.2115288');
+      'Dispatch · 2115288');
     assert.equal(labels.targetLabel(equalWorkingTarget),
-      'Dispatch · BEE00.348.2115288');
+      'Dispatch · 2115288');
     const localRadioTarget = { ...equalWorkingTarget, radio_system_key: 'p25:bee00:348' };
     assert.equal(labels.callLabel(localRadioTarget), 'Dispatch · 2115288',
       'Local radio numbers should stay compact in the listening player.');
@@ -400,8 +400,10 @@ async function main() {
     assert.equal(labels.callLabel({ ...localRadioTarget, target_alias: '', target_observed_working_id: 501 }),
       '2115288 (Working ID 501)', 'A local radio retains a different Working ID without repeating the home system.');
     assert.equal(labels.canonicalRadioLabel({ ...foreignNamedRadio, radio_system_key: '',
-      target_home_system_name: 'Home System' }, 'target'), 'Home System · 2115288',
-      'Missing receiving scope should keep home system context even when the Working ID matches.');
+      target_home_system_name: 'Home System' }, 'target'), '2115288',
+      'Missing receiving scope cannot establish a foreign home system.');
+    assert.equal(labels.targetLabel({ ...foreignNamedRadio, serving_system_key: null }), 'Dispatch · 2115288',
+      'Captured unknown serving facts take precedence over a known routing key.');
     const differentHomes = {
       protocol: 'P25', radio_system_key: 'p25:bee00:349',
       source_form: 'RADIO', source_id: 501, source_home_system_name: 'Source Home',
@@ -415,8 +417,8 @@ async function main() {
     assert.equal(labels.callLabel({ ...differentHomes, target_home_system_name: 'Target Home' }),
       'Target Home · 501 ← Source Home · 501');
     rememberSystemNames({ radio_system_key: 'p25:bee00:348', system_name: 'Cached Home' });
-    assert.equal(labels.targetLabel(equalWorkingTarget), 'Dispatch · Cached Home · 2115288',
-      'Previously received system names can label an exact home identity.');
+    assert.equal(labels.targetLabel(equalWorkingTarget), 'Dispatch · 2115288',
+      'Previously received home names cannot establish a foreign receiving system.');
     assert.equal(labels.targetLabel(localRadioTarget), 'Dispatch · 2115288',
       'A cached name must not lengthen a confirmed local radio label.');
     rememberSystemNames({ radio_system_key: 'p25:bee00:348', system_name: '' });
@@ -427,7 +429,7 @@ async function main() {
       playback_target: { key: 'channel:p25-conventional', kind: 'channel', label: 'P25 Conventional' }
     };
     assert.equal(labels.callLabel(conventionalCanonicalTarget),
-      'BEE00.348.2115288 (Working ID 501)');
+      '2115288 (Working ID 501)');
     assert.equal(labels.targetLabel(conventionalCanonicalTarget), 'P25 Conventional',
       'Hold and Avoid labels must describe the channel-scoped playback target');
     const firstSystemScope = labels.avoidSystemScope(trunked);

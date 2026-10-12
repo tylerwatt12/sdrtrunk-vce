@@ -94,7 +94,9 @@ async function main() {
   assert.equal(normalizedRadio({ serving_system: { key: 'p25:bee00:4a2' }, home_system_name: '' }).identifier,
     'BEE00.49F.1872114', 'Unnamed foreign radios retain the full identity.');
   assert.equal(normalizedRadio({ serving_system: null }).identifier,
-    'GCRCN · 1872114', 'An unknown serving system must not imply a local radio.');
+    '1872114', 'An unknown serving system cannot establish a foreign home prefix.');
+  assert.equal(normalizedRadio({ serving_system_key: null, radio_system_key: 'p25:bee00:4a2' }).identifier,
+    '1872114', 'Captured unknown context takes precedence over map routing and nested context.');
   assert.equal(normalizedRadio({ radio_system_key: 'p25:bee00:4a2' }).identifier,
     'GCRCN · 1872114', 'An explicit receiving system takes precedence over nested serving context.');
   for (const missing of [null, undefined, '', false]) {

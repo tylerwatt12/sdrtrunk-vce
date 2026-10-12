@@ -1,6 +1,6 @@
 import { createDualRange } from '../core/dual-range.js?v=1';
 import { systemLabel, systemName } from '../core/system-labels.js?v=1';
-import { formatP25RadioIdentifier } from '../core/radio-labels.js?v=5';
+import { formatP25RadioIdentifier, p25ServingSystemKey } from '../core/radio-labels.js?v=6';
 import { formatSourceName } from '../core/source-names.js?v=1';
 import { formatHexDecimal } from '../core/call-value-format.js?v=1';
 
@@ -134,7 +134,7 @@ function recordingRadioId(row, prefix, id) {
       `p25:${Number(identity.wacn).toString(16).padStart(5, '0')}:${
         Number(identity.system_id).toString(16).padStart(3, '0')}` : '');
   return formatP25RadioIdentifier(identity, {
-    servingSystemKey: row?.system_key || row?.radio_system_key,
+    servingSystemKey: p25ServingSystemKey(row),
     homeSystemName: row?.[`${prefix}_home_system_name`] || systemName(home) || systemName(homeKey),
     workingId: id
   }) || id;

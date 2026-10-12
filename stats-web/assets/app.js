@@ -8,7 +8,7 @@ import { createTableOverflow } from './core/table-overflow.js?v=1';
 import { Controller as PageTitleController } from './core/page-title.js?v=2';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
 import * as systemLabels from './core/system-labels.js?v=1';
-import { formatP25RadioIdentifier, p25ServingSystemKey } from './core/radio-labels.js?v=5';
+import { formatP25RadioIdentifier, formatP25QualifiedIdentifierText, p25ServingSystemKey } from './core/radio-labels.js?v=6';
 import * as pageLifecycle from './core/page-lifecycle.js';
 import { installIconHints } from './core/icon-hints.js?v=5';
 import { createFormWorkflow } from './core/form-workflows.js?v=2';
@@ -21,7 +21,7 @@ import {
   isReceiverHealthAlertEnabled
 } from './core/receiver-health-alerts.js?v=3';
 import * as radioSystemsDirectory from './features/radio-systems-directory.js';
-import { createListenMap } from './features/listen-map.js?v=8';
+import { createListenMap } from './features/listen-map.js?v=9';
 import { buildRadioResolvePlannerUrl } from './features/radioresolve-analysis.js?v=2';
 import {
   createAliasList,
@@ -32,7 +32,7 @@ import { radioReferenceLocalityCache } from './features/radioreference-locality-
 import { createStreamingWorkspace } from './features/streaming.js?v=8';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=10';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=13';
-import { createRecordingsFeature } from './features/recordings.js?v=30';
+import { createRecordingsFeature } from './features/recordings.js?v=31';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=27';
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=8';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
@@ -41,7 +41,7 @@ import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum
 import { createAudioDock } from './core/audio-dock.js?v=19';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=4';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
-import { WebCallPlayer } from './web-call-player.js?v=15';
+import { WebCallPlayer } from './web-call-player.js?v=16';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
@@ -12877,10 +12877,6 @@ function liveEventCategoryClass(value) {
   return LIVE_EVENT_CATEGORY_CLASSES[category] || LIVE_EVENT_CATEGORY_CLASSES.OTHER;
 }
 
-function liveEventCaptured(event, selection) {
-  return { ...event, radio_system_key: p25ServingSystemKey(event) || selection?.radioSystemKey || '' };
-}
-
 function liveEventRadioRow(event, identifier) {
   if (String(identifier?.form || '').toUpperCase() !== 'RADIO') return null;
   const row = { protocol: identifier.protocol || event?.protocol,
@@ -12903,7 +12899,7 @@ function liveEventReplaceRadioText(event, value, party) {
     text = text.replace(token, (_match, boundary) => boundary +
       radioIdentifierText(row, row.canonical_identity.subscriber_id));
   }
-  return text;
+  return formatP25QualifiedIdentifierText(text, p25ServingSystemKey(event));
 }
 
 function liveEventIdentifierText(event, identifier) {
@@ -12911,14 +12907,16 @@ function liveEventIdentifierText(event, identifier) {
   if (row) return radioIdentifierText(row, row.canonical_identity.subscriber_id);
   if (String(identifier?.form || '').toUpperCase() === 'PATCH_GROUP' && identifier.patch_group &&
       Array.isArray(identifier.talkgroup_members) && Array.isArray(identifier.radio_members)) {
-    const groups = identifier.talkgroup_members.map(String);
+    const groups = identifier.talkgroup_members.map((member) =>
+      formatP25QualifiedIdentifierText(member, p25ServingSystemKey(event)));
     const radios = identifier.radio_members.map((member) => {
       const radio = liveEventRadioRow(event, member);
       return radio ? radioIdentifierText(radio, radio.canonical_identity.subscriber_id) : String(member?.text || '');
     }).filter(Boolean);
     if (identifier.talkgroup_members_truncated) groups.push('…');
     if (identifier.radio_members_truncated) radios.push('…');
-    return [`P:${identifier.patch_group}`, groups.length ? `[${groups.join(', ')}]` : '',
+    return [`P:${formatP25QualifiedIdentifierText(identifier.patch_group, p25ServingSystemKey(event))}`,
+      groups.length ? `[${groups.join(', ')}]` : '',
       radios.length ? `[${radios.join(', ')}]` : ''].filter(Boolean).join(' ');
   }
   return liveEventReplaceRadioText(event, identifier?.text, [identifier]);
@@ -12927,7 +12925,7 @@ function liveEventIdentifierText(event, identifier) {
 function liveEventPartyText(event, side) {
   const party = event?.[`${side}_party`];
   return Array.isArray(party) && party.length ? party.map((identifier) => liveEventIdentifierText(event, identifier))
-    .filter(Boolean).join(', ') : String(event?.[`${side}_identifiers`] || '');
+    .filter(Boolean).join(', ') : formatP25QualifiedIdentifierText(event?.[`${side}_identifiers`], p25ServingSystemKey(event));
 }
 
 function liveEventDetailsText(event) {
@@ -18146,7 +18144,7 @@ function liveEventsPanel(onCollapse) {
   };
 
   const addEvent = (event) => {
-    if (!liveDetailCaptureRow(events, order, liveEventCaptured(event, selection),
+    if (!liveDetailCaptureRow(events, order, event,
         'event_id', 'time_start_ms', liveDetailCaptureLimit())) return;
     scheduleRender();
   };
@@ -19367,7 +19365,7 @@ function saveP25VisualizerEventSettings(value) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=40');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=41');
   const visualizerModule = await p25VisualizerModulePromise;
   if (!renderIsCurrent(renderContext)) return;
   const visualizer = visualizerModule.createP25Visualizer({

@@ -1552,7 +1552,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(source.contains("event?.timeslot"));
         assertTrue(events.contains("liveDetailSelectionDelta(selection, nextSelection)"));
         assertFalse(events.contains("filters.resetForSelection"));
-        assertTrue(events.contains("liveDetailCaptureRow(events, order, liveEventCaptured(event, selection),"));
+        assertTrue(events.contains("liveDetailCaptureRow(events, order, event,"));
+        assertFalse(source.contains("liveEventCaptured"));
         String capture = function(source,
             "function liveDetailCaptureRow(values, order, value, idField, timeField, limit)");
         assertTrue(capture.contains("liveDetailCapturedRowKey(value, idField)"));
