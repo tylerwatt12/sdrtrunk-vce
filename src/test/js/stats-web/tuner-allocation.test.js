@@ -20,6 +20,24 @@ assert.deepEqual(result.decisions.map((item) => item.decisionId), [2, 3, 1]);
 assert.equal(result.tuners[0].frequencyHz, 855_362_500);
 assert.equal(result.sites[0].coveredFrequencyCount, 9);
 assert.equal(result.sites[0].frequencies[0].frequencyHz, 851_737_500);
+const sharedReceivers = snapshot();
+sharedReceivers.tuners[0].receiving = [
+  { frequency_hz: 856_212_500, role: 'call', site_id: 'named-site', channel_name: 'Albany County Simulcast' },
+  { frequency_hz: 856_212_500, role: 'call', site_id: 'other-site', channel_name: 'Other site' },
+  { frequency_hz: 855_187_500, role: 'conventional', site_id: 'weather', channel_name: 'Albany County Simulcast' },
+  { frequency_hz: 855_062_500, role: 'call', site_id: null, channel_name: 'Albany County Simulcast' }
+];
+const receiving = plain(context.tunerAllocationSnapshot(sharedReceivers)).tuners[0].receiving;
+assert.deepEqual(receiving.map((item) => item.siteId), ['named-site', 'other-site', 'weather', null],
+  'Receiving channel identities remain separate across a shared frequency and a reused saved name');
+assert.deepEqual(receiving.map((item) => item.role), ['call', 'call', 'conventional', 'call']);
+assert.deepEqual(receiving.map((item) => context.tunerAllocationReceptionScope(item, 'named-site')),
+  ['selected', 'other', 'other', 'unscoped'], 'Marker emphasis follows receiving channel identity');
+assert.deepEqual(receiving.map((item) => context.tunerAllocationReceptionScope(item, 'other-site')),
+  ['other', 'selected', 'other', 'unscoped'], 'Changing the selected site reclassifies shared tuner work');
+assert.equal(context.tunerAllocationReceptionScope({ siteId: '', frequencyHz: 856_212_500,
+  channelName: 'Albany County Simulcast' }, 'named-site'), 'unscoped',
+  'A matching known frequency and saved name cannot supply a missing channel identity');
 assert.equal(context.tunerAllocationSnapshot(snapshot(Array.from({ length: 150 }, (_, index) => row(index + 1)))).decisions.length, 100);
 assert.throws(() => context.tunerAllocationSnapshot({}), /could not be loaded/);
 const decisions = Array.from({ length: 45 }, (_, index) => row(index + 1));
@@ -80,6 +98,16 @@ const separate = plain(context.tunerAllocationMapGroups([...allTuners, { ...tune
 assert.equal(separate.length, 2, '700 and 850 MHz windows use separate readable scales');
 assert.equal(separate[0].frequencies.length, 1);
 assert.equal(separate[1].frequencies.length, 11);
+const separatedBands = plain(context.tunerAllocationMapGroups([...allTuners,
+  { ...tuner, id: 'regional', name: 'RTL-SDR 5', frequencyHz: 773_987_500,
+    minFrequencyHz: 760_000_000, maxFrequencyHz: 790_000_000 },
+  { ...tuner, id: 'county-fire', name: 'RTL-SDR 6', frequencyHz: 150_000_000,
+    minFrequencyHz: 140_000_000, maxFrequencyHz: 160_000_000 }], actualKnown));
+assert.equal(separatedBands.length, 3, 'Widely separated tuner windows retain distinct frequency scales');
+assert.deepEqual(separatedBands.map((group) => group.frequencies.length), [0, 0, 11],
+  'Only the selected site supplies known frequencies, even when other bands receive channels');
+assert.equal(separatedBands[1].start - separatedBands[0].end, 621_635_500);
+assert.equal(separatedBands[2].start - separatedBands[1].end, 75_873_000);
 const excludedCenter = { ...tuner, minFrequencyHz: 860_000_000, maxFrequencyHz: 861_000_000 };
 const excludedMap = plain(context.tunerAllocationMapGroups([excludedCenter], []));
 assert.equal(excludedMap.length, 1);

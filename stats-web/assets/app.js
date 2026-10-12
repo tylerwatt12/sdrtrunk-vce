@@ -32141,7 +32141,12 @@ function tunerAllocationMapGroups(tuners, frequencies) {
   return groups;
 }
 
-function tunerAllocationMapPlot(host, group, kind, tuner, highlighted) {
+function tunerAllocationReceptionScope(item, selectedSiteId) {
+  if (item.siteId == null || item.siteId === '') return 'unscoped';
+  return String(item.siteId) === String(selectedSiteId) ? 'selected' : 'other';
+}
+
+function tunerAllocationMapPlot(host, group, kind, tuner, highlighted, selectedSiteId) {
   const width = Math.max(100, host.clientWidth || 640);
   const height = kind === 'ruler' ? 32 : kind === 'known' ? 28 : 44;
   const svg = svgNode('svg', { class: 'chart-frequency-windows chart-frequency-window-row',
@@ -32160,9 +32165,11 @@ function tunerAllocationMapPlot(host, group, kind, tuner, highlighted) {
       'text-anchor': index === 0 ? 'start' : index === ticks - 1 ? 'end' : 'middle' },
       (value / 1_000_000).toFixed(group.maximum - group.minimum < 1_000_000 ? 3 : 2)));
   }
+  if (kind !== 'ruler') svg.append(svgNode('line', { class: 'chart-window-baseline',
+    x1: 8, x2: width - 8, y1: height / 2, y2: height / 2 }));
   if (tuner && tuner.available !== false) {
     const bounds = tunerAllocationWindowBounds(tuner);
-    if (bounds && bounds.end > bounds.start) svg.append(svgNode('rect', { class: 'chart-window-band',
+    if (bounds && bounds.end > bounds.start) svg.append(svgNode('rect', { class: 'chart-window-band chart-window-map-band',
       x: x(bounds.start), y: 12, width: x(bounds.end) - x(bounds.start), height: 20, rx: 3 }));
     const center = Number(tuner.frequencyHz);
     const gap = Number(tuner.dcGapHz) || 0;
@@ -32172,14 +32179,24 @@ function tunerAllocationMapPlot(host, group, kind, tuner, highlighted) {
     const mark = svgNode('line', { class: 'chart-window-center', x1: x(center), x2: x(center), y1: 9, y2: 35 });
     mark.append(svgNode('title', {}, `Center ${tunerAllocationFrequency(center)}`));
     svg.append(mark);
-    (tuner.receiving || []).forEach((item) => {
+    // Draw selected reception last. A larger hollow marker still shows shared-frequency reception underneath it.
+    const receiving = [...(tuner.receiving || [])].sort((left, right) =>
+      Number(tunerAllocationReceptionScope(left, selectedSiteId) === 'selected') -
+      Number(tunerAllocationReceptionScope(right, selectedSiteId) === 'selected'));
+    receiving.forEach((item) => {
       if (Number(item.frequencyHz) < group.minimum || Number(item.frequencyHz) > group.maximum) return;
       const position = x(item.frequencyHz);
+      const scope = tunerAllocationReceptionScope(item, selectedSiteId);
       const control = item.role === 'control';
-      const marker = control ? svgNode('path', { class: 'chart-window-control',
-        d: `M ${position} 16 l 6 6 l -6 6 l -6 -6 Z` }) :
-        svgNode('circle', { class: 'chart-window-call', cx: position, cy: 22, r: 5 });
-      marker.append(svgNode('title', {}, `${control ? 'Control channel' : item.role === 'conventional' ? 'Conventional channel' : item.role === 'call' ? 'Call' : 'Receiving channel'} ${tunerAllocationFrequency(item.frequencyHz)}${item.channelName ? ` · ${item.channelName}` : ''}`));
+      const marker = scope !== 'selected' ? svgNode('circle', { class: `chart-window-${scope}`,
+        cx: position, cy: 22, r: 6 }) : control ? svgNode('path', {
+        class: 'chart-window-control chart-window-selected', d: `M ${position} 16 l 6 6 l -6 6 l -6 -6 Z` }) :
+        svgNode('circle', { class: 'chart-window-call chart-window-selected', cx: position, cy: 22, r: 4.5 });
+      marker.dataset.receptionScope = scope;
+      const scopeLabel = scope === 'selected' ? 'Selected channel' : scope === 'other' ? 'Other channel' : 'Unknown channel';
+      const role = control ? 'Control channel' : item.role === 'conventional' ? 'Conventional channel' :
+        item.role === 'call' ? 'Call' : 'Receiving channel';
+      marker.append(svgNode('title', {}, `${scopeLabel} · ${role} ${tunerAllocationFrequency(item.frequencyHz)}${item.channelName ? ` · ${item.channelName}` : ''}`));
       svg.append(marker);
     });
   }
@@ -32198,14 +32215,19 @@ function tunerAllocationMapPlot(host, group, kind, tuner, highlighted) {
   host.replaceChildren(svg);
 }
 
-function tunerAllocationMapLegend() {
+function tunerAllocationMapLegend(hasUnscoped = false) {
   const legend = node('div', 'chart-window-legend');
-  for (const [label, kind] of [['Window', 'band'], ['Receiving control', 'control'], ['Receiving call / channel', 'call'], ['Outside windows', 'outside']]) {
+  const keys = [['Window', 'band'], ['Selected channel', 'selected'], ['Other channels', 'other'], ['Outside windows', 'outside']];
+  if (hasUnscoped) keys.push(['Unknown channel', 'unscoped']);
+  for (const [label, kind] of keys) {
     const key = node('span');
-    const svg = svgNode('svg', { viewBox: '0 0 20 16', 'aria-hidden': 'true' });
-    svg.append(kind === 'band' ? svgNode('rect', { class: 'chart-window-band', x: 1, y: 4, width: 18, height: 8, rx: 2 }) :
-      kind === 'control' ? svgNode('path', { class: 'chart-window-control', d: 'M 10 2 l 6 6 l -6 6 l -6 -6 Z' }) :
-      kind === 'call' ? svgNode('circle', { class: 'chart-window-call', cx: 10, cy: 8, r: 5 }) :
+    const svg = svgNode('svg', { viewBox: kind === 'selected' ? '0 0 32 16' : '0 0 20 16',
+      class: kind === 'selected' ? 'chart-window-legend-pair' : '', 'aria-hidden': 'true' });
+    if (kind === 'selected') svg.append(
+      svgNode('path', { class: 'chart-window-control chart-window-selected', d: 'M 8 2 l 6 6 l -6 6 l -6 -6 Z' }),
+      svgNode('circle', { class: 'chart-window-call chart-window-selected', cx: 24, cy: 8, r: 4.5 }));
+    else svg.append(kind === 'band' ? svgNode('rect', { class: 'chart-window-band chart-window-map-band', x: 1, y: 4, width: 18, height: 8, rx: 2 }) :
+      kind === 'other' || kind === 'unscoped' ? svgNode('circle', { class: `chart-window-${kind}`, cx: 10, cy: 8, r: 6 }) :
       svgNode('path', { class: 'chart-window-outside', d: 'M 10 2 l 6 12 h -12 Z' }));
     key.append(svg, document.createTextNode(label));
     legend.append(key);
@@ -32245,22 +32267,35 @@ function tunerAllocationSiteMap(site, snapshot, state, openTuner) {
     return button;
   };
   const groups = tunerAllocationMapGroups(snapshot.tuners, site.frequencies || []);
-  groups.forEach((group) => {
+  groups.forEach((group, index) => {
+    if (index > 0) {
+      const gapHz = group.start - groups[index - 1].end;
+      const gap = node('p', 'ui-section-note tuner-allocation-band-gap',
+        `Gap · ${number(Math.round(gapHz / 10_000) / 100)} MHz`);
+      gap.dataset.gapHz = String(gapHz);
+      body.append(gap);
+    }
     const map = node('div', 'tuner-allocation-map');
+    map.dataset.bandStartHz = String(group.start);
+    map.dataset.bandEndHz = String(group.end);
+    map.setAttribute('role', 'group');
+    map.setAttribute('aria-label', `Frequency range ${(group.minimum / 1_000_000).toFixed(2)} to ${(group.maximum / 1_000_000).toFixed(2)} MHz`);
+    if (groups.length > 1) map.append(node('p', 'ui-label muted',
+      `${(group.minimum / 1_000_000).toFixed(2)}–${(group.maximum / 1_000_000).toFixed(2)} MHz`));
     const addPlot = (label, kind, tuner = null) => {
-      const row = node('div', `tuner-allocation-window-row tuner-allocation-${kind}-row`);
+      const row = node('div', `tuner-allocation-window-row chart-window-map-row tuner-allocation-${kind}-row${kind === 'ruler' ? ' chart-window-map-ruler' : ''}`);
       if (tuner) row.dataset.tunerId = String(tuner.id);
       const host = node('div', 'tuner-allocation-plot');
       row.append(label, host);
       map.append(row);
-      plots.push(() => tunerAllocationMapPlot(host, group, kind, tuner, state.highlight));
+      plots.push(() => tunerAllocationMapPlot(host, group, kind, tuner, state.highlight, site.id));
     };
     addPlot(node('span', 'muted', 'Frequency · MHz'), 'ruler');
-    addPlot(node('span', 'muted', 'Known frequencies'), 'known');
+    if (group.frequencies.length) addPlot(node('span', 'ui-label muted', 'Known frequencies'), 'known');
     group.tuners.forEach((tuner) => {
       const label = node('div', 'tuner-allocation-tuner-label');
-      label.append(tunerButton(tuner), node('span', '', tuner.available === false ? 'Unavailable' : tunerAllocationWork(tuner.receiving)),
-        node('small', 'muted', `Center ${tunerAllocationFrequency(tuner.frequencyHz)}`));
+      label.append(tunerButton(tuner), node('span', 'ui-label', tuner.available === false ? 'Unavailable' : tunerAllocationWork(tuner.receiving)),
+        node('small', 'ui-label muted', `Center ${tunerAllocationFrequency(tuner.frequencyHz)}`));
       addPlot(label, 'tuner', tuner);
     });
     body.append(map);
@@ -32271,7 +32306,8 @@ function tunerAllocationSiteMap(site, snapshot, state, openTuner) {
     row.append(tunerButton(tuner), node('span', 'muted', 'No receiving window available'));
     body.append(row);
   });
-  if (groups.length) body.append(tunerAllocationMapLegend());
+  if (groups.length) body.append(tunerAllocationMapLegend(snapshot.tuners.some((tuner) =>
+    (tuner.receiving || []).some((item) => tunerAllocationReceptionScope(item, site.id) === 'unscoped'))));
   else body.append(node('p', 'ui-section-note', 'No current receiving windows or known frequencies.'));
   const outside = (site.frequencies || []).filter((item) => !item.covered);
   if (outside.length) {

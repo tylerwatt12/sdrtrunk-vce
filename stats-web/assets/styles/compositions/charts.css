@@ -188,3 +188,19 @@
   height: var(--space-4);
   flex: none;
 }
+
+/* Map rows separate the known-frequency strip from each tuner's reception. */
+.chart-window-map-row + .chart-window-map-row {
+  border-top: 1px solid var(--line);
+}
+
+.chart-window-map-band { stroke: none; }
+.chart-window-baseline { stroke: var(--line); stroke-width: 1; }
+.chart-window-other,
+.chart-window-unscoped {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.5;
+}
+.chart-window-unscoped { stroke-dasharray: 2 2; }
+.chart-window-legend svg.chart-window-legend-pair { width: calc(var(--space-4) * 2); }

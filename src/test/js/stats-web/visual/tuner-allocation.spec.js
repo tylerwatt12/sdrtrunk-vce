@@ -38,6 +38,51 @@ function snapshot(decisions = []) {
       receiving: channels, supports_shared_window: true, reason: null })), decisions };
 }
 
+// Synthetic shared-tuner work tests channel ownership. Albany's call frequency
+// also appears on another site's receiving tuner; a conventional channel has
+// the same saved channel name as Albany, and one receiver has no site identity.
+function sharedTunerSnapshot() {
+  const data = snapshot();
+  const received = (frequency_hz, role, site_id, channel_name) =>
+    ({ frequency_hz, bandwidth_hz: 12_500, role, site_id, channel_name });
+  data.tuners[0].receiving.push(
+    received(854_937_500, 'control', 'colonie', 'Colonie Simulcast'),
+    received(855_187_500, 'conventional', 'weather', 'Albany County Simulcast'),
+    received(855_062_500, 'call', null, 'Albany County Simulcast'));
+  data.tuners[3].receiving.push(
+    received(856_212_500, 'call', 'colonie', 'Colonie Simulcast'),
+    received(856_937_500, 'control', 'colonie', 'Colonie Simulcast'));
+  data.sites[0].frequencies.push({ frequency_hz: 855_062_500, bandwidth_hz: 12_500, covered: true, role: 'call' });
+  data.sites[0].known_frequency_count++;
+  data.sites[0].covered_frequency_count++;
+  data.sites.push({ id: 'colonie', name: 'Colonie Simulcast', system_name: 'Other system',
+    channel_name: 'Colonie Simulcast', kind: 'trunked', known_frequency_count: 3,
+    covered_frequency_count: 3, status: 'control_and_calls', tuners: ['safe-tuner-1', 'safe-tuner-4'],
+    frequencies: [[854_937_500, 'control'], [856_212_500, 'call'], [856_937_500, 'control']]
+      .map(([frequency_hz, role]) => ({ frequency_hz, bandwidth_hz: 12_500, covered: true, role })) });
+  data.sites.push({ id: 'weather', name: 'Weather', system_name: '', channel_name: 'Albany County Simulcast',
+    kind: 'conventional', known_frequency_count: 1, covered_frequency_count: 1,
+    status: 'conventional', tuners: ['safe-tuner-1'], frequencies: [
+      { frequency_hz: 855_187_500, bandwidth_hz: 12_500, covered: true, role: 'conventional' }] });
+  return data;
+}
+
+function separatedBandsSnapshot() {
+  const data = snapshot();
+  for (const [id, name, frequency_hz, role, site_id, channel_name] of [
+    ['safe-tuner-5', 'RTL-SDR 5', 773_987_500, 'control', 'regional', 'Regional Simulcast'],
+    ['safe-tuner-6', 'RTL-SDR 6', 150_000_000, 'conventional', 'county-fire', 'County Fire']
+  ]) {
+    const item = { frequency_hz, bandwidth_hz: 12_500, role, site_id, channel_name };
+    data.tuners.push({ ...data.tuners[0], id, name, frequency_hz, min_frequency_hz: frequency_hz - 5_000_000,
+      max_frequency_hz: frequency_hz + 5_000_000, receiving: [item] });
+    data.sites.push({ id: site_id, name: channel_name, channel_name, system_name: '',
+      kind: role === 'conventional' ? 'conventional' : 'trunked', known_frequency_count: 1,
+      covered_frequency_count: 1, status: role, tuners: [id], frequencies: [{ ...item, covered: true }] });
+  }
+  return data;
+}
+
 // Synthetic decisions exercise history, grouped failures and captured geometry.
 // None of these decisions is presented as a recorded Albany event.
 function decision(id = 1, extra = {}) {
@@ -79,6 +124,8 @@ async function openApp(page, options = {}) {
 const sitePanel = (page) => page.locator('.tuner-allocation-site[data-site-id="albany"]');
 const tunerRow = (page, id) => sitePanel(page).locator(`.tuner-allocation-window-row[data-tuner-id="safe-tuner-${id}"]`);
 const centerReadout = (dialog) => dialog.locator('.ui-fact-row:has(dt:text-is("Center")) dd');
+const receivingMarker = (host, titleText) => host.locator(
+  '.chart-window-selected, .chart-window-other, .chart-window-unscoped').filter({ hasText: titleText });
 
 test('real Albany coverage shows current windows, overlap, and uncovered known frequencies', async ({ page }) => {
   await openApp(page);
@@ -216,25 +263,28 @@ for (const theme of ['light', 'dark']) {
       await expect(centerReadout(dialog)).toHaveText('855.36250 MHz');
       await expect(dialog).toContainText('854.53750 MHz');
       await expect(dialog).toContainText('856.21250 MHz');
-      if (width === 1280 || width === 320) await page.screenshot({ path: testInfo.outputPath(`tuner-details-${theme}-${width}.png`) });
+      if (width === 1280 || width === 320) await page.screenshot({ animations: 'disabled', path: testInfo.outputPath(`tuner-details-${theme}-${width}.png`) });
       await page.keyboard.press('Escape');
       await expect(page.getByRole('dialog')).toHaveCount(0);
-      if (width === 1280 || width === 320) await page.screenshot({ path: testInfo.outputPath(`tuner-coverage-${theme}-${width}.png`), fullPage: true });
+      if (width === 1280 || width === 320) await page.screenshot({ animations: 'disabled', path: testInfo.outputPath(`tuner-coverage-${theme}-${width}.png`), fullPage: true });
     }
     await page.getByRole('button', { name: 'Decision history', exact: true }).click();
     await page.getByRole('button', { name: 'Details for tuner decision 1' }).click();
     await expect(page.getByRole('dialog')).toContainText('Before · 859.46250 MHz');
     await expect(page.getByRole('dialog')).not.toContainText('Previous center');
-    await page.screenshot({ path: testInfo.outputPath(`tuner-decision-${theme}-320.png`) });
+    await page.screenshot({ animations: 'disabled', path: testInfo.outputPath(`tuner-decision-${theme}-320.png`) });
     await page.keyboard.press('Escape');
     await page.goto(`/design-system.html?view=receiving-windows&theme=${theme}`);
     await expect(page.locator('.visual-frequency-window-example')).toBeVisible();
-    await page.screenshot({ path: testInfo.outputPath(`receiving-window-gallery-${theme}-320.png`), fullPage: true });
+    await page.screenshot({ animations: 'disabled', path: testInfo.outputPath(`receiving-window-gallery-${theme}-320.png`), fullPage: true });
   });
 }
 
 test('separate radio bands remain readable and unavailable or limited tuners never appear as frequency matches', async ({ page }) => {
   const data = snapshot();
+  data.tuners[3].dc_gap_hz = 500_000;
+  data.sites[0].known_frequency_count++;
+  data.sites[0].frequencies.push({ frequency_hz: 856_962_500, bandwidth_hz: 12_500, covered: false, role: 'call' });
   data.tuners.push({ ...data.tuners[0], id: 'safe-tuner-5', name: 'RTL-SDR 5', frequency_hz: 773_987_500,
     min_frequency_hz: 760_000_000, max_frequency_hz: 800_000_000, supports_shared_window: false, dc_gap_hz: 0,
     receiving: [{ frequency_hz: 773_987_500, bandwidth_hz: 12_500, role: 'control', site_id: 'albany' }] });
@@ -250,6 +300,12 @@ test('separate radio bands remain readable and unavailable or limited tuners nev
   const site = sitePanel(page);
   await expect(site.locator('.tuner-allocation-window-row[data-tuner-id]')).toHaveCount(7);
   await expect(site.getByRole('button', { name: 'Highlight 853.73750 MHz', exact: true })).toBeVisible();
+  await expect(site.getByRole('button', { name: 'Highlight 856.96250 MHz', exact: true })).toBeVisible();
+  const gapGeometry = await tunerRow(page, 4).locator('svg').evaluate((chart) => ({
+    gap: Number(chart.querySelector('.chart-window-gap').getAttribute('width')),
+    window: Number(chart.querySelector('.chart-window-band').getAttribute('width'))
+  }));
+  expect(gapGeometry.gap / gapGeometry.window).toBeCloseTo(500_000 / 2_352_000, 5);
   const known = site.locator('details[data-allocation-disclosure="known"]');
   await known.locator('summary').click();
   const alternate = known.getByRole('row').filter({ hasText: '853.73750' });
@@ -257,6 +313,7 @@ test('separate radio bands remain readable and unavailable or limited tuners nev
   await expect(alternate).not.toContainText('RTL-SDR 6');
   await expect(alternate).not.toContainText('RTL-SDR 7');
   await expect(known.getByRole('row').filter({ hasText: '773.98750' })).toContainText('RTL-SDR 5');
+  await expect(known.getByRole('row').filter({ hasText: '856.96250' })).toContainText('Outside');
   await expect(known.getByRole('row').filter({ hasText: '854.53750' })).not.toContainText('RTL-SDR 5');
   await tunerRow(page, 6).getByRole('button', { name: 'Details for RTL-SDR 6', exact: true }).click();
   await expect(page.getByRole('dialog')).toContainText('Unavailable');
@@ -278,6 +335,150 @@ test('site selection scopes known frequencies without hiding the tuner inventory
   await expect(selected.locator('.tuner-allocation-window-row[data-tuner-id]')).toHaveCount(4);
   await expect(selected.getByRole('button', { name: 'Highlight 773.98750 MHz', exact: true })).toBeVisible();
   await expect(sitePanel(page)).toHaveCount(0);
+});
+
+test('selected channel markers distinguish shared tuner work by site identity through selection and retunes', async ({ page }) => {
+  const app = await openApp(page, { data: sharedTunerSnapshot() });
+  const selected = (id) => page.locator(`.tuner-allocation-site[data-site-id="${id}"]`);
+  const row = (siteId, tunerId) => selected(siteId).locator(
+    `.tuner-allocation-window-row[data-tuner-id="safe-tuner-${tunerId}"]`);
+  const albany = selected('albany');
+  await expect(albany.locator('[data-tuner-id] .chart-window-selected')).toHaveCount(3);
+  await expect(albany.locator('[data-tuner-id] .chart-window-other')).toHaveCount(4);
+  await expect(albany.locator('[data-tuner-id] .chart-window-unscoped')).toHaveCount(1);
+  await expect(row('albany', 1).locator('.chart-window-selected.chart-window-control')).toHaveCount(1);
+  await expect(row('albany', 1).locator('.chart-window-selected.chart-window-call')).toHaveCount(1);
+  await expect(receivingMarker(row('albany', 4), 'Call 856.21250 MHz · Colonie Simulcast'))
+    .toHaveClass(/chart-window-other/);
+  await expect(receivingMarker(row('albany', 1), 'Control channel 854.93750 MHz · Colonie Simulcast'))
+    .toHaveClass(/chart-window-other/);
+  await expect(receivingMarker(row('albany', 1), 'Conventional channel 855.18750 MHz · Albany County Simulcast'))
+    .toHaveClass(/chart-window-other/);
+  await expect(receivingMarker(row('albany', 1), 'Call 855.06250 MHz · Albany County Simulcast'))
+    .toHaveClass(/chart-window-unscoped/);
+  await expect(row('albany', 1).locator('.chart-window-other.chart-window-control')).toHaveCount(0);
+  await expect(albany.locator('.tuner-allocation-known-row .chart-window-selected')).toHaveCount(0);
+  await expect(albany.locator('.tuner-allocation-known-row .chart-window-known-dot')).toHaveCount(10);
+
+  // A frequency shared with Albany becomes selected only when its receiving
+  // channel belongs to the selected site. Saved names alone never select it.
+  await page.locator('.tuner-allocation-site-filter').selectOption('colonie');
+  const colonie = selected('colonie');
+  await expect(colonie.locator('[data-tuner-id] .chart-window-selected')).toHaveCount(3);
+  await expect(colonie.locator('[data-tuner-id] .chart-window-other')).toHaveCount(4);
+  await expect(colonie.locator('[data-tuner-id] .chart-window-unscoped')).toHaveCount(1);
+  await expect(receivingMarker(row('colonie', 4), 'Call 856.21250 MHz · Colonie Simulcast'))
+    .toHaveClass(/chart-window-selected/);
+  await expect(receivingMarker(row('colonie', 1), 'Call 856.21250 MHz · Albany County Simulcast'))
+    .toHaveClass(/chart-window-other/);
+  await expect(row('colonie', 4).locator('.chart-window-selected.chart-window-control')).toHaveCount(1);
+
+  const changed = sharedTunerSnapshot();
+  changed.tuners[3].frequency_hz = 857_112_500;
+  app.respond({ data: changed });
+  await expect(row('colonie', 4).locator('.chart-window-center title')).toHaveText('Center 857.11250 MHz');
+  await expect(receivingMarker(row('colonie', 4), 'Call 856.21250 MHz · Colonie Simulcast'))
+    .toHaveClass(/chart-window-selected/);
+  await expect(receivingMarker(row('colonie', 1), 'Call 856.21250 MHz · Albany County Simulcast'))
+    .toHaveClass(/chart-window-other/);
+
+  await page.locator('.tuner-allocation-site-filter').selectOption('weather');
+  const weather = selected('weather');
+  await expect(weather.locator('[data-tuner-id] .chart-window-selected')).toHaveCount(1);
+  await expect(receivingMarker(row('weather', 1), 'Conventional channel 855.18750 MHz · Albany County Simulcast'))
+    .toHaveClass(/chart-window-selected/);
+  await expect(weather.locator('[data-tuner-id] .chart-window-unscoped')).toHaveCount(1);
+});
+
+for (const theme of ['light', 'dark']) {
+  test(`tuner map row separators and selected versus other markers remain clear in ${theme}`, async ({ page }, testInfo) => {
+    await openApp(page, { theme, data: sharedTunerSnapshot() });
+    // Freeze this style inspection so a live redraw cannot detach the SVG
+    // between locating its marker and reading its computed appearance.
+    await page.getByRole('button', { name: 'Pause tuner allocation monitor' }).click();
+    for (const width of [1280, 320]) {
+      await page.setViewportSize({ width, height: 900 });
+      const site = sitePanel(page);
+      const rows = site.locator('.tuner-allocation-window-row');
+      await expect(rows).toHaveCount(6);
+      const geometry = await rows.evaluateAll((elements) => elements.map((element) => {
+        const style = getComputedStyle(element);
+        const bounds = element.getBoundingClientRect();
+        const chart = element.querySelector('.tuner-allocation-plot').getBoundingClientRect();
+        return { borderStyle: style.borderTopStyle, borderWidth: parseFloat(style.borderTopWidth),
+          borderColor: style.borderTopColor, background: getComputedStyle(element.closest('.ui-section')).backgroundColor,
+          top: bounds.top, bottom: bounds.bottom, left: bounds.left, right: bounds.right,
+          chartLeft: chart.left, chartRight: chart.right };
+      }));
+      for (const item of geometry.slice(2)) {
+        expect(item.borderStyle).toBe('solid');
+        expect(item.borderWidth).toBeGreaterThanOrEqual(1);
+        expect(item.borderColor).not.toMatch(/^(transparent|rgba\(0, 0, 0, 0\))$/);
+        expect(item.borderColor).not.toBe(item.background);
+      }
+      geometry.forEach((item, index) => {
+        expect(item.left).toBeGreaterThanOrEqual(0);
+        expect(item.right).toBeLessThanOrEqual(width);
+        expect(item.chartLeft).toBeCloseTo(geometry[0].chartLeft, 0);
+        expect(item.chartRight).toBeCloseTo(geometry[0].chartRight, 0);
+        if (index) expect(item.top).toBeGreaterThanOrEqual(geometry[index - 1].bottom - .5);
+      });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+      const selectedCall = tunerRow(page, 1).locator('.chart-window-selected.chart-window-call');
+      const otherCall = receivingMarker(tunerRow(page, 4), 'Call 856.21250 MHz · Colonie Simulcast');
+      await expect(otherCall).toHaveCSS('fill', 'none');
+      const selectedStyle = await selectedCall.evaluate((element) => ({
+        fill: getComputedStyle(element).fill, stroke: getComputedStyle(element).stroke }));
+      const otherStyle = await otherCall.evaluate((element) => ({
+        fill: getComputedStyle(element).fill, stroke: getComputedStyle(element).stroke,
+        strokeWidth: parseFloat(getComputedStyle(element).strokeWidth), tag: element.tagName }));
+      expect(selectedStyle.fill).not.toBe('none');
+      expect(otherStyle.fill).toBe('none');
+      expect(otherStyle.stroke).not.toBe('none');
+      expect(otherStyle.strokeWidth).toBeGreaterThanOrEqual(1);
+      expect(otherStyle.tag).toBe('circle');
+      expect(selectedStyle.fill).not.toBe(otherStyle.stroke);
+      const unknown = tunerRow(page, 1).locator('.chart-window-unscoped');
+      expect(await unknown.evaluate((element) => getComputedStyle(element).fill)).toBe('none');
+      await page.screenshot({ animations: 'disabled', path: testInfo.outputPath(`shared-tuner-map-${theme}-${width}.png`), fullPage: true });
+    }
+  });
+}
+
+test('widely separated tuner bands show measured gaps and keep selected known frequencies in their own band', async ({ page }, testInfo) => {
+  await openApp(page, { data: separatedBandsSnapshot() });
+  const site = sitePanel(page);
+  await expect(site.locator('.tuner-allocation-map')).toHaveCount(3);
+  await expect(site.locator('.tuner-allocation-window-row[data-tuner-id]')).toHaveCount(6);
+  await expect(site.getByText(/621\.64\s*MHz/)).toBeVisible();
+  await expect(site.getByText(/75\.87\s*MHz/)).toBeVisible();
+  const maps = site.locator('.tuner-allocation-map');
+  for (const [index, minimum, maximum] of [[0, 140, 160], [1, 760, 790], [2, 840, 870]]) {
+    const map = maps.nth(index);
+    await expect(map.locator('.tuner-allocation-ruler-row')).toHaveCount(1);
+    await expect(map.locator('.tuner-allocation-known-row')).toHaveCount(index === 2 ? 1 : 0);
+    const ticks = await map.locator('.chart-axis-label').allTextContents();
+    expect(ticks.length).toBeGreaterThanOrEqual(3);
+    expect(Math.min(...ticks.map(Number))).toBeGreaterThan(minimum);
+    expect(Math.max(...ticks.map(Number))).toBeLessThan(maximum);
+  }
+  await expect(maps.nth(0).locator('.chart-window-other')).toHaveCount(1);
+  await expect(maps.nth(1).locator('.chart-window-other')).toHaveCount(1);
+  await expect(maps.nth(2).locator('[data-tuner-id] .chart-window-selected')).toHaveCount(3);
+  for (const width of [1280, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    await expect(site.getByText(/621\.64\s*MHz/)).toBeVisible();
+    await expect(site.getByText(/75\.87\s*MHz/)).toBeVisible();
+    await page.screenshot({ animations: 'disabled', path: testInfo.outputPath(`separated-tuner-bands-${width}.png`), fullPage: true });
+  }
+  await page.locator('.tuner-allocation-site-filter').selectOption('county-fire');
+  const fire = page.locator('.tuner-allocation-site[data-site-id="county-fire"]');
+  await expect(fire.locator('.tuner-allocation-map')).toHaveCount(3);
+  await expect(fire.locator('.tuner-allocation-window-row[data-tuner-id]')).toHaveCount(6);
+  await expect(fire.locator('.tuner-allocation-map').nth(0).locator('.tuner-allocation-known-row')).toHaveCount(1);
+  await expect(fire.locator('.tuner-allocation-map').nth(2).locator('.tuner-allocation-known-row')).toHaveCount(0);
+  await expect(fire.locator('[data-tuner-id] .chart-window-selected')).toHaveCount(1);
 });
 
 test('receiver session changes close details and reset captured history', async ({ page }) => {

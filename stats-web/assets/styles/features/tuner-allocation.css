@@ -26,18 +26,18 @@
 
 .tuner-allocation-window-row {
   display: grid;
-  grid-template-columns: minmax(calc(var(--space-5) * 6), .3fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, calc(var(--space-5) * 6)) minmax(0, 1fr);
   align-items: center;
   gap: var(--space-3);
   min-width: 0;
-  padding-block: var(--space-2);
+  padding-block: var(--space-1);
 }
 
 .tuner-allocation-tuner-label {
   display: grid;
   justify-items: start;
   min-width: 0;
-  gap: var(--space-1);
+  gap: 0;
 }
 
 .tuner-allocation-plot {
