@@ -7,20 +7,42 @@
   gap: var(--space-4);
 }
 
-.tuner-allocation-catalog > .tuner-allocation-back {
-  justify-self: start;
+.tuner-allocation-channel-list,
+.tuner-allocation-protocol-group {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-2);
 }
 
-.tuner-allocation-selected-channel {
-  flex-wrap: wrap;
+.tuner-allocation-channel-list {
+  gap: var(--space-5);
+}
+
+.tuner-allocation-picker-toolbar,
+.tuner-allocation-monitor-toolbar {
+  justify-content: space-between;
+}
+
+.tuner-allocation-back,
+.tuner-allocation-channel-trailing {
+  flex: 0 0 auto;
+}
+
+.tuner-allocation-channel-label {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
+.tuner-allocation-channel-trailing {
+  flex-wrap: nowrap;
 }
 
 .tuner-allocation-channel-metadata {
   min-width: 0;
 }
 
-.tuner-allocation-channel-label {
-  justify-items: start;
+.tuner-allocation-failure:empty {
+  display: none;
 }
 
 .tuner-allocation-live-status,
@@ -29,6 +51,11 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
+}
+
+.tuner-allocation-live-status {
+  flex-wrap: nowrap;
+  margin-left: auto;
 }
 
 .tuner-allocation-site-heading {
@@ -81,6 +108,15 @@
 }
 
 @media (max-width: 560px) {
+  .tuner-allocation-monitor-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tuner-allocation-live-status {
+    justify-self: end;
+  }
+
   .tuner-allocation-window-row,
   .tuner-allocation-history-list tbody > tr {
     grid-template-columns: minmax(0, 1fr);

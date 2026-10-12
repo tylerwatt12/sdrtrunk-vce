@@ -32476,9 +32476,9 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
   const selectedChannelId = route.get('allocation_channel') || '';
   const selectedChannel = channels.find((channel) => String(channel.configuration_id) === selectedChannelId) ||
     (String(tunerAllocationPickerState.channel?.configuration_id || '') === selectedChannelId ? tunerAllocationPickerState.channel : null);
-  const back = anchor(fragment(iconGlyph('icon-chevron-left'), 'Back to channels'),
-    currentHref({ allocation_channel: null }), 'ui-button ui-button-secondary tuner-allocation-back');
-  const catalogController = {};
+  const back = setIconButton(anchor('', currentHref({ allocation_channel: null }),
+    'ui-button ui-button-quiet ui-icon-button ui-icon-button-compact tuner-allocation-back'),
+  'icon-chevron-left', 'Back to channels');
   let catalogRefreshInFlight = false;
   let catalogRefreshStopped = false;
   let catalogSignature = JSON.stringify(channels);
@@ -32507,71 +32507,84 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
       }
     } finally { catalogRefreshInFlight = false; }
   };
-  renderContext.signal.addEventListener('abort', () => {
-    cleanupTableLayoutMenu(catalogController);
-    catalogController.widthObserver?.disconnect();
-  }, { once: true });
   if (!selectedChannelId) {
-    const toolbar = node('div', 'ui-toolbar');
-    const searchWrap = node('label', 'ui-search');
+    const toolbar = node('div', 'ui-toolbar tuner-allocation-picker-toolbar');
+    const searchWrap = node('label', 'ui-search tuner-allocation-picker-search');
     const search = node('input', 'ui-input tuner-allocation-channel-search');
     search.type = 'search';
-    search.placeholder = 'Search channels, systems, protocols, or frequencies';
-    search.setAttribute('aria-label', search.placeholder);
+    search.placeholder = 'Find a channel';
+    search.setAttribute('aria-label', 'Search channels, systems, protocols, or frequencies');
     search.value = tunerAllocationPickerState.query;
     searchWrap.append(iconGlyph('icon-search'), search);
-    toolbar.append(searchWrap);
-    const pickerActions = sectionActionHost();
-    const tableHost = node('div');
+    const count = node('span', 'ui-label muted');
+    count.setAttribute('role', 'status');
+    toolbar.append(searchWrap, count);
+    const picker = node('div', 'tuner-allocation-channel-list');
     const selectChannel = (channel) => {
       Object.assign(tunerAllocationPickerState, { query: search.value, scrollX: window.scrollX,
         scrollY: window.scrollY, focusId: String(channel.configuration_id), restore: true, channel });
       navigateTo(currentHref({ allocation_channel: channel.configuration_id }));
     };
-    const rows = () => channels.filter((channel) => tunerAllocationChannelMatches(channel, search.value));
-    const picker = table(rows(), [
-      { id: 'channel', label: 'Channel', essential: true, render: (channel) => {
-        const label = node('div', 'ui-heading-group ui-heading-group-quiet tuner-allocation-channel-label');
-        const choice = node('button', 'ui-button ui-button-link tuner-allocation-channel-choice', channel.name || 'Unnamed channel');
-        choice.type = 'button';
-        choice.dataset.configurationId = String(channel.configuration_id);
-        choice.dataset.allocationChannelId = String(channel.configuration_id);
-        const frequencies = channelAdminFrequencyList(channel.frequencies_hz);
-        choice.setAttribute('aria-label', `Inspect ${channel.name || 'Unnamed channel'}${frequencies ? ` · ${frequencies} MHz` : ''}`);
-        choice.addEventListener('click', () => selectChannel(channel));
-        label.append(choice);
-        const context = tunerAllocationChannelContext(channel);
-        if (context) label.append(node('small', 'muted', context));
-        return label;
-      } },
-      { id: 'frequency', label: 'Frequencies', fullLabel: 'Frequencies (MHz)', essential: true,
-        render: (channel) => channelAdminFrequencyList(channel.frequencies_hz) || 'No frequencies configured' },
-      { id: 'status', label: 'Status', essential: true, render: (channel) => uiPill(
-        channel.processing_state === 'RUNNING' ? 'Running' : 'Stopped',
-        channel.processing_state === 'RUNNING' ? 'success' : 'neutral',
-        channel.processing_state === 'RUNNING' ? 'icon-play' : 'icon-stop') }
-    ], channels.length ? 'No channels match this search.' : 'No local tuner channels are configured.', {
-      type: 'tuner-allocation-channels', controller: catalogController, layoutMenuHost: pickerActions, sortable: false, mobileCards: true,
-      rowGroup: channelProtocolGroup, rowGroupNoun: 'channel', revealRowGroups: () => Boolean(search.value.trim()),
-      rowKey: (channel) => channel.configuration_id,
-      tableClass: 'tuner-allocation-channel-table', wrapperClass: 'tuner-allocation-channel-table-wrap'
-    });
-    tableHost.append(picker);
     drawCatalog = () => {
       const focusedId = picker.contains(document.activeElement) ? document.activeElement.dataset.configurationId : null;
-      const focusedGroup = picker.contains(document.activeElement) && document.activeElement.classList.contains('table-row-group-disclosure') ?
-        document.activeElement.dataset.rowGroup : null;
       tunerAllocationPickerState.query = search.value;
-      catalogController.setEmptyText(channels.length ? 'No channels match this search.' :
-        'No local tuner channels are configured.', { render: false });
-      catalogController.reconcileRows(rows());
+      const matches = channels.filter((channel) => tunerAllocationChannelMatches(channel, search.value));
+      const names = new Map();
+      channels.forEach((channel) => {
+        const name = String(channel.name || '').trim().toLowerCase();
+        names.set(name, (names.get(name) || 0) + 1);
+      });
+      count.textContent = `${number(matches.length)} ${matches.length === 1 ? 'channel' : 'channels'}`;
+      const groups = new Map();
+      matches.forEach((channel) => {
+        const group = channelProtocolGroup(channel);
+        if (!groups.has(group.key)) groups.set(group.key, { ...group, channels: [] });
+        groups.get(group.key).channels.push(channel);
+      });
+      const replacement = document.createDocumentFragment();
+      for (const group of groups.values()) {
+        const groupHost = node('section', 'tuner-allocation-protocol-group');
+        const heading = node('div', 'ui-action-row ui-action-row-start');
+        const title = node('h2', 'ui-section-heading tuner-allocation-protocol-name', group.label);
+        title.id = `allocation-protocol-${group.key}`;
+        groupHost.setAttribute('aria-labelledby', title.id);
+        heading.append(title, node('span', 'ui-label muted', number(group.channels.length)));
+        const list = node('div', 'ui-record-card');
+        for (const channel of group.channels) {
+          const choice = node('button', 'ui-select-list-item tuner-allocation-channel-choice');
+          choice.type = 'button';
+          choice.dataset.configurationId = String(channel.configuration_id);
+          choice.dataset.allocationChannelId = String(channel.configuration_id);
+          const frequencies = channelAdminFrequencyList(channel.frequencies_hz);
+          choice.setAttribute('aria-label', `Inspect ${channel.name || 'Unnamed channel'}${frequencies ? ` · ${frequencies} MHz` : ''}`);
+          choice.addEventListener('click', () => selectChannel(channel));
+          const label = node('span', 'ui-toggle-copy tuner-allocation-channel-label');
+          label.append(node('strong', '', channel.name || 'Unnamed channel'));
+          const context = tunerAllocationChannelContext(channel);
+          const showFrequencies = channel.channel_kind !== 'TRUNKED' || !channel.name ||
+            names.get(String(channel.name).trim().toLowerCase()) > 1;
+          const detail = [context, showFrequencies ? (frequencies ? `${frequencies} MHz` : 'No frequencies configured') : '']
+            .filter(Boolean).join(' · ');
+          if (detail) label.append(node('small', '', detail));
+          const trailing = node('span', 'ui-action-row tuner-allocation-channel-trailing');
+          const chevron = node('span', 'ui-record-card-icon');
+          chevron.append(iconGlyph('icon-chevron-right'));
+          trailing.append(uiStatus(channel.processing_state === 'RUNNING' ? 'Running' : 'Stopped',
+            channel.processing_state === 'RUNNING' ? 'success' : 'neutral'), chevron);
+          choice.append(label, trailing);
+          list.append(choice);
+        }
+        groupHost.append(heading, list);
+        replacement.append(groupHost);
+      }
+      if (!matches.length) replacement.append(node('p', 'ui-field-detail', channels.length ?
+        'No channels match this search.' : 'No local tuner channels are configured.'));
+      picker.replaceChildren(replacement);
       if (focusedId) picker.querySelector(`[data-configuration-id="${CSS.escape(focusedId)}"]`)?.focus({ preventScroll: true });
-      else if (focusedGroup) picker.querySelector(`.table-row-group-disclosure[data-row-group="${CSS.escape(focusedGroup)}"]`)?.focus({ preventScroll: true });
     };
     search.addEventListener('input', drawCatalog);
-    const pickerBody = node('div', 'ui-section-body');
-    pickerBody.append(toolbar, tableHost);
-    catalogHost.replaceChildren(section('Choose a channel', pickerBody, pickerActions));
+    drawCatalog();
+    catalogHost.replaceChildren(toolbar, picker);
     if (tunerAllocationPickerState.restore) {
       requestAnimationFrame(() => {
         if (!renderIsCurrent(renderContext) || !workspace.isConnected) return;
@@ -32590,10 +32603,11 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
   }
   tunerAllocationPickerState.channel = selectedChannel;
   tunerAllocationPickerState.restore = true;
-  const selectedContext = node('div', 'ui-surface-heading tuner-allocation-selected-channel');
+  const selectedContext = node('section', 'ui-record-card tuner-allocation-selected-channel');
   selectedContext.dataset.configurationId = selectedChannelId;
-  const heading = node('div', 'ui-heading-group');
-  const channelDetails = node('div', 'ui-action-row tuner-allocation-channel-metadata');
+  const selectedHeader = node('div', 'ui-record-card-header');
+  const heading = node('div', 'ui-record-card-copy');
+  const channelDetails = node('div', 'ui-action-row ui-action-row-start tuner-allocation-channel-metadata');
   let channelSignature = null;
   let lastSavedChannel = selectedChannel;
   const drawChannelContext = () => {
@@ -32602,22 +32616,41 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
       lastSavedChannel = saved;
       tunerAllocationPickerState.channel = saved;
     }
-    const signature = JSON.stringify([lastSavedChannel, Boolean(saved)]);
+    const name = String(lastSavedChannel.name || '').trim().toLowerCase();
+    const showFrequencies = lastSavedChannel.channel_kind !== 'TRUNKED' || !name ||
+      channels.some((channel) => String(channel.configuration_id) !== selectedChannelId &&
+        String(channel.name || '').trim().toLowerCase() === name);
+    const signature = JSON.stringify([lastSavedChannel, Boolean(saved), showFrequencies]);
     if (signature === channelSignature) return;
-    heading.replaceChildren(node('h2', '', lastSavedChannel.name || 'Unnamed channel'));
+    heading.replaceChildren(node('h2', 'ui-record-card-title', lastSavedChannel.name || 'Unnamed channel'), channelDetails);
     const context = tunerAllocationChannelContext(lastSavedChannel);
-    if (context) heading.append(node('p', '', context));
-    const frequencies = channelAdminFrequencyList(lastSavedChannel.frequencies_hz);
-    channelDetails.replaceChildren(uiPill(channelProtocolGroup(lastSavedChannel).label),
-      node('span', 'ui-label', frequencies ? `${frequencies} MHz` : 'No frequencies configured'),
-      uiPill(!saved ? 'Removed' : saved.processing_state === 'RUNNING' ? 'Running' : 'Stopped',
-        saved?.processing_state === 'RUNNING' ? 'success' : 'neutral'));
+    const frequencies = showFrequencies ? channelAdminFrequencyList(lastSavedChannel.frequencies_hz) : '';
+    channelDetails.replaceChildren(node('span', 'ui-field-detail',
+      [channelProtocolGroup(lastSavedChannel).label, context, frequencies ? `${frequencies} MHz` : '']
+        .filter(Boolean).join(' · ')));
+    if (!saved || saved.processing_state !== 'RUNNING') channelDetails.append(uiPill(!saved ? 'Removed' : 'Stopped'));
     channelSignature = signature;
   };
   drawChannelContext();
   drawCatalog = drawChannelContext;
-  selectedContext.append(heading, channelDetails);
-  catalogHost.replaceChildren(back, selectedContext);
+  const details = iconButton('icon-info-circle', 'Channel details',
+    'ui-button ui-button-quiet ui-icon-button ui-icon-button-compact tuner-allocation-channel-details');
+  details.addEventListener('click', () => {
+    selectedTunerId = null;
+    selectedTunerHost = null;
+    const saved = channels.some((channel) => String(channel.configuration_id) === selectedChannelId);
+    selectedModal = openReadOnlyModal(lastSavedChannel.name || 'Unnamed channel', tunerAllocationFacts([
+      ['Protocol', channelProtocolGroup(lastSavedChannel).label],
+      ['System', lastSavedChannel.system || '—'], ['Site', lastSavedChannel.site || '—'],
+      ['Configured frequencies', channelAdminFrequencyList(lastSavedChannel.frequencies_hz) ?
+        `${channelAdminFrequencyList(lastSavedChannel.frequencies_hz)} MHz` : 'None'],
+      ['Status', !saved ? 'Removed' : lastSavedChannel.processing_state === 'RUNNING' ? 'Running' : 'Stopped']
+    ]), { id: 'tuner-allocation-channel', className: 'modal-size-small',
+      returnFocusSelector: '.tuner-allocation-channel-details', onClose: () => { selectedModal = null; } });
+  });
+  selectedHeader.append(back, heading, details);
+  selectedContext.append(selectedHeader);
+  catalogHost.replaceChildren(selectedContext);
   pageInterval(refreshCatalog, 5_000);
   const status = node('div', 'tuner-allocation-live-status');
   status.setAttribute('role', 'status');
@@ -32785,10 +32818,12 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
     navigation.append(button);
   }
   activate(activeTab);
-  const toolbar = node('div', 'ui-toolbar');
+  const toolbar = node('div', 'ui-record-card-footer tuner-allocation-monitor-toolbar');
   toolbar.append(navigation, status);
-  const failure = node('div');
-  workspace.append(toolbar, failure, coveragePanel, historyPanel);
+  selectedContext.append(toolbar);
+  const failure = node('div', 'tuner-allocation-failure');
+  failure.setAttribute('role', 'alert');
+  workspace.append(failure, coveragePanel, historyPanel);
   const renderHistory = () => {
     if (!latest) return;
     const decisions = latest.decisions.filter((decision) => String(decision.siteId) === selectedChannelId);

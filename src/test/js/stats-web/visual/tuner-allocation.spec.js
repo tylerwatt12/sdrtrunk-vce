@@ -192,20 +192,29 @@ for (const theme of ['light', 'dark']) {
     await expect(page.locator('.tuner-allocation-map')).toHaveCount(0);
     await expect(page.locator('table[data-table-type="tuner-allocation-decisions"]')).toHaveCount(0);
     expect(app.requests()).toBe(0);
-    await expect(page.locator('.table-row-group-label')).toHaveText(['P25 Trunked', 'P25 Conventional', 'AM']);
+    await expect(page.locator('.tuner-allocation-protocol-name')).toHaveText(['P25 Trunked', 'P25 Conventional', 'AM']);
+    await expect(page.locator('.tuner-allocation-protocol-group')).toHaveCount(3);
+    await expect(page.locator('table')).toHaveCount(0);
+    await expect(page.locator('.table-layout-menu')).toHaveCount(0);
+    await expect(choices.first()).toHaveClass(/ui-select-list-item/);
     expect(await choices.evaluateAll((elements) => elements.map((element) => element.dataset.configurationId)))
       .toEqual(['albany', 'marcs-elyria', 'marcs-grafton', 'unnamed', 'failed', 'never-run', 'stopped', 'atc-1', 'atc-2']);
     await expect(pickerChoice(page, 'remote')).toHaveCount(0);
-    const row = (id) => pickerChoice(page, id).locator('xpath=ancestor::tr');
+    const row = (id) => pickerChoice(page, id);
     await expect(row('marcs-grafton')).toContainText('MARCS-Grafton');
     await expect(row('marcs-elyria')).toContainText('MARCS-Elyria');
     await expect(row('marcs-grafton')).toContainText('Lorain');
     await expect(row('marcs-elyria')).toContainText('Lorain');
+    await expect(row('marcs-grafton')).not.toContainText('773.08125');
+    await expect(row('marcs-grafton')).not.toContainText('770.90625');
+    await expect(row('marcs-elyria')).not.toContainText('770.20625');
+    await expect(row('marcs-grafton')).toContainText('Running');
     await expect(row('atc-1')).toContainText('125.85000');
     await expect(row('atc-2')).toContainText('125.97500');
     await expect(pickerChoice(page, 'atc-1')).not.toHaveAttribute('aria-label',
       await pickerChoice(page, 'atc-2').getAttribute('aria-label'));
     await expect(row('unnamed')).toContainText('154.46400');
+    await expect(row('stopped')).toContainText('Stopped');
     for (const width of [1280, 320]) {
       await page.setViewportSize({ width, height: 900 });
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
@@ -213,6 +222,28 @@ for (const theme of ['light', 'dark']) {
     }
   });
 }
+
+test('duplicate trunked names include saved frequencies and the whole row is keyboard selectable', async ({ page }) => {
+  const catalog = pickerCatalog();
+  for (const item of catalog.channels.filter((channel) => channel.configuration_id.startsWith('marcs-'))) item.name = 'MARCS';
+  await openApp(page, { choose: false, catalog });
+  const grafton = pickerChoice(page, 'marcs-grafton');
+  const elyria = pickerChoice(page, 'marcs-elyria');
+  await expect(grafton).toContainText('773.08125');
+  await expect(elyria).toContainText('770.20625');
+  await expect(grafton).not.toHaveAttribute('aria-label', await elyria.getAttribute('aria-label'));
+  await grafton.focus();
+  await page.keyboard.press('Enter');
+  const selected = page.locator('.tuner-allocation-selected-channel[data-configuration-id="marcs-grafton"]');
+  await expect(selected).toBeVisible();
+  await expect(selected).toContainText('773.08125');
+  await expect(selected).not.toContainText('770.20625');
+  await expect(page).toHaveURL(/allocation_channel=marcs-grafton/);
+  await changeChannel(page, 'atc-1');
+  const atc = page.locator('.tuner-allocation-selected-channel[data-configuration-id="atc-1"]');
+  await expect(atc).toContainText('125.85000');
+  await expect(atc).not.toContainText('125.97500');
+});
 
 test('channel search finds configured names, system, site, protocol, and RF frequency', async ({ page }) => {
   await openApp(page, { choose: false, catalog: pickerCatalog() });
@@ -248,6 +279,22 @@ test('chosen saved channel ID scopes coverage and decision history without a cho
   await chooseChannel(page, 'marcs-grafton');
   await expect(page).toHaveURL(/allocation_channel=marcs-grafton/);
   await expect(page.locator('.tuner-allocation-selected-channel')).toContainText('MARCS-Grafton');
+  const selected = page.locator('.tuner-allocation-selected-channel');
+  await expect(selected).toHaveClass(/ui-record-card/);
+  await expect(selected).not.toContainText('773.08125');
+  await expect(selected).not.toContainText('770.90625');
+  const toolbar = selected.locator('.tuner-allocation-monitor-toolbar');
+  await expect(toolbar.getByRole('button', { name: 'Coverage', exact: true })).toBeVisible();
+  await expect(toolbar.getByRole('button', { name: 'Decision history', exact: true })).toBeVisible();
+  await expect(toolbar.locator('.tuner-allocation-live-status')).toContainText('Live');
+  await expect(toolbar.getByRole('button', { name: 'Pause tuner allocation monitor' })).toBeVisible();
+  const details = selected.getByRole('button', { name: 'Channel details', exact: true });
+  await details.click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toContainText('773.08125');
+  await expect(dialog).toContainText('770.90625');
+  await page.keyboard.press('Escape');
+  await expect(details).toBeFocused();
   await expect(page.locator('.tuner-allocation-site[data-site-id="marcs-grafton"]')).toBeVisible();
   await expect(page.locator('.tuner-allocation-site[data-site-id="marcs-elyria"]')).toHaveCount(0);
   await expect(page.locator('.tuner-allocation-site-filter')).toHaveCount(0);
@@ -442,6 +489,13 @@ for (const theme of ['light', 'dark']) {
     for (const width of [1280, 390, 320]) {
       await page.setViewportSize({ width, height: 900 });
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+      const header = page.locator('.tuner-allocation-selected-channel');
+      const headerRect = await header.boundingBox();
+      expect(headerRect.x).toBeGreaterThanOrEqual(0);
+      expect(headerRect.x + headerRect.width).toBeLessThanOrEqual(width);
+      await expect(header.locator('.tuner-allocation-monitor-toolbar').getByRole('button', {
+        name: 'Pause tuner allocation monitor'
+      })).toBeVisible();
       const site = sitePanel(page);
       const rect = await site.boundingBox();
       expect(rect.x + rect.width).toBeLessThanOrEqual(width);
@@ -690,7 +744,10 @@ test('access loss clears tuner status, history, and open details', async ({ page
   const app = await openApp(page);
   await tunerRow(page, 1).getByRole('button', { name: 'Details for RTL-SDR 1', exact: true }).click();
   app.respond({ status: 403 });
-  await expect(page.locator('.tuner-allocation-live-status')).toContainText('Access denied');
+  await expect(page.getByRole('alert')).toContainText('You no longer have access to tuner allocation.');
+  await expect(page.locator('.tuner-allocation-selected-channel')).toHaveCount(0);
+  await expect(page.locator('.tuner-allocation-live-status')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Pause tuner allocation monitor' })).toHaveCount(0);
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.locator('.tuner-allocation-window-row[data-tuner-id]')).toHaveCount(0);
   await expect(page.locator('.tuner-allocation-workspace')).not.toContainText('855.36250 MHz');
