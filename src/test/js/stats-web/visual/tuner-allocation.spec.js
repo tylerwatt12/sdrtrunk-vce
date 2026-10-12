@@ -95,16 +95,64 @@ function decision(id = 1, extra = {}) {
     first_timestamp: 1_700_000_004_000 + id, last_timestamp: 1_700_000_004_000 + id, candidates: [], ...extra };
 }
 
+function catalogForSnapshot(data) {
+  return { revision: 1, channels: data.sites.map((site) => ({
+    configuration_id: site.id, name: site.channel_name || site.name, system: site.system_name || '', site: site.name,
+    protocol_id: site.kind === 'conventional' ? 'p25-conventional' : 'p25-phase1',
+    protocol_label: site.kind === 'conventional' ? 'P25 Conventional' : 'P25 Phase 1',
+    channel_kind: site.kind === 'conventional' ? 'CONVENTIONAL' : 'TRUNKED',
+    frequencies_hz: (site.frequencies || []).filter((item) => site.kind === 'conventional' || item.role === 'control')
+      .map((item) => item.frequency_hz),
+    processing_state: site.status === 'stopped' ? 'STOPPED' : 'RUNNING', auto_start_order: 1,
+    alias_list_name: 'County P25', remote_origin: null
+  })) };
+}
+
+// Real saved names/frequencies use sanitized IDs. Remaining state variations
+// deliberately exercise channels without a current allocation snapshot.
+function pickerCatalog() {
+  const channel = (id, name, system, site, frequencies_hz, extra = {}) => ({
+    configuration_id: id, name, system, site, frequencies_hz, protocol_id: 'p25-phase1',
+    protocol_label: 'P25 Phase 1', channel_kind: 'TRUNKED', processing_state: 'RUNNING',
+    auto_start_order: 1, alias_list_name: 'County P25', remote_origin: null, ...extra });
+  const conventional = { protocol_id: 'p25-conventional', protocol_label: 'P25 Conventional', channel_kind: 'CONVENTIONAL' };
+  const am = { protocol_id: 'am', protocol_label: 'AM', channel_kind: 'CONVENTIONAL' };
+  return { revision: 1, channels: [
+    channel('remote', 'Remote North', 'Remote system', 'North', [773_500_000], { remote_origin: { remote: true } }),
+    channel('atc-1', 'ATC', 'ATC', 'ATC', [125_850_000], am),
+    channel('marcs-elyria', 'MARCS-Elyria', 'Ohio MARCS-IP: Multi-Agency Radio Communications', 'Lorain', [770_206_250, 770_606_250]),
+    channel('unnamed', null, 'Unknown', null, [154_464_000], conventional),
+    ...catalogForSnapshot(snapshot()).channels,
+    channel('stopped', 'Stopped channel', 'County conventional', 'West', [154_600_000], { ...conventional, processing_state: 'STOPPED' }),
+    channel('never-run', 'Never started', 'County conventional', 'South', [154_700_000], { ...conventional, processing_state: 'STOPPED', auto_start_order: null }),
+    channel('atc-2', 'ATC', 'ATC', 'ATC', [125_975_000], am),
+    channel('marcs-grafton', 'MARCS-Grafton', 'Ohio MARCS-IP: Multi-Agency Radio Communications', 'Lorain', [773_081_250, 770_906_250]),
+    channel('failed', 'Failed channel', 'County conventional', 'East', [154_800_000], { ...conventional, processing_state: 'STOPPED' })
+  ] };
+}
+
+const pickerChoice = (page, id) => page.locator(`.tuner-allocation-channel-choice[data-configuration-id="${id}"]`);
+async function chooseChannel(page, id) {
+  await pickerChoice(page, id).click();
+  await expect(page.locator(`.tuner-allocation-selected-channel[data-configuration-id="${id}"]`)).toBeVisible();
+}
+async function changeChannel(page, id) {
+  await page.locator('.tuner-allocation-back').click();
+  await chooseChannel(page, id);
+}
+
 async function openApp(page, options = {}) {
   let requests = 0;
+  let catalogRequests = 0;
   let response = { data: options.data || snapshot() };
+  let catalogResponse = options.catalogResponse || { data: options.catalog || catalogForSnapshot(response.data) };
   let preferences = JSON.parse(JSON.stringify(defaults));
   preferences.appearance.theme = options.theme || 'light';
   await page.route('**/api/v1/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname;
     if (pathname === '/api/v1/auth/session') return route.fulfill({ json: { data: {
       configured: true, authenticated: true, username: 'admin', tier: 'admin', primary: true,
-      capabilities: { 'admin-settings': true, credits: true } } } });
+      capabilities: { 'admin-settings': true, 'radio-view': true, 'admin-channels': false, credits: true } } } });
     if (pathname === '/api/v1/me/preferences') {
       if (route.request().method() === 'PUT') preferences = route.request().postDataJSON();
       return route.fulfill({ json: { revision: 1, preferences } });
@@ -114,11 +162,18 @@ async function openApp(page, options = {}) {
       return route.fulfill({ status: response.status || 200,
         json: response.status && response.status !== 200 ? { error: { status: response.status, message: 'Unavailable' } } : { data: response.data } });
     }
+    if (pathname === '/api/v1/channel-catalog') {
+      catalogRequests++;
+      return route.fulfill({ status: catalogResponse.status || 200,
+        json: catalogResponse.status && catalogResponse.status !== 200 ? { error: { status: catalogResponse.status, message: 'Unavailable' } } : { data: catalogResponse.data } });
+    }
     return route.fulfill({ status: 404, json: { error: { status: 404, message: 'Unavailable' } } });
   });
-  await page.goto('/app.html?view=admin&tab=tuner-allocation');
-  await expect(page.locator('.tuner-allocation-live-status')).toContainText('Live');
-  return { requests: () => requests, respond: (next) => { response = next; } };
+  await page.goto(`/app.html?view=admin&tab=tuner-allocation${options.channel ? `&allocation_channel=${options.channel}` : ''}`);
+  if (options.choose !== false && !options.channel) await chooseChannel(page, options.selectedId || 'albany');
+  if (options.choose !== false || options.channel) await expect(page.locator('.tuner-allocation-live-status')).toContainText('Live');
+  return { requests: () => requests, catalogRequests: () => catalogRequests,
+    respond: (next) => { response = next; }, respondCatalog: (next) => { catalogResponse = next; } };
 }
 
 const sitePanel = (page) => page.locator('.tuner-allocation-site[data-site-id="albany"]');
@@ -126,6 +181,145 @@ const tunerRow = (page, id) => sitePanel(page).locator(`.tuner-allocation-window
 const centerReadout = (dialog) => dialog.locator('.ui-fact-row:has(dt:text-is("Center")) dd');
 const receivingMarker = (host, titleText) => host.locator(
   '.chart-window-selected, .chart-window-other, .chart-window-unscoped').filter({ hasText: titleText });
+
+for (const theme of ['light', 'dark']) {
+  test(`channel picker starts without choosing a channel and follows Channel manager groups with recognizable names in ${theme}`, async ({ page }, testInfo) => {
+    const app = await openApp(page, { choose: false, catalog: pickerCatalog(), theme });
+    const choices = page.locator('.tuner-allocation-channel-choice');
+    await expect(choices).toHaveCount(9);
+    await expect(page.getByRole('button', { name: 'Coverage', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Decision history', exact: true })).toHaveCount(0);
+    await expect(page.locator('.tuner-allocation-map')).toHaveCount(0);
+    await expect(page.locator('table[data-table-type="tuner-allocation-decisions"]')).toHaveCount(0);
+    expect(app.requests()).toBe(0);
+    await expect(page.locator('.table-row-group-label')).toHaveText(['P25 Trunked', 'P25 Conventional', 'AM']);
+    expect(await choices.evaluateAll((elements) => elements.map((element) => element.dataset.configurationId)))
+      .toEqual(['albany', 'marcs-elyria', 'marcs-grafton', 'unnamed', 'failed', 'never-run', 'stopped', 'atc-1', 'atc-2']);
+    await expect(pickerChoice(page, 'remote')).toHaveCount(0);
+    const row = (id) => pickerChoice(page, id).locator('xpath=ancestor::tr');
+    await expect(row('marcs-grafton')).toContainText('MARCS-Grafton');
+    await expect(row('marcs-elyria')).toContainText('MARCS-Elyria');
+    await expect(row('marcs-grafton')).toContainText('Lorain');
+    await expect(row('marcs-elyria')).toContainText('Lorain');
+    await expect(row('atc-1')).toContainText('125.85000');
+    await expect(row('atc-2')).toContainText('125.97500');
+    await expect(pickerChoice(page, 'atc-1')).not.toHaveAttribute('aria-label',
+      await pickerChoice(page, 'atc-2').getAttribute('aria-label'));
+    await expect(row('unnamed')).toContainText('154.46400');
+    for (const width of [1280, 320]) {
+      await page.setViewportSize({ width, height: 900 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+      await page.screenshot({ animations: 'disabled', path: testInfo.outputPath(`tuner-channel-picker-${theme}-${width}.png`), fullPage: true });
+    }
+  });
+}
+
+test('channel search finds configured names, system, site, protocol, and RF frequency', async ({ page }) => {
+  await openApp(page, { choose: false, catalog: pickerCatalog() });
+  const search = page.locator('.tuner-allocation-channel-search');
+  const ids = () => page.locator('.tuner-allocation-channel-choice').evaluateAll(
+    (elements) => elements.map((element) => element.dataset.configurationId));
+  for (const [term, expected] of [
+    ['MARCS-Grafton', ['marcs-grafton']], ['Ohio MARCS', ['marcs-elyria', 'marcs-grafton']],
+    ['Lorain', ['marcs-elyria', 'marcs-grafton']], ['125.975', ['atc-2']],
+    ['154.464', ['unnamed']], ['P25 Conventional', ['unnamed', 'failed', 'never-run', 'stopped']],
+    ['Unknown', ['unnamed']], ['Unnamed', ['unnamed']]
+  ]) {
+    await search.fill(term);
+    await expect.poll(ids).toEqual(expected);
+  }
+  await search.fill('No matching channel');
+  await expect(page.locator('.tuner-allocation-channel-choice')).toHaveCount(0);
+  await search.fill('');
+  await expect(page.locator('.tuner-allocation-channel-choice')).toHaveCount(9);
+});
+
+test('chosen saved channel ID scopes coverage and decision history without a chooser inside either tab', async ({ page }) => {
+  const data = snapshot([
+    decision(71, { site_id: 'marcs-grafton', site_name: 'Lorain', reason: 'Grafton request could not fit', type: 'failure', outcome: 'allocation_failed' }),
+    decision(72, { site_id: 'marcs-elyria', site_name: 'Lorain', reason: 'Elyria request could not fit', type: 'failure', outcome: 'allocation_failed' })
+  ]);
+  for (const [id, frequency_hz] of [['marcs-grafton', 773_081_250], ['marcs-elyria', 770_206_250]]) {
+    data.sites.push({ id, name: 'Lorain', channel_name: id === 'marcs-grafton' ? 'MARCS-Grafton' : 'MARCS-Elyria',
+      system_name: 'Ohio MARCS-IP: Multi-Agency Radio Communications', kind: 'trunked', known_frequency_count: 1,
+      covered_frequency_count: 0, status: 'stopped', tuners: [], frequencies: [{ frequency_hz, bandwidth_hz: 12_500, covered: false, role: 'control' }] });
+  }
+  await openApp(page, { choose: false, data, catalog: pickerCatalog() });
+  await chooseChannel(page, 'marcs-grafton');
+  await expect(page).toHaveURL(/allocation_channel=marcs-grafton/);
+  await expect(page.locator('.tuner-allocation-selected-channel')).toContainText('MARCS-Grafton');
+  await expect(page.locator('.tuner-allocation-site[data-site-id="marcs-grafton"]')).toBeVisible();
+  await expect(page.locator('.tuner-allocation-site[data-site-id="marcs-elyria"]')).toHaveCount(0);
+  await expect(page.locator('.tuner-allocation-site-filter')).toHaveCount(0);
+  await expect(page.locator('.tuner-allocation-channel-search')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Decision history', exact: true }).click();
+  const table = page.locator('table[data-table-type="tuner-allocation-decisions"]');
+  await expect(table.locator('tbody tr')).toHaveCount(1);
+  await expect(table).toContainText('Grafton request could not fit');
+  await expect(table).not.toContainText('Elyria request could not fit');
+  await expect(page.locator('.tuner-allocation-site-filter')).toHaveCount(0);
+  await expect(page.locator('.tuner-allocation-channel-search')).toHaveCount(0);
+  await expect(page.locator('.tuner-allocation-back')).toBeVisible();
+});
+
+test('Back to channels and browser Back preserve the search and explicit selection', async ({ page }) => {
+  await openApp(page, { choose: false, catalog: pickerCatalog() });
+  await page.locator('.tuner-allocation-channel-search').fill('MARCS');
+  await chooseChannel(page, 'marcs-grafton');
+  await page.goBack();
+  await expect(page.locator('.tuner-allocation-channel-search')).toHaveValue('MARCS');
+  await expect(page.locator('.tuner-allocation-selected-channel')).toHaveCount(0);
+  await page.goForward();
+  await expect(page.locator('.tuner-allocation-selected-channel[data-configuration-id="marcs-grafton"]')).toBeVisible();
+  await page.locator('.tuner-allocation-back').click();
+  await expect(page.locator('.tuner-allocation-channel-search')).toHaveValue('MARCS');
+  await expect(page).not.toHaveURL(/allocation_channel=/);
+  await chooseChannel(page, 'marcs-elyria');
+  await expect(page).toHaveURL(/allocation_channel=marcs-elyria/);
+});
+
+test('stopped, never-run, and failed channels retain the chosen ID and their own decisions without a current site snapshot', async ({ page }) => {
+  const decisions = ['stopped', 'never-run', 'failed'].map((id, index) => decision(80 + index,
+    { site_id: id, site_name: 'County conventional', reason: `${id} request could not start`, type: 'failure', outcome: 'allocation_failed' }));
+  const app = await openApp(page, { choose: false, data: snapshot(decisions), catalog: pickerCatalog() });
+  for (const [index, id] of ['stopped', 'never-run', 'failed'].entries()) {
+    await chooseChannel(page, id);
+    await expect(page.locator(`.tuner-allocation-selected-channel[data-configuration-id="${id}"]`)).toBeVisible();
+    await expect(sitePanel(page)).toHaveCount(0);
+    await expect(page).toHaveURL(new RegExp(`allocation_channel=${id}`));
+    await page.getByRole('button', { name: 'Decision history', exact: true }).click();
+    const table = page.locator('table[data-table-type="tuner-allocation-decisions"]');
+    await expect(table.locator('tbody tr')).toHaveCount(1);
+    await expect(table).toContainText(`${id} request could not start`);
+    const changed = snapshot(decisions);
+    changed.tuners[2].frequency_hz = 859_212_500;
+    changed.decisions = decisions.map((item) => ({ ...item, repeat_count: index + 2 }));
+    app.respond({ data: changed });
+    await expect(page.locator(`.tuner-allocation-selected-channel[data-configuration-id="${id}"]`)).toBeVisible();
+    await expect(table).toContainText(`${id} request could not start`);
+    await expect(table).toContainText(`${index + 2} requests`);
+    await page.locator('.tuner-allocation-back').click();
+  }
+  await page.goto('/app.html?view=admin&tab=tuner-allocation&allocation_channel=failed');
+  await expect(page.locator('.tuner-allocation-selected-channel[data-configuration-id="failed"]')).toBeVisible();
+  await expect(sitePanel(page)).toHaveCount(0);
+});
+
+test('catalog load failure retries and a revoked catalog session clears channel choices', async ({ page }) => {
+  const app = await openApp(page, { choose: false, catalogResponse: { status: 503 } });
+  await expect(page.locator('.tuner-allocation-channel-choice')).toHaveCount(0, { timeout: 7000 });
+  const retry = page.getByRole('button', { name: 'Retry', exact: true });
+  await expect(retry).toBeVisible();
+  app.respondCatalog({ data: pickerCatalog() });
+  await retry.click();
+  await expect(page.locator('.tuner-allocation-channel-choice')).toHaveCount(9);
+  await page.locator('.tuner-allocation-channel-search').fill('ATC');
+  app.respondCatalog({ status: 403 });
+  await expect(page.locator('.tuner-allocation-channel-choice')).toHaveCount(0, { timeout: 7000 });
+  await expect(page.locator('.tuner-allocation-selected-channel')).toHaveCount(0);
+  await expect(page.locator('.tuner-allocation-channel-search')).toHaveCount(0);
+  await expect(page.locator('main')).not.toContainText('125.850');
+});
 
 test('real Albany coverage shows current windows, overlap, and uncovered known frequencies', async ({ page }) => {
   await openApp(page);
@@ -135,7 +329,7 @@ test('real Albany coverage shows current windows, overlap, and uncovered known f
   const support = page.locator('.admin-settings-branch').filter({ hasText: 'Status & support' });
   await expect(support.getByRole('link', { name: 'Call matching', exact: true })).toHaveCount(0);
   const site = sitePanel(page);
-  await expect(site).toContainText('Albany/Schenectady Counties');
+  await expect(page.locator('.tuner-allocation-selected-channel')).toContainText('Albany/Schenectady Counties');
   await expect(site).toContainText('9 / 11 in windows');
   await expect(site.locator('.tuner-allocation-window-row[data-tuner-id]')).toHaveCount(4);
   await expect(tunerRow(page, 1).locator('.chart-window-center title')).toHaveText('Center 855.36250 MHz');
@@ -328,9 +522,9 @@ test('site selection scopes known frequencies without hiding the tuner inventory
     kind: 'trunked', known_frequency_count: 1, covered_frequency_count: 0, status: 'stopped', tuners: [],
     frequencies: [{ frequency_hz: 773_987_500, bandwidth_hz: 12_500, covered: false, role: 'control' }] });
   await openApp(page, { data });
-  await page.locator('.tuner-allocation-site-filter').selectOption('other-site');
+  await changeChannel(page, 'other-site');
   const selected = page.locator('.tuner-allocation-site[data-site-id="other-site"]');
-  await expect(selected).toContainText('Other system');
+  await expect(page.locator('.tuner-allocation-selected-channel')).toContainText('Other system');
   await expect(selected).toContainText('0 / 1 in windows');
   await expect(selected.locator('.tuner-allocation-window-row[data-tuner-id]')).toHaveCount(4);
   await expect(selected.getByRole('button', { name: 'Highlight 773.98750 MHz', exact: true })).toBeVisible();
@@ -362,7 +556,7 @@ test('selected channel markers distinguish shared tuner work by site identity th
 
   // A frequency shared with Albany becomes selected only when its receiving
   // channel belongs to the selected site. Saved names alone never select it.
-  await page.locator('.tuner-allocation-site-filter').selectOption('colonie');
+  await changeChannel(page, 'colonie');
   const colonie = selected('colonie');
   await expect(colonie.locator('[data-tuner-id] .chart-window-selected')).toHaveCount(3);
   await expect(colonie.locator('[data-tuner-id] .chart-window-other')).toHaveCount(4);
@@ -382,7 +576,7 @@ test('selected channel markers distinguish shared tuner work by site identity th
   await expect(receivingMarker(row('colonie', 1), 'Call 856.21250 MHz · Albany County Simulcast'))
     .toHaveClass(/chart-window-other/);
 
-  await page.locator('.tuner-allocation-site-filter').selectOption('weather');
+  await changeChannel(page, 'weather');
   const weather = selected('weather');
   await expect(weather.locator('[data-tuner-id] .chart-window-selected')).toHaveCount(1);
   await expect(receivingMarker(row('weather', 1), 'Conventional channel 855.18750 MHz · Albany County Simulcast'))
@@ -472,7 +666,7 @@ test('widely separated tuner bands show measured gaps and keep selected known fr
     await expect(site.getByText(/75\.87\s*MHz/)).toBeVisible();
     await page.screenshot({ animations: 'disabled', path: testInfo.outputPath(`separated-tuner-bands-${width}.png`), fullPage: true });
   }
-  await page.locator('.tuner-allocation-site-filter').selectOption('county-fire');
+  await changeChannel(page, 'county-fire');
   const fire = page.locator('.tuner-allocation-site[data-site-id="county-fire"]');
   await expect(fire.locator('.tuner-allocation-map')).toHaveCount(3);
   await expect(fire.locator('.tuner-allocation-window-row[data-tuner-id]')).toHaveCount(6);

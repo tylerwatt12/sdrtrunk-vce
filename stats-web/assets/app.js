@@ -31859,6 +31859,33 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
 
 const TUNER_ALLOCATION_HISTORY_LIMIT = 100;
 const TUNER_ALLOCATION_PAGE_SIZE = 20;
+const tunerAllocationPickerState = { query: '', scrollX: 0, scrollY: 0, focusId: null, restore: false,
+  channel: null, account: null };
+
+function tunerAllocationCatalogChannels(value) {
+  if (!value || !Array.isArray(value.channels)) {
+    throw new Error('Channels could not be loaded. Reload the page and try again.');
+  }
+  return value.channels.filter((channel) => channel.configuration_id && channel.remote_origin?.remote !== true)
+    .sort(channelProtocolOrder);
+}
+
+function tunerAllocationChannelContext(channel) {
+  const seen = new Set([String(channel.name || '').trim().toLowerCase()]);
+  return [channel.system, channel.site].map((value) => String(value || '').trim()).filter((value) => {
+    const key = value.toLowerCase();
+    if (!value || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).join(' · ');
+}
+
+function tunerAllocationChannelMatches(channel, term) {
+  const query = String(term || '').trim().toLowerCase();
+  return !query || [channel.name || 'Unnamed channel', channel.system, channel.site, channel.protocol_label,
+    channelProtocolGroup(channel).label, channelAdminFrequencyList(channel.frequencies_hz)]
+    .some((value) => String(value || '').toLowerCase().includes(query));
+}
 
 function tunerAllocationSnapshot(value) {
   const normalize = (item) => Array.isArray(item) ? item.map(normalize) :
@@ -32236,17 +32263,13 @@ function tunerAllocationMapLegend(hasUnscoped = false) {
 }
 
 function tunerAllocationSiteMap(site, snapshot, state, openTuner) {
-  const name = node('div', 'ui-heading-group ui-heading-group-quiet');
-  name.append(node('strong', '', site.name || site.channelName || 'Unknown channel'));
-  if (site.systemName) name.append(node('small', 'muted', site.systemName));
   const coverage = uiStatus(Number(site.knownFrequencyCount) > 0 ?
     `${number(site.coveredFrequencyCount)} / ${number(site.knownFrequencyCount)} in windows` : 'No known frequencies',
     Number(site.coveredFrequencyCount) < Number(site.knownFrequencyCount) ? 'warning' : 'neutral');
   const header = node('div', 'tuner-allocation-site-heading');
-  header.append(name, coverage);
+  header.append(node('strong', '', 'Tuner windows'), coverage);
   if (site.status === 'stopped') header.append(uiStatus('Stopped', 'neutral'));
   const body = node('div', 'ui-section-body');
-  body.append(node('p', 'ui-section-note', 'All current tuner windows'));
   const panel = section('', body);
   panel.firstElementChild.append(header);
   panel.classList.add('tuner-allocation-site');
@@ -32402,7 +32425,177 @@ function tunerAllocationDecisionDetails(decision) {
 }
 
 async function renderAdminTunerAllocation(renderContext = captureRenderContext()) {
+  const account = accessSession.authenticated ? accessSession.username : 'anonymous';
+  if (tunerAllocationPickerState.account !== account) {
+    Object.assign(tunerAllocationPickerState, { query: '', scrollX: 0, scrollY: 0, focusId: null,
+      restore: false, channel: null, account });
+  }
   const workspace = node('div', 'ui-settings-page tuner-allocation-workspace');
+  const catalogHost = node('div', 'tuner-allocation-catalog');
+  catalogHost.append(node('p', 'ui-section-note', 'Loading channels…'));
+  workspace.append(catalogHost);
+  content.append(workspace);
+  let channels;
+  try {
+    channels = tunerAllocationCatalogChannels(await requestChannelConfigurationJson('/api/v1/channel-catalog', {
+      csrf: false, signal: renderContext.signal
+    }));
+  } catch (error) {
+    if (error?.name === 'AbortError' || !renderIsCurrent(renderContext)) return;
+    if (error?.status === 401 || error?.status === 403) {
+      Object.assign(tunerAllocationPickerState, { query: '', scrollX: 0, scrollY: 0, focusId: null, restore: false, channel: null });
+      throw error;
+    }
+    catalogHost.replaceChildren(asyncSectionFailure(null, 'Channels could not be loaded. Reload or try again.', () => render()));
+    return;
+  }
+  if (!renderIsCurrent(renderContext) || !workspace.isConnected) return;
+  const selectedChannelId = route.get('allocation_channel') || '';
+  const selectedChannel = channels.find((channel) => String(channel.configuration_id) === selectedChannelId) ||
+    (String(tunerAllocationPickerState.channel?.configuration_id || '') === selectedChannelId ? tunerAllocationPickerState.channel : null);
+  const back = anchor(fragment(iconGlyph('icon-chevron-left'), 'Back to channels'),
+    currentHref({ allocation_channel: null }), 'ui-button ui-button-secondary tuner-allocation-back');
+  const catalogController = {};
+  let catalogRefreshInFlight = false;
+  let catalogRefreshStopped = false;
+  let catalogSignature = JSON.stringify(channels);
+  let drawCatalog = () => {};
+  const refreshCatalog = async () => {
+    if (catalogRefreshInFlight || catalogRefreshStopped || document.hidden ||
+        !renderIsCurrent(renderContext) || !workspace.isConnected) return;
+    catalogRefreshInFlight = true;
+    try {
+      const replacement = tunerAllocationCatalogChannels(await requestChannelConfigurationJson('/api/v1/channel-catalog', {
+        csrf: false, signal: renderContext.signal
+      }));
+      if (!renderIsCurrent(renderContext) || document.hidden || !workspace.isConnected) return;
+      const signature = JSON.stringify(replacement);
+      if (signature === catalogSignature) return;
+      channels = replacement;
+      catalogSignature = signature;
+      drawCatalog();
+    } catch (error) {
+      if (error?.name === 'AbortError' || !renderIsCurrent(renderContext)) return;
+      if (error?.status === 401 || error?.status === 403) {
+        catalogRefreshStopped = true;
+        Object.assign(tunerAllocationPickerState, { query: '', scrollX: 0, scrollY: 0, focusId: null, restore: false, channel: null });
+        workspace.replaceChildren(node('div', 'error', 'You no longer have access to tuner allocation.'));
+        void render();
+      }
+    } finally { catalogRefreshInFlight = false; }
+  };
+  renderContext.signal.addEventListener('abort', () => {
+    cleanupTableLayoutMenu(catalogController);
+    catalogController.widthObserver?.disconnect();
+  }, { once: true });
+  if (!selectedChannelId) {
+    const toolbar = node('div', 'ui-toolbar');
+    const searchWrap = node('label', 'ui-search');
+    const search = node('input', 'ui-input tuner-allocation-channel-search');
+    search.type = 'search';
+    search.placeholder = 'Search channels, systems, protocols, or frequencies';
+    search.setAttribute('aria-label', search.placeholder);
+    search.value = tunerAllocationPickerState.query;
+    searchWrap.append(iconGlyph('icon-search'), search);
+    toolbar.append(searchWrap);
+    const pickerActions = sectionActionHost();
+    const tableHost = node('div');
+    const selectChannel = (channel) => {
+      Object.assign(tunerAllocationPickerState, { query: search.value, scrollX: window.scrollX,
+        scrollY: window.scrollY, focusId: String(channel.configuration_id), restore: true, channel });
+      navigateTo(currentHref({ allocation_channel: channel.configuration_id }));
+    };
+    const rows = () => channels.filter((channel) => tunerAllocationChannelMatches(channel, search.value));
+    const picker = table(rows(), [
+      { id: 'channel', label: 'Channel', essential: true, render: (channel) => {
+        const label = node('div', 'ui-heading-group ui-heading-group-quiet tuner-allocation-channel-label');
+        const choice = node('button', 'ui-button ui-button-link tuner-allocation-channel-choice', channel.name || 'Unnamed channel');
+        choice.type = 'button';
+        choice.dataset.configurationId = String(channel.configuration_id);
+        choice.dataset.allocationChannelId = String(channel.configuration_id);
+        const frequencies = channelAdminFrequencyList(channel.frequencies_hz);
+        choice.setAttribute('aria-label', `Inspect ${channel.name || 'Unnamed channel'}${frequencies ? ` · ${frequencies} MHz` : ''}`);
+        choice.addEventListener('click', () => selectChannel(channel));
+        label.append(choice);
+        const context = tunerAllocationChannelContext(channel);
+        if (context) label.append(node('small', 'muted', context));
+        return label;
+      } },
+      { id: 'frequency', label: 'Frequencies', fullLabel: 'Frequencies (MHz)', essential: true,
+        render: (channel) => channelAdminFrequencyList(channel.frequencies_hz) || 'No frequencies configured' },
+      { id: 'status', label: 'Status', essential: true, render: (channel) => uiPill(
+        channel.processing_state === 'RUNNING' ? 'Running' : 'Stopped',
+        channel.processing_state === 'RUNNING' ? 'success' : 'neutral',
+        channel.processing_state === 'RUNNING' ? 'icon-play' : 'icon-stop') }
+    ], channels.length ? 'No channels match this search.' : 'No local tuner channels are configured.', {
+      type: 'tuner-allocation-channels', controller: catalogController, layoutMenuHost: pickerActions, sortable: false, mobileCards: true,
+      rowGroup: channelProtocolGroup, rowGroupNoun: 'channel', revealRowGroups: () => Boolean(search.value.trim()),
+      rowKey: (channel) => channel.configuration_id,
+      tableClass: 'tuner-allocation-channel-table', wrapperClass: 'tuner-allocation-channel-table-wrap'
+    });
+    tableHost.append(picker);
+    drawCatalog = () => {
+      const focusedId = picker.contains(document.activeElement) ? document.activeElement.dataset.configurationId : null;
+      const focusedGroup = picker.contains(document.activeElement) && document.activeElement.classList.contains('table-row-group-disclosure') ?
+        document.activeElement.dataset.rowGroup : null;
+      tunerAllocationPickerState.query = search.value;
+      catalogController.setEmptyText(channels.length ? 'No channels match this search.' :
+        'No local tuner channels are configured.', { render: false });
+      catalogController.reconcileRows(rows());
+      if (focusedId) picker.querySelector(`[data-configuration-id="${CSS.escape(focusedId)}"]`)?.focus({ preventScroll: true });
+      else if (focusedGroup) picker.querySelector(`.table-row-group-disclosure[data-row-group="${CSS.escape(focusedGroup)}"]`)?.focus({ preventScroll: true });
+    };
+    search.addEventListener('input', drawCatalog);
+    const pickerBody = node('div', 'ui-section-body');
+    pickerBody.append(toolbar, tableHost);
+    catalogHost.replaceChildren(section('Choose a channel', pickerBody, pickerActions));
+    if (tunerAllocationPickerState.restore) {
+      requestAnimationFrame(() => {
+        if (!renderIsCurrent(renderContext) || !workspace.isConnected) return;
+        const choice = picker.querySelector(`[data-configuration-id="${CSS.escape(tunerAllocationPickerState.focusId || '')}"]`);
+        (choice || search).focus({ preventScroll: true });
+        window.scrollTo(tunerAllocationPickerState.scrollX, tunerAllocationPickerState.scrollY);
+        tunerAllocationPickerState.restore = false;
+      });
+    }
+    pageInterval(refreshCatalog, 5_000);
+    return;
+  }
+  if (!selectedChannel) {
+    catalogHost.replaceChildren(back, node('p', 'ui-section-note', 'This channel is no longer available. Choose another channel.'));
+    return;
+  }
+  tunerAllocationPickerState.channel = selectedChannel;
+  tunerAllocationPickerState.restore = true;
+  const selectedContext = node('div', 'ui-surface-heading tuner-allocation-selected-channel');
+  selectedContext.dataset.configurationId = selectedChannelId;
+  const heading = node('div', 'ui-heading-group');
+  const channelDetails = node('div', 'ui-action-row tuner-allocation-channel-metadata');
+  let channelSignature = null;
+  let lastSavedChannel = selectedChannel;
+  const drawChannelContext = () => {
+    const saved = channels.find((channel) => String(channel.configuration_id) === selectedChannelId);
+    if (saved) {
+      lastSavedChannel = saved;
+      tunerAllocationPickerState.channel = saved;
+    }
+    const signature = JSON.stringify([lastSavedChannel, Boolean(saved)]);
+    if (signature === channelSignature) return;
+    heading.replaceChildren(node('h2', '', lastSavedChannel.name || 'Unnamed channel'));
+    const context = tunerAllocationChannelContext(lastSavedChannel);
+    if (context) heading.append(node('p', '', context));
+    const frequencies = channelAdminFrequencyList(lastSavedChannel.frequencies_hz);
+    channelDetails.replaceChildren(uiPill(channelProtocolGroup(lastSavedChannel).label),
+      node('span', 'ui-label', frequencies ? `${frequencies} MHz` : 'No frequencies configured'),
+      uiPill(!saved ? 'Removed' : saved.processing_state === 'RUNNING' ? 'Running' : 'Stopped',
+        saved?.processing_state === 'RUNNING' ? 'success' : 'neutral'));
+    channelSignature = signature;
+  };
+  drawChannelContext();
+  drawCatalog = drawChannelContext;
+  selectedContext.append(heading, channelDetails);
+  catalogHost.replaceChildren(back, selectedContext);
+  pageInterval(refreshCatalog, 5_000);
   const status = node('div', 'tuner-allocation-live-status');
   status.setAttribute('role', 'status');
   const connectionState = node('span');
@@ -32423,7 +32616,7 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
   let selectedTunerSiteId = null;
   let selectedTunerHost = null;
   let selectedTunerSignature = null;
-  let coverageSiteId = null;
+  const coverageSiteId = selectedChannelId;
   let coverageSignature = null;
   const mapStates = new Map();
   const clearMapStates = () => {
@@ -32474,19 +32667,13 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
   };
   const coveragePanel = node('div', 'tuner-allocation-coverage');
   coveragePanel.append(node('p', 'ui-section-note', 'Loading tuner allocation…'));
-  const coverageSiteFilter = node('select', 'ui-select tuner-allocation-site-filter');
-  coverageSiteFilter.setAttribute('aria-label', 'Site / channel');
-  const coverageFilter = formField('Site / channel', coverageSiteFilter);
-  coverageFilter.hidden = true;
   const renderCoverage = () => {
     if (!latest) return;
-    const site = latest.sites.find((item) => String(item.id) === coverageSiteId) || latest.sites[0];
-    coverageSiteId = site ? String(site.id) : null;
-    coverageSiteFilter.value = coverageSiteId || '';
+    const site = latest.sites.find((item) => String(item.id) === coverageSiteId);
     const signature = JSON.stringify([site, latest.tuners]);
     if (signature === coverageSignature) return;
     if (!site) {
-      coveragePanel.replaceChildren(node('p', 'ui-section-note', 'No receiving channels are running.'));
+      coveragePanel.replaceChildren(node('p', 'ui-section-note', 'No tuner coverage information is available for this channel yet.'));
       coverageSignature = signature;
       return;
     }
@@ -32508,11 +32695,6 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
     else if (focusedDisclosure) [...replacement.querySelectorAll('details')]
       .find((item) => item.dataset.allocationDisclosure === focusedDisclosure)?.querySelector('summary')?.focus({ preventScroll: true });
   };
-  coverageSiteFilter.addEventListener('change', () => {
-    coverageSiteId = coverageSiteFilter.value;
-    coverageSignature = null;
-    renderCoverage();
-  });
   const chartResize = new ResizeObserver(() => coveragePanel.firstElementChild?.drawPlots?.());
   chartResize.observe(coveragePanel);
   const historyController = {};
@@ -32556,13 +32738,8 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
     tableClass: 'ui-record-list-compact tuner-allocation-history-list',
     recordListOrder: ['outcome', 'action', 'site', 'time', 'reason'], rowKey: (decision) => decision.decisionId
   });
-  const siteFilter = node('select', 'ui-select');
-  siteFilter.append(node('option', '', 'All sites / channels'));
-  siteFilter.firstElementChild.value = '';
-  const filter = node('div', 'ui-section-body');
-  filter.append(formField('Site / channel', siteFilter));
   const historyPager = node('div', 'tuner-allocation-history-pagination');
-  const historyPanel = section('Decision history', fragment(filter, history, historyPager,
+  const historyPanel = section('Decision history', fragment(history, historyPager,
     node('p', 'ui-section-note', 'History clears when the receiver restarts.')), historyActions);
   historyPanel.hidden = true;
   const navigation = node('nav', 'ui-segmented');
@@ -32571,7 +32748,6 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
   const activate = (id) => {
     activeTab = id;
     for (const [key, panel] of Object.entries(panels)) panel.hidden = key !== id;
-    coverageFilter.hidden = id !== 'coverage' || (latest?.sites.length || 0) < 2;
     if (id === 'coverage') coveragePanel.firstElementChild?.drawPlots?.();
     [...navigation.children].forEach((button) => {
       button.classList.toggle('active', button.dataset.view === id);
@@ -32589,11 +32765,10 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
   const toolbar = node('div', 'ui-toolbar');
   toolbar.append(navigation, status);
   const failure = node('div');
-  workspace.append(toolbar, failure, coverageFilter, coveragePanel, historyPanel);
-  content.append(workspace);
+  workspace.append(toolbar, failure, coveragePanel, historyPanel);
   const renderHistory = () => {
     if (!latest) return;
-    const decisions = latest.decisions.filter((decision) => !siteFilter.value || String(decision.siteId) === siteFilter.value);
+    const decisions = latest.decisions.filter((decision) => String(decision.siteId) === selectedChannelId);
     const page = tunerAllocationHistoryPage(decisions, historyPage);
     historyPage = page.page;
     historyController.reconcileRows(page.rows);
@@ -32605,7 +32780,6 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
       next: { enabled: page.page + 1 < page.pageCount, onClick: () => { historyPage++; renderHistory(); } }
     }));
   };
-  siteFilter.addEventListener('change', () => { historyPage = 0; renderHistory(); });
   const update = (value) => {
     const next = tunerAllocationSnapshot(value);
     if (latest && latest.sessionId !== next.sessionId) {
@@ -32624,36 +32798,7 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
       }
     }
     failure.replaceChildren();
-    const choices = new Map(latest.sites.map((site) => [String(site.id), site.name || site.channelName || 'Unknown channel']));
-    latest.decisions.forEach((decision) => {
-      if (decision.siteId != null && !choices.has(String(decision.siteId))) choices.set(String(decision.siteId), decision.siteName || 'Unknown channel');
-    });
-    const choiceSignature = JSON.stringify([...choices]);
-    if (siteFilter.dataset.choiceSignature !== choiceSignature) {
-      const saved = siteFilter.value;
-      const all = node('option', '', 'All sites / channels');
-      all.value = '';
-      siteFilter.replaceChildren(all);
-      for (const [id, name] of choices) {
-        const option = node('option', '', name);
-        option.value = id;
-        siteFilter.append(option);
-      }
-      siteFilter.value = choices.has(saved) ? saved : '';
-      siteFilter.dataset.choiceSignature = choiceSignature;
-    }
-    const coverageChoices = JSON.stringify(latest.sites.map((site) => [site.id, site.name, site.systemName]));
-    if (coverageSiteFilter.dataset.choiceSignature !== coverageChoices) {
-      coverageSiteFilter.replaceChildren(...latest.sites.map((site) => {
-        const duplicate = latest.sites.some((other) => other.id !== site.id && other.name === site.name);
-        const option = node('option', '', `${site.name || site.channelName || 'Unknown channel'}${duplicate && site.systemName ? ` · ${site.systemName}` : ''}`);
-        option.value = String(site.id);
-        return option;
-      }));
-      coverageSiteFilter.dataset.choiceSignature = coverageChoices;
-    }
-    coverageFilter.hidden = activeTab !== 'coverage' || latest.sites.length < 2;
-    historyController.setEmptyText('No tuner moves or failed calls have been recorded yet.', { render: false });
+    historyController.setEmptyText('No tuner moves or failed calls have been recorded for this channel yet.', { render: false });
     renderCoverage();
     renderHistory();
     syncPause();
@@ -32684,13 +32829,13 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
         pause.disabled = true;
         historyController.setEmptyText('No tuner decisions are available.', { render: false });
         coveragePanel.replaceChildren(node('p', 'ui-section-note', 'No tuner information is available.'));
-        coverageFilter.hidden = true;
-        coverageSiteFilter.replaceChildren();
         coverageSignature = null;
         clearMapStates();
         historyController.replaceRows([]);
         historyPager.replaceChildren();
-        siteFilter.replaceChildren();
+        Object.assign(tunerAllocationPickerState, { query: '', scrollX: 0, scrollY: 0, focusId: null, restore: false, channel: null });
+        catalogRefreshStopped = true;
+        catalogHost.replaceChildren();
         failure.replaceChildren(node('div', 'error', 'You no longer have access to tuner allocation.'));
         syncPause();
         if (initialRequest) throw error;
@@ -32751,7 +32896,7 @@ function adminSettingsGroups() {
       { id: 'call-matching', label: 'Call matching', icon: 'call-matching', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         description: 'Monitor how duplicate calls are matched.' },
       { id: 'tuner-allocation', label: 'Tuner allocation', icon: 'tuner', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        description: 'See where each tuner is listening and which frequencies fit.' }
+        description: 'See tuner coverage and decisions for a channel.' }
     ] },
     { label: 'Audio & recordings', items: [
       { id: 'recordings', label: 'Recording settings', icon: 'recording-settings', capability: ACCESS_CAPABILITIES.ADMIN_RECORDINGS,

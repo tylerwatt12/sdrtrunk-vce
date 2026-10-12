@@ -1,9 +1,26 @@
 .tuner-allocation-workspace,
 .tuner-allocation-details,
-.tuner-allocation-coverage {
+.tuner-allocation-coverage,
+.tuner-allocation-catalog {
   display: grid;
   min-width: 0;
   gap: var(--space-4);
+}
+
+.tuner-allocation-catalog > .tuner-allocation-back {
+  justify-self: start;
+}
+
+.tuner-allocation-selected-channel {
+  flex-wrap: wrap;
+}
+
+.tuner-allocation-channel-metadata {
+  min-width: 0;
+}
+
+.tuner-allocation-channel-label {
+  justify-items: start;
 }
 
 .tuner-allocation-live-status,

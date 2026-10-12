@@ -8,6 +8,14 @@ const start = source.indexOf('const TUNER_ALLOCATION_HISTORY_LIMIT = 100;');
 const end = source.indexOf('async function renderAdminTunerAllocation(', start);
 assert.ok(start >= 0 && end > start);
 const context = vm.createContext({ number: String, frequency: (value) => (Number(value) / 1_000_000).toFixed(5) });
+const protocolStart = source.indexOf('function channelProtocolGroup(');
+const protocolEnd = source.indexOf('function channelAutoStartOrder(', protocolStart);
+assert.ok(protocolStart >= 0 && protocolEnd > protocolStart);
+vm.runInContext(source.slice(protocolStart, protocolEnd), context);
+const frequencyStart = source.indexOf('function channelAdminFrequencyList(');
+const frequencyEnd = source.indexOf('function uiActionButton(', frequencyStart);
+assert.ok(frequencyStart >= 0 && frequencyEnd > frequencyStart);
+vm.runInContext(source.slice(frequencyStart, frequencyEnd), context);
 vm.runInContext(source.slice(start, end), context);
 const snapshot = (decisions = []) => ({ session_id: 'session', generated_at_ms: 123,
   sites: [{ id: 'named-site', name: 'Albany County Simulcast', known_frequency_count: 11,
@@ -55,6 +63,40 @@ assert.equal(context.tunerAllocationWork([{ role: 'control' }, { role: 'call' },
 assert.equal(context.tunerAllocationWork([]), 'Unused');
 assert.equal(context.tunerAllocationFrequency(null), 'Unavailable');
 assert.equal(context.tunerAllocationFrequency(851_012_500), '851.01250 MHz');
+
+const saved = (configuration_id, name, protocol_id, frequencies_hz, extra = {}) => ({
+  configuration_id, name, protocol_id, protocol_label: protocol_id === 'am' ? 'AM' : 'P25',
+  channel_kind: protocol_id === 'p25-phase1' ? 'TRUNKED' : 'CONVENTIONAL',
+  system: 'Ohio MARCS-IP: Multi-Agency Radio Communications', site: 'Lorain',
+  frequencies_hz, processing_state: 'STOPPED', remote_origin: null, ...extra
+});
+const catalog = { channels: [
+  saved('atc-2', 'ATC', 'am', [125_975_000], { system: 'ATC', site: 'ATC' }),
+  saved('grafton', 'MARCS-Grafton', 'p25-phase1', [773_081_250, 770_906_250]),
+  saved('remote', 'Remote', 'p25-phase1', [773_500_000], { remote_origin: { remote: true } }),
+  saved('unnamed', null, 'p25-conventional', [154_464_000], { system: 'Unknown', site: null }),
+  saved('elyria', 'MARCS-Elyria', 'p25-phase1', [770_206_250, 770_606_250]),
+  saved('atc-1', 'ATC', 'am', [125_850_000], { system: 'ATC', site: 'ATC' }),
+  saved(null, 'No saved identity', 'am', [125_500_000])
+] };
+const catalogChannels = plain(context.tunerAllocationCatalogChannels(catalog));
+assert.deepEqual(catalogChannels.map((item) => item.configuration_id),
+  ['elyria', 'grafton', 'unnamed', 'atc-2', 'atc-1'],
+  'Picker uses saved IDs and Channel manager protocol/name order while excluding remote reception');
+assert.throws(() => context.tunerAllocationCatalogChannels({}), /could not be loaded/);
+const grafton = catalogChannels.find((item) => item.configuration_id === 'grafton');
+for (const term of ['grafton', 'Ohio MARCS', 'Lorain', '773.08125']) {
+  assert.equal(context.tunerAllocationChannelMatches(grafton, term), true, `Search recognizes ${term}`);
+}
+assert.equal(context.tunerAllocationChannelMatches(grafton, 'Elyria'), false);
+assert.equal(context.tunerAllocationChannelMatches(catalogChannels.find((item) => item.configuration_id === 'unnamed'),
+  '154.464'), true, 'An unnamed saved channel remains searchable by RF frequency');
+assert.equal(context.tunerAllocationChannelMatches(catalogChannels.find((item) => item.configuration_id === 'unnamed'),
+  'Unnamed'), true, 'Search recognizes the fallback channel label shown in the picker');
+assert.equal(context.tunerAllocationChannelContext(catalogChannels.find((item) => item.configuration_id === 'atc-1')),
+  '', 'Repeated ATC name/system/site adds no redundant context');
+assert.match(context.tunerAllocationChannelContext(grafton), /Ohio MARCS-IP.*Lorain/,
+  'Configured name retains separate system and site context');
 
 // Match actual Albany geometry while testing receiver safety boundaries with
 // explicit synthetic frequency limits; the saved report omitted those limits.
