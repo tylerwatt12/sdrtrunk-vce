@@ -10,12 +10,13 @@ const galleryViews = [
   'radio-directory-panel', 'admin-scan-lists', 'scanner', 'tuner-spectrum', 'tuners', 'aliases',
   'alias-modal', 'alias-export', 'scan-list-members', 'channels', 'radio-directory', 'entity-details',
   'live-notice', 'live-filter', 'tuner-frequency-popover', 'spectrum-discovery', 'spectrum-search',
-  'control-states', 'table-overflow', 'setup-guide', 'call-matching', 'section-body'
+  'control-states', 'table-overflow', 'setup-guide', 'call-matching', 'receiving-windows', 'section-body'
 ];
 const gallerySelector = (view) => ({
   gallery: '.design-system-gallery', 'modal-long': '.visual-modal-example',
   'radio-directory-panel': '.visual-radio-directory-coverage-example',
   'live-notice': '.visual-live-example',
+  'receiving-windows': '.visual-frequency-window-example',
   'spectrum-discovery': '.visual-spectrum-discovery-example .spectrum-discovery-modal',
   'spectrum-search': '.visual-spectrum-search-example .spectrum-search-modal',
   'setup-guide': 'body'

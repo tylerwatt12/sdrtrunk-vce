@@ -1,0 +1,45 @@
+.tuner-allocation-workspace,
+.tuner-allocation-details {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-4);
+}
+
+.tuner-allocation-live-status,
+.tuner-allocation-frequency-list {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.tuner-allocation-window-scroll {
+  overflow-x: auto;
+}
+
+.tuner-allocation-history-pagination:empty {
+  display: none;
+}
+
+.tuner-allocation-site-list tbody > tr {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1.7fr) auto;
+}
+
+.tuner-allocation-history-list tbody > tr {
+  display: grid;
+  grid-template-columns: minmax(0, .9fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.8fr) auto;
+}
+
+@media (max-width: 1100px) {
+  .tuner-allocation-site-list tbody > tr,
+  .tuner-allocation-history-list tbody > tr {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .tuner-allocation-history-list tbody > tr {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

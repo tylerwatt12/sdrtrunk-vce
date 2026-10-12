@@ -51,6 +51,10 @@ for (const view of galleryViews) {
       await expect(page.locator('body')).toHaveAttribute('data-gallery-view', view);
       const example = page.locator(gallerySelector(view));
       await expect(example).toBeVisible();
+      if (view === 'admin-navigation') {
+        await expect(example.locator('[data-visual-admin-navigation]')).toContainText('Decisions engine');
+        await expect(example.locator('[data-visual-admin-navigation]')).toContainText('Tuner allocation');
+      }
       if (view === 'focus') await page.locator('#visual-focus-target').focus();
       await expectNoHorizontalOverflow(page);
       if (process.env.STYLE_AUDIT_ASSERTIONS_ONLY !== '1') {

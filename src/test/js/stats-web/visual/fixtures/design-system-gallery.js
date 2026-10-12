@@ -409,7 +409,7 @@ const view = ['control-states', 'table-overflow', 'mobile-table', 'gallery', 'wo
   'signal-quality-detail', 'radioreference-results',
   'radio-directory-coverage', 'radio-directory-panel', 'admin-scan-lists',
   'scanner', 'tuner-spectrum', 'tuners', 'aliases', 'alias-modal', 'alias-export', 'scan-list-members', 'channels',
-  'radio-directory', 'entity-details', 'call-matching', 'live-notice', 'live-filter', 'tuner-frequency-popover',
+  'radio-directory', 'entity-details', 'call-matching', 'receiving-windows', 'live-notice', 'live-filter', 'tuner-frequency-popover',
   'spectrum-discovery', 'spectrum-search', 'setup-guide'].includes(parameters.get('view')) ?
   parameters.get('view') : 'gallery';
 document.documentElement.dataset.theme = theme;
@@ -997,9 +997,10 @@ void initializeReceiverHealth();
   const navigation = workspace.querySelector('[data-visual-admin-navigation]');
   const picker = workspace.querySelector('[data-visual-admin-picker]');
   const groups = [
-    ['Status & support', [['health', 'Receiver status', 'health'], ['matching', 'Call matching', 'call-matching'],
+    ['Status & support', [['health', 'Receiver status', 'health'],
       ['application-log', 'Application log', 'activity'],
       ['support', 'Report a problem', 'bug']]],
+    ['Decisions engine', [['matching', 'Call matching', 'call-matching'], ['allocation', 'Tuner allocation', 'tuner']]],
     ['Audio & recordings', [['recording', 'Recording settings', 'recording-settings'],
       ['audio', 'Audio quality', 'audio-quality'], ['transcription', 'Transcription', 'transcription']]],
     ['Activity & storage', [['activity', 'Activity settings', 'activity'], ['cleanup', 'Saved data cleanup', 'cleanup']]],

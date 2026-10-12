@@ -122,3 +122,29 @@
 .chart-tooltip[hidden] {
   display: none;
 }
+
+/* Frequency windows share a visual language in live and recorded diagnostics. */
+.chart-frequency-windows {
+  display: block;
+  width: 100%;
+  min-width: 480px;
+}
+
+.chart-window-label {
+  fill: var(--ink);
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-control);
+}
+
+.chart-window-band {
+  fill: var(--accent-soft);
+  stroke: var(--accent);
+  stroke-width: 1;
+}
+
+.chart-window-gap { fill: var(--surface); }
+.chart-window-center { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 2; }
+.chart-window-known { stroke: var(--muted); stroke-width: 1; }
+.chart-window-control { fill: var(--chart-grant); }
+.chart-window-call { fill: var(--chart-call); }
+.chart-window-request { fill: var(--warning); }

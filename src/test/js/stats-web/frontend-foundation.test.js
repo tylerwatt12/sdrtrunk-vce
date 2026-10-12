@@ -1345,8 +1345,14 @@ async function main() {
   assert.match(callMatchingRenderer, /sortable: false/);
   assert.match(callMatchingRenderer, /callMatchingHistoryPage\(latest\.duplicates, historyPage\)/);
   assert.match(callMatchingRenderer, /callMatchingHistoryPager\(page, \(nextPage\) =>/);
+  const tunerAllocationRenderer = functionBinding(appSource, 'renderAdminTunerAllocation');
+  assert.match(tunerAllocationRenderer, /type: 'tuner-allocation-sites'/);
+  assert.match(tunerAllocationRenderer, /type: 'tuner-allocation-decisions'/);
+  assert.match(tunerAllocationRenderer, /recordList: true/);
+  assert.match(tunerAllocationRenderer, /sortable: false/);
+  assert.match(tunerAllocationRenderer, /tunerAllocationHistoryPage\(decisions, historyPage\)/);
   const tableCalls = functionCalls(appSource, 'table');
-  assert.equal(tableCalls.length, 16, 'Every application table call must be audited');
+  assert.equal(tableCalls.length, 18, 'Every application table call must be audited');
   assert.match(appSource,
     /else if \(!options\.serverSort && options\.sortable !== false\)/,
     'Server-paged tables must not offer current-page-only sorting for derived columns');
